@@ -167,9 +167,8 @@ export const buildCommand = (
 
   if (agent === "gemini") {
     const args = ["-p", prompt, "--yolo", "-o", "stream-json", "-m", model];
-    if (opts?.geminiMcpConfigPath) {
-      args.push("--mcp-config", opts.geminiMcpConfigPath);
-    }
+    // Gemini CLI does not support --mcp-config; MCP servers are configured
+    // via `gemini mcp` or project-level .gemini/settings.json
     return { args, cmd: "gemini" };
   }
 
