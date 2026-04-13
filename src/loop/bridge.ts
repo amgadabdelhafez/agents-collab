@@ -11,11 +11,12 @@ import { claudeChannelInstructions } from "./bridge-guidance";
 import {
   bridgeRuntimeCommandDeps,
   clearStaleTmuxBridgeState,
+  deliverTmuxBridgeMessage,
+  hasBridgeDeliveryRoute,
   deliverCodexBridgeMessage,
   drainCodexTmuxMessages,
   ensureBridgeWorker,
   flushClaudeChannelMessages,
-  hasLiveCodexTmuxSession,
   readBridgeRuntimeStatus,
 } from "./bridge-runtime";
 import {
@@ -208,13 +209,17 @@ const handleSendMessageTool = async (
     target,
     message,
     target === "codex"
-      ? (entry) => deliverCodexBridgeMessage(runDir, entry)
-      : undefined,
-    target === "codex" ? () => hasLiveCodexTmuxSession(runDir) : undefined
+      ? async (entry) =>
+          (await deliverCodexBridgeMessage(runDir, entry)) ||
+          (await deliverTmuxBridgeMessage(runDir, entry))
+      : target === "cursor" || target === "gemini"
+        ? (entry) => deliverTmuxBridgeMessage(runDir, entry)
+        : undefined,
+    undefined
   );
   if (
-    result.status === "queued" &&
-    target === "codex" &&
+    result.status !== "delivered" &&
+    hasBridgeDeliveryRoute(runDir, target) &&
     ensureBridgeWorker(runDir)
   ) {
     result.status = "accepted";
@@ -599,7 +604,9 @@ export const bridgeInternals = {
   claudeChannelServerName,
   commandDeps: bridgeRuntimeCommandDeps,
   drainCodexTmuxMessages,
+  deliverTmuxBridgeMessage,
   deliverCodexBridgeMessage,
   ensureBridgeWorker,
+  hasBridgeDeliveryRoute,
   readBridgeEvents,
 };

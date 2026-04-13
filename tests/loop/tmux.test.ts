@@ -431,6 +431,8 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
   expect(manifest.codexThreadId).toBe("codex-thread-1");
   expect(manifest.tmuxSession).toBe("repo-loop-1");
+  expect(manifest.tmuxPaneLeftAgent).toBe("claude");
+  expect(manifest.tmuxPaneRightAgent).toBe("codex");
 });
 
 test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
@@ -584,6 +586,9 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
   expect(manifest.claudeSessionId).toBe("");
   expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
   expect(manifest.codexThreadId).toBe("codex-thread-1");
+  expect(manifest.tmuxSession).toBe("repo-loop-1");
+  expect(manifest.tmuxPaneLeftAgent).toBe("cursor");
+  expect(manifest.tmuxPaneRightAgent).toBe("codex");
 });
 
 test("runInTmux starts paired tmux panes for Gemini and Cursor without persistent transports", async () => {
@@ -707,6 +712,9 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
   expect(manifest.claudeSessionId).toBe("");
   expect(manifest.codexRemoteUrl).toBeUndefined();
   expect(manifest.codexThreadId).toBe("");
+  expect(manifest.tmuxSession).toBe("repo-loop-1");
+  expect(manifest.tmuxPaneLeftAgent).toBe("gemini");
+  expect(manifest.tmuxPaneRightAgent).toBe("cursor");
 });
 
 test("runInTmux releases local codex app-server handles after paired handoff", async () => {
@@ -1010,6 +1018,8 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
   ]);
   expect(typed).toEqual([]);
   expect(manifest.tmuxSession).toBe("repo-loop-1");
+  expect(manifest.tmuxPaneLeftAgent).toBe("claude");
+  expect(manifest.tmuxPaneRightAgent).toBe("codex");
 });
 
 test("runInTmux keeps the no-prompt Claude startup wait bounded", async () => {

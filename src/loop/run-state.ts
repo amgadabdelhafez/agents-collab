@@ -68,6 +68,8 @@ export interface RunManifest {
   state: RunLifecycleState;
   status: RunStatus;
   tmuxSession?: string;
+  tmuxPaneLeftAgent?: Agent;
+  tmuxPaneRightAgent?: Agent;
   updatedAt: string;
 }
 
@@ -137,6 +139,8 @@ interface RunManifestInput {
   state?: RunLifecycleState;
   status?: string;
   tmuxSession?: string;
+  tmuxPaneLeftAgent?: Agent;
+  tmuxPaneRightAgent?: Agent;
   updatedAt?: string;
 }
 
@@ -180,6 +184,14 @@ const firstInteger = (
     }
   }
   return undefined;
+};
+
+const firstAgent = (
+  obj: Record<string, unknown>,
+  keys: string[]
+): Agent | undefined => {
+  const value = firstString(obj, keys);
+  return value && isAgent(value) ? value : undefined;
 };
 
 const optionalRunId = (runId: string | undefined): string | undefined => {
@@ -462,6 +474,12 @@ export const createRunManifest = (
     state,
     status: runStatusFromState(state),
     ...(input.tmuxSession ? { tmuxSession: input.tmuxSession } : {}),
+    ...(input.tmuxPaneLeftAgent
+      ? { tmuxPaneLeftAgent: input.tmuxPaneLeftAgent }
+      : {}),
+    ...(input.tmuxPaneRightAgent
+      ? { tmuxPaneRightAgent: input.tmuxPaneRightAgent }
+      : {}),
     updatedAt: input.updatedAt ?? now,
   };
 };
@@ -561,6 +579,22 @@ export const readRunManifest = (
       ...(firstString(parsed, ["tmuxSession", "tmux_session"])
         ? {
             tmuxSession: firstString(parsed, ["tmuxSession", "tmux_session"]),
+          }
+        : {}),
+      ...(firstAgent(parsed, ["tmuxPaneLeftAgent", "tmux_pane_left_agent"])
+        ? {
+            tmuxPaneLeftAgent: firstAgent(parsed, [
+              "tmuxPaneLeftAgent",
+              "tmux_pane_left_agent",
+            ]),
+          }
+        : {}),
+      ...(firstAgent(parsed, ["tmuxPaneRightAgent", "tmux_pane_right_agent"])
+        ? {
+            tmuxPaneRightAgent: firstAgent(parsed, [
+              "tmuxPaneRightAgent",
+              "tmux_pane_right_agent",
+            ]),
           }
         : {}),
       updatedAt,

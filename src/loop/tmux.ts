@@ -688,19 +688,22 @@ const updatePairedManifest = (
   claudeSessionId: string,
   codexRemoteUrl: string,
   codexThreadId: string,
-  session: string
+  session: string,
+  paneAgents: { left: Agent; right: Agent }
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
       {
         ...(current ?? manifest),
         claudeSessionId,
-        codexRemoteUrl,
+        ...(codexRemoteUrl ? { codexRemoteUrl } : {}),
         codexThreadId,
         cwd: deps.cwd,
         mode: "paired",
         pid: process.pid,
         tmuxSession: session,
+        tmuxPaneLeftAgent: paneAgents.left,
+        tmuxPaneRightAgent: paneAgents.right,
       },
       new Date().toISOString()
     )
@@ -742,9 +745,7 @@ const cleanupFailedPairedSessionStart = (
 const preparePersistentTmuxLaunch = async (
   deps: TmuxDeps,
   opts: Options,
-  storage: RunStorage,
-  manifest: RunManifest,
-  session: string
+  manifest: RunManifest
 ): Promise<{
   claudeSessionId: string;
   codexRemoteUrl: string;
@@ -787,15 +788,6 @@ const preparePersistentTmuxLaunch = async (
     ...(claudeSessionId ? { claude: claudeSessionId } : {}),
     ...(codexThreadId ? { codex: codexThreadId } : {}),
   };
-  updatePairedManifest(
-    deps,
-    storage,
-    manifest,
-    claudeSessionId,
-    codexRemoteUrl,
-    codexThreadId,
-    session
-  );
   return { claudeSessionId, codexRemoteUrl, codexThreadId };
 };
 
@@ -970,13 +962,26 @@ const startPairedSession = async (
   const { manifest, storage } = deps.preparePairedRun(launch.opts, deps.cwd);
   const runBase = resolveRunBase(deps.cwd, deps, storage.runId);
   const session = buildRunName(runBase, storage.runId);
-  if (sessionExists(session, deps.spawn)) {
-    return session;
-  }
-
   const primaryAgent = launch.opts.agent;
   const secondaryAgent = pairedPeer(launch.opts);
   const paneAgents = resolveTmuxPaneAgents(primaryAgent, secondaryAgent);
+  if (sessionExists(session, deps.spawn)) {
+    deps.updateRunManifest(storage.manifestPath, (current) =>
+      touchRunManifest(
+        {
+          ...(current ?? manifest),
+          cwd: deps.cwd,
+          mode: "paired",
+          pid: process.pid,
+          tmuxSession: session,
+          tmuxPaneLeftAgent: paneAgents.left,
+          tmuxPaneRightAgent: paneAgents.right,
+        },
+        new Date().toISOString()
+      )
+    );
+    return session;
+  }
   const hadAgentSession: Record<Agent, boolean> = {
     claude: Boolean(manifest.claudeSessionId || launch.opts.pairedSessionIds?.claude),
     codex: Boolean(manifest.codexThreadId || launch.opts.pairedSessionIds?.codex),
@@ -995,9 +1000,7 @@ const startPairedSession = async (
     const persistent = await preparePersistentTmuxLaunch(
       deps,
       launch.opts,
-      storage,
-      manifest,
-      session
+      manifest
     );
     claudeSessionId = persistent.claudeSessionId;
     codexRemoteUrl = persistent.codexRemoteUrl;
@@ -1109,6 +1112,16 @@ const startPairedSession = async (
     const primaryPane =
       paneAgents.left === primaryAgent ? `${session}:0.0` : `${session}:0.1`;
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
+    updatePairedManifest(
+      deps,
+      storage,
+      manifest,
+      claudeSessionId,
+      codexRemoteUrl,
+      codexThreadId,
+      session,
+      paneAgents
+    );
     return session;
   } catch (error: unknown) {
     cleanupFailedPairedSessionStart(

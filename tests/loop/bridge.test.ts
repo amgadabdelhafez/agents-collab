@@ -623,7 +623,8 @@ test("bridge MCP send_message rejects an unknown normalized target", async () =>
   expect(JSON.parse(result.stdout)).toMatchObject({
     error: {
       code: -32_602,
-      message: 'Unknown target "foo" - expected "claude" or "codex"',
+      message:
+        'Unknown target "foo" - expected one of "claude", "codex", "gemini", or "cursor"',
     },
     id: 1,
     jsonrpc: "2.0",
@@ -1380,6 +1381,156 @@ test("bridge drains pending codex tmux messages through the injected command dep
     ],
     [
       ["tmux", "send-keys", "-t", "repo-loop-8:0.1", "Enter"],
+      { stderr: "ignore" },
+    ],
+  ]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge drains pending cursor tmux messages through the stored pane routing", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("standing by for Codex review request", "utf8"),
+      };
+    }
+    if (args[0] === "tmux" && args[1] === "send-keys") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      status: "running",
+      tmuxPaneLeftAgent: "cursor",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-cursor-1",
+    kind: "message",
+    message: "Please review the current diff and send notes back through the bridge.",
+    source: "codex",
+    target: "cursor",
+  });
+
+  const delivered = await bridge.drainTmuxBridgeMessages(runDir);
+
+  expect(delivered).toBe(true);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(spawnSync.mock.calls).toEqual([
+    [
+      ["tmux", "has-session", "-t", "repo-loop-8"],
+      { stderr: "ignore", stdout: "ignore" },
+    ],
+    [
+      ["tmux", "has-session", "-t", "repo-loop-8"],
+      { stderr: "ignore", stdout: "ignore" },
+    ],
+    [
+      ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.0"],
+      { stderr: "ignore", stdout: "pipe" },
+    ],
+    [
+      [
+        "tmux",
+        "send-keys",
+        "-t",
+        "repo-loop-8:0.0",
+        "-l",
+        "--",
+        "Message from Codex via the loop bridge:",
+      ],
+      { stderr: "ignore" },
+    ],
+    [
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
+      { stderr: "ignore" },
+    ],
+    [
+      [
+        "tmux",
+        "send-keys",
+        "-t",
+        "repo-loop-8:0.0",
+        "-l",
+        "--",
+        "",
+      ],
+      { stderr: "ignore" },
+    ],
+    [
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
+      { stderr: "ignore" },
+    ],
+    [
+      [
+        "tmux",
+        "send-keys",
+        "-t",
+        "repo-loop-8:0.0",
+        "-l",
+        "--",
+        "Please review the current diff and send notes back through the bridge.",
+      ],
+      { stderr: "ignore" },
+    ],
+    [
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
+      { stderr: "ignore" },
+    ],
+    [
+      [
+        "tmux",
+        "send-keys",
+        "-t",
+        "repo-loop-8:0.0",
+        "-l",
+        "--",
+        "",
+      ],
+      { stderr: "ignore" },
+    ],
+    [
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
+      { stderr: "ignore" },
+    ],
+    [
+      [
+        "tmux",
+        "send-keys",
+        "-t",
+        "repo-loop-8:0.0",
+        "-l",
+        "--",
+        "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
+      ],
+      { stderr: "ignore" },
+    ],
+    [
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "Enter"],
       { stderr: "ignore" },
     ],
   ]);

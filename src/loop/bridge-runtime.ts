@@ -17,6 +17,7 @@ import {
   type BridgeMessage,
   type BridgeStatus,
   readBridgeInbox,
+  readPendingBridgeMessages,
   readBridgeStatus,
 } from "./bridge-store";
 import { injectCodexMessage } from "./codex-app-server";
@@ -36,10 +37,12 @@ const CLAUDE_CHANNEL_USER_ID = "codex";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
 const BRIDGE_WORKER_IDLE_DELAY_MS = 250;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
-const CODEX_TMUX_PANE = "0.1";
+const TMUX_LEFT_PANE = "0.0";
+const TMUX_RIGHT_PANE = "0.1";
 const CODEX_TMUX_READY_DELAY_MS = 250;
 const CODEX_TMUX_READY_POLLS = 20;
 const CODEX_TMUX_SEND_FOOTER = "Ctrl+J newline";
+const GENERIC_TMUX_READY_POLLS = 12;
 
 export const bridgeRuntimeCommandDeps = { spawn, spawnSync };
 
@@ -102,7 +105,13 @@ const wait = async (ms: number): Promise<void> => {
 const decodeOutput = (value: Uint8Array): string =>
   new TextDecoder().decode(value);
 
-const codexPane = (session: string): string => `${session}:${CODEX_TMUX_PANE}`;
+const capitalize = (value: string): string =>
+  value.slice(0, 1).toUpperCase() + value.slice(1);
+
+const tmuxPane = (session: string, paneId: string): string =>
+  `${session}:${paneId}`;
+
+const codexPane = (session: string): string => tmuxPane(session, TMUX_RIGHT_PANE);
 
 const capturePane = (pane: string): string => {
   const result = bridgeRuntimeCommandDeps.spawnSync(
@@ -118,26 +127,27 @@ const capturePane = (pane: string): string => {
   return decodeOutput(result.stdout);
 };
 
-const sendPaneKeys = (pane: string, keys: string[]): void => {
-  bridgeRuntimeCommandDeps.spawnSync(
+const sendPaneKeys = (pane: string, keys: string[]): boolean => {
+  const result = bridgeRuntimeCommandDeps.spawnSync(
     ["tmux", "send-keys", "-t", pane, ...keys],
     {
       stderr: "ignore",
     }
   );
+  return result.exitCode === 0;
 };
 
-const sendPaneText = (pane: string, text: string): void => {
-  bridgeRuntimeCommandDeps.spawnSync(
+const sendPaneText = (pane: string, text: string): boolean => {
+  const result = bridgeRuntimeCommandDeps.spawnSync(
     ["tmux", "send-keys", "-t", pane, "-l", "--", text],
     {
       stderr: "ignore",
     }
   );
+  return result.exitCode === 0;
 };
 
-const waitForCodexPane = async (session: string): Promise<boolean> => {
-  const pane = codexPane(session);
+const waitForCodexPane = async (pane: string): Promise<boolean> => {
   for (let attempt = 0; attempt < CODEX_TMUX_READY_POLLS; attempt += 1) {
     if (capturePane(pane).includes(CODEX_TMUX_SEND_FOOTER)) {
       return true;
@@ -147,24 +157,39 @@ const waitForCodexPane = async (session: string): Promise<boolean> => {
   return false;
 };
 
-const injectCodexTmuxMessage = async (
-  session: string,
+const waitForInteractivePane = async (pane: string): Promise<boolean> => {
+  for (let attempt = 0; attempt < GENERIC_TMUX_READY_POLLS; attempt += 1) {
+    if (capturePane(pane).trim()) {
+      return true;
+    }
+    await wait(CODEX_TMUX_READY_DELAY_MS);
+  }
+  return true;
+};
+
+const injectTmuxMessage = async (
+  pane: string,
+  target: BridgeMessage["target"],
   message: string
 ): Promise<boolean> => {
-  if (!(session && (await waitForCodexPane(session)))) {
+  const ready =
+    target === "codex"
+      ? await waitForCodexPane(pane)
+      : await waitForInteractivePane(pane);
+  if (!(pane && ready)) {
     return false;
   }
-  const pane = codexPane(session);
   const lines = message.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
-    sendPaneText(pane, lines[index] ?? "");
-    if (index < lines.length - 1) {
-      sendPaneKeys(pane, ["C-j"]);
+    if (!sendPaneText(pane, lines[index] ?? "")) {
+      return false;
+    }
+    if (index < lines.length - 1 && !sendPaneKeys(pane, ["C-j"])) {
+      return false;
     }
   }
   await wait(100);
-  sendPaneKeys(pane, ["Enter"]);
-  return true;
+  return sendPaneKeys(pane, ["Enter"]);
 };
 
 const tmuxSessionExists = (session: string): boolean => {
@@ -186,6 +211,59 @@ export interface BridgeRuntimeStatus extends BridgeStatus {
   codexDeliveryMode: "app-server" | "none" | "tmux";
   hasLiveTmuxSession: boolean;
 }
+
+const readRunManifestForBridge = (runDir: string) =>
+  readRunManifest(join(runDir, "manifest.json"));
+
+const paneIdForTarget = (
+  runDir: string,
+  target: BridgeMessage["target"]
+): string | undefined => {
+  const manifest = readRunManifestForBridge(runDir);
+  if (manifest?.tmuxPaneLeftAgent === target) {
+    return TMUX_LEFT_PANE;
+  }
+  if (manifest?.tmuxPaneRightAgent === target) {
+    return TMUX_RIGHT_PANE;
+  }
+  if (target === "codex") {
+    return TMUX_RIGHT_PANE;
+  }
+  if (target === "claude") {
+    return TMUX_LEFT_PANE;
+  }
+  return undefined;
+};
+
+const tmuxPaneForTarget = (
+  runDir: string,
+  target: BridgeMessage["target"]
+): string | undefined => {
+  const manifest = readRunManifestForBridge(runDir);
+  if (!manifest?.tmuxSession) {
+    return undefined;
+  }
+  const paneId = paneIdForTarget(runDir, target);
+  return paneId ? tmuxPane(manifest.tmuxSession, paneId) : undefined;
+};
+
+const formatTmuxBridgeMessage = (message: BridgeMessage): string => {
+  if (message.target === "codex") {
+    return formatCodexBridgeMessage(message.source, message.message);
+  }
+  // Cursor/Gemini can connect to the bridge MCP, but their CLIs do not turn
+  // server notifications into agent actions. In tmux mode we push the bridge
+  // message into the live pane instead of waiting for the agent to poll.
+  const trimmed = message.message.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return [
+    `Message from ${capitalize(message.source)} via the loop bridge:`,
+    trimmed,
+    "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
+  ].join("\n\n");
+};
 
 export const readBridgeRuntimeStatus = (
   runDir: string
@@ -210,7 +288,13 @@ export const readBridgeRuntimeStatus = (
 export const ensureBridgeWorker = (runDir: string): boolean => {
   const status = readBridgeRuntimeStatus(runDir);
   const state = parseRunLifecycleState(status.state);
-  if (!(status.hasCodexRemote && state && isActiveRunState(state))) {
+  if (
+    !(
+      (status.hasCodexRemote || status.hasLiveTmuxSession) &&
+      state &&
+      isActiveRunState(state)
+    )
+  ) {
     return false;
   }
   const currentPid = readBridgeWorkerPid(runDir);
@@ -247,6 +331,20 @@ export const hasLiveCodexTmuxSession = (runDir: string): boolean => {
   );
 };
 
+export const hasBridgeDeliveryRoute = (
+  runDir: string,
+  target: BridgeMessage["target"]
+): boolean => {
+  const status = readBridgeRuntimeStatus(runDir);
+  if (target === "claude") {
+    return false;
+  }
+  if (target === "codex" && status.hasCodexRemote) {
+    return true;
+  }
+  return Boolean(status.hasLiveTmuxSession && paneIdForTarget(runDir, target));
+};
+
 export const clearStaleTmuxBridgeState = (runDir: string): boolean => {
   let removedServerNames: string[] = [];
   const next = updateRunManifest(join(runDir, "manifest.json"), (manifest) => {
@@ -261,6 +359,8 @@ export const clearStaleTmuxBridgeState = (runDir: string): boolean => {
       {
         ...manifest,
         tmuxSession: undefined,
+        tmuxPaneLeftAgent: undefined,
+        tmuxPaneRightAgent: undefined,
       },
       new Date().toISOString()
     );
@@ -344,9 +444,13 @@ export const deliverCodexBridgeMessage = async (
   }
 };
 
-export const drainCodexTmuxMessages = async (
-  runDir: string
+export const deliverTmuxBridgeMessage = async (
+  runDir: string,
+  message: BridgeMessage
 ): Promise<boolean> => {
+  if (message.target === "claude") {
+    return false;
+  }
   const status = readBridgeRuntimeStatus(runDir);
   if (!status.tmuxSession) {
     return false;
@@ -355,19 +459,31 @@ export const drainCodexTmuxMessages = async (
     clearStaleTmuxBridgeState(runDir);
     return false;
   }
+  const pane = tmuxPaneForTarget(runDir, message.target);
+  const content = formatTmuxBridgeMessage(message);
+  if (!(pane && content)) {
+    return false;
+  }
+  const delivered = await injectTmuxMessage(pane, message.target, content);
+  if (!delivered) {
+    return false;
+  }
+  acknowledgeBridgeDelivery(
+    runDir,
+    message,
+    `sent to ${message.target} tmux pane`
+  );
+  return true;
+};
+
+export const drainCodexTmuxMessages = async (
+  runDir: string
+): Promise<boolean> => {
   const message = readNextPendingBridgeMessageForTarget(runDir, "codex");
   if (!message) {
     return false;
   }
-  const delivered = await injectCodexTmuxMessage(
-    status.tmuxSession,
-    formatCodexBridgeMessage(message.source, message.message)
-  );
-  if (!delivered) {
-    return false;
-  }
-  acknowledgeBridgeDelivery(runDir, message, "sent to codex tmux pane");
-  return true;
+  return deliverTmuxBridgeMessage(runDir, message);
 };
 
 export const drainCodexAppServerMessages = (
@@ -382,6 +498,26 @@ export const drainCodexAppServerMessages = (
     return Promise.resolve(false);
   }
   return deliverCodexBridgeMessage(runDir, message);
+};
+
+export const drainTmuxBridgeMessages = async (
+  runDir: string
+): Promise<boolean> => {
+  const status = readBridgeRuntimeStatus(runDir);
+  if (!status.tmuxSession) {
+    return false;
+  }
+  if (!status.hasLiveTmuxSession) {
+    clearStaleTmuxBridgeState(runDir);
+    return false;
+  }
+  const message = readPendingBridgeMessages(runDir).find(
+    (entry) => entry.target !== "claude" && paneIdForTarget(runDir, entry.target)
+  );
+  if (!message) {
+    return false;
+  }
+  return deliverTmuxBridgeMessage(runDir, message);
 };
 
 const clearStaleTmuxWorkerState = (
@@ -410,9 +546,9 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       if (!clearStaleTmuxWorkerState(runDir, status)) {
         return;
       }
-      const delivered = status.hasCodexRemote
-        ? await drainCodexAppServerMessages(runDir)
-        : await drainCodexTmuxMessages(runDir);
+      const delivered =
+        (status.hasCodexRemote && (await drainCodexAppServerMessages(runDir))) ||
+        (await drainTmuxBridgeMessages(runDir));
       if (!(status.hasCodexRemote || status.hasLiveTmuxSession)) {
         return;
       }
