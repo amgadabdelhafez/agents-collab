@@ -5,7 +5,7 @@ export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
 export const DEFAULT_CODEX_MODEL = "gpt-5.4";
 export const DEFAULT_CLAUDE_MODEL = "opus";
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
-export const DEFAULT_CURSOR_MODEL = "sonnet-4";
+export const DEFAULT_CURSOR_MODEL = "auto";
 export const DEFAULT_MAX_ITERATIONS = 20;
 export const LOOP_VERSION = pkg.version;
 

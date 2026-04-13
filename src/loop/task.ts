@@ -81,8 +81,8 @@ const runPlanMode = async (opts: Options, task: string): Promise<void> => {
   const reviewPrompt = buildPlanReviewPrompt(task);
   const review = await runPlanReviewer(reviewer, reviewPrompt, opts);
   if (review.exitCode !== 0) {
-    throw new Error(
-      `[loop] plan review ${reviewer} exited with code ${review.exitCode}`
+    console.error(
+      `[loop] warning: plan review ${reviewer} exited with code ${review.exitCode}, skipping review`
     );
   }
 };
