@@ -145,8 +145,16 @@ const isSingleAgentMode = (argv: string[]): boolean =>
 const capitalize = (value: string): string =>
   value.slice(0, 1).toUpperCase() + value.slice(1);
 
-const peerAgent = (agent: Agent): Agent =>
-  agent === "claude" ? "codex" : "claude";
+const peerAgent = (agent: Agent, pairWith?: Agent): Agent => {
+  if (pairWith) return pairWith;
+  const peers: Record<Agent, Agent> = {
+    claude: "codex",
+    codex: "claude",
+    gemini: "claude",
+    cursor: "claude",
+  };
+  return peers[agent];
+};
 
 const appendProofPrompt = (parts: string[], proof: string): void => {
   const trimmed = proof.trim();
