@@ -19,7 +19,7 @@ import {
 } from "./paired-options";
 import { runDraftPrStep } from "./pr";
 import { buildWorkPrompt } from "./prompts";
-import { createRunReviewWithPrompt, resolveReviewers } from "./review";
+import { createRunReviewWithPrompt, resolvePairedReviewers } from "./review";
 import {
   appendRunTranscriptEntry,
   createRunResultEntry,
@@ -41,10 +41,10 @@ import type {
   Agent,
   Options,
   ReviewFailure,
-  ReviewMode,
   RunLifecycleState,
   RunResult,
 } from "./types";
+import { defaultPeerAgent, isPersistentAgent } from "./agents";
 import { hasSignal } from "./utils";
 
 const MAX_BRIDGE_HOPS = 12;
@@ -87,21 +87,19 @@ const capitalize = (value: string): string =>
 
 const bridgeTargetLiteral = (agent: Agent): string => `target: "${agent}"`;
 
-const resolvePairedReviewers = (
-  review: ReviewMode | undefined,
-  agent: Agent
-): Agent[] => resolveReviewers(review, agent);
-
 const pairedResumeHint = (runId: string): void => {
   console.error(`[loop] to resume paired run: loop --run-id ${runId}`);
 };
 
-const bridgeGuidance = (agent: Agent): string => {
-  const peer = agent === "claude" ? "Codex" : "Claude";
-  const target = agent === "claude" ? "codex" : "claude";
+const pairPeer = (agent: Agent, opts: Options): Agent =>
+  agent === opts.agent ? (opts.pairWith ?? defaultPeerAgent(agent)) : opts.agent;
+
+const bridgeGuidance = (agent: Agent, opts: Options): string => {
+  const target = pairPeer(agent, opts);
+  const peer = capitalize(target);
   return [
     "Paired mode:",
-    `You are in a persistent Claude/Codex pair. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
+    `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
     `Do not ask the human to relay messages between agents or answer the human on the other agent's behalf. Use ${quotedBridgeTool(agent, "bridge_status")} only if delivery looks stuck.`,
     `Use ${quotedBridgeTool(agent, "receive_messages")} only if ${quotedBridgeTool(agent, "bridge_status")} shows pending messages addressed to you and direct delivery looks stuck.`,
   ].join("\n");
@@ -109,7 +107,7 @@ const bridgeGuidance = (agent: Agent): string => {
 
 const bridgeToolGuidance = (agent: Agent): string =>
   [
-    `You can use the MCP tools ${quotedBridgeTool(agent, "send_message")}, ${quotedBridgeTool(agent, "bridge_status")}, and ${quotedBridgeTool(agent, "receive_messages")} for direct Claude/Codex coordination.`,
+    `You can use the MCP tools ${quotedBridgeTool(agent, "send_message")}, ${quotedBridgeTool(agent, "bridge_status")}, and ${quotedBridgeTool(agent, "receive_messages")} for direct paired-agent coordination.`,
     `Only use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} when delivery looks stuck.`,
     "Do not ask the human to relay messages between agents.",
   ].join("\n");
@@ -157,14 +155,16 @@ const reviewBridgePrompt = (
 const forwardBridgePrompt = ({
   message,
   source,
+  target,
 }: {
   message: string;
   source: Agent;
+  target: Agent;
 }): string => {
-  const agent = source === "claude" ? "codex" : "claude";
+  const agent = target;
   const replyGuidance = `Send a message to the other agent with ${quotedBridgeTool(agent, "send_message")} only when you have something useful for them to act on.`;
   return (
-    source === "claude"
+    target === "codex"
       ? [
           formatCodexBridgeMessage(source, message),
           "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
@@ -182,6 +182,13 @@ const forwardBridgePrompt = ({
 };
 
 const updateIds = (state: PairedState): void => {
+  state.options.pairedSessionIds = {
+    ...state.options.pairedSessionIds,
+    claude:
+      getLastClaudeSessionId() || state.options.pairedSessionIds?.claude || "",
+    codex:
+      getLastCodexThreadId() || state.options.pairedSessionIds?.codex || "",
+  };
   const next = touchRunManifest(
     {
       ...state.manifest,
@@ -253,10 +260,7 @@ const nextResumeId = (state: PairedState, agent: Agent): string | undefined => {
     return undefined;
   }
   state.usedResume[agent] = true;
-  const value =
-    agent === "claude"
-      ? state.manifest.claudeSessionId
-      : state.manifest.codexThreadId;
+  const value = state.options.pairedSessionIds?.[agent];
   return value || undefined;
 };
 
@@ -327,30 +331,32 @@ const prepareRunState = (opts: Options, cwd: string): PairedState => {
     manifest,
     options: opts,
     storage,
-    usedResume: { claude: false, codex: false },
+    usedResume: {
+      claude: false,
+      codex: false,
+      cursor: false,
+      gemini: false,
+    },
   };
 };
 
 const startPair = async (state: PairedState): Promise<void> => {
-  const claudeKind = state.options.agent === "claude" ? "work" : "review";
-  const codexKind = state.options.agent === "codex" ? "work" : "review";
-
-  await Promise.all([
-    pairedLoopDeps.startPersistentAgentSession(
-      "claude",
-      state.options,
-      state.manifest.claudeSessionId || undefined,
-      undefined,
-      claudeKind
-    ),
-    pairedLoopDeps.startPersistentAgentSession(
-      "codex",
-      state.options,
-      state.manifest.codexThreadId || undefined,
-      undefined,
-      codexKind
-    ),
-  ]);
+  const pair = [state.options.agent, state.options.pairWith].filter(
+    (value): value is Agent => Boolean(value)
+  );
+  await Promise.all(
+    pair
+      .filter((agent) => isPersistentAgent(agent))
+      .map((agent) =>
+        pairedLoopDeps.startPersistentAgentSession(
+          agent,
+          state.options,
+          state.options.pairedSessionIds?.[agent],
+          undefined,
+          agent === state.options.agent ? "work" : "review"
+        )
+      )
+  );
   transitionRunState(state, "working", "paired sessions ready");
 };
 
@@ -441,7 +447,7 @@ const runIterations = async (
 
     const prompt = [
       buildWorkPrompt(task, doneSignal, state.options.proof, reviewNotes),
-      bridgeGuidance(state.options.agent),
+      bridgeGuidance(state.options.agent, state.options),
     ].join("\n\n");
     reviewNotes = "";
 
@@ -513,7 +519,7 @@ export const runPairedLoop = async (
   task: string,
   opts: Options
 ): Promise<void> => {
-  const reviewers = resolvePairedReviewers(opts.review, opts.agent);
+  const reviewers = resolvePairedReviewers(opts.agent, opts.pairWith);
   const rl = process.stdin.isTTY
     ? createInterface({ input: process.stdin, output: process.stdout })
     : undefined;

@@ -13,6 +13,8 @@
   "bin": {
     "claude-loop": "./src/claude-loop.ts",
     "codex-loop": "./src/codex-loop.ts",
+    "cursor-loop": "./src/cursor-loop.ts",
+    "gemini-loop": "./src/gemini-loop.ts",
     "loop": "./src/cli.ts"
   },
   "devDependencies": {

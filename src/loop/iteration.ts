@@ -21,7 +21,11 @@ export const iterationCooldown = (i: number): Promise<void> =>
   i > 1 ? sleep(parseIterationCooldownMs()) : Promise.resolve();
 
 const lastSession = (agent: Agent): string =>
-  agent === "claude" ? getLastClaudeSessionId() : getLastCodexThreadId();
+  agent === "claude"
+    ? getLastClaudeSessionId()
+    : agent === "codex"
+      ? getLastCodexThreadId()
+      : "";
 
 export const doneText = (s: string): string => `done signal "${s}"`;
 

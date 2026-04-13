@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import { isAgent } from "./agents";
 import {
   type GitResult,
   runGit as runGitCommand,
@@ -651,7 +652,7 @@ const parseReviewTranscriptEntry = (
   at: string
 ): RunReviewTranscriptEntry | undefined => {
   const reviewer =
-    parsed.reviewer === "claude" || parsed.reviewer === "codex"
+    typeof parsed.reviewer === "string" && isAgent(parsed.reviewer)
       ? parsed.reviewer
       : undefined;
   const reason = asString(parsed.reason);

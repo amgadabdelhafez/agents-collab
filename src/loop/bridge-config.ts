@@ -135,6 +135,14 @@ export const ensureClaudeBridgeConfig = (
   source: Agent,
   serverName = BRIDGE_SERVER
 ): string => {
+  return ensureAgentBridgeConfig(runDir, source, serverName);
+};
+
+export const ensureAgentBridgeConfig = (
+  runDir: string,
+  source: Agent,
+  serverName = BRIDGE_SERVER
+): string => {
   const path = join(runDir, `${source}-mcp.json`);
   ensureParentDir(path);
   writeFileSync(

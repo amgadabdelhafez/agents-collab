@@ -1,7 +1,10 @@
 import { env } from "bun";
+import { defaultPeerAgent, isAgent } from "./agents";
 import {
   DEFAULT_CODEX_MODEL,
+  DEFAULT_CURSOR_MODEL,
   DEFAULT_DONE_SIGNAL,
+  DEFAULT_GEMINI_MODEL,
   DEFAULT_MAX_ITERATIONS,
   HELP,
   LOOP_VERSION,
@@ -17,12 +20,11 @@ import type {
 } from "./types";
 
 const EMPTY_DONE_SIGNAL_ERROR = "Invalid --done value: cannot be empty";
-const ONLY_MODE_CONFLICT_ERROR =
-  "Cannot combine --claude-only with --codex-only.";
+const ONLY_MODE_CONFLICT_ERROR = "Cannot combine multiple --*-only flags.";
 const INVALID_RUN_ID_ERROR = "Invalid --run-id value: cannot be empty";
 
 const parseAgent = (value: string): Agent => {
-  if (value === "claude" || value === "codex") {
+  if (isAgent(value)) {
     return value;
   }
   throw new Error(`Invalid --agent value: ${value}`);
@@ -36,7 +38,7 @@ const parseFormat = (value: string): Format => {
 };
 
 const parseReviewValue = (value: string): ReviewMode => {
-  if (value === "claude" || value === "codex" || value === "claudex") {
+  if (isAgent(value) || value === "claudex") {
     return value;
   }
   throw new Error(`Invalid --review value: ${value}`);
@@ -47,8 +49,7 @@ const maybeParsePlanReviewValue = (
 ): PlanReviewMode | undefined => {
   if (
     value === "other" ||
-    value === "claude" ||
-    value === "codex" ||
+    isAgent(value) ||
     value === "none"
   ) {
     return value;
@@ -110,6 +111,9 @@ const applyValueFlag = (
         "Invalid --proof value: cannot be empty"
       );
       return;
+    case "pairWith":
+      opts.pairWith = parseAgent(value);
+      return;
     case "codexModel":
       opts.codexModel = requireTrimmedValue(
         value,
@@ -122,10 +126,34 @@ const applyValueFlag = (
         "Invalid --codex-reviewer-model value: cannot be empty"
       );
       return;
+    case "cursorModel":
+      opts.cursorModel = requireTrimmedValue(
+        value,
+        "Invalid --cursor-model value: cannot be empty"
+      );
+      return;
+    case "cursorReviewerModel":
+      opts.cursorReviewerModel = requireTrimmedValue(
+        value,
+        "Invalid --cursor-reviewer-model value: cannot be empty"
+      );
+      return;
     case "claudeReviewerModel":
       opts.claudeReviewerModel = requireTrimmedValue(
         value,
         "Invalid --claude-reviewer-model value: cannot be empty"
+      );
+      return;
+    case "geminiModel":
+      opts.geminiModel = requireTrimmedValue(
+        value,
+        "Invalid --gemini-model value: cannot be empty"
+      );
+      return;
+    case "geminiReviewerModel":
+      opts.geminiReviewerModel = requireTrimmedValue(
+        value,
+        "Invalid --gemini-reviewer-model value: cannot be empty"
       );
       return;
     case "session":
@@ -163,6 +191,12 @@ const parseOnlyModeFlag = (arg: string): Agent | undefined => {
   if (arg === "--codex-only") {
     return "codex";
   }
+  if (arg === "--gemini-only") {
+    return "gemini";
+  }
+  if (arg === "--cursor-only") {
+    return "cursor";
+  }
   return undefined;
 };
 
@@ -187,7 +221,7 @@ const parseReviewArg = (
     }
 
     const next = argv[index + 1];
-    if (next === "claude" || next === "codex" || next === "claudex") {
+    if (isAgent(next) || next === "claudex") {
       return index + 1;
     }
 
@@ -205,8 +239,8 @@ const parseReviewArg = (
   }
 
   const next = argv[index + 1];
-  if (next === "claude" || next === "codex" || next === "claudex") {
-    opts.review = next;
+  if (isAgent(next) || next === "claudex") {
+    opts.review = parseReviewValue(next);
     return index + 1;
   }
 
@@ -298,6 +332,18 @@ const parseModelArg = (
     );
     return index + 1;
   }
+  if (arg.startsWith("--cursor-model=")) {
+    applyValueFlag("cursorModel", arg.slice("--cursor-model=".length), opts);
+    return index + 1;
+  }
+  if (arg.startsWith("--cursor-reviewer-model=")) {
+    applyValueFlag(
+      "cursorReviewerModel",
+      arg.slice("--cursor-reviewer-model=".length),
+      opts
+    );
+    return index + 1;
+  }
   if (arg.startsWith("--claude-reviewer-model=")) {
     applyValueFlag(
       "claudeReviewerModel",
@@ -306,10 +352,26 @@ const parseModelArg = (
     );
     return index + 1;
   }
+  if (arg.startsWith("--gemini-model=")) {
+    applyValueFlag("geminiModel", arg.slice("--gemini-model=".length), opts);
+    return index + 1;
+  }
+  if (arg.startsWith("--gemini-reviewer-model=")) {
+    applyValueFlag(
+      "geminiReviewerModel",
+      arg.slice("--gemini-reviewer-model=".length),
+      opts
+    );
+    return index + 1;
+  }
   if (
     arg === "--codex-model" ||
     arg === "--codex-reviewer-model" ||
-    arg === "--claude-reviewer-model"
+    arg === "--cursor-model" ||
+    arg === "--cursor-reviewer-model" ||
+    arg === "--claude-reviewer-model" ||
+    arg === "--gemini-model" ||
+    arg === "--gemini-reviewer-model"
   ) {
     applyValueFlag(
       VALUE_FLAGS[arg],
@@ -416,6 +478,8 @@ export const parseArgs = (argv: string[]): Options => {
     format: "pretty",
     maxIterations: DEFAULT_MAX_ITERATIONS,
     codexModel: env.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
+    cursorModel: env.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
+    geminiModel: env.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
     pairedMode: true,
     review: "claudex",
     resumeRunId: undefined,
@@ -445,6 +509,15 @@ export const parseArgs = (argv: string[]): Options => {
       );
     }
     opts.promptInput = positional.join(" ");
+  }
+
+  if (opts.pairedMode && opts.pairWith === opts.agent) {
+    throw new Error(
+      `Invalid --pair-with value: ${opts.pairWith} matches --agent ${opts.agent}`
+    );
+  }
+  if (opts.pairedMode && !opts.pairWith) {
+    opts.pairWith = defaultPeerAgent(opts.agent);
   }
 
   return opts;

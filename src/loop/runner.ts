@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import { isPersistentAgent } from "./agents";
 import {
   type ClaudeSdkLaunchOptions,
   hasClaudeSdkProcess,
@@ -149,18 +150,44 @@ export const buildCommand = (
     return { args, cmd: "claude" };
   }
 
+  if (agent === "codex") {
+    const args = [
+      "exec",
+      "--json",
+      "--model",
+      model,
+      "-c",
+      'model_reasoning_effort="xhigh"',
+      ...(opts?.codexMcpConfigArgs ?? []),
+      "--yolo",
+      prompt,
+    ];
+    return { args, cmd: "codex" };
+  }
+
+  if (agent === "gemini") {
+    const args = ["-p", prompt, "--yolo", "-o", "stream-json", "-m", model];
+    if (opts?.geminiMcpConfigPath) {
+      args.push("--mcp-config", opts.geminiMcpConfigPath);
+    }
+    return { args, cmd: "gemini" };
+  }
+
   const args = [
-    "exec",
-    "--json",
+    "agent",
+    "-p",
+    prompt,
+    "--yolo",
+    "--output-format",
+    "stream-json",
     "--model",
     model,
-    "-c",
-    'model_reasoning_effort="xhigh"',
-    ...(opts?.codexMcpConfigArgs ?? []),
-    "--yolo",
-    prompt,
+    "--approve-mcps",
   ];
-  return { args, cmd: "codex" };
+  if (opts?.cursorMcpConfigPath) {
+    args.push("--mcp-config", opts.cursorMcpConfigPath);
+  }
+  return { args, cmd: "cursor" };
 };
 
 const resolveModel = (
@@ -173,10 +200,24 @@ const resolveModel = (
       ? (opts.codexReviewerModel ?? opts.codexModel)
       : opts.codexModel;
   }
+  if (agent === "cursor") {
+    return kind === "review"
+      ? (opts.cursorReviewerModel ?? opts.cursorModel)
+      : opts.cursorModel;
+  }
+  if (agent === "gemini") {
+    return kind === "review"
+      ? (opts.geminiReviewerModel ?? opts.geminiModel)
+      : opts.geminiModel;
+  }
+  if (agent === "claude") {
+    return kind === "review"
+      ? (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL)
+      : DEFAULT_CLAUDE_MODEL;
+  }
 
-  return kind === "review"
-    ? (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL)
-    : DEFAULT_CLAUDE_MODEL;
+  const exhaustive: never = agent;
+  throw new Error(`Unknown agent: ${exhaustive}`);
 };
 
 const withCodexModel = (opts: Options, model: string): Options => {
@@ -192,43 +233,87 @@ const eventMessage = (line: string): string => {
   }
 
   try {
-    const event = JSON.parse(line) as {
-      item?: {
-        content?: Array<{ text?: string }>;
-        text?: string;
-        type?: string;
-      };
-      message?: { content?: Array<{ text?: string; type?: string }> };
-      result?: unknown;
-      type?: string;
+    const event = JSON.parse(line) as Record<string, unknown>;
+    const messageValue = nestedMessage(event.message);
+    const messageText =
+      typeof messageValue?.text === "string" ? messageValue.text.trim() : "";
+    const joinTextParts = (
+      value: unknown,
+      onlyTypedText = false
+    ): string | undefined => {
+      if (!Array.isArray(value)) {
+        return undefined;
+      }
+      const text = value
+        .flatMap((part) => {
+          if (typeof part === "string") {
+            return part;
+          }
+          if (!(typeof part === "object" && part !== null)) {
+            return [];
+          }
+          const typedPart = part as {
+            content?: string;
+            text?: string;
+            type?: string;
+          };
+          if (onlyTypedText && typedPart.type && typedPart.type !== "text") {
+            return [];
+          }
+          return typedPart.text ?? typedPart.content ?? "";
+        })
+        .join("")
+        .trim();
+      return text || undefined;
     };
+    function nestedMessage(
+      value: unknown
+    ): { content?: unknown; text?: unknown } | undefined {
+      return typeof value === "object" && value !== null
+        ? (value as { content?: unknown; text?: unknown })
+        : undefined;
+    }
 
     if (
       event.type === "item.completed" &&
-      event.item?.type === "agent_message"
+      typeof event.item === "object" &&
+      event.item !== null &&
+      (event.item as { type?: unknown }).type === "agent_message"
     ) {
       return (
-        event.item.text?.trim() ||
-        (event.item.content ?? [])
-          .map((part) => part.text ?? "")
-          .join("")
-          .trim()
+        (typeof (event.item as { text?: unknown }).text === "string"
+          ? ((event.item as { text: string }).text ?? "").trim()
+          : "") ||
+        joinTextParts((event.item as { content?: unknown }).content) ||
+        ""
       );
     }
 
     if (event.type === "assistant") {
-      return (event.message?.content ?? [])
-        .filter((part) => part.type === "text")
-        .map((part) => part.text ?? "")
-        .join("")
-        .trim();
+      return joinTextParts(messageValue?.content, true) || messageText || "";
     }
 
     if (event.type === "result" && typeof event.result === "string") {
       return event.result.trim();
     }
 
-    return "";
+    if (typeof event.text === "string") {
+      return event.text.trim();
+    }
+
+    if (typeof event.delta === "string") {
+      return event.delta.trim();
+    }
+
+    if (typeof event.message === "string") {
+      return event.message.trim();
+    }
+
+    return (
+      joinTextParts(messageValue?.content) ||
+      messageText ||
+      ""
+    );
   } catch {
     return "";
   }
@@ -491,6 +576,15 @@ const defaultRunLegacyAgent: LegacyAgentRunner = (
   kind?: AgentRunKind
 ): Promise<RunResult> => runLegacyAgent(agent, prompt, opts, sessionId, kind);
 
+const runSpawnAgent = (
+  agent: Agent,
+  prompt: string,
+  opts: Options,
+  sessionId?: string,
+  kind: AgentRunKind = "work"
+): Promise<RunResult> =>
+  runnerState.runLegacyAgent(agent, prompt, opts, sessionId, kind);
+
 export const runnerInternals = {
   reset(): void {
     fallbackWarned = false;
@@ -552,6 +646,22 @@ const runClaudeAgent = async (
   }
 };
 
+const runGeminiAgent = async (
+  prompt: string,
+  opts: Options,
+  sessionId?: string,
+  kind: AgentRunKind = "work"
+): Promise<RunResult> =>
+  runSpawnAgent("gemini", prompt, opts, sessionId, kind);
+
+const runCursorAgent = async (
+  prompt: string,
+  opts: Options,
+  sessionId?: string,
+  kind: AgentRunKind = "work"
+): Promise<RunResult> =>
+  runSpawnAgent("cursor", prompt, opts, sessionId, kind);
+
 const runAgentWithKind = (
   agent: Agent,
   prompt: string,
@@ -562,7 +672,13 @@ const runAgentWithKind = (
   if (agent === "codex") {
     return runCodexAgent(prompt, opts, sessionId, kind);
   }
-  return runClaudeAgent(prompt, opts, sessionId, kind);
+  if (agent === "claude") {
+    return runClaudeAgent(prompt, opts, sessionId, kind);
+  }
+  if (agent === "gemini") {
+    return runGeminiAgent(prompt, opts, sessionId, kind);
+  }
+  return runCursorAgent(prompt, opts, sessionId, kind);
 };
 
 export const runAgent = (
@@ -587,6 +703,9 @@ export const startPersistentAgentSession = async (
   sessionOptions: PersistentAgentSessionOptions = {},
   kind: AgentRunKind = "work"
 ): Promise<void> => {
+  if (!isPersistentAgent(agent)) {
+    return;
+  }
   if (agent === "codex") {
     await startAppServer({
       configValues:

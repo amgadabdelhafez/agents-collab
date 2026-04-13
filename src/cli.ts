@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { isAgent } from "./loop/agents";
 import { runBridgeMcpServer } from "./loop/bridge";
 import {
   BRIDGE_SUBCOMMAND,
@@ -32,8 +33,10 @@ const shouldAwaitAutoUpdate = (opts: Options): boolean =>
 
 const parseBridgeArgs = (argv: string[]): { runDir: string; source: Agent } => {
   const [runDir, source] = argv;
-  if (!runDir || (source !== "claude" && source !== "codex")) {
-    throw new Error("Usage: loop __bridge-mcp <run-dir> <claude|codex>");
+  if (!runDir || !isAgent(source)) {
+    throw new Error(
+      "Usage: loop __bridge-mcp <run-dir> <claude|codex|gemini|cursor>"
+    );
   }
   return { runDir, source };
 };

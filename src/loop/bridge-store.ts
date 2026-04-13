@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { AGENTS } from "./agents";
 import { resolveClaudeChannelServerName } from "./bridge-config";
 import { BRIDGE_SERVER } from "./bridge-constants";
 import { normalizeBridgeMessage } from "./bridge-message-format";
@@ -45,7 +46,7 @@ export interface BridgeStatus {
   codexThreadId: string;
   hasCodexRemote: boolean;
   hasTmuxSession: boolean;
-  pending: { claude: number; codex: number };
+  pending: Record<Agent, number>;
   runId: string;
   state: string;
   status: string;
@@ -59,7 +60,7 @@ const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() ? value : undefined;
 
 export const normalizeAgent = (value: unknown): Agent | undefined => {
-  if (value === "claude" || value === "codex") {
+  if (typeof value === "string" && AGENTS.includes(value as Agent)) {
     return value;
   }
   return undefined;
@@ -222,7 +223,12 @@ export const blocksBridgeBounce = (
 };
 
 const countPendingMessages = (runDir: string): BridgeStatus["pending"] => {
-  const pending = { claude: 0, codex: 0 };
+  const pending = {
+    claude: 0,
+    codex: 0,
+    cursor: 0,
+    gemini: 0,
+  } satisfies Record<Agent, number>;
   for (const message of readPendingBridgeMessages(runDir).slice(
     0,
     MAX_STATUS_MESSAGES

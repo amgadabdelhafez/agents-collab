@@ -165,7 +165,7 @@ const handleSendMessageTool = async (
     writeError(
       id,
       MCP_INVALID_PARAMS,
-      `Unknown target "${normalizedTarget}" - expected "claude" or "codex"`
+      `Unknown target "${normalizedTarget}" - expected one of "claude", "codex", "gemini", or "cursor"`
     );
     return;
   }
@@ -329,7 +329,7 @@ const handleBridgeRequest = async (
                 properties: {
                   message: { type: "string" },
                   target: {
-                    enum: ["claude", "codex"],
+                    enum: ["claude", "codex", "gemini", "cursor"],
                     type: "string",
                   },
                 },

@@ -1,3 +1,4 @@
+import { defaultPeerAgent } from "./agents";
 import { NEWLINE_RE, REVIEW_FAIL, REVIEW_PASS } from "./constants";
 import { buildReviewPrompt } from "./prompts";
 import { runReviewerAgent } from "./runner";
@@ -210,6 +211,11 @@ export const resolveReviewers = (
 
   return [review];
 };
+
+export const resolvePairedReviewers = (
+  agent: Agent,
+  pairWith?: Agent
+): Agent[] => [pairWith ?? defaultPeerAgent(agent)];
 
 type RunAgentFn = (
   agent: Agent,

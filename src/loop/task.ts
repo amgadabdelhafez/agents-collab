@@ -1,3 +1,4 @@
+import { defaultPeerAgent } from "./agents";
 import { preparePairedOptions } from "./paired-options";
 import { buildPlanPrompt, buildPlanReviewPrompt } from "./prompts";
 import { runAgent, runReviewerAgent } from "./runner";
@@ -14,14 +15,15 @@ const isMarkdownInput = (input: string): boolean =>
 
 const resolvePlanReviewer = (
   reviewPlan: PlanReviewMode | undefined,
-  agent: Agent
+  agent: Agent,
+  pairWith?: Agent
 ): Agent | undefined => {
   const mode = reviewPlan ?? "other";
   if (mode === "none") {
     return undefined;
   }
   if (mode === "other") {
-    return agent === "codex" ? "claude" : "codex";
+    return pairWith ?? defaultPeerAgent(agent);
   }
   return mode;
 };
@@ -30,9 +32,7 @@ const pairedSessionId = (opts: Options, agent: Agent): string | undefined => {
   if (!opts.pairedMode) {
     return undefined;
   }
-  return agent === "claude"
-    ? opts.pairedSessionIds?.claude
-    : opts.pairedSessionIds?.codex;
+  return opts.pairedSessionIds?.[agent];
 };
 
 const runPlanAgent = (agent: Agent, prompt: string, opts: Options) => {
@@ -68,7 +68,11 @@ const runPlanMode = async (opts: Options, task: string): Promise<void> => {
     throw new Error("[loop] planning step did not create PLAN.md");
   }
 
-  const reviewer = resolvePlanReviewer(opts.reviewPlan, opts.agent);
+  const reviewer = resolvePlanReviewer(
+    opts.reviewPlan,
+    opts.agent,
+    opts.pairWith
+  );
   if (!reviewer) {
     console.log("\n[loop] skipping PLAN.md review (--review-plan none).");
     return;

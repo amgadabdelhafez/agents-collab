@@ -45,7 +45,12 @@ export const TMUX_MISSING_ERROR =
 const WORKTREE_FLAG = "--worktree";
 const RUN_ID_FLAG = "--run-id";
 const SESSION_FLAG = "--session";
-const ONLY_MODE_FLAGS = ["--claude-only", "--codex-only"] as const;
+const ONLY_MODE_FLAGS = [
+  "--claude-only",
+  "--codex-only",
+  "--gemini-only",
+  "--cursor-only",
+] as const;
 const RUN_BASE_ENV = "LOOP_RUN_BASE";
 const RUN_ID_ENV = "LOOP_RUN_ID";
 const CLAUDE_TRUST_PROMPT = "Is this a project you created or one you trust?";

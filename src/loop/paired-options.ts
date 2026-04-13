@@ -1,7 +1,7 @@
 import {
   buildCodexBridgeConfigArgs,
   claudeChannelServerName,
-  ensureClaudeBridgeConfig,
+  ensureAgentBridgeConfig,
   resolveClaudeChannelServerName,
 } from "./bridge-config";
 import {
@@ -82,20 +82,17 @@ const pairedSessionIds = (
   const stored = canResumePairedManifest(manifest) ? manifest : undefined;
   const sessionId = opts.sessionId?.trim();
   let fallback: PairedSessionIds | undefined;
-  if (
-    allowRawSessionFallback &&
-    sessionId &&
-    !(stored?.claudeSessionId || stored?.codexThreadId)
-  ) {
-    fallback =
-      opts.agent === "claude" ? { claude: sessionId } : { codex: sessionId };
+  if (allowRawSessionFallback && sessionId) {
+    fallback = { [opts.agent]: sessionId } as PairedSessionIds;
   }
   const claude = stored?.claudeSessionId || fallback?.claude || undefined;
   const codex = stored?.codexThreadId || fallback?.codex || undefined;
-  if (!(claude || codex)) {
+  const gemini = fallback?.gemini || undefined;
+  const cursor = fallback?.cursor || undefined;
+  if (!(claude || codex || gemini || cursor)) {
     return undefined;
   }
-  return { claude, codex };
+  return { claude, codex, cursor, gemini };
 };
 
 export const resolvePreparedRunState = (
@@ -152,13 +149,15 @@ export const applyPairedOptions = (
   manifest: RunManifest | undefined,
   allowRawSessionFallback = false
 ): void => {
-  opts.claudeMcpConfigPath = ensureClaudeBridgeConfig(
+  opts.claudeMcpConfigPath = ensureAgentBridgeConfig(
     storage.runDir,
     "claude",
     resolveClaudeBridgeServer(storage, manifest)
   );
   opts.claudePersistentSession = true;
+  opts.cursorMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "cursor");
   opts.codexMcpConfigArgs = buildCodexBridgeConfigArgs(storage.runDir, "codex");
+  opts.geminiMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "gemini");
   opts.pairedMode = true;
   opts.pairedSessionIds = pairedSessionIds(
     opts,
