@@ -21,6 +21,8 @@ const DASHBOARD_COMMAND = "dashboard";
 const DEFAULT_TMUX_ARGV = ["--tmux"];
 const INTERACTIVE_TMUX_ERROR =
   "[loop] interactive paired tmux mode must be started outside tmux.";
+const PAIRED_TMUX_HANDOFF_ERROR =
+  "[loop] paired tmux launch did not hand off; not continuing in the foreground.";
 
 const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
   opts.tmux &&
@@ -128,13 +130,12 @@ export const runCli = async (argv: string[]): Promise<void> => {
       throw new Error(INTERACTIVE_TMUX_ERROR);
     }
     const task = await cliDeps.resolveTask(opts);
-    if (
-      opts.tmux &&
-      opts.pairedMode &&
-      (await cliDeps.runInTmux(normalizedArgv, undefined, { opts, task }))
-    ) {
-      shouldCloseAgents = false;
-      return;
+    if (opts.tmux && opts.pairedMode) {
+      if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts, task })) {
+        shouldCloseAgents = false;
+        return;
+      }
+      throw new Error(PAIRED_TMUX_HANDOFF_ERROR);
     }
     await cliDeps.runLoop(task, opts);
   } finally {

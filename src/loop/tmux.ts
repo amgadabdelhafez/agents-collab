@@ -1324,9 +1324,7 @@ export const runInTmux = async (
   }
 
   const deps = { ...defaultDeps(), ...overrides };
-  if (deps.env.TMUX) {
-    return false;
-  }
+  const insideTmux = Boolean(deps.env.TMUX);
 
   if (!deps.findBinary("tmux")) {
     throw new Error(TMUX_MISSING_ERROR);
@@ -1357,7 +1355,7 @@ export const runInTmux = async (
 
   deps.log(`[loop] started tmux session "${session}"`);
   deps.log(`[loop] attach with: tmux attach -t ${session}`);
-  const handedOff = attachSessionIfInteractive(session, deps);
+  const handedOff = insideTmux ? true : attachSessionIfInteractive(session, deps);
   if (pairedLaunch && handedOff) {
     if (sessionExists(session, deps.spawn)) {
       deps.releasePersistentCodexSession();

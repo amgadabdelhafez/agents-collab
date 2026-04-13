@@ -287,7 +287,7 @@ test("runCli starts paired interactive tmux without resolving a task", async () 
   expect(closeClaudeSdkMock).not.toHaveBeenCalled();
 });
 
-test("runCli keeps normal flow when already in tmux session", async () => {
+test("runCli does not fall through to foreground work when paired tmux handoff returns false", async () => {
   const opts = { ...makeOptions(), tmux: true };
   const {
     maybeEnterWorktreeMock,
@@ -302,12 +302,16 @@ test("runCli keeps normal flow when already in tmux session", async () => {
     resolveTask: async () => "ship feature",
   });
 
-  await runCli(["--tmux", "--proof", "verify with tests"]);
+  await expect(
+    runCli(["--tmux", "--proof", "verify with tests"])
+  ).rejects.toThrow(
+    "[loop] paired tmux launch did not hand off; not continuing in the foreground."
+  );
 
   expect(runInTmuxMock).toHaveBeenCalledTimes(1);
   expect(maybeEnterWorktreeMock).toHaveBeenCalledWith(opts);
   expect(resolveTaskMock).toHaveBeenCalledWith(opts);
-  expect(runLoopMock).toHaveBeenCalledWith("ship feature", opts);
+  expect(runLoopMock).not.toHaveBeenCalled();
   expect(runPanelMock).not.toHaveBeenCalled();
 });
 

@@ -67,12 +67,50 @@ test("runInTmux returns false when --tmux is not present", async () => {
   expect(delegated).toBe(false);
 });
 
-test("runInTmux returns false when already inside tmux", async () => {
+test("runInTmux starts a detached session without auto-attach when already inside tmux", async () => {
+  const calls: string[][] = [];
+  const attaches: string[] = [];
+
   const delegated = await runInTmux(["--tmux", "--proof", "verify"], {
+    attach: (session: string) => {
+      attaches.push(session);
+    },
+    cwd: "/repo",
     env: { TMUX: "1" },
+    findBinary: () => true,
+    getTerminalSize: () => undefined,
+    isInteractive: () => true,
+    launchArgv: ["bun", "/repo/src/cli.ts"],
+    log: (): void => undefined,
+    spawn: (args: string[]) => {
+      calls.push(args);
+      return { exitCode: 0, stderr: "" };
+    },
   });
 
-  expect(delegated).toBe(false);
+  expect(delegated).toBe(true);
+  expect(calls).toEqual([
+    [
+      "tmux",
+      "new-session",
+      "-d",
+      "-s",
+      "repo-loop-1",
+      "-c",
+      "/repo",
+      "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'bun' '/repo/src/cli.ts' '--proof' 'verify'",
+    ],
+    ["tmux", "has-session", "-t", "repo-loop-1"],
+    [
+      "tmux",
+      "set-window-option",
+      "-t",
+      "repo-loop-1:0",
+      "remain-on-exit",
+      "on",
+    ],
+  ]);
+  expect(attaches).toEqual([]);
 });
 
 test("runInTmux throws install message when tmux is missing", async () => {
@@ -667,7 +705,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
     ["tmux", "has-session", "-t", "repo-loop-1"],
   ]);
   expect(manifest.claudeSessionId).toBe("");
-  expect(manifest.codexRemoteUrl).toBe("");
+  expect(manifest.codexRemoteUrl).toBeUndefined();
   expect(manifest.codexThreadId).toBe("");
 });
 
