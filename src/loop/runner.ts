@@ -183,9 +183,8 @@ export const buildCommand = (
     model,
     "--approve-mcps",
   ];
-  if (opts?.cursorMcpConfigPath) {
-    args.push("--mcp-config", opts.cursorMcpConfigPath);
-  }
+  // Cursor Agent does not support --mcp-config; MCP servers are configured
+  // via cursor settings or project-level .cursor/mcp.json
   return { args, cmd: "cursor" };
 };
 
