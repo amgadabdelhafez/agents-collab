@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { BRIDGE_SERVER, BRIDGE_SUBCOMMAND } from "./bridge-constants";
 import { sanitizeBase } from "./git";
@@ -174,18 +174,20 @@ export const injectProjectBridgeConfig = (
 ): void => {
   const config = buildBridgeServerConfig(runDir, source, buildLaunchArgv());
 
-  if (source === "cursor") {
-    const cursorDir = join(cwd, ".cursor");
-    mkdirSync(cursorDir, { recursive: true });
-    const cursorMcpPath = join(cursorDir, "mcp.json");
-    // Read existing config and merge, or create new
-    let existing: Record<string, unknown> = {};
+  const readExistingConfig = (path: string): Record<string, unknown> => {
     try {
-      const raw = require("node:fs").readFileSync(cursorMcpPath, "utf8");
-      existing = JSON.parse(raw);
-    } catch {
-      // No existing file
+      const raw = readFileSync(path, "utf8");
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error(`Failed to read ${path}: ${String(err)}`);
+      }
+      return {};
     }
+  };
+
+  const mergeAndWrite = (configPath: string): void => {
+    const existing = readExistingConfig(configPath);
     const merged = {
       ...existing,
       mcpServers: {
@@ -193,31 +195,18 @@ export const injectProjectBridgeConfig = (
         [serverName]: config,
       },
     };
-    writeFileSync(cursorMcpPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+    writeFileSync(configPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  };
+
+  if (source === "cursor") {
+    const cursorDir = join(cwd, ".cursor");
+    mkdirSync(cursorDir, { recursive: true });
+    mergeAndWrite(join(cursorDir, "mcp.json"));
   }
 
   if (source === "gemini") {
     const geminiDir = join(cwd, ".gemini");
     mkdirSync(geminiDir, { recursive: true });
-    const geminiSettingsPath = join(geminiDir, "settings.json");
-    let existing: Record<string, unknown> = {};
-    try {
-      const raw = require("node:fs").readFileSync(geminiSettingsPath, "utf8");
-      existing = JSON.parse(raw);
-    } catch {
-      // No existing file
-    }
-    const merged = {
-      ...existing,
-      mcpServers: {
-        ...((existing.mcpServers as Record<string, unknown>) ?? {}),
-        [serverName]: config,
-      },
-    };
-    writeFileSync(
-      geminiSettingsPath,
-      `${JSON.stringify(merged, null, 2)}\n`,
-      "utf8"
-    );
+    mergeAndWrite(join(geminiDir, "settings.json"));
   }
 };

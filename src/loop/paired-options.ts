@@ -159,10 +159,15 @@ export const applyPairedOptions = (
   opts.cursorMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "cursor");
   opts.codexMcpConfigArgs = buildCodexBridgeConfigArgs(storage.runDir, "codex");
   opts.geminiMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "gemini");
-  // Inject bridge MCP into project-level config for agents that don't accept --mcp-config
+  // Inject bridge MCP into project-level config only for agents in this pair
   const cwd = storage.runDir.split("/.loop/")[0] ?? process.cwd();
-  injectProjectBridgeConfig(process.cwd(), storage.runDir, "cursor");
-  injectProjectBridgeConfig(process.cwd(), storage.runDir, "gemini");
+  const pair = [opts.agent, opts.pairWith].filter(Boolean);
+  if (pair.includes("cursor")) {
+    injectProjectBridgeConfig(cwd, storage.runDir, "cursor");
+  }
+  if (pair.includes("gemini")) {
+    injectProjectBridgeConfig(cwd, storage.runDir, "gemini");
+  }
   opts.pairedMode = true;
   opts.pairedSessionIds = pairedSessionIds(
     opts,
