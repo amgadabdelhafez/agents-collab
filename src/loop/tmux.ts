@@ -983,17 +983,33 @@ const startPairedSession = async (
     gemini: Boolean(launch.opts.pairedSessionIds?.gemini),
     cursor: Boolean(launch.opts.pairedSessionIds?.cursor),
   };
-  const { claudeSessionId, codexRemoteUrl, codexThreadId } =
-    await preparePersistentTmuxLaunch(
+  // Only boot persistent transports when claude or codex is in the pair
+  const needsPersistent = [primaryAgent, secondaryAgent].some(
+    (a) => a === "claude" || a === "codex"
+  );
+  let claudeSessionId = "";
+  let codexRemoteUrl = "";
+  let codexThreadId = "";
+  let codexProxyUrl = "";
+  if (needsPersistent) {
+    const persistent = await preparePersistentTmuxLaunch(
       deps,
       launch.opts,
       storage,
       manifest,
       session
     );
-  const codexProxyUrl = codexThreadId
-    ? await deps.startCodexProxy(storage.runDir, codexRemoteUrl, codexThreadId)
-    : "";
+    claudeSessionId = persistent.claudeSessionId;
+    codexRemoteUrl = persistent.codexRemoteUrl;
+    codexThreadId = persistent.codexThreadId;
+    if (codexThreadId && codexRemoteUrl) {
+      codexProxyUrl = await deps.startCodexProxy(
+        storage.runDir,
+        codexRemoteUrl,
+        codexThreadId
+      );
+    }
+  }
   const claudeChannelServer = [primaryAgent, secondaryAgent].includes("claude")
     ? resolveClaudeChannelServerName(
         storage.runId,
