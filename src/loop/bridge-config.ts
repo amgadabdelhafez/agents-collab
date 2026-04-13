@@ -159,3 +159,65 @@ export const ensureAgentBridgeConfig = (
   );
   return path;
 };
+
+/**
+ * Write bridge MCP config into the project directory for agents that
+ * load MCP from project config rather than --mcp-config CLI flag.
+ * - Cursor: .cursor/mcp.json
+ * - Gemini: .gemini/settings.json
+ */
+export const injectProjectBridgeConfig = (
+  cwd: string,
+  runDir: string,
+  source: Agent,
+  serverName = BRIDGE_SERVER
+): void => {
+  const config = buildBridgeServerConfig(runDir, source, buildLaunchArgv());
+
+  if (source === "cursor") {
+    const cursorDir = join(cwd, ".cursor");
+    mkdirSync(cursorDir, { recursive: true });
+    const cursorMcpPath = join(cursorDir, "mcp.json");
+    // Read existing config and merge, or create new
+    let existing: Record<string, unknown> = {};
+    try {
+      const raw = require("node:fs").readFileSync(cursorMcpPath, "utf8");
+      existing = JSON.parse(raw);
+    } catch {
+      // No existing file
+    }
+    const merged = {
+      ...existing,
+      mcpServers: {
+        ...((existing.mcpServers as Record<string, unknown>) ?? {}),
+        [serverName]: config,
+      },
+    };
+    writeFileSync(cursorMcpPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  }
+
+  if (source === "gemini") {
+    const geminiDir = join(cwd, ".gemini");
+    mkdirSync(geminiDir, { recursive: true });
+    const geminiSettingsPath = join(geminiDir, "settings.json");
+    let existing: Record<string, unknown> = {};
+    try {
+      const raw = require("node:fs").readFileSync(geminiSettingsPath, "utf8");
+      existing = JSON.parse(raw);
+    } catch {
+      // No existing file
+    }
+    const merged = {
+      ...existing,
+      mcpServers: {
+        ...((existing.mcpServers as Record<string, unknown>) ?? {}),
+        [serverName]: config,
+      },
+    };
+    writeFileSync(
+      geminiSettingsPath,
+      `${JSON.stringify(merged, null, 2)}\n`,
+      "utf8"
+    );
+  }
+};

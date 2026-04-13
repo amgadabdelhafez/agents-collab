@@ -2,6 +2,7 @@ import {
   buildCodexBridgeConfigArgs,
   claudeChannelServerName,
   ensureAgentBridgeConfig,
+  injectProjectBridgeConfig,
   resolveClaudeChannelServerName,
 } from "./bridge-config";
 import {
@@ -158,6 +159,10 @@ export const applyPairedOptions = (
   opts.cursorMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "cursor");
   opts.codexMcpConfigArgs = buildCodexBridgeConfigArgs(storage.runDir, "codex");
   opts.geminiMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "gemini");
+  // Inject bridge MCP into project-level config for agents that don't accept --mcp-config
+  const cwd = storage.runDir.split("/.loop/")[0] ?? process.cwd();
+  injectProjectBridgeConfig(process.cwd(), storage.runDir, "cursor");
+  injectProjectBridgeConfig(process.cwd(), storage.runDir, "gemini");
   opts.pairedMode = true;
   opts.pairedSessionIds = pairedSessionIds(
     opts,
