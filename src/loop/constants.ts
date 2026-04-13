@@ -46,7 +46,7 @@ Options:
   --review-plan [other|claude|codex|gemini|cursor|none] Review PLAN.md after plain-text planning (default: other)
   --run-id <id>                            Reuse a specific run id; resumes paired runs in paired mode when supported
   --session <id>                           Resume from a paired run id or raw session/thread ID
-  --tmux                                   Run in tmux (promptless paired tmux remains optimized for Claude/Codex; no prompt/proof starts interactive TUIs)
+  --tmux                                   Run in tmux (paired mode opens the selected two agents side-by-side; no prompt/proof starts interactive sessions)
   --worktree                               Create and run in a fresh git worktree (name: repo-loop-X)
   -v, --version                            Show loop version
   -h, --help                               Show this help

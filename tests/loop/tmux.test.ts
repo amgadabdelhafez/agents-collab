@@ -19,8 +19,10 @@ const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
 const makePairedOptions = (overrides: Partial<Options> = {}): Options => ({
   agent: "codex",
   codexModel: "test-model",
+  cursorModel: "cursor-test-model",
   doneSignal: "<done/>",
   format: "raw",
+  geminiModel: "gemini-test-model",
   maxIterations: 1,
   pairedMode: true,
   proof: "verify with tests",
@@ -391,6 +393,282 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
   expect(manifest.codexThreadId).toBe("codex-thread-1");
   expect(manifest.tmuxSession).toBe("repo-loop-1");
+});
+
+test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
+  const calls: string[][] = [];
+  const proxyCalls: Array<{
+    remoteUrl: string;
+    runDir: string;
+    threadId: string;
+  }> = [];
+  const startCalls: Array<{
+    agent: string;
+    kind?: string;
+    sessionId?: string;
+  }> = [];
+  let sessionStarted = false;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  const opts = makePairedOptions({ pairWith: "cursor" });
+  const codexMcpConfigArgs = ["-c", 'mcp_servers.loop-bridge.command="loop"'];
+  const codexRemoteUrl = "ws://127.0.0.1:4500";
+  const codexProxyUrl = "ws://127.0.0.1:4600/";
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/repo/.loop/runs/1",
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+
+  const delegated = await runInTmux(
+    ["--tmux", "--proof", "verify with tests", "--pair-with", "cursor"],
+    {
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      getCodexAppServerUrl: () => codexRemoteUrl,
+      getLastCodexThreadId: () => "codex-thread-1",
+      isInteractive: () => false,
+      launchArgv: ["bun", "/repo/src/cli.ts"],
+      log: (): void => undefined,
+      preparePairedRun: (nextOpts) => {
+        nextOpts.codexMcpConfigArgs = codexMcpConfigArgs;
+        return { manifest, storage };
+      },
+      sleep: () => Promise.resolve(),
+      startCodexProxy: (
+        runDir: string,
+        remoteUrl: string,
+        threadId: string
+      ) => {
+        proxyCalls.push({ remoteUrl, runDir, threadId });
+        return Promise.resolve(codexProxyUrl);
+      },
+      startPersistentAgentSession: (agent, _opts, sessionId, _launch, kind) => {
+        startCalls.push({ agent, kind, sessionId });
+        return Promise.resolve(undefined);
+      },
+      spawn: (args: string[]) => {
+        calls.push(args);
+        if (args[0] === "tmux" && args[1] === "has-session") {
+          return sessionStarted
+            ? { exitCode: 0, stderr: "" }
+            : { exitCode: 1, stderr: "" };
+        }
+        if (args[0] === "tmux" && args[1] === "new-session") {
+          sessionStarted = true;
+        }
+        return { exitCode: 0, stderr: "" };
+      },
+      updateRunManifest: (_path, update) => {
+        manifest = update(manifest) ?? manifest;
+        return manifest;
+      },
+    },
+    { opts, task: "Ship feature" }
+  );
+
+  const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=1"];
+  const cursorCommand = tmuxInternals.buildShellCommand([
+    "env",
+    ...env,
+    ...tmuxInternals.buildCursorCommand(
+      "cursor-test-model",
+      tmuxInternals.buildPeerPrompt("Ship feature", opts, "cursor", "1", "")
+    ),
+  ]);
+  const codexCommand = tmuxInternals.buildShellCommand([
+    "env",
+    ...env,
+    ...tmuxInternals.buildCodexCommand(
+      codexProxyUrl,
+      "test-model",
+      codexMcpConfigArgs,
+      tmuxInternals.buildPrimaryPrompt("Ship feature", opts, "1", "")
+    ),
+  ]);
+
+  expect(delegated).toBe(true);
+  expect(proxyCalls).toEqual([
+    {
+      remoteUrl: codexRemoteUrl,
+      runDir: storage.runDir,
+      threadId: "codex-thread-1",
+    },
+  ]);
+  expect(startCalls).toEqual([
+    { agent: "codex", kind: "work", sessionId: undefined },
+  ]);
+  expect(calls).toEqual([
+    ["tmux", "has-session", "-t", "repo-loop-1"],
+    [
+      "tmux",
+      "new-session",
+      "-d",
+      "-s",
+      "repo-loop-1",
+      "-c",
+      "/repo",
+      cursorCommand,
+    ],
+    [
+      "tmux",
+      "split-window",
+      "-h",
+      "-t",
+      "repo-loop-1:0",
+      "-c",
+      "/repo",
+      codexCommand,
+    ],
+    ["tmux", "select-layout", "-t", "repo-loop-1:0", "even-horizontal"],
+    ["tmux", "select-pane", "-t", "repo-loop-1:0.1"],
+    ["tmux", "has-session", "-t", "repo-loop-1"],
+    [
+      "tmux",
+      "set-window-option",
+      "-t",
+      "repo-loop-1:0",
+      "remain-on-exit",
+      "on",
+    ],
+    ["tmux", "has-session", "-t", "repo-loop-1"],
+  ]);
+  expect(manifest.claudeSessionId).toBe("");
+  expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
+  expect(manifest.codexThreadId).toBe("codex-thread-1");
+});
+
+test("runInTmux starts paired tmux panes for Gemini and Cursor without persistent transports", async () => {
+  const calls: string[][] = [];
+  const proxyCalls: string[] = [];
+  const startCalls: string[] = [];
+  let sessionStarted = false;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  const opts = makePairedOptions({ agent: "gemini", pairWith: "cursor" });
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/repo/.loop/runs/1",
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+
+  const delegated = await runInTmux(
+    ["--tmux", "--proof", "verify with tests", "--agent", "gemini", "--pair-with", "cursor"],
+    {
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => false,
+      launchArgv: ["bun", "/repo/src/cli.ts"],
+      log: (): void => undefined,
+      preparePairedRun: () => ({ manifest, storage }),
+      sleep: () => Promise.resolve(),
+      startCodexProxy: () => {
+        proxyCalls.push("codex");
+        return Promise.resolve("ws://127.0.0.1:4600/");
+      },
+      startPersistentAgentSession: (agent) => {
+        startCalls.push(agent);
+        return Promise.resolve(undefined);
+      },
+      spawn: (args: string[]) => {
+        calls.push(args);
+        if (args[0] === "tmux" && args[1] === "has-session") {
+          return sessionStarted
+            ? { exitCode: 0, stderr: "" }
+            : { exitCode: 1, stderr: "" };
+        }
+        if (args[0] === "tmux" && args[1] === "new-session") {
+          sessionStarted = true;
+        }
+        return { exitCode: 0, stderr: "" };
+      },
+      updateRunManifest: (_path, update) => {
+        manifest = update(manifest) ?? manifest;
+        return manifest;
+      },
+    },
+    { opts, task: "Ship feature" }
+  );
+
+  const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=1"];
+  const geminiCommand = tmuxInternals.buildShellCommand([
+    "env",
+    ...env,
+    ...tmuxInternals.buildGeminiCommand(
+      "gemini-test-model",
+      tmuxInternals.buildPrimaryPrompt("Ship feature", opts, "1", "")
+    ),
+  ]);
+  const cursorCommand = tmuxInternals.buildShellCommand([
+    "env",
+    ...env,
+    ...tmuxInternals.buildCursorCommand(
+      "cursor-test-model",
+      tmuxInternals.buildPeerPrompt("Ship feature", opts, "cursor", "1", "")
+    ),
+  ]);
+
+  expect(delegated).toBe(true);
+  expect(startCalls).toEqual([]);
+  expect(proxyCalls).toEqual([]);
+  expect(calls).toEqual([
+    ["tmux", "has-session", "-t", "repo-loop-1"],
+    [
+      "tmux",
+      "new-session",
+      "-d",
+      "-s",
+      "repo-loop-1",
+      "-c",
+      "/repo",
+      geminiCommand,
+    ],
+    [
+      "tmux",
+      "split-window",
+      "-h",
+      "-t",
+      "repo-loop-1:0",
+      "-c",
+      "/repo",
+      cursorCommand,
+    ],
+    ["tmux", "select-layout", "-t", "repo-loop-1:0", "even-horizontal"],
+    ["tmux", "select-pane", "-t", "repo-loop-1:0.0"],
+    ["tmux", "has-session", "-t", "repo-loop-1"],
+    [
+      "tmux",
+      "set-window-option",
+      "-t",
+      "repo-loop-1:0",
+      "remain-on-exit",
+      "on",
+    ],
+    ["tmux", "has-session", "-t", "repo-loop-1"],
+  ]);
+  expect(manifest.claudeSessionId).toBe("");
+  expect(manifest.codexRemoteUrl).toBe("");
+  expect(manifest.codexThreadId).toBe("");
 });
 
 test("runInTmux releases local codex app-server handles after paired handoff", async () => {
@@ -807,6 +1085,31 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(peerPrompt).toContain(
     '"mcp__loop-bridge-repo-123-1__receive_messages"'
   );
+});
+
+test("tmux prompts respect --pair-with for non-default peers", () => {
+  const opts = makePairedOptions({ pairWith: "cursor" });
+  const primaryPrompt = tmuxInternals.buildPrimaryPrompt(
+    "Ship feature",
+    opts,
+    "1",
+    ""
+  );
+  const peerPrompt = tmuxInternals.buildPeerPrompt(
+    "Ship feature",
+    opts,
+    "cursor",
+    "1",
+    ""
+  );
+
+  expect(primaryPrompt).toContain("Your peer is Cursor.");
+  expect(primaryPrompt).toContain('with target: "cursor"');
+  expect(primaryPrompt).toContain("Cursor reviews and helps on request.");
+  expect(primaryPrompt).not.toContain("Your peer is Claude.");
+  expect(peerPrompt).toContain("You are Cursor.");
+  expect(peerPrompt).toContain('with target: "codex"');
+  expect(peerPrompt).toContain("Wait for Codex to send you a targeted request");
 });
 
 test("interactive tmux prompts tell both agents to wait for the human", () => {
