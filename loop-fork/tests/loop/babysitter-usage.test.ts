@@ -51,6 +51,42 @@ test("summarizeClaude ignores malformed lines and lines without usage", () => {
   expect(u.outputTokens).toBe(2);
 });
 
+test("summarizeClaude counts agent messages and genuine human prompts", () => {
+  const text = [
+    JSON.stringify({ type: "user", message: { role: "user", content: "do X" } }),
+    JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
+    }),
+    // meta reminder — not a human prompt
+    JSON.stringify({ type: "user", isMeta: true, message: { role: "user", content: "<reminder>" } }),
+    // tool result — not a human prompt
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "r" }] },
+    }),
+    JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+    }),
+  ].join("\n");
+  const u = summarizeClaude(text);
+  expect(u.messages).toBe(2);
+  expect(u.humanMessages).toBe(1);
+});
+
+test("summarizeCodex counts messages by role", () => {
+  const text = [
+    JSON.stringify({ payload: { type: "message", role: "user", content: [] } }),
+    JSON.stringify({ payload: { type: "message", role: "assistant", content: [] } }),
+    JSON.stringify({ payload: { type: "reasoning" } }),
+    JSON.stringify({ role: "assistant" }),
+  ].join("\n");
+  const u = summarizeCodex(text);
+  expect(u.messages).toBe(2);
+  expect(u.humanMessages).toBe(1);
+});
+
 test("summarizeCodex takes the last token-count event as cumulative usage", () => {
   const text = [
     JSON.stringify({ model: "gpt-5.5", timestamp: "2026-07-04T00:00:00Z" }),
@@ -77,6 +113,8 @@ test("applyPricing computes cost and context window for a known model", () => {
     contextTokens: 500_000,
     contextWindow: 0,
     costUsd: 0,
+    humanMessages: 0,
+    messages: 0,
     inputTokens: 1_000_000,
     model: "claude-opus-4-8",
     outputTokens: 1_000_000,
@@ -94,6 +132,8 @@ test("applyPricing prices cache tokens at reduced rates", () => {
     contextTokens: 0,
     contextWindow: 0,
     costUsd: 0,
+    humanMessages: 0,
+    messages: 0,
     inputTokens: 0,
     model: "claude-opus-4-8",
     outputTokens: 0,
@@ -109,6 +149,8 @@ test("applyPricing yields zero cost and default window for an unknown model", ()
     contextTokens: 0,
     contextWindow: 0,
     costUsd: 0,
+    humanMessages: 0,
+    messages: 0,
     inputTokens: 1_000_000,
     model: "some-unknown-model",
     outputTokens: 1_000_000,

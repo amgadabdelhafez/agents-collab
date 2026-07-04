@@ -51,10 +51,24 @@ const emptyUsage = (): AgentUsage => ({
   contextTokens: 0,
   contextWindow: DEFAULT_WINDOW,
   costUsd: 0,
+  humanMessages: 0,
   inputTokens: 0,
+  messages: 0,
   outputTokens: 0,
   totalTokens: 0,
 });
+
+// A Claude "user" entry is a real human prompt when it carries text (a string,
+// or a content array with a text block) rather than only tool_result blocks.
+const isHumanContent = (content: unknown): boolean => {
+  if (typeof content === "string") {
+    return content.trim().length > 0;
+  }
+  if (Array.isArray(content)) {
+    return content.some((block) => asRecord(block).type === "text");
+  }
+  return false;
+};
 
 const eachJsonLine = (text: string, fn: (obj: Record<string, unknown>) => void): void => {
   for (const line of text.split("\n")) {
@@ -90,6 +104,13 @@ export const summarizeClaude = (text: string): AgentUsage => {
   eachJsonLine(text, (rec) => {
     trackTs(rec, bounds);
     const message = asRecord(rec.message);
+    const role = typeof rec.type === "string" ? rec.type : message.role;
+    const meta = rec.isMeta === true || rec.isSidechain === true;
+    if (role === "assistant") {
+      usage.messages += 1;
+    } else if (role === "user" && !meta && isHumanContent(message.content)) {
+      usage.humanMessages += 1;
+    }
     const u = asRecord(message.usage);
     if (Object.keys(u).length === 0) {
       return;
@@ -149,6 +170,18 @@ const findTokens = (value: unknown): CodexTokens | undefined => {
 const tokenMagnitude = (t: CodexTokens): number =>
   t.total || t.input + t.output;
 
+// Find a message role in a codex rollout entry (role may be nested in payload).
+const findRole = (rec: Record<string, unknown>): string | undefined => {
+  if (typeof rec.role === "string") {
+    return rec.role;
+  }
+  const payload = asRecord(rec.payload);
+  if (typeof payload.role === "string" && payload.type === "message") {
+    return payload.role;
+  }
+  return undefined;
+};
+
 // Codex rollout transcript: token-count events carry running (cumulative)
 // totals. Take the record with the largest total to get the session total,
 // robust to interleaved per-turn records. Codex does not cleanly expose the
@@ -162,6 +195,12 @@ export const summarizeCodex = (text: string): AgentUsage => {
     trackTs(rec, bounds);
     if (typeof rec.model === "string") {
       usage.model = rec.model;
+    }
+    const role = findRole(rec);
+    if (role === "assistant") {
+      usage.messages += 1;
+    } else if (role === "user") {
+      usage.humanMessages += 1;
     }
     const tokens = findTokens(rec);
     if (tokens && (!best || tokenMagnitude(tokens) > tokenMagnitude(best))) {

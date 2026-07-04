@@ -175,12 +175,32 @@ const renderAgentLine = (
   return `  ${liveness.agent.padEnd(7)} [${status}] ${stateField} active=${active} ${fmtContext(usage)} tok=${tok} cost=${cost}${summary}${act}`;
 };
 
+const renderSummary = (
+  summaries: { agent: Agent; usage: AgentUsage }[]
+): string => {
+  const totalCost = summaries.reduce((sum, s) => sum + s.usage.costUsd, 0);
+  // A genuine human prompt is relayed to every agent, while agent-to-agent
+  // bridge messages inflate the peer's "user" count — so the minimum across
+  // agents that have a transcript is the truest human-message count.
+  const found = summaries.filter(
+    (s) => s.usage.messages > 0 || s.usage.humanMessages > 0
+  );
+  const human = found.length
+    ? Math.min(...found.map((s) => s.usage.humanMessages))
+    : 0;
+  const perAgent = summaries
+    .map((s) => `${s.agent} ${s.usage.messages}`)
+    .join(" · ");
+  return `Σ $${totalCost.toFixed(2)} · human ${human} · ${perAgent}`;
+};
+
 const renderBoard = (
   lines: string[],
   llmOffline: boolean,
-  nowIso: string
+  nowIso: string,
+  summaries: { agent: Agent; usage: AgentUsage }[]
 ): string => {
-  const header = `── babysitter ${nowIso}${llmOffline ? "  ⚠ LLM offline (recovery suppressed)" : ""}`;
+  const header = `── babysitter ${nowIso}  ${renderSummary(summaries)}${llmOffline ? "  ⚠ LLM offline (recovery suppressed)" : ""}`;
   return [header, ...lines].join("\n");
 };
 
@@ -195,12 +215,14 @@ export const babysitTick = async (
   const nowIso = new Date(nowMs).toISOString();
   let history = historyIn;
   const lines: string[] = [];
+  const summaries: { agent: Agent; usage: AgentUsage }[] = [];
   let llmOffline = false;
 
   for (const info of config.agents) {
     const paneText = deps.capturePane(info.pane);
     const events = deps.readHooks(info.hookFile);
     const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
+    summaries.push({ agent: info.agent, usage });
     const prev =
       states.get(info.agent) ??
       initLivenessState(info.agent, nowMs, hashPane(paneText));
@@ -258,7 +280,7 @@ export const babysitTick = async (
     lines.push(renderAgentLine(liveness, verdict, action, usage, config.tickMs));
   }
 
-  const board = renderBoard(lines, llmOffline, nowIso);
+  const board = renderBoard(lines, llmOffline, nowIso, summaries);
   deps.render(board);
   return { board, history, llmOffline, states };
 };

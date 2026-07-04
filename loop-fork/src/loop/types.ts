@@ -121,8 +121,12 @@ export interface AgentUsage {
   contextWindow: number;
   costUsd: number;
   firstTs?: string;
+  // Count of genuine human prompts seen in this agent's transcript.
+  humanMessages: number;
   inputTokens: number;
   lastTs?: string;
+  // Count of this agent's own (assistant) messages.
+  messages: number;
   model?: string;
   outputTokens: number;
   totalTokens: number;

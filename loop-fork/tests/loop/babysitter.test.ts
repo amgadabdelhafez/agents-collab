@@ -57,6 +57,8 @@ const makeDeps = (
     contextTokens: 0,
     contextWindow: 200_000,
     costUsd: 0,
+    humanMessages: 0,
+    messages: 0,
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
