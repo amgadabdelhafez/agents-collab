@@ -11,11 +11,13 @@ import { spawnSync } from "bun";
 import { readPriorSummaries, readProjectContext } from "./babysitter-context";
 import { initLivenessState, updateLiveness } from "./babysitter-detect";
 import { judgeAgent, summarizeSession } from "./babysitter-llm";
+import { type EscalationEvent, sendNtfy } from "./babysitter-notify";
 import { decideRecovery, executeRecovery } from "./babysitter-recover";
 import { readAgentUsage, readHumanMessages } from "./babysitter-usage";
 import {
   DEFAULT_BABYSIT_CONFIDENCE,
   DEFAULT_BABYSIT_COOLDOWN_SECONDS,
+  DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS,
   DEFAULT_BABYSIT_IDLE_SECONDS,
   DEFAULT_BABYSIT_MAX_RECOVERIES,
   DEFAULT_BABYSIT_MODEL,
@@ -58,6 +60,8 @@ export interface BabysitAgentInfo {
 
 export interface BabysitConfig {
   agents: BabysitAgentInfo[];
+  // Session cost ceiling (USD) for the budget line + escalation; 0 disables.
+  budgetUsd: number;
   confidence: number;
   cooldownMs: number;
   // Run manifest creation time, for session uptime.
@@ -65,12 +69,16 @@ export interface BabysitConfig {
   // Working directory of the run, for reading project docs into the summary.
   cwd?: string;
   dryRun: boolean;
+  // How long an agent may sit waiting-for-human before we escalate.
+  escalateIdleMs: number;
   idleMs: number;
   logFile: string;
   maxRecoveries: number;
   model: string;
   // On-disk size (GB) of the local LLM, shown in the footer.
   modelSizeGb?: number;
+  // ntfy topic URL for remote escalation; escalation is off when unset.
+  ntfyUrl?: string;
   // Run directory, for reading prior-session summaries into the summary.
   runDir?: string;
   runId: string;
@@ -91,6 +99,7 @@ export interface BabysitDeps {
   capturePane: (pane: string) => string;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
   loadState: (stateFile?: string) => BabysitRunState | undefined;
+  notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
   now: () => number;
   readBridge: (transcriptPath?: string) => BridgeCounts;
   readHooks: (file: string) => HookEvent[];
@@ -120,25 +129,46 @@ export interface SessionStats {
   idleMs: Record<string, number>;
 }
 
+// Which escalations have already been sent, so we alert once per episode
+// rather than every tick (persisted, so a restart does not re-spam).
+export interface NotifiedState {
+  budget80: boolean;
+  budget100: boolean;
+  ladder: Record<string, boolean>;
+  waiting: Record<string, boolean>;
+}
+
 // State the babysitter carries across ticks.
 export interface BabysitRunState {
   history: RecoveryHistoryEntry[];
   llmTokens: number;
+  notified: NotifiedState;
   recoveries: number;
   stats: SessionStats;
   summary: string;
   summaryTick: number;
   tick: number;
+  // Epoch ms each agent entered the waiting-for-human state (absent = not).
+  waitingSince: Record<string, number>;
 }
+
+const freshNotified = (): NotifiedState => ({
+  budget100: false,
+  budget80: false,
+  ladder: {},
+  waiting: {},
+});
 
 export const freshRunState = (): BabysitRunState => ({
   history: [],
   llmTokens: 0,
+  notified: freshNotified(),
   recoveries: 0,
   stats: { activeMs: {}, humanIdleMs: 0, idleMs: {} },
   summary: "",
   summaryTick: -1,
   tick: 0,
+  waitingSince: {},
 });
 
 export interface BabysitTickResult {
@@ -221,6 +251,7 @@ const ANSI = {
 const CONTEXT_ALERT_PCT = 80;
 const LAST_ACTION_WIDTH = 46;
 const MS_PER_HOUR = 3_600_000;
+const BUDGET_WARN_FRACTION = 0.8;
 
 const paint = (code: string, text: string): string =>
   `${code}${text}${ANSI.reset}`;
@@ -286,6 +317,7 @@ interface AgentRow {
 
 interface BoardMeta {
   bridge: BridgeCounts;
+  budgetUsd: number;
   llmOffline: boolean;
   llmTokens: number;
   modelName: string;
@@ -296,6 +328,8 @@ interface BoardMeta {
   summary: string;
   tickMs: number;
   uptimeMs: number;
+  // Per-agent ms in the waiting-for-human state (absent/0 = not waiting).
+  waiting: Record<string, number>;
 }
 
 const COLUMNS: [string, number][] = [
@@ -334,12 +368,22 @@ const bridgeFor = (
   return { recv, sent };
 };
 
+// The STATE cell: a bright "waits you" badge for waiting-human, else the
+// colored state. Waiting-human is the highest-signal state — it means the
+// agent is blocked on the human, not merely idle — so it stands out.
+const stateCell = (state: string): string =>
+  state === "waiting-human"
+    ? paint(ANSI.yellow, cell("⏳ waits you", 12))
+    : paint(stateColor(state), cell(`● ${state}`, 12));
+
 const renderRow = (row: AgentRow, meta: BoardMeta): string => {
   const agent = row.liveness.agent;
   const state = rowState(row);
-  const forMs = row.thinking
+  const waitingMs = meta.waiting[agent] ?? 0;
+  const activeMs = row.thinking
     ? row.liveness.lastEventAgeMs
     : row.liveness.paneIdleMs;
+  const forMs = waitingMs > 0 ? waitingMs : activeMs;
   const ctxText = contextCell(row.usage);
   const ctx =
     contextPct(row.usage) > CONTEXT_ALERT_PCT
@@ -358,7 +402,7 @@ const renderRow = (row: AgentRow, meta: BoardMeta): string => {
   return ` ${[
     cell(agent, 7),
     cell(shortModel(row.usage.model), 10),
-    paint(stateColor(state), cell(`● ${state}`, 12)),
+    stateCell(state),
     cell(fmtDuration(forMs), 6),
     cell(fmtDuration(meta.stats.activeMs[agent] ?? 0), 6),
     cell(fmtDuration(meta.stats.idleMs[agent] ?? 0), 6),
@@ -380,6 +424,38 @@ const codexClaudeRatio = (stats: SessionStats): string => {
   return `${(codex / claude).toFixed(1)}×`;
 };
 
+// The cost cell, with a budget fraction when a budget is set (colored as it
+// crosses the 80% warn line and the 100% ceiling).
+const costCell = (
+  totalCost: number,
+  perHr: number,
+  budgetUsd: number
+): string => {
+  const spend = `$${totalCost.toFixed(2)}`;
+  const rate = perHr > 0 ? ` ($${perHr.toFixed(0)}/hr)` : "";
+  if (budgetUsd <= 0) {
+    return `Σ ${spend}${rate}`;
+  }
+  const fraction = totalCost / budgetUsd;
+  const pct = Math.round(fraction * 100);
+  const text = `Σ ${spend}/$${budgetUsd.toFixed(0)} ${pct}%${rate}`;
+  if (fraction >= 1) {
+    return paint(ANSI.red, `${text} ⛔`);
+  }
+  if (fraction >= BUDGET_WARN_FRACTION) {
+    return paint(ANSI.yellow, `${text} ⚠`);
+  }
+  return text;
+};
+
+// Loud alert(s) for any agent blocked on the human, with how long.
+const waitingAlerts = (waiting: Record<string, number>): string[] =>
+  Object.entries(waiting)
+    .filter(([, ms]) => ms > 0)
+    .map(([agent, ms]) =>
+      paint(ANSI.yellow, `❗ ${agent} waits you ${fmtDuration(ms)}`)
+    );
+
 const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   const totalCost = rows.reduce((sum, r) => sum + r.usage.costUsd, 0);
   // A genuine human prompt is relayed to every agent; agent-to-agent bridge
@@ -399,11 +475,12 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     ...(Number.isFinite(meta.uptimeMs)
       ? [`wall ${fmtDuration(meta.uptimeMs)}`]
       : []),
-    `Σ $${totalCost.toFixed(2)}${perHr > 0 ? ` ($${perHr.toFixed(0)}/hr)` : ""}`,
+    costCell(totalCost, perHr, meta.budgetUsd),
     `human ${human}`,
     `recov ${meta.recoveries}`,
     ...(errorTotal > 0 ? [paint(ANSI.red, `errors ${errorTotal}`)] : []),
     meta.llmOffline ? paint(ANSI.red, "qwen ✗") : paint(ANSI.green, "qwen ✓"),
+    ...waitingAlerts(meta.waiting),
   ];
   return ` ${parts.join(" · ")}`;
 };
@@ -692,6 +769,94 @@ const cloneStats = (stats: SessionStats): SessionStats => ({
   idleMs: { ...stats.idleMs },
 });
 
+// Track how long each agent has been blocked on the human. Sets a start time
+// when an agent enters waiting-human, clears it (and its sent-alert flag) when
+// it leaves, and returns the current per-agent waiting durations.
+const updateWaiting = (
+  runState: BabysitRunState,
+  rows: AgentRow[],
+  nowMs: number
+): Record<string, number> => {
+  const durations: Record<string, number> = {};
+  for (const row of rows) {
+    const agent = row.liveness.agent;
+    if (row.verdict?.state === "waiting-human") {
+      runState.waitingSince[agent] ??= nowMs;
+      durations[agent] = nowMs - runState.waitingSince[agent];
+    } else {
+      delete runState.waitingSince[agent];
+      delete runState.notified.waiting[agent];
+    }
+  }
+  return durations;
+};
+
+// Decide what (if anything) to escalate this tick, deduped via runState.notified
+// so each condition alerts once per episode rather than every tick.
+const collectEscalations = (
+  runState: BabysitRunState,
+  waiting: Record<string, number>,
+  totalCost: number,
+  config: BabysitConfig
+): EscalationEvent[] => {
+  const events: EscalationEvent[] = [];
+  const { notified } = runState;
+  for (const [agent, ms] of Object.entries(waiting)) {
+    if (ms >= config.escalateIdleMs && !notified.waiting[agent]) {
+      notified.waiting[agent] = true;
+      events.push({
+        agent: agent as Agent,
+        kind: "waiting-human",
+        message: `${agent} has been blocked on you for ${fmtDuration(ms)} (run ${config.runId}).`,
+        priority: "high",
+        title: `${agent} is waiting for you`,
+      });
+    }
+  }
+  for (const info of config.agents) {
+    const used = runState.history.filter(
+      (entry) => entry.agent === info.agent
+    ).length;
+    if (used >= config.maxRecoveries && !notified.ladder[info.agent]) {
+      notified.ladder[info.agent] = true;
+      events.push({
+        agent: info.agent,
+        kind: "recovery-exhausted",
+        message: `Exhausted ${config.maxRecoveries} recovery attempts for ${info.agent} (run ${config.runId}). It needs you.`,
+        priority: "urgent",
+        title: `${info.agent} can't auto-recover`,
+      });
+    } else if (used < config.maxRecoveries) {
+      notified.ladder[info.agent] = false;
+    }
+  }
+  if (config.budgetUsd > 0) {
+    const fraction = totalCost / config.budgetUsd;
+    const spend = `$${totalCost.toFixed(2)} / $${config.budgetUsd.toFixed(0)}`;
+    if (fraction >= 1 && !notified.budget100) {
+      notified.budget100 = true;
+      events.push({
+        kind: "budget",
+        message: `Run ${config.runId} is over budget: ${spend}.`,
+        priority: "urgent",
+        title: "Budget exceeded",
+      });
+    } else if (
+      fraction >= BUDGET_WARN_FRACTION &&
+      !(notified.budget80 || notified.budget100)
+    ) {
+      notified.budget80 = true;
+      events.push({
+        kind: "budget",
+        message: `Run ${config.runId} at ${Math.round(fraction * 100)}% of budget: ${spend}.`,
+        priority: "high",
+        title: "Budget 80% reached",
+      });
+    }
+  }
+  return events;
+};
+
 // One control-loop tick: detect → (judge suspects) → recover → summarize → render.
 export const babysitTick = async (
   states: Map<Agent, AgentLivenessState>,
@@ -703,8 +868,14 @@ export const babysitTick = async (
   const nowIso = new Date(nowMs).toISOString();
   const runState: BabysitRunState = {
     ...runStateIn,
+    notified: {
+      ...runStateIn.notified,
+      ladder: { ...runStateIn.notified.ladder },
+      waiting: { ...runStateIn.notified.waiting },
+    },
     stats: cloneStats(runStateIn.stats),
     tick: runStateIn.tick + 1,
+    waitingSince: { ...runStateIn.waitingSince },
   };
   let { history, recoveries, llmTokens } = runState;
   let llmOffline = false;
@@ -752,11 +923,23 @@ export const babysitTick = async (
   runState.recoveries = recoveries;
   runState.llmTokens = llmTokens;
 
+  const totalCost = rows.reduce((sum, row) => sum + row.usage.costUsd, 0);
+  const waiting = updateWaiting(runState, rows, nowMs);
+  for (const event of collectEscalations(
+    runState,
+    waiting,
+    totalCost,
+    config
+  )) {
+    deps.notify(config.ntfyUrl, event);
+  }
+
   const uptimeMs = config.createdAt
     ? nowMs - Date.parse(config.createdAt)
     : Number.NaN;
   const board = renderBoard(rows, {
     bridge: deps.readBridge(config.transcriptPath),
+    budgetUsd: config.budgetUsd,
     llmOffline,
     llmTokens,
     modelName: shortLocalModel(config.model),
@@ -767,6 +950,7 @@ export const babysitTick = async (
     summary: runState.summary,
     tickMs: config.tickMs,
     uptimeMs,
+    waiting,
   });
   deps.render(board);
   return { board, llmOffline, runState, states };
@@ -828,6 +1012,7 @@ export const loadBabysitState = (
     return {
       history: Array.isArray(parsed.history) ? parsed.history : [],
       llmTokens: typeof parsed.llmTokens === "number" ? parsed.llmTokens : 0,
+      notified: { ...freshNotified(), ...parsed.notified },
       recoveries: typeof parsed.recoveries === "number" ? parsed.recoveries : 0,
       stats: {
         activeMs: stats.activeMs ?? {},
@@ -838,6 +1023,10 @@ export const loadBabysitState = (
       summaryTick:
         typeof parsed.summaryTick === "number" ? parsed.summaryTick : -1,
       tick: typeof parsed.tick === "number" ? parsed.tick : 0,
+      waitingSince:
+        typeof parsed.waitingSince === "object" && parsed.waitingSince
+          ? parsed.waitingSince
+          : {},
     };
   } catch {
     return undefined;
@@ -867,6 +1056,7 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
   capturePane: (pane) => tmux(["capture-pane", "-p", "-t", pane]),
   judge: (req) => judgeAgent(req),
   loadState: (stateFile) => loadBabysitState(stateFile),
+  notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
   now: () => Date.now(),
   readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
   readHooks: (file) => {
@@ -999,8 +1189,10 @@ export const resolveBabysitConfig = (
   addAgent(manifest?.tmuxPaneRightAgent, 1);
   const maxRaw = Number.parseInt(env.LOOP_BABYSIT_MAX ?? "", 10);
   const model = env.LOOP_BABYSIT_MODEL || DEFAULT_BABYSIT_MODEL;
+  const budget = Number.parseFloat(env.LOOP_BABYSIT_BUDGET ?? "");
   return {
     agents,
+    budgetUsd: Number.isFinite(budget) && budget > 0 ? budget : 0,
     confidence: envConfidence(env),
     cooldownMs: envSeconds(
       env,
@@ -1010,6 +1202,11 @@ export const resolveBabysitConfig = (
     createdAt: manifest?.createdAt,
     cwd: manifest?.cwd,
     dryRun: env.LOOP_BABYSIT_DRY_RUN === "1",
+    escalateIdleMs: envSeconds(
+      env,
+      "LOOP_BABYSIT_ESCALATE_IDLE",
+      DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS
+    ),
     idleMs: envSeconds(env, "LOOP_BABYSIT_IDLE", DEFAULT_BABYSIT_IDLE_SECONDS),
     logFile: join(storage.runDir, "babysitter.jsonl"),
     maxRecoveries:
@@ -1018,6 +1215,7 @@ export const resolveBabysitConfig = (
         : DEFAULT_BABYSIT_MAX_RECOVERIES,
     model,
     modelSizeGb: modelSizeGb(model),
+    ntfyUrl: env.LOOP_BABYSIT_NTFY || undefined,
     runId,
     runDir: storage.runDir,
     session,

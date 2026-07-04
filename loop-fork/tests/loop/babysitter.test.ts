@@ -5,6 +5,7 @@ import {
   babysitTick,
   freshRunState,
 } from "../../src/loop/babysitter";
+import type { EscalationEvent } from "../../src/loop/babysitter-notify";
 import type {
   Agent,
   AgentLivenessState,
@@ -17,9 +18,11 @@ const START_MS = 1_000_000;
 
 const baseConfig = (overrides: Partial<BabysitConfig> = {}): BabysitConfig => ({
   agents: [{ agent: "claude", hookFile: "hooks.jsonl", pane: "s:0.0" }],
+  budgetUsd: 0,
   confidence: 0.7,
   cooldownMs: 300_000,
   dryRun: false,
+  escalateIdleMs: 300_000,
   idleMs: IDLE_MS,
   logFile: "babysitter.jsonl",
   maxRecoveries: 3,
@@ -34,6 +37,7 @@ const baseConfig = (overrides: Partial<BabysitConfig> = {}): BabysitConfig => ({
 interface Spies {
   judged: number;
   logs: unknown[];
+  notifies: EscalationEvent[];
   respawns: string[];
   sends: string[][];
   texts: string[];
@@ -51,6 +55,7 @@ const makeDeps = (
     return Promise.resolve(outcome);
   },
   loadState: () => undefined,
+  notify: (_url, event) => spies.notifies.push(event),
   now: () => clock.ms,
   readBridge: () => ({}),
   readHooks: () => [],
@@ -83,6 +88,7 @@ const makeDeps = (
 const freshSpies = (): Spies => ({
   judged: 0,
   logs: [],
+  notifies: [],
   respawns: [],
   sends: [],
   texts: [],
@@ -217,4 +223,70 @@ test("observed progress clears the agent's recovery history", async () => {
   });
   expect(result.runState.history).toHaveLength(0);
   expect(spies.judged).toBe(0);
+});
+
+const waitingHuman: JudgeOutcome = {
+  ok: true,
+  verdict: {
+    confidence: 0.9,
+    state: "waiting-human",
+    summary: "asked the user a question",
+  },
+};
+
+test("board flags an agent that is waiting for the human", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps = makeDeps(waitingHuman, clock, spies);
+  const result = await runToSuspect(baseConfig(), deps, clock);
+  expect(result.board).toContain("waits you");
+});
+
+test("escalates once when an agent waits for the human past the threshold", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps = makeDeps(waitingHuman, clock, spies);
+  const config = baseConfig({ escalateIdleMs: 1000 });
+  const states = new Map<Agent, AgentLivenessState>();
+  const t1 = await babysitTick(states, config, deps);
+  clock.ms = START_MS + 2 * IDLE_MS; // becomes suspect + waiting-human
+  const t2 = await babysitTick(states, config, deps, t1.runState);
+  expect(spies.notifies).toHaveLength(0); // just entered waiting
+  clock.ms += 2000; // now past the 1s escalation threshold
+  const t3 = await babysitTick(states, config, deps, t2.runState);
+  clock.ms += 2000;
+  await babysitTick(states, config, deps, t3.runState);
+  const waits = spies.notifies.filter((e) => e.kind === "waiting-human");
+  expect(waits).toHaveLength(1); // deduped across subsequent ticks
+});
+
+test("escalates once when the session crosses its cost budget", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const working: JudgeOutcome = {
+    ok: true,
+    verdict: { confidence: 0.9, state: "working", summary: "" },
+  };
+  const deps: BabysitDeps = {
+    ...makeDeps(working, clock, spies),
+    readUsage: () => ({
+      cacheCreateTokens: 0,
+      cacheReadTokens: 0,
+      contextTokens: 0,
+      contextWindow: 200_000,
+      costUsd: 60,
+      humanMessages: 0,
+      inputTokens: 0,
+      messages: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    }),
+  };
+  const config = baseConfig({ budgetUsd: 50 });
+  const states = new Map<Agent, AgentLivenessState>();
+  const first = await babysitTick(states, config, deps);
+  await babysitTick(states, config, deps, first.runState);
+  const budgetAlerts = spies.notifies.filter((e) => e.kind === "budget");
+  expect(budgetAlerts).toHaveLength(1);
+  expect(first.board).toContain("⛔");
 });

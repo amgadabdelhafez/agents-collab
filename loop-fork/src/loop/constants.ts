@@ -19,6 +19,7 @@ export const DEFAULT_BABYSIT_MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit";
 export const DEFAULT_BABYSIT_HEIGHT = "25%";
 export const DEFAULT_BABYSIT_CONFIDENCE = 0.7;
 export const DEFAULT_BABYSIT_TICK_SECONDS = 15;
+export const DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS = 300;
 
 export const HELP = `
 loop - v${LOOP_VERSION} - meta agent loop runner
