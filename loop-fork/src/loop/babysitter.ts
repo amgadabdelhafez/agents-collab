@@ -38,6 +38,8 @@ const PANE_HASH_LENGTH = 12;
 
 export interface BabysitAgentInfo {
   agent: Agent;
+  // Per-run CODEX_HOME, so Codex usage transcripts under it can be located.
+  codexHome?: string;
   hookFile: string;
   pane: string;
   // Session id / thread id used to locate the agent's usage transcript.
@@ -65,7 +67,11 @@ export interface BabysitDeps {
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
   now: () => number;
   readHooks: (file: string) => HookEvent[];
-  readUsage: (agent: Agent, sessionRef?: string) => AgentUsage;
+  readUsage: (
+    agent: Agent,
+    sessionRef?: string,
+    codexHome?: string
+  ) => AgentUsage;
   render: (text: string) => void;
   respawnPane: (pane: string) => void;
   sendKeys: (pane: string, keys: string[]) => void;
@@ -194,7 +200,7 @@ export const babysitTick = async (
   for (const info of config.agents) {
     const paneText = deps.capturePane(info.pane);
     const events = deps.readHooks(info.hookFile);
-    const usage = deps.readUsage(info.agent, info.sessionRef);
+    const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
     const prev =
       states.get(info.agent) ??
       initLivenessState(info.agent, nowMs, hashPane(paneText));
@@ -287,7 +293,8 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
       return [];
     }
   },
-  readUsage: (agent, sessionRef) => readAgentUsage(agent, sessionRef),
+  readUsage: (agent, sessionRef, codexHome) =>
+    readAgentUsage(agent, sessionRef, codexHome),
   render: (text) => {
     // Clear the pane and print the fresh board.
     process.stdout.write(`\x1b[2J\x1b[H${text}\n`);
@@ -351,11 +358,13 @@ export const resolveBabysitConfig = (
     }
     return undefined;
   };
+  const codexHome = join(storage.runDir, "codex-home");
   const agents: BabysitAgentInfo[] = [];
   const addAgent = (agent: Agent | undefined, paneIndex: number): void => {
     if (agent) {
       agents.push({
         agent,
+        codexHome: agent === "codex" ? codexHome : undefined,
         hookFile: join(storage.runDir, "hooks", `${agent}.jsonl`),
         pane: `${session}:0.${paneIndex}`,
         sessionRef: sessionRefFor(agent),

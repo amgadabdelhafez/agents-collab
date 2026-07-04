@@ -64,8 +64,8 @@ test("summarizeCodex takes the last token-count event as cumulative usage", () =
   expect(u.inputTokens).toBe(4000);
   expect(u.outputTokens).toBe(300);
   expect(u.cacheReadTokens).toBe(3900);
-  expect(u.totalTokens).toBe(4300);
-  expect(u.contextTokens).toBe(7900); // input + cached
+  expect(u.totalTokens).toBe(4300); // record with the largest total
+  expect(u.contextTokens).toBe(0); // codex current context is not exposed
   expect(u.model).toBe("gpt-5.5");
 });
 

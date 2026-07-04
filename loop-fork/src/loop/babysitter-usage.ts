@@ -146,28 +146,33 @@ const findTokens = (value: unknown): CodexTokens | undefined => {
   return undefined;
 };
 
-// Codex rollout transcript: token-count events carry running totals; the last
-// one seen is the session's cumulative usage.
+const tokenMagnitude = (t: CodexTokens): number =>
+  t.total || t.input + t.output;
+
+// Codex rollout transcript: token-count events carry running (cumulative)
+// totals. Take the record with the largest total to get the session total,
+// robust to interleaved per-turn records. Codex does not cleanly expose the
+// *current* context size (its counters are lifetime), so contextTokens is left
+// at 0 (rendered as "—") rather than reporting a misleading cumulative number.
 export const summarizeCodex = (text: string): AgentUsage => {
   const usage = emptyUsage();
   const bounds: { first?: string; last?: string } = {};
-  let latest: CodexTokens | undefined;
+  let best: CodexTokens | undefined;
   eachJsonLine(text, (rec) => {
     trackTs(rec, bounds);
     if (typeof rec.model === "string") {
       usage.model = rec.model;
     }
     const tokens = findTokens(rec);
-    if (tokens) {
-      latest = tokens;
+    if (tokens && (!best || tokenMagnitude(tokens) > tokenMagnitude(best))) {
+      best = tokens;
     }
   });
-  if (latest) {
-    usage.inputTokens = latest.input;
-    usage.outputTokens = latest.output;
-    usage.cacheReadTokens = latest.cached;
-    usage.totalTokens = latest.total || latest.input + latest.output;
-    usage.contextTokens = latest.input + latest.cached;
+  if (best) {
+    usage.inputTokens = best.input;
+    usage.outputTokens = best.output;
+    usage.cacheReadTokens = best.cached;
+    usage.totalTokens = best.total || best.input + best.output;
   }
   usage.model = usage.model ?? "gpt-5.5";
   usage.firstTs = bounds.first;
@@ -214,39 +219,61 @@ const findClaudeTranscript = (sessionRef: string): string | undefined => {
   return undefined;
 };
 
-const findCodexTranscript = (threadRef: string): string | undefined => {
-  const root = join(homedir(), ".codex", "sessions");
-  if (!existsSync(root)) {
+// sessions/YYYY/MM/DD/rollout-*<threadRef>*.jsonl — walk a bounded tree.
+const walkForThread = (
+  dir: string,
+  threadRef: string,
+  depth: number
+): string | undefined => {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
     return undefined;
   }
-  // sessions/YYYY/MM/DD/rollout-*<threadRef>*.jsonl — walk a bounded tree.
-  const walk = (dir: string, depth: number): string | undefined => {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return undefined;
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    if (entry.includes(threadRef) && entry.endsWith(".jsonl")) {
+      return full;
     }
-    for (const entry of entries) {
-      const full = join(dir, entry);
-      if (entry.includes(threadRef) && entry.endsWith(".jsonl")) {
-        return full;
-      }
-      if (depth > 0 && statSync(full).isDirectory()) {
-        const found = walk(full, depth - 1);
-        if (found) {
-          return found;
-        }
+    if (depth > 0 && statSync(full).isDirectory()) {
+      const found = walkForThread(full, threadRef, depth - 1);
+      if (found) {
+        return found;
       }
     }
-    return undefined;
-  };
-  return walk(root, 4);
+  }
+  return undefined;
+};
+
+// loop-fork gives each run its own CODEX_HOME, so the transcript lives under
+// <runDir>/codex-home/sessions before falling back to the user's global home.
+const findCodexTranscript = (
+  threadRef: string,
+  codexHome?: string
+): string | undefined => {
+  const roots = [
+    ...(codexHome ? [join(codexHome, "sessions")] : []),
+    join(homedir(), ".codex", "sessions"),
+  ];
+  for (const root of roots) {
+    if (existsSync(root)) {
+      const found = walkForThread(root, threadRef, 4);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return undefined;
 };
 
 // Locate and parse an agent's session transcript into a priced usage snapshot.
 // Best-effort: any failure (no transcript, unknown agent) yields empty usage.
-export const readAgentUsage = (agent: Agent, sessionRef?: string): AgentUsage => {
+export const readAgentUsage = (
+  agent: Agent,
+  sessionRef?: string,
+  codexHome?: string
+): AgentUsage => {
   if (!sessionRef) {
     return emptyUsage();
   }
@@ -255,7 +282,7 @@ export const readAgentUsage = (agent: Agent, sessionRef?: string): AgentUsage =>
     if (agent === "claude") {
       path = findClaudeTranscript(sessionRef);
     } else if (agent === "codex") {
-      path = findCodexTranscript(sessionRef);
+      path = findCodexTranscript(sessionRef, codexHome);
     }
     if (!path) {
       return emptyUsage();
