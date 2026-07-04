@@ -59,6 +59,70 @@ export interface BabysitterVerdict {
   summary: string;
 }
 
+// One normalized hook event, appended as a JSONL line by both agents' hooks.
+export interface HookEvent {
+  agent: Agent;
+  cwd?: string;
+  detail?: string;
+  event: string;
+  tool?: string;
+  ts: string;
+}
+
+// --- Detector (babysitter-detect.ts) ---
+// Per-agent input for one detector tick.
+export interface AgentLivenessInput {
+  agent: Agent;
+  lastEventTs?: string;
+  paneHash: string;
+}
+
+// Detector state carried across ticks for one agent.
+export interface AgentLivenessState {
+  agent: Agent;
+  lastEventTs?: string;
+  paneHash: string;
+  paneStableSinceMs: number;
+}
+
+// Detector verdict for one agent on one tick.
+export interface AgentLiveness {
+  agent: Agent;
+  lastEventAgeMs: number;
+  paneStable: boolean;
+  suspect: boolean;
+}
+
+// --- Recovery ladder (babysitter-recover.ts) ---
+export type RecoveryLevel = "answer-prompt" | "nudge" | "restart";
+
+export interface RecoveryHistoryEntry {
+  agent: Agent;
+  level: RecoveryLevel;
+  ts: string;
+}
+
+export interface RecoveryDecision {
+  agent: Agent;
+  level: RecoveryLevel | null;
+  reason: string;
+}
+
+// --- LLM judge (babysitter-llm.ts) ---
+export interface JudgeRequest {
+  agent: Agent;
+  hookTail: HookEvent[];
+  model: string;
+  paneText: string;
+  url: string;
+}
+
+export type JudgeFailureReason = "malformed" | "timeout" | "unreachable";
+
+export type JudgeOutcome =
+  | { ok: true; verdict: BabysitterVerdict }
+  | { fallback: BabysitterVerdict; ok: false; reason: JudgeFailureReason };
+
 export interface Options {
   agent: Agent;
   babysit?: boolean;
