@@ -178,6 +178,20 @@ export interface SummaryResult {
   tokens: number;
 }
 
+// Local-LLM judgment of whether both idle agents are blocked on the human.
+export interface WaitingRequest {
+  agents: SummaryAgentContext[];
+  model: string;
+  url: string;
+}
+
+export interface WaitingResult {
+  // One-line description of what the agents need from the human ("" if none).
+  ask: string;
+  tokens: number;
+  waiting: boolean;
+}
+
 export interface Options {
   agent: Agent;
   babysit?: boolean;

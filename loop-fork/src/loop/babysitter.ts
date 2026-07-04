@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "bun";
 import { readPriorSummaries, readProjectContext } from "./babysitter-context";
 import { initLivenessState, updateLiveness } from "./babysitter-detect";
-import { judgeAgent, summarizeSession } from "./babysitter-llm";
+import { assessWaiting, judgeAgent, summarizeSession } from "./babysitter-llm";
 import { type EscalationEvent, sendNtfy } from "./babysitter-notify";
 import { decideRecovery, executeRecovery } from "./babysitter-recover";
 import { readAgentUsage, readHumanMessages } from "./babysitter-usage";
@@ -40,6 +40,8 @@ import type {
   SummaryAgentContext,
   SummaryRequest,
   SummaryResult,
+  WaitingRequest,
+  WaitingResult,
 } from "./types";
 
 export const BABYSIT_SUBCOMMAND = "__babysit";
@@ -96,6 +98,7 @@ export type BridgeCounts = Record<string, Record<string, number>>;
 
 export interface BabysitDeps {
   appendLog: (file: string, record: unknown) => void;
+  assessWaiting: (req: WaitingRequest) => Promise<WaitingResult>;
   capturePane: (pane: string) => string;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
   loadState: (stateFile?: string) => BabysitRunState | undefined;
@@ -150,6 +153,9 @@ export interface BabysitRunState {
   summary: string;
   summaryTick: number;
   tick: number;
+  // The local LLM's read of the current both-idle episode.
+  waitingAsk: string;
+  waitingConfirmed: boolean;
 }
 
 const freshNotified = (): NotifiedState => ({
@@ -169,6 +175,8 @@ export const freshRunState = (): BabysitRunState => ({
   summary: "",
   summaryTick: -1,
   tick: 0,
+  waitingAsk: "",
+  waitingConfirmed: false,
 });
 
 export interface BabysitTickResult {
@@ -254,9 +262,9 @@ const CONTEXT_ALERT_PCT = 80;
 const LAST_ACTION_WIDTH = 46;
 const MS_PER_HOUR = 3_600_000;
 const BUDGET_WARN_FRACTION = 0.8;
-// Only surface "waiting for you" once the pair has been idle together this long,
-// to avoid flicker on the brief both-idle gaps between hand-offs.
-const WAITING_FOR_YOU_DISPLAY_MS = 60_000;
+// Only ask the local LLM whether the pair needs us once they have been idle
+// together this long, to skip the brief both-idle gaps between hand-offs.
+const BOTH_IDLE_ASSESS_MS = 45_000;
 
 const paint = (code: string, text: string): string =>
   `${code}${text}${ANSI.reset}`;
@@ -310,68 +318,21 @@ const truncate = (text: string, width: number): string =>
 // that keeps repainting (blinking cursor at the prompt) is idle, not thinking.
 const TURN_END_EVENTS = new Set(["Stop", "Notification"]);
 
-// TUI chrome (input box, status line, rules, spinners) — not agent output.
-const PANE_CHROME_RE =
-  /^[❯›•⏺✻✽⎿─]|ctx:|bypass permissions|for agents|gpt-5|opus 4|claude |esc to|tip:|tokens|thinking|brewed|waddling|worked for|working \(|reviewing|\bloop-bridge-/i;
-// Phrasings that signal an agent is handing a decision back to the human.
-const QUESTION_PHRASES = [
-  "let me know",
-  "what's next",
-  "whats next",
-  "which would you",
-  "should i ",
-  "shall i ",
-  "do you want",
-  "would you like",
-  "your call",
-  "waiting for your",
-  "want me to",
-  "how would you like",
-  "please confirm",
-  "up to you",
-];
-const QUESTION_SNIPPET_MAX = 88;
-const QUESTION_SCAN_LINES = 6;
-
-// Best-effort read of a question an agent is putting to the human, from the last
-// few lines of real output in its pane (ignoring the input box / status chrome).
-// Enrichment only — never the trigger — so a false read can't cause a false ping.
-const detectPendingQuestion = (paneText: string): string | undefined => {
-  const lines = paneText
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !PANE_CHROME_RE.test(line));
-  for (const line of lines.slice(-QUESTION_SCAN_LINES).reverse()) {
-    const lower = line.toLowerCase();
-    if (
-      line.endsWith("?") ||
-      QUESTION_PHRASES.some((phrase) => lower.includes(phrase))
-    ) {
-      return line.length > QUESTION_SNIPPET_MAX
-        ? `${line.slice(0, QUESTION_SNIPPET_MAX)}…`
-        : line;
-    }
-  }
-  return undefined;
-};
-
 interface AgentRow {
   action: RecoveryHistoryEntry | null;
   errors: number;
   lastAction: string;
   liveness: AgentLiveness;
-  // A question this agent appears to be asking the human (from its pane), if any.
-  pendingQuestion?: string;
   thinking: boolean;
   usage: AgentUsage;
   verdict?: BabysitterVerdict;
 }
 
-// The pair is idle and (probably) needs you: how long, and what was asked.
+// The pair is idle; the local LLM confirms whether it needs you and what for.
 interface WaitingForYou {
-  agent?: Agent;
+  ask: string;
+  confirmed: boolean;
   ms: number;
-  question?: string;
 }
 
 interface BoardMeta {
@@ -504,16 +465,13 @@ const costCell = (
   return text;
 };
 
-// Loud top-line alert when the pair is idle together long enough that it
-// probably needs you — with the pending question when we could read one.
+// Loud top-line alert once the local LLM confirms the idle pair needs you,
+// quoting what it says they need.
 const waitingForYouAlert = (waiting: WaitingForYou): string[] => {
-  if (waiting.ms < WAITING_FOR_YOU_DISPLAY_MS) {
+  if (!waiting.confirmed) {
     return [];
   }
-  const asked =
-    waiting.agent && waiting.question
-      ? ` — ${waiting.agent}: "${waiting.question}"`
-      : "";
+  const asked = waiting.ask ? ` — ${waiting.ask}` : "";
   return [
     paint(ANSI.yellow, `❗ waiting for you ${fmtDuration(waiting.ms)}${asked}`),
   ];
@@ -718,7 +676,6 @@ const processAgent = async (
     errors,
     lastAction: lastActionOf(events),
     liveness,
-    pendingQuestion: detectPendingQuestion(paneText),
     thinking,
     usage,
   };
@@ -852,7 +809,7 @@ const cloneStats = (stats: SessionStats): SessionStats => ({
 
 // A lone idle agent is usually just waiting on its peer via the bridge; the pair
 // needs the human when BOTH are idle together. Track how long that has held,
-// resetting when either agent goes active, and surface any pending question.
+// resetting (and forgetting the LLM's read) the moment either agent goes active.
 const updateBothIdle = (
   runState: BabysitRunState,
   rows: AgentRow[],
@@ -860,17 +817,18 @@ const updateBothIdle = (
 ): WaitingForYou => {
   if (rows.length === 0 || rows.some(isRowActive)) {
     runState.bothIdleSince = 0;
+    runState.waitingConfirmed = false;
+    runState.waitingAsk = "";
     runState.notified.waitingForYou = false;
-    return { ms: 0 };
+    return { ask: "", confirmed: false, ms: 0 };
   }
   if (runState.bothIdleSince === 0) {
     runState.bothIdleSince = nowMs;
   }
-  const asking = rows.find((row) => row.pendingQuestion);
   return {
-    agent: asking?.liveness.agent,
+    ask: runState.waitingAsk,
+    confirmed: runState.waitingConfirmed,
     ms: nowMs - runState.bothIdleSince,
-    question: asking?.pendingQuestion,
   };
 };
 
@@ -884,15 +842,16 @@ const collectEscalations = (
 ): EscalationEvent[] => {
   const events: EscalationEvent[] = [];
   const { notified } = runState;
-  if (waiting.ms >= config.escalateIdleMs && !notified.waitingForYou) {
+  if (
+    waiting.confirmed &&
+    waiting.ms >= config.escalateIdleMs &&
+    !notified.waitingForYou
+  ) {
     notified.waitingForYou = true;
-    const asked = waiting.question
-      ? ` ${waiting.agent} asked: "${waiting.question}"`
-      : "";
+    const asked = waiting.ask ? ` They need: ${waiting.ask}` : "";
     events.push({
-      agent: waiting.agent,
       kind: "waiting-human",
-      message: `Both agents have been idle for ${fmtDuration(waiting.ms)} (run ${config.runId}).${asked}`,
+      message: `Both agents idle ${fmtDuration(waiting.ms)} and waiting on you (run ${config.runId}).${asked}`,
       priority: "high",
       title: "The session is waiting for you",
     });
@@ -1090,6 +1049,9 @@ export const loadBabysitState = (
       summaryTick:
         typeof parsed.summaryTick === "number" ? parsed.summaryTick : -1,
       tick: typeof parsed.tick === "number" ? parsed.tick : 0,
+      waitingAsk:
+        typeof parsed.waitingAsk === "string" ? parsed.waitingAsk : "",
+      waitingConfirmed: parsed.waitingConfirmed === true,
     };
   } catch {
     return undefined;
@@ -1112,6 +1074,7 @@ export const saveBabysitState = (
 };
 
 export const defaultBabysitDeps = (): BabysitDeps => ({
+  assessWaiting: (req) => assessWaiting(req),
   appendLog: (file, record) => {
     mkdirSync(dirname(file), { recursive: true });
     appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
@@ -1290,8 +1253,9 @@ export const resolveBabysitConfig = (
 };
 
 // Long-running loop; runs in the babysitter pane until the session ends.
-// The board renders every tick; the (slow) local-LLM summary is generated in
-// the background so it never blocks a tick, and folded in when it completes.
+// The board renders every tick; the (slow) local-LLM summary and the both-idle
+// "does the pair need you?" judgment run in the background so they never block a
+// tick, and are folded in when they complete.
 export const runBabysitter = async (
   config: BabysitConfig,
   deps: BabysitDeps = defaultBabysitDeps()
@@ -1302,18 +1266,29 @@ export const runBabysitter = async (
   let summaryTick = runState.summaryTick;
   let summaryInFlight = false;
   let pendingSummaryTokens = 0;
+  let waitingAsk = runState.waitingAsk;
+  let waitingConfirmed = runState.waitingConfirmed;
+  let waitingAssessInFlight = false;
+  let assessedForIdleSince = 0;
+  let pendingWaitTokens = 0;
   for (;;) {
-    // Fold any completed background summary in before rendering this tick.
+    // Fold any completed background work in before rendering this tick.
     runState = {
       ...runState,
-      llmTokens: runState.llmTokens + pendingSummaryTokens,
+      llmTokens: runState.llmTokens + pendingSummaryTokens + pendingWaitTokens,
       summary: summaryText,
       summaryTick,
+      waitingAsk,
+      waitingConfirmed,
     };
     pendingSummaryTokens = 0;
+    pendingWaitTokens = 0;
 
     const result = await babysitTick(states, config, deps, runState);
     runState = result.runState;
+    // updateBothIdle may have cleared the waiting read (agents went active).
+    waitingConfirmed = runState.waitingConfirmed;
+    waitingAsk = runState.waitingAsk;
 
     if (
       !summaryInFlight &&
@@ -1340,6 +1315,38 @@ export const runBabysitter = async (
         })
         .finally(() => {
           summaryInFlight = false;
+        });
+    }
+
+    // Once the pair has been idle together a while, ask the local LLM (once per
+    // idle episode) whether they are actually blocked on the human.
+    const idleSince = runState.bothIdleSince;
+    if (idleSince === 0) {
+      assessedForIdleSince = 0;
+    } else if (
+      !waitingAssessInFlight &&
+      assessedForIdleSince !== idleSince &&
+      deps.now() - idleSince >= BOTH_IDLE_ASSESS_MS
+    ) {
+      waitingAssessInFlight = true;
+      const episode = idleSince;
+      deps
+        .assessWaiting({
+          agents: result.summaryCtxs,
+          model: config.model,
+          url: config.url,
+        })
+        .then((assessment) => {
+          waitingConfirmed = assessment.waiting;
+          waitingAsk = assessment.ask;
+          assessedForIdleSince = episode;
+          pendingWaitTokens += assessment.tokens;
+        })
+        .catch(() => {
+          // Best-effort; retried on the next tick.
+        })
+        .finally(() => {
+          waitingAssessInFlight = false;
         });
     }
 

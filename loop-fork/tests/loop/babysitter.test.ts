@@ -50,6 +50,7 @@ const makeDeps = (
   spies: Spies
 ): BabysitDeps => ({
   appendLog: (_file, record) => spies.logs.push(record),
+  assessWaiting: () => Promise.resolve({ ask: "", tokens: 0, waiting: false }),
   capturePane: () => "stable pane text",
   judge: (_req) => {
     spies.judged += 1;
@@ -266,7 +267,15 @@ const twoAgents = [
   { agent: "codex" as Agent, hookFile: "codex.jsonl", pane: "s:0.1" },
 ];
 
-test("a lone idle agent whose peer is active is not 'waiting for you'", async () => {
+const bothIdle = (clock: { ms: number }, spies: Spies): BabysitDeps => {
+  const stop: HookEvent = {
+    event: "Stop",
+    ts: new Date(START_MS).toISOString(),
+  };
+  return { ...makeDeps(stuck, clock, spies), readHooks: () => [stop] };
+};
+
+test("a confirmed waiting pair clears the moment an agent goes active", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();
   let frame = 0;
@@ -280,60 +289,54 @@ test("a lone idle agent whose peer is active is not 'waiting for you'", async ()
     capturePane: (pane) => (pane.endsWith(".0") ? `frame ${frame++}` : "idle"),
     readHooks: (file) => (file.includes("codex") ? [stop] : []),
   };
-  const config = baseConfig({ agents: twoAgents, escalateIdleMs: 1000 });
+  const config = baseConfig({ agents: twoAgents });
   const states = new Map<Agent, AgentLivenessState>();
-  const t1 = await babysitTick(states, config, deps);
-  clock.ms += 5000;
-  const t2 = await babysitTick(states, config, deps, t1.runState);
-  clock.ms += 5000;
-  const t3 = await babysitTick(states, config, deps, t2.runState);
-  expect(t3.board).not.toContain("waiting for you");
-  expect(spies.notifies.filter((e) => e.kind === "waiting-human")).toHaveLength(
-    0
-  );
+  // Seed a confirmed waiting read; claude is active this tick, so it must clear.
+  const result = await babysitTick(states, config, deps, {
+    ...freshRunState(),
+    bothIdleSince: START_MS,
+    waitingAsk: "merge?",
+    waitingConfirmed: true,
+  });
+  expect(result.board).not.toContain("waiting for you");
+  expect(result.runState.waitingConfirmed).toBe(false);
 });
 
-test("both agents idle surfaces the pending question and escalates once", async () => {
-  const clock = { ms: START_MS };
+test("a confirmed idle pair shows the LLM's ask and escalates once", async () => {
+  const clock = { ms: START_MS + 400_000 }; // well past escalateIdleMs
   const spies = freshSpies();
-  const stop: HookEvent = {
-    event: "Stop",
-    ts: new Date(START_MS).toISOString(),
-  };
-  const deps: BabysitDeps = {
-    ...makeDeps(stuck, clock, spies),
-    capturePane: (pane) =>
-      pane.endsWith(".0") ? "Should I merge this now?" : "done",
-    readHooks: () => [stop],
-  };
-  const config = baseConfig({ agents: twoAgents, escalateIdleMs: 1000 });
+  const deps = bothIdle(clock, spies);
+  const config = baseConfig({ agents: twoAgents });
   const states = new Map<Agent, AgentLivenessState>();
-  const t1 = await babysitTick(states, config, deps);
-  clock.ms += 90_000; // past both the display and escalation thresholds
-  const t2 = await babysitTick(states, config, deps, t1.runState);
-  expect(t2.board).toContain("waiting for you");
-  expect(t2.board).toContain("Should I merge this now?");
+  const seeded = {
+    ...freshRunState(),
+    bothIdleSince: START_MS,
+    waitingAsk: "Should I merge this now?",
+    waitingConfirmed: true,
+  };
+  const t1 = await babysitTick(states, config, deps, seeded);
+  expect(t1.board).toContain("waiting for you");
+  expect(t1.board).toContain("Should I merge this now?");
+  // A second tick must not re-escalate (deduped).
+  await babysitTick(states, config, deps, t1.runState);
   const waits = spies.notifies.filter((e) => e.kind === "waiting-human");
   expect(waits).toHaveLength(1);
   expect(waits[0].message).toContain("Should I merge this now?");
 });
 
-test("escalates once when an agent waits for the human past the threshold", async () => {
-  const clock = { ms: START_MS };
+test("both idle but unconfirmed by the LLM does not alert", async () => {
+  const clock = { ms: START_MS + 400_000 };
   const spies = freshSpies();
-  const deps = makeDeps(waitingHuman, clock, spies);
-  const config = baseConfig({ escalateIdleMs: 1000 });
+  const deps = bothIdle(clock, spies);
+  const config = baseConfig({ agents: twoAgents });
   const states = new Map<Agent, AgentLivenessState>();
-  const t1 = await babysitTick(states, config, deps);
-  clock.ms = START_MS + 2 * IDLE_MS; // becomes suspect + waiting-human
-  const t2 = await babysitTick(states, config, deps, t1.runState);
-  expect(spies.notifies).toHaveLength(0); // just entered waiting
-  clock.ms += 2000; // now past the 1s escalation threshold
-  const t3 = await babysitTick(states, config, deps, t2.runState);
-  clock.ms += 2000;
-  await babysitTick(states, config, deps, t3.runState);
-  const waits = spies.notifies.filter((e) => e.kind === "waiting-human");
-  expect(waits).toHaveLength(1); // deduped across subsequent ticks
+  // Idle a long time, but the LLM has not confirmed they need us.
+  const result = await babysitTick(states, config, deps, {
+    ...freshRunState(),
+    bothIdleSince: START_MS,
+  });
+  expect(result.board).not.toContain("waiting for you");
+  expect(spies.notifies).toHaveLength(0);
 });
 
 test("escalates once when the session crosses its cost budget", async () => {

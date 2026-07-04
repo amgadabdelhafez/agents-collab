@@ -6,6 +6,8 @@ import type {
   JudgeRequest,
   SummaryRequest,
   SummaryResult,
+  WaitingRequest,
+  WaitingResult,
 } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -365,6 +367,83 @@ export const summarizeSession = async (
     };
   } catch {
     return { text: "", tokens: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const WAITING_SYSTEM_PROMPT = [
+  "Two AI coding agents share one task and have both gone idle at the same time.",
+  "From their recent actions and terminal panes, decide whether they are BLOCKED",
+  "waiting for the human to answer, decide, or approve something — as opposed to",
+  "having simply finished the work or paused between steps. Reply with ONLY a",
+  "strict JSON object, no prose:",
+  '{"waiting": true|false, "ask": "<one line, <=100 chars: what they need from the',
+  'human; empty string if not waiting>"}.',
+  "Be conservative: set waiting=true only if a pane clearly shows a question or",
+  "request directed at the human.",
+].join(" ");
+
+const WAITING_MAX_TOKENS = 1200;
+const WAITING_ASK_MAX = 100;
+
+const buildWaitingPrompt = (req: WaitingRequest): string =>
+  req.agents.map(agentSection).join("\n\n");
+
+const asWaiting = (content: string, tokens: number): WaitingResult => {
+  const json = extractFirstJsonObject(stripThinkBlocks(content));
+  if (!json) {
+    return { ask: "", tokens, waiting: false };
+  }
+  try {
+    const parsed = JSON.parse(json) as { ask?: unknown; waiting?: unknown };
+    const waiting = parsed.waiting === true;
+    const ask =
+      waiting && typeof parsed.ask === "string"
+        ? parsed.ask.trim().slice(0, WAITING_ASK_MAX)
+        : "";
+    return { ask, tokens, waiting };
+  } catch {
+    return { ask: "", tokens, waiting: false };
+  }
+};
+
+// Ask the local LLM whether both idle agents are actually blocked on the human,
+// and (if so) a one-line description of what they need. Best-effort: any failure
+// yields waiting=false so we do not raise a false alert.
+export const assessWaiting = async (
+  req: WaitingRequest,
+  deps?: JudgeDeps
+): Promise<WaitingResult> => {
+  const fetchFn = deps?.fetchFn ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  );
+  try {
+    const response = await fetchFn(`${req.url}${CHAT_COMPLETIONS_PATH}`, {
+      body: JSON.stringify({
+        max_tokens: WAITING_MAX_TOKENS,
+        messages: [
+          { content: WAITING_SYSTEM_PROMPT, role: "system" },
+          { content: buildWaitingPrompt(req), role: "user" },
+        ],
+        model: req.model,
+        temperature: TEMPERATURE,
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { ask: "", tokens: 0, waiting: false };
+    }
+    const payload = await response.json();
+    const content = extractMessageContent(payload) ?? "";
+    return asWaiting(content, extractTokens(payload));
+  } catch {
+    return { ask: "", tokens: 0, waiting: false };
   } finally {
     clearTimeout(timer);
   }
