@@ -13,6 +13,7 @@ import {
   runCodexTmuxProxy,
 } from "./loop/codex-tmux-proxy";
 import { cliDeps } from "./loop/deps";
+import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 
@@ -82,6 +83,16 @@ export const runCli = async (argv: string[]): Promise<void> => {
       argv.slice(1)
     );
     await runCodexTmuxProxy(runDir, remoteUrl, threadId, port);
+    return;
+  }
+  if (argv[0] === HOOK_EMIT_SUBCOMMAND) {
+    const [source, hookFile] = argv.slice(1);
+    if (!(isAgent(source) && hookFile)) {
+      throw new Error(
+        "Usage: loop __hook-emit <claude|codex|gemini|cursor|copilot> <hook-file>"
+      );
+    }
+    await runHookEmit(source, hookFile);
     return;
   }
 
