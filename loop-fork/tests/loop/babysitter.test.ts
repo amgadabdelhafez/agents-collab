@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import {
-  babysitTick,
   type BabysitConfig,
   type BabysitDeps,
+  babysitTick,
   freshRunState,
 } from "../../src/loop/babysitter";
 import type {
@@ -50,6 +50,7 @@ const makeDeps = (
     spies.judged += 1;
     return Promise.resolve(outcome);
   },
+  loadState: () => undefined,
   now: () => clock.ms,
   readBridge: () => ({}),
   readHooks: () => [],
@@ -69,6 +70,9 @@ const makeDeps = (
     // no-op for tests
   },
   respawnPane: (pane) => spies.respawns.push(pane),
+  saveState: () => {
+    // no-op for tests
+  },
   sendKeys: (pane, keys) => spies.sends.push([pane, ...keys]),
   sendText: (_pane, text) => spies.texts.push(text),
   sleep: () => Promise.resolve(),
@@ -111,7 +115,9 @@ test("suspect + stuck in dry-run: judges and decides but executes nothing", asyn
   expect(spies.sends).toHaveLength(0);
   expect(spies.respawns).toHaveLength(0);
   expect(result.runState.history).toHaveLength(0); // dry-run does not record history
-  expect(spies.logs.some((r) => (r as { kind: string }).kind === "decision")).toBe(true);
+  expect(
+    spies.logs.some((r) => (r as { kind: string }).kind === "decision")
+  ).toBe(true);
 });
 
 test("suspect + stuck live: executes the first ladder rung and records history", async () => {
@@ -197,10 +203,17 @@ test("observed progress clears the agent's recovery history", async () => {
   const deps = makeDeps(stuck, clock, spies);
   const states = new Map<Agent, AgentLivenessState>();
   const seeded: RecoveryHistoryEntry[] = [
-    { agent: "claude", level: "answer-prompt", ts: new Date(START_MS).toISOString() },
+    {
+      agent: "claude",
+      level: "answer-prompt",
+      ts: new Date(START_MS).toISOString(),
+    },
   ];
   // First tick: agent is not yet suspect (pane just seen) => progress path.
-  const result = await babysitTick(states, baseConfig(), deps, { ...freshRunState(), history: seeded });
+  const result = await babysitTick(states, baseConfig(), deps, {
+    ...freshRunState(),
+    history: seeded,
+  });
   expect(result.runState.history).toHaveLength(0);
   expect(spies.judged).toBe(0);
 });

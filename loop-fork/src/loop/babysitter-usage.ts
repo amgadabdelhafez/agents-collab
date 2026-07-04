@@ -18,11 +18,16 @@ const PRICING: Record<string, Price> = {
   "claude-opus-4-8": { cacheRead: 0.5, cacheWrite: 6.25, input: 5, output: 25 },
   "claude-opus-4-7": { cacheRead: 0.5, cacheWrite: 6.25, input: 5, output: 25 },
   "claude-opus-4-6": { cacheRead: 0.5, cacheWrite: 6.25, input: 5, output: 25 },
-  "claude-sonnet-4-6": { cacheRead: 0.3, cacheWrite: 3.75, input: 3, output: 15 },
+  "claude-sonnet-4-6": {
+    cacheRead: 0.3,
+    cacheWrite: 3.75,
+    input: 3,
+    output: 15,
+  },
   "claude-haiku-4-5": { cacheRead: 0.1, cacheWrite: 1.25, input: 1, output: 5 },
   "claude-fable-5": { cacheRead: 1, cacheWrite: 12.5, input: 10, output: 50 },
-  // ESTIMATE — verify against current OpenAI pricing for gpt-5.5.
-  "gpt-5.5": { cacheRead: 0.125, cacheWrite: 1.25, input: 1.25, output: 10 },
+  // OpenAI gpt-5.5: $5 input / $0.50 cached / $30 output per 1M tokens.
+  "gpt-5.5": { cacheRead: 0.5, cacheWrite: 5, input: 5, output: 30 },
 };
 
 const CONTEXT_WINDOW: Record<string, number> = {
@@ -32,7 +37,7 @@ const CONTEXT_WINDOW: Record<string, number> = {
   "claude-sonnet-4-6": 1_000_000,
   "claude-haiku-4-5": 200_000,
   "claude-fable-5": 1_000_000,
-  "gpt-5.5": 400_000,
+  "gpt-5.5": 1_050_000,
 };
 
 const DEFAULT_WINDOW = 200_000;
@@ -70,7 +75,10 @@ const isHumanContent = (content: unknown): boolean => {
   return false;
 };
 
-const eachJsonLine = (text: string, fn: (obj: Record<string, unknown>) => void): void => {
+const eachJsonLine = (
+  text: string,
+  fn: (obj: Record<string, unknown>) => void
+): void => {
   for (const line of text.split("\n")) {
     if (!line.trim()) {
       continue;
@@ -257,7 +265,8 @@ export const summarizeCodex = (text: string): AgentUsage => {
     usage.inputTokens = bestGeneric.input;
     usage.outputTokens = bestGeneric.output;
     usage.cacheReadTokens = bestGeneric.cached;
-    usage.totalTokens = bestGeneric.total || bestGeneric.input + bestGeneric.output;
+    usage.totalTokens =
+      bestGeneric.total || bestGeneric.input + bestGeneric.output;
   }
   usage.model = usage.model ?? "gpt-5.5";
   usage.firstTs = bounds.first;
@@ -373,7 +382,8 @@ export const readAgentUsage = (
       return emptyUsage();
     }
     const text = readFileSync(path, "utf8");
-    const parsed = agent === "codex" ? summarizeCodex(text) : summarizeClaude(text);
+    const parsed =
+      agent === "codex" ? summarizeCodex(text) : summarizeClaude(text);
     return applyPricing(parsed);
   } catch {
     return emptyUsage();

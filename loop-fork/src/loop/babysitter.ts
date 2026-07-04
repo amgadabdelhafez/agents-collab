@@ -1,11 +1,17 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "bun";
 import { initLivenessState, updateLiveness } from "./babysitter-detect";
 import { judgeAgent, summarizeSession } from "./babysitter-llm";
 import { decideRecovery, executeRecovery } from "./babysitter-recover";
+import { readAgentUsage } from "./babysitter-usage";
 import {
   DEFAULT_BABYSIT_CONFIDENCE,
   DEFAULT_BABYSIT_COOLDOWN_SECONDS,
@@ -15,7 +21,6 @@ import {
   DEFAULT_BABYSIT_TICK_SECONDS,
   DEFAULT_BABYSIT_URL,
 } from "./constants";
-import { readAgentUsage } from "./babysitter-usage";
 import { decode } from "./git";
 import { loadRunState } from "./run-state";
 import type {
@@ -57,17 +62,19 @@ export interface BabysitConfig {
   // Run manifest creation time, for session uptime.
   createdAt?: string;
   dryRun: boolean;
-  // On-disk size (GB) of the local LLM, shown in the footer.
-  modelSizeGb?: number;
-  // Path to the run transcript (bridge messages between agents).
-  transcriptPath?: string;
   idleMs: number;
   logFile: string;
   maxRecoveries: number;
   model: string;
+  // On-disk size (GB) of the local LLM, shown in the footer.
+  modelSizeGb?: number;
   runId: string;
   session: string;
+  // Persisted run-state file, so stats survive babysitter restarts.
+  stateFile?: string;
   tickMs: number;
+  // Path to the run transcript (bridge messages between agents).
+  transcriptPath?: string;
   url: string;
 }
 
@@ -78,6 +85,7 @@ export interface BabysitDeps {
   appendLog: (file: string, record: unknown) => void;
   capturePane: (pane: string) => string;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
+  loadState: (stateFile?: string) => BabysitRunState | undefined;
   now: () => number;
   readBridge: (transcriptPath?: string) => BridgeCounts;
   readHooks: (file: string) => HookEvent[];
@@ -88,6 +96,7 @@ export interface BabysitDeps {
   ) => AgentUsage;
   render: (text: string) => void;
   respawnPane: (pane: string) => void;
+  saveState: (stateFile: string | undefined, state: BabysitRunState) => void;
   sendKeys: (pane: string, keys: string[]) => void;
   sendText: (pane: string, text: string) => void;
   sleep: (ms: number) => Promise<void>;
@@ -326,7 +335,8 @@ const renderRow = (row: AgentRow, meta: BoardMeta): string => {
     contextPct(row.usage) > CONTEXT_ALERT_PCT
       ? paint(ANSI.red, cell(`${ctxText} ⚠`, 13))
       : cell(ctxText, 13);
-  const tok = row.usage.totalTokens > 0 ? fmtTokens(row.usage.totalTokens) : "—";
+  const tok =
+    row.usage.totalTokens > 0 ? fmtTokens(row.usage.totalTokens) : "—";
   const cost = row.usage.costUsd > 0 ? `$${row.usage.costUsd.toFixed(2)}` : "—";
   const bridge = bridgeFor(agent, meta.bridge);
   const detail = truncate(
@@ -431,7 +441,11 @@ const renderFooter = (meta: BoardMeta): string[] => {
     .join(" ");
   if (summaryText) {
     lines.push(paint(ANSI.dim, " ── summary ──"));
-    for (const line of wrapText(summaryText, SUMMARY_LINE_WIDTH, SUMMARY_LINE_MAX)) {
+    for (const line of wrapText(
+      summaryText,
+      SUMMARY_LINE_WIDTH,
+      SUMMARY_LINE_MAX
+    )) {
       lines.push(`   ${line}`);
     }
   }
@@ -472,12 +486,17 @@ const recoverAgent = (
   deps: BabysitDeps,
   ctx: AgentTickContext
 ): RecoveryHistoryEntry | null => {
-  const decision: RecoveryDecision = decideRecovery(verdict, ctx.history, info.agent, {
-    confidence: config.confidence,
-    cooldownMs: config.cooldownMs,
-    maxRecoveries: config.maxRecoveries,
-    nowMs: ctx.nowMs,
-  });
+  const decision: RecoveryDecision = decideRecovery(
+    verdict,
+    ctx.history,
+    info.agent,
+    {
+      confidence: config.confidence,
+      cooldownMs: config.cooldownMs,
+      maxRecoveries: config.maxRecoveries,
+      nowMs: ctx.nowMs,
+    }
+  );
   const action = executeRecovery(
     decision,
     buildRecoveryDeps(info, deps, config.logFile),
@@ -512,7 +531,8 @@ const processAgent = async (
   }
   const paneHash = hashPane(paneText);
   const prev =
-    states.get(info.agent) ?? initLivenessState(info.agent, ctx.nowMs, paneHash);
+    states.get(info.agent) ??
+    initLivenessState(info.agent, ctx.nowMs, paneHash);
   const { state, liveness } = updateLiveness(
     prev,
     { agent: info.agent, lastEventTs: lastEventTs(events), paneHash },
@@ -573,7 +593,9 @@ const processAgent = async (
   const recovered = Boolean(action) && !config.dryRun;
   return {
     ...base,
-    history: recovered ? [...ctx.history, action as RecoveryHistoryEntry] : ctx.history,
+    history: recovered
+      ? [...ctx.history, action as RecoveryHistoryEntry]
+      : ctx.history,
     llmTokens,
     recoveries: ctx.recoveries + (recovered ? 1 : 0),
   };
@@ -689,7 +711,10 @@ export const babysitTick = async (
 };
 
 const tmux = (args: string[]): string => {
-  const result = spawnSync(["tmux", ...args], { stderr: "ignore", stdout: "pipe" });
+  const result = spawnSync(["tmux", ...args], {
+    stderr: "ignore",
+    stdout: "pipe",
+  });
   return decode(result.stdout);
 };
 
@@ -723,6 +748,55 @@ export const readBridgeCounts = (transcriptPath?: string): BridgeCounts => {
   return counts;
 };
 
+// Persist run-state so cumulative stats survive a babysitter respawn.
+export const loadBabysitState = (
+  stateFile?: string
+): BabysitRunState | undefined => {
+  if (!stateFile) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(
+      readFileSync(stateFile, "utf8")
+    ) as Partial<BabysitRunState>;
+    const stats = parsed.stats;
+    if (!stats) {
+      return undefined;
+    }
+    return {
+      history: Array.isArray(parsed.history) ? parsed.history : [],
+      llmTokens: typeof parsed.llmTokens === "number" ? parsed.llmTokens : 0,
+      recoveries: typeof parsed.recoveries === "number" ? parsed.recoveries : 0,
+      stats: {
+        activeMs: stats.activeMs ?? {},
+        humanIdleMs: stats.humanIdleMs ?? 0,
+        idleMs: stats.idleMs ?? {},
+      },
+      summary: typeof parsed.summary === "string" ? parsed.summary : "",
+      summaryTick:
+        typeof parsed.summaryTick === "number" ? parsed.summaryTick : -1,
+      tick: typeof parsed.tick === "number" ? parsed.tick : 0,
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+export const saveBabysitState = (
+  stateFile: string | undefined,
+  state: BabysitRunState
+): void => {
+  if (!stateFile) {
+    return;
+  }
+  try {
+    mkdirSync(dirname(stateFile), { recursive: true });
+    writeFileSync(stateFile, JSON.stringify(state), "utf8");
+  } catch {
+    // Best-effort persistence.
+  }
+};
+
 export const defaultBabysitDeps = (): BabysitDeps => ({
   appendLog: (file, record) => {
     mkdirSync(dirname(file), { recursive: true });
@@ -730,6 +804,7 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
   },
   capturePane: (pane) => tmux(["capture-pane", "-p", "-t", pane]),
   judge: (req) => judgeAgent(req),
+  loadState: (stateFile) => loadBabysitState(stateFile),
   now: () => Date.now(),
   readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
   readHooks: (file) => {
@@ -758,6 +833,7 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
   respawnPane: (pane) => {
     spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });
   },
+  saveState: (stateFile, state) => saveBabysitState(stateFile, state),
   sendKeys: (pane, keys) => {
     spawnSync(["tmux", "send-keys", "-t", pane, ...keys], { stderr: "ignore" });
   },
@@ -782,7 +858,8 @@ const envSeconds = (
 ): number => {
   const raw = env[key];
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-  const seconds = Number.isInteger(parsed) && parsed > 0 ? parsed : fallbackSeconds;
+  const seconds =
+    Number.isInteger(parsed) && parsed > 0 ? parsed : fallbackSeconds;
   return seconds * MS_PER_SECOND;
 };
 
@@ -811,7 +888,9 @@ const modelSizeGb = (model: string): number | undefined => {
       spawnSync(["du", "-sm", dir], { stderr: "ignore", stdout: "pipe" }).stdout
     );
     const mb = Number.parseInt(out.trim().split(WHITESPACE_RE)[0] ?? "", 10);
-    return Number.isFinite(mb) && mb > 0 ? Math.round(mb / MB_PER_GB) : undefined;
+    return Number.isFinite(mb) && mb > 0
+      ? Math.round(mb / MB_PER_GB)
+      : undefined;
   } catch {
     return undefined;
   }
@@ -859,17 +938,24 @@ export const resolveBabysitConfig = (
   return {
     agents,
     confidence: envConfidence(env),
-    cooldownMs: envSeconds(env, "LOOP_BABYSIT_COOLDOWN", DEFAULT_BABYSIT_COOLDOWN_SECONDS),
+    cooldownMs: envSeconds(
+      env,
+      "LOOP_BABYSIT_COOLDOWN",
+      DEFAULT_BABYSIT_COOLDOWN_SECONDS
+    ),
     createdAt: manifest?.createdAt,
     dryRun: env.LOOP_BABYSIT_DRY_RUN === "1",
     idleMs: envSeconds(env, "LOOP_BABYSIT_IDLE", DEFAULT_BABYSIT_IDLE_SECONDS),
     logFile: join(storage.runDir, "babysitter.jsonl"),
     maxRecoveries:
-      Number.isInteger(maxRaw) && maxRaw > 0 ? maxRaw : DEFAULT_BABYSIT_MAX_RECOVERIES,
+      Number.isInteger(maxRaw) && maxRaw > 0
+        ? maxRaw
+        : DEFAULT_BABYSIT_MAX_RECOVERIES,
     model,
     modelSizeGb: modelSizeGb(model),
     runId,
     session,
+    stateFile: join(storage.runDir, "babysitter-state.json"),
     tickMs: envSeconds(env, "LOOP_BABYSIT_TICK", DEFAULT_BABYSIT_TICK_SECONDS),
     transcriptPath: join(storage.runDir, "transcript.jsonl"),
     url: env.LOOP_BABYSIT_URL || DEFAULT_BABYSIT_URL,
@@ -882,10 +968,11 @@ export const runBabysitter = async (
   deps: BabysitDeps = defaultBabysitDeps()
 ): Promise<void> => {
   const states = new Map<Agent, AgentLivenessState>();
-  let runState = freshRunState();
+  let runState = deps.loadState(config.stateFile) ?? freshRunState();
   for (;;) {
     const result = await babysitTick(states, config, deps, runState);
     runState = result.runState;
+    deps.saveState(config.stateFile, runState);
     await deps.sleep(config.tickMs);
   }
 };
