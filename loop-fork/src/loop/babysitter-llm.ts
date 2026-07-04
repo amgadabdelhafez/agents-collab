@@ -4,6 +4,8 @@ import type {
   JudgeFailureReason,
   JudgeOutcome,
   JudgeRequest,
+  SummaryRequest,
+  SummaryResult,
 } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -96,6 +98,18 @@ const extractMessageContent = (payload: unknown): string | null => {
   }
   const content = message.content;
   return typeof content === "string" ? content : null;
+};
+
+const extractTokens = (payload: unknown): number => {
+  if (!isRecord(payload)) {
+    return 0;
+  }
+  const usage = payload.usage;
+  if (!isRecord(usage)) {
+    return 0;
+  }
+  const total = usage.total_tokens ?? usage.completion_tokens;
+  return typeof total === "number" ? total : 0;
 };
 
 const stripThinkBlocks = (text: string): string =>
@@ -252,5 +266,70 @@ export const judgeAgent = async (
     return fallbackOutcome("malformed");
   }
 
-  return { ok: true, verdict };
+  return { ok: true, tokens: extractTokens(payload), verdict };
+};
+
+const SUMMARY_SYSTEM_PROMPT = [
+  "You are observing a live pair-programming session between AI coding agents.",
+  "In 3-4 short plain-text lines (no markdown, no preamble), summarize what the",
+  "session is about and the concrete progress so far. Be specific about the code",
+  "and tasks. Do not describe the agents' idle/active status.",
+].join(" ");
+
+const SUMMARY_MAX_TOKENS = 2000;
+const SUMMARY_PANE_CHARS = 1500;
+const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
+
+const buildSummaryPrompt = (req: SummaryRequest): string =>
+  req.agents
+    .map((a) =>
+      [
+        `## ${a.agent}`,
+        `recent actions: ${a.lastActions.slice(-8).join(" | ") || "—"}`,
+        "pane:",
+        a.paneText.slice(-SUMMARY_PANE_CHARS),
+      ].join("\n")
+    )
+    .join("\n\n");
+
+// Ask the local LLM for a short natural-language session summary.
+export const summarizeSession = async (
+  req: SummaryRequest,
+  deps?: JudgeDeps
+): Promise<SummaryResult> => {
+  const fetchFn = deps?.fetchFn ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  );
+  try {
+    const response = await fetchFn(`${req.url}${CHAT_COMPLETIONS_PATH}`, {
+      body: JSON.stringify({
+        max_tokens: SUMMARY_MAX_TOKENS,
+        messages: [
+          { content: SUMMARY_SYSTEM_PROMPT, role: "system" },
+          { content: buildSummaryPrompt(req), role: "user" },
+        ],
+        model: req.model,
+        temperature: TEMPERATURE,
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { text: "", tokens: 0 };
+    }
+    const payload = await response.json();
+    const content = extractMessageContent(payload) ?? "";
+    return {
+      text: content.replace(THINK_BLOCK_RE, "").trim(),
+      tokens: extractTokens(payload),
+    };
+  } catch {
+    return { text: "", tokens: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
 };

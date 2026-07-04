@@ -146,8 +146,31 @@ export interface JudgeRequest {
 export type JudgeFailureReason = "malformed" | "timeout" | "unreachable";
 
 export type JudgeOutcome =
-  | { ok: true; verdict: BabysitterVerdict }
-  | { fallback: BabysitterVerdict; ok: false; reason: JudgeFailureReason };
+  | { ok: true; tokens?: number; verdict: BabysitterVerdict }
+  | {
+      fallback: BabysitterVerdict;
+      ok: false;
+      reason: JudgeFailureReason;
+      tokens?: number;
+    };
+
+// Local-LLM session summary (a few lines describing the session + progress).
+export interface SummaryAgentContext {
+  agent: Agent;
+  lastActions: string[];
+  paneText: string;
+}
+
+export interface SummaryRequest {
+  agents: SummaryAgentContext[];
+  model: string;
+  url: string;
+}
+
+export interface SummaryResult {
+  text: string;
+  tokens: number;
+}
 
 export interface Options {
   agent: Agent;

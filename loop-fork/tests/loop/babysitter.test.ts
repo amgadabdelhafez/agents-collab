@@ -3,6 +3,7 @@ import {
   babysitTick,
   type BabysitConfig,
   type BabysitDeps,
+  freshRunState,
 } from "../../src/loop/babysitter";
 import type {
   Agent,
@@ -50,6 +51,7 @@ const makeDeps = (
     return Promise.resolve(outcome);
   },
   now: () => clock.ms,
+  readBridge: () => ({}),
   readHooks: () => [],
   readUsage: () => ({
     cacheCreateTokens: 0,
@@ -70,6 +72,7 @@ const makeDeps = (
   sendKeys: (pane, keys) => spies.sends.push([pane, ...keys]),
   sendText: (_pane, text) => spies.texts.push(text),
   sleep: () => Promise.resolve(),
+  summarize: () => Promise.resolve({ text: "", tokens: 0 }),
 });
 
 const freshSpies = (): Spies => ({
@@ -93,9 +96,9 @@ const runToSuspect = async (
   clock: { ms: number }
 ) => {
   const states = new Map<Agent, AgentLivenessState>();
-  await babysitTick(states, [], config, deps);
+  const first = await babysitTick(states, config, deps);
   clock.ms = START_MS + 2 * IDLE_MS;
-  return babysitTick(states, [], config, deps);
+  return babysitTick(states, config, deps, first.runState);
 };
 
 test("suspect + stuck in dry-run: judges and decides but executes nothing", async () => {
@@ -107,7 +110,7 @@ test("suspect + stuck in dry-run: judges and decides but executes nothing", asyn
   expect(spies.judged).toBe(1);
   expect(spies.sends).toHaveLength(0);
   expect(spies.respawns).toHaveLength(0);
-  expect(result.history).toHaveLength(0); // dry-run does not record history
+  expect(result.runState.history).toHaveLength(0); // dry-run does not record history
   expect(spies.logs.some((r) => (r as { kind: string }).kind === "decision")).toBe(true);
 });
 
@@ -119,8 +122,8 @@ test("suspect + stuck live: executes the first ladder rung and records history",
 
   // answer-prompt rung => a single Enter keystroke to the agent pane
   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
-  expect(result.history).toHaveLength(1);
-  expect(result.history[0].level).toBe("answer-prompt");
+  expect(result.runState.history).toHaveLength(1);
+  expect(result.runState.history[0].level).toBe("answer-prompt");
 });
 
 test("LLM unreachable suppresses recovery and flags the board", async () => {
@@ -149,9 +152,9 @@ test("board labels an agent [thinking] while its pane is animating", async () =>
     capturePane: () => `frame ${frame++}`, // pane changes every tick
   };
   const states = new Map<Agent, AgentLivenessState>();
-  await babysitTick(states, [], baseConfig(), deps);
+  await babysitTick(states, baseConfig(), deps);
   clock.ms = START_MS + 2 * IDLE_MS;
-  const result = await babysitTick(states, [], baseConfig(), deps);
+  const result = await babysitTick(states, baseConfig(), deps);
   expect(result.board).toContain("thinking");
 });
 
@@ -165,10 +168,10 @@ test("board labels an agent [idle] once its pane is frozen", async () => {
   };
   const deps = makeDeps(working, clock, spies);
   const states = new Map<Agent, AgentLivenessState>();
-  await babysitTick(states, [], baseConfig(), deps); // seed
+  await babysitTick(states, baseConfig(), deps); // seed
   // advance past a tick but under the idle threshold: frozen but not yet suspect
   clock.ms = START_MS + baseConfig().tickMs + 1;
-  const result = await babysitTick(states, [], baseConfig(), deps);
+  const result = await babysitTick(states, baseConfig(), deps);
   expect(result.board).toContain("idle");
 });
 
@@ -184,7 +187,7 @@ test("board uses the agent's live pane context % when present", async () => {
     capturePane: () => "Opus 4.8 | ctx: 61% | effort: high",
   };
   const states = new Map<Agent, AgentLivenessState>();
-  const result = await babysitTick(states, [], baseConfig(), deps);
+  const result = await babysitTick(states, baseConfig(), deps);
   expect(result.board).toContain("61%");
 });
 
@@ -197,7 +200,7 @@ test("observed progress clears the agent's recovery history", async () => {
     { agent: "claude", level: "answer-prompt", ts: new Date(START_MS).toISOString() },
   ];
   // First tick: agent is not yet suspect (pane just seen) => progress path.
-  const result = await babysitTick(states, seeded, baseConfig(), deps);
-  expect(result.history).toHaveLength(0);
+  const result = await babysitTick(states, baseConfig(), deps, { ...freshRunState(), history: seeded });
+  expect(result.runState.history).toHaveLength(0);
   expect(spies.judged).toBe(0);
 });

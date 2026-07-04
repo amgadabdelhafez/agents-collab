@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "bun";
 import { initLivenessState, updateLiveness } from "./babysitter-detect";
-import { judgeAgent } from "./babysitter-llm";
+import { judgeAgent, summarizeSession } from "./babysitter-llm";
 import { decideRecovery, executeRecovery } from "./babysitter-recover";
 import {
   DEFAULT_BABYSIT_CONFIDENCE,
@@ -28,6 +29,9 @@ import type {
   JudgeRequest,
   RecoveryDecision,
   RecoveryHistoryEntry,
+  SummaryAgentContext,
+  SummaryRequest,
+  SummaryResult,
 } from "./types";
 
 export const BABYSIT_SUBCOMMAND = "__babysit";
@@ -53,6 +57,10 @@ export interface BabysitConfig {
   // Run manifest creation time, for session uptime.
   createdAt?: string;
   dryRun: boolean;
+  // On-disk size (GB) of the local LLM, shown in the footer.
+  modelSizeGb?: number;
+  // Path to the run transcript (bridge messages between agents).
+  transcriptPath?: string;
   idleMs: number;
   logFile: string;
   maxRecoveries: number;
@@ -63,11 +71,15 @@ export interface BabysitConfig {
   url: string;
 }
 
+// Per-agent bridge message counts, keyed by sender then recipient.
+export type BridgeCounts = Record<string, Record<string, number>>;
+
 export interface BabysitDeps {
   appendLog: (file: string, record: unknown) => void;
   capturePane: (pane: string) => string;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
   now: () => number;
+  readBridge: (transcriptPath?: string) => BridgeCounts;
   readHooks: (file: string) => HookEvent[];
   readUsage: (
     agent: Agent,
@@ -79,13 +91,41 @@ export interface BabysitDeps {
   sendKeys: (pane: string, keys: string[]) => void;
   sendText: (pane: string, text: string) => void;
   sleep: (ms: number) => Promise<void>;
+  summarize: (req: SummaryRequest) => Promise<SummaryResult>;
 }
+
+// Cumulative, observed-since-start time budget per agent + both-idle time.
+export interface SessionStats {
+  activeMs: Record<string, number>;
+  humanIdleMs: number;
+  idleMs: Record<string, number>;
+}
+
+// State the babysitter carries across ticks.
+export interface BabysitRunState {
+  history: RecoveryHistoryEntry[];
+  llmTokens: number;
+  recoveries: number;
+  stats: SessionStats;
+  summary: string;
+  summaryTick: number;
+  tick: number;
+}
+
+export const freshRunState = (): BabysitRunState => ({
+  history: [],
+  llmTokens: 0,
+  recoveries: 0,
+  stats: { activeMs: {}, humanIdleMs: 0, idleMs: {} },
+  summary: "",
+  summaryTick: -1,
+  tick: 0,
+});
 
 export interface BabysitTickResult {
   board: string;
-  history: RecoveryHistoryEntry[];
   llmOffline: boolean;
-  recoveries: number;
+  runState: BabysitRunState;
   states: Map<Agent, AgentLivenessState>;
 }
 
@@ -151,13 +191,6 @@ const fmtTokens = (n: number): string => {
   return String(n);
 };
 
-const activeMs = (usage: AgentUsage): number => {
-  if (!(usage.firstTs && usage.lastTs)) {
-    return Number.NaN;
-  }
-  return Date.parse(usage.lastTs) - Date.parse(usage.firstTs);
-};
-
 const ANSI = {
   cyan: "\x1b[36m",
   dim: "\x1b[2m",
@@ -173,7 +206,12 @@ const MS_PER_HOUR = 3_600_000;
 const paint = (code: string, text: string): string =>
   `${code}${text}${ANSI.reset}`;
 const cell = (text: string, width: number): string => text.padEnd(width);
-const fmtClock = (iso: string): string => iso.slice(11, 19);
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+// Local wall-clock time from epoch ms.
+const fmtClock = (nowMs: number): string => {
+  const d = new Date(nowMs);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+};
 
 const CLAUDE_PREFIX_RE = /^claude-/;
 const shortModel = (model?: string): string =>
@@ -189,14 +227,15 @@ const contextCell = (u: AgentUsage): string =>
     ? `${fmtTokens(u.contextTokens)}/${fmtTokens(u.contextWindow)} ${contextPct(u)}%`
     : "—";
 
+const eventLabel = (event: HookEvent): string => {
+  const label = event.tool ?? event.event;
+  return event.detail ? `${label} ${event.detail}` : label;
+};
+
 // Most recent hook event as a short "what is it doing" string.
 const lastActionOf = (events: HookEvent[]): string => {
   const event = events.at(-1);
-  if (!event) {
-    return "—";
-  }
-  const label = event.tool ?? event.event;
-  return event.detail ? `${label} ${event.detail}` : label;
+  return event ? eventLabel(event) : "—";
 };
 
 const stateColor = (state: string): string => {
@@ -221,15 +260,21 @@ interface AgentRow {
   errors: number;
   lastAction: string;
   liveness: AgentLiveness;
-  turnEnded: boolean;
+  thinking: boolean;
   usage: AgentUsage;
   verdict?: BabysitterVerdict;
 }
 
 interface BoardMeta {
+  bridge: BridgeCounts;
   llmOffline: boolean;
-  nowIso: string;
+  llmTokens: number;
+  modelName: string;
+  modelSizeGb?: number;
+  nowMs: number;
   recoveries: number;
+  stats: SessionStats;
+  summary: string;
   tickMs: number;
   uptimeMs: number;
 }
@@ -239,11 +284,13 @@ const COLUMNS: [string, number][] = [
   ["MODEL", 10],
   ["STATE", 12],
   ["FOR", 6],
-  ["ACTIVE", 7],
+  ["ACTIVE", 6],
+  ["IDLE", 6],
   ["CTX", 13],
   ["TOK", 7],
   ["COST", 8],
   ["MSGS", 5],
+  ["BRIDGE", 9],
 ];
 
 const headerRow = paint(
@@ -251,15 +298,27 @@ const headerRow = paint(
   ` ${COLUMNS.map(([label, width]) => cell(label, width)).join(" ")} LAST`
 );
 
-const renderRow = (row: AgentRow, tickMs: number): string => {
-  // Pane changed within the last tick => the TUI is animating (thinking);
-  // frozen past a tick, or the turn has ended, => genuinely idle.
-  const thinking =
-    !row.turnEnded &&
-    row.liveness.paneIdleMs < tickMs &&
-    !row.liveness.suspect;
-  const state = row.verdict?.state ?? (thinking ? "thinking" : "idle");
-  const forMs = thinking
+const rowState = (row: AgentRow): string =>
+  row.verdict?.state ?? (row.thinking ? "thinking" : "idle");
+
+const bridgeFor = (
+  agent: string,
+  bridge: BridgeCounts
+): { recv: number; sent: number } => {
+  const sent = Object.values(bridge[agent] ?? {}).reduce((a, b) => a + b, 0);
+  let recv = 0;
+  for (const [from, tos] of Object.entries(bridge)) {
+    if (from !== agent) {
+      recv += tos[agent] ?? 0;
+    }
+  }
+  return { recv, sent };
+};
+
+const renderRow = (row: AgentRow, meta: BoardMeta): string => {
+  const agent = row.liveness.agent;
+  const state = rowState(row);
+  const forMs = row.thinking
     ? row.liveness.lastEventAgeMs
     : row.liveness.paneIdleMs;
   const ctxText = contextCell(row.usage);
@@ -269,6 +328,7 @@ const renderRow = (row: AgentRow, tickMs: number): string => {
       : cell(ctxText, 13);
   const tok = row.usage.totalTokens > 0 ? fmtTokens(row.usage.totalTokens) : "—";
   const cost = row.usage.costUsd > 0 ? `$${row.usage.costUsd.toFixed(2)}` : "—";
+  const bridge = bridgeFor(agent, meta.bridge);
   const detail = truncate(
     row.lastAction +
       (row.errors > 0 ? ` (err ${row.errors})` : "") +
@@ -276,17 +336,28 @@ const renderRow = (row: AgentRow, tickMs: number): string => {
     LAST_ACTION_WIDTH
   );
   return ` ${[
-    cell(row.liveness.agent, 7),
+    cell(agent, 7),
     cell(shortModel(row.usage.model), 10),
     paint(stateColor(state), cell(`● ${state}`, 12)),
     cell(fmtDuration(forMs), 6),
-    cell(fmtDuration(activeMs(row.usage)), 7),
+    cell(fmtDuration(meta.stats.activeMs[agent] ?? 0), 6),
+    cell(fmtDuration(meta.stats.idleMs[agent] ?? 0), 6),
     ctx,
     cell(tok, 7),
     cell(cost, 8),
     cell(String(row.usage.messages), 5),
+    cell(`→${bridge.sent} ←${bridge.recv}`, 9),
     detail,
   ].join(" ")}`;
+};
+
+const codexClaudeRatio = (stats: SessionStats): string => {
+  const claude = stats.activeMs.claude ?? 0;
+  const codex = stats.activeMs.codex ?? 0;
+  if (claude === 0) {
+    return "—";
+  }
+  return `${(codex / claude).toFixed(1)}×`;
 };
 
 const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
@@ -299,32 +370,80 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   const human = found.length
     ? Math.min(...found.map((r) => r.usage.humanMessages))
     : 0;
-  const activeSpans = rows
-    .map((r) => activeMs(r.usage))
-    .filter((ms) => Number.isFinite(ms));
-  const maxActive = activeSpans.length > 0 ? Math.max(...activeSpans) : 0;
-  const perHr = maxActive > 0 ? totalCost / (maxActive / MS_PER_HOUR) : 0;
+  const perHr =
+    meta.uptimeMs > 0 ? totalCost / (meta.uptimeMs / MS_PER_HOUR) : 0;
   const errorTotal = rows.reduce((sum, r) => sum + r.errors, 0);
   const parts = [
     paint(ANSI.cyan, "babysitter"),
-    fmtClock(meta.nowIso),
+    fmtClock(meta.nowMs),
     ...(Number.isFinite(meta.uptimeMs)
-      ? [`up ${fmtDuration(meta.uptimeMs)}`]
+      ? [`wall ${fmtDuration(meta.uptimeMs)}`]
       : []),
     `Σ $${totalCost.toFixed(2)}${perHr > 0 ? ` ($${perHr.toFixed(0)}/hr)` : ""}`,
     `human ${human}`,
-    `recoveries ${meta.recoveries}`,
+    `recov ${meta.recoveries}`,
     ...(errorTotal > 0 ? [paint(ANSI.red, `errors ${errorTotal}`)] : []),
     meta.llmOffline ? paint(ANSI.red, "qwen ✗") : paint(ANSI.green, "qwen ✓"),
   ];
   return ` ${parts.join(" · ")}`;
 };
 
+const SUMMARY_LINE_MAX = 4;
+const SUMMARY_LINE_WIDTH = 180;
+const SPACE_RE = /\s+/;
+
+// Word-wrap a paragraph to `width`-char lines, capped at `maxLines`.
+const wrapText = (text: string, width: number, maxLines: number): string[] => {
+  const lines: string[] = [];
+  let current = "";
+  for (const word of text.split(SPACE_RE)) {
+    if (!word) {
+      continue;
+    }
+    if (current && current.length + word.length + 1 > width) {
+      lines.push(current);
+      current = word;
+      if (lines.length >= maxLines) {
+        return lines;
+      }
+    } else {
+      current = current ? `${current} ${word}` : word;
+    }
+  }
+  if (current && lines.length < maxLines) {
+    lines.push(current);
+  }
+  return lines;
+};
+
+const renderFooter = (meta: BoardMeta): string[] => {
+  const size = meta.modelSizeGb ? ` (${meta.modelSizeGb.toFixed(0)}GB)` : "";
+  const lines = [
+    paint(
+      ANSI.dim,
+      ` idle-both ${fmtDuration(meta.stats.humanIdleMs)} · codex:claude ${codexClaudeRatio(meta.stats)} · local ${meta.modelName}${size} · llm ${fmtTokens(meta.llmTokens)} tok`
+    ),
+  ];
+  const summaryText = meta.summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+  if (summaryText) {
+    lines.push(paint(ANSI.dim, " ── summary ──"));
+    for (const line of wrapText(summaryText, SUMMARY_LINE_WIDTH, SUMMARY_LINE_MAX)) {
+      lines.push(`   ${line}`);
+    }
+  }
+  return lines;
+};
+
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string =>
   [
     renderSummaryLine(rows, meta),
     headerRow,
-    ...rows.map((row) => renderRow(row, meta.tickMs)),
+    ...rows.map((row) => renderRow(row, meta)),
+    ...renderFooter(meta),
   ].join("\n");
 
 interface AgentTickContext {
@@ -334,11 +453,15 @@ interface AgentTickContext {
   recoveries: number;
 }
 
+const SUMMARY_ACTIONS = 8;
+
 interface AgentTickResult {
   history: RecoveryHistoryEntry[];
   llmOffline: boolean;
+  llmTokens: number;
   recoveries: number;
   row: AgentRow;
+  summaryCtx: SummaryAgentContext;
 }
 
 // Run the recovery ladder for a suspect agent; returns the taken action (if any).
@@ -400,21 +523,35 @@ const processAgent = async (
 
   const errors = events.filter((event) => event.error === true).length;
   const turnEnded = TURN_END_EVENTS.has(events.at(-1)?.event ?? "");
+  // Pane changed within the last tick => the TUI is animating (thinking);
+  // frozen past a tick, or the turn ended, => genuinely idle.
+  const thinking =
+    !turnEnded && liveness.paneIdleMs < config.tickMs && !liveness.suspect;
   const row: AgentRow = {
     action: null,
     errors,
     lastAction: lastActionOf(events),
     liveness,
-    turnEnded,
+    thinking,
     usage,
+  };
+  const summaryCtx: SummaryAgentContext = {
+    agent: info.agent,
+    lastActions: events.slice(-SUMMARY_ACTIONS).map(eventLabel),
+    paneText,
+  };
+  const base = {
+    llmOffline: false,
+    llmTokens: 0,
+    recoveries: ctx.recoveries,
+    row,
+    summaryCtx,
   };
 
   if (!liveness.suspect) {
     return {
+      ...base,
       history: ctx.history.filter((entry) => entry.agent !== info.agent),
-      llmOffline: false,
-      recoveries: ctx.recoveries,
-      row,
     };
   }
 
@@ -425,38 +562,74 @@ const processAgent = async (
     paneText,
     url: config.url,
   });
+  const llmTokens = outcome.tokens ?? 0;
   row.verdict = outcome.ok ? outcome.verdict : outcome.fallback;
   if (!outcome.ok && outcome.reason === "unreachable") {
-    return { history: ctx.history, llmOffline: true, recoveries: ctx.recoveries, row };
+    return { ...base, history: ctx.history, llmOffline: true, llmTokens };
   }
 
   const action = recoverAgent(info, row.verdict, config, deps, ctx);
   row.action = action;
-  if (action && !config.dryRun) {
-    return {
-      history: [...ctx.history, action],
-      llmOffline: false,
-      recoveries: ctx.recoveries + 1,
-      row,
-    };
-  }
-  return { history: ctx.history, llmOffline: false, recoveries: ctx.recoveries, row };
+  const recovered = Boolean(action) && !config.dryRun;
+  return {
+    ...base,
+    history: recovered ? [...ctx.history, action as RecoveryHistoryEntry] : ctx.history,
+    llmTokens,
+    recoveries: ctx.recoveries + (recovered ? 1 : 0),
+  };
 };
 
-// One control-loop tick: detect → (judge suspects) → recover → render + log.
+const SUMMARY_REFRESH_TICKS = 20;
+const LOCAL_MODEL_PREFIX_RE = /^[^/]+\//;
+const shortLocalModel = (model: string): string =>
+  model.replace(LOCAL_MODEL_PREFIX_RE, "");
+
+// Add tickMs to each agent's active/idle budget; both idle => human-idle time.
+const accumulateStats = (
+  stats: SessionStats,
+  rows: AgentRow[],
+  tickMs: number
+): void => {
+  let anyActive = false;
+  for (const row of rows) {
+    const agent = row.liveness.agent;
+    const active = row.thinking || row.verdict?.state === "working";
+    if (active) {
+      stats.activeMs[agent] = (stats.activeMs[agent] ?? 0) + tickMs;
+      anyActive = true;
+    } else {
+      stats.idleMs[agent] = (stats.idleMs[agent] ?? 0) + tickMs;
+    }
+  }
+  if (!anyActive) {
+    stats.humanIdleMs += tickMs;
+  }
+};
+
+const cloneStats = (stats: SessionStats): SessionStats => ({
+  activeMs: { ...stats.activeMs },
+  humanIdleMs: stats.humanIdleMs,
+  idleMs: { ...stats.idleMs },
+});
+
+// One control-loop tick: detect → (judge suspects) → recover → summarize → render.
 export const babysitTick = async (
   states: Map<Agent, AgentLivenessState>,
-  historyIn: RecoveryHistoryEntry[],
   config: BabysitConfig,
   deps: BabysitDeps,
-  recoveriesIn = 0
+  runStateIn: BabysitRunState = freshRunState()
 ): Promise<BabysitTickResult> => {
   const nowMs = deps.now();
   const nowIso = new Date(nowMs).toISOString();
-  let history = historyIn;
-  let recoveries = recoveriesIn;
-  const rows: AgentRow[] = [];
+  const runState: BabysitRunState = {
+    ...runStateIn,
+    stats: cloneStats(runStateIn.stats),
+    tick: runStateIn.tick + 1,
+  };
+  let { history, recoveries, llmTokens } = runState;
   let llmOffline = false;
+  const rows: AgentRow[] = [];
+  const summaryCtxs: SummaryAgentContext[] = [];
 
   for (const info of config.agents) {
     const result = await processAgent(info, states, config, deps, {
@@ -467,27 +640,87 @@ export const babysitTick = async (
     });
     history = result.history;
     recoveries = result.recoveries;
+    llmTokens += result.llmTokens;
     llmOffline = llmOffline || result.llmOffline;
     rows.push(result.row);
+    summaryCtxs.push(result.summaryCtx);
   }
+
+  accumulateStats(runState.stats, rows, config.tickMs);
+
+  if (
+    runState.summaryTick < 0 ||
+    runState.tick - runState.summaryTick >= SUMMARY_REFRESH_TICKS
+  ) {
+    const summary = await deps.summarize({
+      agents: summaryCtxs,
+      model: config.model,
+      url: config.url,
+    });
+    if (summary.text) {
+      runState.summary = summary.text;
+    }
+    llmTokens += summary.tokens;
+    runState.summaryTick = runState.tick;
+  }
+
+  runState.history = history;
+  runState.recoveries = recoveries;
+  runState.llmTokens = llmTokens;
 
   const uptimeMs = config.createdAt
     ? nowMs - Date.parse(config.createdAt)
     : Number.NaN;
   const board = renderBoard(rows, {
+    bridge: deps.readBridge(config.transcriptPath),
     llmOffline,
-    nowIso,
+    llmTokens,
+    modelName: shortLocalModel(config.model),
+    modelSizeGb: config.modelSizeGb,
+    nowMs,
     recoveries,
+    stats: runState.stats,
+    summary: runState.summary,
     tickMs: config.tickMs,
     uptimeMs,
   });
   deps.render(board);
-  return { board, history, llmOffline, recoveries, states };
+  return { board, llmOffline, runState, states };
 };
 
 const tmux = (args: string[]): string => {
   const result = spawnSync(["tmux", ...args], { stderr: "ignore", stdout: "pipe" });
   return decode(result.stdout);
+};
+
+// Tally bridge messages from the run transcript, keyed by sender then recipient.
+export const readBridgeCounts = (transcriptPath?: string): BridgeCounts => {
+  const counts: BridgeCounts = {};
+  if (!transcriptPath) {
+    return counts;
+  }
+  try {
+    for (const line of readFileSync(transcriptPath, "utf8").split("\n")) {
+      if (!line.trim()) {
+        continue;
+      }
+      let record: Record<string, unknown>;
+      try {
+        record = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const from = record.from;
+      const to = record.to;
+      if (typeof from === "string" && typeof to === "string") {
+        counts[from] ??= {};
+        counts[from][to] = (counts[from][to] ?? 0) + 1;
+      }
+    }
+  } catch {
+    // No transcript yet.
+  }
+  return counts;
 };
 
 export const defaultBabysitDeps = (): BabysitDeps => ({
@@ -498,6 +731,7 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
   capturePane: (pane) => tmux(["capture-pane", "-p", "-t", pane]),
   judge: (req) => judgeAgent(req),
   now: () => Date.now(),
+  readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
   readHooks: (file) => {
     try {
       return readFileSync(file, "utf8")
@@ -536,6 +770,7 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
     new Promise((resolve) => {
       setTimeout(resolve, ms);
     }),
+  summarize: (req) => summarizeSession(req),
 });
 
 const MS_PER_SECOND = 1000;
@@ -556,6 +791,30 @@ const envConfidence = (env: NodeJS.ProcessEnv): number => {
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
     ? parsed
     : DEFAULT_BABYSIT_CONFIDENCE;
+};
+
+const MODEL_SLASH_RE = /\//g;
+const WHITESPACE_RE = /\s+/;
+const MB_PER_GB = 1024;
+
+// Best-effort on-disk size (GB) of the local model from the HF cache.
+const modelSizeGb = (model: string): number | undefined => {
+  const dir = join(
+    homedir(),
+    ".cache",
+    "huggingface",
+    "hub",
+    `models--${model.replace(MODEL_SLASH_RE, "--")}`
+  );
+  try {
+    const out = decode(
+      spawnSync(["du", "-sm", dir], { stderr: "ignore", stdout: "pipe" }).stdout
+    );
+    const mb = Number.parseInt(out.trim().split(WHITESPACE_RE)[0] ?? "", 10);
+    return Number.isFinite(mb) && mb > 0 ? Math.round(mb / MB_PER_GB) : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 // Resolve the babysitter config from the run manifest (session + pane agents)
@@ -596,6 +855,7 @@ export const resolveBabysitConfig = (
   addAgent(manifest?.tmuxPaneLeftAgent, 0);
   addAgent(manifest?.tmuxPaneRightAgent, 1);
   const maxRaw = Number.parseInt(env.LOOP_BABYSIT_MAX ?? "", 10);
+  const model = env.LOOP_BABYSIT_MODEL || DEFAULT_BABYSIT_MODEL;
   return {
     agents,
     confidence: envConfidence(env),
@@ -606,10 +866,12 @@ export const resolveBabysitConfig = (
     logFile: join(storage.runDir, "babysitter.jsonl"),
     maxRecoveries:
       Number.isInteger(maxRaw) && maxRaw > 0 ? maxRaw : DEFAULT_BABYSIT_MAX_RECOVERIES,
-    model: env.LOOP_BABYSIT_MODEL || DEFAULT_BABYSIT_MODEL,
+    model,
+    modelSizeGb: modelSizeGb(model),
     runId,
     session,
     tickMs: envSeconds(env, "LOOP_BABYSIT_TICK", DEFAULT_BABYSIT_TICK_SECONDS),
+    transcriptPath: join(storage.runDir, "transcript.jsonl"),
     url: env.LOOP_BABYSIT_URL || DEFAULT_BABYSIT_URL,
   };
 };
@@ -620,12 +882,10 @@ export const runBabysitter = async (
   deps: BabysitDeps = defaultBabysitDeps()
 ): Promise<void> => {
   const states = new Map<Agent, AgentLivenessState>();
-  let history: RecoveryHistoryEntry[] = [];
-  let recoveries = 0;
+  let runState = freshRunState();
   for (;;) {
-    const result = await babysitTick(states, history, config, deps, recoveries);
-    history = result.history;
-    recoveries = result.recoveries;
+    const result = await babysitTick(states, config, deps, runState);
+    runState = result.runState;
     await deps.sleep(config.tickMs);
   }
 };
