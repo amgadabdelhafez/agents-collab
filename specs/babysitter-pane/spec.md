@@ -81,7 +81,11 @@ These map directly to `verify.md`.
 
 ## Open questions
 
-- [ ] Exact Codex hooks config schema/event names in the installed Codex version — confirm against
-      `codex` on this machine during T-02 and pin the emitted events.
+- [x] Exact Codex hooks config schema/event names — RESOLVED (2026-07-04). Codex hooks mirror Claude's:
+      `$CODEX_HOME/hooks.json` = `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"…"}]}],
+      "UserPromptSubmit":[…],"Stop":[…]}}`. Trust is tracked in `config.toml [hooks.state]` via `trusted_hash`;
+      `--dangerously-bypass-hook-trust` skips it. Codex exposes coarse turn-level events (SessionStart /
+      UserPromptSubmit / Stop) — no per-tool event like Claude's PostToolUse — so Codex liveness leans more on
+      pane-hash than hook cadence. The emitter/settings shape is shared between both agents.
 - [ ] Default idle threshold and confidence gate values — start at `idle=120s`, `confidence=0.7`,
       tune during dry-run testing.
