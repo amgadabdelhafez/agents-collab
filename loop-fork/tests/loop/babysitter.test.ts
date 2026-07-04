@@ -261,6 +261,63 @@ test("board flags an agent that is waiting for the human", async () => {
   expect(result.board).toContain("waits you");
 });
 
+const twoAgents = [
+  { agent: "claude" as Agent, hookFile: "claude.jsonl", pane: "s:0.0" },
+  { agent: "codex" as Agent, hookFile: "codex.jsonl", pane: "s:0.1" },
+];
+
+test("a lone idle agent whose peer is active is not 'waiting for you'", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  let frame = 0;
+  const stop: HookEvent = {
+    event: "Stop",
+    ts: new Date(START_MS).toISOString(),
+  };
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    // claude's pane animates (thinking); codex ended its turn (idle).
+    capturePane: (pane) => (pane.endsWith(".0") ? `frame ${frame++}` : "idle"),
+    readHooks: (file) => (file.includes("codex") ? [stop] : []),
+  };
+  const config = baseConfig({ agents: twoAgents, escalateIdleMs: 1000 });
+  const states = new Map<Agent, AgentLivenessState>();
+  const t1 = await babysitTick(states, config, deps);
+  clock.ms += 5000;
+  const t2 = await babysitTick(states, config, deps, t1.runState);
+  clock.ms += 5000;
+  const t3 = await babysitTick(states, config, deps, t2.runState);
+  expect(t3.board).not.toContain("waiting for you");
+  expect(spies.notifies.filter((e) => e.kind === "waiting-human")).toHaveLength(
+    0
+  );
+});
+
+test("both agents idle surfaces the pending question and escalates once", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const stop: HookEvent = {
+    event: "Stop",
+    ts: new Date(START_MS).toISOString(),
+  };
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    capturePane: (pane) =>
+      pane.endsWith(".0") ? "Should I merge this now?" : "done",
+    readHooks: () => [stop],
+  };
+  const config = baseConfig({ agents: twoAgents, escalateIdleMs: 1000 });
+  const states = new Map<Agent, AgentLivenessState>();
+  const t1 = await babysitTick(states, config, deps);
+  clock.ms += 90_000; // past both the display and escalation thresholds
+  const t2 = await babysitTick(states, config, deps, t1.runState);
+  expect(t2.board).toContain("waiting for you");
+  expect(t2.board).toContain("Should I merge this now?");
+  const waits = spies.notifies.filter((e) => e.kind === "waiting-human");
+  expect(waits).toHaveLength(1);
+  expect(waits[0].message).toContain("Should I merge this now?");
+});
+
 test("escalates once when an agent waits for the human past the threshold", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();

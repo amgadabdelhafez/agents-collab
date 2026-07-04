@@ -135,11 +135,13 @@ export interface NotifiedState {
   budget80: boolean;
   budget100: boolean;
   ladder: Record<string, boolean>;
-  waiting: Record<string, boolean>;
+  waitingForYou: boolean;
 }
 
 // State the babysitter carries across ticks.
 export interface BabysitRunState {
+  // Epoch ms both agents became idle together (0 = not both idle right now).
+  bothIdleSince: number;
   history: RecoveryHistoryEntry[];
   llmTokens: number;
   notified: NotifiedState;
@@ -148,18 +150,17 @@ export interface BabysitRunState {
   summary: string;
   summaryTick: number;
   tick: number;
-  // Epoch ms each agent entered the waiting-for-human state (absent = not).
-  waitingSince: Record<string, number>;
 }
 
 const freshNotified = (): NotifiedState => ({
   budget100: false,
   budget80: false,
   ladder: {},
-  waiting: {},
+  waitingForYou: false,
 });
 
 export const freshRunState = (): BabysitRunState => ({
+  bothIdleSince: 0,
   history: [],
   llmTokens: 0,
   notified: freshNotified(),
@@ -168,7 +169,6 @@ export const freshRunState = (): BabysitRunState => ({
   summary: "",
   summaryTick: -1,
   tick: 0,
-  waitingSince: {},
 });
 
 export interface BabysitTickResult {
@@ -254,6 +254,9 @@ const CONTEXT_ALERT_PCT = 80;
 const LAST_ACTION_WIDTH = 46;
 const MS_PER_HOUR = 3_600_000;
 const BUDGET_WARN_FRACTION = 0.8;
+// Only surface "waiting for you" once the pair has been idle together this long,
+// to avoid flicker on the brief both-idle gaps between hand-offs.
+const WAITING_FOR_YOU_DISPLAY_MS = 60_000;
 
 const paint = (code: string, text: string): string =>
   `${code}${text}${ANSI.reset}`;
@@ -307,14 +310,68 @@ const truncate = (text: string, width: number): string =>
 // that keeps repainting (blinking cursor at the prompt) is idle, not thinking.
 const TURN_END_EVENTS = new Set(["Stop", "Notification"]);
 
+// TUI chrome (input box, status line, rules, spinners) — not agent output.
+const PANE_CHROME_RE =
+  /^[❯›•⏺✻✽⎿─]|ctx:|bypass permissions|for agents|gpt-5|opus 4|claude |esc to|tip:|tokens|thinking|brewed|waddling|worked for|working \(|reviewing|\bloop-bridge-/i;
+// Phrasings that signal an agent is handing a decision back to the human.
+const QUESTION_PHRASES = [
+  "let me know",
+  "what's next",
+  "whats next",
+  "which would you",
+  "should i ",
+  "shall i ",
+  "do you want",
+  "would you like",
+  "your call",
+  "waiting for your",
+  "want me to",
+  "how would you like",
+  "please confirm",
+  "up to you",
+];
+const QUESTION_SNIPPET_MAX = 88;
+const QUESTION_SCAN_LINES = 6;
+
+// Best-effort read of a question an agent is putting to the human, from the last
+// few lines of real output in its pane (ignoring the input box / status chrome).
+// Enrichment only — never the trigger — so a false read can't cause a false ping.
+const detectPendingQuestion = (paneText: string): string | undefined => {
+  const lines = paneText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !PANE_CHROME_RE.test(line));
+  for (const line of lines.slice(-QUESTION_SCAN_LINES).reverse()) {
+    const lower = line.toLowerCase();
+    if (
+      line.endsWith("?") ||
+      QUESTION_PHRASES.some((phrase) => lower.includes(phrase))
+    ) {
+      return line.length > QUESTION_SNIPPET_MAX
+        ? `${line.slice(0, QUESTION_SNIPPET_MAX)}…`
+        : line;
+    }
+  }
+  return undefined;
+};
+
 interface AgentRow {
   action: RecoveryHistoryEntry | null;
   errors: number;
   lastAction: string;
   liveness: AgentLiveness;
+  // A question this agent appears to be asking the human (from its pane), if any.
+  pendingQuestion?: string;
   thinking: boolean;
   usage: AgentUsage;
   verdict?: BabysitterVerdict;
+}
+
+// The pair is idle and (probably) needs you: how long, and what was asked.
+interface WaitingForYou {
+  agent?: Agent;
+  ms: number;
+  question?: string;
 }
 
 interface BoardMeta {
@@ -330,8 +387,7 @@ interface BoardMeta {
   summary: string;
   tickMs: number;
   uptimeMs: number;
-  // Per-agent ms in the waiting-for-human state (absent/0 = not waiting).
-  waiting: Record<string, number>;
+  waitingForYou: WaitingForYou;
 }
 
 const COLUMNS: [string, number][] = [
@@ -381,11 +437,9 @@ const stateCell = (state: string): string =>
 const renderRow = (row: AgentRow, meta: BoardMeta): string => {
   const agent = row.liveness.agent;
   const state = rowState(row);
-  const waitingMs = meta.waiting[agent] ?? 0;
-  const activeMs = row.thinking
+  const forMs = row.thinking
     ? row.liveness.lastEventAgeMs
     : row.liveness.paneIdleMs;
-  const forMs = waitingMs > 0 ? waitingMs : activeMs;
   const ctxText = contextCell(row.usage);
   const ctx =
     contextPct(row.usage) > CONTEXT_ALERT_PCT
@@ -450,13 +504,20 @@ const costCell = (
   return text;
 };
 
-// Loud alert(s) for any agent blocked on the human, with how long.
-const waitingAlerts = (waiting: Record<string, number>): string[] =>
-  Object.entries(waiting)
-    .filter(([, ms]) => ms > 0)
-    .map(([agent, ms]) =>
-      paint(ANSI.yellow, `❗ ${agent} waits you ${fmtDuration(ms)}`)
-    );
+// Loud top-line alert when the pair is idle together long enough that it
+// probably needs you — with the pending question when we could read one.
+const waitingForYouAlert = (waiting: WaitingForYou): string[] => {
+  if (waiting.ms < WAITING_FOR_YOU_DISPLAY_MS) {
+    return [];
+  }
+  const asked =
+    waiting.agent && waiting.question
+      ? ` — ${waiting.agent}: "${waiting.question}"`
+      : "";
+  return [
+    paint(ANSI.yellow, `❗ waiting for you ${fmtDuration(waiting.ms)}${asked}`),
+  ];
+};
 
 const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   const totalCost = rows.reduce((sum, r) => sum + r.usage.costUsd, 0);
@@ -482,7 +543,7 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     `recov ${meta.recoveries}`,
     ...(errorTotal > 0 ? [paint(ANSI.red, `errors ${errorTotal}`)] : []),
     meta.llmOffline ? paint(ANSI.red, "qwen ✗") : paint(ANSI.green, "qwen ✓"),
-    ...waitingAlerts(meta.waiting),
+    ...waitingForYouAlert(meta.waitingForYou),
   ];
   return ` ${parts.join(" · ")}`;
 };
@@ -657,6 +718,7 @@ const processAgent = async (
     errors,
     lastAction: lastActionOf(events),
     liveness,
+    pendingQuestion: detectPendingQuestion(paneText),
     thinking,
     usage,
   };
@@ -758,24 +820,26 @@ const LOCAL_MODEL_PREFIX_RE = /^[^/]+\//;
 const shortLocalModel = (model: string): string =>
   model.replace(LOCAL_MODEL_PREFIX_RE, "");
 
+// An agent counts as active when its TUI is animating (thinking) or the judge
+// says it is working; anything else (finished turn, frozen, stuck) is idle.
+const isRowActive = (row: AgentRow): boolean =>
+  row.thinking || row.verdict?.state === "working";
+
 // Add tickMs to each agent's active/idle budget; both idle => human-idle time.
 const accumulateStats = (
   stats: SessionStats,
   rows: AgentRow[],
   tickMs: number
 ): void => {
-  let anyActive = false;
   for (const row of rows) {
     const agent = row.liveness.agent;
-    const active = row.thinking || row.verdict?.state === "working";
-    if (active) {
+    if (isRowActive(row)) {
       stats.activeMs[agent] = (stats.activeMs[agent] ?? 0) + tickMs;
-      anyActive = true;
     } else {
       stats.idleMs[agent] = (stats.idleMs[agent] ?? 0) + tickMs;
     }
   }
-  if (!anyActive) {
+  if (!rows.some(isRowActive)) {
     stats.humanIdleMs += tickMs;
   }
 };
@@ -786,49 +850,52 @@ const cloneStats = (stats: SessionStats): SessionStats => ({
   idleMs: { ...stats.idleMs },
 });
 
-// Track how long each agent has been blocked on the human. Sets a start time
-// when an agent enters waiting-human, clears it (and its sent-alert flag) when
-// it leaves, and returns the current per-agent waiting durations.
-const updateWaiting = (
+// A lone idle agent is usually just waiting on its peer via the bridge; the pair
+// needs the human when BOTH are idle together. Track how long that has held,
+// resetting when either agent goes active, and surface any pending question.
+const updateBothIdle = (
   runState: BabysitRunState,
   rows: AgentRow[],
   nowMs: number
-): Record<string, number> => {
-  const durations: Record<string, number> = {};
-  for (const row of rows) {
-    const agent = row.liveness.agent;
-    if (row.verdict?.state === "waiting-human") {
-      runState.waitingSince[agent] ??= nowMs;
-      durations[agent] = nowMs - runState.waitingSince[agent];
-    } else {
-      delete runState.waitingSince[agent];
-      delete runState.notified.waiting[agent];
-    }
+): WaitingForYou => {
+  if (rows.length === 0 || rows.some(isRowActive)) {
+    runState.bothIdleSince = 0;
+    runState.notified.waitingForYou = false;
+    return { ms: 0 };
   }
-  return durations;
+  if (runState.bothIdleSince === 0) {
+    runState.bothIdleSince = nowMs;
+  }
+  const asking = rows.find((row) => row.pendingQuestion);
+  return {
+    agent: asking?.liveness.agent,
+    ms: nowMs - runState.bothIdleSince,
+    question: asking?.pendingQuestion,
+  };
 };
 
 // Decide what (if anything) to escalate this tick, deduped via runState.notified
 // so each condition alerts once per episode rather than every tick.
 const collectEscalations = (
   runState: BabysitRunState,
-  waiting: Record<string, number>,
+  waiting: WaitingForYou,
   totalCost: number,
   config: BabysitConfig
 ): EscalationEvent[] => {
   const events: EscalationEvent[] = [];
   const { notified } = runState;
-  for (const [agent, ms] of Object.entries(waiting)) {
-    if (ms >= config.escalateIdleMs && !notified.waiting[agent]) {
-      notified.waiting[agent] = true;
-      events.push({
-        agent: agent as Agent,
-        kind: "waiting-human",
-        message: `${agent} has been blocked on you for ${fmtDuration(ms)} (run ${config.runId}).`,
-        priority: "high",
-        title: `${agent} is waiting for you`,
-      });
-    }
+  if (waiting.ms >= config.escalateIdleMs && !notified.waitingForYou) {
+    notified.waitingForYou = true;
+    const asked = waiting.question
+      ? ` ${waiting.agent} asked: "${waiting.question}"`
+      : "";
+    events.push({
+      agent: waiting.agent,
+      kind: "waiting-human",
+      message: `Both agents have been idle for ${fmtDuration(waiting.ms)} (run ${config.runId}).${asked}`,
+      priority: "high",
+      title: "The session is waiting for you",
+    });
   }
   for (const info of config.agents) {
     const used = runState.history.filter(
@@ -888,11 +955,9 @@ export const babysitTick = async (
     notified: {
       ...runStateIn.notified,
       ladder: { ...runStateIn.notified.ladder },
-      waiting: { ...runStateIn.notified.waiting },
     },
     stats: cloneStats(runStateIn.stats),
     tick: runStateIn.tick + 1,
-    waitingSince: { ...runStateIn.waitingSince },
   };
   let { history, recoveries, llmTokens } = runState;
   let llmOffline = false;
@@ -924,10 +989,10 @@ export const babysitTick = async (
   runState.llmTokens = llmTokens;
 
   const totalCost = rows.reduce((sum, row) => sum + row.usage.costUsd, 0);
-  const waiting = updateWaiting(runState, rows, nowMs);
+  const waitingForYou = updateBothIdle(runState, rows, nowMs);
   for (const event of collectEscalations(
     runState,
-    waiting,
+    waitingForYou,
     totalCost,
     config
   )) {
@@ -950,7 +1015,7 @@ export const babysitTick = async (
     summary: runState.summary,
     tickMs: config.tickMs,
     uptimeMs,
-    waiting,
+    waitingForYou,
   });
   deps.render(board);
   return { board, llmOffline, runState, states, summaryCtxs };
@@ -1010,6 +1075,8 @@ export const loadBabysitState = (
       return undefined;
     }
     return {
+      bothIdleSince:
+        typeof parsed.bothIdleSince === "number" ? parsed.bothIdleSince : 0,
       history: Array.isArray(parsed.history) ? parsed.history : [],
       llmTokens: typeof parsed.llmTokens === "number" ? parsed.llmTokens : 0,
       notified: { ...freshNotified(), ...parsed.notified },
@@ -1023,10 +1090,6 @@ export const loadBabysitState = (
       summaryTick:
         typeof parsed.summaryTick === "number" ? parsed.summaryTick : -1,
       tick: typeof parsed.tick === "number" ? parsed.tick : 0,
-      waitingSince:
-        typeof parsed.waitingSince === "object" && parsed.waitingSince
-          ? parsed.waitingSince
-          : {},
     };
   } catch {
     return undefined;
