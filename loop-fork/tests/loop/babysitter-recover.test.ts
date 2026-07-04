@@ -16,7 +16,7 @@ const NOW_MS = Date.parse(NOW_ISO);
 const verdict = (
   state: BabysitterState,
   confidence: number
-): BabysitterVerdict => ({ state, confidence });
+): BabysitterVerdict => ({ confidence, state, summary: "" });
 
 const gateOpts = (overrides: Partial<{
   confidence: number;

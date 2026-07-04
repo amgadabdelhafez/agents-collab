@@ -1,4 +1,9 @@
-import type { Agent } from "./types";
+import type {
+  Agent,
+  AgentLiveness,
+  AgentLivenessInput,
+  AgentLivenessState,
+} from "./types";
 
 /**
  * Deterministic stuck-detector for the babysitter feature.
@@ -6,39 +11,17 @@ import type { Agent } from "./types";
  * All functions are pure: no I/O and no wall-clock reads. Time is always
  * supplied by the caller via `nowMs` and ISO timestamps, which keeps the
  * detector testable with a fixed synthetic clock.
- *
- * NOTE: The contract types below are declared here rather than in
- * `src/loop/types.ts`. The task required importing them from `types.ts`, but
- * they do not yet exist there and this module is not permitted to edit
- * `types.ts`. Declaring and exporting them here keeps the module self-contained
- * and type-safe. Only `Agent` is imported from the shared contract.
  */
+
+// Re-export the shared contract types so consumers/tests can import them here.
+export type {
+  AgentLiveness,
+  AgentLivenessInput,
+  AgentLivenessState,
+} from "./types";
 
 /** Minimum clamp for a computed event age; ages can never be negative. */
 const MIN_EVENT_AGE_MS = 0;
-
-/** A single observation of an agent's pane and most recent event. */
-export interface AgentLivenessInput {
-  agent: Agent;
-  paneHash: string;
-  lastEventTs?: string;
-}
-
-/** Persisted detector state carried between ticks. */
-export interface AgentLivenessState {
-  agent: Agent;
-  paneHash: string;
-  paneStableSinceMs: number;
-  lastEventTs?: string;
-}
-
-/** Derived liveness signal for a single tick. */
-export interface AgentLiveness {
-  agent: Agent;
-  lastEventAgeMs: number;
-  paneStable: boolean;
-  suspect: boolean;
-}
 
 /**
  * Create the initial detector state for an agent.

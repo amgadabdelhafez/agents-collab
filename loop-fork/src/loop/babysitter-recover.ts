@@ -1,47 +1,20 @@
-import type { Agent } from "./types";
+import type {
+  Agent,
+  BabysitterAgentState,
+  BabysitterVerdict,
+  RecoveryDecision,
+  RecoveryHistoryEntry,
+  RecoveryLevel,
+} from "./types";
 
-/**
- * NOTE (contract deviation): the task stated that `BabysitterVerdict`,
- * `RecoveryLevel`, `RecoveryHistoryEntry`, and `RecoveryDecision` already exist
- * in `src/loop/types.ts`. They do not — only `Agent` is defined there. Because
- * this module is only permitted to touch two files (and not edit `types.ts`),
- * these contract types are defined and exported here instead.
- */
-
-/** A babysitter's assessment of what an agent is currently doing. */
-export type BabysitterState =
-  | "working"
-  | "waiting-human"
-  | "waiting-peer"
-  | "stuck"
-  | "crashed";
-
-export interface BabysitterVerdict {
-  state: BabysitterState;
-  /** Confidence in the verdict, in the range [0, 1]. */
-  confidence: number;
-}
-
-/** The recovery actions available, ordered from gentlest to most disruptive. */
-export type RecoveryLevel = "answer-prompt" | "nudge" | "restart";
-
-/** A record of a recovery action that was decided/taken for an agent. */
-export interface RecoveryHistoryEntry {
-  agent: Agent;
-  level: RecoveryLevel;
-  /** ISO-8601 timestamp of when the action occurred. */
-  ts: string;
-}
-
-/**
- * The outcome of {@link decideRecovery}. A `null` level means "do nothing";
- * `reason` always explains the decision.
- */
-export interface RecoveryDecision {
-  agent: Agent;
-  level: RecoveryLevel | null;
-  reason: string;
-}
+// Re-export the shared contract types so consumers/tests can import them here.
+export type {
+  BabysitterVerdict,
+  RecoveryDecision,
+  RecoveryHistoryEntry,
+  RecoveryLevel,
+} from "./types";
+export type BabysitterState = BabysitterAgentState;
 
 /** States for which auto-recovery is allowed. */
 const RECOVERABLE_STATES: readonly BabysitterState[] = ["stuck", "crashed"];
