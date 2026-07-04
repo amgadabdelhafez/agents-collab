@@ -94,9 +94,8 @@ test("non-2xx status returns malformed with fallback", async () => {
 });
 
 test("network error (ECONNREFUSED) returns unreachable", async () => {
-  const fetchFn = (async () => {
-    throw new Error("ECONNREFUSED");
-  }) as unknown as typeof fetch;
+  const fetchFn = (() =>
+    Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
   const outcome = await judgeAgent(baseRequest(), { fetchFn });
   expect(outcome.ok).toBe(false);
   if (!outcome.ok) {
@@ -106,10 +105,10 @@ test("network error (ECONNREFUSED) returns unreachable", async () => {
 });
 
 test("AbortError from timeout returns timeout", async () => {
-  const fetchFn = (async () => {
-    const err = new DOMException("Aborted", "AbortError");
-    throw err;
-  }) as unknown as typeof fetch;
+  const fetchFn = (() =>
+    Promise.reject(
+      new DOMException("Aborted", "AbortError")
+    )) as unknown as typeof fetch;
   const outcome = await judgeAgent(baseRequest(), { fetchFn, timeoutMs: 10 });
   expect(outcome.ok).toBe(false);
   if (!outcome.ok) {

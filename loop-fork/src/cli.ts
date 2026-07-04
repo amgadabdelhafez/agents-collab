@@ -31,10 +31,12 @@ const PAIRED_TMUX_HANDOFF_ERROR =
   "[loop] paired tmux launch did not hand off; not continuing in the foreground.";
 
 const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
-  opts.tmux &&
-  opts.pairedMode &&
-  !opts.promptInput?.trim() &&
-  !opts.proof.trim();
+  Boolean(
+    opts.tmux &&
+      opts.pairedMode &&
+      !opts.promptInput?.trim() &&
+      !opts.proof.trim()
+  );
 
 const shouldAwaitAutoUpdate = (opts: Options): boolean =>
   !process.env.TMUX && isPromptlessPairedTmuxLaunch(opts);
@@ -72,23 +74,24 @@ const parseCodexTmuxProxyArgs = (
   return { port, remoteUrl, runDir, threadId };
 };
 
-export const runCli = async (argv: string[]): Promise<void> => {
+// Dispatch the hidden `__*` helper subcommands. Returns true when handled.
+const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
   if (argv[0] === BRIDGE_SUBCOMMAND) {
     const { runDir, source } = parseBridgeArgs(argv.slice(1));
     await runBridgeMcpServer(runDir, source);
-    return;
+    return true;
   }
   if (argv[0] === BRIDGE_WORKER_SUBCOMMAND) {
     const { runDir } = parseBridgeWorkerArgs(argv.slice(1));
     await runBridgeWorker(runDir);
-    return;
+    return true;
   }
   if (argv[0] === CODEX_TMUX_PROXY_SUBCOMMAND) {
     const { port, remoteUrl, runDir, threadId } = parseCodexTmuxProxyArgs(
       argv.slice(1)
     );
     await runCodexTmuxProxy(runDir, remoteUrl, threadId, port);
-    return;
+    return true;
   }
   if (argv[0] === HOOK_EMIT_SUBCOMMAND) {
     const [source, hookFile] = argv.slice(1);
@@ -98,7 +101,7 @@ export const runCli = async (argv: string[]): Promise<void> => {
       );
     }
     await runHookEmit(source, hookFile);
-    return;
+    return true;
   }
   if (argv[0] === BABYSIT_SUBCOMMAND) {
     const runId = argv[1];
@@ -106,6 +109,13 @@ export const runCli = async (argv: string[]): Promise<void> => {
       throw new Error("Usage: loop __babysit <run-id>");
     }
     await runBabysitter(resolveBabysitConfig(runId, process.env));
+    return true;
+  }
+  return false;
+};
+
+export const runCli = async (argv: string[]): Promise<void> => {
+  if (await runHiddenSubcommand(argv)) {
     return;
   }
 

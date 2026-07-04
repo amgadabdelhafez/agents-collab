@@ -40,7 +40,10 @@ interface ChatMessage {
   role: "system" | "user";
 }
 
-type JudgeDeps = { fetchFn?: typeof fetch; timeoutMs?: number };
+interface JudgeDeps {
+  fetchFn?: typeof fetch;
+  timeoutMs?: number;
+}
 
 const fallbackOutcome = (reason: JudgeFailureReason): JudgeOutcome => ({
   ok: false,
@@ -98,36 +101,47 @@ const extractMessageContent = (payload: unknown): string | null => {
 const stripThinkBlocks = (text: string): string =>
   text.replace(/<think>[\s\S]*?<\/think>/gi, "");
 
+interface ScanState {
+  depth: number;
+  escaped: boolean;
+  inString: boolean;
+}
+
+// Advance string-literal scanning state for one character inside a JSON string.
+const scanStringChar = (state: ScanState, char: string): void => {
+  if (state.escaped) {
+    state.escaped = false;
+    return;
+  }
+  if (char === "\\") {
+    state.escaped = true;
+    return;
+  }
+  if (char === '"') {
+    state.inString = false;
+  }
+};
+
 // Extract the first balanced top-level JSON object substring from arbitrary text.
 const extractFirstJsonObject = (text: string): string | null => {
   const start = text.indexOf("{");
   if (start === -1) {
     return null;
   }
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
+  const state: ScanState = { depth: 0, escaped: false, inString: false };
+  for (let i = start; i < text.length; i += 1) {
     const char = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
+    if (state.inString) {
+      scanStringChar(state, char);
       continue;
     }
     if (char === '"') {
-      inString = true;
-      continue;
-    }
-    if (char === "{") {
-      depth++;
+      state.inString = true;
+    } else if (char === "{") {
+      state.depth += 1;
     } else if (char === "}") {
-      depth--;
-      if (depth === 0) {
+      state.depth -= 1;
+      if (state.depth === 0) {
         return text.slice(start, i + 1);
       }
     }
@@ -173,7 +187,7 @@ const parseVerdict = (content: string): BabysitterVerdict | null => {
   } catch {
     return null;
   }
-  if (!isRecord(parsed) || !isAllowedState(parsed.state)) {
+  if (!(isRecord(parsed) && isAllowedState(parsed.state))) {
     return null;
   }
   const verdict: BabysitterVerdict = {

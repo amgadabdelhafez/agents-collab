@@ -57,6 +57,7 @@ describe("runHookEmit", () => {
   test("appends one normalized JSONL line and never throws", async () => {
     const lines: string[] = [];
     async function* stdin() {
+      await Promise.resolve();
       yield new TextEncoder().encode(
         JSON.stringify({ hook_event_name: "Stop", cwd: "/repo" })
       );
@@ -75,6 +76,7 @@ describe("runHookEmit", () => {
   test("swallows malformed stdin without throwing", async () => {
     const lines: string[] = [];
     async function* stdin() {
+      await Promise.resolve();
       yield new TextEncoder().encode("not json{{{");
     }
     await runHookEmit("claude", "/tmp/x.jsonl", {
