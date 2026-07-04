@@ -14,11 +14,13 @@ import {
   DEFAULT_BABYSIT_TICK_SECONDS,
   DEFAULT_BABYSIT_URL,
 } from "./constants";
+import { readAgentUsage } from "./babysitter-usage";
 import { decode } from "./git";
 import { loadRunState } from "./run-state";
 import type {
   Agent,
   AgentLivenessState,
+  AgentUsage,
   BabysitterVerdict,
   HookEvent,
   JudgeOutcome,
@@ -37,6 +39,8 @@ export interface BabysitAgentInfo {
   agent: Agent;
   hookFile: string;
   pane: string;
+  // Session id / thread id used to locate the agent's usage transcript.
+  sessionRef?: string;
 }
 
 export interface BabysitConfig {
@@ -60,6 +64,7 @@ export interface BabysitDeps {
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
   now: () => number;
   readHooks: (file: string) => HookEvent[];
+  readUsage: (agent: Agent, sessionRef?: string) => AgentUsage;
   render: (text: string) => void;
   respawnPane: (pane: string) => void;
   sendKeys: (pane: string, keys: string[]) => void;
@@ -101,18 +106,59 @@ const buildRecoveryDeps = (
   },
 });
 
+const fmtDuration = (ms: number): string => {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return "—";
+  }
+  const s = Math.round(ms / 1000);
+  if (s < 60) {
+    return `${s}s`;
+  }
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m}m` : `${Math.round(m / 60)}h`;
+};
+
+const fmtTokens = (n: number): string => {
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`;
+  }
+  if (n >= 1000) {
+    return `${Math.round(n / 1000)}k`;
+  }
+  return String(n);
+};
+
+const fmtContext = (usage: AgentUsage): string => {
+  if (usage.contextTokens <= 0) {
+    return "ctx=—";
+  }
+  const pct = Math.round((usage.contextTokens / usage.contextWindow) * 100);
+  return `ctx=${fmtTokens(usage.contextTokens)}/${fmtTokens(usage.contextWindow)}(${pct}%)`;
+};
+
+const activeMs = (usage: AgentUsage): number => {
+  if (!(usage.firstTs && usage.lastTs)) {
+    return Number.NaN;
+  }
+  return Date.parse(usage.lastTs) - Date.parse(usage.firstTs);
+};
+
 const renderAgentLine = (
   agent: Agent,
   suspect: boolean,
   ageMs: number,
   verdict: BabysitterVerdict | undefined,
-  action: RecoveryHistoryEntry | null
+  action: RecoveryHistoryEntry | null,
+  usage: AgentUsage
 ): string => {
-  const age = Number.isFinite(ageMs) ? `${Math.round(ageMs / 1000)}s` : "—";
   const status = verdict?.state ?? (suspect ? "suspect" : "working");
+  const idle = fmtDuration(ageMs);
+  const active = fmtDuration(activeMs(usage));
+  const tok = usage.totalTokens > 0 ? fmtTokens(usage.totalTokens) : "—";
+  const cost = usage.costUsd > 0 ? `$${usage.costUsd.toFixed(2)}` : "—";
   const summary = verdict?.summary ? ` · ${verdict.summary}` : "";
   const act = action ? ` · action=${action.level}` : "";
-  return `  ${agent.padEnd(7)} [${status}] idle=${age}${summary}${act}`;
+  return `  ${agent.padEnd(7)} [${status}] idle=${idle} active=${active} ${fmtContext(usage)} tok=${tok} cost=${cost}${summary}${act}`;
 };
 
 const renderBoard = (
@@ -140,6 +186,7 @@ export const babysitTick = async (
   for (const info of config.agents) {
     const paneText = deps.capturePane(info.pane);
     const events = deps.readHooks(info.hookFile);
+    const usage = deps.readUsage(info.agent, info.sessionRef);
     const prev =
       states.get(info.agent) ??
       initLivenessState(info.agent, nowMs, hashPane(paneText));
@@ -154,7 +201,9 @@ export const babysitTick = async (
     if (!liveness.suspect) {
       // Progress observed — reset this agent's recovery ladder.
       history = history.filter((entry) => entry.agent !== info.agent);
-      lines.push(renderAgentLine(info.agent, false, liveness.lastEventAgeMs, undefined, null));
+      lines.push(
+        renderAgentLine(info.agent, false, liveness.lastEventAgeMs, undefined, null, usage)
+      );
       continue;
     }
 
@@ -168,7 +217,9 @@ export const babysitTick = async (
     const verdict = outcome.ok ? outcome.verdict : outcome.fallback;
     if (!outcome.ok && outcome.reason === "unreachable") {
       llmOffline = true;
-      lines.push(renderAgentLine(info.agent, true, liveness.lastEventAgeMs, verdict, null));
+      lines.push(
+        renderAgentLine(info.agent, true, liveness.lastEventAgeMs, verdict, null, usage)
+      );
       continue;
     }
 
@@ -194,7 +245,9 @@ export const babysitTick = async (
       ts: nowIso,
       verdict,
     });
-    lines.push(renderAgentLine(info.agent, true, liveness.lastEventAgeMs, verdict, action));
+    lines.push(
+      renderAgentLine(info.agent, true, liveness.lastEventAgeMs, verdict, action, usage)
+    );
   }
 
   const board = renderBoard(lines, llmOffline, nowIso);
@@ -232,6 +285,7 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
       return [];
     }
   },
+  readUsage: (agent, sessionRef) => readAgentUsage(agent, sessionRef),
   render: (text) => {
     // Clear the pane and print the fresh board.
     process.stdout.write(`\x1b[2J\x1b[H${text}\n`);
@@ -286,6 +340,15 @@ export const resolveBabysitConfig = (
   if (!session) {
     throw new Error(`[loop] babysitter: no tmux session for run ${runId}`);
   }
+  const sessionRefFor = (agent: Agent): string | undefined => {
+    if (agent === "claude") {
+      return manifest?.claudeSessionId || undefined;
+    }
+    if (agent === "codex") {
+      return manifest?.codexThreadId || undefined;
+    }
+    return undefined;
+  };
   const agents: BabysitAgentInfo[] = [];
   const addAgent = (agent: Agent | undefined, paneIndex: number): void => {
     if (agent) {
@@ -293,6 +356,7 @@ export const resolveBabysitConfig = (
         agent,
         hookFile: join(storage.runDir, "hooks", `${agent}.jsonl`),
         pane: `${session}:0.${paneIndex}`,
+        sessionRef: sessionRefFor(agent),
       });
     }
   };

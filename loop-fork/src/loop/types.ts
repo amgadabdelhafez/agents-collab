@@ -108,6 +108,23 @@ export interface RecoveryDecision {
   reason: string;
 }
 
+// --- Usage / cost (babysitter-usage.ts) ---
+// Per-agent token/context/cost snapshot derived from the agent's session
+// transcript. All token counts are cumulative for the session.
+export interface AgentUsage {
+  cacheCreateTokens: number;
+  cacheReadTokens: number;
+  contextTokens: number;
+  contextWindow: number;
+  costUsd: number;
+  firstTs?: string;
+  inputTokens: number;
+  lastTs?: string;
+  model?: string;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 // --- LLM judge (babysitter-llm.ts) ---
 export interface JudgeRequest {
   agent: Agent;

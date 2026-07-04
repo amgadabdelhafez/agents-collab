@@ -51,6 +51,16 @@ const makeDeps = (
   },
   now: () => clock.ms,
   readHooks: () => [],
+  readUsage: () => ({
+    cacheCreateTokens: 0,
+    cacheReadTokens: 0,
+    contextTokens: 0,
+    contextWindow: 200_000,
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  }),
   render: () => {
     // no-op for tests
   },
