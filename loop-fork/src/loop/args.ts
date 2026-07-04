@@ -1,6 +1,12 @@
 import { env } from "bun";
 import { defaultPeerAgent, isAgent } from "./agents";
 import {
+  DEFAULT_BABYSIT_COOLDOWN_SECONDS,
+  DEFAULT_BABYSIT_HEIGHT,
+  DEFAULT_BABYSIT_IDLE_SECONDS,
+  DEFAULT_BABYSIT_MAX_RECOVERIES,
+  DEFAULT_BABYSIT_MODEL,
+  DEFAULT_BABYSIT_URL,
   DEFAULT_CODEX_MODEL,
   DEFAULT_COPILOT_MODEL,
   DEFAULT_CURSOR_MODEL,
@@ -67,6 +73,14 @@ const requireTrimmedValue = (value: string, message: string): string => {
     throw new Error(message);
   }
   return trimmed;
+};
+
+const parsePositiveInt = (value: string, flag: string): number => {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 1) {
+    throw new Error(`Invalid ${flag} value: ${value}`);
+  }
+  return num;
 };
 
 const requireFlagValue = (arg: string, value: string | undefined): string => {
@@ -176,6 +190,39 @@ const applyValueFlag = (
       return;
     case "format":
       opts.format = parseFormat(value);
+      return;
+    case "babysitIdle":
+      opts.babysitIdleSeconds = parsePositiveInt(value, "--babysit-idle");
+      return;
+    case "babysitCooldown":
+      opts.babysitCooldownSeconds = parsePositiveInt(
+        value,
+        "--babysit-cooldown"
+      );
+      return;
+    case "babysitMaxRecoveries":
+      opts.babysitMaxRecoveries = parsePositiveInt(
+        value,
+        "--babysit-max-recoveries"
+      );
+      return;
+    case "babysitUrl":
+      opts.babysitUrl = requireTrimmedValue(
+        value,
+        "Invalid --babysit-url value: cannot be empty"
+      );
+      return;
+    case "babysitModel":
+      opts.babysitModel = requireTrimmedValue(
+        value,
+        "Invalid --babysit-model value: cannot be empty"
+      );
+      return;
+    case "babysitHeight":
+      opts.babysitHeight = requireTrimmedValue(
+        value,
+        "Invalid --babysit-height value: cannot be empty"
+      );
       return;
     default: {
       const exhaustive: never = flag;
@@ -478,6 +525,16 @@ const consumeArg = (
     return { nextIndex: index + 1, stop: false, onlyAgent };
   }
 
+  if (arg === "--babysit") {
+    opts.babysit = true;
+    return { nextIndex: index + 1, stop: false, onlyAgent };
+  }
+
+  if (arg === "--babysit-dry-run") {
+    opts.babysitDryRun = true;
+    return { nextIndex: index + 1, stop: false, onlyAgent };
+  }
+
   const flag = VALUE_FLAGS[arg];
   if (flag) {
     const value = argv[index + 1];
@@ -507,6 +564,12 @@ export const parseArgs = (argv: string[]): Options => {
     copilotModel: env.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
     cursorModel: env.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
     geminiModel: env.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    babysitIdleSeconds: DEFAULT_BABYSIT_IDLE_SECONDS,
+    babysitCooldownSeconds: DEFAULT_BABYSIT_COOLDOWN_SECONDS,
+    babysitMaxRecoveries: DEFAULT_BABYSIT_MAX_RECOVERIES,
+    babysitUrl: env.LOOP_BABYSIT_URL ?? DEFAULT_BABYSIT_URL,
+    babysitModel: env.LOOP_BABYSIT_MODEL ?? DEFAULT_BABYSIT_MODEL,
+    babysitHeight: DEFAULT_BABYSIT_HEIGHT,
     pairedMode: true,
     review: "claudex",
     resumeRunId: undefined,

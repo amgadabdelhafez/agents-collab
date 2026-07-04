@@ -37,15 +37,43 @@ export type ValueFlag =
   | "geminiReviewerModel"
   | "format"
   | "runId"
-  | "session";
+  | "session"
+  | "babysitIdle"
+  | "babysitCooldown"
+  | "babysitMaxRecoveries"
+  | "babysitUrl"
+  | "babysitModel"
+  | "babysitHeight";
+
+export type BabysitterAgentState =
+  | "working"
+  | "waiting-human"
+  | "waiting-peer"
+  | "stuck"
+  | "crashed";
+
+export interface BabysitterVerdict {
+  confidence: number;
+  state: BabysitterAgentState;
+  suggestedAction?: string;
+  summary: string;
+}
 
 export interface Options {
   agent: Agent;
+  babysit?: boolean;
+  babysitCooldownSeconds: number;
+  babysitDryRun?: boolean;
+  babysitHeight: string;
+  babysitIdleSeconds: number;
+  babysitMaxRecoveries: number;
+  babysitModel: string;
+  babysitUrl: string;
   claudeMcpConfigPath?: string;
   claudePersistentSession?: boolean;
   claudeReviewerModel?: string;
-  codexMcpConfigArgs?: string[];
   codexHome?: string;
+  codexMcpConfigArgs?: string[];
   codexModel: string;
   codexReviewerModel?: string;
   copilotMcpConfigPath?: string;

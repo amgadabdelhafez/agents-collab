@@ -10,6 +10,15 @@ export const DEFAULT_CURSOR_MODEL = "auto";
 export const DEFAULT_MAX_ITERATIONS = 20;
 export const LOOP_VERSION = pkg.version;
 
+// Babysitter pane (--babysit) defaults.
+export const DEFAULT_BABYSIT_IDLE_SECONDS = 120;
+export const DEFAULT_BABYSIT_COOLDOWN_SECONDS = 300;
+export const DEFAULT_BABYSIT_MAX_RECOVERIES = 3;
+export const DEFAULT_BABYSIT_URL = "http://127.0.0.1:8082";
+export const DEFAULT_BABYSIT_MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit";
+export const DEFAULT_BABYSIT_HEIGHT = "25%";
+export const DEFAULT_BABYSIT_CONFIDENCE = 0.7;
+
 export const HELP = `
 loop - v${LOOP_VERSION} - meta agent loop runner
 
@@ -53,6 +62,14 @@ Options:
   --session <id>                           Resume from a paired run id or raw session/thread ID
   --tmux                                   Run in tmux (paired mode opens the selected two agents side-by-side; no prompt/proof starts interactive sessions)
   --worktree                               Create and run in a fresh git worktree (name: repo-loop-X)
+  --babysit                                Add a full-width bottom pane that summarizes both agents from their hook events and auto-recovers a stuck agent (paired + tmux only)
+  --babysit-dry-run                        Babysitter logs intended recovery actions but executes none
+  --babysit-idle <seconds>                 Idle seconds before an agent is a stuck suspect (default: ${DEFAULT_BABYSIT_IDLE_SECONDS})
+  --babysit-cooldown <seconds>             Minimum seconds between recovery actions per agent (default: ${DEFAULT_BABYSIT_COOLDOWN_SECONDS})
+  --babysit-max-recoveries <number>        Max recovery actions per agent per run (default: ${DEFAULT_BABYSIT_MAX_RECOVERIES})
+  --babysit-url <url>                      OpenAI-compatible endpoint for babysitter judgment (default: ${DEFAULT_BABYSIT_URL})
+  --babysit-model <model>                  Model id for babysitter judgment (default: ${DEFAULT_BABYSIT_MODEL})
+  --babysit-height <rows|percent>          Babysitter pane height, e.g. 25% or 12 (default: ${DEFAULT_BABYSIT_HEIGHT})
   -v, --version                            Show loop version
   -h, --help                               Show this help
 
@@ -90,4 +107,10 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "--format": "format",
   "--run-id": "runId",
   "--session": "session",
+  "--babysit-idle": "babysitIdle",
+  "--babysit-cooldown": "babysitCooldown",
+  "--babysit-max-recoveries": "babysitMaxRecoveries",
+  "--babysit-url": "babysitUrl",
+  "--babysit-model": "babysitModel",
+  "--babysit-height": "babysitHeight",
 };

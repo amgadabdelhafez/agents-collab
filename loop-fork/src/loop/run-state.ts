@@ -55,6 +55,7 @@ export interface RunStorage {
 }
 
 export interface RunManifest {
+  babysit?: boolean;
   claudeChannelServer?: string;
   claudeSessionId: string;
   codexRemoteUrl?: string;
@@ -67,6 +68,7 @@ export interface RunManifest {
   runId: string;
   state: RunLifecycleState;
   status: RunStatus;
+  tmuxPaneBabysit?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneRightAgent?: Agent;
   tmuxSession?: string;
@@ -126,6 +128,7 @@ interface RepoIdDeps {
 }
 
 interface RunManifestInput {
+  babysit?: boolean;
   claudeChannelServer?: string;
   claudeSessionId?: string;
   codexRemoteUrl?: string;
@@ -138,6 +141,7 @@ interface RunManifestInput {
   runId: string;
   state?: RunLifecycleState;
   status?: string;
+  tmuxPaneBabysit?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneRightAgent?: Agent;
   tmuxSession?: string;
@@ -480,6 +484,10 @@ export const createRunManifest = (
     ...(input.tmuxPaneRightAgent
       ? { tmuxPaneRightAgent: input.tmuxPaneRightAgent }
       : {}),
+    ...(input.tmuxPaneBabysit
+      ? { tmuxPaneBabysit: input.tmuxPaneBabysit }
+      : {}),
+    ...(input.babysit ? { babysit: true } : {}),
     updatedAt: input.updatedAt ?? now,
   };
 };
@@ -597,6 +605,15 @@ export const readRunManifest = (
             ]),
           }
         : {}),
+      ...(firstString(parsed, ["tmuxPaneBabysit", "tmux_pane_babysit"])
+        ? {
+            tmuxPaneBabysit: firstString(parsed, [
+              "tmuxPaneBabysit",
+              "tmux_pane_babysit",
+            ]),
+          }
+        : {}),
+      ...(parsed.babysit === true ? { babysit: true } : {}),
       updatedAt,
     };
   } catch {
