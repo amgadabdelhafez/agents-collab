@@ -1,0 +1,17 @@
+.DS_Store
+
+# Local agent/editor state.
+.claude/settings.local.json
+
+# Dependency and build output.
+node_modules/
+target/
+env/
+.venv/
+__pycache__/
+*.pyc
+
+# Separate local checkouts/worktrees that are not part of this repo.
+bakeoff-todo/
+bakeoff-todo-loop-1/
+witchcraft/
