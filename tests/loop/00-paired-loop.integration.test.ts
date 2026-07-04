@@ -62,6 +62,9 @@ const loadPairedLoop = (): Promise<PairedLoopModule> => {
     runClaudeTurn: mock(
       (prompt: string, _opts: Options): Promise<RunResult> => {
         calls.push({ agent: "claude", prompt });
+        if (prompt.includes("Review this completed work")) {
+          return Promise.resolve(makeResult("<review>PASS</review>"));
+        }
         return Promise.resolve(
           makeResult("Claude acknowledged the bridge message.\n<done/>")
         );
@@ -85,6 +88,9 @@ const loadPairedLoop = (): Promise<PairedLoopModule> => {
       const manifest = readRunManifest(join(currentRunDir, "manifest.json"));
       observedCodexThreadIdsAtTurnStart.push(manifest?.codexThreadId ?? "");
       calls.push({ agent: "codex", prompt });
+      if (prompt.includes("Create a draft GitHub pull request")) {
+        return Promise.resolve(makeResult(""));
+      }
       bridgeInternals.appendBridgeEvent(currentRunDir, {
         at: "2026-03-22T10:00:00.000Z",
         id: "bridge-1",
@@ -157,8 +163,13 @@ test("runPairedLoop forwards a real bridge message in default paired mode", asyn
     await module.runPairedLoop("Ship feature", makeOptions());
 
     const storage = resolveRunStorage(runId, process.cwd(), home);
-    expect(calls).toHaveLength(2);
-    expect(calls.map((call) => call.agent)).toEqual(["codex", "claude"]);
+    expect(calls).toHaveLength(4);
+    expect(calls.map((call) => call.agent)).toEqual([
+      "codex",
+      "claude",
+      "claude",
+      "codex",
+    ]);
     expect(startAppServerCalls[0]?.threadModel).toBe("test-model");
     expect(observedCodexThreadIdsAtTurnStart[0]).toBe("codex-thread-1");
     expect(calls[1]?.prompt).toContain(
@@ -167,6 +178,8 @@ test("runPairedLoop forwards a real bridge message in default paired mode", asyn
     expect(calls[1]?.prompt).toContain(
       "Please review the implementation details."
     );
+    expect(calls[2]?.prompt).toContain("Review this completed work");
+    expect(calls[3]?.prompt).toContain("Create a draft GitHub pull request");
     expect(readPendingBridgeMessages(storage.runDir)).toHaveLength(0);
     expect(readRunManifest(storage.manifestPath)?.status).toBe("done");
     expect(lastClaudeSessionId).toBe("claude-session-1");

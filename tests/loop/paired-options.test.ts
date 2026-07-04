@@ -103,6 +103,44 @@ test("preparePairedOptions writes a readable Claude bridge server for fresh runs
   }
 });
 
+test("preparePairedOptions creates a loop-scoped Codex home without global MCP config", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  process.env.HOME = home;
+  Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+
+  try {
+    const opts = makeOptions({ pairedMode: true });
+
+    preparePairedOptions(opts, process.cwd(), true);
+
+    const storage = resolveRunStorage("1", process.cwd(), home);
+    expect(opts.codexHome).toBe(join(storage.runDir, "codex-home"));
+    const config = readFileSync(
+      join(opts.codexHome ?? "", "config.toml"),
+      "utf8"
+    );
+    expect(config).toContain('approval_policy = "never"');
+    expect(config).toContain('sandbox_mode = "danger-full-access"');
+    expect(config).toContain(`[projects.${JSON.stringify(process.cwd())}]`);
+    expect(config).not.toContain("[mcp_servers.");
+    expect(config).not.toContain("[plugins.");
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("preparePairedRun upgrades an older hashed Claude bridge server name", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;

@@ -12,6 +12,8 @@ test("buildPlanPrompt asks for PLAN.md", () => {
 
   expect(prompt).toContain("Task:\nship feature");
   expect(prompt).toContain("Create or update PLAN.md");
+  expect(prompt).toContain("Create or update status.md");
+  expect(prompt).toContain("Session state:");
   expect(prompt).toContain("Do not implement code yet.");
 });
 
@@ -21,6 +23,7 @@ test("buildPlanReviewPrompt asks to review PLAN.md only", () => {
   expect(prompt).toContain("Task:\nship feature");
   expect(prompt).toContain("Review PLAN.md");
   expect(prompt).toContain("Update PLAN.md directly if needed.");
+  expect(prompt).toContain("Check that status.md exists");
   expect(prompt).toContain("Only edit PLAN.md in this step.");
 });
 
@@ -38,6 +41,9 @@ test("buildWorkPrompt keeps task, optional sections, and done instruction", () =
   expect(prompt).toContain(
     'append "<promise>DONE</promise>" on its own final line.'
   );
+  expect(prompt).toContain("Maintain `PLAN.md` and `status.md`");
+  expect(prompt).toContain("running handoff");
+  expect(prompt).toContain("what should happen next");
   expect(prompt).toContain("worktree isolation");
 });
 
@@ -73,6 +79,7 @@ test("buildReviewPrompt includes strict review signal instructions", () => {
   expect(prompt).toContain(
     "concrete file paths, commands, and code locations that must change."
   );
+  expect(prompt).toContain("PLAN.md and status.md are current");
   expect(prompt).toContain("Proof requirements:\nmust pass ci");
   expect(prompt).toContain("worktree isolation");
   expect(prompt).toContain("must not include");

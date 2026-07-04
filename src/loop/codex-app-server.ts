@@ -9,6 +9,7 @@ type TransportMode = "app-server" | "exec";
 type Callback = (text: string) => void;
 export interface AppServerLaunchOptions {
   configValues?: string[];
+  env?: NodeJS.ProcessEnv;
   orphanOnExit?: boolean;
   persistentThread?: boolean;
   resumeThreadId?: string;
@@ -584,6 +585,7 @@ class AppServerClient {
   private connectUrl = "";
   private ws: import("./ws-client").WsClient | undefined;
   private closed = false;
+  private env: NodeJS.ProcessEnv | undefined;
   private lastThreadId = "";
   private orphanOnExit = false;
   private persistentThread = false;
@@ -619,12 +621,15 @@ class AppServerClient {
       !sameConfigValues(
         this.configValues,
         normalizeConfigValues(options.configValues)
-      ) || this.orphanOnExit !== (options.orphanOnExit ?? false)
+      ) ||
+      this.orphanOnExit !== (options.orphanOnExit ?? false) ||
+      this.env?.CODEX_HOME !== options.env?.CODEX_HOME
     );
   }
 
   configureLaunch(options: AppServerLaunchOptions = {}): void {
     this.configValues = normalizeConfigValues(options.configValues);
+    this.env = options.env;
     this.orphanOnExit = options.orphanOnExit ?? false;
     this.persistentThread = options.persistentThread ?? false;
     if (options.resumeThreadId !== undefined) {
@@ -655,7 +660,7 @@ class AppServerClient {
     this.started = true;
     try {
       const port = await this.findPort();
-      const listenUrl = `ws://0.0.0.0:${port}`;
+      const listenUrl = `ws://127.0.0.1:${port}`;
       const connectUrl = `ws://127.0.0.1:${port}`;
       this.connectUrl = connectUrl;
       const configArgs = this.configValues.flatMap((value) => ["-c", value]);
@@ -663,7 +668,7 @@ class AppServerClient {
         [APP_SERVER_CMD, ...configArgs, "app-server", "--listen", listenUrl],
         {
           detached: DETACH_CHILD_PROCESS,
-          env: process.env,
+          env: this.env ?? process.env,
           stderr: this.orphanOnExit ? "ignore" : "pipe",
           stdin: this.orphanOnExit ? "ignore" : "pipe",
           stdout: this.orphanOnExit ? "ignore" : "pipe",

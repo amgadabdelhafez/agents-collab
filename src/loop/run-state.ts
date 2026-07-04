@@ -67,9 +67,9 @@ export interface RunManifest {
   runId: string;
   state: RunLifecycleState;
   status: RunStatus;
-  tmuxSession?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneRightAgent?: Agent;
+  tmuxSession?: string;
   updatedAt: string;
 }
 
@@ -138,9 +138,9 @@ interface RunManifestInput {
   runId: string;
   state?: RunLifecycleState;
   status?: string;
-  tmuxSession?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneRightAgent?: Agent;
+  tmuxSession?: string;
   updatedAt?: string;
 }
 

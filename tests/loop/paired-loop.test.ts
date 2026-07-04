@@ -253,8 +253,8 @@ test("runPairedLoop starts the non-primary peer session in review mode", async (
   });
 
   expect(startCalls).toEqual([
-    { agent: "claude", kind: "review" },
     { agent: "codex", kind: "work" },
+    { agent: "claude", kind: "review" },
   ]);
 });
 
@@ -296,8 +296,8 @@ test("runPairedLoop resolves a stored raw session id back to its run manifest", 
     );
 
     expect(starts).toEqual([
-      { agent: "claude", sessionId: "claude-session-1" },
       { agent: "codex", sessionId: "codex-thread-1" },
+      { agent: "claude", sessionId: "claude-session-1" },
     ]);
     expect(
       readRunManifest(resolveRunStorage("99", process.cwd(), home).manifestPath)
@@ -361,14 +361,14 @@ test("runPairedLoop restarts a completed paired run with fresh agent sessions", 
     );
 
     expect(starts).toEqual([
-      { agent: "claude", sessionId: undefined },
       { agent: "codex", sessionId: undefined },
+      { agent: "claude", sessionId: undefined },
     ]);
     expect(readRunManifest(storage.manifestPath)).toMatchObject({
       claudeSessionId: "",
       codexThreadId: "",
       runId: "alpha",
-      status: "done",
+      status: "stopped",
     });
   } finally {
     if (originalHome === undefined) {
@@ -533,6 +533,15 @@ test("runPairedLoop marks a failed startup as failed", async () => {
 
 test("runPairedLoop records structured lifecycle events when no bridge traffic occurs", async () => {
   const module = await loadPairedLoop();
+  runAgentImpl = (_agent, prompt) => {
+    if (prompt.includes("Review this completed work")) {
+      return Promise.resolve(makeResult("<review>PASS</review>"));
+    }
+    if (prompt.includes("Create a draft GitHub pull request")) {
+      return Promise.resolve(makeResult(""));
+    }
+    return Promise.resolve(makeResult("<done/>"));
+  };
 
   await withTempHome("4a", async (runDir) => {
     await module.runPairedLoop("Ship feature", makeOptions({ agent: "codex" }));
@@ -691,6 +700,12 @@ test("runPairedLoop restores a pending follow-up prompt on resume", async () => 
   readlineAnswers = ["Add the missing edge-case test."];
 
   runAgentImpl = (_agent, prompt) => {
+    if (prompt.includes("Review this completed work")) {
+      return Promise.resolve(makeResult("<review>PASS</review>"));
+    }
+    if (prompt.includes("Create a draft GitHub pull request")) {
+      return Promise.resolve(makeResult(""));
+    }
     workPrompts.push(prompt);
     return Promise.resolve(makeResult("<done/>"));
   };
@@ -746,7 +761,7 @@ test("runPairedLoop delivers peer messages back to the primary agent", async () 
         source: "claude",
         target: "codex",
       });
-      return Promise.resolve(makeResult("<done/>"));
+      return Promise.resolve(makeResult("working"));
     }
 
     if (agent === "codex" && !sentReply) {
@@ -827,7 +842,7 @@ test("runPairedLoop skips the default work turn after draining input for the pri
   });
 });
 
-test("runPairedLoop preserves claudex reviewers in paired mode", async () => {
+test("runPairedLoop uses the paired peer reviewer in paired mode", async () => {
   const module = await loadPairedLoop();
   const reviewPrompts: Array<{ agent: Agent; prompt: string }> = [];
 
@@ -848,27 +863,17 @@ test("runPairedLoop preserves claudex reviewers in paired mode", async () => {
       makeOptions({ agent: "claude", review: "claudex" })
     );
 
-    expect(reviewPrompts.map((entry) => entry.agent)).toEqual([
-      "claude",
-      "codex",
-    ]);
-    expect(reviewPrompts[0]?.prompt).toContain(
-      "keep the actionable notes in your review body before the final review signal"
-    );
+    expect(reviewPrompts.map((entry) => entry.agent)).toEqual(["codex"]);
     expect(reviewPrompts[0]?.prompt).toContain(
       "concrete file paths, commands, and code locations that must change"
     );
-    expect(reviewPrompts[0]?.prompt).not.toContain("send_to_agent");
-    expect(reviewPrompts[1]?.prompt).toContain(
-      "concrete file paths, commands, and code locations that must change"
-    );
-    expect(reviewPrompts[1]?.prompt).toContain(
+    expect(reviewPrompts[0]?.prompt).toContain(
       'send the actionable notes to Claude with "mcp__loop_bridge__send_message" using target: "claude"'
     );
   });
 });
 
-test("runPairedLoop keeps explicit same-agent review on that agent", async () => {
+test("runPairedLoop uses the paired peer instead of same-agent review in paired mode", async () => {
   const module = await loadPairedLoop();
   const reviewPrompts: Array<{ agent: Agent; prompt: string }> = [];
 
@@ -890,9 +895,9 @@ test("runPairedLoop keeps explicit same-agent review on that agent", async () =>
     );
 
     expect(reviewPrompts).toHaveLength(1);
-    expect(reviewPrompts[0]?.agent).toBe("codex");
+    expect(reviewPrompts[0]?.agent).toBe("claude");
     expect(reviewPrompts[0]?.prompt).toContain(
-      "keep the actionable notes in your review body before the final review signal"
+      'send the actionable notes to Codex with "send_message" using target: "codex"'
     );
     expect(reviewPrompts[0]?.prompt).toContain(
       "concrete file paths, commands, and code locations that must change"
@@ -901,7 +906,7 @@ test("runPairedLoop keeps explicit same-agent review on that agent", async () =>
   });
 });
 
-test("runPairedLoop keeps self-review notes for the next prompt when peer feedback was bridged", async () => {
+test("runPairedLoop does not duplicate bridged peer review notes in the next prompt", async () => {
   const module = await loadPairedLoop();
   const workPrompts: string[] = [];
   let workTurns = 0;
@@ -912,14 +917,6 @@ test("runPairedLoop keeps self-review notes for the next prompt when peer feedba
     await withTempHome("10", async (runDir) => {
       runAgentImpl = (agent, prompt) => {
         if (prompt.includes("Review this completed work")) {
-          if (agent === "claude") {
-            return Promise.resolve(
-              makeResult(
-                "Self review found one more fix.\n<review>FAIL</review>"
-              )
-            );
-          }
-
           appendBridgeMessage(runDir, {
             at: "2026-03-22T10:02:00.000Z",
             id: "msg-3",
@@ -949,10 +946,7 @@ test("runPairedLoop keeps self-review notes for the next prompt when peer feedba
       );
 
       expect(workPrompts).toHaveLength(2);
-      expect(workPrompts[1]).toContain("Review feedback:");
-      expect(workPrompts[1]).toContain(
-        "[claude] Self review found one more fix."
-      );
+      expect(workPrompts[1]).not.toContain("Review feedback:");
       expect(workPrompts[1]).not.toContain("[codex]");
     });
   } finally {

@@ -2,6 +2,7 @@ import { env } from "bun";
 import { defaultPeerAgent, isAgent } from "./agents";
 import {
   DEFAULT_CODEX_MODEL,
+  DEFAULT_COPILOT_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_DONE_SIGNAL,
   DEFAULT_GEMINI_MODEL,
@@ -47,11 +48,7 @@ const parseReviewValue = (value: string): ReviewMode => {
 const maybeParsePlanReviewValue = (
   value: string | undefined
 ): PlanReviewMode | undefined => {
-  if (
-    value === "other" ||
-    isAgent(value) ||
-    value === "none"
-  ) {
+  if (value === "other" || isAgent(value) || value === "none") {
     return value;
   }
 };
@@ -126,6 +123,18 @@ const applyValueFlag = (
         "Invalid --codex-reviewer-model value: cannot be empty"
       );
       return;
+    case "copilotModel":
+      opts.copilotModel = requireTrimmedValue(
+        value,
+        "Invalid --copilot-model value: cannot be empty"
+      );
+      return;
+    case "copilotReviewerModel":
+      opts.copilotReviewerModel = requireTrimmedValue(
+        value,
+        "Invalid --copilot-reviewer-model value: cannot be empty"
+      );
+      return;
     case "cursorModel":
       opts.cursorModel = requireTrimmedValue(
         value,
@@ -196,6 +205,9 @@ const parseOnlyModeFlag = (arg: string): Agent | undefined => {
   }
   if (arg === "--cursor-only") {
     return "cursor";
+  }
+  if (arg === "--copilot-only") {
+    return "copilot";
   }
   return undefined;
 };
@@ -332,6 +344,18 @@ const parseModelArg = (
     );
     return index + 1;
   }
+  if (arg.startsWith("--copilot-model=")) {
+    applyValueFlag("copilotModel", arg.slice("--copilot-model=".length), opts);
+    return index + 1;
+  }
+  if (arg.startsWith("--copilot-reviewer-model=")) {
+    applyValueFlag(
+      "copilotReviewerModel",
+      arg.slice("--copilot-reviewer-model=".length),
+      opts
+    );
+    return index + 1;
+  }
   if (arg.startsWith("--cursor-model=")) {
     applyValueFlag("cursorModel", arg.slice("--cursor-model=".length), opts);
     return index + 1;
@@ -367,6 +391,8 @@ const parseModelArg = (
   if (
     arg === "--codex-model" ||
     arg === "--codex-reviewer-model" ||
+    arg === "--copilot-model" ||
+    arg === "--copilot-reviewer-model" ||
     arg === "--cursor-model" ||
     arg === "--cursor-reviewer-model" ||
     arg === "--claude-reviewer-model" ||
@@ -472,12 +498,13 @@ const consumeArg = (
 
 export const parseArgs = (argv: string[]): Options => {
   const opts: Options = {
-    agent: "codex",
+    agent: "claude",
     doneSignal: DEFAULT_DONE_SIGNAL,
     proof: "",
     format: "pretty",
     maxIterations: DEFAULT_MAX_ITERATIONS,
     codexModel: env.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
+    copilotModel: env.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
     cursorModel: env.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
     geminiModel: env.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
     pairedMode: true,

@@ -1,4 +1,4 @@
-export type Agent = "claude" | "codex" | "gemini" | "cursor";
+export type Agent = "claude" | "codex" | "gemini" | "cursor" | "copilot";
 export type Format = "pretty" | "raw";
 export type ReviewMode = Agent | "claudex";
 export type PlanReviewMode = Agent | "other" | "none";
@@ -15,8 +15,9 @@ export type RunStatus = "running" | "done" | "failed" | "stopped";
 export interface PairedSessionIds {
   claude?: string;
   codex?: string;
-  gemini?: string;
+  copilot?: string;
   cursor?: string;
+  gemini?: string;
 }
 export type ValueFlag =
   | "agent"
@@ -27,6 +28,8 @@ export type ValueFlag =
   | "pairWith"
   | "codexModel"
   | "codexReviewerModel"
+  | "copilotModel"
+  | "copilotReviewerModel"
   | "cursorModel"
   | "cursorReviewerModel"
   | "claudeReviewerModel"
@@ -42,8 +45,12 @@ export interface Options {
   claudePersistentSession?: boolean;
   claudeReviewerModel?: string;
   codexMcpConfigArgs?: string[];
+  codexHome?: string;
   codexModel: string;
   codexReviewerModel?: string;
+  copilotMcpConfigPath?: string;
+  copilotModel: string;
+  copilotReviewerModel?: string;
   cursorMcpConfigPath?: string;
   cursorModel: string;
   cursorReviewerModel?: string;

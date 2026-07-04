@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline/promises";
+import { defaultPeerAgent, isPersistentAgent } from "./agents";
 import {
   acknowledgeBridgeDelivery,
   readNextPendingBridgeMessage,
@@ -44,7 +45,6 @@ import type {
   RunLifecycleState,
   RunResult,
 } from "./types";
-import { defaultPeerAgent, isPersistentAgent } from "./agents";
 import { hasSignal } from "./utils";
 
 const MAX_BRIDGE_HOPS = 12;
@@ -92,7 +92,9 @@ const pairedResumeHint = (runId: string): void => {
 };
 
 const pairPeer = (agent: Agent, opts: Options): Agent =>
-  agent === opts.agent ? (opts.pairWith ?? defaultPeerAgent(agent)) : opts.agent;
+  agent === opts.agent
+    ? (opts.pairWith ?? defaultPeerAgent(agent))
+    : opts.agent;
 
 const bridgeGuidance = (agent: Agent, opts: Options): string => {
   const target = pairPeer(agent, opts);
@@ -104,6 +106,8 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
   return [
     "Paired mode:",
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
+    `Ask ${peer} for validation and feedback after every few concrete steps, after meaningful design choices, and before finalizing. Include what changed, what proof ran, and what you want checked.`,
+    "Use AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.",
     `Do not ask the human to relay messages between agents or answer the human on the other agent's behalf.`,
     pollingGuidance,
   ].join("\n");
@@ -350,9 +354,10 @@ const prepareRunState = (opts: Options, cwd: string): PairedState => {
 };
 
 const startPair = async (state: PairedState): Promise<void> => {
-  const pair = [state.options.agent, state.options.pairWith].filter(
-    (value): value is Agent => Boolean(value)
-  );
+  const pair = [
+    state.options.agent,
+    state.options.pairWith ?? defaultPeerAgent(state.options.agent),
+  ];
   await Promise.all(
     pair
       .filter((agent) => isPersistentAgent(agent))

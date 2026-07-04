@@ -209,4 +209,10 @@ export const injectProjectBridgeConfig = (
     mkdirSync(geminiDir, { recursive: true });
     mergeAndWrite(join(geminiDir, "settings.json"));
   }
+
+  if (source === "copilot") {
+    const copilotDir = join(cwd, ".github", "copilot");
+    mkdirSync(copilotDir, { recursive: true });
+    mergeAndWrite(join(copilotDir, "mcp.json"));
+  }
 };

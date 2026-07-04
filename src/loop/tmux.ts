@@ -19,12 +19,16 @@ import {
   findCodexTmuxProxyPort,
   waitForCodexTmuxProxy,
 } from "./codex-tmux-proxy";
+import { codexHomeEnv } from "./codex-home";
 import { DEFAULT_CLAUDE_MODEL } from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
 import { buildLaunchArgv } from "./launch";
 import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
-import { SPAWN_TEAM_WITH_WORKTREE_ISOLATION } from "./prompts";
+import {
+  SESSION_STATE_GUIDANCE,
+  SPAWN_TEAM_WITH_WORKTREE_ISOLATION,
+} from "./prompts";
 import {
   type RunManifest,
   type RunStorage,
@@ -48,8 +52,9 @@ const SESSION_FLAG = "--session";
 const ONLY_MODE_FLAGS = [
   "--claude-only",
   "--codex-only",
-  "--gemini-only",
+  "--copilot-only",
   "--cursor-only",
+  "--gemini-only",
 ] as const;
 const RUN_BASE_ENV = "LOOP_RUN_BASE";
 const RUN_ID_ENV = "LOOP_RUN_ID";
@@ -146,17 +151,21 @@ const capitalize = (value: string): string =>
   value.slice(0, 1).toUpperCase() + value.slice(1);
 
 const peerAgent = (agent: Agent, pairWith?: Agent): Agent => {
-  if (pairWith) return pairWith;
+  if (pairWith) {
+    return pairWith;
+  }
   const peers: Record<Agent, Agent> = {
     claude: "codex",
     codex: "claude",
-    gemini: "claude",
+    copilot: "claude",
     cursor: "claude",
+    gemini: "claude",
   };
   return peers[agent];
 };
 
-const pairedPeer = (opts: Options): Agent => peerAgent(opts.agent, opts.pairWith);
+const pairedPeer = (opts: Options): Agent =>
+  peerAgent(opts.agent, opts.pairWith);
 
 const appendProofPrompt = (parts: string[], proof: string): void => {
   const trimmed = proof.trim();
@@ -165,6 +174,15 @@ const appendProofPrompt = (parts: string[], proof: string): void => {
   }
   parts.push(`Proof requirements:\n${trimmed}`);
 };
+
+const humanClarificationGuidance = (): string =>
+  "Use AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.";
+
+const reviewerCheckpointGuidance = (peer: string): string =>
+  `Ask ${peer} for validation and feedback after every few concrete steps, after any meaningful design choice, and before finalizing. Keep requests specific: summarize what changed, what proof ran, and what decision or risk you want checked.`;
+
+const reviewerSessionStateGuidance = (primary: string): string =>
+  `When reviewing, check that ${primary} keeps PLAN.md and status.md current enough for handoff: what changed, proof/checks run, open questions, risks, and next steps.`;
 
 const quotedClaudeTmuxBridgeTool = (
   serverName: string,
@@ -198,8 +216,11 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
     return [
       `You are the main worker. ${peer} reviews and helps on request.`,
       "Implement and verify first, then ask for review.",
+      reviewerCheckpointGuidance(peer),
       "Keep iterating until your own review and the peer review both pass.",
       "After both pass, handle the PR yourself: create a draft PR or send a follow-up commit to the existing PR.",
+      SESSION_STATE_GUIDANCE,
+      humanClarificationGuidance(),
     ].join("\n");
   }
 
@@ -207,7 +228,10 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
     `${primary} is the main worker. You are the reviewer/support agent.`,
     "Do not take over the task or create the PR yourself.",
     `When ${primary} asks, do a real review against the task, proof requirements, and repo state.`,
+    `Expect ${primary} to request validation every few concrete steps. Give timely feedback, identify risks early, and ask ${primary} to clarify any ambiguous claim before approving it.`,
+    reviewerSessionStateGuidance(primary),
     "Send either clear actionable feedback or an explicit approval.",
+    humanClarificationGuidance(),
   ].join("\n");
 };
 
@@ -231,6 +255,7 @@ const buildPrimaryPrompt = (
   parts.push(
     `Inspect the repo and start. Ask ${peer} for review once you have concrete work or a specific question.`
   );
+  parts.push(humanClarificationGuidance());
   return parts.join("\n\n");
 };
 
@@ -253,6 +278,7 @@ const buildPeerPrompt = (
   parts.push(
     `Wait for ${primary} to send you a targeted request or review ask.`
   );
+  parts.push(humanClarificationGuidance());
   return parts.join("\n\n");
 };
 
@@ -266,6 +292,7 @@ const buildInteractivePrimaryPrompt = (
   const parts = [
     `Agent-to-agent pair programming: you are the primary ${capitalize(opts.agent)} agent for this run.`,
     "No task has been assigned yet.",
+    "This is a human-driven interactive run. It does not require a prewritten PLAN.md, Harness task, or queued slice.",
     `Your peer is ${peer}. Use ${quotedBridgeTool(opts.agent, "send_message")} for review or help once the human gives you a task.`,
   ];
   appendProofPrompt(parts, opts.proof);
@@ -278,8 +305,16 @@ const buildInteractivePrimaryPrompt = (
     `If the human asks for plan mode, write PLAN.md first, ask ${peer} for a plan review, iterate on PLAN.md, then ask the human to review the plan before implementing.`
   );
   parts.push(
+    "For any sustained task, create or update PLAN.md and status.md before implementation once the task is clear; keep status.md as the end-of-session handoff for the next loop."
+  );
+  parts.push(
+    `Before starting implementation, use AskUserQuestion or the available user-input tool to clarify the task, scope, constraints, acceptance criteria, and desired proof unless the human has already made them clear.`
+  );
+  parts.push(reviewerCheckpointGuidance(peer));
+  parts.push(
     `Wait for the first human task. Do not implement until one arrives. Once it does, coordinate directly with ${peer} and keep the paired review workflow intact. Do not send a message to ${peer} until then.`
   );
+  parts.push(humanClarificationGuidance());
   return parts.join("\n\n");
 };
 
@@ -293,6 +328,7 @@ const buildInteractivePeerPrompt = (
   const parts = [
     `Agent-to-agent pair programming: ${primary} is the primary agent for this run.`,
     "No task has been assigned yet.",
+    "This is a human-driven interactive run. It does not require a prewritten PLAN.md, Harness task, or queued slice.",
     `You are ${capitalize(agent)}. Stay idle until ${primary} sends a specific request or the human clearly assigns you separate work.`,
   ];
   appendProofPrompt(parts, opts.proof);
@@ -301,9 +337,11 @@ const buildInteractivePeerPrompt = (
   parts.push(
     `If ${primary} asks for a plan review, review PLAN.md only, suggest concrete fixes, and wait for the next request.`
   );
+  parts.push(reviewerSessionStateGuidance(primary));
   parts.push(
     `Wait for ${primary} to provide a concrete task or review request. Do not send a message to ${primary} yet. If the human clearly assigns you separate work in this pane, treat that as a new task. If you are answering ${primary}, use the bridge tools instead of a human-facing reply.`
   );
+  parts.push(humanClarificationGuidance());
   return parts.join("\n\n");
 };
 
@@ -327,7 +365,9 @@ const buildLaunchPrompt = (
 const resolveTmuxModel = (agent: Agent, opts: Options): string => {
   const isPrimary = agent === opts.agent;
   if (agent === "codex") {
-    return isPrimary ? opts.codexModel : (opts.codexReviewerModel ?? opts.codexModel);
+    return isPrimary
+      ? opts.codexModel
+      : (opts.codexReviewerModel ?? opts.codexModel);
   }
   if (agent === "claude") {
     return isPrimary
@@ -335,9 +375,18 @@ const resolveTmuxModel = (agent: Agent, opts: Options): string => {
       : (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL);
   }
   if (agent === "gemini") {
-    return isPrimary ? opts.geminiModel : (opts.geminiReviewerModel ?? opts.geminiModel);
+    return isPrimary
+      ? opts.geminiModel
+      : (opts.geminiReviewerModel ?? opts.geminiModel);
   }
-  return isPrimary ? opts.cursorModel : (opts.cursorReviewerModel ?? opts.cursorModel);
+  if (agent === "copilot") {
+    return isPrimary
+      ? opts.copilotModel
+      : (opts.copilotReviewerModel ?? opts.copilotModel);
+  }
+  return isPrimary
+    ? opts.cursorModel
+    : (opts.cursorReviewerModel ?? opts.cursorModel);
 };
 
 const buildClaudeCommand = (
@@ -413,6 +462,21 @@ const buildCursorCommand = (
     "--yolo",
     "--approve-mcps",
   ];
+  if (resumeId) {
+    args.push("--resume", resumeId);
+  }
+  if (prompt) {
+    args.push(prompt);
+  }
+  return args;
+};
+
+const buildCopilotCommand = (
+  model: string,
+  prompt?: string,
+  resumeId?: string
+): string[] => {
+  const args = ["copilot", "agent", "--model", model, "--yolo"];
   if (resumeId) {
     args.push("--resume", resumeId);
   }
@@ -753,7 +817,9 @@ const preparePersistentTmuxLaunch = async (
 }> => {
   const pair = [opts.agent, pairedPeer(opts)];
   const claudeSessionId = pair.includes("claude")
-    ? manifest.claudeSessionId || opts.pairedSessionIds?.claude || deps.makeClaudeSessionId()
+    ? manifest.claudeSessionId ||
+      opts.pairedSessionIds?.claude ||
+      deps.makeClaudeSessionId()
     : "";
   let codexThreadId = "";
   let codexRemoteUrl = "";
@@ -764,7 +830,12 @@ const preparePersistentTmuxLaunch = async (
       "codex",
       opts,
       manifest.codexThreadId || opts.pairedSessionIds?.codex || undefined,
-      { codexLaunch: { orphanOnExit: true } },
+      {
+        codexLaunch: {
+          env: codexHomeEnv(opts.codexHome),
+          orphanOnExit: true,
+        },
+      },
       codexKind
     );
     codexThreadId =
@@ -859,6 +930,13 @@ const buildPairedAgentCommand = ({
       model,
       prompt,
       hadSession ? opts.pairedSessionIds?.gemini : undefined
+    );
+  }
+  if (agent === "copilot") {
+    return buildCopilotCommand(
+      model,
+      prompt,
+      hadSession ? opts.pairedSessionIds?.copilot : undefined
     );
   }
   return buildCursorCommand(
@@ -983,8 +1061,12 @@ const startPairedSession = async (
     return session;
   }
   const hadAgentSession: Record<Agent, boolean> = {
-    claude: Boolean(manifest.claudeSessionId || launch.opts.pairedSessionIds?.claude),
-    codex: Boolean(manifest.codexThreadId || launch.opts.pairedSessionIds?.codex),
+    claude: Boolean(
+      manifest.claudeSessionId || launch.opts.pairedSessionIds?.claude
+    ),
+    codex: Boolean(
+      manifest.codexThreadId || launch.opts.pairedSessionIds?.codex
+    ),
     gemini: Boolean(launch.opts.pairedSessionIds?.gemini),
     cursor: Boolean(launch.opts.pairedSessionIds?.cursor),
   };
@@ -1021,12 +1103,17 @@ const startPairedSession = async (
       )
     : undefined;
   if (claudeChannelServer) {
-    registerClaudeChannelServerForRun(deps, claudeChannelServer, storage.runDir);
+    registerClaudeChannelServerForRun(
+      deps,
+      claudeChannelServer,
+      storage.runDir
+    );
   }
   try {
     const env = [
       `${RUN_BASE_ENV}=${runBase}`,
       `${RUN_ID_ENV}=${storage.runId}`,
+      ...(launch.opts.codexHome ? [`CODEX_HOME=${launch.opts.codexHome}`] : []),
     ];
     const leftPrompt = hadAgentSession[paneAgents.left]
       ? undefined
@@ -1368,7 +1455,9 @@ export const runInTmux = async (
 
   deps.log(`[loop] started tmux session "${session}"`);
   deps.log(`[loop] attach with: tmux attach -t ${session}`);
-  const handedOff = insideTmux ? true : attachSessionIfInteractive(session, deps);
+  const handedOff = insideTmux
+    ? true
+    : attachSessionIfInteractive(session, deps);
   if (pairedLaunch && handedOff) {
     if (sessionExists(session, deps.spawn)) {
       deps.releasePersistentCodexSession();
@@ -1384,6 +1473,7 @@ export const tmuxInternals = {
   buildClaudeChannelServerConfig,
   buildClaudeChannelServerName: claudeChannelServerName,
   buildCodexCommand,
+  buildCopilotCommand,
   buildCursorCommand,
   buildGeminiCommand,
   buildInteractivePeerPrompt,

@@ -10,8 +10,7 @@ import {
 const ORIGINAL_LOOP_CODEX_MODEL = process.env.LOOP_CODEX_MODEL;
 const originalExit = process.exit;
 const originalLog = console.log;
-const CONFLICT_ONLY_MODE_ERROR =
-  "Cannot combine --claude-only with --codex-only.";
+const CONFLICT_ONLY_MODE_ERROR = "Cannot combine multiple --*-only flags.";
 
 const clearModelEnv = (): void => {
   Reflect.deleteProperty(process.env, "LOOP_CODEX_MODEL");
@@ -69,7 +68,8 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   clearModelEnv();
   const opts = parseArgs([]);
 
-  expect(opts.agent).toBe("codex");
+  expect(opts.agent).toBe("claude");
+  expect(opts.pairWith).toBe("codex");
   expect(opts.doneSignal).toBe(DEFAULT_DONE_SIGNAL);
   expect(opts.proof).toBe("");
   expect(opts.format).toBe("pretty");
@@ -159,6 +159,21 @@ test("parseArgs uses reviewer after --review when valid", () => {
   const opts = parseArgs(["--review", "claude", "--proof", "verify"]);
 
   expect(opts.review).toBe("claude");
+});
+
+test("parseArgs uses --reviewer as paired peer without changing completion review", () => {
+  const opts = parseArgs([
+    "--agent",
+    "claude",
+    "--reviewer",
+    "gemini",
+    "--proof",
+    "verify",
+  ]);
+
+  expect(opts.agent).toBe("claude");
+  expect(opts.pairWith).toBe("gemini");
+  expect(opts.review).toBe("claudex");
 });
 
 test("parseArgs treats bare --review-plan as other when no reviewer follows", () => {
@@ -418,4 +433,72 @@ test("parseArgs throws when positional prompt is provided with --prompt", () => 
   expect(() =>
     parseArgs(["--proof", "verify", "--prompt", "PLAN.md", "extra"])
   ).toThrow("Unexpected positional prompt when --prompt is already set.");
+});
+
+test("parseArgs sets agent/review/reviewPlan to copilot with --copilot-only", () => {
+  const opts = parseArgs(["--copilot-only", "--proof", "verify"]);
+
+  expect(opts.agent).toBe("copilot");
+  expect(opts.review).toBe("copilot");
+  expect(opts.reviewPlan).toBe("copilot");
+  expect(opts.pairedMode).toBe(false);
+});
+
+test("parseArgs throws on conflicting --copilot-only and --claude-only", () => {
+  expect(() => parseArgs(["--copilot-only", "--claude-only"])).toThrow(
+    CONFLICT_ONLY_MODE_ERROR
+  );
+});
+
+test("parseArgs accepts copilot as --agent value", () => {
+  const opts = parseArgs(["--agent", "copilot", "--proof", "verify"]);
+
+  expect(opts.agent).toBe("copilot");
+  expect(opts.pairWith).toBe("claude");
+});
+
+test("parseArgs handles --copilot-model and --copilot-reviewer-model", () => {
+  const opts = parseArgs([
+    "--copilot-model",
+    "gpt-4.1",
+    "--copilot-reviewer-model",
+    "gpt-4.1-mini",
+    "--proof",
+    "verify",
+  ]);
+
+  expect(opts.copilotModel).toBe("gpt-4.1");
+  expect(opts.copilotReviewerModel).toBe("gpt-4.1-mini");
+});
+
+test("parseArgs handles --copilot-model= equals form", () => {
+  const opts = parseArgs(["--copilot-model=o3", "--proof", "verify"]);
+
+  expect(opts.copilotModel).toBe("o3");
+});
+
+test("parseArgs accepts copilot as --pair-with value", () => {
+  const opts = parseArgs([
+    "--agent",
+    "claude",
+    "--pair-with",
+    "copilot",
+    "--proof",
+    "verify",
+  ]);
+
+  expect(opts.agent).toBe("claude");
+  expect(opts.pairWith).toBe("copilot");
+});
+
+test("parseArgs accepts copilot as --review value", () => {
+  const opts = parseArgs(["--review", "copilot", "--proof", "verify"]);
+
+  expect(opts.review).toBe("copilot");
+});
+
+test("parseArgs accepts copilot as --review-plan value", () => {
+  const opts = parseArgs(["--review-plan", "copilot", "--proof", "verify"]);
+
+  expect(opts.reviewPlan).toBe("copilot");
 });

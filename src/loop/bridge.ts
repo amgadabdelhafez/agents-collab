@@ -11,12 +11,12 @@ import { claudeChannelInstructions } from "./bridge-guidance";
 import {
   bridgeRuntimeCommandDeps,
   clearStaleTmuxBridgeState,
-  deliverTmuxBridgeMessage,
-  hasBridgeDeliveryRoute,
   deliverCodexBridgeMessage,
+  deliverTmuxBridgeMessage,
   drainCodexTmuxMessages,
   ensureBridgeWorker,
   flushClaudeChannelMessages,
+  hasBridgeDeliveryRoute,
   readBridgeRuntimeStatus,
 } from "./bridge-runtime";
 import {
@@ -166,7 +166,7 @@ const handleSendMessageTool = async (
     writeError(
       id,
       MCP_INVALID_PARAMS,
-      `Unknown target "${normalizedTarget}" - expected one of "claude", "codex", "gemini", or "cursor"`
+      `Unknown target "${normalizedTarget}" - expected one of "claude", "codex", "gemini", "cursor", or "copilot"`
     );
     return;
   }
@@ -209,10 +209,18 @@ const handleSendMessageTool = async (
     target,
     message,
     target === "codex"
-      ? async (entry) =>
-          (await deliverCodexBridgeMessage(runDir, entry)) ||
-          (await deliverTmuxBridgeMessage(runDir, entry))
-      : target === "cursor" || target === "gemini"
+      ? async (entry) => {
+          if (
+            readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy"
+          ) {
+            return false;
+          }
+          return (
+            (await deliverCodexBridgeMessage(runDir, entry)) ||
+            (await deliverTmuxBridgeMessage(runDir, entry))
+          );
+        }
+      : target === "cursor" || target === "gemini" || target === "copilot"
         ? (entry) => deliverTmuxBridgeMessage(runDir, entry)
         : undefined,
     undefined
@@ -334,7 +342,7 @@ const handleBridgeRequest = async (
                 properties: {
                   message: { type: "string" },
                   target: {
-                    enum: ["claude", "codex", "gemini", "cursor"],
+                    enum: ["claude", "codex", "gemini", "cursor", "copilot"],
                     type: "string",
                   },
                 },

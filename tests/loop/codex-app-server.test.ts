@@ -273,7 +273,7 @@ test("startAppServer forwards config overrides into the app-server command", asy
     "app-server",
     "--listen",
   ]);
-  expect(lastSpawnCommand[5]).toContain("ws://0.0.0.0:");
+  expect(lastSpawnCommand[5]).toContain("ws://127.0.0.1:");
 });
 
 test("startAppServer exposes the app-server websocket URL", async () => {

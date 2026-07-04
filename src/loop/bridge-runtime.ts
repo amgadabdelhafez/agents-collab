@@ -17,8 +17,8 @@ import {
   type BridgeMessage,
   type BridgeStatus,
   readBridgeInbox,
-  readPendingBridgeMessages,
   readBridgeStatus,
+  readPendingBridgeMessages,
 } from "./bridge-store";
 import { injectCodexMessage } from "./codex-app-server";
 import { buildLaunchArgv } from "./launch";
@@ -111,7 +111,8 @@ const capitalize = (value: string): string =>
 const tmuxPane = (session: string, paneId: string): string =>
   `${session}:${paneId}`;
 
-const codexPane = (session: string): string => tmuxPane(session, TMUX_RIGHT_PANE);
+const codexPane = (session: string): string =>
+  tmuxPane(session, TMUX_RIGHT_PANE);
 
 const capturePane = (pane: string): string => {
   const result = bridgeRuntimeCommandDeps.spawnSync(
@@ -208,7 +209,7 @@ const tmuxSessionExists = (session: string): boolean => {
 };
 
 export interface BridgeRuntimeStatus extends BridgeStatus {
-  codexDeliveryMode: "app-server" | "none" | "tmux";
+  codexDeliveryMode: "app-server" | "none" | "tmux" | "tmux-proxy";
   hasLiveTmuxSession: boolean;
 }
 
@@ -273,7 +274,13 @@ export const readBridgeRuntimeStatus = (
     status.tmuxSession && tmuxSessionExists(status.tmuxSession)
   );
   let codexDeliveryMode: BridgeRuntimeStatus["codexDeliveryMode"] = "none";
-  if (status.hasCodexRemote) {
+  if (
+    status.hasCodexRemote &&
+    hasLiveTmuxSession &&
+    paneIdForTarget(runDir, "codex")
+  ) {
+    codexDeliveryMode = "tmux-proxy";
+  } else if (status.hasCodexRemote) {
     codexDeliveryMode = "app-server";
   } else if (hasLiveTmuxSession) {
     codexDeliveryMode = "tmux";
@@ -422,6 +429,9 @@ export const deliverCodexBridgeMessage = async (
   if (status.tmuxSession && !status.hasLiveTmuxSession) {
     clearStaleTmuxBridgeState(runDir);
   }
+  if (status.codexDeliveryMode === "tmux-proxy") {
+    return false;
+  }
   if (!status.hasCodexRemote) {
     return false;
   }
@@ -512,7 +522,8 @@ export const drainTmuxBridgeMessages = async (
     return false;
   }
   const message = readPendingBridgeMessages(runDir).find(
-    (entry) => entry.target !== "claude" && paneIdForTarget(runDir, entry.target)
+    (entry) =>
+      entry.target !== "claude" && paneIdForTarget(runDir, entry.target)
   );
   if (!message) {
     return false;
@@ -547,8 +558,11 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
         return;
       }
       const delivered =
-        (status.hasCodexRemote && (await drainCodexAppServerMessages(runDir))) ||
-        (await drainTmuxBridgeMessages(runDir));
+        status.codexDeliveryMode === "tmux-proxy"
+          ? false
+          : (status.hasCodexRemote &&
+              (await drainCodexAppServerMessages(runDir))) ||
+            (await drainTmuxBridgeMessages(runDir));
       if (!(status.hasCodexRemote || status.hasLiveTmuxSession)) {
         return;
       }

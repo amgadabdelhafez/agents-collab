@@ -355,7 +355,7 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
   expect(bridge.readBridgeRuntimeStatus(liveRunDir)).toMatchObject({
     claudeBridgeMode: "local-registration",
     claudeChannelServer: bridge.claudeChannelServerName("8", "repo-123"),
-    codexDeliveryMode: "app-server",
+    codexDeliveryMode: "tmux-proxy",
     hasCodexRemote: true,
     hasLiveTmuxSession: true,
     hasTmuxSession: true,
@@ -624,7 +624,7 @@ test("bridge MCP send_message rejects an unknown normalized target", async () =>
     error: {
       code: -32_602,
       message:
-        'Unknown target "foo" - expected one of "claude", "codex", "gemini", or "cursor"',
+        'Unknown target "foo" - expected one of "claude", "codex", "gemini", "cursor", or "copilot"',
     },
     id: 1,
     jsonrpc: "2.0",
@@ -1175,7 +1175,7 @@ test("bridge delivers Claude replies directly to Codex when app-server state is 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge prefers Codex app-server delivery even when tmux is live", async () => {
+test("bridge leaves live Codex tmux messages queued for the tmux proxy", async () => {
   const injectCodexMessage = mock(async () => true);
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
@@ -1217,18 +1217,16 @@ test("bridge prefers Codex app-server delivery even when tmux is live", async ()
   bridge.bridgeInternals.appendBridgeEvent(runDir, message);
   const delivered = await bridge.deliverCodexBridgeMessage(runDir, message);
 
-  expect(delivered).toBe(true);
-  expect(injectCodexMessage).toHaveBeenCalledWith(
-    "ws://127.0.0.1:4500",
-    "codex-thread-1",
-    "Claude: Please steer this into the active turn."
-  );
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(delivered).toBe(false);
+  expect(injectCodexMessage).not.toHaveBeenCalled();
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining(message),
+  ]);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "delivered")
-  ).toHaveLength(1);
+  ).toHaveLength(0);
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -1431,7 +1429,8 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
     at: "2026-03-23T10:01:00.000Z",
     id: "msg-cursor-1",
     kind: "message",
-    message: "Please review the current diff and send notes back through the bridge.",
+    message:
+      "Please review the current diff and send notes back through the bridge.",
     source: "codex",
     target: "cursor",
   });
@@ -1470,15 +1469,7 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
       { stderr: "ignore" },
     ],
     [
-      [
-        "tmux",
-        "send-keys",
-        "-t",
-        "repo-loop-8:0.0",
-        "-l",
-        "--",
-        "",
-      ],
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "-l", "--", ""],
       { stderr: "ignore" },
     ],
     [
@@ -1502,15 +1493,7 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
       { stderr: "ignore" },
     ],
     [
-      [
-        "tmux",
-        "send-keys",
-        "-t",
-        "repo-loop-8:0.0",
-        "-l",
-        "--",
-        "",
-      ],
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "-l", "--", ""],
       { stderr: "ignore" },
     ],
     [
@@ -2481,6 +2464,203 @@ test("dispatchBridgeMessage formats accepted status with the target name", async
   expect(bridge.formatDispatchResult(result)).toBe(
     `accepted ${result.entry.id} for claude delivery`
   );
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge MCP send_message normalizes copilot as a valid target", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "claude",
+    [
+      encodeFrame({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          arguments: {
+            message: "please review",
+            target: "  COPILOT  ",
+          },
+          name: "send_message",
+        },
+      }),
+      "\n",
+    ].join("")
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout).toContain("queued");
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining({
+      message: "please review",
+      source: "claude",
+      target: "copilot",
+    }),
+  ]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge queues cross-agent messages for all non-Claude/Codex pairs", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const pairs: Array<{ source: "claude" | "codex"; target: string }> = [
+    { source: "claude", target: "copilot" },
+    { source: "claude", target: "gemini" },
+    { source: "claude", target: "cursor" },
+    { source: "codex", target: "copilot" },
+    { source: "codex", target: "gemini" },
+    { source: "codex", target: "cursor" },
+  ];
+
+  for (const { source, target } of pairs) {
+    const pairRunDir = join(root, `run-${source}-${target}`);
+    mkdirSync(pairRunDir, { recursive: true });
+
+    const result = await runBridgeProcess(
+      pairRunDir,
+      source,
+      [
+        encodeFrame({
+          id: 1,
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: {
+            arguments: {
+              message: `hello from ${source}`,
+              target,
+            },
+            name: "send_message",
+          },
+        }),
+        "\n",
+      ].join("")
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("queued");
+    const pending = bridge.readPendingBridgeMessages(pairRunDir);
+    expect(pending).toEqual([
+      expect.objectContaining({
+        message: `hello from ${source}`,
+        source,
+        target,
+      }),
+    ]);
+    rmSync(pairRunDir, { recursive: true, force: true });
+  }
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge config injection writes copilot config to .github/copilot/mcp.json", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const projectDir = join(root, "project");
+  mkdirSync(runDir, { recursive: true });
+  mkdirSync(projectDir, { recursive: true });
+
+  bridge.injectProjectBridgeConfig(projectDir, runDir, "copilot");
+
+  const configPath = join(projectDir, ".github", "copilot", "mcp.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  expect(config.mcpServers).toBeDefined();
+  expect(config.mcpServers[bridge.BRIDGE_SERVER]).toBeDefined();
+  expect(config.mcpServers[bridge.BRIDGE_SERVER].type).toBe("stdio");
+  expect(config.mcpServers[bridge.BRIDGE_SERVER].args).toContain("copilot");
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge pending count includes copilot messages", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const bridgeFile = bridge.bridgeInternals.bridgePath(runDir);
+
+  writeFileSync(
+    bridgeFile,
+    `${JSON.stringify({
+      at: "2026-03-22T10:00:00.000Z",
+      id: "msg-copilot-1",
+      kind: "message",
+      message: "review this",
+      source: "claude",
+      target: "copilot",
+    })}\n`,
+    "utf8"
+  );
+
+  const status = bridge.readBridgeStatus(runDir);
+  expect(status.pending.copilot).toBe(1);
+  expect(status.pending.claude).toBe(0);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge drains pending copilot tmux messages through stored pane routing", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("waiting for input", "utf8"),
+      };
+    }
+    if (args[0] === "tmux" && args[1] === "send-keys") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      status: "running",
+      tmuxPaneLeftAgent: "copilot",
+      tmuxPaneRightAgent: "claude",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-copilot-tmux-1",
+    kind: "message",
+    message: "Please review the latest changes.",
+    source: "claude",
+    target: "copilot",
+  });
+
+  const delivered = await bridge.drainTmuxBridgeMessages(runDir);
+
+  expect(delivered).toBe(true);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
 
   rmSync(root, { recursive: true, force: true });
 });

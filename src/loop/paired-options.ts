@@ -5,6 +5,8 @@ import {
   injectProjectBridgeConfig,
   resolveClaudeChannelServerName,
 } from "./bridge-config";
+import { ensureLoopCodexHome } from "./codex-home";
+import { defaultPeerAgent } from "./agents";
 import {
   createRunManifest,
   ensureRunStorage,
@@ -88,12 +90,13 @@ const pairedSessionIds = (
   }
   const claude = stored?.claudeSessionId || fallback?.claude || undefined;
   const codex = stored?.codexThreadId || fallback?.codex || undefined;
-  const gemini = fallback?.gemini || undefined;
+  const copilot = fallback?.copilot || undefined;
   const cursor = fallback?.cursor || undefined;
-  if (!(claude || codex || gemini || cursor)) {
+  const gemini = fallback?.gemini || undefined;
+  if (!(claude || codex || copilot || cursor || gemini)) {
     return undefined;
   }
-  return { claude, codex, cursor, gemini };
+  return { claude, codex, copilot, cursor, gemini };
 };
 
 export const resolvePreparedRunState = (
@@ -148,20 +151,30 @@ export const applyPairedOptions = (
   opts: Options,
   storage: RunStorage,
   manifest: RunManifest | undefined,
-  allowRawSessionFallback = false
+  allowRawSessionFallback = false,
+  cwd = process.cwd()
 ): void => {
+  opts.pairWith ??= defaultPeerAgent(opts.agent);
   opts.claudeMcpConfigPath = ensureAgentBridgeConfig(
     storage.runDir,
     "claude",
     resolveClaudeBridgeServer(storage, manifest)
   );
   opts.claudePersistentSession = true;
+  opts.copilotMcpConfigPath = ensureAgentBridgeConfig(
+    storage.runDir,
+    "copilot"
+  );
   opts.cursorMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "cursor");
   opts.codexMcpConfigArgs = buildCodexBridgeConfigArgs(storage.runDir, "codex");
+  opts.codexHome = ensureLoopCodexHome(storage.runDir, cwd);
   opts.geminiMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "gemini");
   // Inject bridge MCP into project-level config only for agents in this pair
-  const projectDir = process.cwd();
+  const projectDir = cwd;
   const pair = [opts.agent, opts.pairWith].filter(Boolean);
+  if (pair.includes("copilot")) {
+    injectProjectBridgeConfig(projectDir, storage.runDir, "copilot");
+  }
   if (pair.includes("cursor")) {
     injectProjectBridgeConfig(projectDir, storage.runDir, "cursor");
   }
@@ -183,7 +196,7 @@ export const preparePairedOptions = (
 ): void => {
   const { allowRawSessionFallback, manifest, storage } =
     resolvePreparedRunState(opts, cwd, createManifest);
-  applyPairedOptions(opts, storage, manifest, allowRawSessionFallback);
+  applyPairedOptions(opts, storage, manifest, allowRawSessionFallback, cwd);
 };
 
 export const preparePairedRun = (
@@ -195,7 +208,7 @@ export const preparePairedRun = (
     manifest: existing,
     storage,
   } = resolvePreparedRunState(opts, cwd);
-  applyPairedOptions(opts, storage, existing, allowRawSessionFallback);
+  applyPairedOptions(opts, storage, existing, allowRawSessionFallback, cwd);
 
   const resumable = canResumePairedManifest(existing) ? existing : undefined;
   const manifest = existing

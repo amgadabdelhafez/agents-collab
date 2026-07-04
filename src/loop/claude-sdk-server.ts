@@ -1,26 +1,15 @@
-import {
-  type Server,
-  type ServerWebSocket,
-  serve,
-  spawn,
-  spawnSync,
-} from "bun";
+import { spawn, spawnSync } from "bun";
 import { AGENT_TURN_TIMEOUT_MS, DEFAULT_CLAUDE_MODEL } from "./constants";
-import { findFreePort } from "./ports";
 import { DETACH_CHILD_PROCESS, killChildProcess } from "./process";
 import type { Options, RunResult } from "./types";
 
 type ExitSignal = "SIGINT" | "SIGTERM";
 type Callback = (text: string) => void;
-type ServeFn = (...args: Parameters<typeof serve>) => ReturnType<typeof serve>;
 type SpawnFn = (...args: Parameters<typeof spawn>) => ReturnType<typeof spawn>;
-type WSRole = "claude" | "frontend";
+
 export interface ClaudeSdkLaunchOptions {
   mcpConfig?: string;
   persistent?: boolean;
-}
-interface WSData {
-  role: WSRole;
 }
 
 interface ContentBlock {
@@ -63,12 +52,10 @@ interface TurnState {
   resolve: (result: RunResult) => void;
 }
 
-const CLAUDE_SDK_BASE_PORT = 8765;
-const CLAUDE_SDK_PORT_RANGE = 100;
 const BACKGROUND_TASK_CONTINUATION =
   "Background tasks are complete. Continue with the task.";
 const DEFAULT_CHILD_POLL_INTERVAL_MS = 2000;
-const START_TIMEOUT_MS = 60_000;
+const STARTUP_GRACE_MS = 100;
 
 let childPollIntervalMs = DEFAULT_CHILD_POLL_INTERVAL_MS;
 let waitTimeoutMs = AGENT_TURN_TIMEOUT_MS;
@@ -112,23 +99,6 @@ const countChildProcesses = (pid: number): number => {
 
 let countChildProcessesFn: CountChildProcessesFn = countChildProcesses;
 
-const drainStream = (stream: ReadableStream<Uint8Array>): void => {
-  const reader = stream.getReader();
-  const pump = (): void => {
-    reader
-      .read()
-      .then(({ done }) => {
-        if (!done) {
-          pump();
-        }
-      })
-      .catch(() => {
-        // ignore read errors after process exit
-      });
-  };
-  pump();
-};
-
 const pipeToStderr = (stream: ReadableStream<Uint8Array>): void => {
   const reader = stream.getReader();
   const pump = (): void => {
@@ -150,23 +120,7 @@ const pipeToStderr = (stream: ReadableStream<Uint8Array>): void => {
   pump();
 };
 
-const isValidNdjson = (text: string): boolean => {
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    try {
-      JSON.parse(trimmed);
-    } catch {
-      return false;
-    }
-  }
-  return true;
-};
-
 let spawnFn: SpawnFn = spawn;
-let serveFn: ServeFn = serve;
 
 export const claudeSdkInternals = {
   BACKGROUND_TASK_CONTINUATION,
@@ -176,12 +130,6 @@ export const claudeSdkInternals = {
   },
   setSpawnFn(next: SpawnFn): void {
     spawnFn = next;
-  },
-  restoreServeFn(): void {
-    serveFn = serve;
-  },
-  setServeFn(next: ServeFn): void {
-    serveFn = next;
   },
   restoreCountChildProcessesFn(): void {
     countChildProcessesFn = countChildProcesses;
@@ -206,23 +154,18 @@ export const claudeSdkInternals = {
 class ClaudeSdkClient {
   private child: ReturnType<typeof spawn> | undefined;
   private closed = false;
+  private earlyExitCode: number | undefined;
   private lastSessionId = "";
   private lock: Promise<void> = Promise.resolve();
   private mcpConfig = "";
   private model = DEFAULT_CLAUDE_MODEL;
-  private port = 0;
   private persistentSession = false;
   private ready = false;
   private resumeId = "";
-  private server: Server | undefined;
   private sessionId = "";
   private started = false;
+  private stdoutBuffer = "";
   private turn: TurnState | undefined;
-  private initRequestId = "";
-  private waitingForConnection: (() => void) | undefined;
-  private waitingForInitialize: (() => void) | undefined;
-  private ws: ServerWebSocket<WSData> | undefined;
-  private readonly frontends = new Set<ServerWebSocket<WSData>>();
 
   get process(): ReturnType<typeof spawn> | undefined {
     return this.child;
@@ -297,25 +240,12 @@ class ClaudeSdkClient {
     }
     this.started = true;
     try {
-      this.port = await findFreePort(
-        CLAUDE_SDK_BASE_PORT,
-        CLAUDE_SDK_PORT_RANGE
-      );
-      this.createServer();
-
-      const connected = new Promise<void>((r) => {
-        this.waitingForConnection = r;
-      });
-      const initialized = new Promise<void>((r) => {
-        this.waitingForInitialize = r;
-      });
-
-      const url = `ws://localhost:${this.port}`;
       const resumeArgs = this.resumeId ? ["--resume", this.resumeId] : [];
       const mcpArgs = this.mcpConfig
         ? ["--mcp-config", this.mcpConfig, "--strict-mcp-config"]
         : [];
       this.resumeId = "";
+      this.earlyExitCode = undefined;
 
       this.child = spawnFn(
         [
@@ -331,32 +261,39 @@ class ClaudeSdkClient {
           this.model,
           ...mcpArgs,
           "--dangerously-skip-permissions",
-          "--sdk-url",
-          url,
           ...resumeArgs,
         ],
         {
           detached: DETACH_CHILD_PROCESS,
           env: process.env,
           stderr: "pipe",
+          stdin: "pipe",
           stdout: "pipe",
         }
       );
 
-      drainStream(this.child.stdout);
+      this.consumeStdout(this.child.stdout);
       pipeToStderr(this.child.stderr);
+      this.child.exited
+        .then((code) => {
+          this.earlyExitCode = typeof code === "number" ? code : 1;
+          if (!this.closed) {
+            this.handleUnexpectedExit();
+          }
+        })
+        .catch(() => {
+          // ignore exit propagation errors
+        });
 
-      const timeout = new Promise<never>((_, reject) => {
-        setTimeout(
-          () => reject(new Error("claude sdk startup timed out")),
-          START_TIMEOUT_MS
+      // claude in stdio stream-json mode has no handshake — it begins consuming
+      // stdin immediately. Give it a brief grace window to surface immediate
+      // startup failures (missing binary, auth error) before we declare ready.
+      await wait(STARTUP_GRACE_MS);
+      if (this.earlyExitCode !== undefined) {
+        throw new Error(
+          `claude exited with code ${this.earlyExitCode} during startup`
         );
-      });
-      const exited = this.child.exited.then((code) => {
-        throw new Error(`claude exited with code ${code} during startup`);
-      });
-
-      await Promise.race([connected.then(() => initialized), timeout, exited]);
+      }
       this.ready = true;
     } catch (error) {
       await this.cleanup();
@@ -394,111 +331,47 @@ class ClaudeSdkClient {
     await this.cleanup();
   }
 
-  private broadcastToFrontends(data: string): void {
-    for (const ws of this.frontends) {
-      ws.send(data);
-    }
+  private consumeStdout(stream: ReadableStream<Uint8Array>): void {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    const pump = (): void => {
+      reader
+        .read()
+        .then(({ done, value }) => {
+          if (done) {
+            return;
+          }
+          if (value) {
+            this.stdoutBuffer += decoder.decode(value, { stream: true });
+            this.drainStdoutBuffer();
+          }
+          pump();
+        })
+        .catch(() => {
+          // ignore read errors after process exit
+        });
+    };
+    pump();
   }
 
-  private handleFrontendMessage(
-    _ws: ServerWebSocket<WSData>,
-    text: string
-  ): void {
-    if (!isValidNdjson(text)) {
-      return;
-    }
-    // Fan out frontend-originated NDJSON so observer UIs can render
-    // user prompts that may not be echoed back by Claude.
-    this.broadcastToFrontends(text);
-    this.ws?.send(text);
-  }
-
-  private createServer(): void {
-    const self = this;
-    this.server = serveFn({
-      port: this.port,
-      fetch(req, server) {
-        const path = new URL(req.url).pathname;
-        const role: WSRole = path === "/ws" ? "frontend" : "claude";
-        if (server.upgrade(req, { data: { role } as WSData })) {
-          return undefined;
+  private drainStdoutBuffer(): void {
+    let newlineAt = this.stdoutBuffer.indexOf("\n");
+    while (newlineAt >= 0) {
+      const line = this.stdoutBuffer.slice(0, newlineAt);
+      this.stdoutBuffer = this.stdoutBuffer.slice(newlineAt + 1);
+      const trimmed = line.trim();
+      if (trimmed) {
+        try {
+          this.handleMessage(JSON.parse(trimmed) as NdjsonMessage, trimmed);
+        } catch {
+          // ignore parse errors
         }
-        return new Response("loop", { status: 200 });
-      },
-      websocket: {
-        idleTimeout: 0,
-        perMessageDeflate: false,
-        close(ws, _code, _reason) {
-          const d = ws.data as WSData;
-          if (d.role === "frontend") {
-            self.frontends.delete(ws as ServerWebSocket<WSData>);
-            return;
-          }
-          if (!self.closed) {
-            self.handleUnexpectedClose();
-          }
-        },
-        message(ws, data) {
-          const d = ws.data as WSData;
-          const text =
-            typeof data === "string"
-              ? data
-              : new TextDecoder().decode(data as ArrayBuffer);
-
-          if (d.role === "frontend") {
-            self.handleFrontendMessage(ws as ServerWebSocket<WSData>, text);
-            return;
-          }
-
-          for (const line of text.split("\n")) {
-            if (!line.trim()) {
-              continue;
-            }
-            try {
-              self.handleMessage(JSON.parse(line) as NdjsonMessage, line);
-            } catch {
-              // ignore parse errors
-            }
-          }
-        },
-        open(ws) {
-          const d = ws.data as WSData;
-          if (d.role === "frontend") {
-            self.frontends.add(ws as ServerWebSocket<WSData>);
-            // send current status
-            if (self.ready) {
-              ws.send(
-                `${JSON.stringify({
-                  type: "status",
-                  text: "claude code is connected",
-                })}\n`
-              );
-            }
-            return;
-          }
-
-          self.ws = ws as ServerWebSocket<WSData>;
-          self.waitingForConnection?.();
-          self.waitingForConnection = undefined;
-
-          // Send initialize control_request per SDK protocol
-          self.initRequestId = crypto.randomUUID();
-          ws.send(
-            `${JSON.stringify({
-              type: "control_request",
-              request_id: self.initRequestId,
-              request: { subtype: "initialize" },
-            })}\n`
-          );
-        },
-      },
-    });
+      }
+      newlineAt = this.stdoutBuffer.indexOf("\n");
+    }
   }
 
   private handleMessage(msg: NdjsonMessage, raw: string): void {
-    // broadcast to frontend observers
-    this.broadcastToFrontends(`${raw}\n`);
-
     if (this.turn) {
       this.turn.combined += `${raw}\n`;
       this.turn.onRaw(raw);
@@ -514,9 +387,6 @@ class ClaudeSdkClient {
           }
         }
         return;
-      case "control_response":
-        this.handleControlResponse(msg);
-        return;
       case "stream_event":
         this.handleStreamEvent(msg);
         return;
@@ -531,16 +401,6 @@ class ClaudeSdkClient {
         return;
       default:
         return;
-    }
-  }
-
-  private handleControlResponse(msg: NdjsonMessage): void {
-    if (
-      msg.response?.request_id === this.initRequestId &&
-      msg.response?.subtype === "success"
-    ) {
-      this.waitingForInitialize?.();
-      this.waitingForInitialize = undefined;
     }
   }
 
@@ -605,7 +465,7 @@ class ClaudeSdkClient {
   }
 
   private handleControlRequest(msg: NdjsonMessage): void {
-    if (!(this.ws && msg.request_id)) {
+    if (!msg.request_id) {
       return;
     }
     const input = asRecord(msg.request?.input);
@@ -617,7 +477,7 @@ class ClaudeSdkClient {
       this.turn.backgroundTaskSeen = true;
     }
     if (msg.request?.subtype === "can_use_tool") {
-      this.sendJson({
+      this.writeStdin({
         type: "control_response",
         response: {
           subtype: "success",
@@ -649,20 +509,30 @@ class ClaudeSdkClient {
     }
   }
 
-  private sendJson(data: Record<string, unknown>): void {
-    this.ws?.send(`${JSON.stringify(data)}\n`);
+  private writeStdin(data: Record<string, unknown>): void {
+    const stdin = this.child?.stdin;
+    if (!stdin || typeof stdin === "number") {
+      return;
+    }
+    const line = `${JSON.stringify(data)}\n`;
+    try {
+      (stdin as { write: (chunk: string) => unknown }).write(line);
+      const flush = (stdin as { flush?: () => unknown }).flush;
+      if (typeof flush === "function") {
+        flush.call(stdin);
+      }
+    } catch {
+      // child stdin closed (claude exited); turn timeout / exit handler will reject
+    }
   }
 
   private sendUserMessage(content: string): void {
-    const payload = {
+    this.writeStdin({
       type: "user",
       message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: this.sessionId,
-    };
-    const raw = `${JSON.stringify(payload)}\n`;
-    this.broadcastToFrontends(raw);
-    this.ws?.send(raw);
+    });
   }
 
   private async runTurnExclusive(
@@ -675,8 +545,8 @@ class ClaudeSdkClient {
     if (!(this.child && this.ready)) {
       await this.start();
     }
-    if (!this.ws) {
-      throw new Error("claude sdk server not connected");
+    if (!this.child?.stdin) {
+      throw new Error("claude sdk stdin not available");
     }
 
     const result = await new Promise<RunResult>((resolve, reject) => {
@@ -710,7 +580,7 @@ class ClaudeSdkClient {
     });
 
     if (!this.persistentSession) {
-      // Claude SDK session state is process-bound, so restart per turn to force a
+      // claude session state is process-bound, so restart per turn to force a
       // fresh session ID and avoid carrying state across independent loop turns.
       await this.cleanup();
     }
@@ -718,27 +588,15 @@ class ClaudeSdkClient {
   }
 
   private async cleanup(): Promise<void> {
-    for (const ws of this.frontends) {
-      try {
-        ws.close();
-      } catch {
-        // ignore close errors
-      }
-    }
-    this.frontends.clear();
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch {
-        // ignore close errors
-      }
-      this.ws = undefined;
-    }
-    if (this.server) {
-      this.server.stop();
-      this.server = undefined;
-    }
     if (this.child) {
+      const stdin = this.child.stdin;
+      if (stdin && typeof stdin !== "number") {
+        try {
+          (stdin as { end?: () => unknown }).end?.();
+        } catch {
+          // ignore stdin close errors
+        }
+      }
       killChildProcess(this.child, "SIGTERM");
       await this.child.exited;
       this.child = undefined;
@@ -746,19 +604,17 @@ class ClaudeSdkClient {
     this.ready = false;
     this.started = false;
     this.sessionId = "";
+    this.stdoutBuffer = "";
   }
 
-  private handleUnexpectedClose(): void {
+  private handleUnexpectedExit(): void {
     const state = this.turn;
     this.turn = undefined;
-    this.broadcastToFrontends(
-      `${JSON.stringify({ type: "status", text: "claude code disconnected" })}\n`
+    state?.reject(
+      new Error(
+        `claude sdk process exited unexpectedly (code ${this.earlyExitCode ?? "?"})`
+      )
     );
-    state?.reject(new Error("claude sdk connection closed unexpectedly"));
-    this.ws = undefined;
-    this.cleanup().catch(() => {
-      // ignore cleanup errors after unexpected websocket close
-    });
   }
 }
 

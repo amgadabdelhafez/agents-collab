@@ -18,10 +18,10 @@ or
 loop --prompt "Implement {feature}" --proof "Use {skill} to verify your changes" --tmux
 ```
 
-By default `loop` uses Codex as the main worker and Claude as a reviewer. To run Claude as the main worker instead:
+By default `loop` uses Claude as the main worker and Codex as the reviewer. To run Codex as the main worker instead:
 
 ```bash
-loop --agent claude --tmux
+loop --agent codex --tmux
 ```
 
 ## [Agent-to-agent pair programming](https://axeldelafosse.com/blog/agent-to-agent-pair-programming)
@@ -38,6 +38,7 @@ This _is not_ an "agent harness" and the goal isn't to re-invent the wheel: `loo
 
 - Runs in paired mode by default: one agent does the work, the other stays available for review/support
 - Keeps Claude and Codex sessions persistent across iterations and bridges messages between them
+- Routes live tmux bridge traffic through the visible paired panes, so review asks land in the reviewer TUI instead of disappearing into a background transport
 - Stores paired run state under `~/.loop/runs/...` so runs can be resumed by run id or session/thread id
 - Loops until the task is proven done, then runs reviews and creates a draft PR
 
@@ -97,15 +98,20 @@ Some notes:
 - Default mode is paired: `--agent` selects the primary worker and the other model stays available as reviewer/support.
 - You can pass prompt text positionally (`loop "Implement {feature}"`) or via `--prompt`.
 - `--proof` is strongly recommended for autonomous task runs and should describe how to prove the task works (tests, commands, and checks to run). Be specific.
-- Running with no args starts the same paired interactive tmux workspace as `loop --tmux` and waits for you to provide the first task in the TUIs.
+- Running with no args starts the same paired interactive tmux workspace as `loop --tmux` and waits for you to provide the first task in the TUIs. This human-driven mode does not require a prewritten `PLAN.md`, Harness task, or queued slice.
 - `loop --tmux` still works explicitly and behaves the same as the default `loop` command.
 - If the input is plain text (not a `.md` path), `loop` first runs a planning step to create `PLAN.md`, then uses `PLAN.md` for the main loop.
+- Loop prompts instruct agents to maintain `PLAN.md` and `status.md` for sustained sessions. `PLAN.md` holds the current plan, decisions, acceptance criteria, and verification approach; `status.md` is the running handoff with what changed, proof/checks run, open questions, risks, and next steps for the next session.
 - `loop dashboard` opens the live panel for active sessions, recent paired runs, and tmux sessions.
 - If no prompt is provided and options are present, `loop` will use `PLAN.md` if it exists.
 
 ## Paired mode and resume
 
-Paired mode is the default. `loop` starts one primary worker (`--agent`, default: `codex`) and keeps the other model available as a persistent reviewer/support agent. They coordinate directly through the built-in bridge instead of asking the human to relay messages.
+Paired mode is the default. `loop` starts one primary worker (`--agent`, default: `claude`) and keeps the other model available as a persistent reviewer/support agent. They coordinate directly through the built-in bridge instead of asking the human to relay messages.
+
+The primary worker is instructed to ask the paired reviewer for validation and feedback every few concrete steps, after meaningful design choices, and before final completion. It is also instructed to use `AskUserQuestion` or the available user-input tool when scope, requirements, acceptance criteria, or direction are unclear.
+
+For human-driven sessions, once the task is clear the primary worker is instructed to create or update `PLAN.md` and `status.md` before sustained implementation. At handoff or check-in time, the worker updates both files so the next session can resume from repo state instead of hidden chat context.
 
 Each paired run gets a run id and a manifest under `~/.loop/runs/<repo-id>/<run-id>/`.
 
@@ -113,6 +119,24 @@ Each paired run gets a run id and a manifest under `~/.loop/runs/<repo-id>/<run-
 - Use `--session <id>` to resolve an existing paired run from its run id, Claude session id, or Codex thread id.
 - In single-agent mode, `--session <id>` still works as a raw Claude/Codex session resume flag.
 - When combined with `--worktree` or `--tmux`, resumed paired runs keep the same run id so worktree and tmux naming stay aligned.
+
+### Bridge delivery in tmux
+
+In paired tmux mode, bridge delivery follows the visible workspace. If a live Codex pane is present, messages addressed to Codex are queued for the Codex tmux proxy, which injects them into that pane/thread. This keeps Claude->Codex review requests visible to the Codex reviewer instead of acknowledging them through a background app-server path that the reviewer TUI may not process.
+
+If the stored tmux session is stale, `loop` clears the stale tmux routing and falls back to direct Codex app-server delivery when a valid Codex remote/thread is still available.
+
+### Codex MCP isolation
+
+Paired runs start loop-launched Codex with a run-scoped `CODEX_HOME` at:
+
+```text
+~/.loop/runs/<repo-id>/<run-id>/codex-home
+```
+
+That directory contains a minimal Codex config and reuses the normal Codex auth file. The loop bridge MCP is passed explicitly for the run, so global Codex MCP servers and plugin-provided app connectors are not started in paired loop sessions. This keeps autoloop and tmux startup deterministic even when the user's regular Codex config contains slow or broken MCP servers.
+
+Single-agent Codex runs outside paired mode still use the normal Codex configuration unless you set `CODEX_HOME` yourself.
 
 ## Install globally (symlink)
 
@@ -183,7 +207,8 @@ It restarts against a fresh Codex thread after the app-server drop.
 - `claude-loop`: shorthand for `loop --claude-only`
 - `codex-loop`: shorthand for `loop --codex-only`
 - `dashboard`: open the live panel for active sessions, recent paired runs, and tmux sessions
-- `-a, --agent <claude|codex>`: agent to run (default: `codex`)
+- `-a, --agent <claude|codex|gemini|cursor|copilot>`: primary worker agent (default: `claude`)
+- `--pair-with, --reviewer <claude|codex|gemini|cursor|copilot>`: live paired peer in paired mode. This is the agent that appears in the second tmux pane.
 - `--claude-only`: use Claude for work, review, and plan review
 - `--codex-only`: use Codex for work, review, and plan review
 - `-p, --prompt <text|.md file>`: prompt text or a `.md` prompt file path. Plain text auto-creates `PLAN.md` first.
@@ -194,7 +219,7 @@ It restarts against a fresh Codex thread after the app-server drop.
 - `-m, --max-iterations <number>`: max loop count (default: `20`)
 - `-d, --done <signal>`: done signal string (default: `<promise>DONE</promise>`)
 - `--format <pretty|raw>`: output format (default: `pretty`)
-- `--review [claude|codex|claudex]`: run a review when done (default: `claudex`; bare `--review` also uses `claudex`). With `claudex`, both reviews run in parallel, then both comments are passed back to the original agent so it can decide what to address. If both reviews found the same issue, that is a stronger signal to fix it.
+- `--review [agent|claudex]`: choose completion reviewers for single-agent runs after the done signal (default: `claudex`; bare `--review` also uses `claudex`). In paired mode, the live peer from `--pair-with` is the completion reviewer. With `claudex`, both reviews run in parallel, then both comments are passed back to the original agent so it can decide what to address. If both reviews found the same issue, that is a stronger signal to fix it.
 - `--review-plan [other|claude|codex|none]`: reviewer for the automatic plan review pass that runs after plain-text prompts create `PLAN.md` (default: `other`, the non-primary model). Use `none` to skip plan review.
 - `--run-id <id>`: reuse a specific run id. In paired mode this resumes the stored run state and keeps tmux/worktree naming aligned to that id.
 - `--session <id>`: resume from a paired run id or stored Claude/Codex session id. In single-agent mode, raw session/thread ids are passed through directly.
@@ -204,9 +229,9 @@ It restarts against a fresh Codex thread after the app-server drop.
 
 ## FAQ
 
-### How do I use Claude as the main worker?
+### How do I use Codex as the main worker?
 
-Use `--agent claude`.
+Use `--agent codex`.
 
 ### What happens when the two models disagree? And what's the point of pair programming if they both agree?
 
@@ -234,8 +259,11 @@ loop --proof "Use {skill} to verify your changes" "Implement {feature}"
 # plain text prompt: skip automatic plan review
 loop --proof "Use {skill} to verify your changes" --review-plan none "Implement {feature}"
 
-# run with claude
-loop --proof "Use {skill} to verify your changes" --agent claude --prompt PLAN.md
+# run with Codex as the worker and Claude as the live paired reviewer
+loop --proof "Use {skill} to verify your changes" --agent codex --prompt PLAN.md
+
+# run with Claude as the worker and Gemini as the live paired reviewer
+loop --proof "Use {skill} to verify your changes" --agent claude --pair-with gemini --prompt PLAN.md
 
 # single-agent mode: claude for work, review, and plan review
 loop --claude-only --proof "Use {skill} to verify your changes" "Implement {feature}"
@@ -247,7 +275,7 @@ loop --codex-only --proof "Use {skill} to verify your changes" "Implement {featu
 claude-loop --proof "Use {skill} to verify your changes" "Implement {feature}"
 codex-loop --proof "Use {skill} to verify your changes" "Implement {feature}"
 
-# run review with a single reviewer
+# run completion review with a single reviewer
 loop --proof "Use {skill} to verify your changes" "Implement {feature}" --review codex
 
 # use specific models only for reviewers

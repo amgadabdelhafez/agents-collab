@@ -35,9 +35,9 @@ const shouldAwaitAutoUpdate = (opts: Options): boolean =>
 
 const parseBridgeArgs = (argv: string[]): { runDir: string; source: Agent } => {
   const [runDir, source] = argv;
-  if (!runDir || !isAgent(source)) {
+  if (!(runDir && isAgent(source))) {
     throw new Error(
-      "Usage: loop __bridge-mcp <run-dir> <claude|codex|gemini|cursor>"
+      "Usage: loop __bridge-mcp <run-dir> <claude|codex|gemini|cursor|copilot>"
     );
   }
   return { runDir, source };

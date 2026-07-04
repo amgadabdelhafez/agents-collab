@@ -50,3 +50,26 @@ Please keep the code dead-simple and keep the `src/loop/main.ts` file under 150 
 - Business logic correctness
 - Edge cases and failure paths
 - Clear naming and maintainable control flow
+
+<!-- HARNESS_V2_START -->
+
+## Harness V2
+
+This repo has Harness v2 installed. Before non-trivial edits, read `HARNESS.md` and check `./harness status --json`.
+
+Default flow:
+
+```bash
+./harness task task-slug --mode planned --description "what you are doing"
+./harness plan --init
+./harness checkpoint "important decision"
+./harness verify unit -- <repo-specific test command>
+./harness done
+```
+
+For large work, add `--estimate-loc 500` or `--research-required`, then complete `./harness research --init`, `--save`, and `--gate` before implementation.
+
+For loop-driven paired work, generate a Harness prompt file with `./harness loop-prompt <slug> --slice "..."` and pass the printed file path to `loop --prompt`; do not use long inline loop prompts that create root `PLAN.md`.
+
+Preserve any repo-specific verification rules in this `AGENTS.md`; Harness records evidence but does not replace the repo's normal checks.
+<!-- HARNESS_V2_END -->

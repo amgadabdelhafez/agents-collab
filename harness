@@ -1,0 +1,592 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KIT="${ROOT_DIR}/v2/kit/scripts"
+CURRENT="${ROOT_DIR}/.harness/current-task"
+
+usage() {
+  cat <<'USAGE'
+usage: ./harness <command> [args...]
+
+commands:
+  status [--json]        Show active task and key files
+  resume [task-id]       Print memory checkpoints
+  plan [--init|--save] [--file <path>] [task-id]
+                         Print, create, or save the active task plan
+  list [--json] [--status <status>] [--eval <status>]
+                         List indexed harness tasks
+  reindex                Rebuild task index from runs/ and specs/
+  checkpoint <topic>     Add a checkpoint to the active task
+  task <id> [args...]    Create a new task via v2 kit
+                         Supports --mode, --description, --estimate-loc,
+                         and --research-required
+  research --init|--save|--status|--gate [task-id]
+                         Manage required reuse/web research artifacts
+  session-export [args...]
+                         Export matching session transcripts to sessions/*.jsonl
+  loop-prompt <slug> --slice <text> [--proof <text>] [--test-command <cmd>]
+                         Write a loop-safe prompt file under runs/<task>/loop-slices/
+  park [task-id]         Mark a task parked and clear current marker
+  park "<idea>" [--name <slug>]
+                         Capture an idea without clearing current marker
+  park-idea "<idea>" [--name <slug>]
+                         Explicit idea-capture form
+  activate <task-id>     Make an existing non-done task current
+  promote <slug|spec>    Promote a parked idea into an active task
+  coordinate <intent> [--file <path>] [task-id]
+                         Append an agent coordination intent row
+  coordination [--tail n] [--json] [--file <path>]
+                         Show recent agent coordination rows
+  tracker <args...>      Create/comment/link via configured tracker plugin
+  audit <kind> [args...] Run reusable audit pass
+  done [task-id]         Complete a task via v2 kit
+  eval <args...>         Manage eval dimensions via v2 kit
+  verify <dim> -- <cmd>  Run command for active task and update eval
+  retrospect [args...]   Analyze repo history and write retrospective reports
+  preflight [--json] [task-id]
+                         Check run state and eval schema without mutation
+  stop-gate [--json] [task-id]
+                         Fail unless required dimensions are resolved
+  test-all               Run all v2 kit tests in serial
+  smoke                  Run v2 kit smoke tests
+USAGE
+}
+
+current_task() {
+  if [[ ! -f "${CURRENT}" ]]; then
+    echo "error: no active task marker at .harness/current-task" >&2
+    exit 1
+  fi
+  cat "${CURRENT}"
+}
+
+cmd="${1:-}"
+[[ -n "${cmd}" ]] || {
+  usage
+  exit 2
+}
+shift || true
+
+case "${cmd}" in
+  status)
+    json_output=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --json)
+          json_output=1
+          shift
+          ;;
+        *)
+          echo "error: unknown argument for status: $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+    if [[ ! -f "${CURRENT}" ]]; then
+      if [[ "${json_output}" -eq 1 ]]; then
+        python3 - <<'PY'
+import json
+print(json.dumps({
+    "active_task": None,
+    "run_dir": None,
+    "meta": None,
+    "plan": None,
+    "latest_memory": None,
+    "eval_status": None,
+}, indent=2))
+PY
+        exit 0
+      fi
+      current_task >/dev/null
+    fi
+    task_id="$(cat "${CURRENT}")"
+    if [[ "${json_output}" -eq 1 ]]; then
+      cd "${ROOT_DIR}"
+      python3 - "${task_id}" <<'PY'
+import json
+import pathlib
+import sys
+
+task_id = sys.argv[1]
+run = pathlib.Path("runs") / task_id
+meta_path = run / "meta.json"
+eval_path = run / "eval.json"
+plan_path = run / "plan.md"
+memory_dir = run / "memory"
+
+data = {
+    "active_task": task_id,
+    "run_dir": str(run),
+    "meta": json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else None,
+    "plan": str(plan_path) if plan_path.exists() else None,
+    "latest_memory": None,
+    "eval_status": None,
+}
+
+memory_files = sorted(memory_dir.glob("[0-9][0-9][0-9]-*.md")) if memory_dir.exists() else []
+if memory_files:
+    data["latest_memory"] = str(memory_files[-1])
+
+if eval_path.exists():
+    data["eval_status"] = json.loads(eval_path.read_text(encoding="utf-8")).get("status", "unknown")
+
+print(json.dumps(data, indent=2))
+PY
+      exit 0
+    fi
+    echo "active_task: ${task_id}"
+    echo "run_dir: runs/${task_id}"
+    if [[ -f "${ROOT_DIR}/runs/${task_id}/meta.json" ]]; then
+      echo "meta:"
+      sed 's/^/  /' "${ROOT_DIR}/runs/${task_id}/meta.json"
+    fi
+    if [[ -f "${ROOT_DIR}/runs/${task_id}/plan.md" ]]; then
+      echo "plan: runs/${task_id}/plan.md"
+    fi
+    latest="$(find "${ROOT_DIR}/runs/${task_id}/memory" -maxdepth 1 -name '[0-9][0-9][0-9]-*.md' -type f | sort | tail -1)"
+    if [[ -n "${latest}" ]]; then
+      echo "latest_memory: ${latest#${ROOT_DIR}/}"
+    fi
+    ;;
+  resume)
+    task_id="${1:-$(current_task)}"
+    cd "${ROOT_DIR}"
+    "${KIT}/resume.sh" "${task_id}"
+    ;;
+  plan)
+    init_plan=0
+    save_plan=0
+    input_file=""
+    task_id=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --init)
+          init_plan=1
+          shift
+          ;;
+        --save)
+          save_plan=1
+          shift
+          ;;
+        --file)
+          [[ $# -ge 2 ]] || {
+            echo "error: --file requires a value" >&2
+            exit 2
+          }
+          input_file="$2"
+          shift 2
+          ;;
+        --*)
+          echo "error: unknown argument for plan: $1" >&2
+          exit 2
+          ;;
+        *)
+          [[ -z "${task_id}" ]] || {
+            echo "error: plan accepts at most one task id" >&2
+            exit 2
+          }
+          task_id="$1"
+          shift
+          ;;
+      esac
+    done
+    if [[ "${init_plan}" -eq 1 && "${save_plan}" -eq 1 ]]; then
+      echo "error: plan accepts only one of --init or --save" >&2
+      exit 2
+    fi
+    task_id="${task_id:-$(current_task)}"
+    run_dir="${ROOT_DIR}/runs/${task_id}"
+    plan_path="${ROOT_DIR}/runs/${task_id}/plan.md"
+    if [[ "${save_plan}" -eq 1 ]]; then
+      cd "${ROOT_DIR}"
+      if [[ -n "${input_file}" ]]; then
+        "${KIT}/plan-save.sh" "${task_id}" --file "${input_file}"
+      else
+        "${KIT}/plan-save.sh" "${task_id}"
+      fi
+      exit 0
+    fi
+    if [[ "${init_plan}" -eq 1 ]]; then
+      [[ -d "${run_dir}" ]] || {
+        echo "error: missing run dir: runs/${task_id}" >&2
+        exit 1
+      }
+      [[ -f "${plan_path}" ]] && {
+        echo "error: plan already exists: runs/${task_id}/plan.md" >&2
+        exit 1
+      }
+      meta_path="${run_dir}/meta.json"
+      [[ -f "${meta_path}" ]] || {
+        echo "error: missing meta file: runs/${task_id}/meta.json" >&2
+        exit 1
+      }
+      mode="$(python3 - "${meta_path}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    print(json.load(f).get("mode", "unknown"))
+PY
+)"
+      description="$(python3 - "${meta_path}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    print(json.load(f).get("description", ""))
+PY
+)"
+      research_required="$(python3 - "${meta_path}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    print("1" if json.load(f).get("research_required") else "0")
+PY
+)"
+      research_section=""
+      if [[ "${research_required}" == "1" ]]; then
+        research_section='
+## Required Reuse Research
+
+- [ ] Run `./harness research --init`.
+- [ ] Review available libraries, frameworks, open-source projects, tools, and established implementation patterns.
+- [ ] Save sources and the reuse/build decision with `./harness research --save`.
+- [ ] Confirm `./harness research --gate` passes before implementation.
+'
+      fi
+      cat > "${plan_path}" <<PLAN
+# ${task_id} Plan
+
+Mode: ${mode}
+${description:+Description: ${description}}
+
+## Objective
+
+Describe the outcome this task should produce.
+
+## Scope
+
+List what is in scope for this slice.
+${research_section}
+
+## Proposed Tasks
+
+### 1. Implement
+
+- [ ] Define the concrete change.
+
+### 2. Test and verify
+
+- [ ] Capture evidence with \`./harness verify unit -- ./harness test-all\`.
+
+## Non-goals
+
+- List anything intentionally out of scope.
+PLAN
+      echo "runs/${task_id}/plan.md"
+      exit 0
+    fi
+    [[ -f "${plan_path}" ]] || {
+      echo "error: missing plan: runs/${task_id}/plan.md" >&2
+      exit 1
+    }
+    cat "${plan_path}"
+    ;;
+  list)
+    cd "${ROOT_DIR}"
+    "${KIT}/tasks-index.sh" list "$@"
+    ;;
+  reindex)
+    cd "${ROOT_DIR}"
+    "${KIT}/tasks-index.sh" rebuild
+    ;;
+  checkpoint)
+    [[ $# -ge 1 ]] || {
+      echo "error: checkpoint requires a topic" >&2
+      exit 2
+    }
+    task_id="$(current_task)"
+    cd "${ROOT_DIR}"
+    "${KIT}/checkpoint.sh" "${task_id}" "$*"
+    ;;
+  task)
+    if [[ -f "${CURRENT}" ]]; then
+      active_id="$(cat "${CURRENT}")"
+      if [[ -n "${active_id}" ]]; then
+        echo "error: active task already set: ${active_id}" >&2
+        echo "hint: run './harness done' or './harness park' before starting another task" >&2
+        exit 1
+      fi
+    fi
+    cd "${ROOT_DIR}"
+    "${KIT}/task.sh" "$@"
+    ;;
+  research)
+    [[ $# -ge 1 ]] || {
+      echo "error: research requires --init, --save, --status, or --gate" >&2
+      exit 2
+    }
+    research_command=""
+    task_id=""
+    args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --init)
+          research_command="init"
+          shift
+          ;;
+        --save)
+          research_command="save"
+          shift
+          ;;
+        --status)
+          research_command="status"
+          shift
+          ;;
+        --gate)
+          research_command="gate"
+          shift
+          ;;
+        --file|--json|--force)
+          if [[ "$1" == "--file" ]]; then
+            [[ $# -ge 2 ]] || {
+              echo "error: --file requires a value" >&2
+              exit 2
+            }
+            args+=(--file "$2")
+            shift 2
+          else
+            args+=("$1")
+            shift
+          fi
+          ;;
+        --*)
+          echo "error: unknown argument for research: $1" >&2
+          exit 2
+          ;;
+        *)
+          [[ -z "${task_id}" ]] || {
+            echo "error: research accepts at most one task id" >&2
+            exit 2
+          }
+          task_id="$1"
+          shift
+          ;;
+      esac
+    done
+    [[ -n "${research_command}" ]] || {
+      echo "error: research requires --init, --save, --status, or --gate" >&2
+      exit 2
+    }
+    task_id="${task_id:-$(current_task)}"
+    cd "${ROOT_DIR}"
+    if [[ "${#args[@]}" -gt 0 ]]; then
+      "${KIT}/research.sh" "${research_command}" "${task_id}" "${args[@]}"
+    else
+      "${KIT}/research.sh" "${research_command}" "${task_id}"
+    fi
+    ;;
+  session-export)
+    cd "${ROOT_DIR}"
+    "${KIT}/session-export.sh" "$@"
+    ;;
+  loop-prompt)
+    [[ $# -ge 1 ]] || {
+      echo "error: loop-prompt requires a slug" >&2
+      exit 2
+    }
+    slug="$1"
+    shift
+    task_id="$(current_task)"
+    cd "${ROOT_DIR}"
+    "${KIT}/loop-prompt.sh" "${task_id}" "${slug}" "$@"
+    ;;
+  park)
+    if [[ $# -eq 0 ]]; then
+      task_id="$(current_task)"
+      cd "${ROOT_DIR}"
+      "${KIT}/park.sh" "${task_id}"
+      exit 0
+    fi
+    if [[ $# -eq 1 && -d "${ROOT_DIR}/runs/$1" ]]; then
+      task_id="$1"
+      cd "${ROOT_DIR}"
+      "${KIT}/park.sh" "${task_id}"
+      exit 0
+    fi
+    cd "${ROOT_DIR}"
+    "${KIT}/park-idea.sh" "$@"
+    ;;
+  park-task)
+    task_id="${1:-$(current_task)}"
+    cd "${ROOT_DIR}"
+    "${KIT}/park.sh" "${task_id}"
+    ;;
+  park-idea|idea)
+    cd "${ROOT_DIR}"
+    "${KIT}/park-idea.sh" "$@"
+    ;;
+  activate)
+    [[ $# -eq 1 ]] || {
+      echo "error: activate requires a task id" >&2
+      exit 2
+    }
+    cd "${ROOT_DIR}"
+    "${KIT}/activate.sh" "$1"
+    ;;
+  promote)
+    cd "${ROOT_DIR}"
+    "${KIT}/promote.sh" "$@"
+    ;;
+  coordinate)
+    [[ $# -ge 1 ]] || {
+      echo "error: coordinate requires an intent" >&2
+      exit 2
+    }
+    intent="$1"
+    shift
+    task_id=""
+    args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --file|--agent)
+          [[ $# -ge 2 ]] || {
+            echo "error: $1 requires a value" >&2
+            exit 2
+          }
+          args+=("$1" "$2")
+          shift 2
+          ;;
+        --*)
+          echo "error: unknown argument for coordinate: $1" >&2
+          exit 2
+          ;;
+        *)
+          [[ -z "${task_id}" ]] || {
+            echo "error: coordinate accepts at most one task id" >&2
+            exit 2
+          }
+          task_id="$1"
+          shift
+          ;;
+      esac
+    done
+    task_id="${task_id:-$(current_task)}"
+    cd "${ROOT_DIR}"
+    "${KIT}/coordination.sh" write "${task_id}" --intent "${intent}" "${args[@]}"
+    ;;
+  coordination)
+    args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --tail)
+          [[ $# -ge 2 ]] || {
+            echo "error: --tail requires a value" >&2
+            exit 2
+          }
+          args+=(--limit "$2")
+          shift 2
+          ;;
+        --json|--file)
+          if [[ "$1" == "--file" ]]; then
+            [[ $# -ge 2 ]] || {
+              echo "error: --file requires a value" >&2
+              exit 2
+            }
+            args+=(--file "$2")
+            shift 2
+          else
+            args+=(--json)
+            shift
+          fi
+          ;;
+        *)
+          echo "error: unknown argument for coordination: $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+    cd "${ROOT_DIR}"
+    "${KIT}/coordination.sh" tail "${args[@]}"
+    ;;
+  tracker)
+    cd "${ROOT_DIR}"
+    "${KIT}/tracker.sh" "$@"
+    ;;
+  audit)
+    [[ $# -ge 1 ]] || {
+      echo "error: audit requires a kind" >&2
+      exit 2
+    }
+    cd "${ROOT_DIR}"
+    "${KIT}/audit.sh" "$@"
+    ;;
+  done)
+    task_id="${1:-$(current_task)}"
+    cd "${ROOT_DIR}"
+    "${KIT}/done.sh" "${task_id}"
+    ;;
+  eval)
+    cd "${ROOT_DIR}"
+    "${KIT}/eval-dim.sh" "$@"
+    ;;
+  verify)
+    [[ $# -ge 3 ]] || {
+      echo "error: verify requires <dimension> -- <command>" >&2
+      exit 2
+    }
+    task_id="$(current_task)"
+    cd "${ROOT_DIR}"
+    "${KIT}/verify.sh" "${task_id}" "$@"
+    ;;
+  retrospect)
+    cd "${ROOT_DIR}"
+    "${KIT}/retrospect.sh" "$@"
+    ;;
+  preflight)
+    args=("$@")
+    has_task=0
+    for arg in "$@"; do
+      if [[ "${arg}" != --* ]]; then
+        has_task=1
+      fi
+    done
+    if [[ "${has_task}" -eq 0 ]]; then
+      args+=("$(current_task)")
+    fi
+    cd "${ROOT_DIR}"
+    "${KIT}/preflight.sh" "${args[@]}"
+    ;;
+  stop-gate)
+    args=("$@")
+    has_task=0
+    for arg in "$@"; do
+      if [[ "${arg}" != --* ]]; then
+        has_task=1
+      fi
+    done
+    if [[ "${has_task}" -eq 0 ]]; then
+      args+=("$(current_task)")
+    fi
+    cd "${ROOT_DIR}"
+    "${KIT}/stop-gate.sh" "${args[@]}"
+    ;;
+  test-all)
+    cd "${ROOT_DIR}"
+    ./v2/kit/tests/all.sh
+    ;;
+  smoke)
+    cd "${ROOT_DIR}"
+    ./v2/kit/tests/smoke.sh
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    echo "error: unknown command: ${cmd}" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

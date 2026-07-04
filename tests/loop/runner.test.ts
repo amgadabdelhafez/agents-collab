@@ -109,6 +109,7 @@ let startPersistentAgentSession: (
     claudeLaunch?: { mcpConfig?: string; persistent?: boolean };
     codexLaunch?: {
       configValues?: string[];
+      env?: NodeJS.ProcessEnv;
       persistentThread?: boolean;
       resumeThreadId?: string;
       threadModel?: string;
@@ -126,6 +127,7 @@ let buildCommand: (
 const startAppServer: MockFn<
   (launchOptions?: {
     configValues?: string[];
+    env?: NodeJS.ProcessEnv;
     persistentThread?: boolean;
   }) => Promise<void>
 > = mock(async () => undefined);
@@ -241,6 +243,22 @@ test("runAgent keeps app-server threads persistent for explicit resume", async (
   });
 });
 
+test("runAgent launches Codex app-server with loop-scoped Codex home", async () => {
+  const codexHome = "/tmp/loop-codex-home";
+
+  const result = await runAgent(
+    "codex",
+    "say hello",
+    makeOptions({ codexHome })
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(startAppServer).toHaveBeenCalledTimes(1);
+  expect(startAppServer.mock.calls[0]?.[0]).toMatchObject({
+    env: expect.objectContaining({ CODEX_HOME: codexHome }),
+  });
+});
+
 test("buildCommand uses the provided Claude model", () => {
   const command = buildCommand(
     "claude",
@@ -271,6 +289,42 @@ test("buildCommand carries Codex bridge approval config for legacy exec", () => 
   expect(command.args.slice(0, yoloIndex)).toEqual(
     expect.arrayContaining(codexMcpConfigArgs)
   );
+});
+
+test("buildCommand builds copilot agent command", () => {
+  const command = buildCommand("copilot", "fix the bug", "gpt-4.1");
+
+  expect(command.cmd).toBe("copilot");
+  expect(command.args).toContain("agent");
+  expect(command.args).toContain("-p");
+  expect(command.args).toContain("fix the bug");
+  expect(command.args).toContain("--yolo");
+  expect(command.args).toContain("--output-format");
+  expect(command.args).toContain("stream-json");
+  const modelIdx = command.args.indexOf("--model");
+  expect(modelIdx).toBeGreaterThan(-1);
+  expect(command.args[modelIdx + 1]).toBe("gpt-4.1");
+});
+
+test("buildCommand builds gemini command", () => {
+  const command = buildCommand("gemini", "ship it", "gemini-2.5-pro");
+
+  expect(command.cmd).toBe("gemini");
+  expect(command.args).toContain("-p");
+  expect(command.args).toContain("ship it");
+  expect(command.args).toContain("--yolo");
+  const modelIdx = command.args.indexOf("-m");
+  expect(modelIdx).toBeGreaterThan(-1);
+  expect(command.args[modelIdx + 1]).toBe("gemini-2.5-pro");
+});
+
+test("buildCommand builds cursor agent command with --approve-mcps", () => {
+  const command = buildCommand("cursor", "review code", "auto");
+
+  expect(command.cmd).toBe("cursor");
+  expect(command.args).toContain("agent");
+  expect(command.args).toContain("--approve-mcps");
+  expect(command.args).toContain("--yolo");
 });
 
 test("runAgent honors CODEX_TRANSPORT=exec and uses legacy codex exec", async () => {

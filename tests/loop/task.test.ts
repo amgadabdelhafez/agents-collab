@@ -307,8 +307,10 @@ test("resolveTask skips plan review when review-plan is none", async () => {
   );
 });
 
-test("resolveTask throws when plan review exits non-zero", async () => {
+test("resolveTask warns when plan review exits non-zero", async () => {
   let calls = 0;
+  const originalError = console.error;
+  const consoleErrorMock = mock(() => undefined);
   const { resolveTask } = await loadResolveTask({
     isFile: (path) => path === "PLAN.md",
     runAgent: () => {
@@ -321,8 +323,17 @@ test("resolveTask throws when plan review exits non-zero", async () => {
     },
   });
 
-  await expect(resolveTask(makeOptions("ship feature"))).rejects.toThrow(
-    "[loop] plan review claude exited with code 2"
+  console.error = consoleErrorMock;
+  try {
+    await expect(resolveTask(makeOptions("ship feature"))).resolves.toBe(
+      "PLAN.md"
+    );
+  } finally {
+    console.error = originalError;
+  }
+
+  expect(consoleErrorMock).toHaveBeenCalledWith(
+    "[loop] warning: plan review claude exited with code 2, skipping review"
   );
 });
 

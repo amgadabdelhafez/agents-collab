@@ -21,6 +21,7 @@ import {
   startAppServer,
   useAppServer,
 } from "./codex-app-server";
+import { codexHomeEnv } from "./codex-home";
 import { createCodexRenderer } from "./codex-render";
 import { DEFAULT_CLAUDE_MODEL } from "./constants";
 import { DETACH_CHILD_PROCESS, killChildProcess } from "./process";
@@ -172,6 +173,24 @@ export const buildCommand = (
     return { args, cmd: "gemini" };
   }
 
+  if (agent === "cursor") {
+    const args = [
+      "agent",
+      "-p",
+      prompt,
+      "--yolo",
+      "--output-format",
+      "stream-json",
+      "--model",
+      model,
+      "--approve-mcps",
+    ];
+    // Cursor Agent does not support --mcp-config; MCP servers are configured
+    // via cursor settings or project-level .cursor/mcp.json
+    return { args, cmd: "cursor" };
+  }
+
+  // copilot — GitHub Copilot coding agent CLI
   const args = [
     "agent",
     "-p",
@@ -181,11 +200,10 @@ export const buildCommand = (
     "stream-json",
     "--model",
     model,
-    "--approve-mcps",
   ];
-  // Cursor Agent does not support --mcp-config; MCP servers are configured
-  // via cursor settings or project-level .cursor/mcp.json
-  return { args, cmd: "cursor" };
+  // Copilot does not support --mcp-config; MCP servers are configured
+  // via project-level .github/copilot/mcp.json
+  return { args, cmd: "copilot" };
 };
 
 const resolveModel = (
@@ -207,6 +225,11 @@ const resolveModel = (
     return kind === "review"
       ? (opts.geminiReviewerModel ?? opts.geminiModel)
       : opts.geminiModel;
+  }
+  if (agent === "copilot") {
+    return kind === "review"
+      ? (opts.copilotReviewerModel ?? opts.copilotModel)
+      : opts.copilotModel;
   }
   if (agent === "claude") {
     return kind === "review"
@@ -307,11 +330,7 @@ const eventMessage = (line: string): string => {
       return event.message.trim();
     }
 
-    return (
-      joinTextParts(messageValue?.content) ||
-      messageText ||
-      ""
-    );
+    return joinTextParts(messageValue?.content) || messageText || "";
   } catch {
     return "";
   }
@@ -390,6 +409,7 @@ const runCodexAppServerAttempt = async (
   try {
     await startAppServer({
       configValues: opts.codexMcpConfigArgs,
+      env: codexHomeEnv(opts.codexHome),
       persistentThread: opts.pairedMode === true || Boolean(sessionId),
     });
   } catch (error) {
@@ -497,7 +517,10 @@ const runLegacyAgent = async (
   );
   const proc = spawn([cmd, ...args], {
     detached: DETACH_CHILD_PROCESS,
-    env: process.env,
+    env:
+      agent === "codex"
+        ? (codexHomeEnv(opts.codexHome) ?? process.env)
+        : process.env,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -649,16 +672,22 @@ const runGeminiAgent = async (
   opts: Options,
   sessionId?: string,
   kind: AgentRunKind = "work"
-): Promise<RunResult> =>
-  runSpawnAgent("gemini", prompt, opts, sessionId, kind);
+): Promise<RunResult> => runSpawnAgent("gemini", prompt, opts, sessionId, kind);
 
 const runCursorAgent = async (
   prompt: string,
   opts: Options,
   sessionId?: string,
   kind: AgentRunKind = "work"
+): Promise<RunResult> => runSpawnAgent("cursor", prompt, opts, sessionId, kind);
+
+const runCopilotAgent = async (
+  prompt: string,
+  opts: Options,
+  sessionId?: string,
+  kind: AgentRunKind = "work"
 ): Promise<RunResult> =>
-  runSpawnAgent("cursor", prompt, opts, sessionId, kind);
+  runSpawnAgent("copilot", prompt, opts, sessionId, kind);
 
 const runAgentWithKind = (
   agent: Agent,
@@ -676,7 +705,10 @@ const runAgentWithKind = (
   if (agent === "gemini") {
     return runGeminiAgent(prompt, opts, sessionId, kind);
   }
-  return runCursorAgent(prompt, opts, sessionId, kind);
+  if (agent === "cursor") {
+    return runCursorAgent(prompt, opts, sessionId, kind);
+  }
+  return runCopilotAgent(prompt, opts, sessionId, kind);
 };
 
 export const runAgent = (
@@ -708,6 +740,7 @@ export const startPersistentAgentSession = async (
     await startAppServer({
       configValues:
         sessionOptions.codexLaunch?.configValues ?? opts.codexMcpConfigArgs,
+      env: sessionOptions.codexLaunch?.env ?? codexHomeEnv(opts.codexHome),
       ...(sessionOptions.codexLaunch ?? {}),
       persistentThread: true,
       resumeThreadId: sessionId,
