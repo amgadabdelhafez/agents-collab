@@ -64,6 +64,8 @@ export interface HookEvent {
   agent: Agent;
   cwd?: string;
   detail?: string;
+  // True when the payload indicates a failed tool call / error.
+  error?: boolean;
   event: string;
   tool?: string;
   ts: string;

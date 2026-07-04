@@ -53,6 +53,22 @@ const toolDetail = (obj: Record<string, unknown>): string | undefined => {
   ]);
 };
 
+// Detect whether a tool-call payload indicates failure.
+const isErrorPayload = (obj: Record<string, unknown>): boolean => {
+  if (obj.is_error === true || obj.success === false) {
+    return true;
+  }
+  const response = asRecord(obj.tool_response ?? obj.tool_result ?? obj.toolResult);
+  if (response.is_error === true) {
+    return true;
+  }
+  if (typeof response.error === "string" && response.error.length > 0) {
+    return true;
+  }
+  const code = obj.exit_code ?? response.exit_code;
+  return typeof code === "number" && code !== 0;
+};
+
 // Normalize a raw agent hook payload into our shared HookEvent shape. Tolerant:
 // unknown shapes become a "raw" event rather than throwing.
 export const normalizeHookPayload = (
@@ -72,6 +88,7 @@ export const normalizeHookPayload = (
     agent,
     ...(cwd ? { cwd } : {}),
     ...(detail ? { detail } : {}),
+    ...(isErrorPayload(obj) ? { error: true } : {}),
     event,
     ...(tool ? { tool } : {}),
     ts: nowIso,

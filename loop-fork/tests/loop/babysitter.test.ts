@@ -137,7 +137,7 @@ test("LLM unreachable suppresses recovery and flags the board", async () => {
   expect(result.llmOffline).toBe(true);
   expect(spies.sends).toHaveLength(0);
   expect(spies.respawns).toHaveLength(0);
-  expect(result.board).toContain("LLM offline");
+  expect(result.board).toContain("qwen ✗");
 });
 
 test("board labels an agent [thinking] while its pane is animating", async () => {
@@ -152,8 +152,7 @@ test("board labels an agent [thinking] while its pane is animating", async () =>
   await babysitTick(states, [], baseConfig(), deps);
   clock.ms = START_MS + 2 * IDLE_MS;
   const result = await babysitTick(states, [], baseConfig(), deps);
-  expect(result.board).toContain("[thinking]");
-  expect(result.board).toContain("think=");
+  expect(result.board).toContain("thinking");
 });
 
 test("board labels an agent [idle] once its pane is frozen", async () => {
@@ -170,8 +169,7 @@ test("board labels an agent [idle] once its pane is frozen", async () => {
   // advance past a tick but under the idle threshold: frozen but not yet suspect
   clock.ms = START_MS + baseConfig().tickMs + 1;
   const result = await babysitTick(states, [], baseConfig(), deps);
-  expect(result.board).toContain("[idle]");
-  expect(result.board).toContain("idle=");
+  expect(result.board).toContain("idle");
 });
 
 test("observed progress clears the agent's recovery history", async () => {
