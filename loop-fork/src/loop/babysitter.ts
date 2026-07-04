@@ -8,10 +8,11 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "bun";
+import { readPriorSummaries, readProjectContext } from "./babysitter-context";
 import { initLivenessState, updateLiveness } from "./babysitter-detect";
 import { judgeAgent, summarizeSession } from "./babysitter-llm";
 import { decideRecovery, executeRecovery } from "./babysitter-recover";
-import { readAgentUsage } from "./babysitter-usage";
+import { readAgentUsage, readHumanMessages } from "./babysitter-usage";
 import {
   DEFAULT_BABYSIT_CONFIDENCE,
   DEFAULT_BABYSIT_COOLDOWN_SECONDS,
@@ -61,6 +62,8 @@ export interface BabysitConfig {
   cooldownMs: number;
   // Run manifest creation time, for session uptime.
   createdAt?: string;
+  // Working directory of the run, for reading project docs into the summary.
+  cwd?: string;
   dryRun: boolean;
   idleMs: number;
   logFile: string;
@@ -68,6 +71,8 @@ export interface BabysitConfig {
   model: string;
   // On-disk size (GB) of the local LLM, shown in the footer.
   modelSizeGb?: number;
+  // Run directory, for reading prior-session summaries into the summary.
+  runDir?: string;
   runId: string;
   session: string;
   // Persisted run-state file, so stats survive babysitter restarts.
@@ -89,6 +94,11 @@ export interface BabysitDeps {
   now: () => number;
   readBridge: (transcriptPath?: string) => BridgeCounts;
   readHooks: (file: string) => HookEvent[];
+  readHumanMessages: (
+    agent: Agent,
+    sessionRef?: string,
+    codexHome?: string
+  ) => string[];
   readUsage: (
     agent: Agent,
     sessionRef?: string,
@@ -398,8 +408,10 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   return ` ${parts.join(" · ")}`;
 };
 
-const SUMMARY_LINE_MAX = 4;
+const SUMMARY_LINE_MAX = 6;
 const SUMMARY_LINE_WIDTH = 180;
+const SUMMARY_TOTAL_LINES = 16;
+const SUMMARY_LABEL_RE = /^(project|objective|progress|next)\b/i;
 const SPACE_RE = /\s+/;
 
 // Word-wrap a paragraph to `width`-char lines, capped at `maxLines`.
@@ -434,22 +446,36 @@ const renderFooter = (meta: BoardMeta): string[] => {
       ` idle-both ${fmtDuration(meta.stats.humanIdleMs)} · codex:claude ${codexClaudeRatio(meta.stats)} · local ${meta.modelName}${size} · llm ${fmtTokens(meta.llmTokens)} tok`
     ),
   ];
-  const summaryText = meta.summary
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(" ");
-  if (summaryText) {
+  const summaryLines = renderSummaryBody(meta.summary);
+  if (summaryLines.length > 0) {
     lines.push(paint(ANSI.dim, " ── summary ──"));
-    for (const line of wrapText(
-      summaryText,
-      SUMMARY_LINE_WIDTH,
-      SUMMARY_LINE_MAX
-    )) {
-      lines.push(`   ${line}`);
-    }
+    lines.push(...summaryLines);
   }
   return lines;
+};
+
+// Render the structured summary, preserving its section lines (Project /
+// Objective / Progress / Next), wrapping long ones and capping total height.
+const renderSummaryBody = (summary: string): string[] => {
+  const source = summary
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const line of source) {
+    const isLabel = SUMMARY_LABEL_RE.test(line);
+    const wrapped = wrapText(line, SUMMARY_LINE_WIDTH, SUMMARY_LINE_MAX);
+    for (const [i, text] of wrapped.entries()) {
+      if (out.length >= SUMMARY_TOTAL_LINES) {
+        return out;
+      }
+      // Emphasize section headers; indent continuation/body lines.
+      const rendered =
+        isLabel && i === 0 ? paint(ANSI.cyan, `   ${text}`) : `     ${text}`;
+      out.push(rendered);
+    }
+  }
+  return out;
 };
 
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string =>
@@ -467,7 +493,7 @@ interface AgentTickContext {
   recoveries: number;
 }
 
-const SUMMARY_ACTIONS = 8;
+const SUMMARY_ACTIONS = 24;
 
 interface AgentTickResult {
   history: RecoveryHistoryEntry[];
@@ -602,6 +628,38 @@ const processAgent = async (
 };
 
 const SUMMARY_REFRESH_TICKS = 20;
+
+// Gather the richer context the summary reads: the human's verbatim
+// instructions this session (deduped across agents, order preserved), the
+// project docs, and prior-session summaries.
+const gatherSummaryContext = (
+  config: BabysitConfig,
+  deps: BabysitDeps
+): Pick<
+  SummaryRequest,
+  "humanMessages" | "priorSummaries" | "projectContext"
+> => {
+  const seen = new Set<string>();
+  const humanMessages: string[] = [];
+  for (const info of config.agents) {
+    for (const message of deps.readHumanMessages(
+      info.agent,
+      info.sessionRef,
+      info.codexHome
+    )) {
+      if (!seen.has(message)) {
+        seen.add(message);
+        humanMessages.push(message);
+      }
+    }
+  }
+  return {
+    humanMessages,
+    priorSummaries: readPriorSummaries(config.runDir),
+    projectContext: readProjectContext(config.cwd),
+  };
+};
+
 const LOCAL_MODEL_PREFIX_RE = /^[^/]+\//;
 const shortLocalModel = (model: string): string =>
   model.replace(LOCAL_MODEL_PREFIX_RE, "");
@@ -681,6 +739,7 @@ export const babysitTick = async (
       agents: summaryCtxs,
       model: config.model,
       url: config.url,
+      ...gatherSummaryContext(config, deps),
     });
     if (summary.text) {
       runState.summary = summary.text;
@@ -827,6 +886,8 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
       return [];
     }
   },
+  readHumanMessages: (agent, sessionRef, codexHome) =>
+    readHumanMessages(agent, sessionRef, codexHome),
   readUsage: (agent, sessionRef, codexHome) =>
     readAgentUsage(agent, sessionRef, codexHome),
   render: (text) => {
@@ -947,6 +1008,7 @@ export const resolveBabysitConfig = (
       DEFAULT_BABYSIT_COOLDOWN_SECONDS
     ),
     createdAt: manifest?.createdAt,
+    cwd: manifest?.cwd,
     dryRun: env.LOOP_BABYSIT_DRY_RUN === "1",
     idleMs: envSeconds(env, "LOOP_BABYSIT_IDLE", DEFAULT_BABYSIT_IDLE_SECONDS),
     logFile: join(storage.runDir, "babysitter.jsonl"),
@@ -957,6 +1019,7 @@ export const resolveBabysitConfig = (
     model,
     modelSizeGb: modelSizeGb(model),
     runId,
+    runDir: storage.runDir,
     session,
     stateFile: join(storage.runDir, "babysitter-state.json"),
     tickMs: envSeconds(env, "LOOP_BABYSIT_TICK", DEFAULT_BABYSIT_TICK_SECONDS),

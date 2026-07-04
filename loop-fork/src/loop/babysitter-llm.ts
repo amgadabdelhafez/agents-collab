@@ -270,30 +270,63 @@ export const judgeAgent = async (
 };
 
 const SUMMARY_SYSTEM_PROMPT = [
-  "You are observing a live pair-programming session between AI coding agents.",
-  "In 3-4 short plain-text lines (no markdown, no preamble), summarize what the",
-  "session is about and the concrete progress so far. Be specific about the code",
-  "and tasks. Do not describe the agents' idle/active status.",
+  "You are a technical lead observing a live pair-programming session between two",
+  "AI coding agents (Claude and Codex) working the same task together. You are",
+  "given the project docs, the human's verbatim instructions this session,",
+  "summaries of prior sessions, and each agent's recent actions and terminal",
+  "output. Write a briefing for someone glancing at the pane who wants to know",
+  "exactly what is going on. Use plain text, no markdown symbols. Output EXACTLY",
+  "these four labeled sections, each on its own line, in this order:",
+  "Project: <1 line — what this codebase/project is>",
+  "Objective: <1-2 lines — what the human asked for this session, specifically>",
+  "Progress: <3-5 lines — concrete work done: files, tests, decisions, bugs>",
+  "Next: <2-3 lines — the most likely next steps / what remains>",
+  "Be specific about code, filenames, and tasks. Infer next steps from the",
+  "trajectory. Do not describe whether the agents are idle or active.",
 ].join(" ");
 
-const SUMMARY_MAX_TOKENS = 2000;
-const SUMMARY_PANE_CHARS = 1500;
+const SUMMARY_MAX_TOKENS = 3200;
+const SUMMARY_PANE_CHARS = 1800;
+const SUMMARY_ACTIONS = 24;
+const MAX_PROMPT_HUMAN_MESSAGES = 16;
 // mlx serves one request at a time, so a summary can queue behind a judge
 // call; give it a generous timeout (it is a background board element).
-const SUMMARY_TIMEOUT_MS = 90_000;
+const SUMMARY_TIMEOUT_MS = 120_000;
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
 
-const buildSummaryPrompt = (req: SummaryRequest): string =>
-  req.agents
-    .map((a) =>
-      [
-        `## ${a.agent}`,
-        `recent actions: ${a.lastActions.slice(-8).join(" | ") || "—"}`,
-        "pane:",
-        a.paneText.slice(-SUMMARY_PANE_CHARS),
-      ].join("\n")
-    )
-    .join("\n\n");
+const agentSection = (a: SummaryRequest["agents"][number]): string =>
+  [
+    `## agent: ${a.agent}`,
+    `recent actions: ${a.lastActions.slice(-SUMMARY_ACTIONS).join(" | ") || "—"}`,
+    "terminal:",
+    a.paneText.slice(-SUMMARY_PANE_CHARS),
+  ].join("\n");
+
+const buildSummaryPrompt = (req: SummaryRequest): string => {
+  const blocks: string[] = [];
+  if (req.projectContext) {
+    blocks.push(`# PROJECT DOCS\n${req.projectContext}`);
+  }
+  if (req.humanMessages && req.humanMessages.length > 0) {
+    const lines = req.humanMessages
+      .slice(-MAX_PROMPT_HUMAN_MESSAGES)
+      .map((message) => `- ${message}`)
+      .join("\n");
+    blocks.push(
+      `# HUMAN INSTRUCTIONS THIS SESSION (oldest → newest)\n${lines}`
+    );
+  }
+  if (req.priorSummaries && req.priorSummaries.length > 0) {
+    const lines = req.priorSummaries
+      .map((summary, i) => `[prior session ${i + 1}]\n${summary}`)
+      .join("\n\n");
+    blocks.push(`# PRIOR SESSIONS (newest first)\n${lines}`);
+  }
+  blocks.push(
+    `# LIVE AGENT STATE\n${req.agents.map(agentSection).join("\n\n")}`
+  );
+  return blocks.join("\n\n");
+};
 
 // Ask the local LLM for a short natural-language session summary.
 export const summarizeSession = async (

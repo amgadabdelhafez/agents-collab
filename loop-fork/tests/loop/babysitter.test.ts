@@ -54,6 +54,7 @@ const makeDeps = (
   now: () => clock.ms,
   readBridge: () => ({}),
   readHooks: () => [],
+  readHumanMessages: () => [],
   readUsage: () => ({
     cacheCreateTokens: 0,
     cacheReadTokens: 0,

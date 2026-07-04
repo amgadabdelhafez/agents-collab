@@ -163,7 +163,13 @@ export interface SummaryAgentContext {
 
 export interface SummaryRequest {
   agents: SummaryAgentContext[];
+  // Human instructions given during the session (verbatim, most recent last).
+  humanMessages?: string[];
   model: string;
+  // Prior-session summaries, newest first, for cross-session continuity.
+  priorSummaries?: string[];
+  // Project docs (CLAUDE.md / AGENTS.md / PLAN.md excerpts) from the run cwd.
+  projectContext?: string;
   url: string;
 }
 

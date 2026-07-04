@@ -361,6 +361,105 @@ const findCodexTranscript = (
   return undefined;
 };
 
+const MAX_HUMAN_MESSAGES = 16;
+const MAX_HUMAN_MESSAGE_CHARS = 260;
+const WHITESPACE_RE = /\s+/g;
+// User turns that are actually harness/tooling injections, not real requests.
+const INJECTED_MARKERS = [
+  "Base directory for this skill",
+  "system-reminder",
+  "<command-",
+  "tool_use_error",
+];
+
+const textFromContent = (content: unknown): string => {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        const text = asRecord(block).text;
+        return typeof text === "string" ? text : "";
+      })
+      .join(" ");
+  }
+  return "";
+};
+
+const cleanHuman = (raw: string): string | undefined => {
+  const text = raw.replace(WHITESPACE_RE, " ").trim();
+  if (
+    !text ||
+    text.startsWith("<") ||
+    INJECTED_MARKERS.some((marker) => text.includes(marker))
+  ) {
+    return undefined;
+  }
+  return text.length > MAX_HUMAN_MESSAGE_CHARS
+    ? `${text.slice(0, MAX_HUMAN_MESSAGE_CHARS)}…`
+    : text;
+};
+
+const claudeHumanMessages = (text: string): string[] => {
+  const out: string[] = [];
+  eachJsonLine(text, (rec) => {
+    const message = asRecord(rec.message);
+    const role = typeof rec.type === "string" ? rec.type : message.role;
+    const meta = rec.isMeta === true || rec.isSidechain === true;
+    if (role !== "user" || meta || !isHumanContent(message.content)) {
+      return;
+    }
+    const cleaned = cleanHuman(textFromContent(message.content));
+    if (cleaned) {
+      out.push(cleaned);
+    }
+  });
+  return out;
+};
+
+const codexHumanMessages = (text: string): string[] => {
+  const out: string[] = [];
+  eachJsonLine(text, (rec) => {
+    if (findRole(rec) !== "user") {
+      return;
+    }
+    const payload = asRecord(rec.payload);
+    const cleaned = cleanHuman(textFromContent(payload.content ?? rec.content));
+    if (cleaned) {
+      out.push(cleaned);
+    }
+  });
+  return out;
+};
+
+// Extract the verbatim human instructions from an agent's transcript (most
+// recent last), so the summary knows what the session was actually asked to do.
+export const readHumanMessages = (
+  agent: Agent,
+  sessionRef?: string,
+  codexHome?: string
+): string[] => {
+  if (!sessionRef) {
+    return [];
+  }
+  try {
+    const path =
+      agent === "claude"
+        ? findClaudeTranscript(sessionRef)
+        : findCodexTranscript(sessionRef, codexHome);
+    if (!path) {
+      return [];
+    }
+    const text = readFileSync(path, "utf8");
+    const all =
+      agent === "codex" ? codexHumanMessages(text) : claudeHumanMessages(text);
+    return all.slice(-MAX_HUMAN_MESSAGES);
+  } catch {
+    return [];
+  }
+};
+
 // Locate and parse an agent's session transcript into a priced usage snapshot.
 // Best-effort: any failure (no transcript, unknown agent) yields empty usage.
 export const readAgentUsage = (
