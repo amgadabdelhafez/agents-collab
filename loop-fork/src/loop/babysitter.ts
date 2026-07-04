@@ -673,7 +673,11 @@ const processAgent = async (
     summaryCtx,
   };
 
-  if (!liveness.suspect) {
+  // A cleanly-ended turn (last hook event is Stop/Notification) means the agent
+  // finished and is idle — not stuck. Skip the LLM judge so we don't mislabel an
+  // idle agent as working/waiting-human, and don't run recovery on it. The judge
+  // only runs for a suspect whose turn never ended (frozen mid-work).
+  if (!liveness.suspect || turnEnded) {
     return {
       ...base,
       history: ctx.history.filter((entry) => entry.agent !== info.agent),

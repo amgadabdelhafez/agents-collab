@@ -9,6 +9,7 @@ import type { EscalationEvent } from "../../src/loop/babysitter-notify";
 import type {
   Agent,
   AgentLivenessState,
+  HookEvent,
   JudgeOutcome,
   RecoveryHistoryEntry,
 } from "../../src/loop/types";
@@ -233,6 +234,24 @@ const waitingHuman: JudgeOutcome = {
     summary: "asked the user a question",
   },
 };
+
+test("a cleanly-ended turn stays idle and is never judged, even past the idle window", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  // Last hook event is Stop => the agent finished its turn and is idle.
+  const stop: HookEvent = {
+    event: "Stop",
+    ts: new Date(START_MS).toISOString(),
+  };
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readHooks: () => [stop],
+  };
+  const result = await runToSuspect(baseConfig(), deps, clock);
+  expect(spies.judged).toBe(0); // idle-done agents are not sent to the judge
+  expect(result.board).toContain("idle");
+  expect(result.board).not.toContain("waits you");
+});
 
 test("board flags an agent that is waiting for the human", async () => {
   const clock = { ms: START_MS };
