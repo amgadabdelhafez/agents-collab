@@ -172,6 +172,22 @@ test("board labels an agent [idle] once its pane is frozen", async () => {
   expect(result.board).toContain("idle");
 });
 
+test("board uses the agent's live pane context % when present", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const working: JudgeOutcome = {
+    ok: true,
+    verdict: { confidence: 0.9, state: "working", summary: "" },
+  };
+  const deps: BabysitDeps = {
+    ...makeDeps(working, clock, spies),
+    capturePane: () => "Opus 4.8 | ctx: 61% | effort: high",
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const result = await babysitTick(states, [], baseConfig(), deps);
+  expect(result.board).toContain("61%");
+});
+
 test("observed progress clears the agent's recovery history", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();

@@ -87,6 +87,32 @@ test("summarizeCodex counts messages by role", () => {
   expect(u.humanMessages).toBe(1);
 });
 
+test("summarizeCodex uses total_token_usage (cumulative) + last_token_usage (context)", () => {
+  const info = (totalTotal: number, lastInput: number) =>
+    JSON.stringify({
+      payload: {
+        info: {
+          total_token_usage: {
+            cached_input_tokens: totalTotal - 100,
+            input_tokens: totalTotal - 50,
+            output_tokens: 50,
+            total_tokens: totalTotal,
+          },
+          last_token_usage: {
+            cached_input_tokens: lastInput - 1000,
+            input_tokens: lastInput,
+            output_tokens: 5,
+            total_tokens: lastInput + 5,
+          },
+        },
+      },
+    });
+  const u = summarizeCodex([info(1050, 64_000), info(2080, 70_000)].join("\n"));
+  expect(u.totalTokens).toBe(2080); // largest cumulative total
+  expect(u.contextTokens).toBe(70_000); // current context = its last_token_usage input
+  expect(u.inputTokens).toBe(2030);
+});
+
 test("summarizeCodex takes the last token-count event as cumulative usage", () => {
   const text = [
     JSON.stringify({ model: "gpt-5.5", timestamp: "2026-07-04T00:00:00Z" }),

@@ -95,6 +95,19 @@ const hashPane = (text: string): string =>
 const lastEventTs = (events: HookEvent[]): string | undefined =>
   events.length > 0 ? events.at(-1)?.ts : undefined;
 
+// Agents render their own live context usage in the pane statusline
+// (e.g. "ctx: 61%"). That is authoritative and current, whereas the
+// transcript-derived figure lags by a turn — so prefer the pane value.
+const PANE_CTX_RE = /ctx:?\s*(\d+)\s*%/i;
+const parsePaneCtxPct = (paneText: string): number | undefined => {
+  const match = paneText.match(PANE_CTX_RE);
+  if (!match) {
+    return undefined;
+  }
+  const pct = Number.parseInt(match[1], 10);
+  return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : undefined;
+};
+
 // Build the per-agent recovery executors on top of the injected tmux deps.
 const buildRecoveryDeps = (
   info: BabysitAgentInfo,
@@ -199,11 +212,16 @@ const stateColor = (state: string): string => {
 const truncate = (text: string, width: number): string =>
   text.length > width ? `${text.slice(0, width - 1)}…` : text;
 
+// Hook events that mean the agent finished its turn / is waiting — so a pane
+// that keeps repainting (blinking cursor at the prompt) is idle, not thinking.
+const TURN_END_EVENTS = new Set(["Stop", "Notification"]);
+
 interface AgentRow {
   action: RecoveryHistoryEntry | null;
   errors: number;
   lastAction: string;
   liveness: AgentLiveness;
+  turnEnded: boolean;
   usage: AgentUsage;
   verdict?: BabysitterVerdict;
 }
@@ -235,8 +253,11 @@ const headerRow = paint(
 
 const renderRow = (row: AgentRow, tickMs: number): string => {
   // Pane changed within the last tick => the TUI is animating (thinking);
-  // frozen past a tick => genuinely idle.
-  const thinking = row.liveness.paneIdleMs < tickMs && !row.liveness.suspect;
+  // frozen past a tick, or the turn has ended, => genuinely idle.
+  const thinking =
+    !row.turnEnded &&
+    row.liveness.paneIdleMs < tickMs &&
+    !row.liveness.suspect;
   const state = row.verdict?.state ?? (thinking ? "thinking" : "idle");
   const forMs = thinking
     ? row.liveness.lastEventAgeMs
@@ -306,6 +327,122 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string =>
     ...rows.map((row) => renderRow(row, meta.tickMs)),
   ].join("\n");
 
+interface AgentTickContext {
+  history: RecoveryHistoryEntry[];
+  nowIso: string;
+  nowMs: number;
+  recoveries: number;
+}
+
+interface AgentTickResult {
+  history: RecoveryHistoryEntry[];
+  llmOffline: boolean;
+  recoveries: number;
+  row: AgentRow;
+}
+
+// Run the recovery ladder for a suspect agent; returns the taken action (if any).
+const recoverAgent = (
+  info: BabysitAgentInfo,
+  verdict: BabysitterVerdict,
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  ctx: AgentTickContext
+): RecoveryHistoryEntry | null => {
+  const decision: RecoveryDecision = decideRecovery(verdict, ctx.history, info.agent, {
+    confidence: config.confidence,
+    cooldownMs: config.cooldownMs,
+    maxRecoveries: config.maxRecoveries,
+    nowMs: ctx.nowMs,
+  });
+  const action = executeRecovery(
+    decision,
+    buildRecoveryDeps(info, deps, config.logFile),
+    { dryRun: config.dryRun, nowIso: ctx.nowIso }
+  );
+  deps.appendLog(config.logFile, {
+    agent: info.agent,
+    decision,
+    dryRun: config.dryRun,
+    kind: "decision",
+    ts: ctx.nowIso,
+    verdict,
+  });
+  return action;
+};
+
+// Detect, judge, and (if suspect+recoverable) recover one agent; build its row.
+const processAgent = async (
+  info: BabysitAgentInfo,
+  states: Map<Agent, AgentLivenessState>,
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  ctx: AgentTickContext
+): Promise<AgentTickResult> => {
+  const paneText = deps.capturePane(info.pane);
+  const events = deps.readHooks(info.hookFile);
+  const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
+  // Prefer the agent's own live context %, shown in its pane statusline.
+  const paneCtxPct = parsePaneCtxPct(paneText);
+  if (paneCtxPct !== undefined && usage.contextWindow > 0) {
+    usage.contextTokens = Math.round((paneCtxPct / 100) * usage.contextWindow);
+  }
+  const paneHash = hashPane(paneText);
+  const prev =
+    states.get(info.agent) ?? initLivenessState(info.agent, ctx.nowMs, paneHash);
+  const { state, liveness } = updateLiveness(
+    prev,
+    { agent: info.agent, lastEventTs: lastEventTs(events), paneHash },
+    ctx.nowMs,
+    config.idleMs
+  );
+  states.set(info.agent, state);
+
+  const errors = events.filter((event) => event.error === true).length;
+  const turnEnded = TURN_END_EVENTS.has(events.at(-1)?.event ?? "");
+  const row: AgentRow = {
+    action: null,
+    errors,
+    lastAction: lastActionOf(events),
+    liveness,
+    turnEnded,
+    usage,
+  };
+
+  if (!liveness.suspect) {
+    return {
+      history: ctx.history.filter((entry) => entry.agent !== info.agent),
+      llmOffline: false,
+      recoveries: ctx.recoveries,
+      row,
+    };
+  }
+
+  const outcome = await deps.judge({
+    agent: info.agent,
+    hookTail: events.slice(-HOOK_TAIL_LIMIT),
+    model: config.model,
+    paneText,
+    url: config.url,
+  });
+  row.verdict = outcome.ok ? outcome.verdict : outcome.fallback;
+  if (!outcome.ok && outcome.reason === "unreachable") {
+    return { history: ctx.history, llmOffline: true, recoveries: ctx.recoveries, row };
+  }
+
+  const action = recoverAgent(info, row.verdict, config, deps, ctx);
+  row.action = action;
+  if (action && !config.dryRun) {
+    return {
+      history: [...ctx.history, action],
+      llmOffline: false,
+      recoveries: ctx.recoveries + 1,
+      row,
+    };
+  }
+  return { history: ctx.history, llmOffline: false, recoveries: ctx.recoveries, row };
+};
+
 // One control-loop tick: detect → (judge suspects) → recover → render + log.
 export const babysitTick = async (
   states: Map<Agent, AgentLivenessState>,
@@ -322,72 +459,16 @@ export const babysitTick = async (
   let llmOffline = false;
 
   for (const info of config.agents) {
-    const paneText = deps.capturePane(info.pane);
-    const events = deps.readHooks(info.hookFile);
-    const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
-    const prev =
-      states.get(info.agent) ??
-      initLivenessState(info.agent, nowMs, hashPane(paneText));
-    const { state, liveness } = updateLiveness(
-      prev,
-      { agent: info.agent, lastEventTs: lastEventTs(events), paneHash: hashPane(paneText) },
+    const result = await processAgent(info, states, config, deps, {
+      history,
+      nowIso,
       nowMs,
-      config.idleMs
-    );
-    states.set(info.agent, state);
-
-    const errors = events.filter((event) => event.error === true).length;
-    const lastAction = lastActionOf(events);
-    let verdict: BabysitterVerdict | undefined;
-    let action: RecoveryHistoryEntry | null = null;
-
-    if (liveness.suspect) {
-      const outcome = await deps.judge({
-        agent: info.agent,
-        hookTail: events.slice(-HOOK_TAIL_LIMIT),
-        model: config.model,
-        paneText,
-        url: config.url,
-      });
-      verdict = outcome.ok ? outcome.verdict : outcome.fallback;
-      if (!outcome.ok && outcome.reason === "unreachable") {
-        llmOffline = true;
-      } else {
-        const decision: RecoveryDecision = decideRecovery(
-          verdict,
-          history,
-          info.agent,
-          {
-            confidence: config.confidence,
-            cooldownMs: config.cooldownMs,
-            maxRecoveries: config.maxRecoveries,
-            nowMs,
-          }
-        );
-        action = executeRecovery(
-          decision,
-          buildRecoveryDeps(info, deps, config.logFile),
-          { dryRun: config.dryRun, nowIso }
-        );
-        if (action && !config.dryRun) {
-          history = [...history, action];
-          recoveries += 1;
-        }
-        deps.appendLog(config.logFile, {
-          agent: info.agent,
-          decision,
-          dryRun: config.dryRun,
-          kind: "decision",
-          ts: nowIso,
-          verdict,
-        });
-      }
-    } else {
-      // Progress observed — reset this agent's recovery ladder.
-      history = history.filter((entry) => entry.agent !== info.agent);
-    }
-
-    rows.push({ action, errors, lastAction, liveness, usage, verdict });
+      recoveries,
+    });
+    history = result.history;
+    recoveries = result.recoveries;
+    llmOffline = llmOffline || result.llmOffline;
+    rows.push(result.row);
   }
 
   const uptimeMs = config.createdAt

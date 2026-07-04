@@ -170,6 +170,34 @@ const findTokens = (value: unknown): CodexTokens | undefined => {
 const tokenMagnitude = (t: CodexTokens): number =>
   t.total || t.input + t.output;
 
+interface CodexInfoTokens {
+  context: number;
+  cumulative: CodexTokens;
+}
+
+// Codex logs `payload.info.total_token_usage` (cumulative) and
+// `last_token_usage` (the most recent turn, whose input_tokens ≈ the current
+// context window fill). Extract both when present.
+const findInfoTokens = (
+  rec: Record<string, unknown>
+): CodexInfoTokens | undefined => {
+  const info = asRecord(asRecord(rec.payload).info);
+  const total = asRecord(info.total_token_usage);
+  if (!("total_tokens" in total || "input_tokens" in total)) {
+    return undefined;
+  }
+  const last = asRecord(info.last_token_usage);
+  return {
+    context: num(last.input_tokens),
+    cumulative: {
+      cached: num(total.cached_input_tokens),
+      input: num(total.input_tokens),
+      output: num(total.output_tokens),
+      total: num(total.total_tokens),
+    },
+  };
+};
+
 // Find a message role in a codex rollout entry (role may be nested in payload).
 const findRole = (rec: Record<string, unknown>): string | undefined => {
   if (typeof rec.role === "string") {
@@ -190,7 +218,8 @@ const findRole = (rec: Record<string, unknown>): string | undefined => {
 export const summarizeCodex = (text: string): AgentUsage => {
   const usage = emptyUsage();
   const bounds: { first?: string; last?: string } = {};
-  let best: CodexTokens | undefined;
+  let bestInfo: CodexInfoTokens | undefined;
+  let bestGeneric: CodexTokens | undefined;
   eachJsonLine(text, (rec) => {
     trackTs(rec, bounds);
     if (typeof rec.model === "string") {
@@ -202,16 +231,33 @@ export const summarizeCodex = (text: string): AgentUsage => {
     } else if (role === "user") {
       usage.humanMessages += 1;
     }
+    const info = findInfoTokens(rec);
+    if (info) {
+      if (!bestInfo || info.cumulative.total > bestInfo.cumulative.total) {
+        bestInfo = info;
+      }
+      return;
+    }
     const tokens = findTokens(rec);
-    if (tokens && (!best || tokenMagnitude(tokens) > tokenMagnitude(best))) {
-      best = tokens;
+    if (
+      tokens &&
+      (!bestGeneric || tokenMagnitude(tokens) > tokenMagnitude(bestGeneric))
+    ) {
+      bestGeneric = tokens;
     }
   });
-  if (best) {
-    usage.inputTokens = best.input;
-    usage.outputTokens = best.output;
-    usage.cacheReadTokens = best.cached;
-    usage.totalTokens = best.total || best.input + best.output;
+  if (bestInfo) {
+    const c = bestInfo.cumulative;
+    usage.inputTokens = c.input;
+    usage.outputTokens = c.output;
+    usage.cacheReadTokens = c.cached;
+    usage.totalTokens = c.total || c.input + c.output;
+    usage.contextTokens = bestInfo.context;
+  } else if (bestGeneric) {
+    usage.inputTokens = bestGeneric.input;
+    usage.outputTokens = bestGeneric.output;
+    usage.cacheReadTokens = bestGeneric.cached;
+    usage.totalTokens = bestGeneric.total || bestGeneric.input + bestGeneric.output;
   }
   usage.model = usage.model ?? "gpt-5.5";
   usage.firstTs = bounds.first;
