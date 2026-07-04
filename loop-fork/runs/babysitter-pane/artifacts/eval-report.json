@@ -1,0 +1,42 @@
+{
+  "task_id": "babysitter-pane",
+  "feature": "babysitter-pane",
+  "timestamp": "2026-07-04T00:00:00Z",
+  "checks": {
+    "functional": {
+      "passed": 11,
+      "failed": 0,
+      "details": [
+        "F-01 non-babysit tmux layout unchanged (no split-window -v -f without --babysit)",
+        "F-02 --babysit adds full-width bottom pane via split-window -v -f -l <height> running __babysit",
+        "F-03 hook injection: claude --settings <runDir>/claude-hook-settings.json; codex $CODEX_HOME/hooks.json + --dangerously-bypass-hook-trust (per-run home only)",
+        "F-04 emitter normalizes stdin -> one JSONL line, never throws, unknown -> event:raw",
+        "F-05 detector requires stale-events AND stable-pane for suspect (10 tests)",
+        "F-06 LLM only for suspects; malformed/timeout -> working fallback; unreachable distinct (9 tests)",
+        "F-07 recovery gated on {stuck,crashed}+confidence+cooldown+max; waiting-* never acts (15 tests)",
+        "F-08 dry-run returns intended action, zero executor calls",
+        "F-09 LLM unreachable suppresses recovery, board shows 'LLM offline' (4 tests)",
+        "F-10 decisions/actions appended to runs/<id>/babysitter.jsonl",
+        "F-11 main.ts 11 lines (< 150)"
+      ]
+    },
+    "ui": { "passed": 0, "failed": 0, "screenshots": [] },
+    "performance": {
+      "passed": 1,
+      "failed": 0,
+      "details": ["No LLM call unless an agent is suspect"]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "Full suite 486 pass / 5 fail; the 5 failures pre-exist this feature",
+        "Non-babysit startPairedSession path unchanged",
+        "single-agent paths unaffected (babysitter is paired-only)",
+        "binary builds: 48 modules incl __babysit/__hook-emit"
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "46 new babysitter/hook tests green; tsc + biome clean on every new/touched file. The 5 failing runInTmux tests are a VENDORING ARTIFACT: loop-fork is nested inside the agents-collab git repo, so resolveRunBase derives base 'agents-collab' while the tests hardcode 'loop-fork' (they pass in the standalone upstream). Fixing by hardcoding 'agents-collab' would break upstream, so left untouched. Untouched-file baseline toolchain debt (bridge-*, iteration, paired-options) also left as-is per scope."
+}

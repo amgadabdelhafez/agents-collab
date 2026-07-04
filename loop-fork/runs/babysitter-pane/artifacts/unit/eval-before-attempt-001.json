@@ -1,0 +1,10 @@
+{
+  "task_id": "babysitter-pane",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

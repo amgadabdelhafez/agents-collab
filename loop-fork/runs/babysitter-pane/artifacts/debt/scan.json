@@ -1,0 +1,63 @@
+{
+  "task_id": "babysitter-pane",
+  "scanned_at": "2026-07-04T16:30:19Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-04T16:30:19Z",
+      "task_id": "babysitter-pane",
+      "signal": "loc_growth",
+      "file": "src/loop/babysitter-llm.ts",
+      "before_loc": 0,
+      "after_loc": 256,
+      "delta_loc": 256,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-04T16:30:19Z",
+      "task_id": "babysitter-pane",
+      "signal": "loc_growth",
+      "file": "src/loop/babysitter-recover.ts",
+      "before_loc": 0,
+      "after_loc": 154,
+      "delta_loc": 154,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-04T16:30:19Z",
+      "task_id": "babysitter-pane",
+      "signal": "loc_growth",
+      "file": "src/loop/babysitter.ts",
+      "before_loc": 0,
+      "after_loc": 331,
+      "delta_loc": 331,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-04T16:30:19Z",
+      "task_id": "babysitter-pane",
+      "signal": "loc_growth",
+      "file": "src/loop/hooks/emit.ts",
+      "before_loc": 0,
+      "after_loc": 126,
+      "delta_loc": 126,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-04T16:30:19Z",
+      "task_id": "babysitter-pane",
+      "signal": "loc_growth",
+      "file": "src/loop/tmux.ts",
+      "before_loc": 1493,
+      "after_loc": 1619,
+      "delta_loc": 126,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}
