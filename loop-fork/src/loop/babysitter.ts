@@ -672,6 +672,9 @@ export const babysitTick = async (
 
   if (
     runState.summaryTick < 0 ||
+    // Keep retrying while we have no summary yet (e.g. after a restart, or
+    // when an earlier attempt timed out) instead of waiting a full cycle.
+    runState.summary.length === 0 ||
     runState.tick - runState.summaryTick >= SUMMARY_REFRESH_TICKS
   ) {
     const summary = await deps.summarize({

@@ -278,6 +278,9 @@ const SUMMARY_SYSTEM_PROMPT = [
 
 const SUMMARY_MAX_TOKENS = 2000;
 const SUMMARY_PANE_CHARS = 1500;
+// mlx serves one request at a time, so a summary can queue behind a judge
+// call; give it a generous timeout (it is a background board element).
+const SUMMARY_TIMEOUT_MS = 90_000;
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
 
 const buildSummaryPrompt = (req: SummaryRequest): string =>
@@ -301,7 +304,7 @@ export const summarizeSession = async (
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
-    deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    deps?.timeoutMs ?? SUMMARY_TIMEOUT_MS
   );
   try {
     const response = await fetchFn(`${req.url}${CHAT_COMPLETIONS_PATH}`, {
