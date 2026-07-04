@@ -89,6 +89,9 @@ export interface AgentLivenessState {
 export interface AgentLiveness {
   agent: Agent;
   lastEventAgeMs: number;
+  // Time since the pane last changed. Small = the TUI is animating (the agent
+  // is actively thinking/working); large = the pane is frozen (truly idle).
+  paneIdleMs: number;
   paneStable: boolean;
   suspect: boolean;
 }

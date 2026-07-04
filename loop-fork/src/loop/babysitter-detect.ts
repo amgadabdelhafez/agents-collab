@@ -91,6 +91,7 @@ export const updateLiveness = (
   const liveness: AgentLiveness = {
     agent: input.agent,
     lastEventAgeMs,
+    paneIdleMs: Math.max(MIN_EVENT_AGE_MS, nowMs - paneStableSinceMs),
     paneStable,
     suspect,
   };

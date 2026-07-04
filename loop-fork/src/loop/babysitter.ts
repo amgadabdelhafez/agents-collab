@@ -19,6 +19,7 @@ import { decode } from "./git";
 import { loadRunState } from "./run-state";
 import type {
   Agent,
+  AgentLiveness,
   AgentLivenessState,
   AgentUsage,
   BabysitterVerdict,
@@ -144,21 +145,28 @@ const activeMs = (usage: AgentUsage): number => {
 };
 
 const renderAgentLine = (
-  agent: Agent,
-  suspect: boolean,
-  ageMs: number,
+  liveness: AgentLiveness,
   verdict: BabysitterVerdict | undefined,
   action: RecoveryHistoryEntry | null,
-  usage: AgentUsage
+  usage: AgentUsage,
+  tickMs: number
 ): string => {
-  const status = verdict?.state ?? (suspect ? "suspect" : "working");
-  const idle = fmtDuration(ageMs);
+  // The TUI repaints (spinner/token counter) every second while an agent is
+  // working, so a pane that changed within the last tick means it's actively
+  // thinking; a pane frozen past a tick means it's genuinely idle.
+  const thinking = liveness.paneIdleMs < tickMs && !liveness.suspect;
+  const status = verdict?.state ?? (thinking ? "thinking" : "idle");
+  // While thinking, show time since the last concrete action; while idle, show
+  // how long the pane has been frozen.
+  const stateField = thinking
+    ? `think=${fmtDuration(liveness.lastEventAgeMs)}`
+    : `idle=${fmtDuration(liveness.paneIdleMs)}`;
   const active = fmtDuration(activeMs(usage));
   const tok = usage.totalTokens > 0 ? fmtTokens(usage.totalTokens) : "—";
   const cost = usage.costUsd > 0 ? `$${usage.costUsd.toFixed(2)}` : "—";
   const summary = verdict?.summary ? ` · ${verdict.summary}` : "";
   const act = action ? ` · action=${action.level}` : "";
-  return `  ${agent.padEnd(7)} [${status}] idle=${idle} active=${active} ${fmtContext(usage)} tok=${tok} cost=${cost}${summary}${act}`;
+  return `  ${liveness.agent.padEnd(7)} [${status}] ${stateField} active=${active} ${fmtContext(usage)} tok=${tok} cost=${cost}${summary}${act}`;
 };
 
 const renderBoard = (
@@ -201,9 +209,7 @@ export const babysitTick = async (
     if (!liveness.suspect) {
       // Progress observed — reset this agent's recovery ladder.
       history = history.filter((entry) => entry.agent !== info.agent);
-      lines.push(
-        renderAgentLine(info.agent, false, liveness.lastEventAgeMs, undefined, null, usage)
-      );
+      lines.push(renderAgentLine(liveness, undefined, null, usage, config.tickMs));
       continue;
     }
 
@@ -217,9 +223,7 @@ export const babysitTick = async (
     const verdict = outcome.ok ? outcome.verdict : outcome.fallback;
     if (!outcome.ok && outcome.reason === "unreachable") {
       llmOffline = true;
-      lines.push(
-        renderAgentLine(info.agent, true, liveness.lastEventAgeMs, verdict, null, usage)
-      );
+      lines.push(renderAgentLine(liveness, verdict, null, usage, config.tickMs));
       continue;
     }
 
@@ -245,9 +249,7 @@ export const babysitTick = async (
       ts: nowIso,
       verdict,
     });
-    lines.push(
-      renderAgentLine(info.agent, true, liveness.lastEventAgeMs, verdict, action, usage)
-    );
+    lines.push(renderAgentLine(liveness, verdict, action, usage, config.tickMs));
   }
 
   const board = renderBoard(lines, llmOffline, nowIso);

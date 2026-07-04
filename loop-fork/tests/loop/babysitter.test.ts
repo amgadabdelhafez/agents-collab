@@ -138,6 +138,40 @@ test("LLM unreachable suppresses recovery and flags the board", async () => {
   expect(result.board).toContain("LLM offline");
 });
 
+test("board labels an agent [thinking] while its pane is animating", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  let frame = 0;
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    capturePane: () => `frame ${frame++}`, // pane changes every tick
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  await babysitTick(states, [], baseConfig(), deps);
+  clock.ms = START_MS + 2 * IDLE_MS;
+  const result = await babysitTick(states, [], baseConfig(), deps);
+  expect(result.board).toContain("[thinking]");
+  expect(result.board).toContain("think=");
+});
+
+test("board labels an agent [idle] once its pane is frozen", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  // constant pane text => frozen; a working verdict so no recovery interferes
+  const working: JudgeOutcome = {
+    ok: true,
+    verdict: { confidence: 0.9, state: "working", summary: "" },
+  };
+  const deps = makeDeps(working, clock, spies);
+  const states = new Map<Agent, AgentLivenessState>();
+  await babysitTick(states, [], baseConfig(), deps); // seed
+  // advance past a tick but under the idle threshold: frozen but not yet suspect
+  clock.ms = START_MS + baseConfig().tickMs + 1;
+  const result = await babysitTick(states, [], baseConfig(), deps);
+  expect(result.board).toContain("[idle]");
+  expect(result.board).toContain("idle=");
+});
+
 test("observed progress clears the agent's recovery history", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();
