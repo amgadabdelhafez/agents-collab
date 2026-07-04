@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { spawn, spawnSync } from "bun";
+import { BABYSIT_SUBCOMMAND } from "./babysitter";
+import {
+  buildClaudeHookSettings,
+  buildCodexHooksJson,
+  buildHookCommand,
+} from "./hooks/settings";
 import {
   registerClaudeChannelServer,
   removeClaudeChannelServer,
@@ -394,7 +400,8 @@ const buildClaudeCommand = (
   model: string,
   channelServer: string,
   resume: boolean,
-  prompt?: string
+  prompt?: string,
+  settingsPath?: string
 ): string[] => {
   const args = [
     "claude",
@@ -406,6 +413,9 @@ const buildClaudeCommand = (
     `server:${channelServer}`,
     "--dangerously-skip-permissions",
   ];
+  if (settingsPath) {
+    args.push("--settings", settingsPath);
+  }
   if (prompt) {
     args.push(prompt);
   }
@@ -416,7 +426,8 @@ const buildCodexCommand = (
   remoteUrl: string,
   model: string,
   configValues: string[],
-  prompt?: string
+  prompt?: string,
+  bypassHookTrust?: boolean
 ): string[] => {
   const args = [
     "codex",
@@ -428,6 +439,9 @@ const buildCodexCommand = (
     "--remote",
     remoteUrl,
   ];
+  if (bypassHookTrust) {
+    args.push("--dangerously-bypass-hook-trust");
+  }
   if (prompt) {
     args.push(prompt);
   }
@@ -753,7 +767,8 @@ const updatePairedManifest = (
   codexRemoteUrl: string,
   codexThreadId: string,
   session: string,
-  paneAgents: { left: Agent; right: Agent }
+  paneAgents: { left: Agent; right: Agent },
+  babysitPane?: string
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
@@ -768,10 +783,100 @@ const updatePairedManifest = (
         tmuxSession: session,
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRightAgent: paneAgents.right,
+        ...(babysitPane
+          ? { babysit: true, tmuxPaneBabysit: babysitPane }
+          : {}),
       },
       new Date().toISOString()
     )
   );
+};
+
+interface BabysitHookConfig {
+  claudeSettingsPath?: string;
+  codexBypassHookTrust: boolean;
+}
+
+const writeJsonFile = (path: string, value: unknown): void => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+};
+
+// Inject per-run agent hooks so each agent appends normalized events the
+// babysitter can tail. Claude hooks go through --settings; Codex hooks are
+// written only when a per-run CODEX_HOME is in use (never the user's global).
+const prepareBabysitHooks = (
+  deps: TmuxDeps,
+  opts: Options,
+  runDir: string,
+  paneAgents: { left: Agent; right: Agent }
+): BabysitHookConfig => {
+  if (!opts.babysit) {
+    return { codexBypassHookTrust: false };
+  }
+  const hooksDir = join(runDir, "hooks");
+  const pair = [paneAgents.left, paneAgents.right];
+  let claudeSettingsPath: string | undefined;
+  for (const agent of pair) {
+    const command = buildHookCommand(
+      deps.launchArgv,
+      agent,
+      join(hooksDir, `${agent}.jsonl`)
+    );
+    if (agent === "claude") {
+      claudeSettingsPath = join(runDir, "claude-hook-settings.json");
+      writeJsonFile(claudeSettingsPath, buildClaudeHookSettings(command));
+    }
+    if (agent === "codex" && opts.codexHome) {
+      writeJsonFile(
+        join(opts.codexHome, "hooks.json"),
+        buildCodexHooksJson(command)
+      );
+    }
+  }
+  return {
+    claudeSettingsPath,
+    codexBypassHookTrust: pair.includes("codex") && Boolean(opts.codexHome),
+  };
+};
+
+const babysitEnv = (opts: Options): string[] => [
+  `LOOP_BABYSIT_IDLE=${opts.babysitIdleSeconds}`,
+  `LOOP_BABYSIT_COOLDOWN=${opts.babysitCooldownSeconds}`,
+  `LOOP_BABYSIT_MAX=${opts.babysitMaxRecoveries}`,
+  `LOOP_BABYSIT_URL=${opts.babysitUrl}`,
+  `LOOP_BABYSIT_MODEL=${opts.babysitModel}`,
+  ...(opts.babysitDryRun ? ["LOOP_BABYSIT_DRY_RUN=1"] : []),
+];
+
+// Add the full-width bottom babysitter pane under the two agent panes.
+const startBabysitPane = (
+  deps: TmuxDeps,
+  opts: Options,
+  session: string,
+  runId: string
+): string => {
+  const command = buildShellCommand([
+    "env",
+    ...babysitEnv(opts),
+    ...deps.launchArgv,
+    BABYSIT_SUBCOMMAND,
+    runId,
+  ]);
+  deps.spawn([
+    "tmux",
+    "split-window",
+    "-v",
+    "-f",
+    "-l",
+    opts.babysitHeight,
+    "-t",
+    `${session}:0`,
+    "-c",
+    deps.cwd,
+    command,
+  ]);
+  return `${session}:0.2`;
 };
 
 const registerClaudeChannelServerForRun = (
@@ -885,6 +990,8 @@ const buildPairedAgentCommand = ({
   agent,
   claudeChannelServer,
   claudeSessionId,
+  claudeSettingsPath,
+  codexBypassHookTrust,
   codexProxyUrl,
   hadSession,
   opts,
@@ -893,6 +1000,8 @@ const buildPairedAgentCommand = ({
   agent: Agent;
   claudeChannelServer: string | undefined;
   claudeSessionId: string;
+  claudeSettingsPath?: string;
+  codexBypassHookTrust?: boolean;
   codexProxyUrl: string;
   hadSession: boolean;
   opts: Options;
@@ -908,7 +1017,8 @@ const buildPairedAgentCommand = ({
       model,
       claudeChannelServer,
       hadSession,
-      prompt
+      prompt,
+      claudeSettingsPath
     );
   }
   if (agent === "codex") {
@@ -922,7 +1032,8 @@ const buildPairedAgentCommand = ({
       codexProxyUrl,
       model,
       opts.codexMcpConfigArgs,
-      prompt
+      prompt,
+      codexBypassHookTrust
     );
   }
   if (agent === "gemini") {
@@ -1069,6 +1180,7 @@ const startPairedSession = async (
     ),
     gemini: Boolean(launch.opts.pairedSessionIds?.gemini),
     cursor: Boolean(launch.opts.pairedSessionIds?.cursor),
+    copilot: Boolean(launch.opts.pairedSessionIds?.copilot),
   };
   // Only boot persistent transports when claude or codex is in the pair
   const needsPersistent = [primaryAgent, secondaryAgent].some(
@@ -1131,6 +1243,12 @@ const startPairedSession = async (
           storage.runId,
           claudeChannelServer ?? ""
         );
+    const babysitHooks = prepareBabysitHooks(
+      deps,
+      launch.opts,
+      storage.runDir,
+      paneAgents
+    );
     const leftCommand = buildShellCommand([
       "env",
       ...env,
@@ -1138,6 +1256,8 @@ const startPairedSession = async (
         agent: paneAgents.left,
         claudeChannelServer,
         claudeSessionId,
+        claudeSettingsPath: babysitHooks.claudeSettingsPath,
+        codexBypassHookTrust: babysitHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.left],
         opts: launch.opts,
@@ -1151,6 +1271,8 @@ const startPairedSession = async (
         agent: paneAgents.right,
         claudeChannelServer,
         claudeSessionId,
+        claudeSettingsPath: babysitHooks.claudeSettingsPath,
+        codexBypassHookTrust: babysitHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.right],
         opts: launch.opts,
@@ -1196,6 +1318,9 @@ const startPairedSession = async (
     if (paneAgents.right === "claude") {
       await unblockClaudePane(`${session}:0.1`, deps);
     }
+    const babysitPane = launch.opts.babysit
+      ? startBabysitPane(deps, launch.opts, session, storage.runId)
+      : undefined;
     const primaryPane =
       paneAgents.left === primaryAgent ? `${session}:0.0` : `${session}:0.1`;
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
@@ -1207,7 +1332,8 @@ const startPairedSession = async (
       codexRemoteUrl,
       codexThreadId,
       session,
-      paneAgents
+      paneAgents,
+      babysitPane
     );
     return session;
   } catch (error: unknown) {
