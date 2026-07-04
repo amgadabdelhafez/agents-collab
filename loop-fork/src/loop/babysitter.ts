@@ -176,6 +176,8 @@ export interface BabysitTickResult {
   llmOffline: boolean;
   runState: BabysitRunState;
   states: Map<Agent, AgentLivenessState>;
+  // Per-agent contexts a background summary refresh consumes (see runBabysitter).
+  summaryCtxs: SummaryAgentContext[];
 }
 
 const hashPane = (text: string): string =>
@@ -706,6 +708,17 @@ const processAgent = async (
 
 const SUMMARY_REFRESH_TICKS = 20;
 
+// A summary refresh is due when we have none yet (first run / after a restart /
+// after an attempt returned empty) or the current one has aged out.
+const summaryDue = (
+  summaryText: string,
+  summaryTick: number,
+  tick: number
+): boolean =>
+  summaryTick < 0 ||
+  summaryText.length === 0 ||
+  tick - summaryTick >= SUMMARY_REFRESH_TICKS;
+
 // Gather the richer context the summary reads: the human's verbatim
 // instructions this session (deduped across agents, order preserved), the
 // project docs, and prior-session summaries.
@@ -899,26 +912,9 @@ export const babysitTick = async (
 
   accumulateStats(runState.stats, rows, config.tickMs);
 
-  if (
-    runState.summaryTick < 0 ||
-    // Keep retrying while we have no summary yet (e.g. after a restart, or
-    // when an earlier attempt timed out) instead of waiting a full cycle.
-    runState.summary.length === 0 ||
-    runState.tick - runState.summaryTick >= SUMMARY_REFRESH_TICKS
-  ) {
-    const summary = await deps.summarize({
-      agents: summaryCtxs,
-      model: config.model,
-      url: config.url,
-      ...gatherSummaryContext(config, deps),
-    });
-    if (summary.text) {
-      runState.summary = summary.text;
-    }
-    llmTokens += summary.tokens;
-    runState.summaryTick = runState.tick;
-  }
-
+  // The session summary is generated off the tick (see runBabysitter) so a slow
+  // local-LLM call never freezes the board; here we just render runState.summary
+  // as carried in, and hand back the contexts a background refresh needs.
   runState.history = history;
   runState.recoveries = recoveries;
   runState.llmTokens = llmTokens;
@@ -953,7 +949,7 @@ export const babysitTick = async (
     waiting,
   });
   deps.render(board);
-  return { board, llmOffline, runState, states };
+  return { board, llmOffline, runState, states, summaryCtxs };
 };
 
 const tmux = (args: string[]): string => {
@@ -1227,15 +1223,59 @@ export const resolveBabysitConfig = (
 };
 
 // Long-running loop; runs in the babysitter pane until the session ends.
+// The board renders every tick; the (slow) local-LLM summary is generated in
+// the background so it never blocks a tick, and folded in when it completes.
 export const runBabysitter = async (
   config: BabysitConfig,
   deps: BabysitDeps = defaultBabysitDeps()
 ): Promise<void> => {
   const states = new Map<Agent, AgentLivenessState>();
   let runState = deps.loadState(config.stateFile) ?? freshRunState();
+  let summaryText = runState.summary;
+  let summaryTick = runState.summaryTick;
+  let summaryInFlight = false;
+  let pendingSummaryTokens = 0;
   for (;;) {
+    // Fold any completed background summary in before rendering this tick.
+    runState = {
+      ...runState,
+      llmTokens: runState.llmTokens + pendingSummaryTokens,
+      summary: summaryText,
+      summaryTick,
+    };
+    pendingSummaryTokens = 0;
+
     const result = await babysitTick(states, config, deps, runState);
     runState = result.runState;
+
+    if (
+      !summaryInFlight &&
+      summaryDue(summaryText, summaryTick, runState.tick)
+    ) {
+      summaryInFlight = true;
+      const firedAtTick = runState.tick;
+      deps
+        .summarize({
+          agents: result.summaryCtxs,
+          model: config.model,
+          url: config.url,
+          ...gatherSummaryContext(config, deps),
+        })
+        .then((summary) => {
+          if (summary.text) {
+            summaryText = summary.text;
+          }
+          summaryTick = firedAtTick;
+          pendingSummaryTokens += summary.tokens;
+        })
+        .catch(() => {
+          // Best-effort; the next due tick retries.
+        })
+        .finally(() => {
+          summaryInFlight = false;
+        });
+    }
+
     deps.saveState(config.stateFile, runState);
     await deps.sleep(config.tickMs);
   }
