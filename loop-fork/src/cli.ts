@@ -12,6 +12,11 @@ import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   runCodexTmuxProxy,
 } from "./loop/codex-tmux-proxy";
+import {
+  BABYSIT_SUBCOMMAND,
+  resolveBabysitConfig,
+  runBabysitter,
+} from "./loop/babysitter";
 import { cliDeps } from "./loop/deps";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { Agent, Options } from "./loop/types";
@@ -93,6 +98,14 @@ export const runCli = async (argv: string[]): Promise<void> => {
       );
     }
     await runHookEmit(source, hookFile);
+    return;
+  }
+  if (argv[0] === BABYSIT_SUBCOMMAND) {
+    const runId = argv[1];
+    if (!runId) {
+      throw new Error("Usage: loop __babysit <run-id>");
+    }
+    await runBabysitter(resolveBabysitConfig(runId, process.env));
     return;
   }
 

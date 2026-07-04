@@ -1,0 +1,143 @@
+import { expect, test } from "bun:test";
+import {
+  babysitTick,
+  type BabysitConfig,
+  type BabysitDeps,
+} from "../../src/loop/babysitter";
+import type {
+  Agent,
+  AgentLivenessState,
+  JudgeOutcome,
+  RecoveryHistoryEntry,
+} from "../../src/loop/types";
+
+const IDLE_MS = 60_000;
+const START_MS = 1_000_000;
+
+const baseConfig = (overrides: Partial<BabysitConfig> = {}): BabysitConfig => ({
+  agents: [{ agent: "claude", hookFile: "hooks.jsonl", pane: "s:0.0" }],
+  confidence: 0.7,
+  cooldownMs: 300_000,
+  dryRun: false,
+  idleMs: IDLE_MS,
+  logFile: "babysitter.jsonl",
+  maxRecoveries: 3,
+  model: "m",
+  runId: "1",
+  session: "s",
+  tickMs: 15_000,
+  url: "http://127.0.0.1:8082",
+  ...overrides,
+});
+
+interface Spies {
+  judged: number;
+  logs: unknown[];
+  respawns: string[];
+  sends: string[][];
+  texts: string[];
+}
+
+const makeDeps = (
+  outcome: JudgeOutcome,
+  clock: { ms: number },
+  spies: Spies
+): BabysitDeps => ({
+  appendLog: (_file, record) => spies.logs.push(record),
+  capturePane: () => "stable pane text",
+  judge: (_req) => {
+    spies.judged += 1;
+    return Promise.resolve(outcome);
+  },
+  now: () => clock.ms,
+  readHooks: () => [],
+  render: () => {
+    // no-op for tests
+  },
+  respawnPane: (pane) => spies.respawns.push(pane),
+  sendKeys: (pane, keys) => spies.sends.push([pane, ...keys]),
+  sendText: (_pane, text) => spies.texts.push(text),
+  sleep: () => Promise.resolve(),
+});
+
+const freshSpies = (): Spies => ({
+  judged: 0,
+  logs: [],
+  respawns: [],
+  sends: [],
+  texts: [],
+});
+
+const stuck: JudgeOutcome = {
+  ok: true,
+  verdict: { confidence: 0.9, state: "stuck", summary: "stuck on build" },
+};
+
+// Drive two ticks: the first seeds detector state, the second (after the pane
+// has been stable past the idle window with no events) makes the agent suspect.
+const runToSuspect = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  clock: { ms: number }
+) => {
+  const states = new Map<Agent, AgentLivenessState>();
+  await babysitTick(states, [], config, deps);
+  clock.ms = START_MS + 2 * IDLE_MS;
+  return babysitTick(states, [], config, deps);
+};
+
+test("suspect + stuck in dry-run: judges and decides but executes nothing", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, clock, spies);
+  const result = await runToSuspect(baseConfig({ dryRun: true }), deps, clock);
+
+  expect(spies.judged).toBe(1);
+  expect(spies.sends).toHaveLength(0);
+  expect(spies.respawns).toHaveLength(0);
+  expect(result.history).toHaveLength(0); // dry-run does not record history
+  expect(spies.logs.some((r) => (r as { kind: string }).kind === "decision")).toBe(true);
+});
+
+test("suspect + stuck live: executes the first ladder rung and records history", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, clock, spies);
+  const result = await runToSuspect(baseConfig({ dryRun: false }), deps, clock);
+
+  // answer-prompt rung => a single Enter keystroke to the agent pane
+  expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
+  expect(result.history).toHaveLength(1);
+  expect(result.history[0].level).toBe("answer-prompt");
+});
+
+test("LLM unreachable suppresses recovery and flags the board", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const outcome: JudgeOutcome = {
+    fallback: { confidence: 0, state: "working", summary: "" },
+    ok: false,
+    reason: "unreachable",
+  };
+  const deps = makeDeps(outcome, clock, spies);
+  const result = await runToSuspect(baseConfig(), deps, clock);
+
+  expect(result.llmOffline).toBe(true);
+  expect(spies.sends).toHaveLength(0);
+  expect(spies.respawns).toHaveLength(0);
+  expect(result.board).toContain("LLM offline");
+});
+
+test("observed progress clears the agent's recovery history", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, clock, spies);
+  const states = new Map<Agent, AgentLivenessState>();
+  const seeded: RecoveryHistoryEntry[] = [
+    { agent: "claude", level: "answer-prompt", ts: new Date(START_MS).toISOString() },
+  ];
+  // First tick: agent is not yet suspect (pane just seen) => progress path.
+  const result = await babysitTick(states, seeded, baseConfig(), deps);
+  expect(result.history).toHaveLength(0);
+  expect(spies.judged).toBe(0);
+});
