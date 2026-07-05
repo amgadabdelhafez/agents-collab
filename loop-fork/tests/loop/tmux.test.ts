@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { runGit } from "../../src/loop/git";
 import {
   createRunManifest,
   resolveRunStorage,
@@ -29,6 +30,35 @@ const makePairedOptions = (overrides: Partial<Options> = {}): Options => ({
   review: "claudex",
   ...overrides,
 });
+
+const currentRunBase = (cwd = process.cwd(), requestedId?: string): string => {
+  const commonDir = runGit(cwd, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  if (commonDir.exitCode === 0 && commonDir.stdout) {
+    return tmuxInternals.sanitizeBase(basename(dirname(commonDir.stdout)));
+  }
+
+  const topLevel = runGit(cwd, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--show-toplevel",
+  ]);
+  if (topLevel.exitCode === 0 && topLevel.stdout) {
+    return tmuxInternals.sanitizeBase(basename(topLevel.stdout));
+  }
+
+  let base = tmuxInternals.sanitizeBase(basename(cwd));
+  if (requestedId) {
+    const suffix = `-loop-${tmuxInternals.sanitizeBase(requestedId)}`;
+    if (base.endsWith(suffix)) {
+      base = base.slice(0, -suffix.length);
+    }
+  }
+  return base.replace(/-loop-[a-z0-9][a-z0-9_-]*$/i, "") || "loop";
+};
 
 const withTempHomeRunManifest = async (
   runId: string,
@@ -2002,7 +2032,7 @@ test("runInTmux resolves paired run id through an existing manifest", async () =
     const calls: string[][] = [];
     const attaches: string[] = [];
     let sessionStarted = false;
-    const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+    const runBase = currentRunBase();
     const session = tmuxInternals.buildRunName(runBase, "alpha");
     const command = tmuxInternals.buildShellCommand([
       "env",
@@ -2098,7 +2128,7 @@ test("runInTmux honors paired run resume from --session", async () => {
   await withTempHomeRunManifest("alpha", async (home) => {
     const calls: string[][] = [];
     let sessionStarted = false;
-    const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+    const runBase = currentRunBase();
     const session = tmuxInternals.buildRunName(runBase, "alpha");
     const command = tmuxInternals.buildShellCommand([
       "env",
@@ -2302,7 +2332,7 @@ test("runInTmux resolves raw stored session ids from --session", async () => {
     async (home) => {
       const calls: string[][] = [];
       let sessionStarted = false;
-      const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+      const runBase = currentRunBase();
       const session = tmuxInternals.buildRunName(runBase, "alpha");
       const command = tmuxInternals.buildShellCommand([
         "env",
@@ -2372,7 +2402,7 @@ test("runInTmux ignores an unresolved raw session id in paired mode", async () =
   const home = makeTempHome();
   const calls: string[][] = [];
   let sessionStarted = false;
-  const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+  const runBase = currentRunBase();
   const command = tmuxInternals.buildShellCommand([
     "env",
     `LOOP_RUN_BASE=${runBase}`,
@@ -2666,7 +2696,7 @@ test("runInTmux skips auto-attach for non-interactive sessions", async () => {
 });
 
 test("runInTmux reports when tmux session exits before attach", async () => {
-  const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+  const runBase = currentRunBase();
   await expect(
     runInTmux(["--tmux", "--proof", "verify"], {
       env: {},
