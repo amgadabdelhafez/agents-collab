@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "babysitter-pane",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-04T15:36:35Z",
+      "run_dir": "runs/babysitter-pane",
+      "eval_status": "pass",
+      "ended_at": "2026-07-04T16:30:19Z",
+      "spec_path": "specs/babysitter-pane.md"
+    }
+  ]
+}

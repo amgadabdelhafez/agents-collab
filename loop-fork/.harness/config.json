@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "research_loc_threshold": 500,
+  "state_invariant_dirs": ["state/invariants"],
+  "default_required_dimensions": ["unit"]
+}
