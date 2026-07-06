@@ -2,8 +2,11 @@ import { expect, test } from "bun:test";
 import {
   type BabysitConfig,
   type BabysitDeps,
+  type BridgeSendStatus,
   babysitTick,
+  composePaneTitle,
   freshRunState,
+  sendRenameCommands,
 } from "../../src/loop/babysitter";
 import type { EscalationEvent } from "../../src/loop/babysitter-notify";
 import type {
@@ -14,6 +17,7 @@ import type {
   JudgeOutcome,
   JudgeRequest,
   RecoveryHistoryEntry,
+  RoleBalanceRequest,
 } from "../../src/loop/types";
 
 const IDLE_MS = 60_000;
@@ -62,6 +66,7 @@ const baseConfig = (overrides: Partial<BabysitConfig> = {}): BabysitConfig => ({
   judgeMode: "consensus",
   maxRecoveries: 3,
   model: "m",
+  roleBalanceEnabled: false,
   runId: "1",
   session: "s",
   tickMs: 15_000,
@@ -71,11 +76,21 @@ const baseConfig = (overrides: Partial<BabysitConfig> = {}): BabysitConfig => ({
 });
 
 interface Spies {
-  judgeRequests: JudgeRequest[];
+  bridgeMessages: {
+    message: string;
+    runDir: string;
+    source: Agent;
+    status: BridgeSendStatus;
+    target: Agent;
+  }[];
   judged: number;
+  judgeRequests: JudgeRequest[];
   logs: unknown[];
   notifies: EscalationEvent[];
+  paneBorderInits: string[];
+  paneLabels: [string, string][];
   respawns: string[];
+  roleBalanceRequests: RoleBalanceRequest[];
   sends: string[][];
   texts: string[];
 }
@@ -86,13 +101,24 @@ const makeDeps = (
   spies: Spies
 ): BabysitDeps => ({
   appendLog: (_file, record) => spies.logs.push(record),
+  assessRoleBalance: (req) => {
+    spies.roleBalanceRequests.push(req);
+    return Promise.resolve({
+      confidence: 0,
+      reason: "",
+      switchDriver: false,
+      tokens: 0,
+    });
+  },
   assessWaiting: () => Promise.resolve({ ask: "", tokens: 0, waiting: false }),
   capturePane: () => "stable pane text",
+  initPaneBorders: (session) => spies.paneBorderInits.push(session),
   judge: (req) => {
     spies.judged += 1;
     spies.judgeRequests.push(req);
     return Promise.resolve(outcome);
   },
+  labelPanes: () => Promise.resolve({ labels: {}, tokens: 0 }),
   loadState: () => undefined,
   notify: (_url, event) => spies.notifies.push(event),
   now: () => clock.ms,
@@ -116,12 +142,12 @@ const makeDeps = (
     messages: 0,
     inputTokens: 0,
     outputTokens: 0,
-      textMessages: 0,
-      thinkingMessages: 0,
-      toolCalls: 0,
-      toolCallCounts: {},
-      totalTokens: 0,
-    }),
+    textMessages: 0,
+    thinkingMessages: 0,
+    toolCalls: 0,
+    toolCallCounts: {},
+    totalTokens: 0,
+  }),
   readUsageLimits: () => Promise.resolve(undefined),
   render: () => {
     // no-op for tests
@@ -130,18 +156,28 @@ const makeDeps = (
   saveState: () => {
     // no-op for tests
   },
+  sendBridge: (runDir, source, target, message) => {
+    const status = "accepted";
+    spies.bridgeMessages.push({ message, runDir, source, status, target });
+    return Promise.resolve(status);
+  },
   sendKeys: (pane, keys) => spies.sends.push([pane, ...keys]),
   sendText: (_pane, text) => spies.texts.push(text),
+  setPaneLabel: (pane, label) => spies.paneLabels.push([pane, label]),
   sleep: () => Promise.resolve(),
   summarize: () => Promise.resolve({ text: "", tokens: 0 }),
 });
 
 const freshSpies = (): Spies => ({
+  bridgeMessages: [],
   judgeRequests: [],
   judged: 0,
   logs: [],
   notifies: [],
+  paneBorderInits: [],
+  paneLabels: [],
   respawns: [],
+  roleBalanceRequests: [],
   sends: [],
   texts: [],
 });
@@ -257,12 +293,8 @@ test("dual local judges render separate token rows and require agreement", async
     "qwen",
   ]);
   expect(spies.sends).toHaveLength(0);
-  expect(visibleBoard).toMatch(
-    /qwen\s+qwen\s+ok\s+1\s+150\s+120\s+80\s+30/
-  );
-  expect(visibleBoard).toMatch(
-    /gemma\s+gemma\s+ok\s+1\s+90\s+70\s+40\s+20/
-  );
+  expect(visibleBoard).toMatch(/qwen\s+qwen\s+ok\s+1\s+150\s+120\s+80\s+30/);
+  expect(visibleBoard).toMatch(/gemma\s+gemma\s+ok\s+1\s+90\s+70\s+40\s+20/);
   expect(visibleBoard).toContain("● working");
 });
 
@@ -333,7 +365,7 @@ test("board keeps the configured leader row first", async () => {
     readUsage: (agent) =>
       usage({
         messages: agent === "codex" ? 20 : 5,
-        totalTokens: agent === "codex" ? 20_000 : 5_000,
+        totalTokens: agent === "codex" ? 20_000 : 5000,
       }),
   };
   const states = new Map<Agent, AgentLivenessState>();
@@ -352,6 +384,368 @@ test("board keeps the configured leader row first", async () => {
   expect(headerIndex).toBeGreaterThanOrEqual(0);
   expect(visibleLines[headerIndex + 1]).toStartWith(" claude");
   expect(visibleLines[headerIndex + 2]).toStartWith(" codex");
+});
+
+test("codex session pressure hands driver role to claude until reset", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () =>
+      Promise.resolve({
+        codex: {
+          primaryPct: 98,
+          primaryReset: "Jan 12 1:00 PM",
+          secondaryPct: 50,
+          secondaryReset: "Jan 13 6:00 PM",
+        },
+      }),
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const config = baseConfig({
+    agents: [
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+    ],
+  });
+  const result = await babysitTick(states, config, deps);
+  const visibleLines = stripAnsi(result.board).split("\n");
+  const headerIndex = visibleLines.findIndex((line) => line.includes("AGENT"));
+
+  expect(spies.texts).toHaveLength(1);
+  expect(spies.bridgeMessages).toHaveLength(0);
+  expect(spies.texts[0]).toContain("Codex is at/near session limit");
+  expect(spies.texts[0]).toContain("Claude is now the driver");
+  expect(spies.texts[0]).toContain("do not wait for Codex");
+  expect(spies.sends).toEqual([["s:0.1", "Enter"]]);
+  expect(result.runState.notified.limitHandoff.codex).toBe(
+    "session:Jan 12 1:00 PM"
+  );
+  expect(headerIndex).toBeGreaterThanOrEqual(0);
+  expect(visibleLines[headerIndex + 1]).toStartWith(" claude");
+  expect(visibleLines[headerIndex + 2]).toStartWith(" codex");
+  expect(stripAnsi(result.board)).not.toContain("waiting for you");
+  expect(stripAnsi(result.board)).toContain(
+    "roles · initial codex · current claude · paused codex"
+  );
+  expect(stripAnsi(result.board)).toContain("msgs claude 1 codex 0");
+  expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
+});
+
+test("codex limit handoff does not repeat when reset detail appears later", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () =>
+      Promise.resolve({
+        codex: {
+          primaryPct: 100,
+          primaryReset: "Jan 12 1:00 PM",
+        },
+      }),
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const config = baseConfig({
+    agents: [
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+    ],
+  });
+  const result = await babysitTick(states, config, deps, {
+    ...freshRunState(),
+    notified: {
+      ...freshRunState().notified,
+      limitHandoff: { codex: "session:unknown" },
+    },
+  });
+
+  expect(spies.texts).toHaveLength(0);
+  expect(spies.sends).toHaveLength(0);
+  expect(result.runState.notified.limitHandoff.codex).toBe(
+    "session:Jan 12 1:00 PM"
+  );
+  expect(result.runState.roles.currentDriver).toBe("claude");
+  expect(result.runState.roles.pausedAgent).toBe("codex");
+});
+
+test("codex limit reset restores driver role with compacted handoff context", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () => Promise.resolve({}),
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const config = baseConfig({
+    agents: [
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+    ],
+    initialDriver: "codex",
+    runDir: "run-dir",
+  });
+  const result = await babysitTick(states, config, deps, {
+    ...freshRunState(),
+    notified: {
+      ...freshRunState().notified,
+      limitHandoff: { codex: "session:Jan 12 1:00 PM" },
+    },
+    roles: {
+      currentDriver: "claude",
+      handoffAt: new Date(START_MS - 60_000).toISOString(),
+      initialDriver: "codex",
+      lastAction: "handoff",
+      pausedAgent: "codex",
+      pressureKey: "session:Jan 12 1:00 PM",
+      reset: "Jan 12 1:00 PM",
+      resetKind: "session",
+      temporaryDriver: "claude",
+    },
+    summary:
+      "Project: demo\nObjective: keep going\nProgress: Claude fixed measured inputs\nNext: Codex verify calibration",
+  });
+
+  expect(spies.bridgeMessages).toHaveLength(1);
+  expect(spies.bridgeMessages[0]).toMatchObject({
+    runDir: "run-dir",
+    source: "claude",
+    status: "accepted",
+    target: "codex",
+  });
+  expect(spies.bridgeMessages[0]?.message).toStartWith("/compact babysitter:");
+  expect(spies.bridgeMessages[0]?.message).toContain("Codex's limit reset");
+  expect(spies.bridgeMessages[0]?.message).toContain("Claude drove the task");
+  expect(spies.bridgeMessages[0]?.message).toContain(
+    "Claude fixed measured inputs"
+  );
+  expect(spies.texts).toHaveLength(1);
+  expect(spies.texts[0]).toContain("Hand the driver role back to Codex");
+  expect(spies.sends).toEqual([["s:0.1", "Enter"]]);
+  expect(result.runState.notified.limitHandoff.codex).toBeUndefined();
+  expect(result.runState.roles.currentDriver).toBe("codex");
+  expect(result.runState.roles.pausedAgent).toBeUndefined();
+  expect(stripAnsi(result.board)).toContain(
+    "roles · initial codex · current codex"
+  );
+  expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 1");
+  expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
+});
+
+test("claude session pressure hands driver role to codex until reset", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () =>
+      Promise.resolve({
+        claude: {
+          primaryPct: 97,
+          primaryReset: "Jan 12 2:00 PM",
+          secondaryPct: 30,
+          secondaryReset: "Jan 13 6:00 PM",
+        },
+      }),
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const config = baseConfig({
+    agents: [
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+    ],
+    runDir: "run-dir",
+  });
+  const result = await babysitTick(states, config, deps);
+  const visibleLines = stripAnsi(result.board).split("\n");
+  const headerIndex = visibleLines.findIndex((line) => line.includes("AGENT"));
+
+  expect(spies.texts).toHaveLength(0);
+  expect(spies.sends).toEqual([]);
+  expect(spies.bridgeMessages).toHaveLength(1);
+  expect(spies.bridgeMessages[0]).toMatchObject({
+    runDir: "run-dir",
+    source: "claude",
+    status: "accepted",
+    target: "codex",
+  });
+  expect(spies.bridgeMessages[0]?.message).toContain(
+    "Claude is at/near session limit"
+  );
+  expect(spies.bridgeMessages[0]?.message).toContain("Codex is now the driver");
+  expect(spies.bridgeMessages[0]?.message).toContain("do not wait for Claude");
+  expect(result.runState.notified.limitHandoff.claude).toBe(
+    "session:Jan 12 2:00 PM"
+  );
+  expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 0");
+  expect(headerIndex).toBeGreaterThanOrEqual(0);
+  expect(visibleLines[headerIndex + 1]).toStartWith(" codex");
+  expect(visibleLines[headerIndex + 2]).toStartWith(" claude");
+});
+
+test("proactive quota balance is disabled by default", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    assessRoleBalance: (req) => {
+      spies.roleBalanceRequests.push(req);
+      throw new Error("role balance should not be called");
+    },
+    readUsageLimits: () =>
+      Promise.resolve({
+        claude: { primaryPct: 30, secondaryPct: 20 },
+        codex: { primaryPct: 84, secondaryPct: 62 },
+      }),
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const config = baseConfig({
+    agents: [
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+    ],
+    initialDriver: "codex",
+    runDir: "run-dir",
+  });
+
+  const result = await babysitTick(states, config, deps);
+
+  expect(spies.roleBalanceRequests).toHaveLength(0);
+  expect(spies.texts).toHaveLength(0);
+  expect(spies.sends).toHaveLength(0);
+  expect(spies.bridgeMessages).toHaveLength(0);
+  expect(result.runState.roles.currentDriver).toBeUndefined();
+  expect(result.runState.roles.balanceCheckKey).toBeUndefined();
+  expect(result.runState.llmUsage.totalTokens).toBe(0);
+});
+
+test("proactive quota balance moves driver when local LLM approves", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    assessRoleBalance: (req) => {
+      spies.roleBalanceRequests.push(req);
+      return Promise.resolve({
+        confidence: 0.82,
+        driver: "claude",
+        reason: "Codex session quota is tighter; Claude has enough headroom",
+        switchDriver: true,
+        tokens: 15,
+        usage: {
+          cachedInputTokens: 2,
+          calls: 1,
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        },
+      });
+    },
+    readUsageLimits: () =>
+      Promise.resolve({
+        claude: { primaryPct: 30, secondaryPct: 20 },
+        codex: { primaryPct: 84, secondaryPct: 62 },
+      }),
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const config = baseConfig({
+    agents: [
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+    ],
+    initialDriver: "codex",
+    roleBalanceEnabled: true,
+    runDir: "run-dir",
+  });
+
+  const result = await babysitTick(states, config, deps);
+
+  expect(spies.roleBalanceRequests).toHaveLength(1);
+  expect(spies.roleBalanceRequests[0]).toMatchObject({
+    candidateDriver: "claude",
+    currentDriver: "codex",
+    initialDriver: "codex",
+  });
+  expect(spies.texts).toHaveLength(1);
+  expect(spies.texts[0]).toContain("proactive quota balance");
+  expect(spies.texts[0]).toContain("Claude is now the driver");
+  expect(spies.sends).toEqual([["s:0.1", "Enter"]]);
+  expect(spies.bridgeMessages).toHaveLength(1);
+  expect(spies.bridgeMessages[0]).toMatchObject({
+    runDir: "run-dir",
+    source: "claude",
+    status: "accepted",
+    target: "codex",
+  });
+  expect(spies.bridgeMessages[0]?.message).toContain(
+    "Claude is now the driver"
+  );
+  expect(result.runState.roles.currentDriver).toBe("claude");
+  expect(result.runState.roles.lastAction).toBe("balance");
+  expect(result.runState.roles.pausedAgent).toBeUndefined();
+  expect(result.runState.llmUsage).toMatchObject({
+    calls: 1,
+    inputTokens: 10,
+    outputTokens: 5,
+    totalTokens: 15,
+  });
+  expect(stripAnsi(result.board)).toContain(
+    "roles · initial codex · current claude"
+  );
+  expect(stripAnsi(result.board)).toContain("balance 0s ago");
+  expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 1");
+});
+
+test("proactive quota balance is skipped when local LLM vetoes", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    assessRoleBalance: (req) => {
+      spies.roleBalanceRequests.push(req);
+      return Promise.resolve({
+        confidence: 0.7,
+        reason: "Codex should finish the current step",
+        switchDriver: false,
+        tokens: 7,
+        usage: {
+          cachedInputTokens: 0,
+          calls: 1,
+          inputTokens: 5,
+          outputTokens: 2,
+          totalTokens: 7,
+        },
+      });
+    },
+    readUsageLimits: () =>
+      Promise.resolve({
+        claude: { primaryPct: 30, secondaryPct: 20 },
+        codex: { primaryPct: 84, secondaryPct: 62 },
+      }),
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const config = baseConfig({
+    agents: [
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+    ],
+    initialDriver: "codex",
+    roleBalanceEnabled: true,
+    runDir: "run-dir",
+  });
+
+  const result = await babysitTick(states, config, deps);
+
+  expect(spies.roleBalanceRequests).toHaveLength(1);
+  expect(spies.texts).toHaveLength(0);
+  expect(spies.sends).toHaveLength(0);
+  expect(spies.bridgeMessages).toHaveLength(0);
+  expect(result.runState.roles.currentDriver).toBeUndefined();
+  expect(result.runState.roles.balanceCheckKey).toBe(
+    "balance:codex->claude:80:30"
+  );
+  expect(result.runState.llmUsage.totalTokens).toBe(7);
+  expect(stripAnsi(result.board)).toContain("roles · initial codex");
+  expect(stripAnsi(result.board)).not.toContain("current claude");
 });
 
 test("board labels an agent [idle] once its pane is frozen", async () => {
@@ -398,6 +792,10 @@ test("board shows latest bridge messages in both directions", async () => {
   };
   const deps: BabysitDeps = {
     ...makeDeps(working, clock, spies),
+    readBridge: () => ({
+      claude: { codex: 6 },
+      codex: { claude: 6 },
+    }),
     readBridgeLatest: (runDir) => {
       expect(runDir).toBe("run-dir");
       return {
@@ -417,7 +815,7 @@ test("board shows latest bridge messages in both directions", async () => {
             at: new Date(START_MS - 90_000).toISOString(),
             id: "m2",
             kind: "message",
-            message: "Please review PR #529 and check the skipped hunks.",
+            message: "Final proof checkpoint.\n\nDelta notes are ready.",
             signature: "s2",
             source: "codex",
             target: "claude",
@@ -425,6 +823,28 @@ test("board shows latest bridge messages in both directions", async () => {
         },
       };
     },
+    readHooks: (file) =>
+      file.includes("claude")
+        ? [
+            {
+              agent: "claude",
+              detail: "cd /repo && npm test",
+              event: "ToolUse",
+              tool: "Bash",
+              ts: new Date(START_MS - 12_000).toISOString(),
+            },
+          ]
+        : [
+            {
+              agent: "codex",
+              event: "Stop",
+              ts: new Date(START_MS - 31_000).toISOString(),
+            },
+          ],
+    readUsage: (agent) =>
+      usage({
+        humanMessages: agent === "claude" ? 4 : 2,
+      }),
   };
   const states = new Map<Agent, AgentLivenessState>();
   const result = await babysitTick(
@@ -441,17 +861,27 @@ test("board shows latest bridge messages in both directions", async () => {
   const visibleBoard = stripAnsi(result.board);
 
   expect(visibleBoard).toContain("bridge latest");
-  expect(visibleBoard).toContain("bridge msgs");
-  expect(visibleBoard).toContain("human 0");
+  expect(visibleBoard).not.toContain("bridge msgs");
+  expect(visibleBoard).toContain("human 4 →6 ←6");
+  expect(visibleBoard).toContain("human 2 →6 ←6");
+  expect(visibleBoard).not.toContain("human 3");
   expect(visibleBoard.match(/bridge latest/g) ?? []).toHaveLength(2);
   expect(visibleBoard).toContain(
     "claude→codex 30s ago: Review approved, merge after one confirmation."
   );
   expect(visibleBoard).toContain(
-    "codex→claude 2m ago: Please review PR #529 and check the skipped hunks."
+    "Review approved, merge after one confirmation. · claude 12s: Bash cd /repo && npm test"
   );
-  expect(result.board.match(/\x1b\[35mclaude/g) ?? []).toHaveLength(4);
-  expect(result.board.match(/\x1b\[36mcodex/g) ?? []).toHaveLength(4);
+  expect(visibleBoard).toContain(
+    "codex→claude 2m ago: Final proof checkpoint. Delta notes are ready."
+  );
+  expect(visibleBoard).toMatch(
+    /Final proof checkpoint\. Delta notes are ready\. · codex \d+s: Stop/
+  );
+  expect(visibleBoard).not.toContain("agent latest");
+  expect(visibleBoard).not.toContain("\n\nDelta");
+  expect(result.board).toContain("\x1b[35mclaude");
+  expect(result.board).toContain("\x1b[36mcodex");
   expect(result.board).toContain("\x1b[33m30s ago");
 });
 
@@ -618,7 +1048,7 @@ test("board shows input, cached, and output token details", async () => {
     }),
     readUsage: () => ({
       cacheCreateTokens: 600,
-      cacheReadTokens: 3_400,
+      cacheReadTokens: 3400,
       compactedContextTokens: 1_000_000,
       compactions: 2,
       contextRateTokensPerMinute: 1000,
@@ -629,11 +1059,11 @@ test("board shows input, cached, and output token details", async () => {
       costUsd: 12,
       dataConfidence: "approx",
       humanMessages: 0,
-      inputTokens: 1_200,
+      inputTokens: 1200,
       lastCompactionTs: new Date(START_MS - 10 * 60_000).toISOString(),
       messages: 0,
       model: "gpt-5.5",
-      outputTokens: 7_800,
+      outputTokens: 7800,
       rateLimitPrimaryPct: 70,
       rateLimitSecondaryPct: 24,
       reasoningEffort: "medium",
@@ -664,11 +1094,11 @@ test("board shows input, cached, and output token details", async () => {
   const visibleBoard = stripAnsi(result.board);
 
   expect(visibleBoard).toMatch(
-    /AGENT\s+STATE\s+NOW\s+MODEL\s+EFF\s+MODE\s+CTX\s+CTX\+\s+CMP\s+LIMIT S\/W\s+S RESET\s+W RESET\s+COST\s+\$\/H\s+TOK\s+IN\s+CACHE\s+OUT\s+BRIDGE\s+LAST/
+    /AGENT\s+STATE\s+NOW\s+MODEL\s+EFF\s+MODE\s+CTX\s+CTX\+\s+CMP\s+LIMIT S\/W\s+S RESET\s+W RESET\s+COST\s+\$\/H\s+TOK\s+IN\s+CACHE\s+OUT\s+ACT\s+TXT\s+THK\s+TOOL\s+EXEC\s+CODE\s+READ\/VIEW\s+PLAN\s+MISC\s+BRIDGE/
   );
-  expect(visibleBoard).toMatch(
-    /AGENT\s+ACT\s+TXT\s+THK\s+TOOL\s+EXEC\s+CODE\s+READ\/VIEW\s+PLAN\s+BRIDGE\s+OTHER/
-  );
+  expect(visibleBoard).not.toMatch(/\n AGENT\s+ACT\s+TXT/);
+  expect(visibleBoard).not.toContain("LAST");
+  expect(visibleBoard).not.toContain("OTHER");
   expect(visibleBoard).toContain("TXT");
   expect(visibleBoard).toContain("THK");
   expect(visibleBoard).toContain("TOOL");
@@ -687,7 +1117,7 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("LIMIT S/W");
   expect(visibleBoard).toContain("S RESET");
   expect(visibleBoard).toContain("W RESET");
-  expect(visibleBoard).toMatch(/claude\s+19\s+12\s+3\s+4\s+3\s+1/);
+  expect(visibleBoard).toMatch(/^ claude[^\n]*\s19\s+12\s+3\s+4\s+3\s+1/m);
   expect(visibleBoard).toContain("both idle total 0s");
   expect(visibleBoard).toMatch(
     /LLM\s+MODEL\s+STAT\s+CALLS\s+TOK\s+IN\s+CACHE\s+OUT\s+HIT\s+SLOTS\s+MEM\s+ARCH\s+DT\s+QNT\s+MOE\s+BATCH/
@@ -725,10 +1155,7 @@ test("board caps structured summary section heights", async () => {
     ok: true,
     verdict: { confidence: 0.9, state: "working", summary: "" },
   };
-  const longText = Array.from(
-    { length: 80 },
-    (_, i) => `detail${i}`
-  ).join(" ");
+  const longText = Array.from({ length: 80 }, (_, i) => `detail${i}`).join(" ");
   const summary = [
     `Project: ${longText}`,
     `Objective: ${longText}`,
@@ -743,12 +1170,16 @@ test("board caps structured summary section heights", async () => {
     { ...freshRunState(), summary }
   );
   const lines = stripAnsi(result.board).split("\n");
-  const summaryStart = lines.findIndex((line) => line.includes("── summary ──"));
+  const summaryStart = lines.findIndex((line) =>
+    line.includes("── summary ──")
+  );
   expect(summaryStart).toBeGreaterThanOrEqual(0);
   const sectionCounts: Record<string, number> = {};
   let current = "";
   for (const line of lines.slice(summaryStart + 1)) {
-    const label = line.trimStart().match(/^(Project|Objective|Progress|Next):/i);
+    const label = line
+      .trimStart()
+      .match(/^(Project|Objective|Progress|Next):/i);
     if (label) {
       current = label[1].toLowerCase();
     }
@@ -835,6 +1266,20 @@ test("board labels a session-limit pane as limited, not waiting for the human", 
   expect(spies.judged).toBe(0);
   expect(result.board).toContain("limit");
   expect(result.board).not.toContain("waits you");
+});
+
+test("board does not label babysitter limit handoff text as a session limit", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(waitingHuman, clock, spies),
+    capturePane: () =>
+      "❯ babysitter: Codex is at/near session limit. Claude is now the driver.",
+  };
+  const states = new Map<Agent, AgentLivenessState>();
+  const result = await babysitTick(states, baseConfig(), deps);
+
+  expect(result.board).not.toContain("● limit");
 });
 
 test("board does not label Codex context compaction as a usage limit", async () => {
@@ -980,4 +1425,119 @@ test("escalates once when the session crosses its cost budget", async () => {
   const budgetAlerts = spies.notifies.filter((e) => e.kind === "budget");
   expect(budgetAlerts).toHaveLength(1);
   expect(first.board).toContain("⛔");
+});
+
+test("composePaneTitle composes glyph, agent, and task label", () => {
+  expect(composePaneTitle("claude", "waiting-human", "auth refactor")).toBe(
+    "⏸ claude · auth refactor"
+  );
+  expect(composePaneTitle("codex", "working")).toBe("▶ codex");
+  // Unknown state falls back to the idle glyph.
+  expect(composePaneTitle("codex", "mystery")).toBe("· codex");
+});
+
+test("babysitTick sets each agent's pane border title and skips redundant sets", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, clock, spies);
+  const config = baseConfig();
+  const first = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    config,
+    deps
+  );
+  expect(spies.paneLabels).toEqual([["s:0.0", "… claude"]]);
+  // Same state on the next tick => no fresh tmux set.
+  await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    config,
+    deps,
+    first.runState
+  );
+  expect(spies.paneLabels).toHaveLength(1);
+});
+
+test("babysitTick folds the stored LLM label into the border title", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, clock, spies);
+  const runState = {
+    ...freshRunState(),
+    paneLabels: { claude: "auth refactor" },
+  };
+  await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig(),
+    deps,
+    runState
+  );
+  expect(spies.paneLabels).toEqual([["s:0.0", "… claude · auth refactor"]]);
+});
+
+test("sendRenameCommands injects /rename with session and task per labeled agent", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const config = baseConfig({
+    agents: [
+      { agent: "claude", hookFile: "h", pane: "s:0.0" },
+      { agent: "codex", hookFile: "h", pane: "s:0.1" },
+    ],
+  });
+  // Only claude has a task label => only claude is renamed.
+  sendRenameCommands(config, deps, { claude: "auth refactor" }, {});
+  expect(spies.texts).toEqual(["/rename s · auth refactor"]);
+  expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
+});
+
+test("sendRenameCommands sends nothing in dry-run", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  sendRenameCommands(
+    baseConfig({ dryRun: true }),
+    deps,
+    { claude: "auth refactor" },
+    {}
+  );
+  expect(spies.texts).toHaveLength(0);
+  expect(spies.sends).toHaveLength(0);
+});
+
+test("sendRenameCommands does not re-send an unchanged rename", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const config = baseConfig();
+  const lastRenames: Partial<Record<Agent, string>> = {};
+  // First refresh renames; a second identical refresh is a no-op.
+  sendRenameCommands(config, deps, { claude: "session initialization" }, lastRenames);
+  sendRenameCommands(config, deps, { claude: "session initialization" }, lastRenames);
+  expect(spies.texts).toEqual(["/rename s · session initialization"]);
+  expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
+  // A changed label sends again.
+  sendRenameCommands(config, deps, { claude: "auth refactor" }, lastRenames);
+  expect(spies.texts).toHaveLength(2);
+});
+
+test("sendRenameCommands does not inject into an agent that is mid-turn", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const lastRenames: Partial<Record<Agent, string>> = {};
+  // Agent is working => skip the send AND do not record, so it retries later.
+  sendRenameCommands(
+    baseConfig(),
+    deps,
+    { claude: "auth refactor" },
+    lastRenames,
+    { claude: "working" }
+  );
+  expect(spies.texts).toHaveLength(0);
+  expect(lastRenames).toEqual({});
+  // Once idle, the same label renames.
+  sendRenameCommands(
+    baseConfig(),
+    deps,
+    { claude: "auth refactor" },
+    lastRenames,
+    { claude: "idle" }
+  );
+  expect(spies.texts).toEqual(["/rename s · auth refactor"]);
 });

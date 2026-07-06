@@ -164,6 +164,25 @@ test("summarizeClaude counts agent messages and genuine human prompts", () => {
   const text = [
     JSON.stringify({ type: "user", message: { role: "user", content: "do X" } }),
     JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: "Agent-to-agent pair programming: Codex is the primary agent",
+      },
+    }),
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "babysitter: Codex is at/near session limit" },
+    }),
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "[Request interrupted by user for tool use]" },
+    }),
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "Codex: please review this patch" },
+    }),
+    JSON.stringify({
       type: "assistant",
       message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
     }),
@@ -220,7 +239,39 @@ test("summarizeClaude counts compact boundaries and pre-compact context", () => 
 
 test("summarizeCodex counts messages by role", () => {
   const text = [
-    JSON.stringify({ payload: { type: "message", role: "user", content: [] } }),
+    JSON.stringify({
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "do X" }],
+      },
+    }),
+    JSON.stringify({
+      payload: {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "Agent-to-agent pair programming: start this run",
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Claude: bridge review passed" }],
+      },
+    }),
+    JSON.stringify({
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "/compact babysitter: resume" }],
+      },
+    }),
     JSON.stringify({ payload: { type: "message", role: "assistant", content: [] } }),
     JSON.stringify({ payload: { type: "reasoning" } }),
     JSON.stringify({ role: "assistant" }),

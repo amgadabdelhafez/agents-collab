@@ -2,16 +2,57 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { judgeAgent } from "../../src/loop/babysitter-llm";
-import type { JudgeRequest } from "../../src/loop/types";
+import {
+  assessRoleBalance,
+  judgeAgent,
+  labelPanes,
+} from "../../src/loop/babysitter-llm";
+import type {
+  JudgeRequest,
+  PaneLabelRequest,
+  RoleBalanceRequest,
+} from "../../src/loop/types";
 
 const baseRequest = (): JudgeRequest => ({
   agent: "claude",
   hookTail: [
-    { agent: "claude", event: "tool", tool: "Bash", ts: "2026-07-04T00:00:00Z" },
+    {
+      agent: "claude",
+      event: "tool",
+      tool: "Bash",
+      ts: "2026-07-04T00:00:00Z",
+    },
   ],
   model: "qwen",
   paneText: "some pane output",
+  url: "http://localhost:1234",
+});
+
+const baseRoleBalanceRequest = (): RoleBalanceRequest => ({
+  agents: [
+    {
+      agent: "codex",
+      contextPct: 62,
+      currentDriver: true,
+      sessionPct: 84,
+      state: "idle",
+      weeklyPct: 60,
+    },
+    {
+      agent: "claude",
+      contextPct: 22,
+      currentDriver: false,
+      sessionPct: 32,
+      state: "idle",
+      weeklyPct: 20,
+    },
+  ],
+  candidateDriver: "claude",
+  currentDriver: "codex",
+  initialDriver: "codex",
+  model: "qwen",
+  reasonHint: "codex quota tighter than claude",
+  summary: "Project: demo\nNext: finish tests",
   url: "http://localhost:1234",
 });
 
@@ -58,7 +99,7 @@ test("missing usage is estimated from request and response text", async () => {
   });
 
   expect(outcome.ok).toBe(true);
-  if (!outcome.ok || !outcome.usage) {
+  if (!(outcome.ok && outcome.usage)) {
     throw new Error("expected ok outcome with usage");
   }
   expect(outcome.usage.calls).toBe(1);
@@ -68,6 +109,53 @@ test("missing usage is estimated from request and response text", async () => {
     outcome.usage.inputTokens + outcome.usage.outputTokens
   );
   expect(outcome.tokens).toBe(outcome.usage.totalTokens);
+});
+
+test("role balance response parses approved driver decision", async () => {
+  const content = JSON.stringify({
+    confidence: 0.85,
+    driver: "claude",
+    reason: "Claude has materially more quota headroom",
+    switchDriver: true,
+  });
+  const outcome = await assessRoleBalance(baseRoleBalanceRequest(), {
+    fetchFn: stubFetch(
+      chatResponse(content, 200, {
+        completion_tokens: 8,
+        prompt_tokens: 40,
+        total_tokens: 48,
+      })
+    ),
+  });
+
+  expect(outcome).toMatchObject({
+    confidence: 0.85,
+    driver: "claude",
+    reason: "Claude has materially more quota headroom",
+    switchDriver: true,
+    tokens: 48,
+    usage: {
+      calls: 1,
+      inputTokens: 40,
+      outputTokens: 8,
+      totalTokens: 48,
+    },
+  });
+});
+
+test("role balance refuses switch when driver is invalid", async () => {
+  const content = JSON.stringify({
+    confidence: 0.9,
+    driver: "gemini",
+    reason: "bad target",
+    switchDriver: true,
+  });
+  const outcome = await assessRoleBalance(baseRoleBalanceRequest(), {
+    fetchFn: stubFetch(chatResponse(content)),
+  });
+
+  expect(outcome.switchDriver).toBe(false);
+  expect(outcome.driver).toBeUndefined();
 });
 
 test("valid response reports local LLM call and token split", async () => {
@@ -256,4 +344,60 @@ test("empty content returns malformed", async () => {
   if (!outcome.ok) {
     expect(outcome.reason).toBe("malformed");
   }
+});
+
+const basePaneLabelRequest = (): PaneLabelRequest => ({
+  agents: [
+    {
+      agent: "claude",
+      lastActions: ["Edit auth.ts"],
+      paneText: "editing auth",
+    },
+    {
+      agent: "codex",
+      lastActions: ["Bash bun test"],
+      paneText: "running tests",
+    },
+  ],
+  model: "qwen",
+  url: "http://localhost:1234",
+});
+
+test("labelPanes parses a per-agent task label map", async () => {
+  const content = JSON.stringify({
+    claude: "auth refactor",
+    codex: "writing tests",
+  });
+  const result = await labelPanes(basePaneLabelRequest(), {
+    fetchFn: stubFetch(chatResponse(content)),
+  });
+  expect(result.labels).toEqual({
+    claude: "auth refactor",
+    codex: "writing tests",
+  });
+});
+
+test("labelPanes trims whitespace and truncates long labels", async () => {
+  const content = JSON.stringify({
+    claude: "  a very long task label that keeps going well past the cap  ",
+  });
+  const result = await labelPanes(basePaneLabelRequest(), {
+    fetchFn: stubFetch(chatResponse(content)),
+  });
+  expect(result.labels.claude?.length).toBeLessThanOrEqual(28);
+  expect(result.labels.claude?.startsWith("a very long")).toBe(true);
+});
+
+test("labelPanes returns no labels on malformed content", async () => {
+  const result = await labelPanes(basePaneLabelRequest(), {
+    fetchFn: stubFetch(chatResponse("not json at all")),
+  });
+  expect(result.labels).toEqual({});
+});
+
+test("labelPanes returns no labels on a non-ok response", async () => {
+  const result = await labelPanes(basePaneLabelRequest(), {
+    fetchFn: stubFetch(chatResponse("{}", 500)),
+  });
+  expect(result.labels).toEqual({});
 });

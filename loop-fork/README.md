@@ -1,12 +1,10 @@
-# loop fork
+# loop
 
 Dead-simple Bun CLI that runs `codex` and `claude` in a loop. Uses `tmux` to run the interactive TUIs side-by-side. Codex and Claude talk to each other through the [Codex App Server](https://developers.openai.com/codex/app-server) and [Claude Code Channels](https://code.claude.com/docs/en/channels-reference).
 
-This is an independent fork of [axeldelafosse/loop](https://github.com/axeldelafosse/loop) carried inside [amgadabdelhafez/agents-collab](https://github.com/amgadabdelhafez/agents-collab). The original project is MIT licensed; the original copyright notice is preserved in `LICENSE.md`.
-
 Install:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amgadabdelhafez/agents-collab/main/loop-fork/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/axeldelafosse/loop/main/install.sh | bash
 ```
 
 Run:
@@ -67,7 +65,7 @@ This _is not_ an "agent harness" and the goal isn't to re-invent the wheel: `loo
 ## Install prebuilt binary
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amgadabdelhafez/agents-collab/main/loop-fork/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/axeldelafosse/loop/main/install.sh | bash
 ```
 
 Installer currently supports macOS and Linux and installs `loop`, `claude-loop`, and `codex-loop` to `~/.local/bin` by default.
@@ -139,6 +137,17 @@ Paired runs start loop-launched Codex with a run-scoped `CODEX_HOME` at:
 That directory contains a minimal Codex config and reuses the normal Codex auth file. The loop bridge MCP is passed explicitly for the run, so global Codex MCP servers and plugin-provided app connectors are not started in paired loop sessions. This keeps autoloop and tmux startup deterministic even when the user's regular Codex config contains slow or broken MCP servers.
 
 Single-agent Codex runs outside paired mode still use the normal Codex configuration unless you set `CODEX_HOME` yourself.
+
+### Babysitter pane
+
+Paired tmux runs can add a full-width babysitter pane under the two agents (a local-LLM watchdog). Each tick it detects idle/stuck agents, runs a recovery ladder, tracks token/cost budgets, and escalates to you when the pair is genuinely waiting.
+
+The babysitter also names the workspace from what the local model reads off each pane:
+
+- **Pane borders** — the border of each agent pane shows `⟨state glyph⟩ ⟨agent⟩ · ⟨task⟩`, e.g. `▶ claude · auth refactor`. The state glyph updates every tick; the task label is refreshed by the local LLM on a slow cadence. Titles are written to a per-pane tmux user option (`@loop_label`) rendered via `pane-border-format`, so they survive the agent TUIs overwriting `pane_title`. Borders are enabled on babysitter startup, so a restarted/replaced babysitter pane re-lights them.
+- **Agent rename** — on each label refresh the babysitter sends `/rename <session> · <task>` into each agent, so the agent's own session name tracks the current task.
+
+The local model, endpoint, and pane height are configurable (`--babysit-*` flags / `LOOP_BABYSIT_*` env). The labeling call is sized for reasoning models that emit a `<think>` block before their answer.
 
 ## Install globally (symlink)
 

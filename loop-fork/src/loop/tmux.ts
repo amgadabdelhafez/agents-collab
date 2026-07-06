@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
 import { BABYSIT_SUBCOMMAND } from "./babysitter";
 import {
@@ -190,6 +190,30 @@ const reviewerCheckpointGuidance = (peer: string): string =>
 const reviewerSessionStateGuidance = (primary: string): string =>
   `When reviewing, check that ${primary} keeps PLAN.md and status.md current enough for handoff: what changed, proof/checks run, open questions, risks, and next steps.`;
 
+const pairedContextGuidance = (opts: Options, agent: Agent): string[] => {
+  const peer = pairedPeer(opts);
+  const pair = new Set<Agent>([opts.agent, peer]);
+  if (!(pair.has("claude") && pair.has("codex"))) {
+    return [];
+  }
+
+  if (agent === "claude") {
+    return [
+      "Context role: use Claude's larger context window as the session memory. Preserve historical decisions, prior failed paths, user preferences, and acceptance criteria.",
+      "When asking Codex for work or review, include the small recent slice it needs: current objective, relevant files, latest proof, and the exact question. Answer Codex context questions from session history instead of making it rediscover that history.",
+    ];
+  }
+
+  if (agent === "codex") {
+    return [
+      "Context role: optimize for Codex's smaller context window. Stay focused on the immediate request, current diff, latest logs, and next verification step.",
+      "Do not reconstruct long session history unless it is directly needed. Ask Claude for missing historical context, decisions, or acceptance criteria, and make frequent targeted calls with concise findings, proof, and specific questions.",
+    ];
+  }
+
+  return [];
+};
+
 const quotedClaudeTmuxBridgeTool = (
   serverName: string,
   tool: BridgeTool
@@ -221,6 +245,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
   if (agent === opts.agent) {
     return [
       `You are the main worker. ${peer} reviews and helps on request.`,
+      ...pairedContextGuidance(opts, agent),
       "Implement and verify first, then ask for review.",
       reviewerCheckpointGuidance(peer),
       "Keep iterating until your own review and the peer review both pass.",
@@ -232,6 +257,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
 
   return [
     `${primary} is the main worker. You are the reviewer/support agent.`,
+    ...pairedContextGuidance(opts, agent),
     "Do not take over the task or create the PR yourself.",
     `When ${primary} asks, do a real review against the task, proof requirements, and repo state.`,
     `Expect ${primary} to request validation every few concrete steps. Give timely feedback, identify risks early, and ask ${primary} to clarify any ambiguous claim before approving it.`,
@@ -773,6 +799,7 @@ const updatePairedManifest = (
   codexThreadId: string,
   session: string,
   paneAgents: { left: Agent; right: Agent },
+  primaryAgent: Agent,
   babysitPane?: string
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
@@ -785,6 +812,7 @@ const updatePairedManifest = (
         cwd: deps.cwd,
         mode: "paired",
         pid: process.pid,
+        primaryAgent,
         tmuxSession: session,
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRightAgent: paneAgents.right,
@@ -845,26 +873,153 @@ const prepareBabysitHooks = (
   };
 };
 
-const passEnv = (key: string): string[] => {
-  const value = process.env[key];
+const passEnv = (env: NodeJS.ProcessEnv, key: string): string[] => {
+  const value = env[key];
   return value ? [`${key}=${value}`] : [];
 };
 
-const babysitEnv = (opts: Options): string[] => [
+const envDisabled = (value: string | undefined): boolean => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "0" || normalized === "false" || normalized === "off";
+};
+
+const unquoteEnvValue = (raw: string): string | undefined => {
+  let value = raw.trim();
+  if (!value) {
+    return undefined;
+  }
+  if (value.startsWith("'")) {
+    const end = value.indexOf("'", 1);
+    value = end >= 0 ? value.slice(1, end) : value.slice(1);
+  } else if (value.startsWith('"')) {
+    const end = value.indexOf('"', 1);
+    value = end >= 0 ? value.slice(1, end) : value.slice(1);
+    value = value.replaceAll('\\"', '"').replaceAll("\\\\", "\\");
+  } else {
+    value = value.replace(/\s+#.*$/, "").trim();
+  }
+  return value || undefined;
+};
+
+const envFileValue = (file: string, key: string): string | undefined => {
+  if (!existsSync(file)) {
+    return undefined;
+  }
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}\\s*=\\s*(.*)$`);
+  try {
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const match = pattern.exec(line);
+      if (match) {
+        return unquoteEnvValue(match[1] ?? "");
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+};
+
+const parentDirs = (path: string | undefined, maxDepth = 3): string[] => {
+  if (!path) {
+    return [];
+  }
+  const dirs: string[] = [];
+  let current = resolve(path);
+  for (let i = 0; i < maxDepth; i += 1) {
+    dirs.push(current);
+    const next = dirname(current);
+    if (next === current) {
+      break;
+    }
+    current = next;
+  }
+  return dirs;
+};
+
+const unique = (values: Array<string | undefined>): string[] => [
+  ...new Set(values.filter((value): value is string => Boolean(value))),
+];
+
+const usageTrackerEnvFiles = (
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): string[] => {
+  const explicit = unique([
+    env.LOOP_USAGE_TRACKER_ENV_FILE,
+    env.USAGE_TRACKER_ENV_FILE,
+  ]);
+  const roots = unique([
+    ...parentDirs(cwd),
+    ...parentDirs(process.argv[1] ? dirname(process.argv[1]) : undefined),
+    ...parentDirs(process.execPath ? dirname(process.execPath) : undefined),
+  ]);
+  return unique([
+    ...explicit,
+    ...roots.flatMap((root) => [
+      join(root, ".env"),
+      join(root, "usage-tracker", ".env"),
+      join(root, "usage-tracker", "clean", ".env"),
+      join(root, "usage-tracker-minimal", ".env"),
+    ]),
+  ]);
+};
+
+const usageTrackerEnvFromFiles = (
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): string[] => {
+  if (envDisabled(env.LOOP_USAGE_TRACKER_LIMITS)) {
+    return [];
+  }
+  const files = usageTrackerEnvFiles(env, cwd);
+  const fallbackUrl =
+    env.LOOP_USAGE_TRACKER_URL ||
+    env.USAGE_TRACKER_URL ||
+    files
+      .map((file) => envFileValue(file, "LOOP_USAGE_TRACKER_URL"))
+      .find(Boolean) ||
+    files.map((file) => envFileValue(file, "USAGE_TRACKER_URL")).find(Boolean);
+  const fallbackSecret =
+    env.LOOP_USAGE_TRACKER_SECRET ||
+    env.USAGE_TRACKER_SECRET ||
+    files
+      .map((file) => envFileValue(file, "LOOP_USAGE_TRACKER_SECRET"))
+      .find(Boolean) ||
+    files
+      .map((file) => envFileValue(file, "USAGE_TRACKER_SECRET"))
+      .find(Boolean);
+  return [
+    ...(env.LOOP_USAGE_TRACKER_URL || env.USAGE_TRACKER_URL || !fallbackUrl
+      ? []
+      : [`USAGE_TRACKER_URL=${fallbackUrl}`]),
+    ...(env.LOOP_USAGE_TRACKER_SECRET || env.USAGE_TRACKER_SECRET || !fallbackSecret
+      ? []
+      : [`USAGE_TRACKER_SECRET=${fallbackSecret}`]),
+  ];
+};
+
+const babysitEnv = (
+  opts: Options,
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): string[] => [
   `LOOP_BABYSIT_IDLE=${opts.babysitIdleSeconds}`,
   `LOOP_BABYSIT_COOLDOWN=${opts.babysitCooldownSeconds}`,
   `LOOP_BABYSIT_MAX=${opts.babysitMaxRecoveries}`,
   `LOOP_BABYSIT_URL=${opts.babysitUrl}`,
   `LOOP_BABYSIT_MODEL=${opts.babysitModel}`,
-  ...passEnv("LOOP_BABYSIT_JUDGES"),
-  ...passEnv("LOOP_BABYSIT_JUDGE_MODE"),
-  ...passEnv("LOOP_USAGE_TRACKER_LIMITS"),
-  ...passEnv("LOOP_USAGE_TRACKER_TIMEOUT_MS"),
-  ...passEnv("LOOP_USAGE_TRACKER_URL"),
-  ...passEnv("USAGE_TRACKER_URL"),
-  ...(process.env.LOOP_USAGE_TRACKER_SECRET
-    ? passEnv("LOOP_USAGE_TRACKER_SECRET")
-    : passEnv("USAGE_TRACKER_SECRET")),
+  ...passEnv(env, "LOOP_BABYSIT_JUDGES"),
+  ...passEnv(env, "LOOP_BABYSIT_JUDGE_MODE"),
+  ...passEnv(env, "LOOP_BABYSIT_ROLE_BALANCE"),
+  ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
+  ...passEnv(env, "LOOP_USAGE_TRACKER_TIMEOUT_MS"),
+  ...passEnv(env, "LOOP_USAGE_TRACKER_URL"),
+  ...passEnv(env, "USAGE_TRACKER_URL"),
+  ...(env.LOOP_USAGE_TRACKER_SECRET
+    ? passEnv(env, "LOOP_USAGE_TRACKER_SECRET")
+    : passEnv(env, "USAGE_TRACKER_SECRET")),
+  ...usageTrackerEnvFromFiles(env, cwd),
   ...(opts.babysitLlmTrace
     ? [`LOOP_BABYSIT_LLM_TRACE=${opts.babysitLlmTrace}`]
     : []),
@@ -880,7 +1035,7 @@ const startBabysitPane = (
 ): string => {
   const command = buildShellCommand([
     "env",
-    ...babysitEnv(opts),
+    ...babysitEnv(opts, deps.env, deps.cwd),
     ...deps.launchArgv,
     BABYSIT_SUBCOMMAND,
     runId,
@@ -1184,6 +1339,7 @@ const startPairedSession = async (
           cwd: deps.cwd,
           mode: "paired",
           pid: process.pid,
+          primaryAgent,
           tmuxSession: session,
           tmuxPaneLeftAgent: paneAgents.left,
           tmuxPaneRightAgent: paneAgents.right,
@@ -1348,7 +1504,8 @@ const startPairedSession = async (
       codexRemoteUrl,
       codexThreadId,
       session,
-      paneAgents
+      paneAgents,
+      primaryAgent
     );
     const babysitPane = launch.opts.babysit
       ? startBabysitPane(deps, launch.opts, session, storage.runId)
@@ -1360,10 +1517,11 @@ const startPairedSession = async (
         manifest,
         claudeSessionId,
         codexRemoteUrl,
-        codexThreadId,
-        session,
-        paneAgents,
-        babysitPane
+      codexThreadId,
+      session,
+      paneAgents,
+      primaryAgent,
+      babysitPane
       );
     }
     const primaryPane =

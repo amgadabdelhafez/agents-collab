@@ -108,18 +108,6 @@ interface ContextSample {
   tsMs: number;
 }
 
-// A Claude "user" entry is a real human prompt when it carries text (a string,
-// or a content array with a text block) rather than only tool_result blocks.
-const isHumanContent = (content: unknown): boolean => {
-  if (typeof content === "string") {
-    return content.trim().length > 0;
-  }
-  if (Array.isArray(content)) {
-    return content.some((block) => asRecord(block).type === "text");
-  }
-  return false;
-};
-
 const toolName = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
@@ -335,7 +323,7 @@ export const summarizeClaude = (text: string): AgentUsage => {
       if (key) {
         seenAssistantMessages.add(key);
       }
-    } else if (role === "user" && !meta && isHumanContent(message.content)) {
+    } else if (role === "user" && !meta && cleanHumanFromContent(message.content)) {
       usage.humanMessages += 1;
     }
     const u = asRecord(message.usage);
@@ -505,7 +493,7 @@ export const summarizeCodex = (text: string): AgentUsage => {
     const role = findRole(rec);
     if (role === "assistant") {
       usage.messages += 1;
-    } else if (role === "user") {
+    } else if (role === "user" && cleanHumanFromContent(payload.content ?? rec.content)) {
       usage.humanMessages += 1;
     }
     const info = findInfoTokens(rec);
@@ -721,12 +709,22 @@ const findCodexTranscript = (
 const MAX_HUMAN_MESSAGES = 16;
 const MAX_HUMAN_MESSAGE_CHARS = 260;
 const WHITESPACE_RE = /\s+/g;
+const BRIDGE_DELIVERY_PREFIX_RE =
+  /^(claude|codex|copilot|cursor|gemini)\s*:/i;
 // User turns that are actually harness/tooling injections, not real requests.
 const INJECTED_MARKERS = [
   "Base directory for this skill",
   "system-reminder",
   "<command-",
+  "<subagent_notification>",
   "tool_use_error",
+];
+const INJECTED_PREFIXES = [
+  "# AGENTS.md instructions",
+  "Agent-to-agent pair programming:",
+  "/compact babysitter:",
+  "babysitter:",
+  "[Request interrupted by user",
 ];
 
 const textFromContent = (content: unknown): string => {
@@ -749,6 +747,8 @@ const cleanHuman = (raw: string): string | undefined => {
   if (
     !text ||
     text.startsWith("<") ||
+    BRIDGE_DELIVERY_PREFIX_RE.test(text) ||
+    INJECTED_PREFIXES.some((prefix) => text.startsWith(prefix)) ||
     INJECTED_MARKERS.some((marker) => text.includes(marker))
   ) {
     return undefined;
@@ -758,16 +758,19 @@ const cleanHuman = (raw: string): string | undefined => {
     : text;
 };
 
+const cleanHumanFromContent = (content: unknown): string | undefined =>
+  cleanHuman(textFromContent(content));
+
 const claudeHumanMessages = (text: string): string[] => {
   const out: string[] = [];
   eachJsonLine(text, (rec) => {
     const message = asRecord(rec.message);
     const role = typeof rec.type === "string" ? rec.type : message.role;
     const meta = rec.isMeta === true || rec.isSidechain === true;
-    if (role !== "user" || meta || !isHumanContent(message.content)) {
+    if (role !== "user" || meta) {
       return;
     }
-    const cleaned = cleanHuman(textFromContent(message.content));
+    const cleaned = cleanHumanFromContent(message.content);
     if (cleaned) {
       out.push(cleaned);
     }
@@ -782,7 +785,7 @@ const codexHumanMessages = (text: string): string[] => {
       return;
     }
     const payload = asRecord(rec.payload);
-    const cleaned = cleanHuman(textFromContent(payload.content ?? rec.content));
+    const cleaned = cleanHumanFromContent(payload.content ?? rec.content);
     if (cleaned) {
       out.push(cleaned);
     }

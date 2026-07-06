@@ -124,19 +124,19 @@ export interface AgentUsage {
   cacheReadTokens: number;
   compactedContextTokens: number;
   compactions: number;
-  contextTokens: number;
   contextRateTokensPerMinute: number;
+  contextTokens: number;
   contextWindow: number;
   costRateUsdPerHour: number;
+  costUsd: number;
   // ChatGPT/Codex credit multiplier relative to standard mode when known.
   creditCostMultiplier?: number;
-  costUsd: number;
   dataConfidence: UsageDataConfidence;
-  reasoningEffort?: string;
   firstTs?: string;
   // Count of genuine human prompts seen in this agent's transcript.
   humanMessages: number;
   inputTokens: number;
+  lastCompactionTs?: string;
   lastTs?: string;
   // Count of this agent's own (assistant) messages.
   messages: number;
@@ -146,13 +146,13 @@ export interface AgentUsage {
   rateLimitPrimaryReset?: string;
   rateLimitSecondaryPct?: number;
   rateLimitSecondaryReset?: string;
+  reasoningEffort?: string;
   serviceTier?: string;
   speed?: string;
   textMessages: number;
   thinkingMessages: number;
-  lastCompactionTs?: string;
-  toolCalls: number;
   toolCallCounts: Record<string, number>;
+  toolCalls: number;
   totalTokens: number;
 }
 
@@ -217,6 +217,21 @@ export interface SummaryResult {
   usage?: LocalLlmUsage;
 }
 
+// Local-LLM per-agent pane label (a short task noun phrase for the pane border).
+export interface PaneLabelRequest {
+  agents: SummaryAgentContext[];
+  model: string;
+  traceFile?: string;
+  url: string;
+}
+
+export interface PaneLabelResult {
+  // Short task label per agent, e.g. { claude: "auth refactor" }. Empty on failure.
+  labels: Partial<Record<Agent, string>>;
+  tokens: number;
+  usage?: LocalLlmUsage;
+}
+
 // Local-LLM judgment of whether both idle agents are blocked on the human.
 export interface WaitingRequest {
   agents: SummaryAgentContext[];
@@ -231,6 +246,39 @@ export interface WaitingResult {
   tokens: number;
   usage?: LocalLlmUsage;
   waiting: boolean;
+}
+
+export interface RoleBalanceAgentContext {
+  agent: Agent;
+  contextPct: number;
+  currentDriver: boolean;
+  recentAction?: string;
+  sessionPct?: number;
+  sessionReset?: string;
+  state: string;
+  weeklyPct?: number;
+  weeklyReset?: string;
+}
+
+export interface RoleBalanceRequest {
+  agents: RoleBalanceAgentContext[];
+  candidateDriver?: Agent;
+  currentDriver?: Agent;
+  initialDriver?: Agent;
+  model: string;
+  reasonHint?: string;
+  summary?: string;
+  traceFile?: string;
+  url: string;
+}
+
+export interface RoleBalanceResult {
+  confidence: number;
+  driver?: Agent;
+  reason: string;
+  switchDriver: boolean;
+  tokens: number;
+  usage?: LocalLlmUsage;
 }
 
 export interface Options {
