@@ -86,6 +86,7 @@ Options:
 Environment:
   LOOP_BABYSIT_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
   LOOP_BABYSIT_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
+  LOOP_BABYSIT_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
   LOOP_BABYSIT_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
   LOOP_BABYSIT_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path
   LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for babysitter RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})

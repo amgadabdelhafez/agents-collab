@@ -12,12 +12,14 @@ import { spawnSync } from "bun";
 import { readPriorSummaries, readProjectContext } from "./babysitter-context";
 import { initLivenessState, updateLiveness } from "./babysitter-detect";
 import {
+  assessRoleBalance,
+  assessWaiting,
+  judgeAgent,
   LOCAL_LLM_JUDGE_MAX_TOKENS,
   LOCAL_LLM_SUMMARY_MAX_TOKENS,
   LOCAL_LLM_TEMPERATURE,
   LOCAL_LLM_WAITING_MAX_TOKENS,
-  assessWaiting,
-  judgeAgent,
+  labelPanes,
   summarizeSession,
 } from "./babysitter-llm";
 import { type EscalationEvent, sendNtfy } from "./babysitter-notify";
@@ -27,6 +29,14 @@ import {
   readUsageTrackerLimits,
   type UsageLimitSnapshot,
 } from "./babysitter-usage-limits";
+import { dispatchBridgeMessage } from "./bridge-dispatch";
+import {
+  deliverCodexBridgeMessage,
+  deliverTmuxBridgeMessage,
+  ensureBridgeWorker,
+  hasBridgeDeliveryRoute,
+  readBridgeRuntimeStatus,
+} from "./bridge-runtime";
 import { type BridgeMessage, readBridgeEvents } from "./bridge-store";
 import {
   DEFAULT_BABYSIT_CONFIDENCE,
@@ -52,8 +62,12 @@ import type {
   JudgeOutcome,
   JudgeRequest,
   LocalLlmUsage,
+  PaneLabelRequest,
+  PaneLabelResult,
   RecoveryDecision,
   RecoveryHistoryEntry,
+  RoleBalanceRequest,
+  RoleBalanceResult,
   SummaryAgentContext,
   SummaryRequest,
   SummaryResult,
@@ -66,6 +80,10 @@ export const BABYSIT_SUBCOMMAND = "__babysit";
 const HOOK_TAIL_LIMIT = 20;
 const NUDGE_TEXT = "babysitter: you look idle — status? are you blocked?";
 const PANE_HASH_LENGTH = 12;
+const LIMIT_HANDOFF_PCT = 95;
+const PROACTIVE_BALANCE_PCT = 80;
+const PROACTIVE_BALANCE_ADVANTAGE_PCT = 15;
+const PROACTIVE_BALANCE_MIN_CONFIDENCE = 0.6;
 
 export interface BabysitAgentInfo {
   agent: Agent;
@@ -101,21 +119,23 @@ export interface BabysitConfig {
   // How long an agent may sit waiting-for-human before we escalate.
   escalateIdleMs: number;
   idleMs: number;
-  logFile: string;
+  initialDriver?: Agent;
+  judgeMode: LocalLlmJudgeMode;
+  judges?: LocalLlmJudgeConfig[];
   llmDecodeConcurrency: number;
   llmLogFile?: string;
   llmPrefillStepSize: number;
   llmPromptCacheSlots: number;
   llmPromptConcurrency: number;
   llmTraceFile?: string;
-  judgeMode: LocalLlmJudgeMode;
-  judges?: LocalLlmJudgeConfig[];
+  logFile: string;
   maxRecoveries: number;
   model: string;
   // On-disk size (GB) of the local LLM, shown in the footer.
   modelSizeGb?: number;
   // ntfy topic URL for remote escalation; escalation is off when unset.
   ntfyUrl?: string;
+  roleBalanceEnabled: boolean;
   // Run directory, for reading prior-session summaries into the summary.
   runDir?: string;
   runId: string;
@@ -134,13 +154,18 @@ export interface BabysitConfig {
 // Per-agent bridge message counts, keyed by sender then recipient.
 export type BridgeCounts = Record<string, Record<string, number>>;
 export type BridgeLatest = Record<string, Record<string, BridgeMessage>>;
+export type BridgeSendStatus = "accepted" | "delivered" | "queued";
 export type LocalLlmUsageByJudge = Record<string, LocalLlmUsage>;
 
 export interface BabysitDeps {
   appendLog: (file: string, record: unknown) => void;
+  assessRoleBalance: (req: RoleBalanceRequest) => Promise<RoleBalanceResult>;
   assessWaiting: (req: WaitingRequest) => Promise<WaitingResult>;
   capturePane: (pane: string) => string;
+  // Turn on the pane-border title strip for the whole session (idempotent).
+  initPaneBorders: (session: string) => void;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
+  labelPanes: (req: PaneLabelRequest) => Promise<PaneLabelResult>;
   loadState: (stateFile?: string) => BabysitRunState | undefined;
   notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
   now: () => number;
@@ -164,8 +189,16 @@ export interface BabysitDeps {
   render: (text: string) => void;
   respawnPane: (pane: string) => void;
   saveState: (stateFile: string | undefined, state: BabysitRunState) => void;
+  sendBridge: (
+    runDir: string,
+    source: Agent,
+    target: Agent,
+    message: string
+  ) => Promise<BridgeSendStatus>;
   sendKeys: (pane: string, keys: string[]) => void;
   sendText: (pane: string, text: string) => void;
+  // Set one pane's border title via a per-pane tmux user option (@loop_label).
+  setPaneLabel: (pane: string, label: string) => void;
   sleep: (ms: number) => Promise<void>;
   summarize: (req: SummaryRequest) => Promise<SummaryResult>;
 }
@@ -183,20 +216,46 @@ export interface NotifiedState {
   budget80: boolean;
   budget100: boolean;
   ladder: Record<string, boolean>;
+  limitHandoff: Record<string, string>;
   waitingForYou: boolean;
+}
+
+export interface RoleState {
+  balanceAt?: string;
+  balanceCheckKey?: string;
+  balanceKey?: string;
+  balanceReason?: string;
+  currentDriver?: Agent;
+  handoffAt?: string;
+  initialDriver?: Agent;
+  lastAction?: "balance" | "handoff" | "restore";
+  pausedAgent?: Agent;
+  pressureKey?: string;
+  reset?: string;
+  resetKind?: "session" | "weekly";
+  restoredAt?: string;
+  temporaryDriver?: Agent;
 }
 
 // State the babysitter carries across ticks.
 export interface BabysitRunState {
+  babysitterMessages: Record<string, number>;
   // Epoch ms both agents became idle together (0 = not both idle right now).
   bothIdleSince: number;
   history: RecoveryHistoryEntry[];
-  llmUsage: LocalLlmUsage;
-  llmUsageByJudge: LocalLlmUsageByJudge;
   // Backward-compatible persisted total; `llmUsage` is the canonical shape.
   llmTokens: number;
+  llmUsage: LocalLlmUsage;
+  llmUsageByJudge: LocalLlmUsageByJudge;
   notified: NotifiedState;
+  // Last LLM-derived task label per agent, for the pane border (survives resume).
+  paneLabels: Partial<Record<Agent, string>>;
+  // Tick the pane labels were last refreshed (-1 = never).
+  paneLabelTick: number;
+  // Last border title actually pushed to tmux, keyed by pane, to skip redundant sets.
+  paneTitles: Record<string, string>;
   recoveries: number;
+  roles: RoleState;
   stats: SessionStats;
   summary: string;
   summaryTick: number;
@@ -210,8 +269,43 @@ const freshNotified = (): NotifiedState => ({
   budget100: false,
   budget80: false,
   ladder: {},
+  limitHandoff: {},
   waitingForYou: false,
 });
+
+const readCountMap = (value: unknown): Record<string, number> => {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const [key, count] of Object.entries(value)) {
+    if (typeof count === "number" && Number.isFinite(count) && count > 0) {
+      out[key] = count;
+    }
+  }
+  return out;
+};
+
+const readStringMap = (value: unknown): Record<string, string> => {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const [key, text] of Object.entries(value)) {
+    if (typeof text === "string" && text.length > 0) {
+      out[key] = text;
+    }
+  }
+  return out;
+};
+
+const incrementCount = (
+  counts: Record<string, number>,
+  agent: Agent,
+  amount = 1
+): void => {
+  counts[agent] = (counts[agent] ?? 0) + amount;
+};
 
 const emptyLocalLlmUsage = (): LocalLlmUsage => ({
   cachedInputTokens: 0,
@@ -226,10 +320,7 @@ const localLlmUsageFromTokens = (tokens: number): LocalLlmUsage => ({
   totalTokens: Math.max(0, tokens),
 });
 
-const readLocalLlmUsage = (
-  value: unknown,
-  legacyTokens = 0
-): LocalLlmUsage => {
+const readLocalLlmUsage = (value: unknown, legacyTokens = 0): LocalLlmUsage => {
   if (typeof value !== "object" || value === null) {
     return localLlmUsageFromTokens(legacyTokens);
   }
@@ -275,7 +366,9 @@ const addLocalLlmUsageByJudge = (
   return next;
 };
 
-const sumLocalLlmUsageByJudge = (usageByJudge: LocalLlmUsageByJudge): LocalLlmUsage =>
+const sumLocalLlmUsageByJudge = (
+  usageByJudge: LocalLlmUsageByJudge
+): LocalLlmUsage =>
   Object.values(usageByJudge).reduce(
     (sum, usage) => addLocalLlmUsage(sum, usage),
     emptyLocalLlmUsage()
@@ -295,20 +388,77 @@ const readLocalLlmUsageByJudge = (
   for (const [id, usage] of Object.entries(value)) {
     out[id] = readLocalLlmUsage(usage);
   }
-  if (Object.keys(out).length === 0 && (aggregate.totalTokens > 0 || aggregate.calls > 0)) {
+  if (
+    Object.keys(out).length === 0 &&
+    (aggregate.totalTokens > 0 || aggregate.calls > 0)
+  ) {
     out[primaryId] = aggregate;
   }
   return out;
 };
 
+const AGENT_VALUES: readonly Agent[] = [
+  "claude",
+  "codex",
+  "copilot",
+  "cursor",
+  "gemini",
+];
+
+const readAgentValue = (value: unknown): Agent | undefined =>
+  typeof value === "string" && AGENT_VALUES.includes(value as Agent)
+    ? (value as Agent)
+    : undefined;
+
+const readResetKind = (value: unknown): "session" | "weekly" | undefined =>
+  value === "session" || value === "weekly" ? value : undefined;
+
+const readRoleAction = (
+  value: unknown
+): "balance" | "handoff" | "restore" | undefined =>
+  value === "balance" || value === "handoff" || value === "restore"
+    ? value
+    : undefined;
+
+const readStringValue = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() ? value : undefined;
+
+const readRoleState = (value: unknown): RoleState => {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    balanceAt: readStringValue(record.balanceAt),
+    balanceCheckKey: readStringValue(record.balanceCheckKey),
+    balanceKey: readStringValue(record.balanceKey),
+    balanceReason: readStringValue(record.balanceReason),
+    currentDriver: readAgentValue(record.currentDriver),
+    handoffAt: readStringValue(record.handoffAt),
+    initialDriver: readAgentValue(record.initialDriver),
+    lastAction: readRoleAction(record.lastAction),
+    pausedAgent: readAgentValue(record.pausedAgent),
+    pressureKey: readStringValue(record.pressureKey),
+    reset: readStringValue(record.reset),
+    resetKind: readResetKind(record.resetKind),
+    restoredAt: readStringValue(record.restoredAt),
+    temporaryDriver: readAgentValue(record.temporaryDriver),
+  };
+};
+
 export const freshRunState = (): BabysitRunState => ({
+  babysitterMessages: {},
   bothIdleSince: 0,
   history: [],
   llmUsage: emptyLocalLlmUsage(),
   llmUsageByJudge: emptyLocalLlmUsageByJudge(),
   llmTokens: 0,
   notified: freshNotified(),
+  paneLabels: {},
+  paneLabelTick: -1,
+  paneTitles: {},
   recoveries: 0,
+  roles: {},
   stats: { activeMs: {}, humanIdleMs: 0, idleMs: {} },
   summary: "",
   summaryTick: -1,
@@ -336,8 +486,11 @@ const lastEventTs = (events: HookEvent[]): string | undefined =>
 // (e.g. "ctx: 91%"). Convert it to used context for this board's CTX cell.
 const PANE_CTX_RE = /ctx:?\s*(\d+)\s*%/i;
 const PANE_EFFORT_RE = /effort:?\s*([a-z0-9_-]+)/i;
-const SESSION_LIMIT_RE = /\b(hit|reached)\s+(your\s+)?(session|usage|rate)\s+limit\b|\b(rate|usage|session)\s+limit\b/i;
-const CONTEXT_COMPACT_RE = /\b(context|ctx)\b.*\b(compact|window|full|limit)\b|\b(compact|compress)\b.*\b(context|ctx)\b/i;
+const SESSION_LIMIT_RE =
+  /\b(hit|reached)\s+(your\s+)?(session|usage|rate)\s+limit\b|\b(rate|usage|session)\s+limit\b/i;
+const CONTEXT_COMPACT_RE =
+  /\b(context|ctx)\b.*\b(compact|window|full|limit)\b|\b(compact|compress)\b.*\b(context|ctx)\b/i;
+const BABYSITTER_PROMPT_RE = /\bbabysitter:/i;
 const parsePaneCtxRemainingPct = (paneText: string): number | undefined => {
   const match = paneText.match(PANE_CTX_RE);
   if (!match) {
@@ -353,7 +506,12 @@ const parsePaneEffort = (paneText: string): string | undefined =>
 const isSessionLimited = (paneText: string): boolean =>
   paneText
     .split(/\r?\n/)
-    .some((line) => SESSION_LIMIT_RE.test(line) && !CONTEXT_COMPACT_RE.test(line));
+    .some(
+      (line) =>
+        !BABYSITTER_PROMPT_RE.test(line) &&
+        SESSION_LIMIT_RE.test(line) &&
+        !CONTEXT_COMPACT_RE.test(line)
+    );
 
 // Build the per-agent recovery executors on top of the injected tmux deps.
 const buildRecoveryDeps = (
@@ -416,7 +574,6 @@ const ANSI = {
 };
 const CONTEXT_ALERT_PCT = 80;
 const JUDGE_SUMMARY_MAX = 140;
-const LAST_ACTION_WIDTH = 46;
 const MS_PER_HOUR = 3_600_000;
 const MS_PER_MINUTE = 60_000;
 const BUDGET_WARN_FRACTION = 0.8;
@@ -431,6 +588,8 @@ const BOTH_IDLE_ASSESS_MS = 45_000;
 const paint = (code: string, text: string): string =>
   `${code}${text}${ANSI.reset}`;
 const cell = (text: string, width: number): string => text.padEnd(width);
+const capitalize = (value: string): string =>
+  value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
 const fitCell = (text: string, width: number): string =>
   cell(truncate(text, width), width);
 const colorCell = (code: string, text: string, width: number): string =>
@@ -498,10 +657,7 @@ const totalContextTokens = (u: AgentUsage): number =>
 const tokenCell = (tokens: number): string =>
   tokens > 0 ? fmtTokens(tokens) : "—";
 
-const costBurnCell = (
-  u: AgentUsage,
-  activeMs: number
-): string => {
+const costBurnCell = (u: AgentUsage, activeMs: number): string => {
   const perHr =
     u.costUsd > 0 && activeMs >= MS_PER_MINUTE
       ? u.costUsd / (activeMs / MS_PER_HOUR)
@@ -510,7 +666,10 @@ const costBurnCell = (
 };
 
 const rateLimitCell = (u: AgentUsage): string => {
-  if (u.rateLimitPrimaryPct === undefined && u.rateLimitSecondaryPct === undefined) {
+  if (
+    u.rateLimitPrimaryPct === undefined &&
+    u.rateLimitSecondaryPct === undefined
+  ) {
     return "—";
   }
   const primary = u.rateLimitPrimaryPct ?? 0;
@@ -553,7 +712,9 @@ const resetRemainingCell = (date: Date, nowMs: number): string => {
 
 const sessionResetCell = (reset: string | undefined, nowMs: number): string => {
   const parsed = parseResetTime(reset, nowMs);
-  return parsed ? resetRemainingCell(parsed.date, nowMs) : reset?.trim() ?? "—";
+  return parsed
+    ? resetRemainingCell(parsed.date, nowMs)
+    : (reset?.trim() ?? "—");
 };
 
 const weeklyResetCell = (reset: string | undefined, nowMs: number): string => {
@@ -575,7 +736,10 @@ const weeklyResetCell = (reset: string | undefined, nowMs: number): string => {
 };
 
 const rateLimitColor = (u: AgentUsage): string | undefined => {
-  const high = Math.max(u.rateLimitPrimaryPct ?? 0, u.rateLimitSecondaryPct ?? 0);
+  const high = Math.max(
+    u.rateLimitPrimaryPct ?? 0,
+    u.rateLimitSecondaryPct ?? 0
+  );
   if (high >= 80) {
     return ANSI.red;
   }
@@ -607,8 +771,7 @@ const modeCell = (u: AgentUsage): string => {
   if (!raw) {
     return "—";
   }
-  const mode =
-    raw === "standard" ? "std" : raw === "priority" ? "fast" : raw;
+  const mode = raw === "standard" ? "std" : raw === "priority" ? "fast" : raw;
   return u.creditCostMultiplier
     ? `${mode}/${multiplierLabel(u.creditCostMultiplier)}`
     : mode;
@@ -673,8 +836,8 @@ interface LocalLlmRuntime {
   kvCacheSequences?: number;
   modelInfo?: LocalLlmModelInfo;
   prefillStepSize?: number;
-  promptCacheMaxSequences?: number;
   promptCacheGb?: number;
+  promptCacheMaxSequences?: number;
   promptCacheRoles?: Record<string, number>;
   promptCacheSequences?: number;
   promptConcurrency?: number;
@@ -710,9 +873,11 @@ interface LocalLlmRuntimeInput {
 }
 
 interface BoardMeta {
+  babysitterMessages: Record<string, number>;
   bridge: BridgeCounts;
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
+  initialDriver?: Agent;
   judgeMode: LocalLlmJudgeMode;
   llmJudges: LocalLlmJudgeConfig[];
   llmOfflineByJudge: Record<string, boolean>;
@@ -720,6 +885,7 @@ interface BoardMeta {
   llmUsageByJudge: LocalLlmUsageByJudge;
   nowMs: number;
   recoveries: number;
+  roles: RoleState;
   stats: SessionStats;
   summary: string;
   tickMs: number;
@@ -728,25 +894,34 @@ interface BoardMeta {
 }
 
 const COL = {
+  activity: 6,
   agent: 7,
-  bridge: 9,
+  bridge: 18,
   cache: 7,
+  code: 7,
   compact: 4,
   context: 16,
   contextTotal: 7,
   cost: 8,
   costRate: 7,
   effort: 5,
+  exec: 7,
+  inspect: 9,
   input: 7,
   mode: 9,
   model: 10,
   now: 6,
+  other: 7,
   output: 7,
+  plan: 7,
   rateLimit: 9,
   resetSession: 13,
   resetWeekly: 13,
   state: 12,
+  text: 5,
+  thinking: 5,
   tokens: 7,
+  tools: 6,
 } as const;
 
 const COLUMNS: [string, number][] = [
@@ -768,16 +943,234 @@ const COLUMNS: [string, number][] = [
   ["IN", COL.input],
   ["CACHE", COL.cache],
   ["OUT", COL.output],
+  ["ACT", COL.activity],
+  ["TXT", COL.text],
+  ["THK", COL.thinking],
+  ["TOOL", COL.tools],
+  ["EXEC", COL.exec],
+  ["CODE", COL.code],
+  ["READ/VIEW", COL.inspect],
+  ["PLAN", COL.plan],
+  ["MISC", COL.other],
   ["BRIDGE", COL.bridge],
 ];
 
 const headerRow = paint(
   ANSI.dim,
-  ` ${COLUMNS.map(([label, width]) => cell(label, width)).join(" ")} LAST`
+  ` ${COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
 );
 
 const rowState = (row: AgentRow): string =>
   row.verdict?.state ?? (row.thinking ? "thinking" : "idle");
+
+// Single-glyph state marker for the pane border title.
+const STATE_GLYPHS: Record<string, string> = {
+  working: "▶",
+  thinking: "…",
+  "waiting-human": "⏸",
+  "waiting-peer": "⧗",
+  stuck: "⚠",
+  limited: "⛔",
+  crashed: "✖",
+  idle: "·",
+};
+
+const stateGlyph = (state: string): string => STATE_GLYPHS[state] ?? "·";
+
+const BABYSITTER_PANE_LABEL = "● babysitter";
+
+// The babysitter's own pane: its live tmux pane id when running inside tmux,
+// else the conventional bottom pane of the paired session.
+const babysitterPane = (config: BabysitConfig): string =>
+  process.env.TMUX_PANE ?? `${config.session}:0.2`;
+
+// Compose a pane-border title: "<glyph> <agent> · <task>", dropping the task
+// tail when no confident label exists yet.
+export const composePaneTitle = (
+  agent: Agent,
+  state: string,
+  label?: string
+): string => {
+  const head = `${stateGlyph(state)} ${agent}`;
+  const task = label?.trim();
+  return task ? `${head} · ${task}` : head;
+};
+
+// Push each agent pane's border title, skipping panes whose title is unchanged.
+const applyPaneLabels = (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  rows: AgentRow[],
+  runState: BabysitRunState
+): void => {
+  config.agents.forEach((info, index) => {
+    const row = rows[index];
+    if (!row) {
+      return;
+    }
+    const title = composePaneTitle(
+      info.agent,
+      rowState(row),
+      runState.paneLabels[info.agent]
+    );
+    if (runState.paneTitles[info.pane] === title) {
+      return;
+    }
+    runState.paneTitles[info.pane] = title;
+    deps.setPaneLabel(info.pane, title);
+  });
+};
+
+// The `/rename` value names the agent's session by project+session and the
+// current task, e.g. "/rename harvto-loop-17 · yaw-decoupling analysis".
+const renameCommand = (session: string, label: string): string =>
+  `/rename ${session} · ${label}`;
+
+// Send the built-in `/rename` slash command into each agent that has a current
+// task label. Fires on every label refresh (see runBabysitter), skipped in
+// dry-run so we never inject into a live agent during a rehearsal.
+export const sendRenameCommands = (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  labels: Partial<Record<Agent, string>>
+): void => {
+  if (config.dryRun) {
+    return;
+  }
+  for (const info of config.agents) {
+    const label = labels[info.agent];
+    if (!label) {
+      continue;
+    }
+    deps.sendText(info.pane, renameCommand(config.session, label));
+    deps.sendKeys(info.pane, ["Enter"]);
+  }
+};
+
+interface LimitPressure {
+  key: string;
+  pct: number;
+  reset?: string;
+  resetKind: "session" | "weekly";
+}
+
+const limitPressure = (row: AgentRow): LimitPressure | undefined => {
+  const sessionPct =
+    row.verdict?.state === "limited"
+      ? 100
+      : (row.usage.rateLimitPrimaryPct ?? 0);
+  const weeklyPct = row.usage.rateLimitSecondaryPct ?? 0;
+  const sessionPressure =
+    sessionPct >= LIMIT_HANDOFF_PCT
+      ? {
+          key: `session:${row.usage.rateLimitPrimaryReset ?? "unknown"}`,
+          pct: sessionPct,
+          reset: row.usage.rateLimitPrimaryReset,
+          resetKind: "session" as const,
+        }
+      : undefined;
+  const weeklyPressure =
+    weeklyPct >= LIMIT_HANDOFF_PCT
+      ? {
+          key: `weekly:${row.usage.rateLimitSecondaryReset ?? "unknown"}`,
+          pct: weeklyPct,
+          reset: row.usage.rateLimitSecondaryReset,
+          resetKind: "weekly" as const,
+        }
+      : undefined;
+  if (!(sessionPressure && weeklyPressure)) {
+    return sessionPressure ?? weeklyPressure;
+  }
+  return sessionPressure.pct >= weeklyPressure.pct
+    ? sessionPressure
+    : weeklyPressure;
+};
+
+const isLimitPaused = (row: AgentRow): boolean =>
+  limitPressure(row) !== undefined;
+
+interface RoleBalanceCandidate {
+  candidate: AgentRow;
+  current: AgentRow;
+  key: string;
+  reasonHint: string;
+}
+
+const quotaUsedPct = (row: AgentRow): number =>
+  Math.max(
+    row.usage.rateLimitPrimaryPct ?? 0,
+    row.usage.rateLimitSecondaryPct ?? 0
+  );
+
+const roundedQuotaBucket = (pct: number): number =>
+  Math.floor(Math.max(0, pct) / 5) * 5;
+
+const canDriveProactively = (row: AgentRow): boolean => {
+  if (isLimitPaused(row)) {
+    return false;
+  }
+  const state = rowState(row);
+  return !["crashed", "limited", "stuck", "waiting-human"].includes(state);
+};
+
+const pctLabel = (value: number | undefined): string =>
+  value === undefined ? "?" : `${Math.round(value)}%`;
+
+const quotaSummary = (row: AgentRow): string =>
+  `${row.liveness.agent} session ${pctLabel(row.usage.rateLimitPrimaryPct)}, weekly ${pctLabel(row.usage.rateLimitSecondaryPct)}`;
+
+const roleBalanceCandidate = (
+  rows: AgentRow[],
+  currentDriver: Agent | undefined
+): RoleBalanceCandidate | undefined => {
+  if (!currentDriver) {
+    return undefined;
+  }
+  const current = rows.find((row) => row.liveness.agent === currentDriver);
+  if (!(current && canDriveProactively(current))) {
+    return undefined;
+  }
+  const currentQuota = quotaUsedPct(current);
+  if (currentQuota < PROACTIVE_BALANCE_PCT) {
+    return undefined;
+  }
+  const candidates = rows
+    .filter(
+      (row) => row.liveness.agent !== currentDriver && canDriveProactively(row)
+    )
+    .map((row) => ({ row, quota: quotaUsedPct(row) }))
+    .filter(
+      ({ quota }) => currentQuota - quota >= PROACTIVE_BALANCE_ADVANTAGE_PCT
+    )
+    .sort((a, b) => a.quota - b.quota);
+  const best = candidates[0];
+  if (!best) {
+    return undefined;
+  }
+  const currentBucket = roundedQuotaBucket(currentQuota);
+  const candidateBucket = roundedQuotaBucket(best.quota);
+  return {
+    candidate: best.row,
+    current,
+    key: `balance:${currentDriver}->${best.row.liveness.agent}:${currentBucket}:${candidateBucket}`,
+    reasonHint: `${quotaSummary(current)}; ${quotaSummary(best.row)}`,
+  };
+};
+
+const roleBalanceAgentContext = (
+  row: AgentRow,
+  currentDriver: Agent | undefined
+): RoleBalanceRequest["agents"][number] => ({
+  agent: row.liveness.agent,
+  contextPct: contextPct(row.usage),
+  currentDriver: row.liveness.agent === currentDriver,
+  recentAction: lastActionDetail(row) || undefined,
+  sessionPct: row.usage.rateLimitPrimaryPct,
+  sessionReset: row.usage.rateLimitPrimaryReset,
+  state: rowState(row),
+  weeklyPct: row.usage.rateLimitSecondaryPct,
+  weeklyReset: row.usage.rateLimitSecondaryReset,
+});
 
 const bridgeFor = (
   agent: string,
@@ -801,10 +1194,22 @@ const stateCell = (state: string): string =>
     ? colorCell(ANSI.yellow, "⏳ waits you", COL.state)
     : colorCell(stateColor(state), `● ${stateLabel(state)}`, COL.state);
 
-const countCell = (count: number): string => (count > 0 ? fmtTokens(count) : "—");
+const countCell = (count: number): string =>
+  count > 0 ? fmtTokens(count) : "—";
 
 const activityTotal = (usage: AgentUsage): number =>
   usage.textMessages + usage.thinkingMessages + usage.toolCalls;
+
+const lastActionDetail = (row: AgentRow): string =>
+  [
+    row.lastAction,
+    row.errors > 0 ? `(err ${row.errors})` : "",
+    row.action ? `· ${row.action.level}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(SPACE_GLOBAL_RE, " ")
+    .trim();
 
 const renderRow = (row: AgentRow, meta: BoardMeta): string => {
   const agent = row.liveness.agent;
@@ -840,13 +1245,8 @@ const renderRow = (row: AgentRow, meta: BoardMeta): string => {
     row.usage.rateLimitSecondaryReset,
     meta.nowMs
   );
-  const bridge = bridgeFor(agent, meta.bridge);
-  const detail = truncate(
-    row.lastAction +
-      (row.errors > 0 ? ` (err ${row.errors})` : "") +
-      (row.action ? ` · ${row.action.level}` : ""),
-    LAST_ACTION_WIDTH
-  );
+  const groups = groupedToolCounts(row.usage);
+  const bridgeActivity = bridgeActivityText(row, groups, meta);
   return ` ${[
     fitCell(agent, COL.agent),
     stateCell(state),
@@ -866,8 +1266,16 @@ const renderRow = (row: AgentRow, meta: BoardMeta): string => {
     fitCell(inputTok, COL.input),
     fitCell(cachedTok, COL.cache),
     fitCell(outputTok, COL.output),
-    fitCell(`→${bridge.sent} ←${bridge.recv}`, COL.bridge),
-    detail,
+    renderToolCountCell(countCell(activityTotal(row.usage)), COL.activity),
+    renderToolCountCell(countCell(row.usage.textMessages), COL.text),
+    renderToolCountCell(countCell(row.usage.thinkingMessages), COL.thinking),
+    renderToolCountCell(countCell(row.usage.toolCalls), COL.tools),
+    renderToolCountCell(toolCountText(groups.exec), COL.exec),
+    renderToolCountCell(toolCountText(groups.code), COL.code),
+    renderToolCountCell(toolCountText(groups.inspect), COL.inspect),
+    renderToolCountCell(toolCountText(groups.plan), COL.plan),
+    renderToolCountCell(toolCountText(groups.other), COL.other),
+    renderToolCountCell(bridgeActivity, COL.bridge),
   ].join(" ")}`;
 };
 
@@ -889,14 +1297,60 @@ const localLlmUsageCells = (usage: LocalLlmUsage): string[] => {
     `${fmtTokens(usage.outputTokens)} out`,
     ...(unsplitTokens > 0 ? [`${fmtTokens(unsplitTokens)} unsplit`] : []),
   ];
-  return [
-    `llm ${calls}`,
-    `${tokenText} (${splitParts.join(" / ")})`,
-  ];
+  return [`llm ${calls}`, `${tokenText} (${splitParts.join(" / ")})`];
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const readBabysitterMessageCountsFromLog = (
+  logFile: string
+): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  try {
+    for (const line of readFileSync(logFile, "utf8").split(/\r?\n/)) {
+      if (!line.trim()) {
+        continue;
+      }
+      const parsed = JSON.parse(line) as unknown;
+      if (!isRecord(parsed)) {
+        continue;
+      }
+      const kind = parsed.kind;
+      if (kind === "limit-handoff") {
+        const driver = readAgentValue(parsed.driver);
+        if (driver) {
+          incrementCount(counts, driver);
+        }
+        continue;
+      }
+      if (kind === "limit-restore") {
+        const restored = readAgentValue(parsed.restored);
+        const previous = readAgentValue(parsed.previousDriver);
+        if (restored) {
+          incrementCount(counts, restored);
+        }
+        if (previous && previous !== restored) {
+          incrementCount(counts, previous);
+        }
+        continue;
+      }
+      if (
+        kind === "action" &&
+        parsed.dryRun !== true &&
+        parsed.level === "nudge"
+      ) {
+        const agent = readAgentValue(parsed.agent);
+        if (agent) {
+          incrementCount(counts, agent);
+        }
+      }
+    }
+  } catch {
+    return {};
+  }
+  return counts;
+};
 
 const recordAt = (
   record: Record<string, unknown>,
@@ -924,8 +1378,7 @@ const stringAt = (
   return typeof value === "string" ? value : undefined;
 };
 
-const PROMPT_CACHE_RE =
-  /Prompt Cache:\s+(\d+)\s+sequences?,\s+([\d.]+)\s+GB/i;
+const PROMPT_CACHE_RE = /Prompt Cache:\s+(\d+)\s+sequences?,\s+([\d.]+)\s+GB/i;
 const PROMPT_CACHE_ROLE_RE =
   /-\s+([a-z]+):\s+\d+\s+sequences?,\s+([\d.]+)\s+GB/i;
 const KV_CACHE_RE = /KV Caches?:\s+(\d+)\s+seq(?:uences?)?,\s+([\d.]+)\s+GB/i;
@@ -968,7 +1421,9 @@ const readLocalLlmTraceUsage = (
     }
     promptTokens += numberAt(usage, "prompt_tokens") ?? 0;
     const details = recordAt(usage, "prompt_tokens_details");
-    cachedPromptTokens += details ? numberAt(details, "cached_tokens") ?? 0 : 0;
+    cachedPromptTokens += details
+      ? (numberAt(details, "cached_tokens") ?? 0)
+      : 0;
   }
   return {
     cachedPromptTokens,
@@ -1031,9 +1486,7 @@ const readLocalLlmModelInfo = (
   };
 };
 
-const readLocalLlmRuntime = (
-  input: LocalLlmRuntimeInput
-): LocalLlmRuntime => {
+const readLocalLlmRuntime = (input: LocalLlmRuntimeInput): LocalLlmRuntime => {
   const traceUsage = readLocalLlmTraceUsage(input.traceFile, input.model);
   const base: LocalLlmRuntime = {
     decodeConcurrency: input.decodeConcurrency,
@@ -1124,11 +1577,12 @@ const localLlmRuntimeCell = (
   const kvCacheGb = runtime?.kvCacheGb;
   if (promptCacheGb !== undefined || kvCacheGb !== undefined) {
     const memoryParts = [
-      promptCacheGb !== undefined ? `${fmtGb(promptCacheGb)} prompt` : "",
-      kvCacheGb !== undefined ? `${fmtGb(kvCacheGb)} kv` : "",
+      promptCacheGb === undefined ? "" : `${fmtGb(promptCacheGb)} prompt`,
+      kvCacheGb === undefined ? "" : `${fmtGb(kvCacheGb)} kv`,
     ].filter(Boolean);
     const totalGb = (promptCacheGb ?? 0) + (kvCacheGb ?? 0);
-    const sequences = runtime?.promptCacheSequences ?? runtime?.kvCacheSequences;
+    const sequences =
+      runtime?.promptCacheSequences ?? runtime?.kvCacheSequences;
     const perSeq =
       sequences && sequences > 0 ? ` (${fmtGb(totalGb / sequences)}/seq)` : "";
     parts.push(
@@ -1140,9 +1594,7 @@ const localLlmRuntimeCell = (
   return parts;
 };
 
-const localLlmModelCell = (
-  runtime: LocalLlmRuntime | undefined
-): string[] => {
+const localLlmModelCell = (runtime: LocalLlmRuntime | undefined): string[] => {
   const info = runtime?.modelInfo;
   if (!info) {
     return [];
@@ -1152,42 +1604,42 @@ const localLlmModelCell = (
       ? `kv ${info.kvHeads}x${info.headDim}`
       : undefined;
   const archParts = [
-    info.layers !== undefined ? `${info.layers}L` : "",
-    info.hiddenSize !== undefined ? `h${info.hiddenSize}` : "",
-    info.attentionHeads !== undefined ? `attn ${info.attentionHeads}` : "",
+    info.layers === undefined ? "" : `${info.layers}L`,
+    info.hiddenSize === undefined ? "" : `h${info.hiddenSize}`,
+    info.attentionHeads === undefined ? "" : `attn ${info.attentionHeads}`,
     kv ?? "",
-    info.contextTokens !== undefined
-      ? `ctx ${fmtTokens(info.contextTokens)}`
-      : "",
-    info.fullAttentionInterval !== undefined
-      ? `full attn/${info.fullAttentionInterval}`
-      : "",
+    info.contextTokens === undefined
+      ? ""
+      : `ctx ${fmtTokens(info.contextTokens)}`,
+    info.fullAttentionInterval === undefined
+      ? ""
+      : `full attn/${info.fullAttentionInterval}`,
   ].filter(Boolean);
   const implParts = [
     info.dtype ? `dtype ${info.dtype.replace("bfloat16", "bf16")}` : "",
-    info.quantBits !== undefined
-      ? `weights q${info.quantBits}${
-          info.quantGroupSize !== undefined ? `/g${info.quantGroupSize}` : ""
-        }${info.quantMode ? ` ${info.quantMode}` : ""}`
-      : "",
-    info.moeExperts !== undefined
-      ? `moe ${info.moeExperts}e${
-          info.moeActiveExperts !== undefined
-            ? `/${info.moeActiveExperts} active`
-            : ""
-        }`
-      : "",
+    info.quantBits === undefined
+      ? ""
+      : `weights q${info.quantBits}${
+          info.quantGroupSize === undefined ? "" : `/g${info.quantGroupSize}`
+        }${info.quantMode ? ` ${info.quantMode}` : ""}`,
+    info.moeExperts === undefined
+      ? ""
+      : `moe ${info.moeExperts}e${
+          info.moeActiveExperts === undefined
+            ? ""
+            : `/${info.moeActiveExperts} active`
+        }`,
   ].filter(Boolean);
   const batchParts = [
-    runtime?.promptConcurrency !== undefined
-      ? `prefill ${runtime.promptConcurrency}`
-      : "",
-    runtime?.decodeConcurrency !== undefined
-      ? `decode ${runtime.decodeConcurrency}`
-      : "",
-    runtime?.prefillStepSize !== undefined
-      ? `step ${runtime.prefillStepSize}`
-      : "",
+    runtime?.promptConcurrency === undefined
+      ? ""
+      : `prefill ${runtime.promptConcurrency}`,
+    runtime?.decodeConcurrency === undefined
+      ? ""
+      : `decode ${runtime.decodeConcurrency}`,
+    runtime?.prefillStepSize === undefined
+      ? ""
+      : `step ${runtime.prefillStepSize}`,
   ].filter(Boolean);
   return [
     ...(archParts.length > 0 ? [`model ${archParts.join(" ")}`] : []),
@@ -1244,11 +1696,28 @@ const waitingForYouAlert = (waiting: WaitingForYou): string[] => {
   ];
 };
 
+const renderBabysitterMessageCounts = (
+  rows: AgentRow[],
+  counts: Record<string, number>
+): string | undefined => {
+  if (rows.length === 0) {
+    return undefined;
+  }
+  const parts = rows.map(
+    (row) => `${row.liveness.agent} ${counts[row.liveness.agent] ?? 0}`
+  );
+  return paint(ANSI.dim, `msgs ${parts.join(" ")}`);
+};
+
 const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   const totalCost = rows.reduce((sum, r) => sum + r.usage.costUsd, 0);
   const perHr =
     meta.uptimeMs > 0 ? totalCost / (meta.uptimeMs / MS_PER_HOUR) : 0;
   const errorTotal = rows.reduce((sum, r) => sum + r.errors, 0);
+  const messageCounts = renderBabysitterMessageCounts(
+    rows,
+    meta.babysitterMessages
+  );
   const parts = [
     paint(ANSI.cyan, "babysitter"),
     fmtClock(meta.nowMs),
@@ -1257,6 +1726,8 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
       : []),
     costCell(totalCost, perHr, meta.budgetUsd),
     `both idle total ${fmtDuration(meta.stats.humanIdleMs)}`,
+    ...(messageCounts ? [messageCounts] : []),
+    ...roleSummaryParts(meta),
     ...(errorTotal > 0 ? [paint(ANSI.red, `errors ${errorTotal}`)] : []),
     ...waitingForYouAlert(meta.waitingForYou),
   ];
@@ -1268,6 +1739,7 @@ const SUMMARY_PROJECT_WIDTH = Math.floor(SUMMARY_LINE_WIDTH / 2);
 const SUMMARY_TOTAL_LINES = 8;
 const SUMMARY_LABEL_RE = /^(project|objective|progress|next)\s*:\s*/i;
 const SPACE_RE = /\s+/;
+const SPACE_GLOBAL_RE = /\s+/g;
 const BRIDGE_LATEST_WIDTH = 76;
 
 const bridgeLatestFor = (
@@ -1277,7 +1749,11 @@ const bridgeLatestFor = (
 ): BridgeMessage | undefined => latest[source]?.[target];
 
 const bridgeAgentColor = (agent: string): string =>
-  agent === "claude" ? ANSI.magenta : agent === "codex" ? ANSI.cyan : ANSI.green;
+  agent === "claude"
+    ? ANSI.magenta
+    : agent === "codex"
+      ? ANSI.cyan
+      : ANSI.green;
 
 const renderBridgeDirection = (source: string, target: string): string =>
   [
@@ -1286,17 +1762,45 @@ const renderBridgeDirection = (source: string, target: string): string =>
     paint(bridgeAgentColor(target), target),
   ].join("");
 
+const agentLatestSegment = (
+  row: AgentRow | undefined,
+  prefix: string
+): string | undefined => {
+  if (!row) {
+    return undefined;
+  }
+  const text = truncate(lastActionDetail(row), BRIDGE_LATEST_WIDTH);
+  if (!text || text === "—") {
+    return undefined;
+  }
+  const ageMs = row.thinking
+    ? row.liveness.lastEventAgeMs
+    : row.liveness.paneIdleMs;
+  return [
+    paint(ANSI.dim, prefix),
+    paint(bridgeAgentColor(row.liveness.agent), row.liveness.agent),
+    " ",
+    paint(ANSI.yellow, fmtDuration(ageMs)),
+    paint(ANSI.dim, `: ${text}`),
+  ].join("");
+};
+
 const renderBridgeMessage = (
   message: BridgeMessage | undefined,
-  meta: BoardMeta
+  meta: BoardMeta,
+  row?: AgentRow
 ): string | undefined => {
+  const action = agentLatestSegment(row, " · ");
   if (!message) {
-    return undefined;
+    const standaloneAction = agentLatestSegment(row, "");
+    return standaloneAction
+      ? [paint(ANSI.dim, " bridge latest · "), standaloneAction].join("")
+      : undefined;
   }
   const ageMs = meta.nowMs - Date.parse(message.at);
   const age = Number.isFinite(ageMs) ? `${fmtDuration(ageMs)} ago` : "latest";
   const text = truncate(
-    message.message.replace(SPACE_RE, " ").trim(),
+    message.message.replace(SPACE_GLOBAL_RE, " ").trim(),
     BRIDGE_LATEST_WIDTH
   );
   return [
@@ -1305,40 +1809,8 @@ const renderBridgeMessage = (
     " ",
     paint(ANSI.yellow, age),
     paint(ANSI.dim, `: ${text}`),
+    action ?? "",
   ].join("");
-};
-
-const humanPromptCount = (rows: AgentRow[]): number => {
-  // A genuine human prompt is relayed to every agent; agent-to-agent bridge
-  // messages inflate the peer's "user" count, so the min is the truest total.
-  const found = rows.filter(
-    (row) => row.usage.messages > 0 || row.usage.humanMessages > 0
-  );
-  return found.length
-    ? Math.min(...found.map((row) => row.usage.humanMessages))
-    : 0;
-};
-
-const renderBridgeTotalsLine = (
-  rows: AgentRow[],
-  meta: BoardMeta
-): string | undefined => {
-  if (rows.length === 0) {
-    return undefined;
-  }
-  const [left, right] = rows.map((row) => row.liveness.agent);
-  const parts = [paint(ANSI.dim, `human ${humanPromptCount(rows)}`)];
-  if (left && right) {
-    const leftToRight = meta.bridge[left]?.[right] ?? 0;
-    const rightToLeft = meta.bridge[right]?.[left] ?? 0;
-    parts.push(
-      `${renderBridgeDirection(left, right)} ${paint(ANSI.yellow, String(leftToRight))}`,
-      `${renderBridgeDirection(right, left)} ${paint(ANSI.yellow, String(rightToLeft))}`
-    );
-  }
-  return `${paint(ANSI.dim, " bridge msgs · ")}${parts.join(
-    paint(ANSI.dim, " · ")
-  )}`;
 };
 
 const renderBridgeLatestLine = (
@@ -1346,32 +1818,71 @@ const renderBridgeLatestLine = (
   meta: BoardMeta
 ): string[] => {
   const [left, right] = rows.map((row) => row.liveness.agent);
+  const rowFor = (agent: Agent | undefined): AgentRow | undefined =>
+    agent ? rows.find((row) => row.liveness.agent === agent) : undefined;
   if (!(left && right)) {
-    return [renderBridgeTotalsLine(rows, meta)].filter(
-      (part): part is string => Boolean(part)
-    );
+    return rows
+      .map((row) => renderBridgeMessage(undefined, meta, row))
+      .filter((part): part is string => Boolean(part));
   }
   const parts = [
-    renderBridgeTotalsLine(rows, meta),
-    renderBridgeMessage(bridgeLatestFor(meta.bridgeLatest, left, right), meta),
-    renderBridgeMessage(bridgeLatestFor(meta.bridgeLatest, right, left), meta),
+    renderBridgeMessage(
+      bridgeLatestFor(meta.bridgeLatest, left, right),
+      meta,
+      rowFor(left)
+    ),
+    renderBridgeMessage(
+      bridgeLatestFor(meta.bridgeLatest, right, left),
+      meta,
+      rowFor(right)
+    ),
   ].filter((part): part is string => Boolean(part));
   return parts;
 };
 
-const TOOL_COL = {
-  activity: 6,
-  agent: 7,
-  bridge: 14,
-  code: 9,
-  exec: 9,
-  inspect: 9,
-  other: 9,
-  plan: 9,
-  text: 5,
-  thinking: 5,
-  tools: 6,
-} as const;
+const roleActionAge = (
+  actionAt: string | undefined,
+  nowMs: number
+): string | undefined => {
+  if (!actionAt) {
+    return undefined;
+  }
+  const parsed = Date.parse(actionAt);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  return fmtDuration(nowMs - parsed);
+};
+
+const roleSummaryParts = (meta: BoardMeta): string[] => {
+  const initial = meta.roles.initialDriver ?? meta.initialDriver;
+  const current = meta.roles.currentDriver ?? initial;
+  const balanceAge = roleActionAge(meta.roles.balanceAt, meta.nowMs);
+  const handoffAge = roleActionAge(meta.roles.handoffAt, meta.nowMs);
+  const restoredAge = roleActionAge(meta.roles.restoredAt, meta.nowMs);
+  if (!(initial || current || meta.roles.pausedAgent)) {
+    return [];
+  }
+  const parts = [
+    "roles",
+    initial ? `initial ${initial}` : "",
+    current ? `current ${current}` : "",
+    meta.roles.pausedAgent ? `paused ${meta.roles.pausedAgent}` : "",
+    meta.roles.pausedAgent && meta.roles.reset
+      ? `reset ${sessionResetCell(meta.roles.reset, meta.nowMs)}`
+      : "",
+    meta.roles.lastAction === "handoff" && handoffAge
+      ? `handoff ${handoffAge} ago`
+      : "",
+    meta.roles.lastAction === "balance" && balanceAge
+      ? `balance ${balanceAge} ago`
+      : "",
+    meta.roles.lastAction === "restore" && restoredAge
+      ? `restored ${restoredAge} ago`
+      : "",
+  ].filter(Boolean);
+  return [paint(ANSI.dim, parts.join(" · "))];
+};
 
 interface ToolGroups {
   bridgeRecv: number;
@@ -1475,52 +1986,25 @@ const bridgeToolText = (groups: ToolGroups): string => {
   return parts.join(" ") || "—";
 };
 
-const renderToolDetailHeader = (): string =>
-  paint(
-    ANSI.dim,
-    ` ${[
-      cell("AGENT", TOOL_COL.agent),
-      cell("ACT", TOOL_COL.activity),
-      cell("TXT", TOOL_COL.text),
-      cell("THK", TOOL_COL.thinking),
-      cell("TOOL", TOOL_COL.tools),
-      cell("EXEC", TOOL_COL.exec),
-      cell("CODE", TOOL_COL.code),
-      cell("READ/VIEW", TOOL_COL.inspect),
-      cell("PLAN", TOOL_COL.plan),
-      cell("BRIDGE", TOOL_COL.bridge),
-      cell("OTHER", TOOL_COL.other),
-    ].join(" ")}`
-  );
-
-const renderToolDetailLine = (row: AgentRow): string | undefined => {
-  if (activityTotal(row.usage) <= 0) {
-    return undefined;
+const bridgeActivityText = (
+  row: AgentRow,
+  groups: ToolGroups,
+  meta: BoardMeta
+): string => {
+  const bridge = bridgeFor(row.liveness.agent, meta.bridge);
+  const parts = [];
+  const humanPrompts = row.usage.humanMessages;
+  if (humanPrompts > 0) {
+    parts.push(`human ${fmtTokens(humanPrompts)}`);
   }
-  const groups = groupedToolCounts(row.usage);
-  return ` ${[
-    paint(
-      bridgeAgentColor(row.liveness.agent),
-      fitCell(row.liveness.agent, TOOL_COL.agent)
-    ),
-    renderToolCountCell(countCell(activityTotal(row.usage)), TOOL_COL.activity),
-    renderToolCountCell(countCell(row.usage.textMessages), TOOL_COL.text),
-    renderToolCountCell(countCell(row.usage.thinkingMessages), TOOL_COL.thinking),
-    renderToolCountCell(countCell(row.usage.toolCalls), TOOL_COL.tools),
-    renderToolCountCell(toolCountText(groups.exec), TOOL_COL.exec),
-    renderToolCountCell(toolCountText(groups.code), TOOL_COL.code),
-    renderToolCountCell(toolCountText(groups.inspect), TOOL_COL.inspect),
-    renderToolCountCell(toolCountText(groups.plan), TOOL_COL.plan),
-    renderToolCountCell(bridgeToolText(groups), TOOL_COL.bridge),
-    renderToolCountCell(toolCountText(groups.other), TOOL_COL.other),
-  ].join(" ")}`;
-};
-
-const renderToolDetailLines = (rows: AgentRow[]): string[] => {
-  const lines = rows
-    .map(renderToolDetailLine)
-    .filter((line): line is string => Boolean(line));
-  return lines.length > 0 ? [renderToolDetailHeader(), ...lines] : [];
+  if (bridge.sent > 0 || bridge.recv > 0) {
+    parts.push(`→${fmtTokens(bridge.sent)}`, `←${fmtTokens(bridge.recv)}`);
+  }
+  const bridgeTools = bridgeToolText(groups);
+  if (bridgeTools !== "—") {
+    parts.push(`T${bridgeTools}`);
+  }
+  return parts.join(" ") || "—";
 };
 
 interface LocalFooterPart {
@@ -1621,16 +2105,18 @@ const localLlmArch = (runtime: LocalLlmRuntime | undefined): string => {
     return "—";
   }
   const parts = [
-    info.layers !== undefined ? `${info.layers}L` : "",
-    info.hiddenSize !== undefined ? `h${info.hiddenSize}` : "",
-    info.attentionHeads !== undefined ? `a${info.attentionHeads}` : "",
+    info.layers === undefined ? "" : `${info.layers}L`,
+    info.hiddenSize === undefined ? "" : `h${info.hiddenSize}`,
+    info.attentionHeads === undefined ? "" : `a${info.attentionHeads}`,
     info.kvHeads !== undefined && info.headDim !== undefined
       ? `kv${info.kvHeads}x${info.headDim}`
       : "",
-    info.contextTokens !== undefined ? `ctx${fmtTokens(info.contextTokens)}` : "",
-    info.fullAttentionInterval !== undefined
-      ? `f/${info.fullAttentionInterval}`
-      : "",
+    info.contextTokens === undefined
+      ? ""
+      : `ctx${fmtTokens(info.contextTokens)}`,
+    info.fullAttentionInterval === undefined
+      ? ""
+      : `f/${info.fullAttentionInterval}`,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(" ") : "—";
 };
@@ -1644,7 +2130,7 @@ const localLlmQuant = (runtime: LocalLlmRuntime | undefined): string => {
     return "—";
   }
   return `q${info.quantBits}${
-    info.quantGroupSize !== undefined ? `/g${info.quantGroupSize}` : ""
+    info.quantGroupSize === undefined ? "" : `/g${info.quantGroupSize}`
   }${info.quantMode ? ` ${info.quantMode}` : ""}`;
 };
 
@@ -1654,15 +2140,21 @@ const localLlmMoe = (runtime: LocalLlmRuntime | undefined): string => {
     return "—";
   }
   return `${info.moeExperts}e${
-    info.moeActiveExperts !== undefined ? `/${info.moeActiveExperts}` : ""
+    info.moeActiveExperts === undefined ? "" : `/${info.moeActiveExperts}`
   }`;
 };
 
 const localLlmBatch = (runtime: LocalLlmRuntime | undefined): string => {
   const parts = [
-    runtime?.promptConcurrency !== undefined ? `pre${runtime.promptConcurrency}` : "",
-    runtime?.decodeConcurrency !== undefined ? `dec${runtime.decodeConcurrency}` : "",
-    runtime?.prefillStepSize !== undefined ? `st${runtime.prefillStepSize}` : "",
+    runtime?.promptConcurrency === undefined
+      ? ""
+      : `pre${runtime.promptConcurrency}`,
+    runtime?.decodeConcurrency === undefined
+      ? ""
+      : `dec${runtime.decodeConcurrency}`,
+    runtime?.prefillStepSize === undefined
+      ? ""
+      : `st${runtime.prefillStepSize}`,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(" ") : "—";
 };
@@ -1677,8 +2169,16 @@ const renderLocalLlmUsageRow = (
   return ` ${[
     colorCell(offline ? ANSI.red : ANSI.cyan, judge.id, LLM_COL.id),
     colorCell(ANSI.cyan, localLlmModelLabel(judge), LLM_COL.model),
-    colorCell(offline ? ANSI.red : ANSI.green, offline ? "off" : "ok", LLM_COL.status),
-    colorCell(ANSI.green, usage.calls > 0 ? String(usage.calls) : "0", LLM_COL.calls),
+    colorCell(
+      offline ? ANSI.red : ANSI.green,
+      offline ? "off" : "ok",
+      LLM_COL.status
+    ),
+    colorCell(
+      ANSI.green,
+      usage.calls > 0 ? String(usage.calls) : "0",
+      LLM_COL.calls
+    ),
     colorCell(ANSI.yellow, tokenCell(usage.totalTokens), LLM_COL.tokens),
     colorCell(ANSI.yellow, tokenCell(usage.inputTokens), LLM_COL.input),
     colorCell(ANSI.yellow, tokenCell(usage.cachedInputTokens), LLM_COL.cached),
@@ -1836,15 +2336,15 @@ const renderSummaryLabelLine = (text: string): string => {
   return `   ${paint(ANSI.cyan, label)}${rest ? paint(ANSI.dim, ` ${rest}`) : ""}`;
 };
 
-const renderBoard = (rows: AgentRow[], meta: BoardMeta): string =>
-  [
+const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
+  return [
     renderSummaryLine(rows, meta),
     headerRow,
     ...rows.map((row) => renderRow(row, meta)),
-    ...renderToolDetailLines(rows),
     ...renderBridgeLatestLine(rows, meta),
     ...renderFooter(meta),
   ].join("\n");
+};
 
 interface AgentTickContext {
   history: RecoveryHistoryEntry[];
@@ -1859,8 +2359,8 @@ const SUMMARY_ACTIONS = 24;
 
 interface AgentTickResult {
   history: RecoveryHistoryEntry[];
-  llmOfflineByJudge: Record<string, boolean>;
   llmOffline: boolean;
+  llmOfflineByJudge: Record<string, boolean>;
   llmUsage: LocalLlmUsage;
   llmUsageByJudge: LocalLlmUsageByJudge;
   recoveries: number;
@@ -2214,6 +2714,11 @@ interface WaitingConsensusResult {
   waiting: boolean;
 }
 
+interface RoleBalanceConsensusResult {
+  recommendation: RoleBalanceResult | undefined;
+  usageByJudge: LocalLlmUsageByJudge;
+}
+
 interface SummaryConsensusResult {
   text: string;
   usageByJudge: LocalLlmUsageByJudge;
@@ -2249,6 +2754,46 @@ const summarizeWithLocalJudges = async (
   };
 };
 
+// Pane labels refresh on the same slow cadence as the summary — a task label
+// should be stable, so per-tick naming would waste the single-request LLM.
+const PANE_LABEL_REFRESH_TICKS = SUMMARY_REFRESH_TICKS;
+
+const paneLabelsDue = (paneLabelTick: number, tick: number): boolean =>
+  paneLabelTick < 0 || tick - paneLabelTick >= PANE_LABEL_REFRESH_TICKS;
+
+interface PaneLabelConsensusResult {
+  labels: Partial<Record<Agent, string>>;
+  usageByJudge: LocalLlmUsageByJudge;
+}
+
+const labelPanesWithLocalJudges = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  agents: SummaryAgentContext[],
+  tick: number
+): Promise<PaneLabelConsensusResult> => {
+  const results = await Promise.all(
+    localJudgesForTick(config, tick).map(async (judge) => ({
+      judge,
+      result: await deps.labelPanes({
+        agents,
+        model: judge.model,
+        traceFile: config.llmTraceFile,
+        url: judge.url,
+      }),
+    }))
+  );
+  const usageByJudge: LocalLlmUsageByJudge = {};
+  for (const { judge, result } of results) {
+    usageByJudge[judge.id] =
+      result.usage ?? localLlmUsageFromTokens(result.tokens);
+  }
+  const labels =
+    results.find(({ result }) => Object.keys(result.labels).length > 0)?.result
+      .labels ?? {};
+  return { labels, usageByJudge };
+};
+
 const assessWaitingWithLocalJudges = async (
   config: BabysitConfig,
   deps: BabysitDeps,
@@ -2279,6 +2824,45 @@ const assessWaitingWithLocalJudges = async (
     waiting:
       results.length > 0 &&
       results.every((result) => result.assessment.waiting),
+  };
+};
+
+const assessRoleBalanceWithLocalJudges = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  request: Omit<RoleBalanceRequest, "model" | "url">,
+  tick: number
+): Promise<RoleBalanceConsensusResult> => {
+  const results = await Promise.all(
+    localJudgesForTick(config, tick).map(async (judge) => ({
+      judge,
+      recommendation: await deps.assessRoleBalance({
+        ...request,
+        model: judge.model,
+        traceFile: config.llmTraceFile,
+        url: judge.url,
+      }),
+    }))
+  );
+  const usageByJudge: LocalLlmUsageByJudge = {};
+  for (const result of results) {
+    usageByJudge[result.judge.id] =
+      result.recommendation.usage ??
+      localLlmUsageFromTokens(result.recommendation.tokens);
+  }
+  const candidate = request.candidateDriver;
+  const approvals = results.filter(
+    (result) =>
+      result.recommendation.switchDriver &&
+      result.recommendation.driver === candidate &&
+      result.recommendation.confidence >= PROACTIVE_BALANCE_MIN_CONFIDENCE
+  );
+  return {
+    recommendation:
+      results.length > 0 && approvals.length === results.length
+        ? approvals[0]?.recommendation
+        : results[0]?.recommendation,
+    usageByJudge,
   };
 };
 
@@ -2328,7 +2912,7 @@ const isRowActive = (row: AgentRow): boolean =>
   row.thinking || row.verdict?.state === "working";
 
 const rowsForDisplay = (rows: AgentRow[]): AgentRow[] =>
-  rows;
+  [...rows].sort((a, b) => Number(isLimitPaused(a)) - Number(isLimitPaused(b)));
 
 // Add tickMs to each agent's active/idle budget; both idle => human-idle time.
 const accumulateStats = (
@@ -2344,7 +2928,8 @@ const accumulateStats = (
       stats.idleMs[agent] = (stats.idleMs[agent] ?? 0) + tickMs;
     }
   }
-  if (!rows.some(isRowActive)) {
+  const availableRows = rows.filter((row) => !isLimitPaused(row));
+  if (availableRows.length >= 2 && !availableRows.some(isRowActive)) {
     stats.humanIdleMs += tickMs;
   }
 };
@@ -2363,7 +2948,8 @@ const updateBothIdle = (
   rows: AgentRow[],
   nowMs: number
 ): WaitingForYou => {
-  if (rows.length === 0 || rows.some(isRowActive)) {
+  const availableRows = rows.filter((row) => !isLimitPaused(row));
+  if (availableRows.length < 2 || availableRows.some(isRowActive)) {
     runState.bothIdleSince = 0;
     runState.waitingConfirmed = false;
     runState.waitingAsk = "";
@@ -2378,6 +2964,413 @@ const updateBothIdle = (
     confirmed: runState.waitingConfirmed,
     ms: nowMs - runState.bothIdleSince,
   };
+};
+
+const agentInfoByAgent = (
+  config: BabysitConfig
+): Partial<Record<Agent, BabysitAgentInfo>> =>
+  Object.fromEntries(
+    config.agents.map((info) => [info.agent, info])
+  ) as Partial<Record<Agent, BabysitAgentInfo>>;
+
+const limitHandoffMessage = (
+  paused: Agent,
+  driver: Agent,
+  pressure: LimitPressure
+): string => {
+  const pausedName = capitalize(paused);
+  const driverName = capitalize(driver);
+  const reset = pressure.reset
+    ? ` until the ${pressure.resetKind} limit resets at ${pressure.reset}`
+    : " until its limit resets";
+  return [
+    `babysitter: ${pausedName} is at/near ${pressure.resetKind} limit (${pressure.pct}% used)${reset}.`,
+    `${driverName} is now the driver. Continue the task from the current repo state and do not wait for ${pausedName}'s next turn before making progress.`,
+    `Ask ${pausedName} for review or context only after that limit reset, or if the human explicitly redirects the pairing.`,
+  ].join(" ");
+};
+
+const restoreCompactMessage = (
+  restored: Agent,
+  temporary: Agent | undefined,
+  state: BabysitRunState
+): string => {
+  const restoredName = capitalize(restored);
+  const temporaryName = temporary ? capitalize(temporary) : "The other agent";
+  const summary = state.summary
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+  const context = summary
+    ? truncate(summary, 700)
+    : "Use the current repo state, recent terminal output, PLAN.md/status.md if present, and the peer's latest handoff.";
+  return `/compact babysitter: ${restoredName}'s limit reset and ${restoredName} is the driver again. While you were paused, ${temporaryName} drove the task. Current context: ${context} Pick up from the current repo state; ask ${temporaryName} for only a concise missing detail if needed.`;
+};
+
+const restoreTemporaryDriverMessage = (
+  restored: Agent,
+  temporary: Agent
+): string =>
+  [
+    `babysitter: ${capitalize(restored)}'s limit reset.`,
+    `Hand the driver role back to ${capitalize(restored)} now.`,
+    "Send a concise handoff if useful, then stop driving unless the human redirects.",
+  ].join(" ");
+
+const balanceDriverMessage = (
+  previous: Agent,
+  next: Agent,
+  reason: string
+): string =>
+  [
+    "babysitter: proactive quota balance.",
+    `${capitalize(next)} is now the driver; ${capitalize(previous)} should preserve quota and stay available for review/context.`,
+    reason ? `Reason: ${truncate(reason, 180)}.` : "",
+    "Continue from the current repo state and do not wait for an actual quota limit.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+const balancePreviousDriverMessage = (
+  previous: Agent,
+  next: Agent,
+  reason: string
+): string =>
+  [
+    "babysitter: proactive quota balance.",
+    `${capitalize(next)} is now the driver to preserve available quota.`,
+    reason ? `Reason: ${truncate(reason, 180)}.` : "",
+    `${capitalize(previous)} should stay available for review/context and only resume driving if asked or after roles change again.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+const bridgeSourceFor = (
+  target: Agent,
+  preferred: Agent | undefined,
+  config: BabysitConfig
+): Agent | undefined =>
+  preferred && preferred !== target
+    ? preferred
+    : config.agents.find((info) => info.agent !== target)?.agent;
+
+const sendDirectRoleMessage = (
+  deps: BabysitDeps,
+  info: BabysitAgentInfo,
+  message: string
+): "tmux" => {
+  deps.sendText(info.pane, message);
+  deps.sendKeys(info.pane, ["Enter"]);
+  return "tmux";
+};
+
+const sendRoleMessage = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  targetInfo: BabysitAgentInfo,
+  target: Agent,
+  source: Agent | undefined,
+  message: string
+): Promise<BridgeSendStatus | "tmux"> => {
+  // Claude has no external push route from the babysitter process today; keep
+  // that path direct. Codex/non-Claude bridge delivery avoids fragile pane
+  // text+Enter injection and lets the bridge worker/app-server steer safely.
+  if (config.runDir && source && source !== target && target !== "claude") {
+    return deps.sendBridge(config.runDir, source, target, message);
+  }
+  return sendDirectRoleMessage(deps, targetInfo, message);
+};
+
+const availableDriverRow = (
+  rows: AgentRow[],
+  preferred: Agent | undefined
+): AgentRow | undefined =>
+  (preferred
+    ? rows.find(
+        (row) => row.liveness.agent === preferred && !isLimitPaused(row)
+      )
+    : undefined) ?? rows.find((row) => !isLimitPaused(row));
+
+const setActiveRoleHandoff = (
+  runState: BabysitRunState,
+  initialDriver: Agent,
+  paused: Agent,
+  driver: Agent,
+  pressure: LimitPressure,
+  nowIso: string | undefined
+): void => {
+  runState.roles = {
+    currentDriver: driver,
+    handoffAt: nowIso ?? runState.roles.handoffAt,
+    initialDriver,
+    lastAction: "handoff",
+    pausedAgent: paused,
+    pressureKey: pressure.key,
+    reset: pressure.reset,
+    resetKind: pressure.resetKind,
+    temporaryDriver: driver,
+  };
+};
+
+const setActiveRoleBalance = (
+  runState: BabysitRunState,
+  initialDriver: Agent,
+  previous: Agent,
+  next: Agent,
+  candidateKey: string,
+  reason: string,
+  nowIso: string
+): void => {
+  runState.roles = {
+    balanceAt: nowIso,
+    balanceCheckKey: candidateKey,
+    balanceKey: candidateKey,
+    balanceReason: reason,
+    currentDriver: next,
+    initialDriver,
+    lastAction: "balance",
+    temporaryDriver:
+      previous === initialDriver ? next : runState.roles.temporaryDriver,
+  };
+};
+
+interface RoleTransitionResult {
+  llmUsageByJudge: LocalLlmUsageByJudge;
+}
+
+const handleRoleTransitions = async (
+  rows: AgentRow[],
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  runState: BabysitRunState,
+  nowIso: string
+): Promise<RoleTransitionResult> => {
+  const transitionUsageByJudge = emptyLocalLlmUsageByJudge();
+  const infos = agentInfoByAgent(config);
+  const pressures = new Map<Agent, LimitPressure>();
+  for (const row of rows) {
+    const pressure = limitPressure(row);
+    if (pressure) {
+      pressures.set(row.liveness.agent, pressure);
+    }
+  }
+  const activePaused = runState.roles.pausedAgent;
+  let restoredThisTick = false;
+  if (activePaused && !pressures.has(activePaused)) {
+    const restored =
+      runState.roles.initialDriver ?? config.initialDriver ?? activePaused;
+    const restoredInfo = infos[restored];
+    const temporary = runState.roles.temporaryDriver;
+    const temporaryInfo =
+      temporary && temporary !== restored ? infos[temporary] : undefined;
+    const restoredSource = bridgeSourceFor(restored, temporary, config);
+    let restoredDelivery: BridgeSendStatus | "tmux" | undefined;
+    let temporaryDelivery: BridgeSendStatus | "tmux" | undefined;
+    if (restoredInfo) {
+      restoredDelivery = await sendRoleMessage(
+        config,
+        deps,
+        restoredInfo,
+        restored,
+        restoredSource,
+        restoreCompactMessage(restored, temporary, runState)
+      );
+      incrementCount(runState.babysitterMessages, restored);
+    }
+    if (temporaryInfo) {
+      temporaryDelivery = await sendRoleMessage(
+        config,
+        deps,
+        temporaryInfo,
+        temporary,
+        restored,
+        restoreTemporaryDriverMessage(restored, temporary)
+      );
+      incrementCount(runState.babysitterMessages, temporary);
+    }
+    deps.appendLog(config.logFile, {
+      driver: restored,
+      kind: "limit-restore",
+      previousDriver: temporary,
+      restored,
+      restoredDelivery,
+      ts: nowIso,
+      temporaryDelivery,
+    });
+    delete runState.notified.limitHandoff[activePaused];
+    runState.roles = {
+      currentDriver: restored,
+      initialDriver: restored,
+      lastAction: "restore",
+      restoredAt: nowIso,
+    };
+    restoredThisTick = true;
+  }
+
+  for (const agent of Object.keys(runState.notified.limitHandoff)) {
+    if (!pressures.has(agent as Agent)) {
+      delete runState.notified.limitHandoff[agent];
+    }
+  }
+  for (const [paused, pressure] of pressures) {
+    const initialDriver =
+      runState.roles.initialDriver ?? config.initialDriver ?? paused;
+    const currentDriver = runState.roles.currentDriver ?? initialDriver;
+    const available = availableDriverRow(rows, currentDriver);
+    if (!available) {
+      continue;
+    }
+    const driver = available.liveness.agent;
+    const driverInfo = infos[driver];
+    if (!driverInfo) {
+      continue;
+    }
+    if (runState.notified.limitHandoff[paused]) {
+      runState.notified.limitHandoff[paused] = pressure.key;
+      setActiveRoleHandoff(
+        runState,
+        initialDriver,
+        paused,
+        driver,
+        pressure,
+        undefined
+      );
+      continue;
+    }
+    const message = limitHandoffMessage(paused, driver, pressure);
+    const delivery = await sendRoleMessage(
+      config,
+      deps,
+      driverInfo,
+      driver,
+      paused,
+      message
+    );
+    incrementCount(runState.babysitterMessages, driver);
+    deps.appendLog(config.logFile, {
+      delivery,
+      driver,
+      kind: "limit-handoff",
+      paused,
+      pressure,
+      ts: nowIso,
+    });
+    runState.notified.limitHandoff[paused] = pressure.key;
+    setActiveRoleHandoff(
+      runState,
+      initialDriver,
+      paused,
+      driver,
+      pressure,
+      nowIso
+    );
+  }
+  if (pressures.size > 0 || restoredThisTick) {
+    return { llmUsageByJudge: transitionUsageByJudge };
+  }
+  if (!config.roleBalanceEnabled) {
+    return { llmUsageByJudge: transitionUsageByJudge };
+  }
+
+  const initialDriver =
+    runState.roles.initialDriver ??
+    config.initialDriver ??
+    rows[0]?.liveness.agent;
+  const currentDriver = runState.roles.currentDriver ?? initialDriver;
+  const candidate = roleBalanceCandidate(rows, currentDriver);
+  if (!(candidate && initialDriver && currentDriver)) {
+    return { llmUsageByJudge: transitionUsageByJudge };
+  }
+  if (runState.roles.balanceCheckKey === candidate.key) {
+    return { llmUsageByJudge: transitionUsageByJudge };
+  }
+
+  const next = candidate.candidate.liveness.agent;
+  const previous = candidate.current.liveness.agent;
+  const decision = await assessRoleBalanceWithLocalJudges(
+    config,
+    deps,
+    {
+      agents: rows.map((row) => roleBalanceAgentContext(row, currentDriver)),
+      candidateDriver: next,
+      currentDriver,
+      initialDriver,
+      reasonHint: candidate.reasonHint,
+      summary: runState.summary,
+    },
+    runState.tick
+  );
+  Object.assign(
+    transitionUsageByJudge,
+    addLocalLlmUsageByJudge(transitionUsageByJudge, decision.usageByJudge)
+  );
+  runState.roles.balanceCheckKey = candidate.key;
+  const recommendation = decision.recommendation;
+  if (
+    !recommendation?.switchDriver ||
+    recommendation.driver !== next ||
+    recommendation.confidence < PROACTIVE_BALANCE_MIN_CONFIDENCE
+  ) {
+    deps.appendLog(config.logFile, {
+      candidate: next,
+      currentDriver,
+      decision: recommendation,
+      kind: "role-balance-veto",
+      reasonHint: candidate.reasonHint,
+      ts: nowIso,
+    });
+    return { llmUsageByJudge: transitionUsageByJudge };
+  }
+
+  const nextInfo = infos[next];
+  const previousInfo = infos[previous];
+  if (!nextInfo) {
+    return { llmUsageByJudge: transitionUsageByJudge };
+  }
+  const reason = recommendation.reason || candidate.reasonHint;
+  const nextDelivery = await sendRoleMessage(
+    config,
+    deps,
+    nextInfo,
+    next,
+    previous,
+    balanceDriverMessage(previous, next, reason)
+  );
+  incrementCount(runState.babysitterMessages, next);
+  let previousDelivery: BridgeSendStatus | "tmux" | undefined;
+  if (previousInfo) {
+    previousDelivery = await sendRoleMessage(
+      config,
+      deps,
+      previousInfo,
+      previous,
+      next,
+      balancePreviousDriverMessage(previous, next, reason)
+    );
+    incrementCount(runState.babysitterMessages, previous);
+  }
+  deps.appendLog(config.logFile, {
+    candidate: next,
+    currentDriver,
+    decision: recommendation,
+    kind: "role-balance",
+    nextDelivery,
+    previousDelivery,
+    reason,
+    reasonHint: candidate.reasonHint,
+    ts: nowIso,
+  });
+  setActiveRoleBalance(
+    runState,
+    initialDriver,
+    previous,
+    next,
+    candidate.key,
+    reason,
+    nowIso
+  );
+  return { llmUsageByJudge: transitionUsageByJudge };
 };
 
 // Decide what (if anything) to escalate this tick, deduped via runState.notified
@@ -2457,12 +3450,21 @@ export const babysitTick = async (
 ): Promise<BabysitTickResult> => {
   const nowMs = deps.now();
   const nowIso = new Date(nowMs).toISOString();
+  const babysitterMessages = readCountMap(runStateIn.babysitterMessages);
   const runState: BabysitRunState = {
     ...runStateIn,
+    babysitterMessages:
+      Object.keys(babysitterMessages).length > 0
+        ? babysitterMessages
+        : readBabysitterMessageCountsFromLog(config.logFile),
     notified: {
       ...runStateIn.notified,
       ladder: { ...runStateIn.notified.ladder },
+      limitHandoff: { ...runStateIn.notified.limitHandoff },
     },
+    paneLabels: { ...runStateIn.paneLabels },
+    paneTitles: { ...runStateIn.paneTitles },
+    roles: { ...runStateIn.roles },
     stats: cloneStats(runStateIn.stats),
     tick: runStateIn.tick + 1,
   };
@@ -2501,9 +3503,28 @@ export const babysitTick = async (
     }
     rows.push(result.row);
     summaryCtxs.push(result.summaryCtx);
+    if (result.row.action?.level === "nudge" && !config.dryRun) {
+      incrementCount(runState.babysitterMessages, info.agent);
+    }
   }
 
+  const roleTransitions = await handleRoleTransitions(
+    rows,
+    config,
+    deps,
+    runState,
+    nowIso
+  );
+  llmUsageByJudge = addLocalLlmUsageByJudge(
+    llmUsageByJudge,
+    roleTransitions.llmUsageByJudge
+  );
+  llmUsage = addLocalLlmUsage(
+    llmUsage,
+    sumLocalLlmUsageByJudge(roleTransitions.llmUsageByJudge)
+  );
   accumulateStats(runState.stats, rows, config.tickMs);
+  applyPaneLabels(config, deps, rows, runState);
 
   // The session summary is generated off the tick (see runBabysitter) so a slow
   // local-LLM call never freezes the board; here we just render runState.summary
@@ -2544,9 +3565,11 @@ export const babysitTick = async (
     ])
   );
   const board = renderBoard(rowsForDisplay(rows), {
+    babysitterMessages: runState.babysitterMessages,
     bridge: deps.readBridge(config.transcriptPath),
     bridgeLatest: deps.readBridgeLatest(config.runDir),
     budgetUsd: config.budgetUsd,
+    initialDriver: config.initialDriver,
     judgeMode: config.judgeMode,
     llmJudges: judges,
     llmOfflineByJudge,
@@ -2554,6 +3577,7 @@ export const babysitTick = async (
     llmUsageByJudge,
     nowMs,
     recoveries,
+    roles: runState.roles,
     stats: runState.stats,
     summary: runState.summary,
     tickMs: config.tickMs,
@@ -2642,6 +3666,7 @@ export const loadBabysitState = (
     }
     const llmUsage = readLocalLlmUsage(parsed.llmUsage, parsed.llmTokens);
     return {
+      babysitterMessages: readCountMap(parsed.babysitterMessages),
       bothIdleSince:
         typeof parsed.bothIdleSince === "number" ? parsed.bothIdleSince : 0,
       history: Array.isArray(parsed.history) ? parsed.history : [],
@@ -2652,8 +3677,18 @@ export const loadBabysitState = (
         llmUsage
       ),
       llmTokens: typeof parsed.llmTokens === "number" ? parsed.llmTokens : 0,
-      notified: { ...freshNotified(), ...parsed.notified },
+      notified: {
+        ...freshNotified(),
+        ...parsed.notified,
+        ladder: { ...(parsed.notified?.ladder ?? {}) },
+        limitHandoff: { ...(parsed.notified?.limitHandoff ?? {}) },
+      },
+      paneLabels: readStringMap(parsed.paneLabels),
+      paneLabelTick:
+        typeof parsed.paneLabelTick === "number" ? parsed.paneLabelTick : -1,
+      paneTitles: readStringMap(parsed.paneTitles),
       recoveries: typeof parsed.recoveries === "number" ? parsed.recoveries : 0,
+      roles: readRoleState(parsed.roles),
       stats: {
         activeMs: stats.activeMs ?? {},
         humanIdleMs: stats.humanIdleMs ?? 0,
@@ -2687,14 +3722,57 @@ export const saveBabysitState = (
   }
 };
 
+const sendBabysitterBridgeMessage = async (
+  runDir: string,
+  source: Agent,
+  target: Agent,
+  message: string
+): Promise<BridgeSendStatus> => {
+  const result = await dispatchBridgeMessage(
+    runDir,
+    source,
+    target,
+    message,
+    target === "codex"
+      ? async (entry) => {
+          if (
+            readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy"
+          ) {
+            return false;
+          }
+          return (
+            (await deliverCodexBridgeMessage(runDir, entry)) ||
+            (await deliverTmuxBridgeMessage(runDir, entry))
+          );
+        }
+      : target === "cursor" || target === "gemini" || target === "copilot"
+        ? (entry) => deliverTmuxBridgeMessage(runDir, entry)
+        : undefined
+  );
+  if (
+    result.status !== "delivered" &&
+    hasBridgeDeliveryRoute(runDir, target) &&
+    ensureBridgeWorker(runDir)
+  ) {
+    result.status = "accepted";
+  }
+  return result.status;
+};
+
 export const defaultBabysitDeps = (): BabysitDeps => ({
+  assessRoleBalance: (req) => assessRoleBalance(req),
   assessWaiting: (req) => assessWaiting(req),
   appendLog: (file, record) => {
     mkdirSync(dirname(file), { recursive: true });
     appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
   },
   capturePane: (pane) => tmux(["capture-pane", "-p", "-t", pane]),
+  initPaneBorders: (session) => {
+    tmux(["set-option", "-t", session, "pane-border-status", "top"]);
+    tmux(["set-option", "-t", session, "pane-border-format", "#{@loop_label}"]);
+  },
   judge: (req) => judgeAgent(req),
+  labelPanes: (req) => labelPanes(req),
   loadState: (stateFile) => loadBabysitState(stateFile),
   notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
   now: () => Date.now(),
@@ -2736,6 +3814,11 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
     spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });
   },
   saveState: (stateFile, state) => saveBabysitState(stateFile, state),
+  sendBridge: (runDir, source, target, message) =>
+    sendBabysitterBridgeMessage(runDir, source, target, message),
+  setPaneLabel: (pane, label) => {
+    tmux(["set-option", "-p", "-t", pane, "@loop_label", label]);
+  },
   sendKeys: (pane, keys) => {
     spawnSync(["tmux", "send-keys", "-t", pane, ...keys], { stderr: "ignore" });
   },
@@ -2783,13 +3866,21 @@ const envConfidence = (env: NodeJS.ProcessEnv): number => {
 };
 
 const envJudgeMode = (env: NodeJS.ProcessEnv): LocalLlmJudgeMode =>
-  env.LOOP_BABYSIT_JUDGE_MODE === "round-robin"
-    ? "round-robin"
-    : "consensus";
+  env.LOOP_BABYSIT_JUDGE_MODE === "round-robin" ? "round-robin" : "consensus";
 
 const envDisabled = (value: string | undefined): boolean => {
   const normalized = value?.trim().toLowerCase();
   return normalized === "0" || normalized === "false" || normalized === "off";
+};
+
+const envEnabled = (value: string | undefined): boolean => {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    normalized === "1" ||
+    normalized === "true" ||
+    normalized === "yes" ||
+    normalized === "on"
+  );
 };
 
 const llmTraceFileFromEnv = (
@@ -2850,7 +3941,7 @@ const parseLocalJudgeSpec = (
   const explicitId = eqIndex >= 0 ? trimmed.slice(0, eqIndex).trim() : "";
   const body = eqIndex >= 0 ? trimmed.slice(eqIndex + 1) : trimmed;
   const [url, model, logFile] = body.split(",").map((part) => part.trim());
-  if (!url || !model) {
+  if (!(url && model)) {
     return undefined;
   }
   return {
@@ -2965,6 +4056,7 @@ export const resolveBabysitConfig = (
       DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS
     ),
     idleMs: envSeconds(env, "LOOP_BABYSIT_IDLE", DEFAULT_BABYSIT_IDLE_SECONDS),
+    initialDriver: manifest?.primaryAgent,
     logFile: join(storage.runDir, "babysitter.jsonl"),
     llmDecodeConcurrency: envPositiveInt(
       env,
@@ -2997,6 +4089,7 @@ export const resolveBabysitConfig = (
     model,
     modelSizeGb: primaryLocalJudge.modelSizeGb,
     ntfyUrl: env.LOOP_BABYSIT_NTFY || undefined,
+    roleBalanceEnabled: envEnabled(env.LOOP_BABYSIT_ROLE_BALANCE),
     runId,
     runDir: storage.runDir,
     session,
@@ -3024,10 +4117,18 @@ export const runBabysitter = async (
 ): Promise<void> => {
   const states = new Map<Agent, AgentLivenessState>();
   let runState = deps.loadState(config.stateFile) ?? freshRunState();
+  // Light up the pane-border title strip and name the babysitter's own pane.
+  // Done on every startup (including a replaced pane) so borders self-heal.
+  deps.initPaneBorders(config.session);
+  deps.setPaneLabel(babysitterPane(config), BABYSITTER_PANE_LABEL);
   let summaryText = runState.summary;
   let summaryTick = runState.summaryTick;
   let summaryInFlight = false;
   let pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
+  let paneLabels = runState.paneLabels;
+  let paneLabelTick = runState.paneLabelTick;
+  let paneLabelInFlight = false;
+  let pendingPaneLabelUsageByJudge = emptyLocalLlmUsageByJudge();
   let waitingAsk = runState.waitingAsk;
   let waitingConfirmed = runState.waitingConfirmed;
   let waitingAssessInFlight = false;
@@ -3036,7 +4137,10 @@ export const runBabysitter = async (
   for (;;) {
     // Fold any completed background work in before rendering this tick.
     const pendingLlmUsageByJudge = addLocalLlmUsageByJudge(
-      pendingSummaryUsageByJudge,
+      addLocalLlmUsageByJudge(
+        pendingSummaryUsageByJudge,
+        pendingPaneLabelUsageByJudge
+      ),
       pendingWaitUsageByJudge
     );
     const pendingLlmUsage = sumLocalLlmUsageByJudge(pendingLlmUsageByJudge);
@@ -3050,12 +4154,15 @@ export const runBabysitter = async (
       llmUsage: nextLlmUsage,
       llmUsageByJudge: nextLlmUsageByJudge,
       llmTokens: nextLlmUsage.totalTokens,
+      paneLabels,
+      paneLabelTick,
       summary: summaryText,
       summaryTick,
       waitingAsk,
       waitingConfirmed,
     };
     pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
+    pendingPaneLabelUsageByJudge = emptyLocalLlmUsageByJudge();
     pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
 
     const result = await babysitTick(states, config, deps, runState);
@@ -3090,6 +4197,33 @@ export const runBabysitter = async (
         });
     }
 
+    // Refresh the per-agent pane-border task labels off the tick, on the same
+    // slow cadence as the summary. The composed title (glyph + agent + label)
+    // is applied every tick inside babysitTick; only the label lags.
+    if (!paneLabelInFlight && paneLabelsDue(paneLabelTick, runState.tick)) {
+      paneLabelInFlight = true;
+      const firedAtTick = runState.tick;
+      labelPanesWithLocalJudges(config, deps, result.summaryCtxs, runState.tick)
+        .then((res) => {
+          if (Object.keys(res.labels).length > 0) {
+            paneLabels = { ...paneLabels, ...res.labels };
+            // Every label refresh, name each agent's session via /rename.
+            sendRenameCommands(config, deps, res.labels);
+          }
+          paneLabelTick = firedAtTick;
+          pendingPaneLabelUsageByJudge = addLocalLlmUsageByJudge(
+            pendingPaneLabelUsageByJudge,
+            res.usageByJudge
+          );
+        })
+        .catch(() => {
+          // Best-effort; the next due tick retries.
+        })
+        .finally(() => {
+          paneLabelInFlight = false;
+        });
+    }
+
     // Once the pair has been idle together a while, ask the local LLM (once per
     // idle episode) whether they are actually blocked on the human.
     const idleSince = runState.bothIdleSince;
@@ -3102,7 +4236,12 @@ export const runBabysitter = async (
     ) {
       waitingAssessInFlight = true;
       const episode = idleSince;
-      assessWaitingWithLocalJudges(config, deps, result.summaryCtxs, runState.tick)
+      assessWaitingWithLocalJudges(
+        config,
+        deps,
+        result.summaryCtxs,
+        runState.tick
+      )
         .then((assessment) => {
           waitingConfirmed = assessment.waiting;
           waitingAsk = assessment.ask;

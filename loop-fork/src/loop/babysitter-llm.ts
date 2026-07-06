@@ -9,6 +9,10 @@ import type {
   JudgeOutcome,
   JudgeRequest,
   LocalLlmUsage,
+  PaneLabelRequest,
+  PaneLabelResult,
+  RoleBalanceRequest,
+  RoleBalanceResult,
   SummaryRequest,
   SummaryResult,
   WaitingRequest,
@@ -62,7 +66,12 @@ interface JudgeDeps {
   timeoutMs?: number;
 }
 
-type LlmTracePurpose = "judge" | "summary" | "waiting";
+type LlmTracePurpose =
+  | "judge"
+  | "pane-label"
+  | "role-balance"
+  | "summary"
+  | "waiting";
 
 interface TraceMeta {
   agent?: Agent;
@@ -155,7 +164,7 @@ const traceResponse = (
   responseText: string,
   payload?: unknown
 ): void => {
-  if (!traceFile || !callId) {
+  if (!(traceFile && callId)) {
     return;
   }
   appendTrace(traceFile, {
@@ -178,7 +187,7 @@ const traceError = (
   meta: TraceMeta,
   error: unknown
 ): void => {
-  if (!traceFile || !callId) {
+  if (!(traceFile && callId)) {
     return;
   }
   appendTrace(traceFile, {
@@ -254,14 +263,13 @@ const extractUsage = (payload: unknown): LocalLlmUsage => {
   }
   const outputTokens = num(usage.completion_tokens ?? usage.output_tokens);
   const explicitInput = num(usage.prompt_tokens ?? usage.input_tokens);
-  const promptDetails = usage.prompt_tokens_details ?? usage.input_tokens_details;
+  const promptDetails =
+    usage.prompt_tokens_details ?? usage.input_tokens_details;
   const cachedInputTokens = isRecord(promptDetails)
     ? num(promptDetails.cached_tokens)
     : 0;
-  const totalTokens =
-    num(usage.total_tokens) || explicitInput + outputTokens;
-  const inputTokens =
-    explicitInput || Math.max(0, totalTokens - outputTokens);
+  const totalTokens = num(usage.total_tokens) || explicitInput + outputTokens;
+  const inputTokens = explicitInput || Math.max(0, totalTokens - outputTokens);
   return {
     cachedInputTokens,
     calls: 1,
@@ -581,6 +589,125 @@ export const summarizeSession = async (
   }
 };
 
+const PANE_LABEL_SYSTEM_PROMPT = [
+  "You label terminal panes for a pair of AI coding agents (Claude and Codex).",
+  "For each agent, from their recent actions and terminal output, write a short",
+  "2-4 word task label naming WHAT they are working on right now — a noun phrase",
+  "like a task chip (e.g. 'auth refactor', 'writing tests', 'tmux pane labels').",
+  "Do NOT describe their status (not 'working', 'idle', 'waiting'), no verbs of",
+  "state, no punctuation, no filenames unless that is the clearest label. Reply",
+  "with ONLY a strict JSON object mapping each agent name to its label, nothing",
+  'else: {"claude": "<label>", "codex": "<label>"}.',
+].join(" ");
+
+// Reasoning models (e.g. Qwen3) spend ~1800 tokens in a <think> block before
+// the JSON when reasoning over full panes, so this must be generous (matching
+// the summary budget) or the labels get truncated away entirely.
+export const LOCAL_LLM_PANE_LABEL_MAX_TOKENS = 3200;
+const PANE_LABEL_MAX_CHARS = 28;
+const PANE_LABEL_PANE_CHARS = 1400;
+// mlx serves one request at a time, so this label call routinely queues behind
+// a same-tick summary (and judge/waiting) call; give it a generous timeout to
+// match, or it aborts in the queue and yields no labels.
+const PANE_LABEL_TIMEOUT_MS = 120_000;
+
+const buildPaneLabelPrompt = (req: PaneLabelRequest): string =>
+  req.agents
+    .map((a) =>
+      [
+        `## agent: ${a.agent}`,
+        `recent actions: ${a.lastActions.slice(-SUMMARY_ACTIONS).join(" | ") || "—"}`,
+        "terminal:",
+        a.paneText.slice(-PANE_LABEL_PANE_CHARS),
+      ].join("\n")
+    )
+    .join("\n\n");
+
+const coercePaneLabel = (value: unknown): string | undefined => {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const label = value
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, PANE_LABEL_MAX_CHARS);
+  return label.length > 0 ? label : undefined;
+};
+
+const parsePaneLabels = (content: string): Partial<Record<Agent, string>> => {
+  const jsonText = extractFirstJsonObject(stripThinkBlocks(content));
+  if (jsonText === null) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return {};
+  }
+  if (!isRecord(parsed)) {
+    return {};
+  }
+  const labels: Partial<Record<Agent, string>> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    const label = coercePaneLabel(value);
+    if (label !== undefined) {
+      labels[key as Agent] = label;
+    }
+  }
+  return labels;
+};
+
+// Ask the local LLM for a short task label per agent, for the tmux pane border.
+export const labelPanes = async (
+  req: PaneLabelRequest,
+  deps?: JudgeDeps
+): Promise<PaneLabelResult> => {
+  const fetchFn = deps?.fetchFn ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    deps?.timeoutMs ?? PANE_LABEL_TIMEOUT_MS
+  );
+  const body: ChatRequestBody = {
+    max_tokens: LOCAL_LLM_PANE_LABEL_MAX_TOKENS,
+    messages: [
+      { content: PANE_LABEL_SYSTEM_PROMPT, role: "system" },
+      { content: buildPaneLabelPrompt(req), role: "user" },
+    ],
+    model: req.model,
+    temperature: LOCAL_LLM_TEMPERATURE,
+  };
+  const traceMeta: TraceMeta = {
+    model: req.model,
+    purpose: "pane-label",
+    url: req.url,
+  };
+  const callId = traceRequest(req.traceFile, traceMeta, body);
+  try {
+    const response = await fetchFn(`${req.url}${CHAT_COMPLETIONS_PATH}`, {
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      signal: controller.signal,
+    });
+    const { payload, text } = await readJsonPayload(response);
+    traceResponse(req.traceFile, callId, traceMeta, response, text, payload);
+    if (!response.ok || payload === undefined) {
+      return { labels: {}, tokens: 0, usage: emptyUsage(1) };
+    }
+    const content = extractMessageContent(payload) ?? "";
+    const labels = parsePaneLabels(content);
+    const usage = usageWithFallback(payload, body, content);
+    return { labels, tokens: usage.totalTokens, usage };
+  } catch (error) {
+    traceError(req.traceFile, callId, traceMeta, error);
+    return { labels: {}, tokens: 0, usage: emptyUsage(1) };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const WAITING_SYSTEM_PROMPT = [
   "Two AI coding agents share one task and have both gone idle at the same time.",
   "From their recent actions and terminal panes, decide whether they are BLOCKED",
@@ -667,6 +794,171 @@ export const assessWaiting = async (
   } catch (error) {
     traceError(req.traceFile, callId, traceMeta, error);
     return { ask: "", tokens: 0, usage: emptyUsage(1), waiting: false };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+const ROLE_BALANCE_SYSTEM_PROMPT = [
+  "You are scheduling two AI coding agents that share one task.",
+  "Usage percentages come from the external usage tracker. Higher sessionPct",
+  "or weeklyPct means less quota remains. Decide whether the driver role should",
+  "move now to preserve the tighter agent's quota while keeping progress moving.",
+  "Hard limits are handled elsewhere; this decision is only for proactive",
+  "balancing before a limit is hit. Prefer no switch unless the candidate has",
+  "clearly better quota headroom and can continue the current task.",
+  "Reply with ONLY a strict JSON object, no prose:",
+  '{"switchDriver": true|false, "driver": "<candidate agent id or null>", "confidence": 0..1, "reason": "<=140 chars>"}',
+].join(" ");
+
+export const LOCAL_LLM_ROLE_BALANCE_MAX_TOKENS = 1000;
+const ROLE_BALANCE_REASON_MAX = 140;
+
+const buildRoleBalancePrompt = (req: RoleBalanceRequest): string =>
+  [
+    `Current driver: ${req.currentDriver ?? "unknown"}`,
+    `Initial driver: ${req.initialDriver ?? "unknown"}`,
+    `Candidate driver: ${req.candidateDriver ?? "none"}`,
+    req.reasonHint ? `Heuristic reason: ${req.reasonHint}` : "",
+    req.summary ? `Session summary:\n${req.summary}` : "",
+    `Agents JSON: ${JSON.stringify(req.agents)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+const ROLE_AGENT_VALUES: readonly Agent[] = [
+  "claude",
+  "codex",
+  "copilot",
+  "cursor",
+  "gemini",
+];
+
+const allowedRoleAgent = (value: unknown): Agent | undefined =>
+  typeof value === "string" && ROLE_AGENT_VALUES.includes(value as Agent)
+    ? (value as Agent)
+    : undefined;
+
+const asRoleBalance = (
+  content: string,
+  usage: LocalLlmUsage,
+  candidateDriver: Agent | undefined
+): RoleBalanceResult => {
+  const json = extractFirstJsonObject(stripThinkBlocks(content));
+  if (!json) {
+    return {
+      confidence: 0,
+      reason: "",
+      switchDriver: false,
+      tokens: usage.totalTokens,
+      usage,
+    };
+  }
+  try {
+    const parsed = JSON.parse(json) as {
+      confidence?: unknown;
+      driver?: unknown;
+      reason?: unknown;
+      switchDriver?: unknown;
+    };
+    const parsedDriver = allowedRoleAgent(parsed.driver);
+    const driver =
+      candidateDriver === undefined || parsedDriver === candidateDriver
+        ? parsedDriver
+        : undefined;
+    const switchDriver = parsed.switchDriver === true && driver !== undefined;
+    const reason =
+      typeof parsed.reason === "string"
+        ? parsed.reason.trim().slice(0, ROLE_BALANCE_REASON_MAX)
+        : "";
+    return {
+      confidence: clampConfidence(parsed.confidence),
+      driver,
+      reason,
+      switchDriver,
+      tokens: usage.totalTokens,
+      usage,
+    };
+  } catch {
+    return {
+      confidence: 0,
+      reason: "",
+      switchDriver: false,
+      tokens: usage.totalTokens,
+      usage,
+    };
+  }
+};
+
+export const assessRoleBalance = async (
+  req: RoleBalanceRequest,
+  deps?: JudgeDeps
+): Promise<RoleBalanceResult> => {
+  const fetchFn = deps?.fetchFn ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  );
+  const body: ChatRequestBody = {
+    max_tokens: LOCAL_LLM_ROLE_BALANCE_MAX_TOKENS,
+    messages: [
+      { content: ROLE_BALANCE_SYSTEM_PROMPT, role: "system" },
+      { content: buildRoleBalancePrompt(req), role: "user" },
+    ],
+    model: req.model,
+    temperature: LOCAL_LLM_TEMPERATURE,
+  };
+  const traceMeta: TraceMeta = {
+    model: req.model,
+    purpose: "role-balance",
+    url: req.url,
+  };
+  const callId = traceRequest(req.traceFile, traceMeta, body);
+  try {
+    const response = await fetchFn(`${req.url}${CHAT_COMPLETIONS_PATH}`, {
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const { payload, text } = await readJsonPayload(response);
+      traceResponse(req.traceFile, callId, traceMeta, response, text, payload);
+      return {
+        confidence: 0,
+        reason: "",
+        switchDriver: false,
+        tokens: 0,
+        usage: emptyUsage(1),
+      };
+    }
+    const { payload, text } = await readJsonPayload(response);
+    traceResponse(req.traceFile, callId, traceMeta, response, text, payload);
+    if (payload === undefined) {
+      return {
+        confidence: 0,
+        reason: "",
+        switchDriver: false,
+        tokens: 0,
+        usage: emptyUsage(1),
+      };
+    }
+    const content = extractMessageContent(payload) ?? "";
+    return asRoleBalance(
+      content,
+      usageWithFallback(payload, body, content),
+      req.candidateDriver
+    );
+  } catch (error) {
+    traceError(req.traceFile, callId, traceMeta, error);
+    return {
+      confidence: 0,
+      reason: "",
+      switchDriver: false,
+      tokens: 0,
+      usage: emptyUsage(1),
+    };
   } finally {
     clearTimeout(timer);
   }
