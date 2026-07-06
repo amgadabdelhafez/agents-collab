@@ -1484,7 +1484,7 @@ test("sendRenameCommands injects /rename with session and task per labeled agent
     ],
   });
   // Only claude has a task label => only claude is renamed.
-  sendRenameCommands(config, deps, { claude: "auth refactor" });
+  sendRenameCommands(config, deps, { claude: "auth refactor" }, {});
   expect(spies.texts).toEqual(["/rename s · auth refactor"]);
   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
 });
@@ -1492,9 +1492,27 @@ test("sendRenameCommands injects /rename with session and task per labeled agent
 test("sendRenameCommands sends nothing in dry-run", () => {
   const spies = freshSpies();
   const deps = makeDeps(stuck, { ms: START_MS }, spies);
-  sendRenameCommands(baseConfig({ dryRun: true }), deps, {
-    claude: "auth refactor",
-  });
+  sendRenameCommands(
+    baseConfig({ dryRun: true }),
+    deps,
+    { claude: "auth refactor" },
+    {}
+  );
   expect(spies.texts).toHaveLength(0);
   expect(spies.sends).toHaveLength(0);
+});
+
+test("sendRenameCommands does not re-send an unchanged rename", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const config = baseConfig();
+  const lastRenames: Partial<Record<Agent, string>> = {};
+  // First refresh renames; a second identical refresh is a no-op.
+  sendRenameCommands(config, deps, { claude: "session initialization" }, lastRenames);
+  sendRenameCommands(config, deps, { claude: "session initialization" }, lastRenames);
+  expect(spies.texts).toEqual(["/rename s · session initialization"]);
+  expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
+  // A changed label sends again.
+  sendRenameCommands(config, deps, { claude: "auth refactor" }, lastRenames);
+  expect(spies.texts).toHaveLength(2);
 });
