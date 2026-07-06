@@ -471,6 +471,9 @@ export const freshRunState = (): BabysitRunState => ({
 });
 
 export interface BabysitTickResult {
+  // Per-agent display state this tick (working/thinking/idle/limited/...), so a
+  // background rename can skip agents that are mid-turn.
+  agentStates: Partial<Record<Agent, string>>;
   board: string;
   llmOffline: boolean;
   runState: BabysitRunState;
@@ -1029,16 +1032,23 @@ const applyPaneLabels = (
 const renameCommand = (session: string, label: string): string =>
   `/rename ${session} · ${label}`;
 
-// Send the built-in `/rename` slash command into each agent whose task label
-// changed since we last renamed it. `lastRenames` (the last command sent per
-// agent) is read and updated in place so an unchanged label — e.g. a limited
-// agent stuck on "session initialization" — is not re-injected every refresh.
-// Skipped in dry-run so we never inject into a live agent during a rehearsal.
+// Agents actively producing output — injecting keystrokes would corrupt their
+// input line (or the human's draft) and submit a turn at a bad moment, so we
+// only rename when the agent is idle, mirroring the nudge gate.
+const RENAME_BUSY_STATES = new Set(["working", "thinking"]);
+
+// Send the built-in `/rename` slash command into each idle agent whose task
+// label changed since we last renamed it. `lastRenames` (the last command sent
+// per agent) is read and updated in place so an unchanged label — e.g. a
+// limited agent stuck on "session initialization" — is not re-injected every
+// refresh. A busy agent is skipped WITHOUT recording, so the rename retries
+// once it goes idle. Skipped in dry-run so we never inject during a rehearsal.
 export const sendRenameCommands = (
   config: BabysitConfig,
   deps: BabysitDeps,
   labels: Partial<Record<Agent, string>>,
-  lastRenames: Partial<Record<Agent, string>>
+  lastRenames: Partial<Record<Agent, string>>,
+  states: Partial<Record<Agent, string>> = {}
 ): void => {
   if (config.dryRun) {
     return;
@@ -1046,6 +1056,9 @@ export const sendRenameCommands = (
   for (const info of config.agents) {
     const label = labels[info.agent];
     if (!label) {
+      continue;
+    }
+    if (RENAME_BUSY_STATES.has(states[info.agent] ?? "")) {
       continue;
     }
     const command = renameCommand(config.session, label);
@@ -3596,7 +3609,14 @@ export const babysitTick = async (
     waitingForYou,
   });
   deps.render(board);
-  return { board, llmOffline, runState, states, summaryCtxs };
+  const agentStates: Partial<Record<Agent, string>> = {};
+  config.agents.forEach((info, index) => {
+    const row = rows[index];
+    if (row) {
+      agentStates[info.agent] = rowState(row);
+    }
+  });
+  return { agentStates, board, llmOffline, runState, states, summaryCtxs };
 };
 
 const tmux = (args: string[]): string => {
@@ -4222,8 +4242,15 @@ export const runBabysitter = async (
           if (Object.keys(res.labels).length > 0) {
             paneLabels = { ...paneLabels, ...res.labels };
             // Name each agent's session via /rename, but only when the value
-            // changed — don't re-send an unchanged rename every refresh.
-            sendRenameCommands(config, deps, res.labels, paneRenames);
+            // changed and the agent is idle — don't re-send an unchanged
+            // rename or inject keystrokes into an agent that is mid-turn.
+            sendRenameCommands(
+              config,
+              deps,
+              res.labels,
+              paneRenames,
+              result.agentStates
+            );
           }
           paneLabelTick = firedAtTick;
           pendingPaneLabelUsageByJudge = addLocalLlmUsageByJudge(

@@ -9,7 +9,7 @@ if [[ -n "$TARGET" ]] && [[ ! "$TARGET" =~ ^(stable|latest|v?[0-9]+\.[0-9]+\.[0-
   exit 1
 fi
 
-REPO="axeldelafosse/loop"
+REPO="amgadabdelhafez/agents-collab"
 RELEASES_BASE="https://github.com/${REPO}/releases"
 INSTALL_DIR="${LOOP_INSTALL_DIR:-$HOME/.local/bin}"
 DOWNLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/loop-install.XXXXXX")"

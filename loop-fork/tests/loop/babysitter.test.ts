@@ -1516,3 +1516,28 @@ test("sendRenameCommands does not re-send an unchanged rename", () => {
   sendRenameCommands(config, deps, { claude: "auth refactor" }, lastRenames);
   expect(spies.texts).toHaveLength(2);
 });
+
+test("sendRenameCommands does not inject into an agent that is mid-turn", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const lastRenames: Partial<Record<Agent, string>> = {};
+  // Agent is working => skip the send AND do not record, so it retries later.
+  sendRenameCommands(
+    baseConfig(),
+    deps,
+    { claude: "auth refactor" },
+    lastRenames,
+    { claude: "working" }
+  );
+  expect(spies.texts).toHaveLength(0);
+  expect(lastRenames).toEqual({});
+  // Once idle, the same label renames.
+  sendRenameCommands(
+    baseConfig(),
+    deps,
+    { claude: "auth refactor" },
+    lastRenames,
+    { claude: "idle" }
+  );
+  expect(spies.texts).toEqual(["/rename s · auth refactor"]);
+});

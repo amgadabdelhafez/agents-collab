@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import pkg from "../../package.json";
 
-const GITHUB_REPO = "axeldelafosse/loop";
+const GITHUB_REPO = "amgadabdelhafez/agents-collab";
 const API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 const CACHE_DIR = join(homedir(), ".cache", "loop", "update");
 const STAGED_BINARY = join(CACHE_DIR, "loop-staged");
