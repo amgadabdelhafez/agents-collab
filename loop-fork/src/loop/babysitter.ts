@@ -252,6 +252,8 @@ export interface BabysitRunState {
   paneLabels: Partial<Record<Agent, string>>;
   // Tick the pane labels were last refreshed (-1 = never).
   paneLabelTick: number;
+  // Last `/rename` command sent to each agent, to skip re-sending an unchanged one.
+  paneRenames: Partial<Record<Agent, string>>;
   // Last border title actually pushed to tmux, keyed by pane, to skip redundant sets.
   paneTitles: Record<string, string>;
   recoveries: number;
@@ -456,6 +458,7 @@ export const freshRunState = (): BabysitRunState => ({
   notified: freshNotified(),
   paneLabels: {},
   paneLabelTick: -1,
+  paneRenames: {},
   paneTitles: {},
   recoveries: 0,
   roles: {},
@@ -1026,13 +1029,16 @@ const applyPaneLabels = (
 const renameCommand = (session: string, label: string): string =>
   `/rename ${session} · ${label}`;
 
-// Send the built-in `/rename` slash command into each agent that has a current
-// task label. Fires on every label refresh (see runBabysitter), skipped in
-// dry-run so we never inject into a live agent during a rehearsal.
+// Send the built-in `/rename` slash command into each agent whose task label
+// changed since we last renamed it. `lastRenames` (the last command sent per
+// agent) is read and updated in place so an unchanged label — e.g. a limited
+// agent stuck on "session initialization" — is not re-injected every refresh.
+// Skipped in dry-run so we never inject into a live agent during a rehearsal.
 export const sendRenameCommands = (
   config: BabysitConfig,
   deps: BabysitDeps,
-  labels: Partial<Record<Agent, string>>
+  labels: Partial<Record<Agent, string>>,
+  lastRenames: Partial<Record<Agent, string>>
 ): void => {
   if (config.dryRun) {
     return;
@@ -1042,7 +1048,12 @@ export const sendRenameCommands = (
     if (!label) {
       continue;
     }
-    deps.sendText(info.pane, renameCommand(config.session, label));
+    const command = renameCommand(config.session, label);
+    if (lastRenames[info.agent] === command) {
+      continue;
+    }
+    lastRenames[info.agent] = command;
+    deps.sendText(info.pane, command);
     deps.sendKeys(info.pane, ["Enter"]);
   }
 };
@@ -3686,6 +3697,7 @@ export const loadBabysitState = (
       paneLabels: readStringMap(parsed.paneLabels),
       paneLabelTick:
         typeof parsed.paneLabelTick === "number" ? parsed.paneLabelTick : -1,
+      paneRenames: readStringMap(parsed.paneRenames),
       paneTitles: readStringMap(parsed.paneTitles),
       recoveries: typeof parsed.recoveries === "number" ? parsed.recoveries : 0,
       roles: readRoleState(parsed.roles),
@@ -4127,6 +4139,7 @@ export const runBabysitter = async (
   let pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
   let paneLabels = runState.paneLabels;
   let paneLabelTick = runState.paneLabelTick;
+  const paneRenames = runState.paneRenames;
   let paneLabelInFlight = false;
   let pendingPaneLabelUsageByJudge = emptyLocalLlmUsageByJudge();
   let waitingAsk = runState.waitingAsk;
@@ -4156,6 +4169,7 @@ export const runBabysitter = async (
       llmTokens: nextLlmUsage.totalTokens,
       paneLabels,
       paneLabelTick,
+      paneRenames,
       summary: summaryText,
       summaryTick,
       waitingAsk,
@@ -4207,8 +4221,9 @@ export const runBabysitter = async (
         .then((res) => {
           if (Object.keys(res.labels).length > 0) {
             paneLabels = { ...paneLabels, ...res.labels };
-            // Every label refresh, name each agent's session via /rename.
-            sendRenameCommands(config, deps, res.labels);
+            // Name each agent's session via /rename, but only when the value
+            // changed — don't re-send an unchanged rename every refresh.
+            sendRenameCommands(config, deps, res.labels, paneRenames);
           }
           paneLabelTick = firedAtTick;
           pendingPaneLabelUsageByJudge = addLocalLlmUsageByJudge(
