@@ -138,6 +138,17 @@ That directory contains a minimal Codex config and reuses the normal Codex auth 
 
 Single-agent Codex runs outside paired mode still use the normal Codex configuration unless you set `CODEX_HOME` yourself.
 
+### Babysitter pane
+
+Paired tmux runs can add a full-width babysitter pane under the two agents (a local-LLM watchdog). Each tick it detects idle/stuck agents, runs a recovery ladder, tracks token/cost budgets, and escalates to you when the pair is genuinely waiting.
+
+The babysitter also names the workspace from what the local model reads off each pane:
+
+- **Pane borders** — the border of each agent pane shows `⟨state glyph⟩ ⟨agent⟩ · ⟨task⟩`, e.g. `▶ claude · auth refactor`. The state glyph updates every tick; the task label is refreshed by the local LLM on a slow cadence. Titles are written to a per-pane tmux user option (`@loop_label`) rendered via `pane-border-format`, so they survive the agent TUIs overwriting `pane_title`. Borders are enabled on babysitter startup, so a restarted/replaced babysitter pane re-lights them.
+- **Agent rename** — on each label refresh the babysitter sends `/rename <session> · <task>` into each agent, so the agent's own session name tracks the current task.
+
+The local model, endpoint, and pane height are configurable (`--babysit-*` flags / `LOOP_BABYSIT_*` env). The labeling call is sized for reasoning models that emit a `<think>` block before their answer.
+
 ## Install globally (symlink)
 
 ```bash

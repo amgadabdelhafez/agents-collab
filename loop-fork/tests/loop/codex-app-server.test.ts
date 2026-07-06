@@ -855,6 +855,13 @@ test("runCodexTurn parses successful deltas and completion", async () => {
   });
 
   expect(result.exitCode).toBe(0);
+  const turnStart = latestWrites()
+    .map((line) => JSON.parse(line))
+    .find((frame) => frame.method === "turn/start");
+  expect(turnStart?.params).toMatchObject({
+    effort: "xhigh",
+    model: "test-model",
+  });
   expect(result.parsed).toContain("hello");
   expect(result.parsed).toContain("there");
   expect(parsedLines).toContain("hello");

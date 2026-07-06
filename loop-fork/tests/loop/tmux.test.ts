@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { runGit } from "../../src/loop/git";
 import {
   createRunManifest,
   resolveRunStorage,
@@ -15,6 +16,45 @@ import {
 import type { Options } from "../../src/loop/types";
 
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
+
+const currentRunBase = (
+  cwd: string = process.cwd(),
+  requestedId?: string
+): string => {
+  const gitResult = (args: string[]) => {
+    try {
+      return runGit(cwd, args, "ignore");
+    } catch {
+      return undefined;
+    }
+  };
+  const commonDir = gitResult([
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  if (commonDir?.exitCode === 0 && commonDir.stdout) {
+    return tmuxInternals.sanitizeBase(basename(dirname(commonDir.stdout)));
+  }
+
+  const topLevel = gitResult([
+    "rev-parse",
+    "--path-format=absolute",
+    "--show-toplevel",
+  ]);
+  if (topLevel?.exitCode === 0 && topLevel.stdout) {
+    return tmuxInternals.sanitizeBase(basename(topLevel.stdout));
+  }
+
+  const base = tmuxInternals.sanitizeBase(basename(cwd));
+  if (requestedId) {
+    const suffix = `-loop-${tmuxInternals.sanitizeBase(requestedId)}`;
+    if (base.endsWith(suffix)) {
+      return base.slice(0, -suffix.length) || "loop";
+    }
+  }
+  return base.replace(/-loop-[a-z0-9][a-z0-9_-]*$/i, "") || "loop";
+};
 
 const makePairedOptions = (overrides: Partial<Options> = {}): Options => ({
   agent: "codex",
@@ -445,6 +485,129 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   expect(manifest.tmuxSession).toBe("repo-loop-1");
   expect(manifest.tmuxPaneLeftAgent).toBe("claude");
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
+});
+
+test("runInTmux writes paired session refs before starting babysitter", async () => {
+  const events: string[] = [];
+  const home = makeTempHome();
+  let sessionStarted = false;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  const opts = makePairedOptions({
+    babysit: true,
+    babysitCooldownSeconds: 300,
+    babysitHeight: "25%",
+    babysitIdleSeconds: 120,
+    babysitLlmTrace: "1",
+    babysitMaxRecoveries: 3,
+    babysitModel: "qwen-test",
+    babysitUrl: "http://127.0.0.1:8082",
+  });
+  const runDir = join(home, "run");
+  const repoDir = join(home, "repo");
+  const storage = {
+    manifestPath: join(runDir, "manifest.json"),
+    repoId: "repo-123",
+    runDir,
+    runId: "1",
+    storageRoot: join(home, "runs"),
+    transcriptPath: join(runDir, "transcript.jsonl"),
+  };
+
+  try {
+    mkdirSync(repoDir, { recursive: true });
+    writeFileSync(
+      join(repoDir, ".env"),
+      [
+        "export USAGE_TRACKER_SECRET=dotenv-secret",
+        "USAGE_TRACKER_URL=http://tracker.local",
+      ].join("\n")
+    );
+    const delegated = await runInTmux(
+      ["--tmux", "--proof", "verify with tests", "--babysit"],
+      {
+        capturePane: () => "",
+        cwd: repoDir,
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          nextOpts.codexHome = join(runDir, "codex-home");
+          return { manifest, storage };
+        },
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        spawn: (args: string[]) => {
+          if (args.some((arg) => arg.includes("__babysit"))) {
+            events.push(
+              `spawn-babysit:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneBabysit ?? ""}`
+            );
+            events.push(`babysit-command:${args.at(-1) ?? ""}`);
+          }
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionStarted
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionStarted = true;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          events.push(
+            `manifest:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneBabysit ?? ""}`
+          );
+          return manifest;
+        },
+      },
+      { opts, task: "Ship feature" }
+    );
+
+    expect(delegated).toBe(true);
+    expect(events).toContain("manifest:codex-thread-1:codex:");
+    expect(events).toContain("spawn-babysit:codex-thread-1:codex:");
+    expect(
+      events.some((event) =>
+        event.includes("'LOOP_BABYSIT_LLM_TRACE=1'")
+      )
+    ).toBe(true);
+    expect(
+      events.some((event) =>
+        event.includes("'USAGE_TRACKER_URL=http://tracker.local'")
+      )
+    ).toBe(true);
+    expect(
+      events.some((event) =>
+        event.includes("'USAGE_TRACKER_SECRET=dotenv-secret'")
+      )
+    ).toBe(true);
+    expect(events.indexOf("manifest:codex-thread-1:codex:")).toBeLessThan(
+      events.indexOf("spawn-babysit:codex-thread-1:codex:")
+    );
+    expect(manifest.tmuxPaneBabysit).toBe("repo-loop-1:0.2");
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
 });
 
 test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
@@ -1140,6 +1303,8 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).toContain("Use AskUserQuestion");
   expect(primaryPrompt).toContain("Maintain `PLAN.md` and `status.md`");
   expect(primaryPrompt).toContain("running handoff");
+  expect(primaryPrompt).toContain("Context role: optimize for Codex's smaller context window.");
+  expect(primaryPrompt).toContain("Ask Claude for missing historical context");
   expect(primaryPrompt).toContain(
     "create a draft PR or send a follow-up commit to the existing PR"
   );
@@ -1149,6 +1314,8 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(peerPrompt).toContain("You are the reviewer/support agent.");
   expect(peerPrompt).toContain("request validation every few concrete steps");
   expect(peerPrompt).toContain("keeps PLAN.md and status.md current");
+  expect(peerPrompt).toContain("Context role: use Claude's larger context window");
+  expect(peerPrompt).toContain("Answer Codex context questions from session history");
   expect(peerPrompt).toContain("Do not take over the task or create the PR");
   expect(peerPrompt).toContain("Wait for Codex to send you a targeted request");
   expect(peerPrompt).not.toContain('"reply"');
@@ -1161,6 +1328,34 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(peerPrompt).toContain(
     '"mcp__loop-bridge-repo-123-1__receive_messages"'
   );
+});
+
+test("tmux prompts make Claude the context steward and Codex recent-focused", () => {
+  const opts = makePairedOptions({ agent: "claude", pairWith: "codex" });
+  const primaryPrompt = tmuxInternals.buildPrimaryPrompt(
+    "Ship feature",
+    opts,
+    "1",
+    ""
+  );
+  const peerPrompt = tmuxInternals.buildPeerPrompt(
+    "Ship feature",
+    opts,
+    "codex",
+    "1",
+    ""
+  );
+
+  expect(primaryPrompt).toContain("you are the primary Claude agent");
+  expect(primaryPrompt).toContain("Context role: use Claude's larger context window");
+  expect(primaryPrompt).toContain("Preserve historical decisions");
+  expect(primaryPrompt).toContain("include the small recent slice");
+  expect(primaryPrompt).toContain("Answer Codex context questions from session history");
+  expect(peerPrompt).toContain("You are Codex.");
+  expect(peerPrompt).toContain("Context role: optimize for Codex's smaller context window.");
+  expect(peerPrompt).toContain("Stay focused on the immediate request");
+  expect(peerPrompt).toContain("Ask Claude for missing historical context");
+  expect(peerPrompt).toContain("make frequent targeted calls");
 });
 
 test("tmux prompts respect --pair-with for non-default peers", () => {
@@ -1217,6 +1412,7 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
   expect(primaryPrompt).toContain("use AskUserQuestion");
   expect(primaryPrompt).toContain("create or update PLAN.md and status.md");
   expect(primaryPrompt).toContain("end-of-session handoff");
+  expect(primaryPrompt).toContain("Context role: optimize for Codex's smaller context window.");
   expect(primaryPrompt).toContain(
     "Ask Claude for validation and feedback after every few concrete steps"
   );
@@ -1225,6 +1421,7 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
   expect(peerPrompt).toContain("No task has been assigned yet.");
   expect(peerPrompt).toContain("human-driven interactive run");
   expect(peerPrompt).toContain("keeps PLAN.md and status.md current");
+  expect(peerPrompt).toContain("Context role: use Claude's larger context window");
   expect(peerPrompt).toContain(
     "If Codex asks for a plan review, review PLAN.md only"
   );
@@ -1898,7 +2095,7 @@ test("runInTmux resolves paired run id through an existing manifest", async () =
     const calls: string[][] = [];
     const attaches: string[] = [];
     let sessionStarted = false;
-    const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+    const runBase = currentRunBase(process.cwd(), "alpha");
     const session = tmuxInternals.buildRunName(runBase, "alpha");
     const command = tmuxInternals.buildShellCommand([
       "env",
@@ -1994,7 +2191,7 @@ test("runInTmux honors paired run resume from --session", async () => {
   await withTempHomeRunManifest("alpha", async (home) => {
     const calls: string[][] = [];
     let sessionStarted = false;
-    const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+    const runBase = currentRunBase(process.cwd(), "alpha");
     const session = tmuxInternals.buildRunName(runBase, "alpha");
     const command = tmuxInternals.buildShellCommand([
       "env",
@@ -2198,7 +2395,7 @@ test("runInTmux resolves raw stored session ids from --session", async () => {
     async (home) => {
       const calls: string[][] = [];
       let sessionStarted = false;
-      const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+      const runBase = currentRunBase(process.cwd(), "alpha");
       const session = tmuxInternals.buildRunName(runBase, "alpha");
       const command = tmuxInternals.buildShellCommand([
         "env",
@@ -2268,7 +2465,7 @@ test("runInTmux ignores an unresolved raw session id in paired mode", async () =
   const home = makeTempHome();
   const calls: string[][] = [];
   let sessionStarted = false;
-  const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+  const runBase = currentRunBase(process.cwd(), "1");
   const command = tmuxInternals.buildShellCommand([
     "env",
     `LOOP_RUN_BASE=${runBase}`,
@@ -2562,7 +2759,7 @@ test("runInTmux skips auto-attach for non-interactive sessions", async () => {
 });
 
 test("runInTmux reports when tmux session exits before attach", async () => {
-  const runBase = tmuxInternals.sanitizeBase(basename(process.cwd()));
+  const runBase = currentRunBase(process.cwd(), "1");
   await expect(
     runInTmux(["--tmux", "--proof", "verify"], {
       env: {},

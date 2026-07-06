@@ -255,6 +255,10 @@ test("runAgent launches Codex app-server with loop-scoped Codex home", async () 
   expect(result.exitCode).toBe(0);
   expect(startAppServer).toHaveBeenCalledTimes(1);
   expect(startAppServer.mock.calls[0]?.[0]).toMatchObject({
+    configValues: expect.arrayContaining([
+      'model_reasoning_effort="xhigh"',
+      'service_tier="fast"',
+    ]),
     env: expect.objectContaining({ CODEX_HOME: codexHome }),
   });
 });
@@ -285,6 +289,14 @@ test("buildCommand carries Codex bridge approval config for legacy exec", () => 
   const yoloIndex = command.args.indexOf("--yolo");
 
   expect(command.cmd).toBe("codex");
+  expect(command.args).toEqual(
+    expect.arrayContaining([
+      "-c",
+      'model_reasoning_effort="xhigh"',
+      "-c",
+      'service_tier="fast"',
+    ])
+  );
   expect(yoloIndex).toBeGreaterThan(-1);
   expect(command.args.slice(0, yoloIndex)).toEqual(
     expect.arrayContaining(codexMcpConfigArgs)
@@ -407,7 +419,11 @@ test("startPersistentAgentSession enables persistent Codex threads", async () =>
 
   expect(startAppServer).toHaveBeenCalledWith(
     expect.objectContaining({
-      configValues: ['mcp_servers.bridge.command="/bin/echo"'],
+      configValues: expect.arrayContaining([
+        'model_reasoning_effort="xhigh"',
+        'service_tier="fast"',
+        'mcp_servers.bridge.command="/bin/echo"',
+      ]),
       persistentThread: true,
       threadModel: "test-model",
     })

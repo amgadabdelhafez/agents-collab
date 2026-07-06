@@ -2,7 +2,13 @@ import pkg from "../../package.json";
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
-export const DEFAULT_CODEX_MODEL = "gpt-5.4";
+export const DEFAULT_CODEX_MODEL = "gpt-5.5";
+export const DEFAULT_CODEX_REASONING_EFFORT = "xhigh";
+export const DEFAULT_CODEX_SERVICE_TIER = "fast";
+export const DEFAULT_CODEX_CONFIG_VALUES = [
+  `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
+  `service_tier="${DEFAULT_CODEX_SERVICE_TIER}"`,
+] as const;
 export const DEFAULT_CLAUDE_MODEL = "opus";
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
 export const DEFAULT_COPILOT_MODEL = "auto";
@@ -20,6 +26,8 @@ export const DEFAULT_BABYSIT_HEIGHT = "25%";
 export const DEFAULT_BABYSIT_CONFIDENCE = 0.7;
 export const DEFAULT_BABYSIT_TICK_SECONDS = 15;
 export const DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS = 300;
+export const DEFAULT_USAGE_TRACKER_URL = "http://127.0.0.1:8000";
+export const DEFAULT_USAGE_TRACKER_TIMEOUT_MS = 1500;
 
 export const HELP = `
 loop - v${LOOP_VERSION} - meta agent loop runner
@@ -74,6 +82,15 @@ Options:
   --babysit-height <rows|percent>          Babysitter pane height, e.g. 25% or 12 (default: ${DEFAULT_BABYSIT_HEIGHT})
   -v, --version                            Show loop version
   -h, --help                               Show this help
+
+Environment:
+  LOOP_BABYSIT_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
+  LOOP_BABYSIT_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
+  LOOP_BABYSIT_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
+  LOOP_BABYSIT_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
+  LOOP_BABYSIT_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path
+  LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for babysitter RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})
+  LOOP_USAGE_TRACKER_SECRET=<secret>        Bearer token for Usage Tracker /stats (falls back to USAGE_TRACKER_SECRET)
 
 Auto-update:
   Updates are checked automatically on startup and applied on the next run.

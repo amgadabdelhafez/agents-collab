@@ -7,6 +7,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import {
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
+  DEFAULT_CODEX_SERVICE_TIER,
+} from "./constants";
 
 const LOOP_CODEX_HOME_DIR = "codex-home";
 const AUTH_FILES = ["auth.json"] as const;
@@ -27,7 +32,11 @@ const buildLoopCodexConfig = (cwd: string): string =>
   [
     'approval_policy = "never"',
     'sandbox_mode = "danger-full-access"',
-    'model_reasoning_effort = "xhigh"',
+    `model = ${JSON.stringify(DEFAULT_CODEX_MODEL)}`,
+    `model_reasoning_effort = ${JSON.stringify(
+      DEFAULT_CODEX_REASONING_EFFORT
+    )}`,
+    `service_tier = ${JSON.stringify(DEFAULT_CODEX_SERVICE_TIER)}`,
     "",
     `[projects.${tomlKey(cwd)}]`,
     'trust_level = "trusted"',

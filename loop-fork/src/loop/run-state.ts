@@ -64,6 +64,7 @@ export interface RunManifest {
   cwd: string;
   mode: string;
   pid: number;
+  primaryAgent?: Agent;
   repoId: string;
   runId: string;
   state: RunLifecycleState;
@@ -137,6 +138,7 @@ interface RunManifestInput {
   cwd: string;
   mode: string;
   pid: number;
+  primaryAgent?: Agent;
   repoId: string;
   runId: string;
   state?: RunLifecycleState;
@@ -473,6 +475,7 @@ export const createRunManifest = (
     cwd: input.cwd,
     mode: input.mode,
     pid: input.pid,
+    ...(input.primaryAgent ? { primaryAgent: input.primaryAgent } : {}),
     repoId: input.repoId,
     runId: validateRunId(input.runId),
     state,
@@ -580,6 +583,14 @@ export const readRunManifest = (
       cwd,
       mode,
       pid,
+      ...(firstAgent(parsed, ["primaryAgent", "primary_agent"])
+        ? {
+            primaryAgent: firstAgent(parsed, [
+              "primaryAgent",
+              "primary_agent",
+            ]),
+          }
+        : {}),
       repoId,
       runId,
       state: state ?? "working",

@@ -49,6 +49,7 @@ export type BabysitterAgentState =
   | "working"
   | "waiting-human"
   | "waiting-peer"
+  | "limited"
   | "stuck"
   | "crashed";
 
@@ -116,21 +117,42 @@ export interface RecoveryDecision {
 // --- Usage / cost (babysitter-usage.ts) ---
 // Per-agent token/context/cost snapshot derived from the agent's session
 // transcript. All token counts are cumulative for the session.
+export type UsageDataConfidence = "approx" | "error" | "exact" | "missing";
+
 export interface AgentUsage {
   cacheCreateTokens: number;
   cacheReadTokens: number;
+  compactedContextTokens: number;
+  compactions: number;
+  contextRateTokensPerMinute: number;
   contextTokens: number;
   contextWindow: number;
+  costRateUsdPerHour: number;
   costUsd: number;
+  // ChatGPT/Codex credit multiplier relative to standard mode when known.
+  creditCostMultiplier?: number;
+  dataConfidence: UsageDataConfidence;
   firstTs?: string;
   // Count of genuine human prompts seen in this agent's transcript.
   humanMessages: number;
   inputTokens: number;
+  lastCompactionTs?: string;
   lastTs?: string;
   // Count of this agent's own (assistant) messages.
   messages: number;
   model?: string;
   outputTokens: number;
+  rateLimitPrimaryPct?: number;
+  rateLimitPrimaryReset?: string;
+  rateLimitSecondaryPct?: number;
+  rateLimitSecondaryReset?: string;
+  reasoningEffort?: string;
+  serviceTier?: string;
+  speed?: string;
+  textMessages: number;
+  thinkingMessages: number;
+  toolCallCounts: Record<string, number>;
+  toolCalls: number;
   totalTokens: number;
 }
 
@@ -140,18 +162,33 @@ export interface JudgeRequest {
   hookTail: HookEvent[];
   model: string;
   paneText: string;
+  traceFile?: string;
   url: string;
 }
 
 export type JudgeFailureReason = "malformed" | "timeout" | "unreachable";
 
+export interface LocalLlmUsage {
+  cachedInputTokens: number;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
 export type JudgeOutcome =
-  | { ok: true; tokens?: number; verdict: BabysitterVerdict }
+  | {
+      ok: true;
+      tokens?: number;
+      usage?: LocalLlmUsage;
+      verdict: BabysitterVerdict;
+    }
   | {
       fallback: BabysitterVerdict;
       ok: false;
       reason: JudgeFailureReason;
       tokens?: number;
+      usage?: LocalLlmUsage;
     };
 
 // Local-LLM session summary (a few lines describing the session + progress).
@@ -170,18 +207,36 @@ export interface SummaryRequest {
   priorSummaries?: string[];
   // Project docs (CLAUDE.md / AGENTS.md / PLAN.md excerpts) from the run cwd.
   projectContext?: string;
+  traceFile?: string;
   url: string;
 }
 
 export interface SummaryResult {
   text: string;
   tokens: number;
+  usage?: LocalLlmUsage;
+}
+
+// Local-LLM per-agent pane label (a short task noun phrase for the pane border).
+export interface PaneLabelRequest {
+  agents: SummaryAgentContext[];
+  model: string;
+  traceFile?: string;
+  url: string;
+}
+
+export interface PaneLabelResult {
+  // Short task label per agent, e.g. { claude: "auth refactor" }. Empty on failure.
+  labels: Partial<Record<Agent, string>>;
+  tokens: number;
+  usage?: LocalLlmUsage;
 }
 
 // Local-LLM judgment of whether both idle agents are blocked on the human.
 export interface WaitingRequest {
   agents: SummaryAgentContext[];
   model: string;
+  traceFile?: string;
   url: string;
 }
 
@@ -189,7 +244,41 @@ export interface WaitingResult {
   // One-line description of what the agents need from the human ("" if none).
   ask: string;
   tokens: number;
+  usage?: LocalLlmUsage;
   waiting: boolean;
+}
+
+export interface RoleBalanceAgentContext {
+  agent: Agent;
+  contextPct: number;
+  currentDriver: boolean;
+  recentAction?: string;
+  sessionPct?: number;
+  sessionReset?: string;
+  state: string;
+  weeklyPct?: number;
+  weeklyReset?: string;
+}
+
+export interface RoleBalanceRequest {
+  agents: RoleBalanceAgentContext[];
+  candidateDriver?: Agent;
+  currentDriver?: Agent;
+  initialDriver?: Agent;
+  model: string;
+  reasonHint?: string;
+  summary?: string;
+  traceFile?: string;
+  url: string;
+}
+
+export interface RoleBalanceResult {
+  confidence: number;
+  driver?: Agent;
+  reason: string;
+  switchDriver: boolean;
+  tokens: number;
+  usage?: LocalLlmUsage;
 }
 
 export interface Options {
@@ -199,6 +288,7 @@ export interface Options {
   babysitDryRun?: boolean;
   babysitHeight: string;
   babysitIdleSeconds: number;
+  babysitLlmTrace?: string;
   babysitMaxRecoveries: number;
   babysitModel: string;
   babysitUrl: string;

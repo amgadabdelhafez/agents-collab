@@ -570,6 +570,7 @@ export const parseArgs = (argv: string[]): Options => {
     babysitUrl: env.LOOP_BABYSIT_URL ?? DEFAULT_BABYSIT_URL,
     babysitModel: env.LOOP_BABYSIT_MODEL ?? DEFAULT_BABYSIT_MODEL,
     babysitHeight: DEFAULT_BABYSIT_HEIGHT,
+    babysitLlmTrace: env.LOOP_BABYSIT_LLM_TRACE,
     pairedMode: true,
     review: "claudex",
     resumeRunId: undefined,

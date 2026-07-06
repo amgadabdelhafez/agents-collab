@@ -23,7 +23,7 @@ import {
 } from "./codex-app-server";
 import { codexHomeEnv } from "./codex-home";
 import { createCodexRenderer } from "./codex-render";
-import { DEFAULT_CLAUDE_MODEL } from "./constants";
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_CONFIG_VALUES } from "./constants";
 import { DETACH_CHILD_PROCESS, killChildProcess } from "./process";
 import type { Agent, Options, RunResult } from "./types";
 
@@ -33,6 +33,14 @@ interface SpawnConfig {
   args: string[];
   cmd: string;
 }
+
+const codexConfigValues = (values: string[] = []): string[] => [
+  ...DEFAULT_CODEX_CONFIG_VALUES,
+  ...values,
+];
+
+const codexConfigArgs = (values: string[] = []): string[] =>
+  codexConfigValues(values).flatMap((value) => ["-c", value]);
 export interface PersistentAgentSessionOptions {
   claudeLaunch?: ClaudeSdkLaunchOptions;
   codexLaunch?: AppServerLaunchOptions;
@@ -157,9 +165,7 @@ export const buildCommand = (
       "--json",
       "--model",
       model,
-      "-c",
-      'model_reasoning_effort="xhigh"',
-      ...(opts?.codexMcpConfigArgs ?? []),
+      ...codexConfigArgs(opts?.codexMcpConfigArgs),
       "--yolo",
       prompt,
     ];
@@ -408,7 +414,7 @@ const runCodexAppServerAttempt = async (
 
   try {
     await startAppServer({
-      configValues: opts.codexMcpConfigArgs,
+      configValues: codexConfigValues(opts.codexMcpConfigArgs),
       env: codexHomeEnv(opts.codexHome),
       persistentThread: opts.pairedMode === true || Boolean(sessionId),
     });
@@ -737,11 +743,13 @@ export const startPersistentAgentSession = async (
     return;
   }
   if (agent === "codex") {
+    const codexLaunch = sessionOptions.codexLaunch;
     await startAppServer({
-      configValues:
-        sessionOptions.codexLaunch?.configValues ?? opts.codexMcpConfigArgs,
-      env: sessionOptions.codexLaunch?.env ?? codexHomeEnv(opts.codexHome),
-      ...(sessionOptions.codexLaunch ?? {}),
+      env: codexLaunch?.env ?? codexHomeEnv(opts.codexHome),
+      ...(codexLaunch ?? {}),
+      configValues: codexConfigValues(
+        codexLaunch?.configValues ?? opts.codexMcpConfigArgs
+      ),
       persistentThread: true,
       resumeThreadId: sessionId,
       threadModel: resolveModel(agent, opts, kind),
