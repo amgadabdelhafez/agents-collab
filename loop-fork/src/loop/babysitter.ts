@@ -213,6 +213,7 @@ export interface SessionStats {
 // Which escalations have already been sent, so we alert once per episode
 // rather than every tick (persisted, so a restart does not re-spam).
 export interface NotifiedState {
+  autonomyNudge: boolean;
   budget80: boolean;
   budget100: boolean;
   ladder: Record<string, boolean>;
@@ -269,6 +270,7 @@ export interface BabysitRunState {
 }
 
 const freshNotified = (): NotifiedState => ({
+  autonomyNudge: false,
   budget100: false,
   budget80: false,
   ladder: {},
@@ -499,6 +501,7 @@ const SESSION_LIMIT_RE =
 const CONTEXT_COMPACT_RE =
   /\b(context|ctx)\b.*\b(compact|window|full|limit)\b|\b(compact|compress)\b.*\b(context|ctx)\b/i;
 const BABYSITTER_PROMPT_RE = /\bbabysitter:/i;
+const NEWLINE_RE = /\r?\n/;
 const parsePaneCtxRemainingPct = (paneText: string): number | undefined => {
   const match = paneText.match(PANE_CTX_RE);
   if (!match) {
@@ -601,6 +604,10 @@ const DEFAULT_LOCAL_LLM_PROMPT_CONCURRENCY = 8;
 // Only ask the local LLM whether the pair needs us once they have been idle
 // together this long, to skip the brief both-idle gaps between hand-offs.
 const BOTH_IDLE_ASSESS_MS = 45_000;
+// If that first judgment came back inconclusive (not-waiting and no ask) and the
+// pair is still idle on the same episode this long in, ask exactly once more —
+// a single conservative/flaky read should not silence the rest of the episode.
+const BOTH_IDLE_REASSESS_MS = 120_000;
 
 const paint = (code: string, text: string): string =>
   `${code}${text}${ANSI.reset}`;
@@ -3039,6 +3046,96 @@ const cloneStats = (stats: SessionStats): SessionStats => ({
 // A lone idle agent is usually just waiting on its peer via the bridge; the pair
 // needs the human when BOTH are idle together. Track how long that has held,
 // resetting (and forgetting the LLM's read) the moment either agent goes active.
+// Deterministic backstop for the (conservative, sometimes-wrong) local-LLM
+// waiting judge. We only trust the TAIL of each pane — an agent's newest lines
+// are its current state, so a historical prompt higher up cannot match — and
+// only phrases clearly directed at the HUMAN. Peer-wait / review phrases are
+// excluded so "waiting for Codex's review" never reads as waiting-on-human.
+const WAITING_HUMAN_TAIL_LINES = 12;
+const WAITING_ASK_LEN_MAX = 100;
+
+const WAITING_HUMAN_RE =
+  /\b(waiting (?:for|on) (?:your|you\b)|waiting for the human|await(?:ing)? your|need your (?:input|decision|approval|direction|call|guidance)|which (?:do|would) you (?:want|prefer|like)|how would you like|would you like me to|do you want me to|(?:should|shall) i (?:proceed|continue|start|go ahead|begin)|let me know (?:which|how|what|if you)|your call\b|please (?:confirm|approve|choose|decide|pick)|standing by for (?:the human|your|you\b))/i;
+
+// Waiting-on-a-PEER (or a review) is NOT waiting-on-human; these veto a line.
+const WAITING_PEER_RE =
+  /\b(waiting (?:for|on) (?:codex|claude|gemini|the other agent|the peer|review|a reply)|await(?:ing)? (?:codex|claude|gemini|review)|pinged (?:codex|claude|gemini)|sent (?:to|it to) (?:codex|claude|gemini)|handed (?:back|off) to|asked (?:codex|claude|gemini))/i;
+
+const tailLines = (paneText: string, count: number): string[] =>
+  paneText
+    .split(NEWLINE_RE)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-count);
+
+// Pure decision for runBabysitter's per-episode waiting judgment: run the first
+// assessment once both have been idle long enough, then AT MOST one retry if
+// that first read was inconclusive and the pair is still idle much later.
+export const nextWaitingAssessment = (params: {
+  assessInFlight: boolean;
+  assessedForIdleSince: number;
+  idleSince: number;
+  now: number;
+  reassessedForIdleSince: number;
+  waitingAsk: string;
+  waitingConfirmed: boolean;
+}): "first" | "reassess" | "none" => {
+  const { idleSince, now } = params;
+  if (params.assessInFlight || idleSince === 0) {
+    return "none";
+  }
+  if (now - idleSince < BOTH_IDLE_ASSESS_MS) {
+    return "none";
+  }
+  if (params.assessedForIdleSince !== idleSince) {
+    return "first";
+  }
+  if (
+    params.reassessedForIdleSince !== idleSince &&
+    !params.waitingConfirmed &&
+    params.waitingAsk === "" &&
+    now - idleSince >= BOTH_IDLE_REASSESS_MS
+  ) {
+    return "reassess";
+  }
+  return "none";
+};
+
+// Deterministic backstop for the conservative local-LLM waiting judge: while
+// both are idle, a clear human-directed question in the freshest pane lines
+// confirms waiting-on-human even if the judge said false (or has not run yet).
+const applyDeterministicWaiting = (
+  runState: BabysitRunState,
+  waiting: WaitingForYou,
+  summaryCtxs: SummaryAgentContext[]
+): void => {
+  if (runState.bothIdleSince <= 0 || waiting.confirmed) {
+    return;
+  }
+  const detected = detectWaitingHumanFromTails(summaryCtxs);
+  if (!detected.waiting) {
+    return;
+  }
+  runState.waitingConfirmed = true;
+  runState.waitingAsk = runState.waitingAsk || detected.ask;
+  waiting.confirmed = true;
+  waiting.ask = waiting.ask || detected.ask;
+};
+
+// Scan each pane tail for a clear, current, human-directed question / stand-by.
+export const detectWaitingHumanFromTails = (
+  ctxs: SummaryAgentContext[]
+): { ask: string; waiting: boolean } => {
+  for (const ctx of ctxs) {
+    for (const line of tailLines(ctx.paneText, WAITING_HUMAN_TAIL_LINES)) {
+      if (WAITING_HUMAN_RE.test(line) && !WAITING_PEER_RE.test(line)) {
+        return { ask: line.slice(0, WAITING_ASK_LEN_MAX), waiting: true };
+      }
+    }
+  }
+  return { ask: "", waiting: false };
+};
+
 const updateBothIdle = (
   runState: BabysitRunState,
   rows: AgentRow[],
@@ -3050,6 +3147,7 @@ const updateBothIdle = (
     runState.waitingConfirmed = false;
     runState.waitingAsk = "";
     runState.notified.waitingForYou = false;
+    runState.notified.autonomyNudge = false;
     return { ask: "", confirmed: false, ms: 0 };
   }
   if (runState.bothIdleSince === 0) {
@@ -3194,6 +3292,92 @@ const availableDriverRow = (
         (row) => row.liveness.agent === preferred && !isLimitPaused(row)
       )
     : undefined) ?? rows.find((row) => !isLimitPaused(row));
+
+// Both agents can go idle with the work not actually finished and nobody
+// blocked on the human — each "stands by" waiting for the other (or for a
+// prompt), and the loop stalls. When that happens, nudge the current driver
+// ONCE to pick the next safe item itself instead of waiting. Deduped per idle
+// episode; never fires when the pair is genuinely waiting on the human, an
+// agent is limited/crashed, or the driver says it is waiting on its peer.
+const AUTONOMY_NUDGE_IDLE_MS = 90_000;
+
+const AUTONOMY_STANDBY_RE =
+  /\b(standing by|stand(?:ing)? by to|stood down|awaiting (?:further )?(?:instructions|direction|redirect|guidance)|no further (?:action|work|steps)|ready for the next|nothing (?:left|else|more) to do|will (?:stand by|wait)|holding for)/i;
+
+const AUTONOMY_NUDGE_MESSAGE = [
+  "babysitter: both agents are idle and nothing is blocking on the human.",
+  "Select the next safe, unblocked item already in PLAN.md/STATUS.md and start",
+  "it now. Keep the current scope and any frozen constraints, and do not ask the",
+  "human for routine prioritization.",
+].join(" ");
+
+const maybeSendAutonomyNudge = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  rows: AgentRow[],
+  runState: BabysitRunState,
+  waiting: WaitingForYou,
+  summaryCtxs: SummaryAgentContext[],
+  nowIso: string
+): Promise<void> => {
+  if (config.dryRun || runState.notified.autonomyNudge) {
+    return;
+  }
+  // Only when the pair is idle a while and NOT blocked on the human.
+  if (waiting.confirmed || waiting.ms < AUTONOMY_NUDGE_IDLE_MS) {
+    return;
+  }
+  // A limited or crashed agent is a different failure mode; leave it alone.
+  if (
+    rows.some(
+      (row) =>
+        isLimitPaused(row) ||
+        row.verdict?.state === "crashed" ||
+        row.verdict?.state === "limited"
+    )
+  ) {
+    return;
+  }
+  const driver = runState.roles.currentDriver ?? config.initialDriver;
+  if (!driver) {
+    return;
+  }
+  const driverCtx = summaryCtxs.find((ctx) => ctx.agent === driver);
+  if (!driverCtx) {
+    return;
+  }
+  const tail = tailLines(driverCtx.paneText, WAITING_HUMAN_TAIL_LINES);
+  const generic = tail.some((line) => AUTONOMY_STANDBY_RE.test(line));
+  // Do not nudge if the driver is (or thinks it is) waiting on its peer/review,
+  // or is actually asking the human — those are not "idle for no reason".
+  const blockedOnOther = tail.some(
+    (line) => WAITING_PEER_RE.test(line) || WAITING_HUMAN_RE.test(line)
+  );
+  if (!generic || blockedOnOther) {
+    return;
+  }
+  const info = agentInfoByAgent(config)[driver];
+  if (!info) {
+    return;
+  }
+  const source = bridgeSourceFor(driver, runState.roles.temporaryDriver, config);
+  const delivery = await sendRoleMessage(
+    config,
+    deps,
+    info,
+    driver,
+    source,
+    AUTONOMY_NUDGE_MESSAGE
+  );
+  runState.notified.autonomyNudge = true;
+  incrementCount(runState.babysitterMessages, driver);
+  deps.appendLog(config.logFile, {
+    delivery,
+    driver,
+    kind: "autonomy-nudge",
+    ts: nowIso,
+  });
+};
 
 const setActiveRoleHandoff = (
   runState: BabysitRunState,
@@ -3703,6 +3887,7 @@ export const babysitTick = async (
 
   const totalCost = rows.reduce((sum, row) => sum + row.usage.costUsd, 0);
   const waitingForYou = updateBothIdle(runState, rows, nowMs);
+  applyDeterministicWaiting(runState, waitingForYou, summaryCtxs);
   for (const event of collectEscalations(
     runState,
     waitingForYou,
@@ -3711,6 +3896,15 @@ export const babysitTick = async (
   )) {
     deps.notify(config.ntfyUrl, event);
   }
+  await maybeSendAutonomyNudge(
+    config,
+    deps,
+    rows,
+    runState,
+    waitingForYou,
+    summaryCtxs,
+    nowIso
+  );
 
   const uptimeMs = config.createdAt
     ? nowMs - Date.parse(config.createdAt)
@@ -4308,6 +4502,8 @@ export const runBabysitter = async (
   let waitingConfirmed = runState.waitingConfirmed;
   let waitingAssessInFlight = false;
   let assessedForIdleSince = 0;
+  let reassessedForIdleSince = 0;
+  let summarizedIdleEpisode = 0;
   let pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
   for (;;) {
     // Fold any completed background work in before rendering this tick.
@@ -4346,6 +4542,17 @@ export const runBabysitter = async (
     // updateBothIdle may have cleared the waiting read (agents went active).
     waitingConfirmed = runState.waitingConfirmed;
     waitingAsk = runState.waitingAsk;
+
+    // A new both-idle episode is exactly when the board's Next matters most and
+    // is most likely stale, so force a fresh summary off the newest pane tails
+    // (once per episode) rather than waiting out the slow refresh cadence.
+    const idleEpisode = runState.bothIdleSince;
+    if (idleEpisode === 0) {
+      summarizedIdleEpisode = 0;
+    } else if (idleEpisode !== summarizedIdleEpisode) {
+      summarizedIdleEpisode = idleEpisode;
+      summaryTick = -1;
+    }
 
     if (
       !summaryInFlight &&
@@ -4413,23 +4620,31 @@ export const runBabysitter = async (
     const idleSince = runState.bothIdleSince;
     if (idleSince === 0) {
       assessedForIdleSince = 0;
-    } else if (
-      !waitingAssessInFlight &&
-      assessedForIdleSince !== idleSince &&
-      deps.now() - idleSince >= BOTH_IDLE_ASSESS_MS
-    ) {
+      reassessedForIdleSince = 0;
+    }
+    const waitAction = nextWaitingAssessment({
+      assessInFlight: waitingAssessInFlight,
+      assessedForIdleSince,
+      idleSince,
+      now: deps.now(),
+      reassessedForIdleSince,
+      waitingAsk,
+      waitingConfirmed,
+    });
+    if (waitAction !== "none") {
       waitingAssessInFlight = true;
       const episode = idleSince;
-      assessWaitingWithLocalJudges(
-        config,
-        deps,
-        result.summaryCtxs,
-        runState.tick
-      )
+      const reassessing = waitAction === "reassess";
+      assessWaitingWithLocalJudges(config, deps, result.summaryCtxs, runState.tick)
         .then((assessment) => {
-          waitingConfirmed = assessment.waiting;
-          waitingAsk = assessment.ask;
+          // Never downgrade a waiting already confirmed this episode (by an
+          // earlier judgment or the deterministic pane-tail backstop).
+          waitingConfirmed = assessment.waiting || waitingConfirmed;
+          waitingAsk = waitingAsk || assessment.ask;
           assessedForIdleSince = episode;
+          if (reassessing) {
+            reassessedForIdleSince = episode;
+          }
           pendingWaitUsageByJudge = addLocalLlmUsageByJudge(
             pendingWaitUsageByJudge,
             assessment.usageByJudge

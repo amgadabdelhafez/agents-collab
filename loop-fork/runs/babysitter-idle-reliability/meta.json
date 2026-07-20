@@ -1,0 +1,7 @@
+{
+  "id": "babysitter-idle-reliability",
+  "mode": "planned",
+  "created_at": "2026-07-20T05:44:09Z",
+  "status": "active",
+  "description": "Deterministic waiting-human fallback, idle reassess-once, freshest-evidence summary, one-shot autonomy nudge"
+}

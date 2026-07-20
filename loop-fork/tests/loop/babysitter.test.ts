@@ -5,7 +5,9 @@ import {
   type BridgeSendStatus,
   babysitTick,
   composePaneTitle,
+  detectWaitingHumanFromTails,
   freshRunState,
+  nextWaitingAssessment,
   sendRenameCommands,
 } from "../../src/loop/babysitter";
 import type { EscalationEvent } from "../../src/loop/babysitter-notify";
@@ -1730,4 +1732,252 @@ test("sendRenameCommands does not inject into an agent that is mid-turn", () => 
     { claude: "idle" }
   );
   expect(spies.texts).toEqual(["/rename s · auth refactor"]);
+});
+
+// ---- Idle reliability: deterministic waiting detection (babysitter-idle-reliability) ----
+
+const ctx = (agent: Agent, paneText: string) => ({
+  agent,
+  lastActions: [] as string[],
+  paneText,
+});
+
+test("detectWaitingHumanFromTails confirms a clear human-directed question", () => {
+  const result = detectWaitingHumanFromTails([
+    ctx("claude", "did the thing\nWhich do you want: option A or option B?"),
+  ]);
+  expect(result.waiting).toBe(true);
+  expect(result.ask).toContain("Which do you want");
+});
+
+test("detectWaitingHumanFromTails confirms explicit 'waiting for your input'", () => {
+  const result = detectWaitingHumanFromTails([
+    ctx("codex", "Banked both PRs.\nStanding by, waiting for your input."),
+  ]);
+  expect(result.waiting).toBe(true);
+});
+
+test("detectWaitingHumanFromTails ignores peer-wait / review phrases", () => {
+  const result = detectWaitingHumanFromTails([
+    ctx("claude", "Sent the diff to Codex.\nStanding by, waiting for Codex's review."),
+  ]);
+  expect(result.waiting).toBe(false);
+});
+
+test("detectWaitingHumanFromTails ignores a generic stand-by with no question", () => {
+  const result = detectWaitingHumanFromTails([
+    ctx("claude", "All tests pass.\nStanding by."),
+    ctx("codex", "Acknowledged. Standing down."),
+  ]);
+  expect(result.waiting).toBe(false);
+});
+
+test("detectWaitingHumanFromTails ignores a question buried above the tail window", () => {
+  const buried = [
+    "Which do you want: A or B?", // historical, far above the tail
+    ...Array.from({ length: 20 }, (_, i) => `progress line ${i}`),
+    "Standing by.",
+  ].join("\n");
+  const result = detectWaitingHumanFromTails([ctx("claude", buried)]);
+  expect(result.waiting).toBe(false);
+});
+
+test("detectWaitingHumanFromTails: sanitized loop-24 pane-tail replay confirms waiting", () => {
+  // Sanitized tails reconstructed from the loop-24 stall: both agents finished,
+  // one explicitly asked the human to choose, yet the LLM judge said false.
+  const claudeTail = [
+    "Both PRs are Codex-approved and banked as drafts.",
+    "Two things left for a human: supervisor merge; the 15K-vs-25K threshold call.",
+    "Standing by to judge a new sitting the moment one lands.",
+    "Which do you want: resume the /doctor thread, or start the docs updates?",
+  ].join("\n");
+  const codexTail = [
+    "Handoff acknowledged. Both approvals and corrected verdicts are banked.",
+    "Standing down with no repo, PR, or sitting actions unless you redirect.",
+  ].join("\n");
+  const result = detectWaitingHumanFromTails([
+    ctx("claude", claudeTail),
+    ctx("codex", codexTail),
+  ]);
+  expect(result.waiting).toBe(true);
+  expect(result.ask.toLowerCase()).toContain("which do you want");
+});
+
+// ---- Idle reliability: autonomy nudge + waiting wiring via babysitTick ----
+
+const STOP_BOTH = (clock: { ms: number }) => [
+  { agent: "claude" as Agent, event: "Stop", ts: new Date(clock.ms).toISOString() },
+  { agent: "codex" as Agent, event: "Stop", ts: new Date(clock.ms).toISOString() },
+];
+
+const bothIdleConfig = () =>
+  baseConfig({
+    agents: [
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+    ],
+    initialDriver: "claude",
+  });
+
+// Both idle for > AUTONOMY_NUDGE_IDLE_MS on entry.
+const idleRunState = () => ({
+  ...freshRunState(),
+  bothIdleSince: START_MS - 90_001,
+});
+
+test("autonomy nudge: fires once to the driver when both idle and not human-blocked", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readHooks: () => STOP_BOTH(clock),
+    capturePane: (pane) =>
+      pane === "s:0.0" ? "Done. Standing by." : "Acknowledged. Standing down.",
+  };
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    bothIdleConfig(),
+    deps,
+    idleRunState()
+  );
+  expect(spies.texts.some((t) => t.includes("Select the next safe"))).toBe(true);
+  expect(spies.texts.some((t) => t.includes("do not ask the human"))).toBe(true);
+  expect(
+    spies.logs.some(
+      (log) => (log as { kind?: string }).kind === "autonomy-nudge"
+    )
+  ).toBe(true);
+  expect(result.runState.notified.autonomyNudge).toBe(true);
+});
+
+test("autonomy nudge: does not repeat within the same idle episode", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readHooks: () => STOP_BOTH(clock),
+    capturePane: (pane) => (pane === "s:0.0" ? "Standing by." : "Standing down."),
+  };
+  const config = bothIdleConfig();
+  const first = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    config,
+    deps,
+    idleRunState()
+  );
+  const afterFirst = spies.texts.length;
+  await babysitTick(new Map(), config, deps, first.runState);
+  expect(spies.texts.length).toBe(afterFirst);
+});
+
+test("autonomy nudge: suppressed when the pair is waiting on the human", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readHooks: () => STOP_BOTH(clock),
+    capturePane: (pane) =>
+      pane === "s:0.0"
+        ? "Standing by. Which do you want: A or B?"
+        : "Standing down.",
+  };
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    bothIdleConfig(),
+    deps,
+    idleRunState()
+  );
+  expect(spies.texts.some((t) => t.includes("Select the next safe"))).toBe(false);
+  expect(result.runState.waitingConfirmed).toBe(true);
+});
+
+test("autonomy nudge: suppressed when the driver is waiting on its peer", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readHooks: () => STOP_BOTH(clock),
+    capturePane: (pane) =>
+      pane === "s:0.0"
+        ? "Standing by, waiting for Codex's review."
+        : "Reviewing.",
+  };
+  await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    bothIdleConfig(),
+    deps,
+    idleRunState()
+  );
+  expect(spies.texts.some((t) => t.includes("Select the next safe"))).toBe(false);
+});
+
+test("autonomy nudge: suppressed when an agent is limited", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readHooks: () => [
+      { agent: "claude" as Agent, event: "Stop", ts: new Date(clock.ms).toISOString() },
+    ],
+    capturePane: (pane) =>
+      pane === "s:0.0"
+        ? "Done. Standing by."
+        : "You've reached your session limit. Resets at 1:00 PM.",
+  };
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    bothIdleConfig(),
+    deps,
+    idleRunState()
+  );
+  expect(spies.texts.some((t) => t.includes("Select the next safe"))).toBe(false);
+  expect(result.runState.notified.autonomyNudge).toBe(false);
+});
+
+test("nextWaitingAssessment schedules first pass then one retry when inconclusive", () => {
+  const idleSince = START_MS;
+  const base = {
+    assessInFlight: false,
+    assessedForIdleSince: 0,
+    idleSince,
+    reassessedForIdleSince: 0,
+    waitingAsk: "",
+    waitingConfirmed: false,
+  };
+  // Too soon after going idle: no assessment.
+  expect(nextWaitingAssessment({ ...base, now: idleSince + 1_000 })).toBe("none");
+  // Past the first-assess delay: run the first pass.
+  expect(nextWaitingAssessment({ ...base, now: idleSince + 60_000 })).toBe(
+    "first"
+  );
+  // Already assessed, still inconclusive, past the reassess delay: one retry.
+  expect(
+    nextWaitingAssessment({
+      ...base,
+      assessedForIdleSince: idleSince,
+      now: idleSince + 130_000,
+    })
+  ).toBe("reassess");
+  // The single retry is spent: no further assessments this episode.
+  expect(
+    nextWaitingAssessment({
+      ...base,
+      assessedForIdleSince: idleSince,
+      reassessedForIdleSince: idleSince,
+      now: idleSince + 300_000,
+    })
+  ).toBe("none");
+  // A confirmed waiting never triggers a retry.
+  expect(
+    nextWaitingAssessment({
+      ...base,
+      assessedForIdleSince: idleSince,
+      waitingConfirmed: true,
+      now: idleSince + 300_000,
+    })
+  ).toBe("none");
+  // An in-flight assessment is never double-scheduled.
+  expect(
+    nextWaitingAssessment({ ...base, assessInFlight: true, now: idleSince + 60_000 })
+  ).toBe("none");
 });

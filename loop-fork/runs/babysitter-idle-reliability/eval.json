@@ -1,0 +1,18 @@
+{
+  "task_id": "babysitter-idle-reliability",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/babysitter-idle-reliability/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/babysitter-idle-reliability/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/babysitter-idle-reliability/artifacts/unit/attempt-001.json"
+    }
+  }
+}

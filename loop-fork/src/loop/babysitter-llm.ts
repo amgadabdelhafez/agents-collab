@@ -485,6 +485,16 @@ const SUMMARY_SYSTEM_PROMPT = [
   "Next: <2-3 lines — the most likely next steps / what remains>",
   "Be specific about code, filenames, and tasks. Infer next steps from the",
   "trajectory. Do not describe whether the agents are idle or active.",
+  "The TAIL of each agent's terminal (its most recent lines) is the CURRENT",
+  "state: when it conflicts with older prompt text, PROJECT DOCS, or prior",
+  "sessions, trust the newest terminal evidence. Base Next on the freshest",
+  "completion / stop-rule / decision the panes show, not on an earlier plan the",
+  "agents have since closed, finished, or abandoned; if a lane was explicitly",
+  "closed or exhausted, do not list resuming it as Next.",
+  "Only report human instructions that actually appear in HUMAN INSTRUCTIONS or",
+  "the panes. Never invent, assume, or carry forward an instruction the human",
+  "did not give (for example, do not fabricate 'resume <lane>' or 'enter API",
+  "key' steps that no message or pane supports).",
 ].join(" ");
 
 export const LOCAL_LLM_SUMMARY_MAX_TOKENS = 3200;

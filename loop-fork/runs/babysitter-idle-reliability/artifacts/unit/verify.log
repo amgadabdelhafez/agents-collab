@@ -1,0 +1,17 @@
+task_id: babysitter-idle-reliability
+dimension: unit
+attempt: 001
+started_at: 2026-07-20T05:58:48Z
+command: bun test tests/loop/babysitter.test.ts tests/loop/babysitter-llm.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+ 73 pass
+ 0 fail
+ 328 expect() calls
+Ran 73 tests across 2 files. [33.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-20T05:58:48Z

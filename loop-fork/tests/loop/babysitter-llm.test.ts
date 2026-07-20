@@ -6,6 +6,7 @@ import {
   assessRoleBalance,
   judgeAgent,
   labelPanes,
+  summarizeSession,
 } from "../../src/loop/babysitter-llm";
 import type {
   JudgeRequest,
@@ -400,4 +401,37 @@ test("labelPanes returns no labels on a non-ok response", async () => {
     fetchFn: stubFetch(chatResponse("{}", 500)),
   });
   expect(result.labels).toEqual({});
+});
+
+// Capture the outgoing chat request so we can assert on the system prompt.
+const capturingFetch = (
+  sink: { body: string },
+  response: Response
+): typeof fetch =>
+  (async (_url: string, init: { body?: string }) => {
+    sink.body = String(init?.body ?? "");
+    return response;
+  }) as unknown as typeof fetch;
+
+test("summary prompt privileges freshest pane evidence and forbids inventing instructions", async () => {
+  const sink = { body: "" };
+  await summarizeSession(
+    {
+      agents: [
+        { agent: "claude", lastActions: ["ran tests"], paneText: "standing by" },
+      ],
+      model: "qwen",
+      url: "http://localhost:1234",
+    },
+    { fetchFn: capturingFetch(sink, chatResponse("Project: x\nNext: y")) }
+  );
+  const body = JSON.parse(sink.body) as {
+    messages: { content: string; role: string }[];
+  };
+  const system = body.messages.find((m) => m.role === "system")?.content ?? "";
+  // Freshest-evidence guidance.
+  expect(system).toContain("TAIL");
+  expect(system.toLowerCase()).toContain("freshest");
+  // Anti-hallucination guidance.
+  expect(system).toContain("Never invent");
 });

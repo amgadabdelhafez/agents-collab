@@ -1,0 +1,17 @@
+{
+  "task_id": "babysitter-idle-reliability",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-20T05:58:48Z",
+  "ended_at": "2026-07-20T05:58:48Z",
+  "artifact": "runs/babysitter-idle-reliability/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/babysitter.test.ts",
+    "tests/loop/babysitter-llm.test.ts"
+  ]
+}
