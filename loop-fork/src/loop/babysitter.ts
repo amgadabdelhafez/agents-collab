@@ -231,6 +231,7 @@ export interface RoleState {
   lastAction?: "balance" | "handoff" | "restore";
   pausedAgent?: Agent;
   pressureKey?: string;
+  pressureMissingAt?: string;
   reset?: string;
   resetKind?: "session" | "weekly";
   restoredAt?: string;
@@ -440,6 +441,7 @@ const readRoleState = (value: unknown): RoleState => {
     initialDriver: readAgentValue(record.initialDriver),
     lastAction: readRoleAction(record.lastAction),
     pausedAgent: readAgentValue(record.pausedAgent),
+    pressureMissingAt: readStringValue(record.pressureMissingAt),
     pressureKey: readStringValue(record.pressureKey),
     reset: readStringValue(record.reset),
     resetKind: readResetKind(record.resetKind),
@@ -509,9 +511,18 @@ const parsePaneCtxRemainingPct = (paneText: string): number | undefined => {
 const parsePaneEffort = (paneText: string): string | undefined =>
   paneText.match(PANE_EFFORT_RE)?.[1]?.toLowerCase();
 
+// Only the TAIL of the pane counts as "current state": an idle agent produces
+// no new output, so a pre-reset limit banner higher up would otherwise match
+// forever — invisible to manual limit resets (the loop-23 stale-limit bug).
+// Any newer output (model change, ack, turn) pushes the banner above the
+// window and clears the verdict.
+const SESSION_LIMIT_TAIL_LINES = 20;
+
 const isSessionLimited = (paneText: string): boolean =>
   paneText
     .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .slice(-SESSION_LIMIT_TAIL_LINES)
     .some(
       (line) =>
         !BABYSITTER_PROMPT_RE.test(line) &&
@@ -1034,8 +1045,48 @@ const renameCommand = (session: string, label: string): string =>
 
 // Agents actively producing output — injecting keystrokes would corrupt their
 // input line (or the human's draft) and submit a turn at a bad moment, so we
-// only rename when the agent is idle, mirroring the nudge gate.
-const RENAME_BUSY_STATES = new Set(["working", "thinking"]);
+// only rename when the agent is idle, mirroring the nudge gate. Limited,
+// crashed, and stuck agents are also blocked: their input box does not submit,
+// so injected renames pile up as queued lines (the loop-19 Codex wedge).
+const RENAME_BUSY_STATES = new Set([
+  "working",
+  "thinking",
+  "limited",
+  "crashed",
+  "stuck",
+]);
+
+// How many previously-sent rename commands to remember per agent. The label
+// judge oscillates between near-synonym phrasings ("taper script editing" ↔
+// "mesh taper script"); remembering only the last command lets an A↔B
+// ping-pong re-inject forever, so we dedupe against a short history.
+const RENAME_HISTORY_LIMIT = 4;
+
+// The judge also mints NOVEL synonyms each refresh ("work queue routing" →
+// "work queue staging" → "work queue documentation"), which exact-match
+// history can't catch. Treat a label sharing at least this fraction of its
+// tokens with a remembered label as the same task and skip the rename.
+const RENAME_SIMILARITY_THRESHOLD = 0.5;
+
+const renameLabelTokens = (command: string): Set<string> => {
+  const label = command.split(" · ").slice(1).join(" · ");
+  return new Set(label.toLowerCase().split(SPACE_RE).filter(Boolean));
+};
+
+const renameLabelsSimilar = (a: string, b: string): boolean => {
+  const ta = renameLabelTokens(a);
+  const tb = renameLabelTokens(b);
+  if (ta.size === 0 || tb.size === 0) {
+    return false;
+  }
+  let shared = 0;
+  for (const token of ta) {
+    if (tb.has(token)) {
+      shared += 1;
+    }
+  }
+  return shared / Math.min(ta.size, tb.size) >= RENAME_SIMILARITY_THRESHOLD;
+};
 
 // Send the built-in `/rename` slash command into each idle agent whose task
 // label changed since we last renamed it. `lastRenames` (the last command sent
@@ -1062,10 +1113,19 @@ export const sendRenameCommands = (
       continue;
     }
     const command = renameCommand(config.session, label);
-    if (lastRenames[info.agent] === command) {
+    // The map value holds the last few sent commands newline-joined (it stays
+    // a plain string so babysitter-state.json persistence is unchanged).
+    const history = (lastRenames[info.agent] ?? "").split("\n").filter(Boolean);
+    if (
+      history.includes(command) ||
+      history.some((prev) => renameLabelsSimilar(prev, command))
+    ) {
       continue;
     }
-    lastRenames[info.agent] = command;
+    lastRenames[info.agent] = [
+      ...history.slice(-(RENAME_HISTORY_LIMIT - 1)),
+      command,
+    ].join("\n");
     deps.sendText(info.pane, command);
     deps.sendKeys(info.pane, ["Enter"]);
   }
@@ -2647,7 +2707,19 @@ const processAgent = async (
     thinking,
     usage,
   };
-  if (isSessionLimited(paneText)) {
+  // A limit banner only counts while it is plausibly current. An idle agent
+  // never prints new output, so a stale banner would otherwise pin "limited"
+  // forever — including straight through the limit reset (the loop-23
+  // overnight stall: Codex sat "limited" 12h past its reset). No session
+  // window exceeds ~5h, so a banner that has sat on an unchanged pane longer
+  // than that is guaranteed stale; clear it and let the restore path re-brief.
+  // If the agent is somehow still limited, its next reply re-prints the
+  // banner, the pane changes, and the verdict re-arms — self-correcting.
+  const LIMIT_BANNER_MAX_IDLE_MS = 5.5 * 60 * 60 * 1000;
+  if (
+    isSessionLimited(paneText) &&
+    liveness.paneIdleMs < LIMIT_BANNER_MAX_IDLE_MS
+  ) {
     row.verdict = {
       confidence: 1,
       state: "limited",
@@ -3014,7 +3086,14 @@ const limitHandoffMessage = (
   ].join(" ");
 };
 
-const restoreCompactMessage = (
+// Belt-and-braces throttle for restore briefings: even a genuine handoff
+// briefing repeats at most once per window per agent (in-memory; resets on
+// babysitter respawn, which is fine — the cost of a rare duplicate briefing is
+// one message, the cost of a flapping restore loop is constant interruption).
+const RESTORE_MESSAGE_COOLDOWN_MS = 15 * 60 * 1000;
+const restoreMessageSentAtMs = new Map<Agent, number>();
+
+const restoreContextMessage = (
   restored: Agent,
   temporary: Agent | undefined,
   state: BabysitRunState
@@ -3029,7 +3108,7 @@ const restoreCompactMessage = (
   const context = summary
     ? truncate(summary, 700)
     : "Use the current repo state, recent terminal output, PLAN.md/status.md if present, and the peer's latest handoff.";
-  return `/compact babysitter: ${restoredName}'s limit reset and ${restoredName} is the driver again. While you were paused, ${temporaryName} drove the task. Current context: ${context} Pick up from the current repo state; ask ${temporaryName} for only a concise missing detail if needed.`;
+  return `babysitter: ${restoredName}'s limit reset and ${restoredName} is the driver again. While you were paused, ${temporaryName} drove the task. Current context: ${context} Pick up from the current repo state; ask ${temporaryName} for only a concise missing detail if needed.`;
 };
 
 const restoreTemporaryDriverMessage = (
@@ -3179,61 +3258,112 @@ const handleRoleTransitions = async (
       pressures.set(row.liveness.agent, pressure);
     }
   }
-  const activePaused = runState.roles.pausedAgent;
+  let activePaused = runState.roles.pausedAgent;
   let restoredThisTick = false;
-  if (activePaused && !pressures.has(activePaused)) {
-    const restored =
-      runState.roles.initialDriver ?? config.initialDriver ?? activePaused;
-    const restoredInfo = infos[restored];
-    const temporary = runState.roles.temporaryDriver;
-    const temporaryInfo =
-      temporary && temporary !== restored ? infos[temporary] : undefined;
-    const restoredSource = bridgeSourceFor(restored, temporary, config);
-    let restoredDelivery: BridgeSendStatus | "tmux" | undefined;
-    let temporaryDelivery: BridgeSendStatus | "tmux" | undefined;
-    if (restoredInfo) {
-      restoredDelivery = await sendRoleMessage(
-        config,
-        deps,
-        restoredInfo,
-        restored,
-        restoredSource,
-        restoreCompactMessage(restored, temporary, runState)
-      );
-      incrementCount(runState.babysitterMessages, restored);
-    }
-    if (temporaryInfo) {
-      temporaryDelivery = await sendRoleMessage(
-        config,
-        deps,
-        temporaryInfo,
-        temporary,
-        restored,
-        restoreTemporaryDriverMessage(restored, temporary)
-      );
-      incrementCount(runState.babysitterMessages, temporary);
-    }
-    deps.appendLog(config.logFile, {
-      driver: restored,
-      kind: "limit-restore",
-      previousDriver: temporary,
-      restored,
-      restoredDelivery,
-      ts: nowIso,
-      temporaryDelivery,
-    });
+
+  // A pressure observation for an agent that was not driving does not create a
+  // role handoff. Older babysitters did create one, which made a missing usage
+  // snapshot "restore" the already-active driver and repeatedly compact it.
+  if (
+    activePaused &&
+    runState.roles.initialDriver &&
+    activePaused !== runState.roles.initialDriver
+  ) {
     delete runState.notified.limitHandoff[activePaused];
     runState.roles = {
-      currentDriver: restored,
-      initialDriver: restored,
-      lastAction: "restore",
-      restoredAt: nowIso,
+      currentDriver:
+        runState.roles.currentDriver ?? runState.roles.initialDriver,
+      initialDriver: runState.roles.initialDriver,
+      lastAction: runState.roles.lastAction,
     };
-    restoredThisTick = true;
+    activePaused = undefined;
+  }
+
+  if (activePaused && !pressures.has(activePaused)) {
+    const resetAt = parseResetTime(runState.roles.reset, Date.parse(nowIso));
+    const resetStillPending =
+      resetAt && resetAt.date.getTime() > Date.parse(nowIso);
+    if (resetStillPending) {
+      runState.roles.pressureMissingAt = undefined;
+    } else if (!runState.roles.pressureMissingAt) {
+      // One absent usage read is not a reset. Persist the start of the missing
+      // episode and require a full cooldown before changing roles.
+      runState.roles.pressureMissingAt = nowIso;
+    } else if (
+      Date.parse(nowIso) - Date.parse(runState.roles.pressureMissingAt) >=
+      config.cooldownMs
+    ) {
+      const restored =
+        runState.roles.initialDriver ?? config.initialDriver ?? activePaused;
+      const restoredRow = rows.find((row) => row.liveness.agent === restored);
+      // Keep the restore pending while the agent is mid-turn. Injecting even a
+      // normal briefing into an active TUI can interrupt its work.
+      if (restoredRow && isRowActive(restoredRow)) {
+        return { llmUsageByJudge: transitionUsageByJudge };
+      }
+      const restoredInfo = infos[restored];
+      const temporary = runState.roles.temporaryDriver;
+      const temporaryInfo =
+        temporary && temporary !== restored ? infos[temporary] : undefined;
+      const restoredSource = bridgeSourceFor(restored, temporary, config);
+      let restoredDelivery: BridgeSendStatus | "tmux" | undefined;
+      let temporaryDelivery: BridgeSendStatus | "tmux" | undefined;
+      // A self-restore (nobody else ever drove — restored agent IS the paused
+      // agent and there is no distinct temporary driver) carries zero new
+      // information for the agent, and injecting it interrupts real work. The
+      // loop-24 pathology was six such restores in 19 minutes, each one
+      // stealing the composer mid-turn. Restore the ROLE silently; message
+      // only genuine handoffs, and never more than once per cooldown window.
+      const genuineHandoff = Boolean(temporary && temporary !== restored);
+      const lastMsgAt = restoreMessageSentAtMs.get(restored) ?? 0;
+      const messageAllowed =
+        genuineHandoff &&
+        Date.parse(nowIso) - lastMsgAt >= RESTORE_MESSAGE_COOLDOWN_MS;
+      if (restoredInfo && messageAllowed) {
+        restoredDelivery = await sendRoleMessage(
+          config,
+          deps,
+          restoredInfo,
+          restored,
+          restoredSource,
+          restoreContextMessage(restored, temporary, runState)
+        );
+        restoreMessageSentAtMs.set(restored, Date.parse(nowIso));
+        incrementCount(runState.babysitterMessages, restored);
+      }
+      if (temporaryInfo) {
+        temporaryDelivery = await sendRoleMessage(
+          config,
+          deps,
+          temporaryInfo,
+          temporary,
+          restored,
+          restoreTemporaryDriverMessage(restored, temporary)
+        );
+        incrementCount(runState.babysitterMessages, temporary);
+      }
+      deps.appendLog(config.logFile, {
+        driver: restored,
+        kind: "limit-restore",
+        previousDriver: temporary,
+        restored,
+        restoredDelivery,
+        ts: nowIso,
+        temporaryDelivery,
+      });
+      delete runState.notified.limitHandoff[activePaused];
+      runState.roles = {
+        currentDriver: restored,
+        initialDriver: restored,
+        lastAction: "restore",
+        restoredAt: nowIso,
+      };
+      restoredThisTick = true;
+    }
   }
 
   for (const agent of Object.keys(runState.notified.limitHandoff)) {
-    if (!pressures.has(agent as Agent)) {
+    if (!pressures.has(agent as Agent) && agent !== activePaused) {
       delete runState.notified.limitHandoff[agent];
     }
   }
@@ -3252,14 +3382,26 @@ const handleRoleTransitions = async (
     }
     if (runState.notified.limitHandoff[paused]) {
       runState.notified.limitHandoff[paused] = pressure.key;
-      setActiveRoleHandoff(
-        runState,
-        initialDriver,
-        paused,
-        driver,
-        pressure,
-        undefined
-      );
+      if (
+        runState.roles.pausedAgent === paused ||
+        (!runState.roles.pausedAgent && paused === currentDriver)
+      ) {
+        setActiveRoleHandoff(
+          runState,
+          initialDriver,
+          paused,
+          driver,
+          pressure,
+          undefined
+        );
+        runState.roles.pressureMissingAt = undefined;
+      }
+      continue;
+    }
+    if (paused !== currentDriver) {
+      // Track the observation for dedupe, but do not interrupt the current
+      // driver when no role change is required.
+      runState.notified.limitHandoff[paused] = pressure.key;
       continue;
     }
     const message = limitHandoffMessage(paused, driver, pressure);
@@ -3290,7 +3432,7 @@ const handleRoleTransitions = async (
       nowIso
     );
   }
-  if (pressures.size > 0 || restoredThisTick) {
+  if (pressures.size > 0 || restoredThisTick || runState.roles.pausedAgent) {
     return { llmUsageByJudge: transitionUsageByJudge };
   }
   if (!config.roleBalanceEnabled) {

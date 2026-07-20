@@ -469,11 +469,18 @@ test("codex limit handoff does not repeat when reset detail appears later", asyn
   expect(result.runState.roles.pausedAgent).toBe("codex");
 });
 
-test("codex limit reset restores driver role with compacted handoff context", async () => {
+test("codex limit reset restores driver role without compacting context", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();
   const deps: BabysitDeps = {
     ...makeDeps(stuck, clock, spies),
+    readHooks: () => [
+      {
+        agent: "codex",
+        event: "Stop",
+        ts: new Date(START_MS).toISOString(),
+      },
+    ],
     readUsageLimits: () => Promise.resolve({}),
   };
   const states = new Map<Agent, AgentLivenessState>();
@@ -497,8 +504,9 @@ test("codex limit reset restores driver role with compacted handoff context", as
       initialDriver: "codex",
       lastAction: "handoff",
       pausedAgent: "codex",
+      pressureMissingAt: new Date(START_MS - 300_001).toISOString(),
       pressureKey: "session:Jan 12 1:00 PM",
-      reset: "Jan 12 1:00 PM",
+      reset: "1960-01-01T00:00:00Z",
       resetKind: "session",
       temporaryDriver: "claude",
     },
@@ -513,7 +521,8 @@ test("codex limit reset restores driver role with compacted handoff context", as
     status: "accepted",
     target: "codex",
   });
-  expect(spies.bridgeMessages[0]?.message).toStartWith("/compact babysitter:");
+  expect(spies.bridgeMessages[0]?.message).toStartWith("babysitter:");
+  expect(spies.bridgeMessages[0]?.message).not.toContain("/compact");
   expect(spies.bridgeMessages[0]?.message).toContain("Codex's limit reset");
   expect(spies.bridgeMessages[0]?.message).toContain("Claude drove the task");
   expect(spies.bridgeMessages[0]?.message).toContain(
@@ -530,6 +539,177 @@ test("codex limit reset restores driver role with compacted handoff context", as
   );
   expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 1");
   expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
+});
+
+test("a missing limit snapshot does not restore before a known future reset", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () => Promise.resolve({}),
+  };
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig({
+      agents: [
+        { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+        { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+      ],
+      initialDriver: "codex",
+      runDir: "run-dir",
+    }),
+    deps,
+    {
+      ...freshRunState(),
+      notified: {
+        ...freshRunState().notified,
+        limitHandoff: { codex: "weekly:Jan 12 1:00 PM" },
+      },
+      roles: {
+        currentDriver: "claude",
+        initialDriver: "codex",
+        lastAction: "handoff",
+        pausedAgent: "codex",
+        reset: "Jan 12 1:00 PM",
+        resetKind: "weekly",
+        temporaryDriver: "claude",
+      },
+    }
+  );
+
+  expect(spies.bridgeMessages).toHaveLength(0);
+  expect(spies.texts).toHaveLength(0);
+  expect(result.runState.roles.pausedAgent).toBe("codex");
+  expect(result.runState.roles.pressureMissingAt).toBeUndefined();
+  expect(result.runState.notified.limitHandoff.codex).toBe(
+    "weekly:Jan 12 1:00 PM"
+  );
+});
+
+test("one missing limit snapshot starts a cooldown instead of restoring", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () => Promise.resolve({}),
+  };
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig({
+      agents: [
+        { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+        { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+      ],
+      initialDriver: "codex",
+      runDir: "run-dir",
+    }),
+    deps,
+    {
+      ...freshRunState(),
+      notified: {
+        ...freshRunState().notified,
+        limitHandoff: { codex: "session:unknown" },
+      },
+      roles: {
+        currentDriver: "claude",
+        initialDriver: "codex",
+        lastAction: "handoff",
+        pausedAgent: "codex",
+        temporaryDriver: "claude",
+      },
+    }
+  );
+
+  expect(spies.bridgeMessages).toHaveLength(0);
+  expect(spies.texts).toHaveLength(0);
+  expect(result.runState.roles.pausedAgent).toBe("codex");
+  expect(result.runState.roles.pressureMissingAt).toBe(
+    new Date(START_MS).toISOString()
+  );
+});
+
+test("restore briefing stays pending while its target is active", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () => Promise.resolve({}),
+  };
+  const states = new Map<Agent, AgentLivenessState>([
+    [
+      "codex",
+      {
+        agent: "codex",
+        paneHash: "previous-codex-pane",
+        paneStableSinceMs: START_MS - IDLE_MS,
+      },
+    ],
+  ]);
+  const result = await babysitTick(
+    states,
+    baseConfig({
+      agents: [
+        { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+        { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+      ],
+      initialDriver: "codex",
+      runDir: "run-dir",
+    }),
+    deps,
+    {
+      ...freshRunState(),
+      notified: {
+        ...freshRunState().notified,
+        limitHandoff: { codex: "session:unknown" },
+      },
+      roles: {
+        currentDriver: "claude",
+        initialDriver: "codex",
+        lastAction: "handoff",
+        pausedAgent: "codex",
+        pressureMissingAt: new Date(START_MS - 300_001).toISOString(),
+        temporaryDriver: "claude",
+      },
+    }
+  );
+
+  expect(spies.bridgeMessages).toHaveLength(0);
+  expect(spies.texts).toHaveLength(0);
+  expect(result.runState.roles.pausedAgent).toBe("codex");
+});
+
+test("pressure on a non-driver is deduped without messaging or a handoff", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsageLimits: () =>
+      Promise.resolve({
+        codex: {
+          secondaryPct: 99,
+          secondaryReset: "Jan 12 1:00 PM",
+        },
+      }),
+  };
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig({
+      agents: [
+        { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+        { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+      ],
+      initialDriver: "claude",
+    }),
+    deps
+  );
+
+  expect(spies.bridgeMessages).toHaveLength(0);
+  expect(spies.texts).toHaveLength(0);
+  expect(result.runState.roles.currentDriver).toBeUndefined();
+  expect(result.runState.roles.pausedAgent).toBeUndefined();
+  expect(result.runState.notified.limitHandoff.codex).toBe(
+    "weekly:Jan 12 1:00 PM"
+  );
 });
 
 test("claude session pressure hands driver role to codex until reset", async () => {
@@ -1508,8 +1688,18 @@ test("sendRenameCommands does not re-send an unchanged rename", () => {
   const config = baseConfig();
   const lastRenames: Partial<Record<Agent, string>> = {};
   // First refresh renames; a second identical refresh is a no-op.
-  sendRenameCommands(config, deps, { claude: "session initialization" }, lastRenames);
-  sendRenameCommands(config, deps, { claude: "session initialization" }, lastRenames);
+  sendRenameCommands(
+    config,
+    deps,
+    { claude: "session initialization" },
+    lastRenames
+  );
+  sendRenameCommands(
+    config,
+    deps,
+    { claude: "session initialization" },
+    lastRenames
+  );
   expect(spies.texts).toEqual(["/rename s · session initialization"]);
   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
   // A changed label sends again.

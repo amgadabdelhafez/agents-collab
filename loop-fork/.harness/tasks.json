@@ -10,6 +10,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-04T16:30:19Z",
       "spec_path": "specs/babysitter-pane.md"
+    },
+    {
+      "id": "babysitter-no-repeat-compact",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-19T20:29:55Z",
+      "run_dir": "runs/babysitter-no-repeat-compact",
+      "eval_status": "pass",
+      "ended_at": "2026-07-19T20:33:58Z",
+      "spec_path": "specs/babysitter-no-repeat-compact.md"
     }
   ]
 }

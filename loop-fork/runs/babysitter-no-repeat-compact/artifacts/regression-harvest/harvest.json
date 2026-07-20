@@ -1,0 +1,28 @@
+{
+  "task_id": "babysitter-no-repeat-compact",
+  "status": "created",
+  "bug_id": "babysitter-repeat-compact-on-limit-snapshot-flap",
+  "regression_path": "evals/regression/babysitter-repeat-compact-on-limit-snapshot-flap.md",
+  "prompt_path": "runs/babysitter-no-repeat-compact/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-19T20:33:58Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "babysitter-repeat-compact-on-limit-snapshot-flap"
+    ],
+    "symptom": [
+      "Babysitter repeatedly injects `/compact` and interrupts the active loop agent."
+    ],
+    "guard": [
+      "tests/loop/babysitter.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Babysitter repeatedly injects `/compact` and interrupts the active loop agent."
+  ],
+  "test_lines": [
+    "tests/loop/babysitter.test.ts"
+  ]
+}
