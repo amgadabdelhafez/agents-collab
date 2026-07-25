@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import {
+  applyGovernessPaneIdentity,
+  composeGovernessPaneTitle,
+  governessPaneIdentityTmuxCommands,
+  runGoverness,
   type GovernessConfig,
   type GovernessDeps,
   type BridgeSendStatus,
@@ -93,6 +97,7 @@ interface Spies {
   logs: unknown[];
   notifies: EscalationEvent[];
   paneBorderInits: string[];
+  governessPaneIdentities: [string, string][];
   paneLabels: [string, string][];
   respawns: string[];
   roleBalanceRequests: RoleBalanceRequest[];
@@ -171,6 +176,8 @@ const makeDeps = (
   sendKeys: (pane, keys) => spies.sends.push([pane, ...keys]),
   sendText: (_pane, text) => spies.texts.push(text),
   setPaneLabel: (pane, label) => spies.paneLabels.push([pane, label]),
+  setGovernessPaneIdentity: (pane, label) =>
+    spies.governessPaneIdentities.push([pane, label]),
   sleep: () => Promise.resolve(),
   summarize: () => Promise.resolve({ text: "", tokens: 0 }),
 });
@@ -182,6 +189,7 @@ const freshSpies = (): Spies => ({
   logs: [],
   notifies: [],
   paneBorderInits: [],
+  governessPaneIdentities: [],
   paneLabels: [],
   respawns: [],
   roleBalanceRequests: [],
@@ -1807,6 +1815,82 @@ test("composePaneTitle composes glyph, agent, and task label", () => {
   expect(composePaneTitle("codex", "working")).toBe("▶ codex");
   // Unknown state falls back to the idle glyph.
   expect(composePaneTitle("codex", "mystery")).toBe("· codex");
+});
+
+test("governess pane identity includes full session, run, and path", () => {
+  const config = baseConfig({
+    cwd: "/Users/amgad/harvto",
+    runId: "34",
+    session: "harvto-loop-34",
+  });
+  expect(composeGovernessPaneTitle(config)).toBe(
+    "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto"
+  );
+});
+
+test("governess pane identity is reapplied without deduplication", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const config = baseConfig({
+    cwd: "/Users/amgad/harvto",
+    runId: "34",
+    session: "harvto-loop-34",
+  });
+  applyGovernessPaneIdentity(config, deps, "%9");
+  applyGovernessPaneIdentity(config, deps, "%9");
+  expect(spies.governessPaneIdentities).toEqual([
+    [
+      "%9",
+      "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto",
+    ],
+    [
+      "%9",
+      "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto",
+    ],
+  ]);
+  expect(spies.paneLabels).toEqual([]);
+});
+
+test("governess pane identity writes the border option and native title", () => {
+  const label =
+    "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto";
+  expect(governessPaneIdentityTmuxCommands("%9", label)).toEqual([
+    ["set-option", "-p", "-t", "%9", "@loop_label", label],
+    ["select-pane", "-t", "%9", "-T", label],
+  ]);
+});
+
+test("runGoverness reapplies pane identity on startup and every cycle", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const keys = ["x", "e"];
+  let closed = false;
+  deps.openKeyInput = () => ({
+    close: () => {
+      closed = true;
+    },
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+  await runGoverness(
+    baseConfig({
+      cwd: "/Users/amgad/harvto",
+      runId: "34",
+      session: "harvto-loop-34",
+    }),
+    deps
+  );
+  expect(spies.paneBorderInits).toEqual(["harvto-loop-34"]);
+  expect(spies.governessPaneIdentities).toHaveLength(3);
+  expect(new Set(spies.governessPaneIdentities.map((entry) => entry[1]))).toEqual(
+    new Set([
+      "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto",
+    ])
+  );
+  expect(spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")).toBe(
+    true
+  );
+  expect(closed).toBe(true);
 });
 
 test("governessTick sets each agent's pane border title and skips redundant sets", async () => {

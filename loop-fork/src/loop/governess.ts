@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
 import {
@@ -280,6 +280,9 @@ export interface GovernessDeps {
   sendText: (pane: string, text: string) => void;
   // Set one pane's border title via a per-pane tmux user option (@loop_label).
   setPaneLabel: (pane: string, label: string) => void;
+  // Pin both the visible border label and tmux's native title for the
+  // governess pane. Agent panes intentionally use setPaneLabel only.
+  setGovernessPaneIdentity: (pane: string, label: string) => void;
   sleep: (ms: number) => Promise<void>;
   summarize: (req: SummaryRequest) => Promise<SummaryResult>;
 }
@@ -1294,12 +1297,31 @@ const STATE_GLYPHS: Record<string, string> = {
 
 const stateGlyph = (state: string): string => STATE_GLYPHS[state] ?? "·";
 
-const GOVERNESS_PANE_LABEL = "● governess";
-
 // The governess's own pane: its live tmux pane id when running inside tmux,
 // else the conventional bottom pane of the paired session.
 const governessPane = (config: GovernessConfig): string =>
   process.env.TMUX_PANE ?? `${config.session}:0.2`;
+
+export const composeGovernessPaneTitle = (
+  config: Pick<GovernessConfig, "cwd" | "runId" | "session">
+): string =>
+  `● governess · ${config.session} · run ${config.runId} · ${resolve(config.cwd ?? process.cwd())}`;
+
+export const applyGovernessPaneIdentity = (
+  config: GovernessConfig,
+  deps: Pick<GovernessDeps, "setGovernessPaneIdentity">,
+  pane = governessPane(config)
+): void => {
+  deps.setGovernessPaneIdentity(pane, composeGovernessPaneTitle(config));
+};
+
+export const governessPaneIdentityTmuxCommands = (
+  pane: string,
+  label: string
+): string[][] => [
+  ["set-option", "-p", "-t", pane, "@loop_label", label],
+  ["select-pane", "-t", pane, "-T", label],
+];
 
 // Compose a pane-border title: "<glyph> <agent> · <task>", dropping the task
 // tail when no confident label exists yet.
@@ -5472,6 +5494,11 @@ export const defaultGovernessDeps = (): GovernessDeps => ({
   setPaneLabel: (pane, label) => {
     tmux(["set-option", "-p", "-t", pane, "@loop_label", label]);
   },
+  setGovernessPaneIdentity: (pane, label) => {
+    for (const args of governessPaneIdentityTmuxCommands(pane, label)) {
+      tmux(args);
+    }
+  },
   sendKeys: (pane, keys) => {
     spawnSync(["tmux", "send-keys", "-t", pane, ...keys], { stderr: "ignore" });
   },
@@ -5827,7 +5854,7 @@ export const runGoverness = async (
   // Light up the pane-border title strip and name the governess's own pane.
   // Done on every startup (including a replaced pane) so borders self-heal.
   deps.initPaneBorders(config.session);
-  deps.setPaneLabel(governessPane(config), GOVERNESS_PANE_LABEL);
+  applyGovernessPaneIdentity(config, deps);
   const parentHandoffManifest = process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST;
   if (parentHandoffManifest) {
     const acceptance = acceptGovernessHandoff(
@@ -5906,6 +5933,9 @@ export const runGoverness = async (
         });
         return;
       }
+      // Pane processes and tmux clients can overwrite the native title. Keep
+      // both the visible border label and pane_title pinned to this loop.
+      applyGovernessPaneIdentity(config, deps);
       // Fold any completed background work in before rendering this tick.
       const pendingLlmUsageByJudge = addLocalLlmUsageByJudge(
         addLocalLlmUsageByJudge(

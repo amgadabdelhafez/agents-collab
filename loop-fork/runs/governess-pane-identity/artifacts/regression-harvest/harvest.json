@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-pane-identity",
+  "status": "created",
+  "bug_id": "governess-pane-generic-title",
+  "regression_path": "evals/regression/governess-pane-generic-title.md",
+  "prompt_path": "runs/governess-pane-identity/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-25T22:29:10Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "governess-pane-generic-title"
+    ],
+    "symptom": [
+      "The governess pane is labeled generically and its native tmux title is the host name, hiding the loop identity and path."
+    ],
+    "guard": [
+      "tests/loop/governess.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "The governess pane is labeled generically and its native tmux title is the host name, hiding the loop identity and path."
+  ],
+  "test_lines": [
+    "tests/loop/governess.test.ts"
+  ]
+}
