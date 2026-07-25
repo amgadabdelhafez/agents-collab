@@ -1,0 +1,16 @@
+{
+  "task_id": "governess-header-identity",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-25T22:33:23Z",
+  "ended_at": "2026-07-25T22:33:23Z",
+  "artifact": "runs/governess-header-identity/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/governess.test.ts"
+  ]
+}

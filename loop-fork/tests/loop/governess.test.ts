@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   applyGovernessPaneIdentity,
   composeGovernessPaneTitle,
+  composeGovernessRunIdentity,
   governessPaneIdentityTmuxCommands,
   runGoverness,
   type GovernessConfig,
@@ -1817,15 +1818,37 @@ test("composePaneTitle composes glyph, agent, and task label", () => {
   expect(composePaneTitle("codex", "mystery")).toBe("· codex");
 });
 
-test("governess pane identity includes full session, run, and path", () => {
+test("governess run identity includes full loop name and path", () => {
   const config = baseConfig({
     cwd: "/Users/amgad/harvto",
     runId: "34",
     session: "harvto-loop-34",
   });
-  expect(composeGovernessPaneTitle(config)).toBe(
-    "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto"
+  expect(composeGovernessRunIdentity(config)).toBe(
+    "harvto-loop-34 · /Users/amgad/harvto"
   );
+  expect(composeGovernessPaneTitle(config)).toBe(
+    "governess.harvto-loop-34"
+  );
+});
+
+test("board merges loop and path into the first time/status line", async () => {
+  const result = await governessTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig({
+      cwd: "/Users/amgad/harvto",
+      runId: "34",
+      session: "harvto-loop-34",
+    }),
+    makeDeps(stuck, { ms: START_MS }, freshSpies())
+  );
+  const lines = stripAnsi(result.board).split("\n");
+  expect(lines[0]).toStartWith(
+    "harvto-loop-34 · /Users/amgad/harvto · 00:16:40"
+  );
+  expect(lines[0]).not.toContain("governess");
+  expect(lines[0]).not.toContain("run 34");
+  expect(lines[1]).toStartWith(" AGENT");
 });
 
 test("governess pane identity is reapplied without deduplication", () => {
@@ -1839,21 +1862,14 @@ test("governess pane identity is reapplied without deduplication", () => {
   applyGovernessPaneIdentity(config, deps, "%9");
   applyGovernessPaneIdentity(config, deps, "%9");
   expect(spies.governessPaneIdentities).toEqual([
-    [
-      "%9",
-      "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto",
-    ],
-    [
-      "%9",
-      "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto",
-    ],
+    ["%9", "governess.harvto-loop-34"],
+    ["%9", "governess.harvto-loop-34"],
   ]);
   expect(spies.paneLabels).toEqual([]);
 });
 
 test("governess pane identity writes the border option and native title", () => {
-  const label =
-    "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto";
+  const label = "governess.harvto-loop-34";
   expect(governessPaneIdentityTmuxCommands("%9", label)).toEqual([
     ["set-option", "-p", "-t", "%9", "@loop_label", label],
     ["select-pane", "-t", "%9", "-T", label],
@@ -1883,9 +1899,7 @@ test("runGoverness reapplies pane identity on startup and every cycle", async ()
   expect(spies.paneBorderInits).toEqual(["harvto-loop-34"]);
   expect(spies.governessPaneIdentities).toHaveLength(3);
   expect(new Set(spies.governessPaneIdentities.map((entry) => entry[1]))).toEqual(
-    new Set([
-      "● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto",
-    ])
+    new Set(["governess.harvto-loop-34"])
   );
   expect(spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")).toBe(
     true

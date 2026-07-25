@@ -1230,6 +1230,7 @@ interface BoardMeta {
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
   governessMessages: Record<string, number>;
+  identity: string;
   initialDriver?: Agent;
   judgeMode: LocalLlmJudgeMode;
   llmJudges: LocalLlmJudgeConfig[];
@@ -1303,9 +1304,13 @@ const governessPane = (config: GovernessConfig): string =>
   process.env.TMUX_PANE ?? `${config.session}:0.2`;
 
 export const composeGovernessPaneTitle = (
-  config: Pick<GovernessConfig, "cwd" | "runId" | "session">
+  config: Pick<GovernessConfig, "session">
+): string => `governess.${config.session}`;
+
+export const composeGovernessRunIdentity = (
+  config: Pick<GovernessConfig, "cwd" | "session">
 ): string =>
-  `● governess · ${config.session} · run ${config.runId} · ${resolve(config.cwd ?? process.cwd())}`;
+  `${config.session} · ${resolve(config.cwd ?? process.cwd())}`;
 
 export const applyGovernessPaneIdentity = (
   config: GovernessConfig,
@@ -2179,7 +2184,7 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     meta.governessMessages
   );
   const parts = [
-    paint(ANSI.cyan, "governess"),
+    paint(ANSI.cyan, meta.identity),
     fmtClock(meta.nowMs),
     ...(Number.isFinite(meta.uptimeMs)
       ? [`wall ${fmtDuration(meta.uptimeMs)}`]
@@ -2192,7 +2197,7 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     ...waitingForYouAlert(meta.waitingForYou),
     paint(ANSI.dim, "[x] exit"),
   ];
-  return ` ${parts.join(" · ")}`;
+  return parts.join(" · ");
 };
 
 const SUMMARY_LINE_WIDTH = 180;
@@ -5072,6 +5077,7 @@ export const governessTick = async (
   );
   const board = renderBoard(rowsForDisplay(rows), {
     governessMessages: runState.governessMessages,
+    identity: composeGovernessRunIdentity(config),
     bridge: deps.readBridge(config.transcriptPath),
     bridgeLatest: deps.readBridgeLatest(config.runDir),
     budgetUsd: config.budgetUsd,

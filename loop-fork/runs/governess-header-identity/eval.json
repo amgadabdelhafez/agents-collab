@@ -1,0 +1,18 @@
+{
+  "task_id": "governess-header-identity",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/governess-header-identity/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/governess-header-identity/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/governess-header-identity/artifacts/unit/attempt-002.json"
+    }
+  }
+}
