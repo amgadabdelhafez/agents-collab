@@ -1324,10 +1324,12 @@ test("board renders only aggregate dynamic usage tracker windows", async () => {
   const visibleBoard = stripAnsi(result.board);
 
   expect(visibleBoard).toContain("LIMITS · RESET");
-  expect(visibleBoard).toContain("S43/W17");
-  expect(visibleBoard).toContain("2h19m");
-  expect(visibleBoard).toContain("29h59m");
+  expect(visibleBoard).toContain("S43/W17 · 2h19m/29h59m");
   expect(visibleBoard).toContain("W31 · 30h46m");
+  const quotaRows = visibleBoard.split("\n");
+  const claudeQuotaRow = quotaRows.find((line) => line.startsWith(" claude"));
+  const codexQuotaRow = quotaRows.find((line) => line.startsWith(" codex"));
+  expect(claudeQuotaRow?.indexOf("W17")).toBe(codexQuotaRow?.indexOf("W31"));
   expect(visibleBoard).not.toContain("S12.5");
   expect(visibleBoard).toContain("30h46m");
   expect(visibleBoard).not.toContain("2:19p");

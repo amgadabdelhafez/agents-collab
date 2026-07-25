@@ -1684,7 +1684,11 @@ const resetEtaCell = (
   return `${days}d${hours > 0 ? `${hours}h` : ""}`;
 };
 
-const renderAgentRow = (row: AgentRow, meta: BoardMeta): string => {
+const renderAgentRow = (
+  row: AgentRow,
+  meta: BoardMeta,
+  weeklyLimitIndent: number
+): string => {
   const agent = row.liveness.agent;
   const state = rowState(row);
   const forMs = row.thinking
@@ -1714,11 +1718,16 @@ const renderAgentRow = (row: AgentRow, meta: BoardMeta): string => {
   const burn = costBurnCell(row.usage, meta.stats.activeMs[agent] ?? 0);
   const spend = `${cost}/${burn}`;
   const windows = usageLimitWindows(row.usage);
+  const limits = rateLimitCell(row.usage);
+  const alignedLimits =
+    windows.length === 1 && windows[0]?.kind === "weekly"
+      ? `${" ".repeat(weeklyLimitIndent)}${limits}`
+      : limits;
   const resets = windows
     .map((window) => resetEtaCell(window.reset, meta.nowMs, window.resetAtMs))
     .join("/");
   const rateLimit =
-    windows.length > 0 ? `${rateLimitCell(row.usage)} · ${resets}` : "—";
+    windows.length > 0 ? `${alignedLimits} · ${resets}` : "—";
   const rateLimitRendered = rateLimitColor(row.usage)
     ? colorCell(
         rateLimitColor(row.usage) as string,
@@ -2836,10 +2845,14 @@ const renderSummaryLabelLine = (text: string): string => {
 };
 
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
+  const weeklyLimitIndent = Math.max(
+    0,
+    ...rows.map((row) => rateLimitCell(row.usage).indexOf("W"))
+  );
   const top = [
     renderSummaryLine(rows, meta),
     agentHeaderRow,
-    ...rows.map((row) => renderAgentRow(row, meta)),
+    ...rows.map((row) => renderAgentRow(row, meta, weeklyLimitIndent)),
     ...renderBridgeLatestLine(rows, meta),
   ];
   const footerBudget =
