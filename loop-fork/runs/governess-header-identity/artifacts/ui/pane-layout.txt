@@ -11,3 +11,5 @@ Claude PID preserved: 10483
 Codex PID preserved: 10485
 Claude composer before/after: unchanged
 Codex composer before/after: unchanged
+Canonical installed governess PID: 16480
+Canonical first line: harvto-loop-34 · /Users/amgad/harvto · 15:37:34 · wall 3h

@@ -23,5 +23,8 @@
 - Structural capture: `artifacts/ui/pane-layout.txt`.
 - Independent evaluator: PASS with no actionable findings; live board uses 16
   of 17 rows. Report: `artifacts/evaluator-review.md`.
+- Canonical installed binary refreshed live as governess PID `16480`; Claude
+  and Codex remained `10483` and `10485`, and both composer lines were
+  unchanged.
 
 Regression: no
