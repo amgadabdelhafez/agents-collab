@@ -2,6 +2,7 @@
 
 # Local agent/editor state.
 .claude/settings.local.json
+/.agents/
 
 # Dependency and build output.
 node_modules/
