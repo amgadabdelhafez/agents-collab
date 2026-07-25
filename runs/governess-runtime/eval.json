@@ -43,7 +43,7 @@
       "failed": 0,
       "details": [
         "slow local-LLM work remains off the tick",
-        "journal replay clean with 104 controls at final verification"
+        "journal replay clean with 614 controls at final verification"
       ]
     },
     "regression": {
@@ -54,10 +54,11 @@
         "full suite has four pre-existing Codex model/config expectation failures unrelated to governess",
         "build and git diff --check passed",
         "live doctor all 11 checks true",
-        "disposable run 8 handed over to a ready three-pane loop 9 before stopping"
+        "disposable run 8 handed over to a ready three-pane loop 9 before stopping",
+        "installed launcher created and cleanly stopped a fresh three-pane loop 10"
       ]
     }
   },
   "verdict": "pass",
-  "notes": "Independent evaluator PASS with no blockers. The unified agent table and durable handover lifecycle are focused-tested and live-verified. Disposable run 8 submitted both drain turns, validated both bundles, exited each TUI once, launched ready loop 9, and only then stopped. Narrow deployment preserved both live Harvto agent PIDs and produced a clean replayable epoch-fenced runtime."
+  "notes": "Independent evaluator PASS with no blockers. The unified agent table and durable handover lifecycle are focused-tested and live-verified. Disposable run 8 submitted both drain turns, validated both bundles, exited each TUI once, launched ready loop 9, and only then stopped. The canonical binary is globally installed; its fresh loop 10 smoke test stopped cleanly, and its narrow Harvto deployment preserved both agent PIDs with a clean replayable epoch-fenced runtime."
 }

@@ -48,12 +48,13 @@
   uncertain rename state, missing readiness, malformed journal, missing fence /
   lease, unacknowledged controls and unreconstructable probes were fixed and
   regression-tested.
-- Narrow live deployment: respawned only `harvto-loop-34:0.2` from the isolated
-  verified binary. Claude/Codex PIDs remained `10483` / `10485`.
+- Canonical live deployment: installed the verified binary globally and
+  respawned only `harvto-loop-34:0.2`; the governess PID became `96360` while
+  Claude/Codex PIDs remained `10483` / `10485`.
 - Live state migrated at tick 124 and the refreshed layout advanced through tick
   170 under driver-lease epoch `1785011277066881`.
 - `x` opened the menu and `c` canceled it; destructive `e` / `h` were not used.
-- Live doctor: all 11 checks true. Final journal replay: 104 controls, 0 issues.
+- Live doctor: all 11 checks true. Final journal replay: 614 controls, 0 issues.
 - Live manifest now persists canonical `governess` and `tmuxPaneGoverness` keys.
 - The unified live header is 175 visible characters and both agent rows are 179,
   below the 180-column ceiling with no clipped composite value.
@@ -63,3 +64,6 @@
   loop 8 recorded `handover-launched`, marked itself stopped and exited.
 - Replacement loop 9 was explicitly torn down after verification; no disposable
   agent session remains running.
+- A fresh launch through `/Users/amgad/.local/bin/loop` created normal loop 10
+  with three live panes, canonical governess-only help text and empty
+  `paneRenames`; `x` then `e` stopped the session cleanly.
