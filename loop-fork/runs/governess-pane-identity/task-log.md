@@ -20,11 +20,15 @@
   `● governess · harvto-loop-34 · run 34 · /Users/amgad/harvto`.
 - Claude PID `10483` and Codex PID `10485` were preserved during the focused
   governess refresh; their composer lines were unchanged.
-- Claude and Codex native pane titles were unchanged by the final refresh.
+- The governess-specific identity path never targets agent panes. Agent native
+  titles remain agent-owned and may change independently with TUI activity.
 - Screenshot: `artifacts/ui/governess-pane-identity.png`.
 - Structural assertion capture: `artifacts/ui/pane-identity.txt`.
 - Independent evaluator: PASS with no actionable findings; report saved at
   `artifacts/evaluator-review.md`.
+- Canonical installed binary refreshed live as governess PID `1353`; both
+  governess title fields still matched exactly and agent PIDs remained `10483`
+  and `10485`.
 
 Regression: yes
 Regression id: governess-pane-generic-title

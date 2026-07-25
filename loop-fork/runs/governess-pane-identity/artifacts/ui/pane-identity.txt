@@ -12,3 +12,7 @@ Claude composer before/after: unchanged
 Codex composer before/after: unchanged
 Claude native pane title before/after final refresh: unchanged
 Codex native pane title before/after final refresh: unchanged
+Note: those native-title comparisons are point-in-time samples. Agent TUIs own
+their native titles and may update them independently; the regression guard is
+that the governess identity command path never targets an agent pane.
+Canonical installed governess PID: 1353
