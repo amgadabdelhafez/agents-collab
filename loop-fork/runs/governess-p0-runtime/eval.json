@@ -1,0 +1,18 @@
+{
+  "task_id": "governess-p0-runtime",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/governess-p0-runtime/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/governess-p0-runtime/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/governess-p0-runtime/artifacts/unit/attempt-001.json"
+    }
+  }
+}

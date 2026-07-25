@@ -1,0 +1,19 @@
+{
+  "task_id": "governess-p0-runtime",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-25T23:04:02Z",
+  "ended_at": "2026-07-25T23:04:05Z",
+  "artifact": "runs/governess-p0-runtime/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/governess-p0-runtime.test.ts",
+    "tests/loop/governess-runtime.test.ts",
+    "tests/loop/bridge.test.ts",
+    "tests/loop/paired-loop.test.ts"
+  ]
+}

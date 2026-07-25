@@ -286,6 +286,12 @@ test("readBridgeStatus derives bridge naming and transport fields", async () => 
     hasCodexRemote: true,
     hasTmuxSession: false,
     pending: { claude: 0, codex: 0 },
+    qos: {
+      deadLetters: 0,
+      expired: 0,
+      pending: 0,
+      superseded: 0,
+    },
     runId: "7",
     state: "submitted",
     status: "running",
@@ -868,6 +874,48 @@ test("bridge MCP advertises only the Codex-visible bridge tools", async () => {
     ])
   );
   expect(tools.some((tool) => tool.name === "reply")).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge MCP accepts typed work metadata and TTL", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          artifact_refs: ["src/loop/bridge-store.ts"],
+          dedupe_key: "review:p0",
+          message: "Review the queue policy.",
+          priority: "urgent",
+          subject: "Queue policy",
+          target: "codex",
+          thread_id: "p0-thread",
+          ttl_ms: 60_000,
+          type: "review_request",
+        },
+        name: "send_message",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  expect(bridge.readPendingBridgeMessages(runDir)[0]).toMatchObject({
+    artifactRefs: ["src/loop/bridge-store.ts"],
+    dedupeKey: "review:p0",
+    priority: "urgent",
+    subject: "Queue policy",
+    threadId: "p0-thread",
+    type: "review_request",
+  });
   rmSync(root, { recursive: true, force: true });
 });
 

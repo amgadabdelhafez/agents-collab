@@ -18,7 +18,11 @@ import {
   hasBridgeDeliveryRoute,
   readBridgeRuntimeStatus,
 } from "./bridge-runtime";
-import { type BridgeMessage, readBridgeEvents } from "./bridge-store";
+import {
+  type BridgeEnqueueOptions,
+  type BridgeMessage,
+  readBridgeEvents,
+} from "./bridge-store";
 import {
   DEFAULT_GOVERNESS_CONFIDENCE,
   DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
@@ -63,11 +67,13 @@ import {
   writeGovernessHandoffManifest,
 } from "./governess-handoff";
 import {
+  recordGovernessObservation as appendGovernessObservation,
   ensureGovernessJournal,
   latestGovernessControlByKey,
-  pendingGovernessControlHistory,
+  maintainGovernessJournal,
   prepareGovernessControl,
   readGovernessJournal,
+  readPendingGovernessControlHistory,
   transitionGovernessControl,
 } from "./governess-journal";
 import {
@@ -274,7 +280,8 @@ export interface GovernessDeps {
     runDir: string,
     source: Agent,
     target: Agent,
-    message: string
+    message: string,
+    options?: BridgeEnqueueOptions
   ) => Promise<BridgeSendStatus>;
   sendKeys: (pane: string, keys: string[]) => void;
   sendText: (pane: string, text: string) => void;
@@ -739,9 +746,13 @@ const runJournaledControl = (
 const recordGovernessObservation = (
   config: GovernessConfig,
   deps: GovernessDeps,
-  payload: string,
-  idempotencyKey: string,
-  agent?: Agent
+  input: {
+    agent?: Agent;
+    idempotencyKey: string;
+    payload: string;
+    semanticPayload?: string;
+    stream: string;
+  }
 ): void => {
   if (!config.journalFile) {
     return;
@@ -749,23 +760,19 @@ const recordGovernessObservation = (
   const policy = decideGovernessPolicy("observe-runtime", {
     fenceCurrent: governessFenceCurrent(config, deps),
   });
-  const record = prepareGovernessControl(config.journalFile, {
-    action: "observe-runtime",
-    agent,
+  const result = appendGovernessObservation(config.journalFile, {
+    agent: input.agent,
     at: new Date(deps.now()).toISOString(),
     epoch: config.epoch ?? 0,
-    idempotencyKey,
-    payload,
+    idempotencyKey: input.idempotencyKey,
+    payload: input.payload,
     policyClass: policy.class,
     policyContext: { fenceCurrent: governessFenceCurrent(config, deps) },
+    semanticPayload: input.semanticPayload,
+    stream: input.stream,
   });
-  if (record.phase === "prepared") {
-    transitionGovernessControl(
-      config.journalFile,
-      record.controlId,
-      "completed",
-      new Date(deps.now()).toISOString()
-    );
+  if (result.written && input.stream === "governess-cycle") {
+    maintainGovernessJournal(config.journalFile);
   }
 };
 
@@ -3716,7 +3723,13 @@ const sendRoleMessage = async (
       config.runDir,
       source,
       target,
-      message
+      message,
+      {
+        dedupeKey: record?.idempotencyKey,
+        priority: "high",
+        subject: "governess role decision",
+        type: "decision",
+      }
     );
     if (record && config.journalFile) {
       transitionGovernessControl(
@@ -3811,7 +3824,16 @@ export const createGovernessRuntimeAdapter = (
           config.runDir,
           source,
           info.agent,
-          control.message
+          control.message,
+          {
+            dedupeKey: control.controlId,
+            priority: control.action === "message" ? "normal" : "urgent",
+            subject:
+              control.action === "message"
+                ? "governess work request"
+                : "governess handover",
+            type: control.action === "message" ? "work_request" : "handover",
+          }
         );
         return finish(String(status), transport);
       } catch (error) {
@@ -4063,9 +4085,12 @@ const allHandoverAgentsExited = (
     recordGovernessObservation(
       config,
       deps,
-      JSON.stringify(probe),
-      `${config.epoch}:handoff-exit-probe:${info.agent}:${runState.tick}`,
-      info.agent
+      {
+        agent: info.agent,
+        idempotencyKey: `${config.epoch}:handoff-exit-probe:${info.agent}:${runState.tick}`,
+        payload: JSON.stringify(probe),
+        stream: `handoff-exit-probe:${info.agent}`,
+      }
     );
     if (probe.exited && config.journalFile) {
       const control = latestGovernessControlByKey(
@@ -4245,13 +4270,16 @@ export const advanceHandoverControl = async (
     recordGovernessObservation(
       config,
       deps,
-      JSON.stringify({
-        accepted: handoverAccepted,
-        alive: replacementAlive,
-        ready: replacementReady,
-        session: replacementSession,
-      }),
-      `${config.epoch}:replacement:${replacementSession ?? "missing"}:${replacementAlive}:${replacementReady}:${runState.tick}`
+      {
+        idempotencyKey: `${config.epoch}:replacement:${replacementSession ?? "missing"}:${replacementAlive}:${replacementReady}:${runState.tick}`,
+        payload: JSON.stringify({
+          accepted: handoverAccepted,
+          alive: replacementAlive,
+          ready: replacementReady,
+          session: replacementSession,
+        }),
+        stream: `replacement:${replacementSession ?? "missing"}`,
+      }
     );
     if (!(replacementSession && replacementAlive && replacementReady)) {
       const error = replacementSession
@@ -4365,8 +4393,14 @@ export const advanceHandoverControl = async (
   recordGovernessObservation(
     config,
     deps,
-    JSON.stringify({ ready: replacementReady, session: launched.session }),
-    `${config.epoch}:replacement-launch:${launched.session ?? "missing"}:${replacementReady}:${runState.tick}`
+    {
+      idempotencyKey: `${config.epoch}:replacement-launch:${launched.session ?? "missing"}:${replacementReady}:${runState.tick}`,
+      payload: JSON.stringify({
+        ready: replacementReady,
+        session: launched.session,
+      }),
+      stream: `replacement-launch:${launched.session ?? "missing"}`,
+    }
   );
   if (!(launched.session && replacementReady)) {
     const error = launched.session
@@ -5270,7 +5304,8 @@ const sendGovernessBridgeMessage = async (
   runDir: string,
   source: Agent,
   target: Agent,
-  message: string
+  message: string,
+  options: BridgeEnqueueOptions = {}
 ): Promise<BridgeSendStatus> => {
   const result = await dispatchBridgeMessage(
     runDir,
@@ -5291,16 +5326,24 @@ const sendGovernessBridgeMessage = async (
         }
       : target === "cursor" || target === "gemini" || target === "copilot"
         ? (entry) => deliverTmuxBridgeMessage(runDir, entry)
-        : undefined
+        : undefined,
+    undefined,
+    options
   );
+  if (result.status === "dead-letter" || result.status === "expired") {
+    throw new Error(result.reason ?? `bridge ${result.status}`);
+  }
+  if (result.status === "duplicate") {
+    return "accepted";
+  }
   if (
-    result.status !== "delivered" &&
+    result.status === "queued" &&
     hasBridgeDeliveryRoute(runDir, target) &&
     ensureBridgeWorker(runDir)
   ) {
     result.status = "accepted";
   }
-  return result.status;
+  return result.status as BridgeSendStatus;
 };
 
 export const defaultGovernessDeps = (): GovernessDeps => ({
@@ -5495,8 +5538,8 @@ export const defaultGovernessDeps = (): GovernessDeps => ({
     spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });
   },
   saveState: (stateFile, state) => saveGovernessState(stateFile, state),
-  sendBridge: (runDir, source, target, message) =>
-    sendGovernessBridgeMessage(runDir, source, target, message),
+  sendBridge: (runDir, source, target, message, options) =>
+    sendGovernessBridgeMessage(runDir, source, target, message, options),
   setPaneLabel: (pane, label) => {
     tmux(["set-option", "-p", "-t", pane, "@loop_label", label]);
   },
@@ -5832,6 +5875,7 @@ export const runGoverness = async (
     // Parse before acquiring an epoch. A malformed journal is a hard stop: the
     // governess must not issue controls after losing idempotency evidence.
     readGovernessJournal(config.journalFile);
+    maintainGovernessJournal(config.journalFile);
   }
   const acquiredEpoch = Math.max(
     runState.governessEpoch + 1,
@@ -6006,17 +6050,17 @@ export const runGoverness = async (
         if (event) {
           runState.lifecycleEvents[info.agent] = event;
         }
-        recordGovernessObservation(
-          config,
-          deps,
-          JSON.stringify({
-            lifecycle: runState.lifecycleEvents[info.agent],
-            observation,
-            tick: runState.tick,
-          }),
-          `${acquiredEpoch}:runtime-probe:${info.agent}:${runState.tick}`,
-          info.agent
-        );
+        const runtimeProbe = {
+          lifecycle: runState.lifecycleEvents[info.agent],
+          observation,
+        };
+        recordGovernessObservation(config, deps, {
+          agent: info.agent,
+          idempotencyKey: `${acquiredEpoch}:runtime-probe:${info.agent}:${runState.tick}`,
+          payload: JSON.stringify({ ...runtimeProbe, tick: runState.tick }),
+          semanticPayload: JSON.stringify(runtimeProbe),
+          stream: `runtime-probe:${info.agent}`,
+        });
       }
       const holder =
         runState.roles.currentDriver ??
@@ -6027,11 +6071,7 @@ export const runGoverness = async (
         agents: { ...runState.lifecycleEvents },
         at: lifecycleAt,
         controls: config.journalFile
-          ? pendingGovernessControlHistory(
-              readGovernessJournal(config.journalFile).filter(
-                (record) => record.action !== "observe-runtime"
-              )
-            )
+          ? readPendingGovernessControlHistory(config.journalFile)
           : [],
         epoch: acquiredEpoch,
         ...(holder ? { holder } : {}),
@@ -6067,16 +6107,27 @@ export const runGoverness = async (
           );
         },
       });
-      recordGovernessObservation(
-        config,
-        deps,
-        JSON.stringify({
+      const cycleRecord = {
+        decisions: cycleDecisions,
+        kind: "governess-cycle" as const,
+        snapshot,
+      };
+      recordGovernessObservation(config, deps, {
+        idempotencyKey: `${acquiredEpoch}:cycle:${runState.tick}`,
+        payload: JSON.stringify(cycleRecord),
+        semanticPayload: JSON.stringify({
           decisions: cycleDecisions,
-          kind: "governess-cycle",
-          snapshot,
+          kind: cycleRecord.kind,
+          snapshot: {
+            agents: snapshot.agents,
+            controls: snapshot.controls,
+            epoch: snapshot.epoch,
+            holder: snapshot.holder,
+            hooks: snapshot.hooks,
+          },
         }),
-        `${acquiredEpoch}:cycle:${runState.tick}`
-      );
+        stream: "governess-cycle",
+      });
       // updateBothIdle may have cleared the waiting read (agents went active).
       waitingConfirmed = runState.waitingConfirmed;
       waitingAsk = runState.waitingAsk;

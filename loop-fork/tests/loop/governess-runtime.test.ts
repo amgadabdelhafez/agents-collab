@@ -430,11 +430,15 @@ test("missing or malformed control journals fail closed", () => {
   expect(() => readGovernessJournal(malformed)).toThrow("line 1");
   expect(inspectGovernessJournal(malformed)).toMatchObject({ ok: false });
   const doctor = governessDoctor("missing", dir, tempDir()) as {
+    bridgeQueue: { pending: number };
     journal: { ok: boolean };
+    journalStorage?: unknown;
     ok: boolean;
   };
   expect(doctor.ok).toBe(false);
   expect(doctor.journal.ok).toBe(false);
+  expect(doctor.bridgeQueue.pending).toBe(0);
+  expect(doctor.journalStorage).toBeUndefined();
 });
 
 test("runtime adapter rejects a stale control envelope", async () => {

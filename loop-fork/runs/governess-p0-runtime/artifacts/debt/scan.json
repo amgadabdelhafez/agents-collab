@@ -1,0 +1,41 @@
+{
+  "task_id": "governess-p0-runtime",
+  "scanned_at": "2026-07-25T23:07:07Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-25T23:07:07Z",
+      "task_id": "governess-p0-runtime",
+      "signal": "loc_growth",
+      "file": "src/loop/bridge-store.ts",
+      "before_loc": 333,
+      "after_loc": 640,
+      "delta_loc": 307,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-25T23:07:07Z",
+      "task_id": "governess-p0-runtime",
+      "signal": "loc_growth",
+      "file": "src/loop/bridge.ts",
+      "before_loc": 620,
+      "after_loc": 742,
+      "delta_loc": 122,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-25T23:07:07Z",
+      "task_id": "governess-p0-runtime",
+      "signal": "loc_growth",
+      "file": "src/loop/governess-journal.ts",
+      "before_loc": 369,
+      "after_loc": 701,
+      "delta_loc": 332,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

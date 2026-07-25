@@ -5,7 +5,8 @@ import {
   readNextPendingBridgeMessage,
 } from "./bridge-dispatch";
 import { quotedBridgeTool } from "./bridge-guidance";
-import { formatCodexBridgeMessage } from "./bridge-message-format";
+import { formatBridgeDeliveryMessage } from "./bridge-message-format";
+import type { BridgeMessage } from "./bridge-store";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
 import {
@@ -165,21 +166,14 @@ const reviewBridgePrompt = (
     .filter(Boolean)
     .join("\n\n");
 
-const forwardBridgePrompt = ({
-  message,
-  source,
-  target,
-}: {
-  message: string;
-  source: Agent;
-  target: Agent;
-}): string => {
-  const agent = target;
+const forwardBridgePrompt = (entry: BridgeMessage): string => {
+  const { message, source, target } = entry;
+  const agent = entry.target;
   const replyGuidance = `Send a message to the other agent with ${quotedBridgeTool(agent, "send_message")} only when you have something useful for them to act on.`;
   return (
     target === "codex"
       ? [
-          formatCodexBridgeMessage(source, message),
+          formatBridgeDeliveryMessage(entry),
           "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
           replyGuidance,
           "Do not acknowledge receipt without new information.",

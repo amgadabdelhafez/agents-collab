@@ -7,3 +7,6 @@
 {"ts": "2026-07-25T22:19:09Z", "task_id": "governess-native-runtime", "signal": "loc_growth", "file": "src/loop/governess-journal.ts", "before_loc": 161, "after_loc": 369, "delta_loc": 208, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-25T22:19:09Z", "task_id": "governess-native-runtime", "signal": "loc_growth", "file": "src/loop/governess-replay.ts", "before_loc": 226, "after_loc": 398, "delta_loc": 172, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-25T22:19:09Z", "task_id": "governess-native-runtime", "signal": "loc_growth", "file": "src/loop/governess.ts", "before_loc": 5881, "after_loc": 6215, "delta_loc": 334, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-25T23:07:07Z", "task_id": "governess-p0-runtime", "signal": "loc_growth", "file": "src/loop/bridge-store.ts", "before_loc": 333, "after_loc": 640, "delta_loc": 307, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-25T23:07:07Z", "task_id": "governess-p0-runtime", "signal": "loc_growth", "file": "src/loop/bridge.ts", "before_loc": 620, "after_loc": 742, "delta_loc": 122, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-25T23:07:07Z", "task_id": "governess-p0-runtime", "signal": "loc_growth", "file": "src/loop/governess-journal.ts", "before_loc": 369, "after_loc": 701, "delta_loc": 332, "threshold": 100, "severity": "indicator"}

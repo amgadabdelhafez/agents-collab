@@ -1,6 +1,7 @@
 import {
-  appendBridgeMessage,
+  type BridgeEnqueueOptions,
   type BridgeMessage,
+  enqueueBridgeMessage,
   markBridgeMessage,
   readBridgeInbox,
   readBridgeStatus,
@@ -10,7 +11,14 @@ import type { Agent } from "./types";
 
 export interface DeliveryResult {
   entry: BridgeMessage;
-  status: "accepted" | "delivered" | "queued";
+  reason?: string;
+  status:
+    | "accepted"
+    | "delivered"
+    | "queued"
+    | "duplicate"
+    | "dead-letter"
+    | "expired";
   target: Agent;
 }
 
@@ -60,9 +68,19 @@ export const dispatchBridgeMessage = async (
   target: Agent,
   message: string,
   deliver?: ImmediateBridgeDelivery,
-  acceptsDelivery?: AcceptedBridgeDelivery
+  acceptsDelivery?: AcceptedBridgeDelivery,
+  options: BridgeEnqueueOptions = {}
 ): Promise<DeliveryResult> => {
-  const entry = appendBridgeMessage(runDir, source, target, message);
+  const queued = enqueueBridgeMessage(runDir, source, target, message, options);
+  const { entry } = queued;
+  if (queued.status !== "queued") {
+    return {
+      entry,
+      reason: queued.reason,
+      status: queued.status,
+      target,
+    };
+  }
   const delivered = deliver ? await deliver(entry) : false;
   let status: DeliveryResult["status"] = "queued";
   if (delivered) {
@@ -75,6 +93,7 @@ export const dispatchBridgeMessage = async (
 
 export const formatDispatchResult = ({
   entry,
+  reason,
   status,
   target,
 }: DeliveryResult): string => {
@@ -83,6 +102,12 @@ export const formatDispatchResult = ({
       return `delivered ${entry.id} to ${target}`;
     case "accepted":
       return `accepted ${entry.id} for ${target} delivery`;
+    case "duplicate":
+      return `deduplicated ${entry.id} for ${target}`;
+    case "dead-letter":
+      return `dead-lettered ${entry.id} for ${target}: ${reason ?? "queue rejected"}`;
+    case "expired":
+      return `expired ${entry.id} for ${target}`;
     default:
       return `queued ${entry.id} for ${target}`;
   }

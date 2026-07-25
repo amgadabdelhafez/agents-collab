@@ -12,7 +12,7 @@ import {
   bridgeChatId,
   readNextPendingBridgeMessageForTarget,
 } from "./bridge-dispatch";
-import { formatCodexBridgeMessage } from "./bridge-message-format";
+import { formatBridgeDeliveryMessage } from "./bridge-message-format";
 import {
   type BridgeMessage,
   type BridgeStatus,
@@ -250,7 +250,7 @@ const tmuxPaneForTarget = (
 
 const formatTmuxBridgeMessage = (message: BridgeMessage): string => {
   if (message.target === "codex") {
-    return formatCodexBridgeMessage(message.source, message.message);
+    return formatBridgeDeliveryMessage(message);
   }
   // Cursor/Gemini can connect to the bridge MCP, but their CLIs do not turn
   // server notifications into agent actions. In tmux mode we push the bridge
@@ -439,7 +439,7 @@ export const deliverCodexBridgeMessage = async (
     const delivered = await injectCodexMessage(
       status.codexRemoteUrl,
       status.codexThreadId,
-      formatCodexBridgeMessage(message.source, message.message)
+      formatBridgeDeliveryMessage(message)
     );
     if (delivered) {
       acknowledgeBridgeDelivery(

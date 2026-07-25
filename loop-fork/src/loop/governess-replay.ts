@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "bun";
+import { readBridgeQueueHealth } from "./bridge-store";
 import {
   decideGovernessCycle,
   type GovernessCycleDecision,
@@ -12,6 +13,7 @@ import {
 } from "./governess-handoff";
 import {
   type GovernessControlRecord,
+  inspectGovernessJournalStorage,
   readGovernessJournal,
 } from "./governess-journal";
 import { decideGovernessPolicy } from "./governess-policy";
@@ -273,6 +275,21 @@ export const governessDoctor = (
   migrateLegacyGovernessState(storage.runDir, stateFile);
   const journalFile = join(storage.runDir, "governess-control.jsonl");
   const journal = inspectGovernessJournal(journalFile);
+  let journalStorage:
+    | ReturnType<typeof inspectGovernessJournalStorage>
+    | { error: string; indexCurrent: false }
+    | undefined;
+  if (existsSync(journalFile)) {
+    try {
+      journalStorage = inspectGovernessJournalStorage(journalFile);
+    } catch (error) {
+      journalStorage = {
+        error: error instanceof Error ? error.message : String(error),
+        indexCurrent: false,
+      };
+    }
+  }
+  const bridgeQueue = readBridgeQueueHealth(storage.runDir);
   let epoch = 0;
   let state:
     | {
@@ -349,7 +366,9 @@ export const governessDoctor = (
   return {
     checks,
     epoch,
+    bridgeQueue,
     journal,
+    journalStorage,
     ok: Object.values(checks).every(Boolean),
     runId,
     session,
