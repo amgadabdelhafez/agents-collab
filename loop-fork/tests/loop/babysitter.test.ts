@@ -3,6 +3,7 @@ import {
   type BabysitConfig,
   type BabysitDeps,
   type BridgeSendStatus,
+  agentRenameEnabledFromEnv,
   babysitTick,
   composePaneTitle,
   freshRunState,
@@ -51,6 +52,7 @@ const usage = (overrides: Partial<AgentUsage> = {}): AgentUsage => ({
 });
 
 const baseConfig = (overrides: Partial<BabysitConfig> = {}): BabysitConfig => ({
+  agentRenameEnabled: false,
   agents: [{ agent: "claude", hookFile: "hooks.jsonl", pane: "s:0.0" }],
   budgetUsd: 0,
   confidence: 0.7,
@@ -539,6 +541,65 @@ test("codex limit reset restores driver role without compacting context", async 
   );
   expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 1");
   expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
+});
+
+test("handover mode suppresses pending limit role-transition messages", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: BabysitDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readHooks: () => [
+      {
+        agent: "codex",
+        event: "Stop",
+        ts: new Date(START_MS).toISOString(),
+      },
+    ],
+    readUsageLimits: () => Promise.resolve({}),
+  };
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig({
+      agents: [
+        { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+        { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+      ],
+      initialDriver: "codex",
+      runDir: "run-dir",
+    }),
+    deps,
+    {
+      ...freshRunState(),
+      exitControl: {
+        mode: "handover",
+        notified: {},
+        requestedAt: new Date(START_MS).toISOString(),
+      },
+      notified: {
+        ...freshRunState().notified,
+        limitHandoff: { codex: "session:Jan 12 1:00 PM" },
+      },
+      roles: {
+        currentDriver: "claude",
+        initialDriver: "codex",
+        lastAction: "handoff",
+        pausedAgent: "codex",
+        pressureMissingAt: new Date(START_MS - 300_001).toISOString(),
+        reset: "1960-01-01T00:00:00Z",
+        resetKind: "session",
+        temporaryDriver: "claude",
+      },
+    }
+  );
+
+  expect(spies.bridgeMessages).toEqual([]);
+  expect(spies.texts).toEqual([]);
+  expect(spies.sends).toEqual([]);
+  expect(result.runState.roles.currentDriver).toBe("claude");
+  expect(result.runState.roles.pausedAgent).toBe("codex");
+  expect(result.runState.notified.limitHandoff.codex).toBe(
+    "session:Jan 12 1:00 PM"
+  );
 });
 
 test("a missing limit snapshot does not restore before a known future reset", async () => {
@@ -1060,6 +1121,11 @@ test("board shows latest bridge messages in both directions", async () => {
   );
   expect(visibleBoard).not.toContain("agent latest");
   expect(visibleBoard).not.toContain("\n\nDelta");
+  for (const line of visibleBoard
+    .split("\n")
+    .filter((candidate) => candidate.includes("bridge latest"))) {
+    expect(line.length).toBeLessThanOrEqual(180);
+  }
   expect(result.board).toContain("\x1b[35mclaude");
   expect(result.board).toContain("\x1b[36mcodex");
   expect(result.board).toContain("\x1b[33m30s ago");
@@ -1274,9 +1340,11 @@ test("board shows input, cached, and output token details", async () => {
   const visibleBoard = stripAnsi(result.board);
 
   expect(visibleBoard).toMatch(
-    /AGENT\s+STATE\s+NOW\s+MODEL\s+EFF\s+MODE\s+CTX\s+CTX\+\s+CMP\s+LIMIT S\/W\s+S RESET\s+W RESET\s+COST\s+\$\/H\s+TOK\s+IN\s+CACHE\s+OUT\s+ACT\s+TXT\s+THK\s+TOOL\s+EXEC\s+CODE\s+READ\/VIEW\s+PLAN\s+MISC\s+BRIDGE/
+    /AGENT\s+STATE\s+NOW\s+MODEL\s+EFF\s+MODE\s+CTX\s+CTX\+\s+CMP\s+LIMIT S\/W\s+S RESET\s+W RESET\s+COST\s+\$\/H\s+TOK\s+IN\s+CACHE\s+OUT/
   );
-  expect(visibleBoard).not.toMatch(/\n AGENT\s+ACT\s+TXT/);
+  expect(visibleBoard).toMatch(
+    /AGENT\s+ACT\s+TXT\s+THK\s+TOOL\s+EXEC\s+CODE\s+READ\/VIEW\s+PLAN\s+MISC\s+BRIDGE/
+  );
   expect(visibleBoard).not.toContain("LAST");
   expect(visibleBoard).not.toContain("OTHER");
   expect(visibleBoard).toContain("TXT");
@@ -1297,7 +1365,12 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("LIMIT S/W");
   expect(visibleBoard).toContain("S RESET");
   expect(visibleBoard).toContain("W RESET");
-  expect(visibleBoard).toMatch(/^ claude[^\n]*\s19\s+12\s+3\s+4\s+3\s+1/m);
+  expect(visibleBoard).toMatch(/^ claude\s+19\s+12\s+3\s+4\s+3\s+1/m);
+  const boardLines = visibleBoard.split("\n");
+  const runtimeHeader = boardLines.find((line) => line.includes("LIMIT S/W"));
+  const activityHeader = boardLines.find((line) => line.includes("READ/VIEW"));
+  expect(runtimeHeader?.length).toBeLessThanOrEqual(180);
+  expect(activityHeader?.length).toBeLessThanOrEqual(180);
   expect(visibleBoard).toContain("both idle total 0s");
   expect(visibleBoard).toMatch(
     /LLM\s+MODEL\s+STAT\s+CALLS\s+TOK\s+IN\s+CACHE\s+OUT\s+HIT\s+SLOTS\s+MEM\s+ARCH\s+DT\s+QNT\s+MOE\s+BATCH/
@@ -1350,13 +1423,11 @@ test("board caps structured summary section heights", async () => {
     { ...freshRunState(), summary }
   );
   const lines = stripAnsi(result.board).split("\n");
-  const summaryStart = lines.findIndex((line) =>
-    line.includes("── summary ──")
-  );
+  const summaryStart = lines.findIndex((line) => line.includes("Project:"));
   expect(summaryStart).toBeGreaterThanOrEqual(0);
   const sectionCounts: Record<string, number> = {};
   let current = "";
-  for (const line of lines.slice(summaryStart + 1)) {
+  for (const line of lines.slice(summaryStart)) {
     const label = line
       .trimStart()
       .match(/^(Project|Objective|Progress|Next):/i);
@@ -1371,9 +1442,28 @@ test("board caps structured summary section heights", async () => {
   expect(sectionCounts).toEqual({
     next: 2,
     objective: 2,
-    progress: 3,
-    project: 1,
+    progress: 2,
+    project: 2,
   });
+});
+
+test("board uses the full summary width for the Project line", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const working: JudgeOutcome = {
+    ok: true,
+    verdict: { confidence: 0.9, state: "working", summary: "" },
+  };
+  const project =
+    "Project: Harvto is a pre-seed AR hijab try-on platform using MediaPipe, Three.js, XPBD cloth simulation, deterministic video replay, source-bound frame validation, and an instrument-first workflow for measuring off-axis garment detachment.";
+  const result = await babysitTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig(),
+    makeDeps(working, clock, spies),
+    { ...freshRunState(), summary: project }
+  );
+
+  expect(stripAnsi(result.board).replace(/\s+/g, " ")).toContain(project);
 });
 
 test("observed progress clears the agent's recovery history", async () => {
@@ -1654,10 +1744,29 @@ test("babysitTick folds the stored LLM label into the border title", async () =>
   expect(spies.paneLabels).toEqual([["s:0.0", "… claude · auth refactor"]]);
 });
 
-test("sendRenameCommands injects /rename with session and task per labeled agent", () => {
+test("sendRenameCommands is disabled by default", () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  sendRenameCommands(baseConfig(), deps, { claude: "auth refactor" }, {});
+  expect(spies.texts).toHaveLength(0);
+  expect(spies.sends).toHaveLength(0);
+});
+
+test("agent rename config requires an explicit truthy environment value", () => {
+  expect(agentRenameEnabledFromEnv({})).toBe(false);
+  expect(agentRenameEnabledFromEnv({ LOOP_BABYSIT_AGENT_RENAME: "0" })).toBe(
+    false
+  );
+  expect(agentRenameEnabledFromEnv({ LOOP_BABYSIT_AGENT_RENAME: "1" })).toBe(
+    true
+  );
+});
+
+test("sendRenameCommands injects /rename when explicitly enabled", () => {
   const spies = freshSpies();
   const deps = makeDeps(stuck, { ms: START_MS }, spies);
   const config = baseConfig({
+    agentRenameEnabled: true,
     agents: [
       { agent: "claude", hookFile: "h", pane: "s:0.0" },
       { agent: "codex", hookFile: "h", pane: "s:0.1" },
@@ -1673,7 +1782,7 @@ test("sendRenameCommands sends nothing in dry-run", () => {
   const spies = freshSpies();
   const deps = makeDeps(stuck, { ms: START_MS }, spies);
   sendRenameCommands(
-    baseConfig({ dryRun: true }),
+    baseConfig({ agentRenameEnabled: true, dryRun: true }),
     deps,
     { claude: "auth refactor" },
     {}
@@ -1685,7 +1794,7 @@ test("sendRenameCommands sends nothing in dry-run", () => {
 test("sendRenameCommands does not re-send an unchanged rename", () => {
   const spies = freshSpies();
   const deps = makeDeps(stuck, { ms: START_MS }, spies);
-  const config = baseConfig();
+  const config = baseConfig({ agentRenameEnabled: true });
   const lastRenames: Partial<Record<Agent, string>> = {};
   // First refresh renames; a second identical refresh is a no-op.
   sendRenameCommands(
@@ -1713,7 +1822,7 @@ test("sendRenameCommands does not inject into an agent that is mid-turn", () => 
   const lastRenames: Partial<Record<Agent, string>> = {};
   // Agent is working => skip the send AND do not record, so it retries later.
   sendRenameCommands(
-    baseConfig(),
+    baseConfig({ agentRenameEnabled: true }),
     deps,
     { claude: "auth refactor" },
     lastRenames,
@@ -1723,7 +1832,7 @@ test("sendRenameCommands does not inject into an agent that is mid-turn", () => 
   expect(lastRenames).toEqual({});
   // Once idle, the same label renames.
   sendRenameCommands(
-    baseConfig(),
+    baseConfig({ agentRenameEnabled: true }),
     deps,
     { claude: "auth refactor" },
     lastRenames,

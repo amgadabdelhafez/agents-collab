@@ -145,7 +145,8 @@ Paired tmux runs can add a full-width babysitter pane under the two agents (a lo
 The babysitter also names the workspace from what the local model reads off each pane:
 
 - **Pane borders** — the border of each agent pane shows `⟨state glyph⟩ ⟨agent⟩ · ⟨task⟩`, e.g. `▶ claude · auth refactor`. The state glyph updates every tick; the task label is refreshed by the local LLM on a slow cadence. Titles are written to a per-pane tmux user option (`@loop_label`) rendered via `pane-border-format`, so they survive the agent TUIs overwriting `pane_title`. Borders are enabled on babysitter startup, so a restarted/replaced babysitter pane re-lights them.
-- **Agent rename** — on each label refresh the babysitter sends `/rename <session> · <task>` into each agent, so the agent's own session name tracks the current task.
+- **Agent rename (opt-in)** — pane borders are the safe default because they do not touch an agent's composer. Set `LOOP_BABYSIT_AGENT_RENAME=1` to also send `/rename <session> · <task>` into each idle agent; leave it off when humans or peers may be drafting input.
+- **Exit controls** — focus the babysitter pane and press `x` to open its exit menu. Press `e` to tear down the current loop, `h` to ask both agents to finish, write their handoff, and exit before a fresh paired loop starts, or `c`/`Esc`/`x` to cancel. A failed replacement launch leaves the old babysitter alive for retry or explicit teardown.
 
 The local model, endpoint, and pane height are configurable (`--babysit-*` flags / `LOOP_BABYSIT_*` env). The labeling call is sized for reasoning models that emit a `<think>` block before their answer.
 

@@ -1,0 +1,34 @@
+{
+  "task": "babysitter-exit-control",
+  "verdict": "pass",
+  "evaluator": "rename_safety_eval",
+  "findings": [],
+  "checks": {
+    "focused_tests": {
+      "passed": 59,
+      "failed": 0
+    },
+    "full_tests": {
+      "passed": 575,
+      "failed": 4,
+      "known_unrelated_failures": [
+        "preparePairedOptions creates a loop-scoped Codex home without global MCP config",
+        "runAgent launches Codex app-server with loop-scoped Codex home",
+        "buildCommand carries Codex bridge approval config for legacy exec",
+        "startPersistentAgentSession enables persistent Codex threads"
+      ]
+    },
+    "build": "pass",
+    "diff_check": "pass",
+    "live_x_cancel": "pass",
+    "agent_pids_preserved": {
+      "claude": 38930,
+      "codex": 38932
+    }
+  },
+  "notes": [
+    "No live teardown or handover was triggered.",
+    "Only the babysitter pane was respawned for deployment.",
+    "The repository verify wrapper completed but its lint, typecheck, unit, and integration commands are placeholders."
+  ]
+}

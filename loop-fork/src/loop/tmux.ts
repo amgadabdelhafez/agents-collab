@@ -1011,6 +1011,7 @@ const babysitEnv = (
   `LOOP_BABYSIT_MODEL=${opts.babysitModel}`,
   ...passEnv(env, "LOOP_BABYSIT_JUDGES"),
   ...passEnv(env, "LOOP_BABYSIT_JUDGE_MODE"),
+  ...passEnv(env, "LOOP_BABYSIT_AGENT_RENAME"),
   ...passEnv(env, "LOOP_BABYSIT_ROLE_BALANCE"),
   ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
   ...passEnv(env, "LOOP_USAGE_TRACKER_TIMEOUT_MS"),

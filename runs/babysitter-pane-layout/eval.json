@@ -1,0 +1,42 @@
+{
+  "task_id": "babysitter-pane-layout",
+  "feature": "babysitter-pane-layout",
+  "timestamp": "2026-07-25T18:54:10Z",
+  "checks": {
+    "functional": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "Project wraps over two 180-character lines without truncating the live text.",
+        "Runtime and activity render as two intentional tables preserving all 28 prior fields.",
+        "Runtime and activity fixed widths are 174 and 99 characters.",
+        "LLM columns and bridge excerpts fit the 191-column live pane without accidental wrapping.",
+        "The renderer omits a trailing newline so a full-height frame does not scroll itself."
+      ]
+    },
+    "ui": {
+      "passed": 4,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "Live 191x20 capture begins with babysitter status on row 1.",
+        "Runtime header/rows occupy rows 2-4 and activity header/rows occupy rows 5-7.",
+        "Bridge and LLM rows stay on one physical line each.",
+        "Project renders fully on rows 13-14 with two blank rows remaining for the current three-section summary."
+      ]
+    },
+    "performance": {"passed": 0, "failed": 0, "details": []},
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "Fifteen focused board and summary tests passed.",
+        "The complete babysitter test file passed: 45 tests and 262 assertions under the unrelated compatibility flag.",
+        "Compiled build and git diff --check passed.",
+        "Independent evaluator verdict: PASS for the deployed one-judge configuration."
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "A second configured LLM judge would add one row and can exceed a 20-row pane when all eight summary lines are present; pane-height-aware summary budgeting is a non-blocking follow-up. The combined dirty tree's broad suite remains at 561 pass and 4 unrelated Codex model/runner expectation failures."
+}

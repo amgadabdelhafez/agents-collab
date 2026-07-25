@@ -12,6 +12,18 @@ import { spawnSync } from "bun";
 import { readPriorSummaries, readProjectContext } from "./babysitter-context";
 import { initLivenessState, updateLiveness } from "./babysitter-detect";
 import {
+  agentHasExited,
+  type ExitControlState,
+  exitKeyAction,
+  freshExitControl,
+  HANDOVER_REQUEST,
+  type KeyInput,
+  openRawKeyInput,
+  type ReplacementLaunchResult,
+  readExitControl,
+  replacementLoopArgs,
+} from "./babysitter-exit";
+import {
   assessRoleBalance,
   assessWaiting,
   judgeAgent,
@@ -51,7 +63,12 @@ import {
   DEFAULT_USAGE_TRACKER_URL,
 } from "./constants";
 import { decode } from "./git";
-import { loadRunState } from "./run-state";
+import { buildLaunchArgv } from "./launch";
+import {
+  loadRunState,
+  setRunManifestState,
+  updateRunManifest,
+} from "./run-state";
 import type {
   Agent,
   AgentLiveness,
@@ -106,6 +123,9 @@ export interface LocalLlmJudgeConfig {
 export type LocalLlmJudgeMode = "consensus" | "round-robin";
 
 export interface BabysitConfig {
+  // Sending slash commands into agent TUIs is unsafe around composer drafts, so
+  // session rename is opt-in; pane-border labels remain enabled independently.
+  agentRenameEnabled: boolean;
   agents: BabysitAgentInfo[];
   // Session cost ceiling (USD) for the budget line + escalation; 0 disables.
   budgetUsd: number;
@@ -129,6 +149,8 @@ export interface BabysitConfig {
   llmPromptConcurrency: number;
   llmTraceFile?: string;
   logFile: string;
+  // Manifest updated when an explicit exit path stops this run.
+  manifestPath?: string;
   maxRecoveries: number;
   model: string;
   // On-disk size (GB) of the local LLM, shown in the footer.
@@ -165,10 +187,15 @@ export interface BabysitDeps {
   // Turn on the pane-border title strip for the whole session (idempotent).
   initPaneBorders: (session: string) => void;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
+  killSession?: (session: string) => void;
   labelPanes: (req: PaneLabelRequest) => Promise<PaneLabelResult>;
+  launchReplacementLoop?: (config: BabysitConfig) => ReplacementLaunchResult;
   loadState: (stateFile?: string) => BabysitRunState | undefined;
+  markRunStopped?: (config: BabysitConfig, reason: string) => void;
   notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
   now: () => number;
+  openKeyInput?: () => KeyInput | undefined;
+  paneCommand?: (pane: string) => string | undefined;
   readBridge: (transcriptPath?: string) => BridgeCounts;
   readBridgeLatest: (runDir?: string) => BridgeLatest;
   readHooks: (file: string) => HookEvent[];
@@ -186,6 +213,7 @@ export interface BabysitDeps {
   readUsageLimits: (
     config: BabysitConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
+  replacementSessionAlive?: (session: string) => boolean;
   render: (text: string) => void;
   respawnPane: (pane: string) => void;
   saveState: (stateFile: string | undefined, state: BabysitRunState) => void;
@@ -243,6 +271,7 @@ export interface BabysitRunState {
   babysitterMessages: Record<string, number>;
   // Epoch ms both agents became idle together (0 = not both idle right now).
   bothIdleSince: number;
+  exitControl: ExitControlState;
   history: RecoveryHistoryEntry[];
   // Backward-compatible persisted total; `llmUsage` is the canonical shape.
   llmTokens: number;
@@ -453,6 +482,7 @@ const readRoleState = (value: unknown): RoleState => {
 export const freshRunState = (): BabysitRunState => ({
   babysitterMessages: {},
   bothIdleSince: 0,
+  exitControl: freshExitControl(),
   history: [],
   llmUsage: emptyLocalLlmUsage(),
   llmUsageByJudge: emptyLocalLlmUsageByJudge(),
@@ -619,8 +649,9 @@ const fmtClock = (nowMs: number): string => {
 };
 
 const CLAUDE_PREFIX_RE = /^claude-/;
+const SHORT_MODEL_WIDTH = 12;
 const shortModel = (model?: string): string =>
-  model ? model.replace(CLAUDE_PREFIX_RE, "").slice(0, 10) : "—";
+  model ? model.replace(CLAUDE_PREFIX_RE, "").slice(0, SHORT_MODEL_WIDTH) : "—";
 const LOCAL_MODEL_PREFIX_RE = /^[^/]+\//;
 const shortLocalModel = (model: string): string =>
   model.replace(LOCAL_MODEL_PREFIX_RE, "");
@@ -913,7 +944,7 @@ interface BoardMeta {
 const COL = {
   activity: 6,
   agent: 7,
-  bridge: 18,
+  bridge: 22,
   cache: 7,
   code: 7,
   compact: 4,
@@ -926,7 +957,7 @@ const COL = {
   inspect: 9,
   input: 7,
   mode: 9,
-  model: 10,
+  model: 12,
   now: 6,
   other: 7,
   output: 7,
@@ -941,7 +972,7 @@ const COL = {
   tools: 6,
 } as const;
 
-const COLUMNS: [string, number][] = [
+const RUNTIME_COLUMNS: [string, number][] = [
   ["AGENT", COL.agent],
   ["STATE", COL.state],
   ["NOW", COL.now],
@@ -960,6 +991,10 @@ const COLUMNS: [string, number][] = [
   ["IN", COL.input],
   ["CACHE", COL.cache],
   ["OUT", COL.output],
+];
+
+const ACTIVITY_COLUMNS: [string, number][] = [
+  ["AGENT", COL.agent],
   ["ACT", COL.activity],
   ["TXT", COL.text],
   ["THK", COL.thinking],
@@ -972,9 +1007,14 @@ const COLUMNS: [string, number][] = [
   ["BRIDGE", COL.bridge],
 ];
 
-const headerRow = paint(
+const runtimeHeaderRow = paint(
   ANSI.dim,
-  ` ${COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
+  ` ${RUNTIME_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
+);
+
+const activityHeaderRow = paint(
+  ANSI.dim,
+  ` ${ACTIVITY_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
 );
 
 const rowState = (row: AgentRow): string =>
@@ -1101,7 +1141,7 @@ export const sendRenameCommands = (
   lastRenames: Partial<Record<Agent, string>>,
   states: Partial<Record<Agent, string>> = {}
 ): void => {
-  if (config.dryRun) {
+  if (!config.agentRenameEnabled || config.dryRun) {
     return;
   }
   for (const info of config.agents) {
@@ -1295,7 +1335,7 @@ const lastActionDetail = (row: AgentRow): string =>
     .replace(SPACE_GLOBAL_RE, " ")
     .trim();
 
-const renderRow = (row: AgentRow, meta: BoardMeta): string => {
+const renderRuntimeRow = (row: AgentRow, meta: BoardMeta): string => {
   const agent = row.liveness.agent;
   const state = rowState(row);
   const forMs = row.thinking
@@ -1329,8 +1369,6 @@ const renderRow = (row: AgentRow, meta: BoardMeta): string => {
     row.usage.rateLimitSecondaryReset,
     meta.nowMs
   );
-  const groups = groupedToolCounts(row.usage);
-  const bridgeActivity = bridgeActivityText(row, groups, meta);
   return ` ${[
     fitCell(agent, COL.agent),
     stateCell(state),
@@ -1350,6 +1388,14 @@ const renderRow = (row: AgentRow, meta: BoardMeta): string => {
     fitCell(inputTok, COL.input),
     fitCell(cachedTok, COL.cache),
     fitCell(outputTok, COL.output),
+  ].join(" ")}`;
+};
+
+const renderActivityRow = (row: AgentRow, meta: BoardMeta): string => {
+  const groups = groupedToolCounts(row.usage);
+  const bridgeActivity = bridgeActivityText(row, groups, meta);
+  return ` ${[
+    fitCell(row.liveness.agent, COL.agent),
     renderToolCountCell(countCell(activityTotal(row.usage)), COL.activity),
     renderToolCountCell(countCell(row.usage.textMessages), COL.text),
     renderToolCountCell(countCell(row.usage.thinkingMessages), COL.thinking),
@@ -1814,17 +1860,17 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     ...roleSummaryParts(meta),
     ...(errorTotal > 0 ? [paint(ANSI.red, `errors ${errorTotal}`)] : []),
     ...waitingForYouAlert(meta.waitingForYou),
+    paint(ANSI.dim, "[x] exit"),
   ];
   return ` ${parts.join(" · ")}`;
 };
 
 const SUMMARY_LINE_WIDTH = 180;
-const SUMMARY_PROJECT_WIDTH = Math.floor(SUMMARY_LINE_WIDTH / 2);
 const SUMMARY_TOTAL_LINES = 8;
 const SUMMARY_LABEL_RE = /^(project|objective|progress|next)\s*:\s*/i;
 const SPACE_RE = /\s+/;
 const SPACE_GLOBAL_RE = /\s+/g;
-const BRIDGE_LATEST_WIDTH = 76;
+const BRIDGE_LATEST_WIDTH = 64;
 
 const bridgeLatestFor = (
   latest: BridgeLatest,
@@ -2107,20 +2153,20 @@ const localFooterKnownColor = (text: string, color: string): string =>
 const LLM_COL = {
   arch: 34,
   batch: 18,
-  cached: 7,
+  cached: 6,
   calls: 5,
   dtype: 5,
-  hit: 7,
-  id: 7,
-  input: 7,
-  memory: 8,
-  model: 34,
+  hit: 5,
+  id: 5,
+  input: 6,
+  memory: 7,
+  model: 32,
   moe: 9,
-  output: 7,
+  output: 6,
   quant: 13,
-  slots: 8,
-  status: 5,
-  tokens: 7,
+  slots: 7,
+  status: 4,
+  tokens: 6,
 } as const;
 
 const LLM_COLUMNS: [string, number][] = [
@@ -2358,7 +2404,6 @@ const renderFooter = (meta: BoardMeta): string[] => {
   ];
   const summaryLines = renderSummaryBody(meta.summary);
   if (summaryLines.length > 0) {
-    lines.push(paint(ANSI.dim, " ── summary ──"));
     lines.push(...summaryLines);
   }
   return lines;
@@ -2371,13 +2416,13 @@ const summaryLineBudget = (
 ): { maxLines: number; width: number } => {
   const label = line.match(SUMMARY_LABEL_RE)?.[1]?.toLowerCase();
   if (label === "project") {
-    return { maxLines: 1, width: SUMMARY_PROJECT_WIDTH };
+    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
   }
   if (label === "objective") {
     return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
   }
   if (label === "progress") {
-    return { maxLines: 3, width: SUMMARY_LINE_WIDTH };
+    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
   }
   if (label === "next") {
     return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
@@ -2423,8 +2468,10 @@ const renderSummaryLabelLine = (text: string): string => {
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   return [
     renderSummaryLine(rows, meta),
-    headerRow,
-    ...rows.map((row) => renderRow(row, meta)),
+    runtimeHeaderRow,
+    ...rows.map((row) => renderRuntimeRow(row, meta)),
+    activityHeaderRow,
+    ...rows.map((row) => renderActivityRow(row, meta)),
     ...renderBridgeLatestLine(rows, meta),
     ...renderFooter(meta),
   ].join("\n");
@@ -3185,6 +3232,248 @@ const sendRoleMessage = async (
   return sendDirectRoleMessage(deps, targetInfo, message);
 };
 
+const exitBanner = (
+  state: ExitControlState,
+  menuOpen: boolean,
+  agents: BabysitAgentInfo[],
+  paneCommand: (pane: string) => string | undefined
+): string | undefined => {
+  if (menuOpen) {
+    return " exit · [e] tear down loop · [h] hand over to new loop · [c/Esc/x] cancel";
+  }
+  if (state.mode === "launch-error") {
+    return ` handover launch failed · ${state.launchError ?? "unknown error"} · [h] retry · [e] tear down`;
+  }
+  if (state.mode !== "handover") {
+    return undefined;
+  }
+  const status = agents.map((info) => {
+    if (!state.notified[info.agent]) {
+      return `${info.agent}:finishing`;
+    }
+    return agentHasExited(info.agent, paneCommand(info.pane))
+      ? `${info.agent}:done`
+      : `${info.agent}:exiting`;
+  });
+  return ` handover · ${status.join(" · ")} · [e] force teardown`;
+};
+
+export const renderExitControl = (
+  board: string,
+  state: ExitControlState,
+  menuOpen: boolean,
+  agents: BabysitAgentInfo[],
+  paneCommand: (pane: string) => string | undefined
+): string => {
+  const banner = exitBanner(state, menuOpen, agents, paneCommand);
+  if (!banner) {
+    return board;
+  }
+  const lines = board.split("\n");
+  lines[0] = banner;
+  return lines.join("\n");
+};
+
+const agentSafeForHandover = (state: string | undefined): boolean =>
+  !RENAME_BUSY_STATES.has(state ?? "");
+
+const handoverUsesDirectInput = (
+  config: BabysitConfig,
+  target: Agent,
+  source: Agent | undefined
+): boolean =>
+  !(config.runDir && source && source !== target && target !== "claude");
+
+const directInputIsSafe = (
+  deps: BabysitDeps,
+  info: BabysitAgentInfo
+): boolean => {
+  const events = deps.readHooks(info.hookFile);
+  return TURN_END_EVENTS.has(events.at(-1)?.event ?? "");
+};
+
+const notifyHandoverAgents = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  runState: BabysitRunState,
+  agentStates: Partial<Record<Agent, string>>
+): Promise<void> => {
+  for (const info of config.agents) {
+    if (
+      runState.exitControl.notified[info.agent] ||
+      !agentSafeForHandover(agentStates[info.agent])
+    ) {
+      continue;
+    }
+    const source = bridgeSourceFor(info.agent, undefined, config);
+    if (
+      handoverUsesDirectInput(config, info.agent, source) &&
+      !directInputIsSafe(deps, info)
+    ) {
+      continue;
+    }
+    // Persist before delivery so a babysitter crash cannot re-inject the same
+    // lifecycle request into an agent composer on restart.
+    runState.exitControl.notified[info.agent] = true;
+    deps.saveState(config.stateFile, runState);
+    const delivery = await sendRoleMessage(
+      config,
+      deps,
+      info,
+      info.agent,
+      source,
+      HANDOVER_REQUEST
+    );
+    deps.appendLog(config.logFile, {
+      agent: info.agent,
+      at: new Date(deps.now()).toISOString(),
+      delivery,
+      event: "handover-requested",
+    });
+  }
+};
+
+const allHandoverAgentsExited = (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  runState: BabysitRunState
+): boolean =>
+  config.agents.every(
+    (info) =>
+      runState.exitControl.notified[info.agent] === true &&
+      agentHasExited(info.agent, deps.paneCommand?.(info.pane))
+  );
+
+const beginHandover = (runState: BabysitRunState, now: number): void => {
+  runState.exitControl = {
+    mode: "handover",
+    notified: {},
+    requestedAt: new Date(now).toISOString(),
+  };
+};
+
+export type HandoverAdvanceResult =
+  | { status: "inactive" | "waiting" }
+  | { error: string; status: "launch-error" }
+  | { session?: string; status: "launched" };
+
+export const advanceHandoverControl = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  runState: BabysitRunState,
+  agentStates: Partial<Record<Agent, string>>
+): Promise<HandoverAdvanceResult> => {
+  if (runState.exitControl.mode === "launched") {
+    const replacementSession = runState.exitControl.replacementSession;
+    if (
+      !replacementSession ||
+      deps.replacementSessionAlive?.(replacementSession) !== true
+    ) {
+      const error = replacementSession
+        ? `replacement tmux session ${replacementSession} is not running`
+        : "replacement session was not persisted";
+      runState.exitControl = {
+        ...runState.exitControl,
+        launchError: error,
+        mode: "launch-error",
+      };
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        error,
+        event: "handover-replacement-missing",
+      });
+      deps.saveState(config.stateFile, runState);
+      return { error, status: "launch-error" };
+    }
+    return {
+      session: replacementSession,
+      status: "launched",
+    };
+  }
+  if (runState.exitControl.mode !== "handover") {
+    return { status: "inactive" };
+  }
+  await notifyHandoverAgents(config, deps, runState, agentStates);
+  if (!allHandoverAgentsExited(config, deps, runState)) {
+    return { status: "waiting" };
+  }
+  const launched = deps.launchReplacementLoop?.(config) ?? {
+    error: "replacement launcher unavailable",
+    ok: false,
+  };
+  if (!launched.ok) {
+    const error = launched.error ?? "unknown launch error";
+    runState.exitControl = {
+      ...runState.exitControl,
+      launchError: error,
+      mode: "launch-error",
+    };
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error,
+      event: "handover-launch-failed",
+    });
+    return { error, status: "launch-error" };
+  }
+  deps.appendLog(config.logFile, {
+    at: new Date(deps.now()).toISOString(),
+    event: "handover-launched",
+    replacementSession: launched.session,
+  });
+  runState.exitControl = {
+    ...runState.exitControl,
+    launchError: undefined,
+    mode: "launched",
+    replacementSession: launched.session,
+  };
+  // Persist the transaction result before the caller tears down this session.
+  deps.saveState(config.stateFile, runState);
+  return {
+    ...(launched.session ? { session: launched.session } : {}),
+    status: "launched",
+  };
+};
+
+export const stopBabysatLoop = (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  reason: string
+): void => {
+  deps.appendLog(config.logFile, {
+    at: new Date(deps.now()).toISOString(),
+    event: "exit",
+    reason,
+  });
+  deps.markRunStopped?.(config, reason);
+  deps.killSession?.(config.session);
+};
+
+export const driveHandoverControl = async (
+  config: BabysitConfig,
+  deps: BabysitDeps,
+  runState: BabysitRunState,
+  agentStates: Partial<Record<Agent, string>>
+): Promise<boolean> => {
+  const handover = await advanceHandoverControl(
+    config,
+    deps,
+    runState,
+    agentStates
+  );
+  deps.saveState(config.stateFile, runState);
+  if (handover.status !== "launched") {
+    return false;
+  }
+  stopBabysatLoop(
+    config,
+    deps,
+    handover.session
+      ? `handed over to ${handover.session}`
+      : "handed over to replacement loop"
+  );
+  return true;
+};
+
 const availableDriverRow = (
   rows: AgentRow[],
   preferred: Agent | undefined
@@ -3367,7 +3656,18 @@ const handleRoleTransitions = async (
       delete runState.notified.limitHandoff[agent];
     }
   }
+  // Founder directive (2026-07-23): do NOT reassign the driver based on
+  // quota/session-limit pressure. The initial driver stays the driver even when
+  // limited; the babysitter still does idle recovery, rename, and notifications.
+  // Re-enable quota-based driver handoff by setting LOOP_BABYSIT_LIMIT_HANDOFF=1.
+  const limitHandoffEnabled = process.env.LOOP_BABYSIT_LIMIT_HANDOFF === "1";
   for (const [paused, pressure] of pressures) {
+    if (!limitHandoffEnabled) {
+      // Track the observation for dedupe so we don't re-evaluate every tick,
+      // but never switch the driver or send a "you are now the driver" message.
+      runState.notified.limitHandoff[paused] = pressure.key;
+      continue;
+    }
     const initialDriver =
       runState.roles.initialDriver ?? config.initialDriver ?? paused;
     const currentDriver = runState.roles.currentDriver ?? initialDriver;
@@ -3674,13 +3974,10 @@ export const babysitTick = async (
     }
   }
 
-  const roleTransitions = await handleRoleTransitions(
-    rows,
-    config,
-    deps,
-    runState,
-    nowIso
-  );
+  const roleTransitions =
+    runState.exitControl.mode === "idle"
+      ? await handleRoleTransitions(rows, config, deps, runState, nowIso)
+      : { llmUsageByJudge: emptyLocalLlmUsageByJudge() };
   llmUsageByJudge = addLocalLlmUsageByJudge(
     llmUsageByJudge,
     roleTransitions.llmUsageByJudge
@@ -3842,6 +4139,7 @@ export const loadBabysitState = (
       babysitterMessages: readCountMap(parsed.babysitterMessages),
       bothIdleSince:
         typeof parsed.bothIdleSince === "number" ? parsed.bothIdleSince : 0,
+      exitControl: readExitControl(parsed.exitControl),
       history: Array.isArray(parsed.history) ? parsed.history : [],
       llmUsage,
       llmUsageByJudge: readLocalLlmUsageByJudge(
@@ -3948,8 +4246,90 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
   judge: (req) => judgeAgent(req),
   labelPanes: (req) => labelPanes(req),
   loadState: (stateFile) => loadBabysitState(stateFile),
+  launchReplacementLoop: (config) => {
+    const primary = config.initialDriver ?? config.agents[0]?.agent;
+    const peer = config.agents.find((info) => info.agent !== primary)?.agent;
+    if (primary === undefined || peer === undefined) {
+      return { error: "handover requires two agents", ok: false };
+    }
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key !== "LOOP_RUN_ID")
+    );
+    const result = spawnSync(
+      [...buildLaunchArgv(), ...replacementLoopArgs(primary, peer)],
+      {
+        cwd: config.cwd,
+        env,
+        stderr: "pipe",
+        stdout: "pipe",
+      }
+    );
+    const stdout = decode(result.stdout);
+    const stderr = decode(result.stderr);
+    if (result.exitCode !== 0) {
+      return {
+        error: (stderr || stdout || `exit ${result.exitCode}`).trim(),
+        ok: false,
+      };
+    }
+    const session = stdout.match(/started tmux session "([^"]+)"/)?.[1];
+    if (!session) {
+      return {
+        error: "replacement command succeeded without reporting a tmux session",
+        ok: false,
+      };
+    }
+    const sessionCheck = spawnSync(["tmux", "has-session", "-t", session], {
+      stderr: "ignore",
+    });
+    if (sessionCheck.exitCode !== 0) {
+      return {
+        error: `replacement tmux session ${session} is not running`,
+        ok: false,
+      };
+    }
+    return { ok: true, session };
+  },
+  markRunStopped: (config, reason) => {
+    if (config.manifestPath) {
+      updateRunManifest(config.manifestPath, (manifest) =>
+        manifest ? setRunManifestState(manifest, "stopped") : undefined
+      );
+    }
+    config.transcriptPath &&
+      appendFileSync(
+        config.transcriptPath,
+        `${JSON.stringify({
+          at: new Date().toISOString(),
+          detail: reason,
+          kind: "status",
+          state: "stopped",
+        })}\n`,
+        "utf8"
+      );
+  },
+  killSession: (session) => {
+    spawnSync(["tmux", "kill-session", "-t", session], {
+      stderr: "ignore",
+    });
+  },
   notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
   now: () => Date.now(),
+  openKeyInput: () => openRawKeyInput(),
+  paneCommand: (pane) => {
+    const result = spawnSync(
+      [
+        "tmux",
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{pane_dead}:#{pane_current_command}",
+      ],
+      { stderr: "ignore", stdout: "pipe" }
+    );
+    return result.exitCode === 0 ? decode(result.stdout).trim() : undefined;
+  },
   readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
   readBridgeLatest: (runDir) => readBridgeLatest(runDir),
   readHooks: (file) => {
@@ -3980,9 +4360,13 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
       timeoutMs: config.usageTrackerTimeoutMs,
       url: config.usageTrackerUrl,
     }),
+  replacementSessionAlive: (session) =>
+    spawnSync(["tmux", "has-session", "-t", session], {
+      stderr: "ignore",
+    }).exitCode === 0,
   render: (text) => {
     // Clear the pane and print the fresh board.
-    process.stdout.write(`\x1b[2J\x1b[H${text}\n`);
+    process.stdout.write(`\x1b[2J\x1b[H${text}`);
   },
   respawnPane: (pane) => {
     spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });
@@ -4056,6 +4440,9 @@ const envEnabled = (value: string | undefined): boolean => {
     normalized === "on"
   );
 };
+
+export const agentRenameEnabledFromEnv = (env: NodeJS.ProcessEnv): boolean =>
+  envEnabled(env.LOOP_BABYSIT_AGENT_RENAME);
 
 const llmTraceFileFromEnv = (
   env: NodeJS.ProcessEnv,
@@ -4213,6 +4600,7 @@ export const resolveBabysitConfig = (
   };
   const budget = Number.parseFloat(env.LOOP_BABYSIT_BUDGET ?? "");
   return {
+    agentRenameEnabled: agentRenameEnabledFromEnv(env),
     agents,
     budgetUsd: Number.isFinite(budget) && budget > 0 ? budget : 0,
     confidence: envConfidence(env),
@@ -4266,6 +4654,7 @@ export const resolveBabysitConfig = (
     roleBalanceEnabled: envEnabled(env.LOOP_BABYSIT_ROLE_BALANCE),
     runId,
     runDir: storage.runDir,
+    manifestPath: storage.manifestPath,
     session,
     stateFile: join(storage.runDir, "babysitter-state.json"),
     tickMs: envSeconds(env, "LOOP_BABYSIT_TICK", DEFAULT_BABYSIT_TICK_SECONDS),
@@ -4309,141 +4698,256 @@ export const runBabysitter = async (
   let waitingAssessInFlight = false;
   let assessedForIdleSince = 0;
   let pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
-  for (;;) {
-    // Fold any completed background work in before rendering this tick.
-    const pendingLlmUsageByJudge = addLocalLlmUsageByJudge(
-      addLocalLlmUsageByJudge(
-        pendingSummaryUsageByJudge,
-        pendingPaneLabelUsageByJudge
-      ),
-      pendingWaitUsageByJudge
-    );
-    const pendingLlmUsage = sumLocalLlmUsageByJudge(pendingLlmUsageByJudge);
-    const nextLlmUsage = addLocalLlmUsage(runState.llmUsage, pendingLlmUsage);
-    const nextLlmUsageByJudge = addLocalLlmUsageByJudge(
-      runState.llmUsageByJudge,
-      pendingLlmUsageByJudge
-    );
-    runState = {
-      ...runState,
-      llmUsage: nextLlmUsage,
-      llmUsageByJudge: nextLlmUsageByJudge,
-      llmTokens: nextLlmUsage.totalTokens,
-      paneLabels,
-      paneLabelTick,
-      paneRenames,
-      summary: summaryText,
-      summaryTick,
-      waitingAsk,
-      waitingConfirmed,
-    };
-    pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
-    pendingPaneLabelUsageByJudge = emptyLocalLlmUsageByJudge();
-    pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
-
-    const result = await babysitTick(states, config, deps, runState);
-    runState = result.runState;
-    // updateBothIdle may have cleared the waiting read (agents went active).
-    waitingConfirmed = runState.waitingConfirmed;
-    waitingAsk = runState.waitingAsk;
-
-    if (
-      !summaryInFlight &&
-      (summaryDue(summaryText, summaryTick, runState.tick) ||
-        missingJudgeUsage(config, runState.llmUsageByJudge))
-    ) {
-      summaryInFlight = true;
-      const firedAtTick = runState.tick;
-      summarizeWithLocalJudges(config, deps, result.summaryCtxs, runState.tick)
-        .then((summary) => {
-          if (summary.text) {
-            summaryText = summary.text;
-          }
-          summaryTick = firedAtTick;
-          pendingSummaryUsageByJudge = addLocalLlmUsageByJudge(
-            pendingSummaryUsageByJudge,
-            summary.usageByJudge
-          );
-        })
-        .catch(() => {
-          // Best-effort; the next due tick retries.
-        })
-        .finally(() => {
-          summaryInFlight = false;
-        });
-    }
-
-    // Refresh the per-agent pane-border task labels off the tick, on the same
-    // slow cadence as the summary. The composed title (glyph + agent + label)
-    // is applied every tick inside babysitTick; only the label lags.
-    if (!paneLabelInFlight && paneLabelsDue(paneLabelTick, runState.tick)) {
-      paneLabelInFlight = true;
-      const firedAtTick = runState.tick;
-      labelPanesWithLocalJudges(config, deps, result.summaryCtxs, runState.tick)
-        .then((res) => {
-          if (Object.keys(res.labels).length > 0) {
-            paneLabels = { ...paneLabels, ...res.labels };
-            // Name each agent's session via /rename, but only when the value
-            // changed and the agent is idle — don't re-send an unchanged
-            // rename or inject keystrokes into an agent that is mid-turn.
-            sendRenameCommands(
-              config,
-              deps,
-              res.labels,
-              paneRenames,
-              result.agentStates
-            );
-          }
-          paneLabelTick = firedAtTick;
-          pendingPaneLabelUsageByJudge = addLocalLlmUsageByJudge(
-            pendingPaneLabelUsageByJudge,
-            res.usageByJudge
-          );
-        })
-        .catch(() => {
-          // Best-effort; the next due tick retries.
-        })
-        .finally(() => {
-          paneLabelInFlight = false;
-        });
-    }
-
-    // Once the pair has been idle together a while, ask the local LLM (once per
-    // idle episode) whether they are actually blocked on the human.
-    const idleSince = runState.bothIdleSince;
-    if (idleSince === 0) {
-      assessedForIdleSince = 0;
-    } else if (
-      !waitingAssessInFlight &&
-      assessedForIdleSince !== idleSince &&
-      deps.now() - idleSince >= BOTH_IDLE_ASSESS_MS
-    ) {
-      waitingAssessInFlight = true;
-      const episode = idleSince;
-      assessWaitingWithLocalJudges(
-        config,
-        deps,
-        result.summaryCtxs,
-        runState.tick
+  const keyInput = deps.openKeyInput?.();
+  let pendingKey = keyInput?.next();
+  let exitMenuOpen = false;
+  const paneCommand = (pane: string): string | undefined =>
+    deps.paneCommand?.(pane);
+  const renderExit = (board: string): void => {
+    deps.render(
+      renderExitControl(
+        board,
+        runState.exitControl,
+        exitMenuOpen,
+        config.agents,
+        paneCommand
       )
-        .then((assessment) => {
-          waitingConfirmed = assessment.waiting;
-          waitingAsk = assessment.ask;
-          assessedForIdleSince = episode;
-          pendingWaitUsageByJudge = addLocalLlmUsageByJudge(
-            pendingWaitUsageByJudge,
-            assessment.usageByJudge
-          );
-        })
-        .catch(() => {
-          // Best-effort; retried on the next tick.
-        })
-        .finally(() => {
-          waitingAssessInFlight = false;
-        });
+    );
+  };
+  const stopCurrentLoop = (reason: string): void =>
+    stopBabysatLoop(config, deps, reason);
+  const advanceHandover = async (
+    agentStates: Partial<Record<Agent, string>>,
+    board: string
+  ): Promise<boolean> => {
+    const stopped = await driveHandoverControl(
+      config,
+      deps,
+      runState,
+      agentStates
+    );
+    renderExit(board);
+    return stopped;
+  };
+  try {
+    if (
+      runState.exitControl.mode === "launched" &&
+      (await advanceHandover({}, ""))
+    ) {
+      return;
     }
+    for (;;) {
+      // Fold any completed background work in before rendering this tick.
+      const pendingLlmUsageByJudge = addLocalLlmUsageByJudge(
+        addLocalLlmUsageByJudge(
+          pendingSummaryUsageByJudge,
+          pendingPaneLabelUsageByJudge
+        ),
+        pendingWaitUsageByJudge
+      );
+      const pendingLlmUsage = sumLocalLlmUsageByJudge(pendingLlmUsageByJudge);
+      const nextLlmUsage = addLocalLlmUsage(runState.llmUsage, pendingLlmUsage);
+      const nextLlmUsageByJudge = addLocalLlmUsageByJudge(
+        runState.llmUsageByJudge,
+        pendingLlmUsageByJudge
+      );
+      runState = {
+        ...runState,
+        llmUsage: nextLlmUsage,
+        llmUsageByJudge: nextLlmUsageByJudge,
+        llmTokens: nextLlmUsage.totalTokens,
+        paneLabels,
+        paneLabelTick,
+        paneRenames,
+        summary: summaryText,
+        summaryTick,
+        waitingAsk,
+        waitingConfirmed,
+      };
+      pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
+      pendingPaneLabelUsageByJudge = emptyLocalLlmUsageByJudge();
+      pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
 
-    deps.saveState(config.stateFile, runState);
-    await deps.sleep(config.tickMs);
+      const lifecycleActive = runState.exitControl.mode !== "idle";
+      const tickConfig = lifecycleActive
+        ? {
+            ...config,
+            agentRenameEnabled: false,
+            dryRun: true,
+            roleBalanceEnabled: false,
+          }
+        : config;
+      const result = await babysitTick(states, tickConfig, deps, runState);
+      runState = result.runState;
+      // updateBothIdle may have cleared the waiting read (agents went active).
+      waitingConfirmed = runState.waitingConfirmed;
+      waitingAsk = runState.waitingAsk;
+
+      if (
+        runState.exitControl.mode === "idle" &&
+        !summaryInFlight &&
+        (summaryDue(summaryText, summaryTick, runState.tick) ||
+          missingJudgeUsage(config, runState.llmUsageByJudge))
+      ) {
+        summaryInFlight = true;
+        const firedAtTick = runState.tick;
+        summarizeWithLocalJudges(
+          config,
+          deps,
+          result.summaryCtxs,
+          runState.tick
+        )
+          .then((summary) => {
+            if (summary.text) {
+              summaryText = summary.text;
+            }
+            summaryTick = firedAtTick;
+            pendingSummaryUsageByJudge = addLocalLlmUsageByJudge(
+              pendingSummaryUsageByJudge,
+              summary.usageByJudge
+            );
+          })
+          .catch(() => {
+            // Best-effort; the next due tick retries.
+          })
+          .finally(() => {
+            summaryInFlight = false;
+          });
+      }
+
+      // Refresh the per-agent pane-border task labels off the tick, on the same
+      // slow cadence as the summary. The composed title (glyph + agent + label)
+      // is applied every tick inside babysitTick; only the label lags.
+      if (
+        runState.exitControl.mode === "idle" &&
+        !paneLabelInFlight &&
+        paneLabelsDue(paneLabelTick, runState.tick)
+      ) {
+        paneLabelInFlight = true;
+        const firedAtTick = runState.tick;
+        labelPanesWithLocalJudges(
+          config,
+          deps,
+          result.summaryCtxs,
+          runState.tick
+        )
+          .then((res) => {
+            if (
+              runState.exitControl.mode === "idle" &&
+              Object.keys(res.labels).length > 0
+            ) {
+              paneLabels = { ...paneLabels, ...res.labels };
+              // Name each agent's session via /rename, but only when the value
+              // changed and the agent is idle — don't re-send an unchanged
+              // rename or inject keystrokes into an agent that is mid-turn.
+              sendRenameCommands(
+                config,
+                deps,
+                res.labels,
+                paneRenames,
+                result.agentStates
+              );
+            }
+            paneLabelTick = firedAtTick;
+            pendingPaneLabelUsageByJudge = addLocalLlmUsageByJudge(
+              pendingPaneLabelUsageByJudge,
+              res.usageByJudge
+            );
+          })
+          .catch(() => {
+            // Best-effort; the next due tick retries.
+          })
+          .finally(() => {
+            paneLabelInFlight = false;
+          });
+      }
+
+      // Once the pair has been idle together a while, ask the local LLM (once per
+      // idle episode) whether they are actually blocked on the human.
+      const idleSince = runState.bothIdleSince;
+      if (runState.exitControl.mode !== "idle") {
+        assessedForIdleSince = 0;
+      } else if (idleSince === 0) {
+        assessedForIdleSince = 0;
+      } else if (
+        !waitingAssessInFlight &&
+        assessedForIdleSince !== idleSince &&
+        deps.now() - idleSince >= BOTH_IDLE_ASSESS_MS
+      ) {
+        waitingAssessInFlight = true;
+        const episode = idleSince;
+        assessWaitingWithLocalJudges(
+          config,
+          deps,
+          result.summaryCtxs,
+          runState.tick
+        )
+          .then((assessment) => {
+            waitingConfirmed = assessment.waiting;
+            waitingAsk = assessment.ask;
+            assessedForIdleSince = episode;
+            pendingWaitUsageByJudge = addLocalLlmUsageByJudge(
+              pendingWaitUsageByJudge,
+              assessment.usageByJudge
+            );
+          })
+          .catch(() => {
+            // Best-effort; retried on the next tick.
+          })
+          .finally(() => {
+            waitingAssessInFlight = false;
+          });
+      }
+
+      if (await advanceHandover(result.agentStates, result.board)) {
+        return;
+      }
+
+      deps.saveState(config.stateFile, runState);
+      renderExit(result.board);
+      if (!pendingKey) {
+        await deps.sleep(config.tickMs);
+        continue;
+      }
+      const wake = await Promise.race([
+        deps.sleep(config.tickMs).then(() => ({ kind: "tick" as const })),
+        pendingKey.then((key) => ({ key, kind: "key" as const })),
+      ]);
+      if (wake.kind === "tick") {
+        continue;
+      }
+      pendingKey = keyInput?.next();
+      const action = exitKeyAction(
+        exitMenuOpen,
+        runState.exitControl.mode,
+        wake.key
+      );
+      if (action === "menu") {
+        exitMenuOpen = true;
+      } else if (action === "cancel") {
+        exitMenuOpen = false;
+      } else if (action === "teardown") {
+        stopCurrentLoop("user requested teardown");
+        return;
+      } else if (action === "handover") {
+        exitMenuOpen = false;
+        if (runState.exitControl.mode === "launch-error") {
+          runState.exitControl = {
+            ...runState.exitControl,
+            launchError: undefined,
+            mode: "handover",
+          };
+        } else {
+          beginHandover(runState, deps.now());
+        }
+        if (await advanceHandover(result.agentStates, result.board)) {
+          return;
+        }
+      }
+      deps.saveState(config.stateFile, runState);
+      renderExit(result.board);
+    }
+  } finally {
+    keyInput?.close();
   }
 };

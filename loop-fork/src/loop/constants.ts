@@ -2,9 +2,9 @@ import pkg from "../../package.json";
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
-export const DEFAULT_CODEX_MODEL = "gpt-5.5";
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
 export const DEFAULT_CODEX_REASONING_EFFORT = "xhigh";
-export const DEFAULT_CODEX_SERVICE_TIER = "fast";
+export const DEFAULT_CODEX_SERVICE_TIER = "standard";
 export const DEFAULT_CODEX_CONFIG_VALUES = [
   `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
   `service_tier="${DEFAULT_CODEX_SERVICE_TIER}"`,
@@ -86,6 +86,7 @@ Options:
 Environment:
   LOOP_BABYSIT_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
   LOOP_BABYSIT_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
+  LOOP_BABYSIT_AGENT_RENAME=1              Opt in to sending /rename commands into agent TUIs (default: off)
   LOOP_BABYSIT_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
   LOOP_BABYSIT_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
   LOOP_BABYSIT_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path

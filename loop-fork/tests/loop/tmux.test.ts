@@ -534,7 +534,7 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
       {
         capturePane: () => "",
         cwd: repoDir,
-        env: {},
+        env: { LOOP_BABYSIT_AGENT_RENAME: "1" },
         findBinary: () => true,
         getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
         getLastCodexThreadId: () => "codex-thread-1",
@@ -589,6 +589,11 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
     expect(
       events.some((event) =>
         event.includes("'LOOP_BABYSIT_LLM_TRACE=1'")
+      )
+    ).toBe(true);
+    expect(
+      events.some((event) =>
+        event.includes("'LOOP_BABYSIT_AGENT_RENAME=1'")
       )
     ).toBe(true);
     expect(
