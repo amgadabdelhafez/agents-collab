@@ -82,13 +82,14 @@ Options:
   --governess-height <rows|percent>          Governess pane height, e.g. 25% or 12 (default: ${DEFAULT_GOVERNESS_HEIGHT})
   governess doctor <run-id>                  Check governess state, journal, epoch, and tmux readiness
   governess replay <run-id>                  Replay the durable governess control journal and report invariant violations
+  governess explain <run-id> [control-id]    Explain policy, transport, evidence, and phase history for a control
   -v, --version                            Show loop version
   -h, --help                               Show this help
 
 Environment:
   LOOP_GOVERNESS_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
   LOOP_GOVERNESS_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
-  LOOP_GOVERNESS_AGENT_RENAME=1              Opt in to sending /rename commands into agent TUIs (default: off)
+  LOOP_GOVERNESS_AGENT_RENAME=1              Legacy opt-in for guarded /rename; pane-border task labels are preferred
   LOOP_GOVERNESS_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
   LOOP_GOVERNESS_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
   LOOP_GOVERNESS_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path

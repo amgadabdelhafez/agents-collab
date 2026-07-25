@@ -1,0 +1,52 @@
+{
+  "task_id": "governess-native-runtime",
+  "scanned_at": "2026-07-25T22:19:09Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-25T22:19:09Z",
+      "task_id": "governess-native-runtime",
+      "signal": "loc_growth",
+      "file": "src/loop/governess-handoff.ts",
+      "before_loc": 58,
+      "after_loc": 206,
+      "delta_loc": 148,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-25T22:19:09Z",
+      "task_id": "governess-native-runtime",
+      "signal": "loc_growth",
+      "file": "src/loop/governess-journal.ts",
+      "before_loc": 161,
+      "after_loc": 369,
+      "delta_loc": 208,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-25T22:19:09Z",
+      "task_id": "governess-native-runtime",
+      "signal": "loc_growth",
+      "file": "src/loop/governess-replay.ts",
+      "before_loc": 226,
+      "after_loc": 398,
+      "delta_loc": 172,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-25T22:19:09Z",
+      "task_id": "governess-native-runtime",
+      "signal": "loc_growth",
+      "file": "src/loop/governess.ts",
+      "before_loc": 5881,
+      "after_loc": 6215,
+      "delta_loc": 334,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

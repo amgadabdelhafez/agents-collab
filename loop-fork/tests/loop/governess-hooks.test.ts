@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildClaudeHookSettings,
-  buildCodexHooksJson,
-  buildHookCommand,
-} from "../../src/loop/hooks/settings";
-import {
   CLAUDE_HOOK_EVENTS,
   CODEX_HOOK_EVENTS,
   normalizeHookPayload,
   runHookEmit,
 } from "../../src/loop/hooks/emit";
+import {
+  buildClaudeHookSettings,
+  buildCodexHooksJson,
+  buildHookCommand,
+} from "../../src/loop/hooks/settings";
 
 const NOW = "2026-07-04T12:00:00.000Z";
 
@@ -30,6 +30,7 @@ describe("normalizeHookPayload", () => {
       cwd: "/repo",
       detail: "src/auth.ts",
       event: "PostToolUse",
+      state: "working",
       tool: "Edit",
       ts: NOW,
     });
@@ -69,7 +70,15 @@ describe("runHookEmit", () => {
     });
     expect(lines).toHaveLength(1);
     const parsed = JSON.parse(lines[0]);
-    expect(parsed).toMatchObject({ agent: "codex", event: "Stop", ts: NOW });
+    expect(parsed).toMatchObject({
+      agent: "codex",
+      event: "Stop",
+      sequence: 1,
+      source: "agent-hook",
+      state: "input-required",
+      ts: NOW,
+    });
+    expect(parsed.eventId).toBeString();
     expect(lines[0].endsWith("\n")).toBe(true);
   });
 

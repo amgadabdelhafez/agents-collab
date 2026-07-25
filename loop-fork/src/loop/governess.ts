@@ -10,41 +10,6 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { spawnSync } from "bun";
-import { readPriorSummaries, readProjectContext } from "./governess-context";
-import { initLivenessState, updateLiveness } from "./governess-detect";
-import {
-  agentHasExited,
-  type ExitControlState,
-  exitKeyAction,
-  freshExitControl,
-  handoverContinuationFile,
-  handoverContinuationText,
-  handoverRequest,
-  type KeyInput,
-  openRawKeyInput,
-  type ReplacementLaunchResult,
-  readExitControl,
-  replacementLoopArgs,
-} from "./governess-exit";
-import {
-  assessRoleBalance,
-  assessWaiting,
-  judgeAgent,
-  LOCAL_LLM_JUDGE_MAX_TOKENS,
-  LOCAL_LLM_SUMMARY_MAX_TOKENS,
-  LOCAL_LLM_TEMPERATURE,
-  LOCAL_LLM_WAITING_MAX_TOKENS,
-  labelPanes,
-  summarizeSession,
-} from "./governess-llm";
-import { type EscalationEvent, sendNtfy } from "./governess-notify";
-import { decideRecovery, executeRecovery } from "./governess-recover";
-import { readAgentUsage, readHumanMessages } from "./governess-usage";
-import {
-  applyUsageTrackerPricing,
-  readUsageTrackerLimits,
-  type UsageLimitSnapshot,
-} from "./governess-usage-limits";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
 import {
   deliverCodexBridgeMessage,
@@ -67,29 +32,75 @@ import {
   DEFAULT_USAGE_TRACKER_URL,
 } from "./constants";
 import { decode } from "./git";
-import { buildLaunchArgv } from "./launch";
+import { readPriorSummaries, readProjectContext } from "./governess-context";
 import {
+  compactGovernessCycleSnapshot,
+  decideGovernessCycle,
+  executeGovernessCycle,
+  type GovernessObservationSnapshot,
+} from "./governess-cycle";
+import { initLivenessState, updateLiveness } from "./governess-detect";
+import {
+  agentHasExited,
+  type ExitControlState,
+  exitKeyAction,
+  freshExitControl,
+  handoverContinuationFile,
+  handoverContinuationText,
+  handoverRequest,
+  type KeyInput,
+  openRawKeyInput,
+  type ReplacementLaunchResult,
+  readExitControl,
+  replacementLoopArgs,
+} from "./governess-exit";
+import {
+  acceptGovernessHandoff,
   ensureGovernessHandoffDir,
   governessHandoffFile,
+  readGovernessHandoffAcceptance,
   readGovernessHandoffBundle,
+  writeGovernessHandoffManifest,
 } from "./governess-handoff";
 import {
   ensureGovernessJournal,
+  latestGovernessControlByKey,
+  pendingGovernessControlHistory,
   prepareGovernessControl,
   readGovernessJournal,
   transitionGovernessControl,
 } from "./governess-journal";
 import {
+  assessRoleBalance,
+  assessWaiting,
+  judgeAgent,
+  LOCAL_LLM_JUDGE_MAX_TOKENS,
+  LOCAL_LLM_SUMMARY_MAX_TOKENS,
+  LOCAL_LLM_TEMPERATURE,
+  LOCAL_LLM_WAITING_MAX_TOKENS,
+  labelPanes,
+  summarizeSession,
+} from "./governess-llm";
+import { type EscalationEvent, sendNtfy } from "./governess-notify";
+import {
   decideGovernessPolicy,
   type GovernessAction,
 } from "./governess-policy";
+import { decideRecovery, executeRecovery } from "./governess-recover";
 import {
   driverLeaseIsCurrent,
   explicitAgentState,
-  nextLifecycleEvent,
   type GovernessLifecycleEvent,
   type GovernessRuntimeAdapter,
+  lifecycleEventFromEvidence,
 } from "./governess-runtime";
+import { readAgentUsage, readHumanMessages } from "./governess-usage";
+import {
+  applyUsageTrackerPricing,
+  readUsageTrackerLimits,
+  type UsageLimitSnapshot,
+} from "./governess-usage-limits";
+import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
   withLegacyGovernessEnv,
@@ -167,16 +178,18 @@ export interface GovernessConfig {
   // Working directory of the run, for reading project docs into the summary.
   cwd?: string;
   dryRun: boolean;
+  // Fencing epoch acquired by the currently running governess process.
+  epoch?: number;
   // How long an agent may sit waiting-for-human before we escalate.
   escalateIdleMs: number;
   idleMs: number;
   initialDriver?: Agent;
   journalFile?: string;
+  judgeMode: LocalLlmJudgeMode;
+  judges?: LocalLlmJudgeConfig[];
   // Explicit compatibility switch; quota observations never change drivers
   // unless this is enabled at process configuration time.
   limitHandoffEnabled?: boolean;
-  judgeMode: LocalLlmJudgeMode;
-  judges?: LocalLlmJudgeConfig[];
   llmDecodeConcurrency: number;
   llmLogFile?: string;
   llmPrefillStepSize: number;
@@ -199,8 +212,6 @@ export interface GovernessConfig {
   session: string;
   // Persisted run-state file, so stats survive governess restarts.
   stateFile?: string;
-  // Fencing epoch acquired by the currently running governess process.
-  epoch?: number;
   tickMs: number;
   // Path to the run transcript (bridge messages between agents).
   transcriptPath?: string;
@@ -208,6 +219,9 @@ export interface GovernessConfig {
   usageTrackerSecret?: string;
   usageTrackerTimeoutMs: number;
   usageTrackerUrl?: string;
+  // Optional deterministic render budget for tests/non-TTY callers. A live
+  // pane uses the current stdout height when this is absent.
+  viewportRows?: number;
 }
 
 // Per-agent bridge message counts, keyed by sender then recipient.
@@ -251,9 +265,9 @@ export interface GovernessDeps {
   readUsageLimits: (
     config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
+  render: (text: string) => void;
   replacementSessionAlive?: (session: string) => boolean;
   replacementSessionReady: (session: string) => boolean;
-  render: (text: string) => void;
   respawnPane: (pane: string) => void;
   saveState: (stateFile: string | undefined, state: GovernessRunState) => void;
   sendBridge: (
@@ -313,12 +327,12 @@ export interface DriverLease {
 
 // State the governess carries across ticks.
 export interface GovernessRunState {
-  governessMessages: Record<string, number>;
   // Epoch ms both agents became idle together (0 = not both idle right now).
   bothIdleSince: number;
   driverLease?: DriverLease;
   exitControl: ExitControlState;
   governessEpoch: number;
+  governessMessages: Record<string, number>;
   handoverBundles: Partial<Record<Agent, string>>;
   history: RecoveryHistoryEntry[];
   lifecycleEvents: Partial<Record<Agent, GovernessLifecycleEvent>>;
@@ -652,6 +666,12 @@ const runJournaledControl = (
     fenceCurrent: governessFenceCurrent(config, deps),
     targetSafe: input.targetSafe,
   });
+  const policyContext = {
+    confirmed: input.confirmed,
+    deterministicReason: input.deterministicReason,
+    fenceCurrent: governessFenceCurrent(config, deps),
+    targetSafe: input.targetSafe,
+  };
   if (!policy.allowed) {
     deps.appendLog(config.logFile, {
       action: input.action,
@@ -679,6 +699,7 @@ const runJournaledControl = (
     ),
     payload: input.payload,
     policyClass: policy.class,
+    policyContext,
   });
   if (record.phase !== "prepared") {
     return false;
@@ -694,8 +715,10 @@ const runJournaledControl = (
     transitionGovernessControl(
       config.journalFile,
       record.controlId,
-      "completed",
-      new Date(deps.now()).toISOString()
+      input.agent ? "accepted" : "completed",
+      new Date(deps.now()).toISOString(),
+      undefined,
+      { transport: input.agent ? "tmux-fallback" : "internal" }
     );
     return true;
   } catch (error) {
@@ -731,6 +754,7 @@ const recordGovernessObservation = (
     idempotencyKey,
     payload,
     policyClass: policy.class,
+    policyContext: { fenceCurrent: governessFenceCurrent(config, deps) },
   });
   if (record.phase === "prepared") {
     transitionGovernessControl(
@@ -964,7 +988,9 @@ const rateLimitCell = (u: AgentUsage): string => {
   const windows = usageLimitWindows(u);
   return windows.length > 0
     ? windows
-        .map((window) => `${limitKindCell(window.kind)}${pctCell(window.usedPct)}`)
+        .map(
+          (window) => `${limitKindCell(window.kind)}${pctCell(window.usedPct)}`
+        )
         .join("/")
     : "—";
 };
@@ -1197,16 +1223,17 @@ interface LocalLlmRuntimeInput {
 }
 
 interface BoardMeta {
-  governessMessages: Record<string, number>;
   bridge: BridgeCounts;
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
+  governessMessages: Record<string, number>;
   initialDriver?: Agent;
   judgeMode: LocalLlmJudgeMode;
   llmJudges: LocalLlmJudgeConfig[];
   llmOfflineByJudge: Record<string, boolean>;
   llmRuntimeByJudge: Record<string, LocalLlmRuntime>;
   llmUsageByJudge: LocalLlmUsageByJudge;
+  maxRows?: number;
   nowMs: number;
   recoveries: number;
   roles: RoleState;
@@ -1629,9 +1656,10 @@ const renderAgentRow = (row: AgentRow, meta: BoardMeta): string => {
   const forMs = row.thinking
     ? row.liveness.lastEventAgeMs
     : row.liveness.paneIdleMs;
-  const run = [effortCell(row.usage), modeCell(row.usage)]
-    .filter((part) => part !== "—")
-    .join("/") || "—";
+  const run =
+    [effortCell(row.usage), modeCell(row.usage)]
+      .filter((part) => part !== "—")
+      .join("/") || "—";
   const ctxText = `${contextCell(row.usage)} c${row.usage.compactions}`;
   const ctxWarn = contextPct(row.usage) > CONTEXT_ALERT_PCT;
   const ctx = ctxWarn
@@ -1658,7 +1686,11 @@ const renderAgentRow = (row: AgentRow, meta: BoardMeta): string => {
   const rateLimit =
     windows.length > 0 ? `${rateLimitCell(row.usage)} · ${resets}` : "—";
   const rateLimitRendered = rateLimitColor(row.usage)
-    ? colorCell(rateLimitColor(row.usage) as string, rateLimit, AGENT_COL.limits)
+    ? colorCell(
+        rateLimitColor(row.usage) as string,
+        rateLimit,
+        AGENT_COL.limits
+      )
     : fitCell(rateLimit, AGENT_COL.limits);
   const tokenSummary = `${tok} i${inputTok} c${cachedTok} o${outputTok}`;
   const activity = `${countCell(activityTotal(row.usage))} tx${countCell(
@@ -2664,22 +2696,53 @@ const wrapText = (text: string, width: number, maxLines: number): string[] => {
   return lines;
 };
 
-const renderFooter = (meta: BoardMeta): string[] => {
+const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
   const paramCells = localLlmParamsCell(meta.judgeMode);
   const paramParts: LocalFooterPart[] = [
     { color: ANSI.blue, text: "llm params" },
     ...paramCells.map((text) => ({ color: ANSI.blue, text })),
   ];
-  const lines = [
+  const summaryLines = renderSummaryBody(meta.summary);
+  if (maxRows === undefined) {
+    return [
+      localLlmTableHeader(),
+      ...meta.llmJudges.map((judge) => renderLocalLlmUsageRow(judge, meta)),
+      renderLocalFooterLine(paramParts),
+      ...summaryLines,
+    ];
+  }
+  if (maxRows <= 0) {
+    return [];
+  }
+  if (maxRows === 1) {
+    return [localLlmTableHeader()];
+  }
+  const reserved = 2 + Math.min(4, summaryLines.length);
+  const judgeBudget = Math.max(0, maxRows - reserved);
+  const overflow = meta.llmJudges.length > judgeBudget;
+  const visibleCount = overflow
+    ? Math.max(0, judgeBudget - 1)
+    : meta.llmJudges.length;
+  const judgeLines = meta.llmJudges
+    .slice(0, visibleCount)
+    .map((judge) => renderLocalLlmUsageRow(judge, meta));
+  if (overflow && judgeBudget > 0) {
+    judgeLines.push(
+      paint(
+        ANSI.dim,
+        ` … ${meta.llmJudges.length - visibleCount} more judges (see replay/trace)`
+      )
+    );
+  }
+  const fixed = [
     localLlmTableHeader(),
-    ...meta.llmJudges.map((judge) => renderLocalLlmUsageRow(judge, meta)),
+    ...judgeLines,
     renderLocalFooterLine(paramParts),
   ];
-  const summaryLines = renderSummaryBody(meta.summary);
-  if (summaryLines.length > 0) {
-    lines.push(...summaryLines);
-  }
-  return lines;
+  return [
+    ...fixed,
+    ...summaryLines.slice(0, Math.max(0, maxRows - fixed.length)),
+  ];
 };
 
 // Render the structured summary, preserving its section lines (Project /
@@ -2739,13 +2802,17 @@ const renderSummaryLabelLine = (text: string): string => {
 };
 
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
-  return [
+  const top = [
     renderSummaryLine(rows, meta),
     agentHeaderRow,
     ...rows.map((row) => renderAgentRow(row, meta)),
     ...renderBridgeLatestLine(rows, meta),
-    ...renderFooter(meta),
-  ].join("\n");
+  ];
+  const footerBudget =
+    meta.maxRows === undefined
+      ? undefined
+      : Math.max(0, meta.maxRows - top.length);
+  return [...top, ...renderFooter(meta, footerBudget)].join("\n");
 };
 
 interface AgentTickContext {
@@ -3543,6 +3610,25 @@ const sendDirectRoleMessage = (
   return "tmux";
 };
 
+const controlTransport = (
+  config: GovernessConfig,
+  target: Agent
+): "bridge" | "claude-channel" | "codex-app-server" | "tmux-fallback" => {
+  if (!config.runDir) {
+    return "tmux-fallback";
+  }
+  if (target === "claude") {
+    return "claude-channel";
+  }
+  if (
+    target === "codex" &&
+    readBridgeRuntimeStatus(config.runDir).codexDeliveryMode === "app-server"
+  ) {
+    return "codex-app-server";
+  }
+  return "bridge";
+};
+
 const sendRoleMessage = async (
   config: GovernessConfig,
   deps: GovernessDeps,
@@ -3555,6 +3641,10 @@ const sendRoleMessage = async (
     fenceCurrent: governessFenceCurrent(config, deps),
     targetSafe: true,
   });
+  const policyContext = {
+    fenceCurrent: governessFenceCurrent(config, deps),
+    targetSafe: true,
+  };
   if (!policy.allowed) {
     deps.appendLog(config.logFile, {
       action: "send-control",
@@ -3575,6 +3665,7 @@ const sendRoleMessage = async (
         idempotencyKey: controlKey(config, "send-control", target, message),
         payload: message,
         policyClass: policy.class,
+        policyContext,
       })
     : undefined;
   if (record && record.phase !== "prepared") {
@@ -3585,20 +3676,28 @@ const sendRoleMessage = async (
       config.journalFile,
       record.controlId,
       "dispatched",
-      now
+      now,
+      undefined,
+      { transport: controlTransport(config, target) }
     );
   }
-  // Claude has no external push route from the governess process today; keep
-  // that path direct. Codex/non-Claude bridge delivery avoids fragile pane
-  // text+Enter injection and lets the bridge worker/app-server steer safely.
-  if (config.runDir && source && source !== target && target !== "claude") {
-    const delivery = await deps.sendBridge(config.runDir, source, target, message);
+  // The bridge owns native Claude channel and Codex app-server delivery. It
+  // durably queues when the runtime is reconnecting instead of typing into a
+  // possibly occupied composer.
+  if (config.runDir && source && source !== target) {
+    const delivery = await deps.sendBridge(
+      config.runDir,
+      source,
+      target,
+      message
+    );
     if (record && config.journalFile) {
       transitionGovernessControl(
         config.journalFile,
         record.controlId,
-        delivery === "delivered" ? "completed" : "accepted",
-        new Date(deps.now()).toISOString()
+        "accepted",
+        new Date(deps.now()).toISOString(),
+        `transport ${delivery}`
       );
     }
     return delivery;
@@ -3608,8 +3707,10 @@ const sendRoleMessage = async (
     transitionGovernessControl(
       config.journalFile,
       record.controlId,
-      "completed",
-      new Date(deps.now()).toISOString()
+      "accepted",
+      new Date(deps.now()).toISOString(),
+      "guarded terminal fallback accepted input",
+      { transport: "tmux-fallback" }
     );
   }
   return delivery;
@@ -3633,6 +3734,7 @@ export const createGovernessRuntimeAdapter = (
     ) {
       throw new Error("stale or invalid governess control envelope");
     }
+    const startedAt = deps.now();
     deps.appendLog(config.logFile, {
       action: control.action,
       agent: info.agent,
@@ -3641,7 +3743,27 @@ export const createGovernessRuntimeAdapter = (
       epoch: control.epoch,
       event: "runtime-control",
     });
-    if (direct) {
+    const finish = (status: string, transport: string): string => {
+      deps.appendLog(config.logFile, {
+        agent: info.agent,
+        at: new Date(deps.now()).toISOString(),
+        controlId: control.controlId,
+        durationMs: Math.max(0, deps.now() - startedAt),
+        epoch: control.epoch,
+        event: "runtime-control-span",
+        status,
+        traceId: control.controlId,
+        transport,
+      });
+      return status;
+    };
+    const tmuxFallback = async (): Promise<string> => {
+      if (!directInputIsSafe(deps, info)) {
+        finish("refused", "tmux-fallback");
+        throw new Error(
+          "terminal fallback refused: target composer is not empty"
+        );
+      }
       // Long pasted prompts are staged asynchronously by Codex's TUI. Sending
       // Enter in the same tmux command burst can leave the control sitting in
       // the composer, where it would consume the next user/agent input. Give
@@ -3649,18 +3771,28 @@ export const createGovernessRuntimeAdapter = (
       deps.sendText(info.pane, control.message);
       await deps.sleep(250);
       deps.sendKeys(info.pane, ["Enter"]);
-      return "tmux";
+      return finish("tmux", "tmux-fallback");
+    };
+    if (direct) {
+      return tmuxFallback();
     }
-    return String(
-      await sendRoleMessage(
-        config,
-        deps,
-        info,
-        info.agent,
-        bridgeSourceFor(info.agent, undefined, config),
-        control.message
-      )
-    );
+    const source = bridgeSourceFor(info.agent, undefined, config);
+    if (config.runDir && source) {
+      const transport = controlTransport(config, info.agent);
+      try {
+        const status = await deps.sendBridge(
+          config.runDir,
+          source,
+          info.agent,
+          control.message
+        );
+        return finish(String(status), transport);
+      } catch (error) {
+        finish("failed", transport);
+        throw error;
+      }
+    }
+    return tmuxFallback();
   };
   return {
     agent: info.agent,
@@ -3683,8 +3815,8 @@ export const createGovernessRuntimeAdapter = (
         state: explicitAgentState(displayState, alive),
       };
     },
-    requestDrain: (control) => deliver(control, true),
-    requestExit: deliver,
+    requestDrain: (control) => deliver(control),
+    requestExit: (control) => deliver(control, true),
     sendControl: deliver,
   };
 };
@@ -3701,6 +3833,9 @@ const exitBanner = (
   }
   if (state.mode === "launch-error") {
     return ` handover launch failed · ${state.launchError ?? "unknown error"} · [h] retry · [e] tear down`;
+  }
+  if (state.mode === "launched") {
+    return ` handover · ${state.replacementSession ?? "replacement"} ready · waiting for manifest acceptance · [e] tear down`;
   }
   if (state.mode !== "handover") {
     return undefined;
@@ -3753,7 +3888,14 @@ const directInputIsSafe = (
   // A Notification can mean "permission/input required", not an empty
   // composer. Only a real Stop hook proves a completed turn is safe for
   // direct text injection.
-  return events.at(-1)?.event === "Stop";
+  if (events.at(-1)?.event !== "Stop") {
+    return false;
+  }
+  const tail = deps.capturePane(info.pane).split(/\r?\n/).slice(-10);
+  // Both Codex and Claude prefix a non-empty composer with one of these prompt
+  // glyphs. A Stop hook alone proves turn completion, not that the human has
+  // not started typing since then.
+  return !tail.some((line) => /^\s*[›❯>]\s+\S/.test(line));
 };
 
 const notifyHandoverAgents = async (
@@ -3795,6 +3937,10 @@ const notifyHandoverAgents = async (
           idempotencyKey: `${runState.governessEpoch}:handover:${info.agent}`,
           payload: message,
           policyClass: policy.class,
+          policyContext: {
+            confirmed: true,
+            fenceCurrent: governessFenceCurrent(config, deps),
+          },
         })
       : undefined;
     if (record && record.phase !== "prepared") {
@@ -3847,10 +3993,15 @@ const notifyHandoverAgents = async (
       transitionGovernessControl(
         config.journalFile,
         record.controlId,
-        delivery === "delivered" || delivery === "tmux"
-          ? "completed"
-          : "accepted",
-        new Date(deps.now()).toISOString()
+        "accepted",
+        new Date(deps.now()).toISOString(),
+        `transport ${delivery}`,
+        {
+          transport:
+            delivery === "tmux"
+              ? "tmux-fallback"
+              : controlTransport(config, info.agent),
+        }
       );
     }
     // The journal is the at-most-once fence. Persist the display/progress bit
@@ -3878,8 +4029,7 @@ const allHandoverAgentsExited = (
     const probe = {
       bundle: runState.handoverBundles[info.agent],
       exited: agentHasExited(info.agent, paneProbe),
-      exitRequested:
-        runState.exitControl.exitRequested?.[info.agent] === true,
+      exitRequested: runState.exitControl.exitRequested?.[info.agent] === true,
       notified: runState.exitControl.notified[info.agent] === true,
       paneProbe: paneProbe ?? "unknown",
     };
@@ -3890,6 +4040,26 @@ const allHandoverAgentsExited = (
       `${config.epoch}:handoff-exit-probe:${info.agent}:${runState.tick}`,
       info.agent
     );
+    if (probe.exited && config.journalFile) {
+      const control = latestGovernessControlByKey(
+        config.journalFile,
+        `${runState.governessEpoch}:handover-exit:${info.agent}`
+      );
+      if (
+        control &&
+        control.phase !== "completed" &&
+        control.phase !== "failed"
+      ) {
+        transitionGovernessControl(
+          config.journalFile,
+          control.controlId,
+          "completed",
+          new Date(deps.now()).toISOString(),
+          "agent process exited",
+          { evidence: probe.paneProbe }
+        );
+      }
+    }
     if (!(probe.notified && probe.bundle && probe.exited)) {
       allExited = false;
     }
@@ -3918,8 +4088,10 @@ const requestDrainedAgentExits = async (
   for (const info of config.agents) {
     const paneProbe = deps.paneCommand?.(info.pane);
     if (
-      !runState.exitControl.notified[info.agent] ||
-      !runState.handoverBundles[info.agent] ||
+      !(
+        runState.exitControl.notified[info.agent] &&
+        runState.handoverBundles[info.agent]
+      ) ||
       requested[info.agent] ||
       agentHasExited(info.agent, paneProbe) ||
       !agentSafeForHandover(agentStates[info.agent]) ||
@@ -3945,6 +4117,11 @@ const requestDrainedAgentExits = async (
           idempotencyKey: `${runState.governessEpoch}:handover-exit:${info.agent}`,
           payload,
           policyClass: policy.class,
+          policyContext: {
+            confirmed: true,
+            fenceCurrent: governessFenceCurrent(config, deps),
+            targetSafe: true,
+          },
         })
       : undefined;
     if (record && record.phase !== "prepared") {
@@ -3960,15 +4137,43 @@ const requestDrainedAgentExits = async (
         new Date(deps.now()).toISOString()
       );
     }
-    deps.sendText(info.pane, payload);
-    await deps.sleep(250);
-    deps.sendKeys(info.pane, ["Enter"]);
+    const adapter = createGovernessRuntimeAdapter(config, deps, info);
+    try {
+      await adapter.requestExit({
+        action: "exit",
+        controlId:
+          record?.controlId ??
+          controlKey(config, "handover-loop", info.agent, payload),
+        epoch: config.epoch ?? runState.governessEpoch,
+        message: payload,
+        target: info.agent,
+      });
+    } catch (error) {
+      if (record && config.journalFile) {
+        transitionGovernessControl(
+          config.journalFile,
+          record.controlId,
+          "failed",
+          new Date(deps.now()).toISOString(),
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+      deps.appendLog(config.logFile, {
+        agent: info.agent,
+        at: new Date(deps.now()).toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+        event: "handover-agent-exit-refused",
+      });
+      continue;
+    }
     if (record && config.journalFile) {
       transitionGovernessControl(
         config.journalFile,
         record.controlId,
-        "completed",
-        new Date(deps.now()).toISOString()
+        "accepted",
+        new Date(deps.now()).toISOString(),
+        "guarded terminal exit accepted input",
+        { transport: "tmux-fallback" }
       );
     }
     requested[info.agent] = true;
@@ -4002,21 +4207,26 @@ export const advanceHandoverControl = async (
       replacementSession &&
         deps.replacementSessionReady(replacementSession) === true
     );
+    const handoverAccepted = Boolean(
+      replacementSession &&
+        runState.exitControl.handoverManifest &&
+        readGovernessHandoffAcceptance(
+          runState.exitControl.handoverManifest,
+          replacementSession
+        )
+    );
     recordGovernessObservation(
       config,
       deps,
       JSON.stringify({
+        accepted: handoverAccepted,
         alive: replacementAlive,
         ready: replacementReady,
         session: replacementSession,
       }),
       `${config.epoch}:replacement:${replacementSession ?? "missing"}:${replacementAlive}:${replacementReady}:${runState.tick}`
     );
-    if (
-      !replacementSession ||
-      !replacementAlive ||
-      !replacementReady
-    ) {
+    if (!(replacementSession && replacementAlive && replacementReady)) {
       const error = replacementSession
         ? `replacement tmux session ${replacementSession} is not running or ready`
         : "replacement session was not persisted";
@@ -4032,6 +4242,9 @@ export const advanceHandoverControl = async (
       });
       deps.saveState(config.stateFile, runState);
       return { error, status: "launch-error" };
+    }
+    if (!handoverAccepted) {
+      return { status: "waiting" };
     }
     return {
       session: replacementSession,
@@ -4057,12 +4270,49 @@ export const advanceHandoverControl = async (
         )
       ) {
         runState.handoverBundles[info.agent] = bundleFile;
+        if (config.journalFile) {
+          const control = latestGovernessControlByKey(
+            config.journalFile,
+            `${runState.governessEpoch}:handover:${info.agent}`
+          );
+          if (
+            control &&
+            control.phase !== "completed" &&
+            control.phase !== "failed"
+          ) {
+            transitionGovernessControl(
+              config.journalFile,
+              control.controlId,
+              "completed",
+              new Date(deps.now()).toISOString(),
+              "agent published validated handover bundle",
+              { evidence: bundleFile }
+            );
+          }
+        }
       }
     }
   }
   await requestDrainedAgentExits(config, deps, runState, agentStates);
   if (!allHandoverAgentsExited(config, deps, runState)) {
     return { status: "waiting" };
+  }
+  const handoverManifest = config.runDir
+    ? writeGovernessHandoffManifest(
+        config.runDir,
+        runState.governessEpoch,
+        config.agents.map((info) => info.agent),
+        new Date(deps.now()).toISOString()
+      )
+    : undefined;
+  if (!handoverManifest) {
+    const error = "could not create validated handover manifest";
+    runState.exitControl = {
+      ...runState.exitControl,
+      launchError: error,
+      mode: "launch-error",
+    };
+    return { error, status: "launch-error" };
   }
   const launched = deps.launchReplacementLoop?.(config) ?? {
     error: "replacement launcher unavailable",
@@ -4091,7 +4341,7 @@ export const advanceHandoverControl = async (
     JSON.stringify({ ready: replacementReady, session: launched.session }),
     `${config.epoch}:replacement-launch:${launched.session ?? "missing"}:${replacementReady}:${runState.tick}`
   );
-  if (!launched.session || !replacementReady) {
+  if (!(launched.session && replacementReady)) {
     const error = launched.session
       ? `replacement tmux session ${launched.session} is not ready`
       : "replacement launcher did not return a session";
@@ -4115,16 +4365,14 @@ export const advanceHandoverControl = async (
   });
   runState.exitControl = {
     ...runState.exitControl,
+    handoverManifest,
     launchError: undefined,
     mode: "launched",
     replacementSession: launched.session,
   };
   // Persist the transaction result before the caller tears down this session.
   deps.saveState(config.stateFile, runState);
-  return {
-    ...(launched.session ? { session: launched.session } : {}),
-    status: "launched",
-  };
+  return { status: "waiting" };
 };
 
 export const stopGovernessLoop = (
@@ -4159,6 +4407,10 @@ export const stopGovernessLoop = (
         idempotencyKey: controlKey(config, "teardown-loop", undefined, payload),
         payload,
         policyClass: policy.class,
+        policyContext: {
+          confirmed: true,
+          fenceCurrent: governessFenceCurrent(config, deps),
+        },
       })
     : undefined;
   if (record && record.phase !== "prepared") {
@@ -4687,10 +4939,7 @@ export const governessTick = async (
     stats: cloneStats(runStateIn.stats),
     tick: runStateIn.tick + 1,
   };
-  if (
-    !runState.driverLease &&
-    governessFenceCurrent(config, deps)
-  ) {
+  if (!runState.driverLease && governessFenceCurrent(config, deps)) {
     const holder =
       runState.roles.currentDriver ??
       runState.roles.initialDriver ??
@@ -4810,6 +5059,7 @@ export const governessTick = async (
     llmOfflineByJudge,
     llmRuntimeByJudge,
     llmUsageByJudge,
+    maxRows: config.viewportRows ?? process.stdout.rows,
     nowMs,
     recoveries,
     roles: runState.roles,
@@ -4977,10 +5227,7 @@ export const saveGovernessState = (
   try {
     mkdirSync(dirname(stateFile), { recursive: true });
     const persisted = loadGovernessState(stateFile);
-    if (
-      persisted &&
-      persisted.governessEpoch > state.governessEpoch
-    ) {
+    if (persisted && persisted.governessEpoch > state.governessEpoch) {
       return;
     }
     const temporary = `${stateFile}.${process.pid}.tmp`;
@@ -5040,7 +5287,9 @@ export const defaultGovernessDeps = (): GovernessDeps => ({
     if (!(config.stateFile && typeof config.epoch === "number")) {
       return false;
     }
-    return loadGovernessState(config.stateFile)?.governessEpoch === config.epoch;
+    return (
+      loadGovernessState(config.stateFile)?.governessEpoch === config.epoch
+    );
   },
   initPaneBorders: (session) => {
     tmux(["set-option", "-t", session, "pane-border-status", "top"]);
@@ -5067,16 +5316,22 @@ export const defaultGovernessDeps = (): GovernessDeps => ({
         `${handoverContinuationText(handoffDir)}\n`,
         "utf8"
       );
+      const manifestFile = writeGovernessHandoffManifest(
+        config.runDir as string,
+        config.epoch ?? 0,
+        config.agents.map((info) => info.agent),
+        new Date().toISOString()
+      );
+      if (!manifestFile) {
+        return {
+          error: "handover bundles changed before manifest creation",
+          ok: false,
+        };
+      }
+      env.LOOP_GOVERNESS_HANDOFF_MANIFEST = manifestFile;
     }
     const result = spawnSync(
-      [
-        ...buildLaunchArgv(),
-        ...replacementLoopArgs(
-          primary,
-          peer,
-          handoffDir
-        ),
-      ],
+      [...buildLaunchArgv(), ...replacementLoopArgs(primary, peer, handoffDir)],
       {
         cwd: config.cwd,
         env,
@@ -5186,7 +5441,14 @@ export const defaultGovernessDeps = (): GovernessDeps => ({
     }).exitCode === 0,
   replacementSessionReady: (session) => {
     const result = spawnSync(
-      ["tmux", "list-panes", "-t", session, "-F", "#{pane_dead}:#{pane_current_command}"],
+      [
+        "tmux",
+        "list-panes",
+        "-t",
+        session,
+        "-F",
+        "#{pane_dead}:#{pane_current_command}",
+      ],
       { stderr: "ignore", stdout: "pipe" }
     );
     if (result.exitCode !== 0) {
@@ -5420,7 +5682,8 @@ export const resolveGovernessConfig = (
   const model = env.LOOP_GOVERNESS_MODEL || DEFAULT_GOVERNESS_MODEL;
   const url = env.LOOP_GOVERNESS_URL || DEFAULT_GOVERNESS_URL;
   const llmLogFile =
-    env.LOOP_GOVERNESS_LLM_LOG || join(home ?? homedir(), "models", "mlx-lm.log");
+    env.LOOP_GOVERNESS_LLM_LOG ||
+    join(home ?? homedir(), "models", "mlx-lm.log");
   const usageTrackerDisabled = envDisabled(env.LOOP_USAGE_TRACKER_LIMITS);
   const usageTrackerSecret = usageTrackerDisabled
     ? undefined
@@ -5458,7 +5721,11 @@ export const resolveGovernessConfig = (
       "LOOP_GOVERNESS_ESCALATE_IDLE",
       DEFAULT_GOVERNESS_ESCALATE_IDLE_SECONDS
     ),
-    idleMs: envSeconds(env, "LOOP_GOVERNESS_IDLE", DEFAULT_GOVERNESS_IDLE_SECONDS),
+    idleMs: envSeconds(
+      env,
+      "LOOP_GOVERNESS_IDLE",
+      DEFAULT_GOVERNESS_IDLE_SECONDS
+    ),
     initialDriver: manifest?.primaryAgent,
     journalFile: join(storage.runDir, "governess-control.jsonl"),
     logFile: join(storage.runDir, "governess.jsonl"),
@@ -5500,7 +5767,11 @@ export const resolveGovernessConfig = (
     manifestPath: storage.manifestPath,
     session,
     stateFile,
-    tickMs: envSeconds(env, "LOOP_GOVERNESS_TICK", DEFAULT_GOVERNESS_TICK_SECONDS),
+    tickMs: envSeconds(
+      env,
+      "LOOP_GOVERNESS_TICK",
+      DEFAULT_GOVERNESS_TICK_SECONDS
+    ),
     transcriptPath: join(storage.runDir, "transcript.jsonl"),
     url,
     usageTrackerSecret,
@@ -5557,6 +5828,22 @@ export const runGoverness = async (
   // Done on every startup (including a replaced pane) so borders self-heal.
   deps.initPaneBorders(config.session);
   deps.setPaneLabel(governessPane(config), GOVERNESS_PANE_LABEL);
+  const parentHandoffManifest = process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST;
+  if (parentHandoffManifest) {
+    const acceptance = acceptGovernessHandoff(
+      parentHandoffManifest,
+      config.session,
+      acquiredEpoch,
+      new Date(deps.now()).toISOString()
+    );
+    deps.appendLog(config.logFile, {
+      accepted: Boolean(acceptance),
+      at: new Date(deps.now()).toISOString(),
+      event: "handover-manifest-acceptance",
+      manifest: parentHandoffManifest,
+      replacementSession: config.session,
+    });
+  }
   let summaryText = runState.summary;
   let summaryTick = runState.summaryTick;
   let summaryInFlight = false;
@@ -5662,23 +5949,25 @@ export const runGoverness = async (
       const result = await governessTick(states, tickConfig, deps, runState);
       runState = result.runState;
       const lifecycleAt = new Date(deps.now()).toISOString();
+      const hooksByAgent: Partial<Record<Agent, HookEvent[]>> = {};
       for (const info of config.agents) {
+        const hooks = deps.readHooks(info.hookFile);
+        hooksByAgent[info.agent] = hooks;
         const observation = await createGovernessRuntimeAdapter(
           config,
           deps,
           info,
           result.agentStates[info.agent]
         ).observe();
-        const state = observation.state;
         const previous = runState.lifecycleEvents[info.agent];
-        if (previous?.state !== state || previous.epoch !== acquiredEpoch) {
-          const event = nextLifecycleEvent(previous, {
-            agent: info.agent,
-            at: lifecycleAt,
-            epoch: acquiredEpoch,
-            evidence: observation.evidence,
-            state,
-          });
+        const event = lifecycleEventFromEvidence(previous, {
+          agent: info.agent,
+          at: lifecycleAt,
+          epoch: acquiredEpoch,
+          fallback: observation,
+          hooks,
+        });
+        if (event) {
           runState.lifecycleEvents[info.agent] = event;
         }
         recordGovernessObservation(
@@ -5698,15 +5987,60 @@ export const runGoverness = async (
         runState.roles.initialDriver ??
         config.initialDriver ??
         config.agents[0]?.agent;
-      if (holder) {
-        runState.driverLease = {
-          epoch: acquiredEpoch,
-          expiresAt: new Date(
-            deps.now() + Math.max(config.tickMs * 3, 60_000)
-          ).toISOString(),
-          holder,
-        };
-      }
+      const fullSnapshot: GovernessObservationSnapshot = {
+        agents: { ...runState.lifecycleEvents },
+        at: lifecycleAt,
+        controls: config.journalFile
+          ? pendingGovernessControlHistory(
+              readGovernessJournal(config.journalFile).filter(
+                (record) => record.action !== "observe-runtime"
+              )
+            )
+          : [],
+        epoch: acquiredEpoch,
+        ...(holder ? { holder } : {}),
+        hooks: hooksByAgent,
+        tick: runState.tick,
+      };
+      const cycleDecisions = decideGovernessCycle(fullSnapshot);
+      const snapshot = compactGovernessCycleSnapshot(
+        fullSnapshot,
+        cycleDecisions
+      );
+      executeGovernessCycle(cycleDecisions, {
+        renewDriverLease: (leaseHolder) => {
+          runState.driverLease = {
+            epoch: acquiredEpoch,
+            expiresAt: new Date(
+              deps.now() + Math.max(config.tickMs * 3, 60_000)
+            ).toISOString(),
+            holder: leaseHolder,
+          };
+        },
+        transitionControl: (decision) => {
+          if (!config.journalFile) {
+            return;
+          }
+          transitionGovernessControl(
+            config.journalFile,
+            decision.controlId,
+            decision.phase,
+            decision.at,
+            undefined,
+            { evidence: decision.evidence }
+          );
+        },
+      });
+      recordGovernessObservation(
+        config,
+        deps,
+        JSON.stringify({
+          decisions: cycleDecisions,
+          kind: "governess-cycle",
+          snapshot,
+        }),
+        `${acquiredEpoch}:cycle:${runState.tick}`
+      );
       // updateBothIdle may have cleared the waiting read (agents went active).
       waitingConfirmed = runState.waitingConfirmed;
       waitingAsk = runState.waitingAsk;

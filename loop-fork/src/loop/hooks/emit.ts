@@ -1,4 +1,5 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Agent, HookEvent } from "../types";
 
@@ -58,7 +59,9 @@ const isErrorPayload = (obj: Record<string, unknown>): boolean => {
   if (obj.is_error === true || obj.success === false) {
     return true;
   }
-  const response = asRecord(obj.tool_response ?? obj.tool_result ?? obj.toolResult);
+  const response = asRecord(
+    obj.tool_response ?? obj.tool_result ?? obj.toolResult
+  );
   if (response.is_error === true) {
     return true;
   }
@@ -67,6 +70,45 @@ const isErrorPayload = (obj: Record<string, unknown>): boolean => {
   }
   const code = obj.exit_code ?? response.exit_code;
   return typeof code === "number" && code !== 0;
+};
+
+const lifecycleState = (
+  event: string,
+  error: boolean,
+  raw: Record<string, unknown>
+): HookEvent["state"] => {
+  const explicit = firstString(raw, ["lifecycle_state", "lifecycleState"]);
+  if (
+    explicit === "starting" ||
+    explicit === "working" ||
+    explicit === "input-required" ||
+    explicit === "waiting-peer" ||
+    explicit === "blocked" ||
+    explicit === "draining" ||
+    explicit === "handover-ready" ||
+    explicit === "exited" ||
+    explicit === "failed" ||
+    explicit === "canceled"
+  ) {
+    return explicit;
+  }
+  if (error) {
+    return "failed";
+  }
+  if (event === "SessionStart") {
+    return "starting";
+  }
+  if (
+    event === "UserPromptSubmit" ||
+    event === "PreToolUse" ||
+    event === "PostToolUse"
+  ) {
+    return "working";
+  }
+  if (event === "Notification" || event === "Stop") {
+    return "input-required";
+  }
+  return undefined;
 };
 
 // Normalize a raw agent hook payload into our shared HookEvent shape. Tolerant:
@@ -83,16 +125,33 @@ export const normalizeHookPayload = (
   const tool = firstString(obj, ["tool_name", "toolName", "tool"]);
   const detail =
     toolDetail(obj) ?? firstString(obj, ["message", "notification", "reason"]);
-  const cwd = firstString(obj, ["cwd", "working_directory", "workingDirectory"]);
+  const cwd = firstString(obj, [
+    "cwd",
+    "working_directory",
+    "workingDirectory",
+  ]);
+  const error = isErrorPayload(obj);
+  const state = lifecycleState(event, error, obj);
   return {
     agent,
     ...(cwd ? { cwd } : {}),
     ...(detail ? { detail } : {}),
-    ...(isErrorPayload(obj) ? { error: true } : {}),
+    ...(error ? { error: true } : {}),
     event,
+    ...(state ? { state } : {}),
     ...(tool ? { tool } : {}),
     ts: nowIso,
   };
+};
+
+const nextHookSequence = (hookFile: string): number => {
+  try {
+    return (
+      readFileSync(hookFile, "utf8").split("\n").filter(Boolean).length + 1
+    );
+  } catch {
+    return 1;
+  }
 };
 
 const readAllStdin = async (
@@ -106,9 +165,9 @@ const readAllStdin = async (
 };
 
 interface HookEmitDeps {
+  append?: (path: string, line: string) => void;
   now?: () => string;
   stdin?: AsyncIterable<Uint8Array>;
-  append?: (path: string, line: string) => void;
 }
 
 // Runs as `loop __hook-emit <agent> <hookFile>`. Reads one hook payload on
@@ -135,7 +194,12 @@ export const runHookEmit = async (
     } catch {
       payload = { hook_event_name: "raw", detail: text.trim().slice(0, 200) };
     }
-    const event = normalizeHookPayload(agent, payload, now());
+    const event = {
+      ...normalizeHookPayload(agent, payload, now()),
+      eventId: randomUUID(),
+      sequence: nextHookSequence(hookFile),
+      source: "agent-hook" as const,
+    };
     append(hookFile, `${JSON.stringify(event)}\n`);
   } catch {
     // Best-effort: never propagate a hook failure to the agent.

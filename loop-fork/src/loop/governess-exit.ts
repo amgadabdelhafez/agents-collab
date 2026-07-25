@@ -6,6 +6,7 @@ export type ExitControlMode = "idle" | "handover" | "launched" | "launch-error";
 
 export interface ExitControlState {
   exitRequested?: Partial<Record<Agent, boolean>>;
+  handoverManifest?: string;
   launchError?: string;
   mode: ExitControlMode;
   notified: Partial<Record<Agent, boolean>>;
@@ -61,6 +62,11 @@ export const readExitControl = (value: unknown): ExitControlState => {
     record.replacementSession.trim().length > 0
       ? record.replacementSession
       : undefined;
+  const handoverManifest =
+    typeof record.handoverManifest === "string" &&
+    record.handoverManifest.trim().length > 0
+      ? record.handoverManifest
+      : undefined;
   let validMode: ExitControlMode = "idle";
   if (mode === "launched" && !replacementSession) {
     validMode = "launch-error";
@@ -82,6 +88,7 @@ export const readExitControl = (value: unknown): ExitControlState => {
   return {
     ...(Object.keys(exitRequested).length > 0 ? { exitRequested } : {}),
     ...(launchError ? { launchError } : {}),
+    ...(handoverManifest ? { handoverManifest } : {}),
     mode: validMode,
     notified,
     ...(replacementSession ? { replacementSession } : {}),

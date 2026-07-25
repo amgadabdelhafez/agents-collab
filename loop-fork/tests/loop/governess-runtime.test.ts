@@ -2,6 +2,12 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { GovernessConfig } from "../../src/loop/governess";
+import {
+  compactGovernessCycleSnapshot,
+  decideGovernessCycle,
+  type GovernessObservationSnapshot,
+} from "../../src/loop/governess-cycle";
 import {
   createGovernessRuntimeAdapter,
   defaultGovernessDeps,
@@ -10,24 +16,30 @@ import {
   saveGovernessState,
 } from "../../src/loop/governess";
 import {
+  acceptGovernessHandoff,
   governessHandoffFile,
+  readGovernessHandoffAcceptance,
   readGovernessHandoffBundle,
+  writeGovernessHandoffManifest,
 } from "../../src/loop/governess-handoff";
 import {
+  applyGovernessControlReconciliation,
+  decideGovernessControlReconciliation,
   prepareGovernessControl,
   readGovernessJournal,
   transitionGovernessControl,
 } from "../../src/loop/governess-journal";
 import { decideGovernessPolicy } from "../../src/loop/governess-policy";
 import {
+  explainGovernessControl,
   governessDoctor,
   inspectGovernessJournal,
   replayGovernessJournal,
 } from "../../src/loop/governess-replay";
-import type { GovernessConfig } from "../../src/loop/governess";
 import {
   driverLeaseIsCurrent,
   explicitAgentState,
+  lifecycleEventFromEvidence,
   nextLifecycleEvent,
 } from "../../src/loop/governess-runtime";
 import {
@@ -68,9 +80,9 @@ test("policy separates observations, safe controls, confirmations, and forbidden
       fenceCurrent: true,
     })
   ).toMatchObject({ allowed: true, class: "require-confirmation" });
-  expect(
-    decideGovernessPolicy("commit", { fenceCurrent: true })
-  ).toMatchObject({ allowed: false, class: "forbidden" });
+  expect(decideGovernessPolicy("commit", { fenceCurrent: true })).toMatchObject(
+    { allowed: false, class: "forbidden" }
+  );
 });
 
 test("runtime state and lifecycle sequence are explicit", () => {
@@ -114,6 +126,32 @@ test("runtime state and lifecycle sequence are explicit", () => {
     )
   ).toBe(false);
   expect(driverLeaseIsCurrent(undefined, undefined, Date.now())).toBe(false);
+});
+
+test("agent-authored hook evidence wins over terminal fallback state", () => {
+  const event = lifecycleEventFromEvidence(undefined, {
+    agent: "codex",
+    at: "2026-07-25T00:00:02.000Z",
+    epoch: 7,
+    fallback: { alive: true, evidence: "0:codex", state: "input-required" },
+    hooks: [
+      {
+        agent: "codex",
+        event: "UserPromptSubmit",
+        eventId: "evt-1",
+        sequence: 12,
+        source: "agent-hook",
+        state: "working",
+        ts: "2026-07-25T00:00:01.000Z",
+      },
+    ],
+  });
+  expect(event).toMatchObject({
+    evidence: "UserPromptSubmit:evt-1",
+    source: "agent-hook",
+    sourceSequence: 12,
+    state: "working",
+  });
 });
 
 test("control journal is idempotent and replayable", () => {
@@ -174,6 +212,213 @@ test("control journal is idempotent and replayable", () => {
       (record) => record.controlId === observation.controlId
     )?.payload
   ).toBe(JSON.stringify({ alive: true, state: "working" }));
+});
+
+test("journaled controls reconcile from post-dispatch agent evidence", () => {
+  const journalFile = join(tempDir(), "control.jsonl");
+  const prepared = prepareGovernessControl(journalFile, {
+    action: "send-control",
+    agent: "codex",
+    at: "2026-07-25T00:00:00.000Z",
+    epoch: 4,
+    idempotencyKey: "4:send:codex:one",
+    payload: "status?",
+    policyClass: "safe-automatic",
+    policyContext: { fenceCurrent: true, targetSafe: true },
+  });
+  transitionGovernessControl(
+    journalFile,
+    prepared.controlId,
+    "dispatched",
+    "2026-07-25T00:00:01.000Z"
+  );
+  transitionGovernessControl(
+    journalFile,
+    prepared.controlId,
+    "accepted",
+    "2026-07-25T00:00:02.000Z"
+  );
+  const before = {
+    agent: "codex" as const,
+    event: "Stop",
+    ts: "2026-07-25T00:00:00.500Z",
+  };
+  expect(
+    decideGovernessControlReconciliation(readGovernessJournal(journalFile), {
+      codex: [before],
+    })
+  ).toEqual([]);
+  const decisions = decideGovernessControlReconciliation(
+    readGovernessJournal(journalFile),
+    {
+      codex: [
+        before,
+        {
+          agent: "codex",
+          event: "UserPromptSubmit",
+          sequence: 2,
+          ts: "2026-07-25T00:00:03.000Z",
+        },
+      ],
+    }
+  );
+  expect(decisions).toMatchObject([
+    { controlId: prepared.controlId, phase: "acknowledged" },
+  ]);
+  applyGovernessControlReconciliation(journalFile, decisions);
+  expect(readGovernessJournal(journalFile).at(-1)?.phase).toBe("acknowledged");
+  const completed = decideGovernessControlReconciliation(
+    readGovernessJournal(journalFile),
+    {
+      codex: [
+        {
+          agent: "codex",
+          event: "Stop",
+          sequence: 3,
+          ts: "2026-07-25T00:00:04.000Z",
+        },
+      ],
+    }
+  );
+  applyGovernessControlReconciliation(journalFile, completed);
+  const records = readGovernessJournal(journalFile);
+  expect(records.at(-1)).toMatchObject({
+    evidence: "codex:Stop:3:2026-07-25T00:00:04.000Z",
+    phase: "completed",
+  });
+  expect(replayGovernessJournal(records)).toMatchObject({
+    behavioralChecks: 1,
+    ok: true,
+  });
+  expect(explainGovernessControl(records, prepared.controlId)).toMatchObject({
+    latestPhase: "completed",
+    ok: true,
+    transport: undefined,
+  });
+});
+
+test("behavioral cycle snapshots retain only transition evidence", () => {
+  const journalFile = join(tempDir(), "control.jsonl");
+  const prepared = prepareGovernessControl(journalFile, {
+    action: "send-control",
+    agent: "codex",
+    at: "2026-07-25T00:00:00.000Z",
+    epoch: 4,
+    idempotencyKey: "4:send:codex:bounded",
+    payload: "status?",
+    policyClass: "safe-automatic",
+  });
+  transitionGovernessControl(
+    journalFile,
+    prepared.controlId,
+    "dispatched",
+    "2026-07-25T00:00:01.000Z"
+  );
+  const snapshot: GovernessObservationSnapshot = {
+    agents: {},
+    at: "2026-07-25T00:00:04.000Z",
+    controls: readGovernessJournal(journalFile),
+    epoch: 4,
+    holder: "claude",
+    hooks: {
+      codex: [
+        {
+          agent: "codex",
+          event: "Stop",
+          sequence: 1,
+          ts: "2026-07-25T00:00:00.500Z",
+        },
+        {
+          agent: "codex",
+          event: "UserPromptSubmit",
+          sequence: 2,
+          ts: "2026-07-25T00:00:02.000Z",
+        },
+        {
+          agent: "codex",
+          event: "PostToolUse",
+          sequence: 3,
+          ts: "2026-07-25T00:00:03.000Z",
+        },
+      ],
+    },
+    tick: 1,
+  };
+  const decisions = decideGovernessCycle(snapshot);
+  const compact = compactGovernessCycleSnapshot(snapshot, decisions);
+  expect(compact.hooks.codex).toHaveLength(1);
+  expect(compact.hooks.codex?.[0]?.sequence).toBe(2);
+  expect(decideGovernessCycle(compact)).toEqual(decisions);
+});
+
+test("journal rejects phase regression after transport acceptance", () => {
+  const journalFile = join(tempDir(), "control.jsonl");
+  const prepared = prepareGovernessControl(journalFile, {
+    action: "nudge",
+    agent: "claude",
+    at: "2026-07-25T00:00:00.000Z",
+    epoch: 4,
+    idempotencyKey: "4:nudge:claude:one",
+    payload: "status?",
+    policyClass: "safe-automatic",
+  });
+  transitionGovernessControl(
+    journalFile,
+    prepared.controlId,
+    "accepted",
+    "2026-07-25T00:00:01.000Z"
+  );
+  expect(() =>
+    transitionGovernessControl(
+      journalFile,
+      prepared.controlId,
+      "dispatched",
+      "2026-07-25T00:00:02.000Z"
+    )
+  ).toThrow("accepted -> dispatched");
+});
+
+test("journal retries only failures that happened before dispatch", () => {
+  const journalFile = join(tempDir(), "control.jsonl");
+  const input = {
+    action: "nudge" as const,
+    agent: "claude" as const,
+    at: "2026-07-25T00:00:00.000Z",
+    epoch: 4,
+    idempotencyKey: "4:nudge:claude:retry",
+    payload: "status?",
+    policyClass: "safe-automatic" as const,
+  };
+  const preDispatch = prepareGovernessControl(journalFile, input);
+  transitionGovernessControl(
+    journalFile,
+    preDispatch.controlId,
+    "failed",
+    "2026-07-25T00:00:01.000Z"
+  );
+  const retry = prepareGovernessControl(journalFile, {
+    ...input,
+    at: "2026-07-25T00:00:02.000Z",
+  });
+  expect(retry.controlId).not.toBe(preDispatch.controlId);
+  transitionGovernessControl(
+    journalFile,
+    retry.controlId,
+    "dispatched",
+    "2026-07-25T00:00:03.000Z"
+  );
+  transitionGovernessControl(
+    journalFile,
+    retry.controlId,
+    "failed",
+    "2026-07-25T00:00:04.000Z"
+  );
+  expect(
+    prepareGovernessControl(journalFile, {
+      ...input,
+      at: "2026-07-25T00:00:05.000Z",
+    }).controlId
+  ).toBe(retry.controlId);
 });
 
 test("missing or malformed control journals fail closed", () => {
@@ -239,6 +484,28 @@ test("two-phase handoff accepts only a matching ready bundle", () => {
   expect(readGovernessHandoffBundle(file, "claude", 9)?.status).toBe("ready");
   expect(readGovernessHandoffBundle(file, "codex", 9)).toBeUndefined();
   expect(readGovernessHandoffBundle(file, "claude", 10)).toBeUndefined();
+  const manifest = writeGovernessHandoffManifest(
+    runDir,
+    9,
+    ["claude"],
+    "2026-07-25T00:00:00.000Z"
+  );
+  expect(manifest).toBeString();
+  expect(
+    acceptGovernessHandoff(
+      manifest as string,
+      "replacement",
+      10,
+      "2026-07-25T00:00:01.000Z"
+    )
+  ).toBeDefined();
+  expect(
+    readGovernessHandoffAcceptance(manifest as string, "replacement")
+  ).toMatchObject({ manifestDigest: expect.any(String) });
+  writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
+  expect(
+    readGovernessHandoffAcceptance(manifest as string, "replacement")
+  ).toBeUndefined();
 });
 
 test("stale governess state cannot overwrite a newer epoch", () => {

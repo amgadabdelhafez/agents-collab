@@ -1,4 +1,4 @@
-import type { Agent } from "./types";
+import type { Agent, HookEvent } from "./types";
 
 export type GovernessAgentState =
   | "starting"
@@ -19,6 +19,8 @@ export interface GovernessLifecycleEvent {
   epoch: number;
   evidence?: string;
   sequence: number;
+  source?: "agent-hook" | "codex-app-server" | "tmux-fallback";
+  sourceSequence?: number;
   state: GovernessAgentState;
 }
 
@@ -100,3 +102,65 @@ export const nextLifecycleEvent = (
   ...input,
   sequence: (previous?.sequence ?? 0) + 1,
 });
+
+const hookState = (event: HookEvent): GovernessAgentState | undefined => {
+  if (event.state) {
+    return event.state;
+  }
+  if (event.error) {
+    return "failed";
+  }
+  switch (event.event) {
+    case "SessionStart":
+      return "starting";
+    case "UserPromptSubmit":
+    case "PreToolUse":
+    case "PostToolUse":
+      return "working";
+    case "Notification":
+    case "Stop":
+      return "input-required";
+    default:
+      return undefined;
+  }
+};
+
+export const lifecycleEventFromEvidence = (
+  previous: GovernessLifecycleEvent | undefined,
+  input: {
+    agent: Agent;
+    at: string;
+    epoch: number;
+    fallback: GovernessRuntimeObservation;
+    hooks: HookEvent[];
+  }
+): GovernessLifecycleEvent | undefined => {
+  const hook = input.hooks.findLast((event) => hookState(event) !== undefined);
+  const state = hook ? hookState(hook) : input.fallback.state;
+  if (!state) {
+    return previous;
+  }
+  const sourceSequence = hook?.sequence;
+  const evidence = hook
+    ? `${hook.event}:${hook.eventId ?? hook.sequence ?? hook.ts}`
+    : input.fallback.evidence;
+  const source = hook?.source ?? "tmux-fallback";
+  if (
+    previous?.epoch === input.epoch &&
+    previous.state === state &&
+    previous.source === source &&
+    previous.sourceSequence === sourceSequence &&
+    previous.evidence === evidence
+  ) {
+    return previous;
+  }
+  return nextLifecycleEvent(previous, {
+    agent: input.agent,
+    at: hook?.ts ?? input.at,
+    epoch: input.epoch,
+    evidence,
+    source,
+    ...(sourceSequence === undefined ? {} : { sourceSequence }),
+    state,
+  });
+};

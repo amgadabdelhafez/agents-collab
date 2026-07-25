@@ -63,11 +63,27 @@ export interface GovernessVerdict {
 // One normalized hook event, appended as a JSONL line by both agents' hooks.
 export interface HookEvent {
   agent: Agent;
+  // Stable event identity and per-agent order are authored by the hook
+  // process, not inferred from terminal prose by the governess.
+  eventId?: string;
   cwd?: string;
   detail?: string;
   // True when the payload indicates a failed tool call / error.
   error?: boolean;
   event: string;
+  sequence?: number;
+  source?: "agent-hook" | "codex-app-server" | "tmux-fallback";
+  state?:
+    | "starting"
+    | "working"
+    | "input-required"
+    | "waiting-peer"
+    | "blocked"
+    | "draining"
+    | "handover-ready"
+    | "exited"
+    | "failed"
+    | "canceled";
   tool?: string;
   ts: string;
 }

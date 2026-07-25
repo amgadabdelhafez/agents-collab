@@ -23,6 +23,7 @@ import {
   readExitControl,
   replacementLoopArgs,
 } from "../../src/loop/governess-exit";
+import { acceptGovernessHandoff } from "../../src/loop/governess-handoff";
 
 test("x opens a reversible menu and only explicit e or h selects an exit", () => {
   expect(exitKeyAction(false, "idle", "x")).toBe("menu");
@@ -185,6 +186,25 @@ const writeHandoverBundles = (
   }
 };
 
+const acceptReplacement = (
+  state: ReturnType<typeof freshRunState>,
+  session = "replacement"
+): void => {
+  const manifest = state.exitControl.handoverManifest;
+  if (!manifest) {
+    throw new Error("handover manifest was not persisted");
+  }
+  const accepted = acceptGovernessHandoff(
+    manifest,
+    session,
+    state.governessEpoch + 1,
+    "2026-07-25T00:00:01.000Z"
+  );
+  if (!accepted) {
+    throw new Error("handover manifest was not accepted");
+  }
+};
+
 test("handover waits for a busy agent, notifies each once, and launches after both exit", async () => {
   const config = handoverConfig();
   const state = freshRunState();
@@ -243,9 +263,9 @@ test("handover waits for a busy agent, notifies each once, and launches after bo
   ).toEqual({ status: "waiting" });
   expect(state.exitControl.notified).toEqual({ codex: true });
   expect(saved).toBe(1);
-  expect(bridged).toEqual([]);
-  expect(direct).toHaveLength(1);
-  expect(directOrder).toEqual(["text", "sleep:250", "keys:Enter"]);
+  expect(bridged).toEqual(["codex"]);
+  expect(direct).toHaveLength(0);
+  expect(directOrder).toEqual([]);
   expect(launched).toBe(0);
 
   expect(
@@ -255,7 +275,7 @@ test("handover waits for a busy agent, notifies each once, and launches after bo
     })
   ).toEqual({ status: "waiting" });
   expect(state.exitControl.notified).toEqual({ codex: true });
-  expect(direct).toHaveLength(1);
+  expect(direct).toHaveLength(0);
 
   claudeTurnEnded = true;
   deps.paneCommand = () => "0:zsh";
@@ -265,23 +285,17 @@ test("handover waits for a busy agent, notifies each once, and launches after bo
       claude: "idle",
       codex: "idle",
     })
-  ).toEqual({ session: "replacement", status: "launched" });
+  ).toEqual({ status: "waiting" });
   expect(state.exitControl.notified).toEqual({ claude: true, codex: true });
   expect(state.exitControl.mode).toBe("launched");
   expect(state.exitControl.replacementSession).toBe("replacement");
-  expect(direct).toHaveLength(2);
-  expect(directOrder).toEqual([
-    "text",
-    "sleep:250",
-    "keys:Enter",
-    "text",
-    "sleep:250",
-    "keys:Enter",
-  ]);
-  expect(bridged).toEqual([]);
+  expect(direct).toHaveLength(0);
+  expect(directOrder).toEqual([]);
+  expect(bridged).toEqual(["codex", "claude"]);
   expect(launched).toBe(1);
   expect(saved).toBe(3);
 
+  acceptReplacement(state);
   expect(await advanceHandoverControl(config, deps, state, {})).toEqual({
     session: "replacement",
     status: "launched",
@@ -393,10 +407,14 @@ test("valid ready bundles close each drained TUI exactly once before launch", as
 
   agentsExited = true;
   expect(await advanceHandoverControl(config, deps, state, {})).toEqual({
+    status: "waiting",
+  });
+  expect(launched).toBe(1);
+  acceptReplacement(state);
+  expect(await advanceHandoverControl(config, deps, state, {})).toEqual({
     session: "replacement",
     status: "launched",
   });
-  expect(launched).toBe(1);
 });
 
 test("replacement launch failure preserves the old loop for explicit retry or teardown", async () => {
@@ -453,18 +471,16 @@ test("handover persists launch success before marking and killing the old loop",
     saveState: () => order.push(`save:${state.exitControl.mode}`),
   };
 
-  expect(await driveHandoverControl(config, deps, state, {})).toBe(true);
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
   expect(order).toEqual([
     "launch",
     "log:handover-launched",
     "save:launched",
     "save:launched",
-    "log:exit",
-    "mark",
-    "kill",
   ]);
   expect(launches).toBe(1);
 
+  acceptReplacement(state);
   order.length = 0;
   expect(await driveHandoverControl(config, deps, state, {})).toBe(true);
   expect(launches).toBe(1);

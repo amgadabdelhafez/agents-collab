@@ -1,0 +1,111 @@
+task_id: governess-native-runtime
+dimension: unit
+attempt: 001
+started_at: 2026-07-25T22:11:49Z
+command: bun test tests/loop/governess.test.ts tests/loop/governess-exit.test.ts tests/loop/governess-runtime.test.ts tests/loop/governess-hooks.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess.test.ts:
+(pass) suspect + stuck in dry-run: judges and decides but executes nothing [6.40ms]
+(pass) suspect + stuck live: executes the first ladder rung and records history [0.50ms]
+(pass) LLM unreachable suppresses recovery and flags the board [0.30ms]
+(pass) dual local judges render separate token rows and require agreement [0.45ms]
+(pass) small panes collapse excess judge rows within the viewport budget [0.22ms]
+(pass) round-robin local judge mode calls one model for that tick [0.34ms]
+(pass) board labels an agent [thinking] while its pane is animating [0.23ms]
+(pass) board keeps the configured leader row first [0.40ms]
+(pass) codex session pressure hands driver role to claude until reset [0.63ms]
+(pass) codex limit handoff does not repeat when reset detail appears later [0.12ms]
+(pass) codex limit reset restores driver role without compacting context [0.58ms]
+(pass) handover mode suppresses pending limit role-transition messages [0.16ms]
+(pass) a missing limit snapshot does not restore before a known future reset [0.14ms]
+(pass) one missing limit snapshot starts a cooldown instead of restoring [0.21ms]
+(pass) restore briefing stays pending while its target is active [0.20ms]
+(pass) pressure on a non-driver is deduped without messaging or a handoff [0.18ms]
+(pass) claude session pressure hands driver role to codex until reset [0.38ms]
+(pass) proactive quota balance is disabled by default [0.11ms]
+(pass) proactive quota balance moves driver when local LLM approves [0.72ms]
+(pass) proactive quota balance is skipped when local LLM vetoes [0.19ms]
+(pass) board labels an agent [idle] once its pane is frozen [0.16ms]
+(pass) board converts the agent's live remaining context % to used context
+(pass) board shows latest bridge messages in both directions [0.46ms]
+(pass) board keeps warning-colored agent columns aligned [0.25ms]
+(pass) board renders only aggregate dynamic usage tracker windows [0.26ms]
+(pass) board shows input, cached, and output token details [0.57ms]
+(pass) board caps structured summary section heights [0.44ms]
+(pass) board uses the full summary width for the Project line [0.18ms]
+(pass) observed progress clears the agent's recovery history [0.12ms]
+(pass) a cleanly-ended turn stays idle and is never judged, even past the idle window [0.16ms]
+(pass) board flags an agent that is waiting for the human [0.15ms]
+(pass) board labels a session-limit pane as limited, not waiting for the human [0.15ms]
+(pass) board does not treat an available usage-limit reset as a blocked agent [0.07ms]
+(pass) board does not label governess limit handoff text as a session limit [0.11ms]
+(pass) board does not label Codex context compaction as a usage limit [0.25ms]
+(pass) a confirmed waiting pair clears the moment an agent goes active [0.22ms]
+(pass) a confirmed idle pair shows the LLM's ask and escalates once [0.25ms]
+(pass) both idle but unconfirmed by the LLM does not alert [0.11ms]
+(pass) escalates once when the session crosses its cost budget [0.22ms]
+(pass) composePaneTitle composes glyph, agent, and task label [0.01ms]
+(pass) governessTick sets each agent's pane border title and skips redundant sets [0.12ms]
+(pass) governessTick folds the stored LLM label into the border title [0.07ms]
+(pass) sendRenameCommands is disabled by default [0.10ms]
+(pass) agent rename config requires an explicit truthy environment value [0.02ms]
+(pass) sendRenameCommands injects /rename when explicitly enabled [0.11ms]
+(pass) sendRenameCommands sends nothing in dry-run [0.02ms]
+(pass) sendRenameCommands does not re-send an unchanged rename [0.12ms]
+(pass) sendRenameCommands does not inject into an agent that is mid-turn [0.02ms]
+(pass) sendRenameCommands fails closed without state and turn-end evidence
+(pass) sendRenameCommands preserves a user draft after a Stop hook [0.04ms]
+
+tests/loop/governess-runtime.test.ts:
+(pass) policy separates observations, safe controls, confirmations, and forbidden work [0.14ms]
+(pass) runtime state and lifecycle sequence are explicit [0.20ms]
+(pass) agent-authored hook evidence wins over terminal fallback state [0.16ms]
+(pass) control journal is idempotent and replayable [1.43ms]
+(pass) journaled controls reconcile from post-dispatch agent evidence [0.97ms]
+(pass) journal rejects phase regression after transport acceptance [0.39ms]
+(pass) journal retries only failures that happened before dispatch [0.53ms]
+(pass) missing or malformed control journals fail closed [11.70ms]
+(pass) runtime adapter rejects a stale control envelope [0.36ms]
+(pass) two-phase handoff accepts only a matching ready bundle [1.91ms]
+(pass) stale governess state cannot overwrite a newer epoch [0.68ms]
+(pass) legacy compatibility maps inputs without leaking them into canonical state [0.40ms]
+
+tests/loop/governess-hooks.test.ts:
+(pass) normalizeHookPayload > maps a Claude PostToolUse payload to a normalized event [0.14ms]
+(pass) normalizeHookPayload > falls back to a raw event for unknown shapes [0.02ms]
+(pass) normalizeHookPayload > captures a message detail for notification-style payloads [0.02ms]
+(pass) runHookEmit > appends one normalized JSONL line and never throws [0.70ms]
+(pass) runHookEmit > swallows malformed stdin without throwing [0.15ms]
+(pass) hook settings generators > builds a shell command that invokes the emitter [0.01ms]
+(pass) hook settings generators > Claude settings register every Claude hook event [0.06ms]
+(pass) hook settings generators > Codex hooks.json registers only coarse turn events [0.02ms]
+
+tests/loop/governess-exit.test.ts:
+(pass) x opens a reversible menu and only explicit e or h selects an exit [0.04ms]
+(pass) handover accepts only force teardown and launch retry keys [0.02ms]
+(pass) persisted exit state is validated [0.03ms]
+(pass) agent exit detection distinguishes the TUI from a dead pane or shell [0.09ms]
+(pass) replacement args preserve pairing and supply a continuation prompt [0.02ms]
+(pass) replacement handover uses a markdown continuation file to skip replanning [0.02ms]
+(pass) exit controls replace the status row without growing the board [0.14ms]
+(pass) handover waits for a busy agent, notifies each once, and launches after both exit [12.64ms]
+(pass) handover never injects over a notification or permission prompt [0.41ms]
+(pass) valid ready bundles close each drained TUI exactly once before launch [19.31ms]
+(pass) replacement launch failure preserves the old loop for explicit retry or teardown [0.89ms]
+(pass) handover persists launch success before marking and killing the old loop [1.27ms]
+(pass) handover launch failure never marks or kills the old loop [0.88ms]
+(pass) restart preserves the old loop when the recorded replacement is dead [4.56ms]
+(pass) explicit stop marks the run before killing its tmux session [0.25ms]
+(pass) raw key input emits individual keys and restores the terminal [0.35ms]
+
+ 86 pass
+ 0 fail
+ 437 expect() calls
+Ran 86 tests across 4 files. [112.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-25T22:11:49Z

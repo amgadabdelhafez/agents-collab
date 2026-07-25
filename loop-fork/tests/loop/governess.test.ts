@@ -51,7 +51,9 @@ const usage = (overrides: Partial<AgentUsage> = {}): AgentUsage => ({
   ...overrides,
 });
 
-const baseConfig = (overrides: Partial<GovernessConfig> = {}): GovernessConfig => ({
+const baseConfig = (
+  overrides: Partial<GovernessConfig> = {}
+): GovernessConfig => ({
   agentRenameEnabled: false,
   agents: [{ agent: "claude", hookFile: "hooks.jsonl", pane: "s:0.0" }],
   budgetUsd: 0,
@@ -314,6 +316,28 @@ test("dual local judges render separate token rows and require agreement", async
   expect(visibleBoard).toContain("● working");
 });
 
+test("small panes collapse excess judge rows within the viewport budget", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      judges: ["qwen", "gemma", "llama", "mistral"].map((id) => ({
+        id,
+        model: id,
+        url: `http://${id}`,
+      })),
+      viewportRows: 8,
+    }),
+    makeDeps(stuck, clock, spies)
+  );
+  const board = stripAnsi(result.board);
+  expect(board.split("\n")).toHaveLength(8);
+  expect(board).toContain("qwen");
+  expect(board).toContain("2 more judges");
+  expect(board).not.toContain("mistral");
+});
+
 test("round-robin local judge mode calls one model for that tick", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();
@@ -532,7 +556,7 @@ test("codex limit reset restores driver role without compacting context", async 
       "Project: demo\nObjective: keep going\nProgress: Claude fixed measured inputs\nNext: Codex verify calibration",
   });
 
-  expect(spies.bridgeMessages).toHaveLength(1);
+  expect(spies.bridgeMessages).toHaveLength(2);
   expect(spies.bridgeMessages[0]).toMatchObject({
     runDir: "run-dir",
     source: "claude",
@@ -546,9 +570,17 @@ test("codex limit reset restores driver role without compacting context", async 
   expect(spies.bridgeMessages[0]?.message).toContain(
     "Claude fixed measured inputs"
   );
-  expect(spies.texts).toHaveLength(1);
-  expect(spies.texts[0]).toContain("Hand the driver role back to Codex");
-  expect(spies.sends).toEqual([["s:0.1", "Enter"]]);
+  expect(spies.bridgeMessages[1]).toMatchObject({
+    runDir: "run-dir",
+    source: "codex",
+    status: "accepted",
+    target: "claude",
+  });
+  expect(spies.bridgeMessages[1]?.message).toContain(
+    "Hand the driver role back to Codex"
+  );
+  expect(spies.texts).toEqual([]);
+  expect(spies.sends).toEqual([]);
   expect(result.runState.notified.limitHandoff.codex).toBeUndefined();
   expect(result.runState.roles.currentDriver).toBe("codex");
   expect(result.runState.roles.pausedAgent).toBeUndefined();
@@ -923,18 +955,25 @@ test("proactive quota balance moves driver when local LLM approves", async () =>
     currentDriver: "codex",
     initialDriver: "codex",
   });
-  expect(spies.texts).toHaveLength(1);
-  expect(spies.texts[0]).toContain("proactive quota balance");
-  expect(spies.texts[0]).toContain("Claude is now the driver");
-  expect(spies.sends).toEqual([["s:0.1", "Enter"]]);
-  expect(spies.bridgeMessages).toHaveLength(1);
+  expect(spies.texts).toEqual([]);
+  expect(spies.sends).toEqual([]);
+  expect(spies.bridgeMessages).toHaveLength(2);
   expect(spies.bridgeMessages[0]).toMatchObject({
+    runDir: "run-dir",
+    source: "codex",
+    status: "accepted",
+    target: "claude",
+  });
+  expect(spies.bridgeMessages[0]?.message).toContain(
+    "Claude is now the driver"
+  );
+  expect(spies.bridgeMessages[1]).toMatchObject({
     runDir: "run-dir",
     source: "claude",
     status: "accepted",
     target: "codex",
   });
-  expect(spies.bridgeMessages[0]?.message).toContain(
+  expect(spies.bridgeMessages[1]?.message).toContain(
     "Claude is now the driver"
   );
   expect(result.runState.roles.currentDriver).toBe("claude");
@@ -1383,7 +1422,7 @@ test("board shows input, cached, and output token details", async () => {
         outputTokens: 100,
         totalTokens: 2000,
       },
-    },
+    }
   );
   const visibleBoard = stripAnsi(result.board);
 
@@ -1884,13 +1923,9 @@ test("sendRenameCommands does not re-send an unchanged rename", () => {
   expect(spies.texts).toEqual(["/rename s · session initialization"]);
   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
   // A changed label sends again.
-  sendRenameCommands(
-    config,
-    deps,
-    { claude: "auth refactor" },
-    lastRenames,
-    { claude: "idle" }
-  );
+  sendRenameCommands(config, deps, { claude: "auth refactor" }, lastRenames, {
+    claude: "idle",
+  });
   expect(spies.texts).toHaveLength(2);
 });
 
@@ -1927,6 +1962,23 @@ test("sendRenameCommands fails closed without state and turn-end evidence", () =
     deps,
     { claude: "auth refactor" },
     {}
+  );
+  expect(spies.texts).toEqual([]);
+  expect(spies.sends).toEqual([]);
+});
+
+test("sendRenameCommands preserves a user draft after a Stop hook", () => {
+  const spies = freshSpies();
+  const deps: GovernessDeps = {
+    ...withSafeTurnEnd(makeDeps(stuck, { ms: START_MS }, spies)),
+    capturePane: () => "completed output\n\n› user's unfinished question",
+  };
+  sendRenameCommands(
+    baseConfig({ agentRenameEnabled: true }),
+    deps,
+    { claude: "auth refactor" },
+    {},
+    { claude: "idle" }
   );
   expect(spies.texts).toEqual([]);
   expect(spies.sends).toEqual([]);

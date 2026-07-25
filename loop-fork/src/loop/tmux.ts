@@ -2,13 +2,6 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
-import { GOVERNESS_SUBCOMMAND } from "./governess";
-import { withLegacyGovernessEnv } from "./legacy-governess-compat";
-import {
-  buildClaudeHookSettings,
-  buildCodexHooksJson,
-  buildHookCommand,
-} from "./hooks/settings";
 import {
   registerClaudeChannelServer,
   removeClaudeChannelServer,
@@ -21,15 +14,22 @@ import {
 } from "./bridge-config";
 import { type BridgeTool, quotedBridgeTool } from "./bridge-guidance";
 import { getCodexAppServerUrl, getLastCodexThreadId } from "./codex-app-server";
+import { codexHomeEnv } from "./codex-home";
 import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   findCodexTmuxProxyPort,
   waitForCodexTmuxProxy,
 } from "./codex-tmux-proxy";
-import { codexHomeEnv } from "./codex-home";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_CONFIG_VALUES } from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
+import { GOVERNESS_SUBCOMMAND } from "./governess";
+import {
+  buildClaudeHookSettings,
+  buildCodexHooksJson,
+  buildHookCommand,
+} from "./hooks/settings";
 import { buildLaunchArgv } from "./launch";
+import { withLegacyGovernessEnv } from "./legacy-governess-compat";
 import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
@@ -341,7 +341,7 @@ const buildInteractivePrimaryPrompt = (
     "For any sustained task, create or update PLAN.md and status.md before implementation once the task is clear; keep status.md as the end-of-session handoff for the next loop."
   );
   parts.push(
-    `Before starting implementation, use AskUserQuestion or the available user-input tool to clarify the task, scope, constraints, acceptance criteria, and desired proof unless the human has already made them clear.`
+    "Before starting implementation, use AskUserQuestion or the available user-input tool to clarify the task, scope, constraints, acceptance criteria, and desired proof unless the human has already made them clear."
   );
   parts.push(reviewerCheckpointGuidance(peer));
   parts.push(
@@ -994,7 +994,9 @@ const usageTrackerEnvFromFiles = (
     ...(env.LOOP_USAGE_TRACKER_URL || env.USAGE_TRACKER_URL || !fallbackUrl
       ? []
       : [`USAGE_TRACKER_URL=${fallbackUrl}`]),
-    ...(env.LOOP_USAGE_TRACKER_SECRET || env.USAGE_TRACKER_SECRET || !fallbackSecret
+    ...(env.LOOP_USAGE_TRACKER_SECRET ||
+    env.USAGE_TRACKER_SECRET ||
+    !fallbackSecret
       ? []
       : [`USAGE_TRACKER_SECRET=${fallbackSecret}`]),
   ];
@@ -1008,25 +1010,26 @@ const governessEnv = (
   const env = withLegacyGovernessEnv(inputEnv);
   return [
     `LOOP_GOVERNESS_IDLE=${opts.governessIdleSeconds}`,
-  `LOOP_GOVERNESS_COOLDOWN=${opts.governessCooldownSeconds}`,
-  `LOOP_GOVERNESS_MAX=${opts.governessMaxRecoveries}`,
-  `LOOP_GOVERNESS_URL=${opts.governessUrl}`,
-  `LOOP_GOVERNESS_MODEL=${opts.governessModel}`,
-  ...passEnv(env, "LOOP_GOVERNESS_JUDGES"),
-  ...passEnv(env, "LOOP_GOVERNESS_JUDGE_MODE"),
-  ...passEnv(env, "LOOP_GOVERNESS_AGENT_RENAME"),
-  ...passEnv(env, "LOOP_GOVERNESS_ROLE_BALANCE"),
-  ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
-  ...passEnv(env, "LOOP_USAGE_TRACKER_TIMEOUT_MS"),
-  ...passEnv(env, "LOOP_USAGE_TRACKER_URL"),
-  ...passEnv(env, "USAGE_TRACKER_URL"),
-  ...(env.LOOP_USAGE_TRACKER_SECRET
-    ? passEnv(env, "LOOP_USAGE_TRACKER_SECRET")
-    : passEnv(env, "USAGE_TRACKER_SECRET")),
-  ...usageTrackerEnvFromFiles(env, cwd),
-  ...(opts.governessLlmTrace
-    ? [`LOOP_GOVERNESS_LLM_TRACE=${opts.governessLlmTrace}`]
-    : []),
+    `LOOP_GOVERNESS_COOLDOWN=${opts.governessCooldownSeconds}`,
+    `LOOP_GOVERNESS_MAX=${opts.governessMaxRecoveries}`,
+    `LOOP_GOVERNESS_URL=${opts.governessUrl}`,
+    `LOOP_GOVERNESS_MODEL=${opts.governessModel}`,
+    ...passEnv(env, "LOOP_GOVERNESS_JUDGES"),
+    ...passEnv(env, "LOOP_GOVERNESS_JUDGE_MODE"),
+    ...passEnv(env, "LOOP_GOVERNESS_AGENT_RENAME"),
+    ...passEnv(env, "LOOP_GOVERNESS_ROLE_BALANCE"),
+    ...passEnv(env, "LOOP_GOVERNESS_HANDOFF_MANIFEST"),
+    ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
+    ...passEnv(env, "LOOP_USAGE_TRACKER_TIMEOUT_MS"),
+    ...passEnv(env, "LOOP_USAGE_TRACKER_URL"),
+    ...passEnv(env, "USAGE_TRACKER_URL"),
+    ...(env.LOOP_USAGE_TRACKER_SECRET
+      ? passEnv(env, "LOOP_USAGE_TRACKER_SECRET")
+      : passEnv(env, "USAGE_TRACKER_SECRET")),
+    ...usageTrackerEnvFromFiles(env, cwd),
+    ...(opts.governessLlmTrace
+      ? [`LOOP_GOVERNESS_LLM_TRACE=${opts.governessLlmTrace}`]
+      : []),
     ...(opts.governessDryRun ? ["LOOP_GOVERNESS_DRY_RUN=1"] : []),
   ];
 };
@@ -1522,11 +1525,11 @@ const startPairedSession = async (
         manifest,
         claudeSessionId,
         codexRemoteUrl,
-      codexThreadId,
-      session,
-      paneAgents,
-      primaryAgent,
-      governessPane
+        codexThreadId,
+        session,
+        paneAgents,
+        primaryAgent,
+        governessPane
       );
     }
     const primaryPane =
