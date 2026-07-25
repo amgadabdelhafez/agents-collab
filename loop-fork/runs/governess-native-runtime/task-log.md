@@ -38,15 +38,18 @@ Regression symptom: A repeated governess rename/control can remain in the shared
 ## Verification
 
 - Focused governess suite: 87 passed, 0 failed.
-- Full repository suite: 597 passed, 4 failed. All four failures are the known
+- Full repository suite: 598 passed, 4 failed. All four failures are the known
   unrelated Codex default-model/mock expectation baseline in
   `paired-options.test.ts` and `runner.test.ts`.
 - `bun run build`: pass.
 - `git diff --check`: pass.
-- Live `harvto-loop-34` refresh: governess PID changed `96360 -> 74573 ->
-  77535`; Claude PID `10483` and Codex PID `10485` were preserved. Both
+- Live `harvto-loop-34` refresh and installed-binary rollout: governess PID
+  changed `96360 -> 74573 -> 77535 -> 79942`; Claude PID `10483` and Codex PID
+  `10485` were preserved. Both
   pre-existing composer lines were unchanged, the board remained healthy, and
   compact replay records were 1,077-1,078 bytes with no irrelevant hook arrays.
+- Installed-binary doctor passed all 11 checks; behavioral replay passed with
+  60 checks, 973 journaled controls, and no issues.
 - Semantic handover acceptance is covered in isolated tests; it was not invoked
   against the productive Harvto loop because that intentionally exits agents.
 - `bun run check`: repository-wide baseline does not pass because Ultracite
