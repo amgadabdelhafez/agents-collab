@@ -4,13 +4,28 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { spawnSync } from "bun";
-import { readPriorSummaries, readProjectContext } from "./babysitter-context";
-import { initLivenessState, updateLiveness } from "./babysitter-detect";
+import { readPriorSummaries, readProjectContext } from "./governess-context";
+import { initLivenessState, updateLiveness } from "./governess-detect";
+import {
+  agentHasExited,
+  type ExitControlState,
+  exitKeyAction,
+  freshExitControl,
+  handoverContinuationFile,
+  handoverContinuationText,
+  handoverRequest,
+  type KeyInput,
+  openRawKeyInput,
+  type ReplacementLaunchResult,
+  readExitControl,
+  replacementLoopArgs,
+} from "./governess-exit";
 import {
   assessRoleBalance,
   assessWaiting,
@@ -21,14 +36,15 @@ import {
   LOCAL_LLM_WAITING_MAX_TOKENS,
   labelPanes,
   summarizeSession,
-} from "./babysitter-llm";
-import { type EscalationEvent, sendNtfy } from "./babysitter-notify";
-import { decideRecovery, executeRecovery } from "./babysitter-recover";
-import { readAgentUsage, readHumanMessages } from "./babysitter-usage";
+} from "./governess-llm";
+import { type EscalationEvent, sendNtfy } from "./governess-notify";
+import { decideRecovery, executeRecovery } from "./governess-recover";
+import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
+  applyUsageTrackerPricing,
   readUsageTrackerLimits,
   type UsageLimitSnapshot,
-} from "./babysitter-usage-limits";
+} from "./governess-usage-limits";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
 import {
   deliverCodexBridgeMessage,
@@ -39,25 +55,56 @@ import {
 } from "./bridge-runtime";
 import { type BridgeMessage, readBridgeEvents } from "./bridge-store";
 import {
-  DEFAULT_BABYSIT_CONFIDENCE,
-  DEFAULT_BABYSIT_COOLDOWN_SECONDS,
-  DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS,
-  DEFAULT_BABYSIT_IDLE_SECONDS,
-  DEFAULT_BABYSIT_MAX_RECOVERIES,
-  DEFAULT_BABYSIT_MODEL,
-  DEFAULT_BABYSIT_TICK_SECONDS,
-  DEFAULT_BABYSIT_URL,
+  DEFAULT_GOVERNESS_CONFIDENCE,
+  DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
+  DEFAULT_GOVERNESS_ESCALATE_IDLE_SECONDS,
+  DEFAULT_GOVERNESS_IDLE_SECONDS,
+  DEFAULT_GOVERNESS_MAX_RECOVERIES,
+  DEFAULT_GOVERNESS_MODEL,
+  DEFAULT_GOVERNESS_TICK_SECONDS,
+  DEFAULT_GOVERNESS_URL,
   DEFAULT_USAGE_TRACKER_TIMEOUT_MS,
   DEFAULT_USAGE_TRACKER_URL,
 } from "./constants";
 import { decode } from "./git";
-import { loadRunState } from "./run-state";
+import { buildLaunchArgv } from "./launch";
+import {
+  ensureGovernessHandoffDir,
+  governessHandoffFile,
+  readGovernessHandoffBundle,
+} from "./governess-handoff";
+import {
+  ensureGovernessJournal,
+  prepareGovernessControl,
+  readGovernessJournal,
+  transitionGovernessControl,
+} from "./governess-journal";
+import {
+  decideGovernessPolicy,
+  type GovernessAction,
+} from "./governess-policy";
+import {
+  driverLeaseIsCurrent,
+  explicitAgentState,
+  nextLifecycleEvent,
+  type GovernessLifecycleEvent,
+  type GovernessRuntimeAdapter,
+} from "./governess-runtime";
+import {
+  migrateLegacyGovernessState,
+  withLegacyGovernessEnv,
+} from "./legacy-governess-compat";
+import {
+  loadRunState,
+  setRunManifestState,
+  updateRunManifest,
+} from "./run-state";
 import type {
   Agent,
   AgentLiveness,
   AgentLivenessState,
   AgentUsage,
-  BabysitterVerdict,
+  GovernessVerdict,
   HookEvent,
   JudgeOutcome,
   JudgeRequest,
@@ -71,21 +118,22 @@ import type {
   SummaryAgentContext,
   SummaryRequest,
   SummaryResult,
+  UsageLimitWindow,
   WaitingRequest,
   WaitingResult,
 } from "./types";
 
-export const BABYSIT_SUBCOMMAND = "__babysit";
+export const GOVERNESS_SUBCOMMAND = "__governess";
 
 const HOOK_TAIL_LIMIT = 20;
-const NUDGE_TEXT = "babysitter: you look idle — status? are you blocked?";
+const NUDGE_TEXT = "governess: you look idle — status? are you blocked?";
 const PANE_HASH_LENGTH = 12;
 const LIMIT_HANDOFF_PCT = 95;
 const PROACTIVE_BALANCE_PCT = 80;
 const PROACTIVE_BALANCE_ADVANTAGE_PCT = 15;
 const PROACTIVE_BALANCE_MIN_CONFIDENCE = 0.6;
 
-export interface BabysitAgentInfo {
+export interface GovernessAgentInfo {
   agent: Agent;
   // Per-run CODEX_HOME, so Codex usage transcripts under it can be located.
   codexHome?: string;
@@ -105,8 +153,11 @@ export interface LocalLlmJudgeConfig {
 
 export type LocalLlmJudgeMode = "consensus" | "round-robin";
 
-export interface BabysitConfig {
-  agents: BabysitAgentInfo[];
+export interface GovernessConfig {
+  // Sending slash commands into agent TUIs is unsafe around composer drafts, so
+  // session rename is opt-in; pane-border labels remain enabled independently.
+  agentRenameEnabled: boolean;
+  agents: GovernessAgentInfo[];
   // Session cost ceiling (USD) for the budget line + escalation; 0 disables.
   budgetUsd: number;
   confidence: number;
@@ -120,6 +171,10 @@ export interface BabysitConfig {
   escalateIdleMs: number;
   idleMs: number;
   initialDriver?: Agent;
+  journalFile?: string;
+  // Explicit compatibility switch; quota observations never change drivers
+  // unless this is enabled at process configuration time.
+  limitHandoffEnabled?: boolean;
   judgeMode: LocalLlmJudgeMode;
   judges?: LocalLlmJudgeConfig[];
   llmDecodeConcurrency: number;
@@ -129,6 +184,8 @@ export interface BabysitConfig {
   llmPromptConcurrency: number;
   llmTraceFile?: string;
   logFile: string;
+  // Manifest updated when an explicit exit path stops this run.
+  manifestPath?: string;
   maxRecoveries: number;
   model: string;
   // On-disk size (GB) of the local LLM, shown in the footer.
@@ -140,8 +197,10 @@ export interface BabysitConfig {
   runDir?: string;
   runId: string;
   session: string;
-  // Persisted run-state file, so stats survive babysitter restarts.
+  // Persisted run-state file, so stats survive governess restarts.
   stateFile?: string;
+  // Fencing epoch acquired by the currently running governess process.
+  epoch?: number;
   tickMs: number;
   // Path to the run transcript (bridge messages between agents).
   transcriptPath?: string;
@@ -157,18 +216,24 @@ export type BridgeLatest = Record<string, Record<string, BridgeMessage>>;
 export type BridgeSendStatus = "accepted" | "delivered" | "queued";
 export type LocalLlmUsageByJudge = Record<string, LocalLlmUsage>;
 
-export interface BabysitDeps {
+export interface GovernessDeps {
   appendLog: (file: string, record: unknown) => void;
   assessRoleBalance: (req: RoleBalanceRequest) => Promise<RoleBalanceResult>;
   assessWaiting: (req: WaitingRequest) => Promise<WaitingResult>;
   capturePane: (pane: string) => string;
+  fenceCurrent?: (config: GovernessConfig) => boolean;
   // Turn on the pane-border title strip for the whole session (idempotent).
   initPaneBorders: (session: string) => void;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
+  killSession?: (session: string) => void;
   labelPanes: (req: PaneLabelRequest) => Promise<PaneLabelResult>;
-  loadState: (stateFile?: string) => BabysitRunState | undefined;
+  launchReplacementLoop?: (config: GovernessConfig) => ReplacementLaunchResult;
+  loadState: (stateFile?: string) => GovernessRunState | undefined;
+  markRunStopped?: (config: GovernessConfig, reason: string) => void;
   notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
   now: () => number;
+  openKeyInput?: () => KeyInput | undefined;
+  paneCommand?: (pane: string) => string | undefined;
   readBridge: (transcriptPath?: string) => BridgeCounts;
   readBridgeLatest: (runDir?: string) => BridgeLatest;
   readHooks: (file: string) => HookEvent[];
@@ -184,11 +249,13 @@ export interface BabysitDeps {
     codexHome?: string
   ) => AgentUsage;
   readUsageLimits: (
-    config: BabysitConfig
+    config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
+  replacementSessionAlive?: (session: string) => boolean;
+  replacementSessionReady: (session: string) => boolean;
   render: (text: string) => void;
   respawnPane: (pane: string) => void;
-  saveState: (stateFile: string | undefined, state: BabysitRunState) => void;
+  saveState: (stateFile: string | undefined, state: GovernessRunState) => void;
   sendBridge: (
     runDir: string,
     source: Agent,
@@ -238,12 +305,23 @@ export interface RoleState {
   temporaryDriver?: Agent;
 }
 
-// State the babysitter carries across ticks.
-export interface BabysitRunState {
-  babysitterMessages: Record<string, number>;
+export interface DriverLease {
+  epoch: number;
+  expiresAt: string;
+  holder: Agent;
+}
+
+// State the governess carries across ticks.
+export interface GovernessRunState {
+  governessMessages: Record<string, number>;
   // Epoch ms both agents became idle together (0 = not both idle right now).
   bothIdleSince: number;
+  driverLease?: DriverLease;
+  exitControl: ExitControlState;
+  governessEpoch: number;
+  handoverBundles: Partial<Record<Agent, string>>;
   history: RecoveryHistoryEntry[];
+  lifecycleEvents: Partial<Record<Agent, GovernessLifecycleEvent>>;
   // Backward-compatible persisted total; `llmUsage` is the canonical shape.
   llmTokens: number;
   llmUsage: LocalLlmUsage;
@@ -450,10 +528,14 @@ const readRoleState = (value: unknown): RoleState => {
   };
 };
 
-export const freshRunState = (): BabysitRunState => ({
-  babysitterMessages: {},
+export const freshRunState = (): GovernessRunState => ({
+  governessMessages: {},
   bothIdleSince: 0,
+  exitControl: freshExitControl(),
+  governessEpoch: 0,
+  handoverBundles: {},
   history: [],
+  lifecycleEvents: {},
   llmUsage: emptyLocalLlmUsage(),
   llmUsageByJudge: emptyLocalLlmUsageByJudge(),
   llmTokens: 0,
@@ -472,15 +554,15 @@ export const freshRunState = (): BabysitRunState => ({
   waitingConfirmed: false,
 });
 
-export interface BabysitTickResult {
+export interface GovernessTickResult {
   // Per-agent display state this tick (working/thinking/idle/limited/...), so a
   // background rename can skip agents that are mid-turn.
   agentStates: Partial<Record<Agent, string>>;
   board: string;
   llmOffline: boolean;
-  runState: BabysitRunState;
+  runState: GovernessRunState;
   states: Map<Agent, AgentLivenessState>;
-  // Per-agent contexts a background summary refresh consumes (see runBabysitter).
+  // Per-agent contexts a background summary refresh consumes (see runGoverness).
   summaryCtxs: SummaryAgentContext[];
 }
 
@@ -498,7 +580,9 @@ const SESSION_LIMIT_RE =
   /\b(hit|reached)\s+(your\s+)?(session|usage|rate)\s+limit\b|\b(rate|usage|session)\s+limit\b/i;
 const CONTEXT_COMPACT_RE =
   /\b(context|ctx)\b.*\b(compact|window|full|limit)\b|\b(compact|compress)\b.*\b(context|ctx)\b/i;
-const BABYSITTER_PROMPT_RE = /\bbabysitter:/i;
+const GOVERNESS_PROMPT_RE = /\bgoverness:/i;
+const AVAILABLE_LIMIT_RESET_RE =
+  /\byou have\s+\d+\s+usage limit resets?\s+available\b/gi;
 const parsePaneCtxRemainingPct = (paneText: string): number | undefined => {
   const match = paneText.match(PANE_CTX_RE);
   if (!match) {
@@ -523,31 +607,193 @@ const isSessionLimited = (paneText: string): boolean =>
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0)
     .slice(-SESSION_LIMIT_TAIL_LINES)
+    .join("\n")
+    .replace(AVAILABLE_LIMIT_RESET_RE, "")
+    .split("\n")
     .some(
       (line) =>
-        !BABYSITTER_PROMPT_RE.test(line) &&
+        !GOVERNESS_PROMPT_RE.test(line) &&
         SESSION_LIMIT_RE.test(line) &&
         !CONTEXT_COMPACT_RE.test(line)
     );
 
+const governessFenceCurrent = (
+  config: GovernessConfig,
+  deps: GovernessDeps
+): boolean =>
+  typeof config.epoch === "number" && deps.fenceCurrent?.(config) === true;
+
+const controlKey = (
+  config: GovernessConfig,
+  action: GovernessAction,
+  agent: Agent | undefined,
+  payload: string
+): string =>
+  `${config.epoch ?? 0}:${action}:${agent ?? "loop"}:${createHash("sha256")
+    .update(payload)
+    .digest("hex")}`;
+
+const runJournaledControl = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  input: {
+    action: GovernessAction;
+    agent?: Agent;
+    confirmed?: boolean;
+    deterministicReason?: boolean;
+    payload: string;
+    targetSafe?: boolean;
+  },
+  effect: () => void
+): boolean => {
+  const policy = decideGovernessPolicy(input.action, {
+    confirmed: input.confirmed,
+    deterministicReason: input.deterministicReason,
+    fenceCurrent: governessFenceCurrent(config, deps),
+    targetSafe: input.targetSafe,
+  });
+  if (!policy.allowed) {
+    deps.appendLog(config.logFile, {
+      action: input.action,
+      at: new Date(deps.now()).toISOString(),
+      event: "control-denied",
+      reason: policy.reason,
+    });
+    return false;
+  }
+  if (!config.journalFile) {
+    effect();
+    return true;
+  }
+  const now = new Date(deps.now()).toISOString();
+  const record = prepareGovernessControl(config.journalFile, {
+    action: input.action,
+    agent: input.agent,
+    at: now,
+    epoch: config.epoch ?? 0,
+    idempotencyKey: controlKey(
+      config,
+      input.action,
+      input.agent,
+      input.payload
+    ),
+    payload: input.payload,
+    policyClass: policy.class,
+  });
+  if (record.phase !== "prepared") {
+    return false;
+  }
+  transitionGovernessControl(
+    config.journalFile,
+    record.controlId,
+    "dispatched",
+    now
+  );
+  try {
+    effect();
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "completed",
+      new Date(deps.now()).toISOString()
+    );
+    return true;
+  } catch (error) {
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "failed",
+      new Date(deps.now()).toISOString(),
+      error instanceof Error ? error.message : String(error)
+    );
+    throw error;
+  }
+};
+
+const recordGovernessObservation = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  payload: string,
+  idempotencyKey: string,
+  agent?: Agent
+): void => {
+  if (!config.journalFile) {
+    return;
+  }
+  const policy = decideGovernessPolicy("observe-runtime", {
+    fenceCurrent: governessFenceCurrent(config, deps),
+  });
+  const record = prepareGovernessControl(config.journalFile, {
+    action: "observe-runtime",
+    agent,
+    at: new Date(deps.now()).toISOString(),
+    epoch: config.epoch ?? 0,
+    idempotencyKey,
+    payload,
+    policyClass: policy.class,
+  });
+  if (record.phase === "prepared") {
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "completed",
+      new Date(deps.now()).toISOString()
+    );
+  }
+};
+
 // Build the per-agent recovery executors on top of the injected tmux deps.
 const buildRecoveryDeps = (
-  info: BabysitAgentInfo,
-  deps: BabysitDeps,
-  logFile: string
+  info: GovernessAgentInfo,
+  deps: GovernessDeps,
+  config: GovernessConfig
 ) => ({
   answerPrompt: (_agent: Agent) => {
-    deps.sendKeys(info.pane, ["Enter"]);
+    runJournaledControl(
+      config,
+      deps,
+      {
+        action: "answer-prompt",
+        agent: info.agent,
+        payload: "Enter",
+        targetSafe: true,
+      },
+      () => deps.sendKeys(info.pane, ["Enter"])
+    );
   },
   nudge: (_agent: Agent) => {
-    deps.sendText(info.pane, NUDGE_TEXT);
-    deps.sendKeys(info.pane, ["Enter"]);
+    runJournaledControl(
+      config,
+      deps,
+      {
+        action: "nudge",
+        agent: info.agent,
+        payload: NUDGE_TEXT,
+        targetSafe: true,
+      },
+      () => {
+        deps.sendText(info.pane, NUDGE_TEXT);
+        deps.sendKeys(info.pane, ["Enter"]);
+      }
+    );
   },
   restart: (_agent: Agent) => {
-    deps.respawnPane(info.pane);
+    // Automatic restarts are deliberately denied by policy. A future explicit
+    // UI confirmation can call this with confirmed=true.
+    runJournaledControl(
+      config,
+      deps,
+      {
+        action: "restart-agent",
+        agent: info.agent,
+        confirmed: false,
+        payload: info.pane,
+      },
+      () => deps.respawnPane(info.pane)
+    );
   },
   log: (entry: RecoveryHistoryEntry, dryRun: boolean) => {
-    deps.appendLog(logFile, { dryRun, kind: "action", ...entry });
+    deps.appendLog(config.logFile, { dryRun, kind: "action", ...entry });
   },
 });
 
@@ -619,8 +865,9 @@ const fmtClock = (nowMs: number): string => {
 };
 
 const CLAUDE_PREFIX_RE = /^claude-/;
+const SHORT_MODEL_WIDTH = 12;
 const shortModel = (model?: string): string =>
-  model ? model.replace(CLAUDE_PREFIX_RE, "").slice(0, 10) : "—";
+  model ? model.replace(CLAUDE_PREFIX_RE, "").slice(0, SHORT_MODEL_WIDTH) : "—";
 const LOCAL_MODEL_PREFIX_RE = /^[^/]+\//;
 const shortLocalModel = (model: string): string =>
   model.replace(LOCAL_MODEL_PREFIX_RE, "");
@@ -635,7 +882,7 @@ const judgeIdFromModel = (model: string): string => {
   return name.split(/[-_]/)[0] || "llm";
 };
 
-const primaryJudge = (config: BabysitConfig): LocalLlmJudgeConfig =>
+const primaryJudge = (config: GovernessConfig): LocalLlmJudgeConfig =>
   config.judges?.[0] ?? {
     id: judgeIdFromModel(config.model),
     logFile: config.llmLogFile,
@@ -644,11 +891,11 @@ const primaryJudge = (config: BabysitConfig): LocalLlmJudgeConfig =>
     url: config.url,
   };
 
-const localJudges = (config: BabysitConfig): LocalLlmJudgeConfig[] =>
+const localJudges = (config: GovernessConfig): LocalLlmJudgeConfig[] =>
   config.judges?.length ? config.judges : [primaryJudge(config)];
 
 const localJudgesForTick = (
-  config: BabysitConfig,
+  config: GovernessConfig,
   tick: number
 ): LocalLlmJudgeConfig[] => {
   const judges = localJudges(config);
@@ -668,9 +915,6 @@ const contextCell = (u: AgentUsage): string =>
     ? `${fmtTokens(u.contextTokens)}/${fmtTokens(u.contextWindow)} ${contextPct(u)}%`
     : "—";
 
-const totalContextTokens = (u: AgentUsage): number =>
-  u.contextTokens + u.compactedContextTokens;
-
 const tokenCell = (tokens: number): string =>
   tokens > 0 ? fmtTokens(tokens) : "—";
 
@@ -682,25 +926,71 @@ const costBurnCell = (u: AgentUsage, activeMs: number): string => {
   return perHr > 0 ? `$${perHr.toFixed(0)}` : "—";
 };
 
-const rateLimitCell = (u: AgentUsage): string => {
-  if (
-    u.rateLimitPrimaryPct === undefined &&
-    u.rateLimitSecondaryPct === undefined
-  ) {
-    return "—";
+const usageLimitWindows = (u: AgentUsage): UsageLimitWindow[] => {
+  if (u.rateLimitWindows?.length) {
+    return u.rateLimitWindows;
   }
-  const primary = u.rateLimitPrimaryPct ?? 0;
-  const secondary = u.rateLimitSecondaryPct ?? 0;
-  return `${primary}s/${secondary}w`;
+  return [
+    ...(u.rateLimitPrimaryPct === undefined
+      ? []
+      : [
+          {
+            kind: "session" as const,
+            label: "Session",
+            reset: u.rateLimitPrimaryReset,
+            usedPct: u.rateLimitPrimaryPct,
+          },
+        ]),
+    ...(u.rateLimitSecondaryPct === undefined
+      ? []
+      : [
+          {
+            kind: "weekly" as const,
+            label: "Weekly",
+            reset: u.rateLimitSecondaryReset,
+            usedPct: u.rateLimitSecondaryPct,
+          },
+        ]),
+  ];
+};
+
+const limitKindCell = (kind: UsageLimitWindow["kind"]): string =>
+  kind === "session" ? "S" : kind === "weekly" ? "W" : "A";
+
+const pctCell = (pct: number): string =>
+  Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
+
+const rateLimitCell = (u: AgentUsage): string => {
+  const windows = usageLimitWindows(u);
+  return windows.length > 0
+    ? windows
+        .map((window) => `${limitKindCell(window.kind)}${pctCell(window.usedPct)}`)
+        .join("/")
+    : "—";
 };
 
 const RESET_DATE_RE = /\b\d{4}\b/;
-const RESET_MONTH_DAY_RE = /^([A-Za-z]{3})\s+(\d{1,2})\b/;
+const RESET_TEXT_RE =
+  /^(?:(?<month>[a-z]{3,9})\s+(?<day>\d{1,2})(?:\s+(?<year>\d{4}))?(?:\s+at)?\s+)?(?<hour>\d{1,2})(?::(?<minute>\d{2}))?\s*(?<meridiem>am|pm)$/i;
+const RESET_MONTHS: Record<string, number> = {
+  apr: 3,
+  aug: 7,
+  dec: 11,
+  feb: 1,
+  jan: 0,
+  jul: 6,
+  jun: 5,
+  mar: 2,
+  may: 4,
+  nov: 10,
+  oct: 9,
+  sep: 8,
+};
 
 const parseResetTime = (
   reset: string | undefined,
   nowMs: number
-): { raw: string; date: Date; time: string } | undefined => {
+): { date: Date } | undefined => {
   const raw = reset?.trim();
   if (!raw) {
     return undefined;
@@ -709,14 +999,49 @@ const parseResetTime = (
   const parsed = Date.parse(
     RESET_DATE_RE.test(raw) ? raw : `${raw} ${now.getFullYear()}`
   );
-  if (!Number.isFinite(parsed)) {
+  if (Number.isFinite(parsed)) {
+    return { date: new Date(parsed) };
+  }
+  const match = raw.match(RESET_TEXT_RE);
+  if (!match?.groups) {
     return undefined;
   }
-  const date = new Date(parsed);
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const hours12 = date.getHours() % 12 || 12;
-  const suffix = date.getHours() >= 12 ? "p" : "a";
-  return { date, raw, time: `${hours12}:${minutes}${suffix}` };
+  const monthText = match.groups.month?.slice(0, 3).toLowerCase();
+  const month = monthText ? RESET_MONTHS[monthText] : now.getMonth();
+  const day = match.groups.day ? Number(match.groups.day) : now.getDate();
+  const explicitYear = match.groups.year
+    ? Number(match.groups.year)
+    : undefined;
+  const hour12 = Number(match.groups.hour);
+  const minute = Number(match.groups.minute ?? 0);
+  if (
+    month === undefined ||
+    day < 1 ||
+    day > 31 ||
+    hour12 < 1 ||
+    hour12 > 12 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return undefined;
+  }
+  const hour =
+    (hour12 % 12) + (match.groups.meridiem.toLowerCase() === "pm" ? 12 : 0);
+  const date = new Date(
+    explicitYear ?? now.getFullYear(),
+    month,
+    day,
+    hour,
+    minute
+  );
+  if (!explicitYear && date.getTime() <= nowMs) {
+    if (match.groups.month) {
+      date.setFullYear(date.getFullYear() + 1);
+    } else {
+      date.setDate(date.getDate() + 1);
+    }
+  }
+  return { date };
 };
 
 const resetRemainingCell = (date: Date, nowMs: number): string => {
@@ -734,28 +1059,10 @@ const sessionResetCell = (reset: string | undefined, nowMs: number): string => {
     : (reset?.trim() ?? "—");
 };
 
-const weeklyResetCell = (reset: string | undefined, nowMs: number): string => {
-  const parsed = parseResetTime(reset, nowMs);
-  if (!parsed) {
-    return reset?.trim() || "—";
-  }
-  const { date, raw, time } = parsed;
-  const now = new Date(nowMs);
-  const sameLocalDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  if (sameLocalDay) {
-    return time;
-  }
-  const monthDay = raw.match(RESET_MONTH_DAY_RE);
-  return monthDay ? `${monthDay[1]} ${monthDay[2]} ${time}` : time;
-};
-
 const rateLimitColor = (u: AgentUsage): string | undefined => {
   const high = Math.max(
-    u.rateLimitPrimaryPct ?? 0,
-    u.rateLimitSecondaryPct ?? 0
+    0,
+    ...usageLimitWindows(u).map((window) => window.usedPct)
   );
   if (high >= 80) {
     return ANSI.red;
@@ -836,7 +1143,7 @@ interface AgentRow {
   liveness: AgentLiveness;
   thinking: boolean;
   usage: AgentUsage;
-  verdict?: BabysitterVerdict;
+  verdict?: GovernessVerdict;
 }
 
 // The pair is idle; the local LLM confirms whether it needs you and what for.
@@ -890,7 +1197,7 @@ interface LocalLlmRuntimeInput {
 }
 
 interface BoardMeta {
-  babysitterMessages: Record<string, number>;
+  governessMessages: Record<string, number>;
   bridge: BridgeCounts;
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
@@ -910,71 +1217,37 @@ interface BoardMeta {
   waitingForYou: WaitingForYou;
 }
 
-const COL = {
-  activity: 6,
+const AGENT_COL = {
   agent: 7,
-  bridge: 18,
-  cache: 7,
-  code: 7,
-  compact: 4,
-  context: 16,
-  contextTotal: 7,
-  cost: 8,
-  costRate: 7,
-  effort: 5,
-  exec: 7,
-  inspect: 9,
-  input: 7,
-  mode: 9,
-  model: 10,
-  now: 6,
-  other: 7,
-  output: 7,
-  plan: 7,
-  rateLimit: 9,
-  resetSession: 13,
-  resetWeekly: 13,
   state: 12,
-  text: 5,
-  thinking: 5,
-  tokens: 7,
-  tools: 6,
+  age: 5,
+  model: 12,
+  run: 14,
+  context: 20,
+  limits: 23,
+  spend: 13,
+  tokens: 25,
+  activity: 20,
+  bridge: 18,
 } as const;
 
-const COLUMNS: [string, number][] = [
-  ["AGENT", COL.agent],
-  ["STATE", COL.state],
-  ["NOW", COL.now],
-  ["MODEL", COL.model],
-  ["EFF", COL.effort],
-  ["MODE", COL.mode],
-  ["CTX", COL.context],
-  ["CTX+", COL.contextTotal],
-  ["CMP", COL.compact],
-  ["LIMIT S/W", COL.rateLimit],
-  ["S RESET", COL.resetSession],
-  ["W RESET", COL.resetWeekly],
-  ["COST", COL.cost],
-  ["$/H", COL.costRate],
-  ["TOK", COL.tokens],
-  ["IN", COL.input],
-  ["CACHE", COL.cache],
-  ["OUT", COL.output],
-  ["ACT", COL.activity],
-  ["TXT", COL.text],
-  ["THK", COL.thinking],
-  ["TOOL", COL.tools],
-  ["EXEC", COL.exec],
-  ["CODE", COL.code],
-  ["READ/VIEW", COL.inspect],
-  ["PLAN", COL.plan],
-  ["MISC", COL.other],
-  ["BRIDGE", COL.bridge],
+const AGENT_COLUMNS: [string, number][] = [
+  ["AGENT", AGENT_COL.agent],
+  ["STATE", AGENT_COL.state],
+  ["AGE", AGENT_COL.age],
+  ["MODEL", AGENT_COL.model],
+  ["RUN", AGENT_COL.run],
+  ["CONTEXT · CMP", AGENT_COL.context],
+  ["LIMITS · RESET", AGENT_COL.limits],
+  ["EST RUN / H", AGENT_COL.spend],
+  ["TOKENS I/C/O", AGENT_COL.tokens],
+  ["ACT TX/TH/TL", AGENT_COL.activity],
+  ["MSGS / BRIDGE", AGENT_COL.bridge],
 ];
 
-const headerRow = paint(
+const agentHeaderRow = paint(
   ANSI.dim,
-  ` ${COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
+  ` ${AGENT_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
 );
 
 const rowState = (row: AgentRow): string =>
@@ -994,11 +1267,11 @@ const STATE_GLYPHS: Record<string, string> = {
 
 const stateGlyph = (state: string): string => STATE_GLYPHS[state] ?? "·";
 
-const BABYSITTER_PANE_LABEL = "● babysitter";
+const GOVERNESS_PANE_LABEL = "● governess";
 
-// The babysitter's own pane: its live tmux pane id when running inside tmux,
+// The governess's own pane: its live tmux pane id when running inside tmux,
 // else the conventional bottom pane of the paired session.
-const babysitterPane = (config: BabysitConfig): string =>
+const governessPane = (config: GovernessConfig): string =>
   process.env.TMUX_PANE ?? `${config.session}:0.2`;
 
 // Compose a pane-border title: "<glyph> <agent> · <task>", dropping the task
@@ -1015,10 +1288,10 @@ export const composePaneTitle = (
 
 // Push each agent pane's border title, skipping panes whose title is unchanged.
 const applyPaneLabels = (
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   rows: AgentRow[],
-  runState: BabysitRunState
+  runState: GovernessRunState
 ): void => {
   config.agents.forEach((info, index) => {
     const row = rows[index];
@@ -1055,6 +1328,7 @@ const RENAME_BUSY_STATES = new Set([
   "crashed",
   "stuck",
 ]);
+const RENAME_SAFE_STATES = new Set(["idle", "waiting-human"]);
 
 // How many previously-sent rename commands to remember per agent. The label
 // judge oscillates between near-synonym phrasings ("taper script editing" ↔
@@ -1095,13 +1369,13 @@ const renameLabelsSimilar = (a: string, b: string): boolean => {
 // refresh. A busy agent is skipped WITHOUT recording, so the rename retries
 // once it goes idle. Skipped in dry-run so we never inject during a rehearsal.
 export const sendRenameCommands = (
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   labels: Partial<Record<Agent, string>>,
   lastRenames: Partial<Record<Agent, string>>,
   states: Partial<Record<Agent, string>> = {}
 ): void => {
-  if (config.dryRun) {
+  if (!config.agentRenameEnabled || config.dryRun) {
     return;
   }
   for (const info of config.agents) {
@@ -1109,12 +1383,18 @@ export const sendRenameCommands = (
     if (!label) {
       continue;
     }
-    if (RENAME_BUSY_STATES.has(states[info.agent] ?? "")) {
+    const state = states[info.agent];
+    if (
+      !state ||
+      RENAME_BUSY_STATES.has(state) ||
+      !RENAME_SAFE_STATES.has(state) ||
+      !directInputIsSafe(deps, info)
+    ) {
       continue;
     }
     const command = renameCommand(config.session, label);
     // The map value holds the last few sent commands newline-joined (it stays
-    // a plain string so babysitter-state.json persistence is unchanged).
+    // a plain string so governess-state.json persistence is unchanged).
     const history = (lastRenames[info.agent] ?? "").split("\n").filter(Boolean);
     if (
       history.includes(command) ||
@@ -1126,8 +1406,27 @@ export const sendRenameCommands = (
       ...history.slice(-(RENAME_HISTORY_LIMIT - 1)),
       command,
     ].join("\n");
-    deps.sendText(info.pane, command);
-    deps.sendKeys(info.pane, ["Enter"]);
+    const sent = runJournaledControl(
+      config,
+      deps,
+      {
+        action: "send-control",
+        agent: info.agent,
+        payload: command,
+        targetSafe: true,
+      },
+      () => {
+        deps.sendText(info.pane, command);
+        deps.sendKeys(info.pane, ["Enter"]);
+      }
+    );
+    if (!sent) {
+      if (history.length > 0) {
+        lastRenames[info.agent] = history.join("\n");
+      } else {
+        delete lastRenames[info.agent];
+      }
+    }
   }
 };
 
@@ -1275,8 +1574,8 @@ const bridgeFor = (
 // agent is blocked on the human, not merely idle — so it stands out.
 const stateCell = (state: string): string =>
   state === "waiting-human"
-    ? colorCell(ANSI.yellow, "⏳ waits you", COL.state)
-    : colorCell(stateColor(state), `● ${stateLabel(state)}`, COL.state);
+    ? colorCell(ANSI.yellow, "⏳ waits you", AGENT_COL.state)
+    : colorCell(stateColor(state), `● ${stateLabel(state)}`, AGENT_COL.state);
 
 const countCell = (count: number): string =>
   count > 0 ? fmtTokens(count) : "—";
@@ -1295,71 +1594,94 @@ const lastActionDetail = (row: AgentRow): string =>
     .replace(SPACE_GLOBAL_RE, " ")
     .trim();
 
-const renderRow = (row: AgentRow, meta: BoardMeta): string => {
+const resetEtaCell = (
+  reset: string | undefined,
+  nowMs: number,
+  resetAtMs?: number
+): string => {
+  const parsedMs =
+    resetAtMs !== undefined && Number.isFinite(resetAtMs)
+      ? resetAtMs
+      : parseResetTime(reset, nowMs)?.date.getTime();
+  if (parsedMs === undefined) {
+    return reset?.trim() || "—";
+  }
+  const totalMinutes = Math.max(
+    0,
+    Math.floor((parsedMs - nowMs) / MS_PER_MINUTE)
+  );
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 48) {
+    return `${totalHours}h${minutes > 0 ? `${String(minutes).padStart(2, "0")}m` : ""}`;
+  }
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `${days}d${hours > 0 ? `${hours}h` : ""}`;
+};
+
+const renderAgentRow = (row: AgentRow, meta: BoardMeta): string => {
   const agent = row.liveness.agent;
   const state = rowState(row);
   const forMs = row.thinking
     ? row.liveness.lastEventAgeMs
     : row.liveness.paneIdleMs;
-  const ctxText = contextCell(row.usage);
+  const run = [effortCell(row.usage), modeCell(row.usage)]
+    .filter((part) => part !== "—")
+    .join("/") || "—";
+  const ctxText = `${contextCell(row.usage)} c${row.usage.compactions}`;
   const ctxWarn = contextPct(row.usage) > CONTEXT_ALERT_PCT;
   const ctx = ctxWarn
-    ? colorCell(ANSI.red, `${ctxText} ⚠`, COL.context)
-    : fitCell(ctxText, COL.context);
-  const contextTotal = tokenCell(totalContextTokens(row.usage));
-  const effort = effortCell(row.usage);
-  const mode = modeCell(row.usage);
+    ? colorCell(ANSI.red, `${ctxText} ⚠`, AGENT_COL.context)
+    : fitCell(ctxText, AGENT_COL.context);
   const tok = tokenCell(row.usage.totalTokens);
   const inputTok = tokenCell(row.usage.inputTokens);
   const cachedTok = tokenCell(
     row.usage.cacheReadTokens + row.usage.cacheCreateTokens
   );
   const outputTok = tokenCell(row.usage.outputTokens);
-  const cost = row.usage.costUsd > 0 ? `$${row.usage.costUsd.toFixed(2)}` : "—";
+  const cost =
+    row.usage.costEstimateCoveragePct === 0
+      ? "unpriced"
+      : row.usage.costUsd > 0
+        ? `$${row.usage.costUsd.toFixed(2)}`
+        : "—";
   const burn = costBurnCell(row.usage, meta.stats.activeMs[agent] ?? 0);
-  const rateLimit = rateLimitCell(row.usage);
+  const spend = `${cost}/${burn}`;
+  const windows = usageLimitWindows(row.usage);
+  const resets = windows
+    .map((window) => resetEtaCell(window.reset, meta.nowMs, window.resetAtMs))
+    .join("/");
+  const rateLimit =
+    windows.length > 0 ? `${rateLimitCell(row.usage)} · ${resets}` : "—";
   const rateLimitRendered = rateLimitColor(row.usage)
-    ? colorCell(rateLimitColor(row.usage) as string, rateLimit, COL.rateLimit)
-    : fitCell(rateLimit, COL.rateLimit);
-  const sessionReset = sessionResetCell(
-    row.usage.rateLimitPrimaryReset,
-    meta.nowMs
-  );
-  const weeklyReset = weeklyResetCell(
-    row.usage.rateLimitSecondaryReset,
-    meta.nowMs
-  );
+    ? colorCell(rateLimitColor(row.usage) as string, rateLimit, AGENT_COL.limits)
+    : fitCell(rateLimit, AGENT_COL.limits);
+  const tokenSummary = `${tok} i${inputTok} c${cachedTok} o${outputTok}`;
+  const activity = `${countCell(activityTotal(row.usage))} tx${countCell(
+    row.usage.textMessages
+  )} th${countCell(row.usage.thinkingMessages)} tl${countCell(
+    row.usage.toolCalls
+  )}`;
   const groups = groupedToolCounts(row.usage);
   const bridgeActivity = bridgeActivityText(row, groups, meta);
   return ` ${[
-    fitCell(agent, COL.agent),
+    fitCell(agent, AGENT_COL.agent),
     stateCell(state),
-    fitCell(fmtDuration(forMs), COL.now),
-    fitCell(shortModel(row.usage.model), COL.model),
-    fitCell(effort, COL.effort),
-    fitCell(mode, COL.mode),
+    fitCell(fmtDuration(forMs), AGENT_COL.age),
+    fitCell(shortModel(row.usage.model), AGENT_COL.model),
+    fitCell(run, AGENT_COL.run),
     ctx,
-    fitCell(contextTotal, COL.contextTotal),
-    fitCell(String(row.usage.compactions), COL.compact),
     rateLimitRendered,
-    fitCell(sessionReset, COL.resetSession),
-    fitCell(weeklyReset, COL.resetWeekly),
-    fitCell(cost, COL.cost),
-    fitCell(burn, COL.costRate),
-    fitCell(tok, COL.tokens),
-    fitCell(inputTok, COL.input),
-    fitCell(cachedTok, COL.cache),
-    fitCell(outputTok, COL.output),
-    renderToolCountCell(countCell(activityTotal(row.usage)), COL.activity),
-    renderToolCountCell(countCell(row.usage.textMessages), COL.text),
-    renderToolCountCell(countCell(row.usage.thinkingMessages), COL.thinking),
-    renderToolCountCell(countCell(row.usage.toolCalls), COL.tools),
-    renderToolCountCell(toolCountText(groups.exec), COL.exec),
-    renderToolCountCell(toolCountText(groups.code), COL.code),
-    renderToolCountCell(toolCountText(groups.inspect), COL.inspect),
-    renderToolCountCell(toolCountText(groups.plan), COL.plan),
-    renderToolCountCell(toolCountText(groups.other), COL.other),
-    renderToolCountCell(bridgeActivity, COL.bridge),
+    fitCell(spend, AGENT_COL.spend),
+    fitCell(tokenSummary, AGENT_COL.tokens),
+    activityTotal(row.usage) > 0
+      ? colorCell(ANSI.yellow, activity, AGENT_COL.activity)
+      : colorCell(ANSI.dim, activity, AGENT_COL.activity),
+    renderToolCountCell(bridgeActivity, AGENT_COL.bridge),
   ].join(" ")}`;
 };
 
@@ -1387,7 +1709,7 @@ const localLlmUsageCells = (usage: LocalLlmUsage): string[] => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const readBabysitterMessageCountsFromLog = (
+const readGovernessMessageCountsFromLog = (
   logFile: string
 ): Record<string, number> => {
   const counts: Record<string, number> = {};
@@ -1754,11 +2076,11 @@ const costCell = (
   const spend = `$${totalCost.toFixed(2)}`;
   const rate = perHr > 0 ? ` ($${perHr.toFixed(0)}/hr)` : "";
   if (budgetUsd <= 0) {
-    return `Σ ${spend}${rate}`;
+    return `Σ est ${spend}${rate}`;
   }
   const fraction = totalCost / budgetUsd;
   const pct = Math.round(fraction * 100);
-  const text = `Σ ${spend}/$${budgetUsd.toFixed(0)} ${pct}%${rate}`;
+  const text = `Σ est ${spend}/$${budgetUsd.toFixed(0)} ${pct}%${rate}`;
   if (fraction >= 1) {
     return paint(ANSI.red, `${text} ⛔`);
   }
@@ -1780,7 +2102,7 @@ const waitingForYouAlert = (waiting: WaitingForYou): string[] => {
   ];
 };
 
-const renderBabysitterMessageCounts = (
+const renderGovernessMessageCounts = (
   rows: AgentRow[],
   counts: Record<string, number>
 ): string | undefined => {
@@ -1798,12 +2120,12 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   const perHr =
     meta.uptimeMs > 0 ? totalCost / (meta.uptimeMs / MS_PER_HOUR) : 0;
   const errorTotal = rows.reduce((sum, r) => sum + r.errors, 0);
-  const messageCounts = renderBabysitterMessageCounts(
+  const messageCounts = renderGovernessMessageCounts(
     rows,
-    meta.babysitterMessages
+    meta.governessMessages
   );
   const parts = [
-    paint(ANSI.cyan, "babysitter"),
+    paint(ANSI.cyan, "governess"),
     fmtClock(meta.nowMs),
     ...(Number.isFinite(meta.uptimeMs)
       ? [`wall ${fmtDuration(meta.uptimeMs)}`]
@@ -1814,17 +2136,17 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     ...roleSummaryParts(meta),
     ...(errorTotal > 0 ? [paint(ANSI.red, `errors ${errorTotal}`)] : []),
     ...waitingForYouAlert(meta.waitingForYou),
+    paint(ANSI.dim, "[x] exit"),
   ];
   return ` ${parts.join(" · ")}`;
 };
 
 const SUMMARY_LINE_WIDTH = 180;
-const SUMMARY_PROJECT_WIDTH = Math.floor(SUMMARY_LINE_WIDTH / 2);
 const SUMMARY_TOTAL_LINES = 8;
 const SUMMARY_LABEL_RE = /^(project|objective|progress|next)\s*:\s*/i;
 const SPACE_RE = /\s+/;
 const SPACE_GLOBAL_RE = /\s+/g;
-const BRIDGE_LATEST_WIDTH = 76;
+const BRIDGE_LATEST_WIDTH = 64;
 
 const bridgeLatestFor = (
   latest: BridgeLatest,
@@ -2048,9 +2370,6 @@ const groupedToolCounts = (usage: AgentUsage): ToolGroups => {
   return groups;
 };
 
-const toolCountText = (count: number): string =>
-  count > 0 ? fmtTokens(count) : "—";
-
 const renderToolCountCell = (text: string, width: number): string =>
   text === "—"
     ? paint(ANSI.dim, fitCell(text, width))
@@ -2107,20 +2426,20 @@ const localFooterKnownColor = (text: string, color: string): string =>
 const LLM_COL = {
   arch: 34,
   batch: 18,
-  cached: 7,
+  cached: 6,
   calls: 5,
   dtype: 5,
-  hit: 7,
-  id: 7,
-  input: 7,
-  memory: 8,
-  model: 34,
+  hit: 5,
+  id: 5,
+  input: 6,
+  memory: 7,
+  model: 32,
   moe: 9,
-  output: 7,
+  output: 6,
   quant: 13,
-  slots: 8,
-  status: 5,
-  tokens: 7,
+  slots: 7,
+  status: 4,
+  tokens: 6,
 } as const;
 
 const LLM_COLUMNS: [string, number][] = [
@@ -2358,7 +2677,6 @@ const renderFooter = (meta: BoardMeta): string[] => {
   ];
   const summaryLines = renderSummaryBody(meta.summary);
   if (summaryLines.length > 0) {
-    lines.push(paint(ANSI.dim, " ── summary ──"));
     lines.push(...summaryLines);
   }
   return lines;
@@ -2371,13 +2689,13 @@ const summaryLineBudget = (
 ): { maxLines: number; width: number } => {
   const label = line.match(SUMMARY_LABEL_RE)?.[1]?.toLowerCase();
   if (label === "project") {
-    return { maxLines: 1, width: SUMMARY_PROJECT_WIDTH };
+    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
   }
   if (label === "objective") {
     return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
   }
   if (label === "progress") {
-    return { maxLines: 3, width: SUMMARY_LINE_WIDTH };
+    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
   }
   if (label === "next") {
     return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
@@ -2423,8 +2741,8 @@ const renderSummaryLabelLine = (text: string): string => {
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   return [
     renderSummaryLine(rows, meta),
-    headerRow,
-    ...rows.map((row) => renderRow(row, meta)),
+    agentHeaderRow,
+    ...rows.map((row) => renderAgentRow(row, meta)),
     ...renderBridgeLatestLine(rows, meta),
     ...renderFooter(meta),
   ].join("\n");
@@ -2467,10 +2785,10 @@ interface ConsensusJudgeResult {
 
 // Run the recovery ladder for a suspect agent; returns the taken action (if any).
 const recoverAgent = (
-  info: BabysitAgentInfo,
-  verdict: BabysitterVerdict,
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  info: GovernessAgentInfo,
+  verdict: GovernessVerdict,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   ctx: AgentTickContext
 ): RecoveryHistoryEntry | null => {
   const decision: RecoveryDecision = decideRecovery(
@@ -2484,9 +2802,36 @@ const recoverAgent = (
       nowMs: ctx.nowMs,
     }
   );
+  const recoveryAction: GovernessAction | undefined =
+    decision.level === "answer-prompt"
+      ? "answer-prompt"
+      : decision.level === "nudge"
+        ? "nudge"
+        : decision.level === "restart"
+          ? "restart-agent"
+          : undefined;
+  if (recoveryAction) {
+    const policy = decideGovernessPolicy(recoveryAction, {
+      confirmed: false,
+      fenceCurrent: governessFenceCurrent(config, deps),
+      targetSafe: true,
+    });
+    if (!policy.allowed) {
+      deps.appendLog(config.logFile, {
+        action: recoveryAction,
+        agent: info.agent,
+        decision,
+        kind: "recovery-policy-denied",
+        reason: policy.reason,
+        ts: ctx.nowIso,
+        verdict,
+      });
+      return null;
+    }
+  }
   const action = executeRecovery(
     decision,
-    buildRecoveryDeps(info, deps, config.logFile),
+    buildRecoveryDeps(info, deps, config),
     { dryRun: config.dryRun, nowIso: ctx.nowIso }
   );
   deps.appendLog(config.logFile, {
@@ -2500,7 +2845,7 @@ const recoverAgent = (
   return action;
 };
 
-const conservativeVerdict = (summary: string): BabysitterVerdict => ({
+const conservativeVerdict = (summary: string): GovernessVerdict => ({
   confidence: 0,
   state: "working",
   summary: truncate(summary, JUDGE_SUMMARY_MAX),
@@ -2612,11 +2957,11 @@ const consensusJudgeResult = (
 };
 
 const judgeWithLocalJudges = async (
-  info: BabysitAgentInfo,
+  info: GovernessAgentInfo,
   events: HookEvent[],
   paneText: string,
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   tick: number
 ): Promise<ConsensusJudgeResult> => {
   const results = await Promise.all(
@@ -2640,10 +2985,40 @@ const applyUsageLimits = (
   agent: Agent,
   snapshot?: UsageLimitSnapshot
 ): void => {
+  if (snapshot?.pricing) {
+    applyUsageTrackerPricing(usage, agent, snapshot.pricing);
+  }
   const limits = snapshot?.[agent];
   if (!limits) {
     return;
   }
+  if (limits.windows?.length) {
+    usage.rateLimitWindows = limits.windows.map((window) => ({ ...window }));
+    usage.rateLimitPrimaryPct = undefined;
+    usage.rateLimitPrimaryReset = undefined;
+    usage.rateLimitSecondaryPct = undefined;
+    usage.rateLimitSecondaryReset = undefined;
+    const session = limits.windows.find((window) => window.kind === "session");
+    const weekly = limits.windows.find((window) => window.kind === "weekly");
+    if (session) {
+      usage.rateLimitPrimaryPct = session.usedPct;
+      usage.rateLimitPrimaryReset =
+        session.reset ??
+        (session.resetAtMs === undefined
+          ? undefined
+          : new Date(session.resetAtMs).toISOString());
+    }
+    if (weekly) {
+      usage.rateLimitSecondaryPct = weekly.usedPct;
+      usage.rateLimitSecondaryReset =
+        weekly.reset ??
+        (weekly.resetAtMs === undefined
+          ? undefined
+          : new Date(weekly.resetAtMs).toISOString());
+    }
+    return;
+  }
+  usage.rateLimitWindows = undefined;
   if (limits.primaryPct !== undefined) {
     usage.rateLimitPrimaryPct = limits.primaryPct;
   }
@@ -2660,10 +3035,10 @@ const applyUsageLimits = (
 
 // Detect, judge, and (if suspect+recoverable) recover one agent; build its row.
 const processAgent = async (
-  info: BabysitAgentInfo,
+  info: GovernessAgentInfo,
   states: Map<Agent, AgentLivenessState>,
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   ctx: AgentTickContext
 ): Promise<AgentTickResult> => {
   const paneText = deps.capturePane(info.pane);
@@ -2821,8 +3196,8 @@ interface SummaryConsensusResult {
 }
 
 const summarizeWithLocalJudges = async (
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   agents: SummaryAgentContext[],
   tick: number
 ): Promise<SummaryConsensusResult> => {
@@ -2863,8 +3238,8 @@ interface PaneLabelConsensusResult {
 }
 
 const labelPanesWithLocalJudges = async (
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   agents: SummaryAgentContext[],
   tick: number
 ): Promise<PaneLabelConsensusResult> => {
@@ -2891,8 +3266,8 @@ const labelPanesWithLocalJudges = async (
 };
 
 const assessWaitingWithLocalJudges = async (
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   agents: SummaryAgentContext[],
   tick: number
 ): Promise<WaitingConsensusResult> => {
@@ -2924,8 +3299,8 @@ const assessWaitingWithLocalJudges = async (
 };
 
 const assessRoleBalanceWithLocalJudges = async (
-  config: BabysitConfig,
-  deps: BabysitDeps,
+  config: GovernessConfig,
+  deps: GovernessDeps,
   request: Omit<RoleBalanceRequest, "model" | "url">,
   tick: number
 ): Promise<RoleBalanceConsensusResult> => {
@@ -2963,7 +3338,7 @@ const assessRoleBalanceWithLocalJudges = async (
 };
 
 const missingJudgeUsage = (
-  config: BabysitConfig,
+  config: GovernessConfig,
   usageByJudge: LocalLlmUsageByJudge
 ): boolean =>
   localJudges(config).some((judge) => {
@@ -2975,8 +3350,8 @@ const missingJudgeUsage = (
 // instructions this session (deduped across agents, order preserved), the
 // project docs, and prior-session summaries.
 const gatherSummaryContext = (
-  config: BabysitConfig,
-  deps: BabysitDeps
+  config: GovernessConfig,
+  deps: GovernessDeps
 ): Pick<
   SummaryRequest,
   "humanMessages" | "priorSummaries" | "projectContext"
@@ -3040,7 +3415,7 @@ const cloneStats = (stats: SessionStats): SessionStats => ({
 // needs the human when BOTH are idle together. Track how long that has held,
 // resetting (and forgetting the LLM's read) the moment either agent goes active.
 const updateBothIdle = (
-  runState: BabysitRunState,
+  runState: GovernessRunState,
   rows: AgentRow[],
   nowMs: number
 ): WaitingForYou => {
@@ -3063,11 +3438,11 @@ const updateBothIdle = (
 };
 
 const agentInfoByAgent = (
-  config: BabysitConfig
-): Partial<Record<Agent, BabysitAgentInfo>> =>
+  config: GovernessConfig
+): Partial<Record<Agent, GovernessAgentInfo>> =>
   Object.fromEntries(
     config.agents.map((info) => [info.agent, info])
-  ) as Partial<Record<Agent, BabysitAgentInfo>>;
+  ) as Partial<Record<Agent, GovernessAgentInfo>>;
 
 const limitHandoffMessage = (
   paused: Agent,
@@ -3080,7 +3455,7 @@ const limitHandoffMessage = (
     ? ` until the ${pressure.resetKind} limit resets at ${pressure.reset}`
     : " until its limit resets";
   return [
-    `babysitter: ${pausedName} is at/near ${pressure.resetKind} limit (${pressure.pct}% used)${reset}.`,
+    `governess: ${pausedName} is at/near ${pressure.resetKind} limit (${pressure.pct}% used)${reset}.`,
     `${driverName} is now the driver. Continue the task from the current repo state and do not wait for ${pausedName}'s next turn before making progress.`,
     `Ask ${pausedName} for review or context only after that limit reset, or if the human explicitly redirects the pairing.`,
   ].join(" ");
@@ -3088,7 +3463,7 @@ const limitHandoffMessage = (
 
 // Belt-and-braces throttle for restore briefings: even a genuine handoff
 // briefing repeats at most once per window per agent (in-memory; resets on
-// babysitter respawn, which is fine — the cost of a rare duplicate briefing is
+// governess respawn, which is fine — the cost of a rare duplicate briefing is
 // one message, the cost of a flapping restore loop is constant interruption).
 const RESTORE_MESSAGE_COOLDOWN_MS = 15 * 60 * 1000;
 const restoreMessageSentAtMs = new Map<Agent, number>();
@@ -3096,7 +3471,7 @@ const restoreMessageSentAtMs = new Map<Agent, number>();
 const restoreContextMessage = (
   restored: Agent,
   temporary: Agent | undefined,
-  state: BabysitRunState
+  state: GovernessRunState
 ): string => {
   const restoredName = capitalize(restored);
   const temporaryName = temporary ? capitalize(temporary) : "The other agent";
@@ -3108,7 +3483,7 @@ const restoreContextMessage = (
   const context = summary
     ? truncate(summary, 700)
     : "Use the current repo state, recent terminal output, PLAN.md/status.md if present, and the peer's latest handoff.";
-  return `babysitter: ${restoredName}'s limit reset and ${restoredName} is the driver again. While you were paused, ${temporaryName} drove the task. Current context: ${context} Pick up from the current repo state; ask ${temporaryName} for only a concise missing detail if needed.`;
+  return `governess: ${restoredName}'s limit reset and ${restoredName} is the driver again. While you were paused, ${temporaryName} drove the task. Current context: ${context} Pick up from the current repo state; ask ${temporaryName} for only a concise missing detail if needed.`;
 };
 
 const restoreTemporaryDriverMessage = (
@@ -3116,7 +3491,7 @@ const restoreTemporaryDriverMessage = (
   temporary: Agent
 ): string =>
   [
-    `babysitter: ${capitalize(restored)}'s limit reset.`,
+    `governess: ${capitalize(restored)}'s limit reset.`,
     `Hand the driver role back to ${capitalize(restored)} now.`,
     "Send a concise handoff if useful, then stop driving unless the human redirects.",
   ].join(" ");
@@ -3127,7 +3502,7 @@ const balanceDriverMessage = (
   reason: string
 ): string =>
   [
-    "babysitter: proactive quota balance.",
+    "governess: proactive quota balance.",
     `${capitalize(next)} is now the driver; ${capitalize(previous)} should preserve quota and stay available for review/context.`,
     reason ? `Reason: ${truncate(reason, 180)}.` : "",
     "Continue from the current repo state and do not wait for an actual quota limit.",
@@ -3141,7 +3516,7 @@ const balancePreviousDriverMessage = (
   reason: string
 ): string =>
   [
-    "babysitter: proactive quota balance.",
+    "governess: proactive quota balance.",
     `${capitalize(next)} is now the driver to preserve available quota.`,
     reason ? `Reason: ${truncate(reason, 180)}.` : "",
     `${capitalize(previous)} should stay available for review/context and only resume driving if asked or after roles change again.`,
@@ -3152,15 +3527,15 @@ const balancePreviousDriverMessage = (
 const bridgeSourceFor = (
   target: Agent,
   preferred: Agent | undefined,
-  config: BabysitConfig
+  config: GovernessConfig
 ): Agent | undefined =>
   preferred && preferred !== target
     ? preferred
     : config.agents.find((info) => info.agent !== target)?.agent;
 
 const sendDirectRoleMessage = (
-  deps: BabysitDeps,
-  info: BabysitAgentInfo,
+  deps: GovernessDeps,
+  info: GovernessAgentInfo,
   message: string
 ): "tmux" => {
   deps.sendText(info.pane, message);
@@ -3169,20 +3544,670 @@ const sendDirectRoleMessage = (
 };
 
 const sendRoleMessage = async (
-  config: BabysitConfig,
-  deps: BabysitDeps,
-  targetInfo: BabysitAgentInfo,
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  targetInfo: GovernessAgentInfo,
   target: Agent,
   source: Agent | undefined,
   message: string
 ): Promise<BridgeSendStatus | "tmux"> => {
-  // Claude has no external push route from the babysitter process today; keep
+  const policy = decideGovernessPolicy("send-control", {
+    fenceCurrent: governessFenceCurrent(config, deps),
+    targetSafe: true,
+  });
+  if (!policy.allowed) {
+    deps.appendLog(config.logFile, {
+      action: "send-control",
+      agent: target,
+      at: new Date(deps.now()).toISOString(),
+      event: "control-denied",
+      reason: policy.reason,
+    });
+    return "accepted";
+  }
+  const now = new Date(deps.now()).toISOString();
+  const record = config.journalFile
+    ? prepareGovernessControl(config.journalFile, {
+        action: "send-control",
+        agent: target,
+        at: now,
+        epoch: config.epoch ?? 0,
+        idempotencyKey: controlKey(config, "send-control", target, message),
+        payload: message,
+        policyClass: policy.class,
+      })
+    : undefined;
+  if (record && record.phase !== "prepared") {
+    return "accepted";
+  }
+  if (record && config.journalFile) {
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "dispatched",
+      now
+    );
+  }
+  // Claude has no external push route from the governess process today; keep
   // that path direct. Codex/non-Claude bridge delivery avoids fragile pane
   // text+Enter injection and lets the bridge worker/app-server steer safely.
   if (config.runDir && source && source !== target && target !== "claude") {
-    return deps.sendBridge(config.runDir, source, target, message);
+    const delivery = await deps.sendBridge(config.runDir, source, target, message);
+    if (record && config.journalFile) {
+      transitionGovernessControl(
+        config.journalFile,
+        record.controlId,
+        delivery === "delivered" ? "completed" : "accepted",
+        new Date(deps.now()).toISOString()
+      );
+    }
+    return delivery;
   }
-  return sendDirectRoleMessage(deps, targetInfo, message);
+  const delivery = sendDirectRoleMessage(deps, targetInfo, message);
+  if (record && config.journalFile) {
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "completed",
+      new Date(deps.now()).toISOString()
+    );
+  }
+  return delivery;
+};
+
+export const createGovernessRuntimeAdapter = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  info: GovernessAgentInfo,
+  displayState?: string
+): GovernessRuntimeAdapter => {
+  const deliver = async (
+    control: Parameters<GovernessRuntimeAdapter["sendControl"]>[0],
+    direct = false
+  ) => {
+    if (
+      !control.controlId ||
+      control.target !== info.agent ||
+      control.epoch !== config.epoch ||
+      !governessFenceCurrent(config, deps)
+    ) {
+      throw new Error("stale or invalid governess control envelope");
+    }
+    deps.appendLog(config.logFile, {
+      action: control.action,
+      agent: info.agent,
+      at: new Date(deps.now()).toISOString(),
+      controlId: control.controlId,
+      epoch: control.epoch,
+      event: "runtime-control",
+    });
+    if (direct) {
+      // Long pasted prompts are staged asynchronously by Codex's TUI. Sending
+      // Enter in the same tmux command burst can leave the control sitting in
+      // the composer, where it would consume the next user/agent input. Give
+      // the TUI one short settle window before submitting the turn.
+      deps.sendText(info.pane, control.message);
+      await deps.sleep(250);
+      deps.sendKeys(info.pane, ["Enter"]);
+      return "tmux";
+    }
+    return String(
+      await sendRoleMessage(
+        config,
+        deps,
+        info,
+        info.agent,
+        bridgeSourceFor(info.agent, undefined, config),
+        control.message
+      )
+    );
+  };
+  return {
+    agent: info.agent,
+    checkpoint: async () => {
+      const event = deps.readHooks(info.hookFile).at(-1);
+      return event
+        ? {
+            agent: info.agent,
+            at: event.ts,
+            reference: `${event.event}:${event.ts}`,
+          }
+        : undefined;
+    },
+    observe: async () => {
+      const evidence = deps.paneCommand?.(info.pane) ?? "unknown";
+      const alive = !agentHasExited(info.agent, evidence);
+      return {
+        alive,
+        evidence,
+        state: explicitAgentState(displayState, alive),
+      };
+    },
+    requestDrain: (control) => deliver(control, true),
+    requestExit: deliver,
+    sendControl: deliver,
+  };
+};
+
+const exitBanner = (
+  state: ExitControlState,
+  menuOpen: boolean,
+  agents: GovernessAgentInfo[],
+  paneCommand: (pane: string) => string | undefined,
+  handoverBundles: Partial<Record<Agent, string>> = {}
+): string | undefined => {
+  if (menuOpen) {
+    return " exit · [e] tear down loop · [h] hand over to new loop · [c/Esc/x] cancel";
+  }
+  if (state.mode === "launch-error") {
+    return ` handover launch failed · ${state.launchError ?? "unknown error"} · [h] retry · [e] tear down`;
+  }
+  if (state.mode !== "handover") {
+    return undefined;
+  }
+  const status = agents.map((info) => {
+    if (!state.notified[info.agent]) {
+      return `${info.agent}:finishing`;
+    }
+    if (!handoverBundles[info.agent]) {
+      return `${info.agent}:bundle`;
+    }
+    return agentHasExited(info.agent, paneCommand(info.pane))
+      ? `${info.agent}:done`
+      : `${info.agent}:exiting`;
+  });
+  return ` handover · ${status.join(" · ")} · [e] force teardown`;
+};
+
+export const renderExitControl = (
+  board: string,
+  state: ExitControlState,
+  menuOpen: boolean,
+  agents: GovernessAgentInfo[],
+  paneCommand: (pane: string) => string | undefined,
+  handoverBundles: Partial<Record<Agent, string>> = {}
+): string => {
+  const banner = exitBanner(
+    state,
+    menuOpen,
+    agents,
+    paneCommand,
+    handoverBundles
+  );
+  if (!banner) {
+    return board;
+  }
+  const lines = board.split("\n");
+  lines[0] = banner;
+  return lines.join("\n");
+};
+
+const agentSafeForHandover = (state: string | undefined): boolean =>
+  !RENAME_BUSY_STATES.has(state ?? "");
+
+const directInputIsSafe = (
+  deps: GovernessDeps,
+  info: GovernessAgentInfo
+): boolean => {
+  const events = deps.readHooks(info.hookFile);
+  // A Notification can mean "permission/input required", not an empty
+  // composer. Only a real Stop hook proves a completed turn is safe for
+  // direct text injection.
+  return events.at(-1)?.event === "Stop";
+};
+
+const notifyHandoverAgents = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runState: GovernessRunState,
+  agentStates: Partial<Record<Agent, string>>
+): Promise<void> => {
+  if (!config.runDir) {
+    return;
+  }
+  ensureGovernessHandoffDir(config.runDir, runState.governessEpoch);
+  for (const info of config.agents) {
+    if (
+      runState.exitControl.notified[info.agent] ||
+      !agentSafeForHandover(agentStates[info.agent])
+    ) {
+      continue;
+    }
+    const bundleFile = governessHandoffFile(
+      config.runDir,
+      runState.governessEpoch,
+      info.agent
+    );
+    const message = handoverRequest(bundleFile, runState.governessEpoch);
+    const policy = decideGovernessPolicy("handover-loop", {
+      confirmed: true,
+      fenceCurrent: governessFenceCurrent(config, deps),
+    });
+    if (!policy.allowed) {
+      continue;
+    }
+    const record = config.journalFile
+      ? prepareGovernessControl(config.journalFile, {
+          action: "handover-loop",
+          agent: info.agent,
+          at: new Date(deps.now()).toISOString(),
+          epoch: config.epoch ?? runState.governessEpoch,
+          idempotencyKey: `${runState.governessEpoch}:handover:${info.agent}`,
+          payload: message,
+          policyClass: policy.class,
+        })
+      : undefined;
+    if (record && record.phase !== "prepared") {
+      runState.exitControl.notified[info.agent] = true;
+      deps.saveState(config.stateFile, runState);
+      continue;
+    }
+    if (!directInputIsSafe(deps, info)) {
+      continue;
+    }
+    if (record && config.journalFile) {
+      transitionGovernessControl(
+        config.journalFile,
+        record.controlId,
+        "dispatched",
+        new Date(deps.now()).toISOString()
+      );
+    }
+    const adapter = createGovernessRuntimeAdapter(config, deps, info);
+    let delivery: string;
+    try {
+      delivery = await adapter.requestDrain({
+        action: "drain",
+        controlId:
+          record?.controlId ??
+          controlKey(config, "handover-loop", info.agent, message),
+        epoch: config.epoch ?? runState.governessEpoch,
+        message,
+        target: info.agent,
+      });
+    } catch (error) {
+      if (record && config.journalFile) {
+        transitionGovernessControl(
+          config.journalFile,
+          record.controlId,
+          "failed",
+          new Date(deps.now()).toISOString(),
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+      deps.appendLog(config.logFile, {
+        agent: info.agent,
+        at: new Date(deps.now()).toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+        event: "handover-request-failed",
+      });
+      continue;
+    }
+    if (record && config.journalFile) {
+      transitionGovernessControl(
+        config.journalFile,
+        record.controlId,
+        delivery === "delivered" || delivery === "tmux"
+          ? "completed"
+          : "accepted",
+        new Date(deps.now()).toISOString()
+      );
+    }
+    // The journal is the at-most-once fence. Persist the display/progress bit
+    // only after the adapter accepted the control, so a crash while merely
+    // prepared can retry but a dispatched control is never re-injected.
+    runState.exitControl.notified[info.agent] = true;
+    deps.saveState(config.stateFile, runState);
+    deps.appendLog(config.logFile, {
+      agent: info.agent,
+      at: new Date(deps.now()).toISOString(),
+      delivery,
+      event: "handover-requested",
+    });
+  }
+};
+
+const allHandoverAgentsExited = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runState: GovernessRunState
+): boolean => {
+  let allExited = true;
+  for (const info of config.agents) {
+    const paneProbe = deps.paneCommand?.(info.pane);
+    const probe = {
+      bundle: runState.handoverBundles[info.agent],
+      exited: agentHasExited(info.agent, paneProbe),
+      exitRequested:
+        runState.exitControl.exitRequested?.[info.agent] === true,
+      notified: runState.exitControl.notified[info.agent] === true,
+      paneProbe: paneProbe ?? "unknown",
+    };
+    recordGovernessObservation(
+      config,
+      deps,
+      JSON.stringify(probe),
+      `${config.epoch}:handoff-exit-probe:${info.agent}:${runState.tick}`,
+      info.agent
+    );
+    if (!(probe.notified && probe.bundle && probe.exited)) {
+      allExited = false;
+    }
+  }
+  return allExited;
+};
+
+const beginHandover = (runState: GovernessRunState, now: number): void => {
+  runState.handoverBundles = {};
+  runState.exitControl = {
+    exitRequested: {},
+    mode: "handover",
+    notified: {},
+    requestedAt: new Date(now).toISOString(),
+  };
+};
+
+const requestDrainedAgentExits = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runState: GovernessRunState,
+  agentStates: Partial<Record<Agent, string>>
+): Promise<void> => {
+  const requested = runState.exitControl.exitRequested ?? {};
+  runState.exitControl.exitRequested = requested;
+  for (const info of config.agents) {
+    const paneProbe = deps.paneCommand?.(info.pane);
+    if (
+      !runState.exitControl.notified[info.agent] ||
+      !runState.handoverBundles[info.agent] ||
+      requested[info.agent] ||
+      agentHasExited(info.agent, paneProbe) ||
+      !agentSafeForHandover(agentStates[info.agent]) ||
+      !directInputIsSafe(deps, info)
+    ) {
+      continue;
+    }
+    const policy = decideGovernessPolicy("handover-loop", {
+      confirmed: true,
+      fenceCurrent: governessFenceCurrent(config, deps),
+      targetSafe: true,
+    });
+    if (!policy.allowed) {
+      continue;
+    }
+    const payload = "/exit";
+    const record = config.journalFile
+      ? prepareGovernessControl(config.journalFile, {
+          action: "handover-loop",
+          agent: info.agent,
+          at: new Date(deps.now()).toISOString(),
+          epoch: config.epoch ?? runState.governessEpoch,
+          idempotencyKey: `${runState.governessEpoch}:handover-exit:${info.agent}`,
+          payload,
+          policyClass: policy.class,
+        })
+      : undefined;
+    if (record && record.phase !== "prepared") {
+      requested[info.agent] = true;
+      deps.saveState(config.stateFile, runState);
+      continue;
+    }
+    if (record && config.journalFile) {
+      transitionGovernessControl(
+        config.journalFile,
+        record.controlId,
+        "dispatched",
+        new Date(deps.now()).toISOString()
+      );
+    }
+    deps.sendText(info.pane, payload);
+    await deps.sleep(250);
+    deps.sendKeys(info.pane, ["Enter"]);
+    if (record && config.journalFile) {
+      transitionGovernessControl(
+        config.journalFile,
+        record.controlId,
+        "completed",
+        new Date(deps.now()).toISOString()
+      );
+    }
+    requested[info.agent] = true;
+    deps.saveState(config.stateFile, runState);
+    deps.appendLog(config.logFile, {
+      agent: info.agent,
+      at: new Date(deps.now()).toISOString(),
+      event: "handover-agent-exit-requested",
+    });
+  }
+};
+
+export type HandoverAdvanceResult =
+  | { status: "inactive" | "waiting" }
+  | { error: string; status: "launch-error" }
+  | { session?: string; status: "launched" };
+
+export const advanceHandoverControl = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runState: GovernessRunState,
+  agentStates: Partial<Record<Agent, string>>
+): Promise<HandoverAdvanceResult> => {
+  if (runState.exitControl.mode === "launched") {
+    const replacementSession = runState.exitControl.replacementSession;
+    const replacementAlive = Boolean(
+      replacementSession &&
+        deps.replacementSessionAlive?.(replacementSession) === true
+    );
+    const replacementReady = Boolean(
+      replacementSession &&
+        deps.replacementSessionReady(replacementSession) === true
+    );
+    recordGovernessObservation(
+      config,
+      deps,
+      JSON.stringify({
+        alive: replacementAlive,
+        ready: replacementReady,
+        session: replacementSession,
+      }),
+      `${config.epoch}:replacement:${replacementSession ?? "missing"}:${replacementAlive}:${replacementReady}:${runState.tick}`
+    );
+    if (
+      !replacementSession ||
+      !replacementAlive ||
+      !replacementReady
+    ) {
+      const error = replacementSession
+        ? `replacement tmux session ${replacementSession} is not running or ready`
+        : "replacement session was not persisted";
+      runState.exitControl = {
+        ...runState.exitControl,
+        launchError: error,
+        mode: "launch-error",
+      };
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        error,
+        event: "handover-replacement-missing",
+      });
+      deps.saveState(config.stateFile, runState);
+      return { error, status: "launch-error" };
+    }
+    return {
+      session: replacementSession,
+      status: "launched",
+    };
+  }
+  if (runState.exitControl.mode !== "handover") {
+    return { status: "inactive" };
+  }
+  await notifyHandoverAgents(config, deps, runState, agentStates);
+  if (config.runDir) {
+    for (const info of config.agents) {
+      const bundleFile = governessHandoffFile(
+        config.runDir,
+        runState.governessEpoch,
+        info.agent
+      );
+      if (
+        readGovernessHandoffBundle(
+          bundleFile,
+          info.agent,
+          runState.governessEpoch
+        )
+      ) {
+        runState.handoverBundles[info.agent] = bundleFile;
+      }
+    }
+  }
+  await requestDrainedAgentExits(config, deps, runState, agentStates);
+  if (!allHandoverAgentsExited(config, deps, runState)) {
+    return { status: "waiting" };
+  }
+  const launched = deps.launchReplacementLoop?.(config) ?? {
+    error: "replacement launcher unavailable",
+    ok: false,
+  };
+  if (!launched.ok) {
+    const error = launched.error ?? "unknown launch error";
+    runState.exitControl = {
+      ...runState.exitControl,
+      launchError: error,
+      mode: "launch-error",
+    };
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error,
+      event: "handover-launch-failed",
+    });
+    return { error, status: "launch-error" };
+  }
+  const replacementReady = Boolean(
+    launched.session && deps.replacementSessionReady(launched.session) === true
+  );
+  recordGovernessObservation(
+    config,
+    deps,
+    JSON.stringify({ ready: replacementReady, session: launched.session }),
+    `${config.epoch}:replacement-launch:${launched.session ?? "missing"}:${replacementReady}:${runState.tick}`
+  );
+  if (!launched.session || !replacementReady) {
+    const error = launched.session
+      ? `replacement tmux session ${launched.session} is not ready`
+      : "replacement launcher did not return a session";
+    runState.exitControl = {
+      ...runState.exitControl,
+      launchError: error,
+      mode: "launch-error",
+    };
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error,
+      event: "handover-replacement-not-ready",
+    });
+    deps.saveState(config.stateFile, runState);
+    return { error, status: "launch-error" };
+  }
+  deps.appendLog(config.logFile, {
+    at: new Date(deps.now()).toISOString(),
+    event: "handover-launched",
+    replacementSession: launched.session,
+  });
+  runState.exitControl = {
+    ...runState.exitControl,
+    launchError: undefined,
+    mode: "launched",
+    replacementSession: launched.session,
+  };
+  // Persist the transaction result before the caller tears down this session.
+  deps.saveState(config.stateFile, runState);
+  return {
+    ...(launched.session ? { session: launched.session } : {}),
+    status: "launched",
+  };
+};
+
+export const stopGovernessLoop = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  reason: string
+): void => {
+  const policy = decideGovernessPolicy("teardown-loop", {
+    confirmed: true,
+    fenceCurrent: governessFenceCurrent(config, deps),
+  });
+  deps.appendLog(config.logFile, {
+    at: new Date(deps.now()).toISOString(),
+    event: "exit",
+    reason,
+  });
+  if (!policy.allowed) {
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      event: "exit-denied",
+      reason: policy.reason,
+    });
+    return;
+  }
+  const now = new Date(deps.now()).toISOString();
+  const payload = `${config.session}:${reason}`;
+  const record = config.journalFile
+    ? prepareGovernessControl(config.journalFile, {
+        action: "teardown-loop",
+        at: now,
+        epoch: config.epoch ?? 0,
+        idempotencyKey: controlKey(config, "teardown-loop", undefined, payload),
+        payload,
+        policyClass: policy.class,
+      })
+    : undefined;
+  if (record && record.phase !== "prepared") {
+    return;
+  }
+  if (record && config.journalFile) {
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "dispatched",
+      now
+    );
+  }
+  deps.markRunStopped?.(config, reason);
+  if (record && config.journalFile) {
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "accepted",
+      new Date(deps.now()).toISOString()
+    );
+  }
+  deps.killSession?.(config.session);
+};
+
+export const driveHandoverControl = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runState: GovernessRunState,
+  agentStates: Partial<Record<Agent, string>>
+): Promise<boolean> => {
+  const handover = await advanceHandoverControl(
+    config,
+    deps,
+    runState,
+    agentStates
+  );
+  deps.saveState(config.stateFile, runState);
+  if (handover.status !== "launched") {
+    return false;
+  }
+  stopGovernessLoop(
+    config,
+    deps,
+    handover.session
+      ? `handed over to ${handover.session}`
+      : "handed over to replacement loop"
+  );
+  return true;
 };
 
 const availableDriverRow = (
@@ -3196,7 +4221,7 @@ const availableDriverRow = (
     : undefined) ?? rows.find((row) => !isLimitPaused(row));
 
 const setActiveRoleHandoff = (
-  runState: BabysitRunState,
+  runState: GovernessRunState,
   initialDriver: Agent,
   paused: Agent,
   driver: Agent,
@@ -3217,7 +4242,7 @@ const setActiveRoleHandoff = (
 };
 
 const setActiveRoleBalance = (
-  runState: BabysitRunState,
+  runState: GovernessRunState,
   initialDriver: Agent,
   previous: Agent,
   next: Agent,
@@ -3244,12 +4269,29 @@ interface RoleTransitionResult {
 
 const handleRoleTransitions = async (
   rows: AgentRow[],
-  config: BabysitConfig,
-  deps: BabysitDeps,
-  runState: BabysitRunState,
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runState: GovernessRunState,
   nowIso: string
 ): Promise<RoleTransitionResult> => {
   const transitionUsageByJudge = emptyLocalLlmUsageByJudge();
+  const leaseValid = driverLeaseIsCurrent(
+    runState.driverLease,
+    config.epoch,
+    Date.parse(nowIso)
+  );
+  const rolePolicy = decideGovernessPolicy("change-driver", {
+    deterministicReason: true,
+    fenceCurrent: governessFenceCurrent(config, deps) && leaseValid,
+  });
+  if (!rolePolicy.allowed) {
+    deps.appendLog(config.logFile, {
+      at: nowIso,
+      event: "role-change-denied",
+      reason: leaseValid ? rolePolicy.reason : "driver lease is stale",
+    });
+    return { llmUsageByJudge: transitionUsageByJudge };
+  }
   const infos = agentInfoByAgent(config);
   const pressures = new Map<Agent, LimitPressure>();
   for (const row of rows) {
@@ -3262,7 +4304,7 @@ const handleRoleTransitions = async (
   let restoredThisTick = false;
 
   // A pressure observation for an agent that was not driving does not create a
-  // role handoff. Older babysitters did create one, which made a missing usage
+  // role handoff. Older governesses did create one, which made a missing usage
   // snapshot "restore" the already-active driver and repeatedly compact it.
   if (
     activePaused &&
@@ -3329,9 +4371,9 @@ const handleRoleTransitions = async (
           restoreContextMessage(restored, temporary, runState)
         );
         restoreMessageSentAtMs.set(restored, Date.parse(nowIso));
-        incrementCount(runState.babysitterMessages, restored);
+        incrementCount(runState.governessMessages, restored);
       }
-      if (temporaryInfo) {
+      if (temporary && temporaryInfo) {
         temporaryDelivery = await sendRoleMessage(
           config,
           deps,
@@ -3340,7 +4382,7 @@ const handleRoleTransitions = async (
           restored,
           restoreTemporaryDriverMessage(restored, temporary)
         );
-        incrementCount(runState.babysitterMessages, temporary);
+        incrementCount(runState.governessMessages, temporary);
       }
       deps.appendLog(config.logFile, {
         driver: restored,
@@ -3367,7 +4409,18 @@ const handleRoleTransitions = async (
       delete runState.notified.limitHandoff[agent];
     }
   }
+  // Founder directive (2026-07-23): do NOT reassign the driver based on
+  // quota/session-limit pressure. The initial driver stays the driver even when
+  // limited; the governess still does idle recovery, rename, and notifications.
+  // Re-enable quota-based driver handoff by setting LOOP_GOVERNESS_LIMIT_HANDOFF=1.
+  const limitHandoffEnabled = config.limitHandoffEnabled === true;
   for (const [paused, pressure] of pressures) {
+    if (!limitHandoffEnabled) {
+      // Track the observation for dedupe so we don't re-evaluate every tick,
+      // but never switch the driver or send a "you are now the driver" message.
+      runState.notified.limitHandoff[paused] = pressure.key;
+      continue;
+    }
     const initialDriver =
       runState.roles.initialDriver ?? config.initialDriver ?? paused;
     const currentDriver = runState.roles.currentDriver ?? initialDriver;
@@ -3413,7 +4466,7 @@ const handleRoleTransitions = async (
       paused,
       message
     );
-    incrementCount(runState.babysitterMessages, driver);
+    incrementCount(runState.governessMessages, driver);
     deps.appendLog(config.logFile, {
       delivery,
       driver,
@@ -3503,7 +4556,7 @@ const handleRoleTransitions = async (
     previous,
     balanceDriverMessage(previous, next, reason)
   );
-  incrementCount(runState.babysitterMessages, next);
+  incrementCount(runState.governessMessages, next);
   let previousDelivery: BridgeSendStatus | "tmux" | undefined;
   if (previousInfo) {
     previousDelivery = await sendRoleMessage(
@@ -3514,7 +4567,7 @@ const handleRoleTransitions = async (
       next,
       balancePreviousDriverMessage(previous, next, reason)
     );
-    incrementCount(runState.babysitterMessages, previous);
+    incrementCount(runState.governessMessages, previous);
   }
   deps.appendLog(config.logFile, {
     candidate: next,
@@ -3542,10 +4595,10 @@ const handleRoleTransitions = async (
 // Decide what (if anything) to escalate this tick, deduped via runState.notified
 // so each condition alerts once per episode rather than every tick.
 const collectEscalations = (
-  runState: BabysitRunState,
+  runState: GovernessRunState,
   waiting: WaitingForYou,
   totalCost: number,
-  config: BabysitConfig
+  config: GovernessConfig
 ): EscalationEvent[] => {
   const events: EscalationEvent[] = [];
   const { notified } = runState;
@@ -3608,21 +4661,21 @@ const collectEscalations = (
 };
 
 // One control-loop tick: detect → (judge suspects) → recover → summarize → render.
-export const babysitTick = async (
+export const governessTick = async (
   states: Map<Agent, AgentLivenessState>,
-  config: BabysitConfig,
-  deps: BabysitDeps,
-  runStateIn: BabysitRunState = freshRunState()
-): Promise<BabysitTickResult> => {
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runStateIn: GovernessRunState = freshRunState()
+): Promise<GovernessTickResult> => {
   const nowMs = deps.now();
   const nowIso = new Date(nowMs).toISOString();
-  const babysitterMessages = readCountMap(runStateIn.babysitterMessages);
-  const runState: BabysitRunState = {
+  const governessMessages = readCountMap(runStateIn.governessMessages);
+  const runState: GovernessRunState = {
     ...runStateIn,
-    babysitterMessages:
-      Object.keys(babysitterMessages).length > 0
-        ? babysitterMessages
-        : readBabysitterMessageCountsFromLog(config.logFile),
+    governessMessages:
+      Object.keys(governessMessages).length > 0
+        ? governessMessages
+        : readGovernessMessageCountsFromLog(config.logFile),
     notified: {
       ...runStateIn.notified,
       ladder: { ...runStateIn.notified.ladder },
@@ -3634,6 +4687,25 @@ export const babysitTick = async (
     stats: cloneStats(runStateIn.stats),
     tick: runStateIn.tick + 1,
   };
+  if (
+    !runState.driverLease &&
+    governessFenceCurrent(config, deps)
+  ) {
+    const holder =
+      runState.roles.currentDriver ??
+      runState.roles.initialDriver ??
+      config.initialDriver ??
+      config.agents[0]?.agent;
+    if (holder && typeof config.epoch === "number") {
+      runState.driverLease = {
+        epoch: config.epoch,
+        expiresAt: new Date(
+          nowMs + Math.max(config.tickMs * 3, 60_000)
+        ).toISOString(),
+        holder,
+      };
+    }
+  }
   let { history, recoveries, llmUsage } = runState;
   let llmUsageByJudge =
     Object.keys(runState.llmUsageByJudge).length > 0
@@ -3670,17 +4742,14 @@ export const babysitTick = async (
     rows.push(result.row);
     summaryCtxs.push(result.summaryCtx);
     if (result.row.action?.level === "nudge" && !config.dryRun) {
-      incrementCount(runState.babysitterMessages, info.agent);
+      incrementCount(runState.governessMessages, info.agent);
     }
   }
 
-  const roleTransitions = await handleRoleTransitions(
-    rows,
-    config,
-    deps,
-    runState,
-    nowIso
-  );
+  const roleTransitions =
+    runState.exitControl.mode === "idle"
+      ? await handleRoleTransitions(rows, config, deps, runState, nowIso)
+      : { llmUsageByJudge: emptyLocalLlmUsageByJudge() };
   llmUsageByJudge = addLocalLlmUsageByJudge(
     llmUsageByJudge,
     roleTransitions.llmUsageByJudge
@@ -3692,7 +4761,7 @@ export const babysitTick = async (
   accumulateStats(runState.stats, rows, config.tickMs);
   applyPaneLabels(config, deps, rows, runState);
 
-  // The session summary is generated off the tick (see runBabysitter) so a slow
+  // The session summary is generated off the tick (see runGoverness) so a slow
   // local-LLM call never freezes the board; here we just render runState.summary
   // as carried in, and hand back the contexts a background refresh needs.
   runState.history = history;
@@ -3731,7 +4800,7 @@ export const babysitTick = async (
     ])
   );
   const board = renderBoard(rowsForDisplay(rows), {
-    babysitterMessages: runState.babysitterMessages,
+    governessMessages: runState.governessMessages,
     bridge: deps.readBridge(config.transcriptPath),
     bridgeLatest: deps.readBridgeLatest(config.runDir),
     budgetUsd: config.budgetUsd,
@@ -3822,31 +4891,48 @@ export const readBridgeLatest = (runDir?: string): BridgeLatest => {
   return latest;
 };
 
-// Persist run-state so cumulative stats survive a babysitter respawn.
-export const loadBabysitState = (
+// Persist run-state so cumulative stats survive a governess respawn.
+export const loadGovernessState = (
   stateFile?: string
-): BabysitRunState | undefined => {
+): GovernessRunState | undefined => {
   if (!stateFile) {
     return undefined;
   }
   try {
     const parsed = JSON.parse(
       readFileSync(stateFile, "utf8")
-    ) as Partial<BabysitRunState>;
+    ) as Partial<GovernessRunState>;
     const stats = parsed.stats;
     if (!stats) {
       return undefined;
     }
     const llmUsage = readLocalLlmUsage(parsed.llmUsage, parsed.llmTokens);
+    const lifecycleEvents =
+      parsed.lifecycleEvents && typeof parsed.lifecycleEvents === "object"
+        ? parsed.lifecycleEvents
+        : {};
+    const driverLease =
+      parsed.driverLease &&
+      typeof parsed.driverLease.epoch === "number" &&
+      typeof parsed.driverLease.expiresAt === "string" &&
+      typeof parsed.driverLease.holder === "string"
+        ? parsed.driverLease
+        : undefined;
     return {
-      babysitterMessages: readCountMap(parsed.babysitterMessages),
+      governessMessages: readCountMap(parsed.governessMessages),
       bothIdleSince:
         typeof parsed.bothIdleSince === "number" ? parsed.bothIdleSince : 0,
+      ...(driverLease ? { driverLease } : {}),
+      exitControl: readExitControl(parsed.exitControl),
+      governessEpoch:
+        typeof parsed.governessEpoch === "number" ? parsed.governessEpoch : 0,
+      handoverBundles: readStringMap(parsed.handoverBundles),
       history: Array.isArray(parsed.history) ? parsed.history : [],
+      lifecycleEvents,
       llmUsage,
       llmUsageByJudge: readLocalLlmUsageByJudge(
         parsed.llmUsageByJudge,
-        judgeIdFromModel(DEFAULT_BABYSIT_MODEL),
+        judgeIdFromModel(DEFAULT_GOVERNESS_MODEL),
         llmUsage
       ),
       llmTokens: typeof parsed.llmTokens === "number" ? parsed.llmTokens : 0,
@@ -3881,22 +4967,31 @@ export const loadBabysitState = (
   }
 };
 
-export const saveBabysitState = (
+export const saveGovernessState = (
   stateFile: string | undefined,
-  state: BabysitRunState
+  state: GovernessRunState
 ): void => {
   if (!stateFile) {
     return;
   }
   try {
     mkdirSync(dirname(stateFile), { recursive: true });
-    writeFileSync(stateFile, JSON.stringify(state), "utf8");
+    const persisted = loadGovernessState(stateFile);
+    if (
+      persisted &&
+      persisted.governessEpoch > state.governessEpoch
+    ) {
+      return;
+    }
+    const temporary = `${stateFile}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify(state), "utf8");
+    renameSync(temporary, stateFile);
   } catch {
     // Best-effort persistence.
   }
 };
 
-const sendBabysitterBridgeMessage = async (
+const sendGovernessBridgeMessage = async (
   runDir: string,
   source: Agent,
   target: Agent,
@@ -3933,7 +5028,7 @@ const sendBabysitterBridgeMessage = async (
   return result.status;
 };
 
-export const defaultBabysitDeps = (): BabysitDeps => ({
+export const defaultGovernessDeps = (): GovernessDeps => ({
   assessRoleBalance: (req) => assessRoleBalance(req),
   assessWaiting: (req) => assessWaiting(req),
   appendLog: (file, record) => {
@@ -3941,15 +5036,120 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
     appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
   },
   capturePane: (pane) => tmux(["capture-pane", "-p", "-t", pane]),
+  fenceCurrent: (config) => {
+    if (!(config.stateFile && typeof config.epoch === "number")) {
+      return false;
+    }
+    return loadGovernessState(config.stateFile)?.governessEpoch === config.epoch;
+  },
   initPaneBorders: (session) => {
     tmux(["set-option", "-t", session, "pane-border-status", "top"]);
     tmux(["set-option", "-t", session, "pane-border-format", "#{@loop_label}"]);
   },
   judge: (req) => judgeAgent(req),
   labelPanes: (req) => labelPanes(req),
-  loadState: (stateFile) => loadBabysitState(stateFile),
+  loadState: (stateFile) => loadGovernessState(stateFile),
+  launchReplacementLoop: (config) => {
+    const primary = config.initialDriver ?? config.agents[0]?.agent;
+    const peer = config.agents.find((info) => info.agent !== primary)?.agent;
+    if (primary === undefined || peer === undefined) {
+      return { error: "handover requires two agents", ok: false };
+    }
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key !== "LOOP_RUN_ID")
+    );
+    const handoffDir = config.runDir
+      ? ensureGovernessHandoffDir(config.runDir, config.epoch ?? 0)
+      : undefined;
+    if (handoffDir) {
+      writeFileSync(
+        handoverContinuationFile(handoffDir),
+        `${handoverContinuationText(handoffDir)}\n`,
+        "utf8"
+      );
+    }
+    const result = spawnSync(
+      [
+        ...buildLaunchArgv(),
+        ...replacementLoopArgs(
+          primary,
+          peer,
+          handoffDir
+        ),
+      ],
+      {
+        cwd: config.cwd,
+        env,
+        stderr: "pipe",
+        stdout: "pipe",
+      }
+    );
+    const stdout = decode(result.stdout);
+    const stderr = decode(result.stderr);
+    if (result.exitCode !== 0) {
+      return {
+        error: (stderr || stdout || `exit ${result.exitCode}`).trim(),
+        ok: false,
+      };
+    }
+    const session = stdout.match(/started tmux session "([^"]+)"/)?.[1];
+    if (!session) {
+      return {
+        error: "replacement command succeeded without reporting a tmux session",
+        ok: false,
+      };
+    }
+    const sessionCheck = spawnSync(["tmux", "has-session", "-t", session], {
+      stderr: "ignore",
+    });
+    if (sessionCheck.exitCode !== 0) {
+      return {
+        error: `replacement tmux session ${session} is not running`,
+        ok: false,
+      };
+    }
+    return { ok: true, session };
+  },
+  markRunStopped: (config, reason) => {
+    if (config.manifestPath) {
+      updateRunManifest(config.manifestPath, (manifest) =>
+        manifest ? setRunManifestState(manifest, "stopped") : undefined
+      );
+    }
+    config.transcriptPath &&
+      appendFileSync(
+        config.transcriptPath,
+        `${JSON.stringify({
+          at: new Date().toISOString(),
+          detail: reason,
+          kind: "status",
+          state: "stopped",
+        })}\n`,
+        "utf8"
+      );
+  },
+  killSession: (session) => {
+    spawnSync(["tmux", "kill-session", "-t", session], {
+      stderr: "ignore",
+    });
+  },
   notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
   now: () => Date.now(),
+  openKeyInput: () => openRawKeyInput(),
+  paneCommand: (pane) => {
+    const result = spawnSync(
+      [
+        "tmux",
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{pane_dead}:#{pane_current_command}",
+      ],
+      { stderr: "ignore", stdout: "pipe" }
+    );
+    return result.exitCode === 0 ? decode(result.stdout).trim() : undefined;
+  },
   readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
   readBridgeLatest: (runDir) => readBridgeLatest(runDir),
   readHooks: (file) => {
@@ -3980,16 +5180,33 @@ export const defaultBabysitDeps = (): BabysitDeps => ({
       timeoutMs: config.usageTrackerTimeoutMs,
       url: config.usageTrackerUrl,
     }),
+  replacementSessionAlive: (session) =>
+    spawnSync(["tmux", "has-session", "-t", session], {
+      stderr: "ignore",
+    }).exitCode === 0,
+  replacementSessionReady: (session) => {
+    const result = spawnSync(
+      ["tmux", "list-panes", "-t", session, "-F", "#{pane_dead}:#{pane_current_command}"],
+      { stderr: "ignore", stdout: "pipe" }
+    );
+    if (result.exitCode !== 0) {
+      return false;
+    }
+    const livePanes = decode(result.stdout)
+      .split("\n")
+      .filter((line) => line.startsWith("0:")).length;
+    return livePanes >= 3;
+  },
   render: (text) => {
     // Clear the pane and print the fresh board.
-    process.stdout.write(`\x1b[2J\x1b[H${text}\n`);
+    process.stdout.write(`\x1b[2J\x1b[H${text}`);
   },
   respawnPane: (pane) => {
     spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });
   },
-  saveState: (stateFile, state) => saveBabysitState(stateFile, state),
+  saveState: (stateFile, state) => saveGovernessState(stateFile, state),
   sendBridge: (runDir, source, target, message) =>
-    sendBabysitterBridgeMessage(runDir, source, target, message),
+    sendGovernessBridgeMessage(runDir, source, target, message),
   setPaneLabel: (pane, label) => {
     tmux(["set-option", "-p", "-t", pane, "@loop_label", label]);
   },
@@ -4033,14 +5250,14 @@ const envPositiveInt = (
 };
 
 const envConfidence = (env: NodeJS.ProcessEnv): number => {
-  const parsed = Number.parseFloat(env.LOOP_BABYSIT_CONFIDENCE ?? "");
+  const parsed = Number.parseFloat(env.LOOP_GOVERNESS_CONFIDENCE ?? "");
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
     ? parsed
-    : DEFAULT_BABYSIT_CONFIDENCE;
+    : DEFAULT_GOVERNESS_CONFIDENCE;
 };
 
 const envJudgeMode = (env: NodeJS.ProcessEnv): LocalLlmJudgeMode =>
-  env.LOOP_BABYSIT_JUDGE_MODE === "round-robin" ? "round-robin" : "consensus";
+  env.LOOP_GOVERNESS_JUDGE_MODE === "round-robin" ? "round-robin" : "consensus";
 
 const envDisabled = (value: string | undefined): boolean => {
   const normalized = value?.trim().toLowerCase();
@@ -4057,11 +5274,14 @@ const envEnabled = (value: string | undefined): boolean => {
   );
 };
 
+export const agentRenameEnabledFromEnv = (env: NodeJS.ProcessEnv): boolean =>
+  envEnabled(env.LOOP_GOVERNESS_AGENT_RENAME);
+
 const llmTraceFileFromEnv = (
   env: NodeJS.ProcessEnv,
   runDir: string
 ): string | undefined => {
-  const raw = env.LOOP_BABYSIT_LLM_TRACE?.trim();
+  const raw = env.LOOP_GOVERNESS_LLM_TRACE?.trim();
   const normalized = raw?.toLowerCase();
   if (
     !raw ||
@@ -4131,7 +5351,7 @@ const localJudgesFromEnv = (
   env: NodeJS.ProcessEnv,
   primary: LocalLlmJudgeConfig
 ): LocalLlmJudgeConfig[] => {
-  const raw = env.LOOP_BABYSIT_JUDGES;
+  const raw = env.LOOP_GOVERNESS_JUDGES;
   if (!raw?.trim()) {
     return [primary];
   }
@@ -4153,18 +5373,24 @@ const localJudgesFromEnv = (
     .slice(0, 4);
 };
 
-// Resolve the babysitter config from the run manifest (session + pane agents)
-// and LOOP_BABYSIT_* environment overrides set at pane launch.
-export const resolveBabysitConfig = (
+// Resolve the governess config from the run manifest (session + pane agents)
+// and LOOP_GOVERNESS_* environment overrides set at pane launch.
+export const resolveGovernessConfig = (
   runId: string,
   env: NodeJS.ProcessEnv,
   cwd?: string,
   home?: string
-): BabysitConfig => {
+): GovernessConfig => {
+  env = withLegacyGovernessEnv(env);
   const { manifest, storage } = loadRunState(runId, cwd, home);
   const session = manifest?.tmuxSession;
   if (!session) {
-    throw new Error(`[loop] babysitter: no tmux session for run ${runId}`);
+    throw new Error(`[loop] governess: no tmux session for run ${runId}`);
+  }
+  if (manifest?.governess || manifest?.tmuxPaneGoverness) {
+    // Re-serialize manifests loaded through the legacy alias reader so active
+    // runs converge immediately on canonical governess keys.
+    updateRunManifest(storage.manifestPath, () => manifest);
   }
   const sessionRefFor = (agent: Agent): string | undefined => {
     if (agent === "claude") {
@@ -4176,7 +5402,7 @@ export const resolveBabysitConfig = (
     return undefined;
   };
   const codexHome = join(storage.runDir, "codex-home");
-  const agents: BabysitAgentInfo[] = [];
+  const agents: GovernessAgentInfo[] = [];
   const addAgent = (agent: Agent | undefined, paneIndex: number): void => {
     if (agent) {
       agents.push({
@@ -4190,11 +5416,11 @@ export const resolveBabysitConfig = (
   };
   addAgent(manifest?.tmuxPaneLeftAgent, 0);
   addAgent(manifest?.tmuxPaneRightAgent, 1);
-  const maxRaw = Number.parseInt(env.LOOP_BABYSIT_MAX ?? "", 10);
-  const model = env.LOOP_BABYSIT_MODEL || DEFAULT_BABYSIT_MODEL;
-  const url = env.LOOP_BABYSIT_URL || DEFAULT_BABYSIT_URL;
+  const maxRaw = Number.parseInt(env.LOOP_GOVERNESS_MAX ?? "", 10);
+  const model = env.LOOP_GOVERNESS_MODEL || DEFAULT_GOVERNESS_MODEL;
+  const url = env.LOOP_GOVERNESS_URL || DEFAULT_GOVERNESS_URL;
   const llmLogFile =
-    env.LOOP_BABYSIT_LLM_LOG || join(home ?? homedir(), "models", "mlx-lm.log");
+    env.LOOP_GOVERNESS_LLM_LOG || join(home ?? homedir(), "models", "mlx-lm.log");
   const usageTrackerDisabled = envDisabled(env.LOOP_USAGE_TRACKER_LIMITS);
   const usageTrackerSecret = usageTrackerDisabled
     ? undefined
@@ -4211,64 +5437,70 @@ export const resolveBabysitConfig = (
     modelSizeGb: modelSizeGb(model),
     url,
   };
-  const budget = Number.parseFloat(env.LOOP_BABYSIT_BUDGET ?? "");
+  const budget = Number.parseFloat(env.LOOP_GOVERNESS_BUDGET ?? "");
+  const stateFile = join(storage.runDir, "governess-state.json");
+  migrateLegacyGovernessState(storage.runDir, stateFile);
   return {
+    agentRenameEnabled: agentRenameEnabledFromEnv(env),
     agents,
     budgetUsd: Number.isFinite(budget) && budget > 0 ? budget : 0,
     confidence: envConfidence(env),
     cooldownMs: envSeconds(
       env,
-      "LOOP_BABYSIT_COOLDOWN",
-      DEFAULT_BABYSIT_COOLDOWN_SECONDS
+      "LOOP_GOVERNESS_COOLDOWN",
+      DEFAULT_GOVERNESS_COOLDOWN_SECONDS
     ),
     createdAt: manifest?.createdAt,
     cwd: manifest?.cwd,
-    dryRun: env.LOOP_BABYSIT_DRY_RUN === "1",
+    dryRun: env.LOOP_GOVERNESS_DRY_RUN === "1",
     escalateIdleMs: envSeconds(
       env,
-      "LOOP_BABYSIT_ESCALATE_IDLE",
-      DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS
+      "LOOP_GOVERNESS_ESCALATE_IDLE",
+      DEFAULT_GOVERNESS_ESCALATE_IDLE_SECONDS
     ),
-    idleMs: envSeconds(env, "LOOP_BABYSIT_IDLE", DEFAULT_BABYSIT_IDLE_SECONDS),
+    idleMs: envSeconds(env, "LOOP_GOVERNESS_IDLE", DEFAULT_GOVERNESS_IDLE_SECONDS),
     initialDriver: manifest?.primaryAgent,
-    logFile: join(storage.runDir, "babysitter.jsonl"),
+    journalFile: join(storage.runDir, "governess-control.jsonl"),
+    logFile: join(storage.runDir, "governess.jsonl"),
     llmDecodeConcurrency: envPositiveInt(
       env,
-      "LOOP_BABYSIT_LLM_DECODE_CONCURRENCY",
+      "LOOP_GOVERNESS_LLM_DECODE_CONCURRENCY",
       DEFAULT_LOCAL_LLM_DECODE_CONCURRENCY
     ),
     llmLogFile,
     llmPrefillStepSize: envPositiveInt(
       env,
-      "LOOP_BABYSIT_LLM_PREFILL_STEP",
+      "LOOP_GOVERNESS_LLM_PREFILL_STEP",
       DEFAULT_LOCAL_LLM_PREFILL_STEP_SIZE
     ),
     llmPromptCacheSlots: envPositiveInt(
       env,
-      "LOOP_BABYSIT_LLM_CACHE_SLOTS",
+      "LOOP_GOVERNESS_LLM_CACHE_SLOTS",
       DEFAULT_LOCAL_LLM_PROMPT_CACHE_SLOTS
     ),
     llmPromptConcurrency: envPositiveInt(
       env,
-      "LOOP_BABYSIT_LLM_PROMPT_CONCURRENCY",
+      "LOOP_GOVERNESS_LLM_PROMPT_CONCURRENCY",
       DEFAULT_LOCAL_LLM_PROMPT_CONCURRENCY
     ),
     llmTraceFile: llmTraceFileFromEnv(env, storage.runDir),
+    limitHandoffEnabled: env.LOOP_GOVERNESS_LIMIT_HANDOFF === "1",
     judgeMode: envJudgeMode(env),
     judges: localJudgesFromEnv(env, primaryLocalJudge),
     maxRecoveries:
       Number.isInteger(maxRaw) && maxRaw > 0
         ? maxRaw
-        : DEFAULT_BABYSIT_MAX_RECOVERIES,
+        : DEFAULT_GOVERNESS_MAX_RECOVERIES,
     model,
     modelSizeGb: primaryLocalJudge.modelSizeGb,
-    ntfyUrl: env.LOOP_BABYSIT_NTFY || undefined,
-    roleBalanceEnabled: envEnabled(env.LOOP_BABYSIT_ROLE_BALANCE),
+    ntfyUrl: env.LOOP_GOVERNESS_NTFY || undefined,
+    roleBalanceEnabled: envEnabled(env.LOOP_GOVERNESS_ROLE_BALANCE),
     runId,
     runDir: storage.runDir,
+    manifestPath: storage.manifestPath,
     session,
-    stateFile: join(storage.runDir, "babysitter-state.json"),
-    tickMs: envSeconds(env, "LOOP_BABYSIT_TICK", DEFAULT_BABYSIT_TICK_SECONDS),
+    stateFile,
+    tickMs: envSeconds(env, "LOOP_GOVERNESS_TICK", DEFAULT_GOVERNESS_TICK_SECONDS),
     transcriptPath: join(storage.runDir, "transcript.jsonl"),
     url,
     usageTrackerSecret,
@@ -4281,20 +5513,50 @@ export const resolveBabysitConfig = (
   };
 };
 
-// Long-running loop; runs in the babysitter pane until the session ends.
+// Long-running loop; runs in the governess pane until the session ends.
 // The board renders every tick; the (slow) local-LLM summary and the both-idle
 // "does the pair need you?" judgment run in the background so they never block a
 // tick, and are folded in when they complete.
-export const runBabysitter = async (
-  config: BabysitConfig,
-  deps: BabysitDeps = defaultBabysitDeps()
+export const runGoverness = async (
+  config: GovernessConfig,
+  deps: GovernessDeps = defaultGovernessDeps()
 ): Promise<void> => {
   const states = new Map<Agent, AgentLivenessState>();
   let runState = deps.loadState(config.stateFile) ?? freshRunState();
-  // Light up the pane-border title strip and name the babysitter's own pane.
+  if (config.journalFile) {
+    ensureGovernessJournal(config.journalFile);
+    // Parse before acquiring an epoch. A malformed journal is a hard stop: the
+    // governess must not issue controls after losing idempotency evidence.
+    readGovernessJournal(config.journalFile);
+  }
+  const acquiredEpoch = Math.max(
+    runState.governessEpoch + 1,
+    Date.now() * 1000 + (process.pid % 1000)
+  );
+  config.epoch = acquiredEpoch;
+  runState.governessEpoch = acquiredEpoch;
+  const initialLeaseHolder =
+    runState.roles.currentDriver ??
+    runState.roles.initialDriver ??
+    config.initialDriver ??
+    config.agents[0]?.agent;
+  if (initialLeaseHolder) {
+    runState.driverLease = {
+      epoch: acquiredEpoch,
+      expiresAt: new Date(
+        deps.now() + Math.max(config.tickMs * 3, 60_000)
+      ).toISOString(),
+      holder: initialLeaseHolder,
+    };
+  }
+  deps.saveState(config.stateFile, runState);
+  if (deps.fenceCurrent && !deps.fenceCurrent(config)) {
+    return;
+  }
+  // Light up the pane-border title strip and name the governess's own pane.
   // Done on every startup (including a replaced pane) so borders self-heal.
   deps.initPaneBorders(config.session);
-  deps.setPaneLabel(babysitterPane(config), BABYSITTER_PANE_LABEL);
+  deps.setPaneLabel(governessPane(config), GOVERNESS_PANE_LABEL);
   let summaryText = runState.summary;
   let summaryTick = runState.summaryTick;
   let summaryInFlight = false;
@@ -4309,141 +5571,311 @@ export const runBabysitter = async (
   let waitingAssessInFlight = false;
   let assessedForIdleSince = 0;
   let pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
-  for (;;) {
-    // Fold any completed background work in before rendering this tick.
-    const pendingLlmUsageByJudge = addLocalLlmUsageByJudge(
-      addLocalLlmUsageByJudge(
-        pendingSummaryUsageByJudge,
-        pendingPaneLabelUsageByJudge
-      ),
-      pendingWaitUsageByJudge
-    );
-    const pendingLlmUsage = sumLocalLlmUsageByJudge(pendingLlmUsageByJudge);
-    const nextLlmUsage = addLocalLlmUsage(runState.llmUsage, pendingLlmUsage);
-    const nextLlmUsageByJudge = addLocalLlmUsageByJudge(
-      runState.llmUsageByJudge,
-      pendingLlmUsageByJudge
-    );
-    runState = {
-      ...runState,
-      llmUsage: nextLlmUsage,
-      llmUsageByJudge: nextLlmUsageByJudge,
-      llmTokens: nextLlmUsage.totalTokens,
-      paneLabels,
-      paneLabelTick,
-      paneRenames,
-      summary: summaryText,
-      summaryTick,
-      waitingAsk,
-      waitingConfirmed,
-    };
-    pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
-    pendingPaneLabelUsageByJudge = emptyLocalLlmUsageByJudge();
-    pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
-
-    const result = await babysitTick(states, config, deps, runState);
-    runState = result.runState;
-    // updateBothIdle may have cleared the waiting read (agents went active).
-    waitingConfirmed = runState.waitingConfirmed;
-    waitingAsk = runState.waitingAsk;
-
-    if (
-      !summaryInFlight &&
-      (summaryDue(summaryText, summaryTick, runState.tick) ||
-        missingJudgeUsage(config, runState.llmUsageByJudge))
-    ) {
-      summaryInFlight = true;
-      const firedAtTick = runState.tick;
-      summarizeWithLocalJudges(config, deps, result.summaryCtxs, runState.tick)
-        .then((summary) => {
-          if (summary.text) {
-            summaryText = summary.text;
-          }
-          summaryTick = firedAtTick;
-          pendingSummaryUsageByJudge = addLocalLlmUsageByJudge(
-            pendingSummaryUsageByJudge,
-            summary.usageByJudge
-          );
-        })
-        .catch(() => {
-          // Best-effort; the next due tick retries.
-        })
-        .finally(() => {
-          summaryInFlight = false;
-        });
-    }
-
-    // Refresh the per-agent pane-border task labels off the tick, on the same
-    // slow cadence as the summary. The composed title (glyph + agent + label)
-    // is applied every tick inside babysitTick; only the label lags.
-    if (!paneLabelInFlight && paneLabelsDue(paneLabelTick, runState.tick)) {
-      paneLabelInFlight = true;
-      const firedAtTick = runState.tick;
-      labelPanesWithLocalJudges(config, deps, result.summaryCtxs, runState.tick)
-        .then((res) => {
-          if (Object.keys(res.labels).length > 0) {
-            paneLabels = { ...paneLabels, ...res.labels };
-            // Name each agent's session via /rename, but only when the value
-            // changed and the agent is idle — don't re-send an unchanged
-            // rename or inject keystrokes into an agent that is mid-turn.
-            sendRenameCommands(
-              config,
-              deps,
-              res.labels,
-              paneRenames,
-              result.agentStates
-            );
-          }
-          paneLabelTick = firedAtTick;
-          pendingPaneLabelUsageByJudge = addLocalLlmUsageByJudge(
-            pendingPaneLabelUsageByJudge,
-            res.usageByJudge
-          );
-        })
-        .catch(() => {
-          // Best-effort; the next due tick retries.
-        })
-        .finally(() => {
-          paneLabelInFlight = false;
-        });
-    }
-
-    // Once the pair has been idle together a while, ask the local LLM (once per
-    // idle episode) whether they are actually blocked on the human.
-    const idleSince = runState.bothIdleSince;
-    if (idleSince === 0) {
-      assessedForIdleSince = 0;
-    } else if (
-      !waitingAssessInFlight &&
-      assessedForIdleSince !== idleSince &&
-      deps.now() - idleSince >= BOTH_IDLE_ASSESS_MS
-    ) {
-      waitingAssessInFlight = true;
-      const episode = idleSince;
-      assessWaitingWithLocalJudges(
-        config,
-        deps,
-        result.summaryCtxs,
-        runState.tick
+  const keyInput = deps.openKeyInput?.();
+  let pendingKey = keyInput?.next();
+  let exitMenuOpen = false;
+  const paneCommand = (pane: string): string | undefined =>
+    deps.paneCommand?.(pane);
+  const renderExit = (board: string): void => {
+    deps.render(
+      renderExitControl(
+        board,
+        runState.exitControl,
+        exitMenuOpen,
+        config.agents,
+        paneCommand,
+        runState.handoverBundles
       )
-        .then((assessment) => {
-          waitingConfirmed = assessment.waiting;
-          waitingAsk = assessment.ask;
-          assessedForIdleSince = episode;
-          pendingWaitUsageByJudge = addLocalLlmUsageByJudge(
-            pendingWaitUsageByJudge,
-            assessment.usageByJudge
-          );
-        })
-        .catch(() => {
-          // Best-effort; retried on the next tick.
-        })
-        .finally(() => {
-          waitingAssessInFlight = false;
-        });
+    );
+  };
+  const stopCurrentLoop = (reason: string): void =>
+    stopGovernessLoop(config, deps, reason);
+  const advanceHandover = async (
+    agentStates: Partial<Record<Agent, string>>,
+    board: string
+  ): Promise<boolean> => {
+    const stopped = await driveHandoverControl(
+      config,
+      deps,
+      runState,
+      agentStates
+    );
+    renderExit(board);
+    return stopped;
+  };
+  try {
+    if (
+      runState.exitControl.mode === "launched" &&
+      (await advanceHandover({}, ""))
+    ) {
+      return;
     }
+    for (;;) {
+      if (deps.fenceCurrent && !deps.fenceCurrent(config)) {
+        deps.appendLog(config.logFile, {
+          at: new Date(deps.now()).toISOString(),
+          epoch: config.epoch,
+          event: "stale-epoch-exit",
+        });
+        return;
+      }
+      // Fold any completed background work in before rendering this tick.
+      const pendingLlmUsageByJudge = addLocalLlmUsageByJudge(
+        addLocalLlmUsageByJudge(
+          pendingSummaryUsageByJudge,
+          pendingPaneLabelUsageByJudge
+        ),
+        pendingWaitUsageByJudge
+      );
+      const pendingLlmUsage = sumLocalLlmUsageByJudge(pendingLlmUsageByJudge);
+      const nextLlmUsage = addLocalLlmUsage(runState.llmUsage, pendingLlmUsage);
+      const nextLlmUsageByJudge = addLocalLlmUsageByJudge(
+        runState.llmUsageByJudge,
+        pendingLlmUsageByJudge
+      );
+      runState = {
+        ...runState,
+        llmUsage: nextLlmUsage,
+        llmUsageByJudge: nextLlmUsageByJudge,
+        llmTokens: nextLlmUsage.totalTokens,
+        paneLabels,
+        paneLabelTick,
+        paneRenames,
+        summary: summaryText,
+        summaryTick,
+        waitingAsk,
+        waitingConfirmed,
+      };
+      pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
+      pendingPaneLabelUsageByJudge = emptyLocalLlmUsageByJudge();
+      pendingWaitUsageByJudge = emptyLocalLlmUsageByJudge();
 
-    deps.saveState(config.stateFile, runState);
-    await deps.sleep(config.tickMs);
+      const lifecycleActive = runState.exitControl.mode !== "idle";
+      const tickConfig = lifecycleActive
+        ? {
+            ...config,
+            agentRenameEnabled: false,
+            dryRun: true,
+            roleBalanceEnabled: false,
+          }
+        : config;
+      const result = await governessTick(states, tickConfig, deps, runState);
+      runState = result.runState;
+      const lifecycleAt = new Date(deps.now()).toISOString();
+      for (const info of config.agents) {
+        const observation = await createGovernessRuntimeAdapter(
+          config,
+          deps,
+          info,
+          result.agentStates[info.agent]
+        ).observe();
+        const state = observation.state;
+        const previous = runState.lifecycleEvents[info.agent];
+        if (previous?.state !== state || previous.epoch !== acquiredEpoch) {
+          const event = nextLifecycleEvent(previous, {
+            agent: info.agent,
+            at: lifecycleAt,
+            epoch: acquiredEpoch,
+            evidence: observation.evidence,
+            state,
+          });
+          runState.lifecycleEvents[info.agent] = event;
+        }
+        recordGovernessObservation(
+          config,
+          deps,
+          JSON.stringify({
+            lifecycle: runState.lifecycleEvents[info.agent],
+            observation,
+            tick: runState.tick,
+          }),
+          `${acquiredEpoch}:runtime-probe:${info.agent}:${runState.tick}`,
+          info.agent
+        );
+      }
+      const holder =
+        runState.roles.currentDriver ??
+        runState.roles.initialDriver ??
+        config.initialDriver ??
+        config.agents[0]?.agent;
+      if (holder) {
+        runState.driverLease = {
+          epoch: acquiredEpoch,
+          expiresAt: new Date(
+            deps.now() + Math.max(config.tickMs * 3, 60_000)
+          ).toISOString(),
+          holder,
+        };
+      }
+      // updateBothIdle may have cleared the waiting read (agents went active).
+      waitingConfirmed = runState.waitingConfirmed;
+      waitingAsk = runState.waitingAsk;
+
+      if (
+        runState.exitControl.mode === "idle" &&
+        !summaryInFlight &&
+        (summaryDue(summaryText, summaryTick, runState.tick) ||
+          missingJudgeUsage(config, runState.llmUsageByJudge))
+      ) {
+        summaryInFlight = true;
+        const firedAtTick = runState.tick;
+        summarizeWithLocalJudges(
+          config,
+          deps,
+          result.summaryCtxs,
+          runState.tick
+        )
+          .then((summary) => {
+            if (summary.text) {
+              summaryText = summary.text;
+            }
+            summaryTick = firedAtTick;
+            pendingSummaryUsageByJudge = addLocalLlmUsageByJudge(
+              pendingSummaryUsageByJudge,
+              summary.usageByJudge
+            );
+          })
+          .catch(() => {
+            // Best-effort; the next due tick retries.
+          })
+          .finally(() => {
+            summaryInFlight = false;
+          });
+      }
+
+      // Refresh the per-agent pane-border task labels off the tick, on the same
+      // slow cadence as the summary. The composed title (glyph + agent + label)
+      // is applied every tick inside governessTick; only the label lags.
+      if (
+        runState.exitControl.mode === "idle" &&
+        !paneLabelInFlight &&
+        paneLabelsDue(paneLabelTick, runState.tick)
+      ) {
+        paneLabelInFlight = true;
+        const firedAtTick = runState.tick;
+        labelPanesWithLocalJudges(
+          config,
+          deps,
+          result.summaryCtxs,
+          runState.tick
+        )
+          .then((res) => {
+            if (
+              runState.exitControl.mode === "idle" &&
+              Object.keys(res.labels).length > 0
+            ) {
+              paneLabels = { ...paneLabels, ...res.labels };
+              // Name each agent's session via /rename, but only when the value
+              // changed and the agent is idle — don't re-send an unchanged
+              // rename or inject keystrokes into an agent that is mid-turn.
+              sendRenameCommands(
+                config,
+                deps,
+                res.labels,
+                paneRenames,
+                result.agentStates
+              );
+            }
+            paneLabelTick = firedAtTick;
+            pendingPaneLabelUsageByJudge = addLocalLlmUsageByJudge(
+              pendingPaneLabelUsageByJudge,
+              res.usageByJudge
+            );
+          })
+          .catch(() => {
+            // Best-effort; the next due tick retries.
+          })
+          .finally(() => {
+            paneLabelInFlight = false;
+          });
+      }
+
+      // Once the pair has been idle together a while, ask the local LLM (once per
+      // idle episode) whether they are actually blocked on the human.
+      const idleSince = runState.bothIdleSince;
+      if (runState.exitControl.mode !== "idle") {
+        assessedForIdleSince = 0;
+      } else if (idleSince === 0) {
+        assessedForIdleSince = 0;
+      } else if (
+        !waitingAssessInFlight &&
+        assessedForIdleSince !== idleSince &&
+        deps.now() - idleSince >= BOTH_IDLE_ASSESS_MS
+      ) {
+        waitingAssessInFlight = true;
+        const episode = idleSince;
+        assessWaitingWithLocalJudges(
+          config,
+          deps,
+          result.summaryCtxs,
+          runState.tick
+        )
+          .then((assessment) => {
+            waitingConfirmed = assessment.waiting;
+            waitingAsk = assessment.ask;
+            assessedForIdleSince = episode;
+            pendingWaitUsageByJudge = addLocalLlmUsageByJudge(
+              pendingWaitUsageByJudge,
+              assessment.usageByJudge
+            );
+          })
+          .catch(() => {
+            // Best-effort; retried on the next tick.
+          })
+          .finally(() => {
+            waitingAssessInFlight = false;
+          });
+      }
+
+      if (await advanceHandover(result.agentStates, result.board)) {
+        return;
+      }
+
+      deps.saveState(config.stateFile, runState);
+      renderExit(result.board);
+      if (!pendingKey) {
+        await deps.sleep(config.tickMs);
+        continue;
+      }
+      const wake = await Promise.race([
+        deps.sleep(config.tickMs).then(() => ({ kind: "tick" as const })),
+        pendingKey.then((key) => ({ key, kind: "key" as const })),
+      ]);
+      if (wake.kind === "tick") {
+        continue;
+      }
+      pendingKey = keyInput?.next();
+      const action = exitKeyAction(
+        exitMenuOpen,
+        runState.exitControl.mode,
+        wake.key
+      );
+      if (action === "menu") {
+        exitMenuOpen = true;
+      } else if (action === "cancel") {
+        exitMenuOpen = false;
+      } else if (action === "teardown") {
+        stopCurrentLoop("user requested teardown");
+        return;
+      } else if (action === "handover") {
+        exitMenuOpen = false;
+        if (runState.exitControl.mode === "launch-error") {
+          runState.exitControl = {
+            ...runState.exitControl,
+            launchError: undefined,
+            mode: "handover",
+          };
+        } else {
+          beginHandover(runState, deps.now());
+        }
+        if (await advanceHandover(result.agentStates, result.board)) {
+          return;
+        }
+      }
+      deps.saveState(config.stateFile, runState);
+      renderExit(result.board);
+    }
+  } finally {
+    keyInput?.close();
   }
 };

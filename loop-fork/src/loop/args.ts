@@ -1,12 +1,12 @@
 import { env } from "bun";
 import { defaultPeerAgent, isAgent } from "./agents";
 import {
-  DEFAULT_BABYSIT_COOLDOWN_SECONDS,
-  DEFAULT_BABYSIT_HEIGHT,
-  DEFAULT_BABYSIT_IDLE_SECONDS,
-  DEFAULT_BABYSIT_MAX_RECOVERIES,
-  DEFAULT_BABYSIT_MODEL,
-  DEFAULT_BABYSIT_URL,
+  DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
+  DEFAULT_GOVERNESS_HEIGHT,
+  DEFAULT_GOVERNESS_IDLE_SECONDS,
+  DEFAULT_GOVERNESS_MAX_RECOVERIES,
+  DEFAULT_GOVERNESS_MODEL,
+  DEFAULT_GOVERNESS_URL,
   DEFAULT_CODEX_MODEL,
   DEFAULT_COPILOT_MODEL,
   DEFAULT_CURSOR_MODEL,
@@ -17,6 +17,10 @@ import {
   LOOP_VERSION,
   VALUE_FLAGS,
 } from "./constants";
+import {
+  normalizeLegacyGovernessArgs,
+  withLegacyGovernessEnv,
+} from "./legacy-governess-compat";
 import type {
   Agent,
   Format,
@@ -191,37 +195,37 @@ const applyValueFlag = (
     case "format":
       opts.format = parseFormat(value);
       return;
-    case "babysitIdle":
-      opts.babysitIdleSeconds = parsePositiveInt(value, "--babysit-idle");
+    case "governessIdle":
+      opts.governessIdleSeconds = parsePositiveInt(value, "--governess-idle");
       return;
-    case "babysitCooldown":
-      opts.babysitCooldownSeconds = parsePositiveInt(
+    case "governessCooldown":
+      opts.governessCooldownSeconds = parsePositiveInt(
         value,
-        "--babysit-cooldown"
+        "--governess-cooldown"
       );
       return;
-    case "babysitMaxRecoveries":
-      opts.babysitMaxRecoveries = parsePositiveInt(
+    case "governessMaxRecoveries":
+      opts.governessMaxRecoveries = parsePositiveInt(
         value,
-        "--babysit-max-recoveries"
+        "--governess-max-recoveries"
       );
       return;
-    case "babysitUrl":
-      opts.babysitUrl = requireTrimmedValue(
+    case "governessUrl":
+      opts.governessUrl = requireTrimmedValue(
         value,
-        "Invalid --babysit-url value: cannot be empty"
+        "Invalid --governess-url value: cannot be empty"
       );
       return;
-    case "babysitModel":
-      opts.babysitModel = requireTrimmedValue(
+    case "governessModel":
+      opts.governessModel = requireTrimmedValue(
         value,
-        "Invalid --babysit-model value: cannot be empty"
+        "Invalid --governess-model value: cannot be empty"
       );
       return;
-    case "babysitHeight":
-      opts.babysitHeight = requireTrimmedValue(
+    case "governessHeight":
+      opts.governessHeight = requireTrimmedValue(
         value,
-        "Invalid --babysit-height value: cannot be empty"
+        "Invalid --governess-height value: cannot be empty"
       );
       return;
     default: {
@@ -525,13 +529,13 @@ const consumeArg = (
     return { nextIndex: index + 1, stop: false, onlyAgent };
   }
 
-  if (arg === "--babysit") {
-    opts.babysit = true;
+  if (arg === "--governess") {
+    opts.governess = true;
     return { nextIndex: index + 1, stop: false, onlyAgent };
   }
 
-  if (arg === "--babysit-dry-run") {
-    opts.babysitDryRun = true;
+  if (arg === "--governess-dry-run") {
+    opts.governessDryRun = true;
     return { nextIndex: index + 1, stop: false, onlyAgent };
   }
 
@@ -554,23 +558,25 @@ const consumeArg = (
 };
 
 export const parseArgs = (argv: string[]): Options => {
+  const normalizedArgv = normalizeLegacyGovernessArgs(argv);
+  const runtimeEnv = withLegacyGovernessEnv(env);
   const opts: Options = {
     agent: "claude",
     doneSignal: DEFAULT_DONE_SIGNAL,
     proof: "",
     format: "pretty",
     maxIterations: DEFAULT_MAX_ITERATIONS,
-    codexModel: env.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
-    copilotModel: env.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
-    cursorModel: env.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
-    geminiModel: env.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
-    babysitIdleSeconds: DEFAULT_BABYSIT_IDLE_SECONDS,
-    babysitCooldownSeconds: DEFAULT_BABYSIT_COOLDOWN_SECONDS,
-    babysitMaxRecoveries: DEFAULT_BABYSIT_MAX_RECOVERIES,
-    babysitUrl: env.LOOP_BABYSIT_URL ?? DEFAULT_BABYSIT_URL,
-    babysitModel: env.LOOP_BABYSIT_MODEL ?? DEFAULT_BABYSIT_MODEL,
-    babysitHeight: DEFAULT_BABYSIT_HEIGHT,
-    babysitLlmTrace: env.LOOP_BABYSIT_LLM_TRACE,
+    codexModel: runtimeEnv.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
+    copilotModel: runtimeEnv.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
+    cursorModel: runtimeEnv.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
+    geminiModel: runtimeEnv.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    governessIdleSeconds: DEFAULT_GOVERNESS_IDLE_SECONDS,
+    governessCooldownSeconds: DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
+    governessMaxRecoveries: DEFAULT_GOVERNESS_MAX_RECOVERIES,
+    governessUrl: runtimeEnv.LOOP_GOVERNESS_URL ?? DEFAULT_GOVERNESS_URL,
+    governessModel: runtimeEnv.LOOP_GOVERNESS_MODEL ?? DEFAULT_GOVERNESS_MODEL,
+    governessHeight: DEFAULT_GOVERNESS_HEIGHT,
+    governessLlmTrace: runtimeEnv.LOOP_GOVERNESS_LLM_TRACE,
     pairedMode: true,
     review: "claudex",
     resumeRunId: undefined,
@@ -580,12 +586,12 @@ export const parseArgs = (argv: string[]): Options => {
   const positional: string[] = [];
   let onlyAgent: Agent | undefined;
 
-  for (let index = 0; index < argv.length; ) {
+  for (let index = 0; index < normalizedArgv.length; ) {
     const {
       nextIndex,
       stop,
       onlyAgent: nextOnlyAgent,
-    } = consumeArg(argv, index, opts, positional, onlyAgent);
+    } = consumeArg(normalizedArgv, index, opts, positional, onlyAgent);
     index = nextIndex;
     onlyAgent = nextOnlyAgent;
     if (stop) {

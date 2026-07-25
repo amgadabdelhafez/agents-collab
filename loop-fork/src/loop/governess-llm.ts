@@ -3,8 +3,8 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   Agent,
-  BabysitterAgentState,
-  BabysitterVerdict,
+  GovernessAgentState,
+  GovernessVerdict,
   JudgeFailureReason,
   JudgeOutcome,
   JudgeRequest,
@@ -28,7 +28,7 @@ const MAX_SUMMARY_CHARS = 140;
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const ABORT_ERROR_NAME = "AbortError";
 
-const ALLOWED_STATES: readonly BabysitterAgentState[] = [
+const ALLOWED_STATES: readonly GovernessAgentState[] = [
   "working",
   "waiting-human",
   "waiting-peer",
@@ -37,7 +37,7 @@ const ALLOWED_STATES: readonly BabysitterAgentState[] = [
   "crashed",
 ];
 
-const FALLBACK_VERDICT: BabysitterVerdict = {
+const FALLBACK_VERDICT: GovernessVerdict = {
   state: "working",
   summary: "",
   confidence: 0,
@@ -131,7 +131,7 @@ const appendTrace = (traceFile: string | undefined, record: unknown): void => {
     mkdirSync(dirname(traceFile), { recursive: true });
     appendFileSync(traceFile, `${JSON.stringify(record)}\n`, "utf8");
   } catch {
-    // Tracing is diagnostic only; it must never affect babysitter behavior.
+    // Tracing is diagnostic only; it must never affect governess behavior.
   }
 };
 
@@ -354,7 +354,7 @@ const extractFirstJsonObject = (text: string): string | null => {
   return null;
 };
 
-const isAllowedState = (value: unknown): value is BabysitterAgentState =>
+const isAllowedState = (value: unknown): value is GovernessAgentState =>
   typeof value === "string" &&
   (ALLOWED_STATES as readonly string[]).includes(value);
 
@@ -380,7 +380,7 @@ const coerceSummary = (value: unknown): string => {
 const coerceSuggestedAction = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
 
-const parseVerdict = (content: string): BabysitterVerdict | null => {
+const parseVerdict = (content: string): GovernessVerdict | null => {
   const cleaned = stripThinkBlocks(content);
   const jsonText = extractFirstJsonObject(cleaned);
   if (jsonText === null) {
@@ -395,7 +395,7 @@ const parseVerdict = (content: string): BabysitterVerdict | null => {
   if (!(isRecord(parsed) && isAllowedState(parsed.state))) {
     return null;
   }
-  const verdict: BabysitterVerdict = {
+  const verdict: GovernessVerdict = {
     state: parsed.state,
     summary: coerceSummary(parsed.summary),
     confidence: clampConfidence(parsed.confidence),

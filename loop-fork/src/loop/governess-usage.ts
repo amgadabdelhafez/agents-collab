@@ -82,6 +82,7 @@ const setCreditMultiplier = (usage: AgentUsage): void => {
 const emptyUsage = (
   dataConfidence: UsageDataConfidence = "missing"
 ): AgentUsage => ({
+  cacheCreate1hTokens: 0,
   cacheCreateTokens: 0,
   cacheReadTokens: 0,
   compactedContextTokens: 0,
@@ -333,6 +334,9 @@ export const summarizeClaude = (text: string): AgentUsage => {
     const input = num(u.input_tokens);
     const cacheRead = num(u.cache_read_input_tokens);
     const cacheCreate = num(u.cache_creation_input_tokens);
+    const cacheCreate1h = num(
+      asRecord(u.cache_creation).ephemeral_1h_input_tokens
+    );
     const output = num(u.output_tokens);
     const tokenTotal = input + cacheRead + cacheCreate + output;
     if (tokenTotal === 0) {
@@ -349,6 +353,8 @@ export const summarizeClaude = (text: string): AgentUsage => {
     usage.outputTokens += output;
     usage.cacheReadTokens += cacheRead;
     usage.cacheCreateTokens += cacheCreate;
+    usage.cacheCreate1hTokens =
+      (usage.cacheCreate1hTokens ?? 0) + Math.min(cacheCreate, cacheCreate1h);
     usage.serviceTier = str(u.service_tier) ?? usage.serviceTier;
     usage.speed = str(u.speed) ?? usage.speed;
     if (usage.serviceTier === "standard" || usage.speed === "standard") {
@@ -722,8 +728,8 @@ const INJECTED_MARKERS = [
 const INJECTED_PREFIXES = [
   "# AGENTS.md instructions",
   "Agent-to-agent pair programming:",
-  "/compact babysitter:",
-  "babysitter:",
+  "/compact governess:",
+  "governess:",
   "[Request interrupted by user",
 ];
 

@@ -1,22 +1,22 @@
 import { expect, mock, test } from "bun:test";
 import type { Agent } from "../../src/loop/types";
 import {
-  type BabysitterState,
-  type BabysitterVerdict,
+  type GovernessState,
+  type GovernessVerdict,
   decideRecovery,
   type RecoveryDeps,
   type RecoveryHistoryEntry,
   executeRecovery,
-} from "../../src/loop/babysitter-recover";
+} from "../../src/loop/governess-recover";
 
 const AGENT: Agent = "claude";
 const NOW_ISO = "2026-07-04T00:00:00.000Z";
 const NOW_MS = Date.parse(NOW_ISO);
 
 const verdict = (
-  state: BabysitterState,
+  state: GovernessState,
   confidence: number
-): BabysitterVerdict => ({ confidence, state, summary: "" });
+): GovernessVerdict => ({ confidence, state, summary: "" });
 
 const gateOpts = (overrides: Partial<{
   confidence: number;

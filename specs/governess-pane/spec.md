@@ -1,4 +1,4 @@
-# Spec: Babysitter Pane (LLM loop watchdog)
+# Spec: Governess Pane (LLM loop watchdog)
 
 ## Problem
 
@@ -10,7 +10,7 @@ recovery when the loop gets stuck.
 
 ## Goal
 
-A third tmux pane, opt-in via `--babysit`, that continuously summarizes both agents'
+A third tmux pane, opt-in via `--governess`, that continuously summarizes both agents'
 progress from their hook events and auto-recovers an agent the loop has determined is
 stuck — using the local Qwen mlx-lm server for judgment.
 
@@ -19,7 +19,7 @@ stuck — using the local Qwen mlx-lm server for judgment.
 - Not a replacement for the existing `loop dashboard` panel (that is cross-session; this
   is one pane inside one paired run).
 - Not a general observability/metrics system. It reads hook events + pane text only.
-- No cloud-LLM dependency. The babysitter's reasoning runs against a local, OpenAI-compatible
+- No cloud-LLM dependency. The governess's reasoning runs against a local, OpenAI-compatible
   endpoint (default Qwen `:8082`); if that endpoint is down, recovery is suppressed, not retried elsewhere.
 - Single-agent modes (`--claude-only`, etc.) are out of scope for v1 (paired mode only).
 
@@ -27,7 +27,7 @@ stuck — using the local Qwen mlx-lm server for judgment.
 
 - `loop-fork/src/loop/tmux.ts::startPairedSession` builds the two-pane session. It already
   captures pane text (`capturePane`), sends keys (`sendKeys`/`sendText`), and unblocks Claude
-  startup prompts (`unblockClaudePane`). The babysitter reuses these primitives.
+  startup prompts (`unblockClaudePane`). The governess reuses these primitives.
 - Per-run state lives under `~/.loop/runs/<id>` via `run-state.ts`; Codex already gets a
   per-run `CODEX_HOME` (`codex-home.ts`), which is where its hooks config is injected.
 - Claude Code supports `--settings <file>` (hooks live there). Codex supports hooks with
@@ -38,9 +38,9 @@ stuck — using the local Qwen mlx-lm server for judgment.
 
 ## User journeys
 
-1. **Happy path:** `loop --tmux --babysit "task"`. Top row = Claude | Codex; full-width bottom
+1. **Happy path:** `loop --tmux --governess "task"`. Top row = Claude | Codex; full-width bottom
    pane shows a live board: per-agent one-line progress summary + last hook activity. Agents
-   work; the babysitter stays in observe mode and never acts.
+   work; the governess stays in observe mode and never acts.
 2. **Stuck → recover:** Codex emits no hook events and its pane text is unchanged past the idle
    threshold. The deterministic detector marks it *suspect*; Qwen classifies it `stuck`; the
    escalation ladder answers a pending prompt → nudges → restarts the pane, one gated step at a
@@ -53,7 +53,7 @@ stuck — using the local Qwen mlx-lm server for judgment.
 
 These map directly to `verify.md`.
 
-- [ ] `--babysit` (paired mode) adds a full-width bottom pane under the two agent panes; without
+- [ ] `--governess` (paired mode) adds a full-width bottom pane under the two agent panes; without
       the flag, layout and behavior are byte-for-byte unchanged.
 - [ ] At launch, Claude is passed a generated `--settings` hooks file and Codex a per-run
       `config.toml`; both append normalized events to `runs/<id>/hooks/{claude,codex}.jsonl`.
@@ -63,16 +63,16 @@ These map directly to `verify.md`.
       `{state, summary, confidence, suggestedAction}`; malformed responses are treated as `working`
       (no action).
 - [ ] Recovery fires only on `state ∈ {stuck, crashed}` with `confidence ≥ threshold`, respects
-      `--babysit-cooldown` and `--babysit-max-recoveries`, and follows the L1→L2→L3 ladder.
-- [ ] `--babysit-dry-run` logs intended actions and executes none.
+      `--governess-cooldown` and `--governess-max-recoveries`, and follows the L1→L2→L3 ladder.
+- [ ] `--governess-dry-run` logs intended actions and executes none.
 - [ ] Qwen unreachable ⇒ detector runs, recovery suppressed, board shows `LLM offline`.
 - [ ] `waiting-human` / `waiting-peer` agents are never auto-recovered.
-- [ ] Every decision and action is appended to `runs/<id>/babysitter.jsonl`.
+- [ ] Every decision and action is appended to `runs/<id>/governess.jsonl`.
 - [ ] `main.ts` stays under 150 lines; `bun run check` and `bun test` pass.
 
 ## Out-of-scope risks
 
-- Must not change the two-agent startup path when `--babysit` is absent (regression risk in
+- Must not change the two-agent startup path when `--governess` is absent (regression risk in
   `startPairedSession`).
 - Hook injection must not break agent startup if the emitter or endpoint is missing — hooks are
   best-effort and must never block the agent.

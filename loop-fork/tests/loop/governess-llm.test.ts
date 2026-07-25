@@ -6,7 +6,7 @@ import {
   assessRoleBalance,
   judgeAgent,
   labelPanes,
-} from "../../src/loop/babysitter-llm";
+} from "../../src/loop/governess-llm";
 import type {
   JudgeRequest,
   PaneLabelRequest,

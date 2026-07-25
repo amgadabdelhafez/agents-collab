@@ -1,7 +1,7 @@
 import type {
   Agent,
-  BabysitterAgentState,
-  BabysitterVerdict,
+  GovernessAgentState,
+  GovernessVerdict,
   RecoveryDecision,
   RecoveryHistoryEntry,
   RecoveryLevel,
@@ -9,15 +9,15 @@ import type {
 
 // Re-export the shared contract types so consumers/tests can import them here.
 export type {
-  BabysitterVerdict,
+  GovernessVerdict,
   RecoveryDecision,
   RecoveryHistoryEntry,
   RecoveryLevel,
 } from "./types";
-export type BabysitterState = BabysitterAgentState;
+export type GovernessState = GovernessAgentState;
 
 /** States for which auto-recovery is allowed. */
-const RECOVERABLE_STATES: readonly BabysitterState[] = ["stuck", "crashed"];
+const RECOVERABLE_STATES: readonly GovernessState[] = ["stuck", "crashed"];
 
 /** The escalation ladder: index grows with the number of prior recoveries. */
 const RECOVERY_LADDER: readonly RecoveryLevel[] = [
@@ -26,7 +26,7 @@ const RECOVERY_LADDER: readonly RecoveryLevel[] = [
   "restart",
 ];
 
-const isRecoverableState = (state: BabysitterState): boolean =>
+const isRecoverableState = (state: GovernessState): boolean =>
   RECOVERABLE_STATES.includes(state);
 
 const latestEntry = (
@@ -42,7 +42,7 @@ const latestEntry = (
 };
 
 /**
- * Decide whether (and how) to auto-recover an agent, given the babysitter's
+ * Decide whether (and how) to auto-recover an agent, given the governess's
  * verdict, prior recovery history, and gating options. Pure: no clock access —
  * the current time is supplied via `opts.nowMs`.
  *
@@ -54,7 +54,7 @@ const latestEntry = (
  * Otherwise the ladder escalates by the per-agent recovery count.
  */
 export const decideRecovery = (
-  verdict: BabysitterVerdict,
+  verdict: GovernessVerdict,
   history: readonly RecoveryHistoryEntry[],
   agent: Agent,
   opts: {

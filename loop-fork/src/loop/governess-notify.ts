@@ -1,6 +1,6 @@
 import type { Agent } from "./types";
 
-// A single thing the babysitter wants to reach the human about. Kept small and
+// A single thing the governess wants to reach the human about. Kept small and
 // channel-agnostic so the transport (ntfy today, Telegram/Slack later) can vary.
 export interface EscalationEvent {
   agent?: Agent;

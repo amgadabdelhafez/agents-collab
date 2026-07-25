@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
-import { BABYSIT_SUBCOMMAND } from "./babysitter";
+import { GOVERNESS_SUBCOMMAND } from "./governess";
+import { withLegacyGovernessEnv } from "./legacy-governess-compat";
 import {
   buildClaudeHookSettings,
   buildCodexHooksJson,
@@ -800,7 +801,7 @@ const updatePairedManifest = (
   session: string,
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
-  babysitPane?: string
+  governessPane?: string
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
@@ -816,8 +817,8 @@ const updatePairedManifest = (
         tmuxSession: session,
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRightAgent: paneAgents.right,
-        ...(babysitPane
-          ? { babysit: true, tmuxPaneBabysit: babysitPane }
+        ...(governessPane
+          ? { governess: true, tmuxPaneGoverness: governessPane }
           : {}),
       },
       new Date().toISOString()
@@ -825,7 +826,7 @@ const updatePairedManifest = (
   );
 };
 
-interface BabysitHookConfig {
+interface GovernessHookConfig {
   claudeSettingsPath?: string;
   codexBypassHookTrust: boolean;
 }
@@ -836,15 +837,15 @@ const writeJsonFile = (path: string, value: unknown): void => {
 };
 
 // Inject per-run agent hooks so each agent appends normalized events the
-// babysitter can tail. Claude hooks go through --settings; Codex hooks are
+// governess can tail. Claude hooks go through --settings; Codex hooks are
 // written only when a per-run CODEX_HOME is in use (never the user's global).
-const prepareBabysitHooks = (
+const prepareGovernessHooks = (
   deps: TmuxDeps,
   opts: Options,
   runDir: string,
   paneAgents: { left: Agent; right: Agent }
-): BabysitHookConfig => {
-  if (!opts.babysit) {
+): GovernessHookConfig => {
+  if (!opts.governess) {
     return { codexBypassHookTrust: false };
   }
   const hooksDir = join(runDir, "hooks");
@@ -999,19 +1000,22 @@ const usageTrackerEnvFromFiles = (
   ];
 };
 
-const babysitEnv = (
+const governessEnv = (
   opts: Options,
-  env: NodeJS.ProcessEnv,
+  inputEnv: NodeJS.ProcessEnv,
   cwd: string
-): string[] => [
-  `LOOP_BABYSIT_IDLE=${opts.babysitIdleSeconds}`,
-  `LOOP_BABYSIT_COOLDOWN=${opts.babysitCooldownSeconds}`,
-  `LOOP_BABYSIT_MAX=${opts.babysitMaxRecoveries}`,
-  `LOOP_BABYSIT_URL=${opts.babysitUrl}`,
-  `LOOP_BABYSIT_MODEL=${opts.babysitModel}`,
-  ...passEnv(env, "LOOP_BABYSIT_JUDGES"),
-  ...passEnv(env, "LOOP_BABYSIT_JUDGE_MODE"),
-  ...passEnv(env, "LOOP_BABYSIT_ROLE_BALANCE"),
+): string[] => {
+  const env = withLegacyGovernessEnv(inputEnv);
+  return [
+    `LOOP_GOVERNESS_IDLE=${opts.governessIdleSeconds}`,
+  `LOOP_GOVERNESS_COOLDOWN=${opts.governessCooldownSeconds}`,
+  `LOOP_GOVERNESS_MAX=${opts.governessMaxRecoveries}`,
+  `LOOP_GOVERNESS_URL=${opts.governessUrl}`,
+  `LOOP_GOVERNESS_MODEL=${opts.governessModel}`,
+  ...passEnv(env, "LOOP_GOVERNESS_JUDGES"),
+  ...passEnv(env, "LOOP_GOVERNESS_JUDGE_MODE"),
+  ...passEnv(env, "LOOP_GOVERNESS_AGENT_RENAME"),
+  ...passEnv(env, "LOOP_GOVERNESS_ROLE_BALANCE"),
   ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
   ...passEnv(env, "LOOP_USAGE_TRACKER_TIMEOUT_MS"),
   ...passEnv(env, "LOOP_USAGE_TRACKER_URL"),
@@ -1020,14 +1024,15 @@ const babysitEnv = (
     ? passEnv(env, "LOOP_USAGE_TRACKER_SECRET")
     : passEnv(env, "USAGE_TRACKER_SECRET")),
   ...usageTrackerEnvFromFiles(env, cwd),
-  ...(opts.babysitLlmTrace
-    ? [`LOOP_BABYSIT_LLM_TRACE=${opts.babysitLlmTrace}`]
+  ...(opts.governessLlmTrace
+    ? [`LOOP_GOVERNESS_LLM_TRACE=${opts.governessLlmTrace}`]
     : []),
-  ...(opts.babysitDryRun ? ["LOOP_BABYSIT_DRY_RUN=1"] : []),
-];
+    ...(opts.governessDryRun ? ["LOOP_GOVERNESS_DRY_RUN=1"] : []),
+  ];
+};
 
-// Add the full-width bottom babysitter pane under the two agent panes.
-const startBabysitPane = (
+// Add the full-width bottom governess pane under the two agent panes.
+const startGovernessPane = (
   deps: TmuxDeps,
   opts: Options,
   session: string,
@@ -1035,9 +1040,9 @@ const startBabysitPane = (
 ): string => {
   const command = buildShellCommand([
     "env",
-    ...babysitEnv(opts, deps.env, deps.cwd),
+    ...governessEnv(opts, deps.env, deps.cwd),
     ...deps.launchArgv,
-    BABYSIT_SUBCOMMAND,
+    GOVERNESS_SUBCOMMAND,
     runId,
   ]);
   deps.spawn([
@@ -1046,7 +1051,7 @@ const startBabysitPane = (
     "-v",
     "-f",
     "-l",
-    opts.babysitHeight,
+    opts.governessHeight,
     "-t",
     `${session}:0`,
     "-c",
@@ -1421,7 +1426,7 @@ const startPairedSession = async (
           storage.runId,
           claudeChannelServer ?? ""
         );
-    const babysitHooks = prepareBabysitHooks(
+    const governessHooks = prepareGovernessHooks(
       deps,
       launch.opts,
       storage.runDir,
@@ -1434,8 +1439,8 @@ const startPairedSession = async (
         agent: paneAgents.left,
         claudeChannelServer,
         claudeSessionId,
-        claudeSettingsPath: babysitHooks.claudeSettingsPath,
-        codexBypassHookTrust: babysitHooks.codexBypassHookTrust,
+        claudeSettingsPath: governessHooks.claudeSettingsPath,
+        codexBypassHookTrust: governessHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.left],
         opts: launch.opts,
@@ -1449,8 +1454,8 @@ const startPairedSession = async (
         agent: paneAgents.right,
         claudeChannelServer,
         claudeSessionId,
-        claudeSettingsPath: babysitHooks.claudeSettingsPath,
-        codexBypassHookTrust: babysitHooks.codexBypassHookTrust,
+        claudeSettingsPath: governessHooks.claudeSettingsPath,
+        codexBypassHookTrust: governessHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.right],
         opts: launch.opts,
@@ -1507,10 +1512,10 @@ const startPairedSession = async (
       paneAgents,
       primaryAgent
     );
-    const babysitPane = launch.opts.babysit
-      ? startBabysitPane(deps, launch.opts, session, storage.runId)
+    const governessPane = launch.opts.governess
+      ? startGovernessPane(deps, launch.opts, session, storage.runId)
       : undefined;
-    if (babysitPane) {
+    if (governessPane) {
       updatePairedManifest(
         deps,
         storage,
@@ -1521,7 +1526,7 @@ const startPairedSession = async (
       session,
       paneAgents,
       primaryAgent,
-      babysitPane
+      governessPane
       );
     }
     const primaryPane =

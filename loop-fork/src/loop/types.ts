@@ -38,14 +38,14 @@ export type ValueFlag =
   | "format"
   | "runId"
   | "session"
-  | "babysitIdle"
-  | "babysitCooldown"
-  | "babysitMaxRecoveries"
-  | "babysitUrl"
-  | "babysitModel"
-  | "babysitHeight";
+  | "governessIdle"
+  | "governessCooldown"
+  | "governessMaxRecoveries"
+  | "governessUrl"
+  | "governessModel"
+  | "governessHeight";
 
-export type BabysitterAgentState =
+export type GovernessAgentState =
   | "working"
   | "waiting-human"
   | "waiting-peer"
@@ -53,9 +53,9 @@ export type BabysitterAgentState =
   | "stuck"
   | "crashed";
 
-export interface BabysitterVerdict {
+export interface GovernessVerdict {
   confidence: number;
-  state: BabysitterAgentState;
+  state: GovernessAgentState;
   suggestedAction?: string;
   summary: string;
 }
@@ -72,7 +72,7 @@ export interface HookEvent {
   ts: string;
 }
 
-// --- Detector (babysitter-detect.ts) ---
+// --- Detector (governess-detect.ts) ---
 // Per-agent input for one detector tick.
 export interface AgentLivenessInput {
   agent: Agent;
@@ -99,7 +99,7 @@ export interface AgentLiveness {
   suspect: boolean;
 }
 
-// --- Recovery ladder (babysitter-recover.ts) ---
+// --- Recovery ladder (governess-recover.ts) ---
 export type RecoveryLevel = "answer-prompt" | "nudge" | "restart";
 
 export interface RecoveryHistoryEntry {
@@ -114,12 +114,26 @@ export interface RecoveryDecision {
   reason: string;
 }
 
-// --- Usage / cost (babysitter-usage.ts) ---
+// --- Usage / cost (governess-usage.ts) ---
 // Per-agent token/context/cost snapshot derived from the agent's session
 // transcript. All token counts are cumulative for the session.
 export type UsageDataConfidence = "approx" | "error" | "exact" | "missing";
 
+export type UsageLimitKind = "account" | "session" | "weekly";
+
+export interface UsageLimitWindow {
+  kind: UsageLimitKind;
+  label: string;
+  model?: string;
+  reset?: string;
+  resetAtMs?: number;
+  scopeKind?: string;
+  usedPct: number;
+}
+
 export interface AgentUsage {
+  // Claude cache-write total; cacheCreate1hTokens is the 1-hour subset.
+  cacheCreate1hTokens?: number;
   cacheCreateTokens: number;
   cacheReadTokens: number;
   compactedContextTokens: number;
@@ -127,11 +141,15 @@ export interface AgentUsage {
   contextRateTokensPerMinute: number;
   contextTokens: number;
   contextWindow: number;
+  // Estimated replacement value from the Usage Tracker pricing catalog.
+  costEstimateBasis?: "api-usd" | "credit-estimate";
+  costEstimateCoveragePct?: number;
   costRateUsdPerHour: number;
   costUsd: number;
   // ChatGPT/Codex credit multiplier relative to standard mode when known.
   creditCostMultiplier?: number;
   dataConfidence: UsageDataConfidence;
+  estimatedCredits?: number;
   firstTs?: string;
   // Count of genuine human prompts seen in this agent's transcript.
   humanMessages: number;
@@ -146,6 +164,7 @@ export interface AgentUsage {
   rateLimitPrimaryReset?: string;
   rateLimitSecondaryPct?: number;
   rateLimitSecondaryReset?: string;
+  rateLimitWindows?: UsageLimitWindow[];
   reasoningEffort?: string;
   serviceTier?: string;
   speed?: string;
@@ -156,7 +175,7 @@ export interface AgentUsage {
   totalTokens: number;
 }
 
-// --- LLM judge (babysitter-llm.ts) ---
+// --- LLM judge (governess-llm.ts) ---
 export interface JudgeRequest {
   agent: Agent;
   hookTail: HookEvent[];
@@ -181,10 +200,10 @@ export type JudgeOutcome =
       ok: true;
       tokens?: number;
       usage?: LocalLlmUsage;
-      verdict: BabysitterVerdict;
+      verdict: GovernessVerdict;
     }
   | {
-      fallback: BabysitterVerdict;
+      fallback: GovernessVerdict;
       ok: false;
       reason: JudgeFailureReason;
       tokens?: number;
@@ -283,15 +302,15 @@ export interface RoleBalanceResult {
 
 export interface Options {
   agent: Agent;
-  babysit?: boolean;
-  babysitCooldownSeconds: number;
-  babysitDryRun?: boolean;
-  babysitHeight: string;
-  babysitIdleSeconds: number;
-  babysitLlmTrace?: string;
-  babysitMaxRecoveries: number;
-  babysitModel: string;
-  babysitUrl: string;
+  governess?: boolean;
+  governessCooldownSeconds: number;
+  governessDryRun?: boolean;
+  governessHeight: string;
+  governessIdleSeconds: number;
+  governessLlmTrace?: string;
+  governessMaxRecoveries: number;
+  governessModel: string;
+  governessUrl: string;
   claudeMcpConfigPath?: string;
   claudePersistentSession?: boolean;
   claudeReviewerModel?: string;

@@ -1,0 +1,63 @@
+{
+  "task_id": "governess-runtime",
+  "feature": "governess-runtime",
+  "timestamp": "2026-07-25T21:30:00Z",
+  "checks": {
+    "functional": {
+      "passed": 16,
+      "failed": 0,
+      "details": [
+        "canonical governess surfaces with isolated legacy boundary",
+        "rename default-off, deduplicated, explicit-safe-state and hook-gated",
+        "x/e/h/c lifecycle controls",
+        "epoch fencing and driver lease",
+        "durable idempotent journal with acknowledgement enforcement",
+        "runtime adapter validates control envelopes",
+        "reconstructable runtime and handoff-exit probes",
+        "two-phase handoff bundles",
+        "replacement three-pane readiness",
+        "doctor and replay commands",
+        "atomic fenced state persistence",
+        "single unified row per configured agent",
+        "direct controls submit after a 250 ms composer settle window",
+        "permission notifications fail the direct-input safety gate",
+        "epoch-gated at-most-once agent exit after bundle validation",
+        "persisted continuation Markdown starts a ready replacement loop"
+      ]
+    },
+    "ui": {
+      "passed": 6,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "governess name visible",
+        "Project summary uses two full-width lines",
+        "runtime and activity signals merged into one row per agent",
+        "unified header and rows stay within 180 visible columns without clipping",
+        "x menu opened and c canceled without board growth",
+        "x then h showed handover progress without adding duplicate agent rows"
+      ]
+    },
+    "performance": {
+      "passed": 2,
+      "failed": 0,
+      "details": [
+        "slow local-LLM work remains off the tick",
+        "journal replay clean with 104 controls at final verification"
+      ]
+    },
+    "regression": {
+      "passed": 591,
+      "failed": 4,
+      "details": [
+        "198 focused tests passed",
+        "full suite has four pre-existing Codex model/config expectation failures unrelated to governess",
+        "build and git diff --check passed",
+        "live doctor all 11 checks true",
+        "disposable run 8 handed over to a ready three-pane loop 9 before stopping"
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "Independent evaluator PASS with no blockers. The unified agent table and durable handover lifecycle are focused-tested and live-verified. Disposable run 8 submitted both drain turns, validated both bundles, exited each TUI once, launched ready loop 9, and only then stopped. Narrow deployment preserved both live Harvto agent PIDs and produced a clean replayable epoch-fenced runtime."
+}

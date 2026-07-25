@@ -4,7 +4,7 @@ import {
   type AgentLivenessState,
   initLivenessState,
   updateLiveness,
-} from "../../src/loop/babysitter-detect";
+} from "../../src/loop/governess-detect";
 
 // Fixed synthetic clock. Every timestamp below is derived from this base so the
 // tests never depend on real wall-clock time.

@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { isAgent } from "./agents";
+import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import {
   type GitResult,
   runGit as runGitCommand,
@@ -55,7 +56,7 @@ export interface RunStorage {
 }
 
 export interface RunManifest {
-  babysit?: boolean;
+  governess?: boolean;
   claudeChannelServer?: string;
   claudeSessionId: string;
   codexRemoteUrl?: string;
@@ -69,7 +70,7 @@ export interface RunManifest {
   runId: string;
   state: RunLifecycleState;
   status: RunStatus;
-  tmuxPaneBabysit?: string;
+  tmuxPaneGoverness?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneRightAgent?: Agent;
   tmuxSession?: string;
@@ -129,7 +130,7 @@ interface RepoIdDeps {
 }
 
 interface RunManifestInput {
-  babysit?: boolean;
+  governess?: boolean;
   claudeChannelServer?: string;
   claudeSessionId?: string;
   codexRemoteUrl?: string;
@@ -143,7 +144,7 @@ interface RunManifestInput {
   runId: string;
   state?: RunLifecycleState;
   status?: string;
-  tmuxPaneBabysit?: string;
+  tmuxPaneGoverness?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneRightAgent?: Agent;
   tmuxSession?: string;
@@ -487,10 +488,10 @@ export const createRunManifest = (
     ...(input.tmuxPaneRightAgent
       ? { tmuxPaneRightAgent: input.tmuxPaneRightAgent }
       : {}),
-    ...(input.tmuxPaneBabysit
-      ? { tmuxPaneBabysit: input.tmuxPaneBabysit }
+    ...(input.tmuxPaneGoverness
+      ? { tmuxPaneGoverness: input.tmuxPaneGoverness }
       : {}),
-    ...(input.babysit ? { babysit: true } : {}),
+    ...(input.governess ? { governess: true } : {}),
     updatedAt: input.updatedAt ?? now,
   };
 };
@@ -616,15 +617,25 @@ export const readRunManifest = (
             ]),
           }
         : {}),
-      ...(firstString(parsed, ["tmuxPaneBabysit", "tmux_pane_babysit"])
+      ...(firstString(parsed, [
+        "tmuxPaneGoverness",
+        "tmux_pane_governess",
+        LEGACY_MANIFEST_KEYS.pane,
+        LEGACY_MANIFEST_KEYS.paneSnake,
+      ])
         ? {
-            tmuxPaneBabysit: firstString(parsed, [
-              "tmuxPaneBabysit",
-              "tmux_pane_babysit",
+            tmuxPaneGoverness: firstString(parsed, [
+              "tmuxPaneGoverness",
+              "tmux_pane_governess",
+              LEGACY_MANIFEST_KEYS.pane,
+              LEGACY_MANIFEST_KEYS.paneSnake,
             ]),
           }
         : {}),
-      ...(parsed.babysit === true ? { babysit: true } : {}),
+      ...(parsed.governess === true ||
+      parsed[LEGACY_MANIFEST_KEYS.enabled] === true
+        ? { governess: true }
+        : {}),
       updatedAt,
     };
   } catch {

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { LEGACY_GOVERNESS_STATE_FILE } from "./legacy-governess-compat";
 
 // Project docs to feed the summary as "what this project is", newest-priority
 // first. Kept small; each is truncated to PROJECT_DOC_CHARS.
@@ -70,7 +71,10 @@ export const readPriorSummaries = (runDir?: string): string[] => {
     if (summaries.length >= MAX_PRIOR_SUMMARIES) {
       break;
     }
-    const found = summaryOf(join(parent, name, "babysitter-state.json"));
+    const siblingRunDir = join(parent, name);
+    const found =
+      summaryOf(join(siblingRunDir, "governess-state.json")) ||
+      summaryOf(join(siblingRunDir, LEGACY_GOVERNESS_STATE_FILE));
     if (found) {
       summaries.push(found);
     }

@@ -2,9 +2,9 @@ import pkg from "../../package.json";
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
-export const DEFAULT_CODEX_MODEL = "gpt-5.5";
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
 export const DEFAULT_CODEX_REASONING_EFFORT = "xhigh";
-export const DEFAULT_CODEX_SERVICE_TIER = "fast";
+export const DEFAULT_CODEX_SERVICE_TIER = "standard";
 export const DEFAULT_CODEX_CONFIG_VALUES = [
   `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
   `service_tier="${DEFAULT_CODEX_SERVICE_TIER}"`,
@@ -16,16 +16,16 @@ export const DEFAULT_CURSOR_MODEL = "auto";
 export const DEFAULT_MAX_ITERATIONS = 20;
 export const LOOP_VERSION = pkg.version;
 
-// Babysitter pane (--babysit) defaults.
-export const DEFAULT_BABYSIT_IDLE_SECONDS = 120;
-export const DEFAULT_BABYSIT_COOLDOWN_SECONDS = 300;
-export const DEFAULT_BABYSIT_MAX_RECOVERIES = 3;
-export const DEFAULT_BABYSIT_URL = "http://127.0.0.1:8082";
-export const DEFAULT_BABYSIT_MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit";
-export const DEFAULT_BABYSIT_HEIGHT = "25%";
-export const DEFAULT_BABYSIT_CONFIDENCE = 0.7;
-export const DEFAULT_BABYSIT_TICK_SECONDS = 15;
-export const DEFAULT_BABYSIT_ESCALATE_IDLE_SECONDS = 300;
+// Governess pane (--governess) defaults.
+export const DEFAULT_GOVERNESS_IDLE_SECONDS = 120;
+export const DEFAULT_GOVERNESS_COOLDOWN_SECONDS = 300;
+export const DEFAULT_GOVERNESS_MAX_RECOVERIES = 3;
+export const DEFAULT_GOVERNESS_URL = "http://127.0.0.1:8082";
+export const DEFAULT_GOVERNESS_MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit";
+export const DEFAULT_GOVERNESS_HEIGHT = "25%";
+export const DEFAULT_GOVERNESS_CONFIDENCE = 0.7;
+export const DEFAULT_GOVERNESS_TICK_SECONDS = 15;
+export const DEFAULT_GOVERNESS_ESCALATE_IDLE_SECONDS = 300;
 export const DEFAULT_USAGE_TRACKER_URL = "http://127.0.0.1:8000";
 export const DEFAULT_USAGE_TRACKER_TIMEOUT_MS = 1500;
 
@@ -72,24 +72,27 @@ Options:
   --session <id>                           Resume from a paired run id or raw session/thread ID
   --tmux                                   Run in tmux (paired mode opens the selected two agents side-by-side; no prompt/proof starts interactive sessions)
   --worktree                               Create and run in a fresh git worktree (name: repo-loop-X)
-  --babysit                                Add a full-width bottom pane that summarizes both agents from their hook events and auto-recovers a stuck agent (paired + tmux only)
-  --babysit-dry-run                        Babysitter logs intended recovery actions but executes none
-  --babysit-idle <seconds>                 Idle seconds before an agent is a stuck suspect (default: ${DEFAULT_BABYSIT_IDLE_SECONDS})
-  --babysit-cooldown <seconds>             Minimum seconds between recovery actions per agent (default: ${DEFAULT_BABYSIT_COOLDOWN_SECONDS})
-  --babysit-max-recoveries <number>        Max recovery actions per agent per run (default: ${DEFAULT_BABYSIT_MAX_RECOVERIES})
-  --babysit-url <url>                      OpenAI-compatible endpoint for babysitter judgment (default: ${DEFAULT_BABYSIT_URL})
-  --babysit-model <model>                  Model id for babysitter judgment (default: ${DEFAULT_BABYSIT_MODEL})
-  --babysit-height <rows|percent>          Babysitter pane height, e.g. 25% or 12 (default: ${DEFAULT_BABYSIT_HEIGHT})
+  --governess                                Add a full-width bottom pane that summarizes both agents from their hook events and auto-recovers a stuck agent (paired + tmux only)
+  --governess-dry-run                        Governess logs intended recovery actions but executes none
+  --governess-idle <seconds>                 Idle seconds before an agent is a stuck suspect (default: ${DEFAULT_GOVERNESS_IDLE_SECONDS})
+  --governess-cooldown <seconds>             Minimum seconds between recovery actions per agent (default: ${DEFAULT_GOVERNESS_COOLDOWN_SECONDS})
+  --governess-max-recoveries <number>        Max recovery actions per agent per run (default: ${DEFAULT_GOVERNESS_MAX_RECOVERIES})
+  --governess-url <url>                      OpenAI-compatible endpoint for governess judgment (default: ${DEFAULT_GOVERNESS_URL})
+  --governess-model <model>                  Model id for governess judgment (default: ${DEFAULT_GOVERNESS_MODEL})
+  --governess-height <rows|percent>          Governess pane height, e.g. 25% or 12 (default: ${DEFAULT_GOVERNESS_HEIGHT})
+  governess doctor <run-id>                  Check governess state, journal, epoch, and tmux readiness
+  governess replay <run-id>                  Replay the durable governess control journal and report invariant violations
   -v, --version                            Show loop version
   -h, --help                               Show this help
 
 Environment:
-  LOOP_BABYSIT_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
-  LOOP_BABYSIT_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
-  LOOP_BABYSIT_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
-  LOOP_BABYSIT_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
-  LOOP_BABYSIT_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path
-  LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for babysitter RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})
+  LOOP_GOVERNESS_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
+  LOOP_GOVERNESS_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
+  LOOP_GOVERNESS_AGENT_RENAME=1              Opt in to sending /rename commands into agent TUIs (default: off)
+  LOOP_GOVERNESS_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
+  LOOP_GOVERNESS_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
+  LOOP_GOVERNESS_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path
+  LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for governess RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})
   LOOP_USAGE_TRACKER_SECRET=<secret>        Bearer token for Usage Tracker /stats (falls back to USAGE_TRACKER_SECRET)
 
 Auto-update:
@@ -126,10 +129,10 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "--format": "format",
   "--run-id": "runId",
   "--session": "session",
-  "--babysit-idle": "babysitIdle",
-  "--babysit-cooldown": "babysitCooldown",
-  "--babysit-max-recoveries": "babysitMaxRecoveries",
-  "--babysit-url": "babysitUrl",
-  "--babysit-model": "babysitModel",
-  "--babysit-height": "babysitHeight",
+  "--governess-idle": "governessIdle",
+  "--governess-cooldown": "governessCooldown",
+  "--governess-max-recoveries": "governessMaxRecoveries",
+  "--governess-url": "governessUrl",
+  "--governess-model": "governessModel",
+  "--governess-height": "governessHeight",
 };

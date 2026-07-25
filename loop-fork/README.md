@@ -138,16 +138,19 @@ That directory contains a minimal Codex config and reuses the normal Codex auth 
 
 Single-agent Codex runs outside paired mode still use the normal Codex configuration unless you set `CODEX_HOME` yourself.
 
-### Babysitter pane
+### Governess pane
 
-Paired tmux runs can add a full-width babysitter pane under the two agents (a local-LLM watchdog). Each tick it detects idle/stuck agents, runs a recovery ladder, tracks token/cost budgets, and escalates to you when the pair is genuinely waiting.
+Paired tmux runs can add a full-width governess pane under the two agents (a local-LLM watchdog). Each tick it detects idle/stuck agents, runs a recovery ladder, tracks token/cost budgets, and escalates to you when the pair is genuinely waiting.
 
-The babysitter also names the workspace from what the local model reads off each pane:
+The governess also names the workspace from what the local model reads off each pane:
 
-- **Pane borders** — the border of each agent pane shows `⟨state glyph⟩ ⟨agent⟩ · ⟨task⟩`, e.g. `▶ claude · auth refactor`. The state glyph updates every tick; the task label is refreshed by the local LLM on a slow cadence. Titles are written to a per-pane tmux user option (`@loop_label`) rendered via `pane-border-format`, so they survive the agent TUIs overwriting `pane_title`. Borders are enabled on babysitter startup, so a restarted/replaced babysitter pane re-lights them.
-- **Agent rename** — on each label refresh the babysitter sends `/rename <session> · <task>` into each agent, so the agent's own session name tracks the current task.
+- **Pane borders** — the border of each agent pane shows `⟨state glyph⟩ ⟨agent⟩ · ⟨task⟩`, e.g. `▶ claude · auth refactor`. The state glyph updates every tick; the task label is refreshed by the local LLM on a slow cadence. Titles are written to a per-pane tmux user option (`@loop_label`) rendered via `pane-border-format`, so they survive the agent TUIs overwriting `pane_title`. Borders are enabled on governess startup, so a restarted/replaced governess pane re-lights them.
+- **Agent rename (opt-in)** — pane borders are the safe default because they do not touch an agent's composer. Set `LOOP_GOVERNESS_AGENT_RENAME=1` to also send `/rename <session> · <task>` into each idle agent; leave it off when humans or peers may be drafting input.
+- **Exit controls** — focus the governess pane and press `x` to open its exit menu. Press `e` to tear down the current loop, `h` to ask both agents to finish, write a validated JSON handoff bundle, and exit before a fresh paired loop starts, or `c`/`Esc`/`x` to cancel. The old loop stays alive until every bundle is valid, both agents have exited, and the replacement tmux session reports all three panes ready. A failed replacement launch leaves the old governess alive for retry or explicit teardown.
 
-The local model, endpoint, and pane height are configurable (`--babysit-*` flags / `LOOP_BABYSIT_*` env). The labeling call is sized for reasoning models that emit a `<think>` block before their answer.
+- **Control safety** — one epoch-fenced governess owns side effects at a time. Messages and lifecycle actions use an idempotent JSONL control journal; automatic commit, push, merge, deploy, discard, and restart actions are forbidden. Use `loop governess doctor <run-id>` for live invariants and `loop governess replay <run-id>` to audit the journal.
+
+The local model, endpoint, and pane height are configurable (`--governess-*` flags / `LOOP_GOVERNESS_*` env). The labeling call is sized for reasoning models that emit a `<think>` block before their answer.
 
 ## Install globally (symlink)
 

@@ -7,7 +7,7 @@ import {
   readAgentUsage,
   summarizeClaude,
   summarizeCodex,
-} from "../../src/loop/babysitter-usage";
+} from "../../src/loop/governess-usage";
 
 const claudeLine = (
   ts: string,
@@ -22,6 +22,7 @@ test("summarizeClaude sums usage across assistant turns and tracks context", () 
       output_tokens: 100,
       cache_read_input_tokens: 1000,
       cache_creation_input_tokens: 50,
+      cache_creation: { ephemeral_1h_input_tokens: 40 },
     }),
     claudeLine("2026-07-04T00:05:00Z", {
       input_tokens: 5,
@@ -36,6 +37,7 @@ test("summarizeClaude sums usage across assistant turns and tracks context", () 
   expect(u.outputTokens).toBe(300);
   expect(u.cacheReadTokens).toBe(3000);
   expect(u.cacheCreateTokens).toBe(50);
+  expect(u.cacheCreate1hTokens).toBe(40);
   expect(u.totalTokens).toBe(15 + 300 + 3000 + 50);
   // context ≈ latest turn's input context: 5 + 2000 + 0
   expect(u.contextTokens).toBe(2005);
@@ -172,7 +174,7 @@ test("summarizeClaude counts agent messages and genuine human prompts", () => {
     }),
     JSON.stringify({
       type: "user",
-      message: { role: "user", content: "babysitter: Codex is at/near session limit" },
+      message: { role: "user", content: "governess: Codex is at/near session limit" },
     }),
     JSON.stringify({
       type: "user",
@@ -269,7 +271,7 @@ test("summarizeCodex counts messages by role", () => {
       payload: {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: "/compact babysitter: resume" }],
+        content: [{ type: "input_text", text: "/compact governess: resume" }],
       },
     }),
     JSON.stringify({ payload: { type: "message", role: "assistant", content: [] } }),

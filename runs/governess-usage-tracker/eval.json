@@ -1,0 +1,50 @@
+{
+  "task_id": "governess-usage-tracker",
+  "feature": "governess-usage-tracker",
+  "timestamp": "2026-07-25T20:52:00Z",
+  "checks": {
+    "functional": {
+      "passed": 7,
+      "failed": 0,
+      "details": [
+        "config credential fallback after absent or rejected explicit token",
+        "aggregate dynamic quota window precedence",
+        "no fabricated Codex session window",
+        "numeric and compact-text reset handling",
+        "dated longest-prefix pricing catalog selection",
+        "Claude API USD and Codex credit replacement estimates",
+        "current-loop transcript scope with pricing coverage"
+      ]
+    },
+    "ui": {
+      "passed": 4,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "EST RUN / H and Sigma est labels are explicit",
+        "Claude shows S84/W41 with reset countdowns",
+        "Codex shows W17 only",
+        "live agent rows are 179 visible code points"
+      ]
+    },
+    "performance": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "existing cached Usage Tracker stats endpoint remains on the normal tick path"
+      ]
+    },
+    "regression": {
+      "passed": 194,
+      "failed": 0,
+      "details": [
+        "all governess and tmux tests passed",
+        "compiled binary passed",
+        "git diff check passed",
+        "live pane replacement preserved both agent PIDs"
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "The deployed loop-34 board matches the authenticated Usage Tracker API, distinguishes Claude 1-hour cache writes, and prices both current models at 100 percent coverage without using account-wide totals."
+}

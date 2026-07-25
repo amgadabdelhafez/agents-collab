@@ -13,10 +13,15 @@ import {
   runCodexTmuxProxy,
 } from "./loop/codex-tmux-proxy";
 import {
-  BABYSIT_SUBCOMMAND,
-  resolveBabysitConfig,
-  runBabysitter,
-} from "./loop/babysitter";
+  GOVERNESS_SUBCOMMAND,
+  resolveGovernessConfig,
+  runGoverness,
+} from "./loop/governess";
+import {
+  LEGACY_GOVERNESS_SUBCOMMAND,
+  withLegacyGovernessEnv,
+} from "./loop/legacy-governess-compat";
+import { runGovernessUtilityCommand } from "./loop/governess-replay";
 import { cliDeps } from "./loop/deps";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { Agent, Options } from "./loop/types";
@@ -103,18 +108,26 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
     await runHookEmit(source, hookFile);
     return true;
   }
-  if (argv[0] === BABYSIT_SUBCOMMAND) {
+  if (
+    argv[0] === GOVERNESS_SUBCOMMAND ||
+    argv[0] === LEGACY_GOVERNESS_SUBCOMMAND
+  ) {
     const runId = argv[1];
     if (!runId) {
-      throw new Error("Usage: loop __babysit <run-id>");
+      throw new Error("Usage: loop __governess <run-id>");
     }
-    await runBabysitter(resolveBabysitConfig(runId, process.env));
+    await runGoverness(
+      resolveGovernessConfig(runId, withLegacyGovernessEnv(process.env))
+    );
     return true;
   }
   return false;
 };
 
 export const runCli = async (argv: string[]): Promise<void> => {
+  if (runGovernessUtilityCommand(argv)) {
+    return;
+  }
   if (await runHiddenSubcommand(argv)) {
     return;
   }

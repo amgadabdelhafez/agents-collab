@@ -6,7 +6,7 @@ import type {
 } from "./types";
 
 /**
- * Deterministic stuck-detector for the babysitter feature.
+ * Deterministic stuck-detector for the governess feature.
  *
  * All functions are pure: no I/O and no wall-clock reads. Time is always
  * supplied by the caller via `nowMs` and ISO timestamps, which keeps the

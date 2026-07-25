@@ -487,7 +487,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
 });
 
-test("runInTmux writes paired session refs before starting babysitter", async () => {
+test("runInTmux writes paired session refs before starting governess", async () => {
   const events: string[] = [];
   const home = makeTempHome();
   let sessionStarted = false;
@@ -500,14 +500,14 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
     status: "running",
   });
   const opts = makePairedOptions({
-    babysit: true,
-    babysitCooldownSeconds: 300,
-    babysitHeight: "25%",
-    babysitIdleSeconds: 120,
-    babysitLlmTrace: "1",
-    babysitMaxRecoveries: 3,
-    babysitModel: "qwen-test",
-    babysitUrl: "http://127.0.0.1:8082",
+    governess: true,
+    governessCooldownSeconds: 300,
+    governessHeight: "25%",
+    governessIdleSeconds: 120,
+    governessLlmTrace: "1",
+    governessMaxRecoveries: 3,
+    governessModel: "qwen-test",
+    governessUrl: "http://127.0.0.1:8082",
   });
   const runDir = join(home, "run");
   const repoDir = join(home, "repo");
@@ -530,11 +530,11 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
       ].join("\n")
     );
     const delegated = await runInTmux(
-      ["--tmux", "--proof", "verify with tests", "--babysit"],
+      ["--tmux", "--proof", "verify with tests", "--governess"],
       {
         capturePane: () => "",
         cwd: repoDir,
-        env: {},
+        env: { LOOP_GOVERNESS_AGENT_RENAME: "1" },
         findBinary: () => true,
         getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
         getLastCodexThreadId: () => "codex-thread-1",
@@ -556,11 +556,11 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
         startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args: string[]) => {
-          if (args.some((arg) => arg.includes("__babysit"))) {
+          if (args.some((arg) => arg.includes("__governess"))) {
             events.push(
-              `spawn-babysit:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneBabysit ?? ""}`
+              `spawn-governess:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneGoverness ?? ""}`
             );
-            events.push(`babysit-command:${args.at(-1) ?? ""}`);
+            events.push(`governess-command:${args.at(-1) ?? ""}`);
           }
           if (args[0] === "tmux" && args[1] === "has-session") {
             return sessionStarted
@@ -575,7 +575,7 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
         updateRunManifest: (_path, update) => {
           manifest = update(manifest) ?? manifest;
           events.push(
-            `manifest:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneBabysit ?? ""}`
+            `manifest:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneGoverness ?? ""}`
           );
           return manifest;
         },
@@ -585,10 +585,15 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
 
     expect(delegated).toBe(true);
     expect(events).toContain("manifest:codex-thread-1:codex:");
-    expect(events).toContain("spawn-babysit:codex-thread-1:codex:");
+    expect(events).toContain("spawn-governess:codex-thread-1:codex:");
     expect(
       events.some((event) =>
-        event.includes("'LOOP_BABYSIT_LLM_TRACE=1'")
+        event.includes("'LOOP_GOVERNESS_LLM_TRACE=1'")
+      )
+    ).toBe(true);
+    expect(
+      events.some((event) =>
+        event.includes("'LOOP_GOVERNESS_AGENT_RENAME=1'")
       )
     ).toBe(true);
     expect(
@@ -602,9 +607,9 @@ test("runInTmux writes paired session refs before starting babysitter", async ()
       )
     ).toBe(true);
     expect(events.indexOf("manifest:codex-thread-1:codex:")).toBeLessThan(
-      events.indexOf("spawn-babysit:codex-thread-1:codex:")
+      events.indexOf("spawn-governess:codex-thread-1:codex:")
     );
-    expect(manifest.tmuxPaneBabysit).toBe("repo-loop-1:0.2");
+    expect(manifest.tmuxPaneGoverness).toBe("repo-loop-1:0.2");
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
