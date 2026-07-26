@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readDelegationEvents } from "./delegation-policy";
 import {
   readUtilityJobsForObservability,
   type UtilityJobSnapshot,
@@ -59,8 +60,19 @@ export interface UtilityObservabilitySnapshot {
   latestState?: string;
   model?: string;
   queued: number;
+  routing: UtilityRoutingObservability;
   transcript: UtilityTranscriptEntry[];
   usage: UtilityObservabilityUsage;
+}
+
+export interface UtilityRoutingObservability {
+  autoRouted: number;
+  considered: number;
+  explicitRouted: number;
+  pending: number;
+  reasons: Record<string, number>;
+  routed: number;
+  skipped: number;
 }
 
 const emptyUsage = (): UtilityObservabilityUsage => ({
@@ -73,6 +85,44 @@ const emptyUsage = (): UtilityObservabilityUsage => ({
   toolCalls: 0,
   totalTokens: 0,
 });
+
+const routingSnapshot = (
+  runDir: string,
+  jobs: UtilityJobSnapshot[]
+): UtilityRoutingObservability => {
+  const events = readDelegationEvents(runDir);
+  const autoRouted = events.filter(
+    (event) => event.disposition === "auto-routed"
+  ).length;
+  const explicitRouted = events.filter(
+    (event) => event.disposition === "explicit-routed"
+  ).length;
+  const routedJobs = jobs.filter(
+    (job) => job.decision?.target === "utility"
+  );
+  const skippedJobs = jobs.filter(
+    (job) => job.decision && job.decision.target !== "utility"
+  );
+  const reasons = skippedJobs.reduce<Record<string, number>>(
+    (counts, job) => {
+      const reason = job.decision?.reason;
+      if (reason) {
+        counts[reason] = (counts[reason] ?? 0) + 1;
+      }
+      return counts;
+    },
+    {}
+  );
+  return {
+    autoRouted,
+    considered: jobs.length,
+    explicitRouted,
+    pending: jobs.filter((job) => !job.decision).length,
+    reasons,
+    routed: routedJobs.length,
+    skipped: skippedJobs.length,
+  };
+};
 
 export const sanitizeUtilityPaneText = (value: string): string =>
   value
@@ -202,7 +252,7 @@ const jobRequestEntry = (job: UtilityJobSnapshot): UtilityTranscriptEntry => ({
   at: job.request.createdAt,
   jobId: job.jobId,
   kind: "request",
-  label: `${job.request.requester.toUpperCase()}→GLM`,
+  label: `${job.request.requester.toUpperCase()}→WORKER`,
   text: sanitizeUtilityPaneText(job.request.objective),
 });
 
@@ -222,7 +272,7 @@ const jobResultEntry = (
     at: job.updatedAt,
     jobId: job.jobId,
     kind: "response",
-    label: failed ? "GLM FAIL" : "GLM OK",
+    label: failed ? "WORKER FAIL" : "WORKER OK",
     text: sanitizeUtilityPaneText(detail),
     ...(usage ? { usage } : {}),
   };
@@ -249,7 +299,7 @@ const toolEntries = (runDir: string): UtilityTranscriptEntry[] =>
           at,
           jobId,
           kind: "tool" as const,
-          label: "GLM TOOL",
+          label: "WORKER TOOL",
           text: `${sanitizeUtilityPaneText(tool)} ${outcome}`,
         },
       ];
@@ -290,6 +340,15 @@ export const readUtilityObservability = (
       jobsTotal: 0,
       latestDetail: "no utility run directory",
       queued: 0,
+      routing: {
+        autoRouted: 0,
+        considered: 0,
+        explicitRouted: 0,
+        pending: 0,
+        reasons: {},
+        routed: 0,
+        skipped: 0,
+      },
       transcript: [],
       usage: emptyUsage(),
     };
@@ -340,6 +399,7 @@ export const readUtilityObservability = (
     queued: jobs.filter((job) =>
       ["pending-route", "routed-utility"].includes(job.state)
     ).length,
+    routing: routingSnapshot(runDir, allJobs),
     transcript: transcriptFor(runDir, jobs, usageEvents),
     usage: totals.usage,
   };

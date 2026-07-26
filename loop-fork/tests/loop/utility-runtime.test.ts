@@ -18,6 +18,7 @@ import {
   makeDelegationEvent,
 } from "../../src/loop/delegation-policy";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
+import { readUtilityObservability } from "../../src/loop/utility-observability";
 import {
   applyUtilityJobPatch,
   buildUtilityWorkerEnvironment,
@@ -34,6 +35,9 @@ import {
   transitionUtilityJob,
 } from "../../src/loop/utility-store";
 import { createUtilityToolBroker } from "../../src/loop/utility-tools";
+
+const ANSI_RE = /\u001b\[[0-9;]*m/g;
+const visiblePane = (value: string): string => value.replace(ANSI_RE, "");
 
 const completedEditProposal = async (
   repoRoot: string,
@@ -340,7 +344,7 @@ test("active estimate-less jobs cannot reserve beyond the run cost cap", async (
   }
 });
 
-test("safe key diagnostics persist in route status and the observer pane", async () => {
+test("safe key diagnostics persist in routing observability, not the output-only worker pane", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-diagnostic-"));
   const runDir = join(repoRoot, ".loop", "runs", "diagnostic-run");
   const keyFile = join(repoRoot, "openrouter.key");
@@ -382,9 +386,16 @@ test("safe key diagnostics persist in route status and the observer pane", async
     const pane = renderUtilityPane(runDir, {
       LOOP_UTILITY_API_KEY_FILE: keyFile,
     });
-    expect(pane).toContain("driver/utility-unavailable");
-    expect(pane).toContain("chmod 600");
+    expect(pane).toContain("waiting for first request");
+    expect(pane).not.toContain("driver/utility-unavailable");
+    expect(pane).not.toContain("chmod 600");
     expect(pane).not.toContain("never-render-this-secret");
+    expect(readUtilityObservability(runDir).routing).toMatchObject({
+      considered: 1,
+      reasons: { "utility-unavailable": 1 },
+      routed: 0,
+      skipped: 1,
+    });
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -424,7 +435,7 @@ test("spawn failure terminates the job instead of stranding routed utility work"
     );
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "utility worker process failed to start",
+        blocker: "worker process failed to start",
         status: "failed",
       },
       state: "failed",
@@ -469,7 +480,7 @@ test("an unclaimed routed job fails closed after its claim deadline", async () =
     );
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "utility worker did not claim the routed job",
+        blocker: "worker did not claim the routed job",
         status: "failed",
       },
       state: "failed",
@@ -534,7 +545,7 @@ test("a dead claimed worker fails immediately and releases its write scope", asy
     );
     expect(readUtilityJob(runDir, "dead-edit")).toMatchObject({
       result: {
-        blocker: "utility worker process is no longer alive",
+        blocker: "worker process is no longer alive",
         status: "failed",
       },
       state: "failed",
@@ -650,7 +661,7 @@ test("governess externally terminates a live worker past its runtime", async () 
     expect(terminated).toEqual([4444]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "utility job exceeded its runtime limit and was terminated",
+        blocker: "worker job exceeded its runtime limit and was terminated",
       },
       state: "failed",
     });
@@ -779,7 +790,7 @@ test("overlapping utility writes are not dispatched concurrently", async () => {
   }
 });
 
-test("utility pane reports current work, tool activity, usage, and idle state", () => {
+test("worker pane is a colored output-only request, tool, and response stream", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-utility-pane-"));
   try {
     expect(renderUtilityPane(runDir, {})).toContain(
@@ -890,34 +901,52 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
       { LOOP_UTILITY_API_KEY_FILE: "" },
       { columns: 120, rows: 20 }
     );
-    expect(pane).toContain("GLM-5.2 OFFLINE · idle · jobs 1 a0 q0 d1 f0");
-    expect(pane).toContain("USAGE 2 calls · 1 tools · 1,234 tok · $0.0044");
-    expect(pane).toContain("TOKENS in 900 · cache 500 · out 334");
-    expect(pane).toContain("RECENT JOBS · request / tool / result");
-    expect(pane).toContain("GLM TOOL inspect-");
+    expect(pane).toContain("\u001b[36m");
+    expect(pane).toContain("\u001b[34m");
+    expect(pane).toContain("\u001b[32m");
+    expect(pane).toContain("WORKER TOOL inspect-");
     expect(pane).toContain("search_repo ok 12ms");
-    expect(pane).toContain("CODEX→GLM inspect-");
+    expect(pane).toContain("CODEX→WORKER inspect-");
     expect(pane).toContain("read utility-runtime.ts lines 1221–1290");
-    expect(pane).toContain("GLM OK inspect- · 11s · 2c/1t");
-    expect(pane).toContain("1,234 tok · $0.0044");
+    expect(pane).toContain("WORKER OK inspect-");
+    expect(pane).toContain("Inspected the requested lines");
     expect(pane).toContain("Found the active configuration");
-    expect(pane).not.toContain("Inspected the requested lines");
-    expect(pane).toContain("ROUTE utility/eligible · auto 1 · exp 0 · miss 1");
-    expect(pane).not.toContain("\u001b[31m");
+    expect(pane).not.toContain("USAGE");
+    expect(pane).not.toContain("TOKENS");
+    expect(pane).not.toContain("ROUTE");
+    expect(pane).not.toContain("1,234 tok");
+
+    const timestampOnly = renderUtilityPane(
+      runDir,
+      { LOOP_UTILITY_API_KEY_FILE: "" },
+      { columns: 58, rows: 3 }
+    )
+      .split("\n")
+      .map(visiblePane);
+    expect(timestampOnly).toHaveLength(3);
+    expect(
+      timestampOnly.every((line) => /^\d{2}:\d{2}:\d{2} /.test(line))
+    ).toBe(true);
 
     const compact = renderUtilityPane(
       runDir,
       { LOOP_UTILITY_API_KEY_FILE: "" },
       { columns: 58, rows: 10 }
     );
-    expect(compact.split("\n")).toHaveLength(10);
-    expect(compact.split("\n").every((line) => line.length <= 58)).toBe(true);
-    expect(compact).toContain("REQ inspect-");
-    expect(compact).toContain("TOOL search_repo ok 12ms");
-    expect(compact).toContain(
-      "OK inspect- · 11s · 2c/1t · 1,234 tok · $0.0044"
+    expect(compact.split("\n").length).toBeGreaterThanOrEqual(5);
+    expect(compact.split("\n").length).toBeLessThanOrEqual(10);
+    expect(
+      compact
+        .split("\n")
+        .every((line) => visiblePane(line).length <= 58)
+    ).toBe(true);
+    expect(compact).toContain("CODEX→WORKER inspect-");
+    expect(compact).toContain("WORKER TOOL inspect-");
+    expect(compact).toContain("search_repo ok 12ms");
+    expect(compact).toContain("WORKER OK inspect-");
+    expect(visiblePane(compact).replaceAll(/\s+/g, " ")).toContain(
+      "Found the active configuration"
     );
-    expect(compact).toContain("Found the active configuration");
 
     appendFileSync(join(runDir, "utility", "jobs.jsonl"), "{torn\n");
     expect(() =>
@@ -928,11 +957,13 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
       )
     ).not.toThrow();
     expect(
-      renderUtilityPane(
-        runDir,
-        { LOOP_UTILITY_API_KEY_FILE: "" },
-        { columns: 58, rows: 20 }
-      )
+      visiblePane(
+        renderUtilityPane(
+          runDir,
+          { LOOP_UTILITY_API_KEY_FILE: "" },
+          { columns: 58, rows: 20 }
+        )
+      ).replaceAll(/\s+/g, " ")
     ).toContain("Found the active configuration");
   } finally {
     rmSync(runDir, { recursive: true, force: true });
@@ -970,7 +1001,7 @@ test("utility pane keeps a failed worker response visible within its viewport", 
         checks: [],
         filesChanged: [],
         status: "failed",
-        summary: "Utility worker failed closed.",
+        summary: "Worker failed closed.",
       },
     });
 
@@ -981,9 +1012,9 @@ test("utility pane keeps a failed worker response visible within its viewport", 
     );
     const lines = pane.split("\n");
     expect(lines.length).toBeLessThanOrEqual(12);
-    expect(lines.length).toBeGreaterThan(5);
-    expect(lines.every((line) => line.length <= 52)).toBe(true);
-    expect(pane).toContain("GLM FAIL failed-p");
+    expect(lines.length).toBeGreaterThanOrEqual(5);
+    expect(lines.every((line) => visiblePane(line).length <= 52)).toBe(true);
+    expect(pane).toContain("WORKER FAIL failed-p");
     expect(pane).toContain("Worker token cap exceeded");
 
     const tiny = renderUtilityPane(
@@ -992,7 +1023,7 @@ test("utility pane keeps a failed worker response visible within its viewport", 
       { columns: 20, rows: 5 }
     ).split("\n");
     expect(tiny).toHaveLength(5);
-    expect(tiny.every((line) => line.length <= 20)).toBe(true);
+    expect(tiny.every((line) => visiblePane(line).length <= 20)).toBe(true);
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
@@ -1042,7 +1073,7 @@ test("a new governess epoch fences an orphaned utility claim", async () => {
     expect(terminated).toEqual([4646]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "utility claim belongs to a stale governess epoch",
+        blocker: "worker claim belongs to a stale governess epoch",
         status: "failed",
       },
       state: "failed",
@@ -1263,7 +1294,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
       expect.arrayContaining([
         expect.objectContaining({
           kind: "message",
-          message: expect.stringContaining("Utility result job-1"),
+          message: expect.stringContaining("Worker result job-1"),
           source: "utility",
           target: "codex",
         }),
@@ -1330,7 +1361,7 @@ test("utility worker rejects prose-only completion without repository evidence",
     });
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "utility task completed without repository tool evidence",
+        blocker: "worker task completed without repository tool evidence",
         status: "failed",
       },
       state: "failed",
@@ -1416,7 +1447,7 @@ test("a failing focused check cannot satisfy command completion evidence", async
     });
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "utility command completed without a successful focused check",
+        blocker: "worker command completed without a successful focused check",
         status: "failed",
       },
       state: "failed",

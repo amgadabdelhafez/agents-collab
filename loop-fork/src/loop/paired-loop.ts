@@ -8,7 +8,10 @@ import {
   mandatoryUtilityDelegationGuidance,
   quotedBridgeTool,
 } from "./bridge-guidance";
-import { formatBridgeDeliveryMessage } from "./bridge-message-format";
+import {
+  bridgeSourceLabel,
+  formatBridgeDeliveryMessage,
+} from "./bridge-message-format";
 import type { BridgeMessage } from "./bridge-store";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
@@ -188,7 +191,7 @@ const forwardBridgePrompt = (entry: BridgeMessage): string => {
           "Do not acknowledge receipt without new information.",
         ]
       : [
-          `Message from ${capitalize(source)} via the loop bridge:`,
+          `Message from ${bridgeSourceLabel(source)} via the loop bridge:`,
           message.trim(),
           "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
           replyGuidance,

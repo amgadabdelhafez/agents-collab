@@ -656,6 +656,23 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "-y",
       "8",
     ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      "%42",
+      "@loop_label",
+      "worker.repo-loop-1",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "select-pane",
+      "-t",
+      "%42",
+      "-T",
+      "worker.repo-loop-1",
+    ]);
     expect(manifest.tmuxPaneLeft).toBe("%40");
     expect(manifest.tmuxPaneUtility).toBe("%42");
     expect(manifest.tmuxPaneRight).toBe("%41");

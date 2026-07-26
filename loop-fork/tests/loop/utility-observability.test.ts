@@ -210,6 +210,12 @@ test("utility observability totals worker usage and builds a safe transcript", (
       latestState: "failed",
       model: "z-ai/glm-5.2",
       queued: 0,
+      routing: {
+        considered: 2,
+        pending: 0,
+        routed: 2,
+        skipped: 0,
+      },
       usage: {
         cachedInputTokens: 1000,
         costUsd: 0.007,
@@ -222,14 +228,14 @@ test("utility observability totals worker usage and builds a safe transcript", (
       },
     });
     expect(snapshot.transcript.map((entry) => entry.label)).toEqual([
-      "CLAUDE→GLM",
-      "GLM TOOL",
-      "GLM OK",
-      "CODEX→GLM",
-      "GLM FAIL",
+      "CLAUDE→WORKER",
+      "WORKER TOOL",
+      "WORKER OK",
+      "CODEX→WORKER",
+      "WORKER FAIL",
     ]);
     expect(
-      snapshot.transcript.find((entry) => entry.label === "GLM OK")?.usage
+      snapshot.transcript.find((entry) => entry.label === "WORKER OK")?.usage
     ).toEqual({
       costUsd: 0.003,
       durationMs: 12_000,
