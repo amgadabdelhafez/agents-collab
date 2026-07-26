@@ -1,0 +1,64 @@
+{
+  "task_id": "claude-pane-delivery-confirmation",
+  "feature": "claude-pane-delivery-confirmation",
+  "timestamp": "2026-07-26T22:35:58Z",
+  "evaluator": "codex-independent-eval",
+  "verdict": "pass",
+  "checks": {
+    "delivery_confirmation": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "Claude delivery snapshots the resolved session transcript version before pane injection.",
+        "A delivery is acknowledged only after the transcript size/mtime version advances and the latest Claude composer is explicitly observed empty.",
+        "Missing transcript proof, unchanged transcript state, capture failure, or an absent prompt cannot produce a delivered ledger event.",
+        "An unconfirmed attempt returns false and leaves the original bridge message pending for a later worker attempt.",
+        "Non-Claude tmux targets retain the prior send-and-ack path and do not invoke Claude transcript confirmation."
+      ]
+    },
+    "fallback_and_drafts": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "The fallback waits through the full eight-poll grace window before retrying a stranded composer.",
+        "Fallback is permitted only when the latest composer exactly matches the injected message's first-line header, including its unique bridge-message ID prefix.",
+        "The fallback appends one literal space and sends exactly one additional Enter, then requires confirmation again.",
+        "Readiness checks only the latest Claude prompt, so an older empty prompt cannot override a newer human draft.",
+        "An independent adversarial probe with a post-injection human draft returned false with one Enter, no space retry, and the ledger message still pending."
+      ]
+    },
+    "concurrency": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "Immediate delivery and worker draining share an exclusive per-message claim file.",
+        "The claimant rechecks pending state before injection, preventing acknowledgement or submission after another path has completed delivery.",
+        "The immediate/worker race regression records exactly one Enter, one delivered event, and no pending copy."
+      ]
+    },
+    "transcript_lookup": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "Claude session identifiers are allowlisted to bounded alphanumeric, underscore, and hyphen tokens, rejecting traversal separators.",
+        "Direct and fallback transcript candidates must be non-symlink regular files.",
+        "Canonical transcript paths must remain contained under the canonical Claude projects directory.",
+        "Regression coverage rejects both a traversal-shaped session id and a transcript symlink to an external file."
+      ]
+    },
+    "verification": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "Independent complete bridge suite passed 67/67.",
+        "bun run build passed.",
+        "git diff --check passed."
+      ]
+    }
+  },
+  "known_limitations": [
+    "Live loop-47 control-path refresh and pane-ID/PID preservation are operational acceptance checks separate from this source-level evaluation.",
+    "Transcript version proof intentionally uses file size plus modification time rather than parsing or persisting transcript contents."
+  ],
+  "notes": "PASS. Independent review initially found latest-prompt, post-injection human-draft, transcript-path, and missing-pane-proof gaps. Each was fixed and regression-covered before this verdict."
+}
