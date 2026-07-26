@@ -781,15 +781,19 @@ test("overlapping utility writes are not dispatched concurrently", async () => {
 test("utility pane reports current work, tool activity, usage, and idle state", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-utility-pane-"));
   try {
-    expect(renderUtilityPane(runDir, {})).toContain("No utility jobs yet.");
+    expect(renderUtilityPane(runDir, {})).toContain(
+      "waiting for first request"
+    );
     appendUtilityRouteRequest(
       runDir,
       createUtilityRouteRequest({
         acceptanceCriteria: ["locate the config"],
         authority: {},
+        createdAt: "2026-07-25T11:59:59.000Z",
         id: "inspect-config",
         kind: "inspect",
-        objective: "Locate the active lower-agent configuration",
+        objective:
+          "Locate the active lower-agent configuration\u001b[31m without exposing secrets",
         readScope: ["src"],
         requester: "codex",
         requiredCapabilities: ["inspect"],
@@ -797,6 +801,25 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
         writeScope: [],
       })
     );
+    activateUtilityEpoch(runDir, 1);
+    transitionUtilityJob(runDir, "inspect-config", "routed-utility", {
+      at: "2026-07-25T11:59:59.100Z",
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "openrouter-glm",
+      },
+      routeEpoch: 1,
+    });
+    claimUtilityJob(runDir, 1, {
+      at: "2026-07-25T11:59:59.200Z",
+      jobId: "inspect-config",
+      workerId: "test-worker",
+      workerPid: process.pid,
+    });
+    transitionUtilityJob(runDir, "inspect-config", "running", {
+      at: "2026-07-25T11:59:59.300Z",
+    });
     writeFileSync(
       join(runDir, "utility", "tool-events.jsonl"),
       `${JSON.stringify({
@@ -835,23 +858,114 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
       `${JSON.stringify({
         at: "2026-07-25T12:00:01.000Z",
         jobId: "inspect-config",
+        model: "z-ai/glm-5.2",
+        modelCalls: 2,
         status: "completed",
-        usage: { cost: 0.004_416, totalTokens: 1234 },
+        toolCalls: 1,
+        usage: {
+          cachedInputTokens: 500,
+          cost: 0.004_416,
+          inputTokens: 900,
+          outputTokens: 334,
+          totalTokens: 1234,
+        },
       })}\n`
     );
-
-    const pane = renderUtilityPane(runDir, {
-      LOOP_UTILITY_API_KEY_FILE: "",
+    transitionUtilityJob(runDir, "inspect-config", "completed", {
+      at: "2026-07-25T12:00:02.000Z",
+      result: {
+        artifactRefs: [],
+        checks: [],
+        filesChanged: [],
+        status: "completed",
+        summary:
+          "Found the active configuration in src/loop/utility-runtime.ts; no secret values were read.",
+      },
     });
-    expect(pane).toContain("STATUS  active=0 queued=1 done=0 failed=0");
-    expect(pane).toContain("NOW  inspect- pending-route");
-    expect(pane).toContain("TOOL  search_repo  ok  12ms");
-    expect(pane).toContain("LAST  completed  1,234 tok  $0.0044");
+
+    const pane = renderUtilityPane(
+      runDir,
+      { LOOP_UTILITY_API_KEY_FILE: "" },
+      { columns: 120, rows: 20 }
+    );
+    expect(pane).toContain(
+      "STATUS jobs=1 active=0 queued=0 done=1 failed=0"
+    );
+    expect(pane).toContain("CALLS model=2 tools=1 cost=$0.0044");
+    expect(pane).toContain(
+      "TOKENS total=1,234 in=900 cache=500 out=334"
+    );
+    expect(pane).toContain("NOW idle; waiting for governess routing");
+    expect(pane).toContain("GLM TOOL inspect-");
+    expect(pane).toContain("search_repo ok 12ms");
+    expect(pane).toContain("CODEX→GLM inspect-");
+    expect(pane).toContain("GLM→MAIN inspect-");
+    expect(pane).toContain("Found the active configuration");
+    expect(pane).toContain("LAST completed 1,234 tok $0.0044");
     expect(pane).toContain("DELEG auto=1 explicit=0 missed=1 watch=0");
     expect(pane).toContain("last=codex/codex-tool-hook-una...");
-    expect(pane).toContain("CONFIG  key file loading is disabled");
+    expect(pane).toContain("ROUTE utility/utility-eligible");
+    expect(pane).not.toContain("\u001b[31m");
   } finally {
     rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("utility pane keeps a failed worker response visible within its viewport", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-utility-pane-failure-"));
+  try {
+    const request = createUtilityRouteRequest({
+      acceptanceCriteria: ["return a bounded result"],
+      authority: {},
+      createdAt: "2026-07-25T13:00:00.000Z",
+      id: "failed-pane-job",
+      kind: "inspect",
+      objective: "Inspect one source slice without widening scope",
+      readScope: ["src"],
+      requester: "claude",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    });
+    appendUtilityRouteRequest(runDir, request);
+    transitionUtilityJob(runDir, request.id, "routed-utility", {
+      at: "2026-07-25T13:00:00.100Z",
+      decision: { reason: "utility-eligible", target: "utility" },
+      routeEpoch: 1,
+    });
+    transitionUtilityJob(runDir, request.id, "failed", {
+      at: "2026-07-25T13:00:01.000Z",
+      result: {
+        artifactRefs: [],
+        blocker:
+          "Worker token cap exceeded before a source-backed response could be produced.",
+        checks: [],
+        filesChanged: [],
+        status: "failed",
+        summary: "Utility worker failed closed.",
+      },
+    });
+
+    const pane = renderUtilityPane(
+      runDir,
+      { LOOP_UTILITY_API_KEY_FILE: "" },
+      { columns: 52, rows: 12 }
+    );
+    const lines = pane.split("\n");
+    expect(lines).toHaveLength(11);
+    expect(lines.every((line) => line.length <= 52)).toBe(true);
+    expect(pane).toContain("GLM✕MAIN failed-p");
+    expect(pane).toContain("Worker token cap exceeded");
+
+    const tiny = renderUtilityPane(
+      runDir,
+      { LOOP_UTILITY_API_KEY_FILE: "" },
+      { columns: 20, rows: 5 }
+    ).split("\n");
+    expect(tiny).toHaveLength(5);
+    expect(tiny.every((line) => line.length <= 20)).toBe(true);
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
   }
 });
 

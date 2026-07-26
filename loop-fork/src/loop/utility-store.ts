@@ -491,6 +491,38 @@ export const readUtilityJobs = (runDir: string): UtilityJobSnapshot[] => {
   return allSnapshots(readEvents(paths.eventsFile));
 };
 
+// The authoritative store reader above intentionally fails closed on any
+// malformed event. A status display has a different job: preserve already
+// durable history when the final append was torn, without ever feeding that
+// partial history back into routing or transitions. Interior corruption still
+// yields an empty display snapshot because its ordering cannot be trusted.
+export const readUtilityJobsForObservability = (
+  runDir: string
+): UtilityJobSnapshot[] => {
+  const { eventsFile } = utilityRunPaths(runDir);
+  if (!existsSync(eventsFile)) {
+    return [];
+  }
+  try {
+    const lines = readFileSync(eventsFile, "utf8")
+      .split("\n")
+      .filter((line) => line.trim());
+    const events: UtilityJobEvent[] = [];
+    for (const [index, line] of lines.entries()) {
+      try {
+        const event = JSON.parse(line) as UtilityJobEvent;
+        assertEventShape(event);
+        events.push(event);
+      } catch {
+        return index === lines.length - 1 ? allSnapshots(events) : [];
+      }
+    }
+    return allSnapshots(events);
+  } catch {
+    return [];
+  }
+};
+
 export const transitionUtilityJob = (
   runDir: string,
   jobId: string,

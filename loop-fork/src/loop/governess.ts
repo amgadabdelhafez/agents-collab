@@ -116,6 +116,10 @@ import {
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
+import {
+  readUtilityObservability,
+  type UtilityObservabilitySnapshot,
+} from "./utility-observability";
 import type {
   Agent,
   AgentLiveness,
@@ -1254,6 +1258,7 @@ interface BoardMeta {
   summary: string;
   tickMs: number;
   uptimeMs: number;
+  utility?: UtilityObservabilitySnapshot;
   waitingForYou: WaitingForYou;
 }
 
@@ -1760,6 +1765,87 @@ const renderAgentRow = (
   ].join(" ")}`;
 };
 
+const UTILITY_COL = {
+  calls: 6,
+  cost: 10,
+  detail: 58,
+  jobs: 20,
+  model: 16,
+  name: 7,
+  state: 10,
+  tokens: 25,
+  tools: 6,
+} as const;
+
+const UTILITY_COLUMNS: [string, number][] = [
+  ["LOWER", UTILITY_COL.name],
+  ["STATE", UTILITY_COL.state],
+  ["MODEL", UTILITY_COL.model],
+  ["JOBS A/Q/D/F", UTILITY_COL.jobs],
+  ["CALLS", UTILITY_COL.calls],
+  ["TOOLS", UTILITY_COL.tools],
+  ["TOKENS I/C/O", UTILITY_COL.tokens],
+  ["COST", UTILITY_COL.cost],
+  ["DETAIL", UTILITY_COL.detail],
+];
+
+const utilityTableHeader = paint(
+  ANSI.dim,
+  ` ${UTILITY_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
+);
+
+const utilityState = (snapshot: UtilityObservabilitySnapshot): string => {
+  if (snapshot.active > 0) {
+    return "active";
+  }
+  if (snapshot.queued > 0) {
+    return "queued";
+  }
+  if (snapshot.failed > 0 && snapshot.completed === 0) {
+    return "failed";
+  }
+  return "idle";
+};
+
+const utilityStateColor = (state: string): string =>
+  state === "active"
+    ? ANSI.green
+    : state === "failed"
+      ? ANSI.red
+      : state === "idle"
+        ? ANSI.dim
+        : ANSI.yellow;
+
+const utilityCostCell = (cost: number): string =>
+  cost > 0 ? `$${cost.toFixed(cost < 0.1 ? 4 : 2)}` : "—";
+
+const renderUtilityRow = (snapshot: UtilityObservabilitySnapshot): string => {
+  const state = utilityState(snapshot);
+  const usage = snapshot.usage;
+  const jobs = `${snapshot.jobsTotal} a${snapshot.active} q${snapshot.queued} d${snapshot.completed} f${snapshot.failed}`;
+  const tokens = `${tokenCell(usage.totalTokens)} i${tokenCell(usage.inputTokens)} c${tokenCell(usage.cachedInputTokens)} o${tokenCell(usage.outputTokens)}`;
+  const detail = `${snapshot.latestJobId?.slice(0, 8) ?? "—"} ${snapshot.latestDetail}`;
+  return ` ${[
+    colorCell(ANSI.green, "utility", UTILITY_COL.name),
+    colorCell(utilityStateColor(state), `● ${state}`, UTILITY_COL.state),
+    colorCell(
+      ANSI.green,
+      snapshot.model ? shortLocalModel(snapshot.model) : "glm-5.2",
+      UTILITY_COL.model
+    ),
+    fitCell(jobs, UTILITY_COL.jobs),
+    colorCell(ANSI.yellow, String(usage.modelCalls), UTILITY_COL.calls),
+    colorCell(ANSI.yellow, String(usage.toolCalls), UTILITY_COL.tools),
+    colorCell(ANSI.yellow, tokens, UTILITY_COL.tokens),
+    colorCell(ANSI.yellow, utilityCostCell(usage.costUsd), UTILITY_COL.cost),
+    fitCell(detail, UTILITY_COL.detail),
+  ].join(" ")}`;
+};
+
+const renderUtilityStatus = (
+  snapshot: UtilityObservabilitySnapshot | undefined
+): string[] => (snapshot ? [utilityTableHeader, renderUtilityRow(snapshot)] : []);
+
 const localLlmUsageCells = (usage: LocalLlmUsage): string[] => {
   const calls =
     usage.calls > 0
@@ -2216,9 +2302,6 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   return parts.join(" · ");
 };
 
-const SUMMARY_LINE_WIDTH = 180;
-const SUMMARY_TOTAL_LINES = 8;
-const SUMMARY_LABEL_RE = /^(project|objective|progress|next)\s*:\s*/i;
 const SPACE_RE = /\s+/;
 const SPACE_GLOBAL_RE = /\s+/g;
 const BRIDGE_LATEST_WIDTH = 64;
@@ -2704,54 +2787,17 @@ const renderLocalLlmUsageRow = (
   ].join(" ")}`;
 };
 
-const markTruncated = (line: string, width: number): string => {
-  if (width <= 3) {
-    return ".".repeat(Math.max(0, width));
-  }
-  if (line.length + 3 <= width) {
-    return `${line}...`;
-  }
-  return `${line.slice(0, width - 3)}...`;
-};
-
-// Word-wrap a paragraph to `width`-char lines, capped at `maxLines`.
-const wrapText = (text: string, width: number, maxLines: number): string[] => {
-  const lines: string[] = [];
-  let current = "";
-  for (const word of text.split(SPACE_RE)) {
-    if (!word) {
-      continue;
-    }
-    if (current && current.length + word.length + 1 > width) {
-      lines.push(current);
-      current = word;
-      if (lines.length >= maxLines) {
-        lines[lines.length - 1] = markTruncated(lines[lines.length - 1], width);
-        return lines;
-      }
-    } else {
-      current = current ? `${current} ${word}` : word;
-    }
-  }
-  if (current && lines.length < maxLines) {
-    lines.push(current);
-  }
-  return lines;
-};
-
 const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
   const paramCells = localLlmParamsCell(meta.judgeMode);
   const paramParts: LocalFooterPart[] = [
     { color: ANSI.blue, text: "llm params" },
     ...paramCells.map((text) => ({ color: ANSI.blue, text })),
   ];
-  const summaryLines = renderSummaryBody(meta.summary);
   if (maxRows === undefined) {
     return [
       localLlmTableHeader(),
       ...meta.llmJudges.map((judge) => renderLocalLlmUsageRow(judge, meta)),
       renderLocalFooterLine(paramParts),
-      ...summaryLines,
     ];
   }
   if (maxRows <= 0) {
@@ -2760,7 +2806,7 @@ const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
   if (maxRows === 1) {
     return [localLlmTableHeader()];
   }
-  const reserved = 2 + Math.min(4, summaryLines.length);
+  const reserved = 2;
   const judgeBudget = Math.max(0, maxRows - reserved);
   const overflow = meta.llmJudges.length > judgeBudget;
   const visibleCount = overflow
@@ -2782,66 +2828,7 @@ const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
     ...judgeLines,
     renderLocalFooterLine(paramParts),
   ];
-  return [
-    ...fixed,
-    ...summaryLines.slice(0, Math.max(0, maxRows - fixed.length)),
-  ];
-};
-
-// Render the structured summary, preserving its section lines (Project /
-// Objective / Progress / Next), wrapping long ones and capping total height.
-const summaryLineBudget = (
-  line: string
-): { maxLines: number; width: number } => {
-  const label = line.match(SUMMARY_LABEL_RE)?.[1]?.toLowerCase();
-  if (label === "project") {
-    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
-  }
-  if (label === "objective") {
-    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
-  }
-  if (label === "progress") {
-    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
-  }
-  if (label === "next") {
-    return { maxLines: 2, width: SUMMARY_LINE_WIDTH };
-  }
-  return { maxLines: 1, width: SUMMARY_LINE_WIDTH };
-};
-
-const renderSummaryBody = (summary: string): string[] => {
-  const source = summary
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const out: string[] = [];
-  for (const line of source) {
-    const isLabel = SUMMARY_LABEL_RE.test(line);
-    const budget = summaryLineBudget(line);
-    const wrapped = wrapText(line, budget.width, budget.maxLines);
-    for (const [i, text] of wrapped.entries()) {
-      if (out.length >= SUMMARY_TOTAL_LINES) {
-        return out;
-      }
-      // Keep the body subdued and only color the structured label.
-      const rendered =
-        isLabel && i === 0
-          ? renderSummaryLabelLine(text)
-          : paint(ANSI.dim, `     ${text}`);
-      out.push(rendered);
-    }
-  }
-  return out;
-};
-
-const renderSummaryLabelLine = (text: string): string => {
-  const match = text.match(SUMMARY_LABEL_RE);
-  if (!match) {
-    return paint(ANSI.dim, `   ${text}`);
-  }
-  const label = match[0].trimEnd();
-  const rest = text.slice(match[0].length);
-  return `   ${paint(ANSI.cyan, label)}${rest ? paint(ANSI.dim, ` ${rest}`) : ""}`;
+  return fixed.slice(0, maxRows);
 };
 
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
@@ -2849,16 +2836,53 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     0,
     ...rows.map((row) => rateLimitCell(row.usage).indexOf("W"))
   );
-  const top = [
-    renderSummaryLine(rows, meta),
+  const statusLine = renderSummaryLine(rows, meta);
+  const agentRows = rows.map((row) =>
+    renderAgentRow(row, meta, weeklyLimitIndent)
+  );
+  const bridgeLines = renderBridgeLatestLine(rows, meta);
+  const utilityLines = renderUtilityStatus(meta.utility);
+  const fullTop = [
+    statusLine,
     agentHeaderRow,
-    ...rows.map((row) => renderAgentRow(row, meta, weeklyLimitIndent)),
-    ...renderBridgeLatestLine(rows, meta),
+    ...agentRows,
+    ...bridgeLines,
+    ...utilityLines,
   ];
+  const maxRows = meta.maxRows;
+  let top = fullTop;
+  if (maxRows !== undefined && fullTop.length > maxRows) {
+    const utilityRow = utilityLines.at(-1);
+    const utilityReserve = utilityRow && maxRows > 1 ? 1 : 0;
+    const agentBudget = Math.max(0, maxRows - 1 - utilityReserve);
+    const visibleAgentRows = agentRows.slice(0, agentBudget);
+    let spare = Math.max(
+      0,
+      maxRows - 1 - visibleAgentRows.length - utilityReserve
+    );
+    const showAgentHeader = visibleAgentRows.length > 0 && spare > 0;
+    if (showAgentHeader) {
+      spare -= 1;
+    }
+    const utilityHeader = utilityLines.at(0);
+    const showUtilityHeader =
+      Boolean(utilityRow && utilityHeader && utilityHeader !== utilityRow) &&
+      spare > 0;
+    if (showUtilityHeader) {
+      spare -= 1;
+    }
+    const visibleBridgeLines = bridgeLines.slice(0, Math.max(0, spare));
+    top = [
+      statusLine,
+      ...(showAgentHeader ? [agentHeaderRow] : []),
+      ...visibleAgentRows,
+      ...visibleBridgeLines,
+      ...(showUtilityHeader && utilityHeader ? [utilityHeader] : []),
+      ...(utilityReserve && utilityRow ? [utilityRow] : []),
+    ].slice(0, maxRows);
+  }
   const footerBudget =
-    meta.maxRows === undefined
-      ? undefined
-      : Math.max(0, meta.maxRows - top.length);
+    maxRows === undefined ? undefined : Math.max(0, maxRows - top.length);
   return [...top, ...renderFooter(meta, footerBudget)].join("\n");
 };
 
@@ -5130,6 +5154,9 @@ export const governessTick = async (
     summary: runState.summary,
     tickMs: config.tickMs,
     uptimeMs,
+    ...(config.runDir
+      ? { utility: readUtilityObservability(config.runDir) }
+      : {}),
     waitingForYou,
   });
   deps.render(board);

@@ -1,0 +1,61 @@
+{
+  "task_id": "lower-agent-observability",
+  "feature": "lower-agent-observability",
+  "timestamp": "2026-07-26T21:04:56Z",
+  "evaluator": "codex-independent-eval",
+  "verdict": "pass",
+  "checks": {
+    "functional": {
+      "passed": 82,
+      "failed": 0,
+      "details": [
+        "Independent feature-focused suite passed 82/82 across utility observability, utility runtime, and governess rendering.",
+        "The snapshot reports exact cumulative jobs, model calls, tool calls, token splits, cost, latest job, route detail, and chronological request/tool/result/failure transcript entries.",
+        "A torn final jobs-journal record preserves prior durable history for display while the authoritative routing reader remains fail-closed on corruption."
+      ]
+    },
+    "security": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "Transcript rendering excludes raw provider messages, raw tool output, and unrestricted trace bodies.",
+        "Whitespace and terminal controls are normalized or stripped before display.",
+        "Labeled, bearer, OpenAI/OpenRouter, GitHub, AWS, Google, Slack, GitLab, and similar common credential forms are redacted.",
+        "Observability is read-only and does not alter routing, worker execution, or frontier-agent panes."
+      ]
+    },
+    "display": {
+      "passed": 5,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "The lower-agent pane shows queue state, availability, route, delegation counters, cumulative calls/tokens/cost, bounded tools, responses, and blockers.",
+        "A 20-column by 5-row lower-agent viewport renders exactly 5 lines with every line at most 20 characters.",
+        "A 5-row governess viewport retains both frontier-agent rows and the utility row without overflow.",
+        "The governess utility row includes state, model, jobs, calls, tools, tokens, cost, and latest detail.",
+        "Project, Objective, Progress, and Next are removed only from board rendering; persisted summary state and its control-path consumers remain intact."
+      ]
+    },
+    "integration": {
+      "passed": 341,
+      "failed": 0,
+      "details": [
+        "Independent broad utility, governess, bridge, and tmux suite passed 341/341.",
+        "bun run build passed and git diff --check passed."
+      ]
+    },
+    "regression": {
+      "passed": 773,
+      "failed": 0,
+      "details": [
+        "The full suite produced 773 passing tests and four failures already reproduced unchanged in the canonical checkout.",
+        "The four baseline failures are confined to stale Codex model/config expectations in paired-options.test.ts and runner.test.ts."
+      ]
+    }
+  },
+  "known_limitations": [
+    "scripts/verify.sh exits successfully but contains placeholder lint, typecheck, unit, and integration commands; explicit Bun suites, build, and diff checks provide the substantive evidence.",
+    "Live loop-46 display-pane refresh and pane-ID/PID preservation are release-time checks after integration, not part of this pre-integration evaluator mutation."
+  ],
+  "notes": "PASS. Initial review findings for torn journals, common credential redaction, lower-pane dimensions, and whole-board governess budgeting were fixed and regression-covered before this verdict."
+}
