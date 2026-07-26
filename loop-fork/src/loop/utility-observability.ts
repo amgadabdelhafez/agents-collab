@@ -58,11 +58,20 @@ export interface UtilityObservabilitySnapshot {
   latestRoute?: string;
   latestRouteDetail?: string;
   latestState?: string;
+  messages: UtilityMessageObservability;
   model?: string;
   queued: number;
   routing: UtilityRoutingObservability;
   transcript: UtilityTranscriptEntry[];
   usage: UtilityObservabilityUsage;
+}
+
+export interface UtilityMessageObservability {
+  inbound: number;
+  latestInboundAt?: string;
+  latestOutboundAt?: string;
+  outbound: number;
+  pending: number;
 }
 
 export interface UtilityRoutingObservability {
@@ -121,6 +130,32 @@ const routingSnapshot = (
     reasons,
     routed: routedJobs.length,
     skipped: skippedJobs.length,
+  };
+};
+
+const messageSnapshot = (
+  jobs: UtilityJobSnapshot[]
+): UtilityMessageObservability => {
+  const inbound = jobs
+    .filter(
+      (job) =>
+        job.decision?.target === "utility" ||
+        job.events.some((event) => event.state === "routed-utility")
+    )
+    .sort((left, right) =>
+      left.request.createdAt.localeCompare(right.request.createdAt)
+    );
+  const outbound = inbound
+    .filter((job) => Boolean(job.result))
+    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+  const latestInboundAt = inbound.at(-1)?.request.createdAt;
+  const latestOutboundAt = outbound.at(-1)?.updatedAt;
+  return {
+    inbound: inbound.length,
+    ...(latestInboundAt ? { latestInboundAt } : {}),
+    ...(latestOutboundAt ? { latestOutboundAt } : {}),
+    outbound: outbound.length,
+    pending: Math.max(0, inbound.length - outbound.length),
   };
 };
 
@@ -339,6 +374,7 @@ export const readUtilityObservability = (
       failed: 0,
       jobsTotal: 0,
       latestDetail: "no utility run directory",
+      messages: { inbound: 0, outbound: 0, pending: 0 },
       queued: 0,
       routing: {
         autoRouted: 0,
@@ -357,6 +393,7 @@ export const readUtilityObservability = (
   const jobs = workerJobs(allJobs);
   const usageEvents = latestUsageByJob(runDir);
   const totals = usageSnapshot(usageEvents);
+  const transcript = transcriptFor(runDir, jobs, usageEvents);
   const latest = latestJob(jobs);
   const latestDecision = latestJob(allJobs.filter((job) => job.decision));
   const latestDetail = latest
@@ -376,6 +413,7 @@ export const readUtilityObservability = (
     ).length,
     jobsTotal: jobs.length,
     latestDetail,
+    messages: messageSnapshot(jobs),
     ...(latest
       ? {
           latestAt: latest.updatedAt,
@@ -400,7 +438,7 @@ export const readUtilityObservability = (
       ["pending-route", "routed-utility"].includes(job.state)
     ).length,
     routing: routingSnapshot(runDir, allJobs),
-    transcript: transcriptFor(runDir, jobs, usageEvents),
+    transcript,
     usage: totals.usage,
   };
 };

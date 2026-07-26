@@ -340,9 +340,9 @@ export const resolveUtilityRuntimeConfig = (
     maxSteps: Math.floor(
       positiveNumber(env.LOOP_UTILITY_MAX_STEPS, DEFAULT_MAX_STEPS)
     ),
-    maxTokens: Math.floor(positiveNumber(env.LOOP_UTILITY_MAX_TOKENS, 1800)),
+    maxTokens: Math.floor(positiveNumber(env.LOOP_UTILITY_MAX_TOKENS, 2400)),
     maxTotalTokens: Math.floor(
-      positiveNumber(env.LOOP_UTILITY_MAX_TOTAL_TOKENS, 8000)
+      positiveNumber(env.LOOP_UTILITY_MAX_TOTAL_TOKENS, 16_000)
     ),
     model: env.LOOP_UTILITY_MODEL?.trim() || DEFAULT_MODEL,
     preventPerRequestOverrides: env.LOOP_UTILITY_ALLOW_OVERRIDES !== "1",

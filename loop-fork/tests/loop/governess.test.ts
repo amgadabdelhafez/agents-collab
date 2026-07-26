@@ -1747,6 +1747,9 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
     expect(board).toContain(
       "routing · considered 3 · routed worker 2 · skipped 1 · pending 0 · adoption auto 1 explicit 1"
     );
+    expect(board).toContain(
+      "bridge worker msgs · in 2 latest — · out 2 latest — · pending 0"
+    );
     expect(board).toContain("skipped why · protected-scope 1");
     expect(board).not.toContain("Project: must remain hidden");
   } finally {
@@ -1826,6 +1829,9 @@ test("worker row hides the internal routed-utility state name", async () => {
     );
     const board = stripAnsi(result.board);
     expect(board).toMatch(/worker\s+● queued.*routed-j route/);
+    expect(board).toContain(
+      "bridge worker msgs · in 1 latest — · out 0 latest — · pending 1"
+    );
     expect(board).not.toContain("routed-utility");
   } finally {
     rmSync(runDir, { force: true, recursive: true });
