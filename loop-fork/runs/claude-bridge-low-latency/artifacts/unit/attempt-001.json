@@ -1,0 +1,18 @@
+{
+  "task_id": "claude-bridge-low-latency",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-26T05:51:21Z",
+  "ended_at": "2026-07-26T05:51:28Z",
+  "artifact": "runs/claude-bridge-low-latency/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/bridge.test.ts",
+    "tests/loop/codex-tmux-proxy.test.ts",
+    "tests/loop/codex-tmux-proxy.integration.test.ts"
+  ]
+}

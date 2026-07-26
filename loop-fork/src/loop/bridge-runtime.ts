@@ -1,4 +1,15 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { spawn, spawnSync } from "bun";
 import { removeClaudeChannelServer } from "./bridge-claude-registration";
@@ -35,6 +46,8 @@ const CLAUDE_CHANNEL_METHOD = "notifications/claude/channel";
 const CLAUDE_CHANNEL_SOURCE_TYPE = "codex";
 const CLAUDE_CHANNEL_USER_ID = "codex";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
+const BRIDGE_DELIVERY_CLAIM_DIR = "bridge-delivery-claims";
+const BRIDGE_DELIVERY_CLAIM_STALE_MS = 30_000;
 const BRIDGE_WORKER_IDLE_DELAY_MS = 250;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const TMUX_LEFT_PANE = "0.0";
@@ -42,6 +55,11 @@ const TMUX_RIGHT_PANE = "0.1";
 const CODEX_TMUX_READY_DELAY_MS = 250;
 const CODEX_TMUX_READY_POLLS = 20;
 const CODEX_TMUX_SEND_FOOTER = "Ctrl+J newline";
+const CODEX_TMUX_PROMPT_PREFIX = "› ";
+const CODEX_TMUX_FOOTER_SEPARATOR = " · ";
+const CODEX_TMUX_READY_TAIL_LINES = 8;
+const CLAUDE_TMUX_PROMPT_PREFIX = "❯";
+const LINE_SPLIT_RE = /\r?\n/;
 const GENERIC_TMUX_READY_POLLS = 12;
 
 export const bridgeRuntimeCommandDeps = { spawn, spawnSync };
@@ -102,6 +120,50 @@ const wait = async (ms: number): Promise<void> => {
   });
 };
 
+const deliveryClaimPath = (runDir: string, messageId: string): string => {
+  const digest = createHash("sha256").update(messageId).digest("hex");
+  return join(runDir, BRIDGE_DELIVERY_CLAIM_DIR, `${digest}.lock`);
+};
+
+const acquireDeliveryClaim = (
+  runDir: string,
+  messageId: string,
+  nowMs = Date.now()
+): string | undefined => {
+  const path = deliveryClaimPath(runDir, messageId);
+  mkdirSync(join(runDir, BRIDGE_DELIVERY_CLAIM_DIR), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = openSync(path, "wx");
+      closeSync(fd);
+      return path;
+    } catch (error) {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "EEXIST")
+      ) {
+        return undefined;
+      }
+      try {
+        if (nowMs - statSync(path).mtimeMs <= BRIDGE_DELIVERY_CLAIM_STALE_MS) {
+          return undefined;
+        }
+        unlinkSync(path);
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+};
+
+const releaseDeliveryClaim = (path: string): void => {
+  try {
+    unlinkSync(path);
+  } catch {
+    // A delivery claim is advisory runtime state; stale claims self-heal.
+  }
+};
+
 const decodeOutput = (value: Uint8Array): string =>
   new TextDecoder().decode(value);
 
@@ -110,9 +172,6 @@ const capitalize = (value: string): string =>
 
 const tmuxPane = (session: string, paneId: string): string =>
   `${session}:${paneId}`;
-
-const codexPane = (session: string): string =>
-  tmuxPane(session, TMUX_RIGHT_PANE);
 
 const capturePane = (pane: string): string => {
   const result = bridgeRuntimeCommandDeps.spawnSync(
@@ -148,9 +207,47 @@ const sendPaneText = (pane: string, text: string): boolean => {
   return result.exitCode === 0;
 };
 
+const isCodexPaneReady = (output: string): boolean => {
+  if (output.includes(CODEX_TMUX_SEND_FOOTER)) {
+    return true;
+  }
+  const tail = output.split(LINE_SPLIT_RE).slice(-CODEX_TMUX_READY_TAIL_LINES);
+  const promptIndex = tail.findIndex((line) =>
+    line.trimStart().startsWith(CODEX_TMUX_PROMPT_PREFIX)
+  );
+  return (
+    promptIndex >= 0 &&
+    tail
+      .slice(promptIndex + 1)
+      .some((line) => line.includes(CODEX_TMUX_FOOTER_SEPARATOR))
+  );
+};
+
 const waitForCodexPane = async (pane: string): Promise<boolean> => {
   for (let attempt = 0; attempt < CODEX_TMUX_READY_POLLS; attempt += 1) {
-    if (capturePane(pane).includes(CODEX_TMUX_SEND_FOOTER)) {
+    if (isCodexPaneReady(capturePane(pane))) {
+      return true;
+    }
+    await wait(CODEX_TMUX_READY_DELAY_MS);
+  }
+  return false;
+};
+
+export const isClaudePaneReady = (output: string): boolean =>
+  output
+    .split(LINE_SPLIT_RE)
+    .slice(-CODEX_TMUX_READY_TAIL_LINES)
+    .some((line) => {
+      const trimmed = line.trimStart();
+      return (
+        trimmed.startsWith(CLAUDE_TMUX_PROMPT_PREFIX) &&
+        trimmed.slice(CLAUDE_TMUX_PROMPT_PREFIX.length).trim().length === 0
+      );
+    });
+
+const waitForClaudePane = async (pane: string): Promise<boolean> => {
+  for (let attempt = 0; attempt < GENERIC_TMUX_READY_POLLS; attempt += 1) {
+    if (isClaudePaneReady(capturePane(pane))) {
       return true;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
@@ -173,10 +270,14 @@ const injectTmuxMessage = async (
   target: BridgeMessage["target"],
   message: string
 ): Promise<boolean> => {
-  const ready =
-    target === "codex"
-      ? await waitForCodexPane(pane)
-      : await waitForInteractivePane(pane);
+  let ready: boolean;
+  if (target === "codex") {
+    ready = await waitForCodexPane(pane);
+  } else if (target === "claude") {
+    ready = await waitForClaudePane(pane);
+  } else {
+    ready = await waitForInteractivePane(pane);
+  }
   if (!(pane && ready)) {
     return false;
   }
@@ -226,6 +327,9 @@ const paneIdForTarget = (
   }
   if (manifest?.tmuxPaneRightAgent === target) {
     return TMUX_RIGHT_PANE;
+  }
+  if (manifest?.tmuxPaneLeftAgent || manifest?.tmuxPaneRightAgent) {
+    return undefined;
   }
   if (target === "codex") {
     return TMUX_RIGHT_PANE;
@@ -343,9 +447,6 @@ export const hasBridgeDeliveryRoute = (
   target: BridgeMessage["target"]
 ): boolean => {
   const status = readBridgeRuntimeStatus(runDir);
-  if (target === "claude") {
-    return false;
-  }
   if (target === "codex" && status.hasCodexRemote) {
     return true;
   }
@@ -415,6 +516,13 @@ export const flushClaudeChannelMessages = (
   runDir: string,
   writeJsonRpc: (payload: unknown) => void
 ): void => {
+  const status = readBridgeRuntimeStatus(runDir);
+  if (
+    status.hasLiveTmuxSession &&
+    tmuxPaneForTarget(runDir, "claude") !== undefined
+  ) {
+    return;
+  }
   for (const message of readBridgeInbox(runDir, "claude")) {
     writeChannelNotification(runDir, message, writeJsonRpc);
     acknowledgeBridgeDelivery(runDir, message);
@@ -454,13 +562,10 @@ export const deliverCodexBridgeMessage = async (
   }
 };
 
-export const deliverTmuxBridgeMessage = async (
+export const submitTmuxBridgeMessage = async (
   runDir: string,
   message: BridgeMessage
 ): Promise<boolean> => {
-  if (message.target === "claude") {
-    return false;
-  }
   const status = readBridgeRuntimeStatus(runDir);
   if (!status.tmuxSession) {
     return false;
@@ -475,23 +580,43 @@ export const deliverTmuxBridgeMessage = async (
     return false;
   }
   const delivered = await injectTmuxMessage(pane, message.target, content);
-  if (!delivered) {
-    return false;
-  }
-  acknowledgeBridgeDelivery(
-    runDir,
-    message,
-    `sent to ${message.target} tmux pane`
-  );
-  return true;
+  return delivered;
 };
 
-export const drainCodexTmuxMessages = async (
-  runDir: string
+export const deliverTmuxBridgeMessage = async (
+  runDir: string,
+  message: BridgeMessage
 ): Promise<boolean> => {
+  const claim = acquireDeliveryClaim(runDir, message.id);
+  if (!claim) {
+    return false;
+  }
+  try {
+    const stillPending = readPendingBridgeMessages(runDir).some(
+      (entry) => entry.id === message.id
+    );
+    if (!stillPending) {
+      return false;
+    }
+    const delivered = await submitTmuxBridgeMessage(runDir, message);
+    if (!delivered) {
+      return false;
+    }
+    acknowledgeBridgeDelivery(
+      runDir,
+      message,
+      `sent to ${message.target} tmux pane`
+    );
+    return true;
+  } finally {
+    releaseDeliveryClaim(claim);
+  }
+};
+
+export const drainCodexTmuxMessages = (runDir: string): Promise<boolean> => {
   const message = readNextPendingBridgeMessageForTarget(runDir, "codex");
   if (!message) {
-    return false;
+    return Promise.resolve(false);
   }
   return deliverTmuxBridgeMessage(runDir, message);
 };
@@ -510,23 +635,28 @@ export const drainCodexAppServerMessages = (
   return deliverCodexBridgeMessage(runDir, message);
 };
 
-export const drainTmuxBridgeMessages = async (
-  runDir: string
-): Promise<boolean> => {
+export const drainTmuxBridgeMessages = (runDir: string): Promise<boolean> => {
   const status = readBridgeRuntimeStatus(runDir);
   if (!status.tmuxSession) {
-    return false;
+    return Promise.resolve(false);
   }
   if (!status.hasLiveTmuxSession) {
     clearStaleTmuxBridgeState(runDir);
-    return false;
+    return Promise.resolve(false);
   }
   const message = readPendingBridgeMessages(runDir).find(
-    (entry) =>
-      entry.target !== "claude" && paneIdForTarget(runDir, entry.target)
+    (entry) => {
+      if (
+        entry.target === "codex" &&
+        status.codexDeliveryMode === "tmux-proxy"
+      ) {
+        return false;
+      }
+      return paneIdForTarget(runDir, entry.target) !== undefined;
+    }
   );
   if (!message) {
-    return false;
+    return Promise.resolve(false);
   }
   return deliverTmuxBridgeMessage(runDir, message);
 };
@@ -557,12 +687,12 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       if (!clearStaleTmuxWorkerState(runDir, status)) {
         return;
       }
+      const deliveredToCodex =
+        status.codexDeliveryMode !== "tmux-proxy" &&
+        status.hasCodexRemote &&
+        (await drainCodexAppServerMessages(runDir));
       const delivered =
-        status.codexDeliveryMode === "tmux-proxy"
-          ? false
-          : (status.hasCodexRemote &&
-              (await drainCodexAppServerMessages(runDir))) ||
-            (await drainTmuxBridgeMessages(runDir));
+        deliveredToCodex || (await drainTmuxBridgeMessages(runDir));
       if (!(status.hasCodexRemote || status.hasLiveTmuxSession)) {
         return;
       }

@@ -1,0 +1,12 @@
+{
+  "task_id": "claude-bridge-visible-tui",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

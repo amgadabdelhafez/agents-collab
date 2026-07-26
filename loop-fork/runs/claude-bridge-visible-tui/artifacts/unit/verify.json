@@ -1,0 +1,16 @@
+{
+  "task_id": "claude-bridge-visible-tui",
+  "dimension": "unit",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-26T04:46:23Z",
+  "ended_at": "2026-07-26T04:46:25Z",
+  "artifact": "runs/claude-bridge-visible-tui/artifacts/unit/attempt-002.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/bridge.test.ts"
+  ]
+}
