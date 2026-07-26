@@ -2271,9 +2271,13 @@ const renderGovernessMessageCounts = (
   if (rows.length === 0) {
     return undefined;
   }
-  const parts = rows.map(
-    (row) => `${row.liveness.agent} ${counts[row.liveness.agent] ?? 0}`
+  const entries = rows.map(
+    (row) => [row.liveness.agent, counts[row.liveness.agent] ?? 0] as const
   );
+  if (entries.every(([, count]) => count === 0)) {
+    return undefined;
+  }
+  const parts = entries.map(([agent, count]) => `${agent} ${count}`);
   return paint(ANSI.dim, `msgs ${parts.join(" ")}`);
 };
 

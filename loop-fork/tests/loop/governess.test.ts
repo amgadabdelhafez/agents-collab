@@ -1521,6 +1521,7 @@ test("board shows input, cached, and output token details", async () => {
     expect(row).not.toContain("…");
   }
   expect(visibleBoard).toContain("both idle total 0s");
+  expect(visibleBoard).not.toContain("msgs claude 0 codex 0");
   expect(visibleBoard).toMatch(
     /LLM\s+MODEL\s+STAT\s+CALLS\s+TOK\s+IN\s+CACHE\s+OUT\s+HIT\s+SLOTS\s+MEM\s+ARCH\s+DT\s+QNT\s+MOE\s+BATCH/
   );
