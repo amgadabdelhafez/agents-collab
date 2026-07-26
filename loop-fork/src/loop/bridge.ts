@@ -145,7 +145,7 @@ const bridgeEnqueueOptions = (
   };
 };
 
-const immediateBridgeDelivery = (
+export const immediateBridgeDelivery = (
   runDir: string,
   target: Agent
 ): ImmediateBridgeDelivery | undefined => {
@@ -160,7 +160,12 @@ const immediateBridgeDelivery = (
       );
     };
   }
-  if (target === "cursor" || target === "gemini" || target === "copilot") {
+  if (
+    target === "claude" ||
+    target === "cursor" ||
+    target === "gemini" ||
+    target === "copilot"
+  ) {
     return (entry) => deliverTmuxBridgeMessage(runDir, entry);
   }
   return undefined;

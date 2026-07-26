@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type ServerWebSocket, serve } from "bun";
 import {
   appendBridgeMessage,
+  readBridgeEvents,
   readPendingBridgeMessages,
 } from "../../src/loop/bridge-store";
 import {
@@ -180,87 +181,57 @@ test("codex tmux proxy stops immediately after a seen tmux session disappears", 
   ).toBe(false);
 });
 
-test("codex tmux proxy records turn ids from turn/start responses", () => {
-  const turnIds = new Set<string>(["turn-1"]);
-
-  codexTmuxProxyInternals.noteStartedTurn(turnIds, {
-    turn: { id: "turn-2" },
-  });
-
-  expect([...turnIds]).toEqual(["turn-1", "turn-2"]);
-  expect(codexTmuxProxyInternals.latestActiveTurnId(turnIds)).toBe("turn-2");
-});
-
-test("codex tmux proxy keeps the newest active turn id", () => {
-  const activeTurns = new Set(["turn-1", "turn-2"]);
-
-  expect(codexTmuxProxyInternals.latestActiveTurnId(activeTurns)).toBe(
-    "turn-2"
+test("bridge delivery acknowledges only after visible pane submission", async () => {
+  const root = makeTempDir();
+  const message = appendBridgeMessage(
+    root,
+    bridgeMessage.source,
+    bridgeMessage.target,
+    bridgeMessage.message
   );
-  expect(codexTmuxProxyInternals.latestActiveTurnId(new Set())).toBe(undefined);
+  const attempts: string[] = [];
+  try {
+    const delivered = await codexTmuxProxyInternals.deliverVisibleBridgeMessage(
+      root,
+      message,
+      (_runDir, candidate) => {
+        attempts.push(candidate.id);
+        return Promise.resolve(true);
+      }
+    );
+    expect(delivered).toBe(true);
+    expect(attempts).toEqual([message.id]);
+    expect(readPendingBridgeMessages(root)).toEqual([]);
+    expect(
+      readBridgeEvents(root).filter((event) => event.kind === "delivered")
+    ).toHaveLength(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
-test("codex tmux proxy steers bridge messages into an active turn", () => {
-  expect(
-    codexTmuxProxyInternals.buildBridgeInjectionFrame(
-      -1,
-      "thread-1",
-      bridgeMessage,
-      "turn-active"
-    )
-  ).toEqual({
-    id: -1,
-    method: "turn/steer",
-    params: {
-      expectedTurnId: "turn-active",
-      input: [
-        {
-          text: "Claude: Please review the latest diff.",
-          text_elements: [],
-          type: "text",
-        },
-      ],
-      threadId: "thread-1",
-    },
-  });
-});
-
-test("codex tmux proxy starts a new turn when no active turn exists", () => {
-  expect(
-    codexTmuxProxyInternals.buildBridgeInjectionFrame(
-      -1,
-      "thread-1",
-      bridgeMessage
-    )
-  ).toEqual({
-    id: -1,
-    method: "turn/start",
-    params: {
-      input: [
-        {
-          text: "Claude: Please review the latest diff.",
-          text_elements: [],
-          type: "text",
-        },
-      ],
-      threadId: "thread-1",
-    },
-  });
-});
-
-test("codex tmux proxy only pauses bridge drain when it cannot steer", () => {
-  expect(
-    codexTmuxProxyInternals.shouldPauseBridgeDrain(false, undefined, 0)
-  ).toBe(false);
-  expect(
-    codexTmuxProxyInternals.shouldPauseBridgeDrain(true, "turn-active", 0)
-  ).toBe(false);
-  expect(
-    codexTmuxProxyInternals.shouldPauseBridgeDrain(true, undefined, 0)
-  ).toBe(true);
-  expect(
-    codexTmuxProxyInternals.shouldPauseBridgeDrain(false, undefined, 1)
-  ).toBe(true);
+test("failed visible pane submission leaves a bridge request pending", async () => {
+  const root = makeTempDir();
+  const message = appendBridgeMessage(
+    root,
+    bridgeMessage.source,
+    bridgeMessage.target,
+    bridgeMessage.message
+  );
+  try {
+    const delivered = await codexTmuxProxyInternals.deliverVisibleBridgeMessage(
+      root,
+      message,
+      () => Promise.resolve(false)
+    );
+    expect(delivered).toBe(false);
+    expect(readPendingBridgeMessages(root)).toEqual([message]);
+    expect(
+      readBridgeEvents(root).filter((event) => event.kind === "delivered")
+    ).toHaveLength(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("codex tmux proxy persists newer live thread ids to the run manifest", () => {
@@ -479,8 +450,9 @@ test("codex tmux proxy reconnects to a live upstream without dropping the tui so
       bridgeMessage.target,
       bridgeMessage.message
     );
-    await waitFor(() => bridgeMethods.length > 0, 5000);
-    expect(bridgeMethods).toEqual(["turn/start"]);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(bridgeMethods).toEqual([]);
+    expect(readPendingBridgeMessages(root)).toHaveLength(1);
 
     tui.send(
       JSON.stringify({
@@ -529,14 +501,13 @@ test("codex tmux proxy reconnects to a live upstream without dropping the tui so
   }
 });
 
-test("codex tmux proxy steers bridge messages into the resumed active turn after reconnect", async () => {
+test("codex tmux proxy never injects a bridge request into app-server after reconnect", async () => {
   const root = makeTempDir();
   const manifestPath = join(root, "manifest.json");
   const bridgeMethods: string[] = [];
   const upstreamSockets: ServerWebSocket<{ initialized: boolean }>[] = [];
   let activeTurnId = "";
   let proxyTask: Promise<void> | undefined;
-  let threadReadCount = 0;
   let upstreamConnections = 0;
 
   const upstreamStart = await startServerWithRetries((port) =>
@@ -582,7 +553,6 @@ test("codex tmux proxy steers bridge messages into the resumed active turn after
               continue;
             }
             if (frame.method === "thread/read") {
-              threadReadCount += 1;
               ws.send(
                 JSON.stringify({
                   id: frame.id,
@@ -711,7 +681,6 @@ test("codex tmux proxy steers bridge messages into the resumed active turn after
 
     upstreamSockets[0]?.close();
     await waitFor(() => upstreamConnections >= 2, 5000);
-    await waitFor(() => threadReadCount >= 2, 5000);
 
     appendBridgeMessage(
       root,
@@ -719,13 +688,9 @@ test("codex tmux proxy steers bridge messages into the resumed active turn after
       bridgeMessage.target,
       bridgeMessage.message
     );
-    await waitFor(
-      () =>
-        bridgeMethods.length > 0 &&
-        readPendingBridgeMessages(root).length === 0,
-      5000
-    );
-    expect(bridgeMethods).toEqual(["turn/steer"]);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(bridgeMethods).toEqual([]);
+    expect(readPendingBridgeMessages(root)).toHaveLength(1);
   } finally {
     tui?.close();
     updateRunManifest(manifestPath, (manifest) =>
@@ -746,14 +711,13 @@ test("codex tmux proxy steers bridge messages into the resumed active turn after
   }
 });
 
-test("codex tmux proxy falls back to a fresh bridge turn when steer fails after reconnect", async () => {
+test("codex tmux proxy has no headless fallback when visible delivery is unavailable", async () => {
   const root = makeTempDir();
   const manifestPath = join(root, "manifest.json");
   const bridgeMethods: string[] = [];
   const upstreamSockets: ServerWebSocket<{ initialized: boolean }>[] = [];
   let activeTurnId = "";
   let proxyTask: Promise<void> | undefined;
-  let threadReadCount = 0;
   let upstreamConnections = 0;
   let steerAttempts = 0;
 
@@ -800,7 +764,6 @@ test("codex tmux proxy falls back to a fresh bridge turn when steer fails after 
               continue;
             }
             if (frame.method === "thread/read") {
-              threadReadCount += 1;
               ws.send(
                 JSON.stringify({
                   id: frame.id,
@@ -940,7 +903,6 @@ test("codex tmux proxy falls back to a fresh bridge turn when steer fails after 
 
     upstreamSockets[0]?.close();
     await waitFor(() => upstreamConnections >= 2, 5000);
-    await waitFor(() => threadReadCount >= 2, 5000);
 
     appendBridgeMessage(
       root,
@@ -948,13 +910,9 @@ test("codex tmux proxy falls back to a fresh bridge turn when steer fails after 
       bridgeMessage.target,
       bridgeMessage.message
     );
-    await waitFor(
-      () =>
-        bridgeMethods.length > 1 &&
-        readPendingBridgeMessages(root).length === 0,
-      5000
-    );
-    expect(bridgeMethods).toEqual(["turn/steer", "turn/start"]);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(bridgeMethods).toEqual([]);
+    expect(readPendingBridgeMessages(root)).toHaveLength(1);
   } finally {
     tui?.close();
     updateRunManifest(manifestPath, (manifest) =>

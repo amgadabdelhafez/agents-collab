@@ -82,12 +82,42 @@
       "spec_path": "specs/lower-agent-pane-default.md"
     },
     {
+      "id": "codex-bridge-visible-tui",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T03:41:52Z",
+      "run_dir": "runs/codex-bridge-visible-tui",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T04:04:04Z",
+      "spec_path": "specs/codex-bridge-visible-tui.md"
+    },
+    {
+      "id": "claude-bridge-visible-tui",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T04:27:28Z",
+      "run_dir": "runs/claude-bridge-visible-tui",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T04:46:34Z",
+      "spec_path": "specs/claude-bridge-visible-tui.md"
+    },
+    {
+      "id": "claude-bridge-low-latency",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-26T05:48:24Z",
+      "run_dir": "runs/claude-bridge-low-latency",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T06:04:16Z",
+      "spec_path": "specs/claude-bridge-low-latency.md"
+    },
+    {
       "id": "lower-agent-release-integration",
       "mode": "planned",
       "status": "active",
       "created_at": "2026-07-26T06:24:34Z",
       "run_dir": "runs/lower-agent-release-integration",
-      "eval_status": "pending"
+      "eval_status": "pass"
     }
   ]
 }

@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerWebSocket, serve } from "bun";
 import { runCli } from "../../src/cli";
-import { appendBridgeMessage } from "../../src/loop/bridge-store";
+import {
+  appendBridgeMessage,
+  readPendingBridgeMessages,
+} from "../../src/loop/bridge-store";
 import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   waitForCodexTmuxProxy,
@@ -39,9 +42,6 @@ const makeTempDir = (): string => mkdtempSync(join(tmpdir(), "loop-proxy-"));
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
-
-const asRecord = (value: unknown): Record<string, unknown> =>
-  (isRecord(value) ? value : {}) as Record<string, unknown>;
 
 const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
@@ -144,7 +144,6 @@ test("runCli reconnects the codex tmux proxy subcommand without dropping the tui
   const root = makeTempDir();
   const manifestPath = join(root, "manifest.json");
   const bridgeMethods: string[] = [];
-  const bridgeThreadIds: string[] = [];
   const tuiTurnIds: string[] = [];
   const upstreamSockets: ServerWebSocket<{ initialized: boolean }>[] = [];
   const tuiMessages: JsonFrame[] = [];
@@ -210,15 +209,11 @@ test("runCli reconnects the codex tmux proxy subcommand without dropping the tui
               continue;
             }
             if (frame.method === "turn/start") {
-              const threadId = asString(asRecord(frame.params).threadId);
               const turnId = isBridgeRequestId(frame.id)
                 ? "bridge-turn-after-reconnect"
                 : `tui-turn-${tuiTurnIds.length + 1}`;
               if (isBridgeRequestId(frame.id)) {
                 bridgeMethods.push(frame.method);
-                if (threadId) {
-                  bridgeThreadIds.push(threadId);
-                }
               } else {
                 tuiTurnIds.push(turnId);
               }
@@ -334,9 +329,9 @@ test("runCli reconnects the codex tmux proxy subcommand without dropping the tui
       bridgeMessage.target,
       bridgeMessage.message
     );
-    await waitFor(() => bridgeMethods.length > 0, 5000);
-    expect(bridgeMethods).toEqual(["turn/start"]);
-    expect(bridgeThreadIds).toEqual(["thread-2"]);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(bridgeMethods).toEqual([]);
+    expect(readPendingBridgeMessages(root)).toHaveLength(1);
 
     tui.send(
       JSON.stringify({

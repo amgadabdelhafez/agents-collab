@@ -1,0 +1,13 @@
+{
+  "task_id": "codex-bridge-visible-tui",
+  "feature": "codex-bridge-visible-tui",
+  "timestamp": "2026-07-26T04:43:00Z",
+  "checks": {
+    "functional": {"passed": 10, "failed": 0, "details": ["Codex visible-only delivery", "single acknowledgement", "failed submission remains pending", "reconnect keeps visible-only policy", "global install", "Claude live-tmux bypasses unacknowledged channel writes", "Claude pane draft guard", "headless Claude channel preserved", "worker drains Claude while Codex proxy owns Codex", "non-member Claude is not misrouted into another agent pane"]},
+    "ui": {"passed": 2, "failed": 0, "screenshots": [], "details": ["live run 38 visibly rendered Codex canary e9f6b36d-6b05-44a0-9884-5a43dbe92aa9 and replied VISIBLE-BRIDGE-CANARY-OK", "live run 38 visibly rendered Claude canary 6054874c-2365-4a03-8572-8c74e4952a82 and returned bfcd8df0-7a04-439e-8e8a-40335825d6cf through the exact run-38 bridge"]},
+    "performance": {"passed": 1, "failed": 0, "details": ["250 ms drain remains single-flight"]},
+    "regression": {"passed": 112, "failed": 0, "details": ["proxy, bridge, tmux, and CLI integration focused suites; Claude bridge suite 56/56"]}
+  },
+  "verdict": "pass",
+  "notes": "Build and git diff --check pass. The full suite is 613/617; four unrelated Codex model/config expectation failures remain. The style command is unavailable because ultracite is not installed in this worktree. Live recovery required resuming Claude with --resume after the saved tmux --session-id command failed; the native resume summary replayed an older checkpoint and compacted, so the latest authoritative state was restored explicitly from commit 3fb9e4e and STATUS.md before the canary. Claude then stopped on the correct state. Behavioral evaluation was performed by the separate live Claude and Codex agents."
+}

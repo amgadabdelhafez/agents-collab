@@ -1,12 +1,18 @@
 {
   "task_id": "lower-agent-release-integration",
-  "status": "pending",
+  "status": "pass",
   "required": [
     "unit"
   ],
   "dimensions": {
     "unit": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/lower-agent-release-integration/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/lower-agent-release-integration/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/lower-agent-release-integration/artifacts/unit/attempt-001.json"
     }
   }
 }

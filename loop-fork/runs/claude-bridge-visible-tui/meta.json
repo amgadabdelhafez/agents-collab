@@ -1,0 +1,8 @@
+{
+  "id": "claude-bridge-visible-tui",
+  "mode": "planned",
+  "created_at": "2026-07-26T04:27:28Z",
+  "status": "done",
+  "description": "Deliver Claude bridge messages visibly and reliably through its live tmux pane",
+  "ended_at": "2026-07-26T04:46:34Z"
+}

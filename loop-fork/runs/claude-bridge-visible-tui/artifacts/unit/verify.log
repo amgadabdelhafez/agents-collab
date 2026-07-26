@@ -1,0 +1,75 @@
+task_id: claude-bridge-visible-tui
+dimension: unit
+attempt: 002
+started_at: 2026-07-26T04:46:23Z
+command: bun test tests/loop/bridge.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge.test.ts:
+(pass) bridge message parsing ignores malformed lines and acked entries [7.11ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [2.75ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [2.16ms]
+(pass) readBridgeRuntimeStatus distinguishes live and stale tmux delivery [3.06ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [2.44ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [2.23ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [36.14ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [33.60ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [28.37ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [28.19ms]
+(pass) bridge MCP send_message rejects targeting the current agent [30.67ms]
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [31.69ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [31.36ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [28.34ms]
+(pass) bridge MCP accepts typed work metadata and TTL [34.59ms]
+(pass) bridge MCP writes line-delimited JSON responses [30.57ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [2.39ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [2.79ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [28.12ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [28.84ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [32.02ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [2.97ms]
+(pass) bridge leaves live Codex tmux messages queued for the tmux proxy [2.32ms]
+(pass) bridge falls back to direct Codex delivery when the stored tmux session is stale [2.39ms]
+(pass) bridge drains pending codex tmux messages through the injected command deps [103.63ms]
+(pass) bridge drains pending cursor tmux messages through the stored pane routing [106.09ms]
+(pass) bridge drains pending Claude messages through the visible tmux pane [106.90ms]
+(pass) Claude pane delivery preserves a non-empty user draft [2.06ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [2.85ms]
+(pass) bridge stale tmux cleanup logs non-zero Claude MCP remove exits [2.46ms]
+(pass) bridge stale tmux cleanup logs thrown Claude MCP remove errors [2.51ms]
+(pass) bridge stale tmux cleanup removes a persisted Claude server name [2.31ms]
+(pass) runBridgeWorker clears stale tmux routing and exits [2.34ms]
+(pass) runBridgeWorker falls back to app-server delivery after stale tmux cleanup [103.97ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [3.91ms]
+(pass) runBridgeWorker retries queued codex app-server messages [360.65ms]
+(pass) runBridgeWorker drains Claude while the Codex tmux proxy owns Codex [212.89ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [47.36ms]
+(pass) Claude channel flush leaves live tmux messages pending for visible delivery [3.22ms]
+(pass) Claude channel stays active when the live tmux pair has no Claude pane [3.01ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [85.99ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [33.49ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [31.98ms]
+(pass) bridge MCP allows repeating the same message in the original direction [33.74ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [2.43ms]
+(pass) bridge config helper writes the Claude MCP config file [2.09ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [2.16ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [1.80ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [2.57ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [5.84ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [2.22ms]
+(pass) bridge MCP send_message normalizes copilot as a valid target [32.92ms]
+(pass) bridge queues cross-agent messages for all non-Claude/Codex pairs [181.44ms]
+(pass) bridge config injection writes copilot config to .github/copilot/mcp.json [3.04ms]
+(pass) bridge pending count includes copilot messages [2.17ms]
+(pass) bridge drains pending copilot tmux messages through stored pane routing [105.48ms]
+
+ 56 pass
+ 0 fail
+ 212 expect() calls
+Ran 56 tests across 1 file. [2.04s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-26T04:46:25Z
