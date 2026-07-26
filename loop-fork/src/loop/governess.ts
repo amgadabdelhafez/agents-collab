@@ -2462,6 +2462,38 @@ const renderBridgeLatestLine = (
   return parts;
 };
 
+const workerMessageAge = (
+  at: string | undefined,
+  nowMs: number
+): string => {
+  const parsed = at ? Date.parse(at) : Number.NaN;
+  return Number.isFinite(parsed) ? fmtDuration(nowMs - parsed) : "—";
+};
+
+const renderWorkerBridgeLine = (
+  snapshot: UtilityObservabilitySnapshot,
+  meta: BoardMeta
+): string => {
+  const messages = snapshot.messages;
+  return [
+    paint(ANSI.dim, " bridge worker msgs · "),
+    paint(
+      ANSI.cyan,
+      `in ${messages.inbound} latest ${workerMessageAge(messages.latestInboundAt, meta.nowMs)}`
+    ),
+    paint(ANSI.dim, " · "),
+    paint(
+      ANSI.green,
+      `out ${messages.outbound} latest ${workerMessageAge(messages.latestOutboundAt, meta.nowMs)}`
+    ),
+    paint(ANSI.dim, " · "),
+    paint(
+      messages.pending > 0 ? ANSI.yellow : ANSI.dim,
+      `pending ${messages.pending}`
+    ),
+  ].join("");
+};
+
 const roleActionAge = (
   actionAt: string | undefined,
   nowMs: number
@@ -2938,6 +2970,9 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...(meta.utility ? [renderUtilityAgentRow(meta.utility, meta)] : []),
   ];
   const bridgeLines = renderBridgeLatestLine(rows, meta);
+  const workerBridgeLines = meta.utility
+    ? [renderWorkerBridgeLine(meta.utility, meta)]
+    : [];
   const workerRoutingLines = meta.utility
     ? renderWorkerRoutingRows(meta.utility, meta)
     : [];
@@ -2946,6 +2981,7 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     agentHeaderRow,
     ...agentRows,
     ...bridgeLines,
+    ...workerBridgeLines,
     ...workerRoutingLines,
   ];
   const maxRows = meta.maxRows;
@@ -2960,12 +2996,18 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     }
     const visibleBridgeLines = bridgeLines.slice(0, Math.max(0, spare));
     spare -= visibleBridgeLines.length;
+    const visibleWorkerBridgeLines = workerBridgeLines.slice(
+      0,
+      Math.max(0, spare)
+    );
+    spare -= visibleWorkerBridgeLines.length;
     const visibleRoutingLines = workerRoutingLines.slice(0, Math.max(0, spare));
     top = [
       statusLine,
       ...(showAgentHeader ? [agentHeaderRow] : []),
       ...visibleAgentRows,
       ...visibleBridgeLines,
+      ...visibleWorkerBridgeLines,
       ...visibleRoutingLines,
     ].slice(0, maxRows);
   }

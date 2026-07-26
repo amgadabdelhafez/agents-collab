@@ -56,6 +56,7 @@ test("utility observability safely handles absent and malformed journals", () =>
     expect(readUtilityObservability(runDir)).toMatchObject({
       available: true,
       jobsTotal: 1,
+      messages: { inbound: 0, outbound: 0, pending: 0 },
       model: "z-ai/glm-5.2",
       usage: { modelCalls: 1, totalTokens: 12 },
     });
@@ -208,6 +209,13 @@ test("utility observability totals worker usage and builds a safe transcript", (
       jobsTotal: 2,
       latestJobId: failed.id,
       latestState: "failed",
+      messages: {
+        inbound: 2,
+        latestInboundAt: "2026-07-26T01:01:00.000Z",
+        latestOutboundAt: "2026-07-26T01:01:01.000Z",
+        outbound: 2,
+        pending: 0,
+      },
       model: "z-ai/glm-5.2",
       queued: 0,
       routing: {
