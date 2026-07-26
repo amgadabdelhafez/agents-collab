@@ -37,13 +37,13 @@ future loops without modifying or restarting the active loop 40.
 
 ## Acceptance criteria
 
-- [ ] Combined lower-agent, bridge, proxy, governess, run-state, argument, and
+- [x] Combined lower-agent, bridge, proxy, governess, run-state, argument, and
       tmux focused tests pass.
-- [ ] Full tests and build run; unrelated baseline failures are isolated.
-- [ ] `git diff --check` passes.
-- [ ] A disposable tmux smoke test proves default top-right utility geometry
+- [x] Full tests and build run; unrelated baseline failures are isolated.
+- [x] `git diff --check` passes.
+- [x] A disposable tmux smoke test proves default top-right utility geometry
       and the explicit opt-out without launching paid main agents.
-- [ ] The integrated binary advertises GLM-5.2 utility configuration and the
+- [x] The integrated binary advertises GLM-5.2 utility configuration and the
       bridge routing tools while retaining the visible bridge paths.
 - [ ] The integrated branch is merged locally into the canonical branch and
       its binary is installed atomically for future loops.
