@@ -60,6 +60,14 @@
       "eval_status": "pass",
       "ended_at": "2026-07-25T23:07:07Z",
       "spec_path": "specs/governess-p0-runtime.md"
+    },
+    {
+      "id": "lower-agent-release-integration",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-26T06:24:34Z",
+      "run_dir": "runs/lower-agent-release-integration",
+      "eval_status": "pending"
     }
   ]
 }
