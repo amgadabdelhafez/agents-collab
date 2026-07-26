@@ -46,6 +46,10 @@ import {
   type UtilityToolName,
   type UtilityToolResult,
 } from "./utility-tools";
+import {
+  resolveUtilityRequestWorkspace,
+  verifyAdoptedUtilityWorkspace,
+} from "./utility-workspace";
 
 export const UTILITY_WORKER_SUBCOMMAND = "__utility-worker";
 export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
@@ -546,12 +550,21 @@ const recoverStaleUtilityJobs = async (
   }
 };
 
-const currentUtilityWriteClaims = (runDir: string): string[] =>
+const currentUtilityWriteClaims = (
+  runDir: string,
+  runRoot: string,
+  workspaceRoot: string
+): string[] =>
   readUtilityJobs(runDir)
-    .filter((active) =>
-      ["routed-utility", "claimed", "running"].includes(active.state)
+    .filter(
+      (active) =>
+        ["routed-utility", "claimed", "running"].includes(active.state) &&
+        (active.decision?.workspace?.root ?? runRoot) === workspaceRoot
     )
-    .flatMap((active) => active.request.writeScope);
+    .flatMap(
+      (active) =>
+        active.decision?.workspace?.writeScope ?? active.request.writeScope
+    );
 
 const readJsonlRecords = (path: string): Record<string, unknown>[] => {
   try {
@@ -638,13 +651,28 @@ const startRoutedUtilityJob = async (input: {
   env: NodeJS.ProcessEnv;
   job: UtilityJobSnapshot;
 }): Promise<void> => {
+  const workspace = input.job.decision?.workspace
+    ? verifyAdoptedUtilityWorkspace(
+        input.context.repoRoot,
+        input.job.decision.workspace
+      )
+    : undefined;
+  if (input.job.decision?.workspace && !workspace) {
+    await failUtilityJob(
+      input.context,
+      input.job,
+      "verified utility workspace no longer matches the run repository"
+    );
+    return;
+  }
+  const repoRoot = workspace?.root ?? input.context.repoRoot;
   let started = false;
   try {
     started = (input.deps.spawnWorker ?? spawnUtilityWorker)({
       env: input.env,
       epoch: input.context.epoch,
       jobId: input.job.jobId,
-      repoRoot: input.context.repoRoot,
+      repoRoot,
       runDir: input.context.runDir,
     });
   } catch {
@@ -694,22 +722,44 @@ const processPendingUtilityJob = async (input: {
   env: NodeJS.ProcessEnv;
   job: UtilityJobSnapshot;
 }): Promise<void> => {
-  const routedDecision = routeUtilityRequest(input.job.request, {
-    activeWriteClaims: currentUtilityWriteClaims(input.context.runDir),
-    currentDriver: input.context.currentDriver,
-    currentEpoch: input.context.epoch,
-    peer: input.context.peer,
-    remainingRunBudgetUsd: remainingUtilityRunBudgetUsd(
-      input.context.runDir,
-      input.config
-    ),
-    routingPolicy: routingPolicy(input.config),
-    tiers: [runtimeTier(input.config)],
-  });
+  const workspaceResolution = ["inspect", "edit", "command"].includes(
+    input.job.request.kind
+  )
+    ? resolveUtilityRequestWorkspace(
+        input.job.request,
+        input.context.repoRoot
+      )
+    : { request: input.job.request };
+  const routedDecision = "detail" in workspaceResolution
+    ? {
+        detail: workspaceResolution.detail,
+        reason: "protected-scope" as const,
+        target: "driver" as const,
+      }
+    : routeUtilityRequest(workspaceResolution.request, {
+        activeWriteClaims: currentUtilityWriteClaims(
+          input.context.runDir,
+          input.context.repoRoot,
+          workspaceResolution.workspace?.root ?? input.context.repoRoot
+        ),
+        currentDriver: input.context.currentDriver,
+        currentEpoch: input.context.epoch,
+        peer: input.context.peer,
+        remainingRunBudgetUsd: remainingUtilityRunBudgetUsd(
+          input.context.runDir,
+          input.config
+        ),
+        routingPolicy: routingPolicy(input.config),
+        tiers: [runtimeTier(input.config)],
+      });
   const decision =
     routedDecision.reason === "utility-unavailable"
       ? { ...routedDecision, detail: input.config.availability.message }
-      : routedDecision;
+      : routedDecision.target === "utility" &&
+          !("detail" in workspaceResolution) &&
+          workspaceResolution.workspace
+        ? { ...routedDecision, workspace: workspaceResolution.workspace }
+        : routedDecision;
   transitionUtilityJob(
     input.context.runDir,
     input.job.jobId,
@@ -723,7 +773,11 @@ const processPendingUtilityJob = async (input: {
     }
   );
   if (decision.target === "utility") {
-    await startRoutedUtilityJob(input);
+    const routedJob = readUtilityJob(input.context.runDir, input.job.jobId);
+    await startRoutedUtilityJob({
+      ...input,
+      job: routedJob ?? input.job,
+    });
     return;
   }
   await dispatchNonUtilityRoute(
@@ -1048,13 +1102,36 @@ export const runUtilityWorker = async (
     eventId: `running:${epoch}:${jobId}`,
   });
   const repoRoot = repoRootForRun(runDir);
+  const workspace = claimed.decision?.workspace
+    ? verifyAdoptedUtilityWorkspace(repoRoot, claimed.decision.workspace)
+    : undefined;
+  if (claimed.decision?.workspace && !workspace) {
+    await failUtilityJob(
+      {
+        currentDriver: claimed.request.requester,
+        epoch,
+        peer: claimed.request.requester,
+        repoRoot,
+        runDir,
+      },
+      claimed,
+      "verified utility workspace no longer matches the run repository"
+    );
+    return;
+  }
+  const executionRoot = workspace?.root ?? repoRoot;
+  const readScopes = workspace?.readScope ?? claimed.request.readScope;
+  const writeScopes = workspace?.writeScope ?? claimed.request.writeScope;
+  const executionRequest = workspace
+    ? { ...claimed.request, readScope: readScopes, writeScope: writeScopes }
+    : claimed.request;
   const broker = await createUtilityToolBroker({
-    artifactDir: artifactDirForJob(repoRoot, runDir, jobId),
+    artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
     readScopes: [
-      ...new Set([...claimed.request.readScope, ...claimed.request.writeScope]),
+      ...new Set([...readScopes, ...writeScopes]),
     ],
-    repoRoot,
-    writeScopes: claimed.request.writeScope,
+    repoRoot: executionRoot,
+    writeScopes,
   });
   const traceFile = join(runDir, "utility", "llm-trace.jsonl");
   const usageFile = join(runDir, "utility", "usage.jsonl");
@@ -1073,7 +1150,7 @@ export const runUtilityWorker = async (
       onProgress: (next) => {
         progress = next;
       },
-      request: claimed.request,
+      request: executionRequest,
       toolEventFile: join(runDir, "utility", "tool-events.jsonl"),
       traceFile,
     });
@@ -1195,14 +1272,25 @@ export const applyUtilityJobPatch = async (
     throw new Error("utility patch or manifest integrity metadata is missing");
   }
   const repoRoot = repoRootForRun(runDir);
+  const workspace = job.decision?.workspace
+    ? verifyAdoptedUtilityWorkspace(repoRoot, job.decision.workspace)
+    : undefined;
+  if (job.decision?.workspace && !workspace) {
+    throw new Error(
+      "verified utility workspace no longer matches the run repository"
+    );
+  }
+  const executionRoot = workspace?.root ?? repoRoot;
+  const readScopes = workspace?.readScope ?? job.request.readScope;
+  const writeScopes = workspace?.writeScope ?? job.request.writeScope;
   const broker = await createUtilityToolBroker({
-    artifactDir: artifactDirForJob(repoRoot, runDir, jobId),
+    artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
     commandAllowlist: [],
     readScopes: [
-      ...new Set([...job.request.readScope, ...job.request.writeScope]),
+      ...new Set([...readScopes, ...writeScopes]),
     ],
-    repoRoot,
-    writeScopes: job.request.writeScope,
+    repoRoot: executionRoot,
+    writeScopes,
   });
   const result = await broker.applyPatchProposal({
     appliedBy,

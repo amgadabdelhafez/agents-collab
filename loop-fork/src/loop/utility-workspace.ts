@@ -1,0 +1,219 @@
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { runGit } from "./git";
+import type {
+  UtilityResolvedWorkspace,
+  UtilityRouteRequest,
+} from "./task-router";
+
+export interface UtilityWorkspaceResolution {
+  request: UtilityRouteRequest;
+  workspace?: UtilityResolvedWorkspace;
+}
+
+export interface UtilityWorkspaceFailure {
+  detail: string;
+}
+
+const isContained = (root: string, target: string): boolean => {
+  const rel = relative(root, target);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+
+const nearestExistingPath = (value: string): string | undefined => {
+  let candidate = resolve(value);
+  while (!existsSync(candidate)) {
+    const parent = dirname(candidate);
+    if (parent === candidate) {
+      return undefined;
+    }
+    candidate = parent;
+  }
+  return candidate;
+};
+
+const canonicalTarget = (value: string): string | undefined => {
+  const absolute = resolve(value);
+  const existing = nearestExistingPath(absolute);
+  if (!existing) {
+    return undefined;
+  }
+  try {
+    return resolve(realpathSync(existing), relative(existing, absolute));
+  } catch {
+    return undefined;
+  }
+};
+
+interface GitWorkspaceIdentity {
+  commonDir: string;
+  root: string;
+}
+
+const registeredWorktreeRoots = (runRoot: string): Set<string> | undefined => {
+  const result = runGit(runRoot, ["worktree", "list", "--porcelain"], "ignore");
+  if (result.exitCode !== 0) {
+    return undefined;
+  }
+  const roots = new Set<string>();
+  for (const line of result.stdout.split("\n")) {
+    if (!line.startsWith("worktree ")) {
+      continue;
+    }
+    try {
+      roots.add(realpathSync(line.slice("worktree ".length).trim()));
+    } catch {
+      // Stale worktree registrations are not valid execution roots.
+    }
+  }
+  return roots;
+};
+
+const gitWorkspaceIdentity = (
+  path: string
+): GitWorkspaceIdentity | undefined => {
+  const existing = nearestExistingPath(path);
+  if (!existing) {
+    return undefined;
+  }
+  let cwd = existing;
+  try {
+    if (!statSync(cwd).isDirectory()) {
+      cwd = dirname(cwd);
+    }
+  } catch {
+    return undefined;
+  }
+  const topLevel = runGit(cwd, ["rev-parse", "--show-toplevel"], "ignore");
+  const commonDir = runGit(cwd, ["rev-parse", "--git-common-dir"], "ignore");
+  if (
+    topLevel.exitCode !== 0 ||
+    commonDir.exitCode !== 0 ||
+    !topLevel.stdout.trim() ||
+    !commonDir.stdout.trim()
+  ) {
+    return undefined;
+  }
+  try {
+    return {
+      commonDir: realpathSync(resolve(cwd, commonDir.stdout.trim())),
+      root: realpathSync(topLevel.stdout.trim()),
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const mismatch = (detail: string): UtilityWorkspaceFailure => ({ detail });
+
+export const resolveUtilityRequestWorkspace = (
+  request: UtilityRouteRequest,
+  runRoot: string
+): UtilityWorkspaceResolution | UtilityWorkspaceFailure => {
+  let canonicalRunRoot: string;
+  try {
+    canonicalRunRoot = realpathSync(runRoot);
+  } catch {
+    return mismatch("run workspace root is unavailable");
+  }
+  const scopes = [...request.readScope, ...request.writeScope];
+  if (scopes.every((scope) => !isAbsolute(scope))) {
+    return {
+      request,
+      workspace: {
+        readScope: request.readScope,
+        root: canonicalRunRoot,
+        writeScope: request.writeScope,
+      },
+    };
+  }
+
+  const runIdentity = gitWorkspaceIdentity(canonicalRunRoot);
+  const registeredRoots = registeredWorktreeRoots(canonicalRunRoot);
+  let selectedRoot: string | undefined;
+  const normalizeScopes = (values: readonly string[]): string[] | undefined => {
+    const normalized: string[] = [];
+    for (const value of values) {
+      if (!isAbsolute(value)) {
+        if (selectedRoot && selectedRoot !== canonicalRunRoot) {
+          return undefined;
+        }
+        selectedRoot = canonicalRunRoot;
+        normalized.push(value);
+        continue;
+      }
+      const target = canonicalTarget(value);
+      if (!target) {
+        return undefined;
+      }
+      let workspaceRoot = canonicalRunRoot;
+      if (!isContained(canonicalRunRoot, target)) {
+        const identity = gitWorkspaceIdentity(target);
+        if (
+          !runIdentity ||
+          !identity ||
+          identity.commonDir !== runIdentity.commonDir ||
+          !registeredRoots?.has(identity.root) ||
+          !isContained(identity.root, target)
+        ) {
+          return undefined;
+        }
+        workspaceRoot = identity.root;
+      }
+      if (selectedRoot && selectedRoot !== workspaceRoot) {
+        return undefined;
+      }
+      selectedRoot = workspaceRoot;
+      const scoped = relative(workspaceRoot, target).replaceAll("\\", "/");
+      normalized.push(scoped || ".");
+    }
+    return normalized;
+  };
+
+  const readScope = normalizeScopes(request.readScope);
+  const writeScope = normalizeScopes(request.writeScope);
+  if (!(readScope && writeScope && selectedRoot)) {
+    return mismatch(
+      "scopes do not resolve to one verified worktree of the run repository"
+    );
+  }
+  const workspace = {
+    readScope,
+    root: selectedRoot,
+    writeScope,
+  };
+  return {
+    request: { ...request, readScope, writeScope },
+    workspace,
+  };
+};
+
+export const verifyAdoptedUtilityWorkspace = (
+  runRoot: string,
+  workspace: UtilityResolvedWorkspace
+): UtilityResolvedWorkspace | undefined => {
+  let canonicalRunRoot: string;
+  let canonicalWorkspaceRoot: string;
+  try {
+    canonicalRunRoot = realpathSync(runRoot);
+    canonicalWorkspaceRoot = realpathSync(workspace.root);
+  } catch {
+    return undefined;
+  }
+  if (canonicalRunRoot === canonicalWorkspaceRoot) {
+    return { ...workspace, root: canonicalWorkspaceRoot };
+  }
+  const runIdentity = gitWorkspaceIdentity(canonicalRunRoot);
+  const workspaceIdentity = gitWorkspaceIdentity(canonicalWorkspaceRoot);
+  const registeredRoots = registeredWorktreeRoots(canonicalRunRoot);
+  if (
+    !runIdentity ||
+    !workspaceIdentity ||
+    runIdentity.commonDir !== workspaceIdentity.commonDir ||
+    !registeredRoots?.has(canonicalWorkspaceRoot) ||
+    workspaceIdentity.root !== canonicalWorkspaceRoot
+  ) {
+    return undefined;
+  }
+  return { ...workspace, root: canonicalWorkspaceRoot };
+};

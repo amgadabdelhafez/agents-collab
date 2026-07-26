@@ -1,0 +1,56 @@
+{
+  "task_id": "utility-worktree-adoption",
+  "feature": "utility-worktree-adoption",
+  "timestamp": "2026-07-26T22:26:16Z",
+  "evaluator": "codex-independent-eval",
+  "verdict": "pass",
+  "checks": {
+    "workspace_resolution": {
+      "passed": 7,
+      "failed": 0,
+      "details": [
+        "A request is resolved to one canonical workspace before routing, and every persisted read/write scope is repository-relative to that root.",
+        "Relative scopes retain the canonical run root, including normal non-Git fixture directories.",
+        "Absolute scopes outside the run root require an identical canonical Git common directory and exact membership in the run repository's registered worktree list.",
+        "Unrelated repositories, non-Git outside paths, base-plus-linked scopes, two-linked-worktree scopes, and symlink escapes fail closed with a safe generic mismatch detail.",
+        "An adversarial directory with a copied linked-worktree .git pointer is rejected during initial resolution and persisted-root reverification.",
+        "Absolute protected scopes are converted to root-relative form before the pure router checks them; an independent linked-worktree .env probe routed driver/protected-scope.",
+        "The resolver does not alter authority, capability, risk, budget, or provider policy decisions beyond supplying the verified root-relative request."
+      ]
+    },
+    "durable_execution": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "The route decision durably stores canonical workspace root plus relative read/write scopes.",
+        "The governess reloads the routed journal record and re-verifies registration/common-directory identity before detached spawn.",
+        "The detached worker derives the original run root from the manifest, re-verifies the persisted workspace, and constructs its broker and prompt request from the verified root and scopes.",
+        "Guarded patch application independently repeats persisted-root verification and applies within the adopted worktree boundary.",
+        "Regression tests prove linked-worktree reads return linked content rather than base content and guarded apply changes only the linked checkout."
+      ]
+    },
+    "concurrency": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "Active write claims are workspace-qualified and use persisted normalized write scopes.",
+        "Two edits to the same linked-worktree file produce one utility route and one driver/write-conflict route.",
+        "The same relative filename in the base checkout and a linked worktree does not create a false conflict, and the claim-time store gate uses the same workspace-aware boundary."
+      ]
+    },
+    "verification": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "Independent focused task-router, utility-runtime, utility-store, utility-tools, and utility-workspace suite passed 87/87.",
+        "bun run build passed.",
+        "git diff --check passed."
+      ]
+    }
+  },
+  "known_limitations": [
+    "The worktree registration parser intentionally ignores stale registrations whose paths cannot be canonicalized, so they cannot become execution roots.",
+    "The live loop-47 delivery confirmation is recorded separately from this source-level adoption evaluation."
+  ],
+  "notes": "PASS. Independent review initially found workspace-unaware write claims and a copied-.git registration spoof. Both were corrected and regression-covered before this final verdict."
+}

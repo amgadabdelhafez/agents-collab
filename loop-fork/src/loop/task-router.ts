@@ -148,6 +148,14 @@ export interface UtilityRouteDecision {
   reason: UtilityRouteReason;
   target: UtilityRouteTarget;
   tierId?: string;
+  /** Runtime-verified execution boundary; callers cannot set this directly. */
+  workspace?: UtilityResolvedWorkspace;
+}
+
+export interface UtilityResolvedWorkspace {
+  readScope: string[];
+  root: string;
+  writeScope: string[];
 }
 
 interface RequestFactoryDeps {

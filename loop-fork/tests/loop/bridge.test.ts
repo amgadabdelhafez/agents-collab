@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -740,6 +741,14 @@ test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async 
   });
   const bridge = await loadBridge();
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  const transcriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion =
+    transcriptVersion;
+  bridge.bridgeInternals.commandDeps.readClaudeTranscriptVersion =
+    transcriptVersion;
   bridge.bridgeInternals.commandDeps.spawnSync = spawnSync;
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -787,6 +796,222 @@ test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async 
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Claude delivery retries a stranded composer with space then Enter", async () => {
+  let captureCalls = 0;
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      captureCalls += 1;
+      const pane =
+        captureCalls === 1 || captureCalls >= 3
+          ? "❯\n\nOpus 5 · bypass permissions on"
+          : "❯ [bridge:msg-claude-r] Message from Codex via the loop bridge:\n\nOpus 5";
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(pane, "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() => {
+    transcriptReads += 1;
+    return transcriptReads < 10 ? "before" : "after";
+  });
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-retry",
+    kind: "message" as const,
+    message: "Retry this submission.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(2);
+  expect(spawnSync.mock.calls).toContainEqual([
+    ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "-l", "--", " "],
+    { stderr: "ignore" },
+  ]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("unconfirmed Claude delivery remains pending after one retry", async () => {
+  let captureCalls = 0;
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      captureCalls += 1;
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          captureCalls === 1
+            ? "❯\n\nOpus 5 · bypass permissions on"
+            : "❯ [bridge:msg-claude-u] Message from Codex via the loop bridge:\n\nOpus 5",
+          "utf8"
+        ),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(
+    () => "unchanged"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-unconfirmed",
+    kind: "message" as const,
+    message: "Do not acknowledge without proof.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining({ id: message.id }),
+  ]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toEqual([]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a post-injection human draft is never submitted by fallback", async () => {
+  let captureCalls = 0;
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      captureCalls += 1;
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          captureCalls === 1
+            ? "❯\n\nOpus 5 · bypass permissions on"
+            : "❯ human draft started after injection\n\nOpus 5",
+          "utf8"
+        ),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(
+    () => "unchanged"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-human-draft",
+    kind: "message" as const,
+    message: "Do not submit the human draft.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(1);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) =>
+        args[0] === "tmux" && args[1] === "send-keys" && args.at(-1) === " "
+    )
+  ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining({ id: message.id }),
+  ]);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("immediate Claude delivery and worker drain submit a message once", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
@@ -803,6 +1028,14 @@ test("immediate Claude delivery and worker drain submit a message once", async (
   });
   const bridge = await loadBridge();
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  const transcriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion =
+    transcriptVersion;
+  bridge.bridgeInternals.commandDeps.readClaudeTranscriptVersion =
+    transcriptVersion;
   bridge.bridgeInternals.commandDeps.spawnSync = spawnSync;
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -1810,7 +2043,7 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
         "repo-loop-8:0.0",
         "-l",
         "--",
-        "Message from Codex via the loop bridge:",
+        "[bridge:msg-cursor-1] Message from Codex via the loop bridge:",
       ],
       { stderr: "ignore" },
     ],
@@ -1887,6 +2120,10 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
   });
   const bridge = await loadBridge();
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
@@ -1929,7 +2166,7 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
       "repo-loop-8:0.0",
       "-l",
       "--",
-      "Message from Gemini via the loop bridge:",
+      "[bridge:msg-claude-t] Message from Gemini via the loop bridge:",
     ],
     { stderr: "ignore" },
   ]);
@@ -1955,6 +2192,62 @@ test("Claude pane delivery preserves a non-empty user draft", async () => {
       "❯ check codex bridge message\n\nOpus 5 | ctx: 59% | effort: high"
     )
   ).toBe(false);
+  expect(
+    bridge.isClaudePaneReady(
+      "❯\nshort prior output\n❯ human draft\n\nOpus 5 | ctx: 59%"
+    )
+  ).toBe(false);
+});
+
+test("Claude transcript lookup rejects traversal and external symlink proof", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const projectsDir = join(root, "projects");
+  const projectDir = join(projectsDir, "-repo");
+  const outside = join(root, "outside.jsonl");
+  mkdirSync(runDir, { recursive: true });
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(outside, '{"type":"user"}\n');
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      claudeSessionId: "../../outside",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`
+  );
+  expect(
+    bridge.readClaudeTranscriptVersionFromProjects(runDir, projectsDir)
+  ).toBeUndefined();
+
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      claudeSessionId: "safe-session",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`
+  );
+  symlinkSync(outside, join(projectDir, "safe-session.jsonl"));
+  expect(
+    bridge.readClaudeTranscriptVersionFromProjects(runDir, projectsDir)
+  ).toBeUndefined();
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("bridge stale tmux cleanup is a no-op when the manifest has no tmux session", async () => {
@@ -2418,6 +2711,10 @@ test("runBridgeWorker drains Claude while the Codex tmux proxy owns Codex", asyn
   });
   const bridge = await loadBridge({ injectCodexMessage });
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
   const root = makeTempDir();
   runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });

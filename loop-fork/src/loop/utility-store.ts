@@ -629,12 +629,27 @@ const hasActiveWriteConflict = (
   jobs: readonly UtilityJobSnapshot[]
 ): boolean =>
   jobs.some(
-    (job) =>
-      job.jobId !== candidate.jobId &&
-      (job.state === "claimed" || job.state === "running") &&
-      candidate.request.writeScope.some((path) =>
-        job.request.writeScope.some((claim) => scopeOverlaps(path, claim))
-      )
+    (job) => {
+      if (
+        job.jobId === candidate.jobId ||
+        (job.state !== "claimed" && job.state !== "running")
+      ) {
+        return false;
+      }
+      const candidateRoot = candidate.decision?.workspace?.root;
+      const activeRoot = job.decision?.workspace?.root;
+      if (candidateRoot && activeRoot && candidateRoot !== activeRoot) {
+        return false;
+      }
+      const candidateScopes =
+        candidate.decision?.workspace?.writeScope ??
+        candidate.request.writeScope;
+      const activeScopes =
+        job.decision?.workspace?.writeScope ?? job.request.writeScope;
+      return candidateScopes.some((path) =>
+        activeScopes.some((claim) => scopeOverlaps(path, claim))
+      );
+    }
   );
 
 export const claimUtilityJob = (
