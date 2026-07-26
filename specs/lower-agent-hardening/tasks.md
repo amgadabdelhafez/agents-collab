@@ -7,5 +7,5 @@
 - [x] Implement and test guarded patch application.
 - [x] Implement and test run-budget reservations and pane route reasons.
 - [x] Run focused/full verification and build.
-- [ ] Integrate and install globally without touching loop 43.
-- [ ] Record release evidence and finish the Harness run.
+- [x] Integrate and install globally without touching loop 43.
+- [x] Record release evidence and finish the Harness run.

@@ -64,25 +64,25 @@ cost limits remain conservative under concurrency.
 
 ## Acceptance criteria
 
-- [ ] Repository policy enables exactly `npx vitest run <scoped-file>` for a
+- [x] Repository policy enables exactly `npx vitest run <scoped-file>` for a
       Harvto-like fixture while malformed/broad policies fail closed.
-- [ ] Worker subprocess tests prove unrelated secrets and direct API-key
+- [x] Worker subprocess tests prove unrelated secrets and direct API-key
       variables are absent while the external key-file configuration survives.
-- [ ] Dead PID, live PID, pre-claim timeout, runtime kill, stale epoch, and
+- [x] Dead PID, live PID, pre-claim timeout, runtime kill, stale epoch, and
       terminal-state races have deterministic tests.
-- [ ] Guarded patch application passes a clean apply, refuses preimage drift,
+- [x] Guarded patch application passes a clean apply, refuses preimage drift,
       wrong hash, scope escape, protected/dependency targets, symlink escape,
       repeat-after-drift, and non-agent invocation.
-- [ ] Pane and task status expose safe key/route diagnostics without credential
+- [x] Pane and task status expose safe key/route diagnostics without credential
       content.
-- [ ] Concurrent estimate-less jobs cannot reserve beyond the configured run
+- [x] Concurrent estimate-less jobs cannot reserve beyond the configured run
       budget.
-- [ ] Focused lower-agent/bridge/governess/tmux tests pass.
-- [ ] Full `bun test`, `bun run build`, and `git diff --check` run with any
+- [x] Focused lower-agent/bridge/governess/tmux tests pass.
+- [x] Full `bun test`, `bun run build`, and `git diff --check` run with any
       unrelated baseline failures isolated.
-- [ ] The integrated binary is installed through the global entrypoint and a
+- [x] The integrated binary is installed through the global entrypoint and a
       disposable new-loop smoke proves the default GLM observer.
-- [ ] Loop-43 pane IDs and PIDs are identical before and after release.
+- [x] Loop-43 pane IDs and PIDs are identical before and after release.
 
 ## Non-goals
 

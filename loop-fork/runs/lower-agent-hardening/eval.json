@@ -13,6 +13,18 @@
       "latest_attempt": "002",
       "latest_attempt_artifact": "runs/lower-agent-hardening/artifacts/unit/attempt-002.log",
       "latest_attempt_meta": "runs/lower-agent-hardening/artifacts/unit/attempt-002.json"
+    },
+    "smoke": {
+      "status": "pass",
+      "artifact": "runs/lower-agent-hardening/artifacts/release-proof.md",
+      "reason": "installed GLM pane and Harvto nested Vitest boundary verified with disposable probes",
+      "method": "tmux and fake-runner smoke"
+    },
+    "release": {
+      "status": "pass",
+      "artifact": "runs/lower-agent-hardening/artifacts/release-proof.md",
+      "reason": "canonical integration and global install completed while loop 43 identities remained stable",
+      "method": "local integration proof"
     }
   }
 }
