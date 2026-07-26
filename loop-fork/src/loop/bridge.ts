@@ -403,7 +403,7 @@ const handleToolCall = async (
         MCP_INVALID_PARAMS,
         error instanceof UtilityBridgeInputError
           ? error.message
-          : "utility task request failed"
+          : "worker task request failed"
       );
     }
     return;

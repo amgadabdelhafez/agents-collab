@@ -27,7 +27,10 @@ import {
   bridgeChatId,
   readNextPendingBridgeMessageForTarget,
 } from "./bridge-dispatch";
-import { formatBridgeDeliveryMessage } from "./bridge-message-format";
+import {
+  bridgeSourceLabel,
+  formatBridgeDeliveryMessage,
+} from "./bridge-message-format";
 import {
   type BridgeMessage,
   type BridgeStatus,
@@ -258,9 +261,6 @@ const releaseDeliveryClaim = (path: string): void => {
 
 const decodeOutput = (value: Uint8Array): string =>
   new TextDecoder().decode(value);
-
-const capitalize = (value: string): string =>
-  value.slice(0, 1).toUpperCase() + value.slice(1);
 
 const tmuxPane = (session: string, paneId: string): string =>
   `${session}:${paneId}`;
@@ -538,7 +538,7 @@ const formatTmuxBridgeMessage = (message: BridgeMessage): string => {
     return "";
   }
   return [
-    `[bridge:${message.id.slice(0, 12)}] Message from ${capitalize(message.source)} via the loop bridge:`,
+    `[bridge:${message.id.slice(0, 12)}] Message from ${bridgeSourceLabel(message.source)} via the loop bridge:`,
     trimmed,
     "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
   ].join("\n\n");

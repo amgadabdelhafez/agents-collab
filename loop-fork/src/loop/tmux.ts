@@ -240,7 +240,7 @@ const pairedBridgeGuidance = (
       mandatoryUtilityDelegationGuidance(
         quotedClaudeTmuxBridgeTool(serverName, "route_task")
       ),
-      `For a returned utility edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
+      `For a returned worker edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
       `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
     ].join("\n");
   }
@@ -250,7 +250,7 @@ const pairedBridgeGuidance = (
     mandatoryUtilityDelegationGuidance(
       quotedBridgeTool(agent, "route_task")
     ),
-    `For a returned utility edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
+    `For a returned worker edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
     `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
   ].join("\n");
 };
@@ -1108,8 +1108,12 @@ const utilityPaneHeight = (env: NodeJS.ProcessEnv): string => {
     : DEFAULT_UTILITY_PANE_HEIGHT;
 };
 
+export const composeWorkerPaneTitle = (session: string): string =>
+  `worker.${session}`;
+
 const startUtilityPane = (
   deps: TmuxDeps,
+  session: string,
   rightAgentPane: string,
   utilityPane: string,
   runDir: string
@@ -1135,7 +1139,11 @@ const startUtilityPane = (
     deps.cwd,
     command,
   ]);
-  return stablePaneTarget(result, utilityPane);
+  const pane = stablePaneTarget(result, utilityPane);
+  const title = composeWorkerPaneTitle(session);
+  deps.spawn(["tmux", "set-option", "-p", "-t", pane, "@loop_label", title]);
+  deps.spawn(["tmux", "select-pane", "-t", pane, "-T", title]);
+  return pane;
 };
 
 const resizeUtilityPane = (deps: TmuxDeps, pane: string): void => {
@@ -1486,6 +1494,7 @@ const createPairedPaneLayout = async (input: {
   const utility = showUtilityPane
     ? startUtilityPane(
         input.deps,
+        input.session,
         rightBeforeUtility,
         `${input.session}:0.1`,
         input.runDir

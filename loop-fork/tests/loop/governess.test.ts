@@ -3,6 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  appendDelegationEvent,
+  makeDelegationEvent,
+} from "../../src/loop/delegation-policy";
+import {
   agentRenameEnabledFromEnv,
   applyGovernessPaneIdentity,
   type BridgeSendStatus,
@@ -436,7 +440,9 @@ test("round-robin local judge mode calls one model for that tick", async () => {
   expect(spies.judgeRequests.map((req) => req.model)).toEqual(["gemma"]);
   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
   expect(visibleBoard).toMatch(/gemma\s+gemma\s+ok\s+1\s+120\s+100\s+12\s+20/);
-  expect(visibleBoard).toContain("judge round-robin");
+  expect(visibleBoard).not.toContain("judge round-robin");
+  expect(visibleBoard).not.toContain("llm params");
+  expect(visibleBoard).toContain("temp 0");
 });
 
 test("board labels an agent [thinking] while its pane is animating", async () => {
@@ -526,9 +532,9 @@ test("codex session pressure hands driver role to claude until reset", async () 
   expect(visibleLines[headerIndex + 1]).toStartWith(" claude");
   expect(visibleLines[headerIndex + 2]).toStartWith(" codex");
   expect(stripAnsi(result.board)).not.toContain("waiting for you");
-  expect(stripAnsi(result.board)).toContain(
-    "roles · initial codex · current claude · paused codex"
-  );
+  expect(stripAnsi(result.board)).toContain("paused codex");
+  expect(stripAnsi(result.board)).toContain("handoff 0s ago");
+  expect(stripAnsi(result.board)).not.toContain("roles · initial");
   expect(stripAnsi(result.board)).toContain("msgs claude 1 codex 0");
   expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
 });
@@ -644,9 +650,8 @@ test("codex limit reset restores driver role without compacting context", async 
   expect(result.runState.notified.limitHandoff.codex).toBeUndefined();
   expect(result.runState.roles.currentDriver).toBe("codex");
   expect(result.runState.roles.pausedAgent).toBeUndefined();
-  expect(stripAnsi(result.board)).toContain(
-    "roles · initial codex · current codex"
-  );
+  expect(stripAnsi(result.board)).toContain("restored 0s ago");
+  expect(stripAnsi(result.board)).not.toContain("roles · initial");
   expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 1");
   expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
 });
@@ -1045,9 +1050,8 @@ test("proactive quota balance moves driver when local LLM approves", async () =>
     outputTokens: 5,
     totalTokens: 15,
   });
-  expect(stripAnsi(result.board)).toContain(
-    "roles · initial codex · current claude"
-  );
+  expect(stripAnsi(result.board)).toContain("balance 0s ago");
+  expect(stripAnsi(result.board)).not.toContain("roles · initial");
   expect(stripAnsi(result.board)).toContain("balance 0s ago");
   expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 1");
 });
@@ -1101,7 +1105,7 @@ test("proactive quota balance is skipped when local LLM vetoes", async () => {
     "balance:codex->claude:80:30"
   );
   expect(result.runState.llmUsage.totalTokens).toBe(7);
-  expect(stripAnsi(result.board)).toContain("roles · initial codex");
+  expect(stripAnsi(result.board)).not.toContain("roles · initial");
   expect(stripAnsi(result.board)).not.toContain("current claude");
 });
 
@@ -1681,6 +1685,47 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
         summary: "Failed closed.",
       },
     });
+    const skipped = createUtilityRouteRequest({
+      acceptanceCriteria: ["stay with the driver"],
+      authority: {},
+      createdAt: "2026-07-26T00:59:00.000Z",
+      id: "skipped-route",
+      kind: "inspect",
+      objective: "Inspect a protected governing file",
+      readScope: ["AGENTS.md"],
+      requester: "codex",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    });
+    appendUtilityRouteRequest(runDir, skipped);
+    transitionUtilityJob(runDir, skipped.id, "routed-driver", {
+      decision: { reason: "protected-scope", target: "driver" },
+    });
+    appendDelegationEvent(
+      runDir,
+      makeDelegationEvent({
+        agent: "claude",
+        disposition: "auto-routed",
+        fingerprint: "a".repeat(64),
+        operation: "source-slice",
+        reason: "source-slice",
+        source: "claude-hook",
+        taskId: request.id,
+      })
+    );
+    appendDelegationEvent(
+      runDir,
+      makeDelegationEvent({
+        agent: "codex",
+        disposition: "explicit-routed",
+        fingerprint: "b".repeat(64),
+        operation: "inspect",
+        reason: "explicit-tool-request",
+        source: "bridge",
+        taskId: latestFailed.id,
+      })
+    );
     const result = await governessTick(
       new Map<Agent, AgentLivenessState>(),
       baseConfig({ runDir }),
@@ -1692,12 +1737,16 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
     expect(board.match(/^ AGENT/gm) ?? []).toHaveLength(1);
     expect(board).not.toContain("LOWER");
     expect(board).toMatch(
-      /utility\s+● idle\s+—\s+glm-5\.2\s+1ok\/1fail\s+—\s+—\s+\$0\.0123\/—\s+7k i5k c2k o2k\s+2j 4c 3tl\s+latest-f fail/
+      /worker\s+● idle\s+—\s+glm-5\.2\s+1ok\/1fail\s+—\s+—\s+\$0\.0123\/—\s+7k i5k c2k o2k\s+2j 4c 3tl\s+latest-f fail/
     );
-    const utilityRow = board
+    const workerRow = board
       .split("\n")
-      .find((line) => line.startsWith(" utility"));
-    expect(utilityRow?.length).toBeLessThanOrEqual(176);
+      .find((line) => line.startsWith(" worker"));
+    expect(workerRow?.length).toBeLessThanOrEqual(176);
+    expect(board).toContain(
+      "routing · considered 3 · routed worker 2 · skipped 1 · pending 0 · adoption auto 1 explicit 1"
+    );
+    expect(board).toContain("skipped why · protected-scope 1");
     expect(board).not.toContain("Project: must remain hidden");
   } finally {
     rmSync(runDir, { force: true, recursive: true });
@@ -1733,7 +1782,50 @@ test("small governess viewports retain both agents and utility without overflow"
     expect(lines).toHaveLength(5);
     expect(lines.some((line) => line.startsWith(" claude"))).toBe(true);
     expect(lines.some((line) => line.startsWith(" codex"))).toBe(true);
-    expect(lines.some((line) => line.startsWith(" utility"))).toBe(true);
+    expect(lines.some((line) => line.startsWith(" worker"))).toBe(true);
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("worker row hides the internal routed-utility state name", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "governess-worker-routed-"));
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  try {
+    const request = createUtilityRouteRequest({
+      acceptanceCriteria: ["inspect"],
+      authority: {},
+      id: "routed-job",
+      kind: "inspect",
+      objective: "Inspect one bounded file",
+      readScope: ["src"],
+      requester: "claude",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    });
+    appendUtilityRouteRequest(runDir, request);
+    activateUtilityEpoch(runDir, 1);
+    transitionUtilityJob(runDir, request.id, "routed-utility", {
+      decision: { reason: "utility-eligible", target: "utility" },
+      routeEpoch: 1,
+    });
+    const result = await governessTick(
+      new Map<Agent, AgentLivenessState>(),
+      baseConfig({ runDir }),
+      makeDeps(
+        {
+          ok: true,
+          verdict: { confidence: 0.9, state: "working", summary: "" },
+        },
+        clock,
+        spies
+      )
+    );
+    const board = stripAnsi(result.board);
+    expect(board).toMatch(/worker\s+● queued.*routed-j route/);
+    expect(board).not.toContain("routed-utility");
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }

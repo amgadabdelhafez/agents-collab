@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { spawn } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
-import { readDelegationEvents } from "./delegation-policy";
 import { buildLaunchArgv } from "./launch";
 import {
   type OpenAICompatibleMessage,
@@ -450,7 +449,7 @@ const failUtilityJob = async (
         checks: [],
         filesChanged: [],
         status: "failed",
-        summary: "Utility worker was fenced and failed closed.",
+        summary: "Worker was fenced and failed closed.",
       },
     });
   } catch (error) {
@@ -467,7 +466,7 @@ const failUtilityJob = async (
     context.runDir,
     "utility",
     job.request.requester,
-    `Utility result ${job.jobId} failed: ${reason}`,
+    `Worker result ${job.jobId} failed: ${reason}`,
     undefined,
     undefined,
     { taskId: job.jobId, type: "escalation" }
@@ -481,16 +480,16 @@ const staleUtilityReason = (input: {
   runTimedOut: boolean;
 }): string => {
   if (input.staleEpoch) {
-    return "utility claim belongs to a stale governess epoch";
+    return "worker claim belongs to a stale governess epoch";
   }
   if (input.deadWorker) {
-    return "utility worker process is no longer alive";
+    return "worker process is no longer alive";
   }
   return input.claimTimedOut
-    ? "utility worker did not claim the routed job"
+    ? "worker did not claim the routed job"
     : input.runTimedOut
-      ? "utility job exceeded its runtime limit and was terminated"
-      : "utility worker failed closed";
+      ? "worker job exceeded its runtime limit and was terminated"
+      : "worker failed closed";
 };
 
 const recoverStaleUtilityJobs = async (
@@ -661,7 +660,7 @@ const startRoutedUtilityJob = async (input: {
     await failUtilityJob(
       input.context,
       input.job,
-      "verified utility workspace no longer matches the run repository"
+      "verified worker workspace no longer matches the run repository"
     );
     return;
   }
@@ -686,7 +685,7 @@ const startRoutedUtilityJob = async (input: {
     await failUtilityJob(
       input.context,
       routedJob,
-      "utility worker process failed to start"
+      "worker process failed to start"
     );
   }
 };
@@ -705,7 +704,7 @@ const dispatchNonUtilityRoute = async (
     context.runDir,
     "utility",
     target === "peer" ? requesterPeer : context.currentDriver,
-    `Utility route ${job.jobId} returned to ${target}: ${reason}. Objective: ${job.request.objective}`,
+    `Worker route ${job.jobId} returned to ${target}: ${reason}. Objective: ${job.request.objective}`,
     undefined,
     undefined,
     {
@@ -798,7 +797,7 @@ export const processPendingUtilityRoutes = async (
   const workerEnv = buildUtilityWorkerEnvironment(env);
   const config = resolveUtilityRuntimeConfig(workerEnv);
   if (!activateUtilityEpoch(context.runDir, context.epoch)) {
-    throw new Error("stale governess epoch cannot activate utility routing");
+    throw new Error("stale governess epoch cannot activate worker routing");
   }
   await recoverStaleUtilityJobs(context, config, deps);
   const pending = readPendingRouteRequests(context.runDir);
@@ -878,7 +877,7 @@ const emptyUsage = (): OpenAICompatibleUsage => ({
 
 const utilitySystemPrompt = (): string =>
   [
-    "You are the bounded utility worker beneath two main coding agents.",
+    "You are the bounded worker beneath two main coding agents.",
     "Do only the declared objective and acceptance criteria. Use tools for evidence.",
     "Never expand scope, access secrets, change dependencies, make product decisions, or perform remote/destructive actions.",
     "For edits, produce a minimal unified diff with propose_patch; it is reviewed/applied by a main agent.",
@@ -942,7 +941,7 @@ const assertConversationEvidence = (
       )
     ) {
       throw new Error(
-        "utility edit completed without a validated patch artifact"
+        "worker edit completed without a validated patch artifact"
       );
     }
     return;
@@ -950,13 +949,13 @@ const assertConversationEvidence = (
   if (request.kind === "command") {
     if (!successfulTools.has("run_check")) {
       throw new Error(
-        "utility command completed without a successful focused check"
+        "worker command completed without a successful focused check"
       );
     }
     return;
   }
   if (successfulTools.size === 0) {
-    throw new Error("utility task completed without repository tool evidence");
+    throw new Error("worker task completed without repository tool evidence");
   }
 };
 
@@ -989,10 +988,10 @@ const assertUtilityBudget = (
   config: UtilityRuntimeConfig
 ): void => {
   if (usage.totalTokens > config.maxTotalTokens) {
-    throw new Error("utility job exceeded its total token limit");
+    throw new Error("worker job exceeded its total token limit");
   }
   if ((usage.cost ?? 0) > config.maxJobCostUsd) {
-    throw new Error("utility job exceeded its cost limit");
+    throw new Error("worker job exceeded its cost limit");
   }
 };
 
@@ -1055,7 +1054,7 @@ const runUtilityConversation = async (input: {
         artifacts,
         checks,
         ...progress(),
-        summary: response.message.content?.trim() || "Utility task completed.",
+        summary: response.message.content?.trim() || "Worker task completed.",
       };
     }
     toolRounds += 1;
@@ -1080,7 +1079,7 @@ const runUtilityConversation = async (input: {
       });
     }
   }
-  throw new Error("utility worker reached its step limit without completion");
+  throw new Error("worker reached its step limit without completion");
 };
 
 export const runUtilityWorker = async (
@@ -1115,7 +1114,7 @@ export const runUtilityWorker = async (
         runDir,
       },
       claimed,
-      "verified utility workspace no longer matches the run repository"
+      "verified worker workspace no longer matches the run repository"
     );
     return;
   }
@@ -1184,7 +1183,7 @@ export const runUtilityWorker = async (
       runDir,
       "utility",
       claimed.request.requester,
-      `Utility result ${jobId}: ${result.summary}`,
+      `Worker result ${jobId}: ${result.summary}`,
       undefined,
       undefined,
       {
@@ -1218,14 +1217,14 @@ export const runUtilityWorker = async (
       checks: [],
       filesChanged: [],
       status: "failed",
-      summary: "Utility worker failed closed.",
+      summary: "Worker failed closed.",
     };
     transitionUtilityJob(runDir, jobId, "failed", { result });
     await dispatchBridgeMessage(
       runDir,
       "utility",
       claimed.request.requester,
-      `Utility result ${jobId} failed: ${result.blocker}`,
+      `Worker result ${jobId} failed: ${result.blocker}`,
       undefined,
       undefined,
       { taskId: jobId, type: "escalation" }
@@ -1241,14 +1240,14 @@ export const applyUtilityJobPatch = async (
 ): Promise<GuardedPatchApplyResult> => {
   const job = readUtilityJob(runDir, jobId);
   if (!job) {
-    throw new Error("unknown utility task_id");
+    throw new Error("unknown worker task_id");
   }
   if (
     job.state !== "completed" ||
     job.result?.status !== "completed" ||
     job.request.kind !== "edit"
   ) {
-    throw new Error("guarded patch apply requires a completed utility edit");
+    throw new Error("guarded patch apply requires a completed worker edit");
   }
   const expected = expectedPatchSha256.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(expected)) {
@@ -1262,14 +1261,14 @@ export const applyUtilityJobPatch = async (
   );
   if (artifacts.length !== 1) {
     throw new Error(
-      "expected patch artifact is missing or ambiguous for this utility job"
+      "expected patch artifact is missing or ambiguous for this worker job"
     );
   }
   const patchPath = artifacts[0]?.path;
   const manifestPath = artifacts[0]?.manifestPath;
   const manifestSha256 = artifacts[0]?.manifestSha256;
   if (!(patchPath && manifestPath && manifestSha256)) {
-    throw new Error("utility patch or manifest integrity metadata is missing");
+    throw new Error("worker patch or manifest integrity metadata is missing");
   }
   const repoRoot = repoRootForRun(runDir);
   const workspace = job.decision?.workspace
@@ -1277,7 +1276,7 @@ export const applyUtilityJobPatch = async (
     : undefined;
   if (job.decision?.workspace && !workspace) {
     throw new Error(
-      "verified utility workspace no longer matches the run repository"
+      "verified worker workspace no longer matches the run repository"
     );
   }
   const executionRoot = workspace?.root ?? repoRoot;
@@ -1309,48 +1308,14 @@ export const applyUtilityJobPatch = async (
 export const utilityJobStatus = (runDir: string, jobId: string) =>
   readUtilityJob(runDir, jobId);
 
-const formatPaneCost = (value: unknown): string =>
-  typeof value === "number" && Number.isFinite(value)
-    ? `$${value.toFixed(value < 0.1 ? 4 : 3)}`
-    : "$--";
-
-const formatPaneNumber = (value: unknown): string =>
-  typeof value === "number" && Number.isFinite(value)
-    ? Math.round(value).toLocaleString("en-US")
-    : "--";
-
-const paneRouterRow = (
-  runDir: string,
-  snapshot: UtilityObservabilitySnapshot
-): string => {
-  const events = readDelegationEvents(runDir);
-  const count = (disposition: string): number =>
-    events.filter((event) => event.disposition === disposition).length;
-  const route = (snapshot.latestRoute ?? "waiting").replace(
-    "utility-eligible",
-    "eligible"
-  );
-  const rawDetail = snapshot.latestRouteDetail ?? "";
-  const usefulDetail = rawDetail.includes("chmod 600")
-    ? "chmod 600 · key file permissions too open"
-    : rawDetail;
-  const detail = usefulDetail ? ` · ${usefulDetail}` : "";
-  return `ROUTE ${route}${detail} · auto ${count("auto-routed")} · exp ${count("explicit-routed")} · miss ${count("missed-candidate")}`;
+const PANE_ANSI = {
+  blue: "\u001b[34m",
+  cyan: "\u001b[36m",
+  dim: "\u001b[2m",
+  green: "\u001b[32m",
+  red: "\u001b[31m",
+  reset: "\u001b[0m",
 };
-
-const paneWorkerState = (snapshot: UtilityObservabilitySnapshot): string => {
-  if (snapshot.active > 0) {
-    return "active";
-  }
-  return snapshot.queued > 0 ? "queued" : "idle";
-};
-
-const paneModel = (model: string): string => model.split("/").at(-1) ?? model;
-
-const formatPaneDuration = (durationMs: number): string =>
-  durationMs < 1000
-    ? `${Math.round(durationMs)}ms`
-    : `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
 
 const compactDisplayPath = (value: string): string => {
   const parts = value.split("/").filter(Boolean);
@@ -1379,12 +1344,7 @@ const paneRequestText = (value: string): string => {
 };
 
 const MARKDOWN_NOISE_RE = /(?:\*\*|__|`|^#+\s*)/g;
-const EVIDENCE_MARKER_RE = /\bEvidence(?:\s*\([^)]*\))?\s*:\s*/i;
 const PIPE_SEPARATOR_RE = /\s*\|\s*/g;
-const EVIDENCE_TABLE_HEADER_RE =
-  /^·\s*Lines\s*·\s*Content Summary\s*·\s*·\s*-+\s*·\s*-+\s*·\s*/i;
-const LEADING_LIST_MARKER_RE = /^[-·]\s*/;
-const REPEATED_MIDDLE_DOT_RE = /\s*·(?:\s*·)+\s*/g;
 const RESULT_PREFIX_RE = /^(?:Outcome|Result|Finding)\s*:\s*/i;
 const COMPACT_READ_PREFIX_RE = /^read\s+/i;
 const COMPACT_LINES_RE = /\s+lines\s+/i;
@@ -1393,16 +1353,6 @@ const paneResultText = (value: string): string => {
   const clean = sanitizeUtilityPaneText(value)
     .replace(MARKDOWN_NOISE_RE, "")
     .replaceAll(PIPE_SEPARATOR_RE, " · ");
-  const marker = clean.match(EVIDENCE_MARKER_RE);
-  if (marker?.index !== undefined) {
-    const evidence = clean.slice(marker.index + marker[0].length).trim();
-    if (evidence) {
-      return evidence
-        .replace(EVIDENCE_TABLE_HEADER_RE, "")
-        .replace(LEADING_LIST_MARKER_RE, "")
-        .replace(REPEATED_MIDDLE_DOT_RE, " · ");
-    }
-  }
   return clean.replace(RESULT_PREFIX_RE, "");
 };
 
@@ -1436,6 +1386,9 @@ const fitPaneLine = (value: string, width: number): string => {
   }
   return width <= 3 ? ".".repeat(width) : `${clean.slice(0, width - 3)}...`;
 };
+
+const colorPaneLine = (color: string, value: string, width: number): string =>
+  `${color}${fitPaneLine(value, width)}${PANE_ANSI.reset}`;
 
 const wrapPaneText = (
   value: string,
@@ -1472,39 +1425,28 @@ const renderTranscriptEntry = (
 ): string[] => {
   const head = `${transcriptTime(entry.at)} ${entry.label} ${entry.jobId.slice(0, 8)}`;
   if (entry.kind === "tool") {
-    return [fitPaneLine(`${head} · ${entry.text || "—"}`, width)];
+    return [
+      colorPaneLine(PANE_ANSI.blue, `${head} · ${entry.text || "—"}`, width),
+    ];
   }
   if (entry.kind === "request") {
     return [
-      fitPaneLine(head, width),
+      colorPaneLine(PANE_ANSI.cyan, head, width),
       ...wrapPaneText(
         paneRequestText(entry.text || "—"),
         Math.max(1, width - 2),
         1
-      ).map((line) => `  ${line}`),
+      ).map((line) => colorPaneLine(PANE_ANSI.dim, `  ${line}`, width)),
     ];
   }
-  const usage = entry.usage;
-  const metrics = usage
-    ? [
-        formatPaneDuration(usage.durationMs),
-        `${formatPaneNumber(usage.modelCalls)}c/${formatPaneNumber(usage.toolCalls)}t`,
-      ].join(" · ")
-    : "no usage";
-  const detail = [
-    ...(usage
-      ? [
-          `${formatPaneNumber(usage.totalTokens)} tok`,
-          formatPaneCost(usage.costUsd),
-        ]
-      : []),
-    paneResultText(entry.text || "—"),
-  ].join(" · ");
+  const color = entry.label.includes("FAIL") ? PANE_ANSI.red : PANE_ANSI.green;
   return [
-    fitPaneLine(`${head} · ${metrics}`, width),
-    ...wrapPaneText(detail, Math.max(1, width - 2), 3).map(
-      (line) => `  ${line}`
-    ),
+    colorPaneLine(color, head, width),
+    ...wrapPaneText(
+      paneResultText(entry.text || "—"),
+      Math.max(1, width - 2),
+      3
+    ).map((line) => colorPaneLine(color, `  ${line}`, width)),
   ];
 };
 
@@ -1524,29 +1466,40 @@ const renderCompactTranscriptJob = (
   const lines: string[] = [];
   if (request) {
     lines.push(
-      fitPaneLine(
-        `REQ ${request.jobId.slice(0, 8)} · ${compactRequestText(request)}`,
+      colorPaneLine(
+        PANE_ANSI.cyan,
+        `${transcriptTime(request.at)} ${request.label} ${request.jobId.slice(0, 8)} · ${compactRequestText(request)}`,
         width
       )
     );
   }
   if (tool && lines.length < maxRows) {
-    lines.push(fitPaneLine(`TOOL ${tool.text || "—"}`, width));
+    lines.push(
+      colorPaneLine(
+        PANE_ANSI.blue,
+        `${transcriptTime(tool.at)} ${tool.label} · ${tool.text || "—"}`,
+        width
+      )
+    );
   }
   if (response && lines.length < maxRows) {
-    const usage = response.usage;
-    const metrics = usage
-      ? `${formatPaneDuration(usage.durationMs)} · ${formatPaneNumber(usage.modelCalls)}c/${formatPaneNumber(usage.toolCalls)}t · ${formatPaneNumber(usage.totalTokens)} tok · ${formatPaneCost(usage.costUsd)}`
-      : "no usage";
+    const color = response.label.includes("FAIL")
+      ? PANE_ANSI.red
+      : PANE_ANSI.green;
     lines.push(
-      fitPaneLine(
-        `${response.label.replace("GLM ", "")} ${response.jobId.slice(0, 8)} · ${metrics}`,
+      colorPaneLine(
+        color,
+        `${transcriptTime(response.at)} ${response.label} ${response.jobId.slice(0, 8)}`,
         width
       )
     );
     const detailRows = Math.max(0, maxRows - lines.length);
     lines.push(
-      ...wrapPaneText(paneResultText(response.text || "—"), width, detailRows)
+      ...wrapPaneText(
+        paneResultText(response.text || "—"),
+        width,
+        detailRows
+      ).map((line) => colorPaneLine(color, line, width))
     );
   }
   return lines.slice(0, maxRows);
@@ -1561,7 +1514,7 @@ const renderUtilityTranscript = (
     return [];
   }
   if (snapshot.transcript.length === 0) {
-    return ["  waiting for first request"];
+    return [colorPaneLine(PANE_ANSI.dim, "waiting for first request", width)];
   }
   const byJob = new Map<string, UtilityTranscriptEntry[]>();
   for (const entry of snapshot.transcript) {
@@ -1600,28 +1553,10 @@ export const renderUtilityPane = (
   env: NodeJS.ProcessEnv = process.env,
   viewport: UtilityPaneViewport = {}
 ): string => {
-  const config = resolveUtilityRuntimeConfig(
-    buildUtilityWorkerEnvironment(env)
-  );
   const snapshot = readUtilityObservability(runDir);
   const width = paneWidth(env, viewport);
   const maxRows = paneRows(env, viewport);
-  const healthy = runtimeTier(config).healthy;
-  const top = [
-    `${paneModel(config.model).toUpperCase()} ${healthy ? "READY" : "OFFLINE"} · ${paneWorkerState(snapshot)} · jobs ${snapshot.jobsTotal} a${snapshot.active} q${snapshot.queued} d${snapshot.completed} f${snapshot.failed}`,
-    `USAGE ${formatPaneNumber(snapshot.usage.modelCalls)} calls · ${formatPaneNumber(snapshot.usage.toolCalls)} tools · ${formatPaneNumber(snapshot.usage.totalTokens)} tok · ${formatPaneCost(snapshot.usage.costUsd)}`,
-    `TOKENS in ${formatPaneNumber(snapshot.usage.inputTokens)} · cache ${formatPaneNumber(snapshot.usage.cachedInputTokens)} · out ${formatPaneNumber(snapshot.usage.outputTokens)}`,
-    paneRouterRow(runDir, snapshot),
-    "RECENT JOBS · request / tool / result",
-  ].map((line) => fitPaneLine(line, width));
-  return [
-    ...top,
-    ...renderUtilityTranscript(
-      snapshot,
-      width,
-      Math.max(0, maxRows - top.length)
-    ),
-  ]
+  return renderUtilityTranscript(snapshot, width, maxRows)
     .slice(0, maxRows)
     .join("\n");
 };

@@ -1799,6 +1799,9 @@ const utilityLatestState = (snapshot: UtilityObservabilitySnapshot): string => {
   if (snapshot.latestState === "failed") {
     return "fail";
   }
+  if (snapshot.latestState === "routed-utility") {
+    return "route";
+  }
   return snapshot.latestState ?? "—";
 };
 
@@ -1825,7 +1828,7 @@ const renderUtilityAgentRow = (
     ? `${snapshot.latestJobId.slice(0, 8)} ${utilityLatestState(snapshot)}`
     : "—";
   return ` ${[
-    colorCell(ANSI.green, "utility", AGENT_COL.agent),
+    colorCell(ANSI.green, "worker", AGENT_COL.agent),
     colorCell(utilityStateColor(state), `● ${state}`, AGENT_COL.state),
     fitCell(utilityAge(snapshot, meta.nowMs), AGENT_COL.age),
     colorCell(
@@ -1845,6 +1848,32 @@ const renderUtilityAgentRow = (
     colorCell(ANSI.yellow, activity, AGENT_COL.activity),
     fitCell(latest, AGENT_COL.bridge),
   ].join(" ")}`;
+};
+
+const renderWorkerRoutingRows = (
+  snapshot: UtilityObservabilitySnapshot,
+  meta: BoardMeta
+): string[] => {
+  const width = Math.max(1, meta.maxColumns ?? 176);
+  const routing = snapshot.routing;
+  const decisions = ` routing · considered ${routing.considered} · routed worker ${routing.routed} · skipped ${routing.skipped} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted}`;
+  const reasons = Object.entries(routing.reasons)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([reason, count]) => `${reason} ${count}`)
+    .join(" · ");
+  const latestDetail = snapshot.latestRouteDetail?.includes("chmod 600")
+    ? "key file permissions too open; chmod 600"
+    : snapshot.latestRouteDetail;
+  return [
+    paint(ANSI.cyan, truncate(decisions, width)),
+    paint(
+      routing.skipped > 0 ? ANSI.yellow : ANSI.dim,
+      truncate(
+        ` skipped why · ${reasons || "none"}${latestDetail ? ` · latest ${latestDetail}` : ""}`,
+        width
+      )
+    ),
+  ];
 };
 
 const localLlmUsageCells = (usage: LocalLlmUsage): string[] => {
@@ -2216,8 +2245,7 @@ const localLlmModelCell = (runtime: LocalLlmRuntime | undefined): string[] => {
   ];
 };
 
-const localLlmParamsCell = (judgeMode: LocalLlmJudgeMode): string[] => [
-  `judge ${judgeMode}`,
+const localLlmParamsCell = (_judgeMode: LocalLlmJudgeMode): string[] => [
   `temp ${LOCAL_LLM_TEMPERATURE}`,
   LOCAL_LLM_JUDGE_MAX_TOKENS === LOCAL_LLM_WAITING_MAX_TOKENS
     ? `max out ${fmtTokenLimit(
@@ -2424,18 +2452,10 @@ const roleActionAge = (
 };
 
 const roleSummaryParts = (meta: BoardMeta): string[] => {
-  const initial = meta.roles.initialDriver ?? meta.initialDriver;
-  const current = meta.roles.currentDriver ?? initial;
   const balanceAge = roleActionAge(meta.roles.balanceAt, meta.nowMs);
   const handoffAge = roleActionAge(meta.roles.handoffAt, meta.nowMs);
   const restoredAge = roleActionAge(meta.roles.restoredAt, meta.nowMs);
-  if (!(initial || current || meta.roles.pausedAgent)) {
-    return [];
-  }
   const parts = [
-    "roles",
-    initial ? `initial ${initial}` : "",
-    current ? `current ${current}` : "",
     meta.roles.pausedAgent ? `paused ${meta.roles.pausedAgent}` : "",
     meta.roles.pausedAgent && meta.roles.reset
       ? `reset ${sessionResetCell(meta.roles.reset, meta.nowMs)}`
@@ -2450,7 +2470,7 @@ const roleSummaryParts = (meta: BoardMeta): string[] => {
       ? `restored ${restoredAge} ago`
       : "",
   ].filter(Boolean);
-  return [paint(ANSI.dim, parts.join(" · "))];
+  return parts.length > 0 ? [paint(ANSI.dim, parts.join(" · "))] : [];
 };
 
 interface ToolGroups {
@@ -2824,10 +2844,10 @@ const renderProgressNext = (meta: BoardMeta): string[] => {
 
 const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
   const paramCells = localLlmParamsCell(meta.judgeMode);
-  const paramParts: LocalFooterPart[] = [
-    { color: ANSI.blue, text: "llm params" },
-    ...paramCells.map((text) => ({ color: ANSI.blue, text })),
-  ];
+  const paramParts: LocalFooterPart[] = paramCells.map((text) => ({
+    color: ANSI.blue,
+    text,
+  }));
   const summaryLines = renderProgressNext(meta);
   if (maxRows === undefined) {
     return [
@@ -2893,7 +2913,16 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...(meta.utility ? [renderUtilityAgentRow(meta.utility, meta)] : []),
   ];
   const bridgeLines = renderBridgeLatestLine(rows, meta);
-  const fullTop = [statusLine, agentHeaderRow, ...agentRows, ...bridgeLines];
+  const workerRoutingLines = meta.utility
+    ? renderWorkerRoutingRows(meta.utility, meta)
+    : [];
+  const fullTop = [
+    statusLine,
+    agentHeaderRow,
+    ...agentRows,
+    ...bridgeLines,
+    ...workerRoutingLines,
+  ];
   const maxRows = meta.maxRows;
   let top = fullTop;
   if (maxRows !== undefined && fullTop.length > maxRows) {
@@ -2905,11 +2934,14 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
       spare -= 1;
     }
     const visibleBridgeLines = bridgeLines.slice(0, Math.max(0, spare));
+    spare -= visibleBridgeLines.length;
+    const visibleRoutingLines = workerRoutingLines.slice(0, Math.max(0, spare));
     top = [
       statusLine,
       ...(showAgentHeader ? [agentHeaderRow] : []),
       ...visibleAgentRows,
       ...visibleBridgeLines,
+      ...visibleRoutingLines,
     ].slice(0, maxRows);
   }
   const footerBudget =
