@@ -868,6 +868,29 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Claude submission evidence advances when the hook journal advances", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const hooksDir = join(runDir, "hooks");
+  const projectsDir = join(root, "projects");
+  mkdirSync(hooksDir, { recursive: true });
+  mkdirSync(projectsDir, { recursive: true });
+  writeFileSync(join(hooksDir, "claude.jsonl"), '{"event":"Stop"}\n');
+
+  const before = bridge.readClaudeSubmissionVersion(runDir, projectsDir);
+  writeFileSync(
+    join(hooksDir, "claude.jsonl"),
+    '{"event":"Stop"}\n{"event":"UserPromptSubmit"}\n'
+  );
+  const after = bridge.readClaudeSubmissionVersion(runDir, projectsDir);
+
+  expect(before).toBeDefined();
+  expect(after).toBeDefined();
+  expect(after).not.toBe(before);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("unconfirmed Claude delivery remains pending after one retry", async () => {
   let captureCalls = 0;
   const spawnSync = mock((args: string[]) => {
