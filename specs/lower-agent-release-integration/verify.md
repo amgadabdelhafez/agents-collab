@@ -16,3 +16,7 @@ git diff --check
 
 Live-loop verification is identity-only: record loop-40 pane IDs/PIDs before
 and after installation. Do not send input or restart a process.
+
+Release verification must also confirm `~/.local/bin/loop` resolves to the
+integrated canonical executable and has the same hash. Replacing only a
+worktree-local binary is not a complete release.

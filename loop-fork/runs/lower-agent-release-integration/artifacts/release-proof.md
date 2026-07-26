@@ -53,3 +53,22 @@ Immediately before and after the atomic executable rename:
 
 No keys, bridge messages, signals, restarts, or persisted-state mutations were
 sent to loop 40. The release affects future loop launches only.
+
+## Global entrypoint correction after loop 43
+
+Loop 43 exposed that the canonical executable replacement alone was
+insufficient: the user-facing `/Users/amgad/.local/bin/loop` symlink still
+targeted the older `agents-collab-codex-bridge-visible-tui` worktree. Its
+governess and Codex bridge therefore launched from the bridge-only executable,
+which cannot create or schedule the utility tier.
+
+The old symlink was preserved at
+`/Users/amgad/.loop/release-backups/loop-global-link.pre-glm-worker.20260726T160000Z`,
+then the repository installer repointed the global command to
+`/Users/amgad/dev_projects/agents-collab/loop-fork/loop`. The global and
+canonical paths now resolve to the same SHA-256:
+`8a82d58f7fb95ae522f97e0b4ed790c8005bdd9d4787bc4d0e7fd5e25bf51152`.
+
+Loop 43 was not retrofitted or restarted. Its panes remained `%0/%1/%2/%4`
+with PIDs `82463/82465/82880/84862` before and after the global-link repair.
+New launches now resolve the integrated worker build.

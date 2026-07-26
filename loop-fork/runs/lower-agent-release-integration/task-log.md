@@ -53,3 +53,9 @@ regressed those later repairs, so a semantic integration release was required.
   `35064/35066/35520/36990`, before and after the install. No loop-40 process
   was restarted or signaled; its already-loaded binary remains active until the
   loop ends naturally.
+- Loop 43 later proved the shell entrypoint was still stale:
+  `/Users/amgad/.local/bin/loop` targeted the bridge-only worktree. Preserved
+  that symlink as a rollback artifact and reran the canonical installer. The
+  global link now targets the integrated canonical executable and hashes match.
+  Loop 43 stayed on pane IDs `%0/%1/%2/%4` and PIDs
+  `82463/82465/82880/84862`; it was neither restarted nor retrofitted.
