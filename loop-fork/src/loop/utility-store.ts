@@ -16,6 +16,7 @@ import type {
   UtilityRouteDecision,
   UtilityRouteRequest,
 } from "./task-router";
+import type { Agent } from "./types";
 
 export type UtilityJobState =
   | "pending-route"
@@ -34,14 +35,33 @@ export type UtilityJobEventType =
   | "route-decided"
   | "claimed"
   | "state-transition"
-  | "result-recorded";
+  | "result-recorded"
+  | "patch-applied";
+
+export interface UtilityFileImage {
+  path: string;
+  sha256: string | null;
+}
+
+export interface UtilityPatchApplication {
+  appliedAt: string;
+  appliedBy: Agent;
+  manifestPath: string;
+  manifestSha256: string;
+  patchPath: string;
+  patchSha256: string;
+  postimages: UtilityFileImage[];
+  preimages: UtilityFileImage[];
+}
 
 export interface UtilityJobClaim {
   epoch: number;
+  workerPid: number;
   workerId: string;
 }
 
 export interface UtilityJobEvent {
+  application?: UtilityPatchApplication;
   at: string;
   claim?: UtilityJobClaim;
   decision?: UtilityRouteDecision;
@@ -56,6 +76,7 @@ export interface UtilityJobEvent {
 }
 
 export interface UtilityJobSnapshot {
+  application?: UtilityPatchApplication;
   claim?: UtilityJobClaim;
   decision?: UtilityRouteDecision;
   events: UtilityJobEvent[];
@@ -87,6 +108,7 @@ export interface UtilityClaimOptions {
   at?: string;
   eventId?: string;
   jobId?: string;
+  workerPid?: number;
   workerId?: string;
 }
 
@@ -172,11 +194,26 @@ const assertEventShape = (event: UtilityJobEvent): void => {
   if (!(event.eventId.trim() && event.jobId.trim() && event.at.trim())) {
     throw new Error("utility event requires eventId, jobId, and timestamp");
   }
-  if (event.claim && !isPositiveEpoch(event.claim.epoch)) {
-    throw new Error("utility claim requires a positive governess epoch");
+  if (
+    event.claim &&
+    (!isPositiveEpoch(event.claim.epoch) ||
+      !Number.isInteger(event.claim.workerPid) ||
+      event.claim.workerPid <= 0)
+  ) {
+    throw new Error(
+      "utility claim requires a positive governess epoch and worker PID"
+    );
   }
   if (event.type === "claimed" && !event.claim) {
     throw new Error("claimed utility event requires claim metadata");
+  }
+  if (
+    event.type === "patch-applied" &&
+    (!event.application || event.state !== "completed")
+  ) {
+    throw new Error(
+      "patch-applied utility event requires application metadata and completed state"
+    );
   }
   if (
     event.state === "routed-utility" &&
@@ -184,7 +221,11 @@ const assertEventShape = (event: UtilityJobEvent): void => {
   ) {
     throw new Error("utility route requires a positive governess epoch");
   }
-  if (event.state === "completed" && event.result?.status !== "completed") {
+  if (
+    event.state === "completed" &&
+    event.type !== "patch-applied" &&
+    event.result?.status !== "completed"
+  ) {
     throw new Error("completed utility event requires a completed result");
   }
   if (event.result && event.result.status !== event.state) {
@@ -228,6 +269,8 @@ const snapshotFromEvents = (
     return undefined;
   }
   return {
+    application: [...jobEvents].reverse().find((event) => event.application)
+      ?.application,
     claim: [...jobEvents].reverse().find((event) => event.claim)?.claim,
     decision: [...jobEvents].reverse().find((event) => event.decision)
       ?.decision,
@@ -345,6 +388,12 @@ const validateNewEvent = (
     stableJson(event.request) !== stableJson(current.request)
   ) {
     throw new Error(`utility request changed for job ${event.jobId}`);
+  }
+  if (event.type === "patch-applied") {
+    if (current.state !== "completed" || current.result?.status !== "completed") {
+      throw new Error("utility patch application requires a completed job");
+    }
+    return undefined;
   }
   if (!ALLOWED_TRANSITIONS[current.state].has(event.state)) {
     throw new Error(
@@ -475,6 +524,41 @@ export const transitionUtilityJob = (
   });
 };
 
+export const recordUtilityPatchApplication = (
+  runDir: string,
+  jobId: string,
+  application: UtilityPatchApplication
+): UtilityJobSnapshot => {
+  const paths = utilityRunPaths(runDir);
+  return withStoreLock(paths, () => {
+    const events = readEvents(paths.eventsFile);
+    const current = snapshotFromEvents(events, jobId);
+    if (!current) {
+      throw new Error(`unknown utility job: ${jobId}`);
+    }
+    const existing = current.events.find(
+      (event) =>
+        event.type === "patch-applied" &&
+        event.application?.patchSha256 === application.patchSha256
+    );
+    if (existing) {
+      const snapshot = snapshotFromEvents(events, jobId);
+      if (!snapshot) {
+        throw new Error(`failed to materialize utility job ${jobId}`);
+      }
+      return snapshot;
+    }
+    return appendLocked(paths, events, {
+      application,
+      at: application.appliedAt,
+      eventId: `patch-application:${jobId}:${application.patchSha256}`,
+      jobId,
+      state: "completed",
+      type: "patch-applied",
+    });
+  });
+};
+
 const readEpochFile = (path: string): number | undefined => {
   try {
     const epoch = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
@@ -547,9 +631,13 @@ export const claimUtilityJob = (
       return undefined;
     }
     const workerId = options.workerId?.trim() || "utility";
+    const workerPid = options.workerPid ?? process.pid;
+    if (!(Number.isInteger(workerPid) && workerPid > 0)) {
+      throw new Error("utility claim requires a positive worker PID");
+    }
     return appendLocked(paths, events, {
       at: options.at ?? new Date().toISOString(),
-      claim: { epoch, workerId },
+      claim: { epoch, workerId, workerPid },
       eventId:
         options.eventId ?? `claim:${candidate.jobId}:${epoch}:${workerId}`,
       jobId: candidate.jobId,

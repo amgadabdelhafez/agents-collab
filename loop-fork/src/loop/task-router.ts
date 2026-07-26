@@ -32,6 +32,8 @@ export interface UtilityAuthorityFlags {
 export interface UtilityArtifactRef {
   bytes?: number;
   kind: "diff" | "log" | "report" | "test" | "trace";
+  manifestPath?: string;
+  manifestSha256?: string;
   path: string;
   sha256?: string;
 }
@@ -136,6 +138,8 @@ export type UtilityRouteReason =
   | "budget-exceeded";
 
 export interface UtilityRouteDecision {
+  /** Safe operator-facing context added by the runtime after pure routing. */
+  detail?: string;
   reason: UtilityRouteReason;
   target: UtilityRouteTarget;
   tierId?: string;
@@ -332,9 +336,9 @@ const budgetAllows = (
   tier: UtilityTier,
   remainingRunBudgetUsd: number | undefined
 ): boolean => {
-  const estimated = request.estimatedCostUsd;
+  const estimated = request.estimatedCostUsd ?? tier.maxJobCostUsd;
   if (estimated === undefined) {
-    return true;
+    return remainingRunBudgetUsd === undefined;
   }
   if (!(Number.isFinite(estimated) && estimated >= 0)) {
     return false;

@@ -25,8 +25,9 @@ cost limits remain conservative under concurrency.
    policy file. Validate its schema, reject shell executables, executable paths,
    shell metacharacters, dangerous options, empty prefixes, and protected or
    dependency-file mutation. Preserve `bun test` as the built-in default.
-3. Support Harvto's `npx vitest run <scoped-file>` through that repository
-   policy without granting arbitrary `npx`, options, or shell execution.
+3. Support Harvto's `npx vitest run <scoped-file>` as a built-in local-only,
+   offline check and through the same repository-policy shape without granting
+   arbitrary `npx`, options, package download, or shell execution.
 4. Persist the utility worker PID in its fenced claim. Governess must check PID
    liveness for claimed/running jobs, externally terminate a live worker that
    exceeds its runtime, transition dead/over-time jobs to a terminal failure,

@@ -10,6 +10,7 @@ const CODEX_AUTO_APPROVED_BRIDGE_TOOLS = [
   "route_task",
   "task_status",
   "get_task_result",
+  "apply_task_patch",
   "bridge_status",
   "receive_messages",
 ] as const;

@@ -6,6 +6,7 @@ import {
   type UtilityRisk,
 } from "./task-router";
 import type { Agent } from "./types";
+import { applyUtilityJobPatch } from "./utility-runtime";
 
 type UtilityBridgeSource = Agent | "supervisor";
 
@@ -15,6 +16,7 @@ export const UTILITY_BRIDGE_TOOL_NAMES = [
   "route_task",
   "task_status",
   "get_task_result",
+  "apply_task_patch",
 ] as const;
 export type UtilityBridgeToolName = (typeof UTILITY_BRIDGE_TOOL_NAMES)[number];
 
@@ -108,6 +110,26 @@ export const UTILITY_BRIDGE_TOOLS = [
       type: "object",
     },
     name: "get_task_result",
+  },
+  {
+    annotations: ROUTE_TASK_ANNOTATIONS,
+    description:
+      "Apply one completed utility edit after revalidating its patch hash, scope, and byte preimages; full agents only.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        expected_patch_sha256: {
+          minLength: 64,
+          maxLength: 64,
+          pattern: "^[0-9a-fA-F]{64}$",
+          type: "string",
+        },
+        task_id: { minLength: 1, type: "string" },
+      },
+      required: ["task_id", "expected_patch_sha256"],
+      type: "object",
+    },
+    name: "apply_task_patch",
   },
 ] as const;
 
@@ -227,12 +249,12 @@ const authorityFlags = (value: unknown): UtilityAuthorityFlags => {
 const taskId = (args: Record<string, unknown>): string =>
   requiredString(args, "task_id");
 
-export const callUtilityBridgeTool = (
+export const callUtilityBridgeTool = async (
   name: UtilityBridgeToolName,
   runDir: string,
   source: UtilityBridgeSource,
   args: Record<string, unknown>
-): unknown => {
+): Promise<unknown> => {
   if (name === "route_task") {
     const kind = requestKind(args.kind);
     const estimatedCostUsd = args.estimated_cost_usd;
@@ -288,6 +310,25 @@ export const callUtilityBridgeTool = (
     const job = appendUtilityRouteRequest(runDir, request);
     return { state: job.state, taskId: job.jobId };
   }
+  if (name === "apply_task_patch") {
+    if (source === "supervisor") {
+      throw new UtilityBridgeInputError(
+        "apply_task_patch is restricted to a full in-loop agent"
+      );
+    }
+    try {
+      return await applyUtilityJobPatch(
+        runDir,
+        taskId(args),
+        requiredString(args, "expected_patch_sha256"),
+        source
+      );
+    } catch (error) {
+      throw new UtilityBridgeInputError(
+        error instanceof Error ? error.message : "guarded patch apply failed"
+      );
+    }
+  }
   const job = readUtilityJob(runDir, taskId(args));
   if (!job) {
     throw new UtilityBridgeInputError("unknown utility task_id");
@@ -295,12 +336,14 @@ export const callUtilityBridgeTool = (
   if (name === "task_status") {
     return {
       decision: job.decision,
+      application: job.application,
       state: job.state,
       taskId: job.jobId,
       updatedAt: job.updatedAt,
     };
   }
   return {
+    application: job.application,
     result: job.result,
     state: job.state,
     taskId: job.jobId,

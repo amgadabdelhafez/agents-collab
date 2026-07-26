@@ -2,6 +2,7 @@ import { BRIDGE_SERVER, CLAUDE_CHANNEL_USER } from "./bridge-constants";
 import type { Agent } from "./types";
 
 export type BridgeTool =
+  | "apply_task_patch"
   | "bridge_status"
   | "get_task_result"
   | "receive_messages"

@@ -28,11 +28,13 @@ import {
   readPendingRouteRequests,
   readUtilityJob,
   readUtilityJobs,
+  recordUtilityPatchApplication,
   transitionUtilityJob,
   type UtilityJobSnapshot,
 } from "./utility-store";
 import {
   createUtilityToolBroker,
+  type GuardedPatchApplyResult,
   type UtilityArtifactReference,
   type UtilityToolName,
   type UtilityToolResult,
@@ -53,6 +55,7 @@ const DEFAULT_API_KEY_FILE = join(
 export interface UtilityRuntimeConfig {
   allowedTierPatterns: string[];
   apiKey?: string;
+  availability: UtilityAvailability;
   costQualityTradeoff: number;
   defaultFallbackTierId: string;
   enabled: boolean;
@@ -60,12 +63,28 @@ export interface UtilityRuntimeConfig {
   maxClaimWaitMs: number;
   maxJobCostUsd: number;
   maxJobRuntimeMs: number;
+  maxRunCostUsd: number;
   maxSteps: number;
   maxTokens: number;
   maxTotalTokens: number;
   model: string;
   preventPerRequestOverrides: boolean;
   providerSort: UtilityTierSelectionStrategy;
+}
+
+export interface UtilityAvailability {
+  code:
+    | "ready-key-file"
+    | "ready-environment-key"
+    | "ready-local-endpoint"
+    | "disabled"
+    | "key-file-disabled"
+    | "key-file-empty"
+    | "key-file-missing"
+    | "key-file-not-regular"
+    | "key-file-permissions"
+    | "key-file-unreadable";
+  message: string;
 }
 
 export interface UtilityQueueContext {
@@ -77,6 +96,8 @@ export interface UtilityQueueContext {
 }
 
 export interface UtilityQueueDependencies {
+  isWorkerAlive?: (pid: number) => boolean;
+  now?: () => number;
   spawnWorker?: (input: {
     env: NodeJS.ProcessEnv;
     epoch: number;
@@ -84,7 +105,26 @@ export interface UtilityQueueDependencies {
     repoRoot: string;
     runDir: string;
   }) => boolean;
+  terminateWorker?: (pid: number) => boolean;
 }
+
+const utilityWorkerIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+const terminateUtilityWorker = (pid: number): boolean => {
+  try {
+    process.kill(pid, "SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const positiveNumber = (
   value: string | undefined,
@@ -108,27 +148,93 @@ const isLoopbackEndpoint = (endpoint: string): boolean => {
   }
 };
 
-const readUtilityApiKeyFile = (
-  path: string | undefined
-): string | undefined => {
+interface UtilityKeyFileResult {
+  availability: UtilityAvailability;
+  key?: string;
+}
+
+const readUtilityApiKeyFile = (path: string | undefined): UtilityKeyFileResult => {
   if (!path) {
-    return undefined;
+    return {
+      availability: {
+        code: "key-file-disabled",
+        message: "key file loading is disabled",
+      },
+    };
   }
+  let stat: ReturnType<typeof statSync>;
   try {
-    if (statSync(path).mode % 0o100 !== 0) {
-      return undefined;
-    }
-    return readFileSync(path, "utf8").trim() || undefined;
-  } catch {
-    return undefined;
+    stat = statSync(path);
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String(error.code)
+        : "";
+    return {
+      availability: {
+        code: code === "ENOENT" ? "key-file-missing" : "key-file-unreadable",
+        message:
+          code === "ENOENT"
+            ? `key file missing: ${path}`
+            : `key file cannot be read: ${path}`,
+      },
+    };
   }
+  if (!stat.isFile()) {
+    return {
+      availability: {
+        code: "key-file-not-regular",
+        message: `key path is not a regular file: ${path}`,
+      },
+    };
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    return {
+      availability: {
+        code: "key-file-permissions",
+        message: `key file permissions are too open; chmod 600 ${path}`,
+      },
+    };
+  }
+  let key: string;
+  try {
+    key = readFileSync(path, "utf8").trim();
+  } catch {
+    return {
+      availability: {
+        code: "key-file-unreadable",
+        message: `key file cannot be read: ${path}`,
+      },
+    };
+  }
+  if (!key) {
+    return {
+      availability: {
+        code: "key-file-empty",
+        message: `key file is empty: ${path}`,
+      },
+    };
+  }
+  return {
+    availability: {
+      code: "ready-key-file",
+      message: "credential loaded from mode-safe key file",
+    },
+    key,
+  };
 };
 
-const utilityApiKey = (env: NodeJS.ProcessEnv): string | undefined => {
+const utilityApiKey = (env: NodeJS.ProcessEnv): UtilityKeyFileResult => {
   const direct =
     env.OPENROUTER_API_KEY?.trim() || env.LOOP_UTILITY_API_KEY?.trim();
   if (direct) {
-    return direct;
+    return {
+      availability: {
+        code: "ready-environment-key",
+        message: "credential loaded from process environment",
+      },
+      key: direct,
+    };
   }
   const configuredPath = env.LOOP_UTILITY_API_KEY_FILE;
   const keyFile =
@@ -138,11 +244,47 @@ const utilityApiKey = (env: NodeJS.ProcessEnv): string | undefined => {
   return readUtilityApiKeyFile(keyFile);
 };
 
+const WORKER_ENV_NAMES = new Set([
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "NO_COLOR",
+  "PATH",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+]);
+const UTILITY_SECRET_ENV_NAMES = new Set([
+  "LOOP_UTILITY_API_KEY",
+  "OPENROUTER_API_KEY",
+]);
+
+export const buildUtilityWorkerEnvironment = (
+  env: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv => {
+  const minimal: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (
+      value !== undefined &&
+      !UTILITY_SECRET_ENV_NAMES.has(name) &&
+      (WORKER_ENV_NAMES.has(name) || name.startsWith("LOOP_UTILITY_"))
+    ) {
+      minimal[name] = value;
+    }
+  }
+  minimal.CI = "1";
+  minimal.NO_COLOR = "1";
+  return minimal;
+};
+
 export const resolveUtilityRuntimeConfig = (
   env: NodeJS.ProcessEnv = process.env
 ): UtilityRuntimeConfig => {
   const endpoint = env.LOOP_UTILITY_URL?.trim() || DEFAULT_ENDPOINT;
-  const apiKey = utilityApiKey(env);
+  const keyResult = utilityApiKey(env);
+  const apiKey = keyResult.key;
   const explicitlyEnabled = env.LOOP_UTILITY_ENABLED;
   const enabled =
     explicitlyEnabled === "0"
@@ -164,6 +306,15 @@ export const resolveUtilityRuntimeConfig = (
       .map((value) => value.trim())
       .filter(Boolean),
     ...(apiKey ? { apiKey } : {}),
+    availability:
+      explicitlyEnabled === "0"
+        ? { code: "disabled", message: "disabled by LOOP_UTILITY_ENABLED=0" }
+        : isLoopbackEndpoint(endpoint)
+          ? {
+              code: "ready-local-endpoint",
+              message: "local OpenAI-compatible endpoint does not require a key",
+            }
+          : keyResult.availability,
     costQualityTradeoff: boundedTradeoff(env.LOOP_UTILITY_COST_QUALITY),
     defaultFallbackTierId:
       env.LOOP_UTILITY_FALLBACK_TIER?.trim() || "utility-default",
@@ -172,6 +323,7 @@ export const resolveUtilityRuntimeConfig = (
     maxJobCostUsd: positiveNumber(env.LOOP_UTILITY_MAX_JOB_USD, 0.05),
     maxClaimWaitMs: positiveNumber(env.LOOP_UTILITY_MAX_CLAIM_WAIT_MS, 30_000),
     maxJobRuntimeMs: positiveNumber(env.LOOP_UTILITY_MAX_RUNTIME_MS, 900_000),
+    maxRunCostUsd: positiveNumber(env.LOOP_UTILITY_MAX_RUN_USD, 0.25),
     maxSteps: Math.floor(
       positiveNumber(env.LOOP_UTILITY_MAX_STEPS, DEFAULT_MAX_STEPS)
     ),
@@ -269,16 +421,34 @@ const failUtilityJob = async (
   job: UtilityJobSnapshot,
   reason: string
 ): Promise<void> => {
-  transitionUtilityJob(context.runDir, job.jobId, "failed", {
-    result: {
-      artifactRefs: [],
-      blocker: reason,
-      checks: [],
-      filesChanged: [],
-      status: "failed",
-      summary: "Utility worker was fenced and failed closed.",
-    },
-  });
+  const current = readUtilityJob(context.runDir, job.jobId);
+  if (
+    !current ||
+    ["completed", "failed", "escalated", "canceled"].includes(current.state)
+  ) {
+    return;
+  }
+  try {
+    transitionUtilityJob(context.runDir, job.jobId, "failed", {
+      result: {
+        artifactRefs: [],
+        blocker: reason,
+        checks: [],
+        filesChanged: [],
+        status: "failed",
+        summary: "Utility worker was fenced and failed closed.",
+      },
+    });
+  } catch (error) {
+    const raced = readUtilityJob(context.runDir, job.jobId);
+    if (
+      raced &&
+      ["completed", "failed", "escalated", "canceled"].includes(raced.state)
+    ) {
+      return;
+    }
+    throw error;
+  }
   await dispatchBridgeMessage(
     context.runDir,
     "utility",
@@ -292,21 +462,31 @@ const failUtilityJob = async (
 
 const staleUtilityReason = (input: {
   claimTimedOut: boolean;
+  deadWorker: boolean;
   staleEpoch: boolean;
+  runTimedOut: boolean;
 }): string => {
   if (input.staleEpoch) {
     return "utility claim belongs to a stale governess epoch";
   }
+  if (input.deadWorker) {
+    return "utility worker process is no longer alive";
+  }
   return input.claimTimedOut
     ? "utility worker did not claim the routed job"
-    : "utility job exceeded its runtime limit";
+    : input.runTimedOut
+      ? "utility job exceeded its runtime limit and was terminated"
+      : "utility worker failed closed";
 };
 
 const recoverStaleUtilityJobs = async (
   context: UtilityQueueContext,
-  config: UtilityRuntimeConfig
+  config: UtilityRuntimeConfig,
+  deps: UtilityQueueDependencies
 ): Promise<void> => {
-  const now = Date.now();
+  const now = deps.now?.() ?? Date.now();
+  const isWorkerAlive = deps.isWorkerAlive ?? utilityWorkerIsAlive;
+  const terminateWorker = deps.terminateWorker ?? terminateUtilityWorker;
   for (const active of readUtilityJobs(context.runDir).filter((job) =>
     ["routed-utility", "claimed", "running"].includes(job.state)
   )) {
@@ -322,11 +502,37 @@ const recoverStaleUtilityJobs = async (
       active.state !== "routed-utility" &&
       Number.isFinite(updatedAt) &&
       now - updatedAt > config.maxJobRuntimeMs;
-    if (staleEpoch || claimTimedOut || runTimedOut) {
+    const workerPid = active.claim?.workerPid;
+    const deadWorker =
+      active.state !== "routed-utility" &&
+      workerPid !== undefined &&
+      !isWorkerAlive(workerPid);
+    if (staleEpoch || claimTimedOut || deadWorker || runTimedOut) {
+      const latest = readUtilityJob(context.runDir, active.jobId);
+      if (
+        !latest ||
+        ["completed", "failed", "escalated", "canceled"].includes(
+          latest.state
+        )
+      ) {
+        continue;
+      }
+      if (
+        (staleEpoch || runTimedOut) &&
+        workerPid !== undefined &&
+        isWorkerAlive(workerPid)
+      ) {
+        terminateWorker(workerPid);
+      }
       await failUtilityJob(
         context,
         active,
-        staleUtilityReason({ claimTimedOut, staleEpoch })
+        staleUtilityReason({
+          claimTimedOut,
+          deadWorker,
+          runTimedOut,
+          staleEpoch,
+        })
       );
     }
   }
@@ -338,6 +544,86 @@ const currentUtilityWriteClaims = (runDir: string): string[] =>
       ["routed-utility", "claimed", "running"].includes(active.state)
     )
     .flatMap((active) => active.request.writeScope);
+
+const readJsonlRecords = (path: string): Record<string, unknown>[] => {
+  try {
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => line.trim())
+      .flatMap((line) => {
+        try {
+          const parsed: unknown = JSON.parse(line);
+          return parsed && typeof parsed === "object"
+            ? [parsed as Record<string, unknown>]
+            : [];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return [];
+  }
+};
+
+const recordedUtilityCostUsd = (runDir: string): number => {
+  const latestByJob = new Map<string, number>();
+  for (const event of readJsonlRecords(
+    join(runDir, "utility", "usage.jsonl")
+  )) {
+    const jobId = typeof event.jobId === "string" ? event.jobId : undefined;
+    const usage =
+      event.usage && typeof event.usage === "object"
+        ? (event.usage as Record<string, unknown>)
+        : undefined;
+    const cost = usage?.cost;
+    if (
+      jobId &&
+      typeof cost === "number" &&
+      Number.isFinite(cost) &&
+      cost >= 0
+    ) {
+      latestByJob.set(jobId, cost);
+    }
+  }
+  return [...latestByJob.values()].reduce((total, cost) => total + cost, 0);
+};
+
+const requestReservationUsd = (
+  request: UtilityRouteRequest,
+  maxJobCostUsd: number
+): number => {
+  const estimated = request.estimatedCostUsd;
+  return typeof estimated === "number" &&
+    Number.isFinite(estimated) &&
+    estimated >= 0
+    ? estimated
+    : maxJobCostUsd;
+};
+
+const activeUtilityReservationUsd = (
+  runDir: string,
+  maxJobCostUsd: number
+): number =>
+  readUtilityJobs(runDir)
+    .filter((job) =>
+      ["routed-utility", "claimed", "running"].includes(job.state)
+    )
+    .reduce(
+      (total, job) =>
+        total + requestReservationUsd(job.request, maxJobCostUsd),
+      0
+    );
+
+const remainingUtilityRunBudgetUsd = (
+  runDir: string,
+  config: UtilityRuntimeConfig
+): number =>
+  Math.max(
+    0,
+    config.maxRunCostUsd -
+      recordedUtilityCostUsd(runDir) -
+      activeUtilityReservationUsd(runDir, config.maxJobCostUsd)
+  );
 
 const startRoutedUtilityJob = async (input: {
   context: UtilityQueueContext;
@@ -401,14 +687,22 @@ const processPendingUtilityJob = async (input: {
   env: NodeJS.ProcessEnv;
   job: UtilityJobSnapshot;
 }): Promise<void> => {
-  const decision = routeUtilityRequest(input.job.request, {
+  const routedDecision = routeUtilityRequest(input.job.request, {
     activeWriteClaims: currentUtilityWriteClaims(input.context.runDir),
     currentDriver: input.context.currentDriver,
     currentEpoch: input.context.epoch,
     peer: input.context.peer,
+    remainingRunBudgetUsd: remainingUtilityRunBudgetUsd(
+      input.context.runDir,
+      input.config
+    ),
     routingPolicy: routingPolicy(input.config),
     tiers: [runtimeTier(input.config)],
   });
+  const decision =
+    routedDecision.reason === "utility-unavailable"
+      ? { ...routedDecision, detail: input.config.availability.message }
+      : routedDecision;
   transitionUtilityJob(
     input.context.runDir,
     input.job.jobId,
@@ -429,7 +723,9 @@ const processPendingUtilityJob = async (input: {
     input.context,
     input.job,
     decision.target,
-    decision.reason
+    decision.detail
+      ? `${decision.reason} (${decision.detail})`
+      : decision.reason
   );
 };
 
@@ -438,14 +734,21 @@ export const processPendingUtilityRoutes = async (
   env: NodeJS.ProcessEnv = process.env,
   deps: UtilityQueueDependencies = {}
 ): Promise<number> => {
-  const config = resolveUtilityRuntimeConfig(env);
+  const workerEnv = buildUtilityWorkerEnvironment(env);
+  const config = resolveUtilityRuntimeConfig(workerEnv);
   if (!activateUtilityEpoch(context.runDir, context.epoch)) {
     throw new Error("stale governess epoch cannot activate utility routing");
   }
-  await recoverStaleUtilityJobs(context, config);
+  await recoverStaleUtilityJobs(context, config, deps);
   const pending = readPendingRouteRequests(context.runDir);
   for (const job of pending) {
-    await processPendingUtilityJob({ config, context, deps, env, job });
+    await processPendingUtilityJob({
+      config,
+      context,
+      deps,
+      env: workerEnv,
+      job,
+    });
   }
   return pending.length;
 };
@@ -729,6 +1032,7 @@ export const runUtilityWorker = async (
   const claimed = claimUtilityJob(runDir, epoch, {
     jobId,
     workerId: `utility-${process.pid}`,
+    workerPid: process.pid,
   });
   if (!claimed) {
     return;
@@ -769,6 +1073,8 @@ export const runUtilityWorker = async (
     const result: UtilityCompactResult = {
       artifactRefs: conversation.artifacts.map((artifact) => ({
         kind: artifact.path.endsWith(".patch") ? "diff" : "report",
+        manifestPath: artifact.manifestPath,
+        manifestSha256: artifact.manifestSha256,
         path: artifact.path,
         sha256: artifact.sha256,
       })),
@@ -777,7 +1083,6 @@ export const runUtilityWorker = async (
       status: "completed",
       summary: conversation.summary.slice(0, 4000),
     };
-    transitionUtilityJob(runDir, jobId, "completed", { result });
     appendJsonl(usageFile, {
       at: new Date().toISOString(),
       durationMs: conversation.durationMs,
@@ -790,6 +1095,7 @@ export const runUtilityWorker = async (
       toolRounds: conversation.toolRounds,
       usage: conversation.usage,
     });
+    transitionUtilityJob(runDir, jobId, "completed", { result });
     await dispatchBridgeMessage(
       runDir,
       "utility",
@@ -843,6 +1149,68 @@ export const runUtilityWorker = async (
   }
 };
 
+export const applyUtilityJobPatch = async (
+  runDir: string,
+  jobId: string,
+  expectedPatchSha256: string,
+  appliedBy: Agent
+): Promise<GuardedPatchApplyResult> => {
+  const job = readUtilityJob(runDir, jobId);
+  if (!job) {
+    throw new Error("unknown utility task_id");
+  }
+  if (
+    job.state !== "completed" ||
+    job.result?.status !== "completed" ||
+    job.request.kind !== "edit"
+  ) {
+    throw new Error("guarded patch apply requires a completed utility edit");
+  }
+  const expected = expectedPatchSha256.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expected)) {
+    throw new Error("expected_patch_sha256 must be a SHA-256 hex digest");
+  }
+  const artifacts = job.result.artifactRefs.filter(
+    (artifact) =>
+      artifact.kind === "diff" &&
+      artifact.path.endsWith(".patch") &&
+      artifact.sha256?.toLowerCase() === expected
+  );
+  if (artifacts.length !== 1) {
+    throw new Error(
+      "expected patch artifact is missing or ambiguous for this utility job"
+    );
+  }
+  const patchPath = artifacts[0]?.path;
+  const manifestPath = artifacts[0]?.manifestPath;
+  const manifestSha256 = artifacts[0]?.manifestSha256;
+  if (!(patchPath && manifestPath && manifestSha256)) {
+    throw new Error("utility patch or manifest integrity metadata is missing");
+  }
+  const repoRoot = repoRootForRun(runDir);
+  const broker = await createUtilityToolBroker({
+    artifactDir: artifactDirForJob(repoRoot, runDir, jobId),
+    commandAllowlist: [],
+    readScopes: [
+      ...new Set([...job.request.readScope, ...job.request.writeScope]),
+    ],
+    repoRoot,
+    writeScopes: job.request.writeScope,
+  });
+  const result = await broker.applyPatchProposal({
+    appliedBy,
+    ...(job.application ? { existingApplication: job.application } : {}),
+    expectedManifestSha256: manifestSha256,
+    expectedPatchSha256: expected,
+    manifestPath,
+    patchPath,
+  });
+  if (result.status === "applied") {
+    recordUtilityPatchApplication(runDir, jobId, result.application);
+  }
+  return result;
+};
+
 export const utilityJobStatus = (runDir: string, jobId: string) =>
   readUtilityJob(runDir, jobId);
 
@@ -851,24 +1219,9 @@ const compactObjective = (value: string): string => {
   return oneLine.length > 44 ? `${oneLine.slice(0, 41)}...` : oneLine;
 };
 
-const readPaneEvents = (path: string): Record<string, unknown>[] => {
-  try {
-    return readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line.trim())
-      .flatMap((line) => {
-        try {
-          const parsed: unknown = JSON.parse(line);
-          return parsed && typeof parsed === "object"
-            ? [parsed as Record<string, unknown>]
-            : [];
-        } catch {
-          return [];
-        }
-      });
-  } catch {
-    return [];
-  }
+const compactPaneText = (value: string, max = 64): string => {
+  const oneLine = value.replaceAll(/\s+/g, " ").trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 3)}...` : oneLine;
 };
 
 const formatPaneCost = (value: unknown): string =>
@@ -882,7 +1235,7 @@ const formatPaneNumber = (value: unknown): string =>
     : "--";
 
 const paneToolRow = (runDir: string): string => {
-  const event = readPaneEvents(join(runDir, "utility", "tool-events.jsonl")).at(
+  const event = readJsonlRecords(join(runDir, "utility", "tool-events.jsonl")).at(
     -1
   );
   if (!event) {
@@ -895,7 +1248,7 @@ const paneToolRow = (runDir: string): string => {
 };
 
 const paneUsageRow = (runDir: string): string => {
-  const event = readPaneEvents(join(runDir, "utility", "usage.jsonl")).at(-1);
+  const event = readJsonlRecords(join(runDir, "utility", "usage.jsonl")).at(-1);
   if (!event) {
     return "LAST  no completed worker call yet";
   }
@@ -911,7 +1264,7 @@ export const renderUtilityPane = (
   runDir: string,
   env: NodeJS.ProcessEnv = process.env
 ): string => {
-  const config = resolveUtilityRuntimeConfig(env);
+  const config = resolveUtilityRuntimeConfig(buildUtilityWorkerEnvironment(env));
   const jobs = readUtilityJobs(runDir).reverse();
   const current = jobs.find((job) =>
     ["running", "claimed", "routed-utility", "pending-route"].includes(
@@ -928,21 +1281,28 @@ export const renderUtilityPane = (
   const failed = jobs.filter((job) =>
     ["failed", "escalated", "canceled"].includes(job.state)
   ).length;
+  const latestDecision = jobs.find((job) => job.decision)?.decision;
   const recent = jobs
     .slice(0, 2)
     .map(
       (job) =>
-        `${job.jobId.slice(0, 8)}  ${job.state.padEnd(15)}  ${compactObjective(job.request.objective)}`
+        `${job.jobId.slice(0, 8)}  ${job.decision ? `${job.decision.target}/${job.decision.reason}` : job.state}  ${compactObjective(job.request.objective)}`
     );
   return [
-    `LOWER AGENT  ${config.model}  ${config.enabled ? "READY" : "OFFLINE"}`,
+    `LOWER AGENT  ${config.model}  ${runtimeTier(config).healthy ? "READY" : "OFFLINE"}`,
     `STATUS  active=${active} queued=${queued} done=${completed} failed=${failed}`,
     current
       ? `NOW  ${current.jobId.slice(0, 8)} ${current.state}  ${compactObjective(current.request.objective)}`
       : "NOW  idle; waiting for governess routing",
+    latestDecision
+      ? `ROUTE  ${latestDecision.target}/${latestDecision.reason}${
+          latestDecision.detail
+            ? `  ${compactPaneText(latestDecision.detail)}`
+            : ""
+        }`
+      : `CONFIG  ${compactPaneText(config.availability.message)}`,
     paneToolRow(runDir),
     paneUsageRow(runDir),
-    "governess routes; observer pane is read-only",
     ...(recent.length > 0 ? recent : ["No utility jobs yet."]),
   ].join("\n");
 };

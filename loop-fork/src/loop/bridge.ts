@@ -386,7 +386,12 @@ const handleToolCall = async (
 
   if (isUtilityBridgeToolName(name)) {
     try {
-      const result = callUtilityBridgeTool(name, runDir, source, args);
+      const result = await callUtilityBridgeTool(
+        name,
+        runDir,
+        source,
+        args
+      );
       writeJsonRpc({
         id,
         jsonrpc: "2.0",

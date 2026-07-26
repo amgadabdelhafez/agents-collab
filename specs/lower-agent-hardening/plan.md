@@ -1,7 +1,8 @@
 # Plan: Lower-Agent Hardening
 
 1. Capture loop-43 identities and create an isolated Harness run.
-2. Add validated repository check policy and a Harvto policy fixture/config.
+2. Add validated repository check policy and built-in local-only Harvto Vitest
+   support, avoiding a live-loop repository mutation.
 3. Minimize worker launch environment and surface credential diagnostics.
 4. Persist claim PIDs and add governess-owned liveness/runtime reaping.
 5. Add guarded, idempotent patch application and its bridge surface.

@@ -676,6 +676,33 @@ test("external supervisor can submit a task with an explicit result target", asy
   rmSync(root, { recursive: true, force: true });
 });
 
+test("external supervisor cannot apply a utility patch", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const result = await runBridgeProcess(
+    runDir,
+    "supervisor",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          expected_patch_sha256: "a".repeat(64),
+          task_id: "not-applicable",
+        },
+        name: "apply_task_patch",
+      },
+    })
+  );
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain(
+    "apply_task_patch is restricted to a full in-loop agent"
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
@@ -1053,9 +1080,14 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
       }),
     ])
   );
-  expect(tools).toHaveLength(6);
+  expect(tools).toHaveLength(7);
   expect(tools.map((tool) => tool.name)).toEqual(
-    expect.arrayContaining(["route_task", "task_status", "get_task_result"])
+    expect.arrayContaining([
+      "route_task",
+      "task_status",
+      "get_task_result",
+      "apply_task_patch",
+    ])
   );
   expect(tools.some((tool) => tool.name === "reply")).toBe(false);
   rmSync(root, { recursive: true, force: true });
@@ -1091,7 +1123,7 @@ test("bridge MCP advertises only the Codex-visible bridge tools", async () => {
   expect(result.stderr).toBe("");
   expect(result.stdout).not.toContain('"claude/channel":{}');
   const tools = listedTools(result.stdout);
-  expect(tools).toHaveLength(6);
+  expect(tools).toHaveLength(7);
   expect(tools).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -2886,6 +2918,8 @@ test("bridge config helper builds the bridge MCP entry point for Codex", async (
     'mcp_servers.loop-bridge.tools.task_status.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.get_task_result.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.apply_task_patch.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.bridge_status.approval_mode="approve"',
     "-c",
