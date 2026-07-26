@@ -39,3 +39,17 @@ regressed those later repairs, so a semantic integration release was required.
   `bridge_status`, and `receive_messages`.
 - Exact credential-content scan across source, tests, specs, and run artifacts
   was clean; the key remains external and mode 0600.
+- Merged locally into canonical branch `feat/babysitter-pane` as `4208c52`;
+  nothing was pushed.
+- Backed up the previous executable (SHA-256 `d4a8f01751c1dc0964ce9bcb9aeebd8a5f7901caa1c038e4c057b28b7954af3c`)
+  to `/Users/amgad/.loop/release-backups/loop.pre-lower-agent-integration.20260726T063059Z`.
+- Rebuilt from the merged canonical source into a sibling candidate and
+  atomically renamed it over the installed executable. Installed SHA-256:
+  `8a82d58f7fb95ae522f97e0b4ed790c8005bdd9d4787bc4d0e7fd5e25bf51152`.
+- Post-release MCP probing listed all three worker-routing tools plus the three
+  bridge tools. Installed `--help` advertises `z-ai/glm-5.2`, external key-file
+  loading, and default/opt-out utility-pane controls.
+- Loop 40 remained `%0/%1/%2/%3`, PIDs
+  `35064/35066/35520/36990`, before and after the install. No loop-40 process
+  was restarted or signaled; its already-loaded binary remains active until the
+  loop ends naturally.

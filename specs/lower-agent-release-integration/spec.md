@@ -45,9 +45,9 @@ future loops without modifying or restarting the active loop 40.
       and the explicit opt-out without launching paid main agents.
 - [x] The integrated binary advertises GLM-5.2 utility configuration and the
       bridge routing tools while retaining the visible bridge paths.
-- [ ] The integrated branch is merged locally into the canonical branch and
+- [x] The integrated branch is merged locally into the canonical branch and
       its binary is installed atomically for future loops.
-- [ ] Loop-40 Claude, Codex, Governess, and judge pane IDs and PIDs are
+- [x] Loop-40 Claude, Codex, Governess, and judge pane IDs and PIDs are
       identical before and after release.
 
 ## Non-goals
