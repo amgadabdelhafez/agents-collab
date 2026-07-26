@@ -14,6 +14,12 @@ import {
 } from "./openai-compatible";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
+  readUtilityObservability,
+  sanitizeUtilityPaneText,
+  type UtilityObservabilitySnapshot,
+  type UtilityTranscriptEntry,
+} from "./utility-observability";
+import {
   routeUtilityRequest,
   type UtilityCheckResult,
   type UtilityCompactResult,
@@ -1216,12 +1222,12 @@ export const utilityJobStatus = (runDir: string, jobId: string) =>
   readUtilityJob(runDir, jobId);
 
 const compactObjective = (value: string): string => {
-  const oneLine = value.replaceAll(/\s+/g, " ").trim();
+  const oneLine = sanitizeUtilityPaneText(value);
   return oneLine.length > 44 ? `${oneLine.slice(0, 41)}...` : oneLine;
 };
 
 const compactPaneText = (value: string, max = 64): string => {
-  const oneLine = value.replaceAll(/\s+/g, " ").trim();
+  const oneLine = sanitizeUtilityPaneText(value);
   return oneLine.length > max ? `${oneLine.slice(0, max - 3)}...` : oneLine;
 };
 
@@ -1234,19 +1240,6 @@ const formatPaneNumber = (value: unknown): string =>
   typeof value === "number" && Number.isFinite(value)
     ? Math.round(value).toLocaleString("en-US")
     : "--";
-
-const paneToolRow = (runDir: string): string => {
-  const event = readJsonlRecords(join(runDir, "utility", "tool-events.jsonl")).at(
-    -1
-  );
-  if (!event) {
-    return "TOOL  waiting for first bounded tool call";
-  }
-  const tool = typeof event.tool === "string" ? event.tool : "unknown";
-  const ok = event.ok === true ? "ok" : "failed";
-  const duration = formatPaneNumber(event.durationMs);
-  return `TOOL  ${tool}  ${ok}  ${duration}ms`;
-};
 
 const paneUsageRow = (runDir: string): string => {
   const event = readJsonlRecords(join(runDir, "utility", "usage.jsonl")).at(-1);
@@ -1261,6 +1254,12 @@ const paneUsageRow = (runDir: string): string => {
   return `LAST  ${status}  ${formatPaneNumber(usage.totalTokens)} tok  ${formatPaneCost(usage.cost)}`;
 };
 
+const paneCallRow = (snapshot: UtilityObservabilitySnapshot): string =>
+  `CALLS model=${formatPaneNumber(snapshot.usage.modelCalls)} tools=${formatPaneNumber(snapshot.usage.toolCalls)} cost=${formatPaneCost(snapshot.usage.costUsd)}`;
+
+const paneTokenRow = (snapshot: UtilityObservabilitySnapshot): string =>
+  `TOKENS total=${formatPaneNumber(snapshot.usage.totalTokens)} in=${formatPaneNumber(snapshot.usage.inputTokens)} cache=${formatPaneNumber(snapshot.usage.cachedInputTokens)} out=${formatPaneNumber(snapshot.usage.outputTokens)}`;
+
 const paneDelegationRow = (runDir: string): string => {
   const events = readDelegationEvents(runDir);
   const count = (disposition: string): number =>
@@ -1272,37 +1271,130 @@ const paneDelegationRow = (runDir: string): string => {
   return `DELEG auto=${count("auto-routed")} explicit=${count("explicit-routed")} missed=${count("missed-candidate")} watch=${count("observed-candidate")}  last=${last}`;
 };
 
+export interface UtilityPaneViewport {
+  columns?: number;
+  rows?: number;
+}
+
+const positiveViewportValue = (value: unknown): number | undefined => {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+};
+
+const paneWidth = (
+  env: NodeJS.ProcessEnv,
+  viewport: UtilityPaneViewport
+): number => Math.max(1, positiveViewportValue(viewport.columns ?? env.COLUMNS) ?? 80);
+
+const paneRows = (
+  env: NodeJS.ProcessEnv,
+  viewport: UtilityPaneViewport
+): number => Math.max(1, positiveViewportValue(viewport.rows ?? env.LINES) ?? 20);
+
+const fitPaneLine = (value: string, width: number): string => {
+  const clean = sanitizeUtilityPaneText(value);
+  if (clean.length <= width) {
+    return clean;
+  }
+  return width <= 3 ? ".".repeat(width) : `${clean.slice(0, width - 3)}...`;
+};
+
+const wrapPaneText = (value: string, width: number, maxLines: number): string[] => {
+  let remaining = sanitizeUtilityPaneText(value);
+  const lines: string[] = [];
+  while (remaining && lines.length < maxLines) {
+    if (remaining.length <= width) {
+      lines.push(remaining);
+      break;
+    }
+    if (lines.length === maxLines - 1) {
+      lines.push(fitPaneLine(remaining, width));
+      break;
+    }
+    const candidate = remaining.slice(0, width + 1);
+    const breakAt = Math.max(candidate.lastIndexOf(" "), 1);
+    lines.push(remaining.slice(0, breakAt).trimEnd());
+    remaining = remaining.slice(breakAt).trimStart();
+  }
+  return lines;
+};
+
+const transcriptTime = (at: string): string => {
+  const match = at.match(/T(\d{2}:\d{2}:\d{2})/);
+  return match?.[1] ?? "--:--:--";
+};
+
+const renderTranscriptEntry = (
+  entry: UtilityTranscriptEntry,
+  width: number
+): string[] => {
+  const head = `${transcriptTime(entry.at)} ${entry.label} ${entry.jobId.slice(0, 8)}`;
+  const wrapped = wrapPaneText(
+    `${head} ${entry.text || "—"}`,
+    width,
+    entry.kind === "tool" ? 1 : 2
+  );
+  return wrapped.map((line, index) =>
+    index === 0 ? line : `  ${fitPaneLine(line, Math.max(1, width - 2))}`
+  );
+};
+
+const renderUtilityTranscript = (
+  snapshot: UtilityObservabilitySnapshot,
+  width: number,
+  maxRows: number
+): string[] => {
+  if (maxRows <= 0) {
+    return [];
+  }
+  if (snapshot.transcript.length === 0) {
+    return ["  waiting for first request"];
+  }
+  const groups: string[][] = [];
+  let rows = 0;
+  for (const entry of [...snapshot.transcript].reverse()) {
+    const rendered = renderTranscriptEntry(entry, width);
+    if (rows + rendered.length > maxRows) {
+      continue;
+    }
+    groups.unshift(rendered);
+    rows += rendered.length;
+    if (rows >= maxRows) {
+      break;
+    }
+  }
+  return groups.flat();
+};
+
+const readUtilityPaneJobs = (runDir: string): UtilityJobSnapshot[] => {
+  try {
+    return readUtilityJobs(runDir);
+  } catch {
+    return [];
+  }
+};
+
 export const renderUtilityPane = (
   runDir: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  viewport: UtilityPaneViewport = {}
 ): string => {
   const config = resolveUtilityRuntimeConfig(buildUtilityWorkerEnvironment(env));
-  const jobs = readUtilityJobs(runDir).reverse();
+  const snapshot = readUtilityObservability(runDir);
+  const jobs = readUtilityPaneJobs(runDir).reverse();
   const current = jobs.find((job) =>
     ["running", "claimed", "routed-utility", "pending-route"].includes(
       job.state
     )
   );
-  const active = jobs.filter((job) =>
-    ["running", "claimed"].includes(job.state)
-  ).length;
-  const queued = jobs.filter((job) =>
-    ["pending-route", "routed-utility"].includes(job.state)
-  ).length;
-  const completed = jobs.filter((job) => job.state === "completed").length;
-  const failed = jobs.filter((job) =>
-    ["failed", "escalated", "canceled"].includes(job.state)
-  ).length;
   const latestDecision = jobs.find((job) => job.decision)?.decision;
-  const recent = jobs
-    .slice(0, 1)
-    .map(
-      (job) =>
-        `${job.jobId.slice(0, 8)}  ${job.decision ? `${job.decision.target}/${job.decision.reason}` : job.state}  ${compactObjective(job.request.objective)}`
-    );
-  return [
+  const width = paneWidth(env, viewport);
+  const maxRows = paneRows(env, viewport);
+  const top = [
     `LOWER AGENT  ${config.model}  ${runtimeTier(config).healthy ? "READY" : "OFFLINE"}`,
-    `STATUS  active=${active} queued=${queued} done=${completed} failed=${failed}`,
+    `STATUS jobs=${snapshot.jobsTotal} active=${snapshot.active} queued=${snapshot.queued} done=${snapshot.completed} failed=${snapshot.failed}`,
+    paneCallRow(snapshot),
+    paneTokenRow(snapshot),
     current
       ? `NOW  ${current.jobId.slice(0, 8)} ${current.state}  ${compactObjective(current.request.objective)}`
       : "NOW  idle; waiting for governess routing",
@@ -1313,11 +1405,16 @@ export const renderUtilityPane = (
             : ""
         }`
       : `CONFIG  ${compactPaneText(config.availability.message)}`,
-    paneToolRow(runDir),
     paneUsageRow(runDir),
     paneDelegationRow(runDir),
-    ...(recent.length > 0 ? recent : ["No utility jobs yet."]),
-  ].join("\n");
+    "ACTIVITY  actual requests · bounded tools · worker responses",
+  ].map((line) => fitPaneLine(line, width));
+  return [
+    ...top,
+    ...renderUtilityTranscript(snapshot, width, Math.max(0, maxRows - top.length)),
+  ]
+    .slice(0, maxRows)
+    .join("\n");
 };
 
 export const runUtilityPane = async (
@@ -1326,7 +1423,10 @@ export const runUtilityPane = async (
 ): Promise<void> => {
   for (;;) {
     process.stdout.write(
-      `\u001b[2J\u001b[H${renderUtilityPane(runDir, env)}\n`
+      `\u001b[2J\u001b[H${renderUtilityPane(runDir, env, {
+        columns: process.stdout.columns,
+        rows: process.stdout.rows,
+      })}\n`
     );
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }

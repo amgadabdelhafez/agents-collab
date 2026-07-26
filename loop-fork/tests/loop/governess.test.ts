@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -24,6 +24,7 @@ import {
   resolveRunStorage,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import type {
   Agent,
   AgentLivenessState,
@@ -34,6 +35,12 @@ import type {
   RecoveryHistoryEntry,
   RoleBalanceRequest,
 } from "../../src/loop/types";
+import {
+  activateUtilityEpoch,
+  appendUtilityRouteRequest,
+  claimUtilityJob,
+  transitionUtilityJob,
+} from "../../src/loop/utility-store";
 
 const IDLE_MS = 60_000;
 const START_MS = 1_000_000;
@@ -1544,19 +1551,18 @@ test("board shows input, cached, and output token details", async () => {
   expect(result.board).toContain("\x1b[35mbf16");
 });
 
-test("board caps structured summary section heights", async () => {
+test("board omits the structured project summary block", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();
   const working: JudgeOutcome = {
     ok: true,
     verdict: { confidence: 0.9, state: "working", summary: "" },
   };
-  const longText = Array.from({ length: 80 }, (_, i) => `detail${i}`).join(" ");
   const summary = [
-    `Project: ${longText}`,
-    `Objective: ${longText}`,
-    `Progress: ${longText}`,
-    `Next: ${longText}`,
+    "Project: hidden project",
+    "Objective: hidden objective",
+    "Progress: hidden progress",
+    "Next: hidden next",
   ].join("\n");
   const states = new Map<Agent, AgentLivenessState>();
   const result = await governessTick(
@@ -1565,48 +1571,131 @@ test("board caps structured summary section heights", async () => {
     makeDeps(working, clock, spies),
     { ...freshRunState(), summary }
   );
-  const lines = stripAnsi(result.board).split("\n");
-  const summaryStart = lines.findIndex((line) => line.includes("Project:"));
-  expect(summaryStart).toBeGreaterThanOrEqual(0);
-  const sectionCounts: Record<string, number> = {};
-  let current = "";
-  for (const line of lines.slice(summaryStart)) {
-    const label = line
-      .trimStart()
-      .match(/^(Project|Objective|Progress|Next):/i);
-    if (label) {
-      current = label[1].toLowerCase();
-    }
-    if (current && line.trim()) {
-      sectionCounts[current] = (sectionCounts[current] ?? 0) + 1;
-    }
-  }
-
-  expect(sectionCounts).toEqual({
-    next: 2,
-    objective: 2,
-    progress: 2,
-    project: 2,
-  });
+  const board = stripAnsi(result.board);
+  expect(board).not.toContain("Project:");
+  expect(board).not.toContain("Objective:");
+  expect(board).not.toContain("Progress:");
+  expect(board).not.toContain("Next:");
 });
 
-test("board uses the full summary width for the Project line", async () => {
+test("board uses the recovered summary area for lower-agent metrics", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "governess-utility-board-"));
   const clock = { ms: START_MS };
   const spies = freshSpies();
   const working: JudgeOutcome = {
     ok: true,
     verdict: { confidence: 0.9, state: "working", summary: "" },
   };
-  const project =
-    "Project: Harvto is a pre-seed AR hijab try-on platform using MediaPipe, Three.js, XPBD cloth simulation, deterministic video replay, source-bound frame validation, and an instrument-first workflow for measuring off-axis garment detachment.";
-  const result = await governessTick(
-    new Map<Agent, AgentLivenessState>(),
-    baseConfig(),
-    makeDeps(working, clock, spies),
-    { ...freshRunState(), summary: project }
-  );
+  try {
+    const request = createUtilityRouteRequest({
+      acceptanceCriteria: ["return source-backed evidence"],
+      authority: {},
+      createdAt: "2026-07-26T01:00:00.000Z",
+      id: "board-job",
+      kind: "inspect",
+      objective: "Inspect the active worker configuration",
+      readScope: ["src"],
+      requester: "claude",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    });
+    appendUtilityRouteRequest(runDir, request);
+    activateUtilityEpoch(runDir, 1);
+    transitionUtilityJob(runDir, request.id, "routed-utility", {
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "openrouter-glm",
+      },
+      routeEpoch: 1,
+    });
+    claimUtilityJob(runDir, 1, {
+      jobId: request.id,
+      workerId: "test",
+      workerPid: process.pid,
+    });
+    transitionUtilityJob(runDir, request.id, "running");
+    transitionUtilityJob(runDir, request.id, "completed", {
+      result: {
+        artifactRefs: [],
+        checks: [],
+        filesChanged: [],
+        status: "completed",
+        summary: "Found the active worker configuration in utility-runtime.ts.",
+      },
+    });
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      `${JSON.stringify({
+        jobId: request.id,
+        model: "z-ai/glm-5.2",
+        modelCalls: 4,
+        status: "completed",
+        toolCalls: 3,
+        usage: {
+          cachedInputTokens: 2000,
+          cost: 0.0123,
+          inputTokens: 5000,
+          outputTokens: 1500,
+          totalTokens: 6500,
+        },
+      })}\n`
+    );
+    const result = await governessTick(
+      new Map<Agent, AgentLivenessState>(),
+      baseConfig({ runDir }),
+      makeDeps(working, clock, spies),
+      { ...freshRunState(), summary: "Project: must remain hidden" }
+    );
+    const board = stripAnsi(result.board);
 
-  expect(stripAnsi(result.board).replace(/\s+/g, " ")).toContain(project);
+    expect(board).toMatch(
+      /LOWER\s+STATE\s+MODEL\s+JOBS A\/Q\/D\/F\s+CALLS\s+TOOLS\s+TOKENS I\/C\/O\s+COST\s+DETAIL/
+    );
+    expect(board).toMatch(
+      /utility\s+● idle\s+glm-5\.2\s+1 a0 q0 d1 f0\s+4\s+3\s+7k i5k c2k o2k\s+\$0\.0123/
+    );
+    expect(board).toContain("Found the active worker configuration");
+    expect(board).not.toContain("Project: must remain hidden");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("small governess viewports retain both agents and utility without overflow", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "governess-utility-viewport-"));
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  try {
+    const result = await governessTick(
+      new Map<Agent, AgentLivenessState>(),
+      baseConfig({
+        agents: [
+          { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+          { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+        ],
+        runDir,
+        viewportRows: 5,
+      }),
+      makeDeps(
+        {
+          ok: true,
+          verdict: { confidence: 0.9, state: "working", summary: "" },
+        },
+        clock,
+        spies
+      )
+    );
+    const lines = stripAnsi(result.board).split("\n");
+
+    expect(lines).toHaveLength(5);
+    expect(lines.some((line) => line.startsWith(" claude"))).toBe(true);
+    expect(lines.some((line) => line.startsWith(" codex"))).toBe(true);
+    expect(lines.some((line) => line.startsWith(" utility"))).toBe(true);
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
 });
 
 test("observed progress clears the agent's recovery history", async () => {
