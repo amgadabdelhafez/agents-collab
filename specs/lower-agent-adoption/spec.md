@@ -94,7 +94,7 @@ and any operation outside the classifier's exact grammar.
       `scripts/verify.sh` complete with unrelated baseline failures isolated.
 - [x] A different evaluator records `runs/lower-agent-adoption/eval.json` before
       integration.
-- [ ] The global loop entrypoint is updated atomically for future loops, while
+- [x] The global loop entrypoint is updated atomically for future loops, while
       loop-45 pane IDs/PIDs remain unchanged.
 
 ## Non-goals

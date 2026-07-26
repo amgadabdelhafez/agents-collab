@@ -10,8 +10,7 @@
   route telemetry, mandatory route-first guidance, and pane adoption counters.
 - 2026-07-26: Final independent focused acceptance suite passed 258/258.
   `bun run build` and `git diff --check` passed. Full suite passed 769/773; the
-  same four failures
-  reproduce in the untouched canonical checkout and are stale Codex
+  same four failures reproduce in the untouched canonical checkout and are stale Codex
   model/config assertion baselines in `paired-options.test.ts` and
   `runner.test.ts`.
 - 2026-07-26: Repository `scripts/verify.sh` completed; its lint, typecheck,
@@ -36,3 +35,15 @@
   supported-agent control roots and common MCP/custom-agent instruction files,
   case-insensitively at any depth. Independent evaluator verdict is PASS in
   `eval.json`; release gate opened.
+- 2026-07-26: Merged feature commit `52ebf1d` locally into canonical branch
+  `feat/babysitter-pane` as `fa37c3f`; nothing was pushed remotely.
+- 2026-07-26: Built and smoke-checked a new canonical executable, retained the
+  previous binary at
+  `/Users/amgad/.local/share/loop/backups/loop.backup-lower-agent-adoption-20260726T202211Z`,
+  and atomically replaced the canonical target of `~/.local/bin/loop`. Installed
+  SHA-256 is `490ac2982af12f67a8cd6c210fb905e57de5e66f3a2b88b46b9cf954ba439593`;
+  backup SHA-256 is
+  `b8d64bd325ef001a2bc88512a2fd4598c5c94fffec31dea8c89c461259a4637d`.
+- 2026-07-26: Post-release loop-45 identity remained exactly `%0` PID 13109,
+  `%1` PID 13111, `%3` PID 13469, `%2` PID 13467; all panes remained live. The
+  session received no input, signal, restart, or pane operation.

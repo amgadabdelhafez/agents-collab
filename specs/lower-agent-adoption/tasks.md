@@ -28,5 +28,5 @@
 
 - [x] Run focused tests, full tests, build, diff check, and repository verify.
 - [x] Capture independent eval in `runs/lower-agent-adoption/eval.json`.
-- [ ] Prove loop 45 is untouched.
-- [ ] Atomically update the canonical local loop binary for future loops.
+- [x] Prove loop 45 is untouched.
+- [x] Atomically update the canonical local loop binary for future loops.
