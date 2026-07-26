@@ -1,0 +1,144 @@
+task_id: codex-bridge-visible-tui
+dimension: unit
+attempt: 001
+started_at: 2026-07-26T04:03:09Z
+command: bun test tests/loop/codex-tmux-proxy.test.ts tests/loop/codex-tmux-proxy.integration.test.ts tests/loop/bridge.test.ts tests/loop/tmux.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux returns false when --tmux is not present [0.59ms]
+(pass) runInTmux starts a detached session without auto-attach when already inside tmux [0.82ms]
+(pass) runInTmux throws install message when tmux is missing [0.06ms]
+(pass) runInTmux starts detached session and strips --tmux [0.25ms]
+(pass) runInTmux keeps explicit run id in single-agent mode [0.78ms]
+(pass) runInTmux starts paired tmux panes for Claude and Codex [1.68ms]
+(pass) runInTmux writes paired session refs before starting governess [9.70ms]
+(pass) runInTmux starts paired tmux panes for Cursor and Codex [0.50ms]
+(pass) runInTmux starts paired tmux panes for Gemini and Cursor without persistent transports [0.39ms]
+(pass) runInTmux releases local codex app-server handles after paired handoff [0.30ms]
+(pass) runInTmux closes the local codex app-server when the paired session is gone after attach [0.27ms]
+(pass) runInTmux starts paired interactive tmux panes without a task [0.43ms]
+(pass) runInTmux keeps the no-prompt Claude startup wait bounded [0.29ms]
+(pass) tmux prompts keep the paired review workflow explicit [0.06ms]
+(pass) tmux prompts make Claude the context steward and Codex recent-focused
+(pass) tmux prompts respect --pair-with for non-default peers
+(pass) interactive tmux prompts tell both agents to wait for the human [0.11ms]
+(pass) runInTmux auto-confirms Claude startup prompts in paired mode [0.30ms]
+(pass) runInTmux confirms wrapped Claude dev-channel prompts [0.26ms]
+(pass) runInTmux catches a delayed Claude dev-channel prompt [0.26ms]
+(pass) runInTmux confirms the current Claude bypass prompt wording [0.22ms]
+(pass) runInTmux still confirms Claude trust prompts in paired mode [0.26ms]
+(pass) runInTmux still catches a delayed Claude trust prompt [0.21ms]
+(pass) runInTmux reopens paired tmux panes without replaying the task [0.26ms]
+(pass) runInTmux resolves paired run id through an existing manifest [17.05ms]
+(pass) runInTmux rejects unknown run id before starting tmux session [7.95ms]
+(pass) runInTmux honors paired run resume from --session [15.98ms]
+(pass) runInTmux resolves paired resume from a worktree using git common dir [0.35ms]
+(pass) runInTmux strips a worktree suffix when git metadata is unavailable [0.17ms]
+(pass) runInTmux resolves raw stored session ids from --session [17.95ms]
+(pass) runInTmux ignores an unresolved raw session id in paired mode [13.03ms]
+(pass) runInTmux keeps raw --session values in single-agent mode [0.49ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-2"
+[loop] attach with: tmux attach -t repo-loop-2
+(pass) runInTmux increments session index on conflicts [0.27ms]
+[loop] starting tmux session...
+(pass) runInTmux surfaces tmux startup errors [3.31ms]
+(pass) runInTmux removes the Claude bridge server when paired tmux startup fails [0.54ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-1"
+[loop] attach with: tmux attach -t repo-loop-1
+(pass) runInTmux skips auto-attach for non-interactive sessions [0.21ms]
+[loop] starting tmux session...
+(pass) runInTmux reports when tmux session exits before attach [6.09ms]
+(pass) tmux internals strip --tmux from forwarded args [0.02ms]
+(pass) tmux internals build launch argv from exec path [0.03ms]
+(pass) tmux internals build launch argv for bun-compiled binary
+(pass) tmux internals build launch argv for executable with no script arg [0.02ms]
+(pass) tmux internals build launch argv for installed executable
+(pass) tmux internals build launch argv when bun executes installed binary
+(pass) tmux internals quote single quotes safely
+(pass) tmux internals build shell command with escaping
+(pass) tmux internals unref detached helper processes
+(pass) tmux internals launch Claude in bypass mode
+(pass) tmux internals build run names
+(pass) tmux internals detect session conflicts
+(pass) tmux internals sanitize run base names
+
+tests/loop/codex-tmux-proxy.test.ts:
+(pass) codex tmux proxy waits briefly for the tmux session to appear
+(pass) codex tmux proxy stops once the startup grace window is over [0.01ms]
+(pass) codex tmux proxy stops immediately after a seen tmux session disappears
+(pass) bridge delivery acknowledges only after visible pane submission [1.23ms]
+(pass) failed visible pane submission leaves a bridge request pending [0.74ms]
+(pass) codex tmux proxy persists newer live thread ids to the run manifest [0.48ms]
+(pass) codex tmux proxy reconnects to a live upstream without dropping the tui socket [1260.43ms]
+(pass) codex tmux proxy never injects a bridge request into app-server after reconnect [1262.15ms]
+(pass) codex tmux proxy has no headless fallback when visible delivery is unavailable [1261.44ms]
+
+tests/loop/bridge.test.ts:
+(pass) bridge message parsing ignores malformed lines and acked entries [5.51ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [3.50ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [2.89ms]
+(pass) readBridgeRuntimeStatus distinguishes live and stale tmux delivery [3.23ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [3.43ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [2.33ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [38.64ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [30.86ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [27.05ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [26.83ms]
+(pass) bridge MCP send_message rejects targeting the current agent [28.88ms]
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [30.06ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [29.05ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [25.40ms]
+(pass) bridge MCP accepts typed work metadata and TTL [31.74ms]
+(pass) bridge MCP writes line-delimited JSON responses [27.55ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [2.23ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [2.06ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [26.56ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [26.17ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [29.10ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [2.82ms]
+(pass) bridge leaves live Codex tmux messages queued for the tmux proxy [2.12ms]
+(pass) bridge falls back to direct Codex delivery when the stored tmux session is stale [2.27ms]
+(pass) bridge drains pending codex tmux messages through the injected command deps [104.41ms]
+(pass) bridge drains pending cursor tmux messages through the stored pane routing [106.24ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [4.38ms]
+(pass) bridge stale tmux cleanup logs non-zero Claude MCP remove exits [3.43ms]
+(pass) bridge stale tmux cleanup logs thrown Claude MCP remove errors [2.65ms]
+(pass) bridge stale tmux cleanup removes a persisted Claude server name [3.85ms]
+(pass) runBridgeWorker clears stale tmux routing and exits [3.79ms]
+(pass) runBridgeWorker falls back to app-server delivery after stale tmux cleanup [105.50ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [4.31ms]
+(pass) runBridgeWorker retries queued codex app-server messages [359.17ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [49.95ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [85.37ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [33.55ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [30.87ms]
+(pass) bridge MCP allows repeating the same message in the original direction [32.88ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [2.24ms]
+(pass) bridge config helper writes the Claude MCP config file [2.10ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [1.96ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [1.70ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [2.56ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [6.24ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [2.23ms]
+(pass) bridge MCP send_message normalizes copilot as a valid target [31.67ms]
+(pass) bridge queues cross-agent messages for all non-Claude/Codex pairs [175.52ms]
+(pass) bridge config injection writes copilot config to .github/copilot/mcp.json [2.64ms]
+(pass) bridge pending count includes copilot messages [2.22ms]
+(pass) bridge drains pending copilot tmux messages through stored pane routing [104.39ms]
+
+tests/loop/codex-tmux-proxy.integration.test.ts:
+(pass) runCli reconnects the codex tmux proxy subcommand without dropping the tui socket [1263.38ms]
+
+ 111 pass
+ 0 fail
+ 442 expect() calls
+Ran 111 tests across 4 files. [6.86s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-26T04:03:16Z

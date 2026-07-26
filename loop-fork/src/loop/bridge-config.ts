@@ -7,6 +7,9 @@ import type { Agent } from "./types";
 
 const CODEX_AUTO_APPROVED_BRIDGE_TOOLS = [
   "send_message",
+  "route_task",
+  "task_status",
+  "get_task_result",
   "bridge_status",
   "receive_messages",
 ] as const;

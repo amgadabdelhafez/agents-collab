@@ -488,6 +488,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
 });
 
 test("runInTmux writes paired session refs before starting governess", async () => {
+  const calls: string[][] = [];
   const events: string[] = [];
   const home = makeTempHome();
   let sessionStarted = false;
@@ -556,6 +557,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
         startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args: string[]) => {
+          calls.push(args);
           if (args.some((arg) => arg.includes("__governess"))) {
             events.push(
               `spawn-governess:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneGoverness ?? ""}`
@@ -584,17 +586,15 @@ test("runInTmux writes paired session refs before starting governess", async () 
     );
 
     expect(delegated).toBe(true);
-    expect(events).toContain("manifest:codex-thread-1:codex:");
-    expect(events).toContain("spawn-governess:codex-thread-1:codex:");
+    expect(events).toContain("manifest:codex-thread-1:codex:repo-loop-1:0.3");
+    expect(events).toContain(
+      "spawn-governess:codex-thread-1:codex:repo-loop-1:0.3"
+    );
     expect(
-      events.some((event) =>
-        event.includes("'LOOP_GOVERNESS_LLM_TRACE=1'")
-      )
+      events.some((event) => event.includes("'LOOP_GOVERNESS_LLM_TRACE=1'"))
     ).toBe(true);
     expect(
-      events.some((event) =>
-        event.includes("'LOOP_GOVERNESS_AGENT_RENAME=1'")
-      )
+      events.some((event) => event.includes("'LOOP_GOVERNESS_AGENT_RENAME=1'"))
     ).toBe(true);
     expect(
       events.some((event) =>
@@ -606,13 +606,56 @@ test("runInTmux writes paired session refs before starting governess", async () 
         event.includes("'USAGE_TRACKER_SECRET=dotenv-secret'")
       )
     ).toBe(true);
-    expect(events.indexOf("manifest:codex-thread-1:codex:")).toBeLessThan(
-      events.indexOf("spawn-governess:codex-thread-1:codex:")
+    expect(
+      events.indexOf("manifest:codex-thread-1:codex:repo-loop-1:0.3")
+    ).toBeLessThan(
+      events.indexOf("spawn-governess:codex-thread-1:codex:repo-loop-1:0.3")
     );
-    expect(manifest.tmuxPaneGoverness).toBe("repo-loop-1:0.2");
+    expect(calls).toContainEqual([
+      "tmux",
+      "split-window",
+      "-v",
+      "-b",
+      "-l",
+      "8",
+      "-t",
+      "repo-loop-1:0.1",
+      "-c",
+      repoDir,
+      expect.stringContaining("__utility-pane"),
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "resize-pane",
+      "-t",
+      "repo-loop-1:0.1",
+      "-y",
+      "8",
+    ]);
+    expect(manifest.tmuxPaneLeft).toBe("repo-loop-1:0.0");
+    expect(manifest.tmuxPaneUtility).toBe("repo-loop-1:0.1");
+    expect(manifest.tmuxPaneRight).toBe("repo-loop-1:0.2");
+    expect(manifest.tmuxPaneGoverness).toBe("repo-loop-1:0.3");
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
+});
+
+test("the lower-agent pane defaults on with an explicit opt-out", () => {
+  expect(tmuxInternals.utilityPaneEnabled({})).toBe(true);
+  expect(tmuxInternals.utilityPaneEnabled({ LOOP_UTILITY_PANE: "0" })).toBe(
+    false
+  );
+  expect(tmuxInternals.utilityPaneEnabled({ LOOP_UTILITY_PANE: "off" })).toBe(
+    false
+  );
+  expect(tmuxInternals.utilityPaneHeight({})).toBe("8");
+  expect(
+    tmuxInternals.utilityPaneHeight({ LOOP_UTILITY_PANE_HEIGHT: "20%" })
+  ).toBe("20%");
+  expect(
+    tmuxInternals.utilityPaneHeight({ LOOP_UTILITY_PANE_HEIGHT: "invalid" })
+  ).toBe("8");
 });
 
 test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
@@ -1308,7 +1351,9 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).toContain("Use AskUserQuestion");
   expect(primaryPrompt).toContain("Maintain `PLAN.md` and `status.md`");
   expect(primaryPrompt).toContain("running handoff");
-  expect(primaryPrompt).toContain("Context role: optimize for Codex's smaller context window.");
+  expect(primaryPrompt).toContain(
+    "Context role: optimize for Codex's smaller context window."
+  );
   expect(primaryPrompt).toContain("Ask Claude for missing historical context");
   expect(primaryPrompt).toContain(
     "create a draft PR or send a follow-up commit to the existing PR"
@@ -1319,8 +1364,12 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(peerPrompt).toContain("You are the reviewer/support agent.");
   expect(peerPrompt).toContain("request validation every few concrete steps");
   expect(peerPrompt).toContain("keeps PLAN.md and status.md current");
-  expect(peerPrompt).toContain("Context role: use Claude's larger context window");
-  expect(peerPrompt).toContain("Answer Codex context questions from session history");
+  expect(peerPrompt).toContain(
+    "Context role: use Claude's larger context window"
+  );
+  expect(peerPrompt).toContain(
+    "Answer Codex context questions from session history"
+  );
   expect(peerPrompt).toContain("Do not take over the task or create the PR");
   expect(peerPrompt).toContain("Wait for Codex to send you a targeted request");
   expect(peerPrompt).not.toContain('"reply"');
@@ -1352,12 +1401,18 @@ test("tmux prompts make Claude the context steward and Codex recent-focused", ()
   );
 
   expect(primaryPrompt).toContain("you are the primary Claude agent");
-  expect(primaryPrompt).toContain("Context role: use Claude's larger context window");
+  expect(primaryPrompt).toContain(
+    "Context role: use Claude's larger context window"
+  );
   expect(primaryPrompt).toContain("Preserve historical decisions");
   expect(primaryPrompt).toContain("include the small recent slice");
-  expect(primaryPrompt).toContain("Answer Codex context questions from session history");
+  expect(primaryPrompt).toContain(
+    "Answer Codex context questions from session history"
+  );
   expect(peerPrompt).toContain("You are Codex.");
-  expect(peerPrompt).toContain("Context role: optimize for Codex's smaller context window.");
+  expect(peerPrompt).toContain(
+    "Context role: optimize for Codex's smaller context window."
+  );
   expect(peerPrompt).toContain("Stay focused on the immediate request");
   expect(peerPrompt).toContain("Ask Claude for missing historical context");
   expect(peerPrompt).toContain("make frequent targeted calls");
@@ -1417,7 +1472,9 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
   expect(primaryPrompt).toContain("use AskUserQuestion");
   expect(primaryPrompt).toContain("create or update PLAN.md and status.md");
   expect(primaryPrompt).toContain("end-of-session handoff");
-  expect(primaryPrompt).toContain("Context role: optimize for Codex's smaller context window.");
+  expect(primaryPrompt).toContain(
+    "Context role: optimize for Codex's smaller context window."
+  );
   expect(primaryPrompt).toContain(
     "Ask Claude for validation and feedback after every few concrete steps"
   );
@@ -1426,7 +1483,9 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
   expect(peerPrompt).toContain("No task has been assigned yet.");
   expect(peerPrompt).toContain("human-driven interactive run");
   expect(peerPrompt).toContain("keeps PLAN.md and status.md current");
-  expect(peerPrompt).toContain("Context role: use Claude's larger context window");
+  expect(peerPrompt).toContain(
+    "Context role: use Claude's larger context window"
+  );
   expect(peerPrompt).toContain(
     "If Codex asks for a plan review, review PLAN.md only"
   );

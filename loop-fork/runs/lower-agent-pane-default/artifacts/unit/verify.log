@@ -1,0 +1,224 @@
+task_id: lower-agent-pane-default
+dimension: unit
+attempt: 001
+started_at: 2026-07-26T03:34:38Z
+command: bun test tests/loop/tmux.test.ts tests/loop/run-state.test.ts tests/loop/bridge.test.ts tests/loop/governess.test.ts tests/loop/utility-runtime.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux returns false when --tmux is not present [0.68ms]
+(pass) runInTmux starts a detached session without auto-attach when already inside tmux [0.92ms]
+(pass) runInTmux throws install message when tmux is missing [0.02ms]
+(pass) runInTmux starts detached session and strips --tmux [0.28ms]
+(pass) runInTmux keeps explicit run id in single-agent mode [1.05ms]
+(pass) runInTmux starts paired tmux panes for Claude and Codex [1.61ms]
+(pass) runInTmux writes paired session refs before starting governess [12.64ms]
+(pass) the lower-agent pane defaults on with an explicit opt-out [0.05ms]
+(pass) runInTmux starts paired tmux panes for Cursor and Codex [0.75ms]
+(pass) runInTmux starts paired tmux panes for Gemini and Cursor without persistent transports [0.51ms]
+(pass) runInTmux releases local codex app-server handles after paired handoff [0.41ms]
+(pass) runInTmux closes the local codex app-server when the paired session is gone after attach [0.29ms]
+(pass) runInTmux starts paired interactive tmux panes without a task [0.42ms]
+(pass) runInTmux keeps the no-prompt Claude startup wait bounded [0.28ms]
+(pass) tmux prompts keep the paired review workflow explicit [0.06ms]
+(pass) tmux prompts make Claude the context steward and Codex recent-focused [0.04ms]
+(pass) tmux prompts respect --pair-with for non-default peers [0.03ms]
+(pass) interactive tmux prompts tell both agents to wait for the human [0.06ms]
+(pass) runInTmux auto-confirms Claude startup prompts in paired mode [0.33ms]
+(pass) runInTmux confirms wrapped Claude dev-channel prompts [0.30ms]
+(pass) runInTmux catches a delayed Claude dev-channel prompt [0.26ms]
+(pass) runInTmux confirms the current Claude bypass prompt wording [0.29ms]
+(pass) runInTmux still confirms Claude trust prompts in paired mode [0.35ms]
+(pass) runInTmux still catches a delayed Claude trust prompt [0.27ms]
+(pass) runInTmux reopens paired tmux panes without replaying the task [0.38ms]
+(pass) runInTmux resolves paired run id through an existing manifest [25.42ms]
+(pass) runInTmux rejects unknown run id before starting tmux session [12.99ms]
+(pass) runInTmux honors paired run resume from --session [21.80ms]
+(pass) runInTmux resolves paired resume from a worktree using git common dir [0.57ms]
+(pass) runInTmux strips a worktree suffix when git metadata is unavailable [0.29ms]
+(pass) runInTmux resolves raw stored session ids from --session [25.93ms]
+(pass) runInTmux ignores an unresolved raw session id in paired mode [19.85ms]
+(pass) runInTmux keeps raw --session values in single-agent mode [0.64ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-2"
+[loop] attach with: tmux attach -t repo-loop-2
+(pass) runInTmux increments session index on conflicts [0.36ms]
+[loop] starting tmux session...
+(pass) runInTmux surfaces tmux startup errors [4.21ms]
+(pass) runInTmux removes the Claude bridge server when paired tmux startup fails [0.92ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-1"
+[loop] attach with: tmux attach -t repo-loop-1
+(pass) runInTmux skips auto-attach for non-interactive sessions [0.29ms]
+[loop] starting tmux session...
+(pass) runInTmux reports when tmux session exits before attach [10.39ms]
+(pass) tmux internals strip --tmux from forwarded args [0.20ms]
+(pass) tmux internals build launch argv from exec path [0.04ms]
+(pass) tmux internals build launch argv for bun-compiled binary
+(pass) tmux internals build launch argv for executable with no script arg
+(pass) tmux internals build launch argv for installed executable [0.06ms]
+(pass) tmux internals build launch argv when bun executes installed binary
+(pass) tmux internals quote single quotes safely
+(pass) tmux internals build shell command with escaping [0.05ms]
+(pass) tmux internals unref detached helper processes [0.09ms]
+(pass) tmux internals launch Claude in bypass mode [0.02ms]
+(pass) tmux internals build run names
+(pass) tmux internals detect session conflicts
+(pass) tmux internals sanitize run base names [0.01ms]
+
+tests/loop/utility-runtime.test.ts:
+(pass) OpenRouter GLM is the default but remains disabled without a credential [0.36ms]
+(pass) a mode-0600 key file enables the tier without exporting the secret [0.64ms]
+(pass) governess route processing dispatches eligible work without provider I/O [2.86ms]
+(pass) spawn failure terminates the job instead of stranding routed utility work [2.66ms]
+(pass) an unclaimed routed job fails closed after its claim deadline [2.44ms]
+(pass) overlapping utility writes are not dispatched concurrently [4.12ms]
+(pass) utility pane reports current work, tool activity, usage, and idle state [6.48ms]
+(pass) a new governess epoch fences an orphaned utility claim [2.97ms]
+(pass) peer routing is relative to the requester, not the current driver [1.93ms]
+(pass) utility worker completes against an OpenAI-compatible local endpoint [10.31ms]
+(pass) utility worker rejects prose-only completion without repository evidence [4.65ms]
+(pass) a failing focused check cannot satisfy command completion evidence [21.95ms]
+
+tests/loop/bridge.test.ts:
+(pass) bridge message parsing ignores malformed lines and acked entries [4.21ms]
+(pass) bridge preserves utility results without treating utility as a full agent [2.99ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [2.87ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [2.72ms]
+(pass) readBridgeRuntimeStatus distinguishes live and stale tmux delivery [3.37ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [3.13ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [2.43ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [42.19ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [37.51ms]
+(pass) bridge MCP route_task queues a bounded request from claude [73.50ms]
+(pass) bridge MCP route_task queues a bounded request from codex [67.49ms]
+(pass) external supervisor can submit a task with an explicit result target [34.80ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [34.13ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [33.90ms]
+(pass) bridge MCP send_message rejects targeting the current agent [37.16ms]
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [36.72ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [36.48ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [34.52ms]
+(pass) bridge MCP accepts typed work metadata and TTL [42.60ms]
+(pass) bridge MCP writes line-delimited JSON responses [36.90ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [2.87ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [2.63ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [35.83ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [37.07ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [39.25ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [4.04ms]
+(pass) bridge leaves live Codex tmux messages queued for the tmux proxy [3.19ms]
+(pass) bridge falls back to direct Codex delivery when the stored tmux session is stale [4.48ms]
+(pass) bridge drains codex messages through the persisted post-split pane target [105.45ms]
+(pass) bridge drains pending cursor tmux messages through the stored pane routing [106.11ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [5.09ms]
+(pass) bridge stale tmux cleanup logs non-zero Claude MCP remove exits [3.94ms]
+(pass) bridge stale tmux cleanup logs thrown Claude MCP remove errors [3.95ms]
+(pass) bridge stale tmux cleanup removes a persisted Claude server name [3.42ms]
+(pass) runBridgeWorker clears stale tmux routing and exits [3.93ms]
+(pass) runBridgeWorker falls back to app-server delivery after stale tmux cleanup [106.44ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [3.99ms]
+(pass) runBridgeWorker retries queued codex app-server messages [359.10ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [54.30ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [86.01ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [39.46ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [38.24ms]
+(pass) bridge MCP allows repeating the same message in the original direction [41.12ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [2.52ms]
+(pass) bridge config helper writes the Claude MCP config file [2.87ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [2.79ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [1.86ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [2.63ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [6.26ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [2.86ms]
+(pass) bridge MCP send_message normalizes copilot as a valid target [39.70ms]
+(pass) bridge queues cross-agent messages for all non-Claude/Codex pairs [220.79ms]
+(pass) bridge config injection writes copilot config to .github/copilot/mcp.json [3.09ms]
+(pass) bridge pending count includes copilot messages [2.56ms]
+(pass) bridge drains pending copilot tmux messages through stored pane routing [106.06ms]
+
+tests/loop/governess.test.ts:
+(pass) governess observes agents through persisted post-split pane targets [28.08ms]
+(pass) suspect + stuck in dry-run: judges and decides but executes nothing [4.59ms]
+(pass) suspect + stuck live: executes the first ladder rung and records history [0.42ms]
+(pass) LLM unreachable suppresses recovery and flags the board [0.23ms]
+(pass) dual local judges render separate token rows and require agreement [0.38ms]
+(pass) small panes collapse excess judge rows within the viewport budget [0.16ms]
+(pass) round-robin local judge mode calls one model for that tick [0.30ms]
+(pass) board labels an agent [thinking] while its pane is animating [0.26ms]
+(pass) board keeps the configured leader row first [0.41ms]
+(pass) codex session pressure hands driver role to claude until reset [0.31ms]
+(pass) codex limit handoff does not repeat when reset detail appears later [0.43ms]
+(pass) codex limit reset restores driver role without compacting context [0.26ms]
+(pass) handover mode suppresses pending limit role-transition messages
+(pass) a missing limit snapshot does not restore before a known future reset
+(pass) one missing limit snapshot starts a cooldown instead of restoring [0.51ms]
+(pass) restore briefing stays pending while its target is active [0.13ms]
+(pass) pressure on a non-driver is deduped without messaging or a handoff [0.15ms]
+(pass) claude session pressure hands driver role to codex until reset [0.37ms]
+(pass) proactive quota balance is disabled by default [0.30ms]
+(pass) proactive quota balance moves driver when local LLM approves [0.59ms]
+(pass) proactive quota balance is skipped when local LLM vetoes [0.25ms]
+(pass) board labels an agent [idle] once its pane is frozen [0.20ms]
+(pass) board converts the agent's live remaining context % to used context [0.05ms]
+(pass) board shows latest bridge messages in both directions [0.51ms]
+(pass) board keeps warning-colored agent columns aligned [0.24ms]
+(pass) board renders only aggregate dynamic usage tracker windows [0.34ms]
+(pass) board shows input, cached, and output token details [0.74ms]
+(pass) board caps structured summary section heights [0.37ms]
+(pass) board uses the full summary width for the Project line [0.18ms]
+(pass) observed progress clears the agent's recovery history [0.05ms]
+(pass) a cleanly-ended turn stays idle and is never judged, even past the idle window [0.16ms]
+(pass) board flags an agent that is waiting for the human [0.11ms]
+(pass) board labels a session-limit pane as limited, not waiting for the human [0.13ms]
+(pass) board does not treat an available usage-limit reset as a blocked agent [0.07ms]
+(pass) board does not label governess limit handoff text as a session limit [0.15ms]
+(pass) board does not label Codex context compaction as a usage limit [0.13ms]
+(pass) a confirmed waiting pair clears the moment an agent goes active [0.16ms]
+(pass) a confirmed idle pair shows the LLM's ask and escalates once [0.25ms]
+(pass) both idle but unconfirmed by the LLM does not alert [0.11ms]
+(pass) escalates once when the session crosses its cost budget [0.89ms]
+(pass) composePaneTitle composes glyph, agent, and task label [0.05ms]
+(pass) governess run identity includes full loop name and path [0.04ms]
+(pass) board merges loop and path into the first time/status line [0.42ms]
+(pass) governess pane identity is reapplied without deduplication [0.06ms]
+(pass) governess pane identity writes the border option and native title
+(pass) runGoverness reapplies pane identity on startup and every cycle [2.89ms]
+(pass) governessTick sets each agent's pane border title and skips redundant sets [0.19ms]
+(pass) governessTick folds the stored LLM label into the border title [0.07ms]
+(pass) sendRenameCommands is disabled by default [0.07ms]
+(pass) agent rename config requires an explicit truthy environment value [0.01ms]
+(pass) sendRenameCommands injects /rename when explicitly enabled [0.12ms]
+(pass) sendRenameCommands sends nothing in dry-run
+(pass) sendRenameCommands does not re-send an unchanged rename [0.10ms]
+(pass) sendRenameCommands does not inject into an agent that is mid-turn [0.03ms]
+(pass) sendRenameCommands fails closed without state and turn-end evidence [0.02ms]
+(pass) sendRenameCommands preserves a user draft after a Stop hook [0.04ms]
+
+tests/loop/run-state.test.ts:
+(pass) resolveRepoId prefers git common dir and stays stable across worktrees [0.65ms]
+(pass) resolveRepoId falls back to top-level when git common dir is unavailable [0.10ms]
+(pass) resolveStorageRoot and run path helpers build the expected layout
+(pass) resolveRunStorage resolves the same run dir for a resumed run id
+(pass) resolveRunId prefers LOOP_RUN_ID over auto-incrementing storage [0.80ms]
+(pass) resolveRunId increments from the latest stored run [0.58ms]
+(pass) manifest helpers write, read, and touch run metadata [0.43ms]
+(pass) manifest reader ignores malformed files [0.30ms]
+(pass) loadRunState resolves an existing run by run id [0.60ms]
+(pass) resolveExistingRunId returns a matching stored run id [0.84ms]
+(pass) resolveExistingRunId matches stored Claude and Codex session ids [0.40ms]
+(pass) transcript helpers append and read jsonl entries [0.42ms]
+(pass) transcript helpers parse structured status, review, and result entries [0.41ms]
+(pass) structured transcript entries round-trip without undefined optional fields [0.32ms]
+(pass) run ids are validated before storage paths are built [0.03ms]
+
+ 189 pass
+ 0 fail
+ 786 expect() calls
+Ran 189 tests across 5 files. [2.35s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-26T03:34:40Z
