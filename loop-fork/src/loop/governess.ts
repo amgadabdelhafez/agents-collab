@@ -876,6 +876,7 @@ const ANSI = {
   reset: "\x1b[0m",
   yellow: "\x1b[33m",
 };
+const ANSI_COLOR_SEQUENCE_RE = /^\x1b\[[0-9;]*m/;
 const CONTEXT_ALERT_PCT = 80;
 const JUDGE_SUMMARY_MAX = 140;
 const MS_PER_HOUR = 3_600_000;
@@ -891,6 +892,30 @@ const BOTH_IDLE_ASSESS_MS = 45_000;
 
 const paint = (code: string, text: string): string =>
   `${code}${text}${ANSI.reset}`;
+
+const fitAnsiLine = (value: string, width: number): string => {
+  const visible = value.replaceAll(/\x1b\[[0-9;]*m/g, "");
+  if (visible.length <= width) {
+    return value;
+  }
+  const limit = Math.max(0, width - 1);
+  let rendered = "";
+  let visibleCount = 0;
+  for (let index = 0; index < value.length && visibleCount < limit; ) {
+    const tail = value.slice(index);
+    const ansi = tail.match(ANSI_COLOR_SEQUENCE_RE)?.[0];
+    if (ansi) {
+      rendered += ansi;
+      index += ansi.length;
+      continue;
+    }
+    const glyph = String.fromCodePoint(value.codePointAt(index) ?? 0);
+    rendered += glyph;
+    visibleCount += glyph.length;
+    index += glyph.length;
+  }
+  return `${rendered}…${ANSI.reset}`;
+};
 const cell = (text: string, width: number): string => text.padEnd(width);
 const capitalize = (value: string): string =>
   value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
@@ -2946,7 +2971,11 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   }
   const footerBudget =
     maxRows === undefined ? undefined : Math.max(0, maxRows - top.length);
-  return [...top, ...renderFooter(meta, footerBudget)].join("\n");
+  const lines = [...top, ...renderFooter(meta, footerBudget)];
+  return (meta.maxColumns === undefined
+    ? lines
+    : lines.map((line) => fitAnsiLine(line, Math.max(1, meta.maxColumns ?? 1)))
+  ).join("\n");
 };
 
 interface AgentTickContext {
