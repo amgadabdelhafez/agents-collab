@@ -54,3 +54,19 @@
 - Disposable real-tmux smoke: default four-pane and utility-disabled three-pane
   layouts both preserved each role when addressed through the returned stable
   pane ID, despite numeric index reordering.
+
+## Integration and live repair
+
+- Integrated locally on `feat/babysitter-pane` as `4cc0bc6`; no remote push.
+- Rebuilt the canonical binary. `/Users/amgad/.local/bin/loop` resolves to it
+  and has SHA-256 `b8d64bd325ef001a2bc88512a2fd4598c5c94fffec31dea8c89c461259a4637d`.
+- Preserved the prior binary at
+  `/private/tmp/loop-before-stable-pane-targets-20260726` for rollback.
+- Updated only run 45's manifest targets to Claude `%0`, Codex `%1`, utility
+  `%2`, and governess `%3`; no pane was restarted, signaled, or recreated.
+- Claude's corrected T3 request `7ea0298b` was then acknowledged as
+  `submitted through visible codex tmux pane`; Codex hook sequence 6 recorded
+  `UserPromptSubmit`, and the active review was visible in the Codex pane.
+- The governess doctor passed all 11 checks with zero journal issues. Claude,
+  Codex, governess, and utility PIDs remained `13109`, `13111`, `13469`, and
+  `13467` respectively.
