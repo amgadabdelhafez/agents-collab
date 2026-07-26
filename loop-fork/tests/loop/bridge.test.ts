@@ -1633,7 +1633,7 @@ test("bridge falls back to direct Codex delivery when the stored tmux session is
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge drains codex messages through the persisted post-split pane target", async () => {
+test("bridge drains codex messages through the persisted stable pane target", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -1668,7 +1668,7 @@ test("bridge drains codex messages through the persisted post-split pane target"
       repoId: "repo-123",
       runId: "8",
       status: "running",
-      tmuxPaneRight: "repo-loop-8:0.2",
+      tmuxPaneRight: "%41",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
       updatedAt: "2026-03-23T10:00:00.000Z",
@@ -1694,7 +1694,7 @@ test("bridge drains codex messages through the persisted post-split pane target"
       { stderr: "ignore", stdout: "ignore" },
     ],
     [
-      ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.2"],
+      ["tmux", "capture-pane", "-p", "-t", "%41"],
       { stderr: "ignore", stdout: "pipe" },
     ],
     [
@@ -1702,7 +1702,7 @@ test("bridge drains codex messages through the persisted post-split pane target"
         "tmux",
         "send-keys",
         "-t",
-        "repo-loop-8:0.2",
+        "%41",
         "-l",
         "--",
         "Claude: Please check the tmux path.",
@@ -1710,7 +1710,7 @@ test("bridge drains codex messages through the persisted post-split pane target"
       { stderr: "ignore" },
     ],
     [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.2", "Enter"],
+      ["tmux", "send-keys", "-t", "%41", "Enter"],
       { stderr: "ignore" },
     ],
   ]);

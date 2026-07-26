@@ -82,6 +82,7 @@ const UTILITY_PANE_HEIGHT_RE = /^\d+%?$/;
 interface SpawnResult {
   exitCode: number;
   stderr: string;
+  stdout?: string;
 }
 
 interface TerminalSize {
@@ -1068,11 +1069,14 @@ const startGovernessPane = (
     GOVERNESS_SUBCOMMAND,
     runId,
   ]);
-  deps.spawn([
+  const result = runTmuxCommand(deps, [
     "tmux",
     "split-window",
     "-v",
     "-f",
+    "-P",
+    "-F",
+    "#{pane_id}",
     "-l",
     opts.governessHeight,
     "-t",
@@ -1081,7 +1085,7 @@ const startGovernessPane = (
     deps.cwd,
     command,
   ]);
-  return paneTarget;
+  return stablePaneTarget(result, paneTarget);
 };
 
 const utilityPaneEnabled = (env: NodeJS.ProcessEnv): boolean => {
@@ -1107,11 +1111,14 @@ const startUtilityPane = (
     UTILITY_PANE_SUBCOMMAND,
     runDir,
   ]);
-  runTmuxCommand(deps, [
+  const result = runTmuxCommand(deps, [
     "tmux",
     "split-window",
     "-v",
     "-b",
+    "-P",
+    "-F",
+    "#{pane_id}",
     "-l",
     utilityPaneHeight(deps.env),
     "-t",
@@ -1120,7 +1127,7 @@ const startUtilityPane = (
     deps.cwd,
     command,
   ]);
-  return utilityPane;
+  return stablePaneTarget(result, utilityPane);
 };
 
 const resizeUtilityPane = (deps: TmuxDeps, pane: string): void => {
@@ -1316,14 +1323,26 @@ const runTmuxCommand = (
   deps: TmuxDeps,
   args: string[],
   message = "Failed to start tmux session"
-): void => {
+): SpawnResult => {
   const result = deps.spawn(args);
   if (result.exitCode === 0) {
-    return;
+    return result;
   }
   const suffix = result.stderr ? `: ${result.stderr}` : ".";
   throw new Error(`${message}${suffix}`);
 };
+
+const TMUX_PANE_ID_RE = /^%\d+$/;
+
+const stablePaneId = (result: SpawnResult): string | undefined => {
+  const paneId = result.stdout?.trim();
+  return paneId && TMUX_PANE_ID_RE.test(paneId) ? paneId : undefined;
+};
+
+const stablePaneTarget = (
+  result: SpawnResult,
+  fallback: string
+): string => stablePaneId(result) ?? fallback;
 
 const normalizePaneText = (text: string): string =>
   text.replace(/\s+/g, " ").trim();
@@ -1408,10 +1427,13 @@ const createPairedPaneLayout = async (input: {
   runDir: string;
   session: string;
 }): Promise<PairedPaneTargets> => {
-  runTmuxCommand(input.deps, [
+  const leftResult = runTmuxCommand(input.deps, [
     "tmux",
     "new-session",
     "-d",
+    "-P",
+    "-F",
+    "#{pane_id}",
     ...buildSessionSizeArgs(input.deps),
     "-s",
     input.session,
@@ -1419,20 +1441,26 @@ const createPairedPaneLayout = async (input: {
     input.deps.cwd,
     input.leftCommand,
   ]);
-  runTmuxCommand(
+  const left = stablePaneTarget(leftResult, `${input.session}:0.0`);
+  const rightResult = runTmuxCommand(
     input.deps,
     [
       "tmux",
       "split-window",
       "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-t",
-      `${input.session}:0`,
+      left,
       "-c",
       input.deps.cwd,
       input.rightCommand,
     ],
     "Failed to split tmux window"
   );
+  const rightPaneId = stablePaneId(rightResult);
+  const rightBeforeUtility = rightPaneId ?? `${input.session}:0.1`;
   input.deps.spawn([
     "tmux",
     "select-layout",
@@ -1441,16 +1469,16 @@ const createPairedPaneLayout = async (input: {
     "even-horizontal",
   ]);
   if (input.paneAgents.left === "claude") {
-    await unblockClaudePane(`${input.session}:0.0`, input.deps);
+    await unblockClaudePane(left, input.deps);
   }
   if (input.paneAgents.right === "claude") {
-    await unblockClaudePane(`${input.session}:0.1`, input.deps);
+    await unblockClaudePane(rightBeforeUtility, input.deps);
   }
   const showUtilityPane = input.governess && utilityPaneEnabled(input.deps.env);
   const utility = showUtilityPane
     ? startUtilityPane(
         input.deps,
-        `${input.session}:0.1`,
+        rightBeforeUtility,
         `${input.session}:0.1`,
         input.runDir
       )
@@ -1459,8 +1487,10 @@ const createPairedPaneLayout = async (input: {
     governess: input.governess
       ? `${input.session}:0.${showUtilityPane ? 3 : 2}`
       : undefined,
-    left: `${input.session}:0.0`,
-    right: `${input.session}:0.${showUtilityPane ? 2 : 1}`,
+    left,
+    right:
+      rightPaneId ??
+      `${input.session}:0.${showUtilityPane ? 2 : 1}`,
     utility,
   };
 };
@@ -1471,13 +1501,21 @@ const startPairedControlPanes = (
   session: string,
   runId: string,
   paneTargets: PairedPaneTargets
-): void => {
+): PairedPaneTargets => {
+  let governess = paneTargets.governess;
   if (paneTargets.governess) {
-    startGovernessPane(deps, opts, session, runId, paneTargets.governess);
+    governess = startGovernessPane(
+      deps,
+      opts,
+      session,
+      runId,
+      paneTargets.governess
+    );
   }
   if (paneTargets.utility) {
     resizeUtilityPane(deps, paneTargets.utility);
   }
+  return { ...paneTargets, governess };
 };
 
 const startPairedSession = async (
@@ -1638,15 +1676,31 @@ const startPairedSession = async (
       primaryAgent,
       paneTargets
     );
-    startPairedControlPanes(
+    const livePaneTargets = startPairedControlPanes(
       deps,
       launch.opts,
       session,
       storage.runId,
       paneTargets
     );
+    if (livePaneTargets.governess !== paneTargets.governess) {
+      updatePairedManifest(
+        deps,
+        storage,
+        manifest,
+        claudeSessionId,
+        codexRemoteUrl,
+        codexThreadId,
+        session,
+        paneAgents,
+        primaryAgent,
+        livePaneTargets
+      );
+    }
     const primaryPane =
-      paneAgents.left === primaryAgent ? paneTargets.left : paneTargets.right;
+      paneAgents.left === primaryAgent
+        ? livePaneTargets.left
+        : livePaneTargets.right;
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
     return session;
   } catch (error: unknown) {
@@ -1810,8 +1864,12 @@ const defaultDeps = (): TmuxDeps => ({
   releasePersistentCodexSession,
   startPersistentAgentSession,
   spawn: (args: string[]) => {
-    const result = spawnSync(args, { stderr: "pipe" });
-    return { exitCode: result.exitCode, stderr: decode(result.stderr) };
+    const result = spawnSync(args, { stderr: "pipe", stdout: "pipe" });
+    return {
+      exitCode: result.exitCode,
+      stderr: decode(result.stderr),
+      stdout: decode(result.stdout),
+    };
   },
   updateRunManifest,
 });
