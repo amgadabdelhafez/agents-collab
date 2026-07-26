@@ -233,6 +233,7 @@ export interface GovernessConfig {
   usageTrackerUrl?: string;
   // Optional deterministic render budget for tests/non-TTY callers. A live
   // pane uses the current stdout height when this is absent.
+  viewportColumns?: number;
   viewportRows?: number;
 }
 
@@ -1250,6 +1251,7 @@ interface BoardMeta {
   llmOfflineByJudge: Record<string, boolean>;
   llmRuntimeByJudge: Record<string, LocalLlmRuntime>;
   llmUsageByJudge: LocalLlmUsageByJudge;
+  maxColumns?: number;
   maxRows?: number;
   nowMs: number;
   recoveries: number;
@@ -1267,13 +1269,13 @@ const AGENT_COL = {
   state: 12,
   age: 5,
   model: 12,
-  run: 14,
-  context: 20,
-  limits: 23,
-  spend: 13,
-  tokens: 25,
-  activity: 20,
-  bridge: 18,
+  run: 13,
+  context: 18,
+  limits: 25,
+  spend: 12,
+  tokens: 24,
+  activity: 19,
+  bridge: 14,
 } as const;
 
 const AGENT_COLUMNS: [string, number][] = [
@@ -1282,12 +1284,12 @@ const AGENT_COLUMNS: [string, number][] = [
   ["AGE", AGENT_COL.age],
   ["MODEL", AGENT_COL.model],
   ["RUN", AGENT_COL.run],
-  ["CONTEXT · CMP", AGENT_COL.context],
-  ["LIMITS · RESET", AGENT_COL.limits],
-  ["EST RUN / H", AGENT_COL.spend],
+  ["CONTEXT/CMP", AGENT_COL.context],
+  ["LIMITS/RESET", AGENT_COL.limits],
+  ["COST/RATE", AGENT_COL.spend],
   ["TOKENS I/C/O", AGENT_COL.tokens],
-  ["ACT TX/TH/TL", AGENT_COL.activity],
-  ["MSGS / BRIDGE", AGENT_COL.bridge],
+  ["ACTIVITY", AGENT_COL.activity],
+  ["MSGS/TOOLS", AGENT_COL.bridge],
 ];
 
 const agentHeaderRow = paint(
@@ -1765,35 +1767,6 @@ const renderAgentRow = (
   ].join(" ")}`;
 };
 
-const UTILITY_COL = {
-  calls: 6,
-  cost: 10,
-  detail: 58,
-  jobs: 20,
-  model: 16,
-  name: 7,
-  state: 10,
-  tokens: 25,
-  tools: 6,
-} as const;
-
-const UTILITY_COLUMNS: [string, number][] = [
-  ["LOWER", UTILITY_COL.name],
-  ["STATE", UTILITY_COL.state],
-  ["MODEL", UTILITY_COL.model],
-  ["JOBS A/Q/D/F", UTILITY_COL.jobs],
-  ["CALLS", UTILITY_COL.calls],
-  ["TOOLS", UTILITY_COL.tools],
-  ["TOKENS I/C/O", UTILITY_COL.tokens],
-  ["COST", UTILITY_COL.cost],
-  ["DETAIL", UTILITY_COL.detail],
-];
-
-const utilityTableHeader = paint(
-  ANSI.dim,
-  ` ${UTILITY_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
-);
-
 const utilityState = (snapshot: UtilityObservabilitySnapshot): string => {
   if (snapshot.active > 0) {
     return "active";
@@ -1819,32 +1792,60 @@ const utilityStateColor = (state: string): string =>
 const utilityCostCell = (cost: number): string =>
   cost > 0 ? `$${cost.toFixed(cost < 0.1 ? 4 : 2)}` : "—";
 
-const renderUtilityRow = (snapshot: UtilityObservabilitySnapshot): string => {
+const utilityLatestState = (snapshot: UtilityObservabilitySnapshot): string => {
+  if (snapshot.latestState === "completed") {
+    return "done";
+  }
+  if (snapshot.latestState === "failed") {
+    return "fail";
+  }
+  return snapshot.latestState ?? "—";
+};
+
+const utilityAge = (
+  snapshot: UtilityObservabilitySnapshot,
+  nowMs: number
+): string => {
+  const latestMs = snapshot.latestAt
+    ? Date.parse(snapshot.latestAt)
+    : Number.NaN;
+  return Number.isFinite(latestMs) ? fmtDuration(nowMs - latestMs) : "—";
+};
+
+const renderUtilityAgentRow = (
+  snapshot: UtilityObservabilitySnapshot,
+  meta: BoardMeta
+): string => {
   const state = utilityState(snapshot);
   const usage = snapshot.usage;
-  const jobs = `${snapshot.jobsTotal} a${snapshot.active} q${snapshot.queued} d${snapshot.completed} f${snapshot.failed}`;
+  const run = `${snapshot.completed}ok/${snapshot.failed}fail`;
   const tokens = `${tokenCell(usage.totalTokens)} i${tokenCell(usage.inputTokens)} c${tokenCell(usage.cachedInputTokens)} o${tokenCell(usage.outputTokens)}`;
-  const detail = `${snapshot.latestJobId?.slice(0, 8) ?? "—"} ${snapshot.latestDetail}`;
+  const activity = `${snapshot.jobsTotal}j ${usage.modelCalls}c ${usage.toolCalls}tl`;
+  const latest = snapshot.latestJobId
+    ? `${snapshot.latestJobId.slice(0, 8)} ${utilityLatestState(snapshot)}`
+    : "—";
   return ` ${[
-    colorCell(ANSI.green, "utility", UTILITY_COL.name),
-    colorCell(utilityStateColor(state), `● ${state}`, UTILITY_COL.state),
+    colorCell(ANSI.green, "utility", AGENT_COL.agent),
+    colorCell(utilityStateColor(state), `● ${state}`, AGENT_COL.state),
+    fitCell(utilityAge(snapshot, meta.nowMs), AGENT_COL.age),
     colorCell(
       ANSI.green,
       snapshot.model ? shortLocalModel(snapshot.model) : "glm-5.2",
-      UTILITY_COL.model
+      AGENT_COL.model
     ),
-    fitCell(jobs, UTILITY_COL.jobs),
-    colorCell(ANSI.yellow, String(usage.modelCalls), UTILITY_COL.calls),
-    colorCell(ANSI.yellow, String(usage.toolCalls), UTILITY_COL.tools),
-    colorCell(ANSI.yellow, tokens, UTILITY_COL.tokens),
-    colorCell(ANSI.yellow, utilityCostCell(usage.costUsd), UTILITY_COL.cost),
-    fitCell(detail, UTILITY_COL.detail),
+    fitCell(run, AGENT_COL.run),
+    fitCell("—", AGENT_COL.context),
+    fitCell("—", AGENT_COL.limits),
+    colorCell(
+      ANSI.yellow,
+      `${utilityCostCell(usage.costUsd)}/—`,
+      AGENT_COL.spend
+    ),
+    colorCell(ANSI.yellow, tokens, AGENT_COL.tokens),
+    colorCell(ANSI.yellow, activity, AGENT_COL.activity),
+    fitCell(latest, AGENT_COL.bridge),
   ].join(" ")}`;
 };
-
-const renderUtilityStatus = (
-  snapshot: UtilityObservabilitySnapshot | undefined
-): string[] => (snapshot ? [utilityTableHeader, renderUtilityRow(snapshot)] : []);
 
 const localLlmUsageCells = (usage: LocalLlmUsage): string[] => {
   const calls =
@@ -2582,17 +2583,17 @@ const localFooterKnownColor = (text: string, color: string): string =>
   text.includes("—") ? ANSI.dim : color;
 
 const LLM_COL = {
-  arch: 34,
-  batch: 18,
+  arch: 33,
+  batch: 17,
   cached: 6,
   calls: 5,
   dtype: 5,
   hit: 5,
   id: 5,
   input: 6,
-  memory: 7,
-  model: 32,
-  moe: 9,
+  memory: 6,
+  model: 27,
+  moe: 8,
   output: 6,
   quant: 13,
   slots: 7,
@@ -2787,26 +2788,71 @@ const renderLocalLlmUsageRow = (
   ].join(" ")}`;
 };
 
+const structuredSummaryValue = (
+  summary: string,
+  label: "Progress" | "Next"
+): string | undefined => {
+  const prefix = `${label}:`;
+  const line = summary
+    .split(/\r?\n/)
+    .find((candidate) => candidate.trimStart().startsWith(prefix));
+  const value = line?.trimStart().slice(prefix.length).trim();
+  return value || undefined;
+};
+
+const renderProgressNext = (meta: BoardMeta): string[] => {
+  const entries = (["Progress", "Next"] as const)
+    .map(
+      (label) => [label, structuredSummaryValue(meta.summary, label)] as const
+    )
+    .filter((entry): entry is readonly ["Progress" | "Next", string] =>
+      Boolean(entry[1])
+    );
+  const width = Math.max(1, meta.maxColumns ?? 176);
+  return entries.map(([label, value]) => {
+    const valueWidth = Math.max(1, width - label.length - 3);
+    return ` ${paint(ANSI.blue, `${label}:`)} ${paint(
+      ANSI.dim,
+      truncate(value, valueWidth)
+    )}`;
+  });
+};
+
 const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
   const paramCells = localLlmParamsCell(meta.judgeMode);
   const paramParts: LocalFooterPart[] = [
     { color: ANSI.blue, text: "llm params" },
     ...paramCells.map((text) => ({ color: ANSI.blue, text })),
   ];
+  const summaryLines = renderProgressNext(meta);
   if (maxRows === undefined) {
     return [
       localLlmTableHeader(),
       ...meta.llmJudges.map((judge) => renderLocalLlmUsageRow(judge, meta)),
       renderLocalFooterLine(paramParts),
+      ...summaryLines,
     ];
   }
   if (maxRows <= 0) {
     return [];
   }
   if (maxRows === 1) {
-    return [localLlmTableHeader()];
+    return [summaryLines.at(-1) ?? localLlmTableHeader()];
   }
-  const reserved = 2;
+  if (summaryLines.length > 0 && maxRows <= summaryLines.length + 2) {
+    const supplementalBudget = maxRows - summaryLines.length;
+    const compactLlm = meta.llmJudges[0]
+      ? renderLocalLlmUsageRow(meta.llmJudges[0], meta)
+      : renderLocalFooterLine(paramParts);
+    const supplemental: string[] = [];
+    if (supplementalBudget === 2) {
+      supplemental.push(localLlmTableHeader(), compactLlm);
+    } else if (supplementalBudget === 1) {
+      supplemental.push(compactLlm);
+    }
+    return [...supplemental, ...summaryLines].slice(-maxRows);
+  }
+  const reserved = 2 + summaryLines.length;
   const judgeBudget = Math.max(0, maxRows - reserved);
   const overflow = meta.llmJudges.length > judgeBudget;
   const visibleCount = overflow
@@ -2827,6 +2873,7 @@ const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
     localLlmTableHeader(),
     ...judgeLines,
     renderLocalFooterLine(paramParts),
+    ...summaryLines,
   ];
   return fixed.slice(0, maxRows);
 };
@@ -2837,38 +2884,20 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...rows.map((row) => rateLimitCell(row.usage).indexOf("W"))
   );
   const statusLine = renderSummaryLine(rows, meta);
-  const agentRows = rows.map((row) =>
-    renderAgentRow(row, meta, weeklyLimitIndent)
-  );
-  const bridgeLines = renderBridgeLatestLine(rows, meta);
-  const utilityLines = renderUtilityStatus(meta.utility);
-  const fullTop = [
-    statusLine,
-    agentHeaderRow,
-    ...agentRows,
-    ...bridgeLines,
-    ...utilityLines,
+  const agentRows = [
+    ...rows.map((row) => renderAgentRow(row, meta, weeklyLimitIndent)),
+    ...(meta.utility ? [renderUtilityAgentRow(meta.utility, meta)] : []),
   ];
+  const bridgeLines = renderBridgeLatestLine(rows, meta);
+  const fullTop = [statusLine, agentHeaderRow, ...agentRows, ...bridgeLines];
   const maxRows = meta.maxRows;
   let top = fullTop;
   if (maxRows !== undefined && fullTop.length > maxRows) {
-    const utilityRow = utilityLines.at(-1);
-    const utilityReserve = utilityRow && maxRows > 1 ? 1 : 0;
-    const agentBudget = Math.max(0, maxRows - 1 - utilityReserve);
+    const agentBudget = Math.max(0, maxRows - 1);
     const visibleAgentRows = agentRows.slice(0, agentBudget);
-    let spare = Math.max(
-      0,
-      maxRows - 1 - visibleAgentRows.length - utilityReserve
-    );
+    let spare = Math.max(0, maxRows - 1 - visibleAgentRows.length);
     const showAgentHeader = visibleAgentRows.length > 0 && spare > 0;
     if (showAgentHeader) {
-      spare -= 1;
-    }
-    const utilityHeader = utilityLines.at(0);
-    const showUtilityHeader =
-      Boolean(utilityRow && utilityHeader && utilityHeader !== utilityRow) &&
-      spare > 0;
-    if (showUtilityHeader) {
       spare -= 1;
     }
     const visibleBridgeLines = bridgeLines.slice(0, Math.max(0, spare));
@@ -2877,8 +2906,6 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
       ...(showAgentHeader ? [agentHeaderRow] : []),
       ...visibleAgentRows,
       ...visibleBridgeLines,
-      ...(showUtilityHeader && utilityHeader ? [utilityHeader] : []),
-      ...(utilityReserve && utilityRow ? [utilityRow] : []),
     ].slice(0, maxRows);
   }
   const footerBudget =
@@ -5146,6 +5173,7 @@ export const governessTick = async (
     llmOfflineByJudge,
     llmRuntimeByJudge,
     llmUsageByJudge,
+    maxColumns: config.viewportColumns ?? process.stdout.columns,
     maxRows: config.viewportRows ?? process.stdout.rows,
     nowMs,
     recoveries,

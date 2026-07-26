@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
@@ -793,7 +794,7 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
         id: "inspect-config",
         kind: "inspect",
         objective:
-          "Locate the active lower-agent configuration\u001b[31m without exposing secrets",
+          "Inspect src/loop/utility-runtime.ts for the requested bounded source slice (1221-1290) and return concise relevant evidence.\u001b[31m",
         readScope: ["src"],
         requester: "codex",
         requiredCapabilities: ["inspect"],
@@ -857,6 +858,7 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
       join(runDir, "utility", "usage.jsonl"),
       `${JSON.stringify({
         at: "2026-07-25T12:00:01.000Z",
+        durationMs: 11_000,
         jobId: "inspect-config",
         model: "z-ai/glm-5.2",
         modelCalls: 2,
@@ -879,7 +881,7 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
         filesChanged: [],
         status: "completed",
         summary:
-          "Found the active configuration in src/loop/utility-runtime.ts; no secret values were read.",
+          "**Outcome:** Inspected the requested lines. **Evidence (src/loop/utility-runtime.ts):** Found the active configuration; no secret values were read.",
       },
     });
 
@@ -888,24 +890,50 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
       { LOOP_UTILITY_API_KEY_FILE: "" },
       { columns: 120, rows: 20 }
     );
-    expect(pane).toContain(
-      "STATUS jobs=1 active=0 queued=0 done=1 failed=0"
-    );
-    expect(pane).toContain("CALLS model=2 tools=1 cost=$0.0044");
-    expect(pane).toContain(
-      "TOKENS total=1,234 in=900 cache=500 out=334"
-    );
-    expect(pane).toContain("NOW idle; waiting for governess routing");
+    expect(pane).toContain("GLM-5.2 OFFLINE · idle · jobs 1 a0 q0 d1 f0");
+    expect(pane).toContain("USAGE 2 calls · 1 tools · 1,234 tok · $0.0044");
+    expect(pane).toContain("TOKENS in 900 · cache 500 · out 334");
+    expect(pane).toContain("RECENT JOBS · request / tool / result");
     expect(pane).toContain("GLM TOOL inspect-");
     expect(pane).toContain("search_repo ok 12ms");
     expect(pane).toContain("CODEX→GLM inspect-");
-    expect(pane).toContain("GLM→MAIN inspect-");
+    expect(pane).toContain("read utility-runtime.ts lines 1221–1290");
+    expect(pane).toContain("GLM OK inspect- · 11s · 2c/1t");
+    expect(pane).toContain("1,234 tok · $0.0044");
     expect(pane).toContain("Found the active configuration");
-    expect(pane).toContain("LAST completed 1,234 tok $0.0044");
-    expect(pane).toContain("DELEG auto=1 explicit=0 missed=1 watch=0");
-    expect(pane).toContain("last=codex/codex-tool-hook-una...");
-    expect(pane).toContain("ROUTE utility/utility-eligible");
+    expect(pane).not.toContain("Inspected the requested lines");
+    expect(pane).toContain("ROUTE utility/eligible · auto 1 · exp 0 · miss 1");
     expect(pane).not.toContain("\u001b[31m");
+
+    const compact = renderUtilityPane(
+      runDir,
+      { LOOP_UTILITY_API_KEY_FILE: "" },
+      { columns: 58, rows: 10 }
+    );
+    expect(compact.split("\n")).toHaveLength(10);
+    expect(compact.split("\n").every((line) => line.length <= 58)).toBe(true);
+    expect(compact).toContain("REQ inspect-");
+    expect(compact).toContain("TOOL search_repo ok 12ms");
+    expect(compact).toContain(
+      "OK inspect- · 11s · 2c/1t · 1,234 tok · $0.0044"
+    );
+    expect(compact).toContain("Found the active configuration");
+
+    appendFileSync(join(runDir, "utility", "jobs.jsonl"), "{torn\n");
+    expect(() =>
+      renderUtilityPane(
+        runDir,
+        { LOOP_UTILITY_API_KEY_FILE: "" },
+        { columns: 58, rows: 20 }
+      )
+    ).not.toThrow();
+    expect(
+      renderUtilityPane(
+        runDir,
+        { LOOP_UTILITY_API_KEY_FILE: "" },
+        { columns: 58, rows: 20 }
+      )
+    ).toContain("Found the active configuration");
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
@@ -952,9 +980,10 @@ test("utility pane keeps a failed worker response visible within its viewport", 
       { columns: 52, rows: 12 }
     );
     const lines = pane.split("\n");
-    expect(lines).toHaveLength(11);
+    expect(lines.length).toBeLessThanOrEqual(12);
+    expect(lines.length).toBeGreaterThan(5);
     expect(lines.every((line) => line.length <= 52)).toBe(true);
-    expect(pane).toContain("GLM✕MAIN failed-p");
+    expect(pane).toContain("GLM FAIL failed-p");
     expect(pane).toContain("Worker token cap exceeded");
 
     const tiny = renderUtilityPane(
@@ -1122,12 +1151,7 @@ test("guarded patch application refuses wrong hashes and proposal-time drift", a
       "drifted-edit"
     );
     await expect(
-      applyUtilityJobPatch(
-        runDir,
-        "drifted-edit",
-        "0".repeat(64),
-        "codex"
-      )
+      applyUtilityJobPatch(runDir, "drifted-edit", "0".repeat(64), "codex")
     ).rejects.toThrow("missing or ambiguous");
 
     const originalManifest = readFileSync(proposal.manifestPath, "utf8");

@@ -160,7 +160,9 @@ interface UtilityKeyFileResult {
   key?: string;
 }
 
-const readUtilityApiKeyFile = (path: string | undefined): UtilityKeyFileResult => {
+const readUtilityApiKeyFile = (
+  path: string | undefined
+): UtilityKeyFileResult => {
   if (!path) {
     return {
       availability: {
@@ -319,7 +321,8 @@ export const resolveUtilityRuntimeConfig = (
         : isLoopbackEndpoint(endpoint)
           ? {
               code: "ready-local-endpoint",
-              message: "local OpenAI-compatible endpoint does not require a key",
+              message:
+                "local OpenAI-compatible endpoint does not require a key",
             }
           : keyResult.availability,
     costQualityTradeoff: boundedTradeoff(env.LOOP_UTILITY_COST_QUALITY),
@@ -518,9 +521,7 @@ const recoverStaleUtilityJobs = async (
       const latest = readUtilityJob(context.runDir, active.jobId);
       if (
         !latest ||
-        ["completed", "failed", "escalated", "canceled"].includes(
-          latest.state
-        )
+        ["completed", "failed", "escalated", "canceled"].includes(latest.state)
       ) {
         continue;
       }
@@ -616,8 +617,7 @@ const activeUtilityReservationUsd = (
       ["routed-utility", "claimed", "running"].includes(job.state)
     )
     .reduce(
-      (total, job) =>
-        total + requestReservationUsd(job.request, maxJobCostUsd),
+      (total, job) => total + requestReservationUsd(job.request, maxJobCostUsd),
       0
     );
 
@@ -1221,19 +1221,9 @@ export const applyUtilityJobPatch = async (
 export const utilityJobStatus = (runDir: string, jobId: string) =>
   readUtilityJob(runDir, jobId);
 
-const compactObjective = (value: string): string => {
-  const oneLine = sanitizeUtilityPaneText(value);
-  return oneLine.length > 44 ? `${oneLine.slice(0, 41)}...` : oneLine;
-};
-
-const compactPaneText = (value: string, max = 64): string => {
-  const oneLine = sanitizeUtilityPaneText(value);
-  return oneLine.length > max ? `${oneLine.slice(0, max - 3)}...` : oneLine;
-};
-
 const formatPaneCost = (value: unknown): string =>
   typeof value === "number" && Number.isFinite(value)
-    ? `$${value.toFixed(value < 0.01 ? 4 : 3)}`
+    ? `$${value.toFixed(value < 0.1 ? 4 : 3)}`
     : "$--";
 
 const formatPaneNumber = (value: unknown): string =>
@@ -1241,34 +1231,91 @@ const formatPaneNumber = (value: unknown): string =>
     ? Math.round(value).toLocaleString("en-US")
     : "--";
 
-const paneUsageRow = (runDir: string): string => {
-  const event = readJsonlRecords(join(runDir, "utility", "usage.jsonl")).at(-1);
-  if (!event) {
-    return "LAST  no completed worker call yet";
-  }
-  const usage =
-    event.usage && typeof event.usage === "object"
-      ? (event.usage as Record<string, unknown>)
-      : {};
-  const status = typeof event.status === "string" ? event.status : "unknown";
-  return `LAST  ${status}  ${formatPaneNumber(usage.totalTokens)} tok  ${formatPaneCost(usage.cost)}`;
-};
-
-const paneCallRow = (snapshot: UtilityObservabilitySnapshot): string =>
-  `CALLS model=${formatPaneNumber(snapshot.usage.modelCalls)} tools=${formatPaneNumber(snapshot.usage.toolCalls)} cost=${formatPaneCost(snapshot.usage.costUsd)}`;
-
-const paneTokenRow = (snapshot: UtilityObservabilitySnapshot): string =>
-  `TOKENS total=${formatPaneNumber(snapshot.usage.totalTokens)} in=${formatPaneNumber(snapshot.usage.inputTokens)} cache=${formatPaneNumber(snapshot.usage.cachedInputTokens)} out=${formatPaneNumber(snapshot.usage.outputTokens)}`;
-
-const paneDelegationRow = (runDir: string): string => {
+const paneRouterRow = (
+  runDir: string,
+  snapshot: UtilityObservabilitySnapshot
+): string => {
   const events = readDelegationEvents(runDir);
   const count = (disposition: string): number =>
     events.filter((event) => event.disposition === disposition).length;
-  const latest = events.at(-1);
-  const last = latest
-    ? `${latest.agent}/${compactPaneText(latest.reason, 22)}`
-    : "none";
-  return `DELEG auto=${count("auto-routed")} explicit=${count("explicit-routed")} missed=${count("missed-candidate")} watch=${count("observed-candidate")}  last=${last}`;
+  const route = (snapshot.latestRoute ?? "waiting").replace(
+    "utility-eligible",
+    "eligible"
+  );
+  const rawDetail = snapshot.latestRouteDetail ?? "";
+  const usefulDetail = rawDetail.includes("chmod 600")
+    ? "chmod 600 · key file permissions too open"
+    : rawDetail;
+  const detail = usefulDetail ? ` · ${usefulDetail}` : "";
+  return `ROUTE ${route}${detail} · auto ${count("auto-routed")} · exp ${count("explicit-routed")} · miss ${count("missed-candidate")}`;
+};
+
+const paneWorkerState = (snapshot: UtilityObservabilitySnapshot): string => {
+  if (snapshot.active > 0) {
+    return "active";
+  }
+  return snapshot.queued > 0 ? "queued" : "idle";
+};
+
+const paneModel = (model: string): string => model.split("/").at(-1) ?? model;
+
+const formatPaneDuration = (durationMs: number): string =>
+  durationMs < 1000
+    ? `${Math.round(durationMs)}ms`
+    : `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
+
+const compactDisplayPath = (value: string): string => {
+  const parts = value.split("/").filter(Boolean);
+  return parts.at(-1) || value;
+};
+
+const SLICE_OBJECTIVE_RE =
+  /^Inspect (.+?) for the requested bounded source slice \((\d+)-(\d+)\) and return concise relevant evidence\.?$/i;
+const START_OBJECTIVE_RE =
+  /^Inspect (.+?) starting at line (\d+) for up to (\d+) lines and return only the evidence needed by the requester\.?$/i;
+
+const paneRequestText = (value: string): string => {
+  const clean = sanitizeUtilityPaneText(value);
+  const slice = clean.match(SLICE_OBJECTIVE_RE);
+  if (slice) {
+    return `read ${compactDisplayPath(slice[1] ?? "")} lines ${slice[2]}–${slice[3]}`;
+  }
+  const start = clean.match(START_OBJECTIVE_RE);
+  if (start) {
+    const first = Number.parseInt(start[2] ?? "", 10);
+    const count = Number.parseInt(start[3] ?? "", 10);
+    const last = Number.isFinite(first + count) ? first + count - 1 : first;
+    return `read ${compactDisplayPath(start[1] ?? "")} lines ${first}–${last}`;
+  }
+  return clean;
+};
+
+const MARKDOWN_NOISE_RE = /(?:\*\*|__|`|^#+\s*)/g;
+const EVIDENCE_MARKER_RE = /\bEvidence(?:\s*\([^)]*\))?\s*:\s*/i;
+const PIPE_SEPARATOR_RE = /\s*\|\s*/g;
+const EVIDENCE_TABLE_HEADER_RE =
+  /^·\s*Lines\s*·\s*Content Summary\s*·\s*·\s*-+\s*·\s*-+\s*·\s*/i;
+const LEADING_LIST_MARKER_RE = /^[-·]\s*/;
+const REPEATED_MIDDLE_DOT_RE = /\s*·(?:\s*·)+\s*/g;
+const RESULT_PREFIX_RE = /^(?:Outcome|Result|Finding)\s*:\s*/i;
+const COMPACT_READ_PREFIX_RE = /^read\s+/i;
+const COMPACT_LINES_RE = /\s+lines\s+/i;
+
+const paneResultText = (value: string): string => {
+  const clean = sanitizeUtilityPaneText(value)
+    .replace(MARKDOWN_NOISE_RE, "")
+    .replaceAll(PIPE_SEPARATOR_RE, " · ");
+  const marker = clean.match(EVIDENCE_MARKER_RE);
+  if (marker?.index !== undefined) {
+    const evidence = clean.slice(marker.index + marker[0].length).trim();
+    if (evidence) {
+      return evidence
+        .replace(EVIDENCE_TABLE_HEADER_RE, "")
+        .replace(LEADING_LIST_MARKER_RE, "")
+        .replace(REPEATED_MIDDLE_DOT_RE, " · ");
+    }
+  }
+  return clean.replace(RESULT_PREFIX_RE, "");
 };
 
 export interface UtilityPaneViewport {
@@ -1277,19 +1324,22 @@ export interface UtilityPaneViewport {
 }
 
 const positiveViewportValue = (value: unknown): number | undefined => {
-  const parsed = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  const parsed =
+    typeof value === "number" ? value : Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 };
 
 const paneWidth = (
   env: NodeJS.ProcessEnv,
   viewport: UtilityPaneViewport
-): number => Math.max(1, positiveViewportValue(viewport.columns ?? env.COLUMNS) ?? 80);
+): number =>
+  Math.max(1, positiveViewportValue(viewport.columns ?? env.COLUMNS) ?? 80);
 
 const paneRows = (
   env: NodeJS.ProcessEnv,
   viewport: UtilityPaneViewport
-): number => Math.max(1, positiveViewportValue(viewport.rows ?? env.LINES) ?? 20);
+): number =>
+  Math.max(1, positiveViewportValue(viewport.rows ?? env.LINES) ?? 20);
 
 const fitPaneLine = (value: string, width: number): string => {
   const clean = sanitizeUtilityPaneText(value);
@@ -1299,7 +1349,11 @@ const fitPaneLine = (value: string, width: number): string => {
   return width <= 3 ? ".".repeat(width) : `${clean.slice(0, width - 3)}...`;
 };
 
-const wrapPaneText = (value: string, width: number, maxLines: number): string[] => {
+const wrapPaneText = (
+  value: string,
+  width: number,
+  maxLines: number
+): string[] => {
   let remaining = sanitizeUtilityPaneText(value);
   const lines: string[] = [];
   while (remaining && lines.length < maxLines) {
@@ -1329,14 +1383,85 @@ const renderTranscriptEntry = (
   width: number
 ): string[] => {
   const head = `${transcriptTime(entry.at)} ${entry.label} ${entry.jobId.slice(0, 8)}`;
-  const wrapped = wrapPaneText(
-    `${head} ${entry.text || "—"}`,
-    width,
-    entry.kind === "tool" ? 1 : 2
-  );
-  return wrapped.map((line, index) =>
-    index === 0 ? line : `  ${fitPaneLine(line, Math.max(1, width - 2))}`
-  );
+  if (entry.kind === "tool") {
+    return [fitPaneLine(`${head} · ${entry.text || "—"}`, width)];
+  }
+  if (entry.kind === "request") {
+    return [
+      fitPaneLine(head, width),
+      ...wrapPaneText(
+        paneRequestText(entry.text || "—"),
+        Math.max(1, width - 2),
+        1
+      ).map((line) => `  ${line}`),
+    ];
+  }
+  const usage = entry.usage;
+  const metrics = usage
+    ? [
+        formatPaneDuration(usage.durationMs),
+        `${formatPaneNumber(usage.modelCalls)}c/${formatPaneNumber(usage.toolCalls)}t`,
+      ].join(" · ")
+    : "no usage";
+  const detail = [
+    ...(usage
+      ? [
+          `${formatPaneNumber(usage.totalTokens)} tok`,
+          formatPaneCost(usage.costUsd),
+        ]
+      : []),
+    paneResultText(entry.text || "—"),
+  ].join(" · ");
+  return [
+    fitPaneLine(`${head} · ${metrics}`, width),
+    ...wrapPaneText(detail, Math.max(1, width - 2), 3).map(
+      (line) => `  ${line}`
+    ),
+  ];
+};
+
+const compactRequestText = (entry: UtilityTranscriptEntry): string =>
+  paneRequestText(entry.text || "—")
+    .replace(COMPACT_READ_PREFIX_RE, "")
+    .replace(COMPACT_LINES_RE, " ");
+
+const renderCompactTranscriptJob = (
+  entries: UtilityTranscriptEntry[],
+  width: number,
+  maxRows: number
+): string[] => {
+  const request = entries.find((entry) => entry.kind === "request");
+  const tool = entries.findLast((entry) => entry.kind === "tool");
+  const response = entries.findLast((entry) => entry.kind === "response");
+  const lines: string[] = [];
+  if (request) {
+    lines.push(
+      fitPaneLine(
+        `REQ ${request.jobId.slice(0, 8)} · ${compactRequestText(request)}`,
+        width
+      )
+    );
+  }
+  if (tool && lines.length < maxRows) {
+    lines.push(fitPaneLine(`TOOL ${tool.text || "—"}`, width));
+  }
+  if (response && lines.length < maxRows) {
+    const usage = response.usage;
+    const metrics = usage
+      ? `${formatPaneDuration(usage.durationMs)} · ${formatPaneNumber(usage.modelCalls)}c/${formatPaneNumber(usage.toolCalls)}t · ${formatPaneNumber(usage.totalTokens)} tok · ${formatPaneCost(usage.costUsd)}`
+      : "no usage";
+    lines.push(
+      fitPaneLine(
+        `${response.label.replace("GLM ", "")} ${response.jobId.slice(0, 8)} · ${metrics}`,
+        width
+      )
+    );
+    const detailRows = Math.max(0, maxRows - lines.length);
+    lines.push(
+      ...wrapPaneText(paneResultText(response.text || "—"), width, detailRows)
+    );
+  }
+  return lines.slice(0, maxRows);
 };
 
 const renderUtilityTranscript = (
@@ -1350,10 +1475,23 @@ const renderUtilityTranscript = (
   if (snapshot.transcript.length === 0) {
     return ["  waiting for first request"];
   }
+  const byJob = new Map<string, UtilityTranscriptEntry[]>();
+  for (const entry of snapshot.transcript) {
+    const current = byJob.get(entry.jobId) ?? [];
+    current.push(entry);
+    byJob.set(entry.jobId, current);
+  }
+  const recentJobs = [...byJob.values()].sort((left, right) => {
+    const leftAt = left.at(-1)?.at ?? "";
+    const rightAt = right.at(-1)?.at ?? "";
+    return rightAt.localeCompare(leftAt);
+  });
   const groups: string[][] = [];
   let rows = 0;
-  for (const entry of [...snapshot.transcript].reverse()) {
-    const rendered = renderTranscriptEntry(entry, width);
+  for (const entries of recentJobs) {
+    const rendered = entries.flatMap((entry) =>
+      renderTranscriptEntry(entry, width)
+    );
     if (rows + rendered.length > maxRows) {
       continue;
     }
@@ -1363,15 +1501,10 @@ const renderUtilityTranscript = (
       break;
     }
   }
-  return groups.flat();
-};
-
-const readUtilityPaneJobs = (runDir: string): UtilityJobSnapshot[] => {
-  try {
-    return readUtilityJobs(runDir);
-  } catch {
-    return [];
+  if (groups.length === 0 && recentJobs[0]) {
+    return renderCompactTranscriptJob(recentJobs[0], width, maxRows);
   }
+  return groups.flat();
 };
 
 export const renderUtilityPane = (
@@ -1379,39 +1512,27 @@ export const renderUtilityPane = (
   env: NodeJS.ProcessEnv = process.env,
   viewport: UtilityPaneViewport = {}
 ): string => {
-  const config = resolveUtilityRuntimeConfig(buildUtilityWorkerEnvironment(env));
-  const snapshot = readUtilityObservability(runDir);
-  const jobs = readUtilityPaneJobs(runDir).reverse();
-  const current = jobs.find((job) =>
-    ["running", "claimed", "routed-utility", "pending-route"].includes(
-      job.state
-    )
+  const config = resolveUtilityRuntimeConfig(
+    buildUtilityWorkerEnvironment(env)
   );
-  const latestDecision = jobs.find((job) => job.decision)?.decision;
+  const snapshot = readUtilityObservability(runDir);
   const width = paneWidth(env, viewport);
   const maxRows = paneRows(env, viewport);
+  const healthy = runtimeTier(config).healthy;
   const top = [
-    `LOWER AGENT  ${config.model}  ${runtimeTier(config).healthy ? "READY" : "OFFLINE"}`,
-    `STATUS jobs=${snapshot.jobsTotal} active=${snapshot.active} queued=${snapshot.queued} done=${snapshot.completed} failed=${snapshot.failed}`,
-    paneCallRow(snapshot),
-    paneTokenRow(snapshot),
-    current
-      ? `NOW  ${current.jobId.slice(0, 8)} ${current.state}  ${compactObjective(current.request.objective)}`
-      : "NOW  idle; waiting for governess routing",
-    latestDecision
-      ? `ROUTE  ${latestDecision.target}/${latestDecision.reason}${
-          latestDecision.detail
-            ? `  ${compactPaneText(latestDecision.detail)}`
-            : ""
-        }`
-      : `CONFIG  ${compactPaneText(config.availability.message)}`,
-    paneUsageRow(runDir),
-    paneDelegationRow(runDir),
-    "ACTIVITY  actual requests · bounded tools · worker responses",
+    `${paneModel(config.model).toUpperCase()} ${healthy ? "READY" : "OFFLINE"} · ${paneWorkerState(snapshot)} · jobs ${snapshot.jobsTotal} a${snapshot.active} q${snapshot.queued} d${snapshot.completed} f${snapshot.failed}`,
+    `USAGE ${formatPaneNumber(snapshot.usage.modelCalls)} calls · ${formatPaneNumber(snapshot.usage.toolCalls)} tools · ${formatPaneNumber(snapshot.usage.totalTokens)} tok · ${formatPaneCost(snapshot.usage.costUsd)}`,
+    `TOKENS in ${formatPaneNumber(snapshot.usage.inputTokens)} · cache ${formatPaneNumber(snapshot.usage.cachedInputTokens)} · out ${formatPaneNumber(snapshot.usage.outputTokens)}`,
+    paneRouterRow(runDir, snapshot),
+    "RECENT JOBS · request / tool / result",
   ].map((line) => fitPaneLine(line, width));
   return [
     ...top,
-    ...renderUtilityTranscript(snapshot, width, Math.max(0, maxRows - top.length)),
+    ...renderUtilityTranscript(
+      snapshot,
+      width,
+      Math.max(0, maxRows - top.length)
+    ),
   ]
     .slice(0, maxRows)
     .join("\n");
