@@ -442,6 +442,9 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
       "tmux",
       "new-session",
       "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-x",
       "160",
       "-y",
@@ -456,8 +459,11 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
       "tmux",
       "split-window",
       "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-t",
-      "repo-loop-1:0",
+      "repo-loop-1:0.0",
       "-c",
       "/repo",
       codexCommand,
@@ -560,7 +566,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
           calls.push(args);
           if (args.some((arg) => arg.includes("__governess"))) {
             events.push(
-              `spawn-governess:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneGoverness ?? ""}`
+              `spawn-governess:${manifest.codexThreadId}:${manifest.tmuxPaneRight ?? ""}:${manifest.tmuxPaneGoverness ?? ""}`
             );
             events.push(`governess-command:${args.at(-1) ?? ""}`);
           }
@@ -571,13 +577,25 @@ test("runInTmux writes paired session refs before starting governess", async () 
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
+            return { exitCode: 0, stderr: "", stdout: "%40\n" };
+          }
+          if (args[0] === "tmux" && args[1] === "split-window") {
+            if (args.includes("-h")) {
+              return { exitCode: 0, stderr: "", stdout: "%41\n" };
+            }
+            if (args.includes("-b")) {
+              return { exitCode: 0, stderr: "", stdout: "%42\n" };
+            }
+            if (args.includes("-f")) {
+              return { exitCode: 0, stderr: "", stdout: "%43\n" };
+            }
           }
           return { exitCode: 0, stderr: "" };
         },
         updateRunManifest: (_path, update) => {
           manifest = update(manifest) ?? manifest;
           events.push(
-            `manifest:${manifest.codexThreadId}:${manifest.tmuxPaneRightAgent ?? ""}:${manifest.tmuxPaneGoverness ?? ""}`
+            `manifest:${manifest.codexThreadId}:${manifest.tmuxPaneRight ?? ""}:${manifest.tmuxPaneGoverness ?? ""}`
           );
           return manifest;
         },
@@ -586,10 +604,13 @@ test("runInTmux writes paired session refs before starting governess", async () 
     );
 
     expect(delegated).toBe(true);
-    expect(events).toContain("manifest:codex-thread-1:codex:repo-loop-1:0.3");
     expect(events).toContain(
-      "spawn-governess:codex-thread-1:codex:repo-loop-1:0.3"
+      "manifest:codex-thread-1:%41:repo-loop-1:0.3"
     );
+    expect(events).toContain(
+      "spawn-governess:codex-thread-1:%41:repo-loop-1:0.3"
+    );
+    expect(events).toContain("manifest:codex-thread-1:%41:%43");
     expect(
       events.some((event) => event.includes("'LOOP_GOVERNESS_LLM_TRACE=1'"))
     ).toBe(true);
@@ -607,19 +628,22 @@ test("runInTmux writes paired session refs before starting governess", async () 
       )
     ).toBe(true);
     expect(
-      events.indexOf("manifest:codex-thread-1:codex:repo-loop-1:0.3")
+      events.indexOf("manifest:codex-thread-1:%41:repo-loop-1:0.3")
     ).toBeLessThan(
-      events.indexOf("spawn-governess:codex-thread-1:codex:repo-loop-1:0.3")
+      events.indexOf("spawn-governess:codex-thread-1:%41:repo-loop-1:0.3")
     );
     expect(calls).toContainEqual([
       "tmux",
       "split-window",
       "-v",
       "-b",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-l",
       "8",
       "-t",
-      "repo-loop-1:0.1",
+      "%41",
       "-c",
       repoDir,
       expect.stringContaining("__utility-pane"),
@@ -628,14 +652,14 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "tmux",
       "resize-pane",
       "-t",
-      "repo-loop-1:0.1",
+      "%42",
       "-y",
       "8",
     ]);
-    expect(manifest.tmuxPaneLeft).toBe("repo-loop-1:0.0");
-    expect(manifest.tmuxPaneUtility).toBe("repo-loop-1:0.1");
-    expect(manifest.tmuxPaneRight).toBe("repo-loop-1:0.2");
-    expect(manifest.tmuxPaneGoverness).toBe("repo-loop-1:0.3");
+    expect(manifest.tmuxPaneLeft).toBe("%40");
+    expect(manifest.tmuxPaneUtility).toBe("%42");
+    expect(manifest.tmuxPaneRight).toBe("%41");
+    expect(manifest.tmuxPaneGoverness).toBe("%43");
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
@@ -656,6 +680,86 @@ test("the lower-agent pane defaults on with an explicit opt-out", () => {
   expect(
     tmuxInternals.utilityPaneHeight({ LOOP_UTILITY_PANE_HEIGHT: "invalid" })
   ).toBe("8");
+});
+
+test("governed layout preserves legacy numeric fallbacks without tmux stdout", async () => {
+  const home = makeTempHome();
+  const repoDir = join(home, "repo");
+  const runDir = join(home, "run");
+  mkdirSync(repoDir, { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  let sessionStarted = false;
+  let manifest = createRunManifest({
+    cwd: repoDir,
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: join(runDir, "manifest.json"),
+    repoId: "repo-123",
+    runDir,
+    runId: "1",
+    storageRoot: join(home, "runs"),
+    transcriptPath: join(runDir, "transcript.jsonl"),
+  };
+  const opts = makePairedOptions({
+    agent: "gemini",
+    governess: true,
+    governessCooldownSeconds: 300,
+    governessHeight: "25%",
+    governessIdleSeconds: 120,
+    governessMaxRecoveries: 3,
+    governessModel: "qwen-test",
+    governessUrl: "http://127.0.0.1:8082",
+    pairWith: "cursor",
+  });
+
+  try {
+    const delegated = await runInTmux(
+      ["--tmux", "--governess", "--pair-with", "cursor"],
+      {
+        capturePane: () => "",
+        cwd: repoDir,
+        env: {},
+        findBinary: () => true,
+        getTerminalSize: () => undefined,
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionStarted
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionStarted = true;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      { opts, task: "Ship feature" }
+    );
+
+    expect(delegated).toBe(true);
+    expect(manifest.tmuxPaneLeft).toBe("repo-loop-1:0.0");
+    expect(manifest.tmuxPaneUtility).toBe("repo-loop-1:0.1");
+    expect(manifest.tmuxPaneRight).toBe("repo-loop-1:0.2");
+    expect(manifest.tmuxPaneGoverness).toBe("repo-loop-1:0.3");
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
 });
 
 test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
@@ -777,6 +881,9 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
       "tmux",
       "new-session",
       "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-s",
       "repo-loop-1",
       "-c",
@@ -787,8 +894,11 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
       "tmux",
       "split-window",
       "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-t",
-      "repo-loop-1:0",
+      "repo-loop-1:0.0",
       "-c",
       "/repo",
       codexCommand,
@@ -911,6 +1021,9 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
       "tmux",
       "new-session",
       "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-s",
       "repo-loop-1",
       "-c",
@@ -921,8 +1034,11 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
       "tmux",
       "split-window",
       "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
       "-t",
-      "repo-loop-1:0",
+      "repo-loop-1:0.0",
       "-c",
       "/repo",
       cursorCommand,
@@ -1217,6 +1333,9 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
     "tmux",
     "new-session",
     "-d",
+    "-P",
+    "-F",
+    "#{pane_id}",
     "-s",
     "repo-loop-1",
     "-c",
@@ -1241,8 +1360,11 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
     "tmux",
     "split-window",
     "-h",
+    "-P",
+    "-F",
+    "#{pane_id}",
     "-t",
-    "repo-loop-1:0",
+    "repo-loop-1:0.0",
     "-c",
     "/repo",
     codexCommand,
@@ -2135,6 +2257,9 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
     "tmux",
     "new-session",
     "-d",
+    "-P",
+    "-F",
+    "#{pane_id}",
     "-s",
     "repo-loop-alpha",
     "-c",
@@ -2145,8 +2270,11 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
     "tmux",
     "split-window",
     "-h",
+    "-P",
+    "-F",
+    "#{pane_id}",
     "-t",
-    "repo-loop-alpha:0",
+    "repo-loop-alpha:0.0",
     "-c",
     "/repo",
     codexCommand,
