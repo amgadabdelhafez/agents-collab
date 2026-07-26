@@ -5,4 +5,4 @@
 - [x] Cover worktree and observability regressions.
 - [x] Repair Codex bridge transport and eliminate dual-send guidance.
 - [x] Verify and independently evaluate.
-- [ ] Integrate and prove live loop 47 adoption without main-pane restart.
+- [x] Integrate and prove live loop 47 adoption without main-pane restart.

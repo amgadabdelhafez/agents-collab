@@ -1,6 +1,6 @@
 {
   "task": "utility-hook-worktree-recovery",
-  "verdict": "pass_pending_live_adoption",
+  "verdict": "pass",
   "checks": {
     "focused": "150 passed, 0 failed",
     "bridge_and_prompt": "86 passed, 0 failed",
@@ -9,10 +9,11 @@
     "full_suite": "795 passed, 4 known model/config expectation failures",
     "independent_review": "pass with no blockers; narrow-match and reload-timeout advisories addressed",
     "live_codex_transport": "reloaded through app-server and loop-bridge tools listed without main-pane restart",
-    "live_duplicate_delivery": "root cause isolated to direct tmux plus bridge dual-send; live agent corrected and future prompt guidance fixed"
+    "live_duplicate_delivery": "root cause isolated to direct tmux plus bridge dual-send; live agent corrected and future prompt guidance fixed",
+    "live_linked_worktree_adoption": "automatic job 9599b35e completed from verified root /private/tmp/harvto-loop47-base in 13 seconds and delivered one result",
+    "live_process_safety": "Claude PID 56784 and Codex PID 56786 unchanged; only governess pane restarted"
   },
   "known_limitations": [
-    "Changed-file Biome is unavailable because the repository ultracite/biome/core configuration cannot resolve.",
-    "Final live linked-worktree worker completion is recorded after canonical integration."
+    "Changed-file Biome is unavailable because the repository ultracite/biome/core configuration cannot resolve."
   ]
 }

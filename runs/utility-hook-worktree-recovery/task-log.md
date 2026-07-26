@@ -22,3 +22,9 @@
   pass 86/86; build and diff check pass. Full suite is 795 pass / 4 known
   model/config expectation failures. Independent evaluation passed with no
   blockers; its two recovery advisories were addressed.
+- 2026-07-26: Merged and rebuilt canonical loop. Synthetic Claude PreToolUse
+  `git status --short` from `/private/tmp/harvto-loop47-base` created automatic
+  job `9599b35e`, persisted the verified linked-worktree root, completed in 13
+  seconds, and delivered exactly one worker result. Governess now shows 9 jobs,
+  8 automatic adoptions, and exact skip reasons. Claude PID 56784 and Codex PID
+  56786 remained unchanged; only the governess pane was narrowly respawned.
