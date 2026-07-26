@@ -26,6 +26,11 @@
       "status": "pass",
       "artifact": "runs/lower-agent-release-integration/artifacts/tmux-smoke.md",
       "reason": "default worker pane and explicit opt-out verified in disposable tmux sessions"
+    },
+    "release": {
+      "status": "pass",
+      "artifact": "runs/lower-agent-release-integration/artifacts/release-proof.md",
+      "reason": "canonical merge and atomic local install completed; loop 40 pane identities and PIDs unchanged"
     }
   }
 }
