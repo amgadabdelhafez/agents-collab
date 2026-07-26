@@ -52,3 +52,18 @@
 - Initial adoption and every revalidation require the canonical root to appear
   exactly in `git worktree list --porcelain`.
 - Independent evaluation: PASS (`eval.json`), 87 focused tests.
+
+## Live loop 47 acceptance
+
+- Integrated locally as canonical merge `b2b8b6c` and rebuilt the compiled
+  `loop` binary.
+- Refreshed only governess pane `%3`; Claude `%0` PID `56784` and Codex `%1`
+  PID `56786` were unchanged.
+- Submitted bounded inspect job `00861be8-202e-4fcf-9705-db2e27366d3b`
+  against the active `/private/tmp/harvto-loop47-base` worktree.
+- Durable decision: `utility/utility-eligible`, workspace root
+  `/private/tmp/harvto-loop47-base`, relative read scope
+  `03-Development/tools/mesh-gen/fixtures/local-reference.json`.
+- Worker completed in 4.9 seconds using `read_file`, 2 model calls, 1 tool
+  call, 2,090 tokens, and about $0.0008. Result identified
+  `local-wrap-fixture`; no base-checkout read occurred.

@@ -5,4 +5,4 @@
 - [x] T-03: Persist the resolved root and enforce it in worker/tools/apply.
 - [x] T-04: Add success and fail-closed worktree tests.
 - [x] T-05: Complete broad verification and independent evaluation.
-- [ ] T-06: Integrate and prove live loop 47 adoption without agent restart.
+- [x] T-06: Integrate and prove live loop 47 adoption without agent restart.

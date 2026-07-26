@@ -4,4 +4,4 @@
 - [x] Add transcript and composer confirmation.
 - [x] Add literal-space retry and fail-queued behavior.
 - [x] Add regressions and broad verification.
-- [ ] Integrate and verify loop 47 without interrupting main agents.
+- [x] Integrate and verify loop 47 without interrupting main agents.

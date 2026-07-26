@@ -30,3 +30,14 @@
   pass; capture failure also fails closed because confirmation requires an
   explicitly observed empty prompt.
 - Build, Biome changed-file check, and `git diff --check`: pass.
+
+## Live loop 47 acceptance
+
+- Integrated with canonical merge `b2b8b6c` and rebuilt the compiled binary.
+- Terminated only stale run-47 bridge helpers and refreshed governess `%3`;
+  Claude `%0` PID `56784` and Codex `%1` PID `56786` did not change.
+- Verified the run-47 bridge ledger currently has zero pending messages to
+  Claude, so no synthetic message was injected into either main agent for
+  testing.
+- The next bridge tool connection will launch from the rebuilt canonical
+  binary; the stale helper processes are no longer resident.
