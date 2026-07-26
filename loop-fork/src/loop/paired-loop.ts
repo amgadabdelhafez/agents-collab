@@ -4,7 +4,10 @@ import {
   acknowledgeBridgeDelivery,
   readNextPendingBridgeMessage,
 } from "./bridge-dispatch";
-import { quotedBridgeTool } from "./bridge-guidance";
+import {
+  mandatoryUtilityDelegationGuidance,
+  quotedBridgeTool,
+} from "./bridge-guidance";
 import { formatBridgeDeliveryMessage } from "./bridge-message-format";
 import type { BridgeMessage } from "./bridge-store";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
@@ -107,7 +110,9 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
   return [
     "Paired mode:",
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
-    `Before spending full-agent context on a clearly bounded inspect, small edit, or focused command subtask, submit it through ${quotedBridgeTool(agent, "route_task")}. Keep architecture, product decisions, destructive work, and ambiguous scope with the main pair.`,
+    mandatoryUtilityDelegationGuidance(
+      quotedBridgeTool(agent, "route_task")
+    ),
     `Ask ${peer} for validation and feedback after every few concrete steps, after meaningful design choices, and before finalizing. Include what changed, what proof ran, and what you want checked.`,
     "Use AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.",
     `Do not ask the human to relay messages between agents or answer the human on the other agent's behalf.`,
@@ -122,7 +127,9 @@ const bridgeToolGuidance = (agent: Agent): string => {
     : `Only use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} when delivery looks stuck.`;
   return [
     `You can use the MCP tools ${quotedBridgeTool(agent, "send_message")}, ${quotedBridgeTool(agent, "bridge_status")}, and ${quotedBridgeTool(agent, "receive_messages")} for direct paired-agent coordination.`,
-    `Use ${quotedBridgeTool(agent, "route_task")} for clearly bounded inspect, small edit, or focused command subtasks that do not need full-agent context.`,
+    mandatoryUtilityDelegationGuidance(
+      quotedBridgeTool(agent, "route_task")
+    ),
     pollingNote,
     "Do not ask the human to relay messages between agents.",
   ].join("\n");

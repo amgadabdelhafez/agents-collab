@@ -23,6 +23,11 @@ import type {
   UtilityPatchApplication,
 } from "./utility-store";
 import type { Agent } from "./types";
+import {
+  DEFAULT_UTILITY_PROTECTED_PATHS,
+  isUtilityProtectedPath,
+  UTILITY_PROTECTED_GIT_GLOBS,
+} from "./utility-path-policy";
 
 export type UtilityToolName =
   | "search_repo"
@@ -214,9 +219,6 @@ const DANGEROUS_COMMAND_OPTIONS = new Set([
   "-c",
   "-e",
 ]);
-const SECRET_BASENAME =
-  /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials(?:\..*)?|id_(?:rsa|ed25519)|secrets?(?:\..*)?|.*\.(?:key|p12|pem))$/i;
-const PROTECTED_SEGMENTS = new Set([".aws", ".git", ".gnupg", ".ssh"]);
 const DEPENDENCY_FILES = new Set([
   "bun.lock",
   "bun.lockb",
@@ -232,11 +234,7 @@ const DEPENDENCY_FILES = new Set([
   "requirements.txt",
   "yarn.lock",
 ]);
-const DEFAULT_PROTECTED_PATHS = [
-  "specs/constitution.md",
-  "docs/architecture/invariants.md",
-  UTILITY_REPOSITORY_POLICY_PATH,
-] as const;
+const DEFAULT_PROTECTED_PATHS = [...DEFAULT_UTILITY_PROTECTED_PATHS] as const;
 
 const objectSchema = (
   properties: Record<string, unknown>,
@@ -649,14 +647,6 @@ const normalizeRequestedPath = (value: string): string => {
 
 const inScope = (candidate: string, scope: string): boolean =>
   scope === "." || candidate === scope || candidate.startsWith(`${scope}/`);
-
-const isSecretPath = (path: string): boolean => {
-  const segments = path.toLowerCase().split("/");
-  return (
-    segments.some((segment) => PROTECTED_SEGMENTS.has(segment)) ||
-    segments.some((segment) => SECRET_BASENAME.test(segment))
-  );
-};
 
 const hash = (value: string | Uint8Array): string =>
   createHash("sha256").update(value).digest("hex");
@@ -1156,7 +1146,7 @@ export class UtilityToolBroker {
 
   private isProtected(path: string): boolean {
     return (
-      isSecretPath(path) ||
+      isUtilityProtectedPath(path) ||
       this.protectedPaths.some((protectedPath) => inScope(path, protectedPath))
     );
   }
@@ -1401,6 +1391,9 @@ export class UtilityToolBroker {
       ":(exclude)**/*.p12",
       ":(exclude)**/*.pem",
       ":(exclude)**/.npmrc",
+      ...UTILITY_PROTECTED_GIT_GLOBS.map(
+        (pattern) => `:(exclude,glob,icase)${pattern}`
+      ),
       ...this.protectedPaths.map((path) => `:(exclude)${path}`),
     ];
   }

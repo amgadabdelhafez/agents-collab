@@ -96,6 +96,174 @@ describe("runHookEmit", () => {
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]).event).toBe("raw");
   });
+
+  test("enforce mode queues and denies an exact mechanical Claude tool", async () => {
+    const hookLines: string[] = [];
+    const delegationEvents: unknown[] = [];
+    const routeRequests: unknown[] = [];
+    const stdout: string[] = [];
+    async function* stdin() {
+      await Promise.resolve();
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/repo",
+          hook_event_name: "PreToolUse",
+          tool_input: { command: "git status --short" },
+          tool_name: "Bash",
+          tool_use_id: "tool-1",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: (_path, line) => hookLines.push(line),
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "job-1" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      stdin: stdin(),
+      writeStdout: (value) => stdout.push(value),
+    });
+    expect(hookLines).toHaveLength(1);
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        idempotencyKey: "auto:claude:tool-1",
+        kind: "inspect",
+        requester: "claude",
+      }),
+    ]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({
+        disposition: "auto-routed",
+        operation: "git-status",
+        taskId: "job-1",
+      }),
+    ]);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+      },
+    });
+    expect(stdout.join("")).toContain("task_status");
+    expect(stdout.join("")).toContain("get_task_result");
+  });
+
+  test.each([
+    ["observe", "http://127.0.0.1:8080/v1/chat/completions"],
+    ["enforce", "https://openrouter.ai/api/v1/chat/completions"],
+  ])("%s or unavailable utility observes without blocking", async (mode, url) => {
+    const delegationEvents: unknown[] = [];
+    const stdout: string[] = [];
+    async function* stdin() {
+      await Promise.resolve();
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/repo",
+          hook_event_name: "PreToolUse",
+          tool_input: { command: "git status --short" },
+          tool_name: "Bash",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      env: {
+        LOOP_UTILITY_API_KEY_FILE: "",
+        LOOP_UTILITY_DELEGATION_MODE: mode,
+        LOOP_UTILITY_URL: url,
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      stdin: stdin(),
+      writeStdout: (value) => stdout.push(value),
+    });
+    expect(stdout).toEqual([]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({ disposition: "observed-candidate" }),
+    ]);
+  });
+
+  test("off mode leaves eligible native tools untouched and unmeasured", async () => {
+    const delegationEvents: unknown[] = [];
+    const routeRequests: unknown[] = [];
+    const stdout: string[] = [];
+    async function* stdin() {
+      await Promise.resolve();
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/repo",
+          hook_event_name: "PreToolUse",
+          tool_input: { command: "git status --short" },
+          tool_name: "Bash",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "unexpected" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "off",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      stdin: stdin(),
+      writeStdout: (value) => stdout.push(value),
+    });
+    expect(routeRequests).toEqual([]);
+    expect(delegationEvents).toEqual([]);
+    expect(stdout).toEqual([]);
+  });
+
+  test("automatic route failure is measured and fails open", async () => {
+    const delegationEvents: unknown[] = [];
+    const stdout: string[] = [];
+    async function* stdin() {
+      await Promise.resolve();
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/repo",
+          hook_event_name: "PreToolUse",
+          tool_input: { command: "git status --short" },
+          tool_name: "Bash",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      appendRoute: () => {
+        throw new Error("store unavailable");
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      stdin: stdin(),
+      writeStdout: (value) => stdout.push(value),
+    });
+    expect(stdout).toEqual([]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({
+        disposition: "route-failed",
+        reason: "automatic-route-failed-open",
+      }),
+    ]);
+  });
 });
 
 describe("hook settings generators", () => {

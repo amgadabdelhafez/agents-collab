@@ -6,8 +6,9 @@
 loop CLI / tmux launcher
   ├─ main agent pane ─┐
   ├─ peer agent pane ─┼─ loop bridge MCP + durable bridge JSONL
-  └─ governess pane ──┘          │
-          │ route owner          │ route_task / compact result
+  ├─ delegation hook/observer ────┤
+  └─ governess pane ──┘           │
+          │ route owner           │ route_task / compact result
           ▼                      │
   deterministic task router ◄────┘
           │
@@ -25,6 +26,7 @@ supervisor can submit/observe messages, but is not a route or claim authority.
 | Boundary | Owns | Does not own |
 |---|---|---|
 | Main agent pair | Product judgment, architecture, broad implementation, review | Utility scheduling or lower-tier host policy |
+| Delegation policy | Exact mechanical intent classification, Claude pre-tool auto-submit, Codex miss telemetry | Route eligibility, arbitrary shell parsing, judgment classification |
 | Bridge | Typed participant transport, delivery, acknowledgements | Task eligibility, model choice, host tool execution |
 | Governess | Liveness, driver lease, current epoch, task routing and dispatch | Provider inference or unrestricted code changes |
 | Task router | Pure capability/risk/scope/budget/tier decision | Provider calls, persistence, side effects |
@@ -41,8 +43,8 @@ supervisor can submit/observe messages, but is not a route or claim authority.
   source and execution tier, never a driver, reviewer, or recovery target.
 - Provider latency cannot block governess ticks; inference runs in a detached
   worker process.
-- Agents submit structured requests. They cannot select a model, weaken route
-  policy, or grant new authority.
+- Agents or the narrow Claude pre-tool policy submit structured requests. They
+  cannot select a model, weaken route policy, or grant new authority.
 - Missing evidence, stale epochs, malformed journals, protected paths, and
   unknown risk fail closed.
 - Utility edits are patch proposals in P0. They are not applied automatically.
@@ -52,8 +54,11 @@ supervisor can submit/observe messages, but is not a route or claim authority.
 
 ## Key data flows
 
-1. **Delegation:** a main agent calls `route_task`; the bridge appends a bounded
-   request and returns its task id.
+1. **Delegation:** a main agent calls `route_task`, or Claude's hook recognizes
+   an exact low-risk mechanical intent and appends the same bounded request
+   before denying the direct call. Codex's current per-turn-only hook surface is
+   prompt-enforced and its app-server commands are measured for missed eligible
+   calls. All adoption events are compactly journaled.
 2. **Routing:** governess reads pending requests, applies deterministic policy,
    records the decision, and starts a detached worker only for eligible utility
    work. Peer/driver/escalation routes return through the bridge.
@@ -65,4 +70,5 @@ supervisor can submit/observe messages, but is not a route or claim authority.
 5. **Recovery:** a new governess epoch fences orphaned claims; time-limited jobs
    fail closed and return an escalation rather than being silently replayed.
 
-See `specs/lower-agent-router/` for the feature contract and promotion gates.
+See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
+contracts and promotion gates.

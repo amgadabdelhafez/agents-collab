@@ -11,6 +11,7 @@ import {
 } from "./bridge-runtime";
 import type { BridgeMessage } from "./bridge-store";
 import { LOOP_VERSION } from "./constants";
+import { recordCodexAppServerDelegationCandidate } from "./delegation-policy";
 import { findFreePort } from "./ports";
 import {
   isActiveRunState,
@@ -35,6 +36,7 @@ const INITIALIZED_METHOD = "initialized";
 const THREAD_RESUME_METHOD = "thread/resume";
 const THREAD_START_METHOD = "thread/start";
 const TURN_START_METHOD = "turn/start";
+const ITEM_STARTED_METHOD = "item/started";
 const DEBUG_PROXY = process.env.LOOP_DEBUG_PROXY === "1";
 
 export const CODEX_TMUX_PROXY_SUBCOMMAND = "__codex-tmux-proxy";
@@ -584,6 +586,20 @@ class CodexTmuxProxy {
     }
 
     if (typeof frame.method === "string") {
+      if (frame.method === ITEM_STARTED_METHOD) {
+        const manifest = readRunManifest(join(this.runDir, "manifest.json"));
+        if (manifest?.cwd) {
+          try {
+            recordCodexAppServerDelegationCandidate(
+              this.runDir,
+              manifest.cwd,
+              frame.params
+            );
+          } catch {
+            // Telemetry must never alter or delay app-server forwarding.
+          }
+        }
+      }
       this.forwardToTui(raw);
       return;
     }
@@ -726,5 +742,6 @@ export const codexTmuxProxyInternals = {
   buildProxyUrl,
   proxyInitializeResponse,
   persistCodexThreadId,
+  recordCodexAppServerDelegationCandidate,
   shouldStopForTmuxSession,
 };

@@ -1,0 +1,44 @@
+{
+  "task_id": "lower-agent-adoption",
+  "feature": "lower-agent-adoption",
+  "timestamp": "2026-07-26T20:22:11Z",
+  "evaluator": "codex-independent-eval",
+  "checks": {
+    "functional": {
+      "passed": 258,
+      "failed": 0,
+      "details": [
+        "Independent focused acceptance suite passed 258/258 across delegation policy, Claude hooks, Codex observation, bridge, utility runtime, tmux, task routing, and utility broker tests.",
+        "Classifier coverage includes protected and governing paths, secret-like input, exact mechanical commands, malformed/compound commands, and enforce/observe/off modes.",
+        "Claude enforce routing, fail-open fallback, Codex non-blocking observation, secret-safe durable telemetry, pane adoption output, and agent guidance are covered by focused assertions."
+      ]
+    },
+    "ui": {
+      "passed": 1,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "Terminal utility-pane assertions verify current work, tool activity, usage, adoption counters, and idle state; no graphical UI surface changed."
+      ]
+    },
+    "performance": {
+      "passed": 2,
+      "failed": 0,
+      "details": [
+        "Codex proxy regression tests verify observation remains pass-through and does not replace or block app-server requests.",
+        "Utility execution remains behind the detached worker and bounded broker rather than adding provider work to the hook/proxy path."
+      ]
+    },
+    "regression": {
+      "passed": 769,
+      "failed": 0,
+      "details": [
+        "Current full suite produced 769 passing tests and four failures that were independently reproduced unchanged on the canonical worktree.",
+        "The four baseline failures are confined to paired-options.test.ts and runner.test.ts Codex model/config expectations.",
+        "bun run build passed and git diff --check passed."
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "PASS. The feature-specific acceptance surface is green and the only full-suite failures are confirmed canonical baseline failures. scripts/verify.sh exits zero but contains placeholder lint/typecheck/test commands, so this verdict relies on the explicit focused suite, full Bun suite comparison, successful build, and diff check rather than the wrapper alone."
+}

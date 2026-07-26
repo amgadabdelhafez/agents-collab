@@ -1,7 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import {
+  appendDelegationEvent,
+  classifyDelegationIntent,
+  type DelegationTelemetryEvent,
+  makeDelegationEvent,
+  resolveUtilityDelegationMode,
+} from "../delegation-policy";
+import { readRunManifest } from "../run-state";
+import { createUtilityRouteRequest } from "../task-router";
 import type { Agent, HookEvent } from "../types";
+import {
+  buildUtilityWorkerEnvironment,
+  resolveUtilityRuntimeConfig,
+} from "../utility-runtime";
+import { appendUtilityRouteRequest } from "../utility-store";
 
 export const HOOK_EMIT_SUBCOMMAND = "__hook-emit";
 
@@ -166,9 +180,149 @@ const readAllStdin = async (
 
 interface HookEmitDeps {
   append?: (path: string, line: string) => void;
+  appendDelegation?: (runDir: string, event: DelegationTelemetryEvent) => void;
+  appendRoute?: (
+    runDir: string,
+    request: ReturnType<typeof createUtilityRouteRequest>
+  ) => { jobId: string };
+  env?: NodeJS.ProcessEnv;
   now?: () => string;
+  readManifest?: (path: string) => { cwd: string } | undefined;
   stdin?: AsyncIterable<Uint8Array>;
+  writeStdout?: (text: string) => void;
 }
+
+const preToolDelegationOutput = (taskId: string): string =>
+  JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: `This bounded mechanical operation was delegated automatically to the lower agent as task ${taskId}. Do not retry the native tool. Use task_status, then get_task_result when complete; if governess returns it to the driver, continue directly from that route result.`,
+    },
+  });
+
+const handlePreToolDelegation = (
+  agent: Agent,
+  hookFile: string,
+  payload: unknown,
+  at: string,
+  deps: HookEmitDeps
+): string | undefined => {
+  if (agent !== "claude") {
+    return undefined;
+  }
+  const raw = asRecord(payload);
+  if (
+    firstString(raw, ["hook_event_name", "hookEventName", "event", "type"]) !==
+    "PreToolUse"
+  ) {
+    return undefined;
+  }
+  const mode = resolveUtilityDelegationMode(
+    (deps.env ?? process.env).LOOP_UTILITY_DELEGATION_MODE
+  );
+  if (mode === "off") {
+    return undefined;
+  }
+  const toolName = firstString(raw, ["tool_name", "toolName", "tool"]);
+  const toolInput = raw.tool_input ?? raw.toolInput;
+  const cwd = firstString(raw, [
+    "cwd",
+    "working_directory",
+    "workingDirectory",
+  ]);
+  if (!(toolName && cwd)) {
+    return undefined;
+  }
+  const runDir = dirname(dirname(hookFile));
+  const manifest = (deps.readManifest ?? readRunManifest)(
+    join(runDir, "manifest.json")
+  );
+  if (!manifest?.cwd) {
+    return undefined;
+  }
+  const classification = classifyDelegationIntent({
+    agent,
+    cwd,
+    repoRoot: manifest.cwd,
+    toolInput,
+    toolName,
+    ...(firstString(raw, ["tool_use_id", "toolUseId"])
+      ? { toolUseId: firstString(raw, ["tool_use_id", "toolUseId"]) }
+      : {}),
+  });
+  if (!classification.eligible) {
+    return undefined;
+  }
+  const appendTelemetry = deps.appendDelegation ?? appendDelegationEvent;
+  const config = resolveUtilityRuntimeConfig(
+    buildUtilityWorkerEnvironment(deps.env ?? process.env)
+  );
+  const utilityReady =
+    config.enabled && config.availability.code.startsWith("ready-");
+  if (mode === "observe" || !utilityReady) {
+    appendTelemetry(
+      runDir,
+      makeDelegationEvent(
+        {
+          agent,
+          disposition: "observed-candidate",
+          fingerprint: classification.fingerprint,
+          operation: classification.operation,
+          reason:
+            mode === "observe"
+              ? "delegation-mode-observe"
+              : `utility-unavailable:${config.availability.code}`,
+          source: "claude-hook",
+        },
+        at
+      )
+    );
+    return undefined;
+  }
+  try {
+    const routeRequest = createUtilityRouteRequest({
+      ...classification.request,
+      createdAt: at,
+    });
+    const job = (deps.appendRoute ?? appendUtilityRouteRequest)(
+      runDir,
+      routeRequest
+    );
+    appendTelemetry(
+      runDir,
+      makeDelegationEvent(
+        {
+          agent,
+          disposition: "auto-routed",
+          fingerprint: classification.fingerprint,
+          operation: classification.operation,
+          reason: classification.reason,
+          source: "claude-hook",
+          taskId: job.jobId,
+        },
+        at
+      )
+    );
+    return preToolDelegationOutput(job.jobId);
+  } catch {
+    appendTelemetry(
+      runDir,
+      makeDelegationEvent(
+        {
+          agent,
+          disposition: "route-failed",
+          fingerprint: classification.fingerprint,
+          operation: classification.operation,
+          reason: "automatic-route-failed-open",
+          source: "claude-hook",
+        },
+        at
+      )
+    );
+    return undefined;
+  }
+};
 
 // Runs as `loop __hook-emit <agent> <hookFile>`. Reads one hook payload on
 // stdin, appends a normalized JSONL line, and NEVER fails the calling agent:
@@ -194,13 +348,26 @@ export const runHookEmit = async (
     } catch {
       payload = { hook_event_name: "raw", detail: text.trim().slice(0, 200) };
     }
+    const at = now();
     const event = {
-      ...normalizeHookPayload(agent, payload, now()),
+      ...normalizeHookPayload(agent, payload, at),
       eventId: randomUUID(),
       sequence: nextHookSequence(hookFile),
       source: "agent-hook" as const,
     };
     append(hookFile, `${JSON.stringify(event)}\n`);
+    const decision = handlePreToolDelegation(
+      agent,
+      hookFile,
+      payload,
+      at,
+      deps
+    );
+    if (decision) {
+      (deps.writeStdout ?? ((value) => process.stdout.write(value)))(
+        `${decision}\n`
+      );
+    }
   } catch {
     // Best-effort: never propagate a hook failure to the agent.
   }

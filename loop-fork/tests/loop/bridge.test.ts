@@ -9,7 +9,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readDelegationEvents } from "../../src/loop/delegation-policy";
 import { readRunManifest } from "../../src/loop/run-state";
+
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
 
 const loadBridge = (
   overrides: {
@@ -611,6 +614,7 @@ test.each([
       params: {
         arguments: {
           acceptance_criteria: ["find the defining file"],
+          idempotency_key: "API_KEY=super-secret-idempotency-value",
           kind: "inspect",
           objective: "Locate the bridge server definition",
           read_scope: ["src/loop"],
@@ -626,6 +630,23 @@ test.each([
     taskId: string;
   };
   expect(routed.state).toBe("pending-route");
+  const delegationEvents = readDelegationEvents(runDir);
+  expect(delegationEvents).toEqual([
+    expect.objectContaining({
+      agent: source,
+      disposition: "explicit-routed",
+      operation: "inspect",
+      source: "bridge",
+      taskId: routed.taskId,
+    }),
+  ]);
+  expect(delegationEvents[0]?.fingerprint).toMatch(SHA256_HEX_RE);
+  expect(JSON.stringify(delegationEvents)).not.toContain(
+    "super-secret-idempotency-value"
+  );
+  expect(
+    readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")
+  ).not.toContain("super-secret-idempotency-value");
   const status = await runBridgeProcess(
     runDir,
     source,
@@ -820,9 +841,7 @@ test("immediate Claude delivery and worker drain submit a message once", async (
   expect(
     spawnSync.mock.calls.filter(
       ([args]) =>
-        args[0] === "tmux" &&
-        args[1] === "send-keys" &&
-        args.at(-1) === "Enter"
+        args[0] === "tmux" && args[1] === "send-keys" && args.at(-1) === "Enter"
     )
   ).toHaveLength(1);
   expect(
@@ -1042,6 +1061,8 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   expect(result.stdout).toContain(
     "Never answer the human when the inbound message came from Codex"
   );
+  expect(result.stdout).toContain("Delegation is mandatory");
+  expect(result.stdout).toContain('call \\"route_task\\" before using');
   expect(result.stdout).toContain('"id":2');
   expect(result.stdout).toContain('"result":{}');
   expect(result.stdout).toContain('"id":3');
@@ -1709,10 +1730,7 @@ test("bridge drains codex messages through the persisted stable pane target", as
       ],
       { stderr: "ignore" },
     ],
-    [
-      ["tmux", "send-keys", "-t", "%41", "Enter"],
-      { stderr: "ignore" },
-    ],
+    [["tmux", "send-keys", "-t", "%41", "Enter"], { stderr: "ignore" }],
   ]);
 
   rmSync(root, { recursive: true, force: true });

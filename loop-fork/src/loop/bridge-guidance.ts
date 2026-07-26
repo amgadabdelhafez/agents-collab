@@ -29,10 +29,14 @@ export const receiveMessagesStuckGuidance =
 export const sendProactiveCodexGuidance = (): string =>
   `Use "send_message" with ${bridgeTargetLiteral("codex")} for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.`;
 
+export const mandatoryUtilityDelegationGuidance = (routeTool: string): string =>
+  `Delegation is mandatory for clearly bounded mechanical inspection, repository search/status/diff, small scoped edits, and focused verification that do not require current-session judgment: call ${routeTool} before using a native repository tool. Native tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous or cross-cutting work, and reviewing returned utility evidence.`;
+
 export const claudeChannelInstructions = (): string =>
   [
     `Messages from the Codex agent arrive as <channel source="${BRIDGE_SERVER}" chat_id="..." user="${CLAUDE_CHANNEL_USER}" ...>. The chat_id is informational only.`,
     sendProactiveCodexGuidance(),
+    mandatoryUtilityDelegationGuidance('"route_task"'),
     "Never answer the human when the inbound message came from Codex. Send the response back through the bridge tools instead.",
     bridgeStatusStuckGuidance,
   ].join("\n");

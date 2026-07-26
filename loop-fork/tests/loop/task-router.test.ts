@@ -193,6 +193,48 @@ describe("fail-closed gates", () => {
     ],
     ["unknown risk", { risk: "unknown" }, {}, "risk-not-low"],
     ["protected path", { writeScope: [".env"] }, {}, "protected-scope"],
+    [
+      "credential directory",
+      { readScope: [".aws/config"] },
+      {},
+      "protected-scope",
+    ],
+    [
+      "agent settings",
+      { readScope: ["src/../.claude/settings.json"] },
+      {},
+      "protected-scope",
+    ],
+    [
+      "nested credential directory",
+      { readScope: ["packages/api/.aws/config"] },
+      {},
+      "protected-scope",
+    ],
+    [
+      "nested governing spec",
+      { readScope: ["packages/api/specs/auth/spec.md"] },
+      {},
+      "protected-scope",
+    ],
+    [
+      "nested architecture",
+      { readScope: ["packages/api/docs/architecture/invariants.md"] },
+      {},
+      "protected-scope",
+    ],
+    [
+      "copilot instructions",
+      { readScope: [".github/copilot-instructions.md"] },
+      {},
+      "protected-scope",
+    ],
+    [
+      "case-varied nested agent settings",
+      { readScope: ["packages/api/.CURSOR/rules/project.mdc"] },
+      {},
+      "protected-scope",
+    ],
     ["write conflict", {}, { activeWriteClaims: ["src"] }, "write-conflict"],
     [
       "missing capability",
