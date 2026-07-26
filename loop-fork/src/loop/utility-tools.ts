@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  access,
   lstat,
   mkdir,
   readdir,
@@ -7,6 +8,7 @@ import {
   realpath,
   writeFile,
 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import {
   basename,
   dirname,
@@ -16,6 +18,11 @@ import {
   sep,
 } from "node:path";
 import { spawn } from "bun";
+import type {
+  UtilityFileImage,
+  UtilityPatchApplication,
+} from "./utility-store";
+import type { Agent } from "./types";
 
 export type UtilityToolName =
   | "search_repo"
@@ -46,6 +53,7 @@ export interface UtilityToolError {
 
 export interface UtilityArtifactReference {
   manifestPath?: string;
+  manifestSha256?: string;
   path: string;
   sha256: string;
 }
@@ -68,6 +76,8 @@ export interface UtilityCommandPolicy {
   executable: string;
   /** At least one argv prefix must match. Any remaining arguments must be scoped paths. */
   prefixes: readonly (readonly string[])[];
+  /** Require this repository-local node_modules binary before invoking npx. */
+  requireLocalBinary?: string;
 }
 
 export interface UtilityToolLimits {
@@ -131,6 +141,20 @@ export interface PatchProposalManifest {
   summary?: string;
 }
 
+export interface GuardedPatchApplyInput {
+  appliedBy: Agent;
+  existingApplication?: UtilityPatchApplication;
+  expectedManifestSha256: string;
+  expectedPatchSha256: string;
+  manifestPath: string;
+  patchPath: string;
+}
+
+export interface GuardedPatchApplyResult {
+  application: UtilityPatchApplication;
+  status: "applied" | "already-applied";
+}
+
 const DEFAULT_LIMITS: UtilityToolLimits = {
   maxCommandArgs: 24,
   maxFileBytes: 128 * 1024,
@@ -143,7 +167,16 @@ const DEFAULT_LIMITS: UtilityToolLimits = {
 
 const DEFAULT_COMMAND_ALLOWLIST: readonly UtilityCommandPolicy[] = [
   { executable: "bun", prefixes: [["test"]] },
+  {
+    executable: "npx",
+    prefixes: [["vitest", "run"]],
+    requireLocalBinary: "vitest",
+  },
 ];
+export const UTILITY_REPOSITORY_POLICY_PATH = ".loop/utility-policy.json";
+const MAX_COMMAND_POLICIES = 16;
+const MAX_PREFIXES_PER_POLICY = 16;
+const MAX_PREFIX_LENGTH = 8;
 
 const SAFE_ENV_NAMES = new Set([
   "CI",
@@ -202,6 +235,7 @@ const DEPENDENCY_FILES = new Set([
 const DEFAULT_PROTECTED_PATHS = [
   "specs/constitution.md",
   "docs/architecture/invariants.md",
+  UTILITY_REPOSITORY_POLICY_PATH,
 ] as const;
 
 const objectSchema = (
@@ -393,6 +427,196 @@ const optionalStringArray = (
   return value as string[];
 };
 
+const exactKeys = (
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  label: string
+): void => {
+  const unknown = Object.keys(value).find((key) => !allowed.has(key));
+  if (unknown) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      `${label} contains unsupported key: ${unknown}`
+    );
+  }
+};
+
+const validatePolicyToken = (value: unknown, label: string): string => {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    SHELL_META.test(value) ||
+    DANGEROUS_COMMAND_OPTIONS.has(value)
+  ) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      `${label} contains an unsafe token`
+    );
+  }
+  return value;
+};
+
+const parseCommandPolicy = (
+  value: unknown,
+  index: number
+): UtilityCommandPolicy => {
+  if (!isRecord(value)) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      `commandAllowlist[${index}] must be an object`
+    );
+  }
+  exactKeys(
+    value,
+    new Set(["executable", "prefixes", "requireLocalBinary"]),
+    `commandAllowlist[${index}]`
+  );
+  const executable = validatePolicyToken(
+    value.executable,
+    `commandAllowlist[${index}].executable`
+  );
+  if (
+    executable.includes("/") ||
+    executable.includes("\\") ||
+    SHELL_EXECUTABLES.has(executable.toLowerCase())
+  ) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      `commandAllowlist[${index}] executable is not allowed`
+    );
+  }
+  if (
+    !Array.isArray(value.prefixes) ||
+    value.prefixes.length === 0 ||
+    value.prefixes.length > MAX_PREFIXES_PER_POLICY
+  ) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      `commandAllowlist[${index}].prefixes is not bounded`
+    );
+  }
+  const prefixes = value.prefixes.map((prefix, prefixIndex) => {
+    if (
+      !Array.isArray(prefix) ||
+      prefix.length === 0 ||
+      prefix.length > MAX_PREFIX_LENGTH
+    ) {
+      throw new ToolPolicyError(
+        "invalid_policy",
+        `commandAllowlist[${index}].prefixes[${prefixIndex}] is not bounded`
+      );
+    }
+    return prefix.map((token, tokenIndex) =>
+      validatePolicyToken(
+        token,
+        `commandAllowlist[${index}].prefixes[${prefixIndex}][${tokenIndex}]`
+      )
+    );
+  });
+  const requireLocalBinary = value.requireLocalBinary;
+  if (
+    requireLocalBinary !== undefined &&
+    (typeof requireLocalBinary !== "string" ||
+      !/^[A-Za-z0-9_.-]+$/.test(requireLocalBinary))
+  ) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      `commandAllowlist[${index}].requireLocalBinary is invalid`
+    );
+  }
+  if (executable === "npx" && !requireLocalBinary) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "npx policy requires requireLocalBinary to prevent package download"
+    );
+  }
+  return {
+    executable,
+    prefixes,
+    ...(typeof requireLocalBinary === "string" ? { requireLocalBinary } : {}),
+  };
+};
+
+export const loadUtilityCommandAllowlist = async (
+  repoRoot: string
+): Promise<readonly UtilityCommandPolicy[]> => {
+  const canonicalRoot = await realpath(repoRoot);
+  const path = resolve(canonicalRoot, UTILITY_REPOSITORY_POLICY_PATH);
+  let policyStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    policyStat = await lstat(path);
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      return DEFAULT_COMMAND_ALLOWLIST;
+    }
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository policy cannot be inspected"
+    );
+  }
+  if (!policyStat.isFile() || policyStat.isSymbolicLink()) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository policy must be a regular non-symlink file"
+    );
+  }
+  const canonicalPolicy = await realpath(path);
+  if (!isContained(canonicalRoot, canonicalPolicy)) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository policy resolves outside repository"
+    );
+  }
+  let raw: string;
+  try {
+    raw = await readFile(canonicalPolicy, "utf8");
+  } catch {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository policy cannot be read"
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository policy is not valid JSON"
+    );
+  }
+  if (!isRecord(parsed)) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository policy must be an object"
+    );
+  }
+  exactKeys(
+    parsed,
+    new Set(["version", "commandAllowlist"]),
+    "utility repository policy"
+  );
+  if (parsed.version !== 1) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository policy version must be 1"
+    );
+  }
+  if (
+    !Array.isArray(parsed.commandAllowlist) ||
+    parsed.commandAllowlist.length > MAX_COMMAND_POLICIES
+  ) {
+    throw new ToolPolicyError(
+      "invalid_policy",
+      "utility repository commandAllowlist is not bounded"
+    );
+  }
+  return [
+    ...DEFAULT_COMMAND_ALLOWLIST,
+    ...parsed.commandAllowlist.map(parseCommandPolicy),
+  ];
+};
+
 const relativePath = (root: string, target: string): string => {
   const value = relative(root, target);
   return value === "" ? "." : value.split(sep).join("/");
@@ -561,7 +785,14 @@ export class UtilityToolBroker {
     deps: UtilityToolDependencies = {}
   ): Promise<UtilityToolBroker> {
     const canonicalRoot = await realpath(config.repoRoot);
-    const broker = new UtilityToolBroker(config, deps, canonicalRoot);
+    const commandAllowlist =
+      config.commandAllowlist ??
+      (await loadUtilityCommandAllowlist(canonicalRoot));
+    const broker = new UtilityToolBroker(
+      { ...config, commandAllowlist },
+      deps,
+      canonicalRoot
+    );
     await broker.validateConfiguration();
     return broker;
   }
@@ -590,6 +821,288 @@ export class UtilityToolBroker {
         ok: false,
         tool: call.name,
       };
+    }
+  }
+
+  async applyPatchProposal(
+    input: GuardedPatchApplyInput
+  ): Promise<GuardedPatchApplyResult> {
+    if (!/^[0-9a-f]{64}$/i.test(input.expectedPatchSha256)) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Expected patch SHA-256 is invalid"
+      );
+    }
+    if (!/^[0-9a-f]{64}$/i.test(input.expectedManifestSha256)) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Expected manifest SHA-256 is invalid"
+      );
+    }
+    const patchArtifact = await this.resolveArtifact(
+      input.patchPath,
+      ".patch"
+    );
+    const manifestArtifact = await this.resolveArtifact(
+      input.manifestPath,
+      ".json"
+    );
+    const patch = await readFile(patchArtifact.absolute, "utf8");
+    const patchSha256 = hash(patch);
+    if (patchSha256 !== input.expectedPatchSha256.toLowerCase()) {
+      throw new ToolPolicyError(
+        "patch_drift",
+        "Patch artifact hash does not match the expected SHA-256"
+      );
+    }
+    const manifestText = await readFile(manifestArtifact.absolute, "utf8");
+    const manifestSha256 = hash(manifestText);
+    if (manifestSha256 !== input.expectedManifestSha256.toLowerCase()) {
+      throw new ToolPolicyError(
+        "patch_drift",
+        "Patch manifest hash does not match the recorded SHA-256"
+      );
+    }
+    const manifest = this.parsePatchManifest(manifestText);
+    const manifestPatch = await this.resolveArtifact(manifest.patchPath, ".patch");
+    if (manifestPatch.absolute !== patchArtifact.absolute) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch manifest does not reference the selected artifact"
+      );
+    }
+    const targetPaths = await this.validatedPatchTargets(patch);
+    const manifestPreimages = await this.validatedImages(
+      manifest.preimages,
+      "preimage"
+    );
+    if (
+      JSON.stringify(targetPaths) !==
+      JSON.stringify(manifestPreimages.map((image) => image.path))
+    ) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch targets do not match the proposal manifest"
+      );
+    }
+
+    if (input.existingApplication) {
+      const existing = input.existingApplication;
+      if (
+        existing.patchSha256 !== patchSha256 ||
+        existing.patchPath !== patchArtifact.relative ||
+        existing.manifestSha256 !== manifestSha256 ||
+        existing.manifestPath !== manifestArtifact.relative
+      ) {
+        throw new ToolPolicyError(
+          "patch_drift",
+          "A different patch application is already recorded for this job"
+        );
+      }
+      await this.assertImagesMatch(existing.postimages, "postimage");
+      return { application: existing, status: "already-applied" };
+    }
+
+    await this.assertImagesMatch(manifestPreimages, "preimage");
+    await this.runGitApply(patchArtifact.relative, true);
+    // Recheck after git's applicability probe so concurrent byte drift cannot
+    // pass only because the earlier proposal snapshot happened to match.
+    await this.assertImagesMatch(manifestPreimages, "preimage");
+    await this.runGitApply(patchArtifact.relative, false);
+    const postimages = await Promise.all(
+      targetPaths.map((path) => this.currentImage(path))
+    );
+    return {
+      application: {
+        appliedAt: new Date(this.now()).toISOString(),
+        appliedBy: input.appliedBy,
+        manifestPath: manifestArtifact.relative,
+        manifestSha256,
+        patchPath: patchArtifact.relative,
+        patchSha256,
+        postimages,
+        preimages: manifestPreimages,
+      },
+      status: "applied",
+    };
+  }
+
+  private async resolveArtifact(
+    requested: string,
+    extension: string
+  ): Promise<{ absolute: string; relative: string }> {
+    if (!isAbsolute(requested) || !requested.endsWith(extension)) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch artifact path is invalid"
+      );
+    }
+    const requestedStat = await lstat(requested).catch(() => undefined);
+    if (!requestedStat?.isFile() || requestedStat.isSymbolicLink()) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch artifact must be a regular non-symlink file"
+      );
+    }
+    const canonical = await realpath(requested);
+    if (
+      !isContained(this.repoRoot, canonical) ||
+      !isContained(this.artifactDir, canonical)
+    ) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch artifact escapes its job artifact directory"
+      );
+    }
+    return { absolute: canonical, relative: relativePath(this.repoRoot, canonical) };
+  }
+
+  private parsePatchManifest(raw: string): PatchProposalManifest {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch proposal manifest is invalid"
+      );
+    }
+    if (!isRecord(parsed) || !Array.isArray(parsed.preimages)) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch proposal manifest has an invalid shape"
+      );
+    }
+    exactKeys(
+      parsed,
+      new Set(["createdAt", "patchPath", "preimages", "summary"]),
+      "patch proposal manifest"
+    );
+    if (
+      typeof parsed.createdAt !== "string" ||
+      typeof parsed.patchPath !== "string" ||
+      (parsed.summary !== undefined && typeof parsed.summary !== "string")
+    ) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        "Patch proposal manifest fields are invalid"
+      );
+    }
+    return parsed as unknown as PatchProposalManifest;
+  }
+
+  private async validatedPatchTargets(patch: string): Promise<string[]> {
+    const targets = this.patchTargets(patch);
+    const validated: string[] = [];
+    for (const path of targets) {
+      validated.push((await this.resolvePath(path, "write", false)).relative);
+    }
+    return [...new Set(validated)].sort();
+  }
+
+  private async validatedImages(
+    values: unknown[],
+    label: string
+  ): Promise<UtilityFileImage[]> {
+    const images: UtilityFileImage[] = [];
+    for (const [index, value] of values.entries()) {
+      if (
+        !isRecord(value) ||
+        typeof value.path !== "string" ||
+        !(
+          value.sha256 === null ||
+          (typeof value.sha256 === "string" &&
+            /^[0-9a-f]{64}$/i.test(value.sha256))
+        )
+      ) {
+        throw new ToolPolicyError(
+          "patch_denied",
+          `${label}[${index}] is invalid`
+        );
+      }
+      exactKeys(value, new Set(["path", "sha256"]), `${label}[${index}]`);
+      const target = await this.resolvePath(value.path, "write", false);
+      images.push({
+        path: target.relative,
+        sha256:
+          typeof value.sha256 === "string"
+            ? value.sha256.toLowerCase()
+            : null,
+      });
+    }
+    const sorted = images.sort((left, right) => left.path.localeCompare(right.path));
+    if (new Set(sorted.map((image) => image.path)).size !== sorted.length) {
+      throw new ToolPolicyError(
+        "patch_denied",
+        `${label} contains duplicate paths`
+      );
+    }
+    return sorted;
+  }
+
+  private async currentImage(path: string): Promise<UtilityFileImage> {
+    const target = await this.resolvePath(path, "write", false);
+    const content = await readFile(target.absolute).catch((error: unknown) => {
+      if (isRecord(error) && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    });
+    return { path: target.relative, sha256: content ? hash(content) : null };
+  }
+
+  private async assertImagesMatch(
+    expected: readonly UtilityFileImage[],
+    label: string
+  ): Promise<void> {
+    for (const image of expected) {
+      const current = await this.currentImage(image.path);
+      if (current.sha256 !== image.sha256) {
+        throw new ToolPolicyError(
+          "patch_drift",
+          `${label} drift detected: ${image.path}`
+        );
+      }
+    }
+  }
+
+  private async runGitApply(
+    patchPath: string,
+    checkOnly: boolean
+  ): Promise<void> {
+    const result = await this.runCommand({
+      argv: [
+        "git",
+        "apply",
+        ...(checkOnly ? ["--check"] : []),
+        "--whitespace=nowarn",
+        "--",
+        patchPath,
+      ],
+      cwd: this.repoRoot,
+      env: scrubUtilityEnvironment(this.sourceEnv),
+      maxOutputBytes: this.limits.maxOutputBytes,
+      timeoutMs: this.limits.timeoutMs,
+    });
+    if (result.timedOut) {
+      throw new ToolPolicyError(
+        "timeout",
+        "Guarded patch application timed out"
+      );
+    }
+    if (result.truncated) {
+      throw new ToolPolicyError(
+        "output_limit",
+        "Guarded patch application output exceeded its limit"
+      );
+    }
+    if (result.exitCode !== 0) {
+      throw new ToolPolicyError(
+        "patch_conflict",
+        checkOnly
+          ? "Patch no longer applies cleanly"
+          : "Patch application failed"
+      );
     }
   }
 
@@ -675,19 +1188,27 @@ export class UtilityToolBroker {
 
   private async assertRealContainment(target: string): Promise<string> {
     let cursor = target;
+    const missingSegments: string[] = [];
     while (true) {
       try {
         const canonical = await realpath(cursor);
-        if (!isContained(this.repoRoot, canonical)) {
+        const resolved = resolve(canonical, ...missingSegments);
+        if (!isContained(this.repoRoot, resolved)) {
           throw new ToolPolicyError(
             "path_denied",
             "Path resolves outside repository"
           );
         }
-        return canonical;
+        return resolved;
       } catch (error) {
         if (error instanceof ToolPolicyError) {
           throw error;
+        }
+        if (!isRecord(error) || error.code !== "ENOENT") {
+          throw new ToolPolicyError(
+            "path_denied",
+            "Cannot resolve repository path"
+          );
         }
         const parent = dirname(cursor);
         if (parent === cursor) {
@@ -696,6 +1217,7 @@ export class UtilityToolBroker {
             "Cannot resolve repository path"
           );
         }
+        missingSegments.unshift(basename(cursor));
         cursor = parent;
       }
     }
@@ -722,7 +1244,7 @@ export class UtilityToolBroker {
             `Path does not exist: ${requested}`
           );
         })
-      : await this.assertRealContainment(absolute).then(() => absolute);
+      : await this.assertRealContainment(absolute);
     if (!isContained(this.repoRoot, canonical)) {
       throw new ToolPolicyError(
         "path_denied",
@@ -885,12 +1407,13 @@ export class UtilityToolBroker {
 
   private async runBounded(
     argv: readonly string[],
-    cwd: string
+    cwd: string,
+    extraEnv: Readonly<Record<string, string>> = {}
   ): Promise<CommandExecution> {
     const result = await this.runCommand({
       argv,
       cwd,
-      env: scrubUtilityEnvironment(this.sourceEnv),
+      env: { ...scrubUtilityEnvironment(this.sourceEnv), ...extraEnv },
       maxOutputBytes: this.limits.maxOutputBytes,
       timeoutMs: this.limits.timeoutMs,
     });
@@ -973,7 +1496,10 @@ export class UtilityToolBroker {
     return this.commandResult(result);
   }
 
-  private assertCommandAllowed(argv: readonly string[]): number {
+  private assertCommandAllowed(argv: readonly string[]): {
+    pathArgsStart: number;
+    policy: UtilityCommandPolicy;
+  } {
     if (argv.length === 0 || argv.length > this.limits.maxCommandArgs) {
       throw new ToolPolicyError(
         "command_denied",
@@ -1007,7 +1533,7 @@ export class UtilityToolBroker {
       }
       for (const prefix of policy.prefixes) {
         if (prefix.every((value, index) => argv[index + 1] === value)) {
-          return prefix.length + 1;
+          return { pathArgsStart: prefix.length + 1, policy };
         }
       }
     }
@@ -1027,7 +1553,7 @@ export class UtilityToolBroker {
         "argv must be a string array"
       );
     }
-    const pathArgsStart = this.assertCommandAllowed(argv);
+    const { pathArgsStart, policy } = this.assertCommandAllowed(argv);
     const requestedPaths = argv.slice(pathArgsStart);
     if (
       requestedPaths.length === 0 ||
@@ -1048,6 +1574,41 @@ export class UtilityToolBroker {
       );
     }
     const safeArgv = argv.slice(0, pathArgsStart);
+    if (policy.requireLocalBinary) {
+      let searchDir = cwd.absolute;
+      let canonicalBinary: string | undefined;
+      while (isContained(this.repoRoot, searchDir)) {
+        const localBinary = resolve(
+          searchDir,
+          "node_modules",
+          ".bin",
+          policy.requireLocalBinary
+        );
+        canonicalBinary = await realpath(localBinary).catch(() => undefined);
+        if (canonicalBinary || searchDir === this.repoRoot) {
+          break;
+        }
+        searchDir = dirname(searchDir);
+      }
+      if (!canonicalBinary) {
+        throw new ToolPolicyError(
+          "command_denied",
+          `Required local binary is unavailable: ${policy.requireLocalBinary}`
+        );
+      }
+      if (!isContained(this.repoRoot, canonicalBinary)) {
+        throw new ToolPolicyError(
+          "command_denied",
+          "Required local binary resolves outside repository"
+        );
+      }
+      await access(canonicalBinary, fsConstants.X_OK).catch(() => {
+        throw new ToolPolicyError(
+          "command_denied",
+          `Required local binary is not executable: ${policy.requireLocalBinary}`
+        );
+      });
+    }
     for (const path of requestedPaths) {
       const target = await this.resolvePath(path, "read", true);
       const stat = await lstat(target.absolute);
@@ -1059,7 +1620,13 @@ export class UtilityToolBroker {
       }
       safeArgv.push(relativePath(cwd.absolute, target.absolute));
     }
-    const result = await this.runBounded(safeArgv, cwd.absolute);
+    const result = await this.runBounded(
+      safeArgv,
+      cwd.absolute,
+      policy.executable === "npx"
+        ? { NPM_CONFIG_OFFLINE: "true", NPM_CONFIG_YES: "false" }
+        : {}
+    );
     return this.commandResult(result);
   }
 
@@ -1137,13 +1704,19 @@ export class UtilityToolBroker {
       preimages,
       ...(summary === undefined ? {} : { summary }),
     };
+    const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
     await writeFile(patchPath, patch, { encoding: "utf8", flag: "wx" });
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+    await writeFile(manifestPath, manifestText, {
       encoding: "utf8",
       flag: "wx",
     });
     return {
-      artifact: { manifestPath, path: patchPath, sha256: hash(patch) },
+      artifact: {
+        manifestPath,
+        manifestSha256: hash(manifestText),
+        path: patchPath,
+        sha256: hash(patch),
+      },
       data: { preimages, summary, targets },
     };
   }

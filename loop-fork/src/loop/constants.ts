@@ -93,7 +93,6 @@ Environment:
   LOOP_GOVERNESS_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
   LOOP_GOVERNESS_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
   LOOP_GOVERNESS_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path
-  OPENROUTER_API_KEY=<secret>                Enable the default lower-agent tier (never forwarded to tools)
   LOOP_UTILITY_API_KEY_FILE=<path>           Utility key file (default: ~/.config/loop/openrouter.key; requires mode 0600)
   LOOP_UTILITY_URL=<url>                     Utility OpenAI-compatible chat endpoint (localhost needs no key)
   LOOP_UTILITY_MODEL=<model>                 Utility model (default: z-ai/glm-5.2)
@@ -102,6 +101,7 @@ Environment:
   LOOP_UTILITY_PROVIDER_SORT=<strategy>      balanced, price, throughput, latency, or tool-call-quality
   LOOP_UTILITY_COST_QUALITY=<0..10>          Workspace cost/quality preference (default: 7)
   LOOP_UTILITY_ALLOWED_TIERS=<patterns>      Comma-separated tier wildcard allowlist
+  LOOP_UTILITY_MAX_RUN_USD=<amount>          Utility run cost cap including active reservations (default: 0.25)
   LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for governess RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})
   LOOP_USAGE_TRACKER_SECRET=<secret>        Bearer token for Usage Tracker /stats (falls back to USAGE_TRACKER_SECRET)
 

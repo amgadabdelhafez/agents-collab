@@ -28,8 +28,9 @@ new framework?
   enables `npx vitest run` must also require a locally installed Vitest binary
   and execute npm offline to preserve the utility tier's no-open-world boundary.
 - Repository policy JSON: a small checked/configured literal-prefix file is
-  easier to audit than shell strings and lets Harvto opt into
-  `npx vitest run` without broadening every repository's defaults.
+  easier to audit than shell strings. Harvto's exact local-only
+  `npx vitest run <file>` form is safe enough as a built-in, while policy JSON
+  remains available for other repository-specific literal prefixes.
 
 ## Open-Source Patterns
 

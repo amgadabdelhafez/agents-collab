@@ -233,6 +233,7 @@ const pairedBridgeGuidance = (
     return [
       `Your bridge MCP server is "${serverName}". Use ${quotedClaudeTmuxBridgeTool(serverName, "send_message")} with target: "${target}" for ${peer}-facing messages, including replies to inbound ${peer} channel messages; do not send ${peer}-facing responses as a human-facing message.`,
       `Before spending full-agent context on a clearly bounded inspect, small edit, or focused command subtask, submit it through ${quotedClaudeTmuxBridgeTool(serverName, "route_task")}. Keep architecture, product decisions, destructive work, and ambiguous scope with the main pair.`,
+      `For a returned utility edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
       `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
     ].join("\n");
   }
@@ -240,6 +241,7 @@ const pairedBridgeGuidance = (
   return [
     `Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with target: "${target}" for ${peer}-facing messages, not a human-facing message.`,
     `Before spending full-agent context on a clearly bounded inspect, small edit, or focused command subtask, submit it through ${quotedBridgeTool(agent, "route_task")}. Keep architecture, product decisions, destructive work, and ambiguous scope with the main pair.`,
+    `For a returned utility edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
     `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
   ].join("\n");
 };

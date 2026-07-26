@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -13,6 +14,8 @@ import { serve } from "bun";
 import { readBridgeEvents } from "../../src/loop/bridge-store";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
+  applyUtilityJobPatch,
+  buildUtilityWorkerEnvironment,
   processPendingUtilityRoutes,
   renderUtilityPane,
   resolveUtilityRuntimeConfig,
@@ -25,6 +28,89 @@ import {
   readUtilityJob,
   transitionUtilityJob,
 } from "../../src/loop/utility-store";
+import { createUtilityToolBroker } from "../../src/loop/utility-tools";
+
+const completedEditProposal = async (
+  repoRoot: string,
+  runDir: string,
+  jobId: string
+): Promise<{
+  manifestPath: string;
+  manifestSha256: string;
+  patchPath: string;
+  patchSha256: string;
+}> => {
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repoRoot, "src", "sample.ts"), "export const n = 1;\n");
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["propose one guarded patch"],
+    authority: {},
+    id: jobId,
+    kind: "edit",
+    objective: "Increment the sample value",
+    readScope: ["src/sample.ts"],
+    requester: "claude",
+    requiredCapabilities: ["inspect", "scoped-edit"],
+    risk: "low",
+    writeScope: ["src/sample.ts"],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 30);
+  transitionUtilityJob(runDir, jobId, "routed-utility", { routeEpoch: 30 });
+  claimUtilityJob(runDir, 30, { jobId, workerPid: 6060 });
+  transitionUtilityJob(runDir, jobId, "running");
+  const broker = await createUtilityToolBroker({
+    artifactDir: `.loop/runs/apply/utility/artifacts/${jobId}`,
+    commandAllowlist: [],
+    readScopes: ["src/sample.ts"],
+    repoRoot,
+    writeScopes: ["src/sample.ts"],
+  });
+  const patch = [
+    "diff --git a/src/sample.ts b/src/sample.ts",
+    "--- a/src/sample.ts",
+    "+++ b/src/sample.ts",
+    "@@ -1 +1 @@",
+    "-export const n = 1;",
+    "+export const n = 2;",
+    "",
+  ].join("\n");
+  const proposal = await broker.execute({
+    arguments: { patch, summary: "increment sample" },
+    name: "propose_patch",
+  });
+  if (!(proposal.ok && proposal.artifact)) {
+    throw new Error("failed to create guarded patch fixture");
+  }
+  transitionUtilityJob(runDir, jobId, "completed", {
+    result: {
+      artifactRefs: [
+        {
+          kind: "diff",
+          manifestPath: proposal.artifact.manifestPath,
+          manifestSha256: proposal.artifact.manifestSha256,
+          path: proposal.artifact.path,
+          sha256: proposal.artifact.sha256,
+        },
+      ],
+      checks: [],
+      filesChanged: [],
+      status: "completed",
+      summary: "guarded patch proposed",
+    },
+  });
+  return {
+    manifestPath: proposal.artifact.manifestPath ?? "",
+    manifestSha256: proposal.artifact.manifestSha256 ?? "",
+    patchPath: proposal.artifact.path,
+    patchSha256: proposal.artifact.sha256,
+  };
+};
 
 test("OpenRouter GLM is the default but remains disabled without a credential", () => {
   const config = resolveUtilityRuntimeConfig({
@@ -33,6 +119,7 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.model).toBe("z-ai/glm-5.2");
   expect(config.endpoint).toBe("https://openrouter.ai/api/v1/chat/completions");
   expect(config.enabled).toBe(false);
+  expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
 });
 
@@ -43,13 +130,104 @@ test("a mode-0600 key file enables the tier without exporting the secret", () =>
   try {
     expect(
       resolveUtilityRuntimeConfig({ LOOP_UTILITY_API_KEY_FILE: keyFile })
-    ).toMatchObject({ apiKey: "test-secret", enabled: true });
+    ).toMatchObject({
+      apiKey: "test-secret",
+      availability: { code: "ready-key-file" },
+      enabled: true,
+    });
     chmodSync(keyFile, 0o644);
     expect(
       resolveUtilityRuntimeConfig({ LOOP_UTILITY_API_KEY_FILE: keyFile })
-    ).toMatchObject({ enabled: false });
+    ).toMatchObject({
+      availability: {
+        code: "key-file-permissions",
+        message: expect.stringContaining("chmod 600"),
+      },
+      enabled: false,
+    });
   } finally {
     rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("detached utility worker environment is allowlist-built, not inherited", () => {
+  expect(
+    buildUtilityWorkerEnvironment({
+      HOME: "/Users/example",
+      LOOP_UTILITY_API_KEY: "direct-secret",
+      LOOP_UTILITY_API_KEY_FILE: "/safe/openrouter.key",
+      LOOP_UTILITY_MODEL: "local-model",
+      OPENROUTER_API_KEY: "openrouter-secret",
+      PATH: "/bin",
+      RANDOM_TOKEN: "unrelated-secret",
+    })
+  ).toEqual({
+    CI: "1",
+    HOME: "/Users/example",
+    LOOP_UTILITY_API_KEY_FILE: "/safe/openrouter.key",
+    LOOP_UTILITY_MODEL: "local-model",
+    NO_COLOR: "1",
+    PATH: "/bin",
+  });
+});
+
+test("governess passes only the minimal key-file worker environment", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-worker-env-"));
+  const runDir = join(repoRoot, ".loop", "runs", "worker-env-run");
+  const keyFile = join(repoRoot, "openrouter.key");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(keyFile, "file-secret\n", { mode: 0o600 });
+  appendUtilityRouteRequest(
+    runDir,
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["inspect"],
+      authority: {},
+      id: "worker-env-job",
+      kind: "inspect",
+      objective: "Inspect one file",
+      readScope: ["src"],
+      requester: "claude",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    })
+  );
+  let childEnv: NodeJS.ProcessEnv | undefined;
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 15,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      {
+        HOME: "/Users/example",
+        LOOP_UTILITY_API_KEY: "direct-secret",
+        LOOP_UTILITY_API_KEY_FILE: keyFile,
+        LOOP_UTILITY_MODEL: "z-ai/glm-5.2",
+        OPENROUTER_API_KEY: "openrouter-secret",
+        PATH: "/bin",
+        RANDOM_TOKEN: "unrelated-secret",
+      },
+      {
+        spawnWorker: (input) => {
+          childEnv = input.env;
+          return true;
+        },
+      }
+    );
+    expect(childEnv).toEqual({
+      CI: "1",
+      HOME: "/Users/example",
+      LOOP_UTILITY_API_KEY_FILE: keyFile,
+      LOOP_UTILITY_MODEL: "z-ai/glm-5.2",
+      NO_COLOR: "1",
+      PATH: "/bin",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 
@@ -97,6 +275,111 @@ test("governess route processing dispatches eligible work without provider I/O",
       decision: { target: "utility", tierId: "utility-default" },
       state: "routed-utility",
     });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("active estimate-less jobs cannot reserve beyond the run cost cap", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-run-budget-"));
+  const runDir = join(repoRoot, ".loop", "runs", "budget-run");
+  mkdirSync(runDir, { recursive: true });
+  for (const id of ["budget-a", "budget-b", "budget-c"]) {
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["inspect one scope"],
+        authority: {},
+        id,
+        kind: "inspect",
+        objective: `Inspect ${id}`,
+        readScope: ["src"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+  }
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 18,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_UTILITY_ENABLED: "1",
+        LOOP_UTILITY_MAX_JOB_USD: "0.05",
+        LOOP_UTILITY_MAX_RUN_USD: "0.10",
+        LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
+      },
+      {
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return true;
+        },
+      }
+    );
+
+    expect(spawned).toEqual(["budget-a", "budget-b"]);
+    expect(readUtilityJob(runDir, "budget-c")).toMatchObject({
+      decision: { reason: "budget-exceeded", target: "driver" },
+      state: "routed-driver",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe key diagnostics persist in route status and the observer pane", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-diagnostic-"));
+  const runDir = join(repoRoot, ".loop", "runs", "diagnostic-run");
+  const keyFile = join(repoRoot, "openrouter.key");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(keyFile, "never-render-this-secret\n", { mode: 0o644 });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["inspect one scope"],
+    authority: {},
+    id: "diagnostic-job",
+    kind: "inspect",
+    objective: "Inspect configuration",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "codex",
+        epoch: 19,
+        peer: "claude",
+        repoRoot,
+        runDir,
+      },
+      { LOOP_UTILITY_API_KEY_FILE: keyFile }
+    );
+
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      decision: {
+        detail: expect.stringContaining("chmod 600"),
+        reason: "utility-unavailable",
+        target: "driver",
+      },
+      state: "routed-driver",
+    });
+    const pane = renderUtilityPane(runDir, {
+      LOOP_UTILITY_API_KEY_FILE: keyFile,
+    });
+    expect(pane).toContain("driver/utility-unavailable");
+    expect(pane).toContain("chmod 600");
+    expect(pane).not.toContain("never-render-this-secret");
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -185,6 +468,260 @@ test("an unclaimed routed job fails closed after its claim deadline", async () =
         status: "failed",
       },
       state: "failed",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("a dead claimed worker fails immediately and releases its write scope", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-dead-worker-"));
+  const runDir = join(repoRoot, ".loop", "runs", "dead-worker-run");
+  mkdirSync(runDir, { recursive: true });
+  for (const id of ["dead-edit", "replacement-edit"]) {
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["propose patch"],
+        authority: {},
+        id,
+        kind: "edit",
+        objective: `Edit ${id}`,
+        readScope: ["src/shared.ts"],
+        requester: "codex",
+        requiredCapabilities: ["scoped-edit"],
+        risk: "low",
+        writeScope: ["src/shared.ts"],
+      })
+    );
+  }
+  activateUtilityEpoch(runDir, 20);
+  transitionUtilityJob(runDir, "dead-edit", "routed-utility", {
+    routeEpoch: 20,
+  });
+  claimUtilityJob(runDir, 20, {
+    jobId: "dead-edit",
+    workerId: "utility-4242",
+    workerPid: 4242,
+  });
+  transitionUtilityJob(runDir, "dead-edit", "running");
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "codex",
+        epoch: 20,
+        peer: "claude",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_UTILITY_ENABLED: "1",
+        LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
+      },
+      {
+        isWorkerAlive: () => false,
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return true;
+        },
+      }
+    );
+    expect(readUtilityJob(runDir, "dead-edit")).toMatchObject({
+      result: {
+        blocker: "utility worker process is no longer alive",
+        status: "failed",
+      },
+      state: "failed",
+    });
+    expect(readUtilityJob(runDir, "replacement-edit")?.state).toBe(
+      "routed-utility"
+    );
+    expect(spawned).toEqual(["replacement-edit"]);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("a live worker remains claimed before its external runtime deadline", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-live-worker-"));
+  const runDir = join(repoRoot, ".loop", "runs", "live-worker-run");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["inspect"],
+    authority: {},
+    id: "live-worker",
+    kind: "inspect",
+    objective: "Inspect one file",
+    readScope: ["src"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 21);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    routeEpoch: 21,
+  });
+  claimUtilityJob(runDir, 21, {
+    at: "2026-07-26T16:00:00.000Z",
+    jobId: request.id,
+    workerPid: 4343,
+  });
+  transitionUtilityJob(runDir, request.id, "running", {
+    at: "2026-07-26T16:00:01.000Z",
+  });
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 21,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      { LOOP_UTILITY_MAX_RUNTIME_MS: "10000" },
+      {
+        isWorkerAlive: () => true,
+        now: () => Date.parse("2026-07-26T16:00:05.000Z"),
+      }
+    );
+    expect(readUtilityJob(runDir, request.id)?.state).toBe("running");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("governess externally terminates a live worker past its runtime", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-runtime-kill-"));
+  const runDir = join(repoRoot, ".loop", "runs", "runtime-kill-run");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["inspect"],
+    authority: {},
+    id: "timed-out-worker",
+    kind: "inspect",
+    objective: "Inspect one file",
+    readScope: ["src"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 22);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    routeEpoch: 22,
+  });
+  claimUtilityJob(runDir, 22, {
+    at: "2026-07-26T16:00:00.000Z",
+    jobId: request.id,
+    workerPid: 4444,
+  });
+  transitionUtilityJob(runDir, request.id, "running", {
+    at: "2026-07-26T16:00:01.000Z",
+  });
+  const terminated: number[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 22,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      { LOOP_UTILITY_MAX_RUNTIME_MS: "1000" },
+      {
+        isWorkerAlive: () => true,
+        now: () => Date.parse("2026-07-26T16:00:05.000Z"),
+        terminateWorker: (pid) => {
+          terminated.push(pid);
+          return true;
+        },
+      }
+    );
+    expect(terminated).toEqual([4444]);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        blocker: "utility job exceeded its runtime limit and was terminated",
+      },
+      state: "failed",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("terminal completion racing the reaper is preserved", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-reaper-race-"));
+  const runDir = join(repoRoot, ".loop", "runs", "reaper-race-run");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["inspect"],
+    authority: {},
+    id: "racing-worker",
+    kind: "inspect",
+    objective: "Inspect one file",
+    readScope: ["src"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 23);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    routeEpoch: 23,
+  });
+  claimUtilityJob(runDir, 23, {
+    at: "2026-07-26T16:00:00.000Z",
+    jobId: request.id,
+    workerPid: 4545,
+  });
+  transitionUtilityJob(runDir, request.id, "running", {
+    at: "2026-07-26T16:00:01.000Z",
+  });
+  let completed = false;
+  const terminated: number[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 23,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      { LOOP_UTILITY_MAX_RUNTIME_MS: "1000" },
+      {
+        isWorkerAlive: () => {
+          if (!completed) {
+            completed = true;
+            transitionUtilityJob(runDir, request.id, "completed", {
+              result: {
+                artifactRefs: [],
+                checks: [],
+                filesChanged: [],
+                status: "completed",
+                summary: "completed during reaper probe",
+              },
+            });
+          }
+          return true;
+        },
+        now: () => Date.parse("2026-07-26T16:00:05.000Z"),
+        terminateWorker: (pid) => {
+          terminated.push(pid);
+          return true;
+        },
+      }
+    );
+    expect(terminated).toEqual([]);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: { summary: "completed during reaper probe" },
+      state: "completed",
     });
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
@@ -283,7 +820,7 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
     expect(pane).toContain("NOW  inspect- pending-route");
     expect(pane).toContain("TOOL  search_repo  ok  12ms");
     expect(pane).toContain("LAST  completed  1,234 tok  $0.0044");
-    expect(pane).toContain("governess routes; observer pane is read-only");
+    expect(pane).toContain("CONFIG  key file loading is disabled");
   } finally {
     rmSync(runDir, { recursive: true, force: true });
   }
@@ -310,15 +847,27 @@ test("a new governess epoch fences an orphaned utility claim", async () => {
   transitionUtilityJob(runDir, request.id, "routed-utility", {
     routeEpoch: 4,
   });
-  claimUtilityJob(runDir, 4, { jobId: request.id });
+  claimUtilityJob(runDir, 4, { jobId: request.id, workerPid: 4646 });
+  const terminated: number[] = [];
   try {
-    await processPendingUtilityRoutes({
-      currentDriver: "codex",
-      epoch: 5,
-      peer: "claude",
-      repoRoot,
-      runDir,
-    });
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "codex",
+        epoch: 5,
+        peer: "claude",
+        repoRoot,
+        runDir,
+      },
+      {},
+      {
+        isWorkerAlive: () => true,
+        terminateWorker: (pid) => {
+          terminated.push(pid);
+          return true;
+        },
+      }
+    );
+    expect(terminated).toEqual([4646]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
         blocker: "utility claim belongs to a stale governess epoch",
@@ -365,6 +914,101 @@ test("peer routing is relative to the requester, not the current driver", async 
         }),
       ])
     );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("a full agent applies a completed utility patch with pre/postimage journal proof", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-guarded-apply-"));
+  const runDir = join(repoRoot, ".loop", "runs", "apply");
+  try {
+    const proposal = await completedEditProposal(
+      repoRoot,
+      runDir,
+      "guarded-edit"
+    );
+    const applied = await applyUtilityJobPatch(
+      runDir,
+      "guarded-edit",
+      proposal.patchSha256,
+      "codex"
+    );
+    expect(applied.status).toBe("applied");
+    expect(readFileSync(join(repoRoot, "src", "sample.ts"), "utf8")).toBe(
+      "export const n = 2;\n"
+    );
+    const expectedPostimage = createHash("sha256")
+      .update("export const n = 2;\n")
+      .digest("hex");
+    expect(readUtilityJob(runDir, "guarded-edit")?.application).toMatchObject({
+      appliedBy: "codex",
+      patchSha256: proposal.patchSha256,
+      postimages: [{ path: "src/sample.ts", sha256: expectedPostimage }],
+    });
+
+    const repeated = await applyUtilityJobPatch(
+      runDir,
+      "guarded-edit",
+      proposal.patchSha256,
+      "claude"
+    );
+    expect(repeated.status).toBe("already-applied");
+
+    writeFileSync(join(repoRoot, "src", "sample.ts"), "later drift\n");
+    await expect(
+      applyUtilityJobPatch(
+        runDir,
+        "guarded-edit",
+        proposal.patchSha256,
+        "claude"
+      )
+    ).rejects.toThrow("postimage drift detected");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("guarded patch application refuses wrong hashes and proposal-time drift", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-guarded-drift-"));
+  const runDir = join(repoRoot, ".loop", "runs", "apply");
+  try {
+    const proposal = await completedEditProposal(
+      repoRoot,
+      runDir,
+      "drifted-edit"
+    );
+    await expect(
+      applyUtilityJobPatch(
+        runDir,
+        "drifted-edit",
+        "0".repeat(64),
+        "codex"
+      )
+    ).rejects.toThrow("missing or ambiguous");
+
+    const originalManifest = readFileSync(proposal.manifestPath, "utf8");
+    writeFileSync(proposal.manifestPath, `${originalManifest} `);
+    await expect(
+      applyUtilityJobPatch(
+        runDir,
+        "drifted-edit",
+        proposal.patchSha256,
+        "codex"
+      )
+    ).rejects.toThrow("manifest hash does not match");
+    writeFileSync(proposal.manifestPath, originalManifest);
+
+    writeFileSync(join(repoRoot, "src", "sample.ts"), "concurrent edit\n");
+    await expect(
+      applyUtilityJobPatch(
+        runDir,
+        "drifted-edit",
+        proposal.patchSha256,
+        "codex"
+      )
+    ).rejects.toThrow("preimage drift detected");
+    expect(readUtilityJob(runDir, "drifted-edit")?.application).toBeUndefined();
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

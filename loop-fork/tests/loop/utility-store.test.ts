@@ -16,6 +16,7 @@ import {
   claimUtilityJob,
   readPendingRouteRequests,
   readUtilityJob,
+  recordUtilityPatchApplication,
   transitionUtilityJob,
   utilityRunPaths,
 } from "../../src/loop/utility-store";
@@ -132,10 +133,15 @@ test("claims a routed job with a durable governess epoch", () => {
   const claimed = claimUtilityJob(runDir, 12, {
     at: "2026-07-25T10:02:00.000Z",
     workerId: "worker-a",
+    workerPid: 4321,
   });
 
   expect(claimed?.state).toBe("claimed");
-  expect(claimed?.claim).toEqual({ epoch: 12, workerId: "worker-a" });
+  expect(claimed?.claim).toEqual({
+    epoch: 12,
+    workerId: "worker-a",
+    workerPid: 4321,
+  });
   expect(readUtilityJob(runDir, "job-1")?.claim?.epoch).toBe(12);
   expect(claimUtilityJob(runDir, 12)).toBeUndefined();
 });
@@ -203,6 +209,51 @@ test("persists compact results and makes terminal jobs immutable", () => {
       },
     })
   ).toThrow("terminal");
+});
+
+test("journals a patch application after completion without reopening the job", () => {
+  const runDir = makeRunDir();
+  routeToUtility(runDir);
+  claimUtilityJob(runDir, 12, { workerPid: 5151 });
+  transitionUtilityJob(runDir, "job-1", "running");
+  transitionUtilityJob(runDir, "job-1", "completed", {
+    result: {
+      artifactRefs: [
+        {
+          kind: "diff",
+          path: "/repo/.loop/utility-artifacts/job-1/patch.patch",
+          sha256: "a".repeat(64),
+        },
+      ],
+      checks: [],
+      filesChanged: [],
+      status: "completed",
+      summary: "patch proposed",
+    },
+  });
+  const application = {
+    appliedAt: "2026-07-26T16:30:00.000Z",
+    appliedBy: "claude" as const,
+    manifestPath: ".loop/utility-artifacts/job-1/patch.json",
+    manifestSha256: "d".repeat(64),
+    patchPath: ".loop/utility-artifacts/job-1/patch.patch",
+    patchSha256: "a".repeat(64),
+    postimages: [{ path: "src/parser.ts", sha256: "c".repeat(64) }],
+    preimages: [{ path: "src/parser.ts", sha256: "b".repeat(64) }],
+  };
+
+  const applied = recordUtilityPatchApplication(
+    runDir,
+    "job-1",
+    application
+  );
+  expect(applied.state).toBe("completed");
+  expect(applied.application).toEqual(application);
+  expect(
+    recordUtilityPatchApplication(runDir, "job-1", application).events.filter(
+      (event) => event.type === "patch-applied"
+    )
+  ).toHaveLength(1);
 });
 
 test("fails closed on a malformed journal", () => {

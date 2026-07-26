@@ -1,8 +1,11 @@
 import { expect, mock, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -12,7 +15,9 @@ import { join } from "node:path";
 import {
   type CommandRequest,
   createUtilityToolBroker,
+  loadUtilityCommandAllowlist,
   scrubUtilityEnvironment,
+  UTILITY_REPOSITORY_POLICY_PATH,
   UTILITY_TOOL_DEFINITIONS,
 } from "../../src/loop/utility-tools";
 
@@ -178,6 +183,244 @@ test("runs literal allowlisted argv with a scrubbed environment", async () => {
   });
 });
 
+test("loads a repository policy for local offline npx vitest checks", async () => {
+  await withRepo(async (root) => {
+    await mkdir(join(root, ".loop"), { recursive: true });
+    await mkdir(join(root, "node_modules", ".bin"), { recursive: true });
+    const vitest = join(root, "node_modules", ".bin", "vitest");
+    await writeFile(vitest, "#!/bin/sh\nexit 0\n");
+    await chmod(vitest, 0o755);
+    await writeFile(
+      join(root, UTILITY_REPOSITORY_POLICY_PATH),
+      JSON.stringify({
+        commandAllowlist: [
+          {
+            executable: "npx",
+            prefixes: [["vitest", "run"]],
+            requireLocalBinary: "vitest",
+          },
+        ],
+        version: 1,
+      })
+    );
+    let captured: CommandRequest | undefined;
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["src", "tests"],
+        repoRoot: root,
+        writeScopes: ["src"],
+      },
+      {
+        runCommand: async (request) => {
+          captured = request;
+          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+        },
+      }
+    );
+    const result = await broker.execute({
+      arguments: {
+        argv: ["npx", "vitest", "run", "tests/example.test.ts"],
+        cwd: "tests",
+      },
+      name: "run_check",
+    });
+    expect(result).toMatchObject({ exitCode: 0, ok: true });
+    expect(captured?.argv).toEqual([
+      "npx",
+      "vitest",
+      "run",
+      "example.test.ts",
+    ]);
+    expect(captured?.env).toMatchObject({
+      CI: "1",
+      NPM_CONFIG_OFFLINE: "true",
+      NPM_CONFIG_YES: "false",
+      NO_COLOR: "1",
+    });
+
+    const option = await broker.execute({
+      arguments: {
+        argv: ["npx", "vitest", "run", "--config", "tests/example.test.ts"],
+      },
+      name: "run_check",
+    });
+    expect(option.error?.code).toBe("command_denied");
+  });
+});
+
+test("supports a local offline vitest check without repository mutation", async () => {
+  await withRepo(async (root) => {
+    await mkdir(join(root, "node_modules", ".bin"), { recursive: true });
+    const vitest = join(root, "node_modules", ".bin", "vitest");
+    await writeFile(vitest, "#!/bin/sh\nexit 0\n");
+    await chmod(vitest, 0o755);
+    let captured: CommandRequest | undefined;
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["tests"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: async (request) => {
+          captured = request;
+          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+        },
+      }
+    );
+
+    const result = await broker.execute({
+      arguments: {
+        argv: ["npx", "vitest", "run", "tests/example.test.ts"],
+        cwd: "tests",
+      },
+      name: "run_check",
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, ok: true });
+    expect(captured?.argv).toEqual([
+      "npx",
+      "vitest",
+      "run",
+      "example.test.ts",
+    ]);
+    expect(captured?.env).toMatchObject({
+      NPM_CONFIG_OFFLINE: "true",
+      NPM_CONFIG_YES: "false",
+    });
+  });
+});
+
+test("resolves a monorepo package-local vitest from the declared cwd", async () => {
+  await withRepo(async (root) => {
+    const packageRoot = join(root, "packages", "ar-prototype");
+    await mkdir(join(packageRoot, "node_modules", ".bin"), { recursive: true });
+    await mkdir(join(packageRoot, "tests"), { recursive: true });
+    await writeFile(join(packageRoot, "tests", "yaw.test.ts"), "export {};\n");
+    const vitest = join(packageRoot, "node_modules", ".bin", "vitest");
+    await writeFile(vitest, "#!/bin/sh\nexit 0\n");
+    await chmod(vitest, 0o755);
+    let captured: CommandRequest | undefined;
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["packages/ar-prototype"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: async (request) => {
+          captured = request;
+          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+        },
+      }
+    );
+
+    const result = await broker.execute({
+      arguments: {
+        argv: [
+          "npx",
+          "vitest",
+          "run",
+          "packages/ar-prototype/tests/yaw.test.ts",
+        ],
+        cwd: "packages/ar-prototype",
+      },
+      name: "run_check",
+    });
+
+    expect(result).toMatchObject({ exitCode: 0, ok: true });
+    expect(captured?.argv).toEqual([
+      "npx",
+      "vitest",
+      "run",
+      "tests/yaw.test.ts",
+    ]);
+    expect(captured?.cwd).toBe(await realpath(packageRoot));
+  });
+});
+
+test("repository command policy fails closed when malformed or open-world", async () => {
+  await withRepo(async (root) => {
+    await mkdir(join(root, ".loop"), { recursive: true });
+    const policyPath = join(root, UTILITY_REPOSITORY_POLICY_PATH);
+    await writeFile(policyPath, "{not-json");
+    await expect(loadUtilityCommandAllowlist(root)).rejects.toThrow(
+      "not valid JSON"
+    );
+
+    await writeFile(
+      policyPath,
+      JSON.stringify({
+        commandAllowlist: [
+          { executable: "npx", prefixes: [["vitest", "run"]] },
+        ],
+        version: 1,
+      })
+    );
+    await expect(loadUtilityCommandAllowlist(root)).rejects.toThrow(
+      "requires requireLocalBinary"
+    );
+
+    await writeFile(
+      policyPath,
+      JSON.stringify({
+        commandAllowlist: [
+          { executable: "sh", prefixes: [["-c"]] },
+        ],
+        version: 1,
+      })
+    );
+    await expect(loadUtilityCommandAllowlist(root)).rejects.toThrow(
+      "executable is not allowed"
+    );
+  });
+});
+
+test("repository npx policy refuses a missing local binary", async () => {
+  await withRepo(async (root) => {
+    await mkdir(join(root, ".loop"), { recursive: true });
+    await writeFile(
+      join(root, UTILITY_REPOSITORY_POLICY_PATH),
+      JSON.stringify({
+        commandAllowlist: [
+          {
+            executable: "npx",
+            prefixes: [["vitest", "run"]],
+            requireLocalBinary: "vitest",
+          },
+        ],
+        version: 1,
+      })
+    );
+    const runner = mock(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "should not run",
+    }));
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["tests"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      { runCommand: runner }
+    );
+    const result = await broker.execute({
+      arguments: {
+        argv: ["npx", "vitest", "run", "tests/example.test.ts"],
+        cwd: "tests",
+      },
+      name: "run_check",
+    });
+    expect(result.error?.code).toBe("command_denied");
+    expect(runner).not.toHaveBeenCalled();
+  });
+});
+
 test("rejects timed out and oversized command output", async () => {
   await withRepo(async (root) => {
     const timeoutBroker = await brokerFor(root, async () => ({
@@ -243,6 +486,213 @@ test("stores a validated patch proposal without modifying the source", async () 
       name: "propose_patch",
     });
     expect(dependency.error?.code).toBe("scope_denied");
+  });
+});
+
+test("guarded apply revalidates write scope and dependency targets", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "package.json"), "{}\n");
+    const artifactDir = join(root, ".utility-artifacts");
+    await mkdir(artifactDir);
+    const patchPath = join(artifactDir, "dependency.patch");
+    const manifestPath = join(artifactDir, "dependency.json");
+    const patch = [
+      "diff --git a/package.json b/package.json",
+      "--- a/package.json",
+      "+++ b/package.json",
+      "@@ -1 +1 @@",
+      "-{}",
+      '+{"changed":true}',
+      "",
+    ].join("\n");
+    await writeFile(patchPath, patch);
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        createdAt: "2026-07-26T16:00:00.000Z",
+        patchPath,
+        preimages: [
+          {
+            path: "package.json",
+            sha256: createHash("sha256").update("{}\n").digest("hex"),
+          },
+        ],
+      })
+    );
+    const broker = await createUtilityToolBroker({
+      artifactDir: ".utility-artifacts",
+      commandAllowlist: [],
+      readScopes: ["src"],
+      repoRoot: root,
+      writeScopes: ["package.json"],
+    });
+    await expect(
+      broker.applyPatchProposal({
+        appliedBy: "codex",
+        expectedManifestSha256: createHash("sha256")
+          .update(await readFile(manifestPath))
+          .digest("hex"),
+        expectedPatchSha256: createHash("sha256").update(patch).digest("hex"),
+        manifestPath,
+        patchPath,
+      })
+    ).rejects.toThrow("Dependency file denied");
+
+    const scopePatchPath = join(artifactDir, "scope.patch");
+    const scopeManifestPath = join(artifactDir, "scope.json");
+    const scopePatch = [
+      "diff --git a/tests/example.test.ts b/tests/example.test.ts",
+      "--- a/tests/example.test.ts",
+      "+++ b/tests/example.test.ts",
+      "@@ -1 +1 @@",
+      "-export {};",
+      "+export const changed = true;",
+      "",
+    ].join("\n");
+    await writeFile(scopePatchPath, scopePatch);
+    await writeFile(
+      scopeManifestPath,
+      JSON.stringify({
+        createdAt: "2026-07-26T16:00:00.000Z",
+        patchPath: scopePatchPath,
+        preimages: [
+          {
+            path: "tests/example.test.ts",
+            sha256: createHash("sha256")
+              .update("export {};\n")
+              .digest("hex"),
+          },
+        ],
+      })
+    );
+    await expect(
+      broker.applyPatchProposal({
+        appliedBy: "codex",
+        expectedManifestSha256: createHash("sha256")
+          .update(await readFile(scopeManifestPath))
+          .digest("hex"),
+        expectedPatchSha256: createHash("sha256")
+          .update(scopePatch)
+          .digest("hex"),
+        manifestPath: scopeManifestPath,
+        patchPath: scopePatchPath,
+      })
+    ).rejects.toThrow("outside declared write scope");
+  });
+});
+
+test("guarded apply refuses symlink escapes from write scope", async () => {
+  await withRepo(async (root) => {
+    const outside = await mkdtemp(join(tmpdir(), "utility-apply-outside-"));
+    try {
+      await writeFile(join(outside, "data.ts"), "export const n = 1;\n");
+      await symlink(outside, join(root, "src", "outside"));
+      const artifactDir = join(root, ".utility-artifacts");
+      await mkdir(artifactDir);
+      const patchPath = join(artifactDir, "escape.patch");
+      const manifestPath = join(artifactDir, "escape.json");
+      const patch = [
+        "diff --git a/src/outside/data.ts b/src/outside/data.ts",
+        "--- a/src/outside/data.ts",
+        "+++ b/src/outside/data.ts",
+        "@@ -1 +1 @@",
+        "-export const n = 1;",
+        "+export const n = 2;",
+        "",
+      ].join("\n");
+      await writeFile(patchPath, patch);
+      await writeFile(
+        manifestPath,
+        JSON.stringify({
+          createdAt: "2026-07-26T16:00:00.000Z",
+          patchPath,
+          preimages: [
+            {
+              path: "src/outside/data.ts",
+              sha256: createHash("sha256")
+                .update("export const n = 1;\n")
+                .digest("hex"),
+            },
+          ],
+        })
+      );
+      const broker = await createUtilityToolBroker({
+        artifactDir: ".utility-artifacts",
+        commandAllowlist: [],
+        readScopes: ["src"],
+        repoRoot: root,
+        writeScopes: ["src"],
+      });
+      await expect(
+        broker.applyPatchProposal({
+          appliedBy: "claude",
+          expectedManifestSha256: createHash("sha256")
+            .update(await readFile(manifestPath))
+            .digest("hex"),
+          expectedPatchSha256: createHash("sha256")
+            .update(patch)
+            .digest("hex"),
+          manifestPath,
+          patchPath,
+        })
+      ).rejects.toThrow("resolves outside repository");
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+});
+
+test("guarded apply refuses an in-repository symlink write-scope escape", async () => {
+  await withRepo(async (root) => {
+    await symlink(join(root, "tests"), join(root, "src", "linked-tests"));
+    const artifactDir = join(root, ".utility-artifacts");
+    await mkdir(artifactDir);
+    const patchPath = join(artifactDir, "scope-link.patch");
+    const manifestPath = join(artifactDir, "scope-link.json");
+    const patch = [
+      "diff --git a/src/linked-tests/example.test.ts b/src/linked-tests/example.test.ts",
+      "--- a/src/linked-tests/example.test.ts",
+      "+++ b/src/linked-tests/example.test.ts",
+      "@@ -1 +1 @@",
+      "-export {};",
+      "+export const escaped = true;",
+      "",
+    ].join("\n");
+    await writeFile(patchPath, patch);
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        createdAt: "2026-07-26T16:00:00.000Z",
+        patchPath,
+        preimages: [
+          {
+            path: "src/linked-tests/example.test.ts",
+            sha256: createHash("sha256")
+              .update("export {};\n")
+              .digest("hex"),
+          },
+        ],
+      })
+    );
+    const broker = await createUtilityToolBroker({
+      artifactDir: ".utility-artifacts",
+      commandAllowlist: [],
+      readScopes: ["src"],
+      repoRoot: root,
+      writeScopes: ["src"],
+    });
+
+    await expect(
+      broker.applyPatchProposal({
+        appliedBy: "codex",
+        expectedManifestSha256: createHash("sha256")
+          .update(await readFile(manifestPath))
+          .digest("hex"),
+        expectedPatchSha256: createHash("sha256").update(patch).digest("hex"),
+        manifestPath,
+        patchPath,
+      })
+    ).rejects.toThrow("outside declared write scope");
   });
 });
 
