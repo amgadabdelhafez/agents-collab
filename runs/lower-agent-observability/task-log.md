@@ -36,3 +36,15 @@
   while keeping routing fail-closed, exact viewport caps for both panes, common
   credential redaction, and compact whole-board prioritization with regressions.
   Final independent verdict is PASS in `eval.json`.
+- 2026-07-26: Integrated feature commit `9e68c06` locally as merge `275677c`;
+  nothing was pushed remotely. Rebuilt the canonical binary at the existing
+  global target (`~/.local/bin/loop` resolves to the canonical checkout) and
+  smoke-checked it. Installed SHA-256 is
+  `168cc657927799c1bc183e66f11f491f7197ad8127122c5fdf4e123869574528`.
+- 2026-07-26: Loop 46 was idle with no queued utility jobs, so only display panes
+  were respawned. Lower-agent `%2` changed PID 22814 -> 96929 and governess `%3`
+  changed PID 22816 -> 96931. Claude `%0` stayed PID 22447 and Codex `%1` stayed
+  PID 22449. The live GLM pane now shows request/tool/response transcript and
+  exact cumulative metrics; the governess pane shows the LOWER row and no
+  Project / Objective / Progress / Next block. Governess state advanced to tick
+  116 after refresh.

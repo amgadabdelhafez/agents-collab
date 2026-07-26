@@ -62,7 +62,7 @@ truth.
       complete with any unrelated baseline failures isolated.
 - [x] A different evaluator records `runs/lower-agent-observability/eval.json`
       before integration.
-- [ ] If loop 46 is still active at release, Claude and Codex pane IDs/PIDs are
+- [x] If loop 46 is still active at release, Claude and Codex pane IDs/PIDs are
       unchanged after refreshing only the two display panes.
 
 ## Non-goals
