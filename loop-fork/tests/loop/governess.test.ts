@@ -1240,7 +1240,7 @@ test("board shows latest bridge messages in both directions", async () => {
   for (const line of visibleBoard
     .split("\n")
     .filter((candidate) => candidate.includes("bridge latest"))) {
-    expect(line.length).toBeLessThanOrEqual(180);
+    expect(line.length).toBeLessThanOrEqual(176);
   }
   expect(result.board).toContain("\x1b[35mclaude");
   expect(result.board).toContain("\x1b[36mcodex");

@@ -2309,7 +2309,7 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
 
 const SPACE_RE = /\s+/;
 const SPACE_GLOBAL_RE = /\s+/g;
-const BRIDGE_LATEST_WIDTH = 64;
+const BRIDGE_LATEST_WIDTH = 54;
 
 const bridgeLatestFor = (
   latest: BridgeLatest,

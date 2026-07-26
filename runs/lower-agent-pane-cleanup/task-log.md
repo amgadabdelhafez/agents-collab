@@ -37,3 +37,6 @@
   unified AGENT row, LLM row, and Progress/Next footer. The status line alone
   wrapped because it rendered zero-only governess message counts; suppressed
   that non-signal segment while preserving nonzero counts.
+- 2026-07-26: The next live capture found only the paired `bridge latest` line
+  wrapping. Reduced each message/action excerpt from 64 to 54 characters and
+  tightened its regression limit from 180 to 176 visible columns.
