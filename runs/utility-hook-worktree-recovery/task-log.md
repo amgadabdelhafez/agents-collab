@@ -28,3 +28,15 @@
   seconds, and delivered exactly one worker result. Governess now shows 9 jobs,
   8 automatic adoptions, and exact skip reasons. Claude PID 56784 and Codex PID
   56786 remained unchanged; only the governess pane was narrowly respawned.
+- 2026-07-26: Live delivery exposed a false-negative acknowledgement: Claude
+  acted on a bridge message, but the project transcript version did not advance
+  during the confirmation window and the active pane had no composer, so the
+  durable message remained pending and was retried. Stopped the in-flight
+  background worker, acknowledged the two already-consumed IDs, and verified
+  the pending queue empty.
+- 2026-07-26: Permanent confirmation now combines project-transcript and Claude
+  hook-journal versions. A post-submit evidence advance with no composer
+  confirms delivery even while Claude is actively processing; a foreign draft
+  remains protected. The exact active-pane regression and full bridge file pass
+  69/69. Canonical rebuilt and background bridge worker restarted as PID 14425;
+  main pane PIDs remain unchanged.
