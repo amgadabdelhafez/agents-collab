@@ -1,10 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  appendFileSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -169,6 +164,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
       [
         JSON.stringify({
           at: "2026-07-26T01:00:02.000Z",
+          durationMs: 12_000,
           jobId: completed.id,
           model: "z-ai/glm-5.2",
           modelCalls: 2,
@@ -185,6 +181,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
         }),
         JSON.stringify({
           at: "2026-07-26T01:01:01.000Z",
+          durationMs: 22_000,
           jobId: failed.id,
           model: "z-ai/glm-5.2",
           modelCalls: 3,
@@ -210,6 +207,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
       failed: 1,
       jobsTotal: 2,
       latestJobId: failed.id,
+      latestState: "failed",
       model: "z-ai/glm-5.2",
       queued: 0,
       usage: {
@@ -226,10 +224,19 @@ test("utility observability totals worker usage and builds a safe transcript", (
     expect(snapshot.transcript.map((entry) => entry.label)).toEqual([
       "CLAUDE→GLM",
       "GLM TOOL",
-      "GLM→MAIN",
+      "GLM OK",
       "CODEX→GLM",
-      "GLM✕MAIN",
+      "GLM FAIL",
     ]);
+    expect(
+      snapshot.transcript.find((entry) => entry.label === "GLM OK")?.usage
+    ).toEqual({
+      costUsd: 0.003,
+      durationMs: 12_000,
+      modelCalls: 2,
+      toolCalls: 1,
+      totalTokens: 1250,
+    });
     const transcript = snapshot.transcript.map((entry) => entry.text).join(" ");
     expect(transcript).toContain("worker token cap exceeded");
     expect(transcript).not.toContain("raw tool output");

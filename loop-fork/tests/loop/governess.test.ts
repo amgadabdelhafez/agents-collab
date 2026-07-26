@@ -1374,7 +1374,7 @@ test("board renders only aggregate dynamic usage tracker windows", async () => {
   );
   const visibleBoard = stripAnsi(result.board);
 
-  expect(visibleBoard).toContain("LIMITS · RESET");
+  expect(visibleBoard).toContain("LIMITS/RESET");
   expect(visibleBoard).toContain("S43/W17 · 2h19m/29h59m");
   expect(visibleBoard).toContain("W31 · 30h46m");
   const quotaRows = visibleBoard.split("\n");
@@ -1489,35 +1489,35 @@ test("board shows input, cached, and output token details", async () => {
   const visibleBoard = stripAnsi(result.board);
 
   expect(visibleBoard).toMatch(
-    /AGENT\s+STATE\s+AGE\s+MODEL\s+RUN\s+CONTEXT · CMP\s+LIMITS · RESET\s+EST RUN \/ H\s+TOKENS I\/C\/O\s+ACT TX\/TH\/TL\s+MSGS \/ BRIDGE/
+    /AGENT\s+STATE\s+AGE\s+MODEL\s+RUN\s+CONTEXT\/CMP\s+LIMITS\/RESET\s+COST\/RATE\s+TOKENS I\/C\/O\s+ACTIVITY\s+MSGS\/TOOLS/
   );
   expect(visibleBoard.match(/^ AGENT/gm) ?? []).toHaveLength(1);
   expect(visibleBoard.match(/^ claude/gm) ?? []).toHaveLength(1);
   expect(visibleBoard.match(/^ codex/gm) ?? []).toHaveLength(1);
   expect(visibleBoard).not.toContain("LAST");
   expect(visibleBoard).not.toContain("OTHER");
-  expect(visibleBoard).toContain("TX/TH/TL");
+  expect(visibleBoard).toContain("ACTIVITY");
   expect(visibleBoard).toContain("med");
   expect(visibleBoard).toContain("fast/2.5x");
   expect(visibleBoard).toContain("TOKENS I/C/O");
-  expect(visibleBoard).toContain("CONTEXT · CMP");
+  expect(visibleBoard).toContain("CONTEXT/CMP");
   expect(visibleBoard).toContain("CMP");
   expect(visibleBoard).not.toContain("C/M");
   expect(visibleBoard).not.toContain("T85");
   expect(visibleBoard).not.toContain("IDLE");
   expect(visibleBoard).not.toContain("WORK");
-  expect(visibleBoard).toContain("EST RUN / H");
-  expect(visibleBoard).toContain("LIMITS · RESET");
+  expect(visibleBoard).toContain("COST/RATE");
+  expect(visibleBoard).toContain("LIMITS/RESET");
   expect(visibleBoard).toMatch(/^ claude.*19 tx12 th3 tl4/m);
   const boardLines = visibleBoard.split("\n");
   const agentHeader = boardLines.find((line) => line.startsWith(" AGENT"));
   const agentRows = boardLines.filter(
     (line) => line.startsWith(" claude") || line.startsWith(" codex")
   );
-  expect(agentHeader?.length).toBeLessThanOrEqual(180);
+  expect(agentHeader?.length).toBeLessThanOrEqual(176);
   expect(agentRows).toHaveLength(2);
   for (const row of agentRows) {
-    expect(row.length).toBeLessThanOrEqual(180);
+    expect(row.length).toBeLessThanOrEqual(176);
     expect(row).not.toContain("…");
   }
   expect(visibleBoard).toContain("both idle total 0s");
@@ -1532,6 +1532,10 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("q4/g64 affine");
   expect(visibleBoard).toContain("256e/8");
   expect(visibleBoard).toContain("pre8 dec32 st2048");
+  const llmLines = boardLines.filter(
+    (line) => line.startsWith(" LLM") || line.startsWith(" m ")
+  );
+  expect(llmLines.every((line) => line.length <= 176)).toBe(true);
   expect(visibleBoard).toContain("temp 0");
   expect(visibleBoard).toContain("max out 1.2k judge+wait / 3.2k summary");
   expect(visibleBoard).not.toContain("idle-both");
@@ -1551,7 +1555,7 @@ test("board shows input, cached, and output token details", async () => {
   expect(result.board).toContain("\x1b[35mbf16");
 });
 
-test("board omits the structured project summary block", async () => {
+test("board uses only Progress and Next from the structured summary", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();
   const working: JudgeOutcome = {
@@ -1567,15 +1571,19 @@ test("board omits the structured project summary block", async () => {
   const states = new Map<Agent, AgentLivenessState>();
   const result = await governessTick(
     states,
-    baseConfig(),
+    baseConfig({ viewportRows: 7 }),
     makeDeps(working, clock, spies),
     { ...freshRunState(), summary }
   );
   const board = stripAnsi(result.board);
   expect(board).not.toContain("Project:");
   expect(board).not.toContain("Objective:");
-  expect(board).not.toContain("Progress:");
-  expect(board).not.toContain("Next:");
+  expect(board).toContain("Progress: hidden progress");
+  expect(board).toContain("Next: hidden next");
+  expect(board.split("\n").slice(-2)).toEqual([
+    " Progress: hidden progress",
+    " Next: hidden next",
+  ]);
 });
 
 test("board uses the recovered summary area for lower-agent metrics", async () => {
@@ -1642,6 +1650,36 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
         },
       })}\n`
     );
+    const latestFailed = createUtilityRouteRequest({
+      acceptanceCriteria: ["show the failure"],
+      authority: {},
+      createdAt: "2099-01-01T00:00:00.000Z",
+      id: "latest-failure",
+      kind: "inspect",
+      objective: "Inspect one later bounded task",
+      readScope: ["src"],
+      requester: "codex",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    });
+    appendUtilityRouteRequest(runDir, latestFailed);
+    transitionUtilityJob(runDir, latestFailed.id, "routed-utility", {
+      at: "2099-01-01T00:00:00.100Z",
+      decision: { reason: "utility-eligible", target: "utility" },
+      routeEpoch: 1,
+    });
+    transitionUtilityJob(runDir, latestFailed.id, "failed", {
+      at: "2099-01-01T00:00:01.000Z",
+      result: {
+        artifactRefs: [],
+        blocker: "bounded failure",
+        checks: [],
+        filesChanged: [],
+        status: "failed",
+        summary: "Failed closed.",
+      },
+    });
     const result = await governessTick(
       new Map<Agent, AgentLivenessState>(),
       baseConfig({ runDir }),
@@ -1650,13 +1688,15 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
     );
     const board = stripAnsi(result.board);
 
+    expect(board.match(/^ AGENT/gm) ?? []).toHaveLength(1);
+    expect(board).not.toContain("LOWER");
     expect(board).toMatch(
-      /LOWER\s+STATE\s+MODEL\s+JOBS A\/Q\/D\/F\s+CALLS\s+TOOLS\s+TOKENS I\/C\/O\s+COST\s+DETAIL/
+      /utility\s+● idle\s+—\s+glm-5\.2\s+1ok\/1fail\s+—\s+—\s+\$0\.0123\/—\s+7k i5k c2k o2k\s+2j 4c 3tl\s+latest-f fail/
     );
-    expect(board).toMatch(
-      /utility\s+● idle\s+glm-5\.2\s+1 a0 q0 d1 f0\s+4\s+3\s+7k i5k c2k o2k\s+\$0\.0123/
-    );
-    expect(board).toContain("Found the active worker configuration");
+    const utilityRow = board
+      .split("\n")
+      .find((line) => line.startsWith(" utility"));
+    expect(utilityRow?.length).toBeLessThanOrEqual(176);
     expect(board).not.toContain("Project: must remain hidden");
   } finally {
     rmSync(runDir, { force: true, recursive: true });

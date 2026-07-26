@@ -23,6 +23,15 @@ export interface UtilityTranscriptEntry {
   kind: UtilityTranscriptKind;
   label: string;
   text: string;
+  usage?: UtilityTranscriptUsage;
+}
+
+export interface UtilityTranscriptUsage {
+  costUsd: number;
+  durationMs: number;
+  modelCalls: number;
+  toolCalls: number;
+  totalTokens: number;
 }
 
 export interface UtilityObservabilityUsage {
@@ -42,9 +51,12 @@ export interface UtilityObservabilitySnapshot {
   completed: number;
   failed: number;
   jobsTotal: number;
+  latestAt?: string;
   latestDetail: string;
   latestJobId?: string;
   latestRoute?: string;
+  latestRouteDetail?: string;
+  latestState?: string;
   model?: string;
   queued: number;
   transcript: UtilityTranscriptEntry[];
@@ -67,7 +79,10 @@ export const sanitizeUtilityPaneText = (value: string): string =>
     .replace(ANSI_SEQUENCE_RE, "")
     .replace(CONTROL_CHARACTER_RE, " ")
     .replace(BEARER_SECRET_RE, `Bearer ${REDACTED}`)
-    .replace(LABELED_SECRET_RE, (_match, label: string) => `${label}=${REDACTED}`)
+    .replace(
+      LABELED_SECRET_RE,
+      (_match, label: string) => `${label}=${REDACTED}`
+    )
     .replace(PROVIDER_KEY_RE, REDACTED)
     .replace(COMMON_CREDENTIAL_RE, REDACTED)
     .replaceAll(/\s+/g, " ")
@@ -109,7 +124,10 @@ const recordAt = (
     : undefined;
 };
 
-const stringAt = (value: Record<string, unknown>, key: string): string | undefined =>
+const stringAt = (
+  value: Record<string, unknown>,
+  key: string
+): string | undefined =>
   typeof value[key] === "string" ? (value[key] as string) : undefined;
 
 const safeJobs = (runDir: string): UtilityJobSnapshot[] => {
@@ -164,6 +182,22 @@ const usageSnapshot = (
   return { ...(model ? { model } : {}), usage };
 };
 
+const transcriptUsage = (
+  event: Record<string, unknown> | undefined
+): UtilityTranscriptUsage | undefined => {
+  if (!event) {
+    return undefined;
+  }
+  const usage = recordAt(event, "usage") ?? {};
+  return {
+    costUsd: finiteNumber(usage.cost),
+    durationMs: finiteNumber(event.durationMs),
+    modelCalls: finiteNumber(event.modelCalls),
+    toolCalls: finiteNumber(event.toolCalls),
+    totalTokens: finiteNumber(usage.totalTokens),
+  };
+};
+
 const jobRequestEntry = (job: UtilityJobSnapshot): UtilityTranscriptEntry => ({
   at: job.request.createdAt,
   jobId: job.jobId,
@@ -173,7 +207,8 @@ const jobRequestEntry = (job: UtilityJobSnapshot): UtilityTranscriptEntry => ({
 });
 
 const jobResultEntry = (
-  job: UtilityJobSnapshot
+  job: UtilityJobSnapshot,
+  usageEvent: Record<string, unknown> | undefined
 ): UtilityTranscriptEntry | undefined => {
   if (!job.result) {
     return undefined;
@@ -182,12 +217,14 @@ const jobResultEntry = (
   const detail = failed
     ? job.result.blocker || job.result.summary
     : job.result.summary;
+  const usage = transcriptUsage(usageEvent);
   return {
     at: job.updatedAt,
     jobId: job.jobId,
     kind: "response",
-    label: failed ? "GLM✕MAIN" : "GLM→MAIN",
+    label: failed ? "GLM FAIL" : "GLM OK",
     text: sanitizeUtilityPaneText(detail),
+    ...(usage ? { usage } : {}),
   };
 };
 
@@ -221,10 +258,11 @@ const toolEntries = (runDir: string): UtilityTranscriptEntry[] =>
 
 const transcriptFor = (
   runDir: string,
-  jobs: UtilityJobSnapshot[]
+  jobs: UtilityJobSnapshot[],
+  usageEvents: Map<string, Record<string, unknown>>
 ): UtilityTranscriptEntry[] => {
   const entries = jobs.flatMap((job) => {
-    const result = jobResultEntry(job);
+    const result = jobResultEntry(job, usageEvents.get(job.jobId));
     return result ? [jobRequestEntry(job), result] : [jobRequestEntry(job)];
   });
   entries.push(...toolEntries(runDir));
@@ -236,7 +274,9 @@ const transcriptFor = (
 const latestJob = (
   jobs: UtilityJobSnapshot[]
 ): UtilityJobSnapshot | undefined =>
-  [...jobs].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  [...jobs].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt)
+  )[0];
 
 export const readUtilityObservability = (
   runDir?: string
@@ -254,13 +294,17 @@ export const readUtilityObservability = (
       usage: emptyUsage(),
     };
   }
-  const jobs = workerJobs(safeJobs(runDir));
+  const allJobs = safeJobs(runDir);
+  const jobs = workerJobs(allJobs);
   const usageEvents = latestUsageByJob(runDir);
   const totals = usageSnapshot(usageEvents);
   const latest = latestJob(jobs);
+  const latestDecision = latestJob(allJobs.filter((job) => job.decision));
   const latestDetail = latest
     ? sanitizeUtilityPaneText(
-        latest.result?.blocker || latest.result?.summary || latest.request.objective
+        latest.result?.blocker ||
+          latest.result?.summary ||
+          latest.request.objective
       )
     : "waiting for first routed job";
   return {
@@ -273,17 +317,30 @@ export const readUtilityObservability = (
     ).length,
     jobsTotal: jobs.length,
     latestDetail,
-    ...(latest ? { latestJobId: latest.jobId } : {}),
-    ...(latest?.decision
+    ...(latest
       ? {
-          latestRoute: `${latest.decision.target}/${latest.decision.reason}`,
+          latestAt: latest.updatedAt,
+          latestJobId: latest.jobId,
+          latestState: latest.state,
+        }
+      : {}),
+    ...(latestDecision?.decision
+      ? {
+          latestRoute: `${latestDecision.decision.target}/${latestDecision.decision.reason}`,
+          ...(latestDecision.decision.detail
+            ? {
+                latestRouteDetail: sanitizeUtilityPaneText(
+                  latestDecision.decision.detail
+                ),
+              }
+            : {}),
         }
       : {}),
     ...(totals.model ? { model: totals.model } : {}),
     queued: jobs.filter((job) =>
       ["pending-route", "routed-utility"].includes(job.state)
     ).length,
-    transcript: transcriptFor(runDir, jobs),
+    transcript: transcriptFor(runDir, jobs, usageEvents),
     usage: totals.usage,
   };
 };
