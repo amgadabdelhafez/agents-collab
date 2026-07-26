@@ -29,9 +29,9 @@
     },
     {
       "name": "post_change_live_visual",
-      "status": "pending",
-      "evidence": "Required after local integration and control-pane-only refresh."
+      "status": "pass",
+      "evidence": "Loop 47 shows worker.harvto-loop-47 with a 58-column colored output-only stream; governess shows routed/skipped/reason rows and every row is at most 176 Unicode characters. Main pane PIDs remained 56784 and 56786."
     }
   ],
-  "summary": "No blocking implementation findings. Worker terminology, timestamped activity, routing aggregates, pane title, compact rendering, and bridge aliases are regression-covered."
+  "summary": "No blocking implementation findings. Worker terminology, timestamped activity, routing aggregates, pane title, compact rendering, bridge aliases, and the live loop 47 layout are verified."
 }
