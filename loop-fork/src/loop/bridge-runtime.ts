@@ -147,11 +147,31 @@ export const readClaudeTranscriptVersionFromProjects = (
   }
 };
 
-const readClaudeTranscriptVersion = (runDir: string): string | undefined =>
-  readClaudeTranscriptVersionFromProjects(
+const fileVersion = (path: string): string | undefined => {
+  try {
+    const stat = statSync(path);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return undefined;
+  }
+};
+
+export const readClaudeSubmissionVersion = (
+  runDir: string,
+  projectsDir = join(homedir(), ".claude", "projects")
+): string | undefined => {
+  const transcript = readClaudeTranscriptVersionFromProjects(
     runDir,
-    join(homedir(), ".claude", "projects")
+    projectsDir
   );
+  const hookJournal = fileVersion(join(runDir, "hooks", "claude.jsonl"));
+  return transcript || hookJournal
+    ? `transcript=${transcript ?? "-"};hook=${hookJournal ?? "-"}`
+    : undefined;
+};
+
+const readClaudeTranscriptVersion = (runDir: string): string | undefined =>
+  readClaudeSubmissionVersion(runDir);
 
 export const bridgeRuntimeCommandDeps = {
   readClaudeTranscriptVersion,
