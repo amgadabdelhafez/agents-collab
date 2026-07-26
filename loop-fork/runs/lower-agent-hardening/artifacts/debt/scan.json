@@ -1,0 +1,30 @@
+{
+  "task_id": "lower-agent-hardening",
+  "scanned_at": "2026-07-26T16:46:24Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-26T16:46:24Z",
+      "task_id": "lower-agent-hardening",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-runtime.ts",
+      "before_loc": 960,
+      "after_loc": 1320,
+      "delta_loc": 360,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T16:46:24Z",
+      "task_id": "lower-agent-hardening",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-tools.ts",
+      "before_loc": 1155,
+      "after_loc": 1728,
+      "delta_loc": 573,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

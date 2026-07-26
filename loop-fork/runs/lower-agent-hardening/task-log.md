@@ -38,3 +38,11 @@ without moving authority into the lower agent or adding forced delegation.
   reported.
 - Live loop 43 was not messaged, restarted, signaled, re-paned, or given a
   repository configuration mutation.
+- Integrated locally as canonical commits `8d053fe` and `877806e`, rebuilt and
+  installed SHA-256 `57be1e8e...`, and preserved the prior binary under
+  `/Users/amgad/.loop/release-backups/`.
+- Disposable tmux smoke rendered a 59x8 `z-ai/glm-5.2 READY` observer. An
+  installed MCP probe included `apply_task_patch`; a fake-runner Harvto probe
+  resolved nested package-local Vitest with npm offline and prompting disabled.
+- Loop 43 retained pane IDs `%0/%1/%2/%4` and PIDs
+  `82463/82465/82880/84862` after release.
