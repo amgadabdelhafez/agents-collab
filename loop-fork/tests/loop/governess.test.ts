@@ -1743,6 +1743,7 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
       .split("\n")
       .find((line) => line.startsWith(" worker"));
     expect(workerRow?.length).toBeLessThanOrEqual(176);
+    expect(board.split("\n").every((line) => line.length <= 176)).toBe(true);
     expect(board).toContain(
       "routing · considered 3 · routed worker 2 · skipped 1 · pending 0 · adoption auto 1 explicit 1"
     );
