@@ -157,8 +157,12 @@ test("manifest helpers write, read, and touch run metadata", () => {
       repoId: "repo-abc123",
       runId: "9",
       state: "working",
+      tmuxPaneGoverness: "repo-loop-9:0.3",
+      tmuxPaneLeft: "repo-loop-9:0.0",
       tmuxPaneLeftAgent: "cursor",
+      tmuxPaneRight: "repo-loop-9:0.2",
       tmuxPaneRightAgent: "codex",
+      tmuxPaneUtility: "repo-loop-9:0.1",
       tmuxSession: "repo-loop-9",
     },
     "2026-03-22T10:00:00.000Z"

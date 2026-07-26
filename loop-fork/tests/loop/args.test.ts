@@ -75,6 +75,7 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   expect(opts.format).toBe("pretty");
   expect(opts.maxIterations).toBe(DEFAULT_MAX_ITERATIONS);
   expect(opts.codexModel).toBe(DEFAULT_CODEX_MODEL);
+  expect(opts.governess).toBe(true);
   expect(opts.promptInput).toBeUndefined();
   expect(opts.review).toBe("claudex");
   expect(opts.reviewPlan).toBeUndefined();

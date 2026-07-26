@@ -32,8 +32,16 @@ import {
   normalizeAgent,
   readBridgeEvents,
 } from "./bridge-store";
+import {
+  callUtilityBridgeTool,
+  isUtilityBridgeToolName,
+  UTILITY_BRIDGE_TOOLS,
+  UtilityBridgeInputError,
+} from "./bridge-utility";
 import { LOOP_VERSION } from "./constants";
 import type { Agent } from "./types";
+
+type BridgeMcpSource = Agent | "supervisor";
 
 const CLAUDE_CHANNEL_CAPABILITY = "claude/channel";
 const CLAUDE_CHANNEL_FALLBACK_SWEEP_MS = 2000;
@@ -226,7 +234,7 @@ const handleReceiveMessagesTool = (
 const handleSendMessageTool = async (
   id: JsonRpcRequest["id"],
   runDir: string,
-  source: Agent,
+  source: BridgeMcpSource,
   args: Record<string, unknown>
 ): Promise<void> => {
   const normalizedTarget = normalizeLowerString(args.target);
@@ -337,7 +345,7 @@ const handleSendMessageTool = async (
 const handleToolCall = async (
   id: JsonRpcRequest["id"],
   runDir: string,
-  source: Agent,
+  source: BridgeMcpSource,
   params: unknown
 ): Promise<void> => {
   const call = isRecord(params) ? (params as BridgeCallParams) : undefined;
@@ -350,6 +358,14 @@ const handleToolCall = async (
   }
 
   if (name === "receive_messages") {
+    if (source === "supervisor") {
+      writeError(
+        id,
+        MCP_INVALID_PARAMS,
+        "supervisor bridge sessions cannot receive agent inbox messages"
+      );
+      return;
+    }
     handleReceiveMessagesTool(id, runDir, source);
     return;
   }
@@ -360,6 +376,26 @@ const handleToolCall = async (
       MCP_INVALID_PARAMS,
       'Unknown tool: send_to_agent. Use "send_message" instead.'
     );
+    return;
+  }
+
+  if (isUtilityBridgeToolName(name)) {
+    try {
+      const result = callUtilityBridgeTool(name, runDir, source, args);
+      writeJsonRpc({
+        id,
+        jsonrpc: "2.0",
+        result: toolContent(JSON.stringify(result, null, 2)),
+      });
+    } catch (error) {
+      writeError(
+        id,
+        MCP_INVALID_PARAMS,
+        error instanceof UtilityBridgeInputError
+          ? error.message
+          : "utility task request failed"
+      );
+    }
     return;
   }
 
@@ -377,7 +413,7 @@ const requestedProtocolVersion = (request: JsonRpcRequest): string =>
 
 const handleBridgeRequest = async (
   runDir: string,
-  source: Agent,
+  source: BridgeMcpSource,
   request: JsonRpcRequest
 ): Promise<void> => {
   switch (request.method) {
@@ -429,6 +465,7 @@ const handleBridgeRequest = async (
         jsonrpc: "2.0",
         result: {
           tools: [
+            ...UTILITY_BRIDGE_TOOLS,
             {
               annotations: MUTATING_TOOL_ANNOTATIONS,
               description: "Send a direct message to the paired agent.",
@@ -639,7 +676,7 @@ const isBridgeWatchEvent = (
 
 export const runBridgeMcpServer = async (
   runDir: string,
-  source: Agent
+  source: BridgeMcpSource
 ): Promise<void> => {
   let channelReady = false;
   let bridgeWatcher: { close: () => void } | undefined;

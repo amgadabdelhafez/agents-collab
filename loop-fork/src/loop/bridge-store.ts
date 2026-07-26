@@ -12,6 +12,8 @@ import {
 } from "./run-state";
 import type { Agent } from "./types";
 
+export type BridgeSource = Agent | "supervisor" | "utility";
+
 const BRIDGE_FILE = "bridge.jsonl";
 const LINE_SPLIT_RE = /\r?\n/;
 const MAX_STATUS_MESSAGES = 100;
@@ -61,7 +63,7 @@ interface BridgeBaseEvent {
   at: string;
   id: string;
   signature?: string;
-  source: Agent;
+  source: BridgeSource;
   target: Agent;
 }
 
@@ -167,11 +169,14 @@ export const normalizeAgent = (value: unknown): Agent | undefined => {
   return undefined;
 };
 
-const orderedBridgePairKey = (source: Agent, target: Agent): string =>
+const normalizeBridgeSource = (value: unknown): BridgeSource | undefined =>
+  value === "utility" || value === "supervisor" ? value : normalizeAgent(value);
+
+const orderedBridgePairKey = (source: BridgeSource, target: Agent): string =>
   `${source}>${target}`;
 
 const bridgeSignature = (
-  source: Agent,
+  source: BridgeSource,
   target: Agent,
   message: string
 ): string => {
@@ -237,7 +242,7 @@ const parseBridgeEvent = (
   const kind = asString(value.kind);
   const id = asString(value.id);
   const at = asString(value.at);
-  const source = normalizeAgent(value.source);
+  const source = normalizeBridgeSource(value.source);
   const target = normalizeAgent(value.target);
   if (!(kind && id && at && source && target)) {
     return undefined;
@@ -378,7 +383,7 @@ export const markBridgeMessage = (
 
 export const blocksBridgeBounce = (
   runDir: string,
-  source: Agent,
+  source: BridgeSource,
   target: Agent,
   message: string
 ): boolean => {
@@ -498,7 +503,7 @@ const bridgeExpiry = (
 };
 
 const createBridgeMessage = (
-  source: Agent,
+  source: BridgeSource,
   target: Agent,
   message: string,
   options: BridgeEnqueueOptions
@@ -533,7 +538,7 @@ const createBridgeMessage = (
 
 export const enqueueBridgeMessage = (
   runDir: string,
-  source: Agent,
+  source: BridgeSource,
   target: Agent,
   message: string,
   options: BridgeEnqueueOptions = {}
@@ -597,7 +602,7 @@ export const enqueueBridgeMessage = (
 
 export const appendBridgeMessage = (
   runDir: string,
-  source: Agent,
+  source: BridgeSource,
   target: Agent,
   message: string,
   options: BridgeEnqueueOptions = {}
@@ -623,7 +628,7 @@ export const readBridgeQueueHealth = (
 
 export const appendBlockedBridgeMessage = (
   runDir: string,
-  source: Agent,
+  source: BridgeSource,
   target: Agent,
   message: string,
   reason: string

@@ -62,6 +62,26 @@
       "spec_path": "specs/governess-p0-runtime.md"
     },
     {
+      "id": "lower-agent-router",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T02:10:41Z",
+      "run_dir": "runs/lower-agent-router",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T03:02:04Z",
+      "spec_path": "specs/lower-agent-router.md"
+    },
+    {
+      "id": "lower-agent-pane-default",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T03:23:05Z",
+      "run_dir": "runs/lower-agent-pane-default",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T03:36:17Z",
+      "spec_path": "specs/lower-agent-pane-default.md"
+    },
+    {
       "id": "lower-agent-release-integration",
       "mode": "planned",
       "status": "active",

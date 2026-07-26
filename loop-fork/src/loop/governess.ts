@@ -139,6 +139,8 @@ import type {
   WaitingRequest,
   WaitingResult,
 } from "./types";
+import { processPendingUtilityRoutes } from "./utility-runtime";
+import { activateUtilityEpoch } from "./utility-store";
 
 export const GOVERNESS_SUBCOMMAND = "__governess";
 
@@ -285,11 +287,11 @@ export interface GovernessDeps {
   ) => Promise<BridgeSendStatus>;
   sendKeys: (pane: string, keys: string[]) => void;
   sendText: (pane: string, text: string) => void;
-  // Set one pane's border title via a per-pane tmux user option (@loop_label).
-  setPaneLabel: (pane: string, label: string) => void;
   // Pin both the visible border label and tmux's native title for the
   // governess pane. Agent panes intentionally use setPaneLabel only.
   setGovernessPaneIdentity: (pane: string, label: string) => void;
+  // Set one pane's border title via a per-pane tmux user option (@loop_label).
+  setPaneLabel: (pane: string, label: string) => void;
   sleep: (ms: number) => Promise<void>;
   summarize: (req: SummaryRequest) => Promise<SummaryResult>;
 }
@@ -1316,8 +1318,7 @@ export const composeGovernessPaneTitle = (
 
 export const composeGovernessRunIdentity = (
   config: Pick<GovernessConfig, "cwd" | "session">
-): string =>
-  `${config.session} · ${resolve(config.cwd ?? process.cwd())}`;
+): string => `${config.session} · ${resolve(config.cwd ?? process.cwd())}`;
 
 export const applyGovernessPaneIdentity = (
   config: GovernessConfig,
@@ -1726,8 +1727,7 @@ const renderAgentRow = (
   const resets = windows
     .map((window) => resetEtaCell(window.reset, meta.nowMs, window.resetAtMs))
     .join("/");
-  const rateLimit =
-    windows.length > 0 ? `${alignedLimits} · ${resets}` : "—";
+  const rateLimit = windows.length > 0 ? `${alignedLimits} · ${resets}` : "—";
   const rateLimitRendered = rateLimitColor(row.usage)
     ? colorCell(
         rateLimitColor(row.usage) as string,
@@ -4095,16 +4095,12 @@ const allHandoverAgentsExited = (
       notified: runState.exitControl.notified[info.agent] === true,
       paneProbe: paneProbe ?? "unknown",
     };
-    recordGovernessObservation(
-      config,
-      deps,
-      {
-        agent: info.agent,
-        idempotencyKey: `${config.epoch}:handoff-exit-probe:${info.agent}:${runState.tick}`,
-        payload: JSON.stringify(probe),
-        stream: `handoff-exit-probe:${info.agent}`,
-      }
-    );
+    recordGovernessObservation(config, deps, {
+      agent: info.agent,
+      idempotencyKey: `${config.epoch}:handoff-exit-probe:${info.agent}:${runState.tick}`,
+      payload: JSON.stringify(probe),
+      stream: `handoff-exit-probe:${info.agent}`,
+    });
     if (probe.exited && config.journalFile) {
       const control = latestGovernessControlByKey(
         config.journalFile,
@@ -4280,20 +4276,16 @@ export const advanceHandoverControl = async (
           replacementSession
         )
     );
-    recordGovernessObservation(
-      config,
-      deps,
-      {
-        idempotencyKey: `${config.epoch}:replacement:${replacementSession ?? "missing"}:${replacementAlive}:${replacementReady}:${runState.tick}`,
-        payload: JSON.stringify({
-          accepted: handoverAccepted,
-          alive: replacementAlive,
-          ready: replacementReady,
-          session: replacementSession,
-        }),
-        stream: `replacement:${replacementSession ?? "missing"}`,
-      }
-    );
+    recordGovernessObservation(config, deps, {
+      idempotencyKey: `${config.epoch}:replacement:${replacementSession ?? "missing"}:${replacementAlive}:${replacementReady}:${runState.tick}`,
+      payload: JSON.stringify({
+        accepted: handoverAccepted,
+        alive: replacementAlive,
+        ready: replacementReady,
+        session: replacementSession,
+      }),
+      stream: `replacement:${replacementSession ?? "missing"}`,
+    });
     if (!(replacementSession && replacementAlive && replacementReady)) {
       const error = replacementSession
         ? `replacement tmux session ${replacementSession} is not running or ready`
@@ -4403,18 +4395,14 @@ export const advanceHandoverControl = async (
   const replacementReady = Boolean(
     launched.session && deps.replacementSessionReady(launched.session) === true
   );
-  recordGovernessObservation(
-    config,
-    deps,
-    {
-      idempotencyKey: `${config.epoch}:replacement-launch:${launched.session ?? "missing"}:${replacementReady}:${runState.tick}`,
-      payload: JSON.stringify({
-        ready: replacementReady,
-        session: launched.session,
-      }),
-      stream: `replacement-launch:${launched.session ?? "missing"}`,
-    }
-  );
+  recordGovernessObservation(config, deps, {
+    idempotencyKey: `${config.epoch}:replacement-launch:${launched.session ?? "missing"}:${replacementReady}:${runState.tick}`,
+    payload: JSON.stringify({
+      ready: replacementReady,
+      session: launched.session,
+    }),
+    stream: `replacement-launch:${launched.session ?? "missing"}`,
+  });
   if (!(launched.session && replacementReady)) {
     const error = launched.session
       ? `replacement tmux session ${launched.session} is not ready`
@@ -5754,19 +5742,23 @@ export const resolveGovernessConfig = (
   };
   const codexHome = join(storage.runDir, "codex-home");
   const agents: GovernessAgentInfo[] = [];
-  const addAgent = (agent: Agent | undefined, paneIndex: number): void => {
+  const addAgent = (
+    agent: Agent | undefined,
+    pane: string | undefined,
+    fallbackPaneIndex: number
+  ): void => {
     if (agent) {
       agents.push({
         agent,
         codexHome: agent === "codex" ? codexHome : undefined,
         hookFile: join(storage.runDir, "hooks", `${agent}.jsonl`),
-        pane: `${session}:0.${paneIndex}`,
+        pane: pane ?? `${session}:0.${fallbackPaneIndex}`,
         sessionRef: sessionRefFor(agent),
       });
     }
   };
-  addAgent(manifest?.tmuxPaneLeftAgent, 0);
-  addAgent(manifest?.tmuxPaneRightAgent, 1);
+  addAgent(manifest?.tmuxPaneLeftAgent, manifest?.tmuxPaneLeft, 0);
+  addAgent(manifest?.tmuxPaneRightAgent, manifest?.tmuxPaneRight, 1);
   const maxRaw = Number.parseInt(env.LOOP_GOVERNESS_MAX ?? "", 10);
   const model = env.LOOP_GOVERNESS_MODEL || DEFAULT_GOVERNESS_MODEL;
   const url = env.LOOP_GOVERNESS_URL || DEFAULT_GOVERNESS_URL;
@@ -5912,6 +5904,9 @@ export const runGoverness = async (
   }
   deps.saveState(config.stateFile, runState);
   if (deps.fenceCurrent && !deps.fenceCurrent(config)) {
+    return;
+  }
+  if (config.runDir && !activateUtilityEpoch(config.runDir, acquiredEpoch)) {
     return;
   }
   // Light up the pane-border title strip and name the governess's own pane.
@@ -6141,6 +6136,35 @@ export const runGoverness = async (
         }),
         stream: "governess-cycle",
       });
+      const utilityPeer = config.agents.find(
+        (info) => info.agent !== holder
+      )?.agent;
+      if (config.runDir && config.cwd && holder && utilityPeer) {
+        try {
+          const routed = await processPendingUtilityRoutes({
+            currentDriver: holder,
+            epoch: acquiredEpoch,
+            peer: utilityPeer,
+            repoRoot: config.cwd,
+            runDir: config.runDir,
+          });
+          if (routed > 0) {
+            deps.appendLog(config.logFile, {
+              at: lifecycleAt,
+              epoch: acquiredEpoch,
+              event: "utility-routes-processed",
+              routed,
+            });
+          }
+        } catch (error) {
+          deps.appendLog(config.logFile, {
+            at: lifecycleAt,
+            epoch: acquiredEpoch,
+            error: error instanceof Error ? error.message : String(error),
+            event: "utility-routing-failed-closed",
+          });
+        }
+      }
       // updateBothIdle may have cleared the waiting read (agents went active).
       waitingConfirmed = runState.waitingConfirmed;
       waitingAsk = runState.waitingAsk;

@@ -1,20 +1,29 @@
 import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
+  agentRenameEnabledFromEnv,
   applyGovernessPaneIdentity,
+  type BridgeSendStatus,
   composeGovernessPaneTitle,
   composeGovernessRunIdentity,
-  governessPaneIdentityTmuxCommands,
-  runGoverness,
-  type GovernessConfig,
-  type GovernessDeps,
-  type BridgeSendStatus,
-  agentRenameEnabledFromEnv,
-  governessTick,
   composePaneTitle,
   freshRunState,
+  type GovernessConfig,
+  type GovernessDeps,
+  governessPaneIdentityTmuxCommands,
+  governessTick,
+  resolveGovernessConfig,
+  runGoverness,
   sendRenameCommands,
 } from "../../src/loop/governess";
 import type { EscalationEvent } from "../../src/loop/governess-notify";
+import {
+  createRunManifest,
+  resolveRunStorage,
+  writeRunManifest,
+} from "../../src/loop/run-state";
 import type {
   Agent,
   AgentLivenessState,
@@ -29,6 +38,41 @@ import type {
 const IDLE_MS = 60_000;
 const START_MS = 1_000_000;
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+test("governess observes agents through persisted post-split pane targets", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-governess-panes-"));
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("91", cwd, home);
+  mkdirSync(dirname(storage.manifestPath), { recursive: true });
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      cwd,
+      mode: "paired",
+      pid: 1234,
+      repoId: storage.repoId,
+      runId: "91",
+      status: "running",
+      tmuxPaneLeft: "repo-loop-91:0.0",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRight: "repo-loop-91:0.2",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-91",
+    })
+  );
+
+  try {
+    const config = resolveGovernessConfig("91", {}, cwd, home);
+    expect(config.agents.map(({ agent, pane }) => ({ agent, pane }))).toEqual([
+      { agent: "claude", pane: "repo-loop-91:0.0" },
+      { agent: "codex", pane: "repo-loop-91:0.2" },
+    ]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
 
 const stripAnsi = (text: string): string => text.replace(ANSI_RE, "");
 
@@ -1829,9 +1873,7 @@ test("governess run identity includes full loop name and path", () => {
   expect(composeGovernessRunIdentity(config)).toBe(
     "harvto-loop-34 · /Users/amgad/harvto"
   );
-  expect(composeGovernessPaneTitle(config)).toBe(
-    "governess.harvto-loop-34"
-  );
+  expect(composeGovernessPaneTitle(config)).toBe("governess.harvto-loop-34");
 });
 
 test("board merges loop and path into the first time/status line", async () => {
@@ -1900,12 +1942,12 @@ test("runGoverness reapplies pane identity on startup and every cycle", async ()
   );
   expect(spies.paneBorderInits).toEqual(["harvto-loop-34"]);
   expect(spies.governessPaneIdentities).toHaveLength(3);
-  expect(new Set(spies.governessPaneIdentities.map((entry) => entry[1]))).toEqual(
-    new Set(["governess.harvto-loop-34"])
-  );
-  expect(spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")).toBe(
-    true
-  );
+  expect(
+    new Set(spies.governessPaneIdentities.map((entry) => entry[1]))
+  ).toEqual(new Set(["governess.harvto-loop-34"]));
+  expect(
+    spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")
+  ).toBe(true);
   expect(closed).toBe(true);
 });
 

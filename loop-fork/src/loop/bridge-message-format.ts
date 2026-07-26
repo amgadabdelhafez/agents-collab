@@ -1,14 +1,13 @@
-import type { BridgeMessage } from "./bridge-store";
-import type { Agent } from "./types";
+import type { BridgeMessage, BridgeSource } from "./bridge-store";
 
 const BRIDGE_PREFIX_RE =
-  /^(?:Message from (?:Claude|Codex|Gemini|Cursor) via the loop bridge:|(?:Claude|Codex|Gemini|Cursor):)\s*/i;
+  /^(?:Message from (?:Claude|Codex|Gemini|Cursor|Supervisor|Utility) via the loop bridge:|(?:Claude|Codex|Gemini|Cursor|Supervisor|Utility):)\s*/i;
 
 const capitalize = (value: string): string =>
   value.slice(0, 1).toUpperCase() + value.slice(1);
 
 export const formatCodexBridgeMessage = (
-  source: Agent,
+  source: BridgeSource,
   message: string
 ): string => {
   const trimmed = message.trim();

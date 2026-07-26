@@ -244,6 +244,12 @@ const tmuxPaneForTarget = (
   if (!manifest?.tmuxSession) {
     return undefined;
   }
+  if (manifest.tmuxPaneLeftAgent === target && manifest.tmuxPaneLeft) {
+    return manifest.tmuxPaneLeft;
+  }
+  if (manifest.tmuxPaneRightAgent === target && manifest.tmuxPaneRight) {
+    return manifest.tmuxPaneRight;
+  }
   const paneId = paneIdForTarget(runDir, target);
   return paneId ? tmuxPane(manifest.tmuxSession, paneId) : undefined;
 };

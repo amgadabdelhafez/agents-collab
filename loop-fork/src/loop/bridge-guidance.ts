@@ -1,7 +1,13 @@
 import { BRIDGE_SERVER, CLAUDE_CHANNEL_USER } from "./bridge-constants";
 import type { Agent } from "./types";
 
-export type BridgeTool = "bridge_status" | "receive_messages" | "send_message";
+export type BridgeTool =
+  | "bridge_status"
+  | "get_task_result"
+  | "receive_messages"
+  | "route_task"
+  | "send_message"
+  | "task_status";
 
 const bridgeTargetLiteral = (agent: Agent): string => `target: "${agent}"`;
 const codexBridgeToolName = (tool: BridgeTool): string =>

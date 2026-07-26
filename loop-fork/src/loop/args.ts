@@ -577,6 +577,7 @@ export const parseArgs = (argv: string[]): Options => {
     governessModel: runtimeEnv.LOOP_GOVERNESS_MODEL ?? DEFAULT_GOVERNESS_MODEL,
     governessHeight: DEFAULT_GOVERNESS_HEIGHT,
     governessLlmTrace: runtimeEnv.LOOP_GOVERNESS_LLM_TRACE,
+    governess: true,
     pairedMode: true,
     review: "claudex",
     resumeRunId: undefined,

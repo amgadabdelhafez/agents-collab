@@ -78,7 +78,7 @@ const toolText = (stdout: string, id: number): string => {
 
 const runBridgeProcess = async (
   runDir: string,
-  source: "claude" | "codex",
+  source: "claude" | "codex" | "supervisor",
   frames: string,
   env?: NodeJS.ProcessEnv
 ): Promise<{ code: number | null; stderr: string; stdout: string }> => {
@@ -212,6 +212,36 @@ test("bridge message parsing ignores malformed lines and acked entries", async (
 
   expect(bridge.bridgeInternals.readBridgeEvents(runDir)).toHaveLength(4);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge preserves utility results without treating utility as a full agent", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "claude",
+    "small task completed",
+    {
+      artifactRefs: ["lower/jobs/job-1/result.json"],
+      taskId: "job-1",
+      type: "ack",
+    }
+  );
+
+  expect(bridge.readBridgeInbox(runDir, "claude")).toEqual([
+    expect.objectContaining({
+      artifactRefs: ["lower/jobs/job-1/result.json"],
+      message: "small task completed",
+      source: "utility",
+      target: "claude",
+      taskId: "job-1",
+    }),
+  ]);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -563,6 +593,89 @@ test("bridge MCP send_message normalizes target case and whitespace", async () =
   rmSync(root, { recursive: true, force: true });
 });
 
+test.each([
+  "claude",
+  "codex",
+] as const)("bridge MCP route_task queues a bounded request from %s", async (source) => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    source,
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["find the defining file"],
+          kind: "inspect",
+          objective: "Locate the bridge server definition",
+          read_scope: ["src/loop"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  const routed = JSON.parse(toolText(result.stdout, 1)) as {
+    state: string;
+    taskId: string;
+  };
+  expect(routed.state).toBe("pending-route");
+  const status = await runBridgeProcess(
+    runDir,
+    source,
+    encodeFrame({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: { task_id: routed.taskId },
+        name: "task_status",
+      },
+    })
+  );
+  expect(JSON.parse(toolText(status.stdout, 2))).toMatchObject({
+    state: "pending-route",
+    taskId: routed.taskId,
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("external supervisor can submit a task with an explicit result target", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const result = await runBridgeProcess(
+    runDir,
+    "supervisor",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["locate it"],
+          kind: "inspect",
+          objective: "Locate a bounded definition",
+          read_scope: ["src/loop"],
+          requester: "codex",
+        },
+        name: "route_task",
+      },
+    })
+  );
+  expect(result.code).toBe(0);
+  expect(JSON.parse(toolText(result.stdout, 1))).toMatchObject({
+    state: "pending-route",
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("bridge MCP send_message rejects an empty target after trimming", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -809,7 +922,10 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
       }),
     ])
   );
-  expect(tools).toHaveLength(3);
+  expect(tools).toHaveLength(6);
+  expect(tools.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(["route_task", "task_status", "get_task_result"])
+  );
   expect(tools.some((tool) => tool.name === "reply")).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
@@ -844,7 +960,7 @@ test("bridge MCP advertises only the Codex-visible bridge tools", async () => {
   expect(result.stderr).toBe("");
   expect(result.stdout).not.toContain('"claude/channel":{}');
   const tools = listedTools(result.stdout);
-  expect(tools).toHaveLength(3);
+  expect(tools).toHaveLength(6);
   expect(tools).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -1354,7 +1470,7 @@ test("bridge falls back to direct Codex delivery when the stored tmux session is
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge drains pending codex tmux messages through the injected command deps", async () => {
+test("bridge drains codex messages through the persisted post-split pane target", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -1386,6 +1502,8 @@ test("bridge drains pending codex tmux messages through the injected command dep
       repoId: "repo-123",
       runId: "8",
       status: "running",
+      tmuxPaneRight: "repo-loop-8:0.2",
+      tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
@@ -1410,7 +1528,7 @@ test("bridge drains pending codex tmux messages through the injected command dep
       { stderr: "ignore", stdout: "ignore" },
     ],
     [
-      ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.1"],
+      ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.2"],
       { stderr: "ignore", stdout: "pipe" },
     ],
     [
@@ -1418,7 +1536,7 @@ test("bridge drains pending codex tmux messages through the injected command dep
         "tmux",
         "send-keys",
         "-t",
-        "repo-loop-8:0.1",
+        "repo-loop-8:0.2",
         "-l",
         "--",
         "Claude: Please check the tmux path.",
@@ -1426,7 +1544,7 @@ test("bridge drains pending codex tmux messages through the injected command dep
       { stderr: "ignore" },
     ],
     [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.1", "Enter"],
+      ["tmux", "send-keys", "-t", "repo-loop-8:0.2", "Enter"],
       { stderr: "ignore" },
     ],
   ]);
@@ -2344,6 +2462,12 @@ test("bridge config helper builds the bridge MCP entry point for Codex", async (
     ])}`,
     "-c",
     'mcp_servers.loop-bridge.tools.send_message.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.route_task.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.task_status.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.get_task_result.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.bridge_status.approval_mode="approve"',
     "-c",
