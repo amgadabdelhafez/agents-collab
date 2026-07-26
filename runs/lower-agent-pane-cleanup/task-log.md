@@ -40,3 +40,10 @@
 - 2026-07-26: The next live capture found only the paired `bridge latest` line
   wrapping. Reduced each message/action excerpt from 64 to 54 characters and
   tightened its regression limit from 180 to 176 visible columns.
+- 2026-07-26: Integrated locally and rebuilt the canonical binary. Refreshed
+  only loop 47 utility `%2` and governess `%3`, then one additional `%3`
+  display refresh for each live width fix. Final geometry stayed Claude
+  118x30, Codex 116x30, governess 176x20, utility 58x20. Claude `%0` PID 56784
+  and Codex `%1` PID 56786 were unchanged; final display PIDs are utility 1763
+  and governess 8950. Programmatic live captures found no governess line over
+  176 Unicode columns and no utility line over 58.

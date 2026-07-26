@@ -64,7 +64,7 @@ two compact governess lines for Progress and Next.
       `git diff --check` pass; unrelated full-suite baselines are isolated.
 - [x] Independent evaluator records PASS in
       `runs/lower-agent-pane-cleanup/eval.json` before integration.
-- [ ] Live loop 47 shows the cleaned panes while Claude/Codex IDs and PIDs are
+- [x] Live loop 47 shows the cleaned panes while Claude/Codex IDs and PIDs are
       unchanged.
 
 ## Non-goals
