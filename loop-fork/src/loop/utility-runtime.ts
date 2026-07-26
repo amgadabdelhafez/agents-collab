@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { spawn } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
+import { readDelegationEvents } from "./delegation-policy";
 import { buildLaunchArgv } from "./launch";
 import {
   type OpenAICompatibleMessage,
@@ -1260,6 +1261,17 @@ const paneUsageRow = (runDir: string): string => {
   return `LAST  ${status}  ${formatPaneNumber(usage.totalTokens)} tok  ${formatPaneCost(usage.cost)}`;
 };
 
+const paneDelegationRow = (runDir: string): string => {
+  const events = readDelegationEvents(runDir);
+  const count = (disposition: string): number =>
+    events.filter((event) => event.disposition === disposition).length;
+  const latest = events.at(-1);
+  const last = latest
+    ? `${latest.agent}/${compactPaneText(latest.reason, 22)}`
+    : "none";
+  return `DELEG auto=${count("auto-routed")} explicit=${count("explicit-routed")} missed=${count("missed-candidate")} watch=${count("observed-candidate")}  last=${last}`;
+};
+
 export const renderUtilityPane = (
   runDir: string,
   env: NodeJS.ProcessEnv = process.env
@@ -1283,7 +1295,7 @@ export const renderUtilityPane = (
   ).length;
   const latestDecision = jobs.find((job) => job.decision)?.decision;
   const recent = jobs
-    .slice(0, 2)
+    .slice(0, 1)
     .map(
       (job) =>
         `${job.jobId.slice(0, 8)}  ${job.decision ? `${job.decision.target}/${job.decision.reason}` : job.state}  ${compactObjective(job.request.objective)}`
@@ -1303,6 +1315,7 @@ export const renderUtilityPane = (
       : `CONFIG  ${compactPaneText(config.availability.message)}`,
     paneToolRow(runDir),
     paneUsageRow(runDir),
+    paneDelegationRow(runDir),
     ...(recent.length > 0 ? recent : ["No utility jobs yet."]),
   ].join("\n");
 };

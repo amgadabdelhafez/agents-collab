@@ -1,5 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Agent } from "./types";
+import {
+  isUtilityProtectedPath,
+  normalizeUtilityPolicyPath,
+  utilityPathWithin,
+} from "./utility-path-policy";
 
 export type UtilityRequestKind =
   | "inspect"
@@ -150,28 +155,13 @@ interface RequestFactoryDeps {
   randomId?: () => string;
 }
 
-const DEFAULT_PROTECTED_PATHS = [
-  ".env",
-  ".git",
-  ".ssh",
-  "specs/constitution.md",
-  "docs/architecture/invariants.md",
-] as const;
-const LEADING_CURRENT_DIR_RE = /^\.\//;
-const TRAILING_SLASH_RE = /\/$/;
-
 const UTILITY_KINDS = new Set<UtilityRequestKind>([
   "inspect",
   "edit",
   "command",
 ]);
 
-const normalizePath = (value: string): string =>
-  value
-    .trim()
-    .replaceAll("\\", "/")
-    .replace(LEADING_CURRENT_DIR_RE, "")
-    .replace(TRAILING_SLASH_RE, "");
+const normalizePath = normalizeUtilityPolicyPath;
 
 const uniqueTrimmed = (values: readonly string[]): string[] => [
   ...new Set(values.map((value) => value.trim()).filter(Boolean)),
@@ -221,36 +211,20 @@ const isAuthorityRequest = (request: UtilityRouteRequest): boolean =>
 const hasForbiddenAuthority = (authority: UtilityAuthorityFlags): boolean =>
   Object.values(authority).some((value) => value === true);
 
-const isPathWithin = (path: string, parent: string): boolean =>
-  path === parent || path.startsWith(`${parent}/`);
-
 const touchesProtectedPath = (
   request: UtilityRouteRequest,
   configured: readonly string[] = []
-): boolean => {
-  const protectedPaths = [...DEFAULT_PROTECTED_PATHS, ...configured]
-    .map(normalizePath)
-    .filter(Boolean);
-  return [...request.readScope, ...request.writeScope].some((path) => {
-    const normalized = normalizePath(path);
-    return (
-      !normalized ||
-      normalized === ".." ||
-      normalized.startsWith("../") ||
-      normalized.startsWith("/") ||
-      protectedPaths.some((protectedPath) =>
-        isPathWithin(normalized, protectedPath)
-      )
-    );
-  });
-};
+): boolean =>
+  [...request.readScope, ...request.writeScope].some((path) =>
+    isUtilityProtectedPath(path, configured)
+  );
 
 const overlaps = (left: string, right: string): boolean => {
   const normalizedLeft = normalizePath(left);
   const normalizedRight = normalizePath(right);
   return (
-    isPathWithin(normalizedLeft, normalizedRight) ||
-    isPathWithin(normalizedRight, normalizedLeft)
+    utilityPathWithin(normalizedLeft, normalizedRight) ||
+    utilityPathWithin(normalizedRight, normalizedLeft)
   );
 };
 

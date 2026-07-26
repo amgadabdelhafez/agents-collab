@@ -98,6 +98,7 @@ Environment:
   LOOP_UTILITY_MODEL=<model>                 Utility model (default: z-ai/glm-5.2)
   LOOP_UTILITY_PANE=0                        Hide the default top-right lower-agent pane
   LOOP_UTILITY_PANE_HEIGHT=<rows|percent>    Lower-agent pane height (default: 8 rows)
+  LOOP_UTILITY_DELEGATION_MODE=<mode>        enforce (default), observe, or off for mechanical task adoption
   LOOP_UTILITY_PROVIDER_SORT=<strategy>      balanced, price, throughput, latency, or tool-call-quality
   LOOP_UTILITY_COST_QUALITY=<0..10>          Workspace cost/quality preference (default: 7)
   LOOP_UTILITY_ALLOWED_TIERS=<patterns>      Comma-separated tier wildcard allowlist

@@ -1,6 +1,6 @@
 # Dependency Map
 
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
 ## Modules
 
@@ -14,6 +14,11 @@ Last updated: 2026-07-25
   owns: src/loop/bridge*.ts
   exposes: send_message, route_task, task_status, get_task_result
   consumes: bridge JSONL, utility job API, runtime delivery adapters
+
+[Delegation policy]
+  owns: delegation-policy.ts, Claude PreToolUse integration, Codex proxy observation
+  exposes: exact mechanical classifier and compact adoption telemetry
+  consumes: run manifest, utility job API, app-server item notifications
 
 [Governess]
   owns: src/loop/governess*.ts
@@ -40,6 +45,9 @@ Last updated: 2026-07-25
 
 ```text
 main agents ──MCP──► bridge ──append──► utility store
+    │                                  ▲
+    ├─ Claude exact PreToolUse ────────┤
+    └─ Codex app-server observation ──► delegation telemetry
                                   ▲           │
                                   │           ▼
 governess ──route/epoch───────────┴────► task router
@@ -62,6 +70,7 @@ optional bridge supervisor ──messages/route request──► bridge
 | Secrets | Provider adapter and tool env scrubber | redacted `utility/llm-trace.jsonl` |
 | Background jobs | Utility store/runtime | `utility/jobs.jsonl`, stale-claim fencing |
 | Cost and tokens | Provider adapter/runtime | `utility/usage.jsonl` |
+| Delegation adoption | Delegation policy, hook, and Codex proxy | `utility/delegation.jsonl` |
 | Large outputs | Tool broker | patch/report artifacts referenced by result |
 | Visibility | Governess and optional utility pane | pane output; never a control dependency |
 
@@ -75,3 +84,4 @@ optional bridge supervisor ──messages/route request──► bridge
 | Tool broker | Worker prompt, scope tests, secret/command policy | This is the host security boundary |
 | Provider adapter | Retry/redaction/usage tests and fake canary | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
+| Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts | Claude can enforce pre-tool; Codex is observation-only until a supported per-tool hook exists |

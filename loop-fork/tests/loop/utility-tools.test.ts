@@ -28,11 +28,57 @@ const withRepo = async (
   try {
     await mkdir(join(root, "src"));
     await mkdir(join(root, "tests"));
+    await mkdir(join(root, ".aws"));
+    await mkdir(join(root, ".claude"));
+    await mkdir(join(root, "packages", "api", ".aws"), { recursive: true });
+    await mkdir(join(root, "packages", "api", ".claude"), {
+      recursive: true,
+    });
+    await mkdir(join(root, "packages", "api", "specs", "auth"), {
+      recursive: true,
+    });
+    await mkdir(join(root, "packages", "api", "docs", "architecture"), {
+      recursive: true,
+    });
+    await mkdir(join(root, "fixtures", "repo", ".git"), { recursive: true });
+    await mkdir(join(root, ".github"));
+    await mkdir(join(root, ".cursor", "rules"), { recursive: true });
+    await mkdir(join(root, ".gemini"));
+    await mkdir(join(root, "packages", "api", ".CURSOR", "rules"), {
+      recursive: true,
+    });
     await writeFile(
       join(root, "src", "hello.ts"),
       "export const hello = 'world';\n"
     );
     await writeFile(join(root, ".env"), "OPENROUTER_API_KEY=never-read\n");
+    await writeFile(join(root, ".aws", "config"), "secret-profile\n");
+    await writeFile(join(root, ".claude", "settings.json"), "{}\n");
+    await writeFile(
+      join(root, "packages", "api", ".aws", "config"),
+      "nested-secret-profile\n"
+    );
+    await writeFile(
+      join(root, "packages", "api", ".claude", "settings.json"),
+      "{}\n"
+    );
+    await writeFile(
+      join(root, "packages", "api", "specs", "auth", "spec.md"),
+      "# governing\n"
+    );
+    await writeFile(
+      join(root, "packages", "api", "docs", "architecture", "invariants.md"),
+      "# governing\n"
+    );
+    await writeFile(join(root, "fixtures", "repo", ".git", "config"), "x\n");
+    await writeFile(join(root, ".github", "copilot-instructions.md"), "x\n");
+    await writeFile(join(root, ".cursor", "rules", "project.mdc"), "x\n");
+    await writeFile(join(root, ".gemini", "settings.json"), "{}\n");
+    await writeFile(join(root, ".windsurfrules"), "x\n");
+    await writeFile(
+      join(root, "packages", "api", ".CURSOR", "rules", "project.mdc"),
+      "x\n"
+    );
     await writeFile(join(root, "tests", "example.test.ts"), "export {};\n");
     await run(root);
   } finally {
@@ -97,6 +143,63 @@ test("reads and searches only declared non-secret scope", async () => {
       name: "read_file",
     });
     expect(secret.error?.code).toBe("path_denied");
+  });
+});
+
+test("central protected-path policy denies credential and agent settings", async () => {
+  await withRepo(async (root) => {
+    const broker = await createUtilityToolBroker({
+      artifactDir: ".utility-artifacts",
+      readScopes: ["."],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    for (const path of [
+      ".aws/config",
+      ".claude/settings.json",
+      "packages/api/.aws/config",
+      "packages/api/.claude/settings.json",
+      "packages/api/specs/auth/spec.md",
+      "packages/api/docs/architecture/invariants.md",
+      "fixtures/repo/.git/config",
+      ".github/copilot-instructions.md",
+      ".cursor/rules/project.mdc",
+      ".gemini/settings.json",
+      ".windsurfrules",
+      "packages/api/.CURSOR/rules/project.mdc",
+      ".CLAUDE/settings.json",
+      "packages/api/.AWS/config",
+      "fixtures/repo/.GIT/config",
+    ]) {
+      const read = await broker.execute({
+        arguments: { path },
+        name: "read_file",
+      });
+      expect(read.error?.code).toBe("path_denied");
+    }
+
+    let statusRequest: CommandRequest | undefined;
+    const statusBroker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["."],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: (request) => {
+          statusRequest = request;
+          return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
+        },
+      }
+    );
+    expect(
+      await statusBroker.execute({ arguments: {}, name: "git_status" })
+    ).toMatchObject({ ok: true });
+    expect(statusRequest?.argv).toContain(":(exclude,glob,icase)**/.cursor/**");
+    expect(statusRequest?.argv).toContain(
+      ":(exclude,glob,icase)**/copilot-instructions.md"
+    );
   });
 });
 
@@ -226,12 +329,7 @@ test("loads a repository policy for local offline npx vitest checks", async () =
       name: "run_check",
     });
     expect(result).toMatchObject({ exitCode: 0, ok: true });
-    expect(captured?.argv).toEqual([
-      "npx",
-      "vitest",
-      "run",
-      "example.test.ts",
-    ]);
+    expect(captured?.argv).toEqual(["npx", "vitest", "run", "example.test.ts"]);
     expect(captured?.env).toMatchObject({
       CI: "1",
       NPM_CONFIG_OFFLINE: "true",
@@ -280,12 +378,7 @@ test("supports a local offline vitest check without repository mutation", async 
     });
 
     expect(result).toMatchObject({ exitCode: 0, ok: true });
-    expect(captured?.argv).toEqual([
-      "npx",
-      "vitest",
-      "run",
-      "example.test.ts",
-    ]);
+    expect(captured?.argv).toEqual(["npx", "vitest", "run", "example.test.ts"]);
     expect(captured?.env).toMatchObject({
       NPM_CONFIG_OFFLINE: "true",
       NPM_CONFIG_YES: "false",
@@ -367,9 +460,7 @@ test("repository command policy fails closed when malformed or open-world", asyn
     await writeFile(
       policyPath,
       JSON.stringify({
-        commandAllowlist: [
-          { executable: "sh", prefixes: [["-c"]] },
-        ],
+        commandAllowlist: [{ executable: "sh", prefixes: [["-c"]] }],
         version: 1,
       })
     );
@@ -558,9 +649,7 @@ test("guarded apply revalidates write scope and dependency targets", async () =>
         preimages: [
           {
             path: "tests/example.test.ts",
-            sha256: createHash("sha256")
-              .update("export {};\n")
-              .digest("hex"),
+            sha256: createHash("sha256").update("export {};\n").digest("hex"),
           },
         ],
       })
@@ -629,9 +718,7 @@ test("guarded apply refuses symlink escapes from write scope", async () => {
           expectedManifestSha256: createHash("sha256")
             .update(await readFile(manifestPath))
             .digest("hex"),
-          expectedPatchSha256: createHash("sha256")
-            .update(patch)
-            .digest("hex"),
+          expectedPatchSha256: createHash("sha256").update(patch).digest("hex"),
           manifestPath,
           patchPath,
         })
@@ -667,9 +754,7 @@ test("guarded apply refuses an in-repository symlink write-scope escape", async 
         preimages: [
           {
             path: "src/linked-tests/example.test.ts",
-            sha256: createHash("sha256")
-              .update("export {};\n")
-              .digest("hex"),
+            sha256: createHash("sha256").update("export {};\n").digest("hex"),
           },
         ],
       })

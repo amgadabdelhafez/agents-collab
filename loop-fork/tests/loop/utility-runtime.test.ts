@@ -12,6 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "bun";
 import { readBridgeEvents } from "../../src/loop/bridge-store";
+import {
+  appendDelegationEvent,
+  makeDelegationEvent,
+} from "../../src/loop/delegation-policy";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
   applyUtilityJobPatch,
@@ -803,6 +807,29 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
         tool: "search_repo",
       })}\n`
     );
+    appendDelegationEvent(
+      runDir,
+      makeDelegationEvent({
+        agent: "claude",
+        disposition: "auto-routed",
+        fingerprint: "a".repeat(64),
+        operation: "git-status",
+        reason: "git-status",
+        source: "claude-hook",
+        taskId: "inspect-config",
+      })
+    );
+    appendDelegationEvent(
+      runDir,
+      makeDelegationEvent({
+        agent: "codex",
+        disposition: "missed-candidate",
+        fingerprint: "b".repeat(64),
+        operation: "scoped-search",
+        reason: "codex-tool-hook-unavailable",
+        source: "codex-app-server",
+      })
+    );
     writeFileSync(
       join(runDir, "utility", "usage.jsonl"),
       `${JSON.stringify({
@@ -820,6 +847,8 @@ test("utility pane reports current work, tool activity, usage, and idle state", 
     expect(pane).toContain("NOW  inspect- pending-route");
     expect(pane).toContain("TOOL  search_repo  ok  12ms");
     expect(pane).toContain("LAST  completed  1,234 tok  $0.0044");
+    expect(pane).toContain("DELEG auto=1 explicit=0 missed=1 watch=0");
+    expect(pane).toContain("last=codex/codex-tool-hook-una...");
     expect(pane).toContain("CONFIG  key file loading is disabled");
   } finally {
     rmSync(runDir, { recursive: true, force: true });

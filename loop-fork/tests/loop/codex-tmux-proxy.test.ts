@@ -13,6 +13,7 @@ import {
   runCodexTmuxProxy,
   waitForCodexTmuxProxy,
 } from "../../src/loop/codex-tmux-proxy";
+import { readDelegationEvents } from "../../src/loop/delegation-policy";
 import { findFreePort } from "../../src/loop/ports";
 import {
   createRunManifest,
@@ -259,6 +260,38 @@ test("codex tmux proxy persists newer live thread ids to the run manifest", () =
   );
 
   rmSync(root, { recursive: true, force: true });
+});
+
+test("codex tmux proxy records a mechanical command candidate without command text", () => {
+  const root = makeTempDir();
+  try {
+    expect(
+      codexTmuxProxyInternals.recordCodexAppServerDelegationCandidate(
+        root,
+        "/repo",
+        {
+          item: {
+            command: "git status --short",
+            cwd: "/repo",
+            id: "command-1",
+            type: "commandExecution",
+          },
+        },
+        "2026-07-26T20:00:00.000Z"
+      )
+    ).toBe(true);
+    const events = readDelegationEvents(root);
+    expect(events).toEqual([
+      expect.objectContaining({
+        disposition: "missed-candidate",
+        operation: "git-status",
+        source: "codex-app-server",
+      }),
+    ]);
+    expect(JSON.stringify(events)).not.toContain("git status --short");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("codex tmux proxy reconnects to a live upstream without dropping the tui socket", async () => {

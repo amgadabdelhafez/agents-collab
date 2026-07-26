@@ -1,4 +1,9 @@
 import {
+  appendDelegationEvent,
+  hashDelegationFingerprint,
+  makeDelegationEvent,
+} from "./delegation-policy";
+import {
   createUtilityRouteRequest,
   type UtilityAuthorityFlags,
   type UtilityCapability,
@@ -249,6 +254,78 @@ const authorityFlags = (value: unknown): UtilityAuthorityFlags => {
 const taskId = (args: Record<string, unknown>): string =>
   requiredString(args, "task_id");
 
+const routeTask = (
+  runDir: string,
+  source: UtilityBridgeSource,
+  args: Record<string, unknown>
+): { state: string; taskId: string } => {
+  const kind = requestKind(args.kind);
+  const estimatedCostUsd = args.estimated_cost_usd;
+  if (
+    estimatedCostUsd !== undefined &&
+    (typeof estimatedCostUsd !== "number" ||
+      !Number.isFinite(estimatedCostUsd) ||
+      estimatedCostUsd < 0)
+  ) {
+    throw new UtilityBridgeInputError(
+      "estimated_cost_usd must be non-negative"
+    );
+  }
+  const delegatedRequester = args.requester;
+  const requester =
+    source === "supervisor" &&
+    (delegatedRequester === "claude" ||
+      delegatedRequester === "codex" ||
+      delegatedRequester === "gemini" ||
+      delegatedRequester === "cursor" ||
+      delegatedRequester === "copilot")
+      ? delegatedRequester
+      : source;
+  if (requester === "supervisor") {
+    throw new UtilityBridgeInputError(
+      "supervisor route_task requires a requester result target"
+    );
+  }
+  if (
+    source !== "supervisor" &&
+    delegatedRequester !== undefined &&
+    delegatedRequester !== source
+  ) {
+    throw new UtilityBridgeInputError(
+      "main agents cannot override the route_task requester"
+    );
+  }
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: stringArray(args, "acceptance_criteria"),
+    authority: authorityFlags(args.authority),
+    ...(typeof estimatedCostUsd === "number" ? { estimatedCostUsd } : {}),
+    ...(typeof args.idempotency_key === "string"
+      ? { idempotencyKey: hashDelegationFingerprint(args.idempotency_key) }
+      : {}),
+    kind,
+    objective: requiredString(args, "objective"),
+    readScope: stringArray(args, "read_scope"),
+    requester,
+    requiredCapabilities: capabilities(args, kind),
+    risk: requestRisk(args.risk),
+    writeScope: stringArray(args, "write_scope"),
+  });
+  const job = appendUtilityRouteRequest(runDir, request);
+  appendDelegationEvent(
+    runDir,
+    makeDelegationEvent({
+      agent: requester,
+      disposition: "explicit-routed",
+      fingerprint: hashDelegationFingerprint(request.idempotencyKey),
+      operation: request.kind,
+      reason: source === "supervisor" ? "supervisor-route-task" : "route-task",
+      source: "bridge",
+      taskId: job.jobId,
+    })
+  );
+  return { state: job.state, taskId: job.jobId };
+};
+
 export const callUtilityBridgeTool = async (
   name: UtilityBridgeToolName,
   runDir: string,
@@ -256,59 +333,7 @@ export const callUtilityBridgeTool = async (
   args: Record<string, unknown>
 ): Promise<unknown> => {
   if (name === "route_task") {
-    const kind = requestKind(args.kind);
-    const estimatedCostUsd = args.estimated_cost_usd;
-    if (
-      estimatedCostUsd !== undefined &&
-      (typeof estimatedCostUsd !== "number" ||
-        !Number.isFinite(estimatedCostUsd) ||
-        estimatedCostUsd < 0)
-    ) {
-      throw new UtilityBridgeInputError(
-        "estimated_cost_usd must be non-negative"
-      );
-    }
-    const delegatedRequester = args.requester;
-    const requester =
-      source === "supervisor" &&
-      (delegatedRequester === "claude" ||
-        delegatedRequester === "codex" ||
-        delegatedRequester === "gemini" ||
-        delegatedRequester === "cursor" ||
-        delegatedRequester === "copilot")
-        ? delegatedRequester
-        : source;
-    if (requester === "supervisor") {
-      throw new UtilityBridgeInputError(
-        "supervisor route_task requires a requester result target"
-      );
-    }
-    if (
-      source !== "supervisor" &&
-      delegatedRequester !== undefined &&
-      delegatedRequester !== source
-    ) {
-      throw new UtilityBridgeInputError(
-        "main agents cannot override the route_task requester"
-      );
-    }
-    const request = createUtilityRouteRequest({
-      acceptanceCriteria: stringArray(args, "acceptance_criteria"),
-      authority: authorityFlags(args.authority),
-      ...(typeof estimatedCostUsd === "number" ? { estimatedCostUsd } : {}),
-      ...(typeof args.idempotency_key === "string"
-        ? { idempotencyKey: args.idempotency_key }
-        : {}),
-      kind,
-      objective: requiredString(args, "objective"),
-      readScope: stringArray(args, "read_scope"),
-      requester,
-      requiredCapabilities: capabilities(args, kind),
-      risk: requestRisk(args.risk),
-      writeScope: stringArray(args, "write_scope"),
-    });
-    const job = appendUtilityRouteRequest(runDir, request);
-    return { state: job.state, taskId: job.jobId };
+    return routeTask(runDir, source, args);
   }
   if (name === "apply_task_patch") {
     if (source === "supervisor") {
