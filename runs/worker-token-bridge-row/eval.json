@@ -19,5 +19,14 @@
   "advisories": [
     "The cumulative token ceiling is checked after each provider response, so a final response can cross the ceiling before the job fails; this enforcement behavior predates this change."
   ],
-  "live_verification": "pending"
+  "live_verification": {
+    "loop": 47,
+    "worker_messages": "in 8, out 8, pending 0",
+    "maximum_governess_line_columns": 176,
+    "governess_pane_columns": 176,
+    "claude_pid_preserved": 56784,
+    "codex_pid_preserved": 56786,
+    "worker_pane_output_only": true,
+    "runtime_defaults": "maxTokens=2400, maxTotalTokens=16000"
+  }
 }
