@@ -127,6 +127,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/repo",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
     });
@@ -182,6 +183,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/repo",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
     });
@@ -219,6 +221,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/repo",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
     });
@@ -253,6 +256,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/repo",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
     });
@@ -261,6 +265,101 @@ describe("runHookEmit", () => {
       expect.objectContaining({
         disposition: "route-failed",
         reason: "automatic-route-failed-open",
+      }),
+    ]);
+  });
+
+  test("routes an eligible command from a verified linked worktree", async () => {
+    const delegationEvents: unknown[] = [];
+    const routeRequests: Array<{ readScope?: string[] }> = [];
+    const stdout: string[] = [];
+    async function* stdin() {
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/linked/packages/api",
+          hook_event_name: "PreToolUse",
+          tool_input: { command: "npx vitest run tests/router.test.ts" },
+          tool_name: "Bash",
+          tool_use_id: "linked-tool",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "linked-job" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/linked",
+      stdin: stdin(),
+      writeStdout: (value) => stdout.push(value),
+    });
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        readScope: ["/linked/packages/api/tests/router.test.ts"],
+      }),
+    ]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({
+        disposition: "auto-routed",
+        taskId: "linked-job",
+      }),
+    ]);
+    expect(stdout.join("")).toContain('"permissionDecision":"deny"');
+  });
+
+  test("journals unsupported and unverified automatic candidates", async () => {
+    const delegationEvents: unknown[] = [];
+    const run = async (
+      toolName: string,
+      toolInput: Record<string, unknown>,
+      workspaceRoot: string | undefined
+    ) => {
+      async function* stdin() {
+        yield new TextEncoder().encode(
+          JSON.stringify({
+            cwd: "/linked",
+            hook_event_name: "PreToolUse",
+            tool_input: toolInput,
+            tool_name: toolName,
+          })
+        );
+      }
+      await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+        append: () => undefined,
+        appendDelegation: (_runDir, event) => delegationEvents.push(event),
+        env: {
+          LOOP_UTILITY_DELEGATION_MODE: "enforce",
+          LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+        },
+        now: () => NOW,
+        readManifest: () => ({ cwd: "/repo" }),
+        resolveWorkspaceRoot: () => workspaceRoot,
+        stdin: stdin(),
+      });
+    };
+    await run("Edit", { file_path: "/linked/src/a.ts" }, "/linked");
+    await run("Bash", { command: "rg x src && npm test" }, "/linked");
+    await run("Read", { file_path: "/other/a.ts", limit: 300 }, undefined);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({
+        disposition: "skipped-candidate",
+        reason: "tool-not-enforceable",
+      }),
+      expect.objectContaining({
+        disposition: "skipped-candidate",
+        reason: "compound-or-unsafe-command",
+      }),
+      expect.objectContaining({
+        disposition: "skipped-candidate",
+        reason: "workspace-unverified",
       }),
     ]);
   });

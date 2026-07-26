@@ -1499,6 +1499,8 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   );
   expect(primaryPrompt).not.toContain("Wait briefly if it arrives");
   expect(primaryPrompt).toContain('"mcp__loop_bridge__send_message"');
+  expect(primaryPrompt).toContain("sole peer-delivery transport");
+  expect(primaryPrompt).toContain("Never duplicate a bridge message");
   expect(primaryPrompt).toContain("Delegation is mandatory");
   expect(primaryPrompt).toContain('"mcp__loop_bridge__route_task"');
   expect(primaryPrompt).toContain("worktree isolation");
@@ -1514,6 +1516,7 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(peerPrompt).toContain("Do not take over the task or create the PR");
   expect(peerPrompt).toContain("Wait for Codex to send you a targeted request");
   expect(peerPrompt).toContain("Delegation is mandatory");
+  expect(peerPrompt).toContain("sole peer-delivery transport");
   expect(peerPrompt).not.toContain('"reply"');
   expect(peerPrompt).toContain(
     'Use "mcp__loop-bridge-repo-123-1__send_message" with target: "codex" for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.'

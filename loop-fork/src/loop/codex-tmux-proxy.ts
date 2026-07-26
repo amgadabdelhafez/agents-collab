@@ -37,6 +37,10 @@ const THREAD_RESUME_METHOD = "thread/resume";
 const THREAD_START_METHOD = "thread/start";
 const TURN_START_METHOD = "turn/start";
 const ITEM_STARTED_METHOD = "item/started";
+const ITEM_COMPLETED_METHOD = "item/completed";
+const MCP_RELOAD_METHOD = "config/mcpServer/reload";
+const MCP_RELOAD_ID_PREFIX = "proxy-mcp-reload-";
+const MCP_RELOAD_TIMEOUT_MS = 5000;
 const DEBUG_PROXY = process.env.LOOP_DEBUG_PROXY === "1";
 
 export const CODEX_TMUX_PROXY_SUBCOMMAND = "__codex-tmux-proxy";
@@ -70,6 +74,19 @@ const asString = (value: unknown): string | undefined =>
 
 const asNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isInteger(value) ? value : undefined;
+
+const isClosedLoopBridgeToolCall = (params: unknown): boolean => {
+  if (!isRecord(params)) {
+    return false;
+  }
+  const item = isRecord(params.item) ? params.item : undefined;
+  const error = item && isRecord(item.error) ? item.error : undefined;
+  return Boolean(
+    item?.type === "mcpToolCall" &&
+      asString(item.server) === "loop-bridge" &&
+      asString(error?.message)?.toLowerCase().includes("transport closed")
+  );
+};
 
 const asJsonFrame = (value: string): JsonFrame | undefined => {
   const trimmed = value.trim();
@@ -227,6 +244,8 @@ class CodexTmuxProxy {
   private reconnectAttemptCount = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnecting = false;
+  private mcpReloadInFlight = false;
+  private mcpReloadTimer: ReturnType<typeof setTimeout> | undefined;
   private resolveStopped = () => undefined;
   private sawTmuxSession = false;
   private stopped = false;
@@ -324,6 +343,7 @@ class CodexTmuxProxy {
       clearInterval(this.drainTimer);
       this.drainTimer = undefined;
     }
+    this.clearMcpReloadState();
     this.proxyServer?.stop(true);
     this.proxyServer = undefined;
     this.tuiSocket = undefined;
@@ -511,6 +531,7 @@ class CodexTmuxProxy {
       return;
     }
     this.upstream = undefined;
+    this.clearMcpReloadState();
     this.clearUpstreamState();
     const stopReason = this.stopReason();
     if (stopReason) {
@@ -600,7 +621,21 @@ class CodexTmuxProxy {
           }
         }
       }
+      if (
+        frame.method === ITEM_COMPLETED_METHOD &&
+        isClosedLoopBridgeToolCall(frame.params)
+      ) {
+        this.reloadMcpServers();
+      }
       this.forwardToTui(raw);
+      return;
+    }
+
+    if (
+      typeof frame.id === "string" &&
+      frame.id.startsWith(MCP_RELOAD_ID_PREFIX)
+    ) {
+      this.clearMcpReloadState();
       return;
     }
 
@@ -623,6 +658,33 @@ class CodexTmuxProxy {
     this.handleTrackedResponse(route, frame);
     frame.id = route.clientId;
     this.forwardToTui(JSON.stringify(frame));
+  }
+
+  private reloadMcpServers(): void {
+    if (this.mcpReloadInFlight || !this.upstream) {
+      return;
+    }
+    this.mcpReloadInFlight = true;
+    this.mcpReloadTimer = setTimeout(() => {
+      this.clearMcpReloadState();
+    }, MCP_RELOAD_TIMEOUT_MS);
+    this.mcpReloadTimer.unref?.();
+    const id = `${MCP_RELOAD_ID_PREFIX}${Date.now()}-${this.nextProxyId++}`;
+    try {
+      this.upstream.send(
+        `${JSON.stringify({ id, method: MCP_RELOAD_METHOD, params: null })}\n`
+      );
+    } catch {
+      this.clearMcpReloadState();
+    }
+  }
+
+  private clearMcpReloadState(): void {
+    if (this.mcpReloadTimer) {
+      clearTimeout(this.mcpReloadTimer);
+      this.mcpReloadTimer = undefined;
+    }
+    this.mcpReloadInFlight = false;
   }
 
   private handleTrackedResponse(route: ProxyRoute, frame: JsonFrame): void {
@@ -737,6 +799,7 @@ export const runCodexTmuxProxy = async (
 
 export const codexTmuxProxyInternals = {
   deliverVisibleBridgeMessage,
+  isClosedLoopBridgeToolCall,
   reconnectDelayMs,
   proxyHealth,
   buildProxyUrl,

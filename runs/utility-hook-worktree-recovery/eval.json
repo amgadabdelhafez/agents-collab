@@ -1,0 +1,18 @@
+{
+  "task": "utility-hook-worktree-recovery",
+  "verdict": "pass_pending_live_adoption",
+  "checks": {
+    "focused": "150 passed, 0 failed",
+    "bridge_and_prompt": "86 passed, 0 failed",
+    "build": "passed",
+    "diff_check": "passed",
+    "full_suite": "795 passed, 4 known model/config expectation failures",
+    "independent_review": "pass with no blockers; narrow-match and reload-timeout advisories addressed",
+    "live_codex_transport": "reloaded through app-server and loop-bridge tools listed without main-pane restart",
+    "live_duplicate_delivery": "root cause isolated to direct tmux plus bridge dual-send; live agent corrected and future prompt guidance fixed"
+  },
+  "known_limitations": [
+    "Changed-file Biome is unavailable because the repository ultracite/biome/core configuration cannot resolve.",
+    "Final live linked-worktree worker completion is recorded after canonical integration."
+  ]
+}

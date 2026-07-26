@@ -106,6 +106,14 @@ const routingSnapshot = (
   const explicitRouted = events.filter(
     (event) => event.disposition === "explicit-routed"
   ).length;
+  const unroutedCandidates = events.filter((event) =>
+    [
+      "missed-candidate",
+      "observed-candidate",
+      "route-failed",
+      "skipped-candidate",
+    ].includes(event.disposition)
+  );
   const routedJobs = jobs.filter(
     (job) => job.decision?.target === "utility"
   );
@@ -122,14 +130,17 @@ const routingSnapshot = (
     },
     {}
   );
+  for (const event of unroutedCandidates) {
+    reasons[event.reason] = (reasons[event.reason] ?? 0) + 1;
+  }
   return {
     autoRouted,
-    considered: jobs.length,
+    considered: jobs.length + unroutedCandidates.length,
     explicitRouted,
     pending: jobs.filter((job) => !job.decision).length,
     reasons,
     routed: routedJobs.length,
-    skipped: skippedJobs.length,
+    skipped: skippedJobs.length + unroutedCandidates.length,
   };
 };
 

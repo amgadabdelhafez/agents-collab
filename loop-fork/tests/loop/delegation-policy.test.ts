@@ -183,6 +183,26 @@ describe("delegation classifier", () => {
     expect(resolveUtilityDelegationMode("off")).toBe("off");
     expect(resolveUtilityDelegationMode("surprise")).toBe("observe");
   });
+
+  test("keeps repeated tool attempts distinct when hook ids differ", () => {
+    const first = classifyDelegationIntent({
+      agent: "claude",
+      cwd: ROOT,
+      repoRoot: ROOT,
+      toolInput: { command: "git status --short" },
+      toolName: "Bash",
+      toolUseId: "tool-1",
+    });
+    const second = classifyDelegationIntent({
+      agent: "claude",
+      cwd: ROOT,
+      repoRoot: ROOT,
+      toolInput: { command: "git status --short" },
+      toolName: "Bash",
+      toolUseId: "tool-2",
+    });
+    expect(first.fingerprint).not.toBe(second.fingerprint);
+  });
 });
 
 test("delegation telemetry is compact, durable, and tolerant of missing files", () => {

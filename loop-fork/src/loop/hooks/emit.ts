@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   appendDelegationEvent,
   classifyDelegationIntent,
   type DelegationTelemetryEvent,
+  hashDelegationFingerprint,
   makeDelegationEvent,
   resolveUtilityDelegationMode,
 } from "../delegation-policy";
@@ -16,6 +17,7 @@ import {
   resolveUtilityRuntimeConfig,
 } from "../utility-runtime";
 import { appendUtilityRouteRequest } from "../utility-store";
+import { resolveVerifiedUtilityWorkspaceRoot } from "../utility-workspace";
 
 export const HOOK_EMIT_SUBCOMMAND = "__hook-emit";
 
@@ -188,6 +190,10 @@ interface HookEmitDeps {
   env?: NodeJS.ProcessEnv;
   now?: () => string;
   readManifest?: (path: string) => { cwd: string } | undefined;
+  resolveWorkspaceRoot?: (
+    runRoot: string,
+    path: string
+  ) => string | undefined;
   stdin?: AsyncIterable<Uint8Array>;
   writeStdout?: (text: string) => void;
 }
@@ -234,6 +240,7 @@ const handlePreToolDelegation = (
   if (!(toolName && cwd)) {
     return undefined;
   }
+  const toolUseId = firstString(raw, ["tool_use_id", "toolUseId"]);
   const runDir = dirname(dirname(hookFile));
   const manifest = (deps.readManifest ?? readRunManifest)(
     join(runDir, "manifest.json")
@@ -241,20 +248,55 @@ const handlePreToolDelegation = (
   if (!manifest?.cwd) {
     return undefined;
   }
+  const appendTelemetry = deps.appendDelegation ?? appendDelegationEvent;
+  const candidateFingerprint = hashDelegationFingerprint(
+    JSON.stringify({ agent, cwd, input: toolInput, tool: toolName, toolUseId })
+  );
+  const workspaceRoot = (
+    deps.resolveWorkspaceRoot ?? resolveVerifiedUtilityWorkspaceRoot
+  )(manifest.cwd, cwd);
+  if (!workspaceRoot) {
+    appendTelemetry(
+      runDir,
+      makeDelegationEvent(
+        {
+          agent,
+          disposition: "skipped-candidate",
+          fingerprint: candidateFingerprint,
+          operation: "tool-use",
+          reason: "workspace-unverified",
+          source: "claude-hook",
+        },
+        at
+      )
+    );
+    return undefined;
+  }
   const classification = classifyDelegationIntent({
     agent,
     cwd,
-    repoRoot: manifest.cwd,
+    repoRoot: workspaceRoot,
     toolInput,
     toolName,
-    ...(firstString(raw, ["tool_use_id", "toolUseId"])
-      ? { toolUseId: firstString(raw, ["tool_use_id", "toolUseId"]) }
-      : {}),
+    ...(toolUseId ? { toolUseId } : {}),
   });
   if (!classification.eligible) {
+    appendTelemetry(
+      runDir,
+      makeDelegationEvent(
+        {
+          agent,
+          disposition: "skipped-candidate",
+          fingerprint: classification.fingerprint,
+          operation: "tool-use",
+          reason: classification.reason,
+          source: "claude-hook",
+        },
+        at
+      )
+    );
     return undefined;
   }
-  const appendTelemetry = deps.appendDelegation ?? appendDelegationEvent;
   const config = resolveUtilityRuntimeConfig(
     buildUtilityWorkerEnvironment(deps.env ?? process.env)
   );
@@ -281,9 +323,18 @@ const handlePreToolDelegation = (
     return undefined;
   }
   try {
+    const adoptedWorkspace = workspaceRoot !== resolve(manifest.cwd);
+    const rootScopes = (scopes: string[]): string[] =>
+      adoptedWorkspace
+        ? scopes.map((scope) =>
+            isAbsolute(scope) ? scope : resolve(workspaceRoot, scope)
+          )
+        : scopes;
     const routeRequest = createUtilityRouteRequest({
       ...classification.request,
       createdAt: at,
+      readScope: rootScopes(classification.request.readScope),
+      writeScope: rootScopes(classification.request.writeScope),
     });
     const job = (deps.appendRoute ?? appendUtilityRouteRequest)(
       runDir,

@@ -16,6 +16,7 @@ import {
   mandatoryUtilityDelegationGuidance,
   type BridgeTool,
   quotedBridgeTool,
+  singleBridgeTransportGuidance,
 } from "./bridge-guidance";
 import { getCodexAppServerUrl, getLastCodexThreadId } from "./codex-app-server";
 import { codexHomeEnv } from "./codex-home";
@@ -237,6 +238,7 @@ const pairedBridgeGuidance = (
   if (agent === "claude") {
     return [
       `Your bridge MCP server is "${serverName}". Use ${quotedClaudeTmuxBridgeTool(serverName, "send_message")} with target: "${target}" for ${peer}-facing messages, including replies to inbound ${peer} channel messages; do not send ${peer}-facing responses as a human-facing message.`,
+      singleBridgeTransportGuidance,
       mandatoryUtilityDelegationGuidance(
         quotedClaudeTmuxBridgeTool(serverName, "route_task")
       ),
@@ -247,6 +249,7 @@ const pairedBridgeGuidance = (
 
   return [
     `Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with target: "${target}" for ${peer}-facing messages, not a human-facing message.`,
+    singleBridgeTransportGuidance,
     mandatoryUtilityDelegationGuidance(
       quotedBridgeTool(agent, "route_task")
     ),

@@ -294,6 +294,155 @@ test("codex tmux proxy records a mechanical command candidate without command te
   }
 });
 
+test("closed loop bridge MCP calls are identified narrowly", () => {
+  expect(
+    codexTmuxProxyInternals.isClosedLoopBridgeToolCall({
+      item: {
+        error: { message: "Transport closed" },
+        server: "loop-bridge",
+        status: "failed",
+        tool: "route_task",
+        type: "mcpToolCall",
+      },
+    })
+  ).toBe(true);
+  expect(
+    codexTmuxProxyInternals.isClosedLoopBridgeToolCall({
+      item: {
+        error: { message: "permission denied" },
+        server: "loop-bridge",
+        type: "mcpToolCall",
+      },
+    })
+  ).toBe(false);
+  expect(
+    codexTmuxProxyInternals.isClosedLoopBridgeToolCall({
+      item: {
+        error: { message: "Transport closed" },
+        server: "unrelated-server",
+        type: "mcpToolCall",
+      },
+    })
+  ).toBe(false);
+  expect(
+    codexTmuxProxyInternals.isClosedLoopBridgeToolCall({
+      item: {
+        error: { message: "Transport closed" },
+        server: "not-loop-bridge-cache",
+        type: "mcpToolCall",
+      },
+    })
+  ).toBe(false);
+});
+
+test("codex tmux proxy reloads MCP servers after a closed loop bridge call", async () => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  const upstreamFrames: JsonFrame[] = [];
+  let upstreamSocket: ServerWebSocket<{ initialized: boolean }> | undefined;
+  let proxyTask: Promise<void> | undefined;
+  const upstreamStart = await startServerWithRetries((port) =>
+    serve({
+      fetch: (request, server) => {
+        if (server.upgrade(request, { data: { initialized: false } })) {
+          return undefined;
+        }
+        return new Response("upstream");
+      },
+      hostname: "127.0.0.1",
+      port,
+      websocket: {
+        message: (ws, message) => {
+          for (const raw of String(message).split("\n")) {
+            if (!raw.trim()) {
+              continue;
+            }
+            const frame = JSON.parse(raw) as JsonFrame;
+            upstreamFrames.push(frame);
+            if (frame.method === "initialize") {
+              ws.data.initialized = true;
+              ws.send(JSON.stringify({ id: frame.id, result: {} }));
+            } else if (frame.method === "config/mcpServer/reload") {
+              ws.send(JSON.stringify({ id: frame.id, result: {} }));
+            }
+          }
+        },
+        open: (ws) => {
+          upstreamSocket = ws;
+        },
+      },
+    })
+  );
+  const upstreamUrl = `ws://127.0.0.1:${upstreamStart.port}/`;
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      claudeSessionId: "claude-1",
+      codexRemoteUrl: upstreamUrl,
+      codexThreadId: "thread-1",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "10",
+      state: "working",
+      status: "running",
+    })
+  );
+  let tui: WebSocket | undefined;
+  try {
+    const proxyStart = await startProxyWithRetries(
+      root,
+      upstreamUrl,
+      "thread-1"
+    );
+    proxyTask = proxyStart.proxyTask;
+    tui = new WebSocket(proxyStart.proxyUrl);
+    await new Promise<void>((resolve, reject) => {
+      if (!tui) {
+        reject(new Error("missing tui websocket"));
+        return;
+      }
+      tui.onopen = () => resolve();
+      tui.onerror = () => reject(new Error("failed to open tui websocket"));
+    });
+    tui.send(JSON.stringify({ id: 1, method: "initialize", params: {} }));
+    await waitFor(() => Boolean(upstreamSocket));
+    upstreamSocket?.send(
+      JSON.stringify({
+        method: "item/completed",
+        params: {
+          item: {
+            error: { message: "Transport closed" },
+            server: "loop-bridge",
+            status: "failed",
+            tool: "send_message",
+            type: "mcpToolCall",
+          },
+        },
+      })
+    );
+    await waitFor(() =>
+      upstreamFrames.some(
+        (frame) => frame.method === "config/mcpServer/reload"
+      )
+    );
+  } finally {
+    tui?.close();
+    updateRunManifest(manifestPath, (manifest) =>
+      manifest
+        ? { ...manifest, state: "completed", status: "completed" }
+        : manifest
+    );
+    await Promise.race([
+      proxyTask ?? Promise.resolve(),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+    upstreamStart.server.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("codex tmux proxy reconnects to a live upstream without dropping the tui socket", async () => {
   const root = makeTempDir();
   const manifestPath = join(root, "manifest.json");
