@@ -9,13 +9,13 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { isAgent } from "./agents";
-import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import {
   type GitResult,
   runGit as runGitCommand,
   sanitizeBase,
   validateRunId,
 } from "./git";
+import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import type {
   Agent,
   ReviewStatus,
@@ -56,13 +56,13 @@ export interface RunStorage {
 }
 
 export interface RunManifest {
-  governess?: boolean;
   claudeChannelServer?: string;
   claudeSessionId: string;
   codexRemoteUrl?: string;
   codexThreadId: string;
   createdAt: string;
   cwd: string;
+  governess?: boolean;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
@@ -71,8 +71,11 @@ export interface RunManifest {
   state: RunLifecycleState;
   status: RunStatus;
   tmuxPaneGoverness?: string;
+  tmuxPaneLeft?: string;
   tmuxPaneLeftAgent?: Agent;
+  tmuxPaneRight?: string;
   tmuxPaneRightAgent?: Agent;
+  tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt: string;
 }
@@ -130,13 +133,13 @@ interface RepoIdDeps {
 }
 
 interface RunManifestInput {
-  governess?: boolean;
   claudeChannelServer?: string;
   claudeSessionId?: string;
   codexRemoteUrl?: string;
   codexThreadId?: string;
   createdAt?: string;
   cwd: string;
+  governess?: boolean;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
@@ -145,8 +148,11 @@ interface RunManifestInput {
   state?: RunLifecycleState;
   status?: string;
   tmuxPaneGoverness?: string;
+  tmuxPaneLeft?: string;
   tmuxPaneLeftAgent?: Agent;
+  tmuxPaneRight?: string;
   tmuxPaneRightAgent?: Agent;
+  tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt?: string;
 }
@@ -485,11 +491,16 @@ export const createRunManifest = (
     ...(input.tmuxPaneLeftAgent
       ? { tmuxPaneLeftAgent: input.tmuxPaneLeftAgent }
       : {}),
+    ...(input.tmuxPaneLeft ? { tmuxPaneLeft: input.tmuxPaneLeft } : {}),
     ...(input.tmuxPaneRightAgent
       ? { tmuxPaneRightAgent: input.tmuxPaneRightAgent }
       : {}),
+    ...(input.tmuxPaneRight ? { tmuxPaneRight: input.tmuxPaneRight } : {}),
     ...(input.tmuxPaneGoverness
       ? { tmuxPaneGoverness: input.tmuxPaneGoverness }
+      : {}),
+    ...(input.tmuxPaneUtility
+      ? { tmuxPaneUtility: input.tmuxPaneUtility }
       : {}),
     ...(input.governess ? { governess: true } : {}),
     updatedAt: input.updatedAt ?? now,
@@ -511,6 +522,59 @@ export const writeRunManifest = (
 ): void => {
   ensureParentDir(manifestPath);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+};
+
+const readOptionalRunManifestFields = (
+  parsed: Record<string, unknown>
+): Partial<RunManifest> => {
+  const claudeChannelServer = firstString(parsed, [
+    "claudeChannelServer",
+    "claude_channel_server",
+  ]);
+  const codexRemoteUrl = firstString(parsed, [
+    "codexRemoteUrl",
+    "codex_remote_url",
+  ]);
+  const primaryAgent = firstAgent(parsed, ["primaryAgent", "primary_agent"]);
+  const tmuxSession = firstString(parsed, ["tmuxSession", "tmux_session"]);
+  const tmuxPaneLeftAgent = firstAgent(parsed, [
+    "tmuxPaneLeftAgent",
+    "tmux_pane_left_agent",
+  ]);
+  const tmuxPaneLeft = firstString(parsed, ["tmuxPaneLeft", "tmux_pane_left"]);
+  const tmuxPaneRightAgent = firstAgent(parsed, [
+    "tmuxPaneRightAgent",
+    "tmux_pane_right_agent",
+  ]);
+  const tmuxPaneRight = firstString(parsed, [
+    "tmuxPaneRight",
+    "tmux_pane_right",
+  ]);
+  const tmuxPaneGoverness = firstString(parsed, [
+    "tmuxPaneGoverness",
+    "tmux_pane_governess",
+    LEGACY_MANIFEST_KEYS.pane,
+    LEGACY_MANIFEST_KEYS.paneSnake,
+  ]);
+  const tmuxPaneUtility = firstString(parsed, [
+    "tmuxPaneUtility",
+    "tmux_pane_utility",
+  ]);
+  const governess =
+    parsed.governess === true || parsed[LEGACY_MANIFEST_KEYS.enabled] === true;
+  return {
+    ...(claudeChannelServer ? { claudeChannelServer } : {}),
+    ...(codexRemoteUrl ? { codexRemoteUrl } : {}),
+    ...(governess ? { governess: true } : {}),
+    ...(primaryAgent ? { primaryAgent } : {}),
+    ...(tmuxPaneGoverness ? { tmuxPaneGoverness } : {}),
+    ...(tmuxPaneLeft ? { tmuxPaneLeft } : {}),
+    ...(tmuxPaneLeftAgent ? { tmuxPaneLeftAgent } : {}),
+    ...(tmuxPaneRight ? { tmuxPaneRight } : {}),
+    ...(tmuxPaneRightAgent ? { tmuxPaneRightAgent } : {}),
+    ...(tmuxPaneUtility ? { tmuxPaneUtility } : {}),
+    ...(tmuxSession ? { tmuxSession } : {}),
+  };
 };
 
 export const readRunManifest = (
@@ -560,82 +624,19 @@ export const readRunManifest = (
     }
 
     return {
-      ...(firstString(parsed, ["claudeChannelServer", "claude_channel_server"])
-        ? {
-            claudeChannelServer: firstString(parsed, [
-              "claudeChannelServer",
-              "claude_channel_server",
-            ]),
-          }
-        : {}),
+      ...readOptionalRunManifestFields(parsed),
       claudeSessionId:
         firstString(parsed, ["claudeSessionId", "claude_session_id"]) ?? "",
-      ...(firstString(parsed, ["codexRemoteUrl", "codex_remote_url"])
-        ? {
-            codexRemoteUrl: firstString(parsed, [
-              "codexRemoteUrl",
-              "codex_remote_url",
-            ]),
-          }
-        : {}),
       codexThreadId:
         firstString(parsed, ["codexThreadId", "codex_thread_id"]) ?? "",
       createdAt,
       cwd,
       mode,
       pid,
-      ...(firstAgent(parsed, ["primaryAgent", "primary_agent"])
-        ? {
-            primaryAgent: firstAgent(parsed, [
-              "primaryAgent",
-              "primary_agent",
-            ]),
-          }
-        : {}),
       repoId,
       runId,
       state: state ?? "working",
       status: state ? runStatusFromState(state) : "running",
-      ...(firstString(parsed, ["tmuxSession", "tmux_session"])
-        ? {
-            tmuxSession: firstString(parsed, ["tmuxSession", "tmux_session"]),
-          }
-        : {}),
-      ...(firstAgent(parsed, ["tmuxPaneLeftAgent", "tmux_pane_left_agent"])
-        ? {
-            tmuxPaneLeftAgent: firstAgent(parsed, [
-              "tmuxPaneLeftAgent",
-              "tmux_pane_left_agent",
-            ]),
-          }
-        : {}),
-      ...(firstAgent(parsed, ["tmuxPaneRightAgent", "tmux_pane_right_agent"])
-        ? {
-            tmuxPaneRightAgent: firstAgent(parsed, [
-              "tmuxPaneRightAgent",
-              "tmux_pane_right_agent",
-            ]),
-          }
-        : {}),
-      ...(firstString(parsed, [
-        "tmuxPaneGoverness",
-        "tmux_pane_governess",
-        LEGACY_MANIFEST_KEYS.pane,
-        LEGACY_MANIFEST_KEYS.paneSnake,
-      ])
-        ? {
-            tmuxPaneGoverness: firstString(parsed, [
-              "tmuxPaneGoverness",
-              "tmux_pane_governess",
-              LEGACY_MANIFEST_KEYS.pane,
-              LEGACY_MANIFEST_KEYS.paneSnake,
-            ]),
-          }
-        : {}),
-      ...(parsed.governess === true ||
-      parsed[LEGACY_MANIFEST_KEYS.enabled] === true
-        ? { governess: true }
-        : {}),
       updatedAt,
     };
   } catch {

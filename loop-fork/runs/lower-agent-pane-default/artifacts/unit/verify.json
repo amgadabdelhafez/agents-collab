@@ -1,0 +1,20 @@
+{
+  "task_id": "lower-agent-pane-default",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-26T03:34:38Z",
+  "ended_at": "2026-07-26T03:34:40Z",
+  "artifact": "runs/lower-agent-pane-default/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/tmux.test.ts",
+    "tests/loop/run-state.test.ts",
+    "tests/loop/bridge.test.ts",
+    "tests/loop/governess.test.ts",
+    "tests/loop/utility-runtime.test.ts"
+  ]
+}

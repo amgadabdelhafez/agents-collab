@@ -1,0 +1,12 @@
+{
+  "task_id": "lower-agent-pane-default",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

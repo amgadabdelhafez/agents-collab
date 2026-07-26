@@ -1,6 +1,7 @@
 import {
   type BridgeEnqueueOptions,
   type BridgeMessage,
+  type BridgeSource,
   enqueueBridgeMessage,
   markBridgeMessage,
   readBridgeInbox,
@@ -64,7 +65,7 @@ export const readNextPendingBridgeMessageForTarget = (
 
 export const dispatchBridgeMessage = async (
   runDir: string,
-  source: Agent,
+  source: BridgeSource,
   target: Agent,
   message: string,
   deliver?: ImmediateBridgeDelivery,

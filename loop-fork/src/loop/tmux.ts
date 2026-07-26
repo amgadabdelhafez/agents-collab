@@ -49,6 +49,7 @@ import {
   startPersistentAgentSession,
 } from "./runner";
 import type { Agent, Options } from "./types";
+import { UTILITY_PANE_SUBCOMMAND } from "./utility-runtime";
 
 export const TMUX_FLAG = "--tmux";
 export const TMUX_MISSING_ERROR =
@@ -75,6 +76,8 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
+const DEFAULT_UTILITY_PANE_HEIGHT = "8";
+const UTILITY_PANE_HEIGHT_RE = /^\d+%?$/;
 
 interface SpawnResult {
   exitCode: number;
@@ -229,12 +232,14 @@ const pairedBridgeGuidance = (
   if (agent === "claude") {
     return [
       `Your bridge MCP server is "${serverName}". Use ${quotedClaudeTmuxBridgeTool(serverName, "send_message")} with target: "${target}" for ${peer}-facing messages, including replies to inbound ${peer} channel messages; do not send ${peer}-facing responses as a human-facing message.`,
+      `Before spending full-agent context on a clearly bounded inspect, small edit, or focused command subtask, submit it through ${quotedClaudeTmuxBridgeTool(serverName, "route_task")}. Keep architecture, product decisions, destructive work, and ambiguous scope with the main pair.`,
       `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
     ].join("\n");
   }
 
   return [
     `Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with target: "${target}" for ${peer}-facing messages, not a human-facing message.`,
+    `Before spending full-agent context on a clearly bounded inspect, small edit, or focused command subtask, submit it through ${quotedBridgeTool(agent, "route_task")}. Keep architecture, product decisions, destructive work, and ambiguous scope with the main pair.`,
     `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
   ].join("\n");
 };
@@ -791,6 +796,13 @@ const tmuxStartupMessage = (paired: boolean): string =>
     ? "[loop] starting paired tmux workspace..."
     : "[loop] starting tmux session...";
 
+interface PairedPaneTargets {
+  governess?: string;
+  left: string;
+  right: string;
+  utility?: string;
+}
+
 const updatePairedManifest = (
   deps: TmuxDeps,
   storage: RunStorage,
@@ -801,7 +813,7 @@ const updatePairedManifest = (
   session: string,
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
-  governessPane?: string
+  paneTargets: PairedPaneTargets
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
@@ -815,10 +827,15 @@ const updatePairedManifest = (
         pid: process.pid,
         primaryAgent,
         tmuxSession: session,
+        tmuxPaneLeft: paneTargets.left,
         tmuxPaneLeftAgent: paneAgents.left,
+        tmuxPaneRight: paneTargets.right,
         tmuxPaneRightAgent: paneAgents.right,
-        ...(governessPane
-          ? { governess: true, tmuxPaneGoverness: governessPane }
+        ...(paneTargets.governess
+          ? { governess: true, tmuxPaneGoverness: paneTargets.governess }
+          : {}),
+        ...(paneTargets.utility
+          ? { tmuxPaneUtility: paneTargets.utility }
           : {}),
       },
       new Date().toISOString()
@@ -1034,12 +1051,13 @@ const governessEnv = (
   ];
 };
 
-// Add the full-width bottom governess pane under the two agent panes.
+// Add the full-width bottom governess pane under the agent/utility region.
 const startGovernessPane = (
   deps: TmuxDeps,
   opts: Options,
   session: string,
-  runId: string
+  runId: string,
+  paneTarget: string
 ): string => {
   const command = buildShellCommand([
     "env",
@@ -1061,7 +1079,57 @@ const startGovernessPane = (
     deps.cwd,
     command,
   ]);
-  return `${session}:0.2`;
+  return paneTarget;
+};
+
+const utilityPaneEnabled = (env: NodeJS.ProcessEnv): boolean => {
+  const value = env.LOOP_UTILITY_PANE?.trim().toLowerCase();
+  return !(value === "0" || value === "false" || value === "off");
+};
+
+const utilityPaneHeight = (env: NodeJS.ProcessEnv): string => {
+  const value = env.LOOP_UTILITY_PANE_HEIGHT?.trim();
+  return value && UTILITY_PANE_HEIGHT_RE.test(value)
+    ? value
+    : DEFAULT_UTILITY_PANE_HEIGHT;
+};
+
+const startUtilityPane = (
+  deps: TmuxDeps,
+  rightAgentPane: string,
+  utilityPane: string,
+  runDir: string
+): string => {
+  const command = buildShellCommand([
+    ...deps.launchArgv,
+    UTILITY_PANE_SUBCOMMAND,
+    runDir,
+  ]);
+  runTmuxCommand(deps, [
+    "tmux",
+    "split-window",
+    "-v",
+    "-b",
+    "-l",
+    utilityPaneHeight(deps.env),
+    "-t",
+    rightAgentPane,
+    "-c",
+    deps.cwd,
+    command,
+  ]);
+  return utilityPane;
+};
+
+const resizeUtilityPane = (deps: TmuxDeps, pane: string): void => {
+  runTmuxCommand(deps, [
+    "tmux",
+    "resize-pane",
+    "-t",
+    pane,
+    "-y",
+    utilityPaneHeight(deps.env),
+  ]);
 };
 
 const registerClaudeChannelServerForRun = (
@@ -1329,6 +1397,87 @@ const unblockClaudePane = async (
   }
 };
 
+const createPairedPaneLayout = async (input: {
+  deps: TmuxDeps;
+  governess: boolean;
+  leftCommand: string;
+  paneAgents: { left: Agent; right: Agent };
+  rightCommand: string;
+  runDir: string;
+  session: string;
+}): Promise<PairedPaneTargets> => {
+  runTmuxCommand(input.deps, [
+    "tmux",
+    "new-session",
+    "-d",
+    ...buildSessionSizeArgs(input.deps),
+    "-s",
+    input.session,
+    "-c",
+    input.deps.cwd,
+    input.leftCommand,
+  ]);
+  runTmuxCommand(
+    input.deps,
+    [
+      "tmux",
+      "split-window",
+      "-h",
+      "-t",
+      `${input.session}:0`,
+      "-c",
+      input.deps.cwd,
+      input.rightCommand,
+    ],
+    "Failed to split tmux window"
+  );
+  input.deps.spawn([
+    "tmux",
+    "select-layout",
+    "-t",
+    `${input.session}:0`,
+    "even-horizontal",
+  ]);
+  if (input.paneAgents.left === "claude") {
+    await unblockClaudePane(`${input.session}:0.0`, input.deps);
+  }
+  if (input.paneAgents.right === "claude") {
+    await unblockClaudePane(`${input.session}:0.1`, input.deps);
+  }
+  const showUtilityPane = input.governess && utilityPaneEnabled(input.deps.env);
+  const utility = showUtilityPane
+    ? startUtilityPane(
+        input.deps,
+        `${input.session}:0.1`,
+        `${input.session}:0.1`,
+        input.runDir
+      )
+    : undefined;
+  return {
+    governess: input.governess
+      ? `${input.session}:0.${showUtilityPane ? 3 : 2}`
+      : undefined,
+    left: `${input.session}:0.0`,
+    right: `${input.session}:0.${showUtilityPane ? 2 : 1}`,
+    utility,
+  };
+};
+
+const startPairedControlPanes = (
+  deps: TmuxDeps,
+  opts: Options,
+  session: string,
+  runId: string,
+  paneTargets: PairedPaneTargets
+): void => {
+  if (paneTargets.governess) {
+    startGovernessPane(deps, opts, session, runId, paneTargets.governess);
+  }
+  if (paneTargets.utility) {
+    resizeUtilityPane(deps, paneTargets.utility);
+  }
+};
+
 const startPairedSession = async (
   deps: TmuxDeps,
   launch: PairedTmuxLaunch
@@ -1466,44 +1615,15 @@ const startPairedSession = async (
       }),
     ]);
 
-    runTmuxCommand(deps, [
-      "tmux",
-      "new-session",
-      "-d",
-      ...buildSessionSizeArgs(deps),
-      "-s",
-      session,
-      "-c",
-      deps.cwd,
-      leftCommand,
-    ]);
-    runTmuxCommand(
+    const paneTargets = await createPairedPaneLayout({
       deps,
-      [
-        "tmux",
-        "split-window",
-        "-h",
-        "-t",
-        `${session}:0`,
-        "-c",
-        deps.cwd,
-        rightCommand,
-      ],
-      "Failed to split tmux window"
-    );
-    deps.spawn([
-      "tmux",
-      "select-layout",
-      "-t",
-      `${session}:0`,
-      "even-horizontal",
-    ]);
-    if (paneAgents.left === "claude") {
-      await unblockClaudePane(`${session}:0.0`, deps);
-    }
-    if (paneAgents.right === "claude") {
-      await unblockClaudePane(`${session}:0.1`, deps);
-    }
+      governess: launch.opts.governess,
+      leftCommand,
+      paneAgents,
+      rightCommand,
+      runDir: storage.runDir,
+      session,
+    });
     updatePairedManifest(
       deps,
       storage,
@@ -1513,27 +1633,18 @@ const startPairedSession = async (
       codexThreadId,
       session,
       paneAgents,
-      primaryAgent
+      primaryAgent,
+      paneTargets
     );
-    const governessPane = launch.opts.governess
-      ? startGovernessPane(deps, launch.opts, session, storage.runId)
-      : undefined;
-    if (governessPane) {
-      updatePairedManifest(
-        deps,
-        storage,
-        manifest,
-        claudeSessionId,
-        codexRemoteUrl,
-        codexThreadId,
-        session,
-        paneAgents,
-        primaryAgent,
-        governessPane
-      );
-    }
+    startPairedControlPanes(
+      deps,
+      launch.opts,
+      session,
+      storage.runId,
+      paneTargets
+    );
     const primaryPane =
-      paneAgents.left === primaryAgent ? `${session}:0.0` : `${session}:0.1`;
+      paneAgents.left === primaryAgent ? paneTargets.left : paneTargets.right;
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
     return session;
   } catch (error: unknown) {
@@ -1815,5 +1926,7 @@ export const tmuxInternals = {
   quoteShellArg,
   sanitizeBase,
   stripTmuxFlag,
+  utilityPaneEnabled,
+  utilityPaneHeight,
   worktreeAvailable,
 };
