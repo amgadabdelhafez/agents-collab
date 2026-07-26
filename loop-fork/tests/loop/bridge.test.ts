@@ -891,6 +891,74 @@ test("Claude submission evidence advances when the hook journal advances", async
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Claude delivery confirms when submission evidence advances into an active pane", async () => {
+  let captureCalls = 0;
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      captureCalls += 1;
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          captureCalls === 1
+            ? "❯\n\nOpus 5 · bypass permissions on"
+            : "⏺ Working… (1s · esc to interrupt)\n\nOpus 5",
+          "utf8"
+        ),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let evidenceReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    evidenceReads++ === 0 ? "before" : "after"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-active-confirm",
+    kind: "message" as const,
+    message: "Confirm this active submission once.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("unconfirmed Claude delivery remains pending after one retry", async () => {
   let captureCalls = 0;
   const spawnSync = mock((args: string[]) => {

@@ -382,7 +382,7 @@ const confirmClaudeSubmission = async (
     if (
       transcriptVersion !== undefined &&
       transcriptVersion !== previousTranscriptVersion &&
-      composer === ""
+      !composer
     ) {
       return "confirmed";
     }
