@@ -6,6 +6,10 @@ import {
   readUtilityObservability,
   sanitizeUtilityPaneText,
 } from "../../src/loop/utility-observability";
+import {
+  appendDelegationEvent,
+  makeDelegationEvent,
+} from "../../src/loop/delegation-policy";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
   activateUtilityEpoch,
@@ -65,6 +69,44 @@ test("utility observability safely handles absent and malformed journals", () =>
         "use ghp_1234567890abcdefghijklmnop and AKIAABCDEFGHIJKLMNOP"
       )
     ).toBe("use [REDACTED] and [REDACTED]");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("routing observability counts candidates rejected before job creation", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-observability-skips-"));
+  try {
+    for (const [index, reason] of [
+      "tool-not-enforceable",
+      "compound-or-unsafe-command",
+      "workspace-unverified",
+    ].entries()) {
+      appendDelegationEvent(
+        runDir,
+        makeDelegationEvent({
+          agent: "claude",
+          disposition: "skipped-candidate",
+          fingerprint: `${index}`.repeat(64),
+          operation: "tool-use",
+          reason,
+          source: "claude-hook",
+        })
+      );
+    }
+    expect(readUtilityObservability(runDir).routing).toEqual({
+      autoRouted: 0,
+      considered: 3,
+      explicitRouted: 0,
+      pending: 0,
+      reasons: {
+        "compound-or-unsafe-command": 1,
+        "tool-not-enforceable": 1,
+        "workspace-unverified": 1,
+      },
+      routed: 0,
+      skipped: 3,
+    });
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }

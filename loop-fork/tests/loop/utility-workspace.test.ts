@@ -25,7 +25,10 @@ import {
   transitionUtilityJob,
 } from "../../src/loop/utility-store";
 import { createUtilityToolBroker } from "../../src/loop/utility-tools";
-import { resolveUtilityRequestWorkspace } from "../../src/loop/utility-workspace";
+import {
+  resolveUtilityRequestWorkspace,
+  resolveVerifiedUtilityWorkspaceRoot,
+} from "../../src/loop/utility-workspace";
 
 const requireGit = (cwd: string, args: string[]): void => {
   const result = runGit(cwd, args);
@@ -112,6 +115,32 @@ test("linked worktree scopes resolve to one root-relative verified workspace", (
         writeScope: [],
       },
     });
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("active paths resolve only to the run root or a registered linked worktree", () => {
+  const fixture = workspaceFixture();
+  try {
+    expect(
+      resolveVerifiedUtilityWorkspaceRoot(
+        fixture.base,
+        join(fixture.base, "src")
+      )
+    ).toBe(realpathSync(fixture.base));
+    expect(
+      resolveVerifiedUtilityWorkspaceRoot(
+        fixture.base,
+        join(fixture.linkedA, "src")
+      )
+    ).toBe(realpathSync(fixture.linkedA));
+    expect(
+      resolveVerifiedUtilityWorkspaceRoot(
+        fixture.base,
+        join(fixture.unrelated, "src")
+      )
+    ).toBeUndefined();
   } finally {
     rmSync(fixture.root, { force: true, recursive: true });
   }

@@ -22,7 +22,8 @@ export type DelegationDisposition =
   | "explicit-routed"
   | "missed-candidate"
   | "observed-candidate"
-  | "route-failed";
+  | "route-failed"
+  | "skipped-candidate";
 
 export type DelegationOperation =
   | "focused-check"
@@ -31,7 +32,8 @@ export type DelegationOperation =
   | "large-read"
   | "scoped-glob"
   | "scoped-search"
-  | "source-slice";
+  | "source-slice"
+  | "tool-use";
 
 export interface DelegationTelemetryEvent {
   agent: Agent;
@@ -154,6 +156,7 @@ const fingerprint = (intent: DelegationToolIntent): string =>
         cwd: resolve(intent.cwd),
         input: intent.toolInput,
         tool: intent.toolName,
+        toolUseId: intent.toolUseId,
       })
     )
     .digest("hex");

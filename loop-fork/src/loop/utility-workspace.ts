@@ -106,6 +106,38 @@ const gitWorkspaceIdentity = (
 
 const mismatch = (detail: string): UtilityWorkspaceFailure => ({ detail });
 
+export const resolveVerifiedUtilityWorkspaceRoot = (
+  runRoot: string,
+  path: string
+): string | undefined => {
+  let canonicalRunRoot: string;
+  try {
+    canonicalRunRoot = realpathSync(runRoot);
+  } catch {
+    return undefined;
+  }
+  const target = canonicalTarget(path);
+  if (!target) {
+    return undefined;
+  }
+  if (isContained(canonicalRunRoot, target)) {
+    return canonicalRunRoot;
+  }
+  const runIdentity = gitWorkspaceIdentity(canonicalRunRoot);
+  const targetIdentity = gitWorkspaceIdentity(target);
+  const registeredRoots = registeredWorktreeRoots(canonicalRunRoot);
+  if (
+    !runIdentity ||
+    !targetIdentity ||
+    runIdentity.commonDir !== targetIdentity.commonDir ||
+    !registeredRoots?.has(targetIdentity.root) ||
+    !isContained(targetIdentity.root, target)
+  ) {
+    return undefined;
+  }
+  return targetIdentity.root;
+};
+
 export const resolveUtilityRequestWorkspace = (
   request: UtilityRouteRequest,
   runRoot: string

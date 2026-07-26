@@ -26,6 +26,9 @@ export const bridgeStatusStuckGuidance =
 export const receiveMessagesStuckGuidance =
   'Use "bridge_status" or "receive_messages" only if delivery looks stuck.';
 
+export const singleBridgeTransportGuidance =
+  "The loop bridge is the sole peer-delivery transport. Never duplicate a bridge message with tmux send-keys, direct terminal injection, or a second delivery path.";
+
 export const sendProactiveCodexGuidance = (): string =>
   `Use "send_message" with ${bridgeTargetLiteral("codex")} for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.`;
 
