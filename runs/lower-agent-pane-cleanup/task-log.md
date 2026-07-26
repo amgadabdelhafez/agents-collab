@@ -33,3 +33,7 @@
   broad 341/341, full 773 pass plus the same four canonical baseline failures,
   build/diff checks pass, no tmux/layout implementation diff, 172-column AGENT
   table, <=176-column LLM table, and safe 58x20/58x10 worker output.
+- 2026-07-26: First live loop 47 refresh confirmed the new utility transcript,
+  unified AGENT row, LLM row, and Progress/Next footer. The status line alone
+  wrapped because it rendered zero-only governess message counts; suppressed
+  that non-signal segment while preserving nonzero counts.
