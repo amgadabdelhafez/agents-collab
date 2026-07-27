@@ -34,6 +34,10 @@ delivery.
   requester as the message source and deliver an actionable `review_request`
   with an explicit verdict instruction. Do not describe it as a worker result
   or informational routing notice.
+- Route a driver-authored review request to the full-agent peer. When the
+  non-driver reviewer itself submits review work, keep that work with the
+  requester and emit no bridge message; never bounce a review back to the
+  artifact author as apparent peer evidence.
 
 ## Acceptance
 
@@ -48,3 +52,5 @@ delivery.
   calls for genuinely stuck delivery.
 - Peer-routed reviews appear as requester-authored actionable requests, not
   utility-authored worker status messages.
+- Reviewer-originated review jobs enter `routed-requester` without producing a
+  peer bridge event.

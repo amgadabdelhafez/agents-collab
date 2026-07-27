@@ -52,3 +52,14 @@
   utility-authored notice (`c5ecab5c`) so it cannot surface later. Verified the
   sole remaining peer route is requester-authored by Codex with type
   `review_request`; it remains queued only until Claude is safe to receive it.
+- 2026-07-26: The next real route exposed an author/reviewer inversion: Codex,
+  already the non-driver reviewer, submitted a mechanical review and the
+  generic peer return sent it to Claude, the artifact author. Added an explicit
+  requester route: driver review requests still go to the peer, while review
+  requests submitted by the non-driver stay with that requester and create no
+  bridge event. Focused routing/runtime/governess tests pass 115/115; build and
+  diff check pass; full suite remains 798 pass with the same four known
+  model/config failures. Merged and rebuilt canonical, then respawned only
+  governess as PID 58059. Claude 56784, Codex 56786, and worker 21402 were
+  unchanged. No repeated worker notice is pending; two legitimate Codex-to-
+  Claude coordination messages remain queued for safe delivery.
