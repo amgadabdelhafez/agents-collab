@@ -219,6 +219,7 @@ test("trace file records request and response bodies", async () => {
     expect(records[0]).toMatchObject({
       agent: "claude",
       direction: "to-mlx",
+      harness: "injected-http",
       kind: "llm-trace",
       model: "qwen",
       phase: "request",

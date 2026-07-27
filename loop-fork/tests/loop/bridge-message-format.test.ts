@@ -5,9 +5,9 @@ import {
   normalizeBridgeMessage,
 } from "../../src/loop/bridge-message-format";
 
-test("internal utility sources are presented as worker", () => {
+test("internal utility sources use a neutral helper envelope", () => {
   expect(formatCodexBridgeMessage("utility", "Task completed.")).toBe(
-    "Worker: Task completed."
+    "Helper: Task completed."
   );
   expect(
     formatBridgeDeliveryMessage({
@@ -18,11 +18,14 @@ test("internal utility sources are presented as worker", () => {
       source: "utility",
       target: "codex",
     })
-  ).toBe("Worker: Task completed.");
+  ).toBe("Helper: Task completed.");
   expect(normalizeBridgeMessage("Utility: Task completed.")).toBe(
     "Task completed."
   );
   expect(normalizeBridgeMessage("Worker: Task completed.")).toBe(
+    "Task completed."
+  );
+  expect(normalizeBridgeMessage("Helper: Task completed.")).toBe(
     "Task completed."
   );
 });

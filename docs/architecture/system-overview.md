@@ -7,18 +7,21 @@ loop CLI / tmux launcher
   ├─ main agent pane ─┐
   ├─ peer agent pane ─┼─ loop bridge MCP + durable bridge JSONL
   ├─ delegation hook/observer ────┤
-  └─ governess pane ──┘           │
+  ├─ governess pane ──┘           │
+  └─ Nanny / Au Pair panes (read-only)
           │ route owner           │ route_task / compact result
           ▼                      │
   deterministic task router ◄────┘
           │
           ▼
-  durable utility job journal ──► detached utility worker
-                                      ├─ OpenAI-compatible inference
-                                      └─ bounded local tool broker
+  durable utility job journal ──► one selected execution owner
+                                      ├─ Direct ──► bounded local tool broker
+                                      ├─ Nanny ──Pi──► local Qwen + broker
+                                      └─ Au Pair ─Pi──► OpenRouter GLM + broker
 
-Optional: a read-only utility pane observes the job journal. An external bridge
-supervisor can submit/observe messages, but is not a route or claim authority.
+Separate read-only Nanny and Au Pair panes observe their filtered job streams.
+An external bridge supervisor can submit/observe messages, but is not a route
+or claim authority.
 ```
 
 ## Responsibilities
@@ -31,9 +34,11 @@ supervisor can submit/observe messages, but is not a route or claim authority.
 | Governess | Liveness, driver lease, current epoch, task routing and dispatch | Provider inference or unrestricted code changes |
 | Task router | Pure capability/risk/scope/budget/tier decision | Provider calls, persistence, side effects |
 | Utility job store | Idempotent append-only requests, decisions, claims, results | Routing policy or model inference |
-| Utility worker | One bounded job, immutable context capsule, compact prompt/tool loop, result/usage | Human communication, main-agent roles, commits or deployment |
+| Direct | Exact structured broker calls with no model | Reasoning, scope inference, or permission changes |
+| Nanny | Small read-only bounded reasoning on local Qwen through Pi | Edits, broad investigation, authority, or fallback to GLM |
+| Au Pair | Larger bounded reasoning and patch proposals on GLM through Pi | Main-agent judgment, automatic patch application, or fallback to Nanny |
 | Tool broker | Scope, path, command, environment, time/output policy | Choosing tasks or applying proposed patches |
-| Provider adapter | OpenAI-compatible HTTP, retries, usage/cost, redacted trace | Repository access or scheduling |
+| Pi runtime | Ephemeral provider/model sessions, tool lifecycle, usage/cost, redacted lifecycle trace | Routing, repository permission, persistent chat, or provider fallback |
 
 ## Architecture invariants
 
@@ -41,8 +46,14 @@ supervisor can submit/observe messages, but is not a route or claim authority.
   route and claim.
 - `Agent` remains the full-agent lifecycle type. `utility` is only a bridge
   source and execution tier, never a driver, reviewer, or recovery target.
-- Provider latency cannot block governess ticks; inference runs in a detached
-  worker process.
+- Provider latency cannot block Governess ticks; Nanny and Au Pair inference
+  runs in detached processes. Nanny defaults to one slot; Au Pair defaults to
+  four independently accounted slots.
+- Every accepted job has one durable owner (`utility-direct`,
+  `utility-nanny`, or `utility-au-pair`). A full or failed tier does not cause
+  implicit execution on another model.
+- Governess is deterministic authority. Its local-Qwen classifications and
+  summaries are advisory no-tools Pi completions.
 - Agents or the narrow Claude pre-tool policy submit structured requests. They
   cannot select a model, weaken route policy, or grant new authority.
 - A root `UTILITY.instructions.md` and explicitly selected bounded Markdown
@@ -62,16 +73,19 @@ supervisor can submit/observe messages, but is not a route or claim authority.
    before denying the direct call. Codex's current per-turn-only hook surface is
    prompt-enforced and its app-server commands are measured for missed eligible
    calls. All adoption events are compactly journaled.
-2. **Routing:** governess reads pending requests, applies deterministic policy,
-   records the decision, and starts a detached worker only for eligible utility
-   work. Peer/driver/escalation routes return through the bridge.
-3. **Execution:** the worker claims with the current epoch, builds and persists
-   one bounded context capsule for the verified worktree, calls the configured
-   OpenAI-compatible model, and executes only broker-approved tools.
-4. **Completion:** the worker records usage, trace, checks, artifact references,
+2. **Routing:** Governess reads pending requests, applies deterministic policy,
+   records Direct, Nanny, or Au Pair as the one owner, and starts a detached
+   process only for eligible work. Peer/driver/escalation routes return through
+   the bridge.
+3. **Execution:** the helper claims with the current epoch and persists one
+   bounded context capsule for the verified worktree. Direct executes exact
+   broker calls without inference; Nanny and Au Pair get ephemeral Pi sessions
+   with only current broker tools active and every Pi built-in disabled.
+4. **Completion:** the helper records tier, harness, Pi version, usage, trace,
+   checks, artifact references,
    and a compact result, then sends that result to the requester through the
    bridge.
-5. **Recovery:** a new governess epoch fences orphaned claims; time-limited jobs
+5. **Recovery:** a new Governess epoch fences orphaned claims; time-limited jobs
    fail closed and return an escalation rather than being silently replayed.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature

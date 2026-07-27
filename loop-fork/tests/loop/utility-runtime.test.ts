@@ -184,10 +184,25 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.enabled).toBe(false);
   expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
+  expect(config.harness).toBe("pi-sdk");
   expect(config.maxConcurrentJobs).toBe(4);
+  expect(config.nannyMaxConcurrentJobs).toBe(1);
   expect(config).not.toHaveProperty("maxSteps");
   expect(config).not.toHaveProperty("maxTokens");
   expect(config).not.toHaveProperty("maxTotalTokens");
+});
+
+test("Au Pair and Nanny role-specific switches override compatibility names", () => {
+  const config = resolveUtilityRuntimeConfig({
+    LOOP_AU_PAIR_ENABLED: "0",
+    LOOP_AU_PAIR_PROVIDER_SORT: "throughput",
+    LOOP_NANNY_ENABLED: "0",
+    LOOP_UTILITY_ENABLED: "1",
+    LOOP_UTILITY_PROVIDER_SORT: "price",
+  });
+  expect(config.enabled).toBe(false);
+  expect(config.nannyEnabled).toBe(false);
+  expect(config.providerSort).toBe("throughput");
 });
 
 test("worker concurrency is configurable within a bounded range", () => {
@@ -584,7 +599,7 @@ test("governess route processing dispatches eligible work without provider I/O",
     expect(count).toBe(1);
     expect(spawned).toEqual([request.id]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
-      decision: { target: "utility", tierId: "utility-default" },
+      decision: { target: "utility", tierId: "utility-au-pair" },
       state: "routed-utility",
     });
   } finally {
@@ -706,6 +721,70 @@ test("the default worker pool runs four jobs and leaves a fifth pending", async 
     await processPendingUtilityRoutes(context, env, deps);
     expect(spawned).toEqual(["pool-a", "pool-b", "pool-c", "pool-d", "pool-e"]);
     expect(readUtilityJob(runDir, "pool-e")?.state).toBe("routed-utility");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("Nanny has one independent slot and does not spill queued work to Au Pair", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-nanny-capacity-"));
+  const runDir = join(repoRoot, ".loop", "runs", "nanny-capacity");
+  mkdirSync(runDir, { recursive: true });
+  for (const id of ["nanny-a", "nanny-b"]) {
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["return one search result"],
+        authority: {},
+        executionProfile: "search",
+        id,
+        kind: "inspect",
+        objective: `Search the bounded scope for ${id}`,
+        readScope: ["src"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+  }
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 21,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_AU_PAIR_ENABLED: "1",
+        LOOP_AU_PAIR_URL: "http://127.0.0.1:9998/v1/chat/completions",
+        LOOP_NANNY_ENABLED: "1",
+        LOOP_NANNY_MAX_CONCURRENCY: "1",
+        LOOP_NANNY_URL: "http://127.0.0.1:9999/v1/chat/completions",
+      },
+      {
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return true;
+        },
+      }
+    );
+    expect(spawned).toEqual(["nanny-a"]);
+    expect(readUtilityJob(runDir, "nanny-a")).toMatchObject({
+      decision: { tierId: "utility-nanny" },
+      state: "routed-utility",
+    });
+    expect(readUtilityJob(runDir, "nanny-b")).toMatchObject({
+      decision: { tierId: "utility-nanny" },
+      state: "pending-route",
+    });
+    expect(readUtilityObservability(runDir, "utility-nanny").jobsTotal).toBe(2);
+    expect(readUtilityObservability(runDir, "utility-au-pair").jobsTotal).toBe(
+      0
+    );
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -851,7 +930,7 @@ test("spawn failure terminates the job instead of stranding routed utility work"
     );
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "worker process failed to start",
+        blocker: "Au Pair process failed to start",
         status: "failed",
       },
       state: "failed",
@@ -896,7 +975,7 @@ test("an unclaimed routed job fails closed after its claim deadline", async () =
     );
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "worker did not claim the routed job",
+        blocker: "Au Pair did not claim the routed job",
         status: "failed",
       },
       state: "failed",
@@ -961,7 +1040,7 @@ test("a dead claimed worker fails immediately and releases its write scope", asy
     );
     expect(readUtilityJob(runDir, "dead-edit")).toMatchObject({
       result: {
-        blocker: "worker process is no longer alive",
+        blocker: "Au Pair process is no longer alive",
         status: "failed",
       },
       state: "failed",
@@ -1077,7 +1156,7 @@ test("governess externally terminates a live worker past its runtime", async () 
     expect(terminated).toEqual([4444]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "worker job exceeded its runtime limit and was terminated",
+        blocker: "Au Pair job exceeded its runtime limit and was terminated",
       },
       state: "failed",
     });
@@ -1320,11 +1399,11 @@ test("worker pane is a colored output-only request, tool, and response stream", 
     expect(pane).toContain("\u001b[36m");
     expect(pane).toContain("\u001b[34m");
     expect(pane).toContain("\u001b[32m");
-    expect(pane).toContain("WORKER TOOL inspect-");
+    expect(pane).toContain("AU PAIR TOOL inspect-");
     expect(pane).toContain("search_repo ok 12ms");
-    expect(pane).toContain("CODEX→WORKER inspect-");
+    expect(pane).toContain("CODEX→AU PAIR inspect-");
     expect(pane).toContain("read utility-runtime.ts lines 1221–1290");
-    expect(pane).toContain("WORKER OK inspect-");
+    expect(pane).toContain("AU PAIR OK inspect-");
     expect(pane).toContain("Inspected the requested lines");
     expect(pane).toContain("Found the active configuration");
     expect(pane).not.toContain("USAGE");
@@ -1354,10 +1433,10 @@ test("worker pane is a colored output-only request, tool, and response stream", 
     expect(
       compact.split("\n").every((line) => visiblePane(line).length <= 58)
     ).toBe(true);
-    expect(compact).toContain("CODEX→WORKER inspect-");
-    expect(compact).toContain("WORKER TOOL inspect-");
+    expect(compact).toContain("CODEX→AU PAIR inspect-");
+    expect(compact).toContain("AU PAIR TOOL inspect-");
     expect(compact).toContain("search_repo ok 12ms");
-    expect(compact).toContain("WORKER OK inspect-");
+    expect(compact).toContain("AU PAIR OK inspect-");
     expect(visiblePane(compact).replaceAll(/\s+/g, " ")).toContain(
       "Found the active configuration"
     );
@@ -1428,7 +1507,7 @@ test("utility pane keeps a failed worker response visible within its viewport", 
     expect(lines.length).toBeLessThanOrEqual(12);
     expect(lines.length).toBeGreaterThanOrEqual(5);
     expect(lines.every((line) => visiblePane(line).length <= 52)).toBe(true);
-    expect(pane).toContain("WORKER FAIL failed-p");
+    expect(pane).toContain("AU PAIR FAIL failed-p");
     expect(pane).toContain("Worker token cap exceeded");
 
     const tiny = renderUtilityPane(
@@ -1440,6 +1519,111 @@ test("utility pane keeps a failed worker response visible within its viewport", 
     expect(tiny.every((line) => visiblePane(line).length <= 20)).toBe(true);
   } finally {
     rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("Nanny and Au Pair panes show only their own tier", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-helper-pane-filter-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pane-filter");
+  mkdirSync(runDir, { recursive: true });
+  try {
+    activateUtilityEpoch(runDir, 3);
+    for (const [id, tierId, objective] of [
+      ["nanny-job", "utility-nanny", "NANNY-ONLY-OBJECTIVE"],
+      ["au-pair-job", "utility-au-pair", "AU-PAIR-ONLY-OBJECTIVE"],
+    ] as const) {
+      const request = createUtilityRouteRequest({
+        acceptanceCriteria: ["return evidence"],
+        authority: {},
+        id,
+        kind: "inspect",
+        objective,
+        readScope: ["src"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      });
+      appendUtilityRouteRequest(runDir, request);
+      transitionUtilityJob(runDir, id, "routed-utility", {
+        decision: {
+          reason: "utility-eligible",
+          target: "utility",
+          tierId,
+        },
+        routeEpoch: 3,
+      });
+      claimUtilityJob(runDir, 3, {
+        jobId: id,
+        workerId: `pane-${id}`,
+        workerPid: id === "nanny-job" ? 3001 : 3002,
+      });
+      transitionUtilityJob(runDir, id, "running");
+      transitionUtilityJob(runDir, id, "completed", {
+        result: {
+          artifactRefs: [],
+          checks: [],
+          filesChanged: [],
+          status: "completed",
+          summary: `${objective} complete`,
+        },
+      });
+    }
+    const nanny = visiblePane(
+      renderUtilityPane(runDir, {}, { tierId: "utility-nanny" })
+    );
+    const auPair = visiblePane(
+      renderUtilityPane(runDir, {}, { tierId: "utility-au-pair" })
+    );
+    expect(nanny).toContain("NANNY-ONLY-OBJECTIVE");
+    expect(nanny).not.toContain("AU-PAIR-ONLY-OBJECTIVE");
+    expect(auPair).toContain("AU-PAIR-ONLY-OBJECTIVE");
+    expect(auPair).not.toContain("NANNY-ONLY-OBJECTIVE");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("Nanny pane includes local Qwen governess advisory usage", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-nanny-pane-governess-"));
+  try {
+    writeFileSync(
+      join(runDir, "governess-state.json"),
+      JSON.stringify({
+        llmUsage: { calls: 7, totalTokens: 4321 },
+        summary: "Reviewed pair progress and kept the current driver.",
+      })
+    );
+
+    const nanny = visiblePane(
+      renderUtilityPane(
+        runDir,
+        {},
+        {
+          columns: 100,
+          rows: 6,
+          tierId: "utility-nanny",
+        }
+      )
+    );
+    const auPair = visiblePane(
+      renderUtilityPane(
+        runDir,
+        {},
+        {
+          columns: 100,
+          rows: 6,
+          tierId: "utility-au-pair",
+        }
+      )
+    );
+
+    expect(nanny).toContain("NANNY QWEN");
+    expect(nanny).toContain("governess advisory · 7 calls · 4321 tok");
+    expect(nanny).toContain("Reviewed pair progress");
+    expect(auPair).not.toContain("governess advisory");
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
   }
 });
 
@@ -1487,7 +1671,7 @@ test("a new governess epoch fences an orphaned utility claim", async () => {
     expect(terminated).toEqual([4646]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "worker claim belongs to a stale governess epoch",
+        blocker: "Au Pair claim belongs to a stale Governess epoch",
         status: "failed",
       },
       state: "failed",
@@ -1756,7 +1940,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
       expect.arrayContaining([
         expect.objectContaining({
           kind: "message",
-          message: expect.stringContaining("Worker result job-1"),
+          message: expect.stringContaining("Au Pair result job-1"),
           source: "utility",
           target: "codex",
         }),
@@ -1852,7 +2036,7 @@ test("context-insufficient response escalates once without evidence retries", as
       }),
     ]);
     const pane = visiblePane(renderUtilityPane(runDir));
-    expect(pane).toContain("WORKER CONTEXT");
+    expect(pane).toContain("AU PAIR CONTEXT");
     expect(pane).toContain("Context insufficient; requester notified.");
     expect(pane).not.toContain("DO-NOT-PANE-CONTEXT-9987");
     expect(pane).not.toContain("CONTEXT_INSUFFICIENT");
@@ -2267,7 +2451,7 @@ test("utility worker rejects prose-only completion without repository evidence",
     });
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "worker task completed without repository tool evidence",
+        blocker: "Au Pair task completed without repository tool evidence",
         status: "failed",
       },
       state: "failed",
@@ -2356,7 +2540,7 @@ test("a failing focused check cannot satisfy command completion evidence", async
     });
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "worker command completed without a successful focused check",
+        blocker: "Direct run_check failed: focused check exited 1",
         status: "failed",
       },
       state: "failed",

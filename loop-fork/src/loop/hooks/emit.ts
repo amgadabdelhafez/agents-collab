@@ -204,7 +204,7 @@ const preToolDelegationOutput = (taskId: string): string =>
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: `This bounded mechanical operation was delegated automatically to the lower agent as task ${taskId}. Do not retry the native tool. Use task_status, then get_task_result when complete; if governess returns it to the driver, continue directly from that route result.`,
+      permissionDecisionReason: `This bounded mechanical operation was delegated automatically through Governess to Direct, Nanny, or Au Pair as task ${taskId}. Do not retry the native tool. Use task_status, then get_task_result when complete; if Governess returns it to the driver, continue directly from that route result.`,
     },
   });
 

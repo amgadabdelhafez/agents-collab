@@ -146,6 +146,10 @@ import {
   type UtilityObservabilitySnapshot,
 } from "./utility-observability";
 import { processPendingUtilityRoutes } from "./utility-runtime";
+import {
+  UTILITY_AU_PAIR_TIER,
+  UTILITY_NANNY_TIER,
+} from "./utility-execution-tier";
 import { activateUtilityEpoch } from "./utility-store";
 
 export const GOVERNESS_SUBCOMMAND = "__governess";
@@ -1317,6 +1321,7 @@ interface LocalLlmRuntimeInput {
 }
 
 interface BoardMeta {
+  auPair?: UtilityObservabilitySnapshot;
   bridge: BridgeCounts;
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
@@ -1331,6 +1336,7 @@ interface BoardMeta {
   maxColumns?: number;
   maxRows?: number;
   nowMs: number;
+  nanny?: UtilityObservabilitySnapshot;
   recoveries: number;
   roles: RoleState;
   stats: SessionStats;
@@ -1908,23 +1914,34 @@ const utilityAge = (
 
 const renderUtilityAgentRow = (
   snapshot: UtilityObservabilitySnapshot,
-  meta: BoardMeta
+  meta: BoardMeta,
+  role: "au pair" | "nanny"
 ): string => {
   const state = utilityState(snapshot);
   const usage = snapshot.usage;
+  const nannyUsage =
+    role === "nanny"
+      ? sumLocalLlmUsageByJudge(meta.llmUsageByJudge)
+      : emptyLocalLlmUsage();
   const run = `${snapshot.completed}ok/${snapshot.failed}fail`;
-  const tokens = `${tokenCell(usage.totalTokens)} i${tokenCell(usage.inputTokens)} c${tokenCell(usage.cachedInputTokens)} o${tokenCell(usage.outputTokens)}`;
-  const activity = `${snapshot.jobsTotal}j ${usage.modelCalls}c ${usage.toolCalls}tl`;
+  const tokens = `${tokenCell(usage.totalTokens + nannyUsage.totalTokens)} i${tokenCell(usage.inputTokens + nannyUsage.inputTokens)} c${tokenCell(usage.cachedInputTokens + nannyUsage.cachedInputTokens)} o${tokenCell(usage.outputTokens + nannyUsage.outputTokens)}`;
+  const activity = `${snapshot.jobsTotal}j ${usage.modelCalls + nannyUsage.calls}c ${usage.toolCalls}tl`;
   const latest = snapshot.latestJobId
     ? `${snapshot.latestJobId.slice(0, 8)} ${utilityLatestState(snapshot)}`
-    : "—";
+    : nannyUsage.calls > 0
+      ? `${nannyUsage.calls} advisory`
+      : "—";
   return ` ${[
-    colorCell(ANSI.green, "worker", AGENT_COL.agent),
+    colorCell(ANSI.green, role, AGENT_COL.agent),
     colorCell(utilityStateColor(state), `● ${state}`, AGENT_COL.state),
     fitCell(utilityAge(snapshot, meta.nowMs), AGENT_COL.age),
     colorCell(
       ANSI.green,
-      snapshot.model ? shortLocalModel(snapshot.model) : "glm-5.2",
+      snapshot.model
+        ? shortLocalModel(snapshot.model)
+        : role === "nanny"
+          ? "qwen"
+          : "glm-5.2",
       AGENT_COL.model
     ),
     fitCell(run, AGENT_COL.run),
@@ -1952,7 +1969,7 @@ const renderWorkerRoutingRows = (
 ): string[] => {
   const width = Math.max(1, meta.maxColumns ?? 176);
   const routing = snapshot.routing;
-  const decisions = ` routing · considered ${routing.considered} · routed worker ${routing.routed} · actionable ${routing.actionable} · retained ${routing.retained} · unsafe ${routing.unsafe} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted}`;
+  const decisions = ` routing · considered ${routing.considered} · routed helpers ${routing.routed} · actionable ${routing.actionable} · retained ${routing.retained} · unsafe ${routing.unsafe} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted}`;
   const reasons = Object.entries(routing.reasons)
     .sort(
       (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
@@ -1987,15 +2004,15 @@ const renderWorkerDetailRows = (
   const failures = snapshot.failures;
   const routing = snapshot.routing;
   const measured = performance.measuredJobs > 0;
-  const performanceLine = ` worker perf · success ${performance.successfulJobs}/${performance.finishedJobs} ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · avg ${measured ? fmtDuration(performance.averageDurationMs) : "—"} · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"}`;
-  const loadLine = ` worker load · active ${snapshot.active} · queued ${snapshot.queued} · route share ${routing.routed}/${routing.considered} ${workerPercentage(routing.routed, routing.considered)} · msgs in ${snapshot.messages.inbound} out ${snapshot.messages.outbound} pending ${snapshot.messages.pending}`;
+  const performanceLine = ` helpers perf · success ${performance.successfulJobs}/${performance.finishedJobs} ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · avg ${measured ? fmtDuration(performance.averageDurationMs) : "—"} · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"}`;
+  const loadLine = ` helpers load · active ${snapshot.active} · queued ${snapshot.queued} · route share ${routing.routed}/${routing.considered} ${workerPercentage(routing.routed, routing.considered)} · msgs in ${snapshot.messages.inbound} out ${snapshot.messages.outbound} pending ${snapshot.messages.pending}`;
   const latestContext = contexts.latestHash
     ? `v${contexts.latestVersion ?? "?"} ${contexts.latestHash}`
     : "none";
   const topFailure = failures.topToolError
     ? `${failures.topToolError} ${failures.topToolErrorCount}`
     : "none";
-  const contextLine = ` worker context · capsules ${contexts.capsules}/${snapshot.jobsTotal} ${snapshot.jobsTotal > 0 ? workerPercentage(contexts.coverage, 1) : "—"} · refs ${contexts.references} · latest ${latestContext} · ctx misses ${snapshot.contextInsufficient} · tool failures ${failures.toolFailures} · top ${topFailure}`;
+  const contextLine = ` helpers context · capsules ${contexts.capsules}/${snapshot.jobsTotal} ${snapshot.jobsTotal > 0 ? workerPercentage(contexts.coverage, 1) : "—"} · refs ${contexts.references} · latest ${latestContext} · ctx misses ${snapshot.contextInsufficient} · tool failures ${failures.toolFailures} · top ${topFailure}`;
   return [
     paint(ANSI.green, truncate(performanceLine, width)),
     paint(ANSI.cyan, truncate(loadLine, width)),
@@ -2580,7 +2597,7 @@ const renderWorkerBridgeLine = (
 ): string => {
   const messages = snapshot.messages;
   return [
-    paint(ANSI.dim, " bridge worker msgs · "),
+    paint(ANSI.dim, " bridge helper msgs · "),
     paint(
       ANSI.cyan,
       `in ${messages.inbound} latest ${workerMessageAge(messages.latestInboundAt, meta.nowMs)}`
@@ -2787,7 +2804,7 @@ const LLM_COL = {
 } as const;
 
 const LLM_COLUMNS: [string, number][] = [
-  ["LLM", LLM_COL.id],
+  ["NANNY", LLM_COL.id],
   ["MODEL", LLM_COL.model],
   ["STAT", LLM_COL.status],
   ["CALLS", LLM_COL.calls],
@@ -3071,7 +3088,10 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const statusLine = renderSummaryLine(rows, meta);
   const agentRows = [
     ...rows.map((row) => renderAgentRow(row, meta, weeklyLimitIndent)),
-    ...(meta.utility ? [renderUtilityAgentRow(meta.utility, meta)] : []),
+    ...(meta.nanny ? [renderUtilityAgentRow(meta.nanny, meta, "nanny")] : []),
+    ...(meta.auPair
+      ? [renderUtilityAgentRow(meta.auPair, meta, "au pair")]
+      : []),
   ];
   const bridgeLines = renderBridgeLatestLine(rows, meta);
   const workerBridgeLines = meta.utility
@@ -5407,7 +5427,11 @@ export const governessTick = async (
     tickMs: config.tickMs,
     uptimeMs,
     ...(config.runDir
-      ? { utility: readUtilityObservability(config.runDir) }
+      ? {
+          auPair: readUtilityObservability(config.runDir, UTILITY_AU_PAIR_TIER),
+          nanny: readUtilityObservability(config.runDir, UTILITY_NANNY_TIER),
+          utility: readUtilityObservability(config.runDir),
+        }
       : {}),
     waitingForYou,
   });

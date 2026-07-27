@@ -5,6 +5,11 @@ import {
   readDelegationEvents,
 } from "./delegation-policy";
 import {
+  UTILITY_AU_PAIR_TIER,
+  type UtilityExecutionTierId,
+  utilityRoleName,
+} from "./utility-execution-tier";
+import {
   readUtilityJobsForObservability,
   type UtilityJobSnapshot,
 } from "./utility-store";
@@ -550,19 +555,24 @@ const transcriptUsage = (
   };
 };
 
+const jobTier = (job: UtilityJobSnapshot): UtilityExecutionTierId =>
+  (job.decision?.tierId as UtilityExecutionTierId | undefined) ??
+  UTILITY_AU_PAIR_TIER;
+
 const jobRequestEntry = (job: UtilityJobSnapshot): UtilityTranscriptEntry => ({
   at: job.request.createdAt,
   jobId: job.jobId,
   kind: "request",
-  label: `${job.request.requester.toUpperCase()}→WORKER`,
+  label: `${job.request.requester.toUpperCase()}→${utilityRoleName(jobTier(job)).toUpperCase()}`,
   text: sanitizeUtilityPaneText(job.request.objective),
 });
 
 const jobResultLabel = (job: UtilityJobSnapshot): string => {
+  const role = utilityRoleName(jobTier(job)).toUpperCase();
   if (job.result?.reasonCode === "context-insufficient") {
-    return "WORKER CONTEXT";
+    return `${role} CONTEXT`;
   }
-  return job.result?.status === "completed" ? "WORKER OK" : "WORKER FAIL";
+  return job.result?.status === "completed" ? `${role} OK` : `${role} FAIL`;
 };
 
 const jobResultEntry = (
@@ -588,9 +598,13 @@ const jobResultEntry = (
 };
 
 const toolEntries = (
-  events: Record<string, unknown>[]
-): UtilityTranscriptEntry[] =>
-  events.flatMap((event) => {
+  events: Record<string, unknown>[],
+  jobs: UtilityJobSnapshot[]
+): UtilityTranscriptEntry[] => {
+  const roleByJobId = new Map(
+    jobs.map((job) => [job.jobId, utilityRoleName(jobTier(job))] as const)
+  );
+  return events.flatMap((event) => {
     const at = stringAt(event, "at");
     const jobId = stringAt(event, "jobId");
     const tool = stringAt(event, "tool");
@@ -609,11 +623,12 @@ const toolEntries = (
         at,
         jobId,
         kind: "tool" as const,
-        label: "WORKER TOOL",
+        label: `${(roleByJobId.get(jobId) ?? "Au Pair").toUpperCase()} TOOL`,
         text: `${sanitizeUtilityPaneText(tool)} ${outcome}`,
       },
     ];
   });
+};
 
 const transcriptFor = (
   jobs: UtilityJobSnapshot[],
@@ -624,7 +639,7 @@ const transcriptFor = (
     const result = jobResultEntry(job, usageEvents.get(job.jobId));
     return result ? [jobRequestEntry(job), result] : [jobRequestEntry(job)];
   });
-  entries.push(...toolEntries(toolEvents));
+  entries.push(...toolEntries(toolEvents, jobs));
   return entries
     .filter((entry) => entry.text)
     .sort((left, right) => left.at.localeCompare(right.at));
@@ -638,7 +653,8 @@ const latestJob = (
   )[0];
 
 export const readUtilityObservability = (
-  runDir?: string
+  runDir?: string,
+  tierId?: UtilityExecutionTierId
 ): UtilityObservabilitySnapshot => {
   if (!runDir) {
     return {
@@ -671,11 +687,19 @@ export const readUtilityObservability = (
     };
   }
   const allJobs = safeJobs(runDir);
-  const jobs = workerJobs(allJobs);
-  const usageEvents = latestUsageByJob(runDir);
+  const jobs = workerJobs(allJobs).filter(
+    (job) => tierId === undefined || jobTier(job) === tierId
+  );
+  const jobIds = new Set(jobs.map((job) => job.jobId));
+  const usageEvents = new Map(
+    [...latestUsageByJob(runDir)].filter(([jobId]) => jobIds.has(jobId))
+  );
   const toolEvents = readJsonlRecords(
     join(runDir, "utility", "tool-events.jsonl")
-  );
+  ).filter((event) => {
+    const jobId = stringAt(event, "jobId");
+    return jobId !== undefined && jobIds.has(jobId);
+  });
   const totals = usageSnapshot(usageEvents);
   const transcript = transcriptFor(jobs, usageEvents, toolEvents);
   const latest = latestJob(jobs);

@@ -27,6 +27,13 @@ import {
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 import {
+  UTILITY_AU_PAIR_TIER,
+  UTILITY_NANNY_TIER,
+  type UtilityExecutionTierId,
+} from "./loop/utility-execution-tier";
+import {
+  AU_PAIR_PANE_SUBCOMMAND,
+  NANNY_PANE_SUBCOMMAND,
   runUtilityPane,
   runUtilityWorker,
   UTILITY_PANE_SUBCOMMAND,
@@ -98,6 +105,21 @@ const parseCodexTmuxProxyArgs = (
   return { port, remoteUrl, runDir, threadId };
 };
 
+const utilityPaneTier = (
+  subcommand: string | undefined
+): UtilityExecutionTierId | undefined => {
+  if (subcommand === NANNY_PANE_SUBCOMMAND) {
+    return UTILITY_NANNY_TIER;
+  }
+  if (
+    subcommand === AU_PAIR_PANE_SUBCOMMAND ||
+    subcommand === UTILITY_PANE_SUBCOMMAND
+  ) {
+    return UTILITY_AU_PAIR_TIER;
+  }
+  return undefined;
+};
+
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
   if (argv[0] === BRIDGE_SUBCOMMAND) {
@@ -115,12 +137,13 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
     await runUtilityWorker(runDir, epoch, jobId);
     return true;
   }
-  if (argv[0] === UTILITY_PANE_SUBCOMMAND) {
+  const paneTier = utilityPaneTier(argv[0]);
+  if (paneTier) {
     const [runDir] = argv.slice(1);
     if (!runDir) {
-      throw new Error("Usage: loop __utility-pane <run-dir>");
+      throw new Error(`Usage: loop ${argv[0]} <run-dir>`);
     }
-    await runUtilityPane(runDir);
+    await runUtilityPane(runDir, process.env, paneTier);
     return true;
   }
   if (argv[0] === CODEX_TMUX_PROXY_SUBCOMMAND) {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { completePiText } from "./pi-runtime";
 import type {
   Agent,
   GovernessAgentState,
@@ -66,6 +67,52 @@ interface JudgeDeps {
   timeoutMs?: number;
 }
 
+const piChatFetch = (async (
+  input: string | URL | Request,
+  init?: RequestInit
+): Promise<Response> => {
+  const body = JSON.parse(String(init?.body ?? "{}")) as ChatRequestBody;
+  const url = new URL(
+    typeof input === "string" || input instanceof URL ? input : input.url
+  );
+  const endpoint = `${url.origin}${url.pathname}`;
+  const systemPrompt =
+    body.messages.find((message) => message.role === "system")?.content ?? "";
+  const userPrompt = body.messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n\n");
+  const completion = await completePiText({
+    maxTokens: body.max_tokens,
+    provider: {
+      endpoint,
+      model: body.model,
+      provider: "nanny",
+    },
+    ...(init?.signal ? { signal: init.signal } : {}),
+    systemPrompt,
+    temperature: body.temperature,
+    timeoutMs: 10 * 60_000,
+    userPrompt,
+  });
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content: completion.text, role: "assistant" } }],
+      model: completion.model,
+      pi_version: completion.piVersion,
+      usage: {
+        completion_tokens: completion.usage.outputTokens,
+        prompt_tokens: completion.usage.inputTokens,
+        prompt_tokens_details: {
+          cached_tokens: completion.usage.cachedInputTokens,
+        },
+        total_tokens: completion.usage.totalTokens,
+      },
+    }),
+    { headers: { "Content-Type": "application/json" }, status: 200 }
+  );
+}) as typeof fetch;
+
 type LlmTracePurpose =
   | "judge"
   | "pane-label"
@@ -75,10 +122,14 @@ type LlmTracePurpose =
 
 interface TraceMeta {
   agent?: Agent;
+  harness: "injected-http" | "pi-sdk";
   model: string;
   purpose: LlmTracePurpose;
   url: string;
 }
+
+const traceHarness = (deps: JudgeDeps | undefined): TraceMeta["harness"] =>
+  deps?.fetchFn ? "injected-http" : "pi-sdk";
 
 const emptyUsage = (calls = 0): LocalLlmUsage => ({
   cachedInputTokens: 0,
@@ -414,13 +465,14 @@ export const judgeAgent = async (
   req: JudgeRequest,
   deps?: JudgeDeps
 ): Promise<JudgeOutcome> => {
-  const fetchFn = deps?.fetchFn ?? fetch;
+  const fetchFn = deps?.fetchFn ?? piChatFetch;
   const timeoutMs = deps?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const body = buildJudgeRequestBody(req);
   const traceMeta: TraceMeta = {
     agent: req.agent,
+    harness: traceHarness(deps),
     model: req.model,
     purpose: "judge",
     url: req.url,
@@ -535,7 +587,7 @@ export const summarizeSession = async (
   req: SummaryRequest,
   deps?: JudgeDeps
 ): Promise<SummaryResult> => {
-  const fetchFn = deps?.fetchFn ?? fetch;
+  const fetchFn = deps?.fetchFn ?? piChatFetch;
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -551,6 +603,7 @@ export const summarizeSession = async (
     temperature: LOCAL_LLM_TEMPERATURE,
   };
   const traceMeta: TraceMeta = {
+    harness: traceHarness(deps),
     model: req.model,
     purpose: "summary",
     url: req.url,
@@ -663,7 +716,7 @@ export const labelPanes = async (
   req: PaneLabelRequest,
   deps?: JudgeDeps
 ): Promise<PaneLabelResult> => {
-  const fetchFn = deps?.fetchFn ?? fetch;
+  const fetchFn = deps?.fetchFn ?? piChatFetch;
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -679,6 +732,7 @@ export const labelPanes = async (
     temperature: LOCAL_LLM_TEMPERATURE,
   };
   const traceMeta: TraceMeta = {
+    harness: traceHarness(deps),
     model: req.model,
     purpose: "pane-label",
     url: req.url,
@@ -751,7 +805,7 @@ export const assessWaiting = async (
   req: WaitingRequest,
   deps?: JudgeDeps
 ): Promise<WaitingResult> => {
-  const fetchFn = deps?.fetchFn ?? fetch;
+  const fetchFn = deps?.fetchFn ?? piChatFetch;
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -767,6 +821,7 @@ export const assessWaiting = async (
     temperature: LOCAL_LLM_TEMPERATURE,
   };
   const traceMeta: TraceMeta = {
+    harness: traceHarness(deps),
     model: req.model,
     purpose: "waiting",
     url: req.url,
@@ -894,7 +949,7 @@ export const assessRoleBalance = async (
   req: RoleBalanceRequest,
   deps?: JudgeDeps
 ): Promise<RoleBalanceResult> => {
-  const fetchFn = deps?.fetchFn ?? fetch;
+  const fetchFn = deps?.fetchFn ?? piChatFetch;
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -910,6 +965,7 @@ export const assessRoleBalance = async (
     temperature: LOCAL_LLM_TEMPERATURE,
   };
   const traceMeta: TraceMeta = {
+    harness: traceHarness(deps),
     model: req.model,
     purpose: "role-balance",
     url: req.url,

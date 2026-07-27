@@ -140,7 +140,7 @@ Single-agent Codex runs outside paired mode still use the normal Codex configura
 
 ### Governess pane
 
-Paired tmux runs can add a full-width governess pane under the two agents (a local-LLM watchdog). Each tick it detects idle/stuck agents, runs a recovery ladder, tracks token/cost budgets, and escalates to you when the pair is genuinely waiting.
+Paired tmux runs add a control row under the two agents. Governess occupies the left four-fifths and is the deterministic watchdog/router. The right fifth is split into read-only `nanny.<session>` and `au-pair.<session>` panes: Nanny shows small bounded jobs assigned to local Qwen, while Au Pair shows larger bounded GLM jobs. Exact structured reads/checks use Direct and call no model. A job has one owner; Nanny failures or capacity do not silently spill into Au Pair.
 
 The governess also names the workspace from what the local model reads off each pane:
 
@@ -150,7 +150,7 @@ The governess also names the workspace from what the local model reads off each 
 
 - **Control safety** — one epoch-fenced governess owns side effects at a time. Messages and lifecycle actions use an idempotent JSONL control journal; automatic commit, push, merge, deploy, discard, and restart actions are forbidden. Use `loop governess doctor <run-id>` for live invariants and `loop governess replay <run-id>` to audit the journal.
 
-The local model, endpoint, and pane height are configurable (`--governess-*` flags / `LOOP_GOVERNESS_*` env). The labeling call is sized for reasoning models that emit a `<think>` block before their answer.
+Governess and Nanny use the shared Pi runtime against the local model; Au Pair uses the same runtime against GLM through OpenRouter. Pi built-in filesystem, shell, edit, and write tools are disabled—the existing scoped broker remains the permission boundary. Local watchdog configuration remains under `--governess-*` / `LOOP_GOVERNESS_*`; Nanny uses `LOOP_NANNY_*`, Au Pair uses `LOOP_AU_PAIR_*`, and `LOOP_UTILITY_HARNESS=legacy` is an explicit rollback only. The labeling call is sized for reasoning models that emit a `<think>` block before their answer.
 
 ## Install globally (symlink)
 

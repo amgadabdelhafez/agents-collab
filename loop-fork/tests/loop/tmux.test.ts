@@ -580,8 +580,11 @@ test("runInTmux writes paired session refs before starting governess", async () 
             return { exitCode: 0, stderr: "", stdout: "%40\n" };
           }
           if (args[0] === "tmux" && args[1] === "split-window") {
-            if (args.some((arg) => arg.includes("__utility-pane"))) {
+            if (args.some((arg) => arg.includes("__au-pair-pane"))) {
               return { exitCode: 0, stderr: "", stdout: "%42\n" };
+            }
+            if (args.some((arg) => arg.includes("__nanny-pane"))) {
+              return { exitCode: 0, stderr: "", stdout: "%44\n" };
             }
             if (args.includes("-h")) {
               return { exitCode: 0, stderr: "", stdout: "%41\n" };
@@ -604,9 +607,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     );
 
     expect(delegated).toBe(true);
-    expect(events).toContain(
-      "manifest:codex-thread-1:%41:repo-loop-1:0.2"
-    );
+    expect(events).toContain("manifest:codex-thread-1:%41:repo-loop-1:0.2");
     expect(events).toContain(
       "spawn-governess:codex-thread-1:%41:repo-loop-1:0.2"
     );
@@ -640,12 +641,12 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "-F",
       "#{pane_id}",
       "-l",
-      "25%",
+      "20%",
       "-t",
       "%43",
       "-c",
       repoDir,
-      expect.stringContaining("__utility-pane"),
+      expect.stringContaining("__au-pair-pane"),
     ]);
     expect(calls).toContainEqual([
       "tmux",
@@ -654,7 +655,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "-t",
       "%42",
       "@loop_label",
-      "worker.repo-loop-1",
+      "au-pair.repo-loop-1",
     ]);
     expect(calls).toContainEqual([
       "tmux",
@@ -662,10 +663,12 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "-t",
       "%42",
       "-T",
-      "worker.repo-loop-1",
+      "au-pair.repo-loop-1",
     ]);
     expect(manifest.tmuxPaneLeft).toBe("%40");
     expect(manifest.tmuxPaneUtility).toBe("%42");
+    expect(manifest.tmuxPaneAuPair).toBe("%42");
+    expect(manifest.tmuxPaneNanny).toBe("%44");
     expect(manifest.tmuxPaneRight).toBe("%41");
     expect(manifest.tmuxPaneGoverness).toBe("%43");
   } finally {
@@ -673,7 +676,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
   }
 });
 
-test("the worker pane defaults to the right quarter with an explicit opt-out", () => {
+test("the Nanny/Au Pair column defaults to the right fifth with an explicit opt-out", () => {
   expect(tmuxInternals.utilityPaneEnabled({})).toBe(true);
   expect(tmuxInternals.utilityPaneEnabled({ LOOP_UTILITY_PANE: "0" })).toBe(
     false
@@ -681,7 +684,7 @@ test("the worker pane defaults to the right quarter with an explicit opt-out", (
   expect(tmuxInternals.utilityPaneEnabled({ LOOP_UTILITY_PANE: "off" })).toBe(
     false
   );
-  expect(tmuxInternals.utilityPaneWidth({})).toBe("25%");
+  expect(tmuxInternals.utilityPaneWidth({})).toBe("20%");
   expect(
     tmuxInternals.utilityPaneWidth({ LOOP_UTILITY_PANE_WIDTH: "20%" })
   ).toBe("20%");
@@ -690,7 +693,7 @@ test("the worker pane defaults to the right quarter with an explicit opt-out", (
   ).toBe("18%");
   expect(
     tmuxInternals.utilityPaneWidth({ LOOP_UTILITY_PANE_WIDTH: "invalid" })
-  ).toBe("25%");
+  ).toBe("20%");
 });
 
 test("governed layout preserves legacy numeric fallbacks without tmux stdout", async () => {

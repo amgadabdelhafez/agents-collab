@@ -1,0 +1,41 @@
+{
+  "task_id": "pi-sdk-utility-harness",
+  "feature": "pi-sdk-utility-harness",
+  "timestamp": "2026-07-27T22:16:03Z",
+  "checks": {
+    "functional": {
+      "passed": 232,
+      "failed": 0,
+      "details": [
+        "Direct, Nanny, Au Pair, Pi runtime, Governess, panes, observability, store, and registered-worktree focused tests pass",
+        "compiled Nanny broker canary passes with Pi 0.82.1"
+      ]
+    },
+    "ui": {
+      "passed": 2,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "new-loop layout and role-filtered pane tests pass",
+        "user confirmed completed Loop 55 was intentionally disposed"
+      ]
+    },
+    "performance": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "bridge suite passes 76 tests and leaves zero orphan bridge processes after parent-loss guard"
+      ]
+    },
+    "regression": {
+      "passed": 140,
+      "failed": 0,
+      "details": [
+        "independent evaluator reran utility Pi store and bridge regressions",
+        "four unchanged Codex environment expectation failures remain unrelated"
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "Independent final verdict PASS. Direct, Nanny, and Au Pair behavior, Pi broker security, cancellation, capacity attribution, failure evidence, and bridge parent-loss cleanup are verified."
+}

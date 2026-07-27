@@ -54,7 +54,10 @@ import {
   startPersistentAgentSession,
 } from "./runner";
 import type { Agent, Options } from "./types";
-import { UTILITY_PANE_SUBCOMMAND } from "./utility-runtime";
+import {
+  AU_PAIR_PANE_SUBCOMMAND,
+  NANNY_PANE_SUBCOMMAND,
+} from "./utility-runtime";
 
 export const TMUX_FLAG = "--tmux";
 export const TMUX_MISSING_ERROR =
@@ -81,7 +84,7 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
-const DEFAULT_UTILITY_PANE_WIDTH = "25%";
+const DEFAULT_UTILITY_PANE_WIDTH = "20%";
 const UTILITY_PANE_WIDTH_RE = /^\d+%?$/;
 
 interface SpawnResult {
@@ -242,7 +245,7 @@ const pairedBridgeGuidance = (
       mandatoryUtilityDelegationGuidance(
         quotedClaudeTmuxBridgeTool(serverName, "route_task")
       ),
-      `For a returned worker edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
+      `For a returned Au Pair edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
       `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
     ].join("\n");
   }
@@ -250,10 +253,8 @@ const pairedBridgeGuidance = (
   return [
     `Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with target: "${target}" for ${peer}-facing messages, not a human-facing message.`,
     singleBridgeTransportGuidance,
-    mandatoryUtilityDelegationGuidance(
-      quotedBridgeTool(agent, "route_task")
-    ),
-    `For a returned worker edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
+    mandatoryUtilityDelegationGuidance(quotedBridgeTool(agent, "route_task")),
+    `For a returned Au Pair edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
     `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
   ].join("\n");
 };
@@ -811,8 +812,10 @@ const tmuxStartupMessage = (paired: boolean): string =>
     : "[loop] starting tmux session...";
 
 interface PairedPaneTargets {
+  auPair?: string;
   governess?: string;
   left: string;
+  nanny?: string;
   right: string;
   utility?: string;
 }
@@ -851,6 +854,8 @@ const updatePairedManifest = (
         ...(paneTargets.utility
           ? { tmuxPaneUtility: paneTargets.utility }
           : {}),
+        ...(paneTargets.auPair ? { tmuxPaneAuPair: paneTargets.auPair } : {}),
+        ...(paneTargets.nanny ? { tmuxPaneNanny: paneTargets.nanny } : {}),
       },
       new Date().toISOString()
     )
@@ -1065,7 +1070,8 @@ const governessEnv = (
   ];
 };
 
-// Add the full-width bottom governess pane under the agent/utility region.
+// Add the control row beneath the paired agents. The right fifth is later
+// split into distinct Nanny and Au Pair panes.
 const startGovernessPane = (
   deps: TmuxDeps,
   opts: Options,
@@ -1113,10 +1119,16 @@ const utilityPaneWidth = (env: NodeJS.ProcessEnv): string => {
     : DEFAULT_UTILITY_PANE_WIDTH;
 };
 
-export const composeWorkerPaneTitle = (session: string): string =>
-  `worker.${session}`;
+export const composeAuPairPaneTitle = (session: string): string =>
+  `au-pair.${session}`;
 
-const startUtilityPane = (
+export const composeNannyPaneTitle = (session: string): string =>
+  `nanny.${session}`;
+
+/** Compatibility alias for integrations that still import the old title helper. */
+export const composeWorkerPaneTitle = composeAuPairPaneTitle;
+
+const startAuPairPane = (
   deps: TmuxDeps,
   session: string,
   governessPane: string,
@@ -1125,7 +1137,7 @@ const startUtilityPane = (
 ): string => {
   const command = buildShellCommand([
     ...deps.launchArgv,
-    UTILITY_PANE_SUBCOMMAND,
+    AU_PAIR_PANE_SUBCOMMAND,
     runDir,
   ]);
   const result = runTmuxCommand(deps, [
@@ -1144,7 +1156,42 @@ const startUtilityPane = (
     command,
   ]);
   const pane = stablePaneTarget(result, utilityPane);
-  const title = composeWorkerPaneTitle(session);
+  const title = composeAuPairPaneTitle(session);
+  deps.spawn(["tmux", "set-option", "-p", "-t", pane, "@loop_label", title]);
+  deps.spawn(["tmux", "select-pane", "-t", pane, "-T", title]);
+  return pane;
+};
+
+const startNannyPane = (
+  deps: TmuxDeps,
+  session: string,
+  auPairPane: string,
+  nannyPane: string,
+  runDir: string
+): string => {
+  const command = buildShellCommand([
+    ...deps.launchArgv,
+    NANNY_PANE_SUBCOMMAND,
+    runDir,
+  ]);
+  const result = runTmuxCommand(deps, [
+    "tmux",
+    "split-window",
+    "-v",
+    "-b",
+    "-P",
+    "-F",
+    "#{pane_id}",
+    "-l",
+    "50%",
+    "-t",
+    auPairPane,
+    "-c",
+    deps.cwd,
+    command,
+  ]);
+  const pane = stablePaneTarget(result, nannyPane);
+  const title = composeNannyPaneTitle(session);
   deps.spawn(["tmux", "set-option", "-p", "-t", pane, "@loop_label", title]);
   deps.spawn(["tmux", "select-pane", "-t", pane, "-T", title]);
   return pane;
@@ -1348,10 +1395,8 @@ const stablePaneId = (result: SpawnResult): string | undefined => {
   return paneId && TMUX_PANE_ID_RE.test(paneId) ? paneId : undefined;
 };
 
-const stablePaneTarget = (
-  result: SpawnResult,
-  fallback: string
-): string => stablePaneId(result) ?? fallback;
+const stablePaneTarget = (result: SpawnResult, fallback: string): string =>
+  stablePaneId(result) ?? fallback;
 
 const normalizePaneText = (text: string): string =>
   text.replace(/\s+/g, " ").trim();
@@ -1508,17 +1553,20 @@ const startPairedControlPanes = (
       paneTargets.governess
     );
   }
-  const utility =
+  const auPair =
     governess && utilityPaneEnabled(deps.env)
-      ? startUtilityPane(
-          deps,
-          session,
-          governess,
-          `${session}:0.3`,
-          runDir
-        )
+      ? startAuPairPane(deps, session, governess, `${session}:0.3`, runDir)
       : undefined;
-  return { ...paneTargets, governess, utility };
+  const nanny = auPair
+    ? startNannyPane(deps, session, auPair, `${session}:0.4`, runDir)
+    : undefined;
+  return {
+    ...paneTargets,
+    auPair,
+    governess,
+    nanny,
+    utility: auPair,
+  };
 };
 
 const startPairedSession = async (

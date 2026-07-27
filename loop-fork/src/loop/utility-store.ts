@@ -58,8 +58,8 @@ export interface UtilityPatchApplication {
 
 export interface UtilityJobClaim {
   epoch: number;
-  workerPid: number;
   workerId: string;
+  workerPid: number;
 }
 
 export interface UtilityJobEvent {
@@ -110,8 +110,8 @@ export interface UtilityClaimOptions {
   at?: string;
   eventId?: string;
   jobId?: string;
-  workerPid?: number;
   workerId?: string;
+  workerPid?: number;
 }
 
 const LOCK_STALE_AFTER_MS = 30_000;
@@ -202,8 +202,10 @@ const assertEventShape = (event: UtilityJobEvent): void => {
   }
   if (
     event.claim &&
-    (!isPositiveEpoch(event.claim.epoch) ||
-      !Number.isInteger(event.claim.workerPid) ||
+    (!(
+      isPositiveEpoch(event.claim.epoch) &&
+      Number.isInteger(event.claim.workerPid)
+    ) ||
       event.claim.workerPid <= 0)
   ) {
     throw new Error(
@@ -382,6 +384,25 @@ const withStoreLock = <T>(paths: UtilityStorePaths, operation: () => T): T => {
   }
 };
 
+const isQueuedRouteDecision = (
+  current: UtilityJobSnapshot,
+  event: UtilityJobEvent
+): boolean => {
+  if (event.type !== "route-decided") {
+    return false;
+  }
+  if (
+    current.state !== "pending-route" ||
+    event.state !== "pending-route" ||
+    !event.decision
+  ) {
+    throw new Error(
+      "queued utility route decisions require a pending job and decision"
+    );
+  }
+  return true;
+};
+
 const validateNewEvent = (
   events: readonly UtilityJobEvent[],
   event: UtilityJobEvent
@@ -423,9 +444,15 @@ const validateNewEvent = (
     throw new Error(`utility request changed for job ${event.jobId}`);
   }
   if (event.type === "patch-applied") {
-    if (current.state !== "completed" || current.result?.status !== "completed") {
+    if (
+      current.state !== "completed" ||
+      current.result?.status !== "completed"
+    ) {
       throw new Error("utility patch application requires a completed job");
     }
+    return undefined;
+  }
+  if (isQueuedRouteDecision(current, event)) {
     return undefined;
   }
   if (!ALLOWED_TRANSITIONS[current.state].has(event.state)) {
@@ -522,6 +549,37 @@ export const readPendingRouteRequests = (
 export const readUtilityJobs = (runDir: string): UtilityJobSnapshot[] => {
   const paths = utilityRunPaths(runDir);
   return allSnapshots(readEvents(paths.eventsFile));
+};
+
+export const recordPendingUtilityRouteDecision = (
+  runDir: string,
+  jobId: string,
+  decision: UtilityRouteDecision,
+  epoch: number
+): UtilityJobSnapshot => {
+  if (!isPositiveEpoch(epoch)) {
+    throw new Error("queued utility route decision requires a positive epoch");
+  }
+  const paths = utilityRunPaths(runDir);
+  return withStoreLock(paths, () => {
+    const events = readEvents(paths.eventsFile);
+    const current = snapshotFromEvents(events, jobId);
+    if (!current) {
+      throw new Error(`unknown utility job: ${jobId}`);
+    }
+    if (current.state !== "pending-route") {
+      return current;
+    }
+    return appendLocked(paths, events, {
+      at: new Date().toISOString(),
+      decision,
+      eventId: `route-selected:${epoch}:${jobId}`,
+      jobId,
+      reason: decision.reason,
+      state: "pending-route",
+      type: "route-decided",
+    });
+  });
 };
 
 // The authoritative store reader above intentionally fails closed on any
@@ -661,29 +719,26 @@ const hasActiveWriteConflict = (
   candidate: UtilityJobSnapshot,
   jobs: readonly UtilityJobSnapshot[]
 ): boolean =>
-  jobs.some(
-    (job) => {
-      if (
-        job.jobId === candidate.jobId ||
-        (job.state !== "claimed" && job.state !== "running")
-      ) {
-        return false;
-      }
-      const candidateRoot = candidate.decision?.workspace?.root;
-      const activeRoot = job.decision?.workspace?.root;
-      if (candidateRoot && activeRoot && candidateRoot !== activeRoot) {
-        return false;
-      }
-      const candidateScopes =
-        candidate.decision?.workspace?.writeScope ??
-        candidate.request.writeScope;
-      const activeScopes =
-        job.decision?.workspace?.writeScope ?? job.request.writeScope;
-      return candidateScopes.some((path) =>
-        activeScopes.some((claim) => scopeOverlaps(path, claim))
-      );
+  jobs.some((job) => {
+    if (
+      job.jobId === candidate.jobId ||
+      (job.state !== "claimed" && job.state !== "running")
+    ) {
+      return false;
     }
-  );
+    const candidateRoot = candidate.decision?.workspace?.root;
+    const activeRoot = job.decision?.workspace?.root;
+    if (candidateRoot && activeRoot && candidateRoot !== activeRoot) {
+      return false;
+    }
+    const candidateScopes =
+      candidate.decision?.workspace?.writeScope ?? candidate.request.writeScope;
+    const activeScopes =
+      job.decision?.workspace?.writeScope ?? job.request.writeScope;
+    return candidateScopes.some((path) =>
+      activeScopes.some((claim) => scopeOverlaps(path, claim))
+    );
+  });
 
 export const claimUtilityJob = (
   runDir: string,

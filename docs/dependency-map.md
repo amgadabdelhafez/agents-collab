@@ -1,13 +1,13 @@
 # Dependency Map
 
-Last updated: 2026-07-26
+Last updated: <!-- 2026-07-27 by refresh-dependency-map.sh -->
 
 ## Modules
 
 ```text
 [CLI and tmux]
   owns: src/cli.ts, src/loop/tmux.ts
-  exposes: paired panes and hidden bridge/governess/utility subcommands
+  exposes: paired panes and hidden bridge/Governess/Nanny/Au Pair subcommands
   consumes: run state, bridge config, governess, utility runtime
 
 [Bridge]
@@ -26,13 +26,18 @@ Last updated: 2026-07-26
   consumes: pane/hooks/usage evidence, bridge, utility routing controller
 
 [Utility control]
-  owns: task-router.ts, utility-store.ts, utility-context.ts, utility-runtime.ts
-  exposes: pure route decision, durable jobs, immutable context capsules, detached worker and pane view
-  consumes: bridge dispatch, provider adapter, tool broker
+  owns: task-router.ts, utility-execution-tier.ts, utility-store.ts, utility-context.ts, utility-runtime.ts
+  exposes: pure Direct/Nanny/Au Pair decision, durable one-owner jobs, immutable context capsules, detached helpers and filtered pane views
+  consumes: bridge dispatch, shared Pi runtime, legacy provider adapter, tool broker
 
-[Provider adapter]
+[Shared Pi runtime]
+  owns: pi-runtime.ts
+  exposes: in-memory provider credentials, no-tools text completion, ephemeral tool-agent session
+  consumes: pinned Pi SDK, OpenRouter or localhost OpenAI-compatible endpoint
+
+[Legacy provider adapter]
   owns: openai-compatible.ts
-  exposes: bounded chat/tool transport with redacted trace and usage
+  exposes: explicit rollback chat/tool transport with redacted trace and usage
   consumes: configured HTTPS or localhost OpenAI-compatible endpoint
 
 [Utility tool broker]
@@ -50,16 +55,17 @@ main agents ──MCP──► bridge ──append──► utility store
     └─ Codex app-server observation ──► delegation telemetry
                                   ▲           │
                                   │           ▼
-governess ──route/epoch───────────┴────► task router
-    │                                         │ eligible
+Governess ──route/epoch───────────┴────► task router + execution tier
+    │                                         │ one owner
     └──────────── spawn detached ─────────────▼
-                                         utility worker
-                                         ├─► context capsule ──read──► bounded project docs
-                                         ├─► provider adapter ──HTTPS──► OpenRouter/local endpoint
-                                         ├─► tool broker ──argv/fs──► scoped repository
+                                         bounded helper
+                                         ├─► Direct ───────────────┐
+                                         ├─► Nanny ──Pi──► Qwen   ├─► tool broker
+                                         ├─► Au Pair ─Pi──► GLM   │
+                                         ├─► context capsule ─────┘
                                          └─► bridge ──compact result──► requester
 
-optional utility pane ──read only──► utility store
+Nanny pane / Au Pair pane ──read only──► filtered utility store view
 optional bridge supervisor ──messages/route request──► bridge
 ```
 
@@ -68,8 +74,8 @@ optional bridge supervisor ──messages/route request──► bridge
 | Concern | Owner | Evidence |
 |---|---|---|
 | Route authority | Governess epoch + task router | `governess.jsonl`, utility `jobs.jsonl` |
-| Worker context | Utility context loader/runtime | `utility/contexts/<job>.json`, capsule hash in result/usage |
-| Secrets | Provider adapter and tool env scrubber | redacted `utility/llm-trace.jsonl` |
+| Helper context | Utility context loader/runtime | `utility/contexts/<job>.json`, capsule hash in result/usage |
+| Secrets | Pi runtime, legacy adapter, and tool env scrubber | in-memory credentials; redacted `utility/llm-trace.jsonl` |
 | Background jobs | Utility store/runtime | `utility/jobs.jsonl`, stale-claim fencing |
 | Cost and tokens | Provider adapter/runtime | `utility/usage.jsonl` |
 | Delegation adoption | Delegation policy, hook, and Codex proxy | `utility/delegation.jsonl` |
@@ -85,6 +91,6 @@ optional bridge supervisor ──messages/route request──► bridge
 | Context capsule | Path policy, runtime, provider prompt and observability | Repository text must stay bounded and non-authoritative |
 | Governess epoch/loop | Utility claims, stale recovery, liveness tests | It is the single route authority |
 | Tool broker | Worker prompt, scope tests, secret/command policy | This is the host security boundary |
-| Provider adapter | Retry/redaction/usage tests and fake canary | External I/O must remain bounded and observable |
+| Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
 | Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts | Claude can enforce pre-tool; Codex is observation-only until a supported per-tool hook exists |

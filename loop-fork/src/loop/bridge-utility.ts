@@ -42,7 +42,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit a small bounded task for governess routing to the worker, peer, driver, or human escalation.",
+      "Submit a small bounded task for Governess routing to Direct, Nanny, Au Pair, a peer, the driver, or human escalation.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -100,7 +100,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: READ_ONLY_ANNOTATIONS,
     description:
-      "Read the governess route and current state for a worker job.",
+      "Read the Governess route and current state for a Nanny or Au Pair job.",
     inputSchema: {
       additionalProperties: false,
       properties: { task_id: { minLength: 1, type: "string" } },
@@ -112,7 +112,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: READ_ONLY_ANNOTATIONS,
     description:
-      "Read the compact result and artifact references for a completed worker job.",
+      "Read the compact result and artifact references for a completed Nanny or Au Pair job.",
     inputSchema: {
       additionalProperties: false,
       properties: { task_id: { minLength: 1, type: "string" } },
@@ -124,7 +124,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Apply one completed worker edit after revalidating its patch hash, scope, and byte preimages; full agents only.",
+      "Apply one completed Au Pair edit after revalidating its patch hash, scope, and byte preimages; full agents only.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -362,7 +362,7 @@ export const callUtilityBridgeTool = async (
   }
   const job = readUtilityJob(runDir, taskId(args));
   if (!job) {
-    throw new UtilityBridgeInputError("unknown worker task_id");
+    throw new UtilityBridgeInputError("unknown Nanny or Au Pair task_id");
   }
   if (name === "task_status") {
     return {

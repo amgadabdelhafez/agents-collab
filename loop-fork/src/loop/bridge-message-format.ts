@@ -1,13 +1,13 @@
 import type { BridgeMessage, BridgeSource } from "./bridge-store";
 
 const BRIDGE_PREFIX_RE =
-  /^(?:Message from (?:Claude|Codex|Gemini|Cursor|Supervisor|Utility|Worker) via the loop bridge:|(?:Claude|Codex|Gemini|Cursor|Supervisor|Utility|Worker):)\s*/i;
+  /^(?:Message from (?:Claude|Codex|Gemini|Cursor|Supervisor|Utility|Worker|Helper|Nanny|Au Pair) via the loop bridge:|(?:Claude|Codex|Gemini|Cursor|Supervisor|Utility|Worker|Helper|Nanny|Au Pair):)\s*/i;
 
 const capitalize = (value: string): string =>
   value.slice(0, 1).toUpperCase() + value.slice(1);
 
 export const bridgeSourceLabel = (source: BridgeSource): string =>
-  source === "utility" ? "Worker" : capitalize(source);
+  source === "utility" ? "Helper" : capitalize(source);
 
 export const formatCodexBridgeMessage = (
   source: BridgeSource,

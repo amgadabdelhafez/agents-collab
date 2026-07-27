@@ -70,9 +70,11 @@ export interface RunManifest {
   runId: string;
   state: RunLifecycleState;
   status: RunStatus;
+  tmuxPaneAuPair?: string;
   tmuxPaneGoverness?: string;
   tmuxPaneLeft?: string;
   tmuxPaneLeftAgent?: Agent;
+  tmuxPaneNanny?: string;
   tmuxPaneRight?: string;
   tmuxPaneRightAgent?: Agent;
   tmuxPaneUtility?: string;
@@ -148,10 +150,12 @@ interface RunManifestInput {
   state?: RunLifecycleState;
   status?: string;
   tmuxPaneGoverness?: string;
+  tmuxPaneAuPair?: string;
   tmuxPaneLeft?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneRight?: string;
   tmuxPaneRightAgent?: Agent;
+  tmuxPaneNanny?: string;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt?: string;
@@ -499,6 +503,8 @@ export const createRunManifest = (
     ...(input.tmuxPaneGoverness
       ? { tmuxPaneGoverness: input.tmuxPaneGoverness }
       : {}),
+    ...(input.tmuxPaneAuPair ? { tmuxPaneAuPair: input.tmuxPaneAuPair } : {}),
+    ...(input.tmuxPaneNanny ? { tmuxPaneNanny: input.tmuxPaneNanny } : {}),
     ...(input.tmuxPaneUtility
       ? { tmuxPaneUtility: input.tmuxPaneUtility }
       : {}),
@@ -560,6 +566,14 @@ const readOptionalRunManifestFields = (
     "tmuxPaneUtility",
     "tmux_pane_utility",
   ]);
+  const tmuxPaneAuPair = firstString(parsed, [
+    "tmuxPaneAuPair",
+    "tmux_pane_au_pair",
+  ]);
+  const tmuxPaneNanny = firstString(parsed, [
+    "tmuxPaneNanny",
+    "tmux_pane_nanny",
+  ]);
   const governess =
     parsed.governess === true || parsed[LEGACY_MANIFEST_KEYS.enabled] === true;
   return {
@@ -568,10 +582,12 @@ const readOptionalRunManifestFields = (
     ...(governess ? { governess: true } : {}),
     ...(primaryAgent ? { primaryAgent } : {}),
     ...(tmuxPaneGoverness ? { tmuxPaneGoverness } : {}),
+    ...(tmuxPaneAuPair ? { tmuxPaneAuPair } : {}),
     ...(tmuxPaneLeft ? { tmuxPaneLeft } : {}),
     ...(tmuxPaneLeftAgent ? { tmuxPaneLeftAgent } : {}),
     ...(tmuxPaneRight ? { tmuxPaneRight } : {}),
     ...(tmuxPaneRightAgent ? { tmuxPaneRightAgent } : {}),
+    ...(tmuxPaneNanny ? { tmuxPaneNanny } : {}),
     ...(tmuxPaneUtility ? { tmuxPaneUtility } : {}),
     ...(tmuxSession ? { tmuxSession } : {}),
   };

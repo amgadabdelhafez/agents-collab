@@ -170,6 +170,28 @@ afterEach(() => {
   mock.restore();
 });
 
+test("bridge MCP detects reparented and missing parents", async () => {
+  const bridge = await loadBridge();
+  const alive = mock(() => true);
+  const missing = mock(() => {
+    const error = new Error("missing") as NodeJS.ErrnoException;
+    error.code = "ESRCH";
+    throw error;
+  });
+  const forbidden = mock(() => {
+    const error = new Error("forbidden") as NodeJS.ErrnoException;
+    error.code = "EPERM";
+    throw error;
+  });
+
+  expect(bridge.bridgeInternals.bridgeParentIsGone(42, 1, alive)).toBe(true);
+  expect(bridge.bridgeInternals.bridgeParentIsGone(42, 42, alive)).toBe(false);
+  expect(bridge.bridgeInternals.bridgeParentIsGone(42, 42, missing)).toBe(true);
+  expect(bridge.bridgeInternals.bridgeParentIsGone(42, 42, forbidden)).toBe(
+    false
+  );
+});
+
 test("bridge message parsing ignores malformed lines and acked entries", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
@@ -651,9 +673,9 @@ test.each([
   expect(
     readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")
   ).not.toContain("super-secret-idempotency-value");
-  expect(
-    readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")
-  ).toContain('"contextRefs":["docs/guide.md","README.md"]');
+  expect(readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")).toContain(
+    '"contextRefs":["docs/guide.md","README.md"]'
+  );
   const status = await runBridgeProcess(
     runDir,
     source,

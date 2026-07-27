@@ -1633,7 +1633,7 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("both idle total 0s");
   expect(visibleBoard).not.toContain("msgs claude 0 codex 0");
   expect(visibleBoard).toMatch(
-    /LLM\s+MODEL\s+STAT\s+CALLS\s+TOK\s+IN\s+CACHE\s+OUT\s+HIT\s+SLOTS\s+MEM\s+ARCH\s+DT\s+QNT\s+MOE\s+BATCH/
+    /NANNY\s+MODEL\s+STAT\s+CALLS\s+TOK\s+IN\s+CACHE\s+OUT\s+HIT\s+SLOTS\s+MEM\s+ARCH\s+DT\s+QNT\s+MOE\s+BATCH/
   );
   expect(visibleBoard).toMatch(
     /m\s+m\s+ok\s+3\s+2k\s+900\s+500\s+100\s+20%\s+10\/10\s+1\.82GB/
@@ -1697,7 +1697,7 @@ test("board uses only Progress and Next from the structured summary", async () =
   ]);
 });
 
-test("board uses the recovered summary area for lower-agent metrics", async () => {
+test("board uses the recovered summary area for Nanny and Au Pair metrics", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "governess-utility-board-"));
   const clock = { ms: START_MS };
   const spies = freshSpies();
@@ -1726,7 +1726,7 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
       decision: {
         reason: "utility-eligible",
         target: "utility",
-        tierId: "openrouter-glm",
+        tierId: "utility-au-pair",
       },
       routeEpoch: 1,
     });
@@ -1858,28 +1858,28 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
     expect(board.match(/^ AGENT/gm) ?? []).toHaveLength(1);
     expect(board).not.toContain("LOWER");
     expect(board).toMatch(
-      /worker\s+● idle\s+—\s+glm-5\.2\s+1ok\/1fail\s+—\s+—\s+\$0\.0123\/—\s+7k i5k c2k o2k\s+2j 4c 3tl\s+latest-f fail/
+      /au pair\s+● idle\s+—\s+glm-5\.2\s+1ok\/1fail\s+—\s+—\s+\$0\.0123\/—\s+7k i5k c2k o2k\s+2j 4c 3tl\s+latest-f fail/
     );
-    const workerRow = board
+    const auPairRow = board
       .split("\n")
-      .find((line) => line.startsWith(" worker"));
-    expect(workerRow?.length).toBeLessThanOrEqual(176);
+      .find((line) => line.startsWith(" au pair"));
+    expect(auPairRow?.length).toBeLessThanOrEqual(176);
     expect(board.split("\n").every((line) => line.length <= 176)).toBe(true);
     expect(board).toContain(
-      "routing · considered 3 · routed worker 2 · actionable 0 · retained 0 · unsafe 1 · pending 0 · adoption auto 1 explicit 1"
+      "routing · considered 3 · routed helpers 2 · actionable 0 · retained 0 · unsafe 1 · pending 0 · adoption auto 1 explicit 1"
     );
     expect(board).toContain(
-      "bridge worker msgs · in 2 latest — · out 2 latest — · pending 0"
+      "bridge helper msgs · in 2 latest — · out 2 latest — · pending 0"
     );
     expect(board).toContain("routing why · protected-scope 1");
     expect(board).toContain(
-      "worker perf · success 1/2 50% · avg 12s · $0.0123/job · 7k tok/job · 3.0 tools/job · cache 40%"
+      "helpers perf · success 1/2 50% · avg 12s · $0.0123/job · 7k tok/job · 3.0 tools/job · cache 40%"
     );
     expect(board).toContain(
-      "worker load · active 0 · queued 0 · route share 2/3 67% · msgs in 2 out 2 pending 0"
+      "helpers load · active 0 · queued 0 · route share 2/3 67% · msgs in 2 out 2 pending 0"
     );
     expect(board).toContain(
-      "worker context · capsules 1/2 50% · refs 1 · latest v1 bbbbbbbb · ctx misses 0 · tool failures 1 · top broker_invalid_arguments 1"
+      "helpers context · capsules 1/2 50% · refs 1 · latest v1 bbbbbbbb · ctx misses 0 · tool failures 1 · top broker_invalid_arguments 1"
     );
     expect(board).not.toContain("Project: must remain hidden");
     expect(board).not.toContain("docs/worker.md");
@@ -1888,7 +1888,7 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
   }
 });
 
-test("small governess viewports retain both agents and utility without overflow", async () => {
+test("small governess viewports retain both agents, Nanny, and Au Pair", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "governess-utility-viewport-"));
   const clock = { ms: START_MS };
   const spies = freshSpies();
@@ -1917,13 +1917,14 @@ test("small governess viewports retain both agents and utility without overflow"
     expect(lines).toHaveLength(5);
     expect(lines.some((line) => line.startsWith(" claude"))).toBe(true);
     expect(lines.some((line) => line.startsWith(" codex"))).toBe(true);
-    expect(lines.some((line) => line.startsWith(" worker"))).toBe(true);
+    expect(lines.some((line) => line.startsWith(" nanny"))).toBe(true);
+    expect(lines.some((line) => line.startsWith(" au pair"))).toBe(true);
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
 });
 
-test("worker row hides the internal routed-utility state name", async () => {
+test("Au Pair row hides the internal routed-utility state name", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "governess-worker-routed-"));
   const clock = { ms: START_MS };
   const spies = freshSpies();
@@ -1959,9 +1960,9 @@ test("worker row hides the internal routed-utility state name", async () => {
       )
     );
     const board = stripAnsi(result.board);
-    expect(board).toMatch(/worker\s+● queued.*routed-j route/);
+    expect(board).toMatch(/au pair\s+● queued.*routed-j route/);
     expect(board).toContain(
-      "bridge worker msgs · in 1 latest — · out 0 latest — · pending 1"
+      "bridge helper msgs · in 1 latest — · out 0 latest — · pending 1"
     );
     expect(board).not.toContain("routed-utility");
   } finally {

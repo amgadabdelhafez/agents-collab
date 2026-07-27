@@ -388,12 +388,7 @@ const handleToolCall = async (
 
   if (isUtilityBridgeToolName(name)) {
     try {
-      const result = await callUtilityBridgeTool(
-        name,
-        runDir,
-        source,
-        args
-      );
+      const result = await callUtilityBridgeTool(name, runDir, source, args);
       writeJsonRpc({
         id,
         jsonrpc: "2.0",
@@ -676,6 +671,22 @@ const consumeFrames = (
     process.stdin.on("error", reject);
   });
 
+const bridgeParentIsGone = (
+  initialParentPid: number,
+  currentParentPid: number = process.ppid,
+  signal: (pid: number, signal: 0) => unknown = process.kill
+): boolean => {
+  if (initialParentPid !== 1 && currentParentPid === 1) {
+    return true;
+  }
+  try {
+    signal(initialParentPid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+};
+
 const isBridgeWatchEvent = (
   runDir: string,
   filename: string | Buffer | null
@@ -694,6 +705,7 @@ export const runBridgeMcpServer = async (
   let bridgeWatcher: { close: () => void } | undefined;
   let closed = false;
   let fallbackSweep: ReturnType<typeof setTimeout> | undefined;
+  let parentSweep: ReturnType<typeof setInterval> | undefined;
   let flushQueue: Promise<void> = Promise.resolve();
   let requestQueue: Promise<void> = Promise.resolve();
   const queueClaudeFlush = (): Promise<void> => {
@@ -717,6 +729,22 @@ export const runBridgeMcpServer = async (
     }
     clearTimeout(fallbackSweep);
     fallbackSweep = undefined;
+  };
+
+  const cleanup = (): void => {
+    closed = true;
+    bridgeWatcher?.close();
+    bridgeWatcher = undefined;
+    clearClaudeSweep();
+    if (parentSweep) {
+      clearInterval(parentSweep);
+      parentSweep = undefined;
+    }
+  };
+
+  const exitAfterParentOrSignal = (): void => {
+    cleanup();
+    process.exit(0);
   };
 
   const scheduleClaudeSweep = (): void => {
@@ -748,7 +776,16 @@ export const runBridgeMcpServer = async (
     }
   }
 
-  process.stdin.resume();
+  const initialParentPid = process.ppid;
+  parentSweep = setInterval(() => {
+    if (bridgeParentIsGone(initialParentPid)) {
+      exitAfterParentOrSignal();
+    }
+  }, 250);
+  parentSweep.unref?.();
+  process.once("SIGINT", exitAfterParentOrSignal);
+  process.once("SIGTERM", exitAfterParentOrSignal);
+
   try {
     await consumeFrames(
       (request) => {
@@ -767,9 +804,9 @@ export const runBridgeMcpServer = async (
       }
     );
   } finally {
-    closed = true;
-    bridgeWatcher?.close();
-    clearClaudeSweep();
+    cleanup();
+    process.removeListener("SIGINT", exitAfterParentOrSignal);
+    process.removeListener("SIGTERM", exitAfterParentOrSignal);
   }
 
   await requestQueue;
@@ -788,4 +825,5 @@ export const bridgeInternals = {
   ensureBridgeWorker,
   hasBridgeDeliveryRoute,
   readBridgeEvents,
+  bridgeParentIsGone,
 };

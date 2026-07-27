@@ -61,8 +61,7 @@ test("utility observability safely handles absent and malformed journals", () =>
       available: true,
       jobsTotal: 1,
       messages: { inbound: 0, outbound: 0, pending: 0 },
-      model: "z-ai/glm-5.2",
-      usage: { modelCalls: 1, totalTokens: 12 },
+      usage: { modelCalls: 0, totalTokens: 0 },
     });
     expect(
       sanitizeUtilityPaneText(
@@ -265,11 +264,11 @@ test("utility observability totals worker usage and builds a safe transcript", (
       at: "2026-07-26T01:01:01.000Z",
       result: {
         artifactRefs: [],
-        blocker: "worker token cap exceeded",
+        blocker: "Au Pair token cap exceeded",
         checks: [],
         filesChanged: [],
         status: "failed",
-        summary: "Utility worker failed closed.",
+        summary: "Au Pair failed closed.",
       },
     });
 
@@ -408,16 +407,16 @@ test("utility observability totals worker usage and builds a safe transcript", (
       },
     });
     expect(snapshot.transcript.map((entry) => entry.label)).toEqual([
-      "CLAUDE→WORKER",
-      "WORKER TOOL",
-      "WORKER OK",
-      "CODEX→WORKER",
-      "WORKER TOOL",
-      "WORKER TOOL",
-      "WORKER FAIL",
+      "CLAUDE→AU PAIR",
+      "AU PAIR TOOL",
+      "AU PAIR OK",
+      "CODEX→AU PAIR",
+      "AU PAIR TOOL",
+      "AU PAIR TOOL",
+      "AU PAIR FAIL",
     ]);
     expect(
-      snapshot.transcript.find((entry) => entry.label === "WORKER OK")?.usage
+      snapshot.transcript.find((entry) => entry.label === "AU PAIR OK")?.usage
     ).toEqual({
       costUsd: 0.003,
       durationMs: 12_000,
@@ -426,7 +425,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
       totalTokens: 1250,
     });
     const transcript = snapshot.transcript.map((entry) => entry.text).join(" ");
-    expect(transcript).toContain("worker token cap exceeded");
+    expect(transcript).toContain("Au Pair token cap exceeded");
     expect(transcript).not.toContain("raw tool output");
     expect(transcript).not.toContain("Project instructions");
     expect(transcript).not.toContain("hidden prompt");
