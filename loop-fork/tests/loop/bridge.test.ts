@@ -617,6 +617,7 @@ test.each([
       params: {
         arguments: {
           acceptance_criteria: ["find the defining file"],
+          context_refs: ["./docs/guide.md", "README.md"],
           idempotency_key: "API_KEY=super-secret-idempotency-value",
           kind: "inspect",
           objective: "Locate the bridge server definition",
@@ -650,6 +651,9 @@ test.each([
   expect(
     readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")
   ).not.toContain("super-secret-idempotency-value");
+  expect(
+    readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")
+  ).toContain('"contextRefs":["docs/guide.md","README.md"]');
   const status = await runBridgeProcess(
     runDir,
     source,

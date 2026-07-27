@@ -26,8 +26,8 @@ Last updated: 2026-07-26
   consumes: pane/hooks/usage evidence, bridge, utility routing controller
 
 [Utility control]
-  owns: task-router.ts, utility-store.ts, utility-runtime.ts
-  exposes: pure route decision, durable jobs, detached worker and pane view
+  owns: task-router.ts, utility-store.ts, utility-context.ts, utility-runtime.ts
+  exposes: pure route decision, durable jobs, immutable context capsules, detached worker and pane view
   consumes: bridge dispatch, provider adapter, tool broker
 
 [Provider adapter]
@@ -54,6 +54,7 @@ governess ──route/epoch───────────┴────► t
     │                                         │ eligible
     └──────────── spawn detached ─────────────▼
                                          utility worker
+                                         ├─► context capsule ──read──► bounded project docs
                                          ├─► provider adapter ──HTTPS──► OpenRouter/local endpoint
                                          ├─► tool broker ──argv/fs──► scoped repository
                                          └─► bridge ──compact result──► requester
@@ -67,6 +68,7 @@ optional bridge supervisor ──messages/route request──► bridge
 | Concern | Owner | Evidence |
 |---|---|---|
 | Route authority | Governess epoch + task router | `governess.jsonl`, utility `jobs.jsonl` |
+| Worker context | Utility context loader/runtime | `utility/contexts/<job>.json`, capsule hash in result/usage |
 | Secrets | Provider adapter and tool env scrubber | redacted `utility/llm-trace.jsonl` |
 | Background jobs | Utility store/runtime | `utility/jobs.jsonl`, stale-claim fencing |
 | Cost and tokens | Provider adapter/runtime | `utility/usage.jsonl` |
@@ -80,6 +82,7 @@ optional bridge supervisor ──messages/route request──► bridge
 |---|---|---|
 | Bridge tool schema | Agent MCP config, bridge tests, prompt guidance | Both agents consume the public tool contract |
 | Route/job types | Router, store replay, runtime and bridge utility adapter | Durable events must remain materializable |
+| Context capsule | Path policy, runtime, provider prompt and observability | Repository text must stay bounded and non-authoritative |
 | Governess epoch/loop | Utility claims, stale recovery, liveness tests | It is the single route authority |
 | Tool broker | Worker prompt, scope tests, secret/command policy | This is the host security boundary |
 | Provider adapter | Retry/redaction/usage tests and fake canary | External I/O must remain bounded and observable |

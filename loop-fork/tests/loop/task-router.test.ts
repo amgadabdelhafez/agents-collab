@@ -334,6 +334,59 @@ test("normalizes requests and creates a stable idempotency key", () => {
   expect(first.idempotencyKey).toBe(second.idempotencyKey);
 });
 
+test("normalizes context refs and includes them in idempotency", () => {
+  const first = createUtilityRouteRequest(
+    requestInput({
+      contextRefs: [" ./docs/guide.md ", "docs/guide.md", "README.md"],
+    }),
+    { now: () => "one", randomId: () => "first" }
+  );
+  const same = createUtilityRouteRequest(
+    requestInput({ contextRefs: ["docs/guide.md", "README.md"] }),
+    { now: () => "two", randomId: () => "second" }
+  );
+  const different = createUtilityRouteRequest(
+    requestInput({ contextRefs: ["docs/other.md"] }),
+    { now: () => "three", randomId: () => "third" }
+  );
+
+  expect(first.contextRefs).toEqual(["docs/guide.md", "README.md"]);
+  expect(first.idempotencyKey).toBe(same.idempotencyKey);
+  expect(first.idempotencyKey).not.toBe(different.idempotencyKey);
+  expect(
+    createUtilityRouteRequest(requestInput({ contextRefs: [" "] }), {
+      now: () => "four",
+      randomId: () => "fourth",
+    }).idempotencyKey
+  ).toBe(
+    createUtilityRouteRequest(requestInput(), {
+      now: () => "five",
+      randomId: () => "fifth",
+    }).idempotencyKey
+  );
+});
+
+test("fails closed on invalid or excessive context refs", () => {
+  for (const contextRefs of [
+    ["../README.md"],
+    ["docs/../README.md"],
+    ["AGENTS.md"],
+    ["UTILITY.instructions.md"],
+    ["src/parser.ts"],
+    Array.from({ length: 7 }, (_, index) => `docs/${index}.md`),
+  ]) {
+    expect(
+      routeUtilityRequest(makeRequest({ contextRefs }), context())
+    ).toEqual({ reason: "request-not-bounded", target: "driver" });
+  }
+  expect(
+    routeUtilityRequest(
+      makeRequest({ contextRefs: ["specs/router/spec.md"] }),
+      context()
+    )
+  ).toMatchObject({ reason: "utility-eligible", target: "utility" });
+});
+
 test("treats a protected execution cwd as protected scope", () => {
   expect(
     routeUtilityRequest(

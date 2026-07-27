@@ -1851,20 +1851,31 @@ const utilityState = (snapshot: UtilityObservabilitySnapshot): string => {
   if (snapshot.queued > 0) {
     return "queued";
   }
+  if (
+    snapshot.contextInsufficient > 0 &&
+    snapshot.failed === 0 &&
+    snapshot.completed === 0
+  ) {
+    return "needs-ctx";
+  }
   if (snapshot.failed > 0 && snapshot.completed === 0) {
     return "failed";
   }
   return "idle";
 };
 
-const utilityStateColor = (state: string): string =>
-  state === "active"
-    ? ANSI.green
-    : state === "failed"
-      ? ANSI.red
-      : state === "idle"
-        ? ANSI.dim
-        : ANSI.yellow;
+const utilityStateColor = (state: string): string => {
+  if (state === "active") {
+    return ANSI.green;
+  }
+  if (state === "failed") {
+    return ANSI.red;
+  }
+  if (state === "idle") {
+    return ANSI.dim;
+  }
+  return ANSI.yellow;
+};
 
 const utilityCostCell = (cost: number): string =>
   cost > 0 ? `$${cost.toFixed(cost < 0.1 ? 4 : 2)}` : "—";
@@ -1875,6 +1886,9 @@ const utilityLatestState = (snapshot: UtilityObservabilitySnapshot): string => {
   }
   if (snapshot.latestState === "failed") {
     return "fail";
+  }
+  if (snapshot.latestState === "escalated") {
+    return "context";
   }
   if (snapshot.latestState === "routed-utility") {
     return "route";
@@ -1914,7 +1928,12 @@ const renderUtilityAgentRow = (
       AGENT_COL.model
     ),
     fitCell(run, AGENT_COL.run),
-    fitCell("—", AGENT_COL.context),
+    fitCell(
+      snapshot.contextInsufficient > 0
+        ? `ctx${snapshot.contextInsufficient}`
+        : "—",
+      AGENT_COL.context
+    ),
     fitCell("—", AGENT_COL.limits),
     colorCell(
       ANSI.yellow,

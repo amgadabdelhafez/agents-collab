@@ -12,6 +12,8 @@ const GOVERNING_SPEC_RE =
 const UTILITY_POLICY_PATH_RE = /(?:^|\/)\.loop\/utility-policy\.json$/i;
 const SECRET_BASENAME_RE =
   /^(?:\.env(?:\..*)?|\.npmrc|\.pypirc|credentials(?:\..*)?|id_(?:rsa|ed25519)|secrets?(?:\..*)?|.*\.(?:key|p12|pem))$/i;
+const UTILITY_CONTEXT_DOC_RE =
+  /^(?:README\.md|docs\/.+\.md|specs\/[^/]+\/(?:spec|plan|tasks|verify)\.md)$/i;
 
 export const UTILITY_PROTECTED_DIRECTORY_SEGMENTS = [
   ".aider",
@@ -91,6 +93,38 @@ export const normalizeUtilityPolicyPath = (value: string): string => {
 
 export const utilityPathWithin = (path: string, parent: string): boolean =>
   path === parent || path.startsWith(`${parent}/`);
+
+export const isUtilityContextRefPath = (value: string): boolean => {
+  const portable = value.trim().replaceAll("\\", "/");
+  if (
+    portable.length > 500 ||
+    portable.startsWith("/") ||
+    DRIVE_ABSOLUTE_RE.test(portable) ||
+    portable.includes("\0") ||
+    portable.split("/").includes("..")
+  ) {
+    return false;
+  }
+  const normalized = normalizeUtilityPolicyPath(value);
+  if (
+    !normalized ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.startsWith("/") ||
+    DRIVE_ABSOLUTE_RE.test(normalized) ||
+    normalized.includes("\0") ||
+    !UTILITY_CONTEXT_DOC_RE.test(normalized)
+  ) {
+    return false;
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  return !segments.some(
+    (segment) =>
+      PROTECTED_DIRECTORY_SEGMENTS.has(segment.toLowerCase()) ||
+      SECRET_BASENAME_RE.test(segment) ||
+      GOVERNING_BASENAME_RE.test(segment)
+  );
+};
 
 export const isUtilityProtectedPath = (
   value: string,

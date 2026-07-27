@@ -60,6 +60,11 @@ export const UTILITY_BRIDGE_TOOLS = [
           },
           type: "object",
         },
+        context_refs: {
+          items: { maxLength: 500, type: "string" },
+          maxItems: 6,
+          type: "array",
+        },
         estimated_cost_usd: { minimum: 0, type: "number" },
         idempotency_key: { type: "string" },
         kind: {
@@ -298,6 +303,7 @@ const routeTask = (
   const request = createUtilityRouteRequest({
     acceptanceCriteria: stringArray(args, "acceptance_criteria"),
     authority: authorityFlags(args.authority),
+    contextRefs: stringArray(args, "context_refs"),
     ...(typeof estimatedCostUsd === "number" ? { estimatedCostUsd } : {}),
     ...(typeof args.idempotency_key === "string"
       ? { idempotencyKey: hashDelegationFingerprint(args.idempotency_key) }

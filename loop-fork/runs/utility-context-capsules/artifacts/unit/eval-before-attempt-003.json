@@ -1,0 +1,26 @@
+{
+  "task_id": "utility-context-capsules",
+  "status": "pending",
+  "required": [
+    "unit",
+    "independent-review",
+    "installation"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/utility-context-capsules/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/utility-context-capsules/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/utility-context-capsules/artifacts/unit/attempt-002.json"
+    },
+    "independent-review": {
+      "status": "pending"
+    },
+    "installation": {
+      "status": "pending"
+    }
+  }
+}

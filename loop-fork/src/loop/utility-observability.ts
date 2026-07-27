@@ -53,6 +53,7 @@ export interface UtilityObservabilitySnapshot {
   active: number;
   available: boolean;
   completed: number;
+  contextInsufficient: number;
   failed: number;
   jobsTotal: number;
   latestAt?: string;
@@ -264,6 +265,7 @@ const workerJobs = (jobs: UtilityJobSnapshot[]): UtilityJobSnapshot[] =>
   jobs.filter(
     (job) =>
       job.decision?.target === "utility" ||
+      job.claim !== undefined ||
       ["pending-route", "routed-utility", "claimed", "running"].includes(
         job.state
       )
@@ -328,6 +330,13 @@ const jobRequestEntry = (job: UtilityJobSnapshot): UtilityTranscriptEntry => ({
   text: sanitizeUtilityPaneText(job.request.objective),
 });
 
+const jobResultLabel = (job: UtilityJobSnapshot): string => {
+  if (job.result?.reasonCode === "context-insufficient") {
+    return "WORKER CONTEXT";
+  }
+  return job.result?.status === "completed" ? "WORKER OK" : "WORKER FAIL";
+};
+
 const jobResultEntry = (
   job: UtilityJobSnapshot,
   usageEvent: Record<string, unknown> | undefined
@@ -336,15 +345,15 @@ const jobResultEntry = (
     return undefined;
   }
   const failed = job.result.status !== "completed";
-  const detail = failed
-    ? job.result.blocker || job.result.summary
-    : job.result.summary;
+  const detail =
+    job.result.paneSummary ??
+    (failed ? job.result.blocker || job.result.summary : job.result.summary);
   const usage = transcriptUsage(usageEvent);
   return {
     at: job.updatedAt,
     jobId: job.jobId,
     kind: "response",
-    label: failed ? "WORKER FAIL" : "WORKER OK",
+    label: jobResultLabel(job),
     text: sanitizeUtilityPaneText(detail),
     ...(usage ? { usage } : {}),
   };
@@ -408,6 +417,7 @@ export const readUtilityObservability = (
       active: 0,
       available: false,
       completed: 0,
+      contextInsufficient: 0,
       failed: 0,
       jobsTotal: 0,
       latestDetail: "no utility run directory",
@@ -435,7 +445,8 @@ export const readUtilityObservability = (
   const latestDecision = latestJob(allJobs.filter((job) => job.decision));
   const latestDetail = latest
     ? sanitizeUtilityPaneText(
-        latest.result?.blocker ||
+        latest.result?.paneSummary ||
+          latest.result?.blocker ||
           latest.result?.summary ||
           latest.request.objective
       )
@@ -445,8 +456,13 @@ export const readUtilityObservability = (
       .length,
     available: jobs.length > 0 || usageEvents.size > 0,
     completed: jobs.filter((job) => job.state === "completed").length,
-    failed: jobs.filter((job) =>
-      ["failed", "escalated", "canceled"].includes(job.state)
+    contextInsufficient: jobs.filter(
+      (job) => job.result?.reasonCode === "context-insufficient"
+    ).length,
+    failed: jobs.filter(
+      (job) =>
+        ["failed", "escalated", "canceled"].includes(job.state) &&
+        job.result?.reasonCode !== "context-insufficient"
     ).length,
     jobsTotal: jobs.length,
     latestDetail,

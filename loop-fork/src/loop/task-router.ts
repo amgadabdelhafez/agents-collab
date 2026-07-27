@@ -1,10 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Agent } from "./types";
 import {
+  isUtilityContextRefPath,
   isUtilityProtectedPath,
   normalizeUtilityPolicyPath,
   utilityPathWithin,
 } from "./utility-path-policy";
+
+export const MAX_UTILITY_CONTEXT_REFS = 6;
 
 export type UtilityRequestKind =
   | "inspect"
@@ -94,7 +97,13 @@ export interface UtilityCompactResult {
   artifactRefs: UtilityArtifactRef[];
   blocker?: string;
   checks: UtilityCheckResult[];
+  context?: {
+    sha256: string;
+    version: number;
+  };
   filesChanged: string[];
+  paneSummary?: string;
+  reasonCode?: "context-insufficient";
   status: "completed" | "failed" | "escalated" | "canceled";
   summary: string;
 }
@@ -102,6 +111,7 @@ export interface UtilityCompactResult {
 export interface UtilityRouteRequest {
   acceptanceCriteria: string[];
   authority: UtilityAuthorityFlags;
+  contextRefs?: string[];
   createdAt: string;
   estimatedCostUsd?: number;
   executionArgv?: string[];
@@ -242,6 +252,21 @@ const uniqueTrimmed = (values: readonly string[]): string[] => [
   ...new Set(values.map((value) => value.trim()).filter(Boolean)),
 ];
 
+const normalizedContextRefs = (
+  values: readonly string[] | undefined
+): string[] =>
+  values
+    ? [
+        ...new Set(
+          uniqueTrimmed(values).map((value) =>
+            isUtilityContextRefPath(value)
+              ? normalizePath(value)
+              : value.replaceAll("\\", "/")
+          )
+        ),
+      ].filter(Boolean)
+    : [];
+
 const stableRequestKey = (
   input: Omit<UtilityRouteRequestInput, "createdAt" | "id" | "idempotencyKey">
 ): string => createHash("sha256").update(JSON.stringify(input)).digest("hex");
@@ -255,10 +280,12 @@ export const createUtilityRouteRequest = (
   if (!objective) {
     throw new Error("utility route request objective cannot be empty");
   }
+  const contextRefs = normalizedContextRefs(input.contextRefs);
 
   const requestCore = {
     acceptanceCriteria,
     authority: { ...input.authority },
+    ...(contextRefs.length > 0 ? { contextRefs } : {}),
     estimatedCostUsd: input.estimatedCostUsd,
     ...(input.executionArgv ? { executionArgv: [...input.executionArgv] } : {}),
     ...(input.executionCwd
@@ -556,6 +583,15 @@ const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
 };
 
 const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
+  const contextRefs = request.contextRefs;
+  const contextRefsAreBounded =
+    contextRefs === undefined ||
+    (Array.isArray(contextRefs) &&
+      contextRefs.length <= MAX_UTILITY_CONTEXT_REFS &&
+      new Set(contextRefs).size === contextRefs.length &&
+      contextRefs.every(
+        (ref) => typeof ref === "string" && isUtilityContextRefPath(ref)
+      ));
   const profileIsKnown =
     request.executionProfile === undefined ||
     (typeof request.executionProfile === "string" &&
@@ -572,6 +608,7 @@ const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
         (argument) => typeof argument === "string" && argument.length > 0
       ));
   return (
+    contextRefsAreBounded &&
     profileIsKnown &&
     cwdIsBounded &&
     argvIsBounded &&

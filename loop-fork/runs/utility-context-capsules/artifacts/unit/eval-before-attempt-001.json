@@ -1,0 +1,20 @@
+{
+  "task_id": "utility-context-capsules",
+  "status": "pending",
+  "required": [
+    "unit",
+    "independent-review",
+    "installation"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "independent-review": {
+      "status": "pending"
+    },
+    "installation": {
+      "status": "pending"
+    }
+  }
+}

@@ -31,7 +31,7 @@ supervisor can submit/observe messages, but is not a route or claim authority.
 | Governess | Liveness, driver lease, current epoch, task routing and dispatch | Provider inference or unrestricted code changes |
 | Task router | Pure capability/risk/scope/budget/tier decision | Provider calls, persistence, side effects |
 | Utility job store | Idempotent append-only requests, decisions, claims, results | Routing policy or model inference |
-| Utility worker | One bounded job, compact prompt/tool loop, result/usage | Human communication, main-agent roles, commits or deployment |
+| Utility worker | One bounded job, immutable context capsule, compact prompt/tool loop, result/usage | Human communication, main-agent roles, commits or deployment |
 | Tool broker | Scope, path, command, environment, time/output policy | Choosing tasks or applying proposed patches |
 | Provider adapter | OpenAI-compatible HTTP, retries, usage/cost, redacted trace | Repository access or scheduling |
 
@@ -45,6 +45,9 @@ supervisor can submit/observe messages, but is not a route or claim authority.
   worker process.
 - Agents or the narrow Claude pre-tool policy submit structured requests. They
   cannot select a model, weaken route policy, or grant new authority.
+- A root `UTILITY.instructions.md` and explicitly selected bounded Markdown
+  references supply provider-neutral project context. They never widen route or
+  broker authority and their exact versioned capsule is persisted for replay.
 - Missing evidence, stale epochs, malformed journals, protected paths, and
   unknown risk fail closed.
 - Utility edits are patch proposals in P0. They are not applied automatically.
@@ -62,7 +65,8 @@ supervisor can submit/observe messages, but is not a route or claim authority.
 2. **Routing:** governess reads pending requests, applies deterministic policy,
    records the decision, and starts a detached worker only for eligible utility
    work. Peer/driver/escalation routes return through the bridge.
-3. **Execution:** the worker claims with the current epoch, calls the configured
+3. **Execution:** the worker claims with the current epoch, builds and persists
+   one bounded context capsule for the verified worktree, calls the configured
    OpenAI-compatible model, and executes only broker-approved tools.
 4. **Completion:** the worker records usage, trace, checks, artifact references,
    and a compact result, then sends that result to the requester through the

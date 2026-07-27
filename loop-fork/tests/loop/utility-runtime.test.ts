@@ -18,6 +18,7 @@ import {
   makeDelegationEvent,
 } from "../../src/loop/delegation-policy";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
+import { utilityContextPath } from "../../src/loop/utility-context";
 import { readUtilityObservability } from "../../src/loop/utility-observability";
 import {
   applyUtilityJobPatch,
@@ -40,6 +41,7 @@ import {
 import { createUtilityToolBroker } from "../../src/loop/utility-tools";
 
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
 const visiblePane = (value: string): string => value.replace(ANSI_RE, "");
 
 const completedEditProposal = async (
@@ -1627,7 +1629,13 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-runtime-"));
   const runDir = join(repoRoot, ".loop", "runs", "test-run");
   mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(join(repoRoot, "docs"), { recursive: true });
   mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "UTILITY.instructions.md"),
+    "stable-project-context"
+  );
+  writeFileSync(join(repoRoot, "docs", "guide.md"), "selected-task-context");
   writeFileSync(
     join(repoRoot, "src", "sample.ts"),
     "export const ok = true;\n"
@@ -1639,6 +1647,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
   const request = createUtilityRouteRequest({
     acceptanceCriteria: ["report completion"],
     authority: {},
+    contextRefs: ["docs/guide.md"],
     id: "job-1",
     kind: "inspect",
     objective: "Confirm the sample file exists",
@@ -1659,9 +1668,11 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     routeEpoch: 7,
   });
   let providerCalls = 0;
+  const providerBodies: Array<Record<string, unknown>> = [];
   const server = serve({
-    fetch: () => {
+    fetch: async (incoming) => {
       providerCalls += 1;
+      providerBodies.push((await incoming.json()) as Record<string, unknown>);
       return Response.json({
         choices: [
           {
@@ -1703,9 +1714,44 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
       LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
     });
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
-      result: { status: "completed", summary: "Sample file confirmed." },
+      result: {
+        context: {
+          sha256: expect.stringMatching(SHA256_HEX_RE),
+          version: 1,
+        },
+        status: "completed",
+        summary: "Sample file confirmed.",
+      },
       state: "completed",
     });
+    const userCapsules = providerBodies.map((body) => {
+      const messages = body.messages as Array<Record<string, unknown>>;
+      return messages[1]?.content as string;
+    });
+    expect(userCapsules).toHaveLength(2);
+    expect(new Set(userCapsules).size).toBe(1);
+    const promptedCapsule = JSON.parse(userCapsules[0] ?? "{}") as {
+      projectInstructions: { text?: string };
+      references: Array<{ text?: string }>;
+      request: {
+        authority: Record<string, boolean>;
+        readScope: string[];
+      };
+      sha256: string;
+    };
+    expect(promptedCapsule.projectInstructions.text).toBe(
+      "stable-project-context"
+    );
+    expect(promptedCapsule.references[0]?.text).toBe("selected-task-context");
+    expect(promptedCapsule.request.authority).toEqual({});
+    expect(promptedCapsule.request.readScope).toEqual(["src"]);
+    const firstMessages = providerBodies[0]?.messages as Array<
+      Record<string, unknown>
+    >;
+    expect(firstMessages[0]?.content).toContain("cannot widen authority");
+    expect(
+      JSON.parse(readFileSync(utilityContextPath(runDir, request.id), "utf8"))
+    ).toEqual(promptedCapsule);
     expect(readBridgeEvents(runDir)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1722,9 +1768,187 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     expect(
       readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8")
     ).toContain('"toolRounds":1');
+    expect(
+      readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8")
+    ).toContain(`"contextSha256":"${promptedCapsule.sha256}"`);
+    expect(visiblePane(renderUtilityPane(runDir))).not.toContain(
+      "stable-project-context"
+    );
+    expect(visiblePane(renderUtilityPane(runDir))).not.toContain(
+      "selected-task-context"
+    );
   } finally {
     server.stop(true);
     rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("context-insufficient response escalates once without evidence retries", async () => {
+  const { repoRoot, request, runDir } = routedInspectFixture(
+    "context-insufficient"
+  );
+  writeFileSync(
+    join(repoRoot, "UTILITY.instructions.md"),
+    "DO-NOT-PANE-CONTEXT-9987"
+  );
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: "CONTEXT_INSUFFICIENT: DO-NOT-PANE-CONTEXT-9987",
+              role: "assistant",
+            },
+          },
+        ],
+        model: "local-test",
+        usage: { completion_tokens: 4, prompt_tokens: 8, total_tokens: 12 },
+      });
+    },
+    port: 0,
+  });
+  try {
+    await runUtilityWorker(runDir, 77, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_MODEL: "local-test",
+      LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    expect(providerCalls).toBe(1);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        blocker: "DO-NOT-PANE-CONTEXT-9987",
+        context: {
+          sha256: expect.stringMatching(SHA256_HEX_RE),
+          version: 1,
+        },
+        reasonCode: "context-insufficient",
+        status: "escalated",
+      },
+      state: "escalated",
+    });
+    expect(jsonlRecords(join(runDir, "utility", "usage.jsonl"))).toEqual([
+      expect.objectContaining({
+        contextSha256: expect.stringMatching(SHA256_HEX_RE),
+        contextVersion: 1,
+        modelCalls: 1,
+        status: "context-insufficient",
+        toolCalls: 0,
+      }),
+    ]);
+    expect(readUtilityObservability(runDir)).toMatchObject({
+      contextInsufficient: 1,
+      failed: 0,
+    });
+    expect(readBridgeEvents(runDir)).toEqual([
+      expect.objectContaining({
+        message: expect.stringContaining("needs context"),
+        source: "utility",
+        target: "codex",
+        type: "escalation",
+      }),
+    ]);
+    const pane = visiblePane(renderUtilityPane(runDir));
+    expect(pane).toContain("WORKER CONTEXT");
+    expect(pane).toContain("Context insufficient; requester notified.");
+    expect(pane).not.toContain("DO-NOT-PANE-CONTEXT-9987");
+    expect(pane).not.toContain("CONTEXT_INSUFFICIENT");
+  } finally {
+    server.stop(true);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("worker tools cannot read their persisted context capsule", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-context-guard-"));
+  const runDir = join(repoRoot, ".loop", "runs", "context-guard");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "UTILITY.instructions.md"),
+    "must-never-return-through-a-tool"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["report safe evidence"],
+    authority: {},
+    id: "context-guard-job",
+    kind: "inspect",
+    objective: "Inspect the repository without reading control context",
+    readScope: ["."],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 78);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    routeEpoch: 78,
+  });
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: providerCalls === 1 ? "tool_calls" : "stop",
+            message:
+              providerCalls === 1
+                ? {
+                    content: null,
+                    role: "assistant",
+                    tool_calls: [
+                      {
+                        function: {
+                          arguments: JSON.stringify({
+                            path: ".loop/runs/context-guard/utility/contexts/context-guard-job.json",
+                          }),
+                          name: "read_file",
+                        },
+                        id: "read-context",
+                        type: "function",
+                      },
+                    ],
+                  }
+                : {
+                    content:
+                      "CONTEXT_INSUFFICIENT: protected context is not repository evidence",
+                    role: "assistant",
+                  },
+          },
+        ],
+        model: "local-test",
+        usage: { completion_tokens: 4, prompt_tokens: 8, total_tokens: 12 },
+      });
+    },
+    port: 0,
+  });
+  try {
+    await runUtilityWorker(runDir, 78, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_MODEL: "local-test",
+      LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    expect(providerCalls).toBe(2);
+    const toolEvents = readFileSync(
+      join(runDir, "utility", "tool-events.jsonl"),
+      "utf8"
+    );
+    expect(toolEvents).toContain('"code":"path_denied"');
+    expect(toolEvents).not.toContain("must-never-return-through-a-tool");
+    expect(visiblePane(renderUtilityPane(runDir))).not.toContain(
+      "must-never-return-through-a-tool"
+    );
+  } finally {
+    server.stop(true);
+    rmSync(repoRoot, { force: true, recursive: true });
   }
 });
 

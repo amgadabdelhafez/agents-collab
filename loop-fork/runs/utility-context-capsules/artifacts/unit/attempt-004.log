@@ -1,0 +1,310 @@
+task_id: utility-context-capsules
+dimension: unit
+attempt: 004
+started_at: 2026-07-27T18:31:30Z
+command: bun test tests/loop/utility-context.test.ts tests/loop/task-router.test.ts tests/loop/bridge.test.ts tests/loop/utility-runtime.test.ts tests/loop/utility-observability.test.ts tests/loop/utility-workspace.test.ts tests/loop/utility-tools.test.ts tests/loop/governess.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/task-router.test.ts:
+(pass) routes a bounded low-risk edit to a capable utility tier [0.62ms]
+(pass) routing is provider generic
+(pass) applies generic tier patterns and an eligible default fallback [0.44ms]
+(pass) cost-quality policy changes which eligible tier wins [0.16ms]
+(pass) fails closed on invalid generic routing policy metadata [0.05ms]
+(pass) routes review to the peer and authority to escalation [0.03ms]
+(pass) fail-closed gates > keeps missing epoch with the driver [0.02ms]
+(pass) fail-closed gates > keeps missing acceptance with the driver
+(pass) fail-closed gates > keeps unknown risk with the driver
+(pass) fail-closed gates > keeps protected path with the driver [0.05ms]
+(pass) fail-closed gates > keeps credential directory with the driver
+(pass) fail-closed gates > keeps agent settings with the driver
+(pass) fail-closed gates > keeps nested credential directory with the driver [0.04ms]
+(pass) fail-closed gates > keeps nested governing spec with the driver [0.01ms]
+(pass) fail-closed gates > keeps nested architecture with the driver
+(pass) fail-closed gates > keeps copilot instructions with the driver [0.03ms]
+(pass) fail-closed gates > keeps case-varied nested agent settings with the driver [0.16ms]
+(pass) fail-closed gates > keeps write conflict with the driver [0.12ms]
+(pass) fail-closed gates > keeps missing capability with the driver [0.09ms]
+(pass) fail-closed gates > keeps unhealthy tier with the driver [0.02ms]
+(pass) fail-closed gates > escalates forbidden credentialAccess authority [0.07ms]
+(pass) fail-closed gates > escalates forbidden dependencyChange authority
+(pass) fail-closed gates > escalates forbidden destructive authority
+(pass) fail-closed gates > escalates forbidden migration authority
+(pass) fail-closed gates > escalates forbidden productDecision authority
+(pass) fail-closed gates > escalates forbidden remoteMutation authority
+(pass) fail-closed gates > escalates forbidden release authority
+(pass) fail-closed gates > cost estimates do not gate routing [0.14ms]
+(pass) normalizes requests and creates a stable idempotency key [0.08ms]
+(pass) normalizes context refs and includes them in idempotency [0.20ms]
+(pass) fails closed on invalid or excessive context refs [0.28ms]
+(pass) treats a protected execution cwd as protected scope [0.04ms]
+(pass) routes a fully structured focused check [0.14ms]
+(pass) routes only an exactly bounded file-read profile [0.06ms]
+(pass) routes a bounded read-plan profile without command or write authority [0.23ms]
+(pass) keeps malformed structured read plans with the driver [0.02ms]
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver [0.01ms]
+(pass) keeps malformed structured read plans with the driver
+(pass) normalizes and routes a structured output boundary [0.09ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.02ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.02ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.02ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+
+tests/loop/utility-tools.test.ts:
+(pass) publishes provider-agnostic definitions for bounded tools [0.03ms]
+(pass) exposes and enforces only the tools allowed for an exact request [5.01ms]
+(pass) reads and searches only declared non-secret scope [6.70ms]
+(pass) lists one bounded directory without exposing protected entries [5.79ms]
+(pass) directory listing truncates before the shared output byte limit [4.05ms]
+(pass) reads an exact bounded tail without widening file authority [4.18ms]
+(pass) broker enforces the persisted exact read range against model deviation [5.14ms]
+(pass) broker caps range reads even when exact metadata is tampered [3.97ms]
+(pass) a malformed automatic file-read boundary fails closed [3.61ms]
+(pass) reads a bounded range from a regular file larger than 128 KiB [4.04ms]
+(pass) search rejects matching output larger than the broker output budget [5.69ms]
+(pass) git_inspect runs only literal bounded read-only metadata commands [4.68ms]
+(pass) central protected-path policy denies credential and agent settings [4.42ms]
+(pass) rejects traversal and symlink escape [4.94ms]
+(pass) runs literal allowlisted argv with a scrubbed environment [6.40ms]
+(pass) broker enforces merged tail output for a focused check [4.04ms]
+(pass) broker slices list output and marks the listing truncated [4.34ms]
+(pass) explicit focused cwd is exact while legacy read-scope cwd remains contained [5.63ms]
+(pass) focused check cwd does not widen its exact file authority [4.99ms]
+(pass) focused checks reject files above the configured input bound [4.66ms]
+(pass) broker rejects a tampered focused check with more than four files [5.33ms]
+(pass) git_diff supports bounded commit comparison and diff check [4.28ms]
+(pass) loads a repository policy for local offline npx vitest checks [4.21ms]
+(pass) supports a local offline vitest check without repository mutation [4.46ms]
+(pass) resolves a monorepo package-local vitest from the declared cwd [5.33ms]
+(pass) repository command policy fails closed when malformed or open-world [4.20ms]
+(pass) repository npx policy refuses a missing local binary [3.78ms]
+(pass) rejects timed out and oversized command output [4.70ms]
+(pass) stores a validated patch proposal without modifying the source [5.49ms]
+(pass) guarded apply revalidates write scope and dependency targets [4.72ms]
+(pass) guarded apply refuses symlink escapes from write scope [5.09ms]
+(pass) guarded apply refuses an in-repository symlink write-scope escape [4.78ms]
+(pass) environment scrubbing is allowlist based [0.13ms]
+
+tests/loop/utility-context.test.ts:
+(pass) builds a deterministic bounded capsule and persists the exact prompt [1.95ms]
+(pass) missing instructions are valid and selected refs obey per-file and total budgets [1.19ms]
+(pass) rejects invalid context paths, symlinks, directories, and governing files [0.70ms]
+(pass) capsule hash changes when selected context changes [0.31ms]
+
+tests/loop/utility-observability.test.ts:
+(pass) utility observability safely handles absent and malformed journals [1.82ms]
+(pass) routing observability counts candidates rejected before job creation [0.59ms]
+(pass) utility observability totals worker usage and builds a safe transcript [2.90ms]
+
+tests/loop/utility-runtime.test.ts:
+(pass) OpenRouter GLM is the default but remains disabled without a credential [0.27ms]
+(pass) worker concurrency is configurable within a bounded range
+(pass) auto execution profiles expose only satisfiable broker tools
+(pass) structured cat plans cannot invoke Git tools [0.93ms]
+(pass) structured Git metadata rejects forged narrow file scope [0.45ms]
+(pass) structured multi-directory plans cannot read content or cross stages [0.78ms]
+(pass) structured mixed plans retain exact slices and output filters [1.14ms]
+(pass) file-read runtime carries an exact broker range and fails closed without one [0.06ms]
+(pass) a mode-0600 key file enables the tier without exporting the secret [0.33ms]
+(pass) detached utility worker environment is allowlist-built, not inherited
+(pass) governess passes only the minimal key-file worker environment [2.35ms]
+(pass) governess route processing dispatches eligible work without provider I/O [1.48ms]
+(pass) worker routing ignores cost estimates [2.78ms]
+(pass) the default worker pool runs four jobs and leaves a fifth pending [5.43ms]
+(pass) peer-routed reviews preserve the requester and ask the peer to act [2.73ms]
+(pass) safe key diagnostics persist in routing observability, not the output-only worker pane [1.94ms]
+(pass) spawn failure terminates the job instead of stranding routed utility work [2.03ms]
+(pass) an unclaimed routed job fails closed after its claim deadline [1.87ms]
+(pass) a dead claimed worker fails immediately and releases its write scope [3.64ms]
+(pass) a live worker remains claimed before its external runtime deadline [2.22ms]
+(pass) governess externally terminates a live worker past its runtime [2.26ms]
+(pass) terminal completion racing the reaper is preserved [2.29ms]
+(pass) overlapping utility writes are not dispatched concurrently [2.07ms]
+(pass) worker pane is a colored output-only request, tool, and response stream [3.43ms]
+(pass) utility pane keeps a failed worker response visible within its viewport [1.22ms]
+(pass) a new governess epoch fences an orphaned utility claim [2.83ms]
+(pass) peer routing is relative to the requester, not the current driver [1.96ms]
+(pass) a full agent applies a completed utility patch with pre/postimage journal proof [20.56ms]
+(pass) guarded patch application refuses wrong hashes and proposal-time drift [4.66ms]
+(pass) utility worker completes against an OpenAI-compatible local endpoint [10.44ms]
+(pass) context-insufficient response escalates once without evidence retries [5.54ms]
+(pass) worker tools cannot read their persisted context capsule [7.40ms]
+(pass) utility worker stops after three consecutive broker rejections [6.32ms]
+(pass) a successful broker call resets the consecutive rejection breaker [6.32ms]
+(pass) utility worker refuses to execute a third identical tool call [7.07ms]
+(pass) utility worker stops before a sixty-fifth model call [41.54ms]
+(pass) utility worker rejects prose-only completion without repository evidence [6.07ms]
+(pass) a failing focused check cannot satisfy command completion evidence [22.11ms]
+
+tests/loop/bridge.test.ts:
+(pass) bridge message parsing ignores malformed lines and acked entries [7.13ms]
+(pass) bridge preserves utility results without treating utility as a full agent [3.19ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [2.96ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [2.71ms]
+(pass) readBridgeRuntimeStatus distinguishes live and stale tmux delivery [2.84ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [3.04ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [3.53ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [42.01ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [38.06ms]
+(pass) bridge MCP route_task queues a bounded request from claude [75.70ms]
+(pass) bridge MCP route_task queues a bounded request from codex [69.81ms]
+(pass) external supervisor can submit a task with an explicit result target [34.34ms]
+(pass) external supervisor cannot apply a utility patch [34.95ms]
+(pass) Codex-to-Claude dispatch attempts immediate visible pane delivery [107.46ms]
+(pass) Claude delivery retries a stranded composer with space then Enter [2219.09ms]
+(pass) Claude delivery does not inject into an active turn with an empty composer [6.74ms]
+(pass) Claude delivery injects over a dim type-ahead suggestion [107.35ms]
+(pass) Claude delivery holds no claim while the pane is not ready [3028.61ms]
+(pass) Claude delivery aborts without typing when the message is consumed mid-wait [8.10ms]
+(pass) Claude submission evidence advances when the hook journal advances [3.31ms]
+(pass) Claude delivery confirms when submission evidence advances into an active pane [106.99ms]
+(pass) unconfirmed Claude delivery remains pending after one retry [260.65ms]
+(pass) a post-injection human draft is never submitted by fallback [109.79ms]
+(pass) immediate Claude delivery and worker drain submit a message once [112.09ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [37.08ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [33.78ms]
+(pass) bridge MCP send_message rejects targeting the current agent [36.91ms]
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [37.24ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [37.06ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [33.89ms]
+(pass) bridge MCP accepts typed work metadata and TTL [41.40ms]
+(pass) bridge MCP writes line-delimited JSON responses [37.23ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [3.02ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [3.05ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [34.70ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [33.29ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [36.86ms]
+(pass) bridge MCP receive_messages leaves an automatically claimed item alone [76.25ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [3.58ms]
+(pass) bridge leaves live Codex tmux messages queued for the tmux proxy [2.62ms]
+(pass) bridge falls back to direct Codex delivery when the stored tmux session is stale [2.64ms]
+(pass) bridge drains codex messages through the persisted stable pane target [105.51ms]
+(pass) bridge drains pending cursor tmux messages through the stored pane routing [105.54ms]
+(pass) bridge drains pending Claude messages through the visible tmux pane [108.88ms]
+(pass) Claude pane delivery preserves a non-empty user draft [5.48ms]
+(pass) Claude pane readiness treats a dim type-ahead suggestion as empty [3.36ms]
+(pass) Claude transcript lookup rejects traversal and external symlink proof [3.44ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [2.95ms]
+(pass) bridge stale tmux cleanup logs non-zero Claude MCP remove exits [2.58ms]
+(pass) bridge stale tmux cleanup logs thrown Claude MCP remove errors [2.36ms]
+(pass) bridge stale tmux cleanup removes a persisted Claude server name [2.86ms]
+(pass) runBridgeWorker clears stale tmux routing and exits [2.70ms]
+(pass) runBridgeWorker falls back to app-server delivery after stale tmux cleanup [105.76ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [7.12ms]
+(pass) runBridgeWorker retries queued codex app-server messages [359.48ms]
+(pass) runBridgeWorker drains Claude while the Codex tmux proxy owns Codex [213.26ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [47.57ms]
+(pass) Claude channel flush leaves live tmux messages pending for visible delivery [3.53ms]
+(pass) Claude channel stays active when the live tmux pair has no Claude pane [2.98ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [86.01ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [39.02ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [42.30ms]
+(pass) bridge MCP allows repeating the same message in the original direction [44.66ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [3.40ms]
+(pass) bridge config helper writes the Claude MCP config file [2.88ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [2.43ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [2.32ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [2.77ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [7.54ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [3.09ms]
+(pass) bridge MCP send_message normalizes copilot as a valid target [41.19ms]
+(pass) bridge queues cross-agent messages for all non-Claude/Codex pairs [229.02ms]
+(pass) bridge config injection writes copilot config to .github/copilot/mcp.json [3.48ms]
+(pass) bridge pending count includes copilot messages [2.99ms]
+(pass) bridge drains pending copilot tmux messages through stored pane routing [105.80ms]
+
+tests/loop/governess.test.ts:
+(pass) governess observes agents through persisted post-split pane targets [23.85ms]
+(pass) governess refreshes late and changed agent session bindings [24.34ms]
+(pass) governess preserves known bindings across empty or malformed manifests [22.40ms]
+(pass) suspect + stuck in dry-run: judges and decides but executes nothing [4.23ms]
+(pass) suspect + stuck live: executes the first ladder rung and records history [0.38ms]
+(pass) LLM unreachable suppresses recovery and flags the board [0.24ms]
+(pass) dual local judges render separate token rows and require agreement [0.29ms]
+(pass) small panes collapse excess judge rows within the viewport budget [0.23ms]
+(pass) round-robin local judge mode calls one model for that tick [0.26ms]
+(pass) board labels an agent [thinking] while its pane is animating [0.28ms]
+(pass) board keeps the configured leader row first [0.34ms]
+(pass) codex session pressure hands driver role to claude until reset [1.03ms]
+(pass) codex limit handoff does not repeat when reset detail appears later [0.39ms]
+(pass) codex limit reset restores driver role without compacting context [0.73ms]
+(pass) handover mode suppresses pending limit role-transition messages [0.27ms]
+(pass) a missing limit snapshot does not restore before a known future reset [0.17ms]
+(pass) one missing limit snapshot starts a cooldown instead of restoring [0.14ms]
+(pass) restore briefing stays pending while its target is active [0.19ms]
+(pass) pressure on a non-driver is deduped without messaging or a handoff [0.14ms]
+(pass) claude session pressure hands driver role to codex until reset [0.46ms]
+(pass) proactive quota balance is disabled by default [0.30ms]
+(pass) proactive quota balance moves driver when local LLM approves [0.62ms]
+(pass) proactive quota balance is skipped when local LLM vetoes [0.32ms]
+(pass) board labels an agent [idle] once its pane is frozen [0.19ms]
+(pass) board converts the agent's live remaining context % to used context [0.12ms]
+(pass) board shows latest bridge messages in both directions [0.52ms]
+(pass) board keeps warning-colored agent columns aligned [0.23ms]
+(pass) board renders only aggregate dynamic usage tracker windows [0.37ms]
+(pass) board shows input, cached, and output token details [0.73ms]
+(pass) board uses only Progress and Next from the structured summary [0.24ms]
+(pass) board uses the recovered summary area for lower-agent metrics [3.61ms]
+(pass) small governess viewports retain both agents and utility without overflow [0.43ms]
+(pass) worker row hides the internal routed-utility state name [1.62ms]
+(pass) observed progress clears the agent's recovery history [0.31ms]
+(pass) a cleanly-ended turn stays idle and is never judged, even past the idle window [0.25ms]
+(pass) board flags an agent that is waiting for the human [0.20ms]
+(pass) board labels a session-limit pane as limited, not waiting for the human [0.14ms]
+(pass) board does not treat an available usage-limit reset as a blocked agent [0.12ms]
+(pass) board does not label governess limit handoff text as a session limit [0.04ms]
+(pass) board does not label Codex context compaction as a usage limit [0.16ms]
+(pass) a confirmed waiting pair clears the moment an agent goes active [0.05ms]
+(pass) a confirmed idle pair shows the LLM's ask and escalates once [0.31ms]
+(pass) both idle but unconfirmed by the LLM does not alert [0.09ms]
+(pass) escalates once when the session crosses its cost budget [0.20ms]
+(pass) composePaneTitle composes glyph, agent, and task label
+(pass) governess run identity includes full loop name and path [0.05ms]
+(pass) board merges loop and path into the first time/status line [0.08ms]
+(pass) governess pane identity is reapplied without deduplication [0.07ms]
+(pass) governess pane identity writes the border option and native title
+(pass) runGoverness reapplies pane identity on startup and every cycle [3.21ms]
+(pass) runGoverness refreshes a late Codex binding before reading usage [1.31ms]
+(pass) governessTick sets each agent's pane border title and skips redundant sets [0.20ms]
+(pass) governessTick folds the stored LLM label into the border title [0.09ms]
+(pass) sendRenameCommands is disabled by default [0.02ms]
+(pass) agent rename config requires an explicit truthy environment value
+(pass) sendRenameCommands injects /rename when explicitly enabled [0.19ms]
+(pass) sendRenameCommands sends nothing in dry-run
+(pass) sendRenameCommands does not re-send an unchanged rename [0.07ms]
+(pass) sendRenameCommands does not inject into an agent that is mid-turn [0.02ms]
+(pass) sendRenameCommands fails closed without state and turn-end evidence
+(pass) sendRenameCommands preserves a user draft after a Stop hook
+
+tests/loop/utility-workspace.test.ts:
+(pass) linked worktree scopes resolve to one root-relative verified workspace [161.71ms]
+(pass) linked focused-check cwd resolves with the same verified workspace [162.85ms]
+(pass) linked exact read range resolves with the same verified workspace [164.53ms]
+(pass) linked structured read plan preserves every stage boundary [195.99ms]
+(pass) active paths resolve only to the run root or a registered linked worktree [178.95ms]
+(pass) unrelated, mixed-worktree, and symlink escape scopes fail closed [250.79ms]
+(pass) a copied linked-worktree gitdir pointer cannot spoof registration [163.69ms]
+(pass) runtime journals a safe mismatch detail instead of spawning utility [170.98ms]
+(pass) same linked-worktree writes conflict after scope normalization [221.37ms]
+(pass) identical relative paths in base and linked worktrees do not conflict [204.28ms]
+(pass) routing persists the adopted root and the worker reads the linked checkout [226.47ms]
+(pass) guarded apply reuses the verified linked-worktree boundary [226.96ms]
+
+ 277 pass
+ 0 fail
+ 1039 expect() calls
+Ran 277 tests across 8 files. [11.40s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T18:31:42Z
