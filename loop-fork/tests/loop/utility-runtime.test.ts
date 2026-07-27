@@ -1165,16 +1165,14 @@ test("peer routing is relative to the requester, not the current driver", async 
       repoRoot,
       runDir,
     });
-    expect(readBridgeEvents(runDir)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          source: "claude",
-          target: "codex",
-          taskId: request.id,
-          type: "review_request",
-        }),
-      ])
-    );
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      decision: {
+        reason: "review-stays-with-requester",
+        target: "requester",
+      },
+      state: "routed-requester",
+    });
+    expect(readBridgeEvents(runDir)).toEqual([]);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

@@ -23,6 +23,7 @@ export type UtilityJobState =
   | "routed-utility"
   | "routed-driver"
   | "routed-peer"
+  | "routed-requester"
   | "claimed"
   | "running"
   | "completed"
@@ -129,12 +130,14 @@ const ALLOWED_TRANSITIONS: Readonly<
     "routed-utility",
     "routed-driver",
     "routed-peer",
+    "routed-requester",
     "escalated",
     "canceled",
   ]),
   "routed-utility": new Set(["claimed", "failed", "escalated", "canceled"]),
   "routed-driver": new Set(["completed", "failed", "canceled"]),
   "routed-peer": new Set(["completed", "failed", "canceled"]),
+  "routed-requester": new Set(["completed", "failed", "canceled"]),
   claimed: new Set(["running", "failed", "escalated", "canceled"]),
   running: new Set(["completed", "failed", "escalated", "canceled"]),
   completed: new Set(),

@@ -418,13 +418,21 @@ const spawnUtilityWorker = (input: {
 };
 
 const stateForDecision = (
-  target: "utility" | "driver" | "peer" | "escalate"
-): "routed-utility" | "routed-driver" | "routed-peer" | "escalated" => {
+  target: "utility" | "driver" | "peer" | "requester" | "escalate"
+):
+  | "routed-utility"
+  | "routed-driver"
+  | "routed-peer"
+  | "routed-requester"
+  | "escalated" => {
   if (target === "utility") {
     return "routed-utility";
   }
   if (target === "peer") {
     return "routed-peer";
+  }
+  if (target === "requester") {
+    return "routed-requester";
   }
   return target === "escalate" ? "escalated" : "routed-driver";
 };
@@ -693,9 +701,12 @@ const startRoutedUtilityJob = async (input: {
 const dispatchNonUtilityRoute = async (
   context: UtilityQueueContext,
   job: UtilityJobSnapshot,
-  target: "driver" | "peer" | "escalate",
+  target: "driver" | "peer" | "requester" | "escalate",
   reason: string
 ): Promise<void> => {
+  if (target === "requester") {
+    return;
+  }
   const requesterPeer =
     job.request.requester === context.currentDriver
       ? context.peer

@@ -173,6 +173,15 @@ test("routes review to the peer and authority to escalation", () => {
     routeUtilityRequest(makeRequest({ kind: "review" }), context())
   ).toEqual({ reason: "review-needs-peer", target: "peer" });
   expect(
+    routeUtilityRequest(
+      makeRequest({ kind: "review", requester: "claude" }),
+      context()
+    )
+  ).toEqual({
+    reason: "review-stays-with-requester",
+    target: "requester",
+  });
+  expect(
     routeUtilityRequest(makeRequest({ kind: "design" }), context())
   ).toEqual({ reason: "authority-needs-human", target: "escalate" });
 });
