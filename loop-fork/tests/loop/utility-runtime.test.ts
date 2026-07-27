@@ -130,8 +130,24 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.enabled).toBe(false);
   expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
+  expect(config.maxConcurrentJobs).toBe(2);
   expect(config).not.toHaveProperty("maxTokens");
   expect(config).not.toHaveProperty("maxTotalTokens");
+});
+
+test("worker concurrency is configurable within a bounded range", () => {
+  expect(
+    resolveUtilityRuntimeConfig({ LOOP_UTILITY_MAX_CONCURRENCY: "4" })
+      .maxConcurrentJobs
+  ).toBe(4);
+  expect(
+    resolveUtilityRuntimeConfig({ LOOP_UTILITY_MAX_CONCURRENCY: "0" })
+      .maxConcurrentJobs
+  ).toBe(2);
+  expect(
+    resolveUtilityRuntimeConfig({ LOOP_UTILITY_MAX_CONCURRENCY: "9" })
+      .maxConcurrentJobs
+  ).toBe(2);
 });
 
 test("a mode-0600 key file enables the tier without exporting the secret", () => {
@@ -325,6 +341,7 @@ test("worker routing ignores cost estimates", async () => {
       },
       {
         LOOP_UTILITY_ENABLED: "1",
+        LOOP_UTILITY_MAX_CONCURRENCY: "3",
         LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
       },
       {
@@ -340,6 +357,70 @@ test("worker routing ignores cost estimates", async () => {
       decision: { reason: "utility-eligible", target: "utility" },
       state: "routed-utility",
     });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("the default worker pool runs two jobs and leaves a third pending", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-pool-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pool-run");
+  mkdirSync(runDir, { recursive: true });
+  for (const id of ["pool-a", "pool-b", "pool-c"]) {
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["inspect one scope"],
+        authority: {},
+        id,
+        kind: "inspect",
+        objective: `Inspect ${id}`,
+        readScope: ["src"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+  }
+  const spawned: string[] = [];
+  const context = {
+    currentDriver: "claude" as const,
+    epoch: 19,
+    peer: "codex" as const,
+    repoRoot,
+    runDir,
+  };
+  const env = {
+    LOOP_UTILITY_ENABLED: "1",
+    LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
+  };
+  const deps = {
+    spawnWorker: ({ jobId }: { jobId: string }) => {
+      spawned.push(jobId);
+      return true;
+    },
+  };
+  try {
+    await processPendingUtilityRoutes(context, env, deps);
+    expect(spawned).toEqual(["pool-a", "pool-b"]);
+    expect(readUtilityJob(runDir, "pool-c")?.state).toBe("pending-route");
+
+    claimUtilityJob(runDir, 19, { jobId: "pool-a", workerPid: process.pid });
+    transitionUtilityJob(runDir, "pool-a", "running");
+    transitionUtilityJob(runDir, "pool-a", "completed", {
+      result: {
+        artifactRefs: [],
+        checks: [],
+        filesChanged: [],
+        status: "completed",
+        summary: "done",
+      },
+    });
+
+    await processPendingUtilityRoutes(context, env, deps);
+    expect(spawned).toEqual(["pool-a", "pool-b", "pool-c"]);
+    expect(readUtilityJob(runDir, "pool-c")?.state).toBe("routed-utility");
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

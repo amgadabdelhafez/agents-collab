@@ -96,6 +96,7 @@ Environment:
   LOOP_UTILITY_API_KEY_FILE=<path>           Utility key file (default: ~/.config/loop/openrouter.key; requires mode 0600)
   LOOP_UTILITY_URL=<url>                     Utility OpenAI-compatible chat endpoint (localhost needs no key)
   LOOP_UTILITY_MODEL=<model>                 Utility model (default: z-ai/glm-5.2)
+  LOOP_UTILITY_MAX_CONCURRENCY=<1..8>        Concurrent worker slots (default: 2)
   LOOP_UTILITY_PANE=0                        Hide the default top-right lower-agent pane
   LOOP_UTILITY_PANE_WIDTH=<columns|percent>  Worker pane width in bottom row (default: 25%)
   LOOP_UTILITY_PANE_HEIGHT=<columns|percent> Deprecated alias for LOOP_UTILITY_PANE_WIDTH
