@@ -1,0 +1,23 @@
+{
+  "_comment": "Ceilings for scripts/ratchet.sh. Counts may fall or stay flat; they may never rise. Regenerate with scripts/ratchet.sh --snapshot (RATCHET_ALLOW_RAISE=1 is required to move a ceiling upward).",
+  "generated_at": "2026-07-27T23:03:08Z",
+  "generated_by": "scripts/ratchet.sh --snapshot",
+  "project_dir": "loop-fork",
+  "scope": [
+    "src",
+    "tests"
+  ],
+  "commands": {
+    "biome": "biome check --no-errors-on-unmatched --reporter=summary src tests",
+    "tsc": "tsc --noEmit --pretty false"
+  },
+  "ceilings": {
+    "biome_errors": 147,
+    "biome_warnings": 1,
+    "tsc_errors": 150
+  },
+  "observed_breakdown": {
+    "tsc_errors_src": 20,
+    "tsc_errors_tests": 130
+  }
+}

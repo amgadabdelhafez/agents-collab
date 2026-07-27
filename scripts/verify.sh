@@ -10,6 +10,17 @@ ARTIFACTS_DIR="runs/${TASK_ID}"
 
 echo "=== verify.sh: task=${TASK_ID} feature=${FEATURE} ==="
 
+# 0. Deterministic merge gates. These run first and hard-fail: they are the
+#    only checks in this file that are actually wired to something real.
+#    - protected paths: an agent run may not rewrite its own leash.
+#    - ratchet: biome/tsc diagnostic counts may fall, never rise.
+#    Bypasses are explicit env vars, documented in docs/quality/merge-gates.md.
+echo "--- protected paths ---"
+bash "$(dirname "${BASH_SOURCE[0]}")/check-protected-paths.sh"
+
+echo "--- ratchet (biome + tsc counts) ---"
+bash "$(dirname "${BASH_SOURCE[0]}")/ratchet.sh"
+
 # 1. Lint
 echo "--- lint ---"
 # Replace with your actual lint command:
