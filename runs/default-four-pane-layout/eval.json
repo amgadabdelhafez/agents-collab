@@ -1,0 +1,14 @@
+{
+  "task_id": "default-four-pane-layout",
+  "verdict": "pass",
+  "checks": {
+    "live_reference": "loop 47 at 235x52: bottom governess 176x20 and worker 58x20",
+    "default_geometry": "top 60 percent with equal agents; bottom 40 percent with governess 75 percent and worker 25 percent",
+    "real_tmux_smoke": "235x52 produced top 117x31 and 117x31; bottom 176x20 and 58x20",
+    "focused": "52 passed, 0 failed",
+    "full_suite": "798 passed, 4 known Codex model/config expectation failures",
+    "build": "passed",
+    "diff_check": "passed",
+    "current_loop_untouched": true
+  }
+}

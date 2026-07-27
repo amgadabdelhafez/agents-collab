@@ -81,8 +81,8 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
-const DEFAULT_UTILITY_PANE_HEIGHT = "8";
-const UTILITY_PANE_HEIGHT_RE = /^\d+%?$/;
+const DEFAULT_UTILITY_PANE_WIDTH = "25%";
+const UTILITY_PANE_WIDTH_RE = /^\d+%?$/;
 
 interface SpawnResult {
   exitCode: number;
@@ -1104,11 +1104,13 @@ const utilityPaneEnabled = (env: NodeJS.ProcessEnv): boolean => {
   return !(value === "0" || value === "false" || value === "off");
 };
 
-const utilityPaneHeight = (env: NodeJS.ProcessEnv): string => {
-  const value = env.LOOP_UTILITY_PANE_HEIGHT?.trim();
-  return value && UTILITY_PANE_HEIGHT_RE.test(value)
+const utilityPaneWidth = (env: NodeJS.ProcessEnv): string => {
+  const value = (
+    env.LOOP_UTILITY_PANE_WIDTH ?? env.LOOP_UTILITY_PANE_HEIGHT
+  )?.trim();
+  return value && UTILITY_PANE_WIDTH_RE.test(value)
     ? value
-    : DEFAULT_UTILITY_PANE_HEIGHT;
+    : DEFAULT_UTILITY_PANE_WIDTH;
 };
 
 export const composeWorkerPaneTitle = (session: string): string =>
@@ -1117,7 +1119,7 @@ export const composeWorkerPaneTitle = (session: string): string =>
 const startUtilityPane = (
   deps: TmuxDeps,
   session: string,
-  rightAgentPane: string,
+  governessPane: string,
   utilityPane: string,
   runDir: string
 ): string => {
@@ -1129,15 +1131,14 @@ const startUtilityPane = (
   const result = runTmuxCommand(deps, [
     "tmux",
     "split-window",
-    "-v",
-    "-b",
+    "-h",
     "-P",
     "-F",
     "#{pane_id}",
     "-l",
-    utilityPaneHeight(deps.env),
+    utilityPaneWidth(deps.env),
     "-t",
-    rightAgentPane,
+    governessPane,
     "-c",
     deps.cwd,
     command,
@@ -1147,17 +1148,6 @@ const startUtilityPane = (
   deps.spawn(["tmux", "set-option", "-p", "-t", pane, "@loop_label", title]);
   deps.spawn(["tmux", "select-pane", "-t", pane, "-T", title]);
   return pane;
-};
-
-const resizeUtilityPane = (deps: TmuxDeps, pane: string): void => {
-  runTmuxCommand(deps, [
-    "tmux",
-    "resize-pane",
-    "-t",
-    pane,
-    "-y",
-    utilityPaneHeight(deps.env),
-  ]);
 };
 
 const registerClaudeChannelServerForRun = (
@@ -1493,25 +1483,10 @@ const createPairedPaneLayout = async (input: {
   if (input.paneAgents.right === "claude") {
     await unblockClaudePane(rightBeforeUtility, input.deps);
   }
-  const showUtilityPane = input.governess && utilityPaneEnabled(input.deps.env);
-  const utility = showUtilityPane
-    ? startUtilityPane(
-        input.deps,
-        input.session,
-        rightBeforeUtility,
-        `${input.session}:0.1`,
-        input.runDir
-      )
-    : undefined;
   return {
-    governess: input.governess
-      ? `${input.session}:0.${showUtilityPane ? 3 : 2}`
-      : undefined,
+    governess: input.governess ? `${input.session}:0.2` : undefined,
     left,
-    right:
-      rightPaneId ??
-      `${input.session}:0.${showUtilityPane ? 2 : 1}`,
-    utility,
+    right: rightPaneId ?? `${input.session}:0.1`,
   };
 };
 
@@ -1520,6 +1495,7 @@ const startPairedControlPanes = (
   opts: Options,
   session: string,
   runId: string,
+  runDir: string,
   paneTargets: PairedPaneTargets
 ): PairedPaneTargets => {
   let governess = paneTargets.governess;
@@ -1532,10 +1508,17 @@ const startPairedControlPanes = (
       paneTargets.governess
     );
   }
-  if (paneTargets.utility) {
-    resizeUtilityPane(deps, paneTargets.utility);
-  }
-  return { ...paneTargets, governess };
+  const utility =
+    governess && utilityPaneEnabled(deps.env)
+      ? startUtilityPane(
+          deps,
+          session,
+          governess,
+          `${session}:0.3`,
+          runDir
+        )
+      : undefined;
+  return { ...paneTargets, governess, utility };
 };
 
 const startPairedSession = async (
@@ -1701,9 +1684,13 @@ const startPairedSession = async (
       launch.opts,
       session,
       storage.runId,
+      storage.runDir,
       paneTargets
     );
-    if (livePaneTargets.governess !== paneTargets.governess) {
+    if (
+      livePaneTargets.governess !== paneTargets.governess ||
+      livePaneTargets.utility !== paneTargets.utility
+    ) {
       updatePairedManifest(
         deps,
         storage,
@@ -2007,6 +1994,6 @@ export const tmuxInternals = {
   sanitizeBase,
   stripTmuxFlag,
   utilityPaneEnabled,
-  utilityPaneHeight,
+  utilityPaneWidth,
   worktreeAvailable,
 };
