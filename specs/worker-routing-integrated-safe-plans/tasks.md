@@ -5,4 +5,5 @@
 - [x] Implement the read-only plan classifier and runtime tool profile.
 - [x] Implement actionable/retained/unsafe routing observability.
 - [x] Verify focused/full suites, build, static checks, and independent evaluation.
-- [ ] Commit, atomically deploy, restart only governess, and verify loop 53.
+- [x] Commit and atomically deploy the coherent verified binary.
+- [ ] Restart only governess and verify loop 53 after its tmux session exists.

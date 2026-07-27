@@ -48,3 +48,7 @@ the misleading operator signal.
   suites. The full suite is at exact baseline parity (1,024 pass / 4 unrelated
   Codex-launch expectation failures). Independent review passes. Live loop-53
   restart/layout verification is unavailable because its tmux server exited.
+- Atomically installed candidate, canonical, and global binary hash
+  `912b17ef79dcf780594e9a7540ac3437c845e4ba8573b3efeb3e94c793cd447e`.
+  Persisted run-53 doctor data is readable, but session/adapter/lease are false
+  because no tmux server exists; no agent session was recreated implicitly.

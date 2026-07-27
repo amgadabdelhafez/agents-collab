@@ -24,7 +24,10 @@
       "signed_off_by": "runaway_guard_evaluator"
     },
     "live-runtime": {
-      "status": "pending"
+      "status": "pending",
+      "artifact": "runs/worker-routing-integrated-safe-plans/artifacts/live-runtime/deployment.md",
+      "reason": "installed binary verified; loop-53 tmux server absent so governess restart and pane preservation cannot be exercised",
+      "method": "atomic hash-verified install, installed-string inspection, tmux probe, and persisted doctor check"
     }
   }
 }
