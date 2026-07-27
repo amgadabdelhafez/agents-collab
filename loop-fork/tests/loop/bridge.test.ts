@@ -2265,6 +2265,245 @@ test("bridge falls back to direct Codex delivery when the stored tmux session is
   rmSync(root, { recursive: true, force: true });
 });
 
+const CODEX_APP_SERVER_MANIFEST = {
+  codexRemoteUrl: "ws://127.0.0.1:4500",
+  codexThreadId: "codex-thread-1",
+  createdAt: "2026-03-23T10:00:00.000Z",
+  cwd: "/repo",
+  mode: "paired",
+  pid: 1234,
+  repoId: "repo-123",
+  runId: "7",
+  status: "running",
+  updatedAt: "2026-03-23T10:00:00.000Z",
+};
+
+const writeCodexAppServerRun = (runDir: string): void => {
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify(CODEX_APP_SERVER_MANIFEST)}\n`,
+    "utf8"
+  );
+};
+
+const bridgeDeliveryClaimPath = (runDir: string, messageId: string): string =>
+  join(
+    runDir,
+    "bridge-delivery-claims",
+    `${createHash("sha256").update(messageId).digest("hex")}.lock`
+  );
+
+test("Codex app-server delivery holds the delivery claim while injecting", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-appserver-claim",
+    kind: "message" as const,
+    message: "Hold the claim while this is injected.",
+    source: "claude" as const,
+    target: "codex" as const,
+  };
+  const claimPath = bridgeDeliveryClaimPath(runDir, message.id);
+  const claimSeenDuringInject: boolean[] = [];
+  const injectCodexMessage = mock(() => {
+    claimSeenDuringInject.push(existsSync(claimPath));
+    return Promise.resolve(true);
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  writeCodexAppServerRun(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverCodexBridgeMessage(runDir, message)).toBe(true);
+  expect(claimSeenDuringInject).toEqual([true]);
+  expect(existsSync(claimPath)).toBe(false);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Codex app-server delivery releases the claim when injection fails", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-appserver-release",
+    kind: "message" as const,
+    message: "Release the claim when injection fails.",
+    source: "claude" as const,
+    target: "codex" as const,
+  };
+  const claimPath = bridgeDeliveryClaimPath(runDir, message.id);
+  const claimSeenDuringInject: boolean[] = [];
+  const injectCodexMessage = mock(() => {
+    claimSeenDuringInject.push(existsSync(claimPath));
+    return Promise.resolve(false);
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  writeCodexAppServerRun(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverCodexBridgeMessage(runDir, message)).toBe(false);
+  expect(claimSeenDuringInject).toEqual([true]);
+  expect(existsSync(claimPath)).toBe(false);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toHaveLength(0);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Codex app-server delivery aborts when the message was consumed by polling", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-appserver-consumed",
+    kind: "message" as const,
+    message: "Polled away before injection.",
+    source: "claude" as const,
+    target: "codex" as const,
+  };
+  const injectCodexMessage = mock(async () => true);
+  const bridge = await loadBridge({ injectCodexMessage });
+  writeCodexAppServerRun(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+  bridge.consumeBridgeInbox(runDir, "codex", "read via receive_messages");
+
+  expect(await bridge.deliverCodexBridgeMessage(runDir, message)).toBe(false);
+  expect(injectCodexMessage).not.toHaveBeenCalled();
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Codex app-server delivery yields to a foreign delivery claim", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-appserver-foreign",
+    kind: "message" as const,
+    message: "Another owner is delivering this.",
+    source: "claude" as const,
+    target: "codex" as const,
+  };
+  const injectCodexMessage = mock(async () => true);
+  const bridge = await loadBridge({ injectCodexMessage });
+  writeCodexAppServerRun(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+  const claimPath = bridgeDeliveryClaimPath(runDir, message.id);
+  mkdirSync(join(runDir, "bridge-delivery-claims"), { recursive: true });
+  writeFileSync(claimPath, "", "utf8");
+
+  expect(await bridge.deliverCodexBridgeMessage(runDir, message)).toBe(false);
+  expect(injectCodexMessage).not.toHaveBeenCalled();
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toHaveLength(0);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Codex pane delivery holds the claim and records the visible ack reason", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-visible-claim",
+    kind: "message" as const,
+    message: "Please check the claimed pane path.",
+    source: "claude" as const,
+    target: "codex" as const,
+  };
+  const claimPath = bridgeDeliveryClaimPath(runDir, message.id);
+  const claimSeenDuringCapture: boolean[] = [];
+  const claimSeenDuringSend: boolean[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      claimSeenDuringCapture.push(existsSync(claimPath));
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          "› Use /skills to list available skills\n\n  gpt-5.6-sol xhigh · ~/repo\n",
+          "utf8"
+        ),
+      };
+    }
+    if (args[0] === "tmux" && args[1] === "send-keys") {
+      claimSeenDuringSend.push(existsSync(claimPath));
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      status: "running",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(
+    await bridge.deliverTmuxBridgeMessage(
+      runDir,
+      message,
+      "submitted through visible codex tmux pane"
+    )
+  ).toBe(true);
+  expect(claimSeenDuringCapture[0]).toBe(false);
+  expect(claimSeenDuringSend.length).toBeGreaterThan(0);
+  expect(claimSeenDuringSend.every((seen) => seen)).toBe(true);
+  expect(existsSync(claimPath)).toBe(false);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toEqual([
+    expect.objectContaining({
+      reason: "submitted through visible codex tmux pane",
+    }),
+  ]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("bridge drains codex messages through the persisted stable pane target", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
