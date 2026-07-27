@@ -54,7 +54,6 @@ export const UTILITY_WORKER_SUBCOMMAND = "__utility-worker";
 export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "z-ai/glm-5.2";
-const DEFAULT_MAX_STEPS = 16;
 const DEFAULT_MAX_CONCURRENT_JOBS = 2;
 const DEFAULT_API_KEY_FILE = join(
   homedir(),
@@ -74,7 +73,6 @@ export interface UtilityRuntimeConfig {
   maxClaimWaitMs: number;
   maxConcurrentJobs: number;
   maxJobRuntimeMs: number;
-  maxSteps: number;
   model: string;
   preventPerRequestOverrides: boolean;
   providerSort: UtilityTierSelectionStrategy;
@@ -349,9 +347,6 @@ export const resolveUtilityRuntimeConfig = (
       8
     ),
     maxJobRuntimeMs: positiveNumber(env.LOOP_UTILITY_MAX_RUNTIME_MS, 900_000),
-    maxSteps: Math.floor(
-      positiveNumber(env.LOOP_UTILITY_MAX_STEPS, DEFAULT_MAX_STEPS)
-    ),
     model: env.LOOP_UTILITY_MODEL?.trim() || DEFAULT_MODEL,
     preventPerRequestOverrides: env.LOOP_UTILITY_ALLOW_OVERRIDES !== "1",
     providerSort,
@@ -973,7 +968,9 @@ const runUtilityConversation = async (input: {
     toolRounds,
     usage,
   });
-  for (let step = 0; step < input.config.maxSteps; step += 1) {
+  // Runtime-bounded, not step-bounded: governess stale recovery fails the job
+  // after maxJobRuntimeMs, so the worker must stop spending then too.
+  while (Date.now() - startedAt <= input.config.maxJobRuntimeMs) {
     const response = await openAICompatibleChat({
       ...(input.config.apiKey ? { apiKey: input.config.apiKey } : {}),
       endpoint: input.config.endpoint,
@@ -1027,7 +1024,7 @@ const runUtilityConversation = async (input: {
       });
     }
   }
-  throw new Error("worker reached its step limit without completion");
+  throw new Error("worker exceeded its runtime limit without completion");
 };
 
 export const runUtilityWorker = async (

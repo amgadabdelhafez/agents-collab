@@ -131,6 +131,7 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
   expect(config.maxConcurrentJobs).toBe(2);
+  expect(config).not.toHaveProperty("maxSteps");
   expect(config).not.toHaveProperty("maxTokens");
   expect(config).not.toHaveProperty("maxTotalTokens");
 });
