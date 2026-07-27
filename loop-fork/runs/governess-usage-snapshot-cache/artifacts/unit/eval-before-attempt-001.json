@@ -1,0 +1,12 @@
+{
+  "task_id": "governess-usage-snapshot-cache",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

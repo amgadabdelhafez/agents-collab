@@ -1,0 +1,17 @@
+{
+  "task_id": "governess-usage-snapshot-cache",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T04:46:28Z",
+  "ended_at": "2026-07-27T04:46:28Z",
+  "artifact": "runs/governess-usage-snapshot-cache/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/governess-usage-limits.test.ts",
+    "tests/loop/governess.test.ts"
+  ]
+}

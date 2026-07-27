@@ -160,6 +160,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-27T04:41:04Z",
       "spec_path": "specs/governess-codex-usage-refresh.md"
+    },
+    {
+      "id": "governess-usage-snapshot-cache",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-27T04:43:58Z",
+      "run_dir": "runs/governess-usage-snapshot-cache",
+      "eval_status": "pass",
+      "ended_at": "2026-07-27T04:51:10Z",
+      "spec_path": "specs/governess-usage-snapshot-cache.md"
     }
   ]
 }

@@ -1,0 +1,7 @@
+{
+  "task_id": "governess-usage-snapshot-cache",
+  "scanned_at": "2026-07-27T04:51:10Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

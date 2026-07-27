@@ -627,9 +627,17 @@ export const readUsageTrackerLimits = async (
       }
       return snapshot;
     }
-    if (!(response.rejected && index < secrets.length - 1)) {
+    if (response.rejected) {
+      if (index < secrets.length - 1) {
+        continue;
+      }
       return undefined;
     }
+    // Quota data requires a current authenticated response, but pricing does
+    // not: it already resolves through the local cached/bundled catalog. Keep
+    // cost estimates stable through transient timeouts and server failures
+    // without fabricating a quota observation.
+    return { pricing: pricingSnapshot({}, config) };
   }
   return undefined;
 };

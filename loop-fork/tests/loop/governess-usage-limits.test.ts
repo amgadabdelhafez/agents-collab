@@ -246,6 +246,50 @@ test("current Claude and Codex models use catalog replacement-value pricing", as
   expect(codex.costEstimateCoveragePct).toBe(100);
 });
 
+test("transient tracker failures retain local pricing without quotas", async () => {
+  const config = {
+    configPath: noConfig,
+    pricingCatalogPath: noConfig,
+    secret: "secret",
+    url: "http://tracker.local",
+  };
+  const successful = await readUsageTrackerLimits(config, () =>
+    Promise.resolve(
+      Response.json({
+        codex_quota: { weekly_used_pct: 8 },
+        pricing_catalog: {
+          codex_credit_usd_estimate: { value: 0.04 },
+        },
+      })
+    )
+  );
+  const successfulUsage = usage("gpt-5.6-sol");
+  if (!successful?.pricing) {
+    throw new Error("expected successful pricing snapshot");
+  }
+  applyUsageTrackerPricing(successfulUsage, "codex", successful.pricing);
+
+  const failures = [
+    () => Promise.reject(new Error("The operation was aborted.")),
+    () => Promise.resolve(new Response("Unavailable", { status: 503 })),
+  ];
+  for (const fetchFn of failures) {
+    const fallback = await readUsageTrackerLimits(config, fetchFn);
+    expect(fallback?.claude).toBeUndefined();
+    expect(fallback?.codex).toBeUndefined();
+    expect(fallback?.pricing).toBeDefined();
+    if (!fallback?.pricing) {
+      throw new Error("expected fallback pricing snapshot");
+    }
+    const fallbackUsage = usage("gpt-5.6-sol");
+    applyUsageTrackerPricing(fallbackUsage, "codex", fallback.pricing);
+    expect(fallbackUsage.costUsd).toBe(successfulUsage.costUsd);
+    expect(fallbackUsage.costRateUsdPerHour).toBe(
+      successfulUsage.costRateUsdPerHour
+    );
+  }
+});
+
 test("readUsageTrackerLimits is disabled without any configured secret", async () => {
   let calls = 0;
   const result = await readUsageTrackerLimits(

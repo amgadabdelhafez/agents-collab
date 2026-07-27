@@ -1,0 +1,46 @@
+{
+  "task_id": "governess-usage-snapshot-cache",
+  "verdict": "pass",
+  "evaluated_at": "2026-07-27T04:51:00Z",
+  "evaluator": "independent Codex evaluator",
+  "base_commit": "0e92b3d58c47a036dfdfdfd2af6b45613421e8d9",
+  "findings": [],
+  "acceptance": {
+    "transient_failures_return_local_pricing": {
+      "status": "pass",
+      "evidence": "Timeout/network rejection and HTTP 503 both take the non-rejected failure branch and return a pricing-only snapshot resolved by the existing cached/bundled catalog path."
+    },
+    "costs_remain_nonzero": {
+      "status": "pass",
+      "evidence": "Independent runtime probe produced Claude cost 30.5 and Codex cost 35.5 for both AbortError and HTTP 503 fallback snapshots; the regression test also proves Codex cost and hourly rate equal the successful-path values."
+    },
+    "quotas_are_not_fabricated": {
+      "status": "pass",
+      "evidence": "Fallback snapshots contain only the pricing key; claude and codex quota entries are undefined."
+    },
+    "authentication_boundaries_are_preserved": {
+      "status": "pass",
+      "evidence": "No-secret configuration still returns undefined without fetching, rejected credentials retry the next configured secret, and an exhausted 401/403 path still returns undefined rather than local pricing."
+    },
+    "focused_tests_and_build": {
+      "status": "pass",
+      "evidence": "Independent rerun: 68 focused tests passed, build passed, and git diff --check passed."
+    },
+    "full_suite": {
+      "status": "pass_with_baseline_failures",
+      "evidence": "Independent rerun: 828 passed and 4 failed. The failures are the same known Codex default/config expectation failures in paired-options.test.ts and runner.test.ts; none of those source or test files differ from base 0e92b3d."
+    },
+    "repository_verification": {
+      "status": "pass",
+      "evidence": "Harness unit and integration artifacts record successful focused tests and build; scripts/verify.sh was not rerun by the evaluator because evaluator mutation was restricted to this file."
+    },
+    "live_run_50": {
+      "status": "pass",
+      "evidence": "Recorded deployment evidence shows ten consecutive Codex samples retained $8.82/$26, including three pricing-fallback samples with no current weekly quota; Claude 27090, Codex 27092, and worker 27542 PIDs were preserved while only the governess PID changed, and governess doctor reported a healthy journal with zero pending or dead-letter bridge controls."
+    }
+  },
+  "caveats": [
+    "The regression injects an abort rejection rather than waiting for the real 1.5-second timer, but both reach the same requestStats catch path.",
+    "The evaluator inspected the recorded live evidence but intentionally did not operate tmux independently."
+  ]
+}

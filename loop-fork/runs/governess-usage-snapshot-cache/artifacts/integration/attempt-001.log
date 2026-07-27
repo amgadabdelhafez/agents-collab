@@ -1,0 +1,14 @@
+task_id: governess-usage-snapshot-cache
+dimension: integration
+attempt: 001
+started_at: 2026-07-27T04:46:29Z
+command: bun run build
+--- output ---
+$ bun build --compile --outfile loop src/cli.ts
+   [9ms]  bundle  70 modules
+  [57ms] compile  loop
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T04:46:29Z
