@@ -1,0 +1,17 @@
+task_id: worker-pool-slot-accounting
+dimension: unit
+attempt: 002
+started_at: 2026-07-27T01:49:17Z
+command: bun test tests/loop/utility-runtime.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+ 29 pass
+ 0 fail
+ 112 expect() calls
+Ran 29 tests across 1 file. [110.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T01:49:17Z

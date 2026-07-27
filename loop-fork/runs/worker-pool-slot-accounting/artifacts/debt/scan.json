@@ -1,0 +1,7 @@
+{
+  "task_id": "worker-pool-slot-accounting",
+  "scanned_at": "2026-07-27T01:49:18Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

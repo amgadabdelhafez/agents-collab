@@ -1,0 +1,28 @@
+{
+  "task_id": "worker-pool-slot-accounting",
+  "status": "created",
+  "bug_id": "utility-pool-slot-leak-on-failed-start",
+  "regression_path": "evals/regression/utility-pool-slot-leak-on-failed-start.md",
+  "prompt_path": "runs/worker-pool-slot-accounting/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-27T01:49:18Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "utility-pool-slot-leak-on-failed-start"
+    ],
+    "symptom": [
+      "A worker that failed to start still occupied a pool slot, leaving later pending jobs undispatched until the next governess tick."
+    ],
+    "guard": [
+      "tests/loop/utility-runtime.test.ts (\"a job whose worker fails to start does not consume a worker-pool slot\")"
+    ]
+  },
+  "symptom_lines": [
+    "A worker that failed to start still occupied a pool slot, leaving later pending jobs undispatched until the next governess tick."
+  ],
+  "test_lines": [
+    "tests/loop/utility-runtime.test.ts (\"a job whose worker fails to start does not consume a worker-pool slot\")"
+  ]
+}

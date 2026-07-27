@@ -130,6 +130,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-26T16:46:24Z",
       "spec_path": "specs/lower-agent-hardening.md"
+    },
+    {
+      "id": "worker-pool-slot-accounting",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-27T01:38:15Z",
+      "run_dir": "runs/worker-pool-slot-accounting",
+      "eval_status": "pass",
+      "ended_at": "2026-07-27T01:49:18Z",
+      "spec_path": "specs/worker-pool-slot-accounting.md"
     }
   ]
 }
