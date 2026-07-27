@@ -11,5 +11,5 @@
 9. [x] Complete independent evaluation.
 10. [x] Fix the live-discovered concurrent worker claim race and rerun
     independent evaluation.
-11. [ ] Deploy without restarting Claude/Codex, capture live proof, and pass
+11. [x] Deploy without restarting Claude/Codex, capture live proof, and pass
     the Harness stop gate.

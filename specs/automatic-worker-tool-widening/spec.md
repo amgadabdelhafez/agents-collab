@@ -89,6 +89,6 @@ and preserve the requested cwd, paths, and output bound.
 - [x] Focused, full, static, build, and diff verification are recorded; known
       baseline failures are separated from regressions.
 - [x] An independent evaluator passes the change before deployment.
-- [ ] A live focused-test canary and at least one new inspection-family canary
+- [x] A live focused-test canary and at least one new inspection-family canary
       complete with zero denied-tool calls, while Claude/Codex PIDs remain
       unchanged and governess doctor passes.

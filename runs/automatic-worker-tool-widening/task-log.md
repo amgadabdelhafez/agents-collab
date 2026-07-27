@@ -29,13 +29,13 @@
   widen AWK/tail ranges, exceed 500 lines, drop `head`/`tail`, or reinterpret
   the accepted stderr merge/omit marker.
 
-## Verification so far
+## Verification
 
-- Focused suite: 320 passed, 0 failed; latest Harness unit attempt passed.
+- Focused suite: 334 passed, 0 failed; latest Harness unit attempt passed.
 - Build: passed (`bun run build`), SHA-256
   `7e85ab9389435784f145a549c37a3faa3846e22dbd784e5f56da2e59d8e80ca7`.
 - Diff check: passed (`git diff --check`).
-- Full suite: 983 passed, 4 failed. The same four Codex-local-configuration
+- Full suite: 987 passed, 4 failed. The same four Codex-local-configuration
   failures reproduce unchanged on base commit `e97b206`; they expect the old
   `gpt-5.5` and config argument shape while the live configuration uses
   `gpt-5.6-sol`, `xhigh`, and `standard`.
@@ -50,7 +50,16 @@
   replacement-owner preservation. Reviewed binary SHA-256:
   `0e80de544f426bcd787cb234949217b065b7661a8a53eaf252048bfef63662a7`.
 
-## Remaining
+## Live acceptance
 
-- Deploy the re-reviewed binary, rerun both canaries concurrently, preserve
-  main-agent PIDs, and pass the remaining Harness live-runtime gate.
+- Installed the exact independently reviewed binary hash
+  `0e80de544f426bcd787cb234949217b065b7661a8a53eaf252048bfef63662a7`.
+- Restarted only the governess and utility display panes. Claude PID `22530`
+  and Codex PID `22532` were unchanged.
+- Concurrent `file-list` and `focused-check` jobs claimed on separate worker
+  PIDs and completed with one successful matching broker call each, zero denied
+  calls, no writes, and 19/19 focused tests passing.
+- Governess doctor passed every check before and after. Repeated pane captures
+  kept Claude, Codex, and worker cost cells populated across refreshes.
+- Harness unit, independent-review, and live-runtime dimensions all passed;
+  aggregate, preflight, stop gate, and task completion passed.

@@ -33,3 +33,7 @@ selected executable.
 - Changed-file static diagnostics match base exactly: 38 errors / 1 warning;
   the five additional diagnostics come from newly included utility-store files
   and are unchanged from commit `9e12134`.
+- Live run 51 passed concurrent automatic `file-list` and `focused-check`
+  canaries on distinct worker PIDs with one successful expected tool call each,
+  zero denied calls, 19/19 focused tests, unchanged Claude/Codex PIDs, green
+  governess doctor, and populated cost cells across refreshes.

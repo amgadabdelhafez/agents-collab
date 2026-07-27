@@ -12,9 +12,9 @@
       "artifact": "runs/automatic-worker-tool-widening/artifacts/unit/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "004",
-      "latest_attempt_artifact": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-004.log",
-      "latest_attempt_meta": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-004.json"
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-003.log",
+      "latest_attempt_meta": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-003.json"
     },
     "independent-review": {
       "status": "pass",

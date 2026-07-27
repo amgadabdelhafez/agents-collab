@@ -154,10 +154,12 @@
     {
       "id": "automatic-worker-tool-widening",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-07-27T06:33:02Z",
       "run_dir": "runs/automatic-worker-tool-widening",
-      "eval_status": "pending"
+      "eval_status": "pass",
+      "ended_at": "2026-07-27T08:00:18Z",
+      "spec_path": "specs/automatic-worker-tool-widening.md"
     }
   ]
 }

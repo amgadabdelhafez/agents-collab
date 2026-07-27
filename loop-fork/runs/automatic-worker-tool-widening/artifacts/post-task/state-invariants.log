@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active automatic-worker-tool-widening
+[pass] state/invariants/10-current-task.sh
