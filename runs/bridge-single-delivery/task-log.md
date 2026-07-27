@@ -10,5 +10,6 @@
 - Build and `git diff --check`: passed.
 - Full suite: 800 passed; 4 pre-existing Codex-launch expectation failures.
 - Deployed bridge worker PID 45936 only; all four pane PIDs stayed unchanged.
-- While Claude remained `working`, pending distinct messages produced no ledger
-  growth or tmux injection; they were later consumed once and pending reached 0.
+- While Claude remained `working`, pending distinct messages produced no
+  duplicate ledger events or tmux injection. They remain pending for idle-time
+  delivery or explicit polling, with one message record per ID.
