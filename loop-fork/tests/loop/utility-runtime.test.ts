@@ -123,6 +123,51 @@ const completedEditProposal = async (
   };
 };
 
+const routedInspectFixture = (name: string): {
+  repoRoot: string;
+  request: ReturnType<typeof createUtilityRouteRequest>;
+  runDir: string;
+} => {
+  const repoRoot = mkdtempSync(join(tmpdir(), `loop-utility-${name}-`));
+  const runDir = join(repoRoot, ".loop", "runs", name);
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    Array.from({ length: 80 }, (_, index) => `export const n${index + 1} = ${index + 1};`).join("\n") +
+      "\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["inspect with repository evidence"],
+    authority: {},
+    id: `${name}-job`,
+    kind: "inspect",
+    objective: "Inspect the sample file",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 77);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    routeEpoch: 77,
+  });
+  return { repoRoot, request, runDir };
+};
+
+const jsonlRecords = (path: string): Array<Record<string, unknown>> =>
+  readFileSync(path, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+
 test("OpenRouter GLM is the default but remains disabled without a credential", () => {
   const config = resolveUtilityRuntimeConfig({
     LOOP_UTILITY_API_KEY_FILE: "",
@@ -1501,6 +1546,271 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     expect(
       readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8")
     ).toContain('"toolRounds":1');
+  } finally {
+    server.stop(true);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("utility worker stops after three consecutive broker rejections", async () => {
+  const { repoRoot, request, runDir } = routedInspectFixture("denial-breaker");
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              role: "assistant",
+              tool_calls: [
+                {
+                  function: {
+                    arguments: JSON.stringify({
+                      path: `outside-${providerCalls}.ts`,
+                    }),
+                    name: "read_file",
+                  },
+                  id: `denied-${providerCalls}`,
+                  type: "function",
+                },
+              ],
+            },
+          },
+        ],
+        model: "local-test",
+        usage: { completion_tokens: 1, prompt_tokens: 2, total_tokens: 3 },
+      });
+    },
+    port: 0,
+  });
+  try {
+    await runUtilityWorker(runDir, 77, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_MODEL: "local-test",
+      LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    expect(providerCalls).toBe(3);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        blocker: expect.stringContaining(
+          "3 consecutive broker rejections without progress"
+        ),
+        status: "failed",
+      },
+      state: "failed",
+    });
+    const toolEvents = jsonlRecords(
+      join(runDir, "utility", "tool-events.jsonl")
+    );
+    expect(toolEvents).toHaveLength(3);
+    expect(toolEvents.every((event) => event.ok === false)).toBe(true);
+    expect(JSON.stringify(toolEvents.at(-1))).toContain("scope_denied");
+    expect(readBridgeEvents(runDir)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "message",
+          message: expect.stringContaining(
+            "3 consecutive broker rejections without progress"
+          ),
+          source: "utility",
+          target: "codex",
+        }),
+      ])
+    );
+    expect(
+      jsonlRecords(join(runDir, "utility", "usage.jsonl")).at(-1)
+    ).toMatchObject({
+      modelCalls: 3,
+      status: "failed",
+      toolCalls: 3,
+      toolRounds: 3,
+    });
+  } finally {
+    server.stop(true);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("a successful broker call resets the consecutive rejection breaker", async () => {
+  const { repoRoot, request, runDir } = routedInspectFixture("denial-reset");
+  const toolArguments = [
+    '{"path":"outside-1.ts"}',
+    '{"path":"src/sample.ts","startLine":1,"endLine":1}',
+    '{"path":"outside-2.ts"}',
+    '{"path":"outside-3.ts"}',
+  ];
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      const argumentsJson = toolArguments[providerCalls - 1];
+      return Response.json({
+        choices: [
+          {
+            finish_reason: argumentsJson ? "tool_calls" : "stop",
+            message: argumentsJson
+              ? {
+                  content: null,
+                  role: "assistant",
+                  tool_calls: [
+                    {
+                      function: {
+                        arguments: argumentsJson,
+                        name: "read_file",
+                      },
+                      id: `reset-${providerCalls}`,
+                      type: "function",
+                    },
+                  ],
+                }
+              : { content: "Inspection complete.", role: "assistant" },
+          },
+        ],
+        model: "local-test",
+        usage: { completion_tokens: 1, prompt_tokens: 2, total_tokens: 3 },
+      });
+    },
+    port: 0,
+  });
+  try {
+    await runUtilityWorker(runDir, 77, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_MODEL: "local-test",
+      LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    expect(providerCalls).toBe(5);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: { status: "completed", summary: "Inspection complete." },
+      state: "completed",
+    });
+  } finally {
+    server.stop(true);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("utility worker refuses to execute a third identical tool call", async () => {
+  const { repoRoot, request, runDir } = routedInspectFixture("repeat-breaker");
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              role: "assistant",
+              tool_calls: [
+                {
+                  function: {
+                    arguments:
+                      '{"path":"src/sample.ts","startLine":1,"endLine":1}',
+                    name: "read_file",
+                  },
+                  id: `repeat-${providerCalls}`,
+                  type: "function",
+                },
+              ],
+            },
+          },
+        ],
+        model: "local-test",
+        usage: { completion_tokens: 1, prompt_tokens: 2, total_tokens: 3 },
+      });
+    },
+    port: 0,
+  });
+  try {
+    await runUtilityWorker(runDir, 77, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_MODEL: "local-test",
+      LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    expect(providerCalls).toBe(3);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        blocker: expect.stringContaining(
+          "before third consecutive identical tool call: read_file"
+        ),
+        status: "failed",
+      },
+      state: "failed",
+    });
+    expect(
+      jsonlRecords(join(runDir, "utility", "tool-events.jsonl"))
+    ).toHaveLength(2);
+    expect(
+      jsonlRecords(join(runDir, "utility", "usage.jsonl")).at(-1)
+    ).toMatchObject({ modelCalls: 3, status: "failed", toolCalls: 2 });
+  } finally {
+    server.stop(true);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("utility worker stops before a sixty-fifth model call", async () => {
+  const { repoRoot, request, runDir } = routedInspectFixture("emergency-ceiling");
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+            message: {
+              content: null,
+              role: "assistant",
+              tool_calls: [
+                {
+                  function: {
+                    arguments: JSON.stringify({
+                      endLine: providerCalls,
+                      path: "src/sample.ts",
+                      startLine: providerCalls,
+                    }),
+                    name: "read_file",
+                  },
+                  id: `ceiling-${providerCalls}`,
+                  type: "function",
+                },
+              ],
+            },
+          },
+        ],
+        model: "local-test",
+        usage: { completion_tokens: 1, prompt_tokens: 2, total_tokens: 3 },
+      });
+    },
+    port: 0,
+  });
+  try {
+    await runUtilityWorker(runDir, 77, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_MODEL: "local-test",
+      LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    expect(providerCalls).toBe(64);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        blocker: expect.stringContaining(
+          "emergency 64-model-call ceiling without completion"
+        ),
+        status: "failed",
+      },
+      state: "failed",
+    });
+    expect(
+      jsonlRecords(join(runDir, "utility", "tool-events.jsonl"))
+    ).toHaveLength(64);
+    expect(
+      jsonlRecords(join(runDir, "utility", "usage.jsonl")).at(-1)
+    ).toMatchObject({ modelCalls: 64, status: "failed", toolCalls: 64 });
   } finally {
     server.stop(true);
     rmSync(repoRoot, { recursive: true, force: true });

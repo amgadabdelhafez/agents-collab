@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active utility-worker-runaway-guard
+[pass] state/invariants/10-current-task.sh

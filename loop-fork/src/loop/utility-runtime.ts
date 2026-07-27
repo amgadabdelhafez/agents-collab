@@ -59,6 +59,9 @@ export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "z-ai/glm-5.2";
 const DEFAULT_MAX_CONCURRENT_JOBS = 4;
+const MAX_CONSECUTIVE_BROKER_REJECTIONS = 3;
+const MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS = 3;
+const EMERGENCY_MAX_MODEL_CALLS = 64;
 const DEFAULT_API_KEY_FILE = join(
   homedir(),
   ".config",
@@ -868,6 +871,7 @@ const utilitySystemPrompt = (): string =>
     "Do only the declared objective and acceptance criteria. Use tools for evidence.",
     "Never expand scope, access secrets, change dependencies, make product decisions, or perform remote/destructive actions.",
     "For edits, produce a minimal unified diff with propose_patch; it is reviewed/applied by a main agent.",
+    "Do not repeat a rejected or identical tool call; change approach once, then stop if no safe tool can make progress.",
     "Finish with a terse result: outcome, evidence/checks, artifact paths, and blocker if any.",
   ].join(" ");
 
@@ -990,6 +994,9 @@ const runUtilityConversation = async (input: {
   let modelCalls = 0;
   let toolCalls = 0;
   let toolRounds = 0;
+  let consecutiveBrokerRejections = 0;
+  let lastToolCallFingerprint = "";
+  let repeatedToolCallCount = 0;
   let usage = emptyUsage();
   const progress = (): UtilityConversationProgress => ({
     durationMs: Math.max(0, Date.now() - startedAt),
@@ -998,9 +1005,14 @@ const runUtilityConversation = async (input: {
     toolRounds,
     usage,
   });
-  // Runtime-bounded, not step-bounded: governess stale recovery fails the job
-  // after maxJobRuntimeMs, so the worker must stop spending then too.
+  // The emergency ceiling is a last-resort runaway fuse, not an ordinary task
+  // budget. Governess stale recovery remains the final wall-time boundary.
   while (Date.now() - startedAt <= input.config.maxJobRuntimeMs) {
+    if (modelCalls >= EMERGENCY_MAX_MODEL_CALLS) {
+      throw new Error(
+        `worker stopped at emergency ${EMERGENCY_MAX_MODEL_CALLS}-model-call ceiling without completion`
+      );
+    }
     const response = await openAICompatibleChat({
       ...(input.config.apiKey ? { apiKey: input.config.apiKey } : {}),
       endpoint: input.config.endpoint,
@@ -1034,6 +1046,20 @@ const runUtilityConversation = async (input: {
     }
     toolRounds += 1;
     for (const call of calls) {
+      const toolCallFingerprint = `${call.function.name}\0${call.function.arguments}`;
+      if (toolCallFingerprint === lastToolCallFingerprint) {
+        repeatedToolCallCount += 1;
+      } else {
+        lastToolCallFingerprint = toolCallFingerprint;
+        repeatedToolCallCount = 1;
+      }
+      if (
+        repeatedToolCallCount >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS
+      ) {
+        throw new Error(
+          `worker stopped before third consecutive identical tool call: ${call.function.name}`
+        );
+      }
       const { name, result } = await executeUtilityToolCall({
         broker: input.broker,
         call,
@@ -1044,8 +1070,20 @@ const runUtilityConversation = async (input: {
       if (result.ok && (name !== "run_check" || result.exitCode === 0)) {
         successfulTools.add(name);
       }
-      input.onProgress(progress());
       recordToolResult(name, result, artifacts, checks);
+      if (result.ok) {
+        consecutiveBrokerRejections = 0;
+      } else {
+        consecutiveBrokerRejections += 1;
+      }
+      input.onProgress(progress());
+      if (
+        consecutiveBrokerRejections >= MAX_CONSECUTIVE_BROKER_REJECTIONS
+      ) {
+        throw new Error(
+          `worker stopped after ${MAX_CONSECUTIVE_BROKER_REJECTIONS} consecutive broker rejections without progress (last error: ${result.error?.code ?? "unknown"})`
+        );
+      }
       messages.push({
         content: JSON.stringify(result),
         name,
