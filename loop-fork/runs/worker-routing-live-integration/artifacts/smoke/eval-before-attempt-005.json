@@ -1,0 +1,38 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "status": "fail",
+  "required": [
+    "unit",
+    "integration",
+    "smoke"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-live-integration/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/unit/attempt-003.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/unit/attempt-003.json"
+    },
+    "integration": {
+      "status": "fail",
+      "artifact": "runs/worker-routing-live-integration/artifacts/integration/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/integration/attempt-003.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/integration/attempt-003.json"
+    },
+    "smoke": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-live-integration/artifacts/smoke/verify.log",
+      "reason": "Attempt 004 passed targeted formatting and static checks, compiled build, and git diff --check.",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/smoke/attempt-004.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/smoke/attempt-004.json"
+    }
+  }
+}

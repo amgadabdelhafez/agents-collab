@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import {
   access,
   lstat,
@@ -8,7 +9,6 @@ import {
   realpath,
   writeFile,
 } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
 import {
   basename,
   dirname,
@@ -18,22 +18,23 @@ import {
   sep,
 } from "node:path";
 import { spawn } from "bun";
-import type {
-  UtilityFileImage,
-  UtilityPatchApplication,
-} from "./utility-store";
 import type { Agent } from "./types";
 import {
   DEFAULT_UTILITY_PROTECTED_PATHS,
   isUtilityProtectedPath,
   UTILITY_PROTECTED_GIT_GLOBS,
 } from "./utility-path-policy";
+import type {
+  UtilityFileImage,
+  UtilityPatchApplication,
+} from "./utility-store";
 
 export type UtilityToolName =
   | "search_repo"
   | "read_file"
   | "git_status"
   | "git_diff"
+  | "git_inspect"
   | "run_check"
   | "propose_patch";
 
@@ -96,6 +97,7 @@ export interface UtilityToolLimits {
 }
 
 export interface UtilityToolBrokerConfig {
+  allowedTools?: readonly UtilityToolName[];
   artifactDir: string;
   commandAllowlist?: readonly UtilityCommandPolicy[];
   limits?: Partial<UtilityToolLimits>;
@@ -162,7 +164,7 @@ export interface GuardedPatchApplyResult {
 
 const DEFAULT_LIMITS: UtilityToolLimits = {
   maxCommandArgs: 24,
-  maxFileBytes: 128 * 1024,
+  maxFileBytes: 1024 * 1024,
   maxOutputBytes: 64 * 1024,
   maxPatchBytes: 256 * 1024,
   maxSearchFiles: 500,
@@ -219,6 +221,8 @@ const DANGEROUS_COMMAND_OPTIONS = new Set([
   "-c",
   "-e",
 ]);
+const GIT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+const GIT_BRANCH_PATTERN_RE = /^[A-Za-z0-9._/*?-]{1,128}$/;
 const DEPENDENCY_FILES = new Set([
   "bun.lock",
   "bun.lockb",
@@ -301,6 +305,33 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
         paths: { items: { type: "string" }, type: "array" },
         staged: { type: "boolean" },
       }),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_inspect",
+      description:
+        "Run one bounded read-only Git metadata query: resolve-ref, log, show-stat, branch-list, or object-type.",
+      parameters: objectSchema(
+        {
+          action: {
+            enum: [
+              "resolve-ref",
+              "log",
+              "show-stat",
+              "branch-list",
+              "object-type",
+            ],
+            type: "string",
+          },
+          limit: { maximum: 50, minimum: 1, type: "integer" },
+          includeMetadata: { type: "boolean" },
+          pattern: { minLength: 1, type: "string" },
+          ref: { minLength: 1, type: "string" },
+        },
+        ["action"]
+      ),
     },
   },
   {
@@ -439,6 +470,20 @@ const exactKeys = (
   if (unknown) {
     throw new ToolPolicyError(
       "invalid_policy",
+      `${label} contains unsupported key: ${unknown}`
+    );
+  }
+};
+
+const exactArgumentKeys = (
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  label: string
+): void => {
+  const unknown = Object.keys(value).find((key) => !allowed.has(key));
+  if (unknown) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
       `${label} contains unsupported key: ${unknown}`
     );
   }
@@ -738,7 +783,8 @@ export const runUtilityCommand = async (
 };
 
 export class UtilityToolBroker {
-  readonly definitions = UTILITY_TOOL_DEFINITIONS;
+  readonly definitions: readonly UtilityToolDefinition[];
+  private readonly allowedTools: ReadonlySet<UtilityToolName>;
   private readonly artifactDir: string;
   private readonly commandAllowlist: readonly UtilityCommandPolicy[];
   private readonly id: () => string;
@@ -758,6 +804,13 @@ export class UtilityToolBroker {
     deps: UtilityToolDependencies,
     canonicalRoot: string
   ) {
+    this.allowedTools = new Set(
+      config.allowedTools ??
+        UTILITY_TOOL_DEFINITIONS.map((tool) => tool.function.name)
+    );
+    this.definitions = UTILITY_TOOL_DEFINITIONS.filter((tool) =>
+      this.allowedTools.has(tool.function.name)
+    );
     this.repoRoot = canonicalRoot;
     this.artifactDir = resolve(canonicalRoot, config.artifactDir);
     this.readScopes = config.readScopes.map(normalizeRequestedPath);
@@ -834,10 +887,7 @@ export class UtilityToolBroker {
         "Expected manifest SHA-256 is invalid"
       );
     }
-    const patchArtifact = await this.resolveArtifact(
-      input.patchPath,
-      ".patch"
-    );
+    const patchArtifact = await this.resolveArtifact(input.patchPath, ".patch");
     const manifestArtifact = await this.resolveArtifact(
       input.manifestPath,
       ".json"
@@ -859,7 +909,10 @@ export class UtilityToolBroker {
       );
     }
     const manifest = this.parsePatchManifest(manifestText);
-    const manifestPatch = await this.resolveArtifact(manifest.patchPath, ".patch");
+    const manifestPatch = await this.resolveArtifact(
+      manifest.patchPath,
+      ".patch"
+    );
     if (manifestPatch.absolute !== patchArtifact.absolute) {
       throw new ToolPolicyError(
         "patch_denied",
@@ -949,7 +1002,10 @@ export class UtilityToolBroker {
         "Patch artifact escapes its job artifact directory"
       );
     }
-    return { absolute: canonical, relative: relativePath(this.repoRoot, canonical) };
+    return {
+      absolute: canonical,
+      relative: relativePath(this.repoRoot, canonical),
+    };
   }
 
   private parsePatchManifest(raw: string): PatchProposalManifest {
@@ -1020,12 +1076,12 @@ export class UtilityToolBroker {
       images.push({
         path: target.relative,
         sha256:
-          typeof value.sha256 === "string"
-            ? value.sha256.toLowerCase()
-            : null,
+          typeof value.sha256 === "string" ? value.sha256.toLowerCase() : null,
       });
     }
-    const sorted = images.sort((left, right) => left.path.localeCompare(right.path));
+    const sorted = images.sort((left, right) =>
+      left.path.localeCompare(right.path)
+    );
     if (new Set(sorted.map((image) => image.path)).size !== sorted.length) {
       throw new ToolPolicyError(
         "patch_denied",
@@ -1128,6 +1184,12 @@ export class UtilityToolBroker {
   private async dispatch(
     call: UtilityToolCall
   ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
+    if (!this.allowedTools.has(call.name)) {
+      throw new ToolPolicyError(
+        "tool_denied",
+        `Tool is outside this request's execution profile: ${call.name}`
+      );
+    }
     switch (call.name) {
       case "search_repo":
         return { data: await this.searchRepo(requireRecord(call.arguments)) };
@@ -1137,6 +1199,8 @@ export class UtilityToolBroker {
         return this.gitStatus(requireRecord(call.arguments));
       case "git_diff":
         return this.gitDiff(requireRecord(call.arguments));
+      case "git_inspect":
+        return this.gitInspect(requireRecord(call.arguments));
       case "run_check":
         return this.runCheck(requireRecord(call.arguments));
       case "propose_patch":
@@ -1337,6 +1401,14 @@ export class UtilityToolBroker {
         break;
       }
     }
+    if (
+      Buffer.byteLength(JSON.stringify(matches)) > this.limits.maxOutputBytes
+    ) {
+      throw new ToolPolicyError(
+        "output_limit",
+        "Search results exceed output limit"
+      );
+    }
     return matches;
   }
 
@@ -1518,6 +1590,86 @@ export class UtilityToolBroker {
       this.repoRoot
     );
     return this.commandResult(result);
+  }
+
+  private async gitInspect(
+    args: Record<string, unknown>
+  ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
+    const action = requireString(args, "action");
+    const gitRef = (): string => {
+      const ref = requireString(args, "ref");
+      if (!GIT_REF_RE.test(ref) || ref.includes("..")) {
+        throw new ToolPolicyError(
+          "invalid_arguments",
+          "ref must be a bounded literal Git ref"
+        );
+      }
+      return ref;
+    };
+    let argv: string[];
+    if (action === "resolve-ref") {
+      exactArgumentKeys(args, new Set(["action", "ref"]), "git_inspect");
+      argv = ["git", "rev-parse", "--verify", `${gitRef()}^{commit}`];
+    } else if (action === "object-type") {
+      exactArgumentKeys(args, new Set(["action", "ref"]), "git_inspect");
+      argv = ["git", "cat-file", "-t", gitRef()];
+    } else if (action === "branch-list") {
+      exactArgumentKeys(args, new Set(["action", "pattern"]), "git_inspect");
+      const pattern = requireString(args, "pattern");
+      if (!GIT_BRANCH_PATTERN_RE.test(pattern) || pattern.startsWith("-")) {
+        throw new ToolPolicyError(
+          "invalid_arguments",
+          "pattern must be a bounded literal branch pattern"
+        );
+      }
+      argv = ["git", "branch", "--all", "--list", pattern];
+    } else if (action === "log") {
+      exactArgumentKeys(
+        args,
+        new Set(["action", "limit", "ref"]),
+        "git_inspect"
+      );
+      const limit = optionalPositiveInteger(args, "limit") ?? 10;
+      if (limit > 50) {
+        throw new ToolPolicyError(
+          "invalid_arguments",
+          "log limit cannot exceed 50"
+        );
+      }
+      argv = [
+        "git",
+        "log",
+        "--no-decorate",
+        "--oneline",
+        "-n",
+        String(limit),
+        gitRef(),
+      ];
+    } else if (action === "show-stat") {
+      exactArgumentKeys(
+        args,
+        new Set(["action", "includeMetadata", "ref"]),
+        "git_inspect"
+      );
+      const includeMetadata = optionalBoolean(args, "includeMetadata") ?? true;
+      argv = [
+        "git",
+        "show",
+        "--no-ext-diff",
+        "--stat",
+        includeMetadata ? "--format=fuller" : "--format=",
+        gitRef(),
+        "--",
+        ".",
+        ...this.gitExclusions(),
+      ];
+    } else {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "git_inspect action is unsupported"
+      );
+    }
+    return this.commandResult(await this.runBounded(argv, this.repoRoot));
   }
 
   private assertCommandAllowed(argv: readonly string[]): {

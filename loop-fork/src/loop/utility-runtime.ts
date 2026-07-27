@@ -13,21 +13,22 @@ import {
 } from "./openai-compatible";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
-  readUtilityObservability,
-  sanitizeUtilityPaneText,
-  type UtilityObservabilitySnapshot,
-  type UtilityTranscriptEntry,
-} from "./utility-observability";
-import {
   routeUtilityRequest,
   type UtilityCheckResult,
   type UtilityCompactResult,
+  type UtilityExecutionProfile,
   type UtilityRouteRequest,
   type UtilityRoutingPolicy,
   type UtilityTier,
   type UtilityTierSelectionStrategy,
 } from "./task-router";
 import type { Agent } from "./types";
+import {
+  readUtilityObservability,
+  sanitizeUtilityPaneText,
+  type UtilityObservabilitySnapshot,
+  type UtilityTranscriptEntry,
+} from "./utility-observability";
 import {
   activateUtilityEpoch,
   claimUtilityJob,
@@ -61,6 +62,32 @@ const DEFAULT_API_KEY_FILE = join(
   "loop",
   "openrouter.key"
 );
+
+const TOOLS_BY_EXECUTION_PROFILE: Record<
+  UtilityExecutionProfile,
+  readonly UtilityToolName[]
+> = {
+  "file-read": ["read_file"],
+  "git-diff": ["git_diff"],
+  "git-inspect": ["git_inspect"],
+  "git-status": ["git_status"],
+  search: ["search_repo"],
+};
+
+export const utilityToolsForExecutionProfile = (
+  profile: unknown
+): readonly UtilityToolName[] | undefined => {
+  if (profile === undefined) {
+    return undefined;
+  }
+  if (
+    typeof profile !== "string" ||
+    !Object.hasOwn(TOOLS_BY_EXECUTION_PROFILE, profile)
+  ) {
+    return [];
+  }
+  return TOOLS_BY_EXECUTION_PROFILE[profile as UtilityExecutionProfile];
+};
 
 export interface UtilityRuntimeConfig {
   allowedTierPatterns: string[];
@@ -674,29 +701,27 @@ const processPendingUtilityJob = async (input: {
   const workspaceResolution = ["inspect", "edit", "command"].includes(
     input.job.request.kind
   )
-    ? resolveUtilityRequestWorkspace(
-        input.job.request,
-        input.context.repoRoot
-      )
+    ? resolveUtilityRequestWorkspace(input.job.request, input.context.repoRoot)
     : { request: input.job.request };
-  const routedDecision = "detail" in workspaceResolution
-    ? {
-        detail: workspaceResolution.detail,
-        reason: "protected-scope" as const,
-        target: "driver" as const,
-      }
-    : routeUtilityRequest(workspaceResolution.request, {
-        activeWriteClaims: currentUtilityWriteClaims(
-          input.context.runDir,
-          input.context.repoRoot,
-          workspaceResolution.workspace?.root ?? input.context.repoRoot
-        ),
-        currentDriver: input.context.currentDriver,
-        currentEpoch: input.context.epoch,
-        peer: input.context.peer,
-        routingPolicy: routingPolicy(input.config),
-        tiers: [runtimeTier(input.config)],
-      });
+  const routedDecision =
+    "detail" in workspaceResolution
+      ? {
+          detail: workspaceResolution.detail,
+          reason: "protected-scope" as const,
+          target: "driver" as const,
+        }
+      : routeUtilityRequest(workspaceResolution.request, {
+          activeWriteClaims: currentUtilityWriteClaims(
+            input.context.runDir,
+            input.context.repoRoot,
+            workspaceResolution.workspace?.root ?? input.context.repoRoot
+          ),
+          currentDriver: input.context.currentDriver,
+          currentEpoch: input.context.epoch,
+          peer: input.context.peer,
+          routingPolicy: routingPolicy(input.config),
+          tiers: [runtimeTier(input.config)],
+        });
   const decision =
     routedDecision.reason === "utility-unavailable"
       ? { ...routedDecision, detail: input.config.availability.message }
@@ -1069,11 +1094,13 @@ export const runUtilityWorker = async (
   const executionRequest = workspace
     ? { ...claimed.request, readScope: readScopes, writeScope: writeScopes }
     : claimed.request;
+  const allowedTools = utilityToolsForExecutionProfile(
+    executionRequest.executionProfile
+  );
   const broker = await createUtilityToolBroker({
+    ...(allowedTools ? { allowedTools } : {}),
     artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
-    readScopes: [
-      ...new Set([...readScopes, ...writeScopes]),
-    ],
+    readScopes: [...new Set([...readScopes, ...writeScopes])],
     repoRoot: executionRoot,
     writeScopes,
   });
@@ -1230,9 +1257,7 @@ export const applyUtilityJobPatch = async (
   const broker = await createUtilityToolBroker({
     artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
     commandAllowlist: [],
-    readScopes: [
-      ...new Set([...readScopes, ...writeScopes]),
-    ],
+    readScopes: [...new Set([...readScopes, ...writeScopes])],
     repoRoot: executionRoot,
     writeScopes,
   });

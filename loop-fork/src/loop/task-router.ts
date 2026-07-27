@@ -20,6 +20,13 @@ export type UtilityCapability =
   | "scoped-edit"
   | "focused-verify";
 
+export type UtilityExecutionProfile =
+  | "file-read"
+  | "git-diff"
+  | "git-inspect"
+  | "git-status"
+  | "search";
+
 export type UtilityRisk = "low" | "medium" | "high" | "unknown";
 
 export type UtilityRouteTarget =
@@ -68,6 +75,7 @@ export interface UtilityRouteRequest {
   authority: UtilityAuthorityFlags;
   createdAt: string;
   estimatedCostUsd?: number;
+  executionProfile?: UtilityExecutionProfile;
   id: string;
   idempotencyKey: string;
   kind: UtilityRequestKind;
@@ -196,6 +204,9 @@ export const createUtilityRouteRequest = (
     acceptanceCriteria,
     authority: { ...input.authority },
     estimatedCostUsd: input.estimatedCostUsd,
+    ...(input.executionProfile
+      ? { executionProfile: input.executionProfile }
+      : {}),
     kind: input.kind,
     objective,
     readScope: uniqueTrimmed(input.readScope).map(normalizePath),

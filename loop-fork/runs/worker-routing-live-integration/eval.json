@@ -1,0 +1,82 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "status": "pass",
+  "verdict": "pass",
+  "evaluated_at": "2026-07-27T06:10:13Z",
+  "evaluator": "independent Codex evaluator",
+  "required": [
+    "unit",
+    "integration",
+    "smoke"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-live-integration/artifacts/unit/verify.log",
+      "reason": "Harness attempt 003 passed 283 focused tests with 795 assertions. Independent probes additionally confirmed a 200 KiB search match fails with output_limit and malformed profiles expose zero definitions and deny execution.",
+      "method": "verify.sh plus independent boundary probes",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/unit/attempt-003.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/unit/attempt-003.json"
+    },
+    "integration": {
+      "status": "sign-off-granted",
+      "artifact": "runs/worker-routing-live-integration/artifacts/integration/verify.log",
+      "reason": "The recorded attempt passed 913 tests with four unchanged baseline failures. An independent post-fix full rerun passed 914 tests with the same four Codex app/config failures in paired-options.test.ts and runner.test.ts; no delta regression was introduced.",
+      "method": "verify.sh plus independent post-fix full suite",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/integration/attempt-002.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/integration/attempt-002.json"
+    },
+    "smoke": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-live-integration/artifacts/smoke/verify.log",
+      "reason": "Attempt 004 passed targeted formatting and static checks, build, and git diff --check. The evaluator rebuilt the post-fix tree, reran diff-check, and confirmed executable SHA-256 e04e60191aec2c63e200fc06f0a19693dcf65277b123b36eda5fe6e404e3474a.",
+      "method": "verify.sh plus independent post-fix build",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/smoke/attempt-004.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/smoke/attempt-004.json"
+    }
+  },
+  "findings": [],
+  "resolved_findings": [
+    {
+      "title": "Search output exceeds the broker byte budget after the 1 MiB input-ceiling increase",
+      "resolution": "searchRepo now measures serialized matches against maxOutputBytes and returns output_limit; the 200 KiB regression and independent probe pass."
+    },
+    {
+      "title": "Malformed execution profiles fail open to all broker tools",
+      "resolution": "The profile resolver now accepts untrusted input, reserves undefined for intentional unrestricted explicit requests, and maps unknown, non-string, and prototype-key values to an empty tool set; broker definitions and dispatch both enforce the denial."
+    }
+  ],
+  "acceptance": {
+    "git_metadata_parser_and_literal_argv": {
+      "status": "pass",
+      "evidence": "Supported refs, branch patterns, limits, command counts, pipelines, and chain segments use a narrow literal parser. Unsupported, mutating, network, mixed, option-like, and shell-expanded shapes remain direct. Broker actions construct fixed argv arrays and use the scrubbed bounded command runner."
+    },
+    "execution_profile_restriction": {
+      "status": "pass",
+      "evidence": "Known automatic profiles expose and permit only the satisfiable broker tool. Absent explicit-request profiles retain legacy unrestricted behavior, while every malformed runtime value fails closed to zero tools."
+    },
+    "bounded_read_and_search": {
+      "status": "pass",
+      "evidence": "read_file accepts a bounded range from a 135 KiB regular file and rejects selected output above 64 KiB. search_repo now rejects serialized matches above the same output budget despite the 1 MiB input ceiling."
+    },
+    "governess_usage_regressions": {
+      "status": "pass",
+      "evidence": "Transcript rebinding, transient pricing fallback, and per-provider 60-second quota retention are preserved with passing regressions."
+    },
+    "worker_runtime_budget": {
+      "status": "pass",
+      "evidence": "The worker conversation remains bounded by maxJobRuntimeMs only; no maxSteps, tool-round, or cumulative-job ceiling was reintroduced."
+    },
+    "source_scope": {
+      "status": "pass",
+      "evidence": "Runtime changes are confined to the specified router, tool broker, worker execution-profile wiring, and governess usage integrations, plus their tests and Harness metadata."
+    }
+  },
+  "notes": [
+    "No deployment, push, or live tmux operation was performed.",
+    "The four full-suite failures are confirmed baseline failures and are not findings against this delta."
+  ]
+}

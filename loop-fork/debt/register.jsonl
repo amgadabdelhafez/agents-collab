@@ -27,3 +27,5 @@
 {"ts": "2026-07-26T16:46:24Z", "task_id": "lower-agent-hardening", "signal": "loc_growth", "file": "src/loop/utility-runtime.ts", "before_loc": 960, "after_loc": 1320, "delta_loc": 360, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-26T16:46:24Z", "task_id": "lower-agent-hardening", "signal": "loc_growth", "file": "src/loop/utility-tools.ts", "before_loc": 1155, "after_loc": 1728, "delta_loc": 573, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-27T02:20:04Z", "task_id": "delegation-grammar-widening", "signal": "loc_growth", "file": "src/loop/delegation-policy.ts", "before_loc": 758, "after_loc": 990, "delta_loc": 232, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-27T06:16:15Z", "task_id": "worker-routing-live-integration", "signal": "loc_growth", "file": "src/loop/delegation-policy.ts", "before_loc": 1097, "after_loc": 1291, "delta_loc": 194, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-27T06:16:15Z", "task_id": "worker-routing-live-integration", "signal": "loc_growth", "file": "src/loop/utility-tools.ts", "before_loc": 1752, "after_loc": 1904, "delta_loc": 152, "threshold": 100, "severity": "indicator"}

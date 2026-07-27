@@ -1,0 +1,16 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "dimension": "smoke",
+  "attempt": "004",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T06:03:22Z",
+  "ended_at": "2026-07-27T06:03:22Z",
+  "artifact": "runs/worker-routing-live-integration/artifacts/smoke/attempt-004.log",
+  "command": [
+    "sh",
+    "-c",
+    "./node_modules/.bin/biome format src/loop/delegation-policy.ts src/loop/governess-usage-limits.ts src/loop/governess.ts src/loop/task-router.ts src/loop/utility-runtime.ts src/loop/utility-tools.ts tests/loop/delegation-policy.test.ts tests/loop/governess-usage-limits.test.ts tests/loop/governess.test.ts tests/loop/utility-runtime.test.ts tests/loop/utility-tools.test.ts && ./node_modules/.bin/biome check src/loop/governess-usage-limits.ts tests/loop/governess-usage-limits.test.ts src/loop/task-router.ts && bun run build && git diff --check"
+  ]
+}

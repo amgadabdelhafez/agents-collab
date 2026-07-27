@@ -103,7 +103,7 @@ import {
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
   applyUsageTrackerPricing,
-  readUsageTrackerLimits,
+  createStableUsageLimitReader,
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
 import { buildLaunchArgv } from "./launch";
@@ -113,13 +113,11 @@ import {
 } from "./legacy-governess-compat";
 import {
   loadRunState,
+  type RunManifest,
+  readRunManifest,
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
-import {
-  readUtilityObservability,
-  type UtilityObservabilitySnapshot,
-} from "./utility-observability";
 import type {
   Agent,
   AgentLiveness,
@@ -143,6 +141,10 @@ import type {
   WaitingRequest,
   WaitingResult,
 } from "./types";
+import {
+  readUtilityObservability,
+  type UtilityObservabilitySnapshot,
+} from "./utility-observability";
 import { processPendingUtilityRoutes } from "./utility-runtime";
 import { activateUtilityEpoch } from "./utility-store";
 
@@ -164,6 +166,12 @@ export interface GovernessAgentInfo {
   pane: string;
   // Session id / thread id used to locate the agent's usage transcript.
   sessionRef?: string;
+}
+
+export interface AgentSessionBindingChange {
+  agent: Agent;
+  current: string;
+  previous?: string;
 }
 
 export interface LocalLlmJudgeConfig {
@@ -236,6 +244,50 @@ export interface GovernessConfig {
   viewportColumns?: number;
   viewportRows?: number;
 }
+
+const manifestSessionRef = (
+  manifest: RunManifest,
+  agent: Agent
+): string | undefined => {
+  if (agent === "claude") {
+    return manifest.claudeSessionId || undefined;
+  }
+  if (agent === "codex") {
+    return manifest.codexThreadId || undefined;
+  }
+  return undefined;
+};
+
+// Session identifiers can be filled or corrected after the governess process
+// has already resolved its startup config. Refresh from the canonical manifest
+// before each usage read, but never erase a known-good binding when a manifest
+// is transiently absent, malformed, or contains an empty identifier.
+export const refreshGovernessAgentBindings = (
+  config: Pick<GovernessConfig, "agents" | "manifestPath">,
+  readManifest: (path: string) => RunManifest | undefined = readRunManifest
+): AgentSessionBindingChange[] => {
+  if (!config.manifestPath) {
+    return [];
+  }
+  const manifest = readManifest(config.manifestPath);
+  if (!manifest) {
+    return [];
+  }
+  const changes: AgentSessionBindingChange[] = [];
+  for (const info of config.agents) {
+    const current = manifestSessionRef(manifest, info.agent);
+    if (!current || current === info.sessionRef) {
+      continue;
+    }
+    changes.push({
+      agent: info.agent,
+      current,
+      ...(info.sessionRef ? { previous: info.sessionRef } : {}),
+    });
+    info.sessionRef = current;
+  }
+  return changes;
+};
 
 // Per-agent bridge message counts, keyed by sender then recipient.
 export type BridgeCounts = Record<string, Record<string, number>>;
@@ -1883,7 +1935,9 @@ const renderWorkerRoutingRows = (
   const routing = snapshot.routing;
   const decisions = ` routing · considered ${routing.considered} · routed worker ${routing.routed} · skipped ${routing.skipped} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted}`;
   const reasons = Object.entries(routing.reasons)
-    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .sort(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
+    )
     .map(([reason, count]) => `${reason} ${count}`)
     .join(" · ");
   const latestDetail = snapshot.latestRouteDetail?.includes("chmod 600")
@@ -2462,10 +2516,7 @@ const renderBridgeLatestLine = (
   return parts;
 };
 
-const workerMessageAge = (
-  at: string | undefined,
-  nowMs: number
-): string => {
+const workerMessageAge = (at: string | undefined, nowMs: number): string => {
   const parsed = at ? Date.parse(at) : Number.NaN;
   return Number.isFinite(parsed) ? fmtDuration(nowMs - parsed) : "—";
 };
@@ -3014,9 +3065,12 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const footerBudget =
     maxRows === undefined ? undefined : Math.max(0, maxRows - top.length);
   const lines = [...top, ...renderFooter(meta, footerBudget)];
-  return (meta.maxColumns === undefined
-    ? lines
-    : lines.map((line) => fitAnsiLine(line, Math.max(1, meta.maxColumns ?? 1)))
+  return (
+    meta.maxColumns === undefined
+      ? lines
+      : lines.map((line) =>
+          fitAnsiLine(line, Math.max(1, meta.maxColumns ?? 1))
+        )
   ).join("\n");
 };
 
@@ -5509,7 +5563,9 @@ const sendGovernessBridgeMessage = async (
   return result.status as BridgeSendStatus;
 };
 
-export const defaultGovernessDeps = (): GovernessDeps => ({
+export const defaultGovernessDeps = (
+  readUsageLimits = createStableUsageLimitReader()
+): GovernessDeps => ({
   assessRoleBalance: (req) => assessRoleBalance(req),
   assessWaiting: (req) => assessWaiting(req),
   appendLog: (file, record) => {
@@ -5664,7 +5720,7 @@ export const defaultGovernessDeps = (): GovernessDeps => ({
   readUsage: (agent, sessionRef, codexHome) =>
     readAgentUsage(agent, sessionRef, codexHome),
   readUsageLimits: (config) =>
-    readUsageTrackerLimits({
+    readUsageLimits({
       secret: config.usageTrackerSecret,
       timeoutMs: config.usageTrackerTimeoutMs,
       url: config.usageTrackerUrl,
@@ -6196,6 +6252,15 @@ export const runGoverness = async (
             roleBalanceEnabled: false,
           }
         : config;
+      for (const change of refreshGovernessAgentBindings(config)) {
+        deps.appendLog(config.logFile, {
+          agent: change.agent,
+          at: new Date(deps.now()).toISOString(),
+          event: "agent-session-binding-refreshed",
+          from: change.previous ?? null,
+          to: change.current,
+        });
+      }
       const result = await governessTick(states, tickConfig, deps, runState);
       runState = result.runState;
       const lifecycleAt = new Date(deps.now()).toISOString();

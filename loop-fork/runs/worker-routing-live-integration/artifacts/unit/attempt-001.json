@@ -1,0 +1,20 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T05:44:42Z",
+  "ended_at": "2026-07-27T05:44:43Z",
+  "artifact": "runs/worker-routing-live-integration/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/delegation-policy.test.ts",
+    "tests/loop/governess-hooks.test.ts",
+    "tests/loop/utility-worker-runtime.test.ts",
+    "tests/loop/governess-usage-limits.test.ts",
+    "tests/loop/governess.test.ts"
+  ]
+}

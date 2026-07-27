@@ -41,7 +41,10 @@ describe("delegation classifier", () => {
     ).toMatchObject({
       eligible: true,
       operation: "large-read",
-      request: { readScope: ["src/parser.ts"] },
+      request: {
+        executionProfile: "file-read",
+        readScope: ["src/parser.ts"],
+      },
     });
     expect(
       classify("Read", { file_path: "src/parser.ts", limit: 80 })
@@ -109,7 +112,7 @@ describe("delegation classifier", () => {
     ).toMatchObject({
       eligible: true,
       operation: "scoped-search",
-      request: { readScope: ["src/loop"] },
+      request: { executionProfile: "search", readScope: ["src/loop"] },
     });
     expect(classify("Grep", { pattern: "route_task" })).toMatchObject({
       eligible: false,
@@ -165,18 +168,79 @@ describe("delegation classifier", () => {
   });
 
   test.each([
-    ["git status --short", "git-status", ["."]],
-    ["git diff -- src/loop/tmux.ts", "git-diff", ["src/loop/tmux.ts"]],
-    ["git diff --name-only -- src/loop", "git-diff", ["src/loop"]],
-    ["git diff --cached -- src/loop", "git-diff", ["src/loop"]],
-    ["rg -n 'route|worker' src/loop", "scoped-search", ["src/loop"]],
-    ["sed -n '20,80p' src/loop/tmux.ts", "source-slice", ["src/loop/tmux.ts"]],
-  ])("routes exact mechanical command %s", (command, operation, readScope) => {
+    ["git status --short", "git-status", "git-status", ["."]],
+    [
+      "git diff -- src/loop/tmux.ts",
+      "git-diff",
+      "git-diff",
+      ["src/loop/tmux.ts"],
+    ],
+    ["git diff --name-only -- src/loop", "git-diff", "git-diff", ["src/loop"]],
+    ["git diff --cached -- src/loop", "git-diff", "git-diff", ["src/loop"]],
+    ["rg -n 'route|worker' src/loop", "scoped-search", "search", ["src/loop"]],
+    [
+      "sed -n '20,80p' src/loop/tmux.ts",
+      "source-slice",
+      "file-read",
+      ["src/loop/tmux.ts"],
+    ],
+  ])("routes exact mechanical command %s", (command, operation, executionProfile, readScope) => {
     expect(classify("Bash", { command })).toMatchObject({
       eligible: true,
       operation,
-      request: { readScope },
+      request: { executionProfile, readScope },
     });
+  });
+
+  test.each([
+    ["git show --stat 53a8d5dd | head -60", "show-stat"],
+    ["git show --stat --format='' 53a8d5dd | tail -30", "show-stat"],
+    ["git log --oneline -3 origin/main", "log"],
+    ["git rev-parse origin/main", "resolve-ref"],
+    ["git branch -a --list '*loop51*'", "branch-list"],
+    ["git cat-file -t 53a8d5dd", "object-type"],
+  ])("routes broker-satisfiable Git metadata command %s", (command, marker) => {
+    const classified = classify("Bash", { command });
+    expect(classified).toMatchObject({
+      eligible: true,
+      operation: "git-inspect",
+      request: { executionProfile: "git-inspect", readScope: ["."] },
+    });
+    if (classified.eligible) {
+      expect(classified.request.objective).toContain(marker);
+      if (command.includes("--format=''")) {
+        expect(classified.request.objective).toContain(
+          '"includeMetadata":false'
+        );
+      }
+    }
+  });
+
+  test("routes a bounded chain of exact Git metadata inspections", () => {
+    const classified = classify("Bash", {
+      command:
+        "git rev-parse origin/main && git log --oneline -3 origin/main && git branch -a --list '*loop51*'",
+    });
+    expect(classified).toMatchObject({
+      eligible: true,
+      operation: "git-inspect",
+      request: { executionProfile: "git-inspect", readScope: ["."] },
+    });
+    if (classified.eligible) {
+      expect(classified.request.objective).toContain("resolve-ref");
+      expect(classified.request.objective).toContain("branch-list");
+    }
+  });
+
+  test.each([
+    "git fetch origin main --quiet && git rev-parse origin/main",
+    "git checkout -b loop51/base origin/main && git log --oneline -1",
+    "git show --patch 53a8d5dd",
+    "git log --format=%x00 -3 origin/main",
+    "git rev-parse origin/main && git commit -am done",
+    "git rev-parse a && git rev-parse b && git rev-parse c && git rev-parse d && git rev-parse e",
+  ])("keeps unsupported or mutating Git inspection direct: %s", (command) => {
+    expect(classify("Bash", { command })).toMatchObject({ eligible: false });
   });
 
   // Broker-unsatisfiable shapes are dropped from the grammar and handled

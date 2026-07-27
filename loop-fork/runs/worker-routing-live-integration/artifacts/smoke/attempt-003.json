@@ -1,0 +1,16 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "dimension": "smoke",
+  "attempt": "003",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-07-27T05:46:34Z",
+  "ended_at": "2026-07-27T05:46:34Z",
+  "artifact": "runs/worker-routing-live-integration/artifacts/smoke/attempt-003.log",
+  "command": [
+    "sh",
+    "-c",
+    "./node_modules/.bin/biome check src/loop/governess.ts src/loop/governess-usage-limits.ts tests/loop/governess.test.ts tests/loop/governess-usage-limits.test.ts && bun run build && git diff --check"
+  ]
+}

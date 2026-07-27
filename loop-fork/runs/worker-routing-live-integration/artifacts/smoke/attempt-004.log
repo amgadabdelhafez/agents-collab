@@ -1,0 +1,16 @@
+task_id: worker-routing-live-integration
+dimension: smoke
+attempt: 004
+started_at: 2026-07-27T06:03:22Z
+command: sh -c ./node_modules/.bin/biome\ format\ src/loop/delegation-policy.ts\ src/loop/governess-usage-limits.ts\ src/loop/governess.ts\ src/loop/task-router.ts\ src/loop/utility-runtime.ts\ src/loop/utility-tools.ts\ tests/loop/delegation-policy.test.ts\ tests/loop/governess-usage-limits.test.ts\ tests/loop/governess.test.ts\ tests/loop/utility-runtime.test.ts\ tests/loop/utility-tools.test.ts\ \&\&\ ./node_modules/.bin/biome\ check\ src/loop/governess-usage-limits.ts\ tests/loop/governess-usage-limits.test.ts\ src/loop/task-router.ts\ \&\&\ bun\ run\ build\ \&\&\ git\ diff\ --check
+--- output ---
+Checked 11 files in 33ms. No fixes applied.
+Checked 3 files in 10ms. No fixes applied.
+$ bun build --compile --outfile loop src/cli.ts
+  [10ms]  bundle  70 modules
+  [74ms] compile  loop
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T06:03:22Z

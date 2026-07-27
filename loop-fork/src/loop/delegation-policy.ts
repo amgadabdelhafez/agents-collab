@@ -17,6 +17,7 @@ import {
 } from "node:path";
 import type {
   UtilityCapability,
+  UtilityExecutionProfile,
   UtilityRequestKind,
   UtilityRouteRequestInput,
 } from "./task-router";
@@ -35,6 +36,7 @@ export type DelegationDisposition =
 export type DelegationOperation =
   | "focused-check"
   | "git-diff"
+  | "git-inspect"
   | "git-status"
   | "large-read"
   | "scoped-search"
@@ -92,6 +94,18 @@ const WHITESPACE_RE = /\s/;
 const SOURCE_SLICE_RE = /^(\d+),(\d+)p$/;
 const DIGITS_RE = /^\d+$/;
 const FILTER_COUNT_FLAG_RE = /^-\d+$/;
+const GIT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+const GIT_BRANCH_PATTERN_RE = /^[A-Za-z0-9._/*?-]{1,128}$/;
+const EXECUTION_PROFILE_BY_OPERATION: Partial<
+  Record<DelegationOperation, UtilityExecutionProfile>
+> = {
+  "git-diff": "git-diff",
+  "git-inspect": "git-inspect",
+  "git-status": "git-status",
+  "large-read": "file-read",
+  "scoped-search": "search",
+  "source-slice": "file-read",
+};
 const STDERR_TO_NULL = ">/dev/null";
 const GREP_ALLOWED_KEYS = new Set([
   "pattern",
@@ -312,25 +326,29 @@ const request = (
   acceptanceCriteria: string[],
   readScope: string[],
   requiredCapabilities: UtilityCapability[]
-): EligibleDelegationIntent => ({
-  fingerprint: fingerprint(intent),
-  operation,
-  reason: operation,
-  request: {
-    acceptanceCriteria,
-    authority: {},
-    ...(intent.toolUseId
-      ? { idempotencyKey: `auto:${intent.agent}:${intent.toolUseId}` }
-      : {}),
-    kind,
-    objective,
-    readScope,
-    requester: intent.agent,
-    requiredCapabilities,
-    risk: "low",
-    writeScope: [],
-  },
-});
+): EligibleDelegationIntent => {
+  const executionProfile = EXECUTION_PROFILE_BY_OPERATION[operation];
+  return {
+    fingerprint: fingerprint(intent),
+    operation,
+    reason: operation,
+    request: {
+      acceptanceCriteria,
+      authority: {},
+      ...(executionProfile ? { executionProfile } : {}),
+      ...(intent.toolUseId
+        ? { idempotencyKey: `auto:${intent.agent}:${intent.toolUseId}` }
+        : {}),
+      kind,
+      objective,
+      readScope,
+      requester: intent.agent,
+      requiredCapabilities,
+      risk: "low",
+      writeScope: [],
+    },
+  };
+};
 
 const exempt = (
   intent: DelegationToolIntent,
@@ -710,12 +728,182 @@ const scopesFrom = (
   return scopes.every(Boolean) ? (scopes as string[]) : undefined;
 };
 
+type GitInspectionAction =
+  | "branch-list"
+  | "log"
+  | "object-type"
+  | "resolve-ref"
+  | "show-stat";
+
+interface GitInspectionQuery {
+  action: GitInspectionAction;
+  includeMetadata?: boolean;
+  limit?: number;
+  outputBound?: string;
+  pattern?: string;
+  ref?: string;
+}
+
+const safeGitRef = (value: string | undefined): value is string =>
+  Boolean(value && GIT_REF_RE.test(value) && !value.includes(".."));
+
+const parseGitShowInspection = (
+  argv: readonly string[]
+): GitInspectionQuery | undefined => {
+  let includeMetadata = true;
+  let sawStat = false;
+  let ref: string | undefined;
+  for (const arg of argv.slice(2)) {
+    if (arg === "--stat") {
+      sawStat = true;
+    } else if (arg === "--format=") {
+      // An explicitly empty format is safe and means stat-only output.
+      includeMetadata = false;
+    } else if (!ref && safeGitRef(arg)) {
+      ref = arg;
+    } else {
+      return undefined;
+    }
+  }
+  return sawStat && ref
+    ? { action: "show-stat", includeMetadata, ref }
+    : undefined;
+};
+
+const parseGitLogInspection = (
+  argv: readonly string[]
+): GitInspectionQuery | undefined => {
+  let limit: number | undefined;
+  let oneline = false;
+  let ref: string | undefined;
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index] as string;
+    if (arg === "--oneline") {
+      oneline = true;
+    } else if (FILTER_COUNT_FLAG_RE.test(arg)) {
+      limit = Number(arg.slice(1));
+    } else if (arg === "-n" && DIGITS_RE.test(argv[index + 1] ?? "")) {
+      limit = Number(argv[index + 1]);
+      index += 1;
+    } else if (!ref && safeGitRef(arg)) {
+      ref = arg;
+    } else {
+      return undefined;
+    }
+  }
+  return oneline && ref && limit && limit <= 50
+    ? { action: "log", limit, ref }
+    : undefined;
+};
+
+const parseGitInspection = (
+  argv: readonly string[]
+): GitInspectionQuery | undefined => {
+  if (argv[0] !== "git") {
+    return undefined;
+  }
+  if (argv[1] === "rev-parse" && argv.length === 3 && safeGitRef(argv[2])) {
+    return { action: "resolve-ref", ref: argv[2] };
+  }
+  if (
+    argv[1] === "cat-file" &&
+    argv[2] === "-t" &&
+    argv.length === 4 &&
+    safeGitRef(argv[3])
+  ) {
+    return { action: "object-type", ref: argv[3] };
+  }
+  if (
+    argv[1] === "branch" &&
+    (argv[2] === "-a" || argv[2] === "--all") &&
+    argv[3] === "--list" &&
+    argv.length === 5 &&
+    GIT_BRANCH_PATTERN_RE.test(argv[4] ?? "") &&
+    !argv[4]?.startsWith("-")
+  ) {
+    return { action: "branch-list", pattern: argv[4] };
+  }
+  if (argv[1] === "show") {
+    return parseGitShowInspection(argv);
+  }
+  return argv[1] === "log" ? parseGitLogInspection(argv) : undefined;
+};
+
+const parseGitInspectionSegment = (
+  tokens: ShellToken[]
+): GitInspectionQuery | undefined => {
+  const piped = splitTokens(tokens, "pipe");
+  if (piped.length > 2) {
+    return undefined;
+  }
+  const filter =
+    piped.length === 2 ? parseOutputFilter(piped[1] ?? []) : undefined;
+  if (piped.length === 2 && !filter) {
+    return undefined;
+  }
+  let base = piped[0] ?? [];
+  if (base.at(-1)?.kind === "quiet-stderr") {
+    base = base.slice(0, -1);
+  }
+  const argv = wordValues(base);
+  const query = argv ? parseGitInspection(argv) : undefined;
+  if (!query) {
+    return undefined;
+  }
+  return filter
+    ? { ...query, outputBound: describeOutputFilter(filter) }
+    : query;
+};
+
+const classifyGitInspectionChain = (
+  intent: DelegationToolIntent,
+  tokens: ShellToken[]
+): DelegationClassification | undefined => {
+  const segments = splitTokens(tokens, "and");
+  if (segments.length < 2 || segments.length > 4) {
+    return undefined;
+  }
+  const queries = segments.map(parseGitInspectionSegment);
+  if (queries.some((query) => !query)) {
+    return undefined;
+  }
+  return {
+    eligible: true,
+    ...request(
+      intent,
+      "git-inspect",
+      "inspect",
+      `Inspect repository metadata for these exact bounded queries: ${JSON.stringify(queries)}.`,
+      [
+        "Return the requested Git metadata in order without changing the repository.",
+      ],
+      ["."],
+      ["inspect"]
+    ),
+  };
+};
+
 const classifyGit = (
   intent: DelegationToolIntent,
   argv: string[]
 ): DelegationClassification | undefined => {
   if (argv[0] !== "git") {
     return undefined;
+  }
+  const inspection = parseGitInspection(argv);
+  if (inspection) {
+    return {
+      eligible: true,
+      ...request(
+        intent,
+        "git-inspect",
+        "inspect",
+        `Inspect repository metadata for this exact bounded query: ${JSON.stringify(inspection)}.`,
+        ["Return the requested Git metadata without changing the repository."],
+        ["."],
+        ["inspect"]
+      ),
+    };
   }
   if (
     argv[1] === "status" &&
@@ -911,6 +1099,12 @@ const classifyBash = (
 ): DelegationClassification => {
   const command = asString(input.command);
   const tokens = command ? literalTokens(command) : undefined;
+  const gitInspectionChain = tokens
+    ? classifyGitInspectionChain(intent, tokens)
+    : undefined;
+  if (gitInspectionChain) {
+    return gitInspectionChain;
+  }
   const compound = tokens ? decomposeSafeCompound(tokens) : undefined;
   if (!compound) {
     return { eligible: false, ...exempt(intent, "compound-or-unsafe-command") };

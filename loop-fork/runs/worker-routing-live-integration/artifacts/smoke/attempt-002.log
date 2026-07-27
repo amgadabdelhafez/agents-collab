@@ -1,0 +1,373 @@
+task_id: worker-routing-live-integration
+dimension: smoke
+attempt: 002
+started_at: 2026-07-27T05:46:14Z
+command: sh -c bun\ run\ check\ \&\&\ bun\ run\ build\ \&\&\ git\ diff\ --check
+--- output ---
+$ ultracite check
+runs/babysitter-no-repeat-compact/artifacts/regression-harvest/harvest.json format ━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     7  7 │     "created_at": "2026-07-19T20:33:58Z",
+     8  8 │     "markers": {
+     9    │ - ····"enabled":·[
+    10    │ - ······"yes"
+    11    │ - ····],
+    12    │ - ····"id":·[
+    13    │ - ······"babysitter-repeat-compact-on-limit-snapshot-flap"
+    14    │ - ····],
+        9 │ + ····"enabled":·["yes"],
+       10 │ + ····"id":·["babysitter-repeat-compact-on-limit-snapshot-flap"],
+    15 11 │       "symptom": [
+    16 12 │         "Babysitter repeatedly injects `/compact` and interrupts the active loop agent."
+    17 13 │       ],
+    18    │ - ····"guard":·[
+    19    │ - ······"tests/loop/babysitter.test.ts"
+    20    │ - ····]
+       14 │ + ····"guard":·["tests/loop/babysitter.test.ts"]
+    21 15 │     },
+    22 16 │     "symptom_lines": [
+    23 17 │       "Babysitter repeatedly injects `/compact` and interrupts the active loop agent."
+    24 18 │     ],
+    25    │ - ··"test_lines":·[
+    26    │ - ····"tests/loop/babysitter.test.ts"
+    27    │ - ··]
+       19 │ + ··"test_lines":·["tests/loop/babysitter.test.ts"]
+    28 20 │   }
+    29 21 │
+
+
+runs/babysitter-no-repeat-compact/artifacts/unit/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-19T20:32:18Z",
+    10 10 │     "artifact": "runs/babysitter-no-repeat-compact/artifacts/unit/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test",
+    14    │ - ····"tests/loop/babysitter.test.ts"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"test",·"tests/loop/babysitter.test.ts"]
+    16 12 │   }
+    17 13 │
+
+
+runs/babysitter-no-repeat-compact/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "babysitter-no-repeat-compact",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/babysitter-no-repeat-compact/artifacts/unit/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-19T20:32:18Z",
+    10 10 │     "artifact": "runs/babysitter-no-repeat-compact/artifacts/unit/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test",
+    14    │ - ····"tests/loop/babysitter.test.ts"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"test",·"tests/loop/babysitter.test.ts"]
+    16 12 │   }
+    17 13 │
+
+
+runs/babysitter-no-repeat-compact/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "babysitter-no-repeat-compact",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/babysitter-pane/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "babysitter-pane",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/claude-bridge-low-latency/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "claude-bridge-low-latency",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/claude-bridge-low-latency/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "claude-bridge-low-latency",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"independent-review",
+     7    │ - ····"live-runtime"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"independent-review",·"live-runtime"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/claude-bridge-visible-tui/artifacts/regression-harvest/harvest.json format ━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     7  7 │     "created_at": "2026-07-26T04:46:33Z",
+     8  8 │     "markers": {
+     9    │ - ····"enabled":·[
+    10    │ - ······"yes"
+    11    │ - ····],
+    12    │ - ····"id":·[
+    13    │ - ······"claude-channel-false-delivery-after-session-transition"
+    14    │ - ····],
+        9 │ + ····"enabled":·["yes"],
+       10 │ + ····"id":·["claude-channel-false-delivery-after-session-transition"],
+    15 11 │       "symptom": [
+    16 12 │         "Claude misses bridge rulings while the ledger reports delivery."
+    17 13 │       ],
+    18    │ - ····"guard":·[
+    19    │ - ······"tests/loop/bridge.test.ts"
+    20    │ - ····]
+       14 │ + ····"guard":·["tests/loop/bridge.test.ts"]
+    21 15 │     },
+    22 16 │     "symptom_lines": [
+    23 17 │       "Claude misses bridge rulings while the ledger reports delivery."
+    24 18 │     ],
+    25    │ - ··"test_lines":·[
+    26    │ - ····"tests/loop/bridge.test.ts"
+    27    │ - ··]
+       19 │ + ··"test_lines":·["tests/loop/bridge.test.ts"]
+    28 20 │   }
+    29 21 │
+
+
+runs/claude-bridge-visible-tui/artifacts/unit/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-26T04:40:39Z",
+    10 10 │     "artifact": "runs/claude-bridge-visible-tui/artifacts/unit/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test",
+    14    │ - ····"tests/loop/bridge.test.ts"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"test",·"tests/loop/bridge.test.ts"]
+    16 12 │   }
+    17 13 │
+
+
+runs/claude-bridge-visible-tui/artifacts/unit/attempt-002.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-26T04:46:25Z",
+    10 10 │     "artifact": "runs/claude-bridge-visible-tui/artifacts/unit/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test",
+    14    │ - ····"tests/loop/bridge.test.ts"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"test",·"tests/loop/bridge.test.ts"]
+    16 12 │   }
+    17 13 │
+
+
+runs/claude-bridge-visible-tui/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "claude-bridge-visible-tui",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/claude-bridge-visible-tui/artifacts/unit/eval-before-attempt-002.json format ━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     4  4 │     "evaluator": "live Claude and Codex peer agents",
+     5  5 │     "checks": {
+     6    │ - ····"focused_tests":·{"passed":·56,·"failed":·0},
+     7    │ - ····"build":·{"passed":·true},
+     8    │ - ····"diff_check":·{"passed":·true},
+     9    │ - ····"live_inbound":·{"passed":·true,·"request_id":·"6054874c-2365-4a03-8572-8c74e4952a82",·"reason":·"sent·to·claude·tmux·pane"},
+    10    │ - ····"live_outbound":·{"passed":·true,·"message_id":·"bfcd8df0-7a04-439e-8e8a-40335825d6cf",·"reason":·"submitted·through·visible·codex·tmux·pane"},
+    11    │ - ····"pending":·{"claude":·0,·"codex":·0}
+        6 │ + ····"focused_tests":·{·"passed":·56,·"failed":·0·},
+        7 │ + ····"build":·{·"passed":·true·},
+        8 │ + ····"diff_check":·{·"passed":·true·},
+        9 │ + ····"live_inbound":·{
+       10 │ + ······"passed":·true,
+       11 │ + ······"request_id":·"6054874c-2365-4a03-8572-8c74e4952a82",
+       12 │ + ······"reason":·"sent·to·claude·tmux·pane"
+       13 │ + ····},
+       14 │ + ····"live_outbound":·{
+       15 │ + ······"passed":·true,
+       16 │ + ······"message_id":·"bfcd8df0-7a04-439e-8e8a-40335825d6cf",
+       17 │ + ······"reason":·"submitted·through·visible·codex·tmux·pane"
+       18 │ + ····},
+       19 │ + ····"pending":·{·"claude":·0,·"codex":·0·}
+    12 20 │     },
+    13 21 │     "baseline": {
+
+
+runs/claude-bridge-visible-tui/artifacts/unit/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-26T04:46:25Z",
+    10 10 │     "artifact": "runs/claude-bridge-visible-tui/artifacts/unit/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test",
+    14    │ - ····"tests/loop/bridge.test.ts"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"test",·"tests/loop/bridge.test.ts"]
+    16 12 │   }
+    17 13 │
+
+
+runs/claude-bridge-visible-tui/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "claude-bridge-visible-tui",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/codex-bridge-visible-tui/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "codex-bridge-visible-tui",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/codex-bridge-visible-tui/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "codex-bridge-visible-tui",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/delegation-grammar-widening/artifacts/unit/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-27T02:06:43Z",
+    10 10 │     "artifact": "runs/delegation-grammar-widening/artifacts/unit/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test",
+    14    │ - ····"tests/loop/delegation-policy.test.ts"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"test",·"tests/loop/delegation-policy.test.ts"]
+    16 12 │   }
+    17 13 │
+
+
+runs/delegation-grammar-widening/artifacts/unit/attempt-002.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-27T02:16:25Z",
+    10 10 │     "artifact": "runs/delegation-grammar-widening/artifacts/unit/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test",
+    14    │ - ····"tests/loop/delegation-policy.test.ts"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"test",·"tests/loop/delegation-policy.test.ts"]
+    16 12 │   }
+    17 13 │
+
+
+runs/delegation-grammar-widening/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "delegation-grammar-widening",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 191.
+Checked 278 files in 124ms. No fixes applied.
+Found 210 errors.
+Found 1 warning.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+
+
+error: script "check" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-07-27T05:46:16Z

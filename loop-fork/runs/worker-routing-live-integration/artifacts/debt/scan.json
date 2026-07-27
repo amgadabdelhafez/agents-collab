@@ -1,0 +1,30 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "scanned_at": "2026-07-27T06:16:15Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-27T06:16:15Z",
+      "task_id": "worker-routing-live-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/delegation-policy.ts",
+      "before_loc": 1097,
+      "after_loc": 1291,
+      "delta_loc": 194,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-27T06:16:15Z",
+      "task_id": "worker-routing-live-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-tools.ts",
+      "before_loc": 1752,
+      "after_loc": 1904,
+      "delta_loc": 152,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

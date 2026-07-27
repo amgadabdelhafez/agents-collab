@@ -1,0 +1,38 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "status": "fail",
+  "required": [
+    "unit",
+    "integration",
+    "smoke"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-live-integration/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/unit/attempt-001.json"
+    },
+    "integration": {
+      "status": "fail",
+      "artifact": "runs/worker-routing-live-integration/artifacts/integration/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/integration/attempt-001.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/integration/attempt-001.json"
+    },
+    "smoke": {
+      "status": "fail",
+      "artifact": "runs/worker-routing-live-integration/artifacts/smoke/verify.log",
+      "reason": "command exited 127",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/smoke/attempt-001.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/smoke/attempt-001.json"
+    }
+  }
+}

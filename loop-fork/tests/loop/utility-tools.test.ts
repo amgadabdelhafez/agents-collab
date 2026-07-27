@@ -112,9 +112,28 @@ test("publishes provider-agnostic definitions for bounded tools", () => {
     "read_file",
     "git_status",
     "git_diff",
+    "git_inspect",
     "run_check",
     "propose_patch",
   ]);
+});
+
+test("exposes and enforces only the tools allowed for an exact request", async () => {
+  await withRepo(async (root) => {
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["read_file"],
+      artifactDir: ".utility-artifacts",
+      readScopes: ["src/hello.ts"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(broker.definitions.map((tool) => tool.function.name)).toEqual([
+      "read_file",
+    ]);
+    expect(
+      await broker.execute({ arguments: {}, name: "git_status" })
+    ).toMatchObject({ error: { code: "tool_denied" }, ok: false });
+  });
 });
 
 test("reads and searches only declared non-secret scope", async () => {
@@ -143,6 +162,107 @@ test("reads and searches only declared non-secret scope", async () => {
       name: "read_file",
     });
     expect(secret.error?.code).toBe("path_denied");
+  });
+});
+
+test("reads a bounded range from a regular file larger than 128 KiB", async () => {
+  await withRepo(async (root) => {
+    await writeFile(
+      join(root, "src", "large.md"),
+      `first line\n${"x".repeat(135_000)}\nlast line\n`
+    );
+    const broker = await brokerFor(root);
+    const bounded = await broker.execute({
+      arguments: { endLine: 1, path: "src/large.md", startLine: 1 },
+      name: "read_file",
+    });
+    expect(bounded).toMatchObject({
+      data: { content: "first line", endLine: 1, startLine: 1 },
+      ok: true,
+    });
+    const unbounded = await broker.execute({
+      arguments: { path: "src/large.md" },
+      name: "read_file",
+    });
+    expect(unbounded).toMatchObject({
+      error: { code: "output_limit" },
+      ok: false,
+    });
+  });
+});
+
+test("search rejects matching output larger than the broker output budget", async () => {
+  await withRepo(async (root) => {
+    await writeFile(
+      join(root, "src", "large-match.txt"),
+      `needle ${"x".repeat(200_000)}\n`
+    );
+    const broker = await brokerFor(root);
+    expect(
+      await broker.execute({
+        arguments: { paths: ["src/large-match.txt"], query: "needle" },
+        name: "search_repo",
+      })
+    ).toMatchObject({ error: { code: "output_limit" }, ok: false });
+  });
+});
+
+test("git_inspect runs only literal bounded read-only metadata commands", async () => {
+  await withRepo(async (root) => {
+    const requests: CommandRequest[] = [];
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["git_inspect"],
+        artifactDir: ".utility-artifacts",
+        readScopes: ["."],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: (request) => {
+          requests.push(request);
+          return Promise.resolve({ exitCode: 0, stderr: "", stdout: "ok" });
+        },
+      }
+    );
+
+    for (const args of [
+      { action: "resolve-ref", ref: "origin/main" },
+      { action: "log", limit: 3, ref: "origin/main" },
+      { action: "show-stat", includeMetadata: false, ref: "53a8d5dd" },
+      { action: "branch-list", pattern: "*loop51*" },
+      { action: "object-type", ref: "53a8d5dd" },
+    ]) {
+      expect(
+        await broker.execute({ arguments: args, name: "git_inspect" })
+      ).toMatchObject({ ok: true });
+    }
+
+    expect(requests.map((request) => request.argv.slice(0, 3))).toEqual([
+      ["git", "rev-parse", "--verify"],
+      ["git", "log", "--no-decorate"],
+      ["git", "show", "--no-ext-diff"],
+      ["git", "branch", "--all"],
+      ["git", "cat-file", "-t"],
+    ]);
+    expect(requests[1]?.argv).toContain("-n");
+    expect(requests[1]?.argv).toContain("3");
+    expect(requests[2]?.argv).toContain("--stat");
+    expect(requests[2]?.argv).toContain("--format=");
+    expect(requests[2]?.argv).toContain(":(exclude,glob,icase)**/.claude/**");
+    expect(requests.every((request) => request.env.CI === "1")).toBe(true);
+
+    for (const args of [
+      { action: "resolve-ref", ref: "--exec-path" },
+      { action: "log", limit: 1000, ref: "origin/main" },
+      { action: "branch-list", pattern: "$(touch /tmp/nope)" },
+      { action: "show-stat", extra: true, ref: "53a8d5dd" },
+    ]) {
+      expect(
+        await broker.execute({ arguments: args, name: "git_inspect" })
+      ).toMatchObject({ error: { code: "invalid_arguments" }, ok: false });
+    }
+    expect(requests).toHaveLength(5);
   });
 });
 

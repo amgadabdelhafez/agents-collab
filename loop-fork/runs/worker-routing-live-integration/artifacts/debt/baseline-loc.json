@@ -1,0 +1,315 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "created_at": "2026-07-27T05:39:28Z",
+  "files": {
+    "src/claude-loop.ts": {
+      "loc": 14
+    },
+    "src/cli.ts": {
+      "loc": 237
+    },
+    "src/codex-loop.ts": {
+      "loc": 14
+    },
+    "src/copilot-loop.ts": {
+      "loc": 10
+    },
+    "src/cursor-loop.ts": {
+      "loc": 10
+    },
+    "src/gemini-loop.ts": {
+      "loc": 10
+    },
+    "src/install.ts": {
+      "loc": 154
+    },
+    "src/loop/agents.ts": {
+      "loc": 26
+    },
+    "src/loop/args.ts": {
+      "loc": 622
+    },
+    "src/loop/bridge-claude-registration.ts": {
+      "loc": 88
+    },
+    "src/loop/bridge-config.ts": {
+      "loc": 222
+    },
+    "src/loop/bridge-constants.ts": {
+      "loc": 4
+    },
+    "src/loop/bridge-dispatch.ts": {
+      "loc": 116
+    },
+    "src/loop/bridge-guidance.ts": {
+      "loc": 45
+    },
+    "src/loop/bridge-message-format.ts": {
+      "loc": 41
+    },
+    "src/loop/bridge-runtime.ts": {
+      "loc": 1035
+    },
+    "src/loop/bridge-store.ts": {
+      "loc": 645
+    },
+    "src/loop/bridge-utility.ts": {
+      "loc": 382
+    },
+    "src/loop/bridge.ts": {
+      "loc": 791
+    },
+    "src/loop/claude-sdk-server.ts": {
+      "loc": 689
+    },
+    "src/loop/codex-app-server.ts": {
+      "loc": 1490
+    },
+    "src/loop/codex-home.ts": {
+      "loc": 90
+    },
+    "src/loop/codex-render.ts": {
+      "loc": 231
+    },
+    "src/loop/codex-tmux-proxy.ts": {
+      "loc": 810
+    },
+    "src/loop/constants.ts": {
+      "loc": 150
+    },
+    "src/loop/delegation-policy.ts": {
+      "loc": 1097
+    },
+    "src/loop/deps.ts": {
+      "loc": 17
+    },
+    "src/loop/git.ts": {
+      "loc": 78
+    },
+    "src/loop/governess-context.ts": {
+      "loc": 83
+    },
+    "src/loop/governess-cycle.ts": {
+      "loc": 90
+    },
+    "src/loop/governess-detect.ts": {
+      "loc": 100
+    },
+    "src/loop/governess-exit.ts": {
+      "loc": 290
+    },
+    "src/loop/governess-handoff.ts": {
+      "loc": 206
+    },
+    "src/loop/governess-journal.ts": {
+      "loc": 701
+    },
+    "src/loop/governess-llm.ts": {
+      "loc": 965
+    },
+    "src/loop/governess-notify.ts": {
+      "loc": 47
+    },
+    "src/loop/governess-policy.ts": {
+      "loc": 108
+    },
+    "src/loop/governess-recover.ts": {
+      "loc": 154
+    },
+    "src/loop/governess-replay.ts": {
+      "loc": 417
+    },
+    "src/loop/governess-runtime.ts": {
+      "loc": 166
+    },
+    "src/loop/governess-usage-limits.ts": {
+      "loc": 727
+    },
+    "src/loop/governess-usage.ts": {
+      "loc": 860
+    },
+    "src/loop/governess.ts": {
+      "loc": 6501
+    },
+    "src/loop/hooks/emit.ts": {
+      "loc": 425
+    },
+    "src/loop/hooks/settings.ts": {
+      "loc": 45
+    },
+    "src/loop/iteration.ts": {
+      "loc": 85
+    },
+    "src/loop/launch.ts": {
+      "loc": 43
+    },
+    "src/loop/legacy-governess-compat.ts": {
+      "loc": 60
+    },
+    "src/loop/main.ts": {
+      "loc": 11
+    },
+    "src/loop/openai-compatible.ts": {
+      "loc": 700
+    },
+    "src/loop/paired-loop.ts": {
+      "loc": 595
+    },
+    "src/loop/paired-options.ts": {
+      "loc": 248
+    },
+    "src/loop/panel.ts": {
+      "loc": 1336
+    },
+    "src/loop/ports.ts": {
+      "loc": 44
+    },
+    "src/loop/pr.ts": {
+      "loc": 36
+    },
+    "src/loop/process.ts": {
+      "loc": 26
+    },
+    "src/loop/prompts.ts": {
+      "loc": 118
+    },
+    "src/loop/review.ts": {
+      "loc": 384
+    },
+    "src/loop/run-state.ts": {
+      "loc": 850
+    },
+    "src/loop/runner.ts": {
+      "loc": 774
+    },
+    "src/loop/single-loop.ts": {
+      "loc": 109
+    },
+    "src/loop/task-router.ts": {
+      "loc": 433
+    },
+    "src/loop/task.ts": {
+      "loc": 104
+    },
+    "src/loop/tmux.ts": {
+      "loc": 1999
+    },
+    "src/loop/types.ts": {
+      "loc": 384
+    },
+    "src/loop/update-deps.ts": {
+      "loc": 13
+    },
+    "src/loop/update.ts": {
+      "loc": 395
+    },
+    "src/loop/utility-observability.ts": {
+      "loc": 455
+    },
+    "src/loop/utility-path-policy.ts": {
+      "loc": 132
+    },
+    "src/loop/utility-runtime.ts": {
+      "loc": 1522
+    },
+    "src/loop/utility-store.ts": {
+      "loc": 698
+    },
+    "src/loop/utility-tools.ts": {
+      "loc": 1752
+    },
+    "src/loop/utility-workspace.ts": {
+      "loc": 251
+    },
+    "src/loop/utils.ts": {
+      "loc": 21
+    },
+    "src/loop/worktree.ts": {
+      "loc": 404
+    },
+    "src/loop/ws-client.ts": {
+      "loc": 254
+    },
+    "v2/kit/scripts/activate.sh": {
+      "loc": 49
+    },
+    "v2/kit/scripts/audit.sh": {
+      "loc": 204
+    },
+    "v2/kit/scripts/checkpoint.sh": {
+      "loc": 90
+    },
+    "v2/kit/scripts/coordination.sh": {
+      "loc": 144
+    },
+    "v2/kit/scripts/debt-scan.sh": {
+      "loc": 186
+    },
+    "v2/kit/scripts/debt-snapshot.sh": {
+      "loc": 115
+    },
+    "v2/kit/scripts/done.sh": {
+      "loc": 144
+    },
+    "v2/kit/scripts/eval-dim.sh": {
+      "loc": 175
+    },
+    "v2/kit/scripts/loop-prompt.sh": {
+      "loc": 198
+    },
+    "v2/kit/scripts/park-idea.sh": {
+      "loc": 117
+    },
+    "v2/kit/scripts/park.sh": {
+      "loc": 50
+    },
+    "v2/kit/scripts/plan-save.sh": {
+      "loc": 71
+    },
+    "v2/kit/scripts/post-task.sh": {
+      "loc": 29
+    },
+    "v2/kit/scripts/pre-task.sh": {
+      "loc": 17
+    },
+    "v2/kit/scripts/preflight.sh": {
+      "loc": 205
+    },
+    "v2/kit/scripts/promote.sh": {
+      "loc": 166
+    },
+    "v2/kit/scripts/regression-harvest.sh": {
+      "loc": 204
+    },
+    "v2/kit/scripts/research.sh": {
+      "loc": 210
+    },
+    "v2/kit/scripts/resume.sh": {
+      "loc": 33
+    },
+    "v2/kit/scripts/retrospect.sh": {
+      "loc": 1392
+    },
+    "v2/kit/scripts/session-export.sh": {
+      "loc": 359
+    },
+    "v2/kit/scripts/state-check.sh": {
+      "loc": 132
+    },
+    "v2/kit/scripts/stop-gate.sh": {
+      "loc": 101
+    },
+    "v2/kit/scripts/task.sh": {
+      "loc": 215
+    },
+    "v2/kit/scripts/tasks-index.sh": {
+      "loc": 203
+    },
+    "v2/kit/scripts/tracker.sh": {
+      "loc": 265
+    },
+    "v2/kit/scripts/verify.sh": {
+      "loc": 348
+    }
+  }
+}

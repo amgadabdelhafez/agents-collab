@@ -1,0 +1,15 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "dimension": "integration",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-07-27T05:45:01Z",
+  "ended_at": "2026-07-27T05:45:20Z",
+  "artifact": "runs/worker-routing-live-integration/artifacts/integration/attempt-001.log",
+  "command": [
+    "bun",
+    "test"
+  ]
+}

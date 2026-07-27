@@ -26,6 +26,7 @@ import {
   renderUtilityPane,
   resolveUtilityRuntimeConfig,
   runUtilityWorker,
+  utilityToolsForExecutionProfile,
 } from "../../src/loop/utility-runtime";
 import {
   activateUtilityEpoch,
@@ -149,6 +150,20 @@ test("worker concurrency is configurable within a bounded range", () => {
     resolveUtilityRuntimeConfig({ LOOP_UTILITY_MAX_CONCURRENCY: "9" })
       .maxConcurrentJobs
   ).toBe(2);
+});
+
+test("auto execution profiles expose only satisfiable broker tools", () => {
+  expect(utilityToolsForExecutionProfile("file-read")).toEqual(["read_file"]);
+  expect(utilityToolsForExecutionProfile("search")).toEqual(["search_repo"]);
+  expect(utilityToolsForExecutionProfile("git-status")).toEqual(["git_status"]);
+  expect(utilityToolsForExecutionProfile("git-diff")).toEqual(["git_diff"]);
+  expect(utilityToolsForExecutionProfile("git-inspect")).toEqual([
+    "git_inspect",
+  ]);
+  expect(utilityToolsForExecutionProfile(undefined)).toBeUndefined();
+  expect(utilityToolsForExecutionProfile("future-profile")).toEqual([]);
+  expect(utilityToolsForExecutionProfile("__proto__")).toEqual([]);
+  expect(utilityToolsForExecutionProfile(null)).toEqual([]);
 });
 
 test("a mode-0600 key file enables the tier without exporting the secret", () => {
@@ -436,7 +451,8 @@ test("peer-routed reviews preserve the requester and ask the peer to act", async
     authority: {},
     id: "peer-review-job",
     kind: "review",
-    objective: "Review docs-only commit abc123 and decide whether it is banked.",
+    objective:
+      "Review docs-only commit abc123 and decide whether it is banked.",
     readScope: ["docs/result.md"],
     requester: "codex",
     requiredCapabilities: ["inspect"],
@@ -1067,9 +1083,7 @@ test("worker pane is a colored output-only request, tool, and response stream", 
     expect(compact.split("\n").length).toBeGreaterThanOrEqual(5);
     expect(compact.split("\n").length).toBeLessThanOrEqual(10);
     expect(
-      compact
-        .split("\n")
-        .every((line) => visiblePane(line).length <= 58)
+      compact.split("\n").every((line) => visiblePane(line).length <= 58)
     ).toBe(true);
     expect(compact).toContain("CODEX→WORKER inspect-");
     expect(compact).toContain("WORKER TOOL inspect-");

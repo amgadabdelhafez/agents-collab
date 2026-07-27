@@ -1,0 +1,43 @@
+Captured 2026-07-26 22:40 PDT
+
+source main:
+39e479b770728f7b3edbc0149fa1f6e8abe755d4 merge: widen delegation classifier with fail-closed hardening
+
+running panes before integration deploy:
+0 27090 claude /Users/amgad/harvto
+1 27092 codex-aarch64-a /Users/amgad/harvto
+2 32762 loop /Users/amgad/harvto
+3 27542 loop /Users/amgad/harvto
+
+running governess executable:
+pid 32762 started 2026-07-26 22:09:53 PDT
+lsof text inode 54279221
+
+installed executable:
+mtime 2026-07-26 22:25:20 PDT
+inode 54411913
+sha256 e9d35f5411ff3040f67c759d35fde624ec3e62a4c921a90e53087c7af40f9ea0
+
+Finding: the installed executable was replaced after the current-main router
+merge, but the governess process was not respawned. It is still executing the
+older inode loaded at 22:09. The installed file contains widened-router markers
+`grep-modifier-unsupported`, `git-diff-magic-pathspec`, and
+`unsupported-rg-option`; the running inode predates that replacement.
+
+delegation journal baseline (353 records):
+160 tool-not-enforceable
+144 compound-or-unsafe-command
+16 route-task
+12 small-context-read
+10 governed-or-unsafe-path
+6 command-not-in-delegation-grammar
+3 source-slice
+2 large-read
+
+utility files:
+57 jobs.jsonl records
+5 usage.jsonl records
+260 tool-events.jsonl records
+
+Only five automatic operations reached the worker: three source slices and two
+large reads. This is an eligibility outcome, not a five-request capacity limit.

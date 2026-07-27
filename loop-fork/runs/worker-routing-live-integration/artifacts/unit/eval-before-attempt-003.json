@@ -1,0 +1,87 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "status": "fail",
+  "verdict": "fail",
+  "evaluated_at": "2026-07-27T06:06:54Z",
+  "evaluator": "independent Codex evaluator",
+  "required": [
+    "unit",
+    "integration",
+    "smoke"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "fail",
+      "artifact": "runs/worker-routing-live-integration/artifacts/unit/verify.log",
+      "reason": "The checked-in focused suite passes 282/282, but independent boundary probes found an oversized search result after the shared file ceiling increase and a fail-open malformed execution profile.",
+      "method": "verify.sh plus independent boundary probes",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/unit/attempt-002.json"
+    },
+    "integration": {
+      "status": "sign-off-granted",
+      "artifact": "runs/worker-routing-live-integration/artifacts/integration/verify.log",
+      "reason": "913 tests passed and the four failures are the exact unchanged baseline Codex app/config tests in paired-options.test.ts and runner.test.ts; they are not regressions from this delta.",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/integration/attempt-002.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/integration/attempt-002.json"
+    },
+    "smoke": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-live-integration/artifacts/smoke/verify.log",
+      "reason": "Attempt 004 passed targeted formatting and static checks, compiled build, and git diff --check.",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/worker-routing-live-integration/artifacts/smoke/attempt-004.log",
+      "latest_attempt_meta": "runs/worker-routing-live-integration/artifacts/smoke/attempt-004.json"
+    }
+  },
+  "findings": [
+    {
+      "priority": "P1",
+      "title": "The 1 MiB file ceiling also widens search output past the 64 KiB broker budget",
+      "file": "src/loop/utility-tools.ts",
+      "line": 1374,
+      "detail": "maxFileBytes is shared by read_file and search_repo. Raising it to 1 MiB lets search_repo read a newly eligible large single-line file and append that entire line without consulting maxOutputBytes. An independent probe against a 200006-byte matching line returned ok with a 200106-byte JSON result, even though maxOutputBytes remains 65536. This is a delta-created bounded-output regression; use a separate read_file input ceiling or enforce a cumulative byte budget on search matches."
+    },
+    {
+      "priority": "P1",
+      "title": "Malformed execution profiles fail open to the full broker tool set",
+      "file": "src/loop/utility-runtime.ts",
+      "line": 77,
+      "detail": "utilityToolsForExecutionProfile returns undefined for both an absent profile and any unexpected runtime string. runUtilityWorker interprets undefined as no allowedTools restriction, and UtilityToolBroker then exposes every tool. Utility requests are reloaded from JSONL without runtime validation of executionProfile, so a malformed persisted profile bypasses the new restriction instead of failing the job closed. Distinguish absent explicit routes from invalid values and reject or expose zero tools for an invalid profile."
+    }
+  ],
+  "acceptance": {
+    "git_metadata_parser_and_literal_argv": {
+      "status": "pass",
+      "evidence": "Supported refs, branch patterns, limits, command counts, pipelines, and chain segments are parsed by a narrow literal tokenizer; unsupported, mutating, network, mixed, option-like, and shell-expanded shapes remain direct. Broker actions construct fixed argv arrays and use the scrubbed, bounded command runner."
+    },
+    "execution_profile_restriction": {
+      "status": "fail",
+      "evidence": "Known auto-route profiles expose and enforce one matching tool, but an invalid persisted profile maps to unrestricted tools rather than failing closed."
+    },
+    "bounded_read": {
+      "status": "fail",
+      "evidence": "read_file itself accepts a 135 KiB file and rejects a selected range above 64 KiB, but the shared 1 MiB ceiling newly allows search_repo to return results over the same 64 KiB broker output budget."
+    },
+    "governess_usage_regressions": {
+      "status": "pass",
+      "evidence": "The transcript rebinding, transient pricing fallback, and per-provider 60-second quota retention implementations and regressions are preserved in the combined tree."
+    },
+    "worker_runtime_budget": {
+      "status": "pass",
+      "evidence": "The worker conversation remains bounded only by maxJobRuntimeMs; no maxSteps or tool-round ceiling was reintroduced."
+    },
+    "source_scope": {
+      "status": "pass",
+      "evidence": "Runtime changes are confined to the specified router, tool broker, worker execution-profile wiring, and governess usage integrations, plus their tests and Harness metadata."
+    }
+  },
+  "notes": [
+    "No deployment or live tmux operations were performed.",
+    "The four full-suite failures are baseline failures, not findings against this delta."
+  ]
+}

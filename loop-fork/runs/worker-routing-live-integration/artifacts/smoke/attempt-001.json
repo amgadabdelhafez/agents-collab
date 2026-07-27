@@ -1,0 +1,16 @@
+{
+  "task_id": "worker-routing-live-integration",
+  "dimension": "smoke",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 127,
+  "command_exit_code": 127,
+  "started_at": "2026-07-27T05:45:49Z",
+  "ended_at": "2026-07-27T05:45:49Z",
+  "artifact": "runs/worker-routing-live-integration/artifacts/smoke/attempt-001.log",
+  "command": [
+    "sh",
+    "-c",
+    "bun run check && bun run build && git diff --check"
+  ]
+}

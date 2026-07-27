@@ -1,0 +1,378 @@
+task_id: worker-routing-live-integration
+dimension: smoke
+attempt: 003
+started_at: 2026-07-27T05:46:34Z
+command: sh -c ./node_modules/.bin/biome\ check\ src/loop/governess.ts\ src/loop/governess-usage-limits.ts\ tests/loop/governess.test.ts\ tests/loop/governess-usage-limits.test.ts\ \&\&\ bun\ run\ build\ \&\&\ git\ diff\ --check
+--- output ---
+src/loop/governess.ts:1:1 assist/source/organizeImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × The imports and exports are not sorted.
+
+  > 1 │ import { createHash } from "node:crypto";
+      │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    2 │ import {
+    3 │   appendFileSync,
+
+  i Safe fix: Organize Imports (Biome)
+
+     119  119 │     updateRunManifest,
+     120  120 │   } from "./run-state";
+     121      │ - import·{
+     122      │ - ··readUtilityObservability,
+     123      │ - ··type·UtilityObservabilitySnapshot,
+     124      │ - }·from·"./utility-observability";
+     125      │ - import·type·{
+     126      │ - ··Agent,
+     127      │ - ··AgentLiveness,
+     128      │ - ··AgentLivenessState,
+     129      │ - ··AgentUsage,
+     130      │ - ··GovernessVerdict,
+     131      │ - ··HookEvent,
+     132      │ - ··JudgeOutcome,
+     133      │ - ··JudgeRequest,
+     134      │ - ··LocalLlmUsage,
+     135      │ - ··PaneLabelRequest,
+     136      │ - ··PaneLabelResult,
+     137      │ - ··RecoveryDecision,
+     138      │ - ··RecoveryHistoryEntry,
+     139      │ - ··RoleBalanceRequest,
+     140      │ - ··RoleBalanceResult,
+     141      │ - ··SummaryAgentContext,
+     142      │ - ··SummaryRequest,
+     143      │ - ··SummaryResult,
+     144      │ - ··UsageLimitWindow,
+     145      │ - ··WaitingRequest,
+     146      │ - ··WaitingResult,
+     147      │ - }·from·"./types";
+          121 │ + import·type·{
+          122 │ + ··Agent,
+          123 │ + ··AgentLiveness,
+          124 │ + ··AgentLivenessState,
+          125 │ + ··AgentUsage,
+          126 │ + ··GovernessVerdict,
+          127 │ + ··HookEvent,
+          128 │ + ··JudgeOutcome,
+          129 │ + ··JudgeRequest,
+          130 │ + ··LocalLlmUsage,
+          131 │ + ··PaneLabelRequest,
+          132 │ + ··PaneLabelResult,
+          133 │ + ··RecoveryDecision,
+          134 │ + ··RecoveryHistoryEntry,
+          135 │ + ··RoleBalanceRequest,
+          136 │ + ··RoleBalanceResult,
+          137 │ + ··SummaryAgentContext,
+          138 │ + ··SummaryRequest,
+          139 │ + ··SummaryResult,
+          140 │ + ··UsageLimitWindow,
+          141 │ + ··WaitingRequest,
+          142 │ + ··WaitingResult,
+          143 │ + }·from·"./types";
+          144 │ + import·{
+          145 │ + ··readUtilityObservability,
+          146 │ + ··type·UtilityObservabilitySnapshot,
+          147 │ + }·from·"./utility-observability";
+     148  148 │   import { processPendingUtilityRoutes } from "./utility-runtime";
+     149  149 │   import { activateUtilityEpoch } from "./utility-store";
+
+
+src/loop/governess.ts:690:12 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    688 │ const isSessionLimited = (paneText: string): boolean =>
+    689 │   paneText
+  > 690 │     .split(/\r?\n/)
+        │            ^^^^^^^
+    691 │     .filter((line) => line.trim().length > 0)
+    692 │     .slice(-SESSION_LIMIT_TAIL_LINES)
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:52:18 lint/suspicious/noControlCharactersInRegex ━━━━━━━━━━━━━━━━━━━━━━
+
+  × Unexpected control character in a regular expression.
+
+    50 │ const IDLE_MS = 60_000;
+    51 │ const START_MS = 1_000_000;
+  > 52 │ const ANSI_RE = /\x1b\[[0-9;]*m/g;
+       │                  ^^^^
+    53 │
+    54 │ test("governess observes agents through persisted post-split pane targets", () => {
+
+  i Control characters are unusual and potentially incorrect inputs, so they are disallowed.
+
+
+tests/loop/governess.test.ts:249:1 assist/source/useSortedInterfaceMembers  FIXABLE  ━━━━━━━━━━━━━━━
+
+  × The interface members are not sorted by key.
+
+    247 │ });
+    248 │
+  > 249 │ interface Spies {
+        │ ^^^^^^^^^^^^^^^^^
+  > 250 │   bridgeMessages: {
+         ...
+  > 267 │   texts: string[];
+  > 268 │ }
+        │ ^
+    269 │
+    270 │ const makeDeps = (
+
+  i Safe fix: Sort the interface members by key.
+
+     255  255 │       target: Agent;
+     256  256 │     }[];
+     257      │ - ··judged:·number;
+     258      │ - ··judgeRequests:·JudgeRequest[];
+     259      │ - ··logs:·unknown[];
+     260      │ - ··notifies:·EscalationEvent[];
+     261      │ - ··paneBorderInits:·string[];
+     262      │ - ··governessPaneIdentities:·[string,·string][];
+          257 │ + ··governessPaneIdentities:·[string,·string][];
+          258 │ + ··judged:·number;
+          259 │ + ··judgeRequests:·JudgeRequest[];
+          260 │ + ··logs:·unknown[];
+          261 │ + ··notifies:·EscalationEvent[];
+          262 │ + ··paneBorderInits:·string[];
+     263  263 │     paneLabels: [string, string][];
+     264  264 │     respawns: string[];
+
+
+tests/loop/governess.test.ts:437:43 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    435 │   expect(spies.sends).toHaveLength(0);
+    436 │   expect(spies.respawns).toHaveLength(0);
+  > 437 │   expect(stripAnsi(result.board)).toMatch(/m\s+m\s+off/);
+        │                                           ^^^^^^^^^^^^^
+    438 │   expect(stripAnsi(result.board)).not.toContain("qwen");
+    439 │ });
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:484:32 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    482 │   ]);
+    483 │   expect(spies.sends).toHaveLength(0);
+  > 484 │   expect(visibleBoard).toMatch(/qwen\s+qwen\s+ok\s+1\s+150\s+120\s+80\s+30/);
+        │                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    485 │   expect(visibleBoard).toMatch(/gemma\s+gemma\s+ok\s+1\s+90\s+70\s+40\s+20/);
+    486 │   expect(visibleBoard).toContain("● working");
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:485:32 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    483 │   expect(spies.sends).toHaveLength(0);
+    484 │   expect(visibleBoard).toMatch(/qwen\s+qwen\s+ok\s+1\s+150\s+120\s+80\s+30/);
+  > 485 │   expect(visibleBoard).toMatch(/gemma\s+gemma\s+ok\s+1\s+90\s+70\s+40\s+20/);
+        │                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    486 │   expect(visibleBoard).toContain("● working");
+    487 │ });
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:548:32 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    546 │   expect(spies.judgeRequests.map((req) => req.model)).toEqual(["gemma"]);
+    547 │   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
+  > 548 │   expect(visibleBoard).toMatch(/gemma\s+gemma\s+ok\s+1\s+120\s+100\s+12\s+20/);
+        │                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    549 │   expect(visibleBoard).not.toContain("judge round-robin");
+    550 │   expect(visibleBoard).not.toContain("llm params");
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:645:47 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    643 │   expect(stripAnsi(result.board)).not.toContain("roles · initial");
+    644 │   expect(stripAnsi(result.board)).toContain("msgs claude 1 codex 0");
+  > 645 │   expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
+        │                                               ^^^^^^^^^^^^
+    646 │ });
+    647 │
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:762:47 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    760 │   expect(stripAnsi(result.board)).not.toContain("roles · initial");
+    761 │   expect(stripAnsi(result.board)).toContain("msgs codex 1 claude 1");
+  > 762 │   expect(stripAnsi(result.board)).not.toMatch(/\n roles ·/);
+        │                                               ^^^^^^^^^^^^
+    763 │ });
+    764 │
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1346:5 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1344 │   );
+    1345 │   expect(visibleBoard).toMatch(
+  > 1346 │     /Final proof checkpoint\. Delta notes are ready\. · codex \d+s: Stop/
+         │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1347 │   );
+    1348 │   expect(visibleBoard).not.toContain("agent latest");
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1602:5 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1601 │   expect(visibleBoard).toMatch(
+  > 1602 │     /AGENT\s+STATE\s+AGE\s+MODEL\s+RUN\s+CONTEXT\/CMP\s+LIMITS\/RESET\s+COST\/RATE\s+TOKENS I\/C\/O\s+ACTIVITY\s+MSGS\/TOOLS/
+         │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1603 │   );
+    1604 │   expect(visibleBoard.match(/^ AGENT/gm) ?? []).toHaveLength(1);
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1621:32 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1619 │   expect(visibleBoard).toContain("COST/RATE");
+    1620 │   expect(visibleBoard).toContain("LIMITS/RESET");
+  > 1621 │   expect(visibleBoard).toMatch(/^ claude.*19 tx12 th3 tl4/m);
+         │                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1622 │   const boardLines = visibleBoard.split("\n");
+    1623 │   const agentHeader = boardLines.find((line) => line.startsWith(" AGENT"));
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1636:5 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1634 │   expect(visibleBoard).not.toContain("msgs claude 0 codex 0");
+    1635 │   expect(visibleBoard).toMatch(
+  > 1636 │     /LLM\s+MODEL\s+STAT\s+CALLS\s+TOK\s+IN\s+CACHE\s+OUT\s+HIT\s+SLOTS\s+MEM\s+ARCH\s+DT\s+QNT\s+MOE\s+BATCH/
+         │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1637 │   );
+    1638 │   expect(visibleBoard).toMatch(
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1639:5 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1637 │   );
+    1638 │   expect(visibleBoard).toMatch(
+  > 1639 │     /m\s+m\s+ok\s+3\s+2k\s+900\s+500\s+100\s+20%\s+10\/10\s+1\.82GB/
+         │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1640 │   );
+    1641 │   expect(visibleBoard).toContain("40L h2048 a16 kv2x256 ctx262k f/4");
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1660:32 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1658 │   expect(visibleBoard).toContain("$42");
+    1659 │   expect(visibleBoard).toContain("S70/W24");
+  > 1660 │   expect(visibleBoard).toMatch(/claude\s+● thinking\s+(—|0s)\s+gpt-5\.5/);
+         │                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1661 │   expect(visibleBoard).toMatch(/S70\/W24 ·/);
+    1662 │   expect(visibleBoard).toContain("Σ est $24.00");
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1661:32 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1659 │   expect(visibleBoard).toContain("S70/W24");
+    1660 │   expect(visibleBoard).toMatch(/claude\s+● thinking\s+(—|0s)\s+gpt-5\.5/);
+  > 1661 │   expect(visibleBoard).toMatch(/S70\/W24 ·/);
+         │                                ^^^^^^^^^^^^
+    1662 │   expect(visibleBoard).toContain("Σ est $24.00");
+    1663 │   expect(visibleBoard).toMatch(/\$12\.00\/\$42\s+13k i1k c4k o8k/);
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1663:32 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1661 │   expect(visibleBoard).toMatch(/S70\/W24 ·/);
+    1662 │   expect(visibleBoard).toContain("Σ est $24.00");
+  > 1663 │   expect(visibleBoard).toMatch(/\$12\.00\/\$42\s+13k i1k c4k o8k/);
+         │                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1664 │   expect(result.board).toContain("\x1b[36mm");
+    1665 │   expect(result.board).toContain("\x1b[33m2k");
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1846:7 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1844 │     expect(board).not.toContain("LOWER");
+    1845 │     expect(board).toMatch(
+  > 1846 │       /worker\s+● idle\s+—\s+glm-5\.2\s+1ok\/1fail\s+—\s+—\s+\$0\.0123\/—\s+7k i5k c2k o2k\s+2j 4c 3tl\s+latest-f fail/
+         │       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1847 │     );
+    1848 │     const workerRow = board
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+tests/loop/governess.test.ts:1937:27 lint/performance/useTopLevelRegex ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+
+    1935 │     );
+    1936 │     const board = stripAnsi(result.board);
+  > 1937 │     expect(board).toMatch(/worker\s+● queued.*routed-j route/);
+         │                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1938 │     expect(board).toContain(
+    1939 │       "bridge worker msgs · in 1 latest — · out 0 latest — · pending 1"
+
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 45.
+Checked 4 files in 72ms. No fixes applied.
+Found 65 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+
+
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-07-27T05:46:34Z

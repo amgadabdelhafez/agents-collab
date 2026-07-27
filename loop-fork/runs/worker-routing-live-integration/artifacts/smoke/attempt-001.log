@@ -1,0 +1,14 @@
+task_id: worker-routing-live-integration
+dimension: smoke
+attempt: 001
+started_at: 2026-07-27T05:45:49Z
+command: sh -c bun\ run\ check\ \&\&\ bun\ run\ build\ \&\&\ git\ diff\ --check
+--- output ---
+$ ultracite check
+/bin/bash: ultracite: command not found
+error: script "check" exited with code 127
+
+--- result ---
+command_exit_code: 127
+exit_code: 127
+ended_at: 2026-07-27T05:45:49Z
