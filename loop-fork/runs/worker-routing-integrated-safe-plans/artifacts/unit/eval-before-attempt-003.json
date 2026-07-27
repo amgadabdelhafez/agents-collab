@@ -1,0 +1,30 @@
+{
+  "task_id": "worker-routing-integrated-safe-plans",
+  "status": "fail",
+  "required": [
+    "unit",
+    "independent-review",
+    "live-runtime"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-integrated-safe-plans/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/worker-routing-integrated-safe-plans/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/worker-routing-integrated-safe-plans/artifacts/unit/attempt-002.json"
+    },
+    "independent-review": {
+      "status": "fail",
+      "artifact": "runs/worker-routing-integrated-safe-plans/artifacts/independent-review/evaluation.md",
+      "reason": "read-plan grants a fixed cross-product of tools and scopes; narrow cat authority can invoke repository-wide git_inspect, and per-stage exact boundaries are not broker-enforced",
+      "method": "independent diff review, focused/full tests, build, and production broker replay",
+      "signed_off_by": "runaway_guard_evaluator"
+    },
+    "live-runtime": {
+      "status": "pending"
+    }
+  }
+}

@@ -192,6 +192,72 @@ test("linked exact read range resolves with the same verified workspace", () => 
   }
 });
 
+test("linked structured read plan preserves every stage boundary", () => {
+  const fixture = workspaceFixture();
+  const file = join(fixture.linkedA, "src", "sample.ts");
+  const directory = join(fixture.linkedA, "src");
+  try {
+    const request = createUtilityRouteRequest({
+      acceptanceCriteria: ["report both bounded stages"],
+      authority: {},
+      executionPlan: [
+        {
+          executionOutput: { lineLimit: 1, position: "head" },
+          executionProfile: "file-read",
+          executionRead: { endLine: 20, path: file, startLine: 1 },
+          objective: "Read the sample",
+          readScope: [file],
+        },
+        {
+          executionProfile: "file-list",
+          objective: "List source",
+          readScope: [directory],
+        },
+      ],
+      executionProfile: "read-plan",
+      id: "linked-plan",
+      idempotencyKey: "linked-plan",
+      kind: "inspect",
+      objective: "Run the bounded read plan",
+      readScope: [file, directory],
+      requester: "claude",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    });
+    const resolution = resolveUtilityRequestWorkspace(request, fixture.base);
+    expect(resolution).toMatchObject({
+      request: {
+        executionPlan: [
+          {
+            executionOutput: { lineLimit: 1, position: "head" },
+            executionProfile: "file-read",
+            executionRead: {
+              endLine: 20,
+              path: "src/sample.ts",
+              startLine: 1,
+            },
+            readScope: ["src/sample.ts"],
+          },
+          { executionProfile: "file-list", readScope: ["src"] },
+        ],
+      },
+      workspace: {
+        executionPlan: [
+          {
+            executionRead: { path: "src/sample.ts" },
+            readScope: ["src/sample.ts"],
+          },
+          { readScope: ["src"] },
+        ],
+        root: realpathSync(fixture.linkedA),
+      },
+    });
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
 test("active paths resolve only to the run root or a registered linked worktree", () => {
   const fixture = workspaceFixture();
   try {

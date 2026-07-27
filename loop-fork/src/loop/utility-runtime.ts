@@ -18,6 +18,7 @@ import {
   type UtilityCompactResult,
   type UtilityExecutionProfile,
   type UtilityOutputRequest,
+  type UtilityReadPlanStep,
   type UtilityReadRequest,
   type UtilityResolvedWorkspace,
   type UtilityRouteRequest,
@@ -46,6 +47,8 @@ import {
   createUtilityToolBroker,
   type GuardedPatchApplyResult,
   type UtilityArtifactReference,
+  type UtilityToolCall,
+  type UtilityToolDefinition,
   type UtilityToolName,
   type UtilityToolResult,
 } from "./utility-tools";
@@ -79,6 +82,9 @@ const TOOLS_BY_EXECUTION_PROFILE: Record<
   "git-diff": ["git_diff"],
   "git-inspect": ["git_inspect"],
   "git-status": ["git_status"],
+  // A read plan has no fixed tool set. Its broker exposes exactly one tool for
+  // the current structured step and advances only after that step succeeds.
+  "read-plan": [],
   search: ["search_repo"],
 };
 
@@ -899,6 +905,12 @@ type UtilityConversationProgress = Pick<
   "durationMs" | "modelCalls" | "toolCalls" | "toolRounds" | "usage"
 >;
 
+interface UtilityConversationBroker {
+  assertComplete?: () => void;
+  readonly definitions: readonly UtilityToolDefinition[];
+  execute(call: UtilityToolCall): Promise<UtilityToolResult>;
+}
+
 const recordToolResult = (
   name: string,
   result: UtilityToolResult,
@@ -951,7 +963,7 @@ const assertConversationEvidence = (
 };
 
 const executeUtilityToolCall = async (input: {
-  broker: Awaited<ReturnType<typeof createUtilityToolBroker>>;
+  broker: UtilityConversationBroker;
   call: OpenAICompatibleToolCall;
   jobId: string;
   toolEventFile: string;
@@ -975,7 +987,7 @@ const executeUtilityToolCall = async (input: {
 };
 
 const runUtilityConversation = async (input: {
-  broker: Awaited<ReturnType<typeof createUtilityToolBroker>>;
+  broker: UtilityConversationBroker;
   config: UtilityRuntimeConfig;
   jobId: string;
   onProgress: (progress: UtilityConversationProgress) => void;
@@ -1024,8 +1036,12 @@ const runUtilityConversation = async (input: {
         ? { provider: openRouterProvider(input.config) }
         : {}),
       temperature: 0.1,
-      toolChoice: "auto",
-      tools: input.broker.definitions,
+      ...(input.broker.definitions.length > 0
+        ? {
+            toolChoice: "auto" as const,
+            tools: [...input.broker.definitions],
+          }
+        : {}),
     });
     modelCalls += 1;
     usage = addUsage(usage, response.usage);
@@ -1036,6 +1052,7 @@ const runUtilityConversation = async (input: {
     messages.push(response.message);
     const calls = response.message.tool_calls ?? [];
     if (calls.length === 0) {
+      input.broker.assertComplete?.();
       assertConversationEvidence(input.request, successfulTools, artifacts);
       return {
         artifacts,
@@ -1053,9 +1070,7 @@ const runUtilityConversation = async (input: {
         lastToolCallFingerprint = toolCallFingerprint;
         repeatedToolCallCount = 1;
       }
-      if (
-        repeatedToolCallCount >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS
-      ) {
+      if (repeatedToolCallCount >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS) {
         throw new Error(
           `worker stopped before third consecutive identical tool call: ${call.function.name}`
         );
@@ -1077,9 +1092,7 @@ const runUtilityConversation = async (input: {
         consecutiveBrokerRejections += 1;
       }
       input.onProgress(progress());
-      if (
-        consecutiveBrokerRejections >= MAX_CONSECUTIVE_BROKER_REJECTIONS
-      ) {
+      if (consecutiveBrokerRejections >= MAX_CONSECUTIVE_BROKER_REJECTIONS) {
         throw new Error(
           `worker stopped after ${MAX_CONSECUTIVE_BROKER_REJECTIONS} consecutive broker rejections without progress (last error: ${result.error?.code ?? "unknown"})`
         );
@@ -1132,6 +1145,91 @@ export const utilityBrokerBoundary = (
   };
 };
 
+class UtilityReadPlanToolBroker implements UtilityConversationBroker {
+  private currentStep = 0;
+
+  constructor(
+    private readonly brokers: readonly Awaited<
+      ReturnType<typeof createUtilityToolBroker>
+    >[]
+  ) {}
+
+  get definitions(): readonly UtilityToolDefinition[] {
+    return this.brokers[this.currentStep]?.definitions ?? [];
+  }
+
+  async execute(call: UtilityToolCall): Promise<UtilityToolResult> {
+    const broker = this.brokers[this.currentStep];
+    if (!broker) {
+      return {
+        durationMs: 0,
+        error: {
+          code: "tool_denied",
+          message: "The structured read plan is already complete",
+        },
+        ok: false,
+        tool: call.name,
+      };
+    }
+    const result = await broker.execute(call);
+    if (result.ok) {
+      this.currentStep += 1;
+    }
+    return result;
+  }
+
+  assertComplete(): void {
+    if (this.currentStep !== this.brokers.length) {
+      throw new Error(
+        `worker stopped before completing structured read step ${this.currentStep + 1} of ${this.brokers.length}`
+      );
+    }
+  }
+}
+
+export const createUtilityReadPlanBroker = async (input: {
+  artifactDir: string;
+  executionPlan: readonly UtilityReadPlanStep[];
+  repoRoot: string;
+}): Promise<UtilityConversationBroker> => {
+  if (input.executionPlan.length < 1) {
+    throw new Error("structured read plan cannot be empty");
+  }
+  const brokers = await Promise.all(
+    input.executionPlan.map(async (step) => {
+      const allowedTools = utilityToolsForExecutionProfile(
+        step.executionProfile
+      );
+      if (!allowedTools || allowedTools.length !== 1) {
+        throw new Error(
+          `structured read plan profile is not single-tool: ${step.executionProfile}`
+        );
+      }
+      if (
+        (step.executionProfile === "git-inspect" ||
+          step.executionProfile === "git-status") &&
+        !(step.readScope.length === 1 && step.readScope[0] === ".")
+      ) {
+        throw new Error(
+          `structured ${step.executionProfile} requires explicit repository scope`
+        );
+      }
+      return createUtilityToolBroker({
+        allowedTools,
+        artifactDir: input.artifactDir,
+        ...(step.executionRead ? { exactRead: step.executionRead } : {}),
+        ...(step.executionOutput
+          ? { outputBoundary: step.executionOutput }
+          : {}),
+        readScopes: step.readScope,
+        repoRoot: input.repoRoot,
+        writeScopes: [],
+      });
+    })
+  );
+  return new UtilityReadPlanToolBroker(brokers);
+};
+
 const executionRequestForWorkspace = (
   request: UtilityRouteRequest,
   workspace: UtilityResolvedWorkspace | undefined
@@ -1144,6 +1242,9 @@ const executionRequestForWorkspace = (
     ...(workspace.executionCwd ? { executionCwd: workspace.executionCwd } : {}),
     ...(workspace.executionOutput
       ? { executionOutput: workspace.executionOutput }
+      : {}),
+    ...(workspace.executionPlan
+      ? { executionPlan: workspace.executionPlan }
       : {}),
     ...(workspace.executionRead
       ? { executionRead: workspace.executionRead }
@@ -1196,22 +1297,32 @@ export const runUtilityWorker = async (
     claimed.request,
     workspace
   );
-  const allowedTools = utilityToolsForExecutionProfile(
-    executionRequest.executionProfile
-  );
-  const brokerBoundary = utilityBrokerBoundary(
-    executionRequest,
-    readScopes,
-    writeScopes
-  );
-  const broker = await createUtilityToolBroker({
-    ...(allowedTools ? { allowedTools } : {}),
-    artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
-    ...brokerBoundary,
-    readScopes: [...new Set(brokerBoundary.readScopes)],
-    repoRoot: executionRoot,
-    writeScopes,
-  });
+  const artifactDir = artifactDirForJob(executionRoot, runDir, jobId);
+  const broker =
+    executionRequest.executionProfile === "read-plan"
+      ? await createUtilityReadPlanBroker({
+          artifactDir,
+          executionPlan: executionRequest.executionPlan ?? [],
+          repoRoot: executionRoot,
+        })
+      : await (async () => {
+          const allowedTools = utilityToolsForExecutionProfile(
+            executionRequest.executionProfile
+          );
+          const brokerBoundary = utilityBrokerBoundary(
+            executionRequest,
+            readScopes,
+            writeScopes
+          );
+          return createUtilityToolBroker({
+            ...(allowedTools ? { allowedTools } : {}),
+            artifactDir,
+            ...brokerBoundary,
+            readScopes: [...new Set(brokerBoundary.readScopes)],
+            repoRoot: executionRoot,
+            writeScopes,
+          });
+        })();
   const traceFile = join(runDir, "utility", "llm-trace.jsonl");
   const usageFile = join(runDir, "utility", "usage.jsonl");
   let progress: UtilityConversationProgress = {

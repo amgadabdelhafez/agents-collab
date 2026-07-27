@@ -6,7 +6,8 @@
 2. Add red classifier/router/runtime regressions for structured read plans and
    bounded grammar additions.
 3. Implement read-plan classification by composing only existing safe
-   classifiers; expose the read-only tool union in runtime.
+   classifiers; enforce each persisted stage with its own single-tool broker,
+   scopes, exact reads, output filters, and completion gate.
 4. Add reason-category telemetry with legacy inference and update the governess
    routing rows.
 5. Run focused/full verification, build, Harness gates, and independent review.

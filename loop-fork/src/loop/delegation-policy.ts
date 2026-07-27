@@ -18,6 +18,9 @@ import {
 import type {
   UtilityCapability,
   UtilityExecutionProfile,
+  UtilityOutputRequest,
+  UtilityReadPlanStep,
+  UtilityReadRequest,
   UtilityRequestKind,
   UtilityRouteRequestInput,
 } from "./task-router";
@@ -33,6 +36,11 @@ export type DelegationDisposition =
   | "route-failed"
   | "skipped-candidate";
 
+export type DelegationSkipCategory =
+  | "actionable-miss"
+  | "intentional-retain"
+  | "unsafe-reject";
+
 export type DelegationOperation =
   | "directory-list"
   | "focused-check"
@@ -40,6 +48,7 @@ export type DelegationOperation =
   | "git-inspect"
   | "git-status"
   | "large-read"
+  | "read-plan"
   | "scoped-search"
   | "source-slice"
   | "tool-use";
@@ -47,6 +56,7 @@ export type DelegationOperation =
 export interface DelegationTelemetryEvent {
   agent: Agent;
   at: string;
+  category?: DelegationSkipCategory;
   disposition: DelegationDisposition;
   fingerprint: string;
   operation: DelegationOperation | UtilityRequestKind;
@@ -85,6 +95,8 @@ export const DELEGATION_EVENTS_FILE = "delegation.jsonl";
 const MAX_COMMAND_LENGTH = 2000;
 const MAX_PATTERN_LENGTH = 256;
 const MAX_SCOPES = 4;
+const MAX_READ_PLAN_SCOPES = 12;
+const MAX_READ_PLAN_STEPS = 6;
 const LARGE_READ_MIN_LINES = 200;
 const MAX_SOURCE_SLICE_LINES = 500;
 const SHELL_META = new Set([";", "&", "|", "`", "$", "<", ">", "(", ")"]);
@@ -110,6 +122,7 @@ const EXECUTION_PROFILE_BY_OPERATION: Partial<
   "git-inspect": "git-inspect",
   "git-status": "git-status",
   "large-read": "file-read",
+  "read-plan": "read-plan",
   "scoped-search": "search",
   "source-slice": "file-read",
 };
@@ -365,6 +378,28 @@ const request = (
     },
   };
 };
+
+const withExecutionPlan = (
+  classified: EligibleDelegationIntent,
+  executionPlan: UtilityReadPlanStep[]
+): EligibleDelegationIntent => ({
+  ...classified,
+  request: { ...classified.request, executionPlan },
+});
+
+const readPlanStep = (
+  executionProfile: UtilityReadPlanStep["executionProfile"],
+  objective: string,
+  readScope: string[],
+  executionRead?: UtilityReadRequest,
+  executionOutput?: UtilityOutputRequest
+): UtilityReadPlanStep => ({
+  executionProfile,
+  objective,
+  readScope,
+  ...(executionRead ? { executionRead } : {}),
+  ...(executionOutput ? { executionOutput } : {}),
+});
 
 const exempt = (
   intent: DelegationToolIntent,
@@ -768,6 +803,40 @@ const decomposeSafeCompound = (
     ...(filter === undefined ? {} : { filter }),
     ...(stderr ? { stderr } : {}),
   };
+};
+
+const literalLeadingCdTarget = (tokens: ShellToken[]): string | undefined => {
+  const segments = splitTokens(tokens, "and");
+  if (segments.length < 2) {
+    return undefined;
+  }
+  const lead = wordValues(segments[0] ?? []);
+  if (
+    !lead ||
+    lead.length !== 2 ||
+    lead[0] !== "cd" ||
+    !lead[1] ||
+    lead[1].startsWith("-") ||
+    GLOB_META_RE.test(lead[1])
+  ) {
+    return undefined;
+  }
+  return lead[1];
+};
+
+export const delegationWorkspaceHint = (
+  cwd: string,
+  toolName: string,
+  toolInput: unknown
+): string | undefined => {
+  if (!(toolName === "Bash" || toolName === "exec_command")) {
+    return undefined;
+  }
+  const input = isRecord(toolInput) ? toolInput : {};
+  const command = asString(input.command);
+  const tokens = command ? literalTokens(command) : undefined;
+  const target = tokens ? literalLeadingCdTarget(tokens) : undefined;
+  return target ? resolve(cwd, target) : undefined;
 };
 
 const scopesFrom = (
@@ -1201,37 +1270,105 @@ const classifyDirectoryList = (
     includeHidden = args[0].includes("a");
     args.shift();
   }
-  if (args.length > 1) {
+  if (args.length > MAX_SCOPES || args.some((value) => value.startsWith("-"))) {
     return {
       eligible: false,
       ...exempt(intent, "directory-list-not-bounded"),
     };
   }
-  const scope = safeScope(intent.repoRoot, intent.cwd, args[0] ?? ".", true);
-  if (!scope) {
+  const scopes = (args.length > 0 ? args : ["."]).map((value) =>
+    safeScope(intent.repoRoot, intent.cwd, value, true)
+  );
+  if (scopes.some((scope) => !scope)) {
     return {
       eligible: false,
       ...exempt(intent, "directory-list-without-safe-scope"),
     };
   }
-  const scopedDirectory =
-    scope === "." ? intent.repoRoot : join(intent.repoRoot, scope);
-  if (isExistingNonDirectory(scopedDirectory)) {
+  const safeScopes = scopes as string[];
+  if (
+    safeScopes.some((scope) =>
+      isExistingNonDirectory(
+        scope === "." ? intent.repoRoot : join(intent.repoRoot, scope)
+      )
+    )
+  ) {
     return {
       eligible: false,
       ...exempt(intent, "directory-list-target-not-directory"),
     };
   }
+  const multiple = safeScopes.length > 1;
+  const objective = multiple
+    ? `List each directory in ${JSON.stringify(safeScopes)} once without recursion using list_files with includeHidden=${includeHidden}.`
+    : `List the single directory ${safeScopes[0]} without recursion using list_files with includeHidden=${includeHidden}.`;
+  const classified = request(
+    intent,
+    multiple ? "read-plan" : "directory-list",
+    "inspect",
+    objective,
+    [
+      "Return bounded nonrecursive listings in order without following symlinks.",
+    ],
+    safeScopes,
+    ["inspect"]
+  );
   return {
     eligible: true,
-    ...request(
-      intent,
-      "directory-list",
-      "inspect",
-      `List the single directory ${scope} without recursion using list_files with includeHidden=${includeHidden}.`,
-      ["Return a bounded nonrecursive listing without following symlinks."],
-      [scope],
-      ["inspect"]
+    ...(multiple
+      ? withExecutionPlan(
+          classified,
+          safeScopes.map((scope) =>
+            readPlanStep("file-list", objective, [scope])
+          )
+        )
+      : classified),
+  };
+};
+
+const classifyCatCommand = (
+  intent: DelegationToolIntent,
+  argv: string[]
+): DelegationClassification | undefined => {
+  if (argv[0] !== "cat") {
+    return undefined;
+  }
+  const args = argv.slice(1);
+  if (args[0] === "-n") {
+    args.shift();
+  }
+  if (
+    args.length < 1 ||
+    args.length > MAX_SCOPES ||
+    args.some((value) => value.startsWith("-"))
+  ) {
+    return { eligible: false, ...exempt(intent, "file-read-not-bounded") };
+  }
+  const scopes = args.map((value) =>
+    safeScope(intent.repoRoot, intent.cwd, value, false, true)
+  );
+  if (scopes.some((scope) => !scope)) {
+    return {
+      eligible: false,
+      ...exempt(intent, "governed-or-unsafe-path"),
+    };
+  }
+  const safeScopes = scopes as string[];
+  const objective = `Read each file in ${JSON.stringify(safeScopes)} in order using bounded read_file calls${argv[1] === "-n" ? " and retain line references" : ""}.`;
+  const classified = request(
+    intent,
+    "read-plan",
+    "inspect",
+    objective,
+    ["Return only bounded file evidence without changing files."],
+    safeScopes,
+    ["inspect"]
+  );
+  return {
+    eligible: true,
+    ...withExecutionPlan(
+      classified,
+      safeScopes.map((scope) => readPlanStep("file-read", objective, [scope]))
     ),
   };
 };
@@ -1246,6 +1383,7 @@ const classifyGrepCommand = (
   let index = 1;
   let fixed = false;
   let caseSensitive = true;
+  let lineNumbers = false;
   while (index < argv.length && argv[index]?.startsWith("-")) {
     const flag = argv[index] as string;
     if (flag === "--") {
@@ -1265,6 +1403,7 @@ const classifyGrepCommand = (
       };
     }
     fixed ||= (longFlag ?? flag).includes("F");
+    lineNumbers ||= (longFlag ?? flag).includes("n");
     caseSensitive &&= !(longFlag ?? flag).includes("i");
     index += 1;
   }
@@ -1274,6 +1413,37 @@ const classifyGrepCommand = (
     return {
       eligible: false,
       ...exempt(intent, "unsupported-grep-option"),
+    };
+  }
+  if (pattern === "" && lineNumbers && pathArgs.length === 1) {
+    const scope = safeScope(
+      intent.repoRoot,
+      intent.cwd,
+      pathArgs[0] as string,
+      false,
+      true
+    );
+    if (!scope) {
+      return {
+        eligible: false,
+        ...exempt(intent, "governed-or-unsafe-path"),
+      };
+    }
+    const objective = `Read ${scope} with bounded read_file calls and retain exact line references.`;
+    return {
+      eligible: true,
+      ...withExecutionPlan(
+        request(
+          intent,
+          "read-plan",
+          "inspect",
+          objective,
+          [`Return bounded line-referenced evidence from ${scope}.`],
+          [scope],
+          ["inspect"]
+        ),
+        [readPlanStep("file-read", objective, [scope])]
+      ),
     };
   }
   if (
@@ -1472,6 +1642,129 @@ const withCompoundOutputBoundary = (
   };
 };
 
+const READ_PLAN_PROFILES = new Set<UtilityExecutionProfile>([
+  "file-list",
+  "file-read",
+  "git-diff",
+  "git-inspect",
+  "git-status",
+  "read-plan",
+  "search",
+]);
+
+const classifyReadOnlyArgv = (
+  intent: DelegationToolIntent,
+  argv: string[]
+): DelegationClassification | undefined =>
+  classifyGit(intent, argv) ??
+  classifyRg(intent, argv) ??
+  classifyGrepCommand(intent, argv) ??
+  classifyDirectoryList(intent, argv) ??
+  classifyCatCommand(intent, argv) ??
+  classifySourceSlice(intent, argv);
+
+const classifyReadPlan = (
+  intent: DelegationToolIntent,
+  tokens: ShellToken[]
+): DelegationClassification | undefined => {
+  const chained = splitTokens(tokens, "and");
+  const cdTarget = literalLeadingCdTarget(tokens);
+  const segments = cdTarget ? chained.slice(1) : chained;
+  if (segments.length < 2 || segments.length > MAX_READ_PLAN_STEPS) {
+    return undefined;
+  }
+  let scoped = intent;
+  if (cdTarget) {
+    const rel = safeScope(intent.repoRoot, intent.cwd, cdTarget, true);
+    if (!rel) {
+      return undefined;
+    }
+    scoped = {
+      ...intent,
+      cwd:
+        rel === "."
+          ? resolve(intent.repoRoot)
+          : join(resolve(intent.repoRoot), rel),
+    };
+  }
+  const classifiedStages: EligibleDelegationIntent[] = [];
+  const executionPlan: UtilityReadPlanStep[] = [];
+  for (const segment of segments) {
+    const compound = decomposeSafeCompound(segment);
+    if (
+      !compound ||
+      compound.cdTarget ||
+      compound.argv[0]?.includes("/") ||
+      compound.argv[0]?.includes("\\")
+    ) {
+      return undefined;
+    }
+    const classified = classifyReadOnlyArgv(scoped, compound.argv);
+    if (!classified?.eligible) {
+      return undefined;
+    }
+    const bounded = withCompoundOutputBoundary(
+      { ...classified, eligible: true },
+      compound
+    );
+    const executionProfile = bounded.eligible
+      ? bounded.request.executionProfile
+      : undefined;
+    if (!executionProfile || !READ_PLAN_PROFILES.has(executionProfile)) {
+      return undefined;
+    }
+    if (executionProfile === "read-plan") {
+      if (
+        compound.filter ||
+        compound.stderr ||
+        !bounded.request.executionPlan?.length
+      ) {
+        return undefined;
+      }
+      executionPlan.push(...bounded.request.executionPlan);
+    } else {
+      executionPlan.push(
+        readPlanStep(
+          executionProfile,
+          bounded.request.objective,
+          bounded.request.readScope,
+          bounded.request.executionRead,
+          bounded.request.executionOutput
+        )
+      );
+    }
+    classifiedStages.push(bounded);
+  }
+  const scopes = [
+    ...new Set(classifiedStages.flatMap((stage) => stage.request.readScope)),
+  ];
+  if (
+    executionPlan.length < 1 ||
+    executionPlan.length > MAX_READ_PLAN_SCOPES ||
+    scopes.length < 1 ||
+    scopes.length > MAX_READ_PLAN_SCOPES
+  ) {
+    return undefined;
+  }
+  return {
+    eligible: true,
+    ...withExecutionPlan(
+      request(
+        intent,
+        "read-plan",
+        "inspect",
+        `Execute these ${classifiedStages.length} bounded read-only inspection stages in order using only broker tools: ${JSON.stringify(classifiedStages.map((stage) => stage.request.objective))}.`,
+        [
+          "Return concise evidence for every stage in order without changing files or invoking commands.",
+        ],
+        scopes,
+        ["inspect"]
+      ),
+      executionPlan
+    ),
+  };
+};
+
 const classifyBash = (
   intent: DelegationToolIntent,
   input: Record<string, unknown>
@@ -1483,6 +1776,10 @@ const classifyBash = (
     : undefined;
   if (gitInspectionChain) {
     return gitInspectionChain;
+  }
+  const readPlan = tokens ? classifyReadPlan(intent, tokens) : undefined;
+  if (readPlan) {
+    return readPlan;
   }
   const compound = tokens ? decomposeSafeCompound(tokens) : undefined;
   if (!compound) {
@@ -1510,11 +1807,7 @@ const classifyBash = (
     };
   }
   const classified = classifyFocusedCheck(scoped, argv) ??
-    classifyGit(scoped, argv) ??
-    classifyRg(scoped, argv) ??
-    classifyGrepCommand(scoped, argv) ??
-    classifyDirectoryList(scoped, argv) ??
-    classifySourceSlice(scoped, argv) ?? {
+    classifyReadOnlyArgv(scoped, argv) ?? {
       eligible: false,
       ...exempt(scoped, "command-not-in-delegation-grammar"),
     };
@@ -1602,10 +1895,58 @@ export const readDelegationEvents = (
   }
 };
 
+const INTENTIONAL_RETAIN_REASONS = new Set([
+  "authority-needs-human",
+  "review-needs-peer",
+  "review-stays-with-requester",
+  "risk-not-low",
+  "small-context-read",
+  "tool-not-enforceable",
+  "unsupported-kind",
+  "write-conflict",
+]);
+const ACTIONABLE_MISS_REASONS = new Set([
+  "capability-unavailable",
+  "command-not-in-delegation-grammar",
+  "directory-list-not-bounded",
+  "missing-governess-epoch",
+  "routing-policy-invalid",
+  "utility-unavailable",
+]);
+
+export const delegationSkipCategory = (
+  disposition: DelegationDisposition,
+  reason: string
+): DelegationSkipCategory => {
+  if (
+    disposition === "missed-candidate" ||
+    disposition === "observed-candidate" ||
+    disposition === "route-failed" ||
+    ACTIONABLE_MISS_REASONS.has(reason)
+  ) {
+    return "actionable-miss";
+  }
+  return INTENTIONAL_RETAIN_REASONS.has(reason)
+    ? "intentional-retain"
+    : "unsafe-reject";
+};
+
 export const makeDelegationEvent = (
   input: Omit<DelegationTelemetryEvent, "at">,
   at = new Date().toISOString()
-): DelegationTelemetryEvent => ({ ...input, at });
+): DelegationTelemetryEvent => ({
+  ...input,
+  ...(!input.category &&
+  [
+    "missed-candidate",
+    "observed-candidate",
+    "route-failed",
+    "skipped-candidate",
+  ].includes(input.disposition)
+    ? { category: delegationSkipCategory(input.disposition, input.reason) }
+    : {}),
+  at,
+});
 
 export const hashDelegationFingerprint = (value: string): string =>
   createHash("sha256").update(value).digest("hex");

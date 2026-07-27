@@ -22,6 +22,7 @@ import { readUtilityObservability } from "../../src/loop/utility-observability";
 import {
   applyUtilityJobPatch,
   buildUtilityWorkerEnvironment,
+  createUtilityReadPlanBroker,
   processPendingUtilityRoutes,
   renderUtilityPane,
   resolveUtilityRuntimeConfig,
@@ -123,7 +124,9 @@ const completedEditProposal = async (
   };
 };
 
-const routedInspectFixture = (name: string): {
+const routedInspectFixture = (
+  name: string
+): {
   repoRoot: string;
   request: ReturnType<typeof createUtilityRouteRequest>;
   runDir: string;
@@ -134,8 +137,10 @@ const routedInspectFixture = (name: string): {
   mkdirSync(runDir, { recursive: true });
   writeFileSync(
     join(repoRoot, "src", "sample.ts"),
-    Array.from({ length: 80 }, (_, index) => `export const n${index + 1} = ${index + 1};`).join("\n") +
-      "\n"
+    Array.from(
+      { length: 80 },
+      (_, index) => `export const n${index + 1} = ${index + 1};`
+    ).join("\n") + "\n"
   );
   writeFileSync(
     join(runDir, "manifest.json"),
@@ -210,10 +215,187 @@ test("auto execution profiles expose only satisfiable broker tools", () => {
     "run_check",
   ]);
   expect(utilityToolsForExecutionProfile("file-list")).toEqual(["list_files"]);
+  expect(utilityToolsForExecutionProfile("read-plan")).toEqual([]);
+  expect(utilityToolsForExecutionProfile("read-plan")).not.toContain(
+    "run_check"
+  );
+  expect(utilityToolsForExecutionProfile("read-plan")).not.toContain(
+    "propose_patch"
+  );
   expect(utilityToolsForExecutionProfile(undefined)).toBeUndefined();
   expect(utilityToolsForExecutionProfile("future-profile")).toEqual([]);
   expect(utilityToolsForExecutionProfile("__proto__")).toEqual([]);
   expect(utilityToolsForExecutionProfile(null)).toEqual([]);
+});
+
+test("structured cat plans cannot invoke Git tools", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-read-plan-cat-"));
+  try {
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "sample.ts"), "one\ntwo\n");
+    const broker = await createUtilityReadPlanBroker({
+      artifactDir: ".utility-artifacts",
+      executionPlan: [
+        {
+          executionProfile: "file-read",
+          objective: "Read sample",
+          readScope: ["src/sample.ts"],
+        },
+      ],
+      repoRoot: root,
+    });
+    expect(broker.definitions.map((tool) => tool.function.name)).toEqual([
+      "read_file",
+    ]);
+    expect(
+      await broker.execute({
+        arguments: { action: "show-stat", ref: "HEAD" },
+        name: "git_inspect",
+      })
+    ).toMatchObject({ error: { code: "tool_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: { path: "src/sample.ts" },
+        name: "read_file",
+      })
+    ).toMatchObject({ data: { content: "one\ntwo" }, ok: true });
+    expect(() => broker.assertComplete?.()).not.toThrow();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("structured Git metadata rejects forged narrow file scope", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-read-plan-git-scope-"));
+  try {
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "sample.ts"), "sample\n");
+    await expect(
+      createUtilityReadPlanBroker({
+        artifactDir: ".utility-artifacts",
+        executionPlan: [
+          {
+            executionProfile: "git-inspect",
+            objective: "Inspect Git metadata",
+            readScope: ["src/sample.ts"],
+          },
+        ],
+        repoRoot: root,
+      })
+    ).rejects.toThrow("requires explicit repository scope");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("structured multi-directory plans cannot read content or cross stages", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-read-plan-list-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "tests"));
+    writeFileSync(join(root, "src", "sample.ts"), "source\n");
+    writeFileSync(join(root, "tests", "sample.test.ts"), "test\n");
+    const broker = await createUtilityReadPlanBroker({
+      artifactDir: ".utility-artifacts",
+      executionPlan: [
+        {
+          executionProfile: "file-list",
+          objective: "List source",
+          readScope: ["src"],
+        },
+        {
+          executionProfile: "file-list",
+          objective: "List tests",
+          readScope: ["tests"],
+        },
+      ],
+      repoRoot: root,
+    });
+    expect(
+      await broker.execute({
+        arguments: { path: "src/sample.ts" },
+        name: "read_file",
+      })
+    ).toMatchObject({ error: { code: "tool_denied" }, ok: false });
+    expect(
+      await broker.execute({ arguments: { path: "src" }, name: "list_files" })
+    ).toMatchObject({ ok: true });
+    expect(() => broker.assertComplete?.()).toThrow("step 2 of 2");
+    expect(
+      await broker.execute({ arguments: { path: "src" }, name: "list_files" })
+    ).toMatchObject({ error: { code: "scope_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: { path: "tests" },
+        name: "list_files",
+      })
+    ).toMatchObject({ ok: true });
+    expect(() => broker.assertComplete?.()).not.toThrow();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("structured mixed plans retain exact slices and output filters", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-read-plan-mixed-"));
+  try {
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "tests"));
+    writeFileSync(join(root, "src", "sample.ts"), "one\ntwo\nthree\n");
+    writeFileSync(join(root, "tests", "sample.test.ts"), "needle\n");
+    const broker = await createUtilityReadPlanBroker({
+      artifactDir: ".utility-artifacts",
+      executionPlan: [
+        {
+          executionOutput: { lineLimit: 1, position: "head" },
+          executionProfile: "file-read",
+          executionRead: {
+            endLine: 3,
+            path: "src/sample.ts",
+            startLine: 1,
+          },
+          objective: "Read exact sample slice",
+          readScope: ["src/sample.ts"],
+        },
+        {
+          executionProfile: "search",
+          objective: "Search tests",
+          readScope: ["tests"],
+        },
+      ],
+      repoRoot: root,
+    });
+    expect(
+      await broker.execute({
+        arguments: { endLine: 2, path: "src/sample.ts", startLine: 1 },
+        name: "read_file",
+      })
+    ).toMatchObject({ error: { code: "command_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: { endLine: 3, path: "src/sample.ts", startLine: 1 },
+        name: "read_file",
+      })
+    ).toMatchObject({
+      data: { content: "one", endLine: 1, startLine: 1 },
+      ok: true,
+    });
+    expect(
+      await broker.execute({
+        arguments: { path: "src/sample.ts" },
+        name: "read_file",
+      })
+    ).toMatchObject({ error: { code: "tool_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: { paths: ["tests"], query: "needle" },
+        name: "search_repo",
+      })
+    ).toMatchObject({ ok: true });
+    expect(() => broker.assertComplete?.()).not.toThrow();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("file-read runtime carries an exact broker range and fails closed without one", () => {
@@ -520,13 +702,7 @@ test("the default worker pool runs four jobs and leaves a fifth pending", async 
     });
 
     await processPendingUtilityRoutes(context, env, deps);
-    expect(spawned).toEqual([
-      "pool-a",
-      "pool-b",
-      "pool-c",
-      "pool-d",
-      "pool-e",
-    ]);
+    expect(spawned).toEqual(["pool-a", "pool-b", "pool-c", "pool-d", "pool-e"]);
     expect(readUtilityJob(runDir, "pool-e")?.state).toBe("routed-utility");
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
@@ -1754,7 +1930,8 @@ test("utility worker refuses to execute a third identical tool call", async () =
 });
 
 test("utility worker stops before a sixty-fifth model call", async () => {
-  const { repoRoot, request, runDir } = routedInspectFixture("emergency-ceiling");
+  const { repoRoot, request, runDir } =
+    routedInspectFixture("emergency-ceiling");
   let providerCalls = 0;
   const server = serve({
     fetch: () => {

@@ -1933,7 +1933,7 @@ const renderWorkerRoutingRows = (
 ): string[] => {
   const width = Math.max(1, meta.maxColumns ?? 176);
   const routing = snapshot.routing;
-  const decisions = ` routing · considered ${routing.considered} · routed worker ${routing.routed} · skipped ${routing.skipped} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted}`;
+  const decisions = ` routing · considered ${routing.considered} · routed worker ${routing.routed} · actionable ${routing.actionable} · retained ${routing.retained} · unsafe ${routing.unsafe} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted}`;
   const reasons = Object.entries(routing.reasons)
     .sort(
       (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
@@ -1948,7 +1948,7 @@ const renderWorkerRoutingRows = (
     paint(
       routing.skipped > 0 ? ANSI.yellow : ANSI.dim,
       truncate(
-        ` skipped why · ${reasons || "none"}${latestDetail ? ` · latest ${latestDetail}` : ""}`,
+        ` routing why · ${reasons || "none"}${latestDetail ? ` · latest ${latestDetail}` : ""}`,
         width
       )
     ),

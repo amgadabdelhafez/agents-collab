@@ -148,6 +148,7 @@ const relativeWorkspaceResolution = (
     ...(request.executionOutput
       ? { executionOutput: request.executionOutput }
       : {}),
+    ...(request.executionPlan ? { executionPlan: request.executionPlan } : {}),
     ...(request.executionRead ? { executionRead: request.executionRead } : {}),
     readScope: request.readScope,
     root,
@@ -170,6 +171,12 @@ export const resolveUtilityRequestWorkspace = (
     ...request.writeScope,
     ...(request.executionCwd ? [request.executionCwd] : []),
     ...(request.executionRead ? [request.executionRead.path] : []),
+    ...(request.executionPlan
+      ? request.executionPlan.flatMap((step) => [
+          ...step.readScope,
+          ...(step.executionRead ? [step.executionRead.path] : []),
+        ])
+      : []),
   ];
   if (scopes.every((scope) => !isAbsolute(scope))) {
     return relativeWorkspaceResolution(request, canonicalRunRoot);
@@ -225,11 +232,42 @@ export const resolveUtilityRequestWorkspace = (
   const executionReadPath = request.executionRead
     ? normalizeScopes([request.executionRead.path])?.[0]
     : undefined;
+  let executionPlan = request.executionPlan;
+  let executionPlanIsValid = true;
+  if (request.executionPlan) {
+    executionPlan = [];
+    for (const step of request.executionPlan) {
+      const stepReadScope = normalizeScopes(step.readScope);
+      const stepExecutionReadPath = step.executionRead
+        ? normalizeScopes([step.executionRead.path])?.[0]
+        : undefined;
+      if (
+        !stepReadScope ||
+        (step.executionRead !== undefined && !stepExecutionReadPath)
+      ) {
+        executionPlanIsValid = false;
+        break;
+      }
+      executionPlan.push({
+        ...step,
+        ...(step.executionRead && stepExecutionReadPath
+          ? {
+              executionRead: {
+                ...step.executionRead,
+                path: stepExecutionReadPath,
+              },
+            }
+          : {}),
+        readScope: stepReadScope,
+      });
+    }
+  }
   if (
     !(
       readScope &&
       writeScope &&
       selectedRoot &&
+      executionPlanIsValid &&
       (request.executionCwd === undefined || executionCwd) &&
       (request.executionRead === undefined || executionReadPath)
     )
@@ -243,6 +281,7 @@ export const resolveUtilityRequestWorkspace = (
     ...(request.executionOutput
       ? { executionOutput: request.executionOutput }
       : {}),
+    ...(executionPlan ? { executionPlan } : {}),
     ...(request.executionRead && executionReadPath
       ? {
           executionRead: {
@@ -267,6 +306,7 @@ export const resolveUtilityRequestWorkspace = (
             },
           }
         : {}),
+      ...(executionPlan ? { executionPlan } : {}),
       readScope,
       writeScope,
     },

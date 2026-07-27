@@ -27,6 +27,7 @@ export type UtilityExecutionProfile =
   | "git-diff"
   | "git-inspect"
   | "git-status"
+  | "read-plan"
   | "search";
 
 export type UtilityRisk = "low" | "medium" | "high" | "unknown";
@@ -76,6 +77,19 @@ export interface UtilityOutputRequest {
   stderr?: "merge" | "omit";
 }
 
+export type UtilityReadPlanProfile = Exclude<
+  UtilityExecutionProfile,
+  "focused-check" | "read-plan"
+>;
+
+export interface UtilityReadPlanStep {
+  executionOutput?: UtilityOutputRequest;
+  executionProfile: UtilityReadPlanProfile;
+  executionRead?: UtilityReadRequest;
+  objective: string;
+  readScope: string[];
+}
+
 export interface UtilityCompactResult {
   artifactRefs: UtilityArtifactRef[];
   blocker?: string;
@@ -93,6 +107,7 @@ export interface UtilityRouteRequest {
   executionArgv?: string[];
   executionCwd?: string;
   executionOutput?: UtilityOutputRequest;
+  executionPlan?: UtilityReadPlanStep[];
   executionProfile?: UtilityExecutionProfile;
   executionRead?: UtilityReadRequest;
   id: string;
@@ -185,6 +200,7 @@ export interface UtilityRouteDecision {
 export interface UtilityResolvedWorkspace {
   executionCwd?: string;
   executionOutput?: UtilityOutputRequest;
+  executionPlan?: UtilityReadPlanStep[];
   executionRead?: UtilityReadRequest;
   readScope: string[];
   root: string;
@@ -205,6 +221,15 @@ const UTILITY_EXECUTION_PROFILES = new Set<UtilityExecutionProfile>([
   "file-list",
   "file-read",
   "focused-check",
+  "git-diff",
+  "git-inspect",
+  "git-status",
+  "read-plan",
+  "search",
+]);
+const UTILITY_READ_PLAN_PROFILES = new Set<UtilityReadPlanProfile>([
+  "file-list",
+  "file-read",
   "git-diff",
   "git-inspect",
   "git-status",
@@ -241,6 +266,26 @@ export const createUtilityRouteRequest = (
       : {}),
     ...(input.executionOutput
       ? { executionOutput: { ...input.executionOutput } }
+      : {}),
+    ...(input.executionPlan
+      ? {
+          executionPlan: input.executionPlan.map((step) => ({
+            ...(step.executionOutput
+              ? { executionOutput: { ...step.executionOutput } }
+              : {}),
+            executionProfile: step.executionProfile,
+            ...(step.executionRead
+              ? {
+                  executionRead: {
+                    ...step.executionRead,
+                    path: normalizePath(step.executionRead.path),
+                  },
+                }
+              : {}),
+            objective: step.objective.trim(),
+            readScope: uniqueTrimmed(step.readScope).map(normalizePath),
+          })),
+        }
       : {}),
     ...(input.executionProfile
       ? { executionProfile: input.executionProfile }
@@ -290,6 +335,14 @@ const touchesProtectedPath = (
     ...(typeof request.executionRead?.path === "string"
       ? [request.executionRead.path]
       : []),
+    ...(Array.isArray(request.executionPlan)
+      ? request.executionPlan.flatMap((step) => [
+          ...(Array.isArray(step.readScope) ? step.readScope : []),
+          ...(typeof step.executionRead?.path === "string"
+            ? [step.executionRead.path]
+            : []),
+        ])
+      : []),
   ].some((path) => isUtilityProtectedPath(path, configured));
 
 const overlaps = (left: string, right: string): boolean => {
@@ -312,8 +365,10 @@ const hasWriteConflict = (
 const positiveSafeInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
-const executionReadIsBounded = (request: UtilityRouteRequest): boolean => {
-  const input = request.executionRead as unknown;
+const executionReadValueIsBounded = (
+  input: unknown,
+  readScope: readonly string[]
+): boolean => {
   if (input === undefined) {
     return true;
   }
@@ -327,7 +382,7 @@ const executionReadIsBounded = (request: UtilityRouteRequest): boolean => {
     ) ||
     typeof value.path !== "string" ||
     value.path.trim().length === 0 ||
-    !request.readScope.includes(value.path)
+    !readScope.includes(value.path)
   ) {
     return false;
   }
@@ -346,6 +401,9 @@ const executionReadIsBounded = (request: UtilityRouteRequest): boolean => {
     value.endLine - value.startLine + 1 <= 500
   );
 };
+
+const executionReadIsBounded = (request: UtilityRouteRequest): boolean =>
+  executionReadValueIsBounded(request.executionRead, request.readScope);
 
 const focusedCheckIsBounded = (request: UtilityRouteRequest): boolean => {
   const argv = request.executionArgv;
@@ -376,13 +434,15 @@ const focusedCheckIsBounded = (request: UtilityRouteRequest): boolean => {
   return request.readScope.every((scope) => exactScopes.has(scope));
 };
 
-const executionOutputIsBounded = (request: UtilityRouteRequest): boolean => {
-  const input = request.executionOutput as unknown;
+const executionOutputValueIsBounded = (
+  input: unknown,
+  profile: unknown
+): boolean => {
   if (input === undefined) {
     return true;
   }
   if (
-    request.executionProfile === undefined ||
+    profile === undefined ||
     input === null ||
     typeof input !== "object" ||
     Array.isArray(input)
@@ -413,6 +473,88 @@ const executionOutputIsBounded = (request: UtilityRouteRequest): boolean => {
   );
 };
 
+const executionOutputIsBounded = (request: UtilityRouteRequest): boolean =>
+  executionOutputValueIsBounded(
+    request.executionOutput,
+    request.executionProfile
+  );
+
+const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
+  const input = request.executionPlan as unknown;
+  if (input === undefined) {
+    return request.executionProfile !== "read-plan";
+  }
+  if (
+    request.executionProfile !== "read-plan" ||
+    request.kind !== "inspect" ||
+    request.executionArgv !== undefined ||
+    request.executionCwd !== undefined ||
+    request.executionOutput !== undefined ||
+    request.executionRead !== undefined ||
+    !Array.isArray(input) ||
+    input.length < 1 ||
+    input.length > 12
+  ) {
+    return false;
+  }
+  const planScope = new Set<string>();
+  for (const rawStep of input) {
+    if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
+      return false;
+    }
+    const step = rawStep as Record<string, unknown>;
+    if (
+      Object.keys(step).some(
+        (key) =>
+          ![
+            "executionOutput",
+            "executionProfile",
+            "executionRead",
+            "objective",
+            "readScope",
+          ].includes(key)
+      ) ||
+      typeof step.executionProfile !== "string" ||
+      !UTILITY_READ_PLAN_PROFILES.has(
+        step.executionProfile as UtilityReadPlanProfile
+      ) ||
+      typeof step.objective !== "string" ||
+      step.objective.trim().length === 0 ||
+      !Array.isArray(step.readScope) ||
+      step.readScope.length < 1 ||
+      step.readScope.length > 4 ||
+      step.readScope.some(
+        (scope) => typeof scope !== "string" || scope.trim().length === 0
+      ) ||
+      !executionOutputValueIsBounded(
+        step.executionOutput,
+        step.executionProfile
+      ) ||
+      !executionReadValueIsBounded(
+        step.executionRead,
+        step.readScope as string[]
+      ) ||
+      (step.executionProfile !== "file-read" &&
+        step.executionRead !== undefined) ||
+      ((step.executionProfile === "git-inspect" ||
+        step.executionProfile === "git-status") &&
+        !(
+          step.readScope.length === 1 && (step.readScope as string[])[0] === "."
+        ))
+    ) {
+      return false;
+    }
+    for (const scope of step.readScope as string[]) {
+      planScope.add(scope);
+    }
+  }
+  return (
+    planScope.size <= 12 &&
+    planScope.size === request.readScope.length &&
+    request.readScope.every((scope) => planScope.has(scope))
+  );
+};
+
 const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
   const profileIsKnown =
     request.executionProfile === undefined ||
@@ -434,7 +576,8 @@ const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
     cwdIsBounded &&
     argvIsBounded &&
     executionReadIsBounded(request) &&
-    executionOutputIsBounded(request)
+    executionOutputIsBounded(request) &&
+    executionPlanIsBounded(request)
   );
 };
 

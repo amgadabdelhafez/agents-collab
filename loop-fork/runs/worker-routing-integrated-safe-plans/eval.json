@@ -2,10 +2,28 @@
   "task_id": "worker-routing-integrated-safe-plans",
   "status": "pending",
   "required": [
-    "unit"
+    "unit",
+    "independent-review",
+    "live-runtime"
   ],
   "dimensions": {
     "unit": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-integrated-safe-plans/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/worker-routing-integrated-safe-plans/artifacts/unit/attempt-004.log",
+      "latest_attempt_meta": "runs/worker-routing-integrated-safe-plans/artifacts/unit/attempt-004.json"
+    },
+    "independent-review": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-integrated-safe-plans/artifacts/independent-review/evaluation.md",
+      "reason": "structured per-stage broker enforces one current tool with exact boundaries; automatic cat and forged narrow git-inspect escapes fail closed at routing and broker boundaries",
+      "method": "independent diff review, 435 focused tests, full-suite baseline comparison, build, diff check, and production-boundary replays",
+      "signed_off_by": "runaway_guard_evaluator"
+    },
+    "live-runtime": {
       "status": "pending"
     }
   }

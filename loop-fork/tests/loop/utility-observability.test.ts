@@ -2,15 +2,12 @@ import { expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { appendDelegationEvent } from "../../src/loop/delegation-policy";
+import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
   readUtilityObservability,
   sanitizeUtilityPaneText,
 } from "../../src/loop/utility-observability";
-import {
-  appendDelegationEvent,
-  makeDelegationEvent,
-} from "../../src/loop/delegation-policy";
-import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
   activateUtilityEpoch,
   appendUtilityRouteRequest,
@@ -81,31 +78,34 @@ test("routing observability counts candidates rejected before job creation", () 
       "tool-not-enforceable",
       "compound-or-unsafe-command",
       "workspace-unverified",
+      "command-not-in-delegation-grammar",
     ].entries()) {
-      appendDelegationEvent(
-        runDir,
-        makeDelegationEvent({
-          agent: "claude",
-          disposition: "skipped-candidate",
-          fingerprint: `${index}`.repeat(64),
-          operation: "tool-use",
-          reason,
-          source: "claude-hook",
-        })
-      );
+      appendDelegationEvent(runDir, {
+        agent: "claude",
+        at: "2026-07-26T00:00:00.000Z",
+        disposition: "skipped-candidate",
+        fingerprint: `${index}`.repeat(64),
+        operation: "tool-use",
+        reason,
+        source: "claude-hook",
+      });
     }
     expect(readUtilityObservability(runDir).routing).toEqual({
+      actionable: 1,
       autoRouted: 0,
-      considered: 3,
+      considered: 4,
       explicitRouted: 0,
       pending: 0,
       reasons: {
         "compound-or-unsafe-command": 1,
+        "command-not-in-delegation-grammar": 1,
         "tool-not-enforceable": 1,
         "workspace-unverified": 1,
       },
+      retained: 1,
       routed: 0,
       skipped: 3,
+      unsafe: 2,
     });
   } finally {
     rmSync(runDir, { force: true, recursive: true });

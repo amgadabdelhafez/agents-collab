@@ -1851,12 +1851,12 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
     expect(workerRow?.length).toBeLessThanOrEqual(176);
     expect(board.split("\n").every((line) => line.length <= 176)).toBe(true);
     expect(board).toContain(
-      "routing · considered 3 · routed worker 2 · skipped 1 · pending 0 · adoption auto 1 explicit 1"
+      "routing · considered 3 · routed worker 2 · actionable 0 · retained 0 · unsafe 1 · pending 0 · adoption auto 1 explicit 1"
     );
     expect(board).toContain(
       "bridge worker msgs · in 2 latest — · out 2 latest — · pending 0"
     );
-    expect(board).toContain("skipped why · protected-scope 1");
+    expect(board).toContain("routing why · protected-scope 1");
     expect(board).not.toContain("Project: must remain hidden");
   } finally {
     rmSync(runDir, { force: true, recursive: true });

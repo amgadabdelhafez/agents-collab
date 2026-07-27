@@ -1,0 +1,24 @@
+{
+  "task_id": "worker-routing-integrated-safe-plans",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T17:22:43Z",
+  "ended_at": "2026-07-27T17:22:47Z",
+  "artifact": "runs/worker-routing-integrated-safe-plans/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/delegation-policy.test.ts",
+    "tests/loop/governess-hooks.test.ts",
+    "tests/loop/task-router.test.ts",
+    "tests/loop/utility-observability.test.ts",
+    "tests/loop/utility-runtime.test.ts",
+    "tests/loop/utility-store.test.ts",
+    "tests/loop/utility-tools.test.ts",
+    "tests/loop/utility-workspace.test.ts",
+    "tests/loop/governess.test.ts"
+  ]
+}

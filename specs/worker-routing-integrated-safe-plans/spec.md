@@ -20,7 +20,8 @@ classifier expects.
   contention-safe claims, four-slot default, and runaway circuit breakers.
 - Add a `read-plan` execution profile for two to six literal read-only stages.
   Each stage must independently match an existing safe classifier and the
-  combined request must expose only bounded repository inspection tools.
+  runtime must expose exactly that stage's single broker tool, scopes, exact
+  read boundary, and output boundary until the stage succeeds.
 - Permit a single verified leading `cd`, exact `&&` separators, and the
   existing exact stderr/head/tail output forms. Reject semicolons, arbitrary
   pipes, command substitution, variables, glob expansion, redirects, loops,
@@ -58,8 +59,9 @@ classifier expects.
   four slots, and all three runaway breakers.
 - Safe two-to-six-stage read plans classify and persist as `read-plan`; each
   unsafe near-neighbor fails closed before a job is created.
-- Compound plans cannot expose `run_check` or `propose_patch` and cannot widen
-  beyond the union of verified read scopes.
+- Compound plans cannot expose a cross-product of read tools/scopes, cannot
+  expose `run_check` or `propose_patch`, cannot cross stage boundaries, and
+  cannot complete before every structured stage succeeds.
 - Bounded cat, empty-pattern file reads, multiple directory listings, and
   linked-worktree leading `cd` cases have red-first regressions.
 - Observability reports routed, actionable, retained, unsafe, and pending

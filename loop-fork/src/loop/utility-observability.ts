@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readDelegationEvents } from "./delegation-policy";
+import {
+  delegationSkipCategory,
+  readDelegationEvents,
+} from "./delegation-policy";
 import {
   readUtilityJobsForObservability,
   type UtilityJobSnapshot,
@@ -75,13 +78,16 @@ export interface UtilityMessageObservability {
 }
 
 export interface UtilityRoutingObservability {
+  actionable: number;
   autoRouted: number;
   considered: number;
   explicitRouted: number;
   pending: number;
   reasons: Record<string, number>;
+  retained: number;
   routed: number;
   skipped: number;
+  unsafe: number;
 }
 
 const emptyUsage = (): UtilityObservabilityUsage => ({
@@ -114,33 +120,53 @@ const routingSnapshot = (
       "skipped-candidate",
     ].includes(event.disposition)
   );
-  const routedJobs = jobs.filter(
-    (job) => job.decision?.target === "utility"
-  );
+  const routedJobs = jobs.filter((job) => job.decision?.target === "utility");
   const skippedJobs = jobs.filter(
     (job) => job.decision && job.decision.target !== "utility"
   );
-  const reasons = skippedJobs.reduce<Record<string, number>>(
-    (counts, job) => {
-      const reason = job.decision?.reason;
-      if (reason) {
-        counts[reason] = (counts[reason] ?? 0) + 1;
-      }
-      return counts;
-    },
-    {}
-  );
+  const reasons = skippedJobs.reduce<Record<string, number>>((counts, job) => {
+    const reason = job.decision?.reason;
+    if (reason) {
+      counts[reason] = (counts[reason] ?? 0) + 1;
+    }
+    return counts;
+  }, {});
   for (const event of unroutedCandidates) {
     reasons[event.reason] = (reasons[event.reason] ?? 0) + 1;
   }
+  const categories = [
+    ...skippedJobs.map((job) =>
+      delegationSkipCategory(
+        "skipped-candidate",
+        job.decision?.reason ?? "route-target-not-utility"
+      )
+    ),
+    ...unroutedCandidates.map(
+      (event) =>
+        event.category ??
+        delegationSkipCategory(event.disposition, event.reason)
+    ),
+  ];
+  const actionable = categories.filter(
+    (category) => category === "actionable-miss"
+  ).length;
+  const retained = categories.filter(
+    (category) => category === "intentional-retain"
+  ).length;
+  const unsafe = categories.filter(
+    (category) => category === "unsafe-reject"
+  ).length;
   return {
+    actionable,
     autoRouted,
     considered: jobs.length + unroutedCandidates.length,
     explicitRouted,
     pending: jobs.filter((job) => !job.decision).length,
     reasons,
+    retained,
     routed: routedJobs.length,
-    skipped: skippedJobs.length + unroutedCandidates.length,
+    skipped: actionable + unsafe,
+    unsafe,
   };
 };
 

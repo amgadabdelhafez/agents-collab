@@ -388,6 +388,90 @@ test("routes only an exactly bounded file-read profile", () => {
   });
 });
 
+test("routes a bounded read-plan profile without command or write authority", () => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        executionPlan: [
+          {
+            executionProfile: "search",
+            objective: "Search source",
+            readScope: ["src"],
+          },
+          {
+            executionProfile: "file-list",
+            objective: "List tests",
+            readScope: ["tests"],
+          },
+        ],
+        executionProfile: "read-plan",
+        kind: "inspect",
+        readScope: ["src", "tests"],
+        requiredCapabilities: ["inspect"],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({
+    reason: "utility-eligible",
+    target: "utility",
+    tierId: "cheap-oss",
+  });
+});
+
+test.each([
+  makeRequest({ executionProfile: "read-plan", kind: "inspect" }),
+  makeRequest({
+    executionPlan: [
+      {
+        executionProfile: "search",
+        objective: "Search source",
+        readScope: ["src"],
+      },
+    ],
+    executionProfile: "read-plan",
+    kind: "inspect",
+    readScope: ["src", "tests"],
+    writeScope: [],
+  }),
+  makeRequest({
+    executionPlan: [
+      {
+        executionProfile: "file-read",
+        executionRead: {
+          endLine: 10,
+          path: "tests/example.ts",
+          startLine: 1,
+        },
+        objective: "Read source",
+        readScope: ["src/example.ts"],
+      },
+    ],
+    executionProfile: "read-plan",
+    kind: "inspect",
+    readScope: ["src/example.ts"],
+    writeScope: [],
+  }),
+  makeRequest({
+    executionPlan: [
+      {
+        executionProfile: "git-inspect",
+        objective: "Inspect Git metadata",
+        readScope: ["src/example.ts"],
+      },
+    ],
+    executionProfile: "read-plan",
+    kind: "inspect",
+    readScope: ["src/example.ts"],
+    writeScope: [],
+  }),
+])("keeps malformed structured read plans with the driver", (request) => {
+  expect(routeUtilityRequest(request, context())).toEqual({
+    reason: "request-not-bounded",
+    target: "driver",
+  });
+});
+
 test("normalizes and routes a structured output boundary", () => {
   const request = makeRequest({
     executionOutput: { lineLimit: 25, position: "tail", stderr: "merge" },

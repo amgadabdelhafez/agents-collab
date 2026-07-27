@@ -315,6 +315,69 @@ describe("runHookEmit", () => {
     expect(stdout.join("")).toContain('"permissionDecision":"deny"');
   });
 
+  test("adopts a verified linked worktree named by a leading cd", async () => {
+    const resolvedPaths: string[] = [];
+    const routeRequests: Array<{
+      executionProfile?: string;
+      readScope?: string[];
+    }> = [];
+    async function* stdin() {
+      await Promise.resolve();
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/repo",
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command:
+              "cd /linked/packages/api && rg needle tests/router.test.ts && ls src",
+          },
+          tool_name: "Bash",
+          tool_use_id: "linked-cd-plan",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: () => undefined,
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "linked-cd-job" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: (_runRoot, path) => {
+        resolvedPaths.push(path);
+        return path.startsWith("/linked") ? "/linked" : "/repo";
+      },
+      stdin: stdin(),
+      writeStdout: () => undefined,
+    });
+    expect(resolvedPaths).toEqual(["/repo", "/linked/packages/api"]);
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        executionProfile: "read-plan",
+        executionPlan: [
+          expect.objectContaining({
+            executionProfile: "search",
+            readScope: ["/linked/packages/api/tests/router.test.ts"],
+          }),
+          expect.objectContaining({
+            executionProfile: "file-list",
+            readScope: ["/linked/packages/api/src"],
+          }),
+        ],
+        readScope: [
+          "/linked/packages/api/tests/router.test.ts",
+          "/linked/packages/api/src",
+        ],
+      }),
+    ]);
+  });
+
   test("roots a focused-check cwd and paths in a verified linked worktree", async () => {
     const routeRequests: Array<{
       executionArgv?: string[];
@@ -460,14 +523,17 @@ describe("runHookEmit", () => {
     await run("Read", { file_path: "/other/a.ts", limit: 300 }, undefined);
     expect(delegationEvents).toEqual([
       expect.objectContaining({
+        category: "intentional-retain",
         disposition: "skipped-candidate",
         reason: "tool-not-enforceable",
       }),
       expect.objectContaining({
+        category: "unsafe-reject",
         disposition: "skipped-candidate",
         reason: "compound-or-unsafe-command",
       }),
       expect.objectContaining({
+        category: "unsafe-reject",
         disposition: "skipped-candidate",
         reason: "workspace-unverified",
       }),

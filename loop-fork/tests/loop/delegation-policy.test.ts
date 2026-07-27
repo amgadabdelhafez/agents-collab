@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   appendDelegationEvent,
   classifyDelegationIntent,
+  delegationSkipCategory,
   makeDelegationEvent,
   readDelegationEvents,
   recordCodexAppServerDelegationCandidate,
@@ -246,7 +247,6 @@ describe("delegation classifier", () => {
     "git show --patch 53a8d5dd",
     "git log --format=%x00 -3 origin/main",
     "git rev-parse origin/main && git commit -am done",
-    "git rev-parse a && git rev-parse b && git rev-parse c && git rev-parse d && git rev-parse e",
   ])("keeps unsupported or mutating Git inspection direct: %s", (command) => {
     expect(classify("Bash", { command })).toMatchObject({ eligible: false });
   });
@@ -309,6 +309,18 @@ describe("delegation classifier", () => {
     expect(resolveUtilityDelegationMode("surprise")).toBe("observe");
   });
 
+  test("classifies retained, actionable, and unsafe routing outcomes", () => {
+    expect(
+      delegationSkipCategory("skipped-candidate", "review-stays-with-requester")
+    ).toBe("intentional-retain");
+    expect(
+      delegationSkipCategory("skipped-candidate", "utility-unavailable")
+    ).toBe("actionable-miss");
+    expect(delegationSkipCategory("skipped-candidate", "protected-scope")).toBe(
+      "unsafe-reject"
+    );
+  });
+
   test.each([
     ["rg -n route src/loop | head -50", "scoped-search", ["src/loop"]],
     ["rg -n route src/loop | head -n 50", "scoped-search", ["src/loop"]],
@@ -332,6 +344,131 @@ describe("delegation classifier", () => {
       operation,
       request: { readScope },
     });
+  });
+
+  test("routes a two-to-six stage literal read plan with the union of safe scopes", () => {
+    expect(
+      classify("Bash", {
+        command:
+          "git status --short && rg -n route src/loop && sed -n '20,40p' src/a.ts && ls tests",
+      })
+    ).toMatchObject({
+      eligible: true,
+      operation: "read-plan",
+      request: {
+        executionProfile: "read-plan",
+        executionPlan: [
+          {
+            executionProfile: "git-status",
+            readScope: ["."],
+          },
+          {
+            executionProfile: "search",
+            readScope: ["src/loop"],
+          },
+          {
+            executionProfile: "file-read",
+            executionRead: {
+              endLine: 40,
+              path: "src/a.ts",
+              startLine: 20,
+            },
+            readScope: ["src/a.ts"],
+          },
+          {
+            executionProfile: "file-list",
+            readScope: ["tests"],
+          },
+        ],
+        kind: "inspect",
+        readScope: [".", "src/loop", "src/a.ts", "tests"],
+        requiredCapabilities: ["inspect"],
+        writeScope: [],
+      },
+    });
+  });
+
+  test.each([
+    ["rg -n route src && ls tests", ["src", "tests"]],
+    [
+      "rg -n route src && rg -n route tests && rg -n route docs && rg -n route packages && rg -n route fixtures && rg -n route v2",
+      ["src", "tests", "docs", "packages", "fixtures", "v2"],
+    ],
+  ])("routes the read-plan step boundary %s", (command, readScope) => {
+    expect(classify("Bash", { command })).toMatchObject({
+      eligible: true,
+      operation: "read-plan",
+      request: { executionProfile: "read-plan", readScope },
+    });
+  });
+
+  test.each([
+    "rg -n route src && git commit -am nope",
+    "rg -n route src && node -e 'process.exit(0)'",
+    "rg -n route src && curl https://example.com",
+    "rg -n route src && ps aux",
+    "rg -n route src | wc -l && git status --short",
+    "git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short",
+  ])("keeps unsafe or oversized read-plan neighbor direct: %s", (command) => {
+    expect(classify("Bash", { command })).toMatchObject({
+      eligible: false,
+      reason: "compound-or-unsafe-command",
+    });
+  });
+
+  test.each([
+    ["cat src/a.ts", ["src/a.ts"], ["file-read"]],
+    ["cat -n src/a.ts", ["src/a.ts"], ["file-read"]],
+    [
+      "cat src/a.ts tests/a.test.ts",
+      ["src/a.ts", "tests/a.test.ts"],
+      ["file-read", "file-read"],
+    ],
+    ["grep -n '' src/a.ts", ["src/a.ts"], ["file-read"]],
+    ["ls src tests", ["src", "tests"], ["file-list", "file-list"]],
+    [
+      "ls -la src tests docs",
+      ["src", "tests", "docs"],
+      ["file-list", "file-list", "file-list"],
+    ],
+  ])("routes bounded file/list mapping %s", (command, readScope, profiles) => {
+    const classification = classify("Bash", { command });
+    expect(classification).toMatchObject({
+      eligible: true,
+      operation: "read-plan",
+      request: {
+        executionProfile: "read-plan",
+        readScope,
+      },
+    });
+    expect(classify("Bash", { command })).toMatchObject({
+      request: {
+        executionPlan: profiles.map((executionProfile, index) => ({
+          executionProfile,
+          readScope: [readScope[index]],
+        })),
+      },
+    });
+  });
+
+  test("keeps a nested filtered multi-file mapping direct", () => {
+    expect(
+      classify("Bash", {
+        command: "cat src/a.ts tests/a.test.ts | head -5 && ls docs",
+      })
+    ).toMatchObject({ eligible: false, reason: "compound-or-unsafe-command" });
+  });
+
+  test.each([
+    "cat src/1.ts src/2.ts src/3.ts src/4.ts src/5.ts",
+    "cat -A src/a.ts",
+    "cat .env",
+    "grep -n '' src tests",
+    "ls src tests docs packages fixtures",
+    "ls src -R",
+    "ls src --",
+  ])("keeps unbounded file/list mapping direct: %s", (command) => {
+    expect(classify("Bash", { command })).toMatchObject({ eligible: false });
   });
 
   test.each([
@@ -511,7 +648,6 @@ describe("delegation classifier", () => {
     "npx vitest run tests/router.test.ts 2>&2",
     "npx vitest run tests/router.test.ts && git commit -m nope",
     "ls -R src",
-    "ls src tests",
     "ls /etc",
     "grep -E 'route|worker' src",
     "grep 'route.*worker' src",

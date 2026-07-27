@@ -5,6 +5,7 @@ import {
   appendDelegationEvent,
   classifyDelegationIntent,
   type DelegationTelemetryEvent,
+  delegationWorkspaceHint,
   hashDelegationFingerprint,
   makeDelegationEvent,
   resolveUtilityDelegationMode,
@@ -229,9 +230,40 @@ const rootDelegationRequest = (
           },
         }
       : {}),
+    ...(request.executionPlan
+      ? {
+          executionPlan: request.executionPlan.map((step) => ({
+            ...step,
+            ...(step.executionRead
+              ? {
+                  executionRead: {
+                    ...step.executionRead,
+                    path: rootScope(step.executionRead.path),
+                  },
+                }
+              : {}),
+            readScope: step.readScope.map(rootScope),
+          })),
+        }
+      : {}),
     readScope: request.readScope.map(rootScope),
     writeScope: request.writeScope.map(rootScope),
   };
+};
+
+const resolveDelegationWorkspace = (
+  runRoot: string,
+  cwd: string,
+  toolName: string,
+  toolInput: unknown,
+  resolveWorkspace: NonNullable<HookEmitDeps["resolveWorkspaceRoot"]>
+): string | undefined => {
+  const currentWorkspaceRoot = resolveWorkspace(runRoot, cwd);
+  const workspaceHint = delegationWorkspaceHint(cwd, toolName, toolInput);
+  const hintedWorkspaceRoot = workspaceHint
+    ? resolveWorkspace(runRoot, workspaceHint)
+    : undefined;
+  return hintedWorkspaceRoot ?? currentWorkspaceRoot;
 };
 
 const handlePreToolDelegation = (
@@ -279,9 +311,15 @@ const handlePreToolDelegation = (
   const candidateFingerprint = hashDelegationFingerprint(
     JSON.stringify({ agent, cwd, input: toolInput, tool: toolName, toolUseId })
   );
-  const workspaceRoot = (
-    deps.resolveWorkspaceRoot ?? resolveVerifiedUtilityWorkspaceRoot
-  )(manifest.cwd, cwd);
+  const resolveWorkspace =
+    deps.resolveWorkspaceRoot ?? resolveVerifiedUtilityWorkspaceRoot;
+  const workspaceRoot = resolveDelegationWorkspace(
+    manifest.cwd,
+    cwd,
+    toolName,
+    toolInput,
+    resolveWorkspace
+  );
   if (!workspaceRoot) {
     appendTelemetry(
       runDir,

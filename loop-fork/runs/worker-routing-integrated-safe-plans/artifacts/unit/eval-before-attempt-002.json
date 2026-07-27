@@ -1,0 +1,26 @@
+{
+  "task_id": "worker-routing-integrated-safe-plans",
+  "status": "pending",
+  "required": [
+    "unit",
+    "independent-review",
+    "live-runtime"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/worker-routing-integrated-safe-plans/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/worker-routing-integrated-safe-plans/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/worker-routing-integrated-safe-plans/artifacts/unit/attempt-001.json"
+    },
+    "independent-review": {
+      "status": "pending"
+    },
+    "live-runtime": {
+      "status": "pending"
+    }
+  }
+}
