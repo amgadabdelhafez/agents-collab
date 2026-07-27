@@ -13,6 +13,8 @@ Description: Safely auto-route focused tests and broader bounded repository insp
 - Enforced exact test argv, cwd, and file authority at the broker boundary.
 - Enforced 1 MiB check inputs, 500-line exact reads, 1-4 test files, trailing
   grep-option rejection, and structured output/stderr bounds at the broker.
+- Fixed the live-discovered multi-worker claim race with bounded lock retry,
+  fresh-empty lock protection, owner-token cleanup, and stale-age recovery.
 
 ## Why
 
@@ -23,9 +25,11 @@ selected executable.
 ## Notes
 
 - Red proof: 263 pass / 19 expected fail before implementation.
-- Focused green: 320 pass / 0 fail; latest Harness unit attempt passed.
-- Full suite: 983 pass / 4 baseline fail; the same four failures were
-  reproduced on `e97b206` before the two final regression tests were added.
-- Build and diff check pass; built SHA-256 is
-  `7e85ab9389435784f145a549c37a3faa3846e22dbd784e5f56da2e59d8e80ca7`.
-- Changed-file static diagnostics match base exactly: 33 errors / 1 warning.
+- Focused green after the concurrency fix: 334 pass / 0 fail.
+- Full suite: 987 pass / 4 baseline fail; the same four failures were
+  reproduced on `e97b206`.
+- Build and diff check pass; independently reviewed binary SHA-256:
+  `0e80de544f426bcd787cb234949217b065b7661a8a53eaf252048bfef63662a7`.
+- Changed-file static diagnostics match base exactly: 38 errors / 1 warning;
+  the five additional diagnostics come from newly included utility-store files
+  and are unchanged from commit `9e12134`.

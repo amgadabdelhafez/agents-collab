@@ -9,5 +9,7 @@
 7. [x] Implement literal grep and bounded awk/tail routing.
 8. [x] Run focused, full, static, build, and diff verification.
 9. [x] Complete independent evaluation.
-10. [ ] Deploy without restarting Claude/Codex, capture live proof, and pass
+10. [x] Fix the live-discovered concurrent worker claim race and rerun
+    independent evaluation.
+11. [ ] Deploy without restarting Claude/Codex, capture live proof, and pass
     the Harness stop gate.

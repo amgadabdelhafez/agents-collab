@@ -11,6 +11,7 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { sleepSync } from "bun";
 import type {
   UtilityCompactResult,
   UtilityRouteDecision,
@@ -114,6 +115,8 @@ export interface UtilityClaimOptions {
 }
 
 const LOCK_STALE_AFTER_MS = 30_000;
+const LOCK_ACQUIRE_TIMEOUT_MS = 2000;
+const LOCK_RETRY_INTERVAL_MS = 5;
 const LEADING_CURRENT_DIR_RE = /^\.\//;
 const TRAILING_SLASH_RE = /\/$/;
 const TERMINAL_STATES = new Set<UtilityJobState>([
@@ -297,58 +300,85 @@ const allSnapshots = (
     .filter((job): job is UtilityJobSnapshot => job !== undefined);
 };
 
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
-
 const lockIsStale = (lockFile: string): boolean => {
   try {
     const ageMs = Date.now() - statSync(lockFile).mtimeMs;
-    const raw = readFileSync(lockFile, "utf8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return (
-      ageMs > LOCK_STALE_AFTER_MS ||
-      !isPositiveEpoch(pid) ||
-      !processIsAlive(pid)
-    );
+    return ageMs > LOCK_STALE_AFTER_MS;
   } catch {
-    return true;
+    return false;
+  }
+};
+
+const removeOwnedLock = (lockFile: string, ownerToken: string): void => {
+  try {
+    if (readFileSync(lockFile, "utf8") === ownerToken) {
+      unlinkSync(lockFile);
+    }
+  } catch {
+    // The lock was already removed or replaced; never remove a new owner.
+  }
+};
+
+const clearStaleLock = (lockFile: string): boolean => {
+  if (!lockIsStale(lockFile)) {
+    return false;
+  }
+  try {
+    unlinkSync(lockFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return true;
+};
+
+const createOwnedLock = (
+  lockFile: string
+): { descriptor: number; ownerToken: string } => {
+  const descriptor = openSync(lockFile, "wx", 0o600);
+  const ownerToken = `${process.pid}:${randomUUID()}\n`;
+  try {
+    writeSync(descriptor, ownerToken);
+    fsyncSync(descriptor);
+    return { descriptor, ownerToken };
+  } catch (error) {
+    closeSync(descriptor);
+    removeOwnedLock(lockFile, ownerToken);
+    throw error;
+  }
+};
+
+const acquireStoreLock = (
+  lockFile: string
+): { descriptor: number; ownerToken: string } => {
+  const deadline = Date.now() + LOCK_ACQUIRE_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return createOwnedLock(lockFile);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+      if (clearStaleLock(lockFile)) {
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("utility store is busy");
+      }
+      sleepSync(LOCK_RETRY_INTERVAL_MS);
+    }
   }
 };
 
 const withStoreLock = <T>(paths: UtilityStorePaths, operation: () => T): T => {
   mkdirSync(paths.rootDir, { recursive: true });
-  let lockDescriptor: number | undefined;
+  const { descriptor, ownerToken } = acquireStoreLock(paths.lockFile);
   try {
-    try {
-      lockDescriptor = openSync(paths.lockFile, "wx", 0o600);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-        throw error;
-      }
-      if (!lockIsStale(paths.lockFile)) {
-        throw new Error("utility store is busy");
-      }
-      unlinkSync(paths.lockFile);
-      lockDescriptor = openSync(paths.lockFile, "wx", 0o600);
-    }
-    writeSync(lockDescriptor, `${process.pid}\n`);
-    fsyncSync(lockDescriptor);
     return operation();
   } finally {
-    if (lockDescriptor !== undefined) {
-      closeSync(lockDescriptor);
-      try {
-        unlinkSync(paths.lockFile);
-      } catch {
-        // Another error is already more useful than lock cleanup failure.
-      }
-    }
+    closeSync(descriptor);
+    removeOwnedLock(paths.lockFile, ownerToken);
   }
 };
 

@@ -46,6 +46,9 @@ and preserve the requested cwd, paths, and output bound.
   malformed, protected, outside the verified workspace, or not a directory.
 - Add red-first classifier, broker, runtime, persistence, output-budget, and
   negative security tests.
+- Make utility-store lock acquisition tolerate brief contention between the
+  existing worker slots. A fresh empty lock remains owned, acquisition retries
+  for a short fixed interval, and cleanup removes only the caller's lock.
 - Deploy only after independent evaluation and preserve active Claude/Codex
   panes.
 
@@ -61,8 +64,8 @@ and preserve the requested cwd, paths, and output bound.
   flags, coverage, arbitrary test-runner options, or more than four test files.
 - Recursive file listing, following symlinks, reading temporary paths outside
   the verified repository, or exposing protected/governing paths.
-- Raising worker concurrency. This task increases safe eligibility and keeps
-  the existing bounded pool.
+- Raising the configured worker-pool size. This task increases safe eligibility
+  and makes the existing bounded pool reliably concurrent.
 
 ## Acceptance criteria
 
@@ -81,6 +84,8 @@ and preserve the requested cwd, paths, and output bound.
 - [x] Search/read/list/check outputs remain within 64 KiB; input files remain
       bounded at 1 MiB.
 - [x] Existing safe grammar and all fail-closed security tests remain green.
+- [x] Two workers contending for the journal lock both claim their distinct
+      routed jobs without removing one another's lock or exiting early.
 - [x] Focused, full, static, build, and diff verification are recorded; known
       baseline failures are separated from regressions.
 - [x] An independent evaluator passes the change before deployment.

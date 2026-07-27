@@ -11,7 +11,9 @@
 5. Run focused suites, full tests, static checks, build, and diff validation;
    fix only regressions introduced by this task.
 6. Obtain independent security/correctness evaluation and pass Harness gates.
-7. Install the freshly built executable inode, restart only the
-   governess/worker display processes, and prove live focused-test plus
-   inspection canaries.
-
+7. Repair the live-discovered journal-lock contention race with bounded retry,
+   fresh-lock protection, and ownership-safe cleanup; add a process-contention
+   regression and repeat independent evaluation.
+8. Install the freshly built executable inode, restart only the
+   governess/worker display processes, and prove concurrent live focused-test
+   plus inspection canaries.

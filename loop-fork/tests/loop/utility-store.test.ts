@@ -1,13 +1,17 @@
 import { afterEach, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { type Subprocess, sleep, spawn } from "bun";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
   activateUtilityEpoch,
@@ -144,6 +148,185 @@ test("claims a routed job with a durable governess epoch", () => {
   });
   expect(readUtilityJob(runDir, "job-1")?.claim?.epoch).toBe(12);
   expect(claimUtilityJob(runDir, 12)).toBeUndefined();
+});
+
+test("waits for a fresh contended lock instead of fencing a concurrent worker", async () => {
+  const runDir = makeRunDir();
+  routeToUtility(runDir);
+  const paths = utilityRunPaths(runDir);
+  const readyFile = join(runDir, "lock-holder-ready");
+  const child = spawn({
+    cmd: [
+      process.execPath,
+      "-e",
+      [
+        'import { closeSync, fsyncSync, openSync, unlinkSync, writeFileSync, writeSync } from "node:fs";',
+        "const lockFile = process.env.UTILITY_TEST_LOCK;",
+        "const readyFile = process.env.UTILITY_TEST_READY;",
+        'if (!(lockFile && readyFile)) throw new Error("missing test paths");',
+        'const descriptor = openSync(lockFile, "wx", 0o600);',
+        'writeFileSync(readyFile, "ready\\n");',
+        "Bun.sleepSync(40);",
+        'writeSync(descriptor, String(process.pid) + "\\n");',
+        "fsyncSync(descriptor);",
+        "Bun.sleepSync(80);",
+        "closeSync(descriptor);",
+        "unlinkSync(lockFile);",
+      ].join(" "),
+    ],
+    env: {
+      ...process.env,
+      UTILITY_TEST_LOCK: paths.lockFile,
+      UTILITY_TEST_READY: readyFile,
+    },
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  try {
+    const readyDeadline = Date.now() + 2000;
+    while (!existsSync(readyFile) && Date.now() < readyDeadline) {
+      await sleep(5);
+    }
+    expect(existsSync(readyFile)).toBe(true);
+
+    const startedAt = Date.now();
+    const claimed = claimUtilityJob(runDir, 12, {
+      workerId: "worker-after-contention",
+      workerPid: 4321,
+    });
+
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(60);
+    expect(claimed?.jobId).toBe("job-1");
+    expect(await child.exited).toBe(0);
+  } finally {
+    child.kill();
+    await child.exited;
+  }
+});
+
+test("two contending worker processes claim distinct routed jobs", async () => {
+  const runDir = makeRunDir();
+  routeToUtility(runDir, "worker-a", [], 12);
+  routeToUtility(runDir, "worker-b", [], 12);
+  const paths = utilityRunPaths(runDir);
+  const readyFile = join(runDir, "concurrent-lock-holder-ready");
+  const holder = spawn({
+    cmd: [
+      process.execPath,
+      "-e",
+      [
+        'import { closeSync, fsyncSync, openSync, unlinkSync, writeFileSync, writeSync } from "node:fs";',
+        "const lockFile = process.env.UTILITY_TEST_LOCK;",
+        "const readyFile = process.env.UTILITY_TEST_READY;",
+        'if (!(lockFile && readyFile)) throw new Error("missing test paths");',
+        'const descriptor = openSync(lockFile, "wx", 0o600);',
+        'writeSync(descriptor, String(process.pid) + ":holder\\n");',
+        "fsyncSync(descriptor);",
+        'writeFileSync(readyFile, "ready\\n");',
+        "Bun.sleepSync(300);",
+        "closeSync(descriptor);",
+        "unlinkSync(lockFile);",
+      ].join(" "),
+    ],
+    env: {
+      ...process.env,
+      UTILITY_TEST_LOCK: paths.lockFile,
+      UTILITY_TEST_READY: readyFile,
+    },
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const children: Subprocess[] = [];
+  try {
+    const readyDeadline = Date.now() + 2000;
+    while (!existsSync(readyFile) && Date.now() < readyDeadline) {
+      await sleep(5);
+    }
+    expect(existsSync(readyFile)).toBe(true);
+    const moduleUrl = pathToFileURL(
+      join(import.meta.dir, "../../src/loop/utility-store.ts")
+    ).href;
+    const workerScript = [
+      "const moduleUrl = process.env.UTILITY_TEST_MODULE;",
+      "const runDir = process.env.UTILITY_TEST_RUN_DIR;",
+      "const jobId = process.env.UTILITY_TEST_JOB_ID;",
+      'if (!(moduleUrl && runDir && jobId)) throw new Error("missing test inputs");',
+      "const { claimUtilityJob } = await import(moduleUrl);",
+      "const claimed = claimUtilityJob(runDir, 12, { jobId });",
+      'process.stdout.write(String(claimed?.jobId ?? "none") + "\\n");',
+    ].join(" ");
+    for (const jobId of ["worker-a", "worker-b"]) {
+      children.push(
+        spawn({
+          cmd: [process.execPath, "-e", workerScript],
+          env: {
+            ...process.env,
+            UTILITY_TEST_JOB_ID: jobId,
+            UTILITY_TEST_MODULE: moduleUrl,
+            UTILITY_TEST_RUN_DIR: runDir,
+          },
+          stderr: "pipe",
+          stdout: "pipe",
+        })
+      );
+    }
+
+    const [outputs, errors, exitCodes, holderExit] = await Promise.all([
+      Promise.all(
+        children.map(async (child) =>
+          (await new Response(child.stdout).text()).trim()
+        )
+      ),
+      Promise.all(
+        children.map(async (child) =>
+          (await new Response(child.stderr).text()).trim()
+        )
+      ),
+      Promise.all(children.map(async (child) => child.exited)),
+      holder.exited,
+    ]);
+
+    expect(errors).toEqual(["", ""]);
+    expect(exitCodes).toEqual([0, 0]);
+    expect(holderExit).toBe(0);
+    expect(outputs.sort()).toEqual(["worker-a", "worker-b"]);
+  } finally {
+    holder.kill();
+    await holder.exited;
+    for (const child of children) {
+      child.kill();
+      await child.exited;
+    }
+  }
+});
+
+test("fails closed after a bounded wait without removing a live owner lock", () => {
+  const runDir = makeRunDir();
+  const paths = utilityRunPaths(runDir);
+  mkdirSync(paths.rootDir, { recursive: true });
+  writeFileSync(paths.lockFile, "999:existing-owner\n");
+
+  const startedAt = Date.now();
+  expect(() => appendUtilityRouteRequest(runDir, makeRequest())).toThrow(
+    "utility store is busy"
+  );
+
+  expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1900);
+  expect(readFileSync(paths.lockFile, "utf8")).toBe("999:existing-owner\n");
+});
+
+test("recovers a lock only after its stale-age boundary", () => {
+  const runDir = makeRunDir();
+  const paths = utilityRunPaths(runDir);
+  mkdirSync(paths.rootDir, { recursive: true });
+  writeFileSync(paths.lockFile, "999:abandoned-owner\n");
+  const staleAt = new Date(Date.now() - 31_000);
+  utimesSync(paths.lockFile, staleAt, staleAt);
+
+  expect(appendUtilityRouteRequest(runDir, makeRequest()).state).toBe(
+    "pending-route"
+  );
+  expect(existsSync(paths.lockFile)).toBe(false);
 });
 
 test("does not claim overlapping write scopes concurrently", () => {

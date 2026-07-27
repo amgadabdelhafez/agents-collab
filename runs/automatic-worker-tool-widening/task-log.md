@@ -39,15 +39,18 @@
   failures reproduce unchanged on base commit `e97b206`; they expect the old
   `gpt-5.5` and config argument shape while the live configuration uses
   `gpt-5.6-sol`, `xhigh`, and `standard`.
-- Static check: changed-file diagnostics equal the base exactly (33 errors and
-  1 warning); repository-wide formatting/static debt remains pre-existing.
+- Static check: changed-file diagnostics equal the base exactly (38 errors and
+  1 warning); five newly counted diagnostics are unchanged utility-store debt,
+  and repository-wide formatting/static debt remains pre-existing.
 - Independent adversarial review: passed with no remaining blockers after
   broker-enforced fixes for oversized checks, grep option injection, exact
   read ranges, 1-4 focused-file limits, and structured output filtering.
+- Concurrent-claim re-review: passed after 10/10 repeated two-process and
+  fresh-empty contention probes, near/over-timeout checks, stale recovery, and
+  replacement-owner preservation. Reviewed binary SHA-256:
+  `0e80de544f426bcd787cb234949217b065b7661a8a53eaf252048bfef63662a7`.
 
 ## Remaining
 
-- Remaining Harness live-runtime gate.
-- Commit, deploy the independently verified binary, scoped governess/worker
-  pane restart, live focused-check and inspection canaries, PID preservation,
-  and governess doctor.
+- Deploy the re-reviewed binary, rerun both canaries concurrently, preserve
+  main-agent PIDs, and pass the remaining Harness live-runtime gate.

@@ -25,13 +25,15 @@ Security probes must cover:
 - grep regex ambiguity and dangerous options;
 - unbounded or malformed awk/tail selectors;
 - unknown execution profiles and malformed persisted cwd values.
+- fresh/empty utility locks, live-owner contention, bounded acquisition timeout,
+  stale-owner recovery, and ownership-safe cleanup.
 
 Live acceptance:
 
 - Confirm installed binary hash equals the independently verified build.
 - Record pane IDs/PIDs before and after; Claude and Codex must be unchanged.
 - Run `governess doctor` for the active loop and require every check to pass.
-- Route one focused test and one new inspection-family canary; each must
-  complete using only its expected broker tool with zero failures.
+- Route one focused test and one new inspection-family canary concurrently;
+  both must claim and complete using only their expected broker tool with zero
+  failures.
 - Confirm usage/cost rows remain stable after the scoped restart.
-
