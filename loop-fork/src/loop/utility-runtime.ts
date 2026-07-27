@@ -1933,12 +1933,13 @@ export const runUtilityWorker = async (
   if (!claimed) {
     return;
   }
-  const workerConfig =
+  const legacyCompatibilityJob =
     env.LOOP_UTILITY_HARNESS === undefined &&
     (claimed.decision?.tierId === undefined ||
-      claimed.decision.tierId === "utility-default")
-      ? { ...config, harness: "legacy" as const }
-      : config;
+      claimed.decision.tierId === "utility-default");
+  const workerConfig = legacyCompatibilityJob
+    ? { ...config, harness: "legacy" as const }
+    : config;
   transitionUtilityJob(runDir, jobId, "running", {
     eventId: `running:${epoch}:${jobId}`,
   });
@@ -1967,13 +1968,20 @@ export const runUtilityWorker = async (
     claimed.request,
     workspace
   );
-  const tierId = (
+  let tierId: UtilityExecutionTierId;
+  if (
     claimed.decision?.tierId === UTILITY_DIRECT_TIER ||
     claimed.decision?.tierId === UTILITY_NANNY_TIER ||
     claimed.decision?.tierId === UTILITY_AU_PAIR_TIER
-      ? claimed.decision.tierId
-      : classifyUtilityExecution(executionRequest)
-  ) as UtilityExecutionTierId;
+  ) {
+    tierId = claimed.decision.tierId;
+  } else if (legacyCompatibilityJob) {
+    tierId = directUtilityCalls(executionRequest)
+      ? UTILITY_DIRECT_TIER
+      : UTILITY_AU_PAIR_TIER;
+  } else {
+    tierId = classifyUtilityExecution(executionRequest);
+  }
   const selectedConfig = configForTier(workerConfig, tierId);
   const roleName = utilityRoleName(tierId);
   const assertActive = (): void => {

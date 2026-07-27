@@ -88,9 +88,7 @@ const nannyCommonBoundary = (request: UtilityRouteRequest): boolean =>
   !hasAuthority(request) &&
   (request.contextRefs?.length ?? 0) <= 2;
 
-const unprofiledBoundedInspection = (
-  request: UtilityRouteRequest
-): boolean => {
+const unprofiledBoundedInspection = (request: UtilityRouteRequest): boolean => {
   const requestChars =
     request.objective.length +
     request.acceptanceCriteria.reduce(

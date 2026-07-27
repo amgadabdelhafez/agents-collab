@@ -122,9 +122,7 @@ describe("utility execution tier classification", () => {
   });
 
   test("unprofiled bounded inspections go to Nanny", () => {
-    expect(classifyUtilityExecution(inspectRequest())).toBe(
-      UTILITY_NANNY_TIER
-    );
+    expect(classifyUtilityExecution(inspectRequest())).toBe(UTILITY_NANNY_TIER);
     expect(
       classifyUtilityExecution(
         inspectRequest({

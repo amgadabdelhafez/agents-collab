@@ -1,0 +1,70 @@
+task_id: nanny-bounded-inspection
+dimension: unit
+attempt: 001
+started_at: 2026-07-27T23:02:07Z
+command: bun test tests/loop/utility-execution-tier.test.ts tests/loop/utility-runtime.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-runtime.test.ts:
+(pass) OpenRouter GLM is the default but remains disabled without a credential [0.58ms]
+(pass) Au Pair and Nanny role-specific switches override compatibility names
+(pass) worker concurrency is configurable within a bounded range [0.16ms]
+(pass) auto execution profiles expose only satisfiable broker tools [0.05ms]
+(pass) structured cat plans cannot invoke Git tools [2.26ms]
+(pass) structured Git metadata rejects forged narrow file scope [0.40ms]
+(pass) structured multi-directory plans cannot read content or cross stages [1.39ms]
+(pass) structured mixed plans retain exact slices and output filters [1.54ms]
+(pass) file-read runtime carries an exact broker range and fails closed without one
+(pass) a mode-0600 key file enables the tier without exporting the secret [0.52ms]
+(pass) detached utility worker environment is allowlist-built, not inherited [0.02ms]
+(pass) governess passes only the minimal key-file worker environment [2.74ms]
+(pass) governess route processing dispatches eligible work without provider I/O [1.34ms]
+(pass) worker routing ignores cost estimates [2.29ms]
+(pass) the default worker pool runs four jobs and leaves a fifth pending [4.69ms]
+(pass) unprofiled bounded inspections persist Nanny ownership without spilling to Au Pair [2.69ms]
+(pass) unprofiled bounded inspections fail closed when Nanny is unavailable [1.97ms]
+(pass) peer-routed reviews preserve the requester and ask the peer to act [1.30ms]
+(pass) safe key diagnostics persist in routing observability, not the output-only worker pane [1.80ms]
+(pass) spawn failure terminates the job instead of stranding routed utility work [1.62ms]
+(pass) an unclaimed routed job fails closed after its claim deadline [1.61ms]
+(pass) a dead claimed worker fails immediately and releases its write scope [2.90ms]
+(pass) a live worker remains claimed before its external runtime deadline [1.78ms]
+(pass) governess externally terminates a live worker past its runtime [1.89ms]
+(pass) terminal completion racing the reaper is preserved [1.74ms]
+(pass) overlapping utility writes are not dispatched concurrently [2.02ms]
+(pass) worker pane is a colored output-only request, tool, and response stream [3.34ms]
+(pass) utility pane keeps a failed worker response visible within its viewport [1.15ms]
+(pass) Nanny and Au Pair panes show only their own tier [2.70ms]
+(pass) Nanny pane includes local Qwen governess advisory usage [0.30ms]
+(pass) a new governess epoch fences an orphaned utility claim [2.03ms]
+(pass) peer routing is relative to the requester, not the current driver [1.38ms]
+(pass) a full agent applies a completed utility patch with pre/postimage journal proof [17.62ms]
+(pass) guarded patch application refuses wrong hashes and proposal-time drift [3.55ms]
+(pass) utility worker completes against an OpenAI-compatible local endpoint [8.15ms]
+(pass) context-insufficient response escalates once without evidence retries [5.74ms]
+(pass) worker tools cannot read their persisted context capsule [4.83ms]
+(pass) utility worker stops after three consecutive broker rejections [5.74ms]
+(pass) a successful broker call resets the consecutive rejection breaker [5.57ms]
+(pass) utility worker refuses to execute a third identical tool call [5.39ms]
+(pass) utility worker stops before a sixty-fifth model call [38.82ms]
+(pass) utility worker rejects prose-only completion without repository evidence [4.84ms]
+(pass) a failing focused check cannot satisfy command completion evidence [18.48ms]
+
+tests/loop/utility-execution-tier.test.ts:
+(pass) utility execution tier classification > exact file reads bypass every model [0.08ms]
+(pass) utility execution tier classification > exact focused checks bypass every model
+(pass) utility execution tier classification > small structured read-only reasoning goes to Nanny [0.04ms]
+(pass) utility execution tier classification > edits and broader plans go to Au Pair
+(pass) utility execution tier classification > unprofiled bounded inspections go to Nanny
+(pass) utility execution tier classification > unprofiled Nanny inspections fail closed outside the narrow band [0.27ms]
+
+ 49 pass
+ 0 fail
+ 215 expect() calls
+Ran 49 tests across 2 files. [191.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T23:02:07Z

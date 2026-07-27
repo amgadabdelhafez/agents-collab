@@ -1,0 +1,7 @@
+{
+  "task_id": "nanny-bounded-inspection",
+  "scanned_at": "2026-07-27T23:06:25Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

@@ -514,7 +514,7 @@ test("governess passes only the minimal key-file worker environment", async () =
       objective: "Inspect one file",
       readScope: ["src"],
       requester: "claude",
-      requiredCapabilities: ["inspect"],
+      requiredCapabilities: ["inspect", "focused-verify"],
       risk: "low",
       writeScope: [],
     })
@@ -599,7 +599,7 @@ test("governess route processing dispatches eligible work without provider I/O",
     expect(count).toBe(1);
     expect(spawned).toEqual([request.id]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
-      decision: { target: "utility", tierId: "utility-au-pair" },
+      decision: { target: "utility", tierId: "utility-nanny" },
       state: "routed-utility",
     });
   } finally {
@@ -623,7 +623,7 @@ test("worker routing ignores cost estimates", async () => {
         objective: `Inspect ${id}`,
         readScope: ["src"],
         requester: "claude",
-        requiredCapabilities: ["inspect"],
+        requiredCapabilities: ["inspect", "focused-verify"],
         risk: "low",
         writeScope: [],
       })
@@ -677,7 +677,7 @@ test("the default worker pool runs four jobs and leaves a fifth pending", async 
         objective: `Inspect ${id}`,
         readScope: ["src"],
         requester: "claude",
-        requiredCapabilities: ["inspect"],
+        requiredCapabilities: ["inspect", "focused-verify"],
         risk: "low",
         writeScope: [],
       })
@@ -789,6 +789,62 @@ test("unprofiled bounded inspections persist Nanny ownership without spilling to
   }
 });
 
+test("unprofiled bounded inspections fail closed when Nanny is unavailable", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-nanny-unavailable-"));
+  const runDir = join(repoRoot, ".loop", "runs", "nanny-unavailable");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return bounded file evidence"],
+    authority: {},
+    id: "nanny-unavailable-job",
+    kind: "inspect",
+    objective: "Inspect the bounded source file",
+    readScope: ["src/sample.ts"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 22,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_AU_PAIR_ENABLED: "1",
+        LOOP_AU_PAIR_URL: "http://127.0.0.1:9998/v1/chat/completions",
+        LOOP_NANNY_ENABLED: "0",
+      },
+      {
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return true;
+        },
+      }
+    );
+    expect(spawned).toEqual([]);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      decision: {
+        detail: "disabled by LOOP_NANNY_ENABLED=0",
+        reason: "utility-unavailable",
+        target: "driver",
+      },
+      state: "routed-driver",
+    });
+    expect(readUtilityObservability(runDir, "utility-au-pair").jobsTotal).toBe(
+      0
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("peer-routed reviews preserve the requester and ask the peer to act", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-peer-review-"));
   const runDir = join(repoRoot, ".loop", "runs", "peer-review-run");
@@ -852,7 +908,7 @@ test("safe key diagnostics persist in routing observability, not the output-only
     objective: "Inspect configuration",
     readScope: ["src"],
     requester: "codex",
-    requiredCapabilities: ["inspect"],
+    requiredCapabilities: ["inspect", "focused-verify"],
     risk: "low",
     writeScope: [],
   });
@@ -929,7 +985,7 @@ test("spawn failure terminates the job instead of stranding routed utility work"
     );
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
-        blocker: "Au Pair process failed to start",
+        blocker: "Nanny process failed to start",
         status: "failed",
       },
       state: "failed",

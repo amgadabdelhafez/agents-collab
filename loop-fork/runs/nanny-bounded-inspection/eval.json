@@ -1,0 +1,25 @@
+{
+  "task_id": "nanny-bounded-inspection",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/nanny-bounded-inspection/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/nanny-bounded-inspection/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/nanny-bounded-inspection/artifacts/unit/attempt-001.json"
+    },
+    "live-runtime": {
+      "status": "pass",
+      "artifact": "runs/nanny-bounded-inspection/artifacts/live-runtime/loop-56.md",
+      "reason": "Loop 56 persisted utility-nanny, completed via Pi SDK/Qwen, and left both primaries untouched",
+      "method": "live external-supervisor replay plus job, usage, tool, bridge, pane, PID, and hash evidence",
+      "signed_off_by": "loop-56-live-probe"
+    }
+  }
+}

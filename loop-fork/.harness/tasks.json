@@ -208,6 +208,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-27T20:20:34Z",
       "spec_path": "specs/compound-worktree-observability.md"
+    },
+    {
+      "id": "nanny-bounded-inspection",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-27T22:52:44Z",
+      "run_dir": "runs/nanny-bounded-inspection",
+      "eval_status": "pass",
+      "ended_at": "2026-07-27T23:06:26Z",
+      "spec_path": "specs/nanny-bounded-inspection.md"
     }
   ]
 }

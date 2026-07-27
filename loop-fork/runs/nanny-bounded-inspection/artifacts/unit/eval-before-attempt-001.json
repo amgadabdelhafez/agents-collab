@@ -1,0 +1,12 @@
+{
+  "task_id": "nanny-bounded-inspection",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

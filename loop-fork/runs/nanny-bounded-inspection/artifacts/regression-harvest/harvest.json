@@ -1,0 +1,28 @@
+{
+  "task_id": "nanny-bounded-inspection",
+  "status": "created",
+  "bug_id": "nanny-empty-inspection-band",
+  "regression_path": "evals/regression/nanny-empty-inspection-band.md",
+  "prompt_path": "runs/nanny-bounded-inspection/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-27T23:06:26Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "nanny-empty-inspection-band"
+    ],
+    "symptom": [
+      "Nanny shows advisory calls but receives zero utility jobs."
+    ],
+    "guard": [
+      "tests/loop/utility-execution-tier.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Nanny shows advisory calls but receives zero utility jobs."
+  ],
+  "test_lines": [
+    "tests/loop/utility-execution-tier.test.ts"
+  ]
+}

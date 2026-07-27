@@ -1,0 +1,8 @@
+{
+  "id": "nanny-bounded-inspection",
+  "mode": "planned",
+  "created_at": "2026-07-27T22:52:44Z",
+  "status": "done",
+  "description": "Broaden Nanny routing to safe unprofiled bounded read-only inspections while preserving Direct, Au Pair, and primary-agent boundaries",
+  "ended_at": "2026-07-27T23:06:26Z"
+}
