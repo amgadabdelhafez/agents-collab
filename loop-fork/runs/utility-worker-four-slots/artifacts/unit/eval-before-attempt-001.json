@@ -1,0 +1,12 @@
+{
+  "task_id": "utility-worker-four-slots",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

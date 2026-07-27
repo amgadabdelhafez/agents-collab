@@ -8,5 +8,6 @@ bun run build
 git diff --check
 ```
 
-Live acceptance preserves all main pane PIDs and prevents a queued third job
-from failing merely because both configured worker slots are occupied.
+Live acceptance preserves all main pane PIDs, shows four simultaneous utility
+workers, and prevents a queued fifth job from failing merely because all four
+configured worker slots are occupied.

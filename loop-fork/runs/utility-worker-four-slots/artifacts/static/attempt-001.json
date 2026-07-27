@@ -1,0 +1,16 @@
+{
+  "task_id": "utility-worker-four-slots",
+  "dimension": "static",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 127,
+  "command_exit_code": 127,
+  "started_at": "2026-07-27T15:44:50Z",
+  "ended_at": "2026-07-27T15:44:50Z",
+  "artifact": "runs/utility-worker-four-slots/artifacts/static/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "check"
+  ]
+}

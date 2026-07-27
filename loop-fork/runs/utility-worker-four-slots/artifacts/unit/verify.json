@@ -1,0 +1,17 @@
+{
+  "task_id": "utility-worker-four-slots",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T15:43:37Z",
+  "ended_at": "2026-07-27T15:43:37Z",
+  "artifact": "runs/utility-worker-four-slots/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/utility-runtime.test.ts",
+    "tests/loop/utility-store.test.ts"
+  ]
+}
