@@ -9,3 +9,6 @@
 - Focused bridge tests: 71 passed, 0 failed.
 - Build and `git diff --check`: passed.
 - Full suite: 800 passed; 4 pre-existing Codex-launch expectation failures.
+- Deployed bridge worker PID 45936 only; all four pane PIDs stayed unchanged.
+- While Claude remained `working`, pending distinct messages produced no ledger
+  growth or tmux injection; they were later consumed once and pending reached 0.
