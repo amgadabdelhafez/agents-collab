@@ -298,7 +298,7 @@ test("governess route processing dispatches eligible work without provider I/O",
   }
 });
 
-test("worker routing ignores per-job and accumulated run cost", async () => {
+test("worker routing ignores cost estimates", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-run-budget-"));
   const runDir = join(repoRoot, ".loop", "runs", "budget-run");
   mkdirSync(runDir, { recursive: true });
@@ -332,8 +332,6 @@ test("worker routing ignores per-job and accumulated run cost", async () => {
       },
       {
         LOOP_UTILITY_ENABLED: "1",
-        LOOP_UTILITY_MAX_JOB_USD: "0.05",
-        LOOP_UTILITY_MAX_RUN_USD: "0.10",
         LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
       },
       {

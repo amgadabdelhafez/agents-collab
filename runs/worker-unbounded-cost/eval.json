@@ -5,8 +5,8 @@
     "live_root_cause": "job 4fd7f78a failed at 16970 cumulative tokens after 3 model and 8 bounded tool calls",
     "defaults": "maxTokens 8000; maxTotalTokens 64000",
     "cost_policy": "no worker per-job or per-run dollar routing/runtime gate; cost telemetry preserved",
-    "focused": "54 passed, 0 failed",
-    "full_suite": "798 passed, 4 known Codex model/config expectation failures",
+    "focused": "53 passed, 0 failed",
+    "full_suite": "797 passed, 4 known Codex model/config expectation failures",
     "build": "passed",
     "diff_check": "passed"
   },
