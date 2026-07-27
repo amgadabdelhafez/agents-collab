@@ -1,55 +1,33 @@
-# AGENTS.md
-> Machine-readable entry point. Keep this short. All detail lives in the artifacts below.
+# Agent Instructions
 
-## Where truth lives
+This is the convention file read by Codex CLI, OpenAI agents, and other tools that look for `AGENTS.md` at the repo root.
 
-| Artifact | Purpose |
-|---|---|
-| `specs/constitution.md` | Non-negotiable rules, constraints, quality bar |
-| `specs/<feature>/spec.md` | What to build and why |
-| `specs/<feature>/plan.md` | How to build it (approach, sequence, arch) |
-| `specs/<feature>/tasks.md` | Bounded implementation tasks |
-| `specs/<feature>/verify.md` | Acceptance checks, screenshots required, thresholds |
-| `docs/architecture/system-overview.md` | System map, service boundaries, invariants |
-| `docs/dependency-map.md` | Machine-readable build-graph and cross-service deps |
-| `docs/quality/quality-scorecard.md` | Graded subsystem health + debt register |
-| `docs/testing/commands.md` | How to run every test type |
-| `runs/<task-id>/` | Per-task artifacts: log, decisions, eval, screenshots |
-| `evals/` | Smoke / regression / replay / skill evals |
+**For full repo context — role split, operating loop, commands, worktree discipline, skills, known drift — read [CLAUDE.md](CLAUDE.md).** It is the canonical instruction file and is kept in sync.
 
-## Key commands
+## Quick reference for agents
+
+- **Non-negotiable rules:** [`specs/constitution.md`](specs/constitution.md) — read first on any task
+- **Architecture invariants:** [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md)
+- **Feature contract:** `specs/<feature>/spec.md` → `plan.md` → `tasks.md` → `verify.md`
+- **Per-task artifacts:** `runs/<task-id>/` — `task-log.md` and `eval.json`
+- **Skills:** [`.claude/skills/`](.claude/skills) — `fix-issue`, `ui-evaluator`, `risk-review`
+- **Vendored harness:** [`loop-fork/`](loop-fork) has its own `AGENTS.md`; it wins on coding standards and quick commands for code inside that directory.
+
+## Hard rules (don't violate)
+
+- Never merge or push to `main`. Work on a branch; the supervisor merges.
+- Never start implementation from chat. Start from `specs/<feature>/spec.md`, with human approval on the spec bundle.
+- No PR without a passing `eval.json` in `runs/<task-id>/`, written by an agent other than the implementer.
+- `baseline_failures` is an allowlist of exact test names and must be empty to release — never a count, never a flag.
+- Live-loop verification is identity-only: record pane IDs/PIDs before and after, and never send input to, restart, or signal a live agent pane.
+- Never commit secrets. Credentials stay in the provider process environment and out of prompts, traces, and artifacts.
+- One worktree, one app instance, one `runs/<task-id>/` per task. Do not share worktrees across concurrent tasks.
+
+## Commands
 
 ```bash
-# Run the full verify suite for the current task
-scripts/verify.sh
-
-# Capture UI screenshots + DOM for the running app
-scripts/capture-ui.sh
-
-# Collect logs / metrics / traces from the current worktree's app instance
-scripts/collect-o11y.sh
-
-# Refresh the dependency map after build-graph changes
-scripts/refresh-dependency-map.sh
+cd loop-fork && bun test && bun run check && bun run build && git diff --check
+scripts/verify.sh          # repo-level baseline-allowlist gate
 ```
 
-## Worktree discipline
-
-Every non-trivial task gets:
-- one git worktree
-- one running app instance
-- one `runs/<task-id>/` folder
-- one `eval.json` before the PR opens
-
-Do not share worktrees across concurrent tasks.
-
-## Subagents and skills
-
-Delegate using `.claude/skills/`. Each skill is a bounded workflow invoked by name.
-Background/async subagents are available via Cursor background agents or Claude Code subagent delegation.
-
-## What NOT to do
-
-- Do not start implementation from chat. Start from `specs/<feature>/spec.md`.
-- Do not merge a PR without an `eval.json` in `runs/<task-id>/`.
-- Do not write giant prompt blobs here. This file stays under ~120 lines.
+Everything else lives in CLAUDE.md. Do not write giant prompt blobs here — this file stays a pointer, well under ~120 lines.
