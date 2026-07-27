@@ -30,6 +30,10 @@ delivery.
   existing headless app-server/proxy boundary.
 - Make the bridge the sole peer-delivery transport and remove obsolete periodic
   polling guidance now that paired tmux delivery is push-based.
+- When utility policy routes a review to the peer, preserve the original
+  requester as the message source and deliver an actionable `review_request`
+  with an explicit verdict instruction. Do not describe it as a worker result
+  or informational routing notice.
 
 ## Acceptance
 
@@ -42,3 +46,5 @@ delivery.
   Claude and Codex pane PIDs remain unchanged.
 - Agent prompts prohibit direct tmux duplication and reserve status/receive
   calls for genuinely stuck delivery.
+- Peer-routed reviews appear as requester-authored actionable requests, not
+  utility-authored worker status messages.

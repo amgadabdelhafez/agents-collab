@@ -40,3 +40,11 @@
   remains protected. The exact active-pane regression and full bridge file pass
   69/69. Canonical rebuilt and background bridge worker restarted as PID 14425;
   main pane PIDs remain unchanged.
+- 2026-07-26: Diagnosed `a4ccb580` as one correctly acknowledged delivery, not
+  a duplicate. The confusing second line was Claude treating a utility-authored
+  `work_request` peer route as informational. Changed peer routing to preserve
+  the original requester as source, emit `review_request`, and explicitly ask
+  the peer to perform the review and return a verdict. Focused routing/bridge
+  tests pass 123/123; full suite is 798 pass / the same four known failures.
+  Canonical rebuilt and only governess pane respawned; Claude/Codex/worker PIDs
+  remained unchanged.
