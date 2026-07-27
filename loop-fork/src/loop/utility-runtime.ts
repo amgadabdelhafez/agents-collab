@@ -700,16 +700,31 @@ const dispatchNonUtilityRoute = async (
     job.request.requester === context.currentDriver
       ? context.peer
       : context.currentDriver;
+  const peerRoute = target === "peer";
+  const bridgeTarget = peerRoute ? requesterPeer : context.currentDriver;
+  const message = peerRoute
+    ? [
+        `Peer review requested by ${job.request.requester}.`,
+        `The worker was not used because this task requires peer judgment (${reason}).`,
+        `Objective: ${job.request.objective}`,
+        `Action: perform the review and return an explicit verdict to ${job.request.requester} through the loop bridge. Act on this request.`,
+      ].join(" ")
+    : `Worker route ${job.jobId} returned to ${target}: ${reason}. Objective: ${job.request.objective}`;
   await dispatchBridgeMessage(
     context.runDir,
-    "utility",
-    target === "peer" ? requesterPeer : context.currentDriver,
-    `Worker route ${job.jobId} returned to ${target}: ${reason}. Objective: ${job.request.objective}`,
+    peerRoute ? job.request.requester : "utility",
+    bridgeTarget,
+    message,
     undefined,
     undefined,
     {
       taskId: job.jobId,
-      type: target === "escalate" ? "escalation" : "work_request",
+      type:
+        target === "escalate"
+          ? "escalation"
+          : peerRoute
+            ? "review_request"
+            : "work_request",
     }
   );
 };
