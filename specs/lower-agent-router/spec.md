@@ -37,7 +37,8 @@ without changing paired-agent semantics.
    declared file scope, relevant file excerpts, and tool results. It never
    inherits the paired conversation by default.
 7. Utility tools are locally executed through a broker with path, symlink,
-   command, environment, output, time, token, and cost limits.
+   command, environment, output, time, and token limits. Dollar usage remains
+   observable but is not a routing or execution gate.
 8. Every job records its request, route decision, claim, state transitions,
    model calls, tool calls, usage/cost, artifacts, checks, and compact result.
 9. Results return to the requester through the bridge. Large output and patches
