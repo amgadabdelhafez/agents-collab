@@ -55,6 +55,7 @@ export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "z-ai/glm-5.2";
 const DEFAULT_MAX_STEPS = 16;
+const DEFAULT_MAX_CONCURRENT_JOBS = 2;
 const DEFAULT_API_KEY_FILE = join(
   homedir(),
   ".config",
@@ -71,6 +72,7 @@ export interface UtilityRuntimeConfig {
   enabled: boolean;
   endpoint: string;
   maxClaimWaitMs: number;
+  maxConcurrentJobs: number;
   maxJobRuntimeMs: number;
   maxSteps: number;
   model: string;
@@ -143,6 +145,17 @@ const positiveNumber = (
 const boundedTradeoff = (value: string | undefined): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 10 ? parsed : 7;
+};
+
+const boundedInteger = (
+  value: string | undefined,
+  fallback: number,
+  maximum: number
+): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= maximum
+    ? parsed
+    : fallback;
 };
 
 const isLoopbackEndpoint = (endpoint: string): boolean => {
@@ -330,6 +343,11 @@ export const resolveUtilityRuntimeConfig = (
     enabled,
     endpoint,
     maxClaimWaitMs: positiveNumber(env.LOOP_UTILITY_MAX_CLAIM_WAIT_MS, 30_000),
+    maxConcurrentJobs: boundedInteger(
+      env.LOOP_UTILITY_MAX_CONCURRENCY,
+      DEFAULT_MAX_CONCURRENT_JOBS,
+      8
+    ),
     maxJobRuntimeMs: positiveNumber(env.LOOP_UTILITY_MAX_RUNTIME_MS, 900_000),
     maxSteps: Math.floor(
       positiveNumber(env.LOOP_UTILITY_MAX_STEPS, DEFAULT_MAX_STEPS)
@@ -656,7 +674,8 @@ const processPendingUtilityJob = async (input: {
   deps: UtilityQueueDependencies;
   env: NodeJS.ProcessEnv;
   job: UtilityJobSnapshot;
-}): Promise<void> => {
+  utilitySlotAvailable: boolean;
+}): Promise<boolean> => {
   const workspaceResolution = ["inspect", "edit", "command"].includes(
     input.job.request.kind
   )
@@ -691,6 +710,9 @@ const processPendingUtilityJob = async (input: {
           workspaceResolution.workspace
         ? { ...routedDecision, workspace: workspaceResolution.workspace }
         : routedDecision;
+  if (decision.target === "utility" && !input.utilitySlotAvailable) {
+    return false;
+  }
   transitionUtilityJob(
     input.context.runDir,
     input.job.jobId,
@@ -709,7 +731,7 @@ const processPendingUtilityJob = async (input: {
       ...input,
       job: routedJob ?? input.job,
     });
-    return;
+    return true;
   }
   await dispatchNonUtilityRoute(
     input.context,
@@ -719,6 +741,7 @@ const processPendingUtilityJob = async (input: {
       ? `${decision.reason} (${decision.detail})`
       : decision.reason
   );
+  return false;
 };
 
 export const processPendingUtilityRoutes = async (
@@ -733,14 +756,21 @@ export const processPendingUtilityRoutes = async (
   }
   await recoverStaleUtilityJobs(context, config, deps);
   const pending = readPendingRouteRequests(context.runDir);
+  let activeJobs = readUtilityJobs(context.runDir).filter((job) =>
+    ["routed-utility", "claimed", "running"].includes(job.state)
+  ).length;
   for (const job of pending) {
-    await processPendingUtilityJob({
+    const occupied = await processPendingUtilityJob({
       config,
       context,
       deps,
       env: workerEnv,
       job,
+      utilitySlotAvailable: activeJobs < config.maxConcurrentJobs,
     });
+    if (occupied) {
+      activeJobs += 1;
+    }
   }
   return pending.length;
 };
