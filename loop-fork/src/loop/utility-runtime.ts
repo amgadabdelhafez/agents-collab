@@ -1,4 +1,10 @@
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { spawn } from "bun";
@@ -580,7 +586,7 @@ const startRoutedUtilityJob = async (input: {
   deps: UtilityQueueDependencies;
   env: NodeJS.ProcessEnv;
   job: UtilityJobSnapshot;
-}): Promise<void> => {
+}): Promise<boolean> => {
   const workspace = input.job.decision?.workspace
     ? verifyAdoptedUtilityWorkspace(
         input.context.repoRoot,
@@ -593,7 +599,7 @@ const startRoutedUtilityJob = async (input: {
       input.job,
       "verified worker workspace no longer matches the run repository"
     );
-    return;
+    return false;
   }
   const repoRoot = workspace?.root ?? input.context.repoRoot;
   let started = false;
@@ -609,7 +615,7 @@ const startRoutedUtilityJob = async (input: {
     started = false;
   }
   if (started) {
-    return;
+    return true;
   }
   const routedJob = readUtilityJob(input.context.runDir, input.job.jobId);
   if (routedJob) {
@@ -619,6 +625,7 @@ const startRoutedUtilityJob = async (input: {
       "worker process failed to start"
     );
   }
+  return false;
 };
 
 const dispatchNonUtilityRoute = async (
@@ -663,6 +670,40 @@ const dispatchNonUtilityRoute = async (
   );
 };
 
+const canOnlyAwaitUtilitySlot = (input: {
+  config: UtilityRuntimeConfig;
+  context: UtilityQueueContext;
+  job: UtilityJobSnapshot;
+}): boolean => {
+  const request = input.job.request;
+  // Only a relative, write-free request is provably unaffected by the
+  // expensive inputs: workspace resolution cannot renormalize its scopes and
+  // write claims cannot redirect it, so a claim-free route is the full
+  // decision. Anything else must run the full pipeline even when the pool is
+  // full because its decision may dispatch to a non-utility target.
+  if (request.writeScope.length > 0) {
+    return false;
+  }
+  if (request.readScope.some((scope) => isAbsolute(scope))) {
+    return false;
+  }
+  try {
+    realpathSync(input.context.repoRoot);
+  } catch {
+    return false;
+  }
+  return (
+    routeUtilityRequest(request, {
+      activeWriteClaims: [],
+      currentDriver: input.context.currentDriver,
+      currentEpoch: input.context.epoch,
+      peer: input.context.peer,
+      routingPolicy: routingPolicy(input.config),
+      tiers: [runtimeTier(input.config)],
+    }).target === "utility"
+  );
+};
+
 const processPendingUtilityJob = async (input: {
   config: UtilityRuntimeConfig;
   context: UtilityQueueContext;
@@ -671,6 +712,9 @@ const processPendingUtilityJob = async (input: {
   job: UtilityJobSnapshot;
   utilitySlotAvailable: boolean;
 }): Promise<boolean> => {
+  if (!input.utilitySlotAvailable && canOnlyAwaitUtilitySlot(input)) {
+    return false;
+  }
   const workspaceResolution = ["inspect", "edit", "command"].includes(
     input.job.request.kind
   )
@@ -722,11 +766,10 @@ const processPendingUtilityJob = async (input: {
   );
   if (decision.target === "utility") {
     const routedJob = readUtilityJob(input.context.runDir, input.job.jobId);
-    await startRoutedUtilityJob({
+    return startRoutedUtilityJob({
       ...input,
       job: routedJob ?? input.job,
     });
-    return true;
   }
   await dispatchNonUtilityRoute(
     input.context,

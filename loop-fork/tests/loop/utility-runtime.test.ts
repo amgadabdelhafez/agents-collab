@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -422,6 +422,204 @@ test("the default worker pool runs two jobs and leaves a third pending", async (
     await processPendingUtilityRoutes(context, env, deps);
     expect(spawned).toEqual(["pool-a", "pool-b", "pool-c"]);
     expect(readUtilityJob(runDir, "pool-c")?.state).toBe("routed-utility");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("a job whose worker fails to start does not consume a worker-pool slot", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-slot-"));
+  const runDir = join(repoRoot, ".loop", "runs", "slot-run");
+  mkdirSync(runDir, { recursive: true });
+  for (const id of ["slot-fails", "slot-b", "slot-c"]) {
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["inspect one scope"],
+        authority: {},
+        id,
+        kind: "inspect",
+        objective: `Inspect ${id}`,
+        readScope: ["src"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+  }
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 21,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_UTILITY_ENABLED: "1",
+        LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
+      },
+      {
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return jobId !== "slot-fails";
+        },
+      }
+    );
+
+    expect(readUtilityJob(runDir, "slot-fails")).toMatchObject({
+      result: {
+        blocker: "worker process failed to start",
+        status: "failed",
+      },
+      state: "failed",
+    });
+    expect(spawned).toEqual(["slot-fails", "slot-b", "slot-c"]);
+    expect(readUtilityJob(runDir, "slot-c")?.state).toBe("routed-utility");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("slot-gated utility-only jobs skip workspace resolution while the pool is full", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-gate-"));
+  const runDir = join(repoRoot, ".loop", "runs", "gate-run");
+  mkdirSync(runDir, { recursive: true });
+  for (const id of ["gate-a", "gate-b", "gate-c"]) {
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["inspect one scope"],
+        authority: {},
+        id,
+        kind: "inspect",
+        objective: `Inspect ${id}`,
+        readScope: ["src"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+  }
+  const context = {
+    currentDriver: "claude" as const,
+    epoch: 22,
+    peer: "codex" as const,
+    repoRoot,
+    runDir,
+  };
+  const env = {
+    LOOP_UTILITY_ENABLED: "1",
+    LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
+  };
+  const deps = { spawnWorker: () => true };
+  const workspaceModule = await import("../../src/loop/utility-workspace");
+  const actualExports = { ...workspaceModule };
+  const resolved: string[] = [];
+  try {
+    await processPendingUtilityRoutes(context, env, deps);
+    expect(readUtilityJob(runDir, "gate-c")?.state).toBe("pending-route");
+
+    mock.module("../../src/loop/utility-workspace", () => ({
+      ...actualExports,
+      resolveUtilityRequestWorkspace: (
+        request: Parameters<
+          typeof actualExports.resolveUtilityRequestWorkspace
+        >[0],
+        runRoot: string
+      ) => {
+        resolved.push(request.id);
+        return actualExports.resolveUtilityRequestWorkspace(request, runRoot);
+      },
+    }));
+    await processPendingUtilityRoutes(context, env, deps);
+    expect(resolved).toEqual([]);
+    expect(readUtilityJob(runDir, "gate-c")?.state).toBe("pending-route");
+  } finally {
+    mock.module("../../src/loop/utility-workspace", () => actualExports);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("write-conflicted jobs still dispatch to the driver while the pool is full", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-conflict-"));
+  const runDir = join(repoRoot, ".loop", "runs", "conflict-run");
+  mkdirSync(runDir, { recursive: true });
+  appendUtilityRouteRequest(
+    runDir,
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["edit one scope"],
+      authority: {},
+      id: "conflict-claim",
+      kind: "edit",
+      objective: "Edit the shared module",
+      readScope: ["src/shared.ts"],
+      requester: "claude",
+      requiredCapabilities: ["inspect", "scoped-edit"],
+      risk: "low",
+      writeScope: ["src/shared.ts"],
+    })
+  );
+  appendUtilityRouteRequest(
+    runDir,
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["inspect one scope"],
+      authority: {},
+      id: "conflict-fill",
+      kind: "inspect",
+      objective: "Inspect the docs",
+      readScope: ["docs"],
+      requester: "claude",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    })
+  );
+  appendUtilityRouteRequest(
+    runDir,
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["edit one scope"],
+      authority: {},
+      id: "conflict-blocked",
+      kind: "edit",
+      objective: "Edit the shared module again",
+      readScope: ["src/shared.ts"],
+      requester: "claude",
+      requiredCapabilities: ["inspect", "scoped-edit"],
+      risk: "low",
+      writeScope: ["src/shared.ts"],
+    })
+  );
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 23,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_UTILITY_ENABLED: "1",
+        LOOP_UTILITY_URL: "http://127.0.0.1:9876/v1/chat/completions",
+      },
+      { spawnWorker: () => true }
+    );
+
+    expect(readUtilityJob(runDir, "conflict-claim")?.state).toBe(
+      "routed-utility"
+    );
+    expect(readUtilityJob(runDir, "conflict-fill")?.state).toBe(
+      "routed-utility"
+    );
+    expect(readUtilityJob(runDir, "conflict-blocked")).toMatchObject({
+      decision: { reason: "write-conflict", target: "driver" },
+      state: "routed-driver",
+    });
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

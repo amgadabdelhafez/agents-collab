@@ -1,0 +1,18 @@
+{
+  "task_id": "worker-pool-slot-accounting",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/worker-pool-slot-accounting/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/worker-pool-slot-accounting/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/worker-pool-slot-accounting/artifacts/unit/attempt-002.json"
+    }
+  }
+}

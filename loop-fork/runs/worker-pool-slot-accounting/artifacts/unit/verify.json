@@ -1,0 +1,16 @@
+{
+  "task_id": "worker-pool-slot-accounting",
+  "dimension": "unit",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T01:49:17Z",
+  "ended_at": "2026-07-27T01:49:17Z",
+  "artifact": "runs/worker-pool-slot-accounting/artifacts/unit/attempt-002.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/utility-runtime.test.ts"
+  ]
+}
