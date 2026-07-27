@@ -726,7 +726,7 @@ test("the default worker pool runs four jobs and leaves a fifth pending", async 
   }
 });
 
-test("Nanny has one independent slot and does not spill queued work to Au Pair", async () => {
+test("unprofiled bounded inspections persist Nanny ownership without spilling to Au Pair", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-nanny-capacity-"));
   const runDir = join(repoRoot, ".loop", "runs", "nanny-capacity");
   mkdirSync(runDir, { recursive: true });
@@ -736,11 +736,10 @@ test("Nanny has one independent slot and does not spill queued work to Au Pair",
       createUtilityRouteRequest({
         acceptanceCriteria: ["return one search result"],
         authority: {},
-        executionProfile: "search",
         id,
         kind: "inspect",
-        objective: `Search the bounded scope for ${id}`,
-        readScope: ["src"],
+        objective: `Inspect the bounded source file for ${id}`,
+        readScope: ["src/sample.ts"],
         requester: "claude",
         requiredCapabilities: ["inspect"],
         risk: "low",

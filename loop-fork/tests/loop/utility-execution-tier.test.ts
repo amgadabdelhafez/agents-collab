@@ -121,9 +121,67 @@ describe("utility execution tier classification", () => {
     ).toBe(UTILITY_AU_PAIR_TIER);
   });
 
-  test("an unprofiled request stays with Au Pair instead of guessing locally", () => {
+  test("unprofiled bounded inspections go to Nanny", () => {
     expect(classifyUtilityExecution(inspectRequest())).toBe(
-      UTILITY_AU_PAIR_TIER
+      UTILITY_NANNY_TIER
     );
+    expect(
+      classifyUtilityExecution(
+        inspectRequest({
+          acceptanceCriteria: [
+            "compare the two bounded files and return line evidence",
+          ],
+          objective: "Compare the two declared files for one narrow question",
+          readScope: ["src/left.ts", "src/right.ts"],
+        })
+      )
+    ).toBe(UTILITY_NANNY_TIER);
+  });
+
+  test("unprofiled Nanny inspections fail closed outside the narrow band", () => {
+    const broadScope = inspectRequest({
+      readScope: ["src/a.ts", "src/b.ts", "src/c.ts"],
+    });
+    const focusedVerification = inspectRequest({
+      requiredCapabilities: ["inspect", "focused-verify"],
+    });
+    const forbiddenAuthority = inspectRequest({
+      authority: { dependencyChange: true },
+      executionProfile: "search",
+    });
+    const excessCriteria = inspectRequest({
+      acceptanceCriteria: ["a", "b", "c", "d", "e"],
+    });
+    const oversized = inspectRequest({ objective: "x".repeat(6001) });
+    const excessContext = inspectRequest({
+      contextRefs: [
+        ".loop/context/a.md",
+        ".loop/context/b.md",
+        ".loop/context/c.md",
+      ],
+    });
+    const unprofiledCommand = createUtilityRouteRequest({
+      acceptanceCriteria: ["return bounded command evidence"],
+      authority: {},
+      kind: "command",
+      objective: "Run a bounded command",
+      readScope: ["src"],
+      requester: "claude",
+      requiredCapabilities: ["bounded-command"],
+      risk: "low",
+      writeScope: [],
+    });
+
+    for (const request of [
+      broadScope,
+      focusedVerification,
+      forbiddenAuthority,
+      excessCriteria,
+      oversized,
+      excessContext,
+      unprofiledCommand,
+    ]) {
+      expect(classifyUtilityExecution(request)).toBe(UTILITY_AU_PAIR_TIER);
+    }
   });
 });
