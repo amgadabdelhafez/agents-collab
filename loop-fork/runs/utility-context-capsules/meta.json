@@ -1,0 +1,7 @@
+{
+  "id": "utility-context-capsules",
+  "mode": "planned",
+  "created_at": "2026-07-27T18:06:45Z",
+  "status": "active",
+  "description": "Give governed utility workers bounded provider-neutral project context and replayable per-job task capsules"
+}

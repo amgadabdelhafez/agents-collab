@@ -184,10 +184,18 @@
     {
       "id": "worker-routing-integrated-safe-plans",
       "mode": "planned",
-      "status": "active",
+      "status": "parked",
       "created_at": "2026-07-27T17:07:22Z",
       "run_dir": "runs/worker-routing-integrated-safe-plans",
-      "eval_status": "fail"
+      "eval_status": "pending"
+    },
+    {
+      "id": "utility-context-capsules",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-27T18:06:45Z",
+      "run_dir": "runs/utility-context-capsules",
+      "eval_status": "pending"
     }
   ]
 }
