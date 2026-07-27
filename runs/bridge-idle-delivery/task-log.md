@@ -20,3 +20,11 @@
 - Verification: bridge 75/75; full suite 806 passed with the same four
   baseline Codex-launch failures; build, `git diff --check`, and biome on the
   touched files all clean.
+- Deployment: merged to `feat/babysitter-pane`, rebuilt `loop` (18:27), old
+  worker 45936 stopped; a stale `bridge-worker.json` made manual respawn
+  defer, so the record was cleared and the loop's own `ensureBridgeWorker`
+  respawned worker 80530 on the next queued message. Live: codex->claude
+  `96af2221` pushed once at 01:33:44Z (one second after worker start), no
+  duplicate message/delivered records in the ledger, Claude/Codex/governess/
+  utility-pane PIDs unchanged. The pre-fix stuck verdict had cleared earlier
+  when the human interacted with the pane; the fix prevents recurrence.
