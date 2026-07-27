@@ -1,0 +1,17 @@
+{
+  "task_id": "compound-worktree-observability",
+  "dimension": "ui",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T20:11:13Z",
+  "ended_at": "2026-07-27T20:11:13Z",
+  "artifact": "runs/compound-worktree-observability/artifacts/ui/attempt-002.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/governess.test.ts",
+    "tests/loop/utility-observability.test.ts"
+  ]
+}

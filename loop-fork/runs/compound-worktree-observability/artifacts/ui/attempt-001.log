@@ -1,0 +1,85 @@
+task_id: compound-worktree-observability
+dimension: ui
+attempt: 001
+started_at: 2026-07-27T20:09:32Z
+command: bun test tests/loop/governess.test.ts tests/loop/utility-observability.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-observability.test.ts:
+(pass) utility observability safely handles absent and malformed journals [2.84ms]
+(pass) routing observability counts candidates rejected before job creation [0.40ms]
+(pass) utility observability totals worker usage and builds a safe transcript [3.28ms]
+
+tests/loop/governess.test.ts:
+(pass) governess observes agents through persisted post-split pane targets [14.57ms]
+(pass) governess refreshes late and changed agent session bindings [13.25ms]
+(pass) governess preserves known bindings across empty or malformed manifests [12.83ms]
+(pass) suspect + stuck in dry-run: judges and decides but executes nothing [3.49ms]
+(pass) suspect + stuck live: executes the first ladder rung and records history [0.30ms]
+(pass) LLM unreachable suppresses recovery and flags the board
+(pass) dual local judges render separate token rows and require agreement
+(pass) small panes collapse excess judge rows within the viewport budget
+(pass) round-robin local judge mode calls one model for that tick [0.84ms]
+(pass) board labels an agent [thinking] while its pane is animating [0.30ms]
+(pass) board keeps the configured leader row first [0.30ms]
+(pass) codex session pressure hands driver role to claude until reset [0.16ms]
+(pass) codex limit handoff does not repeat when reset detail appears later [0.46ms]
+(pass) codex limit reset restores driver role without compacting context [0.28ms]
+(pass) handover mode suppresses pending limit role-transition messages [0.40ms]
+(pass) a missing limit snapshot does not restore before a known future reset [0.14ms]
+(pass) one missing limit snapshot starts a cooldown instead of restoring [0.11ms]
+(pass) restore briefing stays pending while its target is active
+(pass) pressure on a non-driver is deduped without messaging or a handoff
+(pass) claude session pressure hands driver role to codex until reset [0.55ms]
+(pass) proactive quota balance is disabled by default [0.29ms]
+(pass) proactive quota balance moves driver when local LLM approves [0.54ms]
+(pass) proactive quota balance is skipped when local LLM vetoes [0.25ms]
+(pass) board labels an agent [idle] once its pane is frozen [0.14ms]
+(pass) board converts the agent's live remaining context % to used context
+(pass) board shows latest bridge messages in both directions [0.45ms]
+(pass) board keeps warning-colored agent columns aligned [0.10ms]
+(pass) board renders only aggregate dynamic usage tracker windows [0.33ms]
+(pass) board shows input, cached, and output token details [0.37ms]
+(pass) board uses only Progress and Next from the structured summary [0.08ms]
+(pass) board uses the recovered summary area for lower-agent metrics [3.25ms]
+(pass) small governess viewports retain both agents and utility without overflow [0.22ms]
+(pass) worker row hides the internal routed-utility state name [0.98ms]
+(pass) observed progress clears the agent's recovery history [0.07ms]
+(pass) a cleanly-ended turn stays idle and is never judged, even past the idle window [0.13ms]
+(pass) board flags an agent that is waiting for the human [0.13ms]
+(pass) board labels a session-limit pane as limited, not waiting for the human [0.12ms]
+(pass) board does not treat an available usage-limit reset as a blocked agent
+(pass) board does not label governess limit handoff text as a session limit [0.15ms]
+(pass) board does not label Codex context compaction as a usage limit [0.05ms]
+(pass) a confirmed waiting pair clears the moment an agent goes active [0.68ms]
+(pass) a confirmed idle pair shows the LLM's ask and escalates once [0.35ms]
+(pass) both idle but unconfirmed by the LLM does not alert [0.12ms]
+(pass) escalates once when the session crosses its cost budget
+(pass) composePaneTitle composes glyph, agent, and task label
+(pass) governess run identity includes full loop name and path
+(pass) board merges loop and path into the first time/status line [0.06ms]
+(pass) governess pane identity is reapplied without deduplication [0.09ms]
+(pass) governess pane identity writes the border option and native title [0.01ms]
+(pass) runGoverness reapplies pane identity on startup and every cycle [1.56ms]
+(pass) runGoverness refreshes a late Codex binding before reading usage [1.14ms]
+(pass) governessTick sets each agent's pane border title and skips redundant sets [0.10ms]
+(pass) governessTick folds the stored LLM label into the border title [0.06ms]
+(pass) sendRenameCommands is disabled by default [0.03ms]
+(pass) agent rename config requires an explicit truthy environment value [0.05ms]
+(pass) sendRenameCommands injects /rename when explicitly enabled
+(pass) sendRenameCommands sends nothing in dry-run [0.11ms]
+(pass) sendRenameCommands does not re-send an unchanged rename
+(pass) sendRenameCommands does not inject into an agent that is mid-turn
+(pass) sendRenameCommands fails closed without state and turn-end evidence
+(pass) sendRenameCommands preserves a user draft after a Stop hook
+
+ 64 pass
+ 0 fail
+ 348 expect() calls
+Ran 64 tests across 2 files. [90.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T20:09:33Z

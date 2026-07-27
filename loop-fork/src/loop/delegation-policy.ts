@@ -93,10 +93,13 @@ export type DelegationClassification =
 export const DELEGATION_EVENTS_FILE = "delegation.jsonl";
 
 const MAX_COMMAND_LENGTH = 2000;
+const MAX_WORKSPACE_HINT_PREFIX = 1024;
 const MAX_PATTERN_LENGTH = 256;
 const MAX_SCOPES = 4;
 const MAX_READ_PLAN_SCOPES = 12;
 const MAX_READ_PLAN_STEPS = 6;
+const MAX_READ_PLAN_LABEL_STAGES = 6;
+const MAX_READ_PLAN_TOTAL_STAGES = 12;
 const LARGE_READ_MIN_LINES = 200;
 const MAX_SOURCE_SLICE_LINES = 500;
 const SHELL_META = new Set([";", "&", "|", "`", "$", "<", ">", "(", ")"]);
@@ -128,6 +131,7 @@ const EXECUTION_PROFILE_BY_OPERATION: Partial<
 };
 const STDERR_TO_NULL = ">/dev/null";
 const STDERR_TO_STDOUT = ">&1";
+const STDERR_BOUNDARY_RE = /[;&|\s]/;
 const GREP_ALLOWED_KEYS = new Set([
   "pattern",
   "path",
@@ -511,14 +515,15 @@ type ShellToken =
   | { kind: "word"; value: string }
   | { kind: "pipe" }
   | { kind: "and" }
+  | { kind: "sequence" }
   | { kind: "merge-stderr" }
   | { kind: "quiet-stderr" };
 
 // A literal shell-token scanner is intentionally explicit: every state branch
 // is a safety boundary and collapsing it would make quoting rules harder to
-// audit. Only three operator forms are recognized — a single `|`, `&&`, and a
-// trailing-token `2>/dev/null`, and trailing-token `2>&1` — everything else
-// fails closed.
+// audit. Only a single `|`, `&&`, `;`, trailing-token `2>/dev/null`, and
+// trailing-token `2>&1` are recognized. The classifier still has to prove the
+// resulting structure is broker-satisfiable; every other operator fails closed.
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auditable tokenizer state machine
 const literalTokens = (command: string): ShellToken[] | undefined => {
   if (
@@ -600,6 +605,11 @@ const literalTokens = (command: string): ShellToken[] | undefined => {
       index += 1;
       continue;
     }
+    if (quote === undefined && char === ";") {
+      push();
+      tokens.push({ kind: "sequence" });
+      continue;
+    }
     if (
       quote === undefined &&
       char === ">" &&
@@ -607,7 +617,9 @@ const literalTokens = (command: string): ShellToken[] | undefined => {
       !tokenQuoted &&
       command.startsWith(STDERR_TO_STDOUT, index) &&
       (index + STDERR_TO_STDOUT.length === command.length ||
-        WHITESPACE_RE.test(command[index + STDERR_TO_STDOUT.length] as string))
+        STDERR_BOUNDARY_RE.test(
+          command[index + STDERR_TO_STDOUT.length] as string
+        ))
     ) {
       token = "";
       tokenQuoted = false;
@@ -622,7 +634,9 @@ const literalTokens = (command: string): ShellToken[] | undefined => {
       !tokenQuoted &&
       command.startsWith(STDERR_TO_NULL, index) &&
       (index + STDERR_TO_NULL.length === command.length ||
-        WHITESPACE_RE.test(command[index + STDERR_TO_NULL.length] as string))
+        STDERR_BOUNDARY_RE.test(
+          command[index + STDERR_TO_NULL.length] as string
+        ))
     ) {
       token = "";
       tokenQuoted = false;
@@ -682,7 +696,7 @@ const wordValues = (tokens: ShellToken[]): string[] | undefined => {
 
 const splitTokens = (
   tokens: ShellToken[],
-  kind: "and" | "pipe"
+  kind: "and" | "pipe" | "sequence"
 ): ShellToken[][] => {
   const segments: ShellToken[][] = [[]];
   for (const token of tokens) {
@@ -693,6 +707,25 @@ const splitTokens = (
     }
   }
   return segments;
+};
+
+interface ReadStageTokens {
+  segments: ShellToken[][];
+  separators: Array<"and" | "sequence">;
+}
+
+const splitReadStageTokens = (tokens: ShellToken[]): ReadStageTokens => {
+  const segments: ShellToken[][] = [[]];
+  const separators: ReadStageTokens["separators"] = [];
+  for (const token of tokens) {
+    if (token.kind === "and" || token.kind === "sequence") {
+      separators.push(token.kind);
+      segments.push([]);
+    } else {
+      segments.at(-1)?.push(token);
+    }
+  }
+  return { segments, separators };
 };
 
 interface OutputFilter {
@@ -805,12 +838,8 @@ const decomposeSafeCompound = (
   };
 };
 
-const literalLeadingCdTarget = (tokens: ShellToken[]): string | undefined => {
-  const segments = splitTokens(tokens, "and");
-  if (segments.length < 2) {
-    return undefined;
-  }
-  const lead = wordValues(segments[0] ?? []);
+const literalCdTarget = (tokens: ShellToken[]): string | undefined => {
+  const lead = wordValues(tokens);
   if (
     !lead ||
     lead.length !== 2 ||
@@ -824,6 +853,54 @@ const literalLeadingCdTarget = (tokens: ShellToken[]): string | undefined => {
   return lead[1];
 };
 
+const literalLeadingCdTarget = (tokens: ShellToken[]): string | undefined => {
+  const stages = splitReadStageTokens(tokens);
+  return stages.separators[0] === "and"
+    ? literalCdTarget(stages.segments[0] ?? [])
+    : undefined;
+};
+
+// Workspace recovery must not require the command remainder to be supported.
+// Scan only through the first unquoted `&&`, then run the normal literal lexer
+// over that prefix. This recovers a workspace hint for later authoritative Git
+// worktree verification without granting any execution authority to the rest.
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auditable quote-aware prefix scanner
+const literalLeadingCdPrefixTarget = (command: string): string | undefined => {
+  if (!command) {
+    return undefined;
+  }
+  let quote: "single" | "double" | undefined;
+  let escaped = false;
+  const scanLength = Math.min(command.length, MAX_WORKSPACE_HINT_PREFIX);
+  for (let index = 0; index < scanLength; index += 1) {
+    const char = command[index] as string;
+    if (char === "\0" || char === "\n" || char === "\r") {
+      return undefined;
+    }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "single") {
+      escaped = true;
+      continue;
+    }
+    if (char === "'" && quote !== "double") {
+      quote = quote === "single" ? undefined : "single";
+      continue;
+    }
+    if (char === '"' && quote !== "single") {
+      quote = quote === "double" ? undefined : "double";
+      continue;
+    }
+    if (quote === undefined && char === "&" && command[index + 1] === "&") {
+      const prefix = literalTokens(command.slice(0, index));
+      return prefix ? literalCdTarget(prefix) : undefined;
+    }
+  }
+  return undefined;
+};
+
 export const delegationWorkspaceHint = (
   cwd: string,
   toolName: string,
@@ -834,8 +911,7 @@ export const delegationWorkspaceHint = (
   }
   const input = isRecord(toolInput) ? toolInput : {};
   const command = asString(input.command);
-  const tokens = command ? literalTokens(command) : undefined;
-  const target = tokens ? literalLeadingCdTarget(tokens) : undefined;
+  const target = command ? literalLeadingCdPrefixTarget(command) : undefined;
   return target ? resolve(cwd, target) : undefined;
 };
 
@@ -1663,14 +1739,84 @@ const classifyReadOnlyArgv = (
   classifyCatCommand(intent, argv) ??
   classifySourceSlice(intent, argv);
 
+const isLiteralEchoLabel = (tokens: ShellToken[]): boolean => {
+  const words = wordValues(tokens);
+  if (!(words?.[0] === "echo" && words.length <= 12)) {
+    return false;
+  }
+  const label = words.slice(1);
+  return (
+    !label.some(
+      (word) => word.startsWith("-") || word.includes("$") || word.includes("`")
+    ) && label.join(" ").length <= 160
+  );
+};
+
+interface ClassifiedReadPlanSegment {
+  classification: EligibleDelegationIntent;
+  steps: UtilityReadPlanStep[];
+}
+
+const classifyReadPlanSegment = (
+  intent: DelegationToolIntent,
+  segment: ShellToken[]
+): ClassifiedReadPlanSegment | undefined => {
+  const compound = decomposeSafeCompound(segment);
+  if (
+    !compound ||
+    compound.cdTarget ||
+    compound.argv[0]?.includes("/") ||
+    compound.argv[0]?.includes("\\")
+  ) {
+    return undefined;
+  }
+  const classified = classifyReadOnlyArgv(intent, compound.argv);
+  if (!classified?.eligible) {
+    return undefined;
+  }
+  const bounded = withCompoundOutputBoundary(classified, compound);
+  if (!bounded.eligible) {
+    return undefined;
+  }
+  const executionProfile = bounded.request.executionProfile;
+  if (!(executionProfile && READ_PLAN_PROFILES.has(executionProfile))) {
+    return undefined;
+  }
+  if (executionProfile === "read-plan") {
+    if (
+      compound.filter ||
+      compound.stderr ||
+      !bounded.request.executionPlan?.length
+    ) {
+      return undefined;
+    }
+    return {
+      classification: bounded,
+      steps: bounded.request.executionPlan,
+    };
+  }
+  return {
+    classification: bounded,
+    steps: [
+      readPlanStep(
+        executionProfile,
+        bounded.request.objective,
+        bounded.request.readScope,
+        bounded.request.executionRead,
+        bounded.request.executionOutput
+      ),
+    ],
+  };
+};
+
 const classifyReadPlan = (
   intent: DelegationToolIntent,
   tokens: ShellToken[]
 ): DelegationClassification | undefined => {
-  const chained = splitTokens(tokens, "and");
+  const stages = splitReadStageTokens(tokens);
   const cdTarget = literalLeadingCdTarget(tokens);
-  const segments = cdTarget ? chained.slice(1) : chained;
-  if (segments.length < 2 || segments.length > MAX_READ_PLAN_STEPS) {
+  const segments = cdTarget ? stages.segments.slice(1) : stages.segments;
+  if (segments.length < 2 || segments.length > MAX_READ_PLAN_TOTAL_STAGES) {
     return undefined;
   }
   let scoped = intent;
@@ -1689,56 +1835,28 @@ const classifyReadPlan = (
   }
   const classifiedStages: EligibleDelegationIntent[] = [];
   const executionPlan: UtilityReadPlanStep[] = [];
+  let labelStages = 0;
   for (const segment of segments) {
-    const compound = decomposeSafeCompound(segment);
-    if (
-      !compound ||
-      compound.cdTarget ||
-      compound.argv[0]?.includes("/") ||
-      compound.argv[0]?.includes("\\")
-    ) {
-      return undefined;
-    }
-    const classified = classifyReadOnlyArgv(scoped, compound.argv);
-    if (!classified?.eligible) {
-      return undefined;
-    }
-    const bounded = withCompoundOutputBoundary(
-      { ...classified, eligible: true },
-      compound
-    );
-    const executionProfile = bounded.eligible
-      ? bounded.request.executionProfile
-      : undefined;
-    if (!executionProfile || !READ_PLAN_PROFILES.has(executionProfile)) {
-      return undefined;
-    }
-    if (executionProfile === "read-plan") {
-      if (
-        compound.filter ||
-        compound.stderr ||
-        !bounded.request.executionPlan?.length
-      ) {
+    if (isLiteralEchoLabel(segment)) {
+      labelStages += 1;
+      if (labelStages > MAX_READ_PLAN_LABEL_STAGES) {
         return undefined;
       }
-      executionPlan.push(...bounded.request.executionPlan);
-    } else {
-      executionPlan.push(
-        readPlanStep(
-          executionProfile,
-          bounded.request.objective,
-          bounded.request.readScope,
-          bounded.request.executionRead,
-          bounded.request.executionOutput
-        )
-      );
+      continue;
     }
-    classifiedStages.push(bounded);
+    const classified = classifyReadPlanSegment(scoped, segment);
+    if (!classified) {
+      return undefined;
+    }
+    executionPlan.push(...classified.steps);
+    classifiedStages.push(classified.classification);
   }
   const scopes = [
     ...new Set(classifiedStages.flatMap((stage) => stage.request.readScope)),
   ];
   if (
+    classifiedStages.length < 1 ||
+    classifiedStages.length > MAX_READ_PLAN_STEPS ||
     executionPlan.length < 1 ||
     executionPlan.length > MAX_READ_PLAN_SCOPES ||
     scopes.length < 1 ||

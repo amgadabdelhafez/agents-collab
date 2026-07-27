@@ -1,0 +1,20 @@
+{
+  "task_id": "compound-worktree-observability",
+  "dimension": "unit",
+  "attempt": "003",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T20:15:45Z",
+  "ended_at": "2026-07-27T20:15:47Z",
+  "artifact": "runs/compound-worktree-observability/artifacts/unit/attempt-003.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/delegation-policy.test.ts",
+    "tests/loop/governess-hooks.test.ts",
+    "tests/loop/utility-workspace.test.ts",
+    "tests/loop/utility-observability.test.ts",
+    "tests/loop/governess.test.ts"
+  ]
+}

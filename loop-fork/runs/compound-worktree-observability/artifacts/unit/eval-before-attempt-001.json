@@ -1,0 +1,24 @@
+{
+  "task_id": "compound-worktree-observability",
+  "status": "pending",
+  "required": [
+    "unit",
+    "ui",
+    "independent-review",
+    "installation"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "ui": {
+      "status": "pending"
+    },
+    "independent-review": {
+      "status": "pending"
+    },
+    "installation": {
+      "status": "pending"
+    }
+  }
+}

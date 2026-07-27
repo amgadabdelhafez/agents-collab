@@ -1,0 +1,36 @@
+{
+  "task_id": "compound-worktree-observability",
+  "status": "pending",
+  "required": [
+    "unit",
+    "ui",
+    "independent-review",
+    "installation"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/compound-worktree-observability/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/compound-worktree-observability/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/compound-worktree-observability/artifacts/unit/attempt-002.json"
+    },
+    "ui": {
+      "status": "pass",
+      "artifact": "runs/compound-worktree-observability/artifacts/ui/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/compound-worktree-observability/artifacts/ui/attempt-002.log",
+      "latest_attempt_meta": "runs/compound-worktree-observability/artifacts/ui/attempt-002.json"
+    },
+    "independent-review": {
+      "status": "pending"
+    },
+    "installation": {
+      "status": "pending"
+    }
+  }
+}

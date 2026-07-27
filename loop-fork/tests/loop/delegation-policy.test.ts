@@ -388,6 +388,72 @@ describe("delegation classifier", () => {
     });
   });
 
+  test("routes semicolon and mixed-separator read plans while omitting literal labels", () => {
+    expect(
+      classify("Bash", {
+        command:
+          "sed -n '20,40p' src/a.ts; echo; echo 'router matches'; rg -n route src/loop | head -25 && git status --short",
+      })
+    ).toMatchObject({
+      eligible: true,
+      operation: "read-plan",
+      request: {
+        executionProfile: "read-plan",
+        executionPlan: [
+          {
+            executionProfile: "file-read",
+            executionRead: {
+              endLine: 40,
+              path: "src/a.ts",
+              startLine: 20,
+            },
+          },
+          {
+            executionProfile: "search",
+            executionOutput: { lineLimit: 25, position: "head" },
+            readScope: ["src/loop"],
+          },
+          { executionProfile: "git-status", readScope: ["."] },
+        ],
+        readScope: ["src/a.ts", "src/loop", "."],
+      },
+    });
+  });
+
+  test.each([
+    ["rg -n route src 2>/dev/null; git status --short", "omit"],
+    ["rg -n route src 2>&1&& git status --short", "merge"],
+  ])("preserves compact stderr boundaries in a read plan: %s", (command, stderr) => {
+    expect(classify("Bash", { command })).toMatchObject({
+      eligible: true,
+      operation: "read-plan",
+      request: {
+        executionPlan: [
+          {
+            executionOutput: { stderr },
+            executionProfile: "search",
+          },
+          { executionProfile: "git-status" },
+        ],
+      },
+    });
+  });
+
+  test.each([
+    "rg -n route src; git add .",
+    "rg -n route src;; git status --short",
+    "rg -n route src; echo -n hidden; git status --short",
+    "rg -n route src; echo '$TOKEN'; git status --short",
+    "rg -n route src; printf label; git status --short",
+    "rg -n route src; git show HEAD:file | grep route | head -10",
+    "echo one; echo two; echo three; echo four; echo five; echo six; echo seven; git status --short",
+  ])("rejects the whole semicolon plan when one stage is not broker-safe: %s", (command) => {
+    expect(classify("Bash", { command })).toMatchObject({
+      eligible: false,
+      reason: "compound-or-unsafe-command",
+    });
+  });
+
   test.each([
     ["rg -n route src && ls tests", ["src", "tests"]],
     [

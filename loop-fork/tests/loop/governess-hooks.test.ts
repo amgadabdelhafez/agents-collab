@@ -378,6 +378,129 @@ describe("runHookEmit", () => {
     ]);
   });
 
+  test("recovers a registered-worktree prefix before classifying the remainder", async () => {
+    const delegationEvents: Array<{ reason?: string }> = [];
+    const resolvedPaths: string[] = [];
+    const routeRequests: Array<{
+      executionProfile?: string;
+      readScope?: string[];
+    }> = [];
+    const run = async (command: string, toolUseId: string) => {
+      async function* stdin() {
+        await Promise.resolve();
+        yield new TextEncoder().encode(
+          JSON.stringify({
+            cwd: "/external/scratch",
+            hook_event_name: "PreToolUse",
+            tool_input: { command },
+            tool_name: "Bash",
+            tool_use_id: toolUseId,
+          })
+        );
+      }
+      await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+        append: () => undefined,
+        appendDelegation: (_runDir, event) => delegationEvents.push(event),
+        appendRoute: (_runDir, request) => {
+          routeRequests.push(request);
+          return { jobId: `${toolUseId}-job` };
+        },
+        env: {
+          LOOP_UTILITY_DELEGATION_MODE: "enforce",
+          LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+        },
+        now: () => NOW,
+        readManifest: () => ({ cwd: "/repo" }),
+        resolveWorkspaceRoot: (_runRoot, path) => {
+          resolvedPaths.push(path);
+          return path.startsWith("/linked") ? "/linked" : undefined;
+        },
+        stdin: stdin(),
+        writeStdout: () => undefined,
+      });
+    };
+
+    await run(
+      "cd /linked/packages/api && sed -n '1,20p' src/router.ts; echo 'matches'; rg -n route tests | head -5",
+      "safe-linked-prefix"
+    );
+    await run(
+      'cd /linked/packages/api && echo "BRANCH: $(git branch --show-current)" && git add .',
+      "unsafe-linked-prefix"
+    );
+    await run(
+      `cd /linked/packages/api && ${"unsupported".repeat(600)}`,
+      "long-unsafe-linked-prefix"
+    );
+
+    expect(resolvedPaths).toEqual([
+      "/external/scratch",
+      "/linked/packages/api",
+      "/external/scratch",
+      "/linked/packages/api",
+      "/external/scratch",
+      "/linked/packages/api",
+    ]);
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        executionProfile: "read-plan",
+        readScope: [
+          "/linked/packages/api/src/router.ts",
+          "/linked/packages/api/tests",
+        ],
+      }),
+    ]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({ disposition: "auto-routed" }),
+      expect.objectContaining({
+        disposition: "skipped-candidate",
+        reason: "compound-or-unsafe-command",
+      }),
+      expect.objectContaining({
+        disposition: "skipped-candidate",
+        reason: "compound-or-unsafe-command",
+      }),
+    ]);
+  });
+
+  test("does not recover substituted or unrelated worktree prefixes", async () => {
+    const delegationEvents: Array<{ reason?: string }> = [];
+    const run = async (command: string) => {
+      async function* stdin() {
+        await Promise.resolve();
+        yield new TextEncoder().encode(
+          JSON.stringify({
+            cwd: "/external/scratch",
+            hook_event_name: "PreToolUse",
+            tool_input: { command },
+            tool_name: "Bash",
+          })
+        );
+      }
+      await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+        append: () => undefined,
+        appendDelegation: (_runDir, event) => delegationEvents.push(event),
+        env: {
+          LOOP_UTILITY_DELEGATION_MODE: "enforce",
+          LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+        },
+        now: () => NOW,
+        readManifest: () => ({ cwd: "/repo" }),
+        resolveWorkspaceRoot: (_runRoot, path) =>
+          path.startsWith("/linked") ? "/linked" : undefined,
+        stdin: stdin(),
+      });
+    };
+
+    await run("cd $WORKTREE && rg -n route src");
+    await run("cd /unrelated/repo && rg -n route src");
+
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({ reason: "workspace-unverified" }),
+      expect.objectContaining({ reason: "workspace-unverified" }),
+    ]);
+  });
+
   test("roots a focused-check cwd and paths in a verified linked worktree", async () => {
     const routeRequests: Array<{
       executionArgv?: string[];

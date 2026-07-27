@@ -18,6 +18,8 @@ const PROVIDER_KEY_RE = /\bsk-[A-Za-z0-9_-]{12,}\b/g;
 const COMMON_CREDENTIAL_RE =
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|glpat-[A-Za-z0-9_-]{20,})\b/g;
 const REDACTED = "[REDACTED]";
+const TOOL_ERROR_CODE_RE = /^[a-z][a-z0-9_-]{0,39}$/;
+const MAX_OBSERVABILITY_NUMBER = Number.MAX_SAFE_INTEGER;
 
 export type UtilityTranscriptKind = "request" | "response" | "tool";
 
@@ -49,12 +51,40 @@ export interface UtilityObservabilityUsage {
   totalTokens: number;
 }
 
+export interface UtilityPerformanceObservability {
+  averageCostUsd: number;
+  averageDurationMs: number;
+  averageTokens: number;
+  averageToolCalls: number;
+  cacheHitRate: number;
+  finishedJobs: number;
+  measuredJobs: number;
+  successfulJobs: number;
+  successRate: number;
+}
+
+export interface UtilityContextObservability {
+  capsules: number;
+  coverage: number;
+  latestHash?: string;
+  latestVersion?: number;
+  references: number;
+}
+
+export interface UtilityFailureObservability {
+  toolFailures: number;
+  topToolError?: string;
+  topToolErrorCount: number;
+}
+
 export interface UtilityObservabilitySnapshot {
   active: number;
   available: boolean;
   completed: number;
   contextInsufficient: number;
+  contexts: UtilityContextObservability;
   failed: number;
+  failures: UtilityFailureObservability;
   jobsTotal: number;
   latestAt?: string;
   latestDetail: string;
@@ -64,6 +94,7 @@ export interface UtilityObservabilitySnapshot {
   latestState?: string;
   messages: UtilityMessageObservability;
   model?: string;
+  performance: UtilityPerformanceObservability;
   queued: number;
   routing: UtilityRoutingObservability;
   transcript: UtilityTranscriptEntry[];
@@ -100,6 +131,29 @@ const emptyUsage = (): UtilityObservabilityUsage => ({
   reasoningTokens: 0,
   toolCalls: 0,
   totalTokens: 0,
+});
+
+const emptyPerformance = (): UtilityPerformanceObservability => ({
+  averageCostUsd: 0,
+  averageDurationMs: 0,
+  averageTokens: 0,
+  averageToolCalls: 0,
+  cacheHitRate: 0,
+  finishedJobs: 0,
+  measuredJobs: 0,
+  successfulJobs: 0,
+  successRate: 0,
+});
+
+const emptyContexts = (): UtilityContextObservability => ({
+  capsules: 0,
+  coverage: 0,
+  references: 0,
+});
+
+const emptyFailures = (): UtilityFailureObservability => ({
+  toolFailures: 0,
+  topToolErrorCount: 0,
 });
 
 const routingSnapshot = (
@@ -232,7 +286,15 @@ const readJsonlRecords = (path: string): Record<string, unknown>[] => {
 };
 
 const finiteNumber = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(value, MAX_OBSERVABILITY_NUMBER)
+    : 0;
+
+const saturatingAdd = (left: number, right: number): number =>
+  Math.min(MAX_OBSERVABILITY_NUMBER, left + right);
+
+const boundedRatio = (numerator: number, denominator: number): number =>
+  denominator > 0 ? Math.min(1, numerator / denominator) : 0;
 
 const recordAt = (
   value: unknown,
@@ -252,6 +314,13 @@ const stringAt = (
   key: string
 ): string | undefined =>
   typeof value[key] === "string" ? (value[key] as string) : undefined;
+
+const safeToolErrorCode = (
+  error: Record<string, unknown> | undefined
+): string | undefined => {
+  const code = error ? stringAt(error, "code") : undefined;
+  return code && TOOL_ERROR_CODE_RE.test(code) ? code : undefined;
+};
 
 const safeJobs = (runDir: string): UtilityJobSnapshot[] => {
   try {
@@ -294,16 +363,175 @@ const usageSnapshot = (
   for (const event of events.values()) {
     model = stringAt(event, "model") ?? model;
     const current = recordAt(event, "usage") ?? {};
-    usage.cachedInputTokens += finiteNumber(current.cachedInputTokens);
-    usage.costUsd += finiteNumber(current.cost);
-    usage.inputTokens += finiteNumber(current.inputTokens);
-    usage.modelCalls += finiteNumber(event.modelCalls);
-    usage.outputTokens += finiteNumber(current.outputTokens);
-    usage.reasoningTokens += finiteNumber(current.reasoningTokens);
-    usage.toolCalls += finiteNumber(event.toolCalls);
-    usage.totalTokens += finiteNumber(current.totalTokens);
+    usage.cachedInputTokens = saturatingAdd(
+      usage.cachedInputTokens,
+      finiteNumber(current.cachedInputTokens)
+    );
+    usage.costUsd = saturatingAdd(usage.costUsd, finiteNumber(current.cost));
+    usage.inputTokens = saturatingAdd(
+      usage.inputTokens,
+      finiteNumber(current.inputTokens)
+    );
+    usage.modelCalls = saturatingAdd(
+      usage.modelCalls,
+      finiteNumber(event.modelCalls)
+    );
+    usage.outputTokens = saturatingAdd(
+      usage.outputTokens,
+      finiteNumber(current.outputTokens)
+    );
+    usage.reasoningTokens = saturatingAdd(
+      usage.reasoningTokens,
+      finiteNumber(current.reasoningTokens)
+    );
+    usage.toolCalls = saturatingAdd(
+      usage.toolCalls,
+      finiteNumber(event.toolCalls)
+    );
+    usage.totalTokens = saturatingAdd(
+      usage.totalTokens,
+      finiteNumber(current.totalTokens)
+    );
   }
   return { ...(model ? { model } : {}), usage };
+};
+
+const terminalWorkerJobs = (jobs: UtilityJobSnapshot[]): UtilityJobSnapshot[] =>
+  jobs.filter((job) =>
+    ["completed", "failed", "escalated", "canceled"].includes(job.state)
+  );
+
+const performanceSnapshot = (
+  jobs: UtilityJobSnapshot[],
+  events: Map<string, Record<string, unknown>>
+): UtilityPerformanceObservability => {
+  const finished = terminalWorkerJobs(jobs);
+  const successfulJobs = finished.filter(
+    (job) => job.state === "completed"
+  ).length;
+  const measured = finished.flatMap((job) => {
+    const event = events.get(job.jobId);
+    return event ? [event] : [];
+  });
+  if (finished.length === 0) {
+    return emptyPerformance();
+  }
+  const totals = measured.reduce(
+    (sum, event) => {
+      const usage = recordAt(event, "usage") ?? {};
+      sum.cachedInputTokens = saturatingAdd(
+        sum.cachedInputTokens,
+        finiteNumber(usage.cachedInputTokens)
+      );
+      sum.costUsd = saturatingAdd(sum.costUsd, finiteNumber(usage.cost));
+      sum.durationMs = saturatingAdd(
+        sum.durationMs,
+        finiteNumber(event.durationMs)
+      );
+      sum.inputTokens = saturatingAdd(
+        sum.inputTokens,
+        finiteNumber(usage.inputTokens)
+      );
+      sum.tokens = saturatingAdd(sum.tokens, finiteNumber(usage.totalTokens));
+      sum.toolCalls = saturatingAdd(
+        sum.toolCalls,
+        finiteNumber(event.toolCalls)
+      );
+      return sum;
+    },
+    {
+      cachedInputTokens: 0,
+      costUsd: 0,
+      durationMs: 0,
+      inputTokens: 0,
+      tokens: 0,
+      toolCalls: 0,
+    }
+  );
+  const divisor = measured.length || 1;
+  return {
+    averageCostUsd: totals.costUsd / divisor,
+    averageDurationMs: totals.durationMs / divisor,
+    averageTokens: totals.tokens / divisor,
+    averageToolCalls: totals.toolCalls / divisor,
+    cacheHitRate: boundedRatio(totals.cachedInputTokens, totals.inputTokens),
+    finishedJobs: finished.length,
+    measuredJobs: measured.length,
+    successfulJobs,
+    successRate: successfulJobs / finished.length,
+  };
+};
+
+const SHA256_RE = /^[a-f0-9]{64}$/i;
+
+const contextSnapshot = (
+  jobs: UtilityJobSnapshot[],
+  events: Map<string, Record<string, unknown>>
+): UtilityContextObservability => {
+  const withContext = jobs.flatMap((job) => {
+    const event = events.get(job.jobId);
+    const eventHash = event ? stringAt(event, "contextSha256") : undefined;
+    const resultContext = job.result?.context;
+    let hash: string | undefined;
+    if (SHA256_RE.test(eventHash ?? "")) {
+      hash = eventHash;
+    } else if (SHA256_RE.test(resultContext?.sha256 ?? "")) {
+      hash = resultContext?.sha256;
+    }
+    if (!hash) {
+      return [];
+    }
+    const eventVersion = finiteNumber(event?.contextVersion);
+    const version = eventVersion || finiteNumber(resultContext?.version);
+    return [
+      {
+        at: job.updatedAt,
+        hash,
+        references: job.request.contextRefs?.length ?? 0,
+        version,
+      },
+    ];
+  });
+  const latest = [...withContext].sort((left, right) =>
+    right.at.localeCompare(left.at)
+  )[0];
+  return {
+    capsules: withContext.length,
+    coverage: jobs.length > 0 ? withContext.length / jobs.length : 0,
+    ...(latest
+      ? {
+          latestHash: latest.hash.slice(0, 8),
+          ...(latest.version > 0 ? { latestVersion: latest.version } : {}),
+        }
+      : {}),
+    references: withContext.reduce(
+      (total, context) => total + context.references,
+      0
+    ),
+  };
+};
+
+const failureSnapshot = (
+  events: Record<string, unknown>[]
+): UtilityFailureObservability => {
+  const failed = events.filter((event) => event.ok === false);
+  const counts = failed.reduce<Record<string, number>>((result, event) => {
+    const error = recordAt(event, "error");
+    const key = safeToolErrorCode(error) ?? "unknown";
+    result[key] = (result[key] ?? 0) + 1;
+    return result;
+  }, {});
+  const top = Object.entries(counts).sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
+  )[0];
+  if (!top) {
+    return { toolFailures: failed.length, topToolErrorCount: 0 };
+  }
+  return {
+    toolFailures: failed.length,
+    topToolError: top[0],
+    topToolErrorCount: top[1],
+  };
 };
 
 const transcriptUsage = (
@@ -359,44 +587,44 @@ const jobResultEntry = (
   };
 };
 
-const toolEntries = (runDir: string): UtilityTranscriptEntry[] =>
-  readJsonlRecords(join(runDir, "utility", "tool-events.jsonl")).flatMap(
-    (event) => {
-      const at = stringAt(event, "at");
-      const jobId = stringAt(event, "jobId");
-      const tool = stringAt(event, "tool");
-      if (!(at && jobId && tool)) {
-        return [];
-      }
-      const ok = event.ok === true;
-      const durationMs = finiteNumber(event.durationMs);
-      const error = recordAt(event, "error");
-      const errorCode = error ? stringAt(error, "code") : undefined;
-      const outcome = `${ok ? "ok" : "failed"} ${Math.round(durationMs)}ms${
-        errorCode ? ` ${sanitizeUtilityPaneText(errorCode)}` : ""
-      }`;
-      return [
-        {
-          at,
-          jobId,
-          kind: "tool" as const,
-          label: "WORKER TOOL",
-          text: `${sanitizeUtilityPaneText(tool)} ${outcome}`,
-        },
-      ];
+const toolEntries = (
+  events: Record<string, unknown>[]
+): UtilityTranscriptEntry[] =>
+  events.flatMap((event) => {
+    const at = stringAt(event, "at");
+    const jobId = stringAt(event, "jobId");
+    const tool = stringAt(event, "tool");
+    if (!(at && jobId && tool)) {
+      return [];
     }
-  );
+    const ok = event.ok === true;
+    const durationMs = finiteNumber(event.durationMs);
+    const error = recordAt(event, "error");
+    const errorCode = safeToolErrorCode(error);
+    const outcome = `${ok ? "ok" : "failed"} ${Math.round(durationMs)}ms${
+      errorCode ? ` ${sanitizeUtilityPaneText(errorCode)}` : ""
+    }`;
+    return [
+      {
+        at,
+        jobId,
+        kind: "tool" as const,
+        label: "WORKER TOOL",
+        text: `${sanitizeUtilityPaneText(tool)} ${outcome}`,
+      },
+    ];
+  });
 
 const transcriptFor = (
-  runDir: string,
   jobs: UtilityJobSnapshot[],
-  usageEvents: Map<string, Record<string, unknown>>
+  usageEvents: Map<string, Record<string, unknown>>,
+  toolEvents: Record<string, unknown>[]
 ): UtilityTranscriptEntry[] => {
   const entries = jobs.flatMap((job) => {
     const result = jobResultEntry(job, usageEvents.get(job.jobId));
     return result ? [jobRequestEntry(job), result] : [jobRequestEntry(job)];
   });
-  entries.push(...toolEntries(runDir));
+  entries.push(...toolEntries(toolEvents));
   return entries
     .filter((entry) => entry.text)
     .sort((left, right) => left.at.localeCompare(right.at));
@@ -417,20 +645,26 @@ export const readUtilityObservability = (
       active: 0,
       available: false,
       completed: 0,
+      contexts: emptyContexts(),
       contextInsufficient: 0,
       failed: 0,
+      failures: emptyFailures(),
       jobsTotal: 0,
       latestDetail: "no utility run directory",
       messages: { inbound: 0, outbound: 0, pending: 0 },
+      performance: emptyPerformance(),
       queued: 0,
       routing: {
+        actionable: 0,
         autoRouted: 0,
         considered: 0,
         explicitRouted: 0,
         pending: 0,
         reasons: {},
+        retained: 0,
         routed: 0,
         skipped: 0,
+        unsafe: 0,
       },
       transcript: [],
       usage: emptyUsage(),
@@ -439,8 +673,11 @@ export const readUtilityObservability = (
   const allJobs = safeJobs(runDir);
   const jobs = workerJobs(allJobs);
   const usageEvents = latestUsageByJob(runDir);
+  const toolEvents = readJsonlRecords(
+    join(runDir, "utility", "tool-events.jsonl")
+  );
   const totals = usageSnapshot(usageEvents);
-  const transcript = transcriptFor(runDir, jobs, usageEvents);
+  const transcript = transcriptFor(jobs, usageEvents, toolEvents);
   const latest = latestJob(jobs);
   const latestDecision = latestJob(allJobs.filter((job) => job.decision));
   const latestDetail = latest
@@ -456,6 +693,7 @@ export const readUtilityObservability = (
       .length,
     available: jobs.length > 0 || usageEvents.size > 0,
     completed: jobs.filter((job) => job.state === "completed").length,
+    contexts: contextSnapshot(jobs, usageEvents),
     contextInsufficient: jobs.filter(
       (job) => job.result?.reasonCode === "context-insufficient"
     ).length,
@@ -464,6 +702,7 @@ export const readUtilityObservability = (
         ["failed", "escalated", "canceled"].includes(job.state) &&
         job.result?.reasonCode !== "context-insufficient"
     ).length,
+    failures: failureSnapshot(toolEvents),
     jobsTotal: jobs.length,
     latestDetail,
     messages: messageSnapshot(jobs),
@@ -487,6 +726,7 @@ export const readUtilityObservability = (
         }
       : {}),
     ...(totals.model ? { model: totals.model } : {}),
+    performance: performanceSnapshot(jobs, usageEvents),
     queued: jobs.filter((job) =>
       ["pending-route", "routed-utility"].includes(job.state)
     ).length,

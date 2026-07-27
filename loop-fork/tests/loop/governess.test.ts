@@ -1713,6 +1713,7 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
       id: "board-job",
       kind: "inspect",
       objective: "Inspect the active worker configuration",
+      contextRefs: ["docs/worker.md"],
       readScope: ["src"],
       requester: "claude",
       requiredCapabilities: ["inspect"],
@@ -1747,6 +1748,9 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
     writeFileSync(
       join(runDir, "utility", "usage.jsonl"),
       `${JSON.stringify({
+        contextSha256: "b".repeat(64),
+        contextVersion: 1,
+        durationMs: 12_000,
         jobId: request.id,
         model: "z-ai/glm-5.2",
         modelCalls: 4,
@@ -1791,6 +1795,17 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
         summary: "Failed closed.",
       },
     });
+    writeFileSync(
+      join(runDir, "utility", "tool-events.jsonl"),
+      `${JSON.stringify({
+        at: "2099-01-01T00:00:00.500Z",
+        durationMs: 4,
+        error: { code: "broker_invalid_arguments" },
+        jobId: latestFailed.id,
+        ok: false,
+        tool: "search",
+      })}\n`
+    );
     const skipped = createUtilityRouteRequest({
       acceptanceCriteria: ["stay with the driver"],
       authority: {},
@@ -1857,7 +1872,17 @@ test("board uses the recovered summary area for lower-agent metrics", async () =
       "bridge worker msgs · in 2 latest — · out 2 latest — · pending 0"
     );
     expect(board).toContain("routing why · protected-scope 1");
+    expect(board).toContain(
+      "worker perf · success 1/2 50% · avg 12s · $0.0123/job · 7k tok/job · 3.0 tools/job · cache 40%"
+    );
+    expect(board).toContain(
+      "worker load · active 0 · queued 0 · route share 2/3 67% · msgs in 2 out 2 pending 0"
+    );
+    expect(board).toContain(
+      "worker context · capsules 1/2 50% · refs 1 · latest v1 bbbbbbbb · ctx misses 0 · tool failures 1 · top broker_invalid_arguments 1"
+    );
     expect(board).not.toContain("Project: must remain hidden");
+    expect(board).not.toContain("docs/worker.md");
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }

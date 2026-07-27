@@ -20,14 +20,16 @@ useful, but currently shows only aggregate job and routing counts.
 
 ### Compound read plans
 
-- Accept two through six ordered top-level stages separated by `&&`, `;`, or a
-  mixture of the two.
+- Accept one through six ordered executable read stages separated by `&&`, `;`,
+  or a mixture of the two. Up to six additional literal `echo` labels may be
+  omitted as presentation-only stages.
 - Every executable stage must independently satisfy the existing broker-backed,
   read-only delegation grammar. The router must persist a structured plan; it
   must never pass an accepted shell compound to a general shell.
-- Permit literal `echo` label stages only as presentation metadata. Labels may
-  not contain expansion, substitution, redirection, flags, or executable shell
-  syntax and must not become broker operations.
+- Permit literal `echo` label stages, including a bare blank-line `echo`, only
+  as presentation metadata. Labels may not contain expansion, substitution,
+  redirection, flags, or executable shell syntax and must not become broker
+  operations.
 - Preserve existing per-stage bounds such as `head`, `tail`, and stderr
   suppression.
 - Reject the entire candidate if any stage is empty, mutating, unbounded,
@@ -84,4 +86,3 @@ useful, but currently shows only aggregate job and routing counts.
   text alone.
 - Existing claims, concurrency, timeout, output, and cost ceilings remain in
   force.
-

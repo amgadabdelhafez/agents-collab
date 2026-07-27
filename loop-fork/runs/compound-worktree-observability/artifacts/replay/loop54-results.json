@@ -1,0 +1,28 @@
+{
+  "counts": {
+    "new:compound-or-unsafe-command": 143,
+    "new:eligible": 3,
+    "new:leading-worktree-hint-recovered": 1,
+    "new:workspace-unverified": 2,
+    "old:compound-or-unsafe-command": 146,
+    "old:workspace-unverified": 2,
+    "replay:normalized-deleted-worktree": 102
+  },
+  "newlyRouted": [
+    {
+      "operation": "read-plan",
+      "scopes": 2,
+      "sequence": 62
+    },
+    {
+      "operation": "read-plan",
+      "scopes": 1,
+      "sequence": 106
+    },
+    {
+      "operation": "read-plan",
+      "scopes": 2,
+      "sequence": 148
+    }
+  ]
+}

@@ -1974,6 +1974,40 @@ const renderWorkerRoutingRows = (
   ];
 };
 
+const workerPercentage = (part: number, total: number): string =>
+  total > 0 ? `${Math.round((part / total) * 100)}%` : "—";
+
+const renderWorkerDetailRows = (
+  snapshot: UtilityObservabilitySnapshot,
+  meta: BoardMeta
+): string[] => {
+  const width = Math.max(1, meta.maxColumns ?? 176);
+  const performance = snapshot.performance;
+  const contexts = snapshot.contexts;
+  const failures = snapshot.failures;
+  const routing = snapshot.routing;
+  const measured = performance.measuredJobs > 0;
+  const performanceLine = ` worker perf · success ${performance.successfulJobs}/${performance.finishedJobs} ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · avg ${measured ? fmtDuration(performance.averageDurationMs) : "—"} · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"}`;
+  const loadLine = ` worker load · active ${snapshot.active} · queued ${snapshot.queued} · route share ${routing.routed}/${routing.considered} ${workerPercentage(routing.routed, routing.considered)} · msgs in ${snapshot.messages.inbound} out ${snapshot.messages.outbound} pending ${snapshot.messages.pending}`;
+  const latestContext = contexts.latestHash
+    ? `v${contexts.latestVersion ?? "?"} ${contexts.latestHash}`
+    : "none";
+  const topFailure = failures.topToolError
+    ? `${failures.topToolError} ${failures.topToolErrorCount}`
+    : "none";
+  const contextLine = ` worker context · capsules ${contexts.capsules}/${snapshot.jobsTotal} ${snapshot.jobsTotal > 0 ? workerPercentage(contexts.coverage, 1) : "—"} · refs ${contexts.references} · latest ${latestContext} · ctx misses ${snapshot.contextInsufficient} · tool failures ${failures.toolFailures} · top ${topFailure}`;
+  return [
+    paint(ANSI.green, truncate(performanceLine, width)),
+    paint(ANSI.cyan, truncate(loadLine, width)),
+    paint(
+      failures.toolFailures > 0 || snapshot.contextInsufficient > 0
+        ? ANSI.yellow
+        : ANSI.dim,
+      truncate(contextLine, width)
+    ),
+  ];
+};
+
 const localLlmUsageCells = (usage: LocalLlmUsage): string[] => {
   const calls =
     usage.calls > 0
@@ -3046,6 +3080,9 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const workerRoutingLines = meta.utility
     ? renderWorkerRoutingRows(meta.utility, meta)
     : [];
+  const workerDetailLines = meta.utility
+    ? renderWorkerDetailRows(meta.utility, meta)
+    : [];
   const fullTop = [
     statusLine,
     agentHeaderRow,
@@ -3053,6 +3090,7 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...bridgeLines,
     ...workerBridgeLines,
     ...workerRoutingLines,
+    ...workerDetailLines,
   ];
   const maxRows = meta.maxRows;
   let top = fullTop;
@@ -3072,6 +3110,11 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     );
     spare -= visibleWorkerBridgeLines.length;
     const visibleRoutingLines = workerRoutingLines.slice(0, Math.max(0, spare));
+    spare -= visibleRoutingLines.length;
+    const visibleWorkerDetailLines = workerDetailLines.slice(
+      0,
+      Math.max(0, spare)
+    );
     top = [
       statusLine,
       ...(showAgentHeader ? [agentHeaderRow] : []),
@@ -3079,6 +3122,7 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
       ...visibleBridgeLines,
       ...visibleWorkerBridgeLines,
       ...visibleRoutingLines,
+      ...visibleWorkerDetailLines,
     ].slice(0, maxRows);
   }
   const footerBudget =
