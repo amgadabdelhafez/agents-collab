@@ -1,0 +1,17 @@
+task_id: bridge-turn-idle-freshness
+dimension: unit
+attempt: 001
+started_at: 2026-07-27T01:49:44Z
+command: bun test tests/loop/bridge.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+ 85 pass
+ 0 fail
+ 302 expect() calls
+Ran 85 tests across 1 file. [8.60s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T01:49:52Z

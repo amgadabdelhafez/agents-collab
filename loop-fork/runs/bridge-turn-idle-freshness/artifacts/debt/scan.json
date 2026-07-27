@@ -1,0 +1,7 @@
+{
+  "task_id": "bridge-turn-idle-freshness",
+  "scanned_at": "2026-07-27T01:50:39Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

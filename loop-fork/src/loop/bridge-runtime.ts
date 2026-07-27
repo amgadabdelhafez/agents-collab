@@ -69,6 +69,13 @@ const CLAUDE_TMUX_PROMPT_PREFIX = "❯";
 const LINE_SPLIT_RE = /\r?\n/;
 const GENERIC_TMUX_READY_POLLS = 12;
 const CLAUDE_DELIVERY_CONFIRM_POLLS = 8;
+// A fresh launch pastes the initial prompt within seconds of SessionStart; a
+// resumed session (--resume, no prompt) never leaves "starting" on its own.
+const CLAUDE_TURN_STARTING_STALE_MS = 30_000;
+// Intra-turn hook silence is normally seconds, but the stretch between the
+// last PostToolUse and Stop covers final-response writing, which can run
+// minutes. Only a tail older than this stops blocking delivery.
+const CLAUDE_TURN_WORKING_STALE_MS = 300_000;
 const CLAUDE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 const containedRegularFile = (
@@ -177,6 +184,7 @@ const readClaudeTranscriptVersion = (runDir: string): string | undefined =>
   readClaudeSubmissionVersion(runDir);
 
 export const bridgeRuntimeCommandDeps = {
+  now: () => Date.now(),
   readClaudeTranscriptVersion,
   spawn,
   spawnSync,
@@ -410,6 +418,18 @@ const claudeComposerText = (output: string): string | undefined => {
 export const isClaudePaneReady = (output: string): boolean =>
   claudeComposerText(output) === "";
 
+// A missing or malformed timestamp reads as fresh: runHookEmit always stamps
+// ts, so blocking delivery is the safer default for hand-written tails.
+const hookTailAgeMs = (ts: unknown): number => {
+  if (typeof ts !== "string") {
+    return 0;
+  }
+  const parsed = Date.parse(ts);
+  return Number.isNaN(parsed)
+    ? 0
+    : Math.max(0, bridgeRuntimeCommandDeps.now() - parsed);
+};
+
 export const isClaudeTurnActive = (runDir: string): boolean => {
   try {
     const latest = readFileSync(join(runDir, "hooks", "claude.jsonl"), "utf8")
@@ -426,17 +446,28 @@ export const isClaudeTurnActive = (runDir: string): boolean => {
     if (!latest) {
       return false;
     }
-    const event = JSON.parse(latest) as { event?: unknown; state?: unknown };
-    if (event.state === "starting" || event.state === "working") {
-      return true;
+    const event = JSON.parse(latest) as {
+      event?: unknown;
+      state?: unknown;
+      ts?: unknown;
+    };
+    const age = hookTailAgeMs(event.ts);
+    const starting =
+      event.state === "starting" ||
+      (event.state === undefined && event.event === "SessionStart");
+    if (starting) {
+      return age <= CLAUDE_TURN_STARTING_STALE_MS;
     }
-    return (
-      event.state === undefined &&
-      (event.event === "SessionStart" ||
-        event.event === "UserPromptSubmit" ||
-        event.event === "PreToolUse" ||
-        event.event === "PostToolUse")
-    );
+    // A "failed" tail is an errored tool call inside a still-running turn,
+    // not a terminal verdict; it goes idle on the same bound as "working".
+    const working =
+      event.state === "working" ||
+      event.state === "failed" ||
+      (event.state === undefined &&
+        (event.event === "UserPromptSubmit" ||
+          event.event === "PreToolUse" ||
+          event.event === "PostToolUse"));
+    return working && age <= CLAUDE_TURN_WORKING_STALE_MS;
   } catch {
     return false;
   }

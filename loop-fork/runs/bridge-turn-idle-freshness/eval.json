@@ -1,0 +1,18 @@
+{
+  "task_id": "bridge-turn-idle-freshness",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/bridge-turn-idle-freshness/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/bridge-turn-idle-freshness/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/bridge-turn-idle-freshness/artifacts/unit/attempt-001.json"
+    }
+  }
+}

@@ -886,6 +886,7 @@ test("Claude delivery does not inject into an active turn with an empty composer
   });
   const bridge = await loadBridge();
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 5000;
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(join(runDir, "hooks"), { recursive: true });
@@ -913,7 +914,7 @@ test("Claude delivery does not inject into an active turn with an empty composer
       agent: "claude",
       event: "PostToolUse",
       state: "working",
-      ts: "2026-03-23T10:01:00.000Z",
+      ts: TURN_TAIL_TS,
     })}\n`,
     "utf8"
   );
@@ -1100,6 +1101,278 @@ test("Claude delivery aborts without typing when the message is consumed mid-wai
       ([args]) => args[0] === "tmux" && args[1] === "send-keys"
     )
   ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+const TURN_TAIL_TS = "2026-03-23T10:01:00.000Z";
+const TURN_TAIL_MS = Date.parse(TURN_TAIL_TS);
+
+const writeClaudeRunWithHookTail = (
+  runDir: string,
+  tail: Record<string, unknown>
+): void => {
+  mkdirSync(join(runDir, "hooks"), { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify(IDLE_CLAUDE_MANIFEST)}\n`,
+    "utf8"
+  );
+  writeFileSync(
+    join(runDir, "hooks", "claude.jsonl"),
+    `${JSON.stringify(tail)}\n`,
+    "utf8"
+  );
+};
+
+test("isClaudeTurnActive treats a fresh failed tail as turn-active", async () => {
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 5000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    error: true,
+    event: "PostToolUse",
+    state: "failed",
+    ts: TURN_TAIL_TS,
+  });
+
+  expect(bridge.isClaudeTurnActive(runDir)).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("isClaudeTurnActive treats a stale failed tail as idle", async () => {
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 301_000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    error: true,
+    event: "PostToolUse",
+    state: "failed",
+    ts: TURN_TAIL_TS,
+  });
+
+  expect(bridge.isClaudeTurnActive(runDir)).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("isClaudeTurnActive keeps a fresh starting tail active", async () => {
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 5000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    event: "SessionStart",
+    state: "starting",
+    ts: TURN_TAIL_TS,
+  });
+
+  expect(bridge.isClaudeTurnActive(runDir)).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("isClaudeTurnActive treats a stale starting tail as idle", async () => {
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 31_000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    event: "SessionStart",
+    state: "starting",
+    ts: TURN_TAIL_TS,
+  });
+
+  expect(bridge.isClaudeTurnActive(runDir)).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("isClaudeTurnActive treats a stale working tail as idle", async () => {
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 301_000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    event: "PostToolUse",
+    state: "working",
+    ts: TURN_TAIL_TS,
+  });
+
+  expect(bridge.isClaudeTurnActive(runDir)).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("isClaudeTurnActive treats a stale stateless SessionStart tail as idle", async () => {
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 31_000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    event: "SessionStart",
+    ts: TURN_TAIL_TS,
+  });
+
+  expect(bridge.isClaudeTurnActive(runDir)).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("isClaudeTurnActive keeps an active tail without a timestamp active", async () => {
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 301_000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    event: "PostToolUse",
+    state: "working",
+  });
+
+  expect(bridge.isClaudeTurnActive(runDir)).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Claude delivery does not inject when the tail is a fresh failed tool call", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("Working…\n\n❯\n\nOpus 5", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 5000;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    error: true,
+    event: "PostToolUse",
+    state: "failed",
+    ts: TURN_TAIL_TS,
+  });
+  const message = {
+    at: "2026-03-23T10:01:01.000Z",
+    id: "msg-claude-failed-tail",
+    kind: "message" as const,
+    message: "Hold until the errored turn finishes.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args[1] === "send-keys"
+    )
+  ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Claude delivery recovers when a resumed session idles past the starting bound", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nOpus 5 | ctx: 59%", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 31_000;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() => {
+    transcriptReads += 1;
+    return transcriptReads === 1 ? "before" : "after";
+  });
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    event: "SessionStart",
+    state: "starting",
+    ts: TURN_TAIL_TS,
+  });
+  const message = {
+    at: "2026-03-23T10:01:32.000Z",
+    id: "msg-claude-resume-wedge",
+    kind: "message" as const,
+    message: "Codex verdict is ready after the resume.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(1);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Claude delivery recovers when a failed session ages past the working bound", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nOpus 5 | ctx: 59%", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.now = () => TURN_TAIL_MS + 301_000;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() => {
+    transcriptReads += 1;
+    return transcriptReads === 1 ? "before" : "after";
+  });
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeClaudeRunWithHookTail(runDir, {
+    agent: "claude",
+    error: true,
+    event: "PostToolUse",
+    state: "failed",
+    ts: TURN_TAIL_TS,
+  });
+  const message = {
+    at: "2026-03-23T10:06:02.000Z",
+    id: "msg-claude-terminal-failure",
+    kind: "message" as const,
+    message: "Delivery unblocks after a terminal failure.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(1);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
 
   rmSync(root, { recursive: true, force: true });
