@@ -59,3 +59,6 @@ Set verdict to BLOCK if any of the following are true:
 - Protected path modified without spec reference.
 - Touched subsystem is grade F with no remediation spec.
 - Missing eval.json in `runs/<task-id>/`.
+- `eval.json` has a non-empty `baseline_failures` allowlist, records it as a count
+  or a flag instead of exact test names, or uses the retired
+  `pass_with_baseline_failures` result.

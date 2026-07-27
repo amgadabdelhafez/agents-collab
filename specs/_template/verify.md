@@ -63,7 +63,21 @@ The evaluator writes `runs/<task-id>/eval.json`:
     "performance": { "passed": 0, "failed": 0, "details": [] },
     "regression": { "passed": 0, "failed": 0, "details": [] }
   },
+  "baseline_failures": [],
   "verdict": "pass | fail",
   "notes": ""
 }
 ```
+
+## Baseline failures
+
+`baseline_failures` is an allowlist of **exact test names** that are known to fail
+and are not caused by this task. It is never a count and never a flag:
+`"baseline_failures": 4` and `"baseline_failures": true` are invalid records, as
+is the retired `"result": "pass_with_baseline_failures"`.
+
+**The allowlist must be empty to release.** `scripts/verify.sh` runs
+`scripts/check-baseline-allowlist.py` against the run's `eval.json` and fails
+while any name remains. A named entry is a blocker to fix or waive explicitly —
+it is not a tolerance budget, so a task cannot inherit someone else's failures by
+matching a number.

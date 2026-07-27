@@ -57,12 +57,21 @@ if [ "${TASK_ID}" != "unknown" ]; then
     "performance": {"passed": 0, "failed": 0, "details": []},
     "regression": {"passed": 0, "failed": 0, "details": []}
   },
+  "baseline_failures": [],
   "verdict": "pending",
   "notes": "Stub written by verify.sh. Evaluator agent must update verdict."
 }
 EOF
     echo "eval.json stub written to ${ARTIFACTS_DIR}/eval.json"
   fi
+fi
+
+# 7. Baseline-failure gate
+# Baseline failures are a NAMED allowlist, never a count. The allowlist must be
+# empty to release: any named test left on it fails verify.
+if [ -f "${ARTIFACTS_DIR}/eval.json" ]; then
+  echo "--- baseline allowlist ---"
+  python3 scripts/check-baseline-allowlist.py "${ARTIFACTS_DIR}/eval.json"
 fi
 
 echo "=== verify.sh complete ==="
