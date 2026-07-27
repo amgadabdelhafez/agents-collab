@@ -8,7 +8,8 @@
     "focused": "70 passed, 0 failed",
     "full_suite": "798 passed, 4 known Codex model/config expectation failures",
     "build": "passed",
-    "diff_check": "passed"
+    "diff_check": "passed",
+    "live_deployment": "governess PID 94680; Claude 56784, Codex 56786, and worker pane 21402 unchanged; no active worker job; bridge pending zero"
   },
   "preserved_boundaries": [
     "runtime and step limits",
