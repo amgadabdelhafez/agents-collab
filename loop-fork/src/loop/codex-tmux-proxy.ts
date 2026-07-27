@@ -1,13 +1,10 @@
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { serve, spawnSync } from "bun";
-import {
-  acknowledgeBridgeDelivery,
-  readNextPendingBridgeMessageForTarget,
-} from "./bridge-dispatch";
+import { readNextPendingBridgeMessageForTarget } from "./bridge-dispatch";
 import {
   clearStaleTmuxBridgeState,
-  submitTmuxBridgeMessage,
+  deliverTmuxBridgeMessage,
 } from "./bridge-runtime";
 import type { BridgeMessage } from "./bridge-store";
 import { LOOP_VERSION } from "./constants";
@@ -144,27 +141,21 @@ const persistCodexThreadId = (runDir: string, threadId: string): void => {
   });
 };
 
-type VisibleBridgeSubmit = (
-  runDir: string,
-  message: BridgeMessage
-) => Promise<boolean>;
-
-const deliverVisibleBridgeMessage = async (
+type VisibleBridgeDeliver = (
   runDir: string,
   message: BridgeMessage,
-  submit: VisibleBridgeSubmit = submitTmuxBridgeMessage
-): Promise<boolean> => {
-  const delivered = await submit(runDir, message);
-  if (!delivered) {
-    return false;
-  }
-  acknowledgeBridgeDelivery(
-    runDir,
-    message,
-    "submitted through visible codex tmux pane"
-  );
-  return true;
-};
+  ackReason?: string
+) => Promise<boolean>;
+
+// Route through the claimed tmux delivery path so a receive_messages poll
+// cannot consume the message while the pane injection is in flight; the
+// delivery acknowledges under the claim before releasing it.
+const deliverVisibleBridgeMessage = (
+  runDir: string,
+  message: BridgeMessage,
+  deliver: VisibleBridgeDeliver = deliverTmuxBridgeMessage
+): Promise<boolean> =>
+  deliver(runDir, message, "submitted through visible codex tmux pane");
 
 const isTmuxSessionAlive = (session: string): boolean => {
   if (!session) {

@@ -876,7 +876,16 @@ export const deliverCodexBridgeMessage = async (
   if (!status.hasCodexRemote) {
     return false;
   }
+  // The app-server call is the injection itself, so there is no readiness
+  // wait to keep outside the claim; claim, re-check pending, then inject.
+  const claim = acquireDeliveryClaim(runDir, message.id);
+  if (!claim) {
+    return false;
+  }
   try {
+    if (!isMessagePending(runDir, message.id)) {
+      return false;
+    }
     const delivered = await injectCodexMessage(
       status.codexRemoteUrl,
       status.codexThreadId,
@@ -892,6 +901,8 @@ export const deliverCodexBridgeMessage = async (
     return delivered;
   } catch {
     return false;
+  } finally {
+    releaseDeliveryClaim(claim);
   }
 };
 
@@ -912,30 +923,13 @@ const resolveTmuxBridgeDelivery = (
   return pane && content ? { content, pane } : undefined;
 };
 
-export const submitTmuxBridgeMessage = (
-  runDir: string,
-  message: BridgeMessage,
-  readyAttempts?: number
-): Promise<boolean> => {
-  const resolved = resolveTmuxBridgeDelivery(runDir, message);
-  if (!resolved) {
-    return Promise.resolve(false);
-  }
-  return injectTmuxMessage(
-    runDir,
-    resolved.pane,
-    message.target,
-    resolved.content,
-    readyAttempts
-  );
-};
-
 const isMessagePending = (runDir: string, messageId: string): boolean =>
   readPendingBridgeMessages(runDir).some((entry) => entry.id === messageId);
 
 export const deliverTmuxBridgeMessage = async (
   runDir: string,
-  message: BridgeMessage
+  message: BridgeMessage,
+  ackReason = `sent to ${message.target} tmux pane`
 ): Promise<boolean> => {
   if (!isMessagePending(runDir, message.id)) {
     return false;
@@ -967,11 +961,7 @@ export const deliverTmuxBridgeMessage = async (
     if (!delivered) {
       return false;
     }
-    acknowledgeBridgeDelivery(
-      runDir,
-      message,
-      `sent to ${message.target} tmux pane`
-    );
+    acknowledgeBridgeDelivery(runDir, message, ackReason);
     return true;
   } finally {
     releaseDeliveryClaim(claim);

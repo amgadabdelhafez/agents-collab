@@ -182,7 +182,7 @@ test("codex tmux proxy stops immediately after a seen tmux session disappears", 
   ).toBe(false);
 });
 
-test("bridge delivery acknowledges only after visible pane submission", async () => {
+test("visible bridge delivery routes through the claimed tmux delivery path", async () => {
   const root = makeTempDir();
   const message = appendBridgeMessage(
     root,
@@ -190,22 +190,29 @@ test("bridge delivery acknowledges only after visible pane submission", async ()
     bridgeMessage.target,
     bridgeMessage.message
   );
-  const attempts: string[] = [];
+  const attempts: Array<{ ackReason?: string; id: string }> = [];
   try {
     const delivered = await codexTmuxProxyInternals.deliverVisibleBridgeMessage(
       root,
       message,
-      (_runDir, candidate) => {
-        attempts.push(candidate.id);
+      (_runDir, candidate, ackReason) => {
+        attempts.push({ ackReason, id: candidate.id });
         return Promise.resolve(true);
       }
     );
     expect(delivered).toBe(true);
-    expect(attempts).toEqual([message.id]);
-    expect(readPendingBridgeMessages(root)).toEqual([]);
+    expect(attempts).toEqual([
+      {
+        ackReason: "submitted through visible codex tmux pane",
+        id: message.id,
+      },
+    ]);
+    // Acknowledgement is owned by the claimed delivery path; the visible
+    // wrapper must not acknowledge separately.
+    expect(readPendingBridgeMessages(root)).toEqual([message]);
     expect(
       readBridgeEvents(root).filter((event) => event.kind === "delivered")
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -423,9 +430,7 @@ test("codex tmux proxy reloads MCP servers after a closed loop bridge call", asy
       })
     );
     await waitFor(() =>
-      upstreamFrames.some(
-        (frame) => frame.method === "config/mcpServer/reload"
-      )
+      upstreamFrames.some((frame) => frame.method === "config/mcpServer/reload")
     );
   } finally {
     tui?.close();

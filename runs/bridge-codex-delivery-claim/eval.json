@@ -1,0 +1,36 @@
+{
+  "task_id": "bridge-codex-delivery-claim",
+  "result": "pass_with_baseline_failures",
+  "evaluator": "independent general-purpose subagent (not the implementation agent), 2026-07-26",
+  "acceptance": {
+    "appserver_claim_held_during_injection": true,
+    "appserver_claim_released_on_failed_injection": true,
+    "consumed_message_not_injected": true,
+    "foreign_claim_yields_without_injecting": true,
+    "visible_path_routes_through_claimed_delivery": true,
+    "visible_ack_reason_preserved": true,
+    "readiness_wait_never_holds_claim": true,
+    "main_agent_restart_required": false
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test tests/loop/bridge.test.ts tests/loop/codex-tmux-proxy.test.ts",
+      "passed": 92,
+      "failed": 0
+    },
+    "full": {
+      "command": "bun test",
+      "passed": 811,
+      "failed": 4,
+      "baseline_failures": [
+        "preparePairedOptions creates a loop-scoped Codex home without global MCP config",
+        "runAgent launches Codex app-server with loop-scoped Codex home",
+        "buildCommand carries Codex bridge approval config for legacy exec",
+        "startPersistentAgentSession enables persistent Codex threads"
+      ]
+    },
+    "build": "pass",
+    "diff_check": "pass",
+    "live": "pending deployment"
+  }
+}
