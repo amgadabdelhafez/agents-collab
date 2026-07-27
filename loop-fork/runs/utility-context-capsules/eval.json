@@ -1,6 +1,6 @@
 {
   "task_id": "utility-context-capsules",
-  "status": "pending",
+  "status": "pass",
   "required": [
     "unit",
     "independent-review",
@@ -24,7 +24,11 @@
       "signed_off_by": "evaluate_utility_context_capsules"
     },
     "installation": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/utility-context-capsules/artifacts/installation/deployment.md",
+      "reason": "candidate, canonical, and global binary hashes match after atomic installation",
+      "method": "same-directory atomic rename plus byte, hash, mode, symlink, and installed marker verification",
+      "signed_off_by": "codex"
     }
   }
 }

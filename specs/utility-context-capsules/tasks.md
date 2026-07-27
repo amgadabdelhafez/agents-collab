@@ -6,4 +6,4 @@
 - [x] Add context-insufficient escalation, usage evidence, and observability.
 - [x] Add repository utility instructions and dependency documentation.
 - [x] Run focused/full verification, build, diff check, and independent evaluation.
-- [ ] Commit and atomically install the verified binary for future loops.
+- [x] Commit and atomically install the verified binary for future loops.

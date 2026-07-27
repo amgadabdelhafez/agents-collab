@@ -192,10 +192,12 @@
     {
       "id": "utility-context-capsules",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-07-27T18:06:45Z",
       "run_dir": "runs/utility-context-capsules",
-      "eval_status": "pending"
+      "eval_status": "pass",
+      "ended_at": "2026-07-27T18:34:08Z",
+      "spec_path": "specs/utility-context-capsules.md"
     }
   ]
 }

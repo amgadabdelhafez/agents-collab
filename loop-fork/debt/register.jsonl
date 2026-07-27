@@ -32,3 +32,5 @@
 {"ts": "2026-07-27T08:00:18Z", "task_id": "automatic-worker-tool-widening", "signal": "loc_growth", "file": "src/loop/delegation-policy.ts", "before_loc": 1291, "after_loc": 1656, "delta_loc": 365, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-27T08:00:18Z", "task_id": "automatic-worker-tool-widening", "signal": "loc_growth", "file": "src/loop/task-router.ts", "before_loc": 444, "after_loc": 645, "delta_loc": 201, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-27T08:00:18Z", "task_id": "automatic-worker-tool-widening", "signal": "loc_growth", "file": "src/loop/utility-tools.ts", "before_loc": 1904, "after_loc": 2345, "delta_loc": 441, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-27T18:33:48Z", "task_id": "utility-context-capsules", "signal": "loc_growth", "file": "src/loop/utility-context.ts", "before_loc": 0, "after_loc": 234, "delta_loc": 234, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-27T18:33:48Z", "task_id": "utility-context-capsules", "signal": "loc_growth", "file": "src/loop/utility-runtime.ts", "before_loc": 1766, "after_loc": 1889, "delta_loc": 123, "threshold": 100, "severity": "indicator"}
