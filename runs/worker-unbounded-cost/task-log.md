@@ -17,3 +17,6 @@
   repeated denied attempts to run literal `git` through `run_check`. Raised the
   conversation default to 16 steps and extended the shell-free `git_diff` tool
   with validated literal commit hashes, changed-file mode, and diff-check mode.
+- Canonical rebuilt and loop 47 governess narrowly respawned as PID 94680.
+  Claude PID 56784, Codex PID 56786, and worker pane PID 21402 remained
+  unchanged. No worker job is queued or active and bridge pending is zero.
