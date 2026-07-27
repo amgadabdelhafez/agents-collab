@@ -25,7 +25,11 @@ import {
   findCodexTmuxProxyPort,
   waitForCodexTmuxProxy,
 } from "./codex-tmux-proxy";
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_CONFIG_VALUES } from "./constants";
+import {
+  DEFAULT_CLAUDE_DRIVER_EFFORT,
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_CONFIG_VALUES,
+} from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
 import { GOVERNESS_SUBCOMMAND } from "./governess";
 import {
@@ -455,6 +459,8 @@ const buildClaudeCommand = (
     sessionId,
     "--model",
     model,
+    "--effort",
+    DEFAULT_CLAUDE_DRIVER_EFFORT,
     "--dangerously-load-development-channels",
     `server:${channelServer}`,
     "--dangerously-skip-permissions",
