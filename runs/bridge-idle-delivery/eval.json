@@ -26,6 +26,6 @@
     },
     "build": "pass",
     "diff_check": "pass",
-    "live": "pending deployment"
+    "live": "pass: worker 80530 on 18:27 binary; codex->claude 96af2221 pushed once at 01:33:44Z; zero duplicate ledger records; pane and governess PIDs unchanged"
   }
 }
