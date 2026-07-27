@@ -102,6 +102,11 @@ import {
 } from "./governess-runtime";
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
+  createGovernessWake,
+  governessWakeEnabled,
+  governessWakePaths,
+} from "./governess-wake";
+import {
   applyUsageTrackerPricing,
   readUsageTrackerLimits,
   type UsageLimitSnapshot,
@@ -6108,6 +6113,25 @@ export const runGoverness = async (
   const keyInput = deps.openKeyInput?.();
   let pendingKey = keyInput?.next();
   let exitMenuOpen = false;
+  // Event-driven tick: agent hook writes and bridge traffic wake the cycle
+  // instead of it sleeping a fixed tickMs. tickMs remains the fallback, so a
+  // failed watcher degrades to exactly the previous fixed-interval poll.
+  const wake =
+    config.runDir && governessWakeEnabled(process.env)
+      ? createGovernessWake({ paths: governessWakePaths(config.runDir) })
+      : undefined;
+  const waitTick = (): Promise<unknown> =>
+    wake ? wake.wait(config.tickMs) : deps.sleep(config.tickMs);
+  // Event-driven wakes make ticks fire faster than tickMs while agents are
+  // busy. The local-judge refreshes are budgeted in ticks, so without a
+  // wall-clock floor the extra wakes would buy extra inference and make the
+  // waste worse. One tick of slack keeps the fixed-poll cadence unchanged.
+  const llmRefreshMinMs = Math.max(
+    0,
+    (SUMMARY_REFRESH_TICKS - 1) * config.tickMs
+  );
+  let summaryAtMs = 0;
+  let paneLabelAtMs = 0;
   const paneCommand = (pane: string): string | undefined =>
     deps.paneCommand?.(pane);
   const renderExit = (board: string): void => {
@@ -6334,10 +6358,12 @@ export const runGoverness = async (
       if (
         runState.exitControl.mode === "idle" &&
         !summaryInFlight &&
+        deps.now() - summaryAtMs >= llmRefreshMinMs &&
         (summaryDue(summaryText, summaryTick, runState.tick) ||
           missingJudgeUsage(config, runState.llmUsageByJudge))
       ) {
         summaryInFlight = true;
+        summaryAtMs = deps.now();
         const firedAtTick = runState.tick;
         summarizeWithLocalJudges(
           config,
@@ -6369,9 +6395,11 @@ export const runGoverness = async (
       if (
         runState.exitControl.mode === "idle" &&
         !paneLabelInFlight &&
+        deps.now() - paneLabelAtMs >= llmRefreshMinMs &&
         paneLabelsDue(paneLabelTick, runState.tick)
       ) {
         paneLabelInFlight = true;
+        paneLabelAtMs = deps.now();
         const firedAtTick = runState.tick;
         labelPanesWithLocalJudges(
           config,
@@ -6454,21 +6482,21 @@ export const runGoverness = async (
       deps.saveState(config.stateFile, runState);
       renderExit(result.board);
       if (!pendingKey) {
-        await deps.sleep(config.tickMs);
+        await waitTick();
         continue;
       }
-      const wake = await Promise.race([
-        deps.sleep(config.tickMs).then(() => ({ kind: "tick" as const })),
+      const woke = await Promise.race([
+        waitTick().then(() => ({ kind: "tick" as const })),
         pendingKey.then((key) => ({ key, kind: "key" as const })),
       ]);
-      if (wake.kind === "tick") {
+      if (woke.kind === "tick") {
         continue;
       }
       pendingKey = keyInput?.next();
       const action = exitKeyAction(
         exitMenuOpen,
         runState.exitControl.mode,
-        wake.key
+        woke.key
       );
       if (action === "menu") {
         exitMenuOpen = true;
@@ -6497,5 +6525,6 @@ export const runGoverness = async (
     }
   } finally {
     keyInput?.close();
+    wake?.close();
   }
 };
