@@ -22,7 +22,12 @@ export type UtilityCapability =
 
 export type UtilityRisk = "low" | "medium" | "high" | "unknown";
 
-export type UtilityRouteTarget = "utility" | "driver" | "peer" | "escalate";
+export type UtilityRouteTarget =
+  | "utility"
+  | "driver"
+  | "peer"
+  | "requester"
+  | "escalate";
 
 export interface UtilityAuthorityFlags {
   credentialAccess?: boolean;
@@ -129,6 +134,7 @@ export interface UtilityRouteContext {
 export type UtilityRouteReason =
   | "utility-eligible"
   | "review-needs-peer"
+  | "review-stays-with-requester"
   | "authority-needs-human"
   | "missing-governess-epoch"
   | "unsupported-kind"
@@ -390,7 +396,9 @@ export const routeUtilityRequest = (
   context: UtilityRouteContext
 ): UtilityRouteDecision => {
   if (request.kind === "review") {
-    return { reason: "review-needs-peer", target: "peer" };
+    return request.requester === context.currentDriver
+      ? { reason: "review-needs-peer", target: "peer" }
+      : { reason: "review-stays-with-requester", target: "requester" };
   }
   if (isAuthorityRequest(request)) {
     return { reason: "authority-needs-human", target: "escalate" };
