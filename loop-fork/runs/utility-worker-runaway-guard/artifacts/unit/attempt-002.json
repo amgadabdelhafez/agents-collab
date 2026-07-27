@@ -1,0 +1,17 @@
+{
+  "task_id": "utility-worker-runaway-guard",
+  "dimension": "unit",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T16:13:11Z",
+  "ended_at": "2026-07-27T16:13:11Z",
+  "artifact": "runs/utility-worker-runaway-guard/artifacts/unit/attempt-002.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/utility-runtime.test.ts",
+    "tests/loop/utility-store.test.ts"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "task_id": "utility-worker-runaway-guard",
+  "scanned_at": "2026-07-27T16:16:55Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

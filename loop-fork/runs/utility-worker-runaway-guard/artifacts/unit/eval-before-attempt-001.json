@@ -1,0 +1,12 @@
+{
+  "task_id": "utility-worker-runaway-guard",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

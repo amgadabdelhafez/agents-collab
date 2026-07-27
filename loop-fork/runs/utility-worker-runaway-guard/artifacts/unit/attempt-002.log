@@ -1,0 +1,61 @@
+task_id: utility-worker-runaway-guard
+dimension: unit
+attempt: 002
+started_at: 2026-07-27T16:13:11Z
+command: bun test tests/loop/utility-runtime.test.ts tests/loop/utility-store.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-runtime.test.ts:
+(pass) OpenRouter GLM is the default but remains disabled without a credential [0.80ms]
+(pass) worker concurrency is configurable within a bounded range [0.10ms]
+(pass) a mode-0600 key file enables the tier without exporting the secret [0.46ms]
+(pass) detached utility worker environment is allowlist-built, not inherited
+(pass) governess passes only the minimal key-file worker environment [3.02ms]
+(pass) governess route processing dispatches eligible work without provider I/O [1.25ms]
+(pass) worker routing ignores cost estimates [2.14ms]
+(pass) the default worker pool runs four jobs and leaves a fifth pending [3.85ms]
+(pass) peer-routed reviews preserve the requester and ask the peer to act [1.85ms]
+(pass) safe key diagnostics persist in routing observability, not the output-only worker pane [1.94ms]
+(pass) spawn failure terminates the job instead of stranding routed utility work [1.52ms]
+(pass) an unclaimed routed job fails closed after its claim deadline [1.68ms]
+(pass) a dead claimed worker fails immediately and releases its write scope [2.46ms]
+(pass) a live worker remains claimed before its external runtime deadline [1.48ms]
+(pass) governess externally terminates a live worker past its runtime [1.91ms]
+(pass) terminal completion racing the reaper is preserved [1.59ms]
+(pass) overlapping utility writes are not dispatched concurrently [1.74ms]
+(pass) worker pane is a colored output-only request, tool, and response stream [3.20ms]
+(pass) utility pane keeps a failed worker response visible within its viewport [0.93ms]
+(pass) a new governess epoch fences an orphaned utility claim [1.82ms]
+(pass) peer routing is relative to the requester, not the current driver [1.54ms]
+(pass) a full agent applies a completed utility patch with pre/postimage journal proof [17.40ms]
+(pass) guarded patch application refuses wrong hashes and proposal-time drift [4.11ms]
+(pass) utility worker completes against an OpenAI-compatible local endpoint [6.05ms]
+(pass) utility worker stops after three consecutive broker rejections [4.70ms]
+(pass) a successful broker call resets the consecutive rejection breaker [5.26ms]
+(pass) utility worker refuses to execute a third identical tool call [4.91ms]
+(pass) utility worker stops before a sixty-fifth model call [36.27ms]
+(pass) utility worker rejects prose-only completion without repository evidence [3.82ms]
+(pass) a failing focused check cannot satisfy command completion evidence [17.76ms]
+
+tests/loop/utility-store.test.ts:
+(pass) persists route requests and reads pending jobs [0.60ms]
+(pass) deduplicates route requests by idempotency key [0.49ms]
+(pass) makes event ids idempotent and rejects collisions [0.81ms]
+(pass) claims a routed job with a durable governess epoch [0.98ms]
+(pass) does not claim overlapping write scopes concurrently [1.77ms]
+(pass) a successor epoch atomically fences workers from the prior route [1.58ms]
+(pass) enforces safe transitions and epoch claims [0.71ms]
+(pass) persists compact results and makes terminal jobs immutable [1.53ms]
+(pass) journals a patch application after completion without reopening the job [1.44ms]
+(pass) fails closed on a malformed journal [0.26ms]
+
+ 40 pass
+ 0 fail
+ 147 expect() calls
+Ran 40 tests across 2 files. [162.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T16:13:11Z
