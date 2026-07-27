@@ -1,0 +1,12 @@
+{
+  "task_id": "worker-routing-integrated-safe-plans",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}
