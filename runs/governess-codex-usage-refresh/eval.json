@@ -1,0 +1,83 @@
+{
+  "task_id": "governess-codex-usage-refresh",
+  "feature": "governess-codex-usage-refresh",
+  "timestamp": "2026-07-27T04:24:13Z",
+  "evaluator": {
+    "independent": true,
+    "implementation_agent": "different agent",
+    "base_commit": "d83f676cb6f352ae092c1495d92ed6e62e99bee6"
+  },
+  "scope": {
+    "implementation": [
+      "loop-fork/src/loop/governess.ts",
+      "loop-fork/tests/loop/governess.test.ts"
+    ],
+    "contract": [
+      "specs/governess-codex-usage-refresh/spec.md",
+      "specs/governess-codex-usage-refresh/plan.md",
+      "specs/governess-codex-usage-refresh/tasks.md",
+      "specs/governess-codex-usage-refresh/verify.md",
+      "specs/constitution.md"
+    ]
+  },
+  "checks": {
+    "functional": {
+      "passed": 6,
+      "failed": 0,
+      "details": [
+        "PASS: refreshGovernessAgentBindings reads the canonical current run manifest and adopts only non-empty Claude/Codex identifiers.",
+        "PASS: runGoverness invokes the refresh immediately before governessTick, so the refreshed sessionRef is visible to readUsage in the same tick.",
+        "PASS: absent-to-present and changed Codex bindings are covered and pass; the change record also makes refreshes observable in governess.jsonl.",
+        "PASS: empty, malformed, incomplete, or absent manifests return without mutating a known-good in-memory binding. Empty and malformed cases are explicit tests; incomplete/absent behavior follows the reviewed readRunManifest undefined path.",
+        "PASS: focused integration coverage proves every usage read in runGoverness receives the late Codex thread ID rather than the stale undefined value.",
+        "PASS: the implementation only reads the manifest and mutates in-memory agent metadata; it does not write the manifest or issue pane controls."
+      ]
+    },
+    "ui": {
+      "passed": 2,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "PASS (recorded live evidence): runs/governess-codex-usage-refresh/log.md records that run 50's Codex model, context, tokens, and activity repopulated after replacing only harvto-loop-50:0.2.",
+        "PASS (recorded process evidence): the same log records preserved Claude PID 27090, Codex PID 27092, and worker PID 27542.",
+        "No renderer code changed, so DOM assertions are not applicable to this terminal-only data-binding repair. No screenshot artifact was supplied; the evaluator was explicitly instructed not to touch tmux and therefore did not independently recapture the live pane."
+      ]
+    },
+    "performance": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "PASS by bounded design review: the added steady-state work is one synchronous read of the small run manifest per governess tick; no watcher, polling loop, outbound call, or unbounded work was added. No benchmark threshold was specified."
+      ]
+    },
+    "regression": {
+      "passed": 6,
+      "failed": 0,
+      "details": [
+        "PASS: focused suite: bun test tests/loop/governess-usage.test.ts tests/loop/governess.test.ts -> 80 pass, 0 fail, 408 expectations.",
+        "PASS WITH BASELINE EXCEPTION: full suite: bun test -> 827 pass, 4 fail, 2659 expectations across 50 files. None of the failures touches the changed files or governess behavior.",
+        "PASS: the same four failures reproduce at base commit d83f676 in the focused paired-options/runner baseline run (25 pass, 4 fail): loop-scoped Codex home model expectation, app-server launch matcher, legacy exec bridge approval argv, and persistent Codex thread matcher.",
+        "PASS: bun run build compiled 70 modules successfully.",
+        "PASS: git diff --check d83f676 -- . returned clean.",
+        "PASS WITH INFRASTRUCTURE CAVEAT: scripts/verify.sh exited 0, but its lint, typecheck, unit, and integration sections are unconfigured placeholders; direct focused/full/build checks above provide the substantive evidence."
+      ]
+    }
+  },
+  "acceptance": {
+    "refresh_before_usage": "pass",
+    "late_or_changed_binding_self_heals": "pass",
+    "known_good_binding_survives_transient_manifest_failure": "pass",
+    "focused_regressions": "pass",
+    "full_build_and_repository_verification": "pass_with_isolated_baseline_and_placeholder_verify_caveats",
+    "live_run_50_and_pid_preservation": "pass_from_recorded_evidence"
+  },
+  "findings": [],
+  "caveats": [
+    "The live repopulation evidence was produced by a governess-only respawn of the pre-fix binary. It strongly confirms the diagnosed stale startup binding and the PID-safe deployment method, while the new absent-to-present self-heal is proven offline by the focused runGoverness test. Installing and respawning the verified new binary remains the post-evaluation deployment step.",
+    "The evaluator did not touch tmux, deploy, or independently rerun governess doctor. The prior live diagnostic reported doctor healthy, and no bridge/quota/renderer code changed.",
+    "The repository-wide suite is not green at the base commit under the current Codex environment; the four unchanged baseline failures should be repaired separately.",
+    "scripts/verify.sh currently provides orchestration scaffolding rather than real repository verification and should be configured in a separate infrastructure task."
+  ],
+  "verdict": "pass",
+  "notes": "Independent review found no blocking defect in the 219-line implementation/test diff. The feature contract is substantively met: current manifest bindings refresh before usage reads, non-empty changes are adopted in-process, known-good bindings survive transient manifest failures, and the behavior is directly regression-tested. PASS is issued with the documented baseline, verification-scaffold, and live-recapture caveats."
+}

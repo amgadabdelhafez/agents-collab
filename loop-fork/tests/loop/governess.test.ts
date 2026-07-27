@@ -18,6 +18,7 @@ import {
   type GovernessDeps,
   governessPaneIdentityTmuxCommands,
   governessTick,
+  refreshGovernessAgentBindings,
   resolveGovernessConfig,
   runGoverness,
   sendRenameCommands,
@@ -79,6 +80,111 @@ test("governess observes agents through persisted post-split pane targets", () =
     expect(config.agents.map(({ agent, pane }) => ({ agent, pane }))).toEqual([
       { agent: "claude", pane: "repo-loop-91:0.0" },
       { agent: "codex", pane: "repo-loop-91:0.2" },
+    ]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("governess refreshes late and changed agent session bindings", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-governess-bindings-"));
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("92", cwd, home);
+  mkdirSync(dirname(storage.manifestPath), { recursive: true });
+  const manifest = createRunManifest({
+    cwd,
+    mode: "paired",
+    pid: 1234,
+    repoId: storage.repoId,
+    runId: "92",
+    status: "running",
+    tmuxPaneLeftAgent: "claude",
+    tmuxPaneRightAgent: "codex",
+    tmuxSession: "repo-loop-92",
+  });
+  writeRunManifest(storage.manifestPath, manifest);
+
+  try {
+    const config = resolveGovernessConfig("92", {}, cwd, home);
+    expect(config.agents.map((info) => info.sessionRef)).toEqual([
+      undefined,
+      undefined,
+    ]);
+
+    writeRunManifest(storage.manifestPath, {
+      ...manifest,
+      claudeSessionId: "claude-session-1",
+      codexThreadId: "codex-thread-1",
+    });
+    expect(refreshGovernessAgentBindings(config)).toEqual([
+      { agent: "claude", current: "claude-session-1" },
+      { agent: "codex", current: "codex-thread-1" },
+    ]);
+    expect(config.agents.map((info) => info.sessionRef)).toEqual([
+      "claude-session-1",
+      "codex-thread-1",
+    ]);
+
+    writeRunManifest(storage.manifestPath, {
+      ...manifest,
+      claudeSessionId: "claude-session-1",
+      codexThreadId: "codex-thread-2",
+    });
+    expect(refreshGovernessAgentBindings(config)).toEqual([
+      {
+        agent: "codex",
+        current: "codex-thread-2",
+        previous: "codex-thread-1",
+      },
+    ]);
+    expect(config.agents[1]?.sessionRef).toBe("codex-thread-2");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("governess preserves known bindings across empty or malformed manifests", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-governess-bindings-"));
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("93", cwd, home);
+  mkdirSync(dirname(storage.manifestPath), { recursive: true });
+  const manifest = createRunManifest({
+    claudeSessionId: "claude-session-1",
+    codexThreadId: "codex-thread-1",
+    cwd,
+    mode: "paired",
+    pid: 1234,
+    repoId: storage.repoId,
+    runId: "93",
+    status: "running",
+    tmuxPaneLeftAgent: "claude",
+    tmuxPaneRightAgent: "codex",
+    tmuxSession: "repo-loop-93",
+  });
+  writeRunManifest(storage.manifestPath, manifest);
+
+  try {
+    const config = resolveGovernessConfig("93", {}, cwd, home);
+    writeRunManifest(storage.manifestPath, {
+      ...manifest,
+      claudeSessionId: "",
+      codexThreadId: "",
+    });
+    expect(refreshGovernessAgentBindings(config)).toEqual([]);
+    expect(config.agents.map((info) => info.sessionRef)).toEqual([
+      "claude-session-1",
+      "codex-thread-1",
+    ]);
+
+    writeFileSync(storage.manifestPath, "{not-json", "utf8");
+    expect(refreshGovernessAgentBindings(config)).toEqual([]);
+    expect(config.agents.map((info) => info.sessionRef)).toEqual([
+      "claude-session-1",
+      "codex-thread-1",
     ]);
   } finally {
     rmSync(root, { force: true, recursive: true });
@@ -2178,6 +2284,58 @@ test("runGoverness reapplies pane identity on startup and every cycle", async ()
     spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")
   ).toBe(true);
   expect(closed).toBe(true);
+});
+
+test("runGoverness refreshes a late Codex binding before reading usage", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-governess-live-binding-"));
+  const manifestPath = join(root, "manifest.json");
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      codexThreadId: "codex-thread-live",
+      cwd: root,
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo",
+      runId: "94",
+      status: "running",
+      tmuxPaneLeftAgent: "codex",
+      tmuxSession: "repo-loop-94",
+    })
+  );
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const seenSessionRefs: (string | undefined)[] = [];
+  deps.readUsage = (_agent, sessionRef) => {
+    seenSessionRefs.push(sessionRef);
+    return usage();
+  };
+  const keys = ["x", "e"];
+  deps.openKeyInput = () => ({
+    close: () => undefined,
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+  const config = baseConfig({
+    agents: [{ agent: "codex", hookFile: "hooks.jsonl", pane: "s:0.0" }],
+    manifestPath,
+  });
+
+  try {
+    await runGoverness(config, deps);
+    expect(seenSessionRefs.length).toBeGreaterThan(0);
+    expect(new Set(seenSessionRefs)).toEqual(new Set(["codex-thread-live"]));
+    expect(config.agents[0]?.sessionRef).toBe("codex-thread-live");
+    expect(spies.logs).toContainEqual({
+      agent: "codex",
+      at: new Date(START_MS).toISOString(),
+      event: "agent-session-binding-refreshed",
+      from: null,
+      to: "codex-thread-live",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("governessTick sets each agent's pane border title and skips redundant sets", async () => {

@@ -1,0 +1,16 @@
+{
+  "task_id": "governess-codex-usage-refresh",
+  "dimension": "integration",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T04:26:44Z",
+  "ended_at": "2026-07-27T04:26:44Z",
+  "artifact": "runs/governess-codex-usage-refresh/artifacts/integration/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "build"
+  ]
+}

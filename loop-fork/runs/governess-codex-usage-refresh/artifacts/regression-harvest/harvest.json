@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-codex-usage-refresh",
+  "status": "created",
+  "bug_id": "governess-stale-codex-session-binding",
+  "regression_path": "evals/regression/governess-stale-codex-session-binding.md",
+  "prompt_path": "runs/governess-codex-usage-refresh/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-27T04:41:04Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "governess-stale-codex-session-binding"
+    ],
+    "symptom": [
+      "Codex quota and lifecycle populate while model, context, tokens, cost, and activity stay blank."
+    ],
+    "guard": [
+      "bun test tests/loop/governess-usage.test.ts tests/loop/governess.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Codex quota and lifecycle populate while model, context, tokens, cost, and activity stay blank."
+  ],
+  "test_lines": [
+    "bun test tests/loop/governess-usage.test.ts tests/loop/governess.test.ts"
+  ]
+}

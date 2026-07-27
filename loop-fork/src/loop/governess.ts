@@ -113,7 +113,9 @@ import {
 } from "./legacy-governess-compat";
 import {
   loadRunState,
+  readRunManifest,
   setRunManifestState,
+  type RunManifest,
   updateRunManifest,
 } from "./run-state";
 import {
@@ -164,6 +166,12 @@ export interface GovernessAgentInfo {
   pane: string;
   // Session id / thread id used to locate the agent's usage transcript.
   sessionRef?: string;
+}
+
+export interface AgentSessionBindingChange {
+  agent: Agent;
+  current: string;
+  previous?: string;
 }
 
 export interface LocalLlmJudgeConfig {
@@ -236,6 +244,50 @@ export interface GovernessConfig {
   viewportColumns?: number;
   viewportRows?: number;
 }
+
+const manifestSessionRef = (
+  manifest: RunManifest,
+  agent: Agent
+): string | undefined => {
+  if (agent === "claude") {
+    return manifest.claudeSessionId || undefined;
+  }
+  if (agent === "codex") {
+    return manifest.codexThreadId || undefined;
+  }
+  return undefined;
+};
+
+// Session identifiers can be filled or corrected after the governess process
+// has already resolved its startup config. Refresh from the canonical manifest
+// before each usage read, but never erase a known-good binding when a manifest
+// is transiently absent, malformed, or contains an empty identifier.
+export const refreshGovernessAgentBindings = (
+  config: Pick<GovernessConfig, "agents" | "manifestPath">,
+  readManifest: (path: string) => RunManifest | undefined = readRunManifest
+): AgentSessionBindingChange[] => {
+  if (!config.manifestPath) {
+    return [];
+  }
+  const manifest = readManifest(config.manifestPath);
+  if (!manifest) {
+    return [];
+  }
+  const changes: AgentSessionBindingChange[] = [];
+  for (const info of config.agents) {
+    const current = manifestSessionRef(manifest, info.agent);
+    if (!current || current === info.sessionRef) {
+      continue;
+    }
+    changes.push({
+      agent: info.agent,
+      current,
+      ...(info.sessionRef ? { previous: info.sessionRef } : {}),
+    });
+    info.sessionRef = current;
+  }
+  return changes;
+};
 
 // Per-agent bridge message counts, keyed by sender then recipient.
 export type BridgeCounts = Record<string, Record<string, number>>;
@@ -6196,6 +6248,15 @@ export const runGoverness = async (
             roleBalanceEnabled: false,
           }
         : config;
+      for (const change of refreshGovernessAgentBindings(config)) {
+        deps.appendLog(config.logFile, {
+          agent: change.agent,
+          at: new Date(deps.now()).toISOString(),
+          event: "agent-session-binding-refreshed",
+          from: change.previous ?? null,
+          to: change.current,
+        });
+      }
       const result = await governessTick(states, tickConfig, deps, runState);
       runState = result.runState;
       const lifecycleAt = new Date(deps.now()).toISOString();
