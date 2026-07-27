@@ -97,7 +97,6 @@ export interface UtilityTier {
   id: string;
   /** Higher means lower latency relative to other configured tiers. */
   latencyScore?: number;
-  maxJobCostUsd?: number;
   model?: string;
   provider?: string;
   qualityScore?: number;
@@ -126,7 +125,6 @@ export interface UtilityRouteContext {
   currentEpoch?: number;
   peer: Agent;
   protectedPaths?: readonly string[];
-  remainingRunBudgetUsd?: number;
   routingPolicy?: UtilityRoutingPolicy;
   tiers: readonly UtilityTier[];
 }
@@ -145,8 +143,7 @@ export type UtilityRouteReason =
   | "write-conflict"
   | "capability-unavailable"
   | "utility-unavailable"
-  | "routing-policy-invalid"
-  | "budget-exceeded";
+  | "routing-policy-invalid";
 
 export interface UtilityRouteDecision {
   /** Safe operator-facing context added by the runtime after pure routing. */
@@ -319,24 +316,6 @@ const routingPolicyIsValid = (
   );
 };
 
-const budgetAllows = (
-  request: UtilityRouteRequest,
-  tier: UtilityTier,
-  remainingRunBudgetUsd: number | undefined
-): boolean => {
-  const estimated = request.estimatedCostUsd ?? tier.maxJobCostUsd;
-  if (estimated === undefined) {
-    return remainingRunBudgetUsd === undefined;
-  }
-  if (!(Number.isFinite(estimated) && estimated >= 0)) {
-    return false;
-  }
-  return (
-    (tier.maxJobCostUsd === undefined || estimated <= tier.maxJobCostUsd) &&
-    (remainingRunBudgetUsd === undefined || estimated <= remainingRunBudgetUsd)
-  );
-};
-
 const normalizedScore = (value: number | undefined): number =>
   typeof value === "number" && Number.isFinite(value)
     ? Math.min(1, Math.max(0, value))
@@ -445,13 +424,7 @@ export const routeUtilityRequest = (
       healthyTierExists ? "capability-unavailable" : "utility-unavailable"
     );
   }
-  const withinBudget = available.filter((candidate) =>
-    budgetAllows(request, candidate, context.remainingRunBudgetUsd)
-  );
-  const tier = selectTier(withinBudget, context.routingPolicy);
-  if (!tier) {
-    return driverDecision("budget-exceeded");
-  }
+  const tier = selectTier(available, context.routingPolicy);
   return {
     reason: "utility-eligible",
     target: "utility",

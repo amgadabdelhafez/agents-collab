@@ -294,33 +294,14 @@ describe("fail-closed gates", () => {
     ).toEqual({ reason: "forbidden-authority", target: "escalate" });
   });
 
-  test("rejects an over-budget route", () => {
+  test("cost estimates do not gate routing", () => {
     expect(
-      routeUtilityRequest(
-        makeRequest({ estimatedCostUsd: 0.2 }),
-        context({ remainingRunBudgetUsd: 0.1 })
-      )
-    ).toEqual({ reason: "budget-exceeded", target: "driver" });
-  });
-
-  test("reserves the tier maximum when a request omits its estimate", () => {
-    expect(
-      routeUtilityRequest(
-        makeRequest(),
-        context({
-          remainingRunBudgetUsd: 0.04,
-          tiers: [
-            {
-              capabilities: ["scoped-edit", "focused-verify"],
-              enabled: true,
-              healthy: true,
-              id: "cheap-oss",
-              maxJobCostUsd: 0.05,
-            },
-          ],
-        })
-      )
-    ).toEqual({ reason: "budget-exceeded", target: "driver" });
+      routeUtilityRequest(makeRequest({ estimatedCostUsd: 10_000 }), context())
+    ).toEqual({
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "cheap-oss",
+    });
   });
 });
 

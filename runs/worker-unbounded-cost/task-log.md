@@ -9,5 +9,7 @@
   the reported-cost execution abort. Cost remains journaled and displayed.
 - Preserved step, runtime, tool-output, filesystem, protected-path, command,
   credential, authority, write-conflict, and patch-application boundaries.
-- Focused router/runtime tests: 54 pass. Full suite: 798 pass with the same four
+- Focused router/runtime tests: 53 pass. Full suite: 797 pass with the same four
   known Codex model/config expectation failures. Build and diff check pass.
+- Final audit removed the dormant generic router `budget-exceeded` branch and
+  its tier/run budget fields, so no dollar estimate can gate routing anywhere.
