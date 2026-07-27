@@ -1,0 +1,25 @@
+{
+  "task_id": "worker-unbounded-steps",
+  "result": "pass_with_baseline_failures",
+  "acceptance": {
+    "max_steps_removed": true,
+    "runtime_bound_preserved": true,
+    "no_process_restarts": true
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test tests/loop/utility-runtime.test.ts tests/loop/utility-store.test.ts",
+      "passed": 36,
+      "failed": 0
+    },
+    "full": {
+      "command": "bun test",
+      "passed": 806,
+      "failed": 4,
+      "baseline_failures": true
+    },
+    "build": "pass",
+    "diff_check": "pass",
+    "live": "deployed via merge + rebuild; next routed job validates"
+  }
+}
