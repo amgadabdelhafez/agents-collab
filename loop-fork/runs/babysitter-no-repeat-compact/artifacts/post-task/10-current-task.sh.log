@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active babysitter-no-repeat-compact
+[pass] state/invariants/10-current-task.sh

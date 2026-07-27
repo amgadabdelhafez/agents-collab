@@ -1,0 +1,329 @@
+task_id: governess-p0-runtime
+dimension: unit
+attempt: 001
+started_at: 2026-07-25T23:04:02Z
+command: bun test tests/loop/governess-p0-runtime.test.ts tests/loop/governess-runtime.test.ts tests/loop/bridge.test.ts tests/loop/paired-loop.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/paired-loop.test.ts:
+(pass) runPairedLoop fails when --run-id does not resolve to an existing manifest [15.63ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 11
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop starts the non-primary peer session in review mode [21.07ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop resolves a stored raw session id back to its run manifest [34.67ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop restarts a completed paired run with fresh agent sessions [25.85ms]
+(pass) preparePairedOptions loads stored pair ids before planning [28.43ms]
+(pass) preparePairedOptions writes a resumeable manifest for a fresh paired run [26.64ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: raw
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop seeds a fresh paired run from a raw primary session id [31.95ms]
+(pass) runPairedLoop marks a failed startup as failed [21.06ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4a
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop records structured lifecycle events when no bridge traffic occurs [23.14ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4c
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+(pass) runPairedLoop does not mark a run completed when the draft PR step fails [21.82ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers forwarded bridge messages to the target agent [22.09ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop keeps a failed bridge message queued until the next run [36.15ms]
+
+[loop] PLAN.md:
+
+Ship feature
+
+Follow-up:
+Add the missing edge-case test.
+[loop] paired run: 4d
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop restores a pending follow-up prompt on resume [33.73ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 5
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers peer messages back to the primary agent [23.81ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 9
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop skips the default work turn after draining input for the primary agent [23.60ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 7
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop uses the paired peer reviewer in paired mode [21.76ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 8
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop uses the paired peer instead of same-agent review in paired mode [22.20ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 10
+
+[loop] iteration 1/2
+
+[loop] review with codex
+
+[loop] bridge codex -> claude
+
+[loop] reviewer feedback delivered through bridge.
+
+[loop] iteration 2/2
+
+[loop] reached max iterations (2), stopping.
+(pass) runPairedLoop does not duplicate bridged peer review notes in the next prompt [24.76ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 6
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers cross-direction bridge messages without permanent suppression [21.67ms]
+
+tests/loop/governess-p0-runtime.test.ts:
+(pass) journal v2 coalesces stable observations and writes one-record heartbeats [1.79ms]
+(pass) journal index rebuild preserves the idempotency fence after dispatch [1.48ms]
+(pass) journal compaction archives superseded observations without losing controls [2.68ms]
+(pass) malformed crash tails fail closed without automatic repair [0.98ms]
+(pass) duplicate hook evidence reconciles a dispatched control only once [1.06ms]
+(pass) typed bridge metadata round-trips and urgent work is delivered first [0.81ms]
+(pass) bridge QoS deduplicates, supersedes, bounds, and dead-letters work [0.80ms]
+(pass) bridge TTL survives a backward clock and expires deterministically [0.72ms]
+
+tests/loop/bridge.test.ts:
+(pass) bridge message parsing ignores malformed lines and acked entries [2.98ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [2.41ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [2.64ms]
+(pass) readBridgeRuntimeStatus distinguishes live and stale tmux delivery [3.70ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [3.36ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [3.91ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [44.40ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [39.02ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [34.19ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [35.14ms]
+(pass) bridge MCP send_message rejects targeting the current agent [39.48ms]
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [38.81ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [38.07ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [34.54ms]
+(pass) bridge MCP accepts typed work metadata and TTL [44.36ms]
+(pass) bridge MCP writes line-delimited JSON responses [38.43ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [3.19ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [2.94ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [35.13ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [34.06ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [35.47ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [4.06ms]
+(pass) bridge leaves live Codex tmux messages queued for the tmux proxy [3.23ms]
+(pass) bridge falls back to direct Codex delivery when the stored tmux session is stale [3.45ms]
+(pass) bridge drains pending codex tmux messages through the injected command deps [104.58ms]
+(pass) bridge drains pending cursor tmux messages through the stored pane routing [105.82ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [3.23ms]
+(pass) bridge stale tmux cleanup logs non-zero Claude MCP remove exits [2.86ms]
+(pass) bridge stale tmux cleanup logs thrown Claude MCP remove errors [2.63ms]
+(pass) bridge stale tmux cleanup removes a persisted Claude server name [2.47ms]
+(pass) runBridgeWorker clears stale tmux routing and exits [3.41ms]
+(pass) runBridgeWorker falls back to app-server delivery after stale tmux cleanup [105.27ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [3.91ms]
+(pass) runBridgeWorker retries queued codex app-server messages [357.87ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [43.52ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [87.15ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [40.01ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [45.56ms]
+(pass) bridge MCP allows repeating the same message in the original direction [49.71ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [2.97ms]
+(pass) bridge config helper writes the Claude MCP config file [3.25ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [3.54ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [2.75ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [3.97ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [8.06ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [3.38ms]
+(pass) bridge MCP send_message normalizes copilot as a valid target [46.69ms]
+(pass) bridge queues cross-agent messages for all non-Claude/Codex pairs [245.74ms]
+(pass) bridge config injection writes copilot config to .github/copilot/mcp.json [3.92ms]
+(pass) bridge pending count includes copilot messages [3.21ms]
+(pass) bridge drains pending copilot tmux messages through stored pane routing [105.76ms]
+
+tests/loop/governess-runtime.test.ts:
+(pass) policy separates observations, safe controls, confirmations, and forbidden work [0.07ms]
+(pass) runtime state and lifecycle sequence are explicit [0.02ms]
+(pass) agent-authored hook evidence wins over terminal fallback state
+(pass) control journal is idempotent and replayable [1.88ms]
+(pass) journaled controls reconcile from post-dispatch agent evidence [2.06ms]
+(pass) behavioral cycle snapshots retain only transition evidence [0.99ms]
+(pass) journal rejects phase regression after transport acceptance [0.78ms]
+(pass) journal retries only failures that happened before dispatch [1.11ms]
+(pass) missing or malformed control journals fail closed [12.90ms]
+(pass) runtime adapter rejects a stale control envelope [0.26ms]
+(pass) two-phase handoff accepts only a matching ready bundle [1.37ms]
+(pass) stale governess state cannot overwrite a newer epoch [0.40ms]
+(pass) legacy compatibility maps inputs without leaking them into canonical state [0.55ms]
+
+ 91 pass
+ 0 fail
+ 362 expect() calls
+Ran 91 tests across 4 files. [2.46s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-25T23:04:05Z

@@ -1,0 +1,23 @@
+{
+  "task_id": "worker-unbounded-cost",
+  "verdict": "pass",
+  "checks": {
+    "live_root_cause": "job 4fd7f78a failed at 16970 cumulative tokens after 3 model and 8 bounded tool calls",
+    "token_policy": "no worker max_tokens request field and no cumulative per-job token abort; token telemetry preserved",
+    "cost_policy": "no worker per-job or per-run dollar routing/runtime gate; cost telemetry preserved",
+    "focused": "70 passed, 0 failed",
+    "full_suite": "798 passed, 4 known Codex model/config expectation failures",
+    "build": "passed",
+    "diff_check": "passed",
+    "live_deployment": "final governess PID 7002; Claude 56784, Codex 56786, and worker pane 21402 unchanged; no active worker job; bridge pending zero",
+    "bridge_repeat_cleanup": "already-actioned decision 9825d7f4 and subsequent wind-down ACK each have one delivered record; pending zero"
+  },
+  "preserved_boundaries": [
+    "runtime and step limits",
+    "workspace and protected paths",
+    "credential and environment isolation",
+    "literal command and tool output limits",
+    "authority and write-conflict routing",
+    "guarded patch application"
+  ]
+}

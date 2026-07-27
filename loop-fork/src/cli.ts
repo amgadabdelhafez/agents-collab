@@ -13,8 +13,25 @@ import {
   runCodexTmuxProxy,
 } from "./loop/codex-tmux-proxy";
 import { cliDeps } from "./loop/deps";
+import {
+  GOVERNESS_SUBCOMMAND,
+  resolveGovernessConfig,
+  runGoverness,
+} from "./loop/governess";
+import { runGovernessUtilityCommand } from "./loop/governess-replay";
+import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
+import {
+  LEGACY_GOVERNESS_SUBCOMMAND,
+  withLegacyGovernessEnv,
+} from "./loop/legacy-governess-compat";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
+import {
+  runUtilityPane,
+  runUtilityWorker,
+  UTILITY_PANE_SUBCOMMAND,
+  UTILITY_WORKER_SUBCOMMAND,
+} from "./loop/utility-runtime";
 
 const TMUX_DETACH_HINT = "[loop] detach with Ctrl-b d";
 const DASHBOARD_COMMAND = "dashboard";
@@ -25,19 +42,23 @@ const PAIRED_TMUX_HANDOFF_ERROR =
   "[loop] paired tmux launch did not hand off; not continuing in the foreground.";
 
 const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
-  opts.tmux &&
-  opts.pairedMode &&
-  !opts.promptInput?.trim() &&
-  !opts.proof.trim();
+  Boolean(
+    opts.tmux &&
+      opts.pairedMode &&
+      !opts.promptInput?.trim() &&
+      !opts.proof.trim()
+  );
 
 const shouldAwaitAutoUpdate = (opts: Options): boolean =>
   !process.env.TMUX && isPromptlessPairedTmuxLaunch(opts);
 
-const parseBridgeArgs = (argv: string[]): { runDir: string; source: Agent } => {
+const parseBridgeArgs = (
+  argv: string[]
+): { runDir: string; source: Agent | "supervisor" } => {
   const [runDir, source] = argv;
-  if (!(runDir && isAgent(source))) {
+  if (!(runDir && (isAgent(source) || source === "supervisor"))) {
     throw new Error(
-      "Usage: loop __bridge-mcp <run-dir> <claude|codex|gemini|cursor|copilot>"
+      "Usage: loop __bridge-mcp <run-dir> <claude|codex|gemini|cursor|copilot|supervisor>"
     );
   }
   return { runDir, source };
@@ -49,6 +70,17 @@ const parseBridgeWorkerArgs = (argv: string[]): { runDir: string } => {
     throw new Error("Usage: loop __bridge-worker <run-dir>");
   }
   return { runDir };
+};
+
+const parseUtilityWorkerArgs = (
+  argv: string[]
+): { epoch: number; jobId: string; runDir: string } => {
+  const [runDir, rawEpoch, jobId] = argv;
+  const epoch = Number.parseInt(rawEpoch ?? "", 10);
+  if (!(runDir && Number.isInteger(epoch) && epoch > 0 && jobId)) {
+    throw new Error("Usage: loop __utility-worker <run-dir> <epoch> <job-id>");
+  }
+  return { epoch, jobId, runDir };
 };
 
 const parseCodexTmuxProxyArgs = (
@@ -66,22 +98,69 @@ const parseCodexTmuxProxyArgs = (
   return { port, remoteUrl, runDir, threadId };
 };
 
-export const runCli = async (argv: string[]): Promise<void> => {
+// Dispatch the hidden `__*` helper subcommands. Returns true when handled.
+const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
   if (argv[0] === BRIDGE_SUBCOMMAND) {
     const { runDir, source } = parseBridgeArgs(argv.slice(1));
     await runBridgeMcpServer(runDir, source);
-    return;
+    return true;
   }
   if (argv[0] === BRIDGE_WORKER_SUBCOMMAND) {
     const { runDir } = parseBridgeWorkerArgs(argv.slice(1));
     await runBridgeWorker(runDir);
-    return;
+    return true;
+  }
+  if (argv[0] === UTILITY_WORKER_SUBCOMMAND) {
+    const { epoch, jobId, runDir } = parseUtilityWorkerArgs(argv.slice(1));
+    await runUtilityWorker(runDir, epoch, jobId);
+    return true;
+  }
+  if (argv[0] === UTILITY_PANE_SUBCOMMAND) {
+    const [runDir] = argv.slice(1);
+    if (!runDir) {
+      throw new Error("Usage: loop __utility-pane <run-dir>");
+    }
+    await runUtilityPane(runDir);
+    return true;
   }
   if (argv[0] === CODEX_TMUX_PROXY_SUBCOMMAND) {
     const { port, remoteUrl, runDir, threadId } = parseCodexTmuxProxyArgs(
       argv.slice(1)
     );
     await runCodexTmuxProxy(runDir, remoteUrl, threadId, port);
+    return true;
+  }
+  if (argv[0] === HOOK_EMIT_SUBCOMMAND) {
+    const [source, hookFile] = argv.slice(1);
+    if (!(isAgent(source) && hookFile)) {
+      throw new Error(
+        "Usage: loop __hook-emit <claude|codex|gemini|cursor|copilot> <hook-file>"
+      );
+    }
+    await runHookEmit(source, hookFile);
+    return true;
+  }
+  if (
+    argv[0] === GOVERNESS_SUBCOMMAND ||
+    argv[0] === LEGACY_GOVERNESS_SUBCOMMAND
+  ) {
+    const runId = argv[1];
+    if (!runId) {
+      throw new Error("Usage: loop __governess <run-id>");
+    }
+    await runGoverness(
+      resolveGovernessConfig(runId, withLegacyGovernessEnv(process.env))
+    );
+    return true;
+  }
+  return false;
+};
+
+export const runCli = async (argv: string[]): Promise<void> => {
+  if (runGovernessUtilityCommand(argv)) {
+    return;
+  }
+  if (await runHiddenSubcommand(argv)) {
     return;
   }
 

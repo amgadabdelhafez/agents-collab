@@ -1,0 +1,7 @@
+{
+  "task_id": "claude-bridge-visible-tui",
+  "scanned_at": "2026-07-26T04:46:33Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

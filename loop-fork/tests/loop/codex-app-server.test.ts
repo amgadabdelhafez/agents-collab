@@ -344,7 +344,7 @@ test("startAppServer normalizes codex bridge config args before spawning", async
     configValues: buildCodexBridgeConfigArgs("/tmp/loop-run", "codex"),
   });
 
-  expect(lastSpawnCommand.filter((value) => value === "-c")).toHaveLength(5);
+  expect(lastSpawnCommand.filter((value) => value === "-c")).toHaveLength(9);
   expect(lastSpawnCommand).toContain("app-server");
   expect(lastSpawnCommand).not.toContain("-c,-c");
   const bridgeArgs = lastSpawnCommand.slice(
@@ -358,6 +358,14 @@ test("startAppServer normalizes codex bridge config args before spawning", async
     expect.stringContaining("mcp_servers.loop-bridge.args="),
     "-c",
     'mcp_servers.loop-bridge.tools.send_message.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.route_task.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.task_status.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.get_task_result.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.apply_task_patch.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.bridge_status.approval_mode="approve"',
     "-c",
@@ -855,6 +863,13 @@ test("runCodexTurn parses successful deltas and completion", async () => {
   });
 
   expect(result.exitCode).toBe(0);
+  const turnStart = latestWrites()
+    .map((line) => JSON.parse(line))
+    .find((frame) => frame.method === "turn/start");
+  expect(turnStart?.params).toMatchObject({
+    effort: "xhigh",
+    model: "test-model",
+  });
   expect(result.parsed).toContain("hello");
   expect(result.parsed).toContain("there");
   expect(parsedLines).toContain("hello");

@@ -1,0 +1,16 @@
+{
+  "task_id": "utility-worker-pool",
+  "result": "pass_with_baseline_failures",
+  "acceptance": {
+    "default_concurrency": 2,
+    "excess_job_stays_pending": true,
+    "queued_job_starts_after_slot_release": true,
+    "write_conflict_preserved": true
+  },
+  "verification": {
+    "focused": { "passed": 36, "failed": 0 },
+    "full": { "passed": 802, "failed": 4, "baseline_failures": true },
+    "build": "pass",
+    "diff_check": "pass"
+  }
+}

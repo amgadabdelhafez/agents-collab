@@ -1,0 +1,12 @@
+{
+  "id": "babysitter-pane",
+  "mode": "planned",
+  "created_at": "2026-07-04T15:36:35Z",
+  "status": "done",
+  "description": "Add opt-in --babysit third tmux pane: hook injection for both agents, deterministic stuck detector, local-Qwen verdict, gated auto-recovery ladder",
+  "estimated_loc": 700,
+  "research_required": true,
+  "research_reason": "estimate-loc>=500",
+  "research_path": "runs/babysitter-pane/research.md",
+  "ended_at": "2026-07-04T16:30:19Z"
+}

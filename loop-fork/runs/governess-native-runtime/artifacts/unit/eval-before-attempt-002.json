@@ -1,0 +1,18 @@
+{
+  "task_id": "governess-native-runtime",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/governess-native-runtime/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/governess-native-runtime/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/governess-native-runtime/artifacts/unit/attempt-001.json"
+    }
+  }
+}

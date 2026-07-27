@@ -1,0 +1,15 @@
+Session: harvto-loop-34
+Run: 34
+Path: /Users/amgad/harvto
+Dashboard line 1: harvto-loop-34 · /Users/amgad/harvto · 15:35:38 · wall 3h
+Dashboard line 1 contains governess: no
+Dashboard line 1 contains run 34: no
+Border @loop_label: governess.harvto-loop-34
+Native pane_title: governess.harvto-loop-34
+Governess PID after focused refresh: 13007
+Claude PID preserved: 10483
+Codex PID preserved: 10485
+Claude composer before/after: unchanged
+Codex composer before/after: unchanged
+Canonical installed governess PID: 16480
+Canonical first line: harvto-loop-34 · /Users/amgad/harvto · 15:37:34 · wall 3h

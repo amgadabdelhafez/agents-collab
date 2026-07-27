@@ -1,0 +1,38 @@
+{
+  "task_id": "stable-pane-targets",
+  "feature": "lower-agent-router",
+  "timestamp": "2026-07-26T18:35:00Z",
+  "checks": {
+    "functional": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "left, right, utility, and governess persist tmux-returned stable pane IDs",
+        "manifest exposes stable main targets before governess startup",
+        "missing-stdout fallback retains correct post-utility numeric routing",
+        "bridge delivery consumes persisted percent-prefixed pane IDs"
+      ]
+    },
+    "ui": {
+      "passed": 2,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "disposable four-pane layout preserved role identity across index reordering",
+        "disposable utility-disabled three-pane layout preserved role identity"
+      ]
+    },
+    "regression": {
+      "passed": 703,
+      "failed": 4,
+      "details": [
+        "125 focused tmux, bridge, and proxy tests passed",
+        "full suite has four pre-existing Codex model/config expectation failures",
+        "build, scripts/verify.sh, and git diff --check passed",
+        "ultracite command is unavailable in the workspace"
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "Independent evaluation initially found an incorrect missing-stdout fallback for the right pane after utility insertion. The fallback was corrected, a governed-layout regression was added, and the evaluator returned PASS after independently running 125 focused tests and the build."
+}

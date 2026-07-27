@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-native-runtime",
+  "status": "created",
+  "bug_id": "governess-repeated-composer-control",
+  "regression_path": "evals/regression/governess-repeated-composer-control.md",
+  "prompt_path": "runs/governess-native-runtime/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-25T22:19:09Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "governess-repeated-composer-control"
+    ],
+    "symptom": [
+      "A repeated governess rename/control can remain in the shared composer and consume later Claude or user input."
+    ],
+    "guard": [
+      "tests/loop/governess-runtime.test.ts, tests/loop/governess-exit.test.ts, tests/loop/governess-hooks.test.ts, and tests/loop/governess.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "A repeated governess rename/control can remain in the shared composer and consume later Claude or user input."
+  ],
+  "test_lines": [
+    "tests/loop/governess-runtime.test.ts, tests/loop/governess-exit.test.ts, tests/loop/governess-hooks.test.ts, and tests/loop/governess.test.ts"
+  ]
+}

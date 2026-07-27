@@ -1,0 +1,32 @@
+{
+  "task_id": "worker-token-bridge-row",
+  "status": "pass_with_advisory",
+  "checks": {
+    "focused_tests": "83 passed, 0 failed",
+    "full_suite": "787 passed, 4 known baseline failures",
+    "build": "passed",
+    "changed_file_biome": "passed",
+    "independent_evaluation": "pass_with_advisories"
+  },
+  "acceptance": {
+    "default_max_tokens": 2400,
+    "default_max_total_tokens": 16000,
+    "environment_overrides_preserved": true,
+    "cost_and_step_caps_unchanged": true,
+    "worker_bridge_row": true,
+    "pane_geometry_changed": false
+  },
+  "advisories": [
+    "The cumulative token ceiling is checked after each provider response, so a final response can cross the ceiling before the job fails; this enforcement behavior predates this change."
+  ],
+  "live_verification": {
+    "loop": 47,
+    "worker_messages": "in 8, out 8, pending 0",
+    "maximum_governess_line_columns": 176,
+    "governess_pane_columns": 176,
+    "claude_pid_preserved": 56784,
+    "codex_pid_preserved": 56786,
+    "worker_pane_output_only": true,
+    "runtime_defaults": "maxTokens=2400, maxTotalTokens=16000"
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "task_id": "lower-agent-release-integration",
+  "scanned_at": "2026-07-26T06:33:49Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/bridge-runtime.ts",
+      "before_loc": 576,
+      "after_loc": 712,
+      "delta_loc": 136,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/bridge-utility.ts",
+      "before_loc": 0,
+      "after_loc": 314,
+      "delta_loc": 314,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/openai-compatible.ts",
+      "before_loc": 0,
+      "after_loc": 700,
+      "delta_loc": 700,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/task-router.ts",
+      "before_loc": 0,
+      "after_loc": 466,
+      "delta_loc": 466,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/tmux.ts",
+      "before_loc": 1819,
+      "after_loc": 1932,
+      "delta_loc": 113,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-runtime.ts",
+      "before_loc": 0,
+      "after_loc": 960,
+      "delta_loc": 960,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-store.ts",
+      "before_loc": 0,
+      "after_loc": 560,
+      "delta_loc": 560,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-26T06:33:49Z",
+      "task_id": "lower-agent-release-integration",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-tools.ts",
+      "before_loc": 0,
+      "after_loc": 1155,
+      "delta_loc": 1155,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

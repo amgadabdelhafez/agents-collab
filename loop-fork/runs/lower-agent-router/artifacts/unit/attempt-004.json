@@ -1,0 +1,23 @@
+{
+  "task_id": "lower-agent-router",
+  "dimension": "unit",
+  "attempt": "004",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-26T03:01:48Z",
+  "ended_at": "2026-07-26T03:01:50Z",
+  "artifact": "runs/lower-agent-router/artifacts/unit/attempt-004.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/task-router.test.ts",
+    "tests/loop/utility-store.test.ts",
+    "tests/loop/openai-compatible.test.ts",
+    "tests/loop/utility-tools.test.ts",
+    "tests/loop/utility-runtime.test.ts",
+    "tests/loop/bridge.test.ts",
+    "tests/loop/codex-app-server.test.ts",
+    "tests/loop/args.test.ts"
+  ]
+}

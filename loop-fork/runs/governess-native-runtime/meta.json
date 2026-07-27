@@ -1,0 +1,12 @@
+{
+  "id": "governess-native-runtime",
+  "mode": "planned",
+  "created_at": "2026-07-25T21:49:56Z",
+  "status": "done",
+  "description": "Complete the remaining OSS-inspired governess runtime architecture: structured adapters and lifecycle events, acknowledged controls, semantic handover acceptance, phased supervision, behavioral replay/explain, and dynamic judge layout.",
+  "estimated_loc": 500,
+  "research_required": true,
+  "research_reason": "explicit, estimate-loc>=500",
+  "research_path": "runs/governess-native-runtime/research.md",
+  "ended_at": "2026-07-25T22:19:09Z"
+}

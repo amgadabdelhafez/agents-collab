@@ -1,0 +1,12 @@
+{
+  "id": "lower-agent-release-integration",
+  "mode": "planned",
+  "created_at": "2026-07-26T06:24:34Z",
+  "status": "done",
+  "description": "Integrate lower-agent router and default pane with visible bridge fixes, then release for future loops without touching loop 40",
+  "estimated_loc": 1200,
+  "research_required": true,
+  "research_reason": "estimate-loc>=500",
+  "research_path": "runs/lower-agent-release-integration/research.md",
+  "ended_at": "2026-07-26T06:33:49Z"
+}

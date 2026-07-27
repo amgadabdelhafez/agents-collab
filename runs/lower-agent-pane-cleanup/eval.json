@@ -1,0 +1,67 @@
+{
+  "task_id": "lower-agent-pane-cleanup",
+  "feature": "lower-agent-pane-cleanup",
+  "timestamp": "2026-07-26T21:46:24Z",
+  "evaluator": "codex-independent-eval",
+  "verdict": "pass",
+  "checks": {
+    "scope": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "The implementation diff is confined to governess, read-only utility observability, utility-pane rendering, and their tests.",
+        "No tmux geometry, split, resize, move, join, break, or launch-layout commands changed.",
+        "Routing, worker scheduling, prompts, budgets, provider behavior, and tool authority remain unchanged."
+      ]
+    },
+    "governess_display": {
+      "passed": 6,
+      "failed": 0,
+      "details": [
+        "Utility renders as a third row under the single shared AGENT header with the same column boundaries as Claude and Codex.",
+        "Utility maps state, age, model, completed/failed counts, cost, token split, jobs/calls/tools, and latest job id/state; unsupported context and quota values render unavailable.",
+        "Rendered AGENT header and data rows are 172 visible columns, within the 176-column limit.",
+        "Rendered local-LLM header and rows remain within 176 visible columns.",
+        "Only Progress and Next are restored from structured summary state; Project and Objective remain hidden.",
+        "Short-viewport tests preserve both frontier-agent rows and utility without overflow, while a seven-row board keeps Progress and Next as the final two lines."
+      ]
+    },
+    "utility_display": {
+      "passed": 7,
+      "failed": 0,
+      "details": [
+        "The compact status block retains availability, worker state, jobs, cumulative calls/tools/tokens/cost, routing, delegation, and recent work.",
+        "Recent activity is grouped per job and includes requester objective, bounded tool outcome, final response or blocker, duration, calls, tools, tokens, and per-job cost.",
+        "Independent 58x20 probe showed request, tool outcome, blocker, 11s duration, 2 model calls, 1 tool call, 1,234 tokens, and $0.0044 cost with maximum line width 48.",
+        "The 58x10 regression renders exactly ten lines, each at most 58 characters, while retaining request, tool, result metrics, and result evidence.",
+        "Raw tool output is never incorporated into the transcript; provider traces and raw provider messages are not read by the renderer.",
+        "Terminal controls and whitespace are normalized, common credential forms remain redacted, and output is width/height bounded.",
+        "A valid jobs journal followed by a torn tail still renders prior durable activity, and mixed completed/latest-failed history labels the latest job as failed."
+      ]
+    },
+    "verification": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "Feature-focused utility observability, utility runtime, and governess suite passed 82/82.",
+        "Broad utility, governess, bridge, and tmux suite passed 341/341.",
+        "bun run build passed.",
+        "git diff --check passed."
+      ]
+    },
+    "regression": {
+      "passed": 773,
+      "failed": 0,
+      "details": [
+        "The full suite produced 773 passing tests and four failures already established on the canonical baseline.",
+        "Those failures are confined to stale Codex model/config expectations in paired-options.test.ts and runner.test.ts and are unrelated to display cleanup."
+      ]
+    }
+  },
+  "risks": [
+    "scripts/verify.sh exits successfully but still contains placeholder lint, typecheck, unit, and integration sections; the explicit Bun suites, build, and diff check are the substantive evidence.",
+    "Live replacement of only the utility and governess display panes, plus final Claude/Codex pane-ID and PID preservation, remains a post-integration release check.",
+    "Long objectives and results are intentionally normalized and truncated to the live viewport, so durable journals remain the source for full text."
+  ],
+  "notes": "PASS. Initial evaluator findings for torn-tail pane failure and incorrect latest-job status in mixed history were fixed and regression-covered before this verdict."
+}

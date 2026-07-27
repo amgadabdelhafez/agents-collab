@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-p0-runtime",
+  "status": "created",
+  "bug_id": "governess-unbounded-observation-journal",
+  "regression_path": "evals/regression/governess-unbounded-observation-journal.md",
+  "prompt_path": "runs/governess-p0-runtime/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-25T23:07:07Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "governess-unbounded-observation-journal"
+    ],
+    "symptom": [
+      "Unchanged runtime observations append two records every tick."
+    ],
+    "guard": [
+      "tests/loop/governess-p0-runtime.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Unchanged runtime observations append two records every tick."
+  ],
+  "test_lines": [
+    "tests/loop/governess-p0-runtime.test.ts"
+  ]
+}

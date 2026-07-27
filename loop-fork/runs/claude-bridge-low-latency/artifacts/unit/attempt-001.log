@@ -1,0 +1,91 @@
+task_id: claude-bridge-low-latency
+dimension: unit
+attempt: 001
+started_at: 2026-07-26T05:51:21Z
+command: bun test tests/loop/bridge.test.ts tests/loop/codex-tmux-proxy.test.ts tests/loop/codex-tmux-proxy.integration.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/codex-tmux-proxy.test.ts:
+(pass) codex tmux proxy waits briefly for the tmux session to appear [0.07ms]
+(pass) codex tmux proxy stops once the startup grace window is over [0.13ms]
+(pass) codex tmux proxy stops immediately after a seen tmux session disappears [0.02ms]
+(pass) bridge delivery acknowledges only after visible pane submission [1.36ms]
+(pass) failed visible pane submission leaves a bridge request pending [0.63ms]
+(pass) codex tmux proxy persists newer live thread ids to the run manifest [0.54ms]
+(pass) codex tmux proxy reconnects to a live upstream without dropping the tui socket [1259.19ms]
+(pass) codex tmux proxy never injects a bridge request into app-server after reconnect [1261.51ms]
+(pass) codex tmux proxy has no headless fallback when visible delivery is unavailable [1260.79ms]
+
+tests/loop/bridge.test.ts:
+(pass) bridge message parsing ignores malformed lines and acked entries [5.53ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [3.80ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [3.88ms]
+(pass) readBridgeRuntimeStatus distinguishes live and stale tmux delivery [3.81ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [3.86ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [2.95ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [42.98ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [32.30ms]
+(pass) Codex-to-Claude dispatch attempts immediate visible pane delivery [104.75ms]
+(pass) immediate Claude delivery and worker drain submit a message once [106.34ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [32.66ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [29.84ms]
+(pass) bridge MCP send_message rejects targeting the current agent [31.83ms]
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [31.41ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [29.27ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [28.63ms]
+(pass) bridge MCP accepts typed work metadata and TTL [35.74ms]
+(pass) bridge MCP writes line-delimited JSON responses [29.63ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [2.59ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [2.11ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [27.81ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [30.15ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [30.34ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [3.10ms]
+(pass) bridge leaves live Codex tmux messages queued for the tmux proxy [2.16ms]
+(pass) bridge falls back to direct Codex delivery when the stored tmux session is stale [2.45ms]
+(pass) bridge drains pending codex tmux messages through the injected command deps [105.73ms]
+(pass) bridge drains pending cursor tmux messages through the stored pane routing [107.65ms]
+(pass) bridge drains pending Claude messages through the visible tmux pane [107.75ms]
+(pass) Claude pane delivery preserves a non-empty user draft [3.36ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [3.14ms]
+(pass) bridge stale tmux cleanup logs non-zero Claude MCP remove exits [3.00ms]
+(pass) bridge stale tmux cleanup logs thrown Claude MCP remove errors [3.54ms]
+(pass) bridge stale tmux cleanup removes a persisted Claude server name [2.80ms]
+(pass) runBridgeWorker clears stale tmux routing and exits [3.57ms]
+(pass) runBridgeWorker falls back to app-server delivery after stale tmux cleanup [107.16ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [4.22ms]
+(pass) runBridgeWorker retries queued codex app-server messages [358.39ms]
+(pass) runBridgeWorker drains Claude while the Codex tmux proxy owns Codex [210.45ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [41.87ms]
+(pass) Claude channel flush leaves live tmux messages pending for visible delivery [3.32ms]
+(pass) Claude channel stays active when the live tmux pair has no Claude pane [2.68ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [86.07ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [33.75ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [31.31ms]
+(pass) bridge MCP allows repeating the same message in the original direction [33.06ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [2.43ms]
+(pass) bridge config helper writes the Claude MCP config file [2.11ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [2.29ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [1.93ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [2.61ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [5.29ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [2.09ms]
+(pass) bridge MCP send_message normalizes copilot as a valid target [32.49ms]
+(pass) bridge queues cross-agent messages for all non-Claude/Codex pairs [182.13ms]
+(pass) bridge config injection writes copilot config to .github/copilot/mcp.json [2.52ms]
+(pass) bridge pending count includes copilot messages [2.02ms]
+(pass) bridge drains pending copilot tmux messages through stored pane routing [105.62ms]
+
+tests/loop/codex-tmux-proxy.integration.test.ts:
+(pass) runCli reconnects the codex tmux proxy subcommand without dropping the tui socket [1260.66ms]
+
+ 68 pass
+ 0 fail
+ 249 expect() calls
+Ran 68 tests across 3 files. [7.33s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-26T05:51:28Z

@@ -1,0 +1,22 @@
+{
+  "task_id": "babysitter-pane",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-04T16:27:18Z",
+  "ended_at": "2026-07-04T16:27:18Z",
+  "artifact": "runs/babysitter-pane/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/babysitter-detect.test.ts",
+    "tests/loop/babysitter-llm.test.ts",
+    "tests/loop/babysitter-recover.test.ts",
+    "tests/loop/babysitter-hooks.test.ts",
+    "tests/loop/babysitter.test.ts",
+    "tests/loop/args.test.ts",
+    "tests/loop/run-state.test.ts"
+  ]
+}

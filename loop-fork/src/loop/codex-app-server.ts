@@ -1,5 +1,9 @@
 import { spawn } from "bun";
-import { AGENT_TURN_TIMEOUT_MS, LOOP_VERSION } from "./constants";
+import {
+  AGENT_TURN_TIMEOUT_MS,
+  DEFAULT_CODEX_REASONING_EFFORT,
+  LOOP_VERSION,
+} from "./constants";
 import { findFreePort } from "./ports";
 import { DETACH_CHILD_PROCESS, killChildProcess } from "./process";
 import type { Options, RunResult } from "./types";
@@ -871,7 +875,7 @@ class AppServerClient {
       threadId,
       input: buildInput(prompt),
       model: opts.codexModel,
-      effort: null,
+      effort: DEFAULT_CODEX_REASONING_EFFORT,
       cwd: null,
     });
     const turn = extractTurnFromStart(response);

@@ -1,6 +1,12 @@
 import { env } from "bun";
 import { defaultPeerAgent, isAgent } from "./agents";
 import {
+  DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
+  DEFAULT_GOVERNESS_HEIGHT,
+  DEFAULT_GOVERNESS_IDLE_SECONDS,
+  DEFAULT_GOVERNESS_MAX_RECOVERIES,
+  DEFAULT_GOVERNESS_MODEL,
+  DEFAULT_GOVERNESS_URL,
   DEFAULT_CODEX_MODEL,
   DEFAULT_COPILOT_MODEL,
   DEFAULT_CURSOR_MODEL,
@@ -11,6 +17,10 @@ import {
   LOOP_VERSION,
   VALUE_FLAGS,
 } from "./constants";
+import {
+  normalizeLegacyGovernessArgs,
+  withLegacyGovernessEnv,
+} from "./legacy-governess-compat";
 import type {
   Agent,
   Format,
@@ -67,6 +77,14 @@ const requireTrimmedValue = (value: string, message: string): string => {
     throw new Error(message);
   }
   return trimmed;
+};
+
+const parsePositiveInt = (value: string, flag: string): number => {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 1) {
+    throw new Error(`Invalid ${flag} value: ${value}`);
+  }
+  return num;
 };
 
 const requireFlagValue = (arg: string, value: string | undefined): string => {
@@ -176,6 +194,39 @@ const applyValueFlag = (
       return;
     case "format":
       opts.format = parseFormat(value);
+      return;
+    case "governessIdle":
+      opts.governessIdleSeconds = parsePositiveInt(value, "--governess-idle");
+      return;
+    case "governessCooldown":
+      opts.governessCooldownSeconds = parsePositiveInt(
+        value,
+        "--governess-cooldown"
+      );
+      return;
+    case "governessMaxRecoveries":
+      opts.governessMaxRecoveries = parsePositiveInt(
+        value,
+        "--governess-max-recoveries"
+      );
+      return;
+    case "governessUrl":
+      opts.governessUrl = requireTrimmedValue(
+        value,
+        "Invalid --governess-url value: cannot be empty"
+      );
+      return;
+    case "governessModel":
+      opts.governessModel = requireTrimmedValue(
+        value,
+        "Invalid --governess-model value: cannot be empty"
+      );
+      return;
+    case "governessHeight":
+      opts.governessHeight = requireTrimmedValue(
+        value,
+        "Invalid --governess-height value: cannot be empty"
+      );
       return;
     default: {
       const exhaustive: never = flag;
@@ -478,6 +529,16 @@ const consumeArg = (
     return { nextIndex: index + 1, stop: false, onlyAgent };
   }
 
+  if (arg === "--governess") {
+    opts.governess = true;
+    return { nextIndex: index + 1, stop: false, onlyAgent };
+  }
+
+  if (arg === "--governess-dry-run") {
+    opts.governessDryRun = true;
+    return { nextIndex: index + 1, stop: false, onlyAgent };
+  }
+
   const flag = VALUE_FLAGS[arg];
   if (flag) {
     const value = argv[index + 1];
@@ -497,16 +558,26 @@ const consumeArg = (
 };
 
 export const parseArgs = (argv: string[]): Options => {
+  const normalizedArgv = normalizeLegacyGovernessArgs(argv);
+  const runtimeEnv = withLegacyGovernessEnv(env);
   const opts: Options = {
     agent: "claude",
     doneSignal: DEFAULT_DONE_SIGNAL,
     proof: "",
     format: "pretty",
     maxIterations: DEFAULT_MAX_ITERATIONS,
-    codexModel: env.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
-    copilotModel: env.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
-    cursorModel: env.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
-    geminiModel: env.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    codexModel: runtimeEnv.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
+    copilotModel: runtimeEnv.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
+    cursorModel: runtimeEnv.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
+    geminiModel: runtimeEnv.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    governessIdleSeconds: DEFAULT_GOVERNESS_IDLE_SECONDS,
+    governessCooldownSeconds: DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
+    governessMaxRecoveries: DEFAULT_GOVERNESS_MAX_RECOVERIES,
+    governessUrl: runtimeEnv.LOOP_GOVERNESS_URL ?? DEFAULT_GOVERNESS_URL,
+    governessModel: runtimeEnv.LOOP_GOVERNESS_MODEL ?? DEFAULT_GOVERNESS_MODEL,
+    governessHeight: DEFAULT_GOVERNESS_HEIGHT,
+    governessLlmTrace: runtimeEnv.LOOP_GOVERNESS_LLM_TRACE,
+    governess: true,
     pairedMode: true,
     review: "claudex",
     resumeRunId: undefined,
@@ -516,12 +587,12 @@ export const parseArgs = (argv: string[]): Options => {
   const positional: string[] = [];
   let onlyAgent: Agent | undefined;
 
-  for (let index = 0; index < argv.length; ) {
+  for (let index = 0; index < normalizedArgv.length; ) {
     const {
       nextIndex,
       stop,
       onlyAgent: nextOnlyAgent,
-    } = consumeArg(argv, index, opts, positional, onlyAgent);
+    } = consumeArg(normalizedArgv, index, opts, positional, onlyAgent);
     index = nextIndex;
     onlyAgent = nextOnlyAgent;
     if (stop) {

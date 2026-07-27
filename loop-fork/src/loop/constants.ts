@@ -2,13 +2,32 @@ import pkg from "../../package.json";
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
-export const DEFAULT_CODEX_MODEL = "gpt-5.4";
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
+export const DEFAULT_CODEX_REASONING_EFFORT = "xhigh";
+export const DEFAULT_CODEX_SERVICE_TIER = "standard";
+export const DEFAULT_CODEX_CONFIG_VALUES = [
+  `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
+  `service_tier="${DEFAULT_CODEX_SERVICE_TIER}"`,
+] as const;
 export const DEFAULT_CLAUDE_MODEL = "opus";
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
 export const DEFAULT_COPILOT_MODEL = "auto";
 export const DEFAULT_CURSOR_MODEL = "auto";
 export const DEFAULT_MAX_ITERATIONS = 20;
 export const LOOP_VERSION = pkg.version;
+
+// Governess pane (--governess) defaults.
+export const DEFAULT_GOVERNESS_IDLE_SECONDS = 120;
+export const DEFAULT_GOVERNESS_COOLDOWN_SECONDS = 300;
+export const DEFAULT_GOVERNESS_MAX_RECOVERIES = 3;
+export const DEFAULT_GOVERNESS_URL = "http://127.0.0.1:8082";
+export const DEFAULT_GOVERNESS_MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit";
+export const DEFAULT_GOVERNESS_HEIGHT = "40%";
+export const DEFAULT_GOVERNESS_CONFIDENCE = 0.7;
+export const DEFAULT_GOVERNESS_TICK_SECONDS = 15;
+export const DEFAULT_GOVERNESS_ESCALATE_IDLE_SECONDS = 300;
+export const DEFAULT_USAGE_TRACKER_URL = "http://127.0.0.1:8000";
+export const DEFAULT_USAGE_TRACKER_TIMEOUT_MS = 1500;
 
 export const HELP = `
 loop - v${LOOP_VERSION} - meta agent loop runner
@@ -53,8 +72,40 @@ Options:
   --session <id>                           Resume from a paired run id or raw session/thread ID
   --tmux                                   Run in tmux (paired mode opens the selected two agents side-by-side; no prompt/proof starts interactive sessions)
   --worktree                               Create and run in a fresh git worktree (name: repo-loop-X)
+  --governess                                Compatibility flag; governess is always enabled for paired tmux runs
+  --governess-dry-run                        Governess logs intended recovery actions but executes none
+  --governess-idle <seconds>                 Idle seconds before an agent is a stuck suspect (default: ${DEFAULT_GOVERNESS_IDLE_SECONDS})
+  --governess-cooldown <seconds>             Minimum seconds between recovery actions per agent (default: ${DEFAULT_GOVERNESS_COOLDOWN_SECONDS})
+  --governess-max-recoveries <number>        Max recovery actions per agent per run (default: ${DEFAULT_GOVERNESS_MAX_RECOVERIES})
+  --governess-url <url>                      OpenAI-compatible endpoint for governess judgment (default: ${DEFAULT_GOVERNESS_URL})
+  --governess-model <model>                  Model id for governess judgment (default: ${DEFAULT_GOVERNESS_MODEL})
+  --governess-height <rows|percent>          Governess pane height, e.g. 25% or 12 (default: ${DEFAULT_GOVERNESS_HEIGHT})
+  governess doctor <run-id>                  Check governess state, journal, epoch, and tmux readiness
+  governess replay <run-id>                  Replay the durable governess control journal and report invariant violations
+  governess explain <run-id> [control-id]    Explain policy, transport, evidence, and phase history for a control
   -v, --version                            Show loop version
   -h, --help                               Show this help
+
+Environment:
+  LOOP_GOVERNESS_JUDGES=<spec>               Multi-judge list: id=url,model[,logFile];id2=url,model[,logFile]
+  LOOP_GOVERNESS_JUDGE_MODE=<mode>           Local judge policy: consensus or round-robin (default: consensus)
+  LOOP_GOVERNESS_AGENT_RENAME=1              Legacy opt-in for guarded /rename; pane-border task labels are preferred
+  LOOP_GOVERNESS_ROLE_BALANCE=1              Enable proactive driver switching based on quota headroom (default: off)
+  LOOP_GOVERNESS_LLM_TRACE=1                 Trace local LLM request/response JSONL to the run's llm-trace.jsonl
+  LOOP_GOVERNESS_LLM_LOG=<path>              Read MLX prompt-cache metrics from a custom server log path
+  LOOP_UTILITY_API_KEY_FILE=<path>           Utility key file (default: ~/.config/loop/openrouter.key; requires mode 0600)
+  LOOP_UTILITY_URL=<url>                     Utility OpenAI-compatible chat endpoint (localhost needs no key)
+  LOOP_UTILITY_MODEL=<model>                 Utility model (default: z-ai/glm-5.2)
+  LOOP_UTILITY_MAX_CONCURRENCY=<1..8>        Concurrent worker slots (default: 2)
+  LOOP_UTILITY_PANE=0                        Hide the default top-right lower-agent pane
+  LOOP_UTILITY_PANE_WIDTH=<columns|percent>  Worker pane width in bottom row (default: 25%)
+  LOOP_UTILITY_PANE_HEIGHT=<columns|percent> Deprecated alias for LOOP_UTILITY_PANE_WIDTH
+  LOOP_UTILITY_DELEGATION_MODE=<mode>        enforce (default), observe, or off for mechanical task adoption
+  LOOP_UTILITY_PROVIDER_SORT=<strategy>      balanced, price, throughput, latency, or tool-call-quality
+  LOOP_UTILITY_COST_QUALITY=<0..10>          Workspace cost/quality preference (default: 7)
+  LOOP_UTILITY_ALLOWED_TIERS=<patterns>      Comma-separated tier wildcard allowlist
+  LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for governess RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})
+  LOOP_USAGE_TRACKER_SECRET=<secret>        Bearer token for Usage Tracker /stats (falls back to USAGE_TRACKER_SECRET)
 
 Auto-update:
   Updates are checked automatically on startup and applied on the next run.
@@ -90,4 +141,10 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "--format": "format",
   "--run-id": "runId",
   "--session": "session",
+  "--governess-idle": "governessIdle",
+  "--governess-cooldown": "governessCooldown",
+  "--governess-max-recoveries": "governessMaxRecoveries",
+  "--governess-url": "governessUrl",
+  "--governess-model": "governessModel",
+  "--governess-height": "governessHeight",
 };

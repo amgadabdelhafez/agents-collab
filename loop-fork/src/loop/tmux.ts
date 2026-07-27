@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
 import {
   registerClaudeChannelServer,
@@ -12,17 +12,29 @@ import {
   legacyClaudeChannelServerName,
   resolveClaudeChannelServerName,
 } from "./bridge-config";
-import { type BridgeTool, quotedBridgeTool } from "./bridge-guidance";
+import {
+  mandatoryUtilityDelegationGuidance,
+  type BridgeTool,
+  quotedBridgeTool,
+  singleBridgeTransportGuidance,
+} from "./bridge-guidance";
 import { getCodexAppServerUrl, getLastCodexThreadId } from "./codex-app-server";
+import { codexHomeEnv } from "./codex-home";
 import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   findCodexTmuxProxyPort,
   waitForCodexTmuxProxy,
 } from "./codex-tmux-proxy";
-import { codexHomeEnv } from "./codex-home";
-import { DEFAULT_CLAUDE_MODEL } from "./constants";
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_CONFIG_VALUES } from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
+import { GOVERNESS_SUBCOMMAND } from "./governess";
+import {
+  buildClaudeHookSettings,
+  buildCodexHooksJson,
+  buildHookCommand,
+} from "./hooks/settings";
 import { buildLaunchArgv } from "./launch";
+import { withLegacyGovernessEnv } from "./legacy-governess-compat";
 import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
@@ -42,6 +54,7 @@ import {
   startPersistentAgentSession,
 } from "./runner";
 import type { Agent, Options } from "./types";
+import { UTILITY_PANE_SUBCOMMAND } from "./utility-runtime";
 
 export const TMUX_FLAG = "--tmux";
 export const TMUX_MISSING_ERROR =
@@ -68,10 +81,13 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
+const DEFAULT_UTILITY_PANE_WIDTH = "25%";
+const UTILITY_PANE_WIDTH_RE = /^\d+%?$/;
 
 interface SpawnResult {
   exitCode: number;
   stderr: string;
+  stdout?: string;
 }
 
 interface TerminalSize {
@@ -184,6 +200,30 @@ const reviewerCheckpointGuidance = (peer: string): string =>
 const reviewerSessionStateGuidance = (primary: string): string =>
   `When reviewing, check that ${primary} keeps PLAN.md and status.md current enough for handoff: what changed, proof/checks run, open questions, risks, and next steps.`;
 
+const pairedContextGuidance = (opts: Options, agent: Agent): string[] => {
+  const peer = pairedPeer(opts);
+  const pair = new Set<Agent>([opts.agent, peer]);
+  if (!(pair.has("claude") && pair.has("codex"))) {
+    return [];
+  }
+
+  if (agent === "claude") {
+    return [
+      "Context role: use Claude's larger context window as the session memory. Preserve historical decisions, prior failed paths, user preferences, and acceptance criteria.",
+      "When asking Codex for work or review, include the small recent slice it needs: current objective, relevant files, latest proof, and the exact question. Answer Codex context questions from session history instead of making it rediscover that history.",
+    ];
+  }
+
+  if (agent === "codex") {
+    return [
+      "Context role: optimize for Codex's smaller context window. Stay focused on the immediate request, current diff, latest logs, and next verification step.",
+      "Do not reconstruct long session history unless it is directly needed. Ask Claude for missing historical context, decisions, or acceptance criteria, and make frequent targeted calls with concise findings, proof, and specific questions.",
+    ];
+  }
+
+  return [];
+};
+
 const quotedClaudeTmuxBridgeTool = (
   serverName: string,
   tool: BridgeTool
@@ -198,12 +238,22 @@ const pairedBridgeGuidance = (
   if (agent === "claude") {
     return [
       `Your bridge MCP server is "${serverName}". Use ${quotedClaudeTmuxBridgeTool(serverName, "send_message")} with target: "${target}" for ${peer}-facing messages, including replies to inbound ${peer} channel messages; do not send ${peer}-facing responses as a human-facing message.`,
+      singleBridgeTransportGuidance,
+      mandatoryUtilityDelegationGuidance(
+        quotedClaudeTmuxBridgeTool(serverName, "route_task")
+      ),
+      `For a returned worker edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
       `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
     ].join("\n");
   }
 
   return [
     `Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with target: "${target}" for ${peer}-facing messages, not a human-facing message.`,
+    singleBridgeTransportGuidance,
+    mandatoryUtilityDelegationGuidance(
+      quotedBridgeTool(agent, "route_task")
+    ),
+    `For a returned worker edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
     `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
   ].join("\n");
 };
@@ -215,6 +265,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
   if (agent === opts.agent) {
     return [
       `You are the main worker. ${peer} reviews and helps on request.`,
+      ...pairedContextGuidance(opts, agent),
       "Implement and verify first, then ask for review.",
       reviewerCheckpointGuidance(peer),
       "Keep iterating until your own review and the peer review both pass.",
@@ -226,6 +277,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
 
   return [
     `${primary} is the main worker. You are the reviewer/support agent.`,
+    ...pairedContextGuidance(opts, agent),
     "Do not take over the task or create the PR yourself.",
     `When ${primary} asks, do a real review against the task, proof requirements, and repo state.`,
     `Expect ${primary} to request validation every few concrete steps. Give timely feedback, identify risks early, and ask ${primary} to clarify any ambiguous claim before approving it.`,
@@ -308,7 +360,7 @@ const buildInteractivePrimaryPrompt = (
     "For any sustained task, create or update PLAN.md and status.md before implementation once the task is clear; keep status.md as the end-of-session handoff for the next loop."
   );
   parts.push(
-    `Before starting implementation, use AskUserQuestion or the available user-input tool to clarify the task, scope, constraints, acceptance criteria, and desired proof unless the human has already made them clear.`
+    "Before starting implementation, use AskUserQuestion or the available user-input tool to clarify the task, scope, constraints, acceptance criteria, and desired proof unless the human has already made them clear."
   );
   parts.push(reviewerCheckpointGuidance(peer));
   parts.push(
@@ -394,7 +446,8 @@ const buildClaudeCommand = (
   model: string,
   channelServer: string,
   resume: boolean,
-  prompt?: string
+  prompt?: string,
+  settingsPath?: string
 ): string[] => {
   const args = [
     "claude",
@@ -406,6 +459,9 @@ const buildClaudeCommand = (
     `server:${channelServer}`,
     "--dangerously-skip-permissions",
   ];
+  if (settingsPath) {
+    args.push("--settings", settingsPath);
+  }
   if (prompt) {
     args.push(prompt);
   }
@@ -416,18 +472,27 @@ const buildCodexCommand = (
   remoteUrl: string,
   model: string,
   configValues: string[],
-  prompt?: string
+  prompt?: string,
+  bypassHookTrust?: boolean
 ): string[] => {
+  const defaultConfigArgs = DEFAULT_CODEX_CONFIG_VALUES.flatMap((value) => [
+    "-c",
+    value,
+  ]);
   const args = [
     "codex",
     "-m",
     model,
+    ...defaultConfigArgs,
     ...configValues,
     "--enable",
     "tui_app_server",
     "--remote",
     remoteUrl,
   ];
+  if (bypassHookTrust) {
+    args.push("--dangerously-bypass-hook-trust");
+  }
   if (prompt) {
     args.push(prompt);
   }
@@ -745,6 +810,13 @@ const tmuxStartupMessage = (paired: boolean): string =>
     ? "[loop] starting paired tmux workspace..."
     : "[loop] starting tmux session...";
 
+interface PairedPaneTargets {
+  governess?: string;
+  left: string;
+  right: string;
+  utility?: string;
+}
+
 const updatePairedManifest = (
   deps: TmuxDeps,
   storage: RunStorage,
@@ -753,7 +825,9 @@ const updatePairedManifest = (
   codexRemoteUrl: string,
   codexThreadId: string,
   session: string,
-  paneAgents: { left: Agent; right: Agent }
+  paneAgents: { left: Agent; right: Agent },
+  primaryAgent: Agent,
+  paneTargets: PairedPaneTargets
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
@@ -765,13 +839,315 @@ const updatePairedManifest = (
         cwd: deps.cwd,
         mode: "paired",
         pid: process.pid,
+        primaryAgent,
         tmuxSession: session,
+        tmuxPaneLeft: paneTargets.left,
         tmuxPaneLeftAgent: paneAgents.left,
+        tmuxPaneRight: paneTargets.right,
         tmuxPaneRightAgent: paneAgents.right,
+        ...(paneTargets.governess
+          ? { governess: true, tmuxPaneGoverness: paneTargets.governess }
+          : {}),
+        ...(paneTargets.utility
+          ? { tmuxPaneUtility: paneTargets.utility }
+          : {}),
       },
       new Date().toISOString()
     )
   );
+};
+
+interface GovernessHookConfig {
+  claudeSettingsPath?: string;
+  codexBypassHookTrust: boolean;
+}
+
+const writeJsonFile = (path: string, value: unknown): void => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+};
+
+// Inject per-run agent hooks so each agent appends normalized events the
+// governess can tail. Claude hooks go through --settings; Codex hooks are
+// written only when a per-run CODEX_HOME is in use (never the user's global).
+const prepareGovernessHooks = (
+  deps: TmuxDeps,
+  opts: Options,
+  runDir: string,
+  paneAgents: { left: Agent; right: Agent }
+): GovernessHookConfig => {
+  if (!opts.governess) {
+    return { codexBypassHookTrust: false };
+  }
+  const hooksDir = join(runDir, "hooks");
+  const pair = [paneAgents.left, paneAgents.right];
+  let claudeSettingsPath: string | undefined;
+  for (const agent of pair) {
+    const command = buildHookCommand(
+      deps.launchArgv,
+      agent,
+      join(hooksDir, `${agent}.jsonl`)
+    );
+    if (agent === "claude") {
+      claudeSettingsPath = join(runDir, "claude-hook-settings.json");
+      writeJsonFile(claudeSettingsPath, buildClaudeHookSettings(command));
+    }
+    if (agent === "codex" && opts.codexHome) {
+      writeJsonFile(
+        join(opts.codexHome, "hooks.json"),
+        buildCodexHooksJson(command)
+      );
+    }
+  }
+  return {
+    claudeSettingsPath,
+    codexBypassHookTrust: pair.includes("codex") && Boolean(opts.codexHome),
+  };
+};
+
+const passEnv = (env: NodeJS.ProcessEnv, key: string): string[] => {
+  const value = env[key];
+  return value ? [`${key}=${value}`] : [];
+};
+
+const envDisabled = (value: string | undefined): boolean => {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "0" || normalized === "false" || normalized === "off";
+};
+
+const unquoteEnvValue = (raw: string): string | undefined => {
+  let value = raw.trim();
+  if (!value) {
+    return undefined;
+  }
+  if (value.startsWith("'")) {
+    const end = value.indexOf("'", 1);
+    value = end >= 0 ? value.slice(1, end) : value.slice(1);
+  } else if (value.startsWith('"')) {
+    const end = value.indexOf('"', 1);
+    value = end >= 0 ? value.slice(1, end) : value.slice(1);
+    value = value.replaceAll('\\"', '"').replaceAll("\\\\", "\\");
+  } else {
+    value = value.replace(/\s+#.*$/, "").trim();
+  }
+  return value || undefined;
+};
+
+const envFileValue = (file: string, key: string): string | undefined => {
+  if (!existsSync(file)) {
+    return undefined;
+  }
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}\\s*=\\s*(.*)$`);
+  try {
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+      const match = pattern.exec(line);
+      if (match) {
+        return unquoteEnvValue(match[1] ?? "");
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+};
+
+const parentDirs = (path: string | undefined, maxDepth = 3): string[] => {
+  if (!path) {
+    return [];
+  }
+  const dirs: string[] = [];
+  let current = resolve(path);
+  for (let i = 0; i < maxDepth; i += 1) {
+    dirs.push(current);
+    const next = dirname(current);
+    if (next === current) {
+      break;
+    }
+    current = next;
+  }
+  return dirs;
+};
+
+const unique = (values: Array<string | undefined>): string[] => [
+  ...new Set(values.filter((value): value is string => Boolean(value))),
+];
+
+const usageTrackerEnvFiles = (
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): string[] => {
+  const explicit = unique([
+    env.LOOP_USAGE_TRACKER_ENV_FILE,
+    env.USAGE_TRACKER_ENV_FILE,
+  ]);
+  const roots = unique([
+    ...parentDirs(cwd),
+    ...parentDirs(process.argv[1] ? dirname(process.argv[1]) : undefined),
+    ...parentDirs(process.execPath ? dirname(process.execPath) : undefined),
+  ]);
+  return unique([
+    ...explicit,
+    ...roots.flatMap((root) => [
+      join(root, ".env"),
+      join(root, "usage-tracker", ".env"),
+      join(root, "usage-tracker", "clean", ".env"),
+      join(root, "usage-tracker-minimal", ".env"),
+    ]),
+  ]);
+};
+
+const usageTrackerEnvFromFiles = (
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): string[] => {
+  if (envDisabled(env.LOOP_USAGE_TRACKER_LIMITS)) {
+    return [];
+  }
+  const files = usageTrackerEnvFiles(env, cwd);
+  const fallbackUrl =
+    env.LOOP_USAGE_TRACKER_URL ||
+    env.USAGE_TRACKER_URL ||
+    files
+      .map((file) => envFileValue(file, "LOOP_USAGE_TRACKER_URL"))
+      .find(Boolean) ||
+    files.map((file) => envFileValue(file, "USAGE_TRACKER_URL")).find(Boolean);
+  const fallbackSecret =
+    env.LOOP_USAGE_TRACKER_SECRET ||
+    env.USAGE_TRACKER_SECRET ||
+    files
+      .map((file) => envFileValue(file, "LOOP_USAGE_TRACKER_SECRET"))
+      .find(Boolean) ||
+    files
+      .map((file) => envFileValue(file, "USAGE_TRACKER_SECRET"))
+      .find(Boolean);
+  return [
+    ...(env.LOOP_USAGE_TRACKER_URL || env.USAGE_TRACKER_URL || !fallbackUrl
+      ? []
+      : [`USAGE_TRACKER_URL=${fallbackUrl}`]),
+    ...(env.LOOP_USAGE_TRACKER_SECRET ||
+    env.USAGE_TRACKER_SECRET ||
+    !fallbackSecret
+      ? []
+      : [`USAGE_TRACKER_SECRET=${fallbackSecret}`]),
+  ];
+};
+
+const governessEnv = (
+  opts: Options,
+  inputEnv: NodeJS.ProcessEnv,
+  cwd: string
+): string[] => {
+  const env = withLegacyGovernessEnv(inputEnv);
+  return [
+    `LOOP_GOVERNESS_IDLE=${opts.governessIdleSeconds}`,
+    `LOOP_GOVERNESS_COOLDOWN=${opts.governessCooldownSeconds}`,
+    `LOOP_GOVERNESS_MAX=${opts.governessMaxRecoveries}`,
+    `LOOP_GOVERNESS_URL=${opts.governessUrl}`,
+    `LOOP_GOVERNESS_MODEL=${opts.governessModel}`,
+    ...passEnv(env, "LOOP_GOVERNESS_JUDGES"),
+    ...passEnv(env, "LOOP_GOVERNESS_JUDGE_MODE"),
+    ...passEnv(env, "LOOP_GOVERNESS_AGENT_RENAME"),
+    ...passEnv(env, "LOOP_GOVERNESS_ROLE_BALANCE"),
+    ...passEnv(env, "LOOP_GOVERNESS_HANDOFF_MANIFEST"),
+    ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
+    ...passEnv(env, "LOOP_USAGE_TRACKER_TIMEOUT_MS"),
+    ...passEnv(env, "LOOP_USAGE_TRACKER_URL"),
+    ...passEnv(env, "USAGE_TRACKER_URL"),
+    ...(env.LOOP_USAGE_TRACKER_SECRET
+      ? passEnv(env, "LOOP_USAGE_TRACKER_SECRET")
+      : passEnv(env, "USAGE_TRACKER_SECRET")),
+    ...usageTrackerEnvFromFiles(env, cwd),
+    ...(opts.governessLlmTrace
+      ? [`LOOP_GOVERNESS_LLM_TRACE=${opts.governessLlmTrace}`]
+      : []),
+    ...(opts.governessDryRun ? ["LOOP_GOVERNESS_DRY_RUN=1"] : []),
+  ];
+};
+
+// Add the full-width bottom governess pane under the agent/utility region.
+const startGovernessPane = (
+  deps: TmuxDeps,
+  opts: Options,
+  session: string,
+  runId: string,
+  paneTarget: string
+): string => {
+  const command = buildShellCommand([
+    "env",
+    ...governessEnv(opts, deps.env, deps.cwd),
+    ...deps.launchArgv,
+    GOVERNESS_SUBCOMMAND,
+    runId,
+  ]);
+  const result = runTmuxCommand(deps, [
+    "tmux",
+    "split-window",
+    "-v",
+    "-f",
+    "-P",
+    "-F",
+    "#{pane_id}",
+    "-l",
+    opts.governessHeight,
+    "-t",
+    `${session}:0`,
+    "-c",
+    deps.cwd,
+    command,
+  ]);
+  return stablePaneTarget(result, paneTarget);
+};
+
+const utilityPaneEnabled = (env: NodeJS.ProcessEnv): boolean => {
+  const value = env.LOOP_UTILITY_PANE?.trim().toLowerCase();
+  return !(value === "0" || value === "false" || value === "off");
+};
+
+const utilityPaneWidth = (env: NodeJS.ProcessEnv): string => {
+  const value = (
+    env.LOOP_UTILITY_PANE_WIDTH ?? env.LOOP_UTILITY_PANE_HEIGHT
+  )?.trim();
+  return value && UTILITY_PANE_WIDTH_RE.test(value)
+    ? value
+    : DEFAULT_UTILITY_PANE_WIDTH;
+};
+
+export const composeWorkerPaneTitle = (session: string): string =>
+  `worker.${session}`;
+
+const startUtilityPane = (
+  deps: TmuxDeps,
+  session: string,
+  governessPane: string,
+  utilityPane: string,
+  runDir: string
+): string => {
+  const command = buildShellCommand([
+    ...deps.launchArgv,
+    UTILITY_PANE_SUBCOMMAND,
+    runDir,
+  ]);
+  const result = runTmuxCommand(deps, [
+    "tmux",
+    "split-window",
+    "-h",
+    "-P",
+    "-F",
+    "#{pane_id}",
+    "-l",
+    utilityPaneWidth(deps.env),
+    "-t",
+    governessPane,
+    "-c",
+    deps.cwd,
+    command,
+  ]);
+  const pane = stablePaneTarget(result, utilityPane);
+  const title = composeWorkerPaneTitle(session);
+  deps.spawn(["tmux", "set-option", "-p", "-t", pane, "@loop_label", title]);
+  deps.spawn(["tmux", "select-pane", "-t", pane, "-T", title]);
+  return pane;
 };
 
 const registerClaudeChannelServerForRun = (
@@ -885,6 +1261,8 @@ const buildPairedAgentCommand = ({
   agent,
   claudeChannelServer,
   claudeSessionId,
+  claudeSettingsPath,
+  codexBypassHookTrust,
   codexProxyUrl,
   hadSession,
   opts,
@@ -893,6 +1271,8 @@ const buildPairedAgentCommand = ({
   agent: Agent;
   claudeChannelServer: string | undefined;
   claudeSessionId: string;
+  claudeSettingsPath?: string;
+  codexBypassHookTrust?: boolean;
   codexProxyUrl: string;
   hadSession: boolean;
   opts: Options;
@@ -908,7 +1288,8 @@ const buildPairedAgentCommand = ({
       model,
       claudeChannelServer,
       hadSession,
-      prompt
+      prompt,
+      claudeSettingsPath
     );
   }
   if (agent === "codex") {
@@ -922,7 +1303,8 @@ const buildPairedAgentCommand = ({
       codexProxyUrl,
       model,
       opts.codexMcpConfigArgs,
-      prompt
+      prompt,
+      codexBypassHookTrust
     );
   }
   if (agent === "gemini") {
@@ -950,14 +1332,26 @@ const runTmuxCommand = (
   deps: TmuxDeps,
   args: string[],
   message = "Failed to start tmux session"
-): void => {
+): SpawnResult => {
   const result = deps.spawn(args);
   if (result.exitCode === 0) {
-    return;
+    return result;
   }
   const suffix = result.stderr ? `: ${result.stderr}` : ".";
   throw new Error(`${message}${suffix}`);
 };
+
+const TMUX_PANE_ID_RE = /^%\d+$/;
+
+const stablePaneId = (result: SpawnResult): string | undefined => {
+  const paneId = result.stdout?.trim();
+  return paneId && TMUX_PANE_ID_RE.test(paneId) ? paneId : undefined;
+};
+
+const stablePaneTarget = (
+  result: SpawnResult,
+  fallback: string
+): string => stablePaneId(result) ?? fallback;
 
 const normalizePaneText = (text: string): string =>
   text.replace(/\s+/g, " ").trim();
@@ -1033,6 +1427,100 @@ const unblockClaudePane = async (
   }
 };
 
+const createPairedPaneLayout = async (input: {
+  deps: TmuxDeps;
+  governess: boolean;
+  leftCommand: string;
+  paneAgents: { left: Agent; right: Agent };
+  rightCommand: string;
+  runDir: string;
+  session: string;
+}): Promise<PairedPaneTargets> => {
+  const leftResult = runTmuxCommand(input.deps, [
+    "tmux",
+    "new-session",
+    "-d",
+    "-P",
+    "-F",
+    "#{pane_id}",
+    ...buildSessionSizeArgs(input.deps),
+    "-s",
+    input.session,
+    "-c",
+    input.deps.cwd,
+    input.leftCommand,
+  ]);
+  const left = stablePaneTarget(leftResult, `${input.session}:0.0`);
+  const rightResult = runTmuxCommand(
+    input.deps,
+    [
+      "tmux",
+      "split-window",
+      "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-t",
+      left,
+      "-c",
+      input.deps.cwd,
+      input.rightCommand,
+    ],
+    "Failed to split tmux window"
+  );
+  const rightPaneId = stablePaneId(rightResult);
+  const rightBeforeUtility = rightPaneId ?? `${input.session}:0.1`;
+  input.deps.spawn([
+    "tmux",
+    "select-layout",
+    "-t",
+    `${input.session}:0`,
+    "even-horizontal",
+  ]);
+  if (input.paneAgents.left === "claude") {
+    await unblockClaudePane(left, input.deps);
+  }
+  if (input.paneAgents.right === "claude") {
+    await unblockClaudePane(rightBeforeUtility, input.deps);
+  }
+  return {
+    governess: input.governess ? `${input.session}:0.2` : undefined,
+    left,
+    right: rightPaneId ?? `${input.session}:0.1`,
+  };
+};
+
+const startPairedControlPanes = (
+  deps: TmuxDeps,
+  opts: Options,
+  session: string,
+  runId: string,
+  runDir: string,
+  paneTargets: PairedPaneTargets
+): PairedPaneTargets => {
+  let governess = paneTargets.governess;
+  if (paneTargets.governess) {
+    governess = startGovernessPane(
+      deps,
+      opts,
+      session,
+      runId,
+      paneTargets.governess
+    );
+  }
+  const utility =
+    governess && utilityPaneEnabled(deps.env)
+      ? startUtilityPane(
+          deps,
+          session,
+          governess,
+          `${session}:0.3`,
+          runDir
+        )
+      : undefined;
+  return { ...paneTargets, governess, utility };
+};
+
 const startPairedSession = async (
   deps: TmuxDeps,
   launch: PairedTmuxLaunch
@@ -1051,6 +1539,7 @@ const startPairedSession = async (
           cwd: deps.cwd,
           mode: "paired",
           pid: process.pid,
+          primaryAgent,
           tmuxSession: session,
           tmuxPaneLeftAgent: paneAgents.left,
           tmuxPaneRightAgent: paneAgents.right,
@@ -1069,6 +1558,7 @@ const startPairedSession = async (
     ),
     gemini: Boolean(launch.opts.pairedSessionIds?.gemini),
     cursor: Boolean(launch.opts.pairedSessionIds?.cursor),
+    copilot: Boolean(launch.opts.pairedSessionIds?.copilot),
   };
   // Only boot persistent transports when claude or codex is in the pair
   const needsPersistent = [primaryAgent, secondaryAgent].some(
@@ -1131,6 +1621,12 @@ const startPairedSession = async (
           storage.runId,
           claudeChannelServer ?? ""
         );
+    const governessHooks = prepareGovernessHooks(
+      deps,
+      launch.opts,
+      storage.runDir,
+      paneAgents
+    );
     const leftCommand = buildShellCommand([
       "env",
       ...env,
@@ -1138,6 +1634,8 @@ const startPairedSession = async (
         agent: paneAgents.left,
         claudeChannelServer,
         claudeSessionId,
+        claudeSettingsPath: governessHooks.claudeSettingsPath,
+        codexBypassHookTrust: governessHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.left],
         opts: launch.opts,
@@ -1151,6 +1649,8 @@ const startPairedSession = async (
         agent: paneAgents.right,
         claudeChannelServer,
         claudeSessionId,
+        claudeSettingsPath: governessHooks.claudeSettingsPath,
+        codexBypassHookTrust: governessHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.right],
         opts: launch.opts,
@@ -1158,47 +1658,15 @@ const startPairedSession = async (
       }),
     ]);
 
-    runTmuxCommand(deps, [
-      "tmux",
-      "new-session",
-      "-d",
-      ...buildSessionSizeArgs(deps),
-      "-s",
-      session,
-      "-c",
-      deps.cwd,
-      leftCommand,
-    ]);
-    runTmuxCommand(
+    const paneTargets = await createPairedPaneLayout({
       deps,
-      [
-        "tmux",
-        "split-window",
-        "-h",
-        "-t",
-        `${session}:0`,
-        "-c",
-        deps.cwd,
-        rightCommand,
-      ],
-      "Failed to split tmux window"
-    );
-    deps.spawn([
-      "tmux",
-      "select-layout",
-      "-t",
-      `${session}:0`,
-      "even-horizontal",
-    ]);
-    if (paneAgents.left === "claude") {
-      await unblockClaudePane(`${session}:0.0`, deps);
-    }
-    if (paneAgents.right === "claude") {
-      await unblockClaudePane(`${session}:0.1`, deps);
-    }
-    const primaryPane =
-      paneAgents.left === primaryAgent ? `${session}:0.0` : `${session}:0.1`;
-    deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
+      governess: launch.opts.governess,
+      leftCommand,
+      paneAgents,
+      rightCommand,
+      runDir: storage.runDir,
+      session,
+    });
     updatePairedManifest(
       deps,
       storage,
@@ -1207,8 +1675,40 @@ const startPairedSession = async (
       codexRemoteUrl,
       codexThreadId,
       session,
-      paneAgents
+      paneAgents,
+      primaryAgent,
+      paneTargets
     );
+    const livePaneTargets = startPairedControlPanes(
+      deps,
+      launch.opts,
+      session,
+      storage.runId,
+      storage.runDir,
+      paneTargets
+    );
+    if (
+      livePaneTargets.governess !== paneTargets.governess ||
+      livePaneTargets.utility !== paneTargets.utility
+    ) {
+      updatePairedManifest(
+        deps,
+        storage,
+        manifest,
+        claudeSessionId,
+        codexRemoteUrl,
+        codexThreadId,
+        session,
+        paneAgents,
+        primaryAgent,
+        livePaneTargets
+      );
+    }
+    const primaryPane =
+      paneAgents.left === primaryAgent
+        ? livePaneTargets.left
+        : livePaneTargets.right;
+    deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
     return session;
   } catch (error: unknown) {
     cleanupFailedPairedSessionStart(
@@ -1371,8 +1871,12 @@ const defaultDeps = (): TmuxDeps => ({
   releasePersistentCodexSession,
   startPersistentAgentSession,
   spawn: (args: string[]) => {
-    const result = spawnSync(args, { stderr: "pipe" });
-    return { exitCode: result.exitCode, stderr: decode(result.stderr) };
+    const result = spawnSync(args, { stderr: "pipe", stdout: "pipe" });
+    return {
+      exitCode: result.exitCode,
+      stderr: decode(result.stderr),
+      stdout: decode(result.stdout),
+    };
   },
   updateRunManifest,
 });
@@ -1489,5 +1993,7 @@ export const tmuxInternals = {
   quoteShellArg,
   sanitizeBase,
   stripTmuxFlag,
+  utilityPaneEnabled,
+  utilityPaneWidth,
   worktreeAvailable,
 };

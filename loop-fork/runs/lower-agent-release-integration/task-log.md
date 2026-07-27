@@ -1,0 +1,61 @@
+# Task lower-agent-release-integration
+
+Created: 2026-07-26T06:24:34Z
+Mode: planned
+Description: Integrate lower-agent router and default pane with visible bridge fixes, then release for future loops without touching loop 40
+
+## What I changed
+
+- Created the dedicated `codex/lower-agent-release-integration` worktree and
+  spec-first Harness run.
+- Landed the lower-agent router/default-pane component as `b4827c3` and the
+  visible bridge repairs as `8f24aba`.
+- Merged both feature sets additively as `048ebc5` and `72838aa`, retaining
+  utility routing plus the newer direct-delivery and draft-safety behavior.
+- Built the combined executable and exercised both default and opt-out layouts
+  in disposable tmux sessions without starting either paid main agent.
+
+## Why
+
+The globally installed executable contained the bridge repairs but predated the
+lower-agent router. Installing the older worker branch directly would have
+regressed those later repairs, so a semantic integration release was required.
+
+## Notes
+
+- Pre-release loop-40 panes were `%0/%1/%2/%3`, with PIDs
+  `35064/35066/35520/36990`. The release procedure must preserve them exactly.
+- Focused integration verification: 331 pass, 0 fail, 1,131 expectations.
+- Full suite: 681 pass, 4 known baseline expectation failures involving the
+  repository's current Codex model defaults; no integrated-feature regression.
+- `bun run build` and `git diff --check` passed.
+- Verified candidate SHA-256:
+  `08b5859c414fcfcdb61aeceb24b0f87d4c7f8f150508f4e8366eb6a2da9d34ae`.
+- Default 160x44 smoke geometry created a top-right 79x8 utility observer and
+  preserved both main panes plus the full-width bottom governess row.
+- `LOOP_UTILITY_PANE=0` restored the three-pane layout.
+- The utility pane reported `LOWER AGENT z-ai/glm-5.2 READY`; bridge MCP listed
+  `route_task`, `task_status`, `get_task_result`, `send_message`,
+  `bridge_status`, and `receive_messages`.
+- Exact credential-content scan across source, tests, specs, and run artifacts
+  was clean; the key remains external and mode 0600.
+- Merged locally into canonical branch `feat/babysitter-pane` as `4208c52`;
+  nothing was pushed.
+- Backed up the previous executable (SHA-256 `d4a8f01751c1dc0964ce9bcb9aeebd8a5f7901caa1c038e4c057b28b7954af3c`)
+  to `/Users/amgad/.loop/release-backups/loop.pre-lower-agent-integration.20260726T063059Z`.
+- Rebuilt from the merged canonical source into a sibling candidate and
+  atomically renamed it over the installed executable. Installed SHA-256:
+  `8a82d58f7fb95ae522f97e0b4ed790c8005bdd9d4787bc4d0e7fd5e25bf51152`.
+- Post-release MCP probing listed all three worker-routing tools plus the three
+  bridge tools. Installed `--help` advertises `z-ai/glm-5.2`, external key-file
+  loading, and default/opt-out utility-pane controls.
+- Loop 40 remained `%0/%1/%2/%3`, PIDs
+  `35064/35066/35520/36990`, before and after the install. No loop-40 process
+  was restarted or signaled; its already-loaded binary remains active until the
+  loop ends naturally.
+- Loop 43 later proved the shell entrypoint was still stale:
+  `/Users/amgad/.local/bin/loop` targeted the bridge-only worktree. Preserved
+  that symlink as a rollback artifact and reran the canonical installer. The
+  global link now targets the integrated canonical executable and hashes match.
+  Loop 43 stayed on pane IDs `%0/%1/%2/%4` and PIDs
+  `82463/82465/82880/84862`; it was neither restarted nor retrofitted.

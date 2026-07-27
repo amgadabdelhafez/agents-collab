@@ -1,0 +1,24 @@
+{
+  "task": "utility-hook-worktree-recovery",
+  "verdict": "pass",
+  "checks": {
+    "focused": "150 passed, 0 failed",
+    "bridge_and_prompt": "86 passed, 0 failed",
+    "build": "passed",
+    "diff_check": "passed",
+    "full_suite": "795 passed, 4 known model/config expectation failures",
+    "independent_review": "pass with no blockers; narrow-match and reload-timeout advisories addressed",
+    "live_codex_transport": "reloaded through app-server and loop-bridge tools listed without main-pane restart",
+    "live_duplicate_delivery": "root cause isolated to direct tmux plus bridge dual-send; live agent corrected and future prompt guidance fixed",
+    "live_linked_worktree_adoption": "automatic job 9599b35e completed from verified root /private/tmp/harvto-loop47-base in 13 seconds and queued exactly one result; synthetic result was consumed by the maintainer to avoid pane noise",
+    "live_process_safety": "Claude PID 56784 and Codex PID 56786 unchanged; only governess pane and background bridge worker restarted",
+    "false_pending_retry_fix": "Claude submission evidence now combines transcript and hook-journal versions and accepts evidence advance while the active pane has no composer; exact regression passes in the 69-test bridge suite",
+    "live_spam_suppression": "stale approval and utility-route IDs manually acknowledged, in-flight old worker stopped, pending queue verified empty, repaired worker started",
+    "peer_review_semantics": "driver-authored review routes preserve requester source and require an actionable verdict; non-driver reviewer requests stay routed-requester and emit zero bridge events",
+    "reviewer_self_route_regression": "focused routing/runtime/governess suite 115/115; full suite 798 pass with the same four known model/config failures",
+    "live_review_topology": "canonical rebuilt; only governess respawned as PID 58059 while Claude 56784, Codex 56786, and worker 21402 remained unchanged; no repeated worker notice pending"
+  },
+  "known_limitations": [
+    "Changed-file Biome is unavailable because the repository ultracite/biome/core configuration cannot resolve."
+  ]
+}

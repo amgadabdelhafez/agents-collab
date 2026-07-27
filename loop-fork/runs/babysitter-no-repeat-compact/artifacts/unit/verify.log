@@ -1,0 +1,61 @@
+task_id: babysitter-no-repeat-compact
+dimension: unit
+attempt: 001
+started_at: 2026-07-19T20:32:18Z
+command: bun test tests/loop/babysitter.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/babysitter.test.ts:
+(pass) suspect + stuck in dry-run: judges and decides but executes nothing [3.56ms]
+(pass) suspect + stuck live: executes the first ladder rung and records history [0.17ms]
+(pass) LLM unreachable suppresses recovery and flags the board [0.28ms]
+(pass) dual local judges render separate token rows and require agreement
+(pass) round-robin local judge mode calls one model for that tick [0.54ms]
+(pass) board labels an agent [thinking] while its pane is animating [0.11ms]
+(pass) board keeps the configured leader row first [0.39ms]
+(pass) codex session pressure hands driver role to claude until reset [0.31ms]
+(pass) codex limit handoff does not repeat when reset detail appears later [0.09ms]
+(pass) codex limit reset restores driver role without compacting context [0.32ms]
+(pass) a missing limit snapshot does not restore before a known future reset [0.22ms]
+(pass) one missing limit snapshot starts a cooldown instead of restoring
+(pass) restore briefing stays pending while its target is active
+(pass) pressure on a non-driver is deduped without messaging or a handoff [0.29ms]
+(pass) claude session pressure hands driver role to codex until reset [0.32ms]
+(pass) proactive quota balance is disabled by default [0.17ms]
+(pass) proactive quota balance moves driver when local LLM approves [0.71ms]
+(pass) proactive quota balance is skipped when local LLM vetoes [0.17ms]
+(pass) board labels an agent [idle] once its pane is frozen [0.20ms]
+(pass) board converts the agent's live remaining context % to used context
+(pass) board shows latest bridge messages in both directions [0.28ms]
+(pass) board keeps warning-colored agent columns aligned [0.39ms]
+(pass) board overlays usage tracker session and weekly limits [0.16ms]
+(pass) board shows input, cached, and output token details [0.39ms]
+(pass) board caps structured summary section heights [0.36ms]
+(pass) observed progress clears the agent's recovery history [0.18ms]
+(pass) a cleanly-ended turn stays idle and is never judged, even past the idle window [0.09ms]
+(pass) board flags an agent that is waiting for the human [0.17ms]
+(pass) board labels a session-limit pane as limited, not waiting for the human [0.07ms]
+(pass) board does not label babysitter limit handoff text as a session limit [0.12ms]
+(pass) board does not label Codex context compaction as a usage limit
+(pass) a confirmed waiting pair clears the moment an agent goes active [0.23ms]
+(pass) a confirmed idle pair shows the LLM's ask and escalates once [0.21ms]
+(pass) both idle but unconfirmed by the LLM does not alert [0.01ms]
+(pass) escalates once when the session crosses its cost budget [0.23ms]
+(pass) composePaneTitle composes glyph, agent, and task label [0.02ms]
+(pass) babysitTick sets each agent's pane border title and skips redundant sets [0.09ms]
+(pass) babysitTick folds the stored LLM label into the border title
+(pass) sendRenameCommands injects /rename with session and task per labeled agent
+(pass) sendRenameCommands sends nothing in dry-run
+(pass) sendRenameCommands does not re-send an unchanged rename [0.26ms]
+(pass) sendRenameCommands does not inject into an agent that is mid-turn
+
+ 42 pass
+ 0 fail
+ 252 expect() calls
+Ran 42 tests across 1 file. [28.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-19T20:32:18Z

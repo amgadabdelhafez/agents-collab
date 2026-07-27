@@ -1,0 +1,31 @@
+{
+  "task_id": "bridge-idle-delivery",
+  "result": "pass_with_baseline_failures",
+  "acceptance": {
+    "ghost_suggestion_delivers": true,
+    "real_draft_blocks_without_claim": true,
+    "consumed_mid_wait_not_injected": true,
+    "main_agent_restart_required": false
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test tests/loop/bridge.test.ts",
+      "passed": 75,
+      "failed": 0
+    },
+    "full": {
+      "command": "bun test",
+      "passed": 806,
+      "failed": 4,
+      "baseline_failures": [
+        "preparePairedOptions creates a loop-scoped Codex home without global MCP config",
+        "runAgent launches Codex app-server with loop-scoped Codex home",
+        "buildCommand carries Codex bridge approval config for legacy exec",
+        "startPersistentAgentSession enables persistent Codex threads"
+      ]
+    },
+    "build": "pass",
+    "diff_check": "pass",
+    "live": "pass: worker 80530 on 18:27 binary; codex->claude 96af2221 pushed once at 01:33:44Z; zero duplicate ledger records; pane and governess PIDs unchanged"
+  }
+}

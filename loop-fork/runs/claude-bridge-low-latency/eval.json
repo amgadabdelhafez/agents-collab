@@ -1,0 +1,34 @@
+{
+  "task_id": "claude-bridge-low-latency",
+  "status": "pass",
+  "required": [
+    "unit",
+    "independent-review",
+    "live-runtime"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/claude-bridge-low-latency/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/claude-bridge-low-latency/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/claude-bridge-low-latency/artifacts/unit/attempt-001.json"
+    },
+    "independent-review": {
+      "status": "pass",
+      "artifact": "runs/claude-bridge-low-latency/artifacts/independent-review.md",
+      "reason": "Independent evaluator found no correctness blocker in atomic direct-delivery and worker-fallback design",
+      "method": "source review, focused tests, build, diff check, fresh/stale claim probes",
+      "signed_off_by": "independent_eval"
+    },
+    "live-runtime": {
+      "status": "pass",
+      "artifact": "runs/claude-bridge-low-latency/artifacts/live-proof.md",
+      "reason": "Live run-38 Codex-to-Claude message delivered visibly once in 151 ms",
+      "method": "installed binary, app-server MCP call, durable ledger timestamps, tmux capture",
+      "signed_off_by": "codex"
+    }
+  }
+}

@@ -6,6 +6,7 @@ import {
   consumeBridgeInbox,
   dispatchBridgeMessage,
   formatDispatchResult,
+  type ImmediateBridgeDelivery,
 } from "./bridge-dispatch";
 import { claudeChannelInstructions } from "./bridge-guidance";
 import {
@@ -17,19 +18,31 @@ import {
   ensureBridgeWorker,
   flushClaudeChannelMessages,
   hasBridgeDeliveryRoute,
+  isBridgeDeliveryClaimed,
   readBridgeRuntimeStatus,
 } from "./bridge-runtime";
 import {
   appendBlockedBridgeMessage,
   appendBridgeEvent,
+  type BridgeEnqueueOptions,
+  type BridgeMessageType,
+  type BridgePriority,
   blocksBridgeBounce,
   bridgePath,
   formatBridgeInbox,
   normalizeAgent,
   readBridgeEvents,
 } from "./bridge-store";
+import {
+  callUtilityBridgeTool,
+  isUtilityBridgeToolName,
+  UTILITY_BRIDGE_TOOLS,
+  UtilityBridgeInputError,
+} from "./bridge-utility";
 import { LOOP_VERSION } from "./constants";
 import type { Agent } from "./types";
+
+type BridgeMcpSource = Agent | "supervisor";
 
 const CLAUDE_CHANNEL_CAPABILITY = "claude/channel";
 const CLAUDE_CHANNEL_FALLBACK_SWEEP_MS = 2000;
@@ -78,6 +91,85 @@ const normalizeLowerString = (value: unknown): string | undefined => {
   }
   const normalized = value.trim().toLowerCase();
   return normalized || undefined;
+};
+
+const bridgeMessageType = (value: unknown): BridgeMessageType | undefined => {
+  const normalized = normalizeLowerString(value);
+  return normalized === "message" ||
+    normalized === "work_request" ||
+    normalized === "review_request" ||
+    normalized === "decision" ||
+    normalized === "handover" ||
+    normalized === "escalation" ||
+    normalized === "ack"
+    ? normalized
+    : undefined;
+};
+
+const bridgePriority = (value: unknown): BridgePriority | undefined => {
+  const normalized = normalizeLowerString(value);
+  return normalized === "low" ||
+    normalized === "normal" ||
+    normalized === "high" ||
+    normalized === "urgent"
+    ? normalized
+    : undefined;
+};
+
+const stringArray = (value: unknown): string[] | undefined =>
+  Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
+
+const bridgeEnqueueOptions = (
+  args: Record<string, unknown>,
+  type: BridgeMessageType | undefined,
+  priority: BridgePriority | undefined
+): BridgeEnqueueOptions => {
+  const artifactRefs = stringArray(args.artifact_refs);
+  const dedupeKey = asString(args.dedupe_key);
+  const replyTo = asString(args.reply_to);
+  const subject = asString(args.subject);
+  const taskId = asString(args.task_id);
+  const threadId = asString(args.thread_id);
+  return {
+    ...(artifactRefs ? { artifactRefs } : {}),
+    ...(dedupeKey ? { dedupeKey } : {}),
+    ...(priority ? { priority } : {}),
+    ...(replyTo ? { replyTo } : {}),
+    ...(subject ? { subject } : {}),
+    ...(args.supersede === true ? { supersede: true } : {}),
+    ...(taskId ? { taskId } : {}),
+    ...(threadId ? { threadId } : {}),
+    ...(typeof args.ttl_ms === "number" ? { ttlMs: args.ttl_ms } : {}),
+    ...(type ? { type } : {}),
+  };
+};
+
+export const immediateBridgeDelivery = (
+  runDir: string,
+  target: Agent
+): ImmediateBridgeDelivery | undefined => {
+  if (target === "codex") {
+    return async (entry) => {
+      if (readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy") {
+        return false;
+      }
+      return (
+        (await deliverCodexBridgeMessage(runDir, entry)) ||
+        (await deliverTmuxBridgeMessage(runDir, entry))
+      );
+    };
+  }
+  if (
+    target === "claude" ||
+    target === "cursor" ||
+    target === "gemini" ||
+    target === "copilot"
+  ) {
+    return (entry) => deliverTmuxBridgeMessage(runDir, entry);
+  }
+  return undefined;
 };
 
 // This bridge is launched under the agent CLIs' stdio MCP hooks, but those
@@ -134,7 +226,8 @@ const handleReceiveMessagesTool = (
   const messages = consumeBridgeInbox(
     runDir,
     source,
-    "read via receive_messages"
+    "read via receive_messages",
+    (message) => !isBridgeDeliveryClaimed(runDir, message.id)
   );
   writeJsonRpc({
     id,
@@ -148,11 +241,13 @@ const handleReceiveMessagesTool = (
 const handleSendMessageTool = async (
   id: JsonRpcRequest["id"],
   runDir: string,
-  source: Agent,
+  source: BridgeMcpSource,
   args: Record<string, unknown>
 ): Promise<void> => {
   const normalizedTarget = normalizeLowerString(args.target);
   const message = asString(args.message);
+  const type = bridgeMessageType(args.type);
+  const priority = bridgePriority(args.priority);
   if (!normalizedTarget) {
     writeError(
       id,
@@ -187,6 +282,34 @@ const handleSendMessageTool = async (
     return;
   }
 
+  if (args.type !== undefined && !type) {
+    writeError(id, MCP_INVALID_PARAMS, "send_message received an invalid type");
+    return;
+  }
+  if (args.priority !== undefined && !priority) {
+    writeError(
+      id,
+      MCP_INVALID_PARAMS,
+      "send_message received an invalid priority"
+    );
+    return;
+  }
+  if (
+    args.ttl_ms !== undefined &&
+    (typeof args.ttl_ms !== "number" ||
+      !Number.isFinite(args.ttl_ms) ||
+      args.ttl_ms <= 0)
+  ) {
+    writeError(
+      id,
+      MCP_INVALID_PARAMS,
+      "send_message ttl_ms must be a positive number"
+    );
+    return;
+  }
+
+  const options = bridgeEnqueueOptions(args, type, priority);
+
   if (blocksBridgeBounce(runDir, source, target, message)) {
     appendBlockedBridgeMessage(
       runDir,
@@ -208,25 +331,12 @@ const handleSendMessageTool = async (
     source,
     target,
     message,
-    target === "codex"
-      ? async (entry) => {
-          if (
-            readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy"
-          ) {
-            return false;
-          }
-          return (
-            (await deliverCodexBridgeMessage(runDir, entry)) ||
-            (await deliverTmuxBridgeMessage(runDir, entry))
-          );
-        }
-      : target === "cursor" || target === "gemini" || target === "copilot"
-        ? (entry) => deliverTmuxBridgeMessage(runDir, entry)
-        : undefined,
-    undefined
+    immediateBridgeDelivery(runDir, target),
+    undefined,
+    options
   );
   if (
-    result.status !== "delivered" &&
+    result.status === "queued" &&
     hasBridgeDeliveryRoute(runDir, target) &&
     ensureBridgeWorker(runDir)
   ) {
@@ -242,7 +352,7 @@ const handleSendMessageTool = async (
 const handleToolCall = async (
   id: JsonRpcRequest["id"],
   runDir: string,
-  source: Agent,
+  source: BridgeMcpSource,
   params: unknown
 ): Promise<void> => {
   const call = isRecord(params) ? (params as BridgeCallParams) : undefined;
@@ -255,6 +365,14 @@ const handleToolCall = async (
   }
 
   if (name === "receive_messages") {
+    if (source === "supervisor") {
+      writeError(
+        id,
+        MCP_INVALID_PARAMS,
+        "supervisor bridge sessions cannot receive agent inbox messages"
+      );
+      return;
+    }
     handleReceiveMessagesTool(id, runDir, source);
     return;
   }
@@ -265,6 +383,31 @@ const handleToolCall = async (
       MCP_INVALID_PARAMS,
       'Unknown tool: send_to_agent. Use "send_message" instead.'
     );
+    return;
+  }
+
+  if (isUtilityBridgeToolName(name)) {
+    try {
+      const result = await callUtilityBridgeTool(
+        name,
+        runDir,
+        source,
+        args
+      );
+      writeJsonRpc({
+        id,
+        jsonrpc: "2.0",
+        result: toolContent(JSON.stringify(result, null, 2)),
+      });
+    } catch (error) {
+      writeError(
+        id,
+        MCP_INVALID_PARAMS,
+        error instanceof UtilityBridgeInputError
+          ? error.message
+          : "worker task request failed"
+      );
+    }
     return;
   }
 
@@ -282,7 +425,7 @@ const requestedProtocolVersion = (request: JsonRpcRequest): string =>
 
 const handleBridgeRequest = async (
   runDir: string,
-  source: Agent,
+  source: BridgeMcpSource,
   request: JsonRpcRequest
 ): Promise<void> => {
   switch (request.method) {
@@ -334,15 +477,43 @@ const handleBridgeRequest = async (
         jsonrpc: "2.0",
         result: {
           tools: [
+            ...UTILITY_BRIDGE_TOOLS,
             {
               annotations: MUTATING_TOOL_ANNOTATIONS,
               description: "Send a direct message to the paired agent.",
               inputSchema: {
                 additionalProperties: false,
                 properties: {
+                  artifact_refs: {
+                    items: { type: "string" },
+                    type: "array",
+                  },
+                  dedupe_key: { type: "string" },
                   message: { type: "string" },
+                  priority: {
+                    enum: ["low", "normal", "high", "urgent"],
+                    type: "string",
+                  },
+                  reply_to: { type: "string" },
+                  subject: { type: "string" },
+                  supersede: { type: "boolean" },
+                  task_id: { type: "string" },
                   target: {
                     enum: ["claude", "codex", "gemini", "cursor", "copilot"],
+                    type: "string",
+                  },
+                  thread_id: { type: "string" },
+                  ttl_ms: { minimum: 1, type: "number" },
+                  type: {
+                    enum: [
+                      "message",
+                      "work_request",
+                      "review_request",
+                      "decision",
+                      "handover",
+                      "escalation",
+                      "ack",
+                    ],
                     type: "string",
                   },
                 },
@@ -517,7 +688,7 @@ const isBridgeWatchEvent = (
 
 export const runBridgeMcpServer = async (
   runDir: string,
-  source: Agent
+  source: BridgeMcpSource
 ): Promise<void> => {
   let channelReady = false;
   let bridgeWatcher: { close: () => void } | undefined;

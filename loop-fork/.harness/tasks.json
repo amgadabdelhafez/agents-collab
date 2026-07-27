@@ -1,4 +1,145 @@
 {
   "version": 1,
-  "tasks": []
+  "tasks": [
+    {
+      "id": "babysitter-pane",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-04T15:36:35Z",
+      "run_dir": "runs/babysitter-pane",
+      "eval_status": "pass",
+      "ended_at": "2026-07-04T16:30:19Z",
+      "spec_path": "specs/babysitter-pane.md"
+    },
+    {
+      "id": "babysitter-no-repeat-compact",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-19T20:29:55Z",
+      "run_dir": "runs/babysitter-no-repeat-compact",
+      "eval_status": "pass",
+      "ended_at": "2026-07-19T20:33:58Z",
+      "spec_path": "specs/babysitter-no-repeat-compact.md"
+    },
+    {
+      "id": "governess-native-runtime",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-25T21:49:56Z",
+      "run_dir": "runs/governess-native-runtime",
+      "eval_status": "pass",
+      "ended_at": "2026-07-25T22:19:09Z",
+      "spec_path": "specs/governess-native-runtime.md"
+    },
+    {
+      "id": "governess-pane-identity",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-25T22:22:28Z",
+      "run_dir": "runs/governess-pane-identity",
+      "eval_status": "pass",
+      "ended_at": "2026-07-25T22:29:10Z",
+      "spec_path": "specs/governess-pane-identity.md"
+    },
+    {
+      "id": "governess-header-identity",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-25T22:31:20Z",
+      "run_dir": "runs/governess-header-identity",
+      "eval_status": "pass",
+      "ended_at": "2026-07-25T22:37:07Z",
+      "spec_path": "specs/governess-header-identity.md"
+    },
+    {
+      "id": "governess-p0-runtime",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-25T22:45:19Z",
+      "run_dir": "runs/governess-p0-runtime",
+      "eval_status": "pass",
+      "ended_at": "2026-07-25T23:07:07Z",
+      "spec_path": "specs/governess-p0-runtime.md"
+    },
+    {
+      "id": "lower-agent-router",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T02:10:41Z",
+      "run_dir": "runs/lower-agent-router",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T03:02:04Z",
+      "spec_path": "specs/lower-agent-router.md"
+    },
+    {
+      "id": "lower-agent-pane-default",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T03:23:05Z",
+      "run_dir": "runs/lower-agent-pane-default",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T03:36:17Z",
+      "spec_path": "specs/lower-agent-pane-default.md"
+    },
+    {
+      "id": "codex-bridge-visible-tui",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T03:41:52Z",
+      "run_dir": "runs/codex-bridge-visible-tui",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T04:04:04Z",
+      "spec_path": "specs/codex-bridge-visible-tui.md"
+    },
+    {
+      "id": "claude-bridge-visible-tui",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T04:27:28Z",
+      "run_dir": "runs/claude-bridge-visible-tui",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T04:46:34Z",
+      "spec_path": "specs/claude-bridge-visible-tui.md"
+    },
+    {
+      "id": "claude-bridge-low-latency",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-26T05:48:24Z",
+      "run_dir": "runs/claude-bridge-low-latency",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T06:04:16Z",
+      "spec_path": "specs/claude-bridge-low-latency.md"
+    },
+    {
+      "id": "lower-agent-release-integration",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T06:24:34Z",
+      "run_dir": "runs/lower-agent-release-integration",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T06:33:49Z",
+      "spec_path": "specs/lower-agent-release-integration.md"
+    },
+    {
+      "id": "lower-agent-hardening",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-26T16:12:05Z",
+      "run_dir": "runs/lower-agent-hardening",
+      "eval_status": "pass",
+      "ended_at": "2026-07-26T16:46:24Z",
+      "spec_path": "specs/lower-agent-hardening.md"
+    },
+    {
+      "id": "delegation-grammar-widening",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-27T02:01:33Z",
+      "run_dir": "runs/delegation-grammar-widening",
+      "eval_status": "pass",
+      "ended_at": "2026-07-27T02:20:38Z",
+      "spec_path": "specs/delegation-grammar-widening.md"
+    }
+  ]
 }

@@ -4,8 +4,16 @@ import {
   acknowledgeBridgeDelivery,
   readNextPendingBridgeMessage,
 } from "./bridge-dispatch";
-import { quotedBridgeTool } from "./bridge-guidance";
-import { formatCodexBridgeMessage } from "./bridge-message-format";
+import {
+  mandatoryUtilityDelegationGuidance,
+  quotedBridgeTool,
+  singleBridgeTransportGuidance,
+} from "./bridge-guidance";
+import {
+  bridgeSourceLabel,
+  formatBridgeDeliveryMessage,
+} from "./bridge-message-format";
+import type { BridgeMessage } from "./bridge-store";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
 import {
@@ -99,13 +107,14 @@ const pairPeer = (agent: Agent, opts: Options): Agent =>
 const bridgeGuidance = (agent: Agent, opts: Options): string => {
   const target = pairPeer(agent, opts);
   const peer = capitalize(target);
-  const needsPolling = agent !== "claude";
-  const pollingGuidance = needsPolling
-    ? `IMPORTANT: Messages are NOT delivered to you automatically. You MUST call ${quotedBridgeTool(agent, "receive_messages")} every 15-30 seconds to check for inbound messages from ${peer}. Do not wait passively — poll actively.`
-    : `Use ${quotedBridgeTool(agent, "receive_messages")} only if ${quotedBridgeTool(agent, "bridge_status")} shows pending messages addressed to you and direct delivery looks stuck.`;
+  const pollingGuidance = `Use ${quotedBridgeTool(agent, "receive_messages")} only if ${quotedBridgeTool(agent, "bridge_status")} shows pending messages addressed to you and direct delivery looks stuck.`;
   return [
     "Paired mode:",
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
+    singleBridgeTransportGuidance,
+    mandatoryUtilityDelegationGuidance(
+      quotedBridgeTool(agent, "route_task")
+    ),
     `Ask ${peer} for validation and feedback after every few concrete steps, after meaningful design choices, and before finalizing. Include what changed, what proof ran, and what you want checked.`,
     "Use AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.",
     `Do not ask the human to relay messages between agents or answer the human on the other agent's behalf.`,
@@ -114,12 +123,13 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
 };
 
 const bridgeToolGuidance = (agent: Agent): string => {
-  const needsPolling = agent !== "claude";
-  const pollingNote = needsPolling
-    ? `You MUST poll ${quotedBridgeTool(agent, "receive_messages")} every 15-30 seconds to receive messages. Messages are not delivered automatically to you.`
-    : `Only use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} when delivery looks stuck.`;
+  const pollingNote = `Only use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} when delivery looks stuck.`;
   return [
     `You can use the MCP tools ${quotedBridgeTool(agent, "send_message")}, ${quotedBridgeTool(agent, "bridge_status")}, and ${quotedBridgeTool(agent, "receive_messages")} for direct paired-agent coordination.`,
+    singleBridgeTransportGuidance,
+    mandatoryUtilityDelegationGuidance(
+      quotedBridgeTool(agent, "route_task")
+    ),
     pollingNote,
     "Do not ask the human to relay messages between agents.",
   ].join("\n");
@@ -165,27 +175,20 @@ const reviewBridgePrompt = (
     .filter(Boolean)
     .join("\n\n");
 
-const forwardBridgePrompt = ({
-  message,
-  source,
-  target,
-}: {
-  message: string;
-  source: Agent;
-  target: Agent;
-}): string => {
-  const agent = target;
+const forwardBridgePrompt = (entry: BridgeMessage): string => {
+  const { message, source, target } = entry;
+  const agent = entry.target;
   const replyGuidance = `Send a message to the other agent with ${quotedBridgeTool(agent, "send_message")} only when you have something useful for them to act on.`;
   return (
     target === "codex"
       ? [
-          formatCodexBridgeMessage(source, message),
+          formatBridgeDeliveryMessage(entry),
           "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
           replyGuidance,
           "Do not acknowledge receipt without new information.",
         ]
       : [
-          `Message from ${capitalize(source)} via the loop bridge:`,
+          `Message from ${bridgeSourceLabel(source)} via the loop bridge:`,
           message.trim(),
           "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
           replyGuidance,

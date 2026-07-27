@@ -1,11 +1,17 @@
 {
-  "name": "loop",
+  "name": "agents-collab-loop-fork",
   "version": "1.0.32",
   "type": "module",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amgadabdelhafez/agents-collab.git",
+    "directory": "loop-fork"
+  },
   "scripts": {
     "build": "bun build --compile --outfile loop src/cli.ts",
     "install:global": "bun run build && bun run src/install.ts",
+    "test:ci": "for file in $(find tests -name '*.test.ts' | sort); do bun test \"$file\" || exit 1; done",
     "release:patch": "npm version patch && git push --follow-tags",
     "check": "ultracite check",
     "fix": "ultracite fix"
