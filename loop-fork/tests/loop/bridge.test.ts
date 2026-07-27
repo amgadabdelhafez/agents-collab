@@ -1,5 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -865,6 +866,75 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
     { stderr: "ignore" },
   ]);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Claude delivery does not inject into an active turn with an empty composer", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("Working…\n\n❯\n\nOpus 5", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(join(runDir, "hooks"), { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  writeFileSync(
+    join(runDir, "hooks", "claude.jsonl"),
+    `${JSON.stringify({
+      agent: "claude",
+      event: "PostToolUse",
+      state: "working",
+      ts: "2026-03-23T10:01:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:01.000Z",
+    id: "msg-claude-busy",
+    kind: "message" as const,
+    message: "Wait until this turn finishes.",
+    source: "utility" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args[1] === "send-keys"
+    )
+  ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(bridge.readPendingBridgeMessages(runDir)[0]).toMatchObject(message);
+
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -1793,6 +1863,56 @@ test("bridge MCP receive_messages returns and clears queued inbox items", async 
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "delivered")
   ).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge MCP receive_messages leaves an automatically claimed item alone", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const claimDir = join(runDir, "bridge-delivery-claims");
+  mkdirSync(claimDir, { recursive: true });
+  const message = {
+    at: "2026-03-23T10:00:00.000Z",
+    id: "claimed-msg-1",
+    kind: "message" as const,
+    message: "Deliver me exactly once.",
+    source: "utility" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+  const claimName = `${createHash("sha256").update(message.id).digest("hex")}.lock`;
+  writeFileSync(join(claimDir, claimName), "", "utf8");
+
+  const claimed = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeLine({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: "receive_messages" },
+    })
+  );
+
+  expect(toolText(claimed.stdout, 1)).toBe("[]");
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(bridge.readPendingBridgeMessages(runDir)[0]).toMatchObject(message);
+
+  rmSync(join(claimDir, claimName));
+  const released = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeLine({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: "receive_messages" },
+    })
+  );
+  expect(toolText(released.stdout, 2)).toContain("Deliver me exactly once.");
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
 
   rmSync(root, { recursive: true, force: true });
 });
