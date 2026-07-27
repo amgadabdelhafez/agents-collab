@@ -2,6 +2,7 @@ import { afterEach, expect, mock, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -806,7 +807,7 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
     if (args[0] === "tmux" && args[1] === "capture-pane") {
       captureCalls += 1;
       const pane =
-        captureCalls === 1 || captureCalls >= 3
+        captureCalls <= 2 || captureCalls >= 4
           ? "❯\n\nOpus 5 · bypass permissions on"
           : "❯ [bridge:msg-claude-r] Message from Codex via the loop bridge:\n\nOpus 5";
       return {
@@ -938,6 +939,172 @@ test("Claude delivery does not inject into an active turn with an empty composer
   rmSync(root, { recursive: true, force: true });
 });
 
+const IDLE_CLAUDE_MANIFEST = {
+  createdAt: "2026-03-23T10:00:00.000Z",
+  cwd: "/repo",
+  mode: "paired",
+  pid: 1234,
+  repoId: "repo-123",
+  runId: "8",
+  state: "working",
+  status: "running",
+  tmuxPaneLeftAgent: "claude",
+  tmuxPaneRightAgent: "codex",
+  tmuxSession: "repo-loop-8",
+  updatedAt: "2026-03-23T10:00:00.000Z",
+};
+
+const writeIdleClaudeRun = (runDir: string): void => {
+  mkdirSync(join(runDir, "hooks"), { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify(IDLE_CLAUDE_MANIFEST)}\n`,
+    "utf8"
+  );
+  writeFileSync(
+    join(runDir, "hooks", "claude.jsonl"),
+    `${JSON.stringify({
+      agent: "claude",
+      event: "Stop",
+      state: "input-required",
+      ts: "2026-03-23T10:00:30.000Z",
+    })}\n`,
+    "utf8"
+  );
+};
+
+test("Claude delivery injects over a dim type-ahead suggestion", async () => {
+  const ghostPane =
+    "\u001B[39m❯ \u001B[2mwait for codex's verdict\u001B[0m\n\nOpus 5 | ctx: 59%";
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(ghostPane, "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() => {
+    transcriptReads += 1;
+    return transcriptReads === 1 ? "before" : "after";
+  });
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeIdleClaudeRun(runDir);
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-ghost",
+    kind: "message" as const,
+    message: "The ledger verdict is ready.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(1);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Claude delivery holds no claim while the pane is not ready", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeIdleClaudeRun(runDir);
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-draft-blocked",
+    kind: "message" as const,
+    message: "Wait for the composer to clear.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  const claimPath = join(
+    runDir,
+    "bridge-delivery-claims",
+    `${createHash("sha256").update(message.id).digest("hex")}.lock`
+  );
+  const claimSeenDuringWait: boolean[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      claimSeenDuringWait.push(existsSync(claimPath));
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯ human draft\n\nOpus 5 | ctx: 59%", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(claimSeenDuringWait.length).toBeGreaterThan(0);
+  expect(claimSeenDuringWait.every((seen) => !seen)).toBe(true);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args[1] === "send-keys"
+    )
+  ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Claude delivery aborts without typing when the message is consumed mid-wait", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeIdleClaudeRun(runDir);
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-consumed",
+    kind: "message" as const,
+    message: "Polled while delivery was waiting.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  let consumed = false;
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      if (!consumed) {
+        consumed = true;
+        bridge.consumeBridgeInbox(runDir, "claude", "polled during wait");
+      }
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nOpus 5 | ctx: 59%", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args[1] === "send-keys"
+    )
+  ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("Claude submission evidence advances when the hook journal advances", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
@@ -973,7 +1140,7 @@ test("Claude delivery confirms when submission evidence advances into an active 
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          captureCalls === 1
+          captureCalls <= 2
             ? "❯\n\nOpus 5 · bypass permissions on"
             : "⏺ Working… (1s · esc to interrupt)\n\nOpus 5",
           "utf8"
@@ -1110,7 +1277,7 @@ test("a post-injection human draft is never submitted by fallback", async () => 
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          captureCalls === 1
+          captureCalls <= 2
             ? "❯\n\nOpus 5 · bypass permissions on"
             : "❯ human draft started after injection\n\nOpus 5",
           "utf8"
@@ -2163,6 +2330,10 @@ test("bridge drains codex messages through the persisted stable pane target", as
       { stderr: "ignore", stdout: "pipe" },
     ],
     [
+      ["tmux", "capture-pane", "-p", "-t", "%41"],
+      { stderr: "ignore", stdout: "pipe" },
+    ],
+    [
       [
         "tmux",
         "send-keys",
@@ -2241,6 +2412,10 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
     [
       ["tmux", "has-session", "-t", "repo-loop-8"],
       { stderr: "ignore", stdout: "ignore" },
+    ],
+    [
+      ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.0"],
+      { stderr: "ignore", stdout: "pipe" },
     ],
     [
       ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.0"],
@@ -2406,6 +2581,26 @@ test("Claude pane delivery preserves a non-empty user draft", async () => {
   expect(
     bridge.isClaudePaneReady(
       "❯\nshort prior output\n❯ human draft\n\nOpus 5 | ctx: 59%"
+    )
+  ).toBe(false);
+});
+
+test("Claude pane readiness treats a dim type-ahead suggestion as empty", async () => {
+  const bridge = await loadBridge();
+
+  expect(
+    bridge.isClaudePaneReady(
+      "\u001B[39m❯ \u001B[2mwait for codex's verdict\u001B[0m\n\nOpus 5 | ctx: 59%"
+    )
+  ).toBe(true);
+  expect(
+    bridge.isClaudePaneReady(
+      "\u001B[39m❯ real draft\u001B[0m\n\nOpus 5 | ctx: 59%"
+    )
+  ).toBe(false);
+  expect(
+    bridge.isClaudePaneReady(
+      "\u001B[39m❯ typed\u001B[2m ghost tail\u001B[0m\n\nOpus 5 | ctx: 59%"
     )
   ).toBe(false);
 });
