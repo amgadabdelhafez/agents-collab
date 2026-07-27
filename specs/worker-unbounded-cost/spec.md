@@ -12,6 +12,9 @@ wants.
 
 - Raise the default completion allowance to 8,000 tokens per model call and
   the cumulative job allowance to 64,000 tokens.
+- Raise the default conversation step allowance from 8 to 16 and expose the
+  common commit-range changed-file/diff-check operation through the existing
+  shell-free `git_diff` broker tool.
 - Remove the worker's per-job and per-run dollar routing/runtime guardrails.
 - Continue recording token and dollar usage for governess observability.
 - Preserve runtime, step, workspace, protected-path, credential, command,

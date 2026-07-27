@@ -291,8 +291,13 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
     type: "function",
     function: {
       name: "git_diff",
-      description: "Return a bounded git diff for declared paths.",
+      description:
+        "Return a bounded git diff for declared paths, optionally between literal commit hashes; use check for git diff --check and nameOnly for a changed-file list.",
       parameters: objectSchema({
+        baseRef: { minLength: 7, type: "string" },
+        check: { type: "boolean" },
+        headRef: { minLength: 7, type: "string" },
+        nameOnly: { type: "boolean" },
         paths: { items: { type: "string" }, type: "array" },
         staged: { type: "boolean" },
       }),
@@ -1469,6 +1474,27 @@ export class UtilityToolBroker {
   ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
     const paths = optionalStringArray(args, "paths") ?? this.readScopes;
     const staged = optionalBoolean(args, "staged") ?? false;
+    const baseRef = optionalString(args, "baseRef");
+    const headRef = optionalString(args, "headRef");
+    const check = optionalBoolean(args, "check") ?? false;
+    const nameOnly = optionalBoolean(args, "nameOnly") ?? false;
+    if (headRef && !baseRef) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "headRef requires baseRef"
+      );
+    }
+    for (const [label, ref] of [
+      ["baseRef", baseRef],
+      ["headRef", headRef],
+    ] as const) {
+      if (ref && !/^[0-9a-f]{7,64}$/i.test(ref)) {
+        throw new ToolPolicyError(
+          "invalid_arguments",
+          `${label} must be a literal commit hash`
+        );
+      }
+    }
     const safePaths: string[] = [];
     for (const path of paths) {
       const target = await this.resolvePath(path, "read", false);
@@ -1479,7 +1505,12 @@ export class UtilityToolBroker {
         "git",
         "diff",
         "--no-ext-diff",
+        ...(check ? ["--check"] : []),
+        ...(nameOnly ? ["--name-only"] : []),
         ...(staged ? ["--cached"] : []),
+        ...(baseRef
+          ? [headRef ? `${baseRef}...${headRef}` : `${baseRef}...HEAD`]
+          : []),
         "--",
         ...safePaths,
         ...this.gitExclusions(),

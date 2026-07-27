@@ -54,7 +54,7 @@ export const UTILITY_WORKER_SUBCOMMAND = "__utility-worker";
 export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "z-ai/glm-5.2";
-const DEFAULT_MAX_STEPS = 8;
+const DEFAULT_MAX_STEPS = 16;
 const DEFAULT_API_KEY_FILE = join(
   homedir(),
   ".config",
