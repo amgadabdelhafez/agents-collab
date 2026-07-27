@@ -1,0 +1,66 @@
+{
+  "task_id": "governess-usage-display-stability",
+  "status": "pass",
+  "verdict": "pass",
+  "required": [
+    "unit",
+    "integration",
+    "smoke"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/governess-usage-display-stability/artifacts/unit/verify.log",
+      "reason": "70 focused usage-limit and governess tests passed independently and in Harness.",
+      "method": "verify.sh"
+    },
+    "integration": {
+      "status": "sign-off-granted",
+      "artifact": "runs/governess-usage-display-stability/artifacts/integration/verify.log",
+      "reason": "830 tests passed; the four failures are unchanged Codex default/config expectation baselines in paired-options.test.ts and runner.test.ts, outside the modified files.",
+      "method": "verify.sh"
+    },
+    "smoke": {
+      "status": "pass",
+      "artifact": "runs/governess-usage-display-stability/artifacts/smoke/verify.log",
+      "reason": "Compiled build completed successfully.",
+      "method": "verify.sh"
+    }
+  },
+  "evaluated_at": "2026-07-27T05:12:27Z",
+  "evaluator": "independent Codex evaluator",
+  "findings": [],
+  "acceptance": {
+    "transient_and_partial_retention": {
+      "status": "pass",
+      "evidence": "The stateful reader caches Claude and Codex independently. A pricing-only failure restores both fresh provider quotas, while a partial success refreshes the present provider and retains only the absent provider."
+    },
+    "bounded_ttl": {
+      "status": "pass",
+      "evidence": "The live default is 60000 ms, timestamps refresh only when that provider has a current quota, and entries are removed once their age exceeds the bound."
+    },
+    "auth_and_disabled_clear": {
+      "status": "pass",
+      "evidence": "An undefined underlying snapshot clears both provider entries. This covers missing URL/secret and exhausted 401/403 authentication. The checked-in auth regression passes; an independent disabled-reader transition probe also passed."
+    },
+    "current_pricing_authoritative": {
+      "status": "pass",
+      "evidence": "The wrapper shallow-copies each current snapshot and changes only absent provider quota fields. An independent partial-response probe preserved a current 0.123 Codex credit value while retaining the other provider quota."
+    },
+    "dependency_instance_isolation": {
+      "status": "pass",
+      "evidence": "createStableUsageLimitReader is evaluated once per defaultGovernessDeps call. An independent probe showed one dependency instance retained its quota through a 503 while a newly created dependency instance did not inherit it."
+    },
+    "source_scope": {
+      "status": "pass",
+      "evidence": "Source changes are limited to governess usage-limit retention and wiring; the only other tracked changes are its regression test and Harness task metadata."
+    },
+    "live_run_50": {
+      "status": "pass",
+      "evidence": "Independent inspection confirmed harvto-loop-50 pane PIDs Claude 27090, Codex 27092, governess 32762, and worker 27542. Three refresh samples at 22:11:45, 22:12:01, and 22:12:18 retained Codex W9 and populated cost/rate ($12.48/$28, $12.48/$27, and $12.72/$28). Governess doctor returned ok with all checks true, a healthy journal, and zero pending, expired, superseded, or dead-letter bridge entries. The implementing-agent record places two direct tracker timeouts immediately before this independent stable-row observation."
+    }
+  },
+  "caveats": [
+    "The evaluator independently recaptured pane identity, three post-timeout row refreshes, and doctor health; the two direct tracker timeout timestamps themselves come from the implementing-agent observation."
+  ]
+}

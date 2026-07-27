@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-usage-display-stability",
+  "status": "created",
+  "bug_id": "governess-transient-usage-display-flicker",
+  "regression_path": "evals/regression/governess-transient-usage-display-flicker.md",
+  "prompt_path": "runs/governess-usage-display-stability/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-27T05:14:24Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "governess-transient-usage-display-flicker"
+    ],
+    "symptom": [
+      "Codex limits alternate between a weekly tracker value and a partial fallback every few refreshes."
+    ],
+    "guard": [
+      "tests/loop/governess-usage-limits.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Codex limits alternate between a weekly tracker value and a partial fallback every few refreshes."
+  ],
+  "test_lines": [
+    "tests/loop/governess-usage-limits.test.ts"
+  ]
+}

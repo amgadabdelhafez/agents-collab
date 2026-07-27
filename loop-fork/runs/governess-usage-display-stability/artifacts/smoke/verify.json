@@ -1,0 +1,16 @@
+{
+  "task_id": "governess-usage-display-stability",
+  "dimension": "smoke",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T05:06:44Z",
+  "ended_at": "2026-07-27T05:06:44Z",
+  "artifact": "runs/governess-usage-display-stability/artifacts/smoke/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "build"
+  ]
+}

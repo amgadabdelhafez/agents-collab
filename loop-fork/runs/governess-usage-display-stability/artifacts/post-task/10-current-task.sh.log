@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active governess-usage-display-stability
+[pass] state/invariants/10-current-task.sh

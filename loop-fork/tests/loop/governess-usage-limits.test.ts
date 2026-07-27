@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyUsageTrackerPricing,
+  createStableUsageLimitReader,
   readUsageTrackerLimits,
 } from "../../src/loop/governess-usage-limits";
 import type { AgentUsage } from "../../src/loop/types";
@@ -288,6 +289,82 @@ test("transient tracker failures retain local pricing without quotas", async () 
       successfulUsage.costRateUsdPerHour
     );
   }
+});
+
+test("stable reader retains fresh per-provider quotas through transient gaps", async () => {
+  const clock = { ms: 1000 };
+  const responses: Array<() => Promise<Response>> = [
+    () =>
+      Promise.resolve(
+        Response.json({
+          claude_quota: { weekly_used_pct: 26 },
+          codex_quota: { weekly_used_pct: 8 },
+          pricing_catalog: {
+            codex_credit_usd_estimate: { value: 0.04 },
+          },
+        })
+      ),
+    () => Promise.reject(new Error("The operation was aborted.")),
+    () =>
+      Promise.resolve(Response.json({ claude_quota: { weekly_used_pct: 27 } })),
+    () => Promise.resolve(new Response("Unavailable", { status: 503 })),
+  ];
+  const read = createStableUsageLimitReader(
+    () => (responses.shift() as () => Promise<Response>)(),
+    () => clock.ms,
+    60_000
+  );
+  const config = {
+    configPath: noConfig,
+    pricingCatalogPath: noConfig,
+    secret: "secret",
+    url: "http://tracker.local",
+  };
+
+  const fresh = await read(config);
+  expect(fresh?.claude?.secondaryPct).toBe(26);
+  expect(fresh?.codex?.secondaryPct).toBe(8);
+
+  clock.ms += 10_000;
+  const transient = await read(config);
+  expect(transient?.claude?.secondaryPct).toBe(26);
+  expect(transient?.codex?.secondaryPct).toBe(8);
+  expect(transient?.pricing).toBeDefined();
+
+  clock.ms += 10_000;
+  const partial = await read(config);
+  expect(partial?.claude?.secondaryPct).toBe(27);
+  expect(partial?.codex?.secondaryPct).toBe(8);
+
+  clock.ms += 60_001;
+  const expired = await read(config);
+  expect(expired?.claude).toBeUndefined();
+  expect(expired?.codex).toBeUndefined();
+  expect(expired?.pricing).toBeDefined();
+});
+
+test("stable reader clears retained quotas after authentication failure", async () => {
+  const responses: Array<() => Promise<Response>> = [
+    () =>
+      Promise.resolve(Response.json({ codex_quota: { weekly_used_pct: 8 } })),
+    () => Promise.resolve(new Response("Unauthorized", { status: 401 })),
+    () => Promise.reject(new Error("The operation was aborted.")),
+  ];
+  const read = createStableUsageLimitReader(() =>
+    (responses.shift() as () => Promise<Response>)()
+  );
+  const config = {
+    configPath: noConfig,
+    pricingCatalogPath: noConfig,
+    secret: "secret",
+    url: "http://tracker.local",
+  };
+
+  expect((await read(config))?.codex?.secondaryPct).toBe(8);
+  expect(await read(config)).toBeUndefined();
+  const afterRejection = await read(config);
+  expect(afterRejection?.codex).toBeUndefined();
+  expect(afterRejection?.pricing).toBeDefined();
 });
 
 test("readUsageTrackerLimits is disabled without any configured secret", async () => {

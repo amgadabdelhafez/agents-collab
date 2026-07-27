@@ -103,7 +103,7 @@ import {
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
   applyUsageTrackerPricing,
-  readUsageTrackerLimits,
+  createStableUsageLimitReader,
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
 import { buildLaunchArgv } from "./launch";
@@ -5561,7 +5561,9 @@ const sendGovernessBridgeMessage = async (
   return result.status as BridgeSendStatus;
 };
 
-export const defaultGovernessDeps = (): GovernessDeps => ({
+export const defaultGovernessDeps = (
+  readUsageLimits = createStableUsageLimitReader()
+): GovernessDeps => ({
   assessRoleBalance: (req) => assessRoleBalance(req),
   assessWaiting: (req) => assessWaiting(req),
   appendLog: (file, record) => {
@@ -5716,7 +5718,7 @@ export const defaultGovernessDeps = (): GovernessDeps => ({
   readUsage: (agent, sessionRef, codexHome) =>
     readAgentUsage(agent, sessionRef, codexHome),
   readUsageLimits: (config) =>
-    readUsageTrackerLimits({
+    readUsageLimits({
       secret: config.usageTrackerSecret,
       timeoutMs: config.usageTrackerTimeoutMs,
       url: config.usageTrackerUrl,

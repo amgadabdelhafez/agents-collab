@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-usage-display-stability",
+  "status": "fail",
+  "required": [
+    "unit",
+    "integration"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/governess-usage-display-stability/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/governess-usage-display-stability/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/governess-usage-display-stability/artifacts/unit/attempt-001.json"
+    },
+    "integration": {
+      "status": "fail",
+      "artifact": "runs/governess-usage-display-stability/artifacts/integration/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/governess-usage-display-stability/artifacts/integration/attempt-001.log",
+      "latest_attempt_meta": "runs/governess-usage-display-stability/artifacts/integration/attempt-001.json"
+    }
+  }
+}

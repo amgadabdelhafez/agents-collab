@@ -56,6 +56,7 @@ export interface UsageTrackerLimitConfig {
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const DEFAULT_TIMEOUT_MS = 1500;
+const DEFAULT_STALE_LIMIT_MS = 60_000;
 const PER_MTOK = 1_000_000;
 const NUMERIC_RE = /^\d+(?:\.\d+)?$/;
 const CONFIG_SECRET_RE =
@@ -640,6 +641,42 @@ export const readUsageTrackerLimits = async (
     return { pricing: pricingSnapshot({}, config) };
   }
   return undefined;
+};
+
+export const createStableUsageLimitReader = (
+  fetchFn: FetchLike = fetch,
+  now: () => number = Date.now,
+  staleMs = DEFAULT_STALE_LIMIT_MS
+): ((
+  config: UsageTrackerLimitConfig
+) => Promise<UsageLimitSnapshot | undefined>) => {
+  const cached: Partial<
+    Record<"claude" | "codex", { atMs: number; limits: AgentUsageLimit }>
+  > = {};
+  return async (config) => {
+    const snapshot = await readUsageTrackerLimits(config, fetchFn);
+    if (!snapshot) {
+      cached.claude = undefined;
+      cached.codex = undefined;
+      return undefined;
+    }
+    const atMs = now();
+    const stable = { ...snapshot };
+    for (const agent of ["claude", "codex"] as const) {
+      const current = snapshot[agent];
+      if (current) {
+        cached[agent] = { atMs, limits: current };
+        continue;
+      }
+      const previous = cached[agent];
+      if (previous && atMs - previous.atMs <= staleMs) {
+        stable[agent] = previous.limits;
+      } else {
+        cached[agent] = undefined;
+      }
+    }
+    return stable;
+  };
 };
 
 const activePricingRate = (

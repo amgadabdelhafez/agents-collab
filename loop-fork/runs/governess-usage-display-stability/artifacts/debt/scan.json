@@ -1,0 +1,7 @@
+{
+  "task_id": "governess-usage-display-stability",
+  "scanned_at": "2026-07-27T05:14:24Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

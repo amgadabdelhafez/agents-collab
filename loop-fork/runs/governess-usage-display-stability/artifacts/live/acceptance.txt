@@ -1,0 +1,38 @@
+Deployment: harvto-loop-50:0.2
+Binary SHA-256: 2cfa6f42ab50cbd28e3a2eceb2546de02ee7b58f0449c07a6dfd0415d401d9e9
+
+Before:
+  claude pane 0 pid 27090
+  codex pane 1 pid 27092
+  governess pane 2 pid 73308
+  worker pane 3 pid 27542
+
+After:
+  claude pane 0 pid 27090
+  codex pane 1 pid 27092
+  governess pane 2 pid 32762
+  worker pane 3 pid 27542
+
+Observation window: 22:10:10 through 22:10:58
+Warm-up: first board used transcript-only S9 fallback.
+Stable window: 24 samples after warm-up retained W9 and populated cost/rate.
+Tracker probes timed out at 22:10:14 and 22:10:34.
+Final row: codex W9 reset 6d15h, $12.48/$28.
+
+Doctor:
+  ok true
+  adapter true
+  epoch true
+  handoff true
+  journal true
+  lease true
+  manifest true
+  replacement true
+  runDir true
+  session true
+  state true
+  transport true
+  journal issues []
+  bridge pending 0
+  bridge expired 0
+  bridge deadLetters 0
