@@ -130,7 +130,7 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.enabled).toBe(false);
   expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
-  expect(config.maxConcurrentJobs).toBe(2);
+  expect(config.maxConcurrentJobs).toBe(4);
   expect(config).not.toHaveProperty("maxSteps");
   expect(config).not.toHaveProperty("maxTokens");
   expect(config).not.toHaveProperty("maxTotalTokens");
@@ -144,11 +144,11 @@ test("worker concurrency is configurable within a bounded range", () => {
   expect(
     resolveUtilityRuntimeConfig({ LOOP_UTILITY_MAX_CONCURRENCY: "0" })
       .maxConcurrentJobs
-  ).toBe(2);
+  ).toBe(4);
   expect(
     resolveUtilityRuntimeConfig({ LOOP_UTILITY_MAX_CONCURRENCY: "9" })
       .maxConcurrentJobs
-  ).toBe(2);
+  ).toBe(4);
 });
 
 test("a mode-0600 key file enables the tier without exporting the secret", () => {
@@ -363,11 +363,11 @@ test("worker routing ignores cost estimates", async () => {
   }
 });
 
-test("the default worker pool runs two jobs and leaves a third pending", async () => {
+test("the default worker pool runs four jobs and leaves a fifth pending", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-pool-"));
   const runDir = join(repoRoot, ".loop", "runs", "pool-run");
   mkdirSync(runDir, { recursive: true });
-  for (const id of ["pool-a", "pool-b", "pool-c"]) {
+  for (const id of ["pool-a", "pool-b", "pool-c", "pool-d", "pool-e"]) {
     appendUtilityRouteRequest(
       runDir,
       createUtilityRouteRequest({
@@ -404,8 +404,8 @@ test("the default worker pool runs two jobs and leaves a third pending", async (
   };
   try {
     await processPendingUtilityRoutes(context, env, deps);
-    expect(spawned).toEqual(["pool-a", "pool-b"]);
-    expect(readUtilityJob(runDir, "pool-c")?.state).toBe("pending-route");
+    expect(spawned).toEqual(["pool-a", "pool-b", "pool-c", "pool-d"]);
+    expect(readUtilityJob(runDir, "pool-e")?.state).toBe("pending-route");
 
     claimUtilityJob(runDir, 19, { jobId: "pool-a", workerPid: process.pid });
     transitionUtilityJob(runDir, "pool-a", "running");
@@ -420,8 +420,14 @@ test("the default worker pool runs two jobs and leaves a third pending", async (
     });
 
     await processPendingUtilityRoutes(context, env, deps);
-    expect(spawned).toEqual(["pool-a", "pool-b", "pool-c"]);
-    expect(readUtilityJob(runDir, "pool-c")?.state).toBe("routed-utility");
+    expect(spawned).toEqual([
+      "pool-a",
+      "pool-b",
+      "pool-c",
+      "pool-d",
+      "pool-e",
+    ]);
+    expect(readUtilityJob(runDir, "pool-e")?.state).toBe("routed-utility");
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

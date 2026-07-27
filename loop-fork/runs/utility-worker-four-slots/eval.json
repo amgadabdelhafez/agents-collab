@@ -1,0 +1,72 @@
+{
+  "task_id": "utility-worker-four-slots",
+  "status": "pass",
+  "required": [
+    "unit",
+    "regression",
+    "build",
+    "static"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/utility-worker-four-slots/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/utility-worker-four-slots/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/utility-worker-four-slots/artifacts/unit/attempt-001.json"
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/utility-worker-four-slots/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/utility-worker-four-slots/artifacts/regression/attempt-002.log",
+      "latest_attempt_meta": "runs/utility-worker-four-slots/artifacts/regression/attempt-002.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/utility-worker-four-slots/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/utility-worker-four-slots/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/utility-worker-four-slots/artifacts/build/attempt-001.json"
+    },
+    "static": {
+      "status": "pass",
+      "artifact": "runs/utility-worker-four-slots/artifacts/static/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/utility-worker-four-slots/artifacts/static/attempt-002.log",
+      "latest_attempt_meta": "runs/utility-worker-four-slots/artifacts/static/attempt-002.json"
+    }
+  },
+  "supplemental_evidence": {
+    "full_suite": {
+      "status": "known_baseline_failures",
+      "artifact": "runs/utility-worker-four-slots/artifacts/regression/attempt-001.log",
+      "passed": 890,
+      "failed": 4,
+      "details": "The four failures are existing Codex launch and configuration expectation mismatches outside the utility runtime and store surfaces."
+    },
+    "live_runtime": {
+      "status": "pass",
+      "artifact": "runs/utility-worker-four-slots/artifacts/live-runtime/acceptance.md",
+      "details": "Four simultaneous workers observed with Claude, Codex, subagent, and worker display panes preserved."
+    },
+    "installed_binary": {
+      "status": "pass",
+      "sha256": "91f1a7a09484e6dee0c5d443dccf21b45b702686be88d80ac4198542f9b95a9a",
+      "details": "Canonical binary and global launcher match; installed help reports default 4."
+    },
+    "independent_review": {
+      "status": "pass",
+      "artifact": "runs/utility-worker-four-slots/artifacts/independent-review/verdict.md",
+      "details": "Independent re-evaluation found no actionable issues."
+    }
+  }
+}
