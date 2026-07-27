@@ -1,0 +1,26 @@
+{
+  "task_id": "automatic-worker-tool-widening",
+  "status": "pending",
+  "required": [
+    "unit",
+    "independent-review",
+    "live-runtime"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/automatic-worker-tool-widening/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-002.json"
+    },
+    "independent-review": {
+      "status": "pending"
+    },
+    "live-runtime": {
+      "status": "pending"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "automatic-worker-tool-widening",
+  "mode": "planned",
+  "created_at": "2026-07-27T06:33:02Z",
+  "status": "active",
+  "description": "Safely auto-route focused tests and broader bounded repository inspection to GLM-5.2",
+  "estimated_loc": 500,
+  "research_required": true,
+  "research_reason": "estimate-loc>=500",
+  "research_path": "runs/automatic-worker-tool-widening/research.md"
+}

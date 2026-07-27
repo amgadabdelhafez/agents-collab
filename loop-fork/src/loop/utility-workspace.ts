@@ -138,6 +138,23 @@ export const resolveVerifiedUtilityWorkspaceRoot = (
   return targetIdentity.root;
 };
 
+const relativeWorkspaceResolution = (
+  request: UtilityRouteRequest,
+  root: string
+): UtilityWorkspaceResolution => ({
+  request,
+  workspace: {
+    ...(request.executionCwd ? { executionCwd: request.executionCwd } : {}),
+    ...(request.executionOutput
+      ? { executionOutput: request.executionOutput }
+      : {}),
+    ...(request.executionRead ? { executionRead: request.executionRead } : {}),
+    readScope: request.readScope,
+    root,
+    writeScope: request.writeScope,
+  },
+});
+
 export const resolveUtilityRequestWorkspace = (
   request: UtilityRouteRequest,
   runRoot: string
@@ -148,16 +165,14 @@ export const resolveUtilityRequestWorkspace = (
   } catch {
     return mismatch("run workspace root is unavailable");
   }
-  const scopes = [...request.readScope, ...request.writeScope];
+  const scopes = [
+    ...request.readScope,
+    ...request.writeScope,
+    ...(request.executionCwd ? [request.executionCwd] : []),
+    ...(request.executionRead ? [request.executionRead.path] : []),
+  ];
   if (scopes.every((scope) => !isAbsolute(scope))) {
-    return {
-      request,
-      workspace: {
-        readScope: request.readScope,
-        root: canonicalRunRoot,
-        writeScope: request.writeScope,
-      },
-    };
+    return relativeWorkspaceResolution(request, canonicalRunRoot);
   }
 
   const runIdentity = gitWorkspaceIdentity(canonicalRunRoot);
@@ -204,18 +219,57 @@ export const resolveUtilityRequestWorkspace = (
 
   const readScope = normalizeScopes(request.readScope);
   const writeScope = normalizeScopes(request.writeScope);
-  if (!(readScope && writeScope && selectedRoot)) {
+  const executionCwd = request.executionCwd
+    ? normalizeScopes([request.executionCwd])?.[0]
+    : undefined;
+  const executionReadPath = request.executionRead
+    ? normalizeScopes([request.executionRead.path])?.[0]
+    : undefined;
+  if (
+    !(
+      readScope &&
+      writeScope &&
+      selectedRoot &&
+      (request.executionCwd === undefined || executionCwd) &&
+      (request.executionRead === undefined || executionReadPath)
+    )
+  ) {
     return mismatch(
       "scopes do not resolve to one verified worktree of the run repository"
     );
   }
   const workspace = {
+    ...(executionCwd ? { executionCwd } : {}),
+    ...(request.executionOutput
+      ? { executionOutput: request.executionOutput }
+      : {}),
+    ...(request.executionRead && executionReadPath
+      ? {
+          executionRead: {
+            ...request.executionRead,
+            path: executionReadPath,
+          },
+        }
+      : {}),
     readScope,
     root: selectedRoot,
     writeScope,
   };
   return {
-    request: { ...request, readScope, writeScope },
+    request: {
+      ...request,
+      ...(executionCwd ? { executionCwd } : {}),
+      ...(request.executionRead && executionReadPath
+        ? {
+            executionRead: {
+              ...request.executionRead,
+              path: executionReadPath,
+            },
+          }
+        : {}),
+      readScope,
+      writeScope,
+    },
     workspace,
   };
 };

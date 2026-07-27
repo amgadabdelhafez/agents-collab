@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type Dirent } from "node:fs";
 import {
   access,
   lstat,
@@ -32,6 +32,7 @@ import type {
 export type UtilityToolName =
   | "search_repo"
   | "read_file"
+  | "list_files"
   | "git_status"
   | "git_diff"
   | "git_inspect"
@@ -89,6 +90,7 @@ export interface UtilityCommandPolicy {
 export interface UtilityToolLimits {
   maxCommandArgs: number;
   maxFileBytes: number;
+  maxListEntries: number;
   maxOutputBytes: number;
   maxPatchBytes: number;
   maxSearchFiles: number;
@@ -96,11 +98,28 @@ export interface UtilityToolLimits {
   timeoutMs: number;
 }
 
+export interface UtilityExactRead {
+  endLine?: number;
+  lastLines?: number;
+  path: string;
+  startLine?: number;
+}
+
+export interface UtilityOutputBoundary {
+  lineLimit?: number;
+  position?: "head" | "tail";
+  stderr?: "merge" | "omit";
+}
+
 export interface UtilityToolBrokerConfig {
   allowedTools?: readonly UtilityToolName[];
   artifactDir: string;
   commandAllowlist?: readonly UtilityCommandPolicy[];
+  commandCwds?: readonly string[];
+  exactCommand?: readonly string[];
+  exactRead?: UtilityExactRead | null;
   limits?: Partial<UtilityToolLimits>;
+  outputBoundary?: UtilityOutputBoundary;
   protectedPaths?: readonly string[];
   readScopes: readonly string[];
   repoRoot: string;
@@ -165,6 +184,7 @@ export interface GuardedPatchApplyResult {
 const DEFAULT_LIMITS: UtilityToolLimits = {
   maxCommandArgs: 24,
   maxFileBytes: 1024 * 1024,
+  maxListEntries: 500,
   maxOutputBytes: 64 * 1024,
   maxPatchBytes: 256 * 1024,
   maxSearchFiles: 500,
@@ -276,8 +296,24 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
       parameters: objectSchema(
         {
           endLine: { minimum: 1, type: "integer" },
+          lastLines: { maximum: 500, minimum: 1, type: "integer" },
           path: { minLength: 1, type: "string" },
           startLine: { minimum: 1, type: "integer" },
+        },
+        ["path"]
+      ),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_files",
+      description:
+        "List one declared repository directory without recursion or symlink traversal.",
+      parameters: objectSchema(
+        {
+          includeHidden: { type: "boolean" },
+          path: { minLength: 1, type: "string" },
         },
         ["path"]
       ),
@@ -377,6 +413,147 @@ class ToolPolicyError extends Error {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const outputBoundaryIsValid = (value: UtilityOutputBoundary): boolean => {
+  const keys = Object.keys(value);
+  if (keys.some((key) => !["lineLimit", "position", "stderr"].includes(key))) {
+    return false;
+  }
+  const hasFilter =
+    value.lineLimit !== undefined || value.position !== undefined;
+  const validFilter =
+    Number.isSafeInteger(value.lineLimit) &&
+    (value.lineLimit as number) > 0 &&
+    (value.lineLimit as number) <= 500 &&
+    (value.position === "head" || value.position === "tail");
+  return (
+    (!hasFilter || validFilter) &&
+    (value.stderr === undefined ||
+      value.stderr === "merge" ||
+      value.stderr === "omit") &&
+    (hasFilter || value.stderr !== undefined)
+  );
+};
+
+const sliceBoundedValues = <T>(
+  values: readonly T[],
+  boundary: UtilityOutputBoundary
+): T[] => {
+  if (!(boundary.lineLimit && boundary.position)) {
+    return [...values];
+  }
+  return boundary.position === "head"
+    ? values.slice(0, boundary.lineLimit)
+    : values.slice(-boundary.lineLimit);
+};
+
+const sliceBoundedText = (
+  value: string,
+  boundary: UtilityOutputBoundary
+): { lineCount: number; text: string } => {
+  if (!(boundary.lineLimit && boundary.position)) {
+    return {
+      lineCount: value.length === 0 ? 0 : value.split(LINE_BREAK).length,
+      text: value,
+    };
+  }
+  const lines = value.length === 0 ? [] : value.split(LINE_BREAK);
+  const trailingNewline = lines.at(-1) === "";
+  if (trailingNewline) {
+    lines.pop();
+  }
+  const selected = sliceBoundedValues(lines, boundary);
+  return {
+    lineCount: selected.length,
+    text: `${selected.join("\n")}${trailingNewline && selected.length > 0 ? "\n" : ""}`,
+  };
+};
+
+type UtilityDispatchResult = Omit<
+  UtilityToolResult,
+  "durationMs" | "ok" | "tool"
+>;
+
+const boundCommandOutput = (
+  result: UtilityDispatchResult,
+  boundary: UtilityOutputBoundary
+): UtilityDispatchResult => {
+  if (typeof result.stdout !== "string") {
+    return result;
+  }
+  const bounded = { ...result };
+  if (boundary.stderr === "merge") {
+    const separator =
+      bounded.stdout && bounded.stderr && !bounded.stdout.endsWith("\n")
+        ? "\n"
+        : "";
+    bounded.stdout = sliceBoundedText(
+      `${bounded.stdout}${separator}${bounded.stderr ?? ""}`,
+      boundary
+    ).text;
+    bounded.stderr = "";
+    return bounded;
+  }
+  bounded.stdout = sliceBoundedText(bounded.stdout, boundary).text;
+  if (boundary.stderr === "omit") {
+    bounded.stderr = "";
+  }
+  return bounded;
+};
+
+const boundStructuredOutput = (
+  data: unknown,
+  boundary: UtilityOutputBoundary
+): unknown => {
+  if (Array.isArray(data)) {
+    return sliceBoundedValues(data, boundary);
+  }
+  if (!isRecord(data)) {
+    return data;
+  }
+  const bounded = { ...data };
+  if (Array.isArray(bounded.entries)) {
+    const originalEntries = bounded.entries;
+    const entries = sliceBoundedValues(originalEntries, boundary);
+    bounded.entries = entries;
+    bounded.truncated =
+      bounded.truncated === true || entries.length < originalEntries.length;
+  }
+  if (
+    typeof bounded.content !== "string" ||
+    typeof bounded.startLine !== "number" ||
+    typeof bounded.endLine !== "number"
+  ) {
+    return bounded;
+  }
+  const sliced = sliceBoundedText(bounded.content, boundary);
+  bounded.content = sliced.text;
+  if (boundary.position === "tail") {
+    bounded.startLine = Math.max(
+      bounded.startLine,
+      bounded.endLine - sliced.lineCount + 1
+    );
+  } else {
+    bounded.endLine = Math.min(
+      bounded.endLine,
+      bounded.startLine + sliced.lineCount - 1
+    );
+  }
+  return bounded;
+};
+
+const applyOutputBoundary = (
+  result: UtilityDispatchResult,
+  boundary: UtilityOutputBoundary | undefined
+): UtilityDispatchResult => {
+  if (!boundary) {
+    return result;
+  }
+  const bounded = boundCommandOutput(result, boundary);
+  return bounded.data === undefined
+    ? bounded
+    : { ...bounded, data: boundStructuredOutput(bounded.data, boundary) };
+};
 
 const requireRecord = (value: unknown): Record<string, unknown> => {
   if (!isRecord(value)) {
@@ -701,6 +878,16 @@ const inScope = (candidate: string, scope: string): boolean =>
 const hash = (value: string | Uint8Array): string =>
   createHash("sha256").update(value).digest("hex");
 
+const directoryEntryType = (entry: Dirent): string => {
+  if (entry.isDirectory()) {
+    return "directory";
+  }
+  if (entry.isFile()) {
+    return "file";
+  }
+  return entry.isSymbolicLink() ? "symlink" : "other";
+};
+
 export const scrubUtilityEnvironment = (
   source: Readonly<Record<string, string | undefined>>
 ): Record<string, string> => {
@@ -787,9 +974,14 @@ export class UtilityToolBroker {
   private readonly allowedTools: ReadonlySet<UtilityToolName>;
   private readonly artifactDir: string;
   private readonly commandAllowlist: readonly UtilityCommandPolicy[];
+  private readonly commandCwds: readonly string[];
+  private readonly commandCwdsAreExact: boolean;
+  private readonly exactCommand?: readonly string[];
+  private readonly exactRead?: UtilityExactRead | null;
   private readonly id: () => string;
   private readonly limits: UtilityToolLimits;
   private readonly now: () => number;
+  private readonly outputBoundary?: UtilityOutputBoundary;
   private readonly protectedPaths: readonly string[];
   private readonly readScopes: readonly string[];
   private readonly repoRoot: string;
@@ -821,6 +1013,24 @@ export class UtilityToolBroker {
     ].map(normalizeRequestedPath);
     this.commandAllowlist =
       config.commandAllowlist ?? DEFAULT_COMMAND_ALLOWLIST;
+    this.commandCwds = (config.commandCwds ?? config.readScopes).map(
+      normalizeRequestedPath
+    );
+    this.commandCwdsAreExact = config.commandCwds !== undefined;
+    this.exactCommand = config.exactCommand
+      ? [...config.exactCommand]
+      : undefined;
+    if (config.exactRead === null) {
+      this.exactRead = null;
+    } else if (config.exactRead) {
+      this.exactRead = {
+        ...config.exactRead,
+        path: normalizeRequestedPath(config.exactRead.path),
+      };
+    }
+    this.outputBoundary = config.outputBoundary
+      ? { ...config.outputBoundary }
+      : undefined;
     this.limits = { ...DEFAULT_LIMITS, ...config.limits };
     this.runCommand = deps.runCommand ?? runUtilityCommand;
     this.sourceEnv = deps.sourceEnv ?? process.env;
@@ -848,7 +1058,10 @@ export class UtilityToolBroker {
   async execute(call: UtilityToolCall): Promise<UtilityToolResult> {
     const startedAt = this.now();
     try {
-      const data = await this.dispatch(call);
+      const data = applyOutputBoundary(
+        await this.dispatch(call),
+        this.outputBoundary
+      );
       return {
         ...data,
         durationMs: Math.max(0, this.now() - startedAt),
@@ -1164,6 +1377,12 @@ export class UtilityToolBroker {
         "At least one read scope is required"
       );
     }
+    if (this.outputBoundary && !outputBoundaryIsValid(this.outputBoundary)) {
+      throw new ToolPolicyError(
+        "invalid_policy",
+        "Output boundary is malformed or exceeds 500 lines"
+      );
+    }
     if (!isContained(this.repoRoot, this.artifactDir)) {
       throw new ToolPolicyError(
         "invalid_policy",
@@ -1171,13 +1390,47 @@ export class UtilityToolBroker {
       );
     }
     await this.assertRealContainment(dirname(this.artifactDir));
-    for (const scope of [...this.readScopes, ...this.writeScopes]) {
+    for (const scope of [
+      ...this.readScopes,
+      ...this.writeScopes,
+      ...this.commandCwds,
+    ]) {
       if (this.isProtected(scope)) {
         throw new ToolPolicyError(
           "invalid_policy",
           `Declared scope is protected: ${scope}`
         );
       }
+    }
+    if (this.exactRead && !this.readScopes.includes(this.exactRead.path)) {
+      throw new ToolPolicyError(
+        "invalid_policy",
+        "Exact read path must be one of the declared read scopes"
+      );
+    }
+  }
+
+  private assertExactRead(args: Record<string, unknown>): void {
+    if (this.exactRead === undefined) {
+      return;
+    }
+    if (this.exactRead === null) {
+      throw new ToolPolicyError(
+        "command_denied",
+        "This file-read profile has no valid exact read boundary"
+      );
+    }
+    const expected = this.exactRead as Record<string, unknown>;
+    const expectedKeys = Object.keys(expected).sort();
+    const actualKeys = Object.keys(args).sort();
+    if (
+      JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys) ||
+      expectedKeys.some((key) => args[key] !== expected[key])
+    ) {
+      throw new ToolPolicyError(
+        "command_denied",
+        "Read arguments do not match the exact classified range"
+      );
     }
   }
 
@@ -1195,6 +1448,8 @@ export class UtilityToolBroker {
         return { data: await this.searchRepo(requireRecord(call.arguments)) };
       case "read_file":
         return { data: await this.readFileTool(requireRecord(call.arguments)) };
+      case "list_files":
+        return { data: await this.listFiles(requireRecord(call.arguments)) };
       case "git_status":
         return this.gitStatus(requireRecord(call.arguments));
       case "git_diff":
@@ -1315,6 +1570,45 @@ export class UtilityToolBroker {
     return { absolute: canonical, relative: canonicalRelative };
   }
 
+  private async resolveCommandCwd(
+    requested: string
+  ): Promise<{ absolute: string; relative: string }> {
+    const lexical = normalizeRequestedPath(requested);
+    const cwdIsDeclared = this.commandCwdsAreExact
+      ? this.commandCwds.includes(lexical)
+      : this.commandCwds.some((scope) => inScope(lexical, scope));
+    if (this.isProtected(lexical) || !cwdIsDeclared) {
+      throw new ToolPolicyError(
+        "scope_denied",
+        `Command cwd is outside its exact declared scope: ${requested}`
+      );
+    }
+    const absolute = resolve(this.repoRoot, lexical);
+    const canonical = await realpath(absolute).catch(() => {
+      throw new ToolPolicyError(
+        "not_found",
+        `Command cwd does not exist: ${requested}`
+      );
+    });
+    if (!isContained(this.repoRoot, canonical)) {
+      throw new ToolPolicyError(
+        "path_denied",
+        `Command cwd resolves outside repository: ${requested}`
+      );
+    }
+    const canonicalRelative = relativePath(this.repoRoot, canonical);
+    const canonicalIsDeclared = this.commandCwdsAreExact
+      ? this.commandCwds.includes(canonicalRelative)
+      : this.commandCwds.some((scope) => inScope(canonicalRelative, scope));
+    if (!canonicalIsDeclared) {
+      throw new ToolPolicyError(
+        "scope_denied",
+        `Command cwd resolves outside its exact declared scope: ${requested}`
+      );
+    }
+    return { absolute: canonical, relative: canonicalRelative };
+  }
+
   private async searchRepo(
     args: Record<string, unknown>
   ): Promise<SearchMatch[]> {
@@ -1418,6 +1712,12 @@ export class UtilityToolBroker {
     path: string;
     startLine: number;
   }> {
+    this.assertExactRead(args);
+    exactArgumentKeys(
+      args,
+      new Set(["endLine", "lastLines", "path", "startLine"]),
+      "read_file arguments"
+    );
     const target = await this.resolvePath(
       requireString(args, "path"),
       "read",
@@ -1440,10 +1740,40 @@ export class UtilityToolBroker {
     if (content.includes("\0")) {
       throw new ToolPolicyError("path_denied", "Binary files cannot be read");
     }
-    const lines = content.split(LINE_BREAK);
-    const startLine = optionalPositiveInteger(args, "startLine") ?? 1;
+    const lines = content.length === 0 ? [] : content.split(LINE_BREAK);
+    if (lines.at(-1) === "") {
+      lines.pop();
+    }
+    const lastLines = optionalPositiveInteger(args, "lastLines");
+    if (
+      lastLines !== undefined &&
+      (args.startLine !== undefined || args.endLine !== undefined)
+    ) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "lastLines cannot be combined with startLine or endLine"
+      );
+    }
+    if (lastLines !== undefined && lastLines > 500) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "lastLines exceeds the bounded read limit"
+      );
+    }
+    const startLine =
+      lastLines === undefined
+        ? (optionalPositiveInteger(args, "startLine") ?? 1)
+        : Math.max(1, lines.length - lastLines + 1);
     const requestedEnd =
-      optionalPositiveInteger(args, "endLine") ?? lines.length;
+      lastLines === undefined
+        ? (optionalPositiveInteger(args, "endLine") ?? lines.length)
+        : lines.length;
+    if (lastLines === undefined && requestedEnd - startLine + 1 > 500) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "Requested file range exceeds the bounded read limit"
+      );
+    }
     const endLine = Math.min(requestedEnd, lines.length);
     if (startLine > endLine && lines.length > 0) {
       throw new ToolPolicyError(
@@ -1459,6 +1789,90 @@ export class UtilityToolBroker {
       );
     }
     return { content: selected, endLine, path: target.relative, startLine };
+  }
+
+  private async listFiles(args: Record<string, unknown>): Promise<{
+    entries: { name: string; path: string; type: string }[];
+    path: string;
+    truncated: boolean;
+  }> {
+    exactArgumentKeys(
+      args,
+      new Set(["includeHidden", "path"]),
+      "list_files arguments"
+    );
+    const requested = requireString(args, "path");
+    const lexical = normalizeRequestedPath(requested);
+    this.assertScope(lexical, "read");
+    const lexicalStat = await lstat(resolve(this.repoRoot, lexical)).catch(
+      () => undefined
+    );
+    if (lexicalStat?.isSymbolicLink()) {
+      throw new ToolPolicyError(
+        "path_denied",
+        "Directory listings cannot follow symbolic links"
+      );
+    }
+    const target = await this.resolvePath(requested, "read", true);
+    if (!this.readScopes.includes(target.relative)) {
+      throw new ToolPolicyError(
+        "scope_denied",
+        `Directory listing is outside its exact declared scope: ${requested}`
+      );
+    }
+    const stat = await lstat(target.absolute);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new ToolPolicyError(
+        "path_denied",
+        "Only directories can be listed"
+      );
+    }
+    const includeHidden = optionalBoolean(args, "includeHidden") ?? false;
+    const candidates = (await readdir(target.absolute, { withFileTypes: true }))
+      .filter((entry) => includeHidden || !entry.name.startsWith("."))
+      .map((entry) => {
+        const path = `${target.relative === "." ? "" : `${target.relative}/`}${entry.name}`;
+        return {
+          entry: {
+            name: entry.name,
+            path,
+            type: directoryEntryType(entry),
+          },
+          protected: this.isProtected(path),
+        };
+      })
+      .filter((candidate) => !candidate.protected)
+      .map((candidate) => candidate.entry)
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const entries: { name: string; path: string; type: string }[] = [];
+    let truncated = candidates.length > this.limits.maxListEntries;
+    for (const entry of candidates.slice(0, this.limits.maxListEntries)) {
+      const next = [...entries, entry];
+      const prospective = {
+        entries: next,
+        path: target.relative,
+        truncated: next.length < candidates.length,
+      };
+      if (
+        Buffer.byteLength(JSON.stringify(prospective)) >
+        this.limits.maxOutputBytes
+      ) {
+        truncated = true;
+        break;
+      }
+      entries.push(entry);
+    }
+    if (entries.length < candidates.length) {
+      truncated = true;
+    }
+    const data = { entries, path: target.relative, truncated };
+    if (Buffer.byteLength(JSON.stringify(data)) > this.limits.maxOutputBytes) {
+      throw new ToolPolicyError(
+        "output_limit",
+        "Directory listing metadata exceeds output limit"
+      );
+    }
+    return data;
   }
 
   private gitExclusions(): string[] {
@@ -1719,6 +2133,39 @@ export class UtilityToolBroker {
     );
   }
 
+  private assertExactCommand(argv: readonly string[]): void {
+    if (!this.exactCommand) {
+      return;
+    }
+    const matches =
+      argv.length === this.exactCommand.length &&
+      argv.every((argument, index) => argument === this.exactCommand?.[index]);
+    if (!matches) {
+      throw new ToolPolicyError(
+        "command_denied",
+        "Command does not match the exact classified argv"
+      );
+    }
+  }
+
+  private async resolveCheckTarget(path: string, cwd: string): Promise<string> {
+    const target = await this.resolvePath(path, "read", true);
+    const stat = await lstat(target.absolute);
+    if (!stat.isFile()) {
+      throw new ToolPolicyError(
+        "path_denied",
+        `Check target must be a file: ${path}`
+      );
+    }
+    if (stat.size > this.limits.maxFileBytes) {
+      throw new ToolPolicyError(
+        "output_limit",
+        `Check target exceeds the configured file limit: ${path}`
+      );
+    }
+    return relativePath(cwd, target.absolute);
+  }
+
   private async runCheck(
     args: Record<string, unknown>
   ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
@@ -1729,10 +2176,12 @@ export class UtilityToolBroker {
         "argv must be a string array"
       );
     }
+    this.assertExactCommand(argv);
     const { pathArgsStart, policy } = this.assertCommandAllowed(argv);
     const requestedPaths = argv.slice(pathArgsStart);
     if (
       requestedPaths.length === 0 ||
+      requestedPaths.length > 4 ||
       requestedPaths.some((value) => value.startsWith("-"))
     ) {
       throw new ToolPolicyError(
@@ -1741,7 +2190,7 @@ export class UtilityToolBroker {
       );
     }
     const cwdRequest = optionalString(args, "cwd") ?? ".";
-    const cwd = await this.resolvePath(cwdRequest, "read", true);
+    const cwd = await this.resolveCommandCwd(cwdRequest);
     const cwdStat = await lstat(cwd.absolute);
     if (!cwdStat.isDirectory()) {
       throw new ToolPolicyError(
@@ -1786,15 +2235,7 @@ export class UtilityToolBroker {
       });
     }
     for (const path of requestedPaths) {
-      const target = await this.resolvePath(path, "read", true);
-      const stat = await lstat(target.absolute);
-      if (!stat.isFile()) {
-        throw new ToolPolicyError(
-          "path_denied",
-          `Check target must be a file: ${path}`
-        );
-      }
-      safeArgv.push(relativePath(cwd.absolute, target.absolute));
+      safeArgv.push(await this.resolveCheckTarget(path, cwd.absolute));
     }
     const result = await this.runBounded(
       safeArgv,

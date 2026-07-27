@@ -70,10 +70,24 @@ const workspaceFixture = (): {
   return { base, linkedA, linkedB, root, unrelated };
 };
 
-const requestFor = (id: string, readScope: string[]) =>
+const requestFor = (
+  id: string,
+  readScope: string[],
+  executionCwd?: string,
+  executionRead?: {
+    endLine?: number;
+    lastLines?: number;
+    path: string;
+    startLine?: number;
+  }
+) =>
   createUtilityRouteRequest({
     acceptanceCriteria: ["report the file contents"],
     authority: {},
+    ...(executionCwd ? { executionCwd } : {}),
+    ...(executionRead
+      ? { executionProfile: "file-read" as const, executionRead }
+      : {}),
     id,
     idempotencyKey: id,
     kind: "inspect",
@@ -113,6 +127,64 @@ test("linked worktree scopes resolve to one root-relative verified workspace", (
         readScope: ["src/sample.ts"],
         root: realpathSync(fixture.linkedA),
         writeScope: [],
+      },
+    });
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("linked focused-check cwd resolves with the same verified workspace", () => {
+  const fixture = workspaceFixture();
+  try {
+    const resolution = resolveUtilityRequestWorkspace(
+      requestFor(
+        "linked-cwd",
+        [join(fixture.linkedA, "src", "sample.ts")],
+        join(fixture.linkedA, "src")
+      ),
+      fixture.base
+    );
+    expect(resolution).toMatchObject({
+      request: { executionCwd: "src", readScope: ["src/sample.ts"] },
+      workspace: {
+        executionCwd: "src",
+        readScope: ["src/sample.ts"],
+        root: realpathSync(fixture.linkedA),
+      },
+    });
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("linked exact read range resolves with the same verified workspace", () => {
+  const fixture = workspaceFixture();
+  const file = join(fixture.linkedA, "src", "sample.ts");
+  try {
+    const resolution = resolveUtilityRequestWorkspace(
+      requestFor("linked-read", [file], undefined, {
+        endLine: 20,
+        path: file,
+        startLine: 1,
+      }),
+      fixture.base
+    );
+    expect(resolution).toMatchObject({
+      request: {
+        executionRead: {
+          endLine: 20,
+          path: "src/sample.ts",
+          startLine: 1,
+        },
+      },
+      workspace: {
+        executionRead: {
+          endLine: 20,
+          path: "src/sample.ts",
+          startLine: 1,
+        },
+        root: realpathSync(fixture.linkedA),
       },
     });
   } finally {
@@ -181,7 +253,10 @@ test("a copied linked-worktree gitdir pointer cannot spoof registration", () => 
   const fake = join(fixture.root, "fake-worktree");
   try {
     mkdirSync(join(fake, "src"), { recursive: true });
-    writeFileSync(join(fake, ".git"), readFileSync(join(fixture.linkedA, ".git")));
+    writeFileSync(
+      join(fake, ".git"),
+      readFileSync(join(fixture.linkedA, ".git"))
+    );
     writeFileSync(join(fake, "src", "sample.ts"), "spoofed checkout\n");
     expect(
       resolveUtilityRequestWorkspace(
@@ -375,12 +450,12 @@ test("routing persists the adopted root and the worker reads the linked checkout
       },
       { spawnWorker: () => true }
     );
-    expect(readUtilityJob(runDir, request.id)?.decision?.workspace).toMatchObject(
-      {
-        readScope: ["src/sample.ts"],
-        root: realpathSync(fixture.linkedA),
-      }
-    );
+    expect(
+      readUtilityJob(runDir, request.id)?.decision?.workspace
+    ).toMatchObject({
+      readScope: ["src/sample.ts"],
+      root: realpathSync(fixture.linkedA),
+    });
     await runUtilityWorker(runDir, 47, request.id, {
       LOOP_UTILITY_ENABLED: "1",
       LOOP_UTILITY_MODEL: "local-test",
@@ -481,9 +556,9 @@ test("guarded apply reuses the verified linked-worktree boundary", async () => {
       proposal.artifact.sha256,
       "codex"
     );
-    expect(readFileSync(join(fixture.linkedA, "src", "sample.ts"), "utf8")).toBe(
-      "updated linked checkout\n"
-    );
+    expect(
+      readFileSync(join(fixture.linkedA, "src", "sample.ts"), "utf8")
+    ).toBe("updated linked checkout\n");
     expect(readFileSync(join(fixture.base, "src", "sample.ts"), "utf8")).toBe(
       "base checkout\n"
     );

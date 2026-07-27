@@ -26,6 +26,7 @@ import {
   renderUtilityPane,
   resolveUtilityRuntimeConfig,
   runUtilityWorker,
+  utilityBrokerBoundary,
   utilityToolsForExecutionProfile,
 } from "../../src/loop/utility-runtime";
 import {
@@ -160,10 +161,49 @@ test("auto execution profiles expose only satisfiable broker tools", () => {
   expect(utilityToolsForExecutionProfile("git-inspect")).toEqual([
     "git_inspect",
   ]);
+  expect(utilityToolsForExecutionProfile("focused-check")).toEqual([
+    "run_check",
+  ]);
+  expect(utilityToolsForExecutionProfile("file-list")).toEqual(["list_files"]);
   expect(utilityToolsForExecutionProfile(undefined)).toBeUndefined();
   expect(utilityToolsForExecutionProfile("future-profile")).toEqual([]);
   expect(utilityToolsForExecutionProfile("__proto__")).toEqual([]);
   expect(utilityToolsForExecutionProfile(null)).toEqual([]);
+});
+
+test("file-read runtime carries an exact broker range and fails closed without one", () => {
+  const exactRequest = createUtilityRouteRequest({
+    acceptanceCriteria: ["return the exact slice"],
+    authority: {},
+    executionOutput: { lineLimit: 5, position: "tail" },
+    executionProfile: "file-read",
+    executionRead: { endLine: 20, path: "src/example.ts", startLine: 1 },
+    kind: "inspect",
+    objective: "Inspect an exact source slice",
+    readScope: ["src/example.ts"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  expect(
+    utilityBrokerBoundary(exactRequest, exactRequest.readScope, [])
+  ).toEqual({
+    exactRead: { endLine: 20, path: "src/example.ts", startLine: 1 },
+    outputBoundary: { lineLimit: 5, position: "tail" },
+    readScopes: ["src/example.ts"],
+  });
+  expect(
+    utilityBrokerBoundary(
+      { ...exactRequest, executionRead: undefined },
+      exactRequest.readScope,
+      []
+    )
+  ).toEqual({
+    exactRead: null,
+    outputBoundary: { lineLimit: 5, position: "tail" },
+    readScopes: ["src/example.ts"],
+  });
 });
 
 test("a mode-0600 key file enables the tier without exporting the secret", () => {
@@ -1540,10 +1580,13 @@ test("a failing focused check cannot satisfy command completion evidence", async
   const request = createUtilityRouteRequest({
     acceptanceCriteria: ["focused check passes"],
     authority: {},
+    executionArgv: ["bun", "test", "tests/fail.test.ts"],
+    executionCwd: "tests",
+    executionProfile: "focused-check",
     id: "failing-check-job",
     kind: "command",
     objective: "Run the focused check",
-    readScope: ["tests"],
+    readScope: ["tests", "tests/fail.test.ts"],
     requester: "claude",
     requiredCapabilities: ["focused-verify"],
     risk: "low",

@@ -1,0 +1,20 @@
+{
+  "task_id": "automatic-worker-tool-widening",
+  "status": "pending",
+  "checks": {
+    "focused_tests": { "passed": 320, "failed": 0 },
+    "full_suite": {
+      "passed": 983,
+      "failed": 4,
+      "baseline_failed": 4
+    },
+    "build": { "passed": true },
+    "diff_check": { "passed": true },
+    "independent_review": {
+      "passed": true,
+      "signed_off_by": "evaluate_governess_usage_refresh"
+    },
+    "live_runtime": { "passed": false }
+  },
+  "verdict": "pending"
+}

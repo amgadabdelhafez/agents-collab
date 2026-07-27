@@ -1,0 +1,29 @@
+{
+  "task_id": "automatic-worker-tool-widening",
+  "status": "pending",
+  "required": [
+    "unit",
+    "independent-review",
+    "live-runtime"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/automatic-worker-tool-widening/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-003.log",
+      "latest_attempt_meta": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-003.json"
+    },
+    "independent-review": {
+      "status": "pass",
+      "reason": "Independent adversarial review found no remaining blockers; 320 focused pass, 983 plus four reproduced baseline failures, build/diff/static parity pass",
+      "method": "independent subagent boundary review",
+      "signed_off_by": "evaluate_governess_usage_refresh"
+    },
+    "live-runtime": {
+      "status": "pending"
+    }
+  }
+}

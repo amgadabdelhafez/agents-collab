@@ -10,7 +10,10 @@ import {
   resolveUtilityDelegationMode,
 } from "../delegation-policy";
 import { readRunManifest } from "../run-state";
-import { createUtilityRouteRequest } from "../task-router";
+import {
+  createUtilityRouteRequest,
+  type UtilityRouteRequestInput,
+} from "../task-router";
 import type { Agent, HookEvent } from "../types";
 import {
   buildUtilityWorkerEnvironment,
@@ -190,10 +193,7 @@ interface HookEmitDeps {
   env?: NodeJS.ProcessEnv;
   now?: () => string;
   readManifest?: (path: string) => { cwd: string } | undefined;
-  resolveWorkspaceRoot?: (
-    runRoot: string,
-    path: string
-  ) => string | undefined;
+  resolveWorkspaceRoot?: (runRoot: string, path: string) => string | undefined;
   stdin?: AsyncIterable<Uint8Array>;
   writeStdout?: (text: string) => void;
 }
@@ -206,6 +206,33 @@ const preToolDelegationOutput = (taskId: string): string =>
       permissionDecisionReason: `This bounded mechanical operation was delegated automatically to the lower agent as task ${taskId}. Do not retry the native tool. Use task_status, then get_task_result when complete; if governess returns it to the driver, continue directly from that route result.`,
     },
   });
+
+const rootDelegationRequest = (
+  request: UtilityRouteRequestInput,
+  workspaceRoot: string,
+  adoptedWorkspace: boolean
+): UtilityRouteRequestInput => {
+  const rootScope = (scope: string): string =>
+    adoptedWorkspace && !isAbsolute(scope)
+      ? resolve(workspaceRoot, scope)
+      : scope;
+  return {
+    ...request,
+    ...(request.executionCwd
+      ? { executionCwd: rootScope(request.executionCwd) }
+      : {}),
+    ...(request.executionRead
+      ? {
+          executionRead: {
+            ...request.executionRead,
+            path: rootScope(request.executionRead.path),
+          },
+        }
+      : {}),
+    readScope: request.readScope.map(rootScope),
+    writeScope: request.writeScope.map(rootScope),
+  };
+};
 
 const handlePreToolDelegation = (
   agent: Agent,
@@ -324,17 +351,13 @@ const handlePreToolDelegation = (
   }
   try {
     const adoptedWorkspace = workspaceRoot !== resolve(manifest.cwd);
-    const rootScopes = (scopes: string[]): string[] =>
-      adoptedWorkspace
-        ? scopes.map((scope) =>
-            isAbsolute(scope) ? scope : resolve(workspaceRoot, scope)
-          )
-        : scopes;
     const routeRequest = createUtilityRouteRequest({
-      ...classification.request,
+      ...rootDelegationRequest(
+        classification.request,
+        workspaceRoot,
+        adoptedWorkspace
+      ),
       createdAt: at,
-      readScope: rootScopes(classification.request.readScope),
-      writeScope: rootScopes(classification.request.writeScope),
     });
     const job = (deps.appendRoute ?? appendUtilityRouteRequest)(
       runDir,

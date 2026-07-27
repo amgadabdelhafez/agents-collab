@@ -110,6 +110,7 @@ test("publishes provider-agnostic definitions for bounded tools", () => {
   expect(UTILITY_TOOL_DEFINITIONS.map((tool) => tool.function.name)).toEqual([
     "search_repo",
     "read_file",
+    "list_files",
     "git_status",
     "git_diff",
     "git_inspect",
@@ -162,6 +163,175 @@ test("reads and searches only declared non-secret scope", async () => {
       name: "read_file",
     });
     expect(secret.error?.code).toBe("path_denied");
+  });
+});
+
+test("lists one bounded directory without exposing protected entries", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", ".ordinary-hidden"), "ok\n");
+    await mkdir(join(root, "src", ".git"));
+    await writeFile(join(root, "src", ".git", "config"), "secret\n");
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["list_files"],
+      artifactDir: ".utility-artifacts",
+      limits: { maxListEntries: 1 },
+      readScopes: ["src"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(broker.definitions.map((tool) => tool.function.name)).toEqual([
+      "list_files",
+    ]);
+    const result = await broker.execute({
+      arguments: { includeHidden: true, path: "src" },
+      name: "list_files",
+    });
+    expect(result).toMatchObject({
+      data: {
+        entries: expect.arrayContaining([
+          expect.objectContaining({ path: "src/.ordinary-hidden" }),
+        ]),
+        path: "src",
+        truncated: true,
+      },
+      ok: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("src/.git");
+    expect(
+      await broker.execute({
+        arguments: { path: "src/hello.ts" },
+        name: "list_files",
+      })
+    ).toMatchObject({ error: { code: "scope_denied" }, ok: false });
+    const fileBroker = await createUtilityToolBroker({
+      allowedTools: ["list_files"],
+      artifactDir: ".utility-artifacts",
+      readScopes: ["src/hello.ts"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(
+      await fileBroker.execute({
+        arguments: { path: "src/hello.ts" },
+        name: "list_files",
+      })
+    ).toMatchObject({ error: { code: "path_denied" }, ok: false });
+  });
+});
+
+test("directory listing truncates before the shared output byte limit", async () => {
+  await withRepo(async (root) => {
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["list_files"],
+      artifactDir: ".utility-artifacts",
+      limits: { maxOutputBytes: 90 },
+      readScopes: ["."],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    const result = await broker.execute({
+      arguments: { path: "." },
+      name: "list_files",
+    });
+    expect(result).toMatchObject({ data: { truncated: true }, ok: true });
+    expect(Buffer.byteLength(JSON.stringify(result.data))).toBeLessThanOrEqual(
+      90
+    );
+  });
+});
+
+test("reads an exact bounded tail without widening file authority", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", "lines.txt"), "one\ntwo\nthree\nfour\n");
+    const broker = await brokerFor(root);
+    expect(
+      await broker.execute({
+        arguments: { lastLines: 2, path: "src/lines.txt" },
+        name: "read_file",
+      })
+    ).toMatchObject({
+      data: { content: "three\nfour", endLine: 4, startLine: 3 },
+      ok: true,
+    });
+    expect(
+      await broker.execute({
+        arguments: { lastLines: 2, path: "src/lines.txt", startLine: 1 },
+        name: "read_file",
+      })
+    ).toMatchObject({ error: { code: "invalid_arguments" }, ok: false });
+  });
+});
+
+test("broker enforces the persisted exact read range against model deviation", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", "lines.txt"), "one\ntwo\nthree\nfour\n");
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["read_file"],
+      artifactDir: ".utility-artifacts",
+      exactRead: { endLine: 2, path: "src/lines.txt", startLine: 1 },
+      readScopes: ["src/lines.txt"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(
+      await broker.execute({
+        arguments: { endLine: 2, path: "src/lines.txt", startLine: 1 },
+        name: "read_file",
+      })
+    ).toMatchObject({ data: { content: "one\ntwo" }, ok: true });
+    for (const arguments_ of [
+      { path: "src/lines.txt" },
+      { endLine: 4, path: "src/lines.txt", startLine: 1 },
+      { lastLines: 2, path: "src/lines.txt" },
+    ]) {
+      expect(
+        await broker.execute({ arguments: arguments_, name: "read_file" })
+      ).toMatchObject({ error: { code: "command_denied" }, ok: false });
+    }
+  });
+});
+
+test("broker caps range reads even when exact metadata is tampered", async () => {
+  await withRepo(async (root) => {
+    await writeFile(
+      join(root, "src", "many-lines.txt"),
+      `${Array.from({ length: 501 }, () => "line").join("\n")}\n`
+    );
+    const exactRead = {
+      endLine: 501,
+      path: "src/many-lines.txt",
+      startLine: 1,
+    };
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["read_file"],
+      artifactDir: ".utility-artifacts",
+      exactRead,
+      readScopes: [exactRead.path],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(
+      await broker.execute({ arguments: exactRead, name: "read_file" })
+    ).toMatchObject({ error: { code: "invalid_arguments" }, ok: false });
+  });
+});
+
+test("a malformed automatic file-read boundary fails closed", async () => {
+  await withRepo(async (root) => {
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["read_file"],
+      artifactDir: ".utility-artifacts",
+      exactRead: null,
+      readScopes: ["src/hello.ts"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(
+      await broker.execute({
+        arguments: { endLine: 1, path: "src/hello.ts", startLine: 1 },
+        name: "read_file",
+      })
+    ).toMatchObject({ error: { code: "command_denied" }, ok: false });
   });
 });
 
@@ -403,6 +573,239 @@ test("runs literal allowlisted argv with a scrubbed environment", async () => {
     expect(optionEscape.error?.code).toBe("command_denied");
     expect(traversal.error?.code).toBe("path_denied");
     expect(runner).toHaveBeenCalledTimes(1);
+  });
+});
+
+test("broker enforces merged tail output for a focused check", async () => {
+  await withRepo(async (root) => {
+    const argv = ["bun", "test", "tests/example.test.ts"];
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["run_check"],
+        artifactDir: ".utility-artifacts",
+        commandCwds: ["."],
+        exactCommand: argv,
+        outputBoundary: {
+          lineLimit: 2,
+          position: "tail",
+          stderr: "merge",
+        },
+        readScopes: ["tests/example.test.ts"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: async () => ({
+          exitCode: 0,
+          stderr: "error-one\nerror-two\n",
+          stdout: "output-one\noutput-two\n",
+        }),
+      }
+    );
+    expect(
+      await broker.execute({
+        arguments: { argv, cwd: "." },
+        name: "run_check",
+      })
+    ).toMatchObject({
+      ok: true,
+      stderr: "",
+      stdout: "error-one\nerror-two\n",
+    });
+  });
+});
+
+test("broker slices list output and marks the listing truncated", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", "a.ts"), "a\n");
+    await writeFile(join(root, "src", "b.ts"), "b\n");
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["list_files"],
+      artifactDir: ".utility-artifacts",
+      outputBoundary: { lineLimit: 1, position: "head" },
+      readScopes: ["src"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(
+      await broker.execute({
+        arguments: { path: "src" },
+        name: "list_files",
+      })
+    ).toMatchObject({
+      data: { entries: [expect.any(Object)], truncated: true },
+      ok: true,
+    });
+  });
+});
+
+test("explicit focused cwd is exact while legacy read-scope cwd remains contained", async () => {
+  await withRepo(async (root) => {
+    const runner = mock(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "pass",
+    }));
+    const containedBroker = await createUtilityToolBroker(
+      {
+        allowedTools: ["run_check"],
+        artifactDir: ".utility-artifacts",
+        readScopes: ["."],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      { runCommand: runner }
+    );
+    expect(
+      await containedBroker.execute({
+        arguments: {
+          argv: ["bun", "test", "tests/example.test.ts"],
+          cwd: "tests",
+        },
+        name: "run_check",
+      })
+    ).toMatchObject({ ok: true });
+
+    const exactBroker = await createUtilityToolBroker(
+      {
+        allowedTools: ["run_check"],
+        artifactDir: ".utility-artifacts",
+        commandCwds: ["."],
+        readScopes: ["tests/example.test.ts"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      { runCommand: runner }
+    );
+    expect(
+      await exactBroker.execute({
+        arguments: {
+          argv: ["bun", "test", "tests/example.test.ts"],
+          cwd: "tests",
+        },
+        name: "run_check",
+      })
+    ).toMatchObject({ error: { code: "scope_denied" }, ok: false });
+  });
+});
+
+test("focused check cwd does not widen its exact file authority", async () => {
+  await withRepo(async (root) => {
+    const runner = mock(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "pass",
+    }));
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["run_check"],
+        artifactDir: ".utility-artifacts",
+        commandCwds: ["."],
+        exactCommand: ["bun", "test", "tests/example.test.ts"],
+        readScopes: ["tests/example.test.ts"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      { runCommand: runner }
+    );
+    expect(
+      await broker.execute({
+        arguments: {
+          argv: ["bun", "test", "tests/example.test.ts"],
+          cwd: ".",
+        },
+        name: "run_check",
+      })
+    ).toMatchObject({ ok: true });
+    expect(
+      await broker.execute({
+        arguments: { argv: ["bun", "test", "src/hello.ts"], cwd: "." },
+        name: "run_check",
+      })
+    ).toMatchObject({ error: { code: "command_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: {
+          argv: [
+            "bun",
+            "test",
+            "tests/example.test.ts",
+            "tests/example.test.ts",
+          ],
+          cwd: ".",
+        },
+        name: "run_check",
+      })
+    ).toMatchObject({ error: { code: "command_denied" }, ok: false });
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+});
+
+test("focused checks reject files above the configured input bound", async () => {
+  await withRepo(async (root) => {
+    const oversizedPath = "tests/oversized.test.ts";
+    await writeFile(join(root, oversizedPath), "x".repeat(1024 * 1024 + 1));
+    const runner = mock(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "pass",
+    }));
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["run_check"],
+        artifactDir: ".utility-artifacts",
+        commandCwds: ["."],
+        exactCommand: ["bun", "test", oversizedPath],
+        readScopes: [oversizedPath],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      { runCommand: runner }
+    );
+    expect(
+      await broker.execute({
+        arguments: { argv: ["bun", "test", oversizedPath], cwd: "." },
+        name: "run_check",
+      })
+    ).toMatchObject({ error: { code: "output_limit" }, ok: false });
+    expect(runner).not.toHaveBeenCalled();
+  });
+});
+
+test("broker rejects a tampered focused check with more than four files", async () => {
+  await withRepo(async (root) => {
+    const paths = Array.from(
+      { length: 5 },
+      (_, index) => `tests/${index + 1}.test.ts`
+    );
+    await Promise.all(
+      paths.map((path) => writeFile(join(root, path), "export {};\n"))
+    );
+    const argv = ["bun", "test", ...paths];
+    const runner = mock(async () => ({
+      exitCode: 0,
+      stderr: "",
+      stdout: "pass",
+    }));
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["run_check"],
+        artifactDir: ".utility-artifacts",
+        commandCwds: ["."],
+        exactCommand: argv,
+        readScopes: paths,
+        repoRoot: root,
+        writeScopes: [],
+      },
+      { runCommand: runner }
+    );
+    expect(
+      await broker.execute({
+        arguments: { argv, cwd: "." },
+        name: "run_check",
+      })
+    ).toMatchObject({ error: { code: "command_denied" }, ok: false });
+    expect(runner).not.toHaveBeenCalled();
   });
 });
 

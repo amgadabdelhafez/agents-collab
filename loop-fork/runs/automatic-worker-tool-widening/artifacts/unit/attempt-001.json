@@ -1,0 +1,21 @@
+{
+  "task_id": "automatic-worker-tool-widening",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-27T07:07:27Z",
+  "ended_at": "2026-07-27T07:07:28Z",
+  "artifact": "runs/automatic-worker-tool-widening/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/delegation-policy.test.ts",
+    "tests/loop/task-router.test.ts",
+    "tests/loop/utility-tools.test.ts",
+    "tests/loop/utility-runtime.test.ts",
+    "tests/loop/utility-workspace.test.ts",
+    "tests/loop/governess-hooks.test.ts"
+  ]
+}

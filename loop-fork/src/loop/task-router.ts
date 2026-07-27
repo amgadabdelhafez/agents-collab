@@ -22,6 +22,8 @@ export type UtilityCapability =
 
 export type UtilityExecutionProfile =
   | "file-read"
+  | "file-list"
+  | "focused-check"
   | "git-diff"
   | "git-inspect"
   | "git-status"
@@ -61,6 +63,19 @@ export interface UtilityCheckResult {
   summary: string;
 }
 
+export interface UtilityReadRequest {
+  endLine?: number;
+  lastLines?: number;
+  path: string;
+  startLine?: number;
+}
+
+export interface UtilityOutputRequest {
+  lineLimit?: number;
+  position?: "head" | "tail";
+  stderr?: "merge" | "omit";
+}
+
 export interface UtilityCompactResult {
   artifactRefs: UtilityArtifactRef[];
   blocker?: string;
@@ -75,7 +90,11 @@ export interface UtilityRouteRequest {
   authority: UtilityAuthorityFlags;
   createdAt: string;
   estimatedCostUsd?: number;
+  executionArgv?: string[];
+  executionCwd?: string;
+  executionOutput?: UtilityOutputRequest;
   executionProfile?: UtilityExecutionProfile;
+  executionRead?: UtilityReadRequest;
   id: string;
   idempotencyKey: string;
   kind: UtilityRequestKind;
@@ -164,6 +183,9 @@ export interface UtilityRouteDecision {
 }
 
 export interface UtilityResolvedWorkspace {
+  executionCwd?: string;
+  executionOutput?: UtilityOutputRequest;
+  executionRead?: UtilityReadRequest;
   readScope: string[];
   root: string;
   writeScope: string[];
@@ -178,6 +200,15 @@ const UTILITY_KINDS = new Set<UtilityRequestKind>([
   "inspect",
   "edit",
   "command",
+]);
+const UTILITY_EXECUTION_PROFILES = new Set<UtilityExecutionProfile>([
+  "file-list",
+  "file-read",
+  "focused-check",
+  "git-diff",
+  "git-inspect",
+  "git-status",
+  "search",
 ]);
 
 const normalizePath = normalizeUtilityPolicyPath;
@@ -204,8 +235,23 @@ export const createUtilityRouteRequest = (
     acceptanceCriteria,
     authority: { ...input.authority },
     estimatedCostUsd: input.estimatedCostUsd,
+    ...(input.executionArgv ? { executionArgv: [...input.executionArgv] } : {}),
+    ...(input.executionCwd
+      ? { executionCwd: normalizePath(input.executionCwd) }
+      : {}),
+    ...(input.executionOutput
+      ? { executionOutput: { ...input.executionOutput } }
+      : {}),
     ...(input.executionProfile
       ? { executionProfile: input.executionProfile }
+      : {}),
+    ...(input.executionRead
+      ? {
+          executionRead: {
+            ...input.executionRead,
+            path: normalizePath(input.executionRead.path),
+          },
+        }
       : {}),
     kind: input.kind,
     objective,
@@ -237,9 +283,14 @@ const touchesProtectedPath = (
   request: UtilityRouteRequest,
   configured: readonly string[] = []
 ): boolean =>
-  [...request.readScope, ...request.writeScope].some((path) =>
-    isUtilityProtectedPath(path, configured)
-  );
+  [
+    ...request.readScope,
+    ...request.writeScope,
+    ...(request.executionCwd ? [request.executionCwd] : []),
+    ...(typeof request.executionRead?.path === "string"
+      ? [request.executionRead.path]
+      : []),
+  ].some((path) => isUtilityProtectedPath(path, configured));
 
 const overlaps = (left: string, right: string): boolean => {
   const normalizedLeft = normalizePath(left);
@@ -258,8 +309,158 @@ const hasWriteConflict = (
     claims.some((claim) => overlaps(path, claim))
   );
 
+const positiveSafeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+const executionReadIsBounded = (request: UtilityRouteRequest): boolean => {
+  const input = request.executionRead as unknown;
+  if (input === undefined) {
+    return true;
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return false;
+  }
+  const value = input as Record<string, unknown>;
+  if (
+    Object.keys(value).some(
+      (key) => !["endLine", "lastLines", "path", "startLine"].includes(key)
+    ) ||
+    typeof value.path !== "string" ||
+    value.path.trim().length === 0 ||
+    !request.readScope.includes(value.path)
+  ) {
+    return false;
+  }
+  if (value.lastLines !== undefined) {
+    return (
+      value.startLine === undefined &&
+      value.endLine === undefined &&
+      positiveSafeInteger(value.lastLines) &&
+      value.lastLines <= 500
+    );
+  }
+  return (
+    positiveSafeInteger(value.startLine) &&
+    positiveSafeInteger(value.endLine) &&
+    value.endLine >= value.startLine &&
+    value.endLine - value.startLine + 1 <= 500
+  );
+};
+
+const focusedCheckIsBounded = (request: UtilityRouteRequest): boolean => {
+  const argv = request.executionArgv;
+  const cwd = request.executionCwd;
+  if (request.kind !== "command" || !argv || !cwd) {
+    return false;
+  }
+  let pathStart: number | undefined;
+  if (argv[0] === "bun" && argv[1] === "test") {
+    pathStart = 2;
+  } else if (argv[0] === "npx" && argv[1] === "vitest" && argv[2] === "run") {
+    pathStart = 3;
+  }
+  if (pathStart === undefined) {
+    return false;
+  }
+  const paths = argv.slice(pathStart);
+  if (
+    paths.length < 1 ||
+    paths.length > 4 ||
+    paths.some(
+      (path) => path.startsWith("-") || !request.readScope.includes(path)
+    )
+  ) {
+    return false;
+  }
+  const exactScopes = new Set([cwd, ...paths]);
+  return request.readScope.every((scope) => exactScopes.has(scope));
+};
+
+const executionOutputIsBounded = (request: UtilityRouteRequest): boolean => {
+  const input = request.executionOutput as unknown;
+  if (input === undefined) {
+    return true;
+  }
+  if (
+    request.executionProfile === undefined ||
+    input === null ||
+    typeof input !== "object" ||
+    Array.isArray(input)
+  ) {
+    return false;
+  }
+  const value = input as Record<string, unknown>;
+  if (
+    Object.keys(value).some(
+      (key) => !["lineLimit", "position", "stderr"].includes(key)
+    )
+  ) {
+    return false;
+  }
+  const hasLineFilter =
+    value.lineLimit !== undefined || value.position !== undefined;
+  const validLineFilter =
+    positiveSafeInteger(value.lineLimit) &&
+    (value.lineLimit as number) <= 500 &&
+    (value.position === "head" || value.position === "tail");
+  const validStderr =
+    value.stderr === undefined ||
+    value.stderr === "merge" ||
+    value.stderr === "omit";
+  return (
+    validStderr &&
+    (hasLineFilter ? validLineFilter : value.stderr !== undefined)
+  );
+};
+
+const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
+  const profileIsKnown =
+    request.executionProfile === undefined ||
+    (typeof request.executionProfile === "string" &&
+      UTILITY_EXECUTION_PROFILES.has(request.executionProfile));
+  const cwdIsBounded =
+    request.executionCwd === undefined ||
+    (typeof request.executionCwd === "string" &&
+      request.executionCwd.trim().length > 0);
+  const argvIsBounded =
+    request.executionArgv === undefined ||
+    (Array.isArray(request.executionArgv) &&
+      request.executionArgv.length > 0 &&
+      request.executionArgv.every(
+        (argument) => typeof argument === "string" && argument.length > 0
+      ));
+  return (
+    profileIsKnown &&
+    cwdIsBounded &&
+    argvIsBounded &&
+    executionReadIsBounded(request) &&
+    executionOutputIsBounded(request)
+  );
+};
+
 const requestIsBounded = (request: UtilityRouteRequest): boolean => {
   if (!(request.objective.trim() && request.acceptanceCriteria.length > 0)) {
+    return false;
+  }
+  if (!executionMetadataIsBounded(request)) {
+    return false;
+  }
+  if (
+    request.executionProfile === "file-read" &&
+    request.executionRead === undefined
+  ) {
+    return false;
+  }
+  if (
+    request.executionProfile !== "file-read" &&
+    request.executionRead !== undefined
+  ) {
+    return false;
+  }
+  if (
+    request.executionProfile === "focused-check" &&
+    !focusedCheckIsBounded(request)
+  ) {
     return false;
   }
   if (request.kind === "inspect") {

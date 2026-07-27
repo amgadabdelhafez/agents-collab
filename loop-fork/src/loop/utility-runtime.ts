@@ -17,6 +17,9 @@ import {
   type UtilityCheckResult,
   type UtilityCompactResult,
   type UtilityExecutionProfile,
+  type UtilityOutputRequest,
+  type UtilityReadRequest,
+  type UtilityResolvedWorkspace,
   type UtilityRouteRequest,
   type UtilityRoutingPolicy,
   type UtilityTier,
@@ -68,6 +71,8 @@ const TOOLS_BY_EXECUTION_PROFILE: Record<
   readonly UtilityToolName[]
 > = {
   "file-read": ["read_file"],
+  "file-list": ["list_files"],
+  "focused-check": ["run_check"],
   "git-diff": ["git_diff"],
   "git-inspect": ["git_inspect"],
   "git-status": ["git_status"],
@@ -1052,6 +1057,64 @@ const runUtilityConversation = async (input: {
   throw new Error("worker exceeded its runtime limit without completion");
 };
 
+export const utilityBrokerBoundary = (
+  request: UtilityRouteRequest,
+  readScopes: readonly string[],
+  writeScopes: readonly string[]
+): {
+  commandCwds?: string[];
+  exactCommand?: string[];
+  exactRead?: UtilityReadRequest | null;
+  outputBoundary?: UtilityOutputRequest;
+  readScopes: string[];
+} => {
+  const allReadScopes = [...readScopes, ...writeScopes];
+  const outputBoundary = request.executionOutput;
+  if (request.executionProfile === "file-read") {
+    return {
+      exactRead: request.executionRead ?? null,
+      ...(outputBoundary ? { outputBoundary } : {}),
+      readScopes: allReadScopes,
+    };
+  }
+  if (request.executionProfile !== "focused-check") {
+    return {
+      ...(outputBoundary ? { outputBoundary } : {}),
+      readScopes: allReadScopes,
+    };
+  }
+  const executionCwd = request.executionCwd;
+  return {
+    commandCwds: executionCwd ? [executionCwd] : [],
+    exactCommand: request.executionArgv ?? [],
+    ...(outputBoundary ? { outputBoundary } : {}),
+    readScopes: executionCwd
+      ? allReadScopes.filter((scope) => scope !== executionCwd)
+      : allReadScopes,
+  };
+};
+
+const executionRequestForWorkspace = (
+  request: UtilityRouteRequest,
+  workspace: UtilityResolvedWorkspace | undefined
+): UtilityRouteRequest => {
+  if (!workspace) {
+    return request;
+  }
+  return {
+    ...request,
+    ...(workspace.executionCwd ? { executionCwd: workspace.executionCwd } : {}),
+    ...(workspace.executionOutput
+      ? { executionOutput: workspace.executionOutput }
+      : {}),
+    ...(workspace.executionRead
+      ? { executionRead: workspace.executionRead }
+      : {}),
+    readScope: workspace.readScope,
+    writeScope: workspace.writeScope,
+  };
+};
+
 export const runUtilityWorker = async (
   runDir: string,
   epoch: number,
@@ -1091,16 +1154,23 @@ export const runUtilityWorker = async (
   const executionRoot = workspace?.root ?? repoRoot;
   const readScopes = workspace?.readScope ?? claimed.request.readScope;
   const writeScopes = workspace?.writeScope ?? claimed.request.writeScope;
-  const executionRequest = workspace
-    ? { ...claimed.request, readScope: readScopes, writeScope: writeScopes }
-    : claimed.request;
+  const executionRequest = executionRequestForWorkspace(
+    claimed.request,
+    workspace
+  );
   const allowedTools = utilityToolsForExecutionProfile(
     executionRequest.executionProfile
+  );
+  const brokerBoundary = utilityBrokerBoundary(
+    executionRequest,
+    readScopes,
+    writeScopes
   );
   const broker = await createUtilityToolBroker({
     ...(allowedTools ? { allowedTools } : {}),
     artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
-    readScopes: [...new Set([...readScopes, ...writeScopes])],
+    ...brokerBoundary,
+    readScopes: [...new Set(brokerBoundary.readScopes)],
     repoRoot: executionRoot,
     writeScopes,
   });

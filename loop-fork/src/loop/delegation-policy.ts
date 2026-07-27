@@ -34,6 +34,7 @@ export type DelegationDisposition =
   | "skipped-candidate";
 
 export type DelegationOperation =
+  | "directory-list"
   | "focused-check"
   | "git-diff"
   | "git-inspect"
@@ -92,13 +93,19 @@ const TRAILING_SLASH_RE = /\/$/;
 const GLOB_META_RE = /[?*[\]{}]/;
 const WHITESPACE_RE = /\s/;
 const SOURCE_SLICE_RE = /^(\d+),(\d+)p$/;
+const AWK_PREFIX_SLICE_RE = /^NR<=(\d+)$/;
+const AWK_RANGE_SLICE_RE = /^NR>=(\d+) && NR<=(\d+)$/;
+const REGEX_META_RE = /[\\.^$|?*+()[\]{}]/;
 const DIGITS_RE = /^\d+$/;
 const FILTER_COUNT_FLAG_RE = /^-\d+$/;
+const GREP_COMMAND_FLAGS_RE = /^-[Finr]+$/;
 const GIT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const GIT_BRANCH_PATTERN_RE = /^[A-Za-z0-9._/*?-]{1,128}$/;
 const EXECUTION_PROFILE_BY_OPERATION: Partial<
   Record<DelegationOperation, UtilityExecutionProfile>
 > = {
+  "directory-list": "file-list",
+  "focused-check": "focused-check",
   "git-diff": "git-diff",
   "git-inspect": "git-inspect",
   "git-status": "git-status",
@@ -107,6 +114,7 @@ const EXECUTION_PROFILE_BY_OPERATION: Partial<
   "source-slice": "file-read",
 };
 const STDERR_TO_NULL = ">/dev/null";
+const STDERR_TO_STDOUT = ">&1";
 const GREP_ALLOWED_KEYS = new Set([
   "pattern",
   "path",
@@ -254,6 +262,14 @@ const isExistingNonFile = (target: string): boolean => {
   }
 };
 
+const isExistingNonDirectory = (target: string): boolean => {
+  try {
+    return !statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 const safeScope = (
   repoRoot: string,
   cwd: string,
@@ -373,17 +389,32 @@ const classifyRead = (
   }
   const offset = asPositiveInteger(input.offset) ?? 1;
   const requested = limit ?? LARGE_READ_MIN_LINES;
+  if (
+    requested > MAX_SOURCE_SLICE_LINES ||
+    !Number.isSafeInteger(offset + requested - 1)
+  ) {
+    return { eligible: false, ...exempt(intent, "large-read-out-of-bounds") };
+  }
+  const classified = request(
+    intent,
+    "large-read",
+    "inspect",
+    `Inspect ${scope} starting at line ${offset} for up to ${requested} lines and return only the evidence needed by the requester.`,
+    [`Return a concise finding with exact line references from ${scope}.`],
+    [scope],
+    ["inspect"]
+  );
   return {
     eligible: true,
-    ...request(
-      intent,
-      "large-read",
-      "inspect",
-      `Inspect ${scope} starting at line ${offset} for up to ${requested} lines and return only the evidence needed by the requester.`,
-      [`Return a concise finding with exact line references from ${scope}.`],
-      [scope],
-      ["inspect"]
-    ),
+    ...classified,
+    request: {
+      ...classified.request,
+      executionRead: {
+        endLine: offset + requested - 1,
+        path: scope,
+        startLine: offset,
+      },
+    },
   };
 };
 
@@ -445,12 +476,14 @@ type ShellToken =
   | { kind: "word"; value: string }
   | { kind: "pipe" }
   | { kind: "and" }
+  | { kind: "merge-stderr" }
   | { kind: "quiet-stderr" };
 
 // A literal shell-token scanner is intentionally explicit: every state branch
 // is a safety boundary and collapsing it would make quoting rules harder to
 // audit. Only three operator forms are recognized — a single `|`, `&&`, and a
-// trailing-token `2>/dev/null` — everything else fails closed.
+// trailing-token `2>/dev/null`, and trailing-token `2>&1` — everything else
+// fails closed.
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auditable tokenizer state machine
 const literalTokens = (command: string): ShellToken[] | undefined => {
   if (
@@ -530,6 +563,21 @@ const literalTokens = (command: string): ShellToken[] | undefined => {
       push();
       tokens.push({ kind: "and" });
       index += 1;
+      continue;
+    }
+    if (
+      quote === undefined &&
+      char === ">" &&
+      token === "2" &&
+      !tokenQuoted &&
+      command.startsWith(STDERR_TO_STDOUT, index) &&
+      (index + STDERR_TO_STDOUT.length === command.length ||
+        WHITESPACE_RE.test(command[index + STDERR_TO_STDOUT.length] as string))
+    ) {
+      token = "";
+      tokenQuoted = false;
+      tokens.push({ kind: "merge-stderr" });
+      index += STDERR_TO_STDOUT.length - 1;
       continue;
     }
     if (
@@ -646,7 +694,9 @@ const parseOutputFilter = (tokens: ShellToken[]): OutputFilter | undefined => {
   } else {
     return undefined;
   }
-  return count >= 1 ? { cmd: name, count } : undefined;
+  return count >= 1 && count <= MAX_SOURCE_SLICE_LINES
+    ? { cmd: name, count }
+    : undefined;
 };
 
 const describeOutputFilter = (filter: OutputFilter): string => {
@@ -660,6 +710,7 @@ interface SafeCompound {
   argv: string[];
   cdTarget?: string;
   filter?: OutputFilter;
+  stderr?: "merge" | "omit";
 }
 
 // Structural parse of `[cd <path> &&] base [2>/dev/null] [| filter]`. Every
@@ -701,8 +752,11 @@ const decomposeSafeCompound = (
     }
   }
   let base = piped[0] ?? [];
-  if (base.at(-1)?.kind === "quiet-stderr") {
+  const stderrToken = base.at(-1)?.kind;
+  let stderr: SafeCompound["stderr"];
+  if (stderrToken === "quiet-stderr" || stderrToken === "merge-stderr") {
     base = base.slice(0, -1);
+    stderr = stderrToken === "merge-stderr" ? "merge" : "omit";
   }
   const argv = wordValues(base);
   if (!argv || argv.length === 0) {
@@ -712,6 +766,7 @@ const decomposeSafeCompound = (
     argv,
     ...(cdTarget === undefined ? {} : { cdTarget }),
     ...(filter === undefined ? {} : { filter }),
+    ...(stderr ? { stderr } : {}),
   };
 };
 
@@ -1044,52 +1099,376 @@ const classifyRg = (
   };
 };
 
-const classifySourceSlice = (
+const classifyFocusedCheck = (
   intent: DelegationToolIntent,
   argv: string[]
 ): DelegationClassification | undefined => {
-  let start: number | undefined;
-  let end: number | undefined;
-  let file: string | undefined;
-  if (argv[0] === "sed" && argv[1] === "-n" && argv.length === 4) {
-    const match = SOURCE_SLICE_RE.exec(argv[2] ?? "");
-    if (match) {
-      start = Number(match[1]);
-      end = Number(match[2]);
-      file = argv[3];
-    }
-  } else if (
-    argv[0] === "head" &&
-    argv[1] === "-n" &&
-    argv.length === 4 &&
-    DIGITS_RE.test(argv[2] ?? "")
-  ) {
-    const count = Number(argv[2]);
-    start = 1;
-    end = count;
-    file = argv[3];
-  }
-  if (start === undefined || end === undefined || !file) {
+  let pathStart: number | undefined;
+  if (argv[0] === "bun" && argv[1] === "test") {
+    pathStart = 2;
+  } else if (argv[0] === "npx" && argv[1] === "vitest" && argv[2] === "run") {
+    pathStart = 3;
+  } else {
     return undefined;
   }
-  if (start < 1 || end < start || end - start + 1 > MAX_SOURCE_SLICE_LINES) {
-    return { eligible: false, ...exempt(intent, "source-slice-out-of-bounds") };
+  const requestedPaths = argv.slice(pathStart);
+  if (requestedPaths.length < 1) {
+    return undefined;
   }
-  const scope = safeScope(intent.repoRoot, intent.cwd, file, false, true);
+  if (
+    requestedPaths.length > MAX_SCOPES ||
+    requestedPaths.some((path) => path.startsWith("-"))
+  ) {
+    return {
+      eligible: false,
+      ...exempt(intent, "focused-check-not-bounded"),
+    };
+  }
+  const executionCwd = safeScope(
+    intent.repoRoot,
+    intent.repoRoot,
+    intent.cwd,
+    true
+  );
+  if (!executionCwd) {
+    return {
+      eligible: false,
+      ...exempt(intent, "focused-check-without-safe-cwd"),
+    };
+  }
+  const cwdPath =
+    executionCwd === "."
+      ? intent.repoRoot
+      : join(intent.repoRoot, executionCwd);
+  if (isExistingNonDirectory(cwdPath)) {
+    return {
+      eligible: false,
+      ...exempt(intent, "focused-check-cwd-not-directory"),
+    };
+  }
+  const testScopes = requestedPaths.map((path) =>
+    safeScope(intent.repoRoot, intent.cwd, path, false, true)
+  );
+  if (testScopes.some((scope) => !scope)) {
+    return {
+      eligible: false,
+      ...exempt(intent, "focused-check-without-safe-files"),
+    };
+  }
+  const scopes = [executionCwd, ...(testScopes as string[])];
+  const executionArgv = [
+    ...argv.slice(0, pathStart),
+    ...(testScopes as string[]),
+  ];
+  const classified = request(
+    intent,
+    "focused-check",
+    "command",
+    `Run this exact focused local check as literal argv ${JSON.stringify(executionArgv)} from ${executionCwd}; invoke run_check once with that exact argv and cwd.`,
+    [
+      "Return the exact focused check exit status and a concise bounded failure summary without changing files.",
+    ],
+    scopes,
+    ["bounded-command", "focused-verify"]
+  );
+  return {
+    eligible: true,
+    ...classified,
+    request: {
+      ...classified.request,
+      executionArgv,
+      executionCwd,
+    },
+  };
+};
+
+const classifyDirectoryList = (
+  intent: DelegationToolIntent,
+  argv: string[]
+): DelegationClassification | undefined => {
+  if (argv[0] !== "ls") {
+    return undefined;
+  }
+  const args = argv.slice(1);
+  let includeHidden = false;
+  if (args[0]?.startsWith("-")) {
+    if (!["-a", "-l", "-la", "-al"].includes(args[0])) {
+      return {
+        eligible: false,
+        ...exempt(intent, "unsupported-list-option"),
+      };
+    }
+    includeHidden = args[0].includes("a");
+    args.shift();
+  }
+  if (args.length > 1) {
+    return {
+      eligible: false,
+      ...exempt(intent, "directory-list-not-bounded"),
+    };
+  }
+  const scope = safeScope(intent.repoRoot, intent.cwd, args[0] ?? ".", true);
   if (!scope) {
-    return { eligible: false, ...exempt(intent, "governed-or-unsafe-path") };
+    return {
+      eligible: false,
+      ...exempt(intent, "directory-list-without-safe-scope"),
+    };
+  }
+  const scopedDirectory =
+    scope === "." ? intent.repoRoot : join(intent.repoRoot, scope);
+  if (isExistingNonDirectory(scopedDirectory)) {
+    return {
+      eligible: false,
+      ...exempt(intent, "directory-list-target-not-directory"),
+    };
   }
   return {
     eligible: true,
     ...request(
       intent,
-      "source-slice",
+      "directory-list",
       "inspect",
-      `Inspect ${scope} for the requested bounded source slice (${start}-${end}) and return concise relevant evidence.`,
-      [`Return exact line references from ${scope} without changing files.`],
+      `List the single directory ${scope} without recursion using list_files with includeHidden=${includeHidden}.`,
+      ["Return a bounded nonrecursive listing without following symlinks."],
       [scope],
       ["inspect"]
     ),
+  };
+};
+
+const classifyGrepCommand = (
+  intent: DelegationToolIntent,
+  argv: string[]
+): DelegationClassification | undefined => {
+  if (argv[0] !== "grep") {
+    return undefined;
+  }
+  let index = 1;
+  let fixed = false;
+  let caseSensitive = true;
+  while (index < argv.length && argv[index]?.startsWith("-")) {
+    const flag = argv[index] as string;
+    if (flag === "--") {
+      index += 1;
+      break;
+    }
+    const longFlag = {
+      "--fixed-strings": "F",
+      "--ignore-case": "i",
+      "--line-number": "n",
+      "--recursive": "r",
+    }[flag];
+    if (!(longFlag || GREP_COMMAND_FLAGS_RE.test(flag))) {
+      return {
+        eligible: false,
+        ...exempt(intent, "unsupported-grep-option"),
+      };
+    }
+    fixed ||= (longFlag ?? flag).includes("F");
+    caseSensitive &&= !(longFlag ?? flag).includes("i");
+    index += 1;
+  }
+  const pattern = argv[index];
+  const pathArgs = argv.slice(index + 1);
+  if (pathArgs.some((value) => value.startsWith("-"))) {
+    return {
+      eligible: false,
+      ...exempt(intent, "unsupported-grep-option"),
+    };
+  }
+  if (
+    !pattern ||
+    pattern.length > MAX_PATTERN_LENGTH ||
+    SECRET_VALUE.test(pattern) ||
+    (!fixed && REGEX_META_RE.test(pattern))
+  ) {
+    return {
+      eligible: false,
+      ...exempt(intent, "grep-pattern-not-literal"),
+    };
+  }
+  const scopes = scopesFrom(intent, pathArgs);
+  if (!scopes) {
+    return {
+      eligible: false,
+      ...exempt(intent, "search-without-safe-scope"),
+    };
+  }
+  return {
+    eligible: true,
+    ...request(
+      intent,
+      "scoped-search",
+      "inspect",
+      `Search for the literal string ${JSON.stringify(pattern)} under ${JSON.stringify(scopes)} using search_repo with regex=false and caseSensitive=${caseSensitive}.`,
+      [
+        "Return matching paths and exact line references without changing files.",
+      ],
+      scopes,
+      ["inspect"]
+    ),
+  };
+};
+
+interface SourceSliceQuery {
+  end: number;
+  file: string;
+  start: number;
+  tail: boolean;
+}
+
+const parseSedOrHeadSlice = (argv: string[]): SourceSliceQuery | undefined => {
+  if (argv[0] === "sed" && argv[1] === "-n" && argv.length === 4) {
+    const match = SOURCE_SLICE_RE.exec(argv[2] ?? "");
+    if (match) {
+      return {
+        end: Number(match[2]),
+        file: argv[3] as string,
+        start: Number(match[1]),
+        tail: false,
+      };
+    }
+  }
+  if (
+    argv[0] === "head" &&
+    argv[1] === "-n" &&
+    argv.length === 4 &&
+    DIGITS_RE.test(argv[2] ?? "")
+  ) {
+    return {
+      end: Number(argv[2]),
+      file: argv[3] as string,
+      start: 1,
+      tail: false,
+    };
+  }
+  return undefined;
+};
+
+const parseAwkSlice = (argv: string[]): SourceSliceQuery | undefined => {
+  if (argv[0] !== "awk" || argv.length !== 3) {
+    return undefined;
+  }
+  const prefix = AWK_PREFIX_SLICE_RE.exec(argv[1] ?? "");
+  if (prefix) {
+    return {
+      end: Number(prefix[1]),
+      file: argv[2] as string,
+      start: 1,
+      tail: false,
+    };
+  }
+  const range = AWK_RANGE_SLICE_RE.exec(argv[1] ?? "");
+  return range
+    ? {
+        end: Number(range[2]),
+        file: argv[2] as string,
+        start: Number(range[1]),
+        tail: false,
+      }
+    : undefined;
+};
+
+const parseTailSlice = (argv: string[]): SourceSliceQuery | undefined => {
+  let count: number | undefined;
+  let file: string | undefined;
+  if (
+    argv[0] === "tail" &&
+    argv[1] === "-n" &&
+    argv.length === 4 &&
+    DIGITS_RE.test(argv[2] ?? "")
+  ) {
+    count = Number(argv[2]);
+    file = argv[3];
+  } else if (
+    argv[0] === "tail" &&
+    argv.length === 3 &&
+    FILTER_COUNT_FLAG_RE.test(argv[1] ?? "")
+  ) {
+    count = Number(argv[1].slice(1));
+    file = argv[2];
+  }
+  return count !== undefined && file
+    ? { end: count, file, start: 1, tail: true }
+    : undefined;
+};
+
+const classifySourceSlice = (
+  intent: DelegationToolIntent,
+  argv: string[]
+): DelegationClassification | undefined => {
+  const query =
+    parseSedOrHeadSlice(argv) ?? parseAwkSlice(argv) ?? parseTailSlice(argv);
+  if (!query) {
+    return undefined;
+  }
+  if (
+    query.start < 1 ||
+    query.end < query.start ||
+    query.end - query.start + 1 > MAX_SOURCE_SLICE_LINES
+  ) {
+    return { eligible: false, ...exempt(intent, "source-slice-out-of-bounds") };
+  }
+  const scope = safeScope(intent.repoRoot, intent.cwd, query.file, false, true);
+  if (!scope) {
+    return { eligible: false, ...exempt(intent, "governed-or-unsafe-path") };
+  }
+  const classified = request(
+    intent,
+    "source-slice",
+    "inspect",
+    query.tail
+      ? `Inspect the last ${query.end} lines of ${scope} using read_file with lastLines=${query.end} and return concise relevant evidence.`
+      : `Inspect ${scope} for the requested bounded source slice (${query.start}-${query.end}) and return concise relevant evidence.`,
+    [`Return exact line references from ${scope} without changing files.`],
+    [scope],
+    ["inspect"]
+  );
+  return {
+    eligible: true,
+    ...classified,
+    request: {
+      ...classified.request,
+      executionRead: query.tail
+        ? { lastLines: query.end, path: scope }
+        : { endLine: query.end, path: scope, startLine: query.start },
+    },
+  };
+};
+
+const withCompoundOutputBoundary = (
+  classified: EligibleDelegationIntent & { eligible: true },
+  compound: SafeCompound
+): DelegationClassification => {
+  if (!(compound.filter || compound.stderr)) {
+    return classified;
+  }
+  const bound = compound.filter
+    ? describeOutputFilter(compound.filter)
+    : undefined;
+  return {
+    ...classified,
+    request: {
+      ...classified.request,
+      executionOutput: {
+        ...(compound.filter
+          ? {
+              lineLimit: compound.filter.count ?? 10,
+              position: compound.filter.cmd,
+            }
+          : {}),
+        ...(compound.stderr ? { stderr: compound.stderr } : {}),
+      },
+      ...(bound
+        ? {
+            objective: `${classified.request.objective} Limit the returned evidence to the ${bound}.`,
+            acceptanceCriteria: [
+              ...classified.request.acceptanceCriteria,
+              `Bound the returned evidence to the ${bound}.`,
+            ],
+          }
+        : {}),
+    },
   };
 };
 
@@ -1130,11 +1509,11 @@ const classifyBash = (
       ...exempt(intent, "executable-path-not-allowed"),
     };
   }
-  // Every delegable operation is inspect-kind: its read scope fully captures
-  // what the worker touches, so a folded `cd` is safe. No command-kind shape is
-  // delegated (a test runner needs a cwd that UtilityRouteRequest cannot carry).
-  const classified = classifyGit(scoped, argv) ??
+  const classified = classifyFocusedCheck(scoped, argv) ??
+    classifyGit(scoped, argv) ??
     classifyRg(scoped, argv) ??
+    classifyGrepCommand(scoped, argv) ??
+    classifyDirectoryList(scoped, argv) ??
     classifySourceSlice(scoped, argv) ?? {
       eligible: false,
       ...exempt(scoped, "command-not-in-delegation-grammar"),
@@ -1142,23 +1521,9 @@ const classifyBash = (
   if (!classified.eligible) {
     return classified;
   }
-  // Carry an output-limiting filter into the delegated request so the worker
-  // honors the same bound the operator asked for instead of dropping it.
-  if (compound.filter) {
-    const bound = describeOutputFilter(compound.filter);
-    return {
-      ...classified,
-      request: {
-        ...classified.request,
-        objective: `${classified.request.objective} Limit the returned evidence to the ${bound}.`,
-        acceptanceCriteria: [
-          ...classified.request.acceptanceCriteria,
-          `Bound the returned evidence to the ${bound}.`,
-        ],
-      },
-    };
-  }
-  return classified;
+  // Persist output semantics for broker enforcement instead of trusting the
+  // worker model to reproduce a shell pipeline or stderr redirect.
+  return withCompoundOutputBoundary(classified, compound);
 };
 
 export const classifyDelegationIntent = (

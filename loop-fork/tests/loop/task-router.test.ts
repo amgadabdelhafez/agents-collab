@@ -4,6 +4,7 @@ import {
   routeUtilityRequest,
   type UtilityRouteContext,
   type UtilityRouteReason,
+  type UtilityRouteRequest,
   type UtilityRouteRequestInput,
 } from "../../src/loop/task-router";
 
@@ -308,12 +309,14 @@ describe("fail-closed gates", () => {
 test("normalizes requests and creates a stable idempotency key", () => {
   const normalizedInput = requestInput({
     acceptanceCriteria: ["done"],
+    executionCwd: "packages/api",
     objective: "bounded work",
     readScope: ["src/parser.ts"],
   });
   const first = createUtilityRouteRequest(
     requestInput({
       acceptanceCriteria: [" done ", "done"],
+      executionCwd: "./packages/api/",
       objective: " bounded work ",
       readScope: ["./src/parser.ts"],
     }),
@@ -326,6 +329,172 @@ test("normalizes requests and creates a stable idempotency key", () => {
 
   expect(first.objective).toBe("bounded work");
   expect(first.acceptanceCriteria).toEqual(["done"]);
+  expect(first.executionCwd).toBe("packages/api");
   expect(first.readScope[0]).toBe("src/parser.ts");
   expect(first.idempotencyKey).toBe(second.idempotencyKey);
+});
+
+test("treats a protected execution cwd as protected scope", () => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({ executionCwd: ".claude", kind: "command" }),
+      context()
+    )
+  ).toEqual({ reason: "protected-scope", target: "driver" });
+});
+
+test("routes a fully structured focused check", () => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        executionArgv: ["bun", "test", "tests/parser.test.ts"],
+        executionCwd: ".",
+        executionProfile: "focused-check",
+        kind: "command",
+        readScope: [".", "tests/parser.test.ts"],
+        requiredCapabilities: ["bounded-command", "focused-verify"],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({
+    reason: "utility-eligible",
+    target: "utility",
+    tierId: "cheap-oss",
+  });
+});
+
+test("routes only an exactly bounded file-read profile", () => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        executionProfile: "file-read",
+        executionRead: {
+          endLine: 40,
+          path: "src/parser.ts",
+          startLine: 1,
+        },
+        kind: "inspect",
+        readScope: ["src/parser.ts"],
+        requiredCapabilities: ["inspect"],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({
+    reason: "utility-eligible",
+    target: "utility",
+    tierId: "cheap-oss",
+  });
+});
+
+test("normalizes and routes a structured output boundary", () => {
+  const request = makeRequest({
+    executionOutput: { lineLimit: 25, position: "tail", stderr: "merge" },
+    executionProfile: "search",
+    kind: "inspect",
+    readScope: ["src/parser.ts"],
+    requiredCapabilities: ["inspect"],
+    writeScope: [],
+  });
+  expect(request.executionOutput).toEqual({
+    lineLimit: 25,
+    position: "tail",
+    stderr: "merge",
+  });
+  expect(routeUtilityRequest(request, context())).toMatchObject({
+    reason: "utility-eligible",
+    target: "utility",
+  });
+});
+
+test.each([
+  makeRequest({ executionProfile: "focused-check", kind: "command" }),
+  makeRequest({
+    executionProfile: "file-read",
+    kind: "inspect",
+    writeScope: [],
+  }),
+  makeRequest({
+    executionOutput: { lineLimit: 501, position: "head" },
+    executionProfile: "search",
+    kind: "inspect",
+    readScope: ["src/parser.ts"],
+    writeScope: [],
+  }),
+  makeRequest({
+    executionOutput: { lineLimit: 20 },
+    executionProfile: "search",
+    kind: "inspect",
+    readScope: ["src/parser.ts"],
+    writeScope: [],
+  }),
+  makeRequest({
+    executionProfile: "file-read",
+    executionRead: { endLine: 501, path: "src/parser.ts", startLine: 1 },
+    kind: "inspect",
+    readScope: ["src/parser.ts"],
+    writeScope: [],
+  }),
+  makeRequest({
+    executionProfile: "file-read",
+    executionRead: { lastLines: 20, path: "src/other.ts" },
+    kind: "inspect",
+    readScope: ["src/parser.ts"],
+    writeScope: [],
+  }),
+  makeRequest({
+    executionProfile: "search",
+    executionRead: { lastLines: 20, path: "src/parser.ts" },
+    kind: "inspect",
+    readScope: ["src/parser.ts"],
+    writeScope: [],
+  }),
+  makeRequest({
+    executionCwd: ".",
+    executionProfile: "focused-check",
+    kind: "command",
+  }),
+  makeRequest({
+    executionArgv: [
+      "bun",
+      "test",
+      "tests/1.test.ts",
+      "tests/2.test.ts",
+      "tests/3.test.ts",
+      "tests/4.test.ts",
+      "tests/5.test.ts",
+    ],
+    executionCwd: ".",
+    executionProfile: "focused-check",
+    kind: "command",
+    readScope: [
+      ".",
+      "tests/1.test.ts",
+      "tests/2.test.ts",
+      "tests/3.test.ts",
+      "tests/4.test.ts",
+      "tests/5.test.ts",
+    ],
+    writeScope: [],
+  }),
+  {
+    ...makeRequest({
+      executionCwd: ".",
+      executionProfile: "focused-check",
+      kind: "command",
+    }),
+    executionCwd: 42 as unknown as string,
+  },
+  makeRequest({
+    executionCwd: ".",
+    executionProfile:
+      "future-profile" as UtilityRouteRequest["executionProfile"],
+    kind: "command",
+  }),
+])("keeps malformed persisted execution metadata with the driver", (request) => {
+  expect(routeUtilityRequest(request, context())).toEqual({
+    reason: "request-not-bounded",
+    target: "driver",
+  });
 });

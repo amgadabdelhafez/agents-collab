@@ -315,6 +315,116 @@ describe("runHookEmit", () => {
     expect(stdout.join("")).toContain('"permissionDecision":"deny"');
   });
 
+  test("roots a focused-check cwd and paths in a verified linked worktree", async () => {
+    const routeRequests: Array<{
+      executionArgv?: string[];
+      executionCwd?: string;
+      readScope?: string[];
+    }> = [];
+    async function* stdin() {
+      await Promise.resolve();
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/linked/packages/api",
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: "npx vitest run tests/router.test.ts 2>&1 | tail -20",
+          },
+          tool_name: "Bash",
+          tool_use_id: "linked-check",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: () => undefined,
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "linked-check-job" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/linked",
+      stdin: stdin(),
+      writeStdout: () => undefined,
+    });
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        executionArgv: [
+          "npx",
+          "vitest",
+          "run",
+          "packages/api/tests/router.test.ts",
+        ],
+        executionCwd: "/linked/packages/api",
+        executionOutput: {
+          lineLimit: 20,
+          position: "tail",
+          stderr: "merge",
+        },
+        readScope: [
+          "/linked/packages/api",
+          "/linked/packages/api/tests/router.test.ts",
+        ],
+      }),
+    ]);
+  });
+
+  test("roots an exact source-slice boundary in a verified linked worktree", async () => {
+    const routeRequests: Array<{
+      executionRead?: {
+        endLine?: number;
+        lastLines?: number;
+        path: string;
+        startLine?: number;
+      };
+      readScope?: string[];
+    }> = [];
+    async function* stdin() {
+      await Promise.resolve();
+      yield new TextEncoder().encode(
+        JSON.stringify({
+          cwd: "/linked/packages/api",
+          hook_event_name: "PreToolUse",
+          tool_input: { command: "awk 'NR>=10 && NR<=20' src/router.ts" },
+          tool_name: "Bash",
+          tool_use_id: "linked-read",
+        })
+      );
+    }
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: () => undefined,
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "linked-read-job" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/linked",
+      stdin: stdin(),
+      writeStdout: () => undefined,
+    });
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        executionRead: {
+          endLine: 20,
+          path: "/linked/packages/api/src/router.ts",
+          startLine: 10,
+        },
+        readScope: ["/linked/packages/api/src/router.ts"],
+      }),
+    ]);
+  });
+
   test("journals unsupported and unverified automatic candidates", async () => {
     const delegationEvents: unknown[] = [];
     const run = async (

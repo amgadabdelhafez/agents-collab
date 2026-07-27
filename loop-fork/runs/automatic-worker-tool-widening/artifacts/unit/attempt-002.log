@@ -1,0 +1,322 @@
+task_id: automatic-worker-tool-widening
+dimension: unit
+attempt: 002
+started_at: 2026-07-27T07:13:57Z
+command: bun test tests/loop/delegation-policy.test.ts tests/loop/task-router.test.ts tests/loop/utility-workspace.test.ts tests/loop/utility-tools.test.ts tests/loop/utility-runtime.test.ts tests/loop/governess-hooks.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/task-router.test.ts:
+(pass) routes a bounded low-risk edit to a capable utility tier [0.54ms]
+(pass) routing is provider generic [0.14ms]
+(pass) applies generic tier patterns and an eligible default fallback
+(pass) cost-quality policy changes which eligible tier wins [0.29ms]
+(pass) fails closed on invalid generic routing policy metadata [0.08ms]
+(pass) routes review to the peer and authority to escalation
+(pass) fail-closed gates > keeps missing epoch with the driver
+(pass) fail-closed gates > keeps missing acceptance with the driver
+(pass) fail-closed gates > keeps unknown risk with the driver
+(pass) fail-closed gates > keeps protected path with the driver
+(pass) fail-closed gates > keeps credential directory with the driver
+(pass) fail-closed gates > keeps agent settings with the driver
+(pass) fail-closed gates > keeps nested credential directory with the driver
+(pass) fail-closed gates > keeps nested governing spec with the driver
+(pass) fail-closed gates > keeps nested architecture with the driver
+(pass) fail-closed gates > keeps copilot instructions with the driver
+(pass) fail-closed gates > keeps case-varied nested agent settings with the driver
+(pass) fail-closed gates > keeps write conflict with the driver
+(pass) fail-closed gates > keeps missing capability with the driver
+(pass) fail-closed gates > keeps unhealthy tier with the driver
+(pass) fail-closed gates > escalates forbidden credentialAccess authority
+(pass) fail-closed gates > escalates forbidden dependencyChange authority
+(pass) fail-closed gates > escalates forbidden destructive authority
+(pass) fail-closed gates > escalates forbidden migration authority
+(pass) fail-closed gates > escalates forbidden productDecision authority
+(pass) fail-closed gates > escalates forbidden remoteMutation authority
+(pass) fail-closed gates > escalates forbidden release authority
+(pass) fail-closed gates > cost estimates do not gate routing
+(pass) normalizes requests and creates a stable idempotency key [0.50ms]
+(pass) treats a protected execution cwd as protected scope [0.04ms]
+(pass) routes a fully structured focused check [0.10ms]
+(pass) keeps malformed persisted execution metadata with the driver [0.02ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+
+tests/loop/utility-tools.test.ts:
+(pass) publishes provider-agnostic definitions for bounded tools [0.02ms]
+(pass) exposes and enforces only the tools allowed for an exact request [4.84ms]
+(pass) reads and searches only declared non-secret scope [6.01ms]
+(pass) lists one bounded directory without exposing protected entries [9.25ms]
+(pass) directory listing truncates before the shared output byte limit [6.42ms]
+(pass) reads an exact bounded tail without widening file authority [8.20ms]
+(pass) reads a bounded range from a regular file larger than 128 KiB [5.32ms]
+(pass) search rejects matching output larger than the broker output budget [7.43ms]
+(pass) git_inspect runs only literal bounded read-only metadata commands [3.87ms]
+(pass) central protected-path policy denies credential and agent settings [3.73ms]
+(pass) rejects traversal and symlink escape [4.07ms]
+(pass) runs literal allowlisted argv with a scrubbed environment [4.11ms]
+(pass) explicit focused cwd is exact while legacy read-scope cwd remains contained [3.39ms]
+(pass) focused check cwd does not widen its exact file authority [3.31ms]
+(pass) git_diff supports bounded commit comparison and diff check [3.43ms]
+(pass) loads a repository policy for local offline npx vitest checks [3.86ms]
+(pass) supports a local offline vitest check without repository mutation [4.17ms]
+(pass) resolves a monorepo package-local vitest from the declared cwd [3.85ms]
+(pass) repository command policy fails closed when malformed or open-world [3.47ms]
+(pass) repository npx policy refuses a missing local binary [3.35ms]
+(pass) rejects timed out and oversized command output [3.42ms]
+(pass) stores a validated patch proposal without modifying the source [3.72ms]
+(pass) guarded apply revalidates write scope and dependency targets [4.79ms]
+(pass) guarded apply refuses symlink escapes from write scope [3.78ms]
+(pass) guarded apply refuses an in-repository symlink write-scope escape [3.60ms]
+(pass) environment scrubbing is allowlist based [0.03ms]
+
+tests/loop/utility-runtime.test.ts:
+(pass) OpenRouter GLM is the default but remains disabled without a credential [0.17ms]
+(pass) worker concurrency is configurable within a bounded range [0.09ms]
+(pass) auto execution profiles expose only satisfiable broker tools [0.04ms]
+(pass) a mode-0600 key file enables the tier without exporting the secret [0.28ms]
+(pass) detached utility worker environment is allowlist-built, not inherited [0.05ms]
+(pass) governess passes only the minimal key-file worker environment [1.87ms]
+(pass) governess route processing dispatches eligible work without provider I/O [1.21ms]
+(pass) worker routing ignores cost estimates [2.15ms]
+(pass) the default worker pool runs two jobs and leaves a third pending [2.98ms]
+(pass) peer-routed reviews preserve the requester and ask the peer to act [1.67ms]
+(pass) safe key diagnostics persist in routing observability, not the output-only worker pane [1.70ms]
+(pass) spawn failure terminates the job instead of stranding routed utility work [1.47ms]
+(pass) an unclaimed routed job fails closed after its claim deadline [1.66ms]
+(pass) a dead claimed worker fails immediately and releases its write scope [2.83ms]
+(pass) a live worker remains claimed before its external runtime deadline [1.39ms]
+(pass) governess externally terminates a live worker past its runtime [1.74ms]
+(pass) terminal completion racing the reaper is preserved [1.52ms]
+(pass) overlapping utility writes are not dispatched concurrently [1.61ms]
+(pass) worker pane is a colored output-only request, tool, and response stream [2.55ms]
+(pass) utility pane keeps a failed worker response visible within its viewport [0.86ms]
+(pass) a new governess epoch fences an orphaned utility claim [1.76ms]
+(pass) peer routing is relative to the requester, not the current driver [1.03ms]
+(pass) a full agent applies a completed utility patch with pre/postimage journal proof [15.20ms]
+(pass) guarded patch application refuses wrong hashes and proposal-time drift [3.07ms]
+(pass) utility worker completes against an OpenAI-compatible local endpoint [5.64ms]
+(pass) utility worker rejects prose-only completion without repository evidence [3.48ms]
+(pass) a failing focused check cannot satisfy command completion evidence [15.78ms]
+
+tests/loop/delegation-policy.test.ts:
+(pass) delegation classifier > routes large safe reads but keeps small and governing reads direct [0.27ms]
+(pass) delegation classifier > keeps protected or governing read direct: AGENTS.md
+(pass) delegation classifier > keeps protected or governing read direct: .aws/config [0.09ms]
+(pass) delegation classifier > keeps protected or governing read direct: .claude/settings.json [0.03ms]
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/.aws/config [0.01ms]
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/.claude/settings.json
+(pass) delegation classifier > keeps protected or governing read direct: fixtures/repo/.git/config
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/specs/auth/spec.md
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/docs/architecture/invariants.md
+(pass) delegation classifier > keeps protected or governing read direct: .github/copilot-instructions.md
+(pass) delegation classifier > keeps protected or governing read direct: .github/copilot/mcp.json
+(pass) delegation classifier > keeps protected or governing read direct: .github/agents/reviewer.agent.md [0.12ms]
+(pass) delegation classifier > keeps protected or governing read direct: .cursor/rules/project.mdc
+(pass) delegation classifier > keeps protected or governing read direct: .gemini/settings.json
+(pass) delegation classifier > keeps protected or governing read direct: .windsurfrules
+(pass) delegation classifier > keeps protected or governing read direct: .vscode/mcp.json
+(pass) delegation classifier > keeps protected or governing read direct: .mcp.json [0.08ms]
+(pass) delegation classifier > keeps protected or governing read direct: .CLAUDE/settings.json
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/.AWS/config
+(pass) delegation classifier > keeps protected or governing read direct: fixtures/repo/.GIT/config
+(pass) delegation classifier > keeps protected or governing read direct: docs/architecture/system-overview.md
+(pass) delegation classifier > keeps protected or governing read direct: .loop/utility-policy.json [0.05ms]
+(pass) delegation classifier > keeps protected or governing read direct: .env.local
+(pass) delegation classifier > keeps protected or governing read direct: .ssh/id_ed25519 [0.02ms]
+(pass) delegation classifier > keeps protected or governing read direct: package.json
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Read [0.02ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Grep [0.07ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Glob
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.25ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.13ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.05ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.01ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.08ms]
+(pass) delegation classifier > routes bounded searches but keeps Glob non-delegable
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","output_mode":"count"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","output_mode":"files_with_matches"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","-c":true}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","-l":true}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","glob":"*.md"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","type":"ts"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","head_limit":5}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","-A":3}
+(pass) delegation classifier > still routes a plain content Grep (content mode, -i/-n allowed) [0.09ms]
+(pass) delegation classifier > routes exact mechanical command git status --short
+(pass) delegation classifier > routes exact mechanical command git diff -- src/loop/tmux.ts [0.05ms]
+(pass) delegation classifier > routes exact mechanical command git diff --name-only -- src/loop [0.04ms]
+(pass) delegation classifier > routes exact mechanical command git diff --cached -- src/loop
+(pass) delegation classifier > routes exact mechanical command rg -n 'route|worker' src/loop [0.05ms]
+(pass) delegation classifier > routes exact mechanical command sed -n '20,80p' src/loop/tmux.ts
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git show --stat 53a8d5dd | head -60 [0.09ms]
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git show --stat --format='' 53a8d5dd | tail -30
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git log --oneline -3 origin/main
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git rev-parse origin/main
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git branch -a --list '*loop51*'
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git cat-file -t 53a8d5dd
+(pass) delegation classifier > routes a bounded chain of exact Git metadata inspections
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git fetch origin main --quiet && git rev-parse origin/main [0.19ms]
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git checkout -b loop51/base origin/main && git log --oneline -1
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git show --patch 53a8d5dd [0.02ms]
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git log --format=%x00 -3 origin/main
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git rev-parse origin/main && git commit -am done [0.04ms]
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git rev-parse a && git rev-parse b && git rev-parse c && git rev-parse d && git rev-parse e
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff --stat -- src/loop
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff --name-status -- src/loop
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff -U0 -- src/loop
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff -U40 -- src/loop
+(pass) delegation classifier > rejects a double-quoted backslash instead of dropping it
+(pass) delegation classifier > rejects unquoted parentheses rg foo (bar)
+(pass) delegation classifier > rejects unquoted parentheses git diff -- (x)
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: git diff [0.09ms]
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: git commit -am done
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: rg route src && npm test
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: npx vitest run
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: sed -n '1,900p' src/loop/tmux.ts
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: echo API_KEY=abcdefghijklmnop
+(pass) delegation classifier > uses enforce by default and observe for invalid modes
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop | head -50
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop | head -n 50
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop | tail -20 [0.02ms]
+(pass) delegation classifier > routes decomposed safe compound command git status --short | head -20 [0.01ms]
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop 2>/dev/null
+(pass) delegation classifier > routes decomposed safe compound command sed -n '20,80p' src/loop/tmux.ts 2>/dev/null [0.05ms]
+(pass) delegation classifier > routes decomposed safe compound command cd src/loop && rg -n route . [0.02ms]
+(pass) delegation classifier > routes decomposed safe compound command cd src && rg -n route . 2>/dev/null | head -50
+(pass) delegation classifier > routes newly bounded local command npx vitest run tests/router.test.ts 2>&1 | tail -25
+(pass) delegation classifier > routes newly bounded local command cd packages/api && bun test tests/router.test.ts | head -20
+(pass) delegation classifier > routes newly bounded local command ls -la tests | head -5
+(pass) delegation classifier > routes newly bounded local command grep -Fin needle src tests [0.21ms]
+(pass) delegation classifier > routes newly bounded local command grep --fixed-strings --ignore-case needle src
+(pass) delegation classifier > routes newly bounded local command grep -n constraints src
+(pass) delegation classifier > routes newly bounded local command awk 'NR>=185 && NR<=215' src/core.js
+(pass) delegation classifier > routes newly bounded local command awk 'NR<=20' tests/example.test.ts
+(pass) delegation classifier > routes newly bounded local command tail -n 40 src/core.js
+(pass) delegation classifier > routes newly bounded local command tail -40 src/core.js [0.17ms]
+(pass) delegation classifier > carries the output-filter bound into the delegated objective for rg -n route src/loop | head -50 [0.03ms]
+(pass) delegation classifier > carries the output-filter bound into the delegated objective for rg -n route src/loop | head -n 50
+(pass) delegation classifier > carries the output-filter bound into the delegated objective for rg -n route src/loop | tail -20
+(pass) delegation classifier > preserves a folded cwd for a focused test [0.12ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run --coverage tests/router.test.ts
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts --update [0.03ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest watch tests/router.test.ts
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: bun test
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: bun test tests/a.test.ts tests/b.test.ts tests/c.test.ts tests/d.test.ts tests/e.test.ts
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: bun test package.json [0.04ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts 2>/tmp/errors
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts 2>&2
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts && git commit -m nope [0.02ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: ls -R src
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: ls src tests
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: ls /etc [0.04ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: grep -E 'route|worker' src
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: grep 'route.*worker' src
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: grep --include '*.ts' route src
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: awk '{print $1}' src/core.js
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: awk 'NR<=501' src/core.js
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: tail -n 501 src/core.js
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: tail -f src/core.js
+(pass) delegation classifier > stops at an unquoted comment like bash
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | xargs rm direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -20 | wc -l direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -n many direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | wc -l extra.txt direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg -n route src/loop | wc -l direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -0 direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -n 0 direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src > findings.txt direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src 2>/tmp/errors direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src 2> /dev/null direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src || rg route tests direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection git add . && git commit -m done direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection cd src && cd tests && ls direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection cd - && rg -n route . direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection cd /tmp && rg route . direct with reason cd-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection cd ../elsewhere && ls direct with reason cd-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection cd .claude && ls direct with reason cd-without-safe-scope [0.19ms]
+(pass) delegation classifier > keeps widened-grammar rejection cd ~ && wc -l .zsh_history direct with reason cd-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection cd src && rm -rf . direct with reason command-not-in-delegation-grammar
+(pass) delegation classifier > keeps widened-grammar rejection echo hello | head -2 direct with reason command-not-in-delegation-grammar
+(pass) delegation classifier > keeps widened-grammar rejection ls src/*.ts direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection wc -l direct with reason command-not-in-delegation-grammar
+(pass) delegation classifier > keeps widened-grammar rejection wc -l src direct with reason command-not-in-delegation-grammar
+(pass) delegation classifier > keeps widened-grammar rejection wc -c src/loop/tmux.ts direct with reason command-not-in-delegation-grammar
+(pass) delegation classifier > keeps widened-grammar rejection wc -l ../outside.txt direct with reason command-not-in-delegation-grammar
+(pass) delegation classifier > keeps widened-grammar rejection rg '' src direct with reason unbounded-or-sensitive-search
+(pass) delegation classifier > keeps widened-grammar rejection head -n 200 ~/.netrc direct with reason governed-or-unsafe-path
+(pass) delegation classifier > keeps widened-grammar rejection rg -n password ~ direct with reason search-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection rg -n route src/{loop,../../../etc} direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg {x,/etc/hosts} src direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg {x,.env} src direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg --pre tools/evil.sh needle src direct with reason unsupported-rg-option
+(pass) delegation classifier > keeps widened-grammar rejection git diff -- :/src direct with reason git-diff-magic-pathspec
+(pass) delegation classifier > keeps widened-grammar rejection git diff -- :!src direct with reason git-diff-magic-pathspec
+(pass) delegation classifier > keeps widened-grammar rejection rg -n route src evil direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection wc -l src/a.ts
+rm -rf src direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection wc -l "src/a.ts\
+rm -rf src" direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection git status --shortrm -rf . direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection bun test tests/a.test.ts
+rm tests/b.test.ts direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src \2>/dev/null direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps repeated tool attempts distinct when hook ids differ
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Read
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Read
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Grep
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Grep
+(pass) safeScope shared hardening covers every classifier > keeps ls on an existing regular file direct [0.47ms]
+(pass) safeScope shared hardening covers every classifier > keeps a focused check with a regular-file cwd direct [0.35ms]
+(pass) safeScope shared hardening covers every classifier > resolves symlinks so an in-repo link pointing outside is rejected [0.64ms]
+(pass) safeScope shared hardening covers every classifier > rejects a dangling in-repo symlink whose target is outside the repo [0.41ms]
+(pass) safeScope shared hardening covers every classifier > rejects an in-repo symlink followed by .. that escapes the repo [0.41ms]
+(pass) safeScope shared hardening covers every classifier > rejects a directory target for a single-file read (Read and head) [0.52ms]
+(pass) safeScope shared hardening covers every classifier > never traverses an in-repo symlink, even via a .. hop or a backslash [0.45ms]
+(pass) safeScope shared hardening covers every classifier > rejects a non-regular-file target (FIFO) for a single-file read [2.96ms]
+(pass) delegation telemetry is compact, durable, and tolerant of missing files [0.27ms]
+(pass) Codex app-server observation records only exact missed candidates
+
+tests/loop/utility-workspace.test.ts:
+(pass) linked worktree scopes resolve to one root-relative verified workspace [114.87ms]
+(pass) linked focused-check cwd resolves with the same verified workspace [109.56ms]
+(pass) active paths resolve only to the run root or a registered linked worktree [123.22ms]
+(pass) unrelated, mixed-worktree, and symlink escape scopes fail closed [152.44ms]
+(pass) a copied linked-worktree gitdir pointer cannot spoof registration [106.72ms]
+(pass) runtime journals a safe mismatch detail instead of spawning utility [108.57ms]
+(pass) same linked-worktree writes conflict after scope normalization [181.55ms]
+(pass) identical relative paths in base and linked worktrees do not conflict [149.92ms]
+(pass) routing persists the adopted root and the worker reads the linked checkout [163.95ms]
+(pass) guarded apply reuses the verified linked-worktree boundary [168.02ms]
+
+tests/loop/governess-hooks.test.ts:
+(pass) normalizeHookPayload > maps a Claude PostToolUse payload to a normalized event [0.14ms]
+(pass) normalizeHookPayload > falls back to a raw event for unknown shapes
+(pass) normalizeHookPayload > captures a message detail for notification-style payloads
+(pass) runHookEmit > appends one normalized JSONL line and never throws [0.46ms]
+(pass) runHookEmit > swallows malformed stdin without throwing [0.13ms]
+(pass) runHookEmit > enforce mode queues and denies an exact mechanical Claude tool [0.31ms]
+(pass) runHookEmit > observe or unavailable utility observes without blocking [0.04ms]
+(pass) runHookEmit > enforce or unavailable utility observes without blocking [0.14ms]
+(pass) runHookEmit > off mode leaves eligible native tools untouched and unmeasured
+(pass) runHookEmit > automatic route failure is measured and fails open [0.20ms]
+(pass) runHookEmit > routes an eligible command from a verified linked worktree [0.16ms]
+(pass) runHookEmit > roots a focused-check cwd and paths in a verified linked worktree
+(pass) runHookEmit > journals unsupported and unverified automatic candidates [0.35ms]
+(pass) hook settings generators > builds a shell command that invokes the emitter
+(pass) hook settings generators > Claude settings register every Claude hook event
+(pass) hook settings generators > Codex hooks.json registers only coarse turn events
+
+ 290 pass
+ 0 fail
+ 529 expect() calls
+Ran 290 tests across 6 files. [1.60s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-27T07:13:59Z

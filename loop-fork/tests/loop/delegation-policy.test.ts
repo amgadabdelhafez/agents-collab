@@ -42,6 +42,11 @@ describe("delegation classifier", () => {
       eligible: true,
       operation: "large-read",
       request: {
+        executionRead: {
+          endLine: 300,
+          path: "src/parser.ts",
+          startLine: 1,
+        },
         executionProfile: "file-read",
         readScope: ["src/parser.ts"],
       },
@@ -49,6 +54,9 @@ describe("delegation classifier", () => {
     expect(
       classify("Read", { file_path: "src/parser.ts", limit: 80 })
     ).toMatchObject({ eligible: false, reason: "small-context-read" });
+    expect(
+      classify("Read", { file_path: "src/parser.ts", limit: 501 })
+    ).toMatchObject({ eligible: false, reason: "large-read-out-of-bounds" });
     expect(
       classify("Read", {
         file_path: "specs/lower-agent-adoption/spec.md",
@@ -243,16 +251,9 @@ describe("delegation classifier", () => {
     expect(classify("Bash", { command })).toMatchObject({ eligible: false });
   });
 
-  // Broker-unsatisfiable shapes are dropped from the grammar and handled
-  // natively: run_check can only satisfy a directory-scoped cwd + regular-file
-  // target, which the leaf-file focused-check scope never provided; git_diff
-  // has no --stat/--name-status/-U capability.
+  // Broker-unsatisfiable Git shapes are dropped from the grammar and handled
+  // natively because git_diff has no --stat/--name-status/-U capability.
   test.each([
-    ["bun test tests/router.test.ts", "command-not-in-delegation-grammar"],
-    [
-      "npx vitest run tests/router.test.ts",
-      "command-not-in-delegation-grammar",
-    ],
     ["git diff --stat -- src/loop", "unsupported-git-diff-option"],
     ["git diff --name-status -- src/loop", "unsupported-git-diff-option"],
     ["git diff -U0 -- src/loop", "unsupported-git-diff-option"],
@@ -333,33 +334,194 @@ describe("delegation classifier", () => {
     });
   });
 
+  test.each([
+    [
+      "npx vitest run tests/router.test.ts 2>&1 | tail -25",
+      "focused-check",
+      "focused-check",
+      ".",
+      [".", "tests/router.test.ts"],
+    ],
+    [
+      "cd packages/api && bun test tests/router.test.ts | head -20",
+      "focused-check",
+      "focused-check",
+      "packages/api",
+      ["packages/api", "packages/api/tests/router.test.ts"],
+    ],
+    [
+      "ls -la tests | head -5",
+      "directory-list",
+      "file-list",
+      undefined,
+      ["tests"],
+    ],
+    [
+      "grep -Fin needle src tests",
+      "scoped-search",
+      "search",
+      undefined,
+      ["src", "tests"],
+    ],
+    [
+      "grep --fixed-strings --ignore-case needle src",
+      "scoped-search",
+      "search",
+      undefined,
+      ["src"],
+    ],
+    ["grep -n constraints src", "scoped-search", "search", undefined, ["src"]],
+    [
+      "awk 'NR>=185 && NR<=215' src/core.js",
+      "source-slice",
+      "file-read",
+      undefined,
+      ["src/core.js"],
+    ],
+    [
+      "awk 'NR<=20' tests/example.test.ts",
+      "source-slice",
+      "file-read",
+      undefined,
+      ["tests/example.test.ts"],
+    ],
+    [
+      "tail -n 40 src/core.js",
+      "source-slice",
+      "file-read",
+      undefined,
+      ["src/core.js"],
+    ],
+    [
+      "tail -40 src/core.js",
+      "source-slice",
+      "file-read",
+      undefined,
+      ["src/core.js"],
+    ],
+  ])("routes newly bounded local command %s", (command, operation, profile, executionCwd, readScope) => {
+    expect(classify("Bash", { command })).toMatchObject({
+      eligible: true,
+      operation,
+      request: {
+        ...(profile === "focused-check"
+          ? { executionArgv: expect.any(Array) }
+          : {}),
+        executionProfile: profile,
+        ...(executionCwd ? { executionCwd } : {}),
+        readScope,
+      },
+    });
+  });
+
+  test.each([
+    [
+      "awk 'NR>=185 && NR<=215' src/core.js",
+      { endLine: 215, path: "src/core.js", startLine: 185 },
+    ],
+    [
+      "awk 'NR<=20' tests/example.test.ts",
+      { endLine: 20, path: "tests/example.test.ts", startLine: 1 },
+    ],
+    ["tail -n 40 src/core.js", { lastLines: 40, path: "src/core.js" }],
+    ["tail -40 src/core.js", { lastLines: 40, path: "src/core.js" }],
+  ])("persists the exact broker read boundary for %s", (command, executionRead) => {
+    expect(classify("Bash", { command })).toMatchObject({
+      eligible: true,
+      request: { executionRead },
+    });
+  });
+
   // An output-limiting filter must be carried into the delegated request, never
   // silently dropped: the worker has to honor the same bound the operator asked
   // for, and a degenerate/absent bound must not read as "no limit".
   test.each([
-    ["rg -n route src/loop | head -50", "first 50"],
-    ["rg -n route src/loop | head -n 50", "first 50"],
-    ["rg -n route src/loop | tail -20", "last 20"],
-  ])("carries the output-filter bound into the delegated objective for %s", (command, expected) => {
+    [
+      "rg -n route src/loop | head -50",
+      "first 50",
+      { lineLimit: 50, position: "head" },
+    ],
+    [
+      "rg -n route src/loop | head -n 50",
+      "first 50",
+      { lineLimit: 50, position: "head" },
+    ],
+    [
+      "rg -n route src/loop | tail -20",
+      "last 20",
+      { lineLimit: 20, position: "tail" },
+    ],
+  ])("carries the output-filter bound into the delegated objective for %s", (command, expected, executionOutput) => {
     const classified = classify("Bash", { command });
     expect(classified.eligible).toBe(true);
     if (classified.eligible) {
       expect(classified.request.objective).toContain(expected);
+      expect(classified.request.executionOutput).toEqual(executionOutput);
     }
   });
 
-  // A leading in-repo `cd` folds only into an inspect read scope. It never
-  // rescues a command the grammar does not delegate, so a folded test-runner
-  // (dropped as broker-unsatisfiable) stays native.
-  test("does not let a folded cd rescue a non-grammar command", () => {
+  test("persists stderr merging for an exact focused check", () => {
+    expect(
+      classify("Bash", {
+        command: "bun test tests/router.test.ts 2>&1 | tail -25",
+      })
+    ).toMatchObject({
+      eligible: true,
+      request: {
+        executionOutput: {
+          lineLimit: 25,
+          position: "tail",
+          stderr: "merge",
+        },
+      },
+    });
+  });
+
+  test("preserves a folded cwd for a focused test", () => {
     expect(
       classify("Bash", {
         command: "cd packages/api && npx vitest run tests/router.test.ts",
       })
     ).toMatchObject({
-      eligible: false,
-      reason: "command-not-in-delegation-grammar",
+      eligible: true,
+      operation: "focused-check",
+      request: {
+        executionArgv: [
+          "npx",
+          "vitest",
+          "run",
+          "packages/api/tests/router.test.ts",
+        ],
+        executionCwd: "packages/api",
+        executionProfile: "focused-check",
+        readScope: ["packages/api", "packages/api/tests/router.test.ts"],
+      },
     });
+  });
+
+  test.each([
+    "npx vitest run",
+    "npx vitest run --coverage tests/router.test.ts",
+    "npx vitest run tests/router.test.ts --update",
+    "npx vitest watch tests/router.test.ts",
+    "bun test",
+    "bun test tests/a.test.ts tests/b.test.ts tests/c.test.ts tests/d.test.ts tests/e.test.ts",
+    "bun test package.json",
+    "npx vitest run tests/router.test.ts 2>/tmp/errors",
+    "npx vitest run tests/router.test.ts 2>&2",
+    "npx vitest run tests/router.test.ts && git commit -m nope",
+    "ls -R src",
+    "ls src tests",
+    "ls /etc",
+    "grep -E 'route|worker' src",
+    "grep 'route.*worker' src",
+    "grep --include '*.ts' route src",
+    "awk '{print $1}' src/core.js",
+    "awk 'NR<=501' src/core.js",
+    "tail -n 501 src/core.js",
+    "tail -f src/core.js",
+  ])("keeps unsafe or ambiguous widening candidate direct: %s", (command) => {
+    expect(classify("Bash", { command })).toMatchObject({ eligible: false });
   });
 
   // Bash ignores everything after an unquoted `#`; the classifier must too, or
@@ -401,11 +563,6 @@ describe("delegation classifier", () => {
     ["cd ~ && wc -l .zsh_history", "cd-without-safe-scope"],
     ["cd src && rm -rf .", "command-not-in-delegation-grammar"],
     ["echo hello | head -2", "command-not-in-delegation-grammar"],
-    // `ls` has no broker tool that can satisfy it, so it left the grammar.
-    ["ls", "command-not-in-delegation-grammar"],
-    ["ls src/loop", "command-not-in-delegation-grammar"],
-    ["ls -R src", "command-not-in-delegation-grammar"],
-    ["ls /etc", "command-not-in-delegation-grammar"],
     // Unquoted glob metacharacters fail closed at the tokenizer (bash expands).
     ["ls src/*.ts", "compound-or-unsafe-command"],
     // `wc -l` left the grammar: line-count on a directory target is
@@ -429,6 +586,12 @@ describe("delegation classifier", () => {
     // An unknown rg flag (e.g. --pre runs an arbitrary program per file) must
     // be rejected, not treated as the search pattern.
     ["rg --pre tools/evil.sh needle src", "unsupported-rg-option"],
+    ["grep needle -v src", "unsupported-grep-option"],
+    ["grep needle -r src", "unsupported-grep-option"],
+    ["grep needle --recursive src", "unsupported-grep-option"],
+    ["grep needle --color=always src", "unsupported-grep-option"],
+    ["grep needle -- src", "unsupported-grep-option"],
+    ["grep -F needle -n src", "unsupported-grep-option"],
     // git magic pathspec (:(exclude), :!) is not a literal path — it would diff
     // everything *except* the named path, leaking governed files past readScope.
     ["git diff -- :/src", "git-diff-magic-pathspec"],
@@ -484,6 +647,53 @@ describe("safeScope shared hardening covers every classifier", () => {
     expect(classify(tool, input as Record<string, unknown>)).toMatchObject({
       eligible: false,
     });
+  });
+
+  test("keeps ls on an existing regular file direct", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "deleg-repo-"));
+    try {
+      writeFileSync(join(repoRoot, "sample.ts"), "export {};\n");
+      expect(
+        classifyDelegationIntent({
+          agent: "claude",
+          cwd: repoRoot,
+          repoRoot,
+          toolInput: { command: "ls sample.ts" },
+          toolName: "Bash",
+          toolUseId: "tool-list-file",
+        })
+      ).toMatchObject({
+        eligible: false,
+        reason: "directory-list-target-not-directory",
+      });
+    } finally {
+      rmSync(repoRoot, { force: true, recursive: true });
+    }
+  });
+
+  test("keeps a focused check with a regular-file cwd direct", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "deleg-repo-"));
+    try {
+      writeFileSync(join(repoRoot, "not-a-directory"), "plain file\n");
+      writeFileSync(join(repoRoot, "sample.test.ts"), "export {};\n");
+      expect(
+        classifyDelegationIntent({
+          agent: "claude",
+          cwd: repoRoot,
+          repoRoot,
+          toolInput: {
+            command: "cd not-a-directory && bun test sample.test.ts",
+          },
+          toolName: "Bash",
+          toolUseId: "tool-check-file-cwd",
+        })
+      ).toMatchObject({
+        eligible: false,
+        reason: "focused-check-cwd-not-directory",
+      });
+    } finally {
+      rmSync(repoRoot, { force: true, recursive: true });
+    }
   });
 
   test("resolves symlinks so an in-repo link pointing outside is rejected", () => {
