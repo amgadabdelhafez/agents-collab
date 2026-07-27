@@ -73,8 +73,6 @@ export interface UtilityRuntimeConfig {
   maxClaimWaitMs: number;
   maxJobRuntimeMs: number;
   maxSteps: number;
-  maxTokens: number;
-  maxTotalTokens: number;
   model: string;
   preventPerRequestOverrides: boolean;
   providerSort: UtilityTierSelectionStrategy;
@@ -335,10 +333,6 @@ export const resolveUtilityRuntimeConfig = (
     maxJobRuntimeMs: positiveNumber(env.LOOP_UTILITY_MAX_RUNTIME_MS, 900_000),
     maxSteps: Math.floor(
       positiveNumber(env.LOOP_UTILITY_MAX_STEPS, DEFAULT_MAX_STEPS)
-    ),
-    maxTokens: Math.floor(positiveNumber(env.LOOP_UTILITY_MAX_TOKENS, 8000)),
-    maxTotalTokens: Math.floor(
-      positiveNumber(env.LOOP_UTILITY_MAX_TOTAL_TOKENS, 64_000)
     ),
     model: env.LOOP_UTILITY_MODEL?.trim() || DEFAULT_MODEL,
     preventPerRequestOverrides: env.LOOP_UTILITY_ALLOW_OVERRIDES !== "1",
@@ -921,15 +915,6 @@ const executeUtilityToolCall = async (input: {
   return { name, result };
 };
 
-const assertUtilityTokenBudget = (
-  usage: OpenAICompatibleUsage,
-  config: UtilityRuntimeConfig
-): void => {
-  if (usage.totalTokens > config.maxTotalTokens) {
-    throw new Error("worker job exceeded its total token limit");
-  }
-};
-
 const runUtilityConversation = async (input: {
   broker: Awaited<ReturnType<typeof createUtilityToolBroker>>;
   config: UtilityRuntimeConfig;
@@ -962,7 +947,6 @@ const runUtilityConversation = async (input: {
     const response = await openAICompatibleChat({
       ...(input.config.apiKey ? { apiKey: input.config.apiKey } : {}),
       endpoint: input.config.endpoint,
-      maxTokens: input.config.maxTokens,
       messages,
       model: input.config.model,
       onTrace: (event: OpenAICompatibleTraceEvent) =>
@@ -977,7 +961,6 @@ const runUtilityConversation = async (input: {
     modelCalls += 1;
     usage = addUsage(usage, response.usage);
     input.onProgress(progress());
-    assertUtilityTokenBudget(usage, input.config);
     if (!response.ok) {
       throw new Error(response.error.message);
     }

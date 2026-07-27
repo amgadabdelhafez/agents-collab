@@ -20,3 +20,11 @@
 - Canonical rebuilt and loop 47 governess narrowly respawned as PID 94680.
   Claude PID 56784, Codex PID 56786, and worker pane PID 21402 remained
   unchanged. No worker job is queued or active and bridge pending is zero.
+- Follow-up operator decision removed token limits entirely: worker requests no
+  longer send `max_tokens`, runtime has no cumulative token abort, and the old
+  token environment controls/help entries are gone. A provider response
+  reporting one million tokens per call completes in regression coverage.
+- During verification, Codex decision `9825d7f4` was found already acted on by
+  Claude but still pending in the bridge. The worker subsequently recorded it
+  delivered, then delivered the newer wind-down ACK once. Both IDs now have one
+  durable delivery record and bridge pending is zero.
