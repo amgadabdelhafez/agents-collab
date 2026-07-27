@@ -580,11 +580,11 @@ test("runInTmux writes paired session refs before starting governess", async () 
             return { exitCode: 0, stderr: "", stdout: "%40\n" };
           }
           if (args[0] === "tmux" && args[1] === "split-window") {
+            if (args.some((arg) => arg.includes("__utility-pane"))) {
+              return { exitCode: 0, stderr: "", stdout: "%42\n" };
+            }
             if (args.includes("-h")) {
               return { exitCode: 0, stderr: "", stdout: "%41\n" };
-            }
-            if (args.includes("-b")) {
-              return { exitCode: 0, stderr: "", stdout: "%42\n" };
             }
             if (args.includes("-f")) {
               return { exitCode: 0, stderr: "", stdout: "%43\n" };
@@ -605,10 +605,10 @@ test("runInTmux writes paired session refs before starting governess", async () 
 
     expect(delegated).toBe(true);
     expect(events).toContain(
-      "manifest:codex-thread-1:%41:repo-loop-1:0.3"
+      "manifest:codex-thread-1:%41:repo-loop-1:0.2"
     );
     expect(events).toContain(
-      "spawn-governess:codex-thread-1:%41:repo-loop-1:0.3"
+      "spawn-governess:codex-thread-1:%41:repo-loop-1:0.2"
     );
     expect(events).toContain("manifest:codex-thread-1:%41:%43");
     expect(
@@ -628,33 +628,24 @@ test("runInTmux writes paired session refs before starting governess", async () 
       )
     ).toBe(true);
     expect(
-      events.indexOf("manifest:codex-thread-1:%41:repo-loop-1:0.3")
+      events.indexOf("manifest:codex-thread-1:%41:repo-loop-1:0.2")
     ).toBeLessThan(
-      events.indexOf("spawn-governess:codex-thread-1:%41:repo-loop-1:0.3")
+      events.indexOf("spawn-governess:codex-thread-1:%41:repo-loop-1:0.2")
     );
     expect(calls).toContainEqual([
       "tmux",
       "split-window",
-      "-v",
-      "-b",
+      "-h",
       "-P",
       "-F",
       "#{pane_id}",
       "-l",
-      "8",
+      "25%",
       "-t",
-      "%41",
+      "%43",
       "-c",
       repoDir,
       expect.stringContaining("__utility-pane"),
-    ]);
-    expect(calls).toContainEqual([
-      "tmux",
-      "resize-pane",
-      "-t",
-      "%42",
-      "-y",
-      "8",
     ]);
     expect(calls).toContainEqual([
       "tmux",
@@ -682,7 +673,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
   }
 });
 
-test("the lower-agent pane defaults on with an explicit opt-out", () => {
+test("the worker pane defaults to the right quarter with an explicit opt-out", () => {
   expect(tmuxInternals.utilityPaneEnabled({})).toBe(true);
   expect(tmuxInternals.utilityPaneEnabled({ LOOP_UTILITY_PANE: "0" })).toBe(
     false
@@ -690,13 +681,16 @@ test("the lower-agent pane defaults on with an explicit opt-out", () => {
   expect(tmuxInternals.utilityPaneEnabled({ LOOP_UTILITY_PANE: "off" })).toBe(
     false
   );
-  expect(tmuxInternals.utilityPaneHeight({})).toBe("8");
+  expect(tmuxInternals.utilityPaneWidth({})).toBe("25%");
   expect(
-    tmuxInternals.utilityPaneHeight({ LOOP_UTILITY_PANE_HEIGHT: "20%" })
+    tmuxInternals.utilityPaneWidth({ LOOP_UTILITY_PANE_WIDTH: "20%" })
   ).toBe("20%");
   expect(
-    tmuxInternals.utilityPaneHeight({ LOOP_UTILITY_PANE_HEIGHT: "invalid" })
-  ).toBe("8");
+    tmuxInternals.utilityPaneWidth({ LOOP_UTILITY_PANE_HEIGHT: "18%" })
+  ).toBe("18%");
+  expect(
+    tmuxInternals.utilityPaneWidth({ LOOP_UTILITY_PANE_WIDTH: "invalid" })
+  ).toBe("25%");
 });
 
 test("governed layout preserves legacy numeric fallbacks without tmux stdout", async () => {
@@ -771,9 +765,9 @@ test("governed layout preserves legacy numeric fallbacks without tmux stdout", a
 
     expect(delegated).toBe(true);
     expect(manifest.tmuxPaneLeft).toBe("repo-loop-1:0.0");
-    expect(manifest.tmuxPaneUtility).toBe("repo-loop-1:0.1");
-    expect(manifest.tmuxPaneRight).toBe("repo-loop-1:0.2");
-    expect(manifest.tmuxPaneGoverness).toBe("repo-loop-1:0.3");
+    expect(manifest.tmuxPaneUtility).toBe("repo-loop-1:0.3");
+    expect(manifest.tmuxPaneRight).toBe("repo-loop-1:0.1");
+    expect(manifest.tmuxPaneGoverness).toBe("repo-loop-1:0.2");
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
