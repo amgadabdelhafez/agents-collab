@@ -21,10 +21,24 @@ When in doubt: Claude plans and evaluates. Codex implements.
 5. Evaluation runs against `specs/<feature>/verify.md` — not self-review.
 6. PR opens only after `eval.json` exists and passes.
 
-## Hooks (deterministic — always run)
+## Hooks
 
-These are enforced by hooks, not by asking Claude nicely:
-- Post-edit: lint + typecheck touched files.
+**Registered and verified** in `.claude/settings.json` — these fire whether or not Claude
+agrees with them. Details: [`docs/project-hooks.md`](docs/project-hooks.md).
+
+- `PreToolUse` on `Bash` → **bulk staging is blocked**: `git add -A`, `git add .`,
+  `git add --all`, `git add :/`, `git stage -A`, `git commit -a` / `-am`. Stage explicit
+  paths. No environment-variable bypass.
+- `PreToolUse` on `Bash|Write|Edit|MultiEdit|NotebookEdit` → **writes to protected config
+  are blocked**: `.claude/settings*.json`, `scripts/hooks/**`, `.gitignore`, and the
+  user-level `~/.claude` / `~/.codex` files. Reads are never blocked.
+
+Also real, but scoped to the vendored subdirectory: `loop-fork/.claude/settings.json`
+registers `PostToolUse` on `Write|Edit` → `bun x ultracite fix`. It applies to sessions
+rooted in `loop-fork/`, not to this repo.
+
+**Intended, NOT implemented** — no hook enforces these today, so treat them as norms you
+have to follow yourself, and do not cite them as automatic:
 - Pre-completion: test run required on any code task.
 - On exit: append one-paragraph entry to `runs/<task-id>/task-log.md`.
 - On UI tasks: `scripts/capture-ui.sh` must succeed before eval.

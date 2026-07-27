@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'h=\"${CLAUDE_PROJECT_DIR:-$PWD}/scripts/hooks/block-bulk-git-add.py\"; [ -f \"$h\" ] || { echo \"PROJECT HOOK MISSING: $h\" >&2; exit 1; }; exec python3 \"$h\"'",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'h=\"${CLAUDE_PROJECT_DIR:-$PWD}/scripts/hooks/guard-protected-paths.py\"; [ -f \"$h\" ] || { echo \"PROJECT HOOK MISSING: $h\" >&2; exit 1; }; exec python3 \"$h\"'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
