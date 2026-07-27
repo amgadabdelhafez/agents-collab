@@ -44,9 +44,10 @@ export const acknowledgeBridgeDelivery = (
 export const consumeBridgeInbox = (
   runDir: string,
   target: Agent,
-  reason: string
+  reason: string,
+  canConsume: (message: BridgeMessage) => boolean = () => true
 ): BridgeMessage[] => {
-  const messages = readBridgeInbox(runDir, target);
+  const messages = readBridgeInbox(runDir, target).filter(canConsume);
   for (const message of messages) {
     acknowledgeBridgeDelivery(runDir, message, reason);
   }

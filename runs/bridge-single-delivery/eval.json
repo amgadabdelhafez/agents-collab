@@ -1,0 +1,29 @@
+{
+  "task_id": "bridge-single-delivery",
+  "result": "pass_with_baseline_failures",
+  "acceptance": {
+    "active_claude_injection_blocked": true,
+    "claimed_message_hidden_from_polling": true,
+    "main_agent_restart_required": false
+  },
+  "verification": {
+    "focused": {
+      "command": "bun test tests/loop/bridge.test.ts",
+      "passed": 71,
+      "failed": 0
+    },
+    "full": {
+      "command": "bun test",
+      "passed": 800,
+      "failed": 4,
+      "baseline_failures": [
+        "preparePairedOptions creates a loop-scoped Codex home without global MCP config",
+        "runAgent launches Codex app-server with loop-scoped Codex home",
+        "buildCommand carries Codex bridge approval config for legacy exec",
+        "startPersistentAgentSession enables persistent Codex threads"
+      ]
+    },
+    "build": "pass",
+    "diff_check": "pass"
+  }
+}

@@ -279,6 +279,21 @@ const releaseDeliveryClaim = (path: string): void => {
   }
 };
 
+export const isBridgeDeliveryClaimed = (
+  runDir: string,
+  messageId: string,
+  nowMs = Date.now()
+): boolean => {
+  try {
+    return (
+      nowMs - statSync(deliveryClaimPath(runDir, messageId)).mtimeMs <=
+      BRIDGE_DELIVERY_CLAIM_STALE_MS
+    );
+  } catch {
+    return false;
+  }
+};
+
 const decodeOutput = (value: Uint8Array): string =>
   new TextDecoder().decode(value);
 
@@ -361,6 +376,38 @@ const claudeComposerText = (output: string): string | undefined => {
 export const isClaudePaneReady = (output: string): boolean =>
   claudeComposerText(output) === "";
 
+export const isClaudeTurnActive = (runDir: string): boolean => {
+  try {
+    const latest = readFileSync(join(runDir, "hooks", "claude.jsonl"), "utf8")
+      .split(LINE_SPLIT_RE)
+      .filter((line) => line.trim())
+      .findLast((line) => {
+        try {
+          JSON.parse(line);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    if (!latest) {
+      return false;
+    }
+    const event = JSON.parse(latest) as { event?: unknown; state?: unknown };
+    if (event.state === "starting" || event.state === "working") {
+      return true;
+    }
+    return (
+      event.state === undefined &&
+      (event.event === "SessionStart" ||
+        event.event === "UserPromptSubmit" ||
+        event.event === "PreToolUse" ||
+        event.event === "PostToolUse")
+    );
+  } catch {
+    return false;
+  }
+};
+
 type ClaudeSubmissionState =
   | "confirmed"
   | "foreign-draft"
@@ -398,9 +445,18 @@ const confirmClaudeSubmission = async (
   return sawStrandedComposer ? "stranded" : "unknown";
 };
 
-const waitForClaudePane = async (pane: string): Promise<boolean> => {
+const waitForClaudePane = async (
+  runDir: string,
+  pane: string
+): Promise<boolean> => {
+  if (isClaudeTurnActive(runDir)) {
+    return false;
+  }
   for (let attempt = 0; attempt < GENERIC_TMUX_READY_POLLS; attempt += 1) {
-    if (isClaudePaneReady(capturePane(pane))) {
+    if (
+      !isClaudeTurnActive(runDir) &&
+      isClaudePaneReady(capturePane(pane))
+    ) {
       return true;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
@@ -428,7 +484,7 @@ const injectTmuxMessage = async (
   if (target === "codex") {
     ready = await waitForCodexPane(pane);
   } else if (target === "claude") {
-    ready = await waitForClaudePane(pane);
+    ready = await waitForClaudePane(runDir, pane);
   } else {
     ready = await waitForInteractivePane(pane);
   }

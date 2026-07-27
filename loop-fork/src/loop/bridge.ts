@@ -18,6 +18,7 @@ import {
   ensureBridgeWorker,
   flushClaudeChannelMessages,
   hasBridgeDeliveryRoute,
+  isBridgeDeliveryClaimed,
   readBridgeRuntimeStatus,
 } from "./bridge-runtime";
 import {
@@ -225,7 +226,8 @@ const handleReceiveMessagesTool = (
   const messages = consumeBridgeInbox(
     runDir,
     source,
-    "read via receive_messages"
+    "read via receive_messages",
+    (message) => !isBridgeDeliveryClaimed(runDir, message.id)
   );
   writeJsonRpc({
     id,
