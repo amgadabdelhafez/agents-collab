@@ -9,7 +9,11 @@
   the reported-cost execution abort. Cost remains journaled and displayed.
 - Preserved step, runtime, tool-output, filesystem, protected-path, command,
   credential, authority, write-conflict, and patch-application boundaries.
-- Focused router/runtime tests: 53 pass. Full suite: 797 pass with the same four
+- Focused router/runtime/tool tests: 70 pass. Full suite: 798 pass with the same four
   known Codex model/config expectation failures. Build and diff check pass.
 - Final audit removed the dormant generic router `budget-exceeded` branch and
   its tier/run budget fields, so no dollar estimate can gate routing anywhere.
+- A second live job (`62dcd839`) exposed a separate 8-step failure caused by
+  repeated denied attempts to run literal `git` through `run_check`. Raised the
+  conversation default to 16 steps and extended the shell-free `git_diff` tool
+  with validated literal commit hashes, changed-file mode, and diff-check mode.

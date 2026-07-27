@@ -286,6 +286,54 @@ test("runs literal allowlisted argv with a scrubbed environment", async () => {
   });
 });
 
+test("git_diff supports bounded commit comparison and diff check", async () => {
+  await withRepo(async (root) => {
+    let captured: CommandRequest | undefined;
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["src"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: (request) => {
+          captured = request;
+          return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
+        },
+      }
+    );
+    expect(
+      await broker.execute({
+        arguments: {
+          baseRef: "28968b22",
+          check: true,
+          headRef: "e5bf6dc2",
+          nameOnly: true,
+        },
+        name: "git_diff",
+      })
+    ).toMatchObject({ ok: true });
+    expect(captured?.argv).toEqual(
+      expect.arrayContaining([
+        "--check",
+        "--name-only",
+        "28968b22...e5bf6dc2",
+        "--",
+        "src",
+      ])
+    );
+    expect(
+      (
+        await broker.execute({
+          arguments: { baseRef: "--output=/tmp/escape" },
+          name: "git_diff",
+        })
+      ).error?.code
+    ).toBe("invalid_arguments");
+  });
+});
+
 test("loads a repository policy for local offline npx vitest checks", async () => {
   await withRepo(async (root) => {
     await mkdir(join(root, ".loop"), { recursive: true });
