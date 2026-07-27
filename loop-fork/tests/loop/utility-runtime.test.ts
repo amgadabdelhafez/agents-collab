@@ -130,15 +130,8 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.enabled).toBe(false);
   expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
-  expect(config.maxTokens).toBe(8000);
-  expect(config.maxTotalTokens).toBe(64_000);
-  expect(
-    resolveUtilityRuntimeConfig({
-      LOOP_UTILITY_API_KEY_FILE: "",
-      LOOP_UTILITY_MAX_TOKENS: "3000",
-      LOOP_UTILITY_MAX_TOTAL_TOKENS: "20000",
-    })
-  ).toMatchObject({ maxTokens: 3000, maxTotalTokens: 20_000 });
+  expect(config).not.toHaveProperty("maxTokens");
+  expect(config).not.toHaveProperty("maxTotalTokens");
 });
 
 test("a mode-0600 key file enables the tier without exporting the secret", () => {
@@ -1334,7 +1327,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
           completion_tokens: 4,
           cost: 10_000,
           prompt_tokens: 8,
-          total_tokens: 12,
+          total_tokens: 1_000_000,
         },
       });
     },
