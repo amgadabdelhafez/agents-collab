@@ -1,6 +1,6 @@
 {
   "task_id": "compound-worktree-observability",
-  "status": "pending",
+  "status": "pass",
   "required": [
     "unit",
     "ui",
@@ -34,7 +34,10 @@
       "signed_off_by": "codex-independent-evaluator"
     },
     "installation": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/compound-worktree-observability/artifacts/installation/verify.md",
+      "reason": "candidate, canonical target, and installed symlink hashes match; help smoke passed; no active Loop 54 pane was restarted",
+      "method": "atomic canonical binary replacement"
     }
   }
 }

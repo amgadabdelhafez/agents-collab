@@ -1,0 +1,30 @@
+{
+  "task_id": "compound-worktree-observability",
+  "scanned_at": "2026-07-27T20:20:34Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-27T20:20:34Z",
+      "task_id": "compound-worktree-observability",
+      "signal": "loc_growth",
+      "file": "src/loop/delegation-policy.ts",
+      "before_loc": 1997,
+      "after_loc": 2115,
+      "delta_loc": 118,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-27T20:20:34Z",
+      "task_id": "compound-worktree-observability",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-observability.ts",
+      "before_loc": 497,
+      "after_loc": 737,
+      "delta_loc": 240,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

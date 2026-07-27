@@ -2,6 +2,7 @@
   "id": "compound-worktree-observability",
   "mode": "planned",
   "created_at": "2026-07-27T19:53:22Z",
-  "status": "active",
-  "description": "Safely decompose read-only compounds, recover registered worktrees, and add worker detail to governess"
+  "status": "done",
+  "description": "Safely decompose read-only compounds, recover registered worktrees, and add worker detail to governess",
+  "ended_at": "2026-07-27T20:20:34Z"
 }

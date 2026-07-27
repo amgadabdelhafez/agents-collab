@@ -9,4 +9,4 @@
 - [x] Render stable, clipped worker detail rows.
 - [x] Run verification and capture artifacts.
 - [x] Obtain an independent evaluator verdict.
-- [ ] Commit and install the verified binary for future loops.
+- [x] Commit and install the verified binary for future loops.
