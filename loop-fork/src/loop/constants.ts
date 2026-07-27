@@ -102,9 +102,8 @@ Environment:
   LOOP_UTILITY_PROVIDER_SORT=<strategy>      balanced, price, throughput, latency, or tool-call-quality
   LOOP_UTILITY_COST_QUALITY=<0..10>          Workspace cost/quality preference (default: 7)
   LOOP_UTILITY_ALLOWED_TIERS=<patterns>      Comma-separated tier wildcard allowlist
-  LOOP_UTILITY_MAX_TOKENS=<tokens>           Worker completion limit per model call (default: 2400)
-  LOOP_UTILITY_MAX_TOTAL_TOKENS=<tokens>     Worker cumulative token limit per job (default: 16000)
-  LOOP_UTILITY_MAX_RUN_USD=<amount>          Utility run cost cap including active reservations (default: 0.25)
+  LOOP_UTILITY_MAX_TOKENS=<tokens>           Worker completion limit per model call (default: 8000)
+  LOOP_UTILITY_MAX_TOTAL_TOKENS=<tokens>     Worker cumulative token limit per job (default: 64000)
   LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for governess RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})
   LOOP_USAGE_TRACKER_SECRET=<secret>        Bearer token for Usage Tracker /stats (falls back to USAGE_TRACKER_SECRET)
 

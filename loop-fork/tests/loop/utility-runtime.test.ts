@@ -130,8 +130,8 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.enabled).toBe(false);
   expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
-  expect(config.maxTokens).toBe(2400);
-  expect(config.maxTotalTokens).toBe(16_000);
+  expect(config.maxTokens).toBe(8000);
+  expect(config.maxTotalTokens).toBe(64_000);
   expect(
     resolveUtilityRuntimeConfig({
       LOOP_UTILITY_API_KEY_FILE: "",
@@ -298,7 +298,7 @@ test("governess route processing dispatches eligible work without provider I/O",
   }
 });
 
-test("active estimate-less jobs cannot reserve beyond the run cost cap", async () => {
+test("worker routing ignores per-job and accumulated run cost", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-run-budget-"));
   const runDir = join(repoRoot, ".loop", "runs", "budget-run");
   mkdirSync(runDir, { recursive: true });
@@ -310,6 +310,7 @@ test("active estimate-less jobs cannot reserve beyond the run cost cap", async (
         authority: {},
         id,
         kind: "inspect",
+        estimatedCostUsd: 10_000,
         objective: `Inspect ${id}`,
         readScope: ["src"],
         requester: "claude",
@@ -343,10 +344,10 @@ test("active estimate-less jobs cannot reserve beyond the run cost cap", async (
       }
     );
 
-    expect(spawned).toEqual(["budget-a", "budget-b"]);
+    expect(spawned).toEqual(["budget-a", "budget-b", "budget-c"]);
     expect(readUtilityJob(runDir, "budget-c")).toMatchObject({
-      decision: { reason: "budget-exceeded", target: "driver" },
-      state: "routed-driver",
+      decision: { reason: "utility-eligible", target: "utility" },
+      state: "routed-utility",
     });
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
@@ -1331,7 +1332,12 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
           },
         ],
         model: "local-test",
-        usage: { completion_tokens: 4, prompt_tokens: 8, total_tokens: 12 },
+        usage: {
+          completion_tokens: 4,
+          cost: 10_000,
+          prompt_tokens: 8,
+          total_tokens: 12,
+        },
       });
     },
     port: 0,

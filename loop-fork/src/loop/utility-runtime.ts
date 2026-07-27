@@ -71,9 +71,7 @@ export interface UtilityRuntimeConfig {
   enabled: boolean;
   endpoint: string;
   maxClaimWaitMs: number;
-  maxJobCostUsd: number;
   maxJobRuntimeMs: number;
-  maxRunCostUsd: number;
   maxSteps: number;
   maxTokens: number;
   maxTotalTokens: number;
@@ -333,16 +331,14 @@ export const resolveUtilityRuntimeConfig = (
       env.LOOP_UTILITY_FALLBACK_TIER?.trim() || "utility-default",
     enabled,
     endpoint,
-    maxJobCostUsd: positiveNumber(env.LOOP_UTILITY_MAX_JOB_USD, 0.05),
     maxClaimWaitMs: positiveNumber(env.LOOP_UTILITY_MAX_CLAIM_WAIT_MS, 30_000),
     maxJobRuntimeMs: positiveNumber(env.LOOP_UTILITY_MAX_RUNTIME_MS, 900_000),
-    maxRunCostUsd: positiveNumber(env.LOOP_UTILITY_MAX_RUN_USD, 0.25),
     maxSteps: Math.floor(
       positiveNumber(env.LOOP_UTILITY_MAX_STEPS, DEFAULT_MAX_STEPS)
     ),
-    maxTokens: Math.floor(positiveNumber(env.LOOP_UTILITY_MAX_TOKENS, 2400)),
+    maxTokens: Math.floor(positiveNumber(env.LOOP_UTILITY_MAX_TOKENS, 8000)),
     maxTotalTokens: Math.floor(
-      positiveNumber(env.LOOP_UTILITY_MAX_TOTAL_TOKENS, 16_000)
+      positiveNumber(env.LOOP_UTILITY_MAX_TOTAL_TOKENS, 64_000)
     ),
     model: env.LOOP_UTILITY_MODEL?.trim() || DEFAULT_MODEL,
     preventPerRequestOverrides: env.LOOP_UTILITY_ALLOW_OVERRIDES !== "1",
@@ -382,7 +378,6 @@ const runtimeTier = (config: UtilityRuntimeConfig): UtilityTier => ({
     config.enabled &&
     (Boolean(config.apiKey) || isLoopbackEndpoint(config.endpoint)),
   id: "utility-default",
-  maxJobCostUsd: config.maxJobCostUsd,
   model: config.model,
   provider: isLoopbackEndpoint(config.endpoint) ? "local" : "openrouter",
 });
@@ -573,85 +568,6 @@ const currentUtilityWriteClaims = (
         active.decision?.workspace?.writeScope ?? active.request.writeScope
     );
 
-const readJsonlRecords = (path: string): Record<string, unknown>[] => {
-  try {
-    return readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line.trim())
-      .flatMap((line) => {
-        try {
-          const parsed: unknown = JSON.parse(line);
-          return parsed && typeof parsed === "object"
-            ? [parsed as Record<string, unknown>]
-            : [];
-        } catch {
-          return [];
-        }
-      });
-  } catch {
-    return [];
-  }
-};
-
-const recordedUtilityCostUsd = (runDir: string): number => {
-  const latestByJob = new Map<string, number>();
-  for (const event of readJsonlRecords(
-    join(runDir, "utility", "usage.jsonl")
-  )) {
-    const jobId = typeof event.jobId === "string" ? event.jobId : undefined;
-    const usage =
-      event.usage && typeof event.usage === "object"
-        ? (event.usage as Record<string, unknown>)
-        : undefined;
-    const cost = usage?.cost;
-    if (
-      jobId &&
-      typeof cost === "number" &&
-      Number.isFinite(cost) &&
-      cost >= 0
-    ) {
-      latestByJob.set(jobId, cost);
-    }
-  }
-  return [...latestByJob.values()].reduce((total, cost) => total + cost, 0);
-};
-
-const requestReservationUsd = (
-  request: UtilityRouteRequest,
-  maxJobCostUsd: number
-): number => {
-  const estimated = request.estimatedCostUsd;
-  return typeof estimated === "number" &&
-    Number.isFinite(estimated) &&
-    estimated >= 0
-    ? estimated
-    : maxJobCostUsd;
-};
-
-const activeUtilityReservationUsd = (
-  runDir: string,
-  maxJobCostUsd: number
-): number =>
-  readUtilityJobs(runDir)
-    .filter((job) =>
-      ["routed-utility", "claimed", "running"].includes(job.state)
-    )
-    .reduce(
-      (total, job) => total + requestReservationUsd(job.request, maxJobCostUsd),
-      0
-    );
-
-const remainingUtilityRunBudgetUsd = (
-  runDir: string,
-  config: UtilityRuntimeConfig
-): number =>
-  Math.max(
-    0,
-    config.maxRunCostUsd -
-      recordedUtilityCostUsd(runDir) -
-      activeUtilityReservationUsd(runDir, config.maxJobCostUsd)
-  );
-
 const startRoutedUtilityJob = async (input: {
   context: UtilityQueueContext;
   deps: UtilityQueueDependencies;
@@ -770,10 +686,6 @@ const processPendingUtilityJob = async (input: {
         currentDriver: input.context.currentDriver,
         currentEpoch: input.context.epoch,
         peer: input.context.peer,
-        remainingRunBudgetUsd: remainingUtilityRunBudgetUsd(
-          input.context.runDir,
-          input.config
-        ),
         routingPolicy: routingPolicy(input.config),
         tiers: [runtimeTier(input.config)],
       });
@@ -1009,15 +921,12 @@ const executeUtilityToolCall = async (input: {
   return { name, result };
 };
 
-const assertUtilityBudget = (
+const assertUtilityTokenBudget = (
   usage: OpenAICompatibleUsage,
   config: UtilityRuntimeConfig
 ): void => {
   if (usage.totalTokens > config.maxTotalTokens) {
     throw new Error("worker job exceeded its total token limit");
-  }
-  if ((usage.cost ?? 0) > config.maxJobCostUsd) {
-    throw new Error("worker job exceeded its cost limit");
   }
 };
 
@@ -1068,7 +977,7 @@ const runUtilityConversation = async (input: {
     modelCalls += 1;
     usage = addUsage(usage, response.usage);
     input.onProgress(progress());
-    assertUtilityBudget(usage, input.config);
+    assertUtilityTokenBudget(usage, input.config);
     if (!response.ok) {
       throw new Error(response.error.message);
     }
