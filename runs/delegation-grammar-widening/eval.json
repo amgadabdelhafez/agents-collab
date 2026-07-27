@@ -1,0 +1,46 @@
+{
+  "task_id": "delegation-grammar-widening",
+  "feature": "delegation-grammar-widening",
+  "timestamp": "2026-07-27T02:18:27Z",
+  "evaluator": "claude-subagent-independent-eval",
+  "checks": {
+    "functional": {
+      "passed": 151,
+      "failed": 0,
+      "details": [
+        "Focused suites green after fix round: bun test tests/loop/delegation-policy.test.ts tests/loop/governess-hooks.test.ts tests/loop/codex-tmux-proxy.test.ts = 122 pass / 0 fail (179 expect calls); delegation-policy alone = 95 pass / 0 fail.",
+        "All 29 independent adversarial probes matched expectations (repoRoot=/repo, cwd=/repo): 17 mandated hostile shapes classify eligible:false (pipe-to-sh, two-stage pipe to sh, semicolon chain, $() and backtick substitution, cd $HOME, 2>>/dev/null, >/dev/null, quoted-'2'>/dev/null, ls .., ls .git, cd .. && ls, wc -l /etc/passwd, pipe to tee, ||, single &, triple && mutation chain); 3 positive shapes classify eligible:true with correct operation and root-relative readScope (cd src && ls -> scoped-list [src]; rg -n foo src | head -100 -> scoped-search [src]; wc -l src/cli.ts -> line-count [src/cli.ts]); 9 separator/escape edge probes (unquoted \\n and \\r compounds, quoted-newline pattern, backslash-escaped fd digit) all classify eligible:false as compound-or-unsafe-command.",
+        "Both evaluator findings from the first pass were re-verified fixed by re-reading the literalTokens diff: the \\0/\\n/\\r rejection now runs before the quote/operator/whitespace branches and fires regardless of quote state, and the escape branch sets tokenQuoted so \\2>/dev/null no longer matches the quiet-stderr redirect.",
+        "Every spec acceptance shape maps to assertions in tests/loop/delegation-policy.test.ts (positive compound/ls/wc cases with exact operation + readScope; negative cases with exact reason strings), including 4 new regression tests for the evaluator findings.",
+        "Existing reason strings preserved: compound-or-unsafe-command and command-not-in-delegation-grammar still present verbatim in src/loop/delegation-policy.ts.",
+        "Classifier remains pure: no shell evaluation or expansion added; compound handling is a structural token parse ([cd <in-repo> &&] base [2>/dev/null] [| head/tail/wc -l]) with scopes still validated by safeScope/isUtilityProtectedPath."
+      ]
+    },
+    "ui": {
+      "passed": 1,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "No UI surface changed: this is a terminal-only classifier change in src/loop/delegation-policy.ts consumed by the Claude PreToolUse hook and the Codex app-server observer; new operation strings (scoped-list, line-count) are additive to telemetry and bridge prompts which aggregate/describe generically."
+      ]
+    },
+    "performance": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "Classifier remains pure and synchronous: literalTokens/decomposeSafeCompound do a single O(n) character scan plus token-list splits; no I/O, no subprocess, and no async work was added to the hook or proxy path."
+      ]
+    },
+    "regression": {
+      "passed": 848,
+      "failed": 0,
+      "details": [
+        "Full bun test after fix round: 848 pass / 4 fail across 852 tests in 50 files; the 4 failures are exactly the known baseline Codex-launch failures (preparePairedOptions creates a loop-scoped Codex home without global MCP config; runAgent launches Codex app-server with loop-scoped Codex home; buildCommand carries Codex bridge approval config for legacy exec; startPersistentAgentSession enables persistent Codex threads).",
+        "bun run build passed (bundle 70 modules, compile loop). git diff --check clean.",
+        "bun run check is failing on 9 pre-existing untouched files per baseline; touched files verified clean instead: ./node_modules/.bin/biome check src/loop/delegation-policy.ts tests/loop/delegation-policy.test.ts -> no diagnostics."
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "PASS. All spec acceptance criteria, verify.md pass conditions, and all 29 adversarial probes hold; enforce-mode consumers deny-and-route on eligible so the raw command string is never executed on the delegation path. The two evaluator findings from the first pass are RESOLVED with regression tests: (1) unquoted \\n/\\r were previously treated as plain whitespace, letting a multiline compound like 'wc -l a.ts\\nrm b.ts' classify eligible — literalTokens now rejects \\0/\\n/\\r before the whitespace branch (verified in diff and by probe; regression tests 'wc -l src/a.ts\\nrm -rf src', 'git status --short\\rrm -rf .', 'bun test tests/a.test.ts\\nrm tests/b.test.ts' expect compound-or-unsafe-command). (2) A backslash-escaped fd digit ('rg x src \\\\2>/dev/null') was previously accepted as quiet-stderr — the escape branch now sets tokenQuoted so it fails closed (verified in diff and by probe; regression test 'rg route src \\\\2>/dev/null' expects compound-or-unsafe-command). Quoted-newline patterns also fail closed since the rejection fires regardless of quote state. No open safety concerns remain from this review. scripts/verify.sh at the repo root is a placeholder ([CONFIGURE] echo stubs, exit 0), so this verdict relies on the focused suites, full-suite baseline comparison, targeted biome check, build, and independent probes rather than the wrapper."
+}

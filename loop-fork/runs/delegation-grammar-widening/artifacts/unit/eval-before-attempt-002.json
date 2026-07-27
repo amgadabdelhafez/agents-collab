@@ -1,0 +1,18 @@
+{
+  "task_id": "delegation-grammar-widening",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/delegation-grammar-widening/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/delegation-grammar-widening/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/delegation-grammar-widening/artifacts/unit/attempt-001.json"
+    }
+  }
+}

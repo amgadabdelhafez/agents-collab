@@ -278,7 +278,7 @@ describe("runHookEmit", () => {
         JSON.stringify({
           cwd: "/linked/packages/api",
           hook_event_name: "PreToolUse",
-          tool_input: { command: "npx vitest run tests/router.test.ts" },
+          tool_input: { command: "rg needle tests/router.test.ts" },
           tool_name: "Bash",
           tool_use_id: "linked-tool",
         })

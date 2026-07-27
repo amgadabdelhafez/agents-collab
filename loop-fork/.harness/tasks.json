@@ -130,6 +130,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-26T16:46:24Z",
       "spec_path": "specs/lower-agent-hardening.md"
+    },
+    {
+      "id": "delegation-grammar-widening",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-27T02:01:33Z",
+      "run_dir": "runs/delegation-grammar-widening",
+      "eval_status": "pass",
+      "ended_at": "2026-07-27T02:20:38Z",
+      "spec_path": "specs/delegation-grammar-widening.md"
     }
   ]
 }

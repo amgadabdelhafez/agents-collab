@@ -1,0 +1,10 @@
+{
+  "task_id": "delegation-grammar-widening",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}
