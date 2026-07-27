@@ -28,3 +28,6 @@
   Claude but still pending in the bridge. The worker subsequently recorded it
   delivered, then delivered the newer wind-down ACK once. Both IDs now have one
   durable delivery record and bridge pending is zero.
+- Final token-policy deployment respawned only governess as PID 7002. Claude
+  56784, Codex 56786, and worker pane 21402 remained unchanged; worker active
+  jobs and bridge pending messages both remained zero.

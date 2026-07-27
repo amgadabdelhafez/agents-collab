@@ -9,7 +9,7 @@
     "full_suite": "798 passed, 4 known Codex model/config expectation failures",
     "build": "passed",
     "diff_check": "passed",
-    "live_deployment": "governess PID 94680 before final token-policy redeploy; Claude 56784, Codex 56786, and worker pane 21402 unchanged; no active worker job; bridge pending zero",
+    "live_deployment": "final governess PID 7002; Claude 56784, Codex 56786, and worker pane 21402 unchanged; no active worker job; bridge pending zero",
     "bridge_repeat_cleanup": "already-actioned decision 9825d7f4 and subsequent wind-down ACK each have one delivered record; pending zero"
   },
   "preserved_boundaries": [
