@@ -84,6 +84,7 @@ import {
   LOCAL_LLM_SUMMARY_MAX_TOKENS,
   LOCAL_LLM_TEMPERATURE,
   LOCAL_LLM_WAITING_MAX_TOKENS,
+  isCompleteSessionSummary,
   labelPanes,
   summarizeSession,
 } from "./governess-llm";
@@ -363,6 +364,8 @@ export interface GovernessRunState {
   roles: RoleState;
   stats: SessionStats;
   summary: string;
+  // Tick at which a failed summary attempt may retry (-1 = no retry pending).
+  summaryRetryAfterTick: number;
   summaryTick: number;
   tick: number;
   // The local LLM's read of the current both-idle episode.
@@ -572,6 +575,7 @@ export const freshRunState = (): GovernessRunState => ({
   roles: {},
   stats: { activeMs: {}, humanIdleMs: 0, idleMs: {} },
   summary: "",
+  summaryRetryAfterTick: -1,
   summaryTick: -1,
   tick: 0,
   waitingAsk: "",
@@ -3280,17 +3284,52 @@ const processAgent = async (
 };
 
 const SUMMARY_REFRESH_TICKS = 20;
+const SUMMARY_INVALID_RETRY_TICKS = 4;
 
-// A summary refresh is due when we have none yet (first run / after a restart /
-// after an attempt returned empty) or the current one has aged out.
-const summaryDue = (
+// Invalid or absent summaries retry on a bounded short cadence; complete
+// summaries retain the normal low-frequency refresh cadence.
+export const summaryRefreshDue = (
   summaryText: string,
   summaryTick: number,
+  summaryRetryAfterTick: number,
   tick: number
-): boolean =>
-  summaryTick < 0 ||
-  summaryText.length === 0 ||
-  tick - summaryTick >= SUMMARY_REFRESH_TICKS;
+): boolean => {
+  if (summaryRetryAfterTick >= 0) {
+    return tick >= summaryRetryAfterTick;
+  }
+  if (summaryTick < 0) {
+    return true;
+  }
+  const refreshTicks = isCompleteSessionSummary(summaryText)
+    ? SUMMARY_REFRESH_TICKS
+    : SUMMARY_INVALID_RETRY_TICKS;
+  return tick - summaryTick >= refreshTicks;
+};
+
+interface SummaryRefreshState {
+  summary: string;
+  summaryRetryAfterTick: number;
+  summaryTick: number;
+}
+
+export const summaryRefreshStateAfterAttempt = (
+  displayedSummary: string,
+  summaryTick: number,
+  resultText: string,
+  completedAtTick: number
+): SummaryRefreshState =>
+  isCompleteSessionSummary(resultText)
+    ? {
+        summary: resultText,
+        summaryRetryAfterTick: -1,
+        summaryTick: completedAtTick,
+      }
+    : {
+        summary: displayedSummary,
+        summaryRetryAfterTick:
+          completedAtTick + SUMMARY_INVALID_RETRY_TICKS,
+        summaryTick,
+      };
 
 interface WaitingConsensusResult {
   ask: string;
@@ -5280,6 +5319,10 @@ export const loadGovernessState = (
         idleMs: stats.idleMs ?? {},
       },
       summary: typeof parsed.summary === "string" ? parsed.summary : "",
+      summaryRetryAfterTick:
+        typeof parsed.summaryRetryAfterTick === "number"
+          ? parsed.summaryRetryAfterTick
+          : -1,
       summaryTick:
         typeof parsed.summaryTick === "number" ? parsed.summaryTick : -1,
       tick: typeof parsed.tick === "number" ? parsed.tick : 0,
@@ -5935,6 +5978,7 @@ export const runGoverness = async (
     });
   }
   let summaryText = runState.summary;
+  let summaryRetryAfterTick = runState.summaryRetryAfterTick;
   let summaryTick = runState.summaryTick;
   let summaryInFlight = false;
   let pendingSummaryUsageByJudge = emptyLocalLlmUsageByJudge();
@@ -6022,6 +6066,7 @@ export const runGoverness = async (
         paneLabelTick,
         paneRenames,
         summary: summaryText,
+        summaryRetryAfterTick,
         summaryTick,
         waitingAsk,
         waitingConfirmed,
@@ -6148,11 +6193,15 @@ export const runGoverness = async (
       if (
         runState.exitControl.mode === "idle" &&
         !summaryInFlight &&
-        (summaryDue(summaryText, summaryTick, runState.tick) ||
+        (summaryRefreshDue(
+          summaryText,
+          summaryTick,
+          summaryRetryAfterTick,
+          runState.tick
+        ) ||
           missingJudgeUsage(config, runState.llmUsageByJudge))
       ) {
         summaryInFlight = true;
-        const firedAtTick = runState.tick;
         summarizeWithLocalJudges(
           config,
           deps,
@@ -6160,17 +6209,29 @@ export const runGoverness = async (
           runState.tick
         )
           .then((summary) => {
-            if (summary.text) {
-              summaryText = summary.text;
-            }
-            summaryTick = firedAtTick;
+            const refreshed = summaryRefreshStateAfterAttempt(
+              summaryText,
+              summaryTick,
+              summary.text,
+              runState.tick
+            );
+            summaryText = refreshed.summary;
+            summaryRetryAfterTick = refreshed.summaryRetryAfterTick;
+            summaryTick = refreshed.summaryTick;
             pendingSummaryUsageByJudge = addLocalLlmUsageByJudge(
               pendingSummaryUsageByJudge,
               summary.usageByJudge
             );
           })
           .catch(() => {
-            // Best-effort; the next due tick retries.
+            // Measure retry backoff from completion, not request dispatch.
+            const refreshed = summaryRefreshStateAfterAttempt(
+              summaryText,
+              summaryTick,
+              "",
+              runState.tick
+            );
+            summaryRetryAfterTick = refreshed.summaryRetryAfterTick;
           })
           .finally(() => {
             summaryInFlight = false;

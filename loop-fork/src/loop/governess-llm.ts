@@ -483,8 +483,11 @@ const SUMMARY_SYSTEM_PROMPT = [
   "Objective: <1-2 lines — what the human asked for this session, specifically>",
   "Progress: <3-5 lines — concrete work done: files, tests, decisions, bugs>",
   "Next: <2-3 lines — the most likely next steps / what remains>",
-  "Be specific about code, filenames, and tasks. Infer next steps from the",
-  "trajectory. Do not describe whether the agents are idle or active.",
+  "Be specific about code, filenames, and tasks. For Next, use only work that",
+  "the latest agent evidence or human instructions explicitly leaves pending.",
+  "Do not invent owners or future work; if uncertain, say that the next step",
+  "awaits an explicit ruling. Do not describe whether the agents are idle or",
+  "active.",
 ].join(" ");
 
 export const LOCAL_LLM_SUMMARY_MAX_TOKENS = 3200;
@@ -495,6 +498,47 @@ const MAX_PROMPT_HUMAN_MESSAGES = 16;
 // call; give it a generous timeout (it is a background board element).
 const SUMMARY_TIMEOUT_MS = 120_000;
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
+const SUMMARY_LABELS = [
+  "Project:",
+  "Objective:",
+  "Progress:",
+  "Next:",
+] as const;
+
+// Reject responses that were cut off before all four board sections were
+// completed. The final-section rule catches fragments such as
+// `Next: The supervisor` while allowing an intentionally terse `Next: Ship it.`
+export const isCompleteSessionSummary = (text: string): boolean => {
+  const lines = text.trim().split(/\r?\n/);
+  const headings = lines.flatMap((line, lineIndex) =>
+    SUMMARY_LABELS.flatMap((label, labelIndex) =>
+      line.startsWith(label) ? [{ labelIndex, lineIndex }] : []
+    )
+  );
+  if (
+    headings.length !== SUMMARY_LABELS.length ||
+    headings[0]?.lineIndex !== 0 ||
+    headings.some((heading, index) => heading.labelIndex !== index)
+  ) {
+    return false;
+  }
+
+  const sections = headings.map((heading, index) => {
+    const end = headings[index + 1]?.lineIndex ?? lines.length;
+    const firstLine = lines[heading.lineIndex].slice(
+      SUMMARY_LABELS[index].length
+    );
+    return [firstLine, ...lines.slice(heading.lineIndex + 1, end)]
+      .join("\n")
+      .trim();
+  });
+  if (sections.some((section) => section.length === 0)) {
+    return false;
+  }
+
+  const next = sections.at(-1) ?? "";
+  return /[.!?]$/.test(next);
+};
 
 const agentSection = (a: SummaryRequest["agents"][number]): string =>
   [
@@ -577,7 +621,7 @@ export const summarizeSession = async (
     const summaryText = content.replace(THINK_BLOCK_RE, "").trim();
     const usage = usageWithFallback(payload, body, summaryText);
     return {
-      text: summaryText,
+      text: isCompleteSessionSummary(summaryText) ? summaryText : "",
       tokens: usage.totalTokens,
       usage,
     };

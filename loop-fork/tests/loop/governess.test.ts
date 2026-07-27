@@ -4,6 +4,8 @@ import {
   composeGovernessPaneTitle,
   composeGovernessRunIdentity,
   governessPaneIdentityTmuxCommands,
+  summaryRefreshDue,
+  summaryRefreshStateAfterAttempt,
   runGoverness,
   type GovernessConfig,
   type GovernessDeps,
@@ -31,6 +33,72 @@ const START_MS = 1_000_000;
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 const stripAnsi = (text: string): string => text.replace(ANSI_RE, "");
+
+const COMPLETE_SUMMARY =
+  "Project: Demo\nObjective: Repair\nProgress: Done\nNext: Verify live state.";
+const TRUNCATED_SUMMARY =
+  "Project: Demo\nObjective: Repair\nProgress: Done\nNext: The supervisor";
+
+test("complete summaries keep the normal refresh cadence", () => {
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 10, -1, 29)).toBe(false);
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 10, -1, 30)).toBe(true);
+});
+
+test("invalid and absent summaries use a bounded short retry cadence", () => {
+  expect(summaryRefreshDue(TRUNCATED_SUMMARY, 10, -1, 13)).toBe(false);
+  expect(summaryRefreshDue(TRUNCATED_SUMMARY, 10, -1, 14)).toBe(true);
+  expect(summaryRefreshDue("", 10, -1, 13)).toBe(false);
+  expect(summaryRefreshDue("", 10, -1, 14)).toBe(true);
+  expect(summaryRefreshDue(TRUNCATED_SUMMARY, -1, -1, 0)).toBe(true);
+});
+
+test("an invalid attempt retries soon while preserving valid displayed text", () => {
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 30, 34, 33)).toBe(false);
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 30, 34, 34)).toBe(true);
+});
+
+test("a persisted retry deadline works at tick zero and after a slow call", () => {
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 0, 4, 3)).toBe(false);
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 0, 4, 4)).toBe(true);
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 10, 24, 23)).toBe(false);
+  expect(summaryRefreshDue(COMPLETE_SUMMARY, 10, 24, 24)).toBe(true);
+});
+
+test("invalid summary completion preserves text and backs off from completion", () => {
+  const refreshed = summaryRefreshStateAfterAttempt(
+    COMPLETE_SUMMARY,
+    0,
+    TRUNCATED_SUMMARY,
+    10
+  );
+  expect(refreshed).toEqual({
+    summary: COMPLETE_SUMMARY,
+    summaryRetryAfterTick: 14,
+    summaryTick: 0,
+  });
+  expect(
+    summaryRefreshDue(
+      refreshed.summary,
+      refreshed.summaryTick,
+      refreshed.summaryRetryAfterTick,
+      13
+    )
+  ).toBe(false);
+});
+
+test("valid summary completion clears retry and dates freshness at completion", () => {
+  const refreshed = summaryRefreshStateAfterAttempt(
+    TRUNCATED_SUMMARY,
+    0,
+    COMPLETE_SUMMARY,
+    10
+  );
+  expect(refreshed).toEqual({
+    summary: COMPLETE_SUMMARY,
+    summaryRetryAfterTick: -1,
+    summaryTick: 10,
+  });
+});
 
 const usage = (overrides: Partial<AgentUsage> = {}): AgentUsage => ({
   cacheCreateTokens: 0,

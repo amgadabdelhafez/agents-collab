@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assessRoleBalance,
+  isCompleteSessionSummary,
   judgeAgent,
   labelPanes,
+  summarizeSession,
 } from "../../src/loop/governess-llm";
 import type {
   JudgeRequest,
   PaneLabelRequest,
   RoleBalanceRequest,
+  SummaryRequest,
 } from "../../src/loop/types";
 
 const baseRequest = (): JudgeRequest => ({
@@ -56,6 +59,23 @@ const baseRoleBalanceRequest = (): RoleBalanceRequest => ({
   url: "http://localhost:1234",
 });
 
+const baseSummaryRequest = (): SummaryRequest => ({
+  agents: [
+    {
+      agent: "claude",
+      lastActions: ["updated implementation"],
+      paneText: "tests pass",
+    },
+    {
+      agent: "codex",
+      lastActions: ["reviewed implementation"],
+      paneText: "review complete",
+    },
+  ],
+  model: "qwen",
+  url: "http://localhost:1234",
+});
+
 const chatResponse = (
   content: string,
   status = 200,
@@ -68,6 +88,70 @@ const chatResponse = (
 
 const stubFetch = (response: Response): typeof fetch =>
   (async () => response) as unknown as typeof fetch;
+
+test("complete session summary is accepted unchanged", async () => {
+  const content = [
+    "Project: Agent collaboration runtime.",
+    "Objective: Keep the live status accurate.",
+    "Progress: Added focused validation and tests.",
+    "Next: Restart the Governess pane and verify the live board.",
+  ].join("\n");
+  const result = await summarizeSession(baseSummaryRequest(), {
+    fetchFn: stubFetch(chatResponse(content)),
+  });
+
+  expect(result.text).toBe(content);
+  expect(result.usage.calls).toBe(1);
+});
+
+test("truncated session summary is rejected without losing usage", async () => {
+  const content = [
+    "Project: Agent collaboration runtime.",
+    "Objective: Keep the live status accurate.",
+    "Progress: Added focused validation and tests.",
+    "Next: The supervisor",
+  ].join("\n");
+  const result = await summarizeSession(baseSummaryRequest(), {
+    fetchFn: stubFetch(chatResponse(content)),
+  });
+
+  expect(result.text).toBe("");
+  expect(result.usage.calls).toBe(1);
+  expect(result.tokens).toBeGreaterThan(0);
+});
+
+test("session summary completeness requires ordered populated sections", () => {
+  expect(
+    isCompleteSessionSummary(
+      "Project: Demo\nObjective: Repair\nProgress: Done\nNext: Ship it."
+    )
+  ).toBe(true);
+  expect(
+    isCompleteSessionSummary(
+      "Project: Demo\nProgress: Done\nObjective: Repair\nNext: Ship it."
+    )
+  ).toBe(false);
+  expect(
+    isCompleteSessionSummary(
+      "Project: Demo\nObjective: Repair\nProgress: Done\nNext:"
+    )
+  ).toBe(false);
+  expect(
+    isCompleteSessionSummary(
+      "Project: Demo\nObjective: Repair\nProgress: Done\nNext: The supervisor needs to"
+    )
+  ).toBe(false);
+  expect(
+    isCompleteSessionSummary(
+      "Project: Mentions Objective: inline only.\nProgress: Done.\nNext: Ship it."
+    )
+  ).toBe(false);
+  expect(
+    isCompleteSessionSummary(
+      "Project: Demo.\nObjective: Repair.\nProgress: Done.\nProgress: More.\nNext: Ship it."
+    )
+  ).toBe(false);
+});
 
 test("valid strict JSON content yields ok verdict with parsed fields", async () => {
   const content = JSON.stringify({
