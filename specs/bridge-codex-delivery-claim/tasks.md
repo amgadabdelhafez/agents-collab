@@ -17,4 +17,4 @@
       failures).
 - [x] Independent evaluation against verify.md; `eval.json` + `task-log.md` in
       `runs/bridge-codex-delivery-claim/`.
-- [ ] Deploy: merge, rebuild live binary, restart only the bridge worker.
+- [x] Deploy: merge, rebuild live binary, restart only the bridge worker.

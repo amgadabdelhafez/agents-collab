@@ -31,6 +31,6 @@
     },
     "build": "pass",
     "diff_check": "pass",
-    "live": "pending deployment"
+    "live": "pass: worker 89757 on 19:03 binary (runs/harvto-b1e274e66299/49); pane PIDs 47776/47778/48204/48206 and codex tmux proxy 47729 unchanged; run 48 had no live worker (next ensureBridgeWorker spawns from the new binary); zero duplicate delivered ledger records in either run; pending queues empty at 02:05Z"
   }
 }

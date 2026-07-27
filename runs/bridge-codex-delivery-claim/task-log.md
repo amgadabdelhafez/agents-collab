@@ -24,5 +24,15 @@
   same four baseline Codex-launch failures; build, scoped biome check, and
   `git diff --check` clean. Independent evaluator subagent returned PASS with
   no blocking defects.
-- Deployment: pending (rebuild live binary, restart only the dedicated
-  bridge worker; no main agent pane restarts).
+- Deployment: merged to `feat/babysitter-pane` (the live checkout had advanced
+  with the turn-activity-evidence fix; post-merge full suite re-run green at
+  821 passed / 4 baseline), rebuilt `loop` (19:03), old run-49 worker 84175
+  stopped and worker 89757 respawned on the new binary with a matching
+  `bridge-worker.json`. Run 48 had no live worker; its next
+  `ensureBridgeWorker` spawns from the new binary, and its 17:43 stale claim
+  lock self-heals past the 30 s window. The codex tmux proxy (47729) was left
+  running deliberately -- restarting it would sever the Codex TUI socket -- so
+  the visible-path fix activates on its next natural restart; until then the
+  worker-side and app-server claims are live. Pane PIDs 47776/47778/48204/
+  48206 unchanged; zero duplicate delivered records in either run's ledger;
+  pending queues empty at 02:05Z.
