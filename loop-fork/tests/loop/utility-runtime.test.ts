@@ -353,6 +353,54 @@ test("active estimate-less jobs cannot reserve beyond the run cost cap", async (
   }
 });
 
+test("peer-routed reviews preserve the requester and ask the peer to act", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-peer-review-"));
+  const runDir = join(repoRoot, ".loop", "runs", "peer-review-run");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return a verdict"],
+    authority: {},
+    id: "peer-review-job",
+    kind: "review",
+    objective: "Review docs-only commit abc123 and decide whether it is banked.",
+    readScope: ["docs/result.md"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "codex",
+        epoch: 20,
+        peer: "claude",
+        repoRoot,
+        runDir,
+      },
+      { LOOP_UTILITY_API_KEY_FILE: "" }
+    );
+
+    const message = readBridgeEvents(runDir).find(
+      (event) => event.kind === "message"
+    );
+    expect(message).toMatchObject({
+      source: "codex",
+      target: "claude",
+      taskId: request.id,
+      type: "review_request",
+    });
+    expect(message?.message).toContain("Peer review requested by codex");
+    expect(message?.message).toContain("Action: perform the review");
+    expect(message?.message).toContain("explicit verdict to codex");
+    expect(message?.message).not.toContain("Worker route");
+    expect(message?.message).not.toContain("informational routing notice");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe key diagnostics persist in routing observability, not the output-only worker pane", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-diagnostic-"));
   const runDir = join(repoRoot, ".loop", "runs", "diagnostic-run");
@@ -1120,9 +1168,10 @@ test("peer routing is relative to the requester, not the current driver", async 
     expect(readBridgeEvents(runDir)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          source: "utility",
+          source: "claude",
           target: "codex",
           taskId: request.id,
+          type: "review_request",
         }),
       ])
     );
