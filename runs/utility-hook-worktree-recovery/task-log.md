@@ -48,3 +48,7 @@
   tests pass 123/123; full suite is 798 pass / the same four known failures.
   Canonical rebuilt and only governess pane respawned; Claude/Codex/worker PIDs
   remained unchanged.
+- 2026-07-26: After deployment, suppressed one obsolete pre-fix pending
+  utility-authored notice (`c5ecab5c`) so it cannot surface later. Verified the
+  sole remaining peer route is requester-authored by Codex with type
+  `review_request`; it remains queued only until Claude is safe to receive it.
