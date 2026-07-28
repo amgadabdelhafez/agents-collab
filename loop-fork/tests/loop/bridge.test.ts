@@ -735,6 +735,39 @@ test("route_task rejects narrative context refs before creating a doomed job", a
   rmSync(root, { recursive: true, force: true });
 });
 
+test("route_task rejects traversal-form context refs before normalization", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["return bounded evidence"],
+          context_refs: ["docs/topic/../result.md"],
+          kind: "inspect",
+          objective: "Read one project context document",
+          read_scope: ["docs/result.md"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain(
+    "context_refs accepts only unique repo-relative README.md"
+  );
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("route_task persists a structured bounded read plan", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -789,10 +822,7 @@ test("route_task persists a structured bounded read plan", async () => {
     taskId: string;
   };
   expect(routed.state).toBe("pending-route");
-  const records = readFileSync(
-    join(runDir, "utility", "jobs.jsonl"),
-    "utf8"
-  )
+  const records = readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as Record<string, unknown>);
@@ -854,7 +884,10 @@ test("route_task drains only older unclaimed helper results for its caller", asy
   const claimDir = join(runDir, "bridge-delivery-claims");
   mkdirSync(claimDir, { recursive: true });
   writeFileSync(
-    join(claimDir, `${createHash("sha256").update(claimed.id).digest("hex")}.lock`),
+    join(
+      claimDir,
+      `${createHash("sha256").update(claimed.id).digest("hex")}.lock`
+    ),
     "claimed\n"
   );
 
@@ -880,7 +913,10 @@ test("route_task drains only older unclaimed helper results for its caller", asy
     priorHelperResults?: Array<{ id: string; message: string }>;
   };
   expect(routed.priorHelperResults).toEqual([
-    expect.objectContaining({ id: helper.id, message: "completed old helper result" }),
+    expect.objectContaining({
+      id: helper.id,
+      message: "completed old helper result",
+    }),
   ]);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual(
     expect.arrayContaining([
@@ -1926,9 +1962,9 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   };
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_plan");
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_read");
-  expect(routeTask.inputSchema?.properties?.context_refs?.description).toContain(
-    "Never put prose, SHAs, source files, or absolute paths here"
-  );
+  expect(
+    routeTask.inputSchema?.properties?.context_refs?.description
+  ).toContain("Never put prose, SHAs, source files, or absolute paths here");
   rmSync(root, { recursive: true, force: true });
 });
 

@@ -369,6 +369,11 @@ const contextReferences = (args: Record<string, unknown>): string[] => {
       `context_refs accepts at most ${MAX_UTILITY_CONTEXT_REFS} paths`
     );
   }
+  if (values.some((value) => !isUtilityContextRefPath(value))) {
+    throw new UtilityBridgeInputError(
+      "context_refs accepts only unique repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts, SHAs, source files, and absolute paths in objective or acceptance_criteria"
+    );
+  }
   const normalized = values.map(normalizeUtilityPolicyPath);
   if (
     new Set(normalized).size !== normalized.length ||
