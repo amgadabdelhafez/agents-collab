@@ -4042,6 +4042,7 @@ test("dispatchBridgeMessage reports delivered when direct codex delivery succeed
 
 test("dispatchBridgeMessage stays queued when tmux metadata is stale", async () => {
   const bridge = await loadBridge();
+  const liveTmuxCheck = mock(() => false);
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
@@ -4067,10 +4068,11 @@ test("dispatchBridgeMessage stays queued when tmux metadata is stale", async () 
     "codex",
     "Please review the final diff.",
     undefined,
-    () => bridge.hasLiveCodexTmuxSession(runDir)
+    liveTmuxCheck
   );
 
   expect(result.status).toBe("queued");
+  expect(liveTmuxCheck).toHaveBeenCalledTimes(1);
   expect(bridge.formatDispatchResult(result)).toContain("queued");
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
     expect.objectContaining({

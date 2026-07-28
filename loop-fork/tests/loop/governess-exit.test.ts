@@ -222,6 +222,7 @@ test("handover waits for a busy agent, notifies each once, and launches after bo
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
+    capturePane: () => "",
     fenceCurrent: () => true,
     launchReplacementLoop: () => {
       launched += 1;
@@ -314,6 +315,7 @@ test("handover never injects over a notification or permission prompt", async ()
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
+    capturePane: () => "",
     fenceCurrent: () => true,
     now: () => 0,
     paneCommand: (pane: string) =>
@@ -355,6 +357,7 @@ test("valid ready bundles close each drained TUI exactly once before launch", as
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
+    capturePane: () => "",
     fenceCurrent: () => true,
     launchReplacementLoop: () => {
       launched += 1;
@@ -428,6 +431,7 @@ test("replacement launch failure preserves the old loop for explicit retry or te
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
+    capturePane: () => "",
     fenceCurrent: () => true,
     launchReplacementLoop: () => ({ error: "could not launch", ok: false }),
     now: () => 0,
@@ -456,6 +460,7 @@ test("handover persists launch success before marking and killing the old loop",
     ...defaultGovernessDeps(),
     appendLog: (_file: string, record: unknown) =>
       order.push(`log:${(record as { event: string }).event}`),
+    capturePane: () => "",
     fenceCurrent: () => true,
     killSession: () => order.push("kill"),
     launchReplacementLoop: () => {
@@ -499,6 +504,7 @@ test("handover launch failure never marks or kills the old loop", async () => {
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
+    capturePane: () => "",
     fenceCurrent: () => true,
     killSession: () => destructive.push("kill"),
     launchReplacementLoop: () => ({ error: "failed", ok: false }),
@@ -525,6 +531,7 @@ test("restart preserves the old loop when the recorded replacement is dead", asy
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
+    capturePane: () => "",
     killSession: () => destructive.push("kill"),
     launchReplacementLoop: () => {
       launched += 1;
@@ -533,6 +540,7 @@ test("restart preserves the old loop when the recorded replacement is dead", asy
     markRunStopped: () => destructive.push("mark"),
     now: () => 0,
     replacementSessionAlive: () => false,
+    replacementSessionReady: () => false,
     saveState: () => undefined,
   };
 
@@ -549,6 +557,7 @@ test("explicit stop marks the run before killing its tmux session", () => {
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => order.push("log"),
+    capturePane: () => "",
     fenceCurrent: () => true,
     killSession: () => order.push("kill"),
     markRunStopped: () => order.push("mark"),
