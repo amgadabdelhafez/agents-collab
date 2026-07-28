@@ -122,6 +122,7 @@ export interface UtilityToolBrokerConfig {
   commandCwds?: readonly string[];
   exactCommand?: readonly string[];
   exactRead?: UtilityExactRead | null;
+  exactWriteScopes?: boolean;
   limits?: Partial<UtilityToolLimits>;
   outputBoundary?: UtilityOutputBoundary;
   protectedPaths?: readonly string[];
@@ -1114,6 +1115,7 @@ export class UtilityToolBroker {
   private readonly commandCwdsAreExact: boolean;
   private readonly exactCommand?: readonly string[];
   private readonly exactRead?: UtilityExactRead | null;
+  private readonly exactWriteScopes: boolean;
   private readonly id: () => string;
   private readonly limits: UtilityToolLimits;
   private readonly now: () => number;
@@ -1156,6 +1158,7 @@ export class UtilityToolBroker {
     this.exactCommand = config.exactCommand
       ? [...config.exactCommand]
       : undefined;
+    this.exactWriteScopes = config.exactWriteScopes ?? false;
     if (config.exactRead === null) {
       this.exactRead = null;
     } else if (config.exactRead) {
@@ -2540,6 +2543,15 @@ export class UtilityToolBroker {
     const preimages: PatchPreimage[] = [];
     for (const path of targets) {
       const target = await this.resolvePath(path, "write", false);
+      if (
+        this.exactWriteScopes &&
+        !this.writeScopes.includes(target.relative)
+      ) {
+        throw new ToolPolicyError(
+          "patch_denied",
+          `Patch target is not an exact declared write file: ${target.relative}`
+        );
+      }
       const content = await readFile(target.absolute).catch(
         (error: unknown) => {
           const code = isRecord(error) ? error.code : undefined;

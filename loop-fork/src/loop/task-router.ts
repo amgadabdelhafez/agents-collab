@@ -8,6 +8,8 @@ import {
 } from "./utility-path-policy";
 
 export const MAX_UTILITY_CONTEXT_REFS = 6;
+export const MAX_UTILITY_EDIT_READ_SCOPES = 4;
+export const MAX_UTILITY_EDIT_WRITE_SCOPES = 2;
 const LINE_MATCHER_CONTROL_RE = /[\n\r\0]/;
 
 export type UtilityRequestKind =
@@ -407,7 +409,9 @@ const touchesProtectedPath = (
             : []),
         ])
       : []),
-  ].some((path) => isUtilityProtectedPath(path, configured));
+  ]
+    .filter((path): path is string => typeof path === "string")
+    .some((path) => isUtilityProtectedPath(path, configured));
 
 const overlaps = (left: string, right: string): boolean => {
   const normalizedLeft = normalizePath(left);
@@ -835,7 +839,21 @@ export const utilityRequestIsBounded = (
     return request.readScope.length > 0 && request.writeScope.length === 0;
   }
   if (request.kind === "edit") {
-    return request.writeScope.length > 0;
+    return (
+      request.readScope.length > 0 &&
+      request.readScope.length <= MAX_UTILITY_EDIT_READ_SCOPES &&
+      request.writeScope.length > 0 &&
+      request.writeScope.length <= MAX_UTILITY_EDIT_WRITE_SCOPES &&
+      request.requiredCapabilities.includes("scoped-edit") &&
+      request.writeScope.every((scope) => request.readScope.includes(scope)) &&
+      request.executionProfile === undefined &&
+      request.executionArgv === undefined &&
+      request.executionCwd === undefined &&
+      request.executionGit === undefined &&
+      request.executionOutput === undefined &&
+      request.executionPlan === undefined &&
+      request.executionRead === undefined
+    );
   }
   if (request.kind === "command") {
     return request.readScope.length > 0 || request.writeScope.length > 0;
@@ -970,8 +988,11 @@ export const routeUtilityRequest = (
   if (!UTILITY_KINDS.has(request.kind)) {
     return driverDecision("unsupported-kind");
   }
+  const protectedScope = touchesProtectedPath(request, context.protectedPaths);
   if (!utilityRequestIsBounded(request)) {
-    return driverDecision("request-not-bounded");
+    return driverDecision(
+      protectedScope ? "protected-scope" : "request-not-bounded"
+    );
   }
   if (request.risk !== "low") {
     return driverDecision("risk-not-low");
@@ -979,7 +1000,7 @@ export const routeUtilityRequest = (
   if (hasForbiddenAuthority(request.authority)) {
     return { reason: "forbidden-authority", target: "escalate" };
   }
-  if (touchesProtectedPath(request, context.protectedPaths)) {
+  if (protectedScope) {
     return driverDecision("protected-scope");
   }
   if (hasWriteConflict(request, context.activeWriteClaims)) {

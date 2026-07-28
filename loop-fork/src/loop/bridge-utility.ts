@@ -138,11 +138,17 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
+      "Submit an independent bounded work packet before doing it natively. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Before authoring a meaningful self-contained code block, use kind=edit with one or two exact write files, one through four exact read files, scoped-edit capability, decided behavior, and concrete acceptance; do not recast code writing as inspect. For patch proposals, low means low operational side-effect/authority risk, not easy reasoning; unresolved design or ambiguous scope is not low. Reserve active write_scope files, review returned artifacts, and use guarded apply only as a full agent. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped patch proposals, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
     inputSchema: {
       additionalProperties: false,
       properties: {
-        acceptance_criteria: { items: { type: "string" }, type: "array" },
+        acceptance_criteria: {
+          description:
+            "Concrete observable outcomes for the bounded packet. For edits, require a minimal patch within exact write files and name focused proof or invariants to preserve.",
+          items: { type: "string" },
+          minItems: 1,
+          type: "array",
+        },
         authority: {
           additionalProperties: false,
           properties: {
@@ -181,6 +187,8 @@ export const UTILITY_BRIDGE_TOOLS = [
         execution_read: EXECUTION_READ_SCHEMA,
         idempotency_key: { type: "string" },
         kind: {
+          description:
+            "Use edit when asking the helper to author or modify code. Use inspect only when no patch should be produced.",
           enum: ["inspect", "edit", "command", "review", "design", "authority"],
           type: "string",
         },
@@ -189,8 +197,15 @@ export const UTILITY_BRIDGE_TOOLS = [
           enum: ["claude", "codex", "gemini", "cursor", "copilot"],
           type: "string",
         },
-        read_scope: { items: { type: "string" }, type: "array" },
+        read_scope: {
+          description:
+            "Exact readable paths. An edit uses one through four and repeats every write target here so Au Pair can inspect its preimage.",
+          items: { type: "string" },
+          type: "array",
+        },
         required_capabilities: {
+          description:
+            "Use inspect plus scoped-edit for code-writing proposals; add focused-verify only when a declared focused check is required.",
           items: {
             enum: [
               "inspect",
@@ -202,8 +217,18 @@ export const UTILITY_BRIDGE_TOOLS = [
           },
           type: "array",
         },
-        risk: { enum: ["low", "medium", "high", "unknown"], type: "string" },
-        write_scope: { items: { type: "string" }, type: "array" },
+        risk: {
+          description:
+            "Operational side-effect and authority risk, not reasoning difficulty. An exact-scope proposal with no authority can be low; ambiguous scope or unresolved design cannot.",
+          enum: ["low", "medium", "high", "unknown"],
+          type: "string",
+        },
+        write_scope: {
+          description:
+            "Exact files a patch may target. Small Au Pair edits use one or two; directory-broad scopes are not valid edit targets.",
+          items: { type: "string" },
+          type: "array",
+        },
       },
       required: ["objective", "kind", "acceptance_criteria"],
       type: "object",

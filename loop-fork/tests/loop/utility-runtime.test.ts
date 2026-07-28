@@ -203,6 +203,12 @@ test("helper Caveman mode is validated and applied once to the system prompt", (
     "CAVEMAN MODE ACTIVE (full)"
   );
   expect(utilitySystemPrompt("Nanny", "off")).not.toContain("CAVEMAN MODE");
+  expect(utilitySystemPrompt("Au Pair", "full")).toContain(
+    "only the decided cohesive block in the exact declared write files"
+  );
+  expect(utilitySystemPrompt("Au Pair", "full")).toContain(
+    "Do not add adjacent cleanup or broaden scope"
+  );
   expect(() =>
     resolveUtilityRuntimeConfig({ LOOP_HELPER_CAVEMAN_MODE: "invalid" })
   ).toThrow("Invalid LOOP_HELPER_CAVEMAN_MODE value");

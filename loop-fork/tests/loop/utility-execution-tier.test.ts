@@ -153,7 +153,7 @@ describe("utility execution tier classification", () => {
     ).toBe(UTILITY_NANNY_TIER);
   });
 
-  test("edits and broader plans go to Au Pair", () => {
+  test("small code-writing proposals and broader plans go to Au Pair", () => {
     const edit = createUtilityRouteRequest({
       acceptanceCriteria: ["return a validated patch"],
       authority: {},
@@ -166,6 +166,7 @@ describe("utility execution tier classification", () => {
       writeScope: ["src/example.ts"],
     });
     expect(classifyUtilityExecution(edit)).toBe(UTILITY_AU_PAIR_TIER);
+    expect(classifyUtilityExecution(inspectRequest())).toBe(UTILITY_NANNY_TIER);
 
     const plan = Array.from({ length: 5 }, (_, index) => ({
       executionProfile: "search" as const,

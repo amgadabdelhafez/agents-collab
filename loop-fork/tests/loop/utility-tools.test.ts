@@ -1400,6 +1400,52 @@ test("stores a validated patch proposal without modifying the source", async () 
   });
 });
 
+test("exact edit scopes cannot act as directory-wide patch authority", async () => {
+  await withRepo(async (root) => {
+    const patch = [
+      "diff --git a/src/hello.ts b/src/hello.ts",
+      "--- a/src/hello.ts",
+      "+++ b/src/hello.ts",
+      "@@ -1 +1 @@",
+      "-export const hello = 'world';",
+      "+export const hello = 'au-pair';",
+      "",
+    ].join("\n");
+    const exact = await createUtilityToolBroker(
+      {
+        artifactDir: ".exact-utility-artifacts",
+        exactWriteScopes: true,
+        readScopes: ["src/hello.ts"],
+        repoRoot: root,
+        writeScopes: ["src/hello.ts"],
+      },
+      { id: () => "exact-patch", now: () => 1_700_000_000_000 }
+    );
+    expect(
+      await exact.execute({ arguments: { patch }, name: "propose_patch" })
+    ).toMatchObject({ ok: true });
+
+    const directoryBroad = await createUtilityToolBroker(
+      {
+        artifactDir: ".broad-utility-artifacts",
+        exactWriteScopes: true,
+        readScopes: ["src"],
+        repoRoot: root,
+        writeScopes: ["src"],
+      },
+      { id: () => "broad-patch", now: () => 1_700_000_000_000 }
+    );
+    const denied = await directoryBroad.execute({
+      arguments: { patch },
+      name: "propose_patch",
+    });
+    expect(denied.error).toMatchObject({
+      code: "patch_denied",
+      message: "Patch target is not an exact declared write file: src/hello.ts",
+    });
+  });
+});
+
 test("guarded apply revalidates write scope and dependency targets", async () => {
   await withRepo(async (root) => {
     await writeFile(join(root, "package.json"), "{}\n");

@@ -62,6 +62,37 @@ test("routes a bounded low-risk edit to a capable utility tier", () => {
   });
 });
 
+test.each([
+  ["missing read context", { readScope: [] }],
+  [
+    "more than four read files",
+    {
+      readScope: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+      writeScope: ["src/a.ts"],
+    },
+  ],
+  [
+    "more than two write files",
+    {
+      readScope: ["src/a.ts", "src/b.ts", "src/c.ts"],
+      writeScope: ["src/a.ts", "src/b.ts", "src/c.ts"],
+    },
+  ],
+  ["missing scoped-edit capability", { requiredCapabilities: ["inspect"] }],
+  [
+    "write target absent from read context",
+    { writeScope: ["src/not-declared-for-read.ts"] },
+  ],
+  ["incompatible execution profile", { executionProfile: "search" }],
+] as const)("keeps a small edit with %s out of utility", (_label, overrides) => {
+  expect(
+    routeUtilityRequest(
+      makeRequest(overrides as Partial<UtilityRouteRequestInput>),
+      context()
+    )
+  ).toEqual({ reason: "request-not-bounded", target: "driver" });
+});
+
 test("routing is provider generic", () => {
   const decision = routeUtilityRequest(
     makeRequest({
