@@ -143,7 +143,7 @@ test("paired resumes restore Caveman modes unless CLI explicitly overrides", () 
   }
 });
 
-test("legacy resumed sessions stay Caveman-off until a new agent session", () => {
+test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;
   process.env.HOME = home;
@@ -188,6 +188,33 @@ test("legacy resumed sessions stay Caveman-off until a new agent session", () =>
     });
     expect(readRunManifest(storage.manifestPath)).toMatchObject({
       cavemanMode: "off",
+      helperCavemanMode: "full",
+    });
+
+    const freshStorage = resolveRunStorage("73", process.cwd(), home);
+    writeRunManifest(
+      freshStorage.manifestPath,
+      createRunManifest({
+        cwd: process.cwd(),
+        mode: "paired",
+        pid: 1234,
+        repoId: freshStorage.repoId,
+        runId: "73",
+        state: "submitted",
+      })
+    );
+    const bothNew = makeOptions({
+      cavemanMode: "lite",
+      cavemanModeSource: "default",
+      helperCavemanMode: "full",
+      helperCavemanModeSource: "default",
+      pairedMode: true,
+      resumeRunId: "73",
+    });
+    preparePairedRun(bothNew, process.cwd());
+    expect(bothNew).toMatchObject({
+      cavemanMode: "lite",
+      cavemanModeSource: "default",
       helperCavemanMode: "full",
     });
   } finally {

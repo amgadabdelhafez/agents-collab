@@ -161,10 +161,16 @@ export const applyPairedOptions = (
   opts.cavemanModeSource ??= "default";
   opts.helperCavemanMode ??= DEFAULT_HELPER_CAVEMAN_MODE;
   opts.helperCavemanModeSource ??= "default";
+  opts.pairWith ??= defaultPeerAgent(opts.agent);
+  const resumedSessionIds = pairedSessionIds(
+    opts,
+    manifest,
+    allowRawSessionFallback
+  );
+  const pairedAgents = [opts.agent, opts.pairWith];
   const resumesLegacyMainSession =
     !manifest?.cavemanMode &&
-    ((manifest ? canResumePairedManifest(manifest) : false) ||
-      (allowRawSessionFallback && Boolean(opts.sessionId?.trim())));
+    pairedAgents.some((agent) => Boolean(resumedSessionIds?.[agent]));
   if (resumesLegacyMainSession) {
     if (opts.cavemanModeSource === "cli" && opts.cavemanMode !== "off") {
       throw new Error(
@@ -186,7 +192,6 @@ export const applyPairedOptions = (
   // the effective (possibly resumed) modes aligned with tmux-launched panes.
   process.env.LOOP_CAVEMAN_MODE = opts.cavemanMode;
   process.env.LOOP_HELPER_CAVEMAN_MODE = opts.helperCavemanMode;
-  opts.pairWith ??= defaultPeerAgent(opts.agent);
   opts.claudeMcpConfigPath = ensureAgentBridgeConfig(
     storage.runDir,
     "claude",
@@ -214,11 +219,7 @@ export const applyPairedOptions = (
     injectProjectBridgeConfig(projectDir, storage.runDir, "gemini");
   }
   opts.pairedMode = true;
-  opts.pairedSessionIds = pairedSessionIds(
-    opts,
-    manifest,
-    allowRawSessionFallback
-  );
+  opts.pairedSessionIds = resumedSessionIds;
 };
 
 export const preparePairedOptions = (
