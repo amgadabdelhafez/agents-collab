@@ -1,7 +1,7 @@
 {
   "task_id": "caveman-integration",
   "feature": "caveman-integration",
-  "timestamp": "2026-07-28T18:11:32Z",
+  "timestamp": "2026-07-28T18:26:30Z",
   "verdict": "pass_with_baseline_failures",
   "upstream": {
     "repository": "https://github.com/JuliusBrussee/caveman",
@@ -13,6 +13,8 @@
     "main_default": "lite",
     "helper_default": "full",
     "supported_modes": ["off", "lite", "full", "ultra"],
+    "legacy_resumed_main_mode": "off",
+    "live_tmux_pair_liveness_probe": true,
     "routing_authority_changed": false,
     "global_caveman_installer_run": false,
     "bridge_shrink_wrapper_enabled": false,
@@ -21,9 +23,9 @@
   "checks": {
     "focused_tests": {
       "status": "pass",
-      "passed": 241,
+      "passed": 242,
       "failed": 0,
-      "assertions": 1043,
+      "assertions": 1055,
       "files": [
         "tests/loop/caveman.test.ts",
         "tests/loop/utility-runtime.test.ts",
@@ -107,12 +109,43 @@
       "session": "019fa9eb-2fec-7ba2-b885-9c739d81c541",
       "verdict": "pass",
       "scope": "Complete integration branch"
+    },
+    {
+      "base": "47706b5",
+      "head": "0d49a1d",
+      "session": "019fa9ed-9c62-7ab0-9778-051035daef23",
+      "verdict": "finding_fixed",
+      "finding": "Legacy resumed sessions could display a Caveman mode they never received."
+    },
+    {
+      "commit": "acf2dc5",
+      "session": "019fa9f0-5841-7a91-8c2f-5ae34371b8d5",
+      "verdict": "finding_fixed",
+      "finding": "The first legacy migration check was broader than actual resumed sessions."
+    },
+    {
+      "commit": "bba4568",
+      "session": "019fa9f1-cfcd-7532-ae1b-ba37fb58c2dd",
+      "verdict": "finding_fixed",
+      "finding": "Out-of-pair legacy bindings needed durable handling."
+    },
+    {
+      "commit": "7a3de0d",
+      "session": "019fa9f3-33a6-76c3-9d56-5fb42a1fb33b",
+      "verdict": "finding_fixed",
+      "finding": "Live tmux reuse had to preserve the actual running pair and bindings."
+    },
+    {
+      "commit": "540e4fa",
+      "session": "019fa9f8-9b8e-7732-bdb3-c3a88a9aa3f1",
+      "verdict": "pass",
+      "scope": "Tmux liveness, legacy migration, and stale-binding correction"
     }
   ],
   "deployment": {
     "integration_branch": "codex/pi-command-intake-prompts",
     "installed_binary": "/Users/amgad/.local/bin/loop",
-    "installed_commit": "d55d9edaf15e7a26a3c00872a83e41cdb1a498a5",
+    "installed_commit": "f7d1e22f2c4a7cc4997ed4ae18330cfbf1860b55",
     "active_loop_restarted": false,
     "activation": "New loop sessions only"
   },
