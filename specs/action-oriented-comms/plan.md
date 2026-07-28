@@ -10,4 +10,3 @@
 5. Run focused tests, repository checks, typecheck, build, the full fail-closed
    verifier, and independent review.
 6. Record evidence in `runs/action-oriented-comms/eval.json`.
-

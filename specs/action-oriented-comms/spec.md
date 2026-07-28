@@ -39,4 +39,3 @@ evidence and exceptions required by internal reviewers.
   agent traffic.
 - Do not rewrite, truncate, or normalize bridge payloads in transport code.
 - Do not restart an active loop, reinstall the global runtime, or push remotely.
-

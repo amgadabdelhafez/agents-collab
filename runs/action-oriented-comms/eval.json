@@ -49,7 +49,8 @@
     },
     "diff_check": {
       "status": "pass",
-      "command": "git diff --check"
+      "command": "git diff --check 08479bf26b427f734b6c6d7c9e04fae724fdb562..HEAD",
+      "note": "Checks the full task patch, including committed files, instead of only the working tree."
     },
     "project_verify": {
       "status": "pass",
@@ -63,6 +64,13 @@
       "session": "019faa36-2247-7d53-bc6c-7ccdb5826e65",
       "verdict": "pass",
       "scope": "Audience boundary implementation and prompt-regression coverage"
+    },
+    {
+      "commit": "63119ce",
+      "session": "019faa3b-5d63-7123-b480-45b902a0b676",
+      "verdict": "finding_resolved",
+      "scope": "Whole task patch and evidence truthfulness",
+      "finding": "The original working-tree-only diff check missed three committed blank lines at EOF; the files and base-aware evidence command were corrected."
     }
   ],
   "deployment": {

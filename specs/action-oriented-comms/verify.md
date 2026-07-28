@@ -6,8 +6,8 @@
   commands/results, risks, unknowns, and requested decision without a list cap.
 - Caveman explicitly preserves the audience contract and internal evidence.
 - Tmux, foreground paired, plan/work/review, and Claude channel prompt tests pass.
-- `bun run check`, TypeScript, build, `bun run test:ci`, `git diff --check`, and
+- `bun run check`, TypeScript, build, `bun run test:ci`, base-aware
+  `git diff --check`, and
   `scripts/verify.sh action-oriented-comms action-oriented-comms` pass.
 - Independent review reports no actionable correctness or prompt-regression
   finding.
-
