@@ -14,6 +14,53 @@
           }
         }
       }
+    },
+    {
+      // These protocol/state-machine modules predate the gate. Keep the
+      // exception named and local so new modules remain complexity-checked.
+      "includes": [
+        "src/loop/governess-usage.ts",
+        "src/loop/governess.ts",
+        "src/loop/hooks/emit.ts",
+        "src/loop/tmux.ts",
+        "src/loop/utility-runtime.ts",
+        "src/loop/utility-workspace.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": "off"
+          }
+        }
+      }
+    },
+    {
+      // ANSI/control-byte sanitizers intentionally match terminal controls.
+      "includes": [
+        "src/loop/governess.ts",
+        "src/loop/utility-observability.ts",
+        "tests/loop/governess.test.ts",
+        "tests/loop/utility-runtime.test.ts"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noControlCharactersInRegex": "off"
+          }
+        }
+      }
+    },
+    {
+      // Regex allocation is irrelevant in one-shot test assertions; keep the
+      // production rule enabled and avoid hoisting assertion-only patterns.
+      "includes": ["tests/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "performance": {
+            "useTopLevelRegex": "off"
+          }
+        }
+      }
     }
   ]
 }

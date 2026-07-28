@@ -15,19 +15,27 @@ interface ReconViewport {
   rows?: number;
 }
 
+const LINE_SPLIT_RE = /\r?\n/;
+const SEPARATOR_LINE_RE = /^[-=]+$/;
+const DIRECT_RESULT_PREFIX_RE = /^Direct result\s+\S+(?:\s+failed)?\s*:\s*/i;
+const TOOL_PAYLOAD_RE = /^[a-z][a-z0-9_]*\s*:\s*(\{[\s\S]*\})$/i;
+const MARKDOWN_HEADING_RE = /^#+\s*/;
+const MARKDOWN_QUOTE_RE = /^>\s*/;
+const DIRECT_PREFIX_RE = /^Direct\s+/;
+
 const bounded = (value: string, width: number): string =>
   sanitizeUtilityPaneText(value).replace(/\s+/g, " ").trim().slice(0, width);
 
 const firstUsefulLine = (value: string): string =>
   value
-    .split(/\r?\n/)
+    .split(LINE_SPLIT_RE)
     .map((line) => sanitizeUtilityPaneText(line).trim())
-    .find((line) => line.length > 0 && !/^[-=]+$/.test(line)) ?? "—";
+    .find((line) => line.length > 0 && !SEPARATOR_LINE_RE.test(line)) ?? "—";
 
 const compactResultText = (value: string): string => {
   let safe = sanitizeUtilityPaneText(value).trim();
-  safe = safe.replace(/^Direct result\s+\S+(?:\s+failed)?\s*:\s*/i, "");
-  const toolPayload = safe.match(/^[a-z][a-z0-9_]*\s*:\s*(\{[\s\S]*\})$/i);
+  safe = safe.replace(DIRECT_RESULT_PREFIX_RE, "");
+  const toolPayload = safe.match(TOOL_PAYLOAD_RE);
   if (toolPayload) {
     try {
       const parsed = JSON.parse(toolPayload[1]) as Record<string, unknown>;
@@ -39,11 +47,11 @@ const compactResultText = (value: string): string => {
     }
   }
   return firstUsefulLine(safe)
-    .replace(/^#+\s*/, "")
-    .replace(/^>\s*/, "")
+    .replace(MARKDOWN_HEADING_RE, "")
+    .replace(MARKDOWN_QUOTE_RE, "")
     .replace(/\*\*/g, "")
     .replace(/`/g, "")
-    .replace(/^Direct\s+/, "")
+    .replace(DIRECT_PREFIX_RE, "")
     .replace(/\s+/g, " ")
     .trim();
 };

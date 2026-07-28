@@ -36,6 +36,7 @@ import {
   type UtilityReadPlanStep,
   type UtilityReadRequest,
   type UtilityResolvedWorkspace,
+  type UtilityRouteDecision,
   type UtilityRouteRequest,
   type UtilityRoutingPolicy,
   type UtilityTier,
@@ -102,6 +103,11 @@ const MAX_CONSECUTIVE_BROKER_REJECTIONS = 3;
 const MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS = 3;
 const EMERGENCY_MAX_MODEL_CALLS = 64;
 const MAX_PI_SYNTHESIS_RESERVE_TOOL_CALLS = 8;
+const CONTEXT_INSUFFICIENT_RE = /^CONTEXT_INSUFFICIENT:\s*(.+)$/is;
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+const QWEN_MODEL_RE = /qwen/i;
+const GLM_MODEL_RE = /glm/i;
+const TRANSCRIPT_TIME_RE = /T(\d{2}:\d{2}:\d{2})/;
 const DEFAULT_API_KEY_FILE = join(
   homedir(),
   ".config",
@@ -294,6 +300,7 @@ const readUtilityApiKeyFile = (
       },
     };
   }
+  // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks are bit fields
   if ((stat.mode & 0o077) !== 0) {
     return {
       availability: {
@@ -393,6 +400,42 @@ export const buildUtilityWorkerEnvironment = (
   return minimal;
 };
 
+const auPairAvailability = (
+  explicitlyEnabled: string | undefined,
+  endpoint: string,
+  keyAvailability: UtilityAvailability
+): UtilityAvailability => {
+  if (explicitlyEnabled === "0") {
+    return { code: "disabled", message: "disabled by LOOP_AU_PAIR_ENABLED=0" };
+  }
+  if (isLoopbackEndpoint(endpoint)) {
+    return {
+      code: "ready-local-endpoint",
+      message: "local OpenAI-compatible endpoint does not require a key",
+    };
+  }
+  return keyAvailability;
+};
+
+const nannyAvailability = (
+  explicitlyEnabled: string | undefined,
+  endpoint: string
+): UtilityAvailability => {
+  if (explicitlyEnabled === "0") {
+    return { code: "disabled", message: "disabled by LOOP_NANNY_ENABLED=0" };
+  }
+  if (isLoopbackEndpoint(endpoint)) {
+    return {
+      code: "ready-local-endpoint",
+      message: "Nanny local Pi endpoint is ready",
+    };
+  }
+  return {
+    code: "disabled",
+    message: "Nanny requires a loopback endpoint",
+  };
+};
+
 export const resolveUtilityRuntimeConfig = (
   env: NodeJS.ProcessEnv = process.env
 ): UtilityRuntimeConfig => {
@@ -435,16 +478,11 @@ export const resolveUtilityRuntimeConfig = (
       .map((value) => value.trim())
       .filter(Boolean),
     ...(apiKey ? { apiKey } : {}),
-    availability:
-      explicitlyEnabled === "0"
-        ? { code: "disabled", message: "disabled by LOOP_AU_PAIR_ENABLED=0" }
-        : isLoopbackEndpoint(endpoint)
-          ? {
-              code: "ready-local-endpoint",
-              message:
-                "local OpenAI-compatible endpoint does not require a key",
-            }
-          : keyResult.availability,
+    availability: auPairAvailability(
+      explicitlyEnabled,
+      endpoint,
+      keyResult.availability
+    ),
     costQualityTradeoff: boundedTradeoff(env.LOOP_UTILITY_COST_QUALITY),
     defaultFallbackTierId:
       env.LOOP_UTILITY_FALLBACK_TIER?.trim() || UTILITY_AU_PAIR_TIER,
@@ -477,18 +515,7 @@ export const resolveUtilityRuntimeConfig = (
       env.LOOP_AU_PAIR_MODEL?.trim() ||
       env.LOOP_UTILITY_MODEL?.trim() ||
       DEFAULT_MODEL,
-    nannyAvailability:
-      nannyExplicitlyEnabled === "0"
-        ? { code: "disabled", message: "disabled by LOOP_NANNY_ENABLED=0" }
-        : isLoopbackEndpoint(nannyEndpoint)
-          ? {
-              code: "ready-local-endpoint",
-              message: "Nanny local Pi endpoint is ready",
-            }
-          : {
-              code: "disabled",
-              message: "Nanny requires a loopback endpoint",
-            },
+    nannyAvailability: nannyAvailability(nannyExplicitlyEnabled, nannyEndpoint),
     nannyEnabled,
     nannyEndpoint,
     nannyMaxConcurrentJobs: boundedInteger(
@@ -684,11 +711,12 @@ const staleUtilityReason = (input: {
   if (input.deadWorker) {
     return `${input.role} process is no longer alive`;
   }
-  return input.claimTimedOut
-    ? `${input.role} did not claim the routed job`
-    : input.runTimedOut
-      ? `${input.role} job exceeded its runtime limit and was terminated`
-      : `${input.role} failed closed`;
+  if (input.claimTimedOut) {
+    return `${input.role} did not claim the routed job`;
+  }
+  return input.runTimedOut
+    ? `${input.role} job exceeded its runtime limit and was terminated`
+    : `${input.role} failed closed`;
 };
 
 const recoverStaleUtilityJobs = async (
@@ -831,6 +859,12 @@ const dispatchNonUtilityRoute = async (
         `Action: perform the review and return an explicit verdict to ${job.request.requester} through the loop bridge. Act on this request.`,
       ].join(" ")
     : `Helper route ${job.jobId} returned to requester ${job.request.requester}: ${reason}. Objective: ${job.request.objective}`;
+  let type: "escalation" | "review_request" | "work_request" = "work_request";
+  if (target === "escalate") {
+    type = "escalation";
+  } else if (peerRoute) {
+    type = "review_request";
+  }
   await dispatchBridgeMessage(
     context.runDir,
     peerRoute ? job.request.requester : "utility",
@@ -840,12 +874,7 @@ const dispatchNonUtilityRoute = async (
     undefined,
     {
       taskId: job.jobId,
-      type:
-        target === "escalate"
-          ? "escalation"
-          : peerRoute
-            ? "review_request"
-            : "work_request",
+      type,
     }
   );
 };
@@ -888,20 +917,22 @@ const processPendingUtilityJob = async (input: {
             runtimeTier(input.config, executionTier as UtilityExecutionTierId),
           ],
         });
-  const decision =
-    routedDecision.reason === "utility-unavailable"
-      ? {
-          ...routedDecision,
-          detail:
-            executionTier === UTILITY_NANNY_TIER
-              ? input.config.nannyAvailability.message
-              : input.config.availability.message,
-        }
-      : routedDecision.target === "utility" &&
-          !("detail" in workspaceResolution) &&
-          workspaceResolution.workspace
-        ? { ...routedDecision, workspace: workspaceResolution.workspace }
-        : routedDecision;
+  let decision: UtilityRouteDecision = routedDecision;
+  if (routedDecision.reason === "utility-unavailable") {
+    decision = {
+      ...routedDecision,
+      detail:
+        executionTier === UTILITY_NANNY_TIER
+          ? input.config.nannyAvailability.message
+          : input.config.availability.message,
+    };
+  } else if (
+    routedDecision.target === "utility" &&
+    !("detail" in workspaceResolution) &&
+    workspaceResolution.workspace
+  ) {
+    decision = { ...routedDecision, workspace: workspaceResolution.workspace };
+  }
   if (
     decision.target === "utility" &&
     decision.tierId !== UTILITY_DIRECT_TIER &&
@@ -968,12 +999,14 @@ export const processPendingUtilityRoutes = async (
       activeByTier.set(tierId, (activeByTier.get(tierId) ?? 0) + 1);
     }
   }
-  const tierLimit = (tierId: UtilityExecutionTierId): number =>
-    tierId === UTILITY_NANNY_TIER
-      ? config.nannyMaxConcurrentJobs
-      : tierId === UTILITY_AU_PAIR_TIER
-        ? config.maxConcurrentJobs
-        : Number.POSITIVE_INFINITY;
+  const tierLimit = (tierId: UtilityExecutionTierId): number => {
+    if (tierId === UTILITY_NANNY_TIER) {
+      return config.nannyMaxConcurrentJobs;
+    }
+    return tierId === UTILITY_AU_PAIR_TIER
+      ? config.maxConcurrentJobs
+      : Number.POSITIVE_INFINITY;
+  };
   for (const job of pending) {
     const occupied = await processPendingUtilityJob({
       config,
@@ -1088,7 +1121,7 @@ export const utilitySystemPrompt = (
 export const parseUtilityContextInsufficient = (
   value: string
 ): string | undefined => {
-  const match = /^CONTEXT_INSUFFICIENT:\s*(.+)$/is.exec(value.trim());
+  const match = CONTEXT_INSUFFICIENT_RE.exec(value.trim());
   const reason = match?.[1]?.trim();
   return reason ? reason.slice(0, 1000) : undefined;
 };
@@ -1722,7 +1755,7 @@ const runPiUtilityConversation = async (input: {
   const stop = (message: string): void => {
     fatalError ||= message;
     queueMicrotask(() => {
-      void session?.abort();
+      session?.abort().catch(() => undefined);
     });
   };
   const synthesisToolLimit = piSynthesisToolLimit(
@@ -1881,7 +1914,7 @@ const runPiUtilityConversation = async (input: {
   };
 };
 
-const runUtilityConversation = async (input: {
+const runUtilityConversation = (input: {
   assertActive: () => void;
   broker: UtilityConversationBroker;
   capsule: UtilityContextCapsule;
@@ -1942,14 +1975,19 @@ export const utilityBrokerBoundary = (
 };
 
 class UtilityReadPlanToolBroker implements UtilityConversationBroker {
+  private readonly brokers: readonly Awaited<
+    ReturnType<typeof createUtilityToolBroker>
+  >[];
   private currentStep = 0;
+  private readonly role: "Direct" | "Nanny" | "Au Pair" | "utility helper";
 
   constructor(
-    private readonly brokers: readonly Awaited<
-      ReturnType<typeof createUtilityToolBroker>
-    >[],
-    private readonly role: "Direct" | "Nanny" | "Au Pair" | "utility helper"
-  ) {}
+    brokers: readonly Awaited<ReturnType<typeof createUtilityToolBroker>>[],
+    role: "Direct" | "Nanny" | "Au Pair" | "utility helper"
+  ) {
+    this.brokers = brokers;
+    this.role = role;
+  }
 
   get definitions(): readonly UtilityToolDefinition[] {
     return this.brokers[this.currentStep]?.definitions ?? [];
@@ -2005,7 +2043,7 @@ export const createUtilityReadPlanBroker = async (input: {
     throw new Error("structured read plan cannot be empty");
   }
   const brokers = await Promise.all(
-    input.executionPlan.map(async (step) => {
+    input.executionPlan.map((step) => {
       const allowedTools = utilityToolsForExecutionProfile(
         step.executionProfile
       );
@@ -2164,14 +2202,16 @@ export const runUtilityWorker = async (
   const usageFile = join(runDir, "utility", "usage.jsonl");
   const failureHarness =
     tierId === UTILITY_DIRECT_TIER ? "direct" : workerConfig.harness;
-  const failureProvider =
-    tierId === UTILITY_DIRECT_TIER
-      ? "broker"
-      : workerConfig.harness === "legacy"
-        ? isLoopbackEndpoint(selectedConfig.endpoint)
-          ? "local"
-          : "openrouter"
-        : piProviderId(providerSpecForTier(selectedConfig, tierId));
+  let failureProvider: string;
+  if (tierId === UTILITY_DIRECT_TIER) {
+    failureProvider = "broker";
+  } else if (workerConfig.harness === "legacy") {
+    failureProvider = isLoopbackEndpoint(selectedConfig.endpoint)
+      ? "local"
+      : "openrouter";
+  } else {
+    failureProvider = piProviderId(providerSpecForTier(selectedConfig, tierId));
+  }
   let capsule: UtilityContextCapsule | undefined;
   let progress: UtilityConversationProgress = {
     durationMs: 0,
@@ -2209,7 +2249,7 @@ export const runUtilityWorker = async (
             repoRoot: executionRoot,
             role: roleName,
           })
-        : await (async () => {
+        : await (() => {
             const allowedTools = utilityToolsForExecutionProfile(
               executionRequest.executionProfile
             );
@@ -2418,7 +2458,7 @@ export const applyUtilityJobPatch = async (
     throw new Error("guarded patch apply requires a completed Au Pair edit");
   }
   const expected = expectedPatchSha256.trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(expected)) {
+  if (!SHA256_HEX_RE.test(expected)) {
     throw new Error("expected_patch_sha256 must be a SHA-256 hex digest");
   }
   const artifacts = job.result.artifactRefs.filter(
@@ -2485,10 +2525,10 @@ const PANE_ANSI = {
 };
 
 const paneModelFamilyName = (model: string): string => {
-  if (/qwen/i.test(model)) {
+  if (QWEN_MODEL_RE.test(model)) {
     return "QWEN";
   }
-  if (/glm/i.test(model)) {
+  if (GLM_MODEL_RE.test(model)) {
     return "GLM";
   }
   return "MODEL";
@@ -2603,7 +2643,7 @@ const wrapPaneText = (
 };
 
 const transcriptTime = (at: string): string => {
-  const match = at.match(/T(\d{2}:\d{2}:\d{2})/);
+  const match = at.match(TRANSCRIPT_TIME_RE);
   return match?.[1] ?? "--:--:--";
 };
 

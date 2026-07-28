@@ -211,10 +211,10 @@ const isWithin = (root: string, target: string): boolean => {
 // prefix. A missing component does not stop the walk — a later `..` can return
 // to a real in-repo symlink, so resolution continues. Returns undefined on a
 // refused/looping/unreadable symlink so every caller fails closed.
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auditable path walker
 const physicalResolve = (
   startAbs: string,
   rejectWithin?: string
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: auditable path walker
 ): string | undefined => {
   if (!isAbsolute(startAbs)) {
     return undefined;

@@ -295,9 +295,9 @@ test("unrelated, mixed-worktree, and symlink escape scopes fail closed", () => {
         join(fixture.linkedB, "src", "sample.ts"),
       ],
     ];
-    const escape = join(fixture.linkedA, "escape");
-    symlinkSync(fixture.unrelated, escape);
-    cases.push([join(escape, "src", "sample.ts")]);
+    const escapeLink = join(fixture.linkedA, "escape");
+    symlinkSync(fixture.unrelated, escapeLink);
+    cases.push([join(escapeLink, "src", "sample.ts")]);
     for (const [index, readScope] of cases.entries()) {
       expect(
         resolveUtilityRequestWorkspace(

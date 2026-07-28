@@ -686,6 +686,8 @@ const MAX_SESSION_ATTEMPTS = 10_000;
 const SESSION_CONFLICT_RE = /duplicate session|already exists/i;
 const NO_SESSION_RE = /no sessions|couldn't find session|session .* not found/i;
 const LOOP_WORKTREE_SUFFIX_RE = /-loop-[a-z0-9][a-z0-9_-]*$/i;
+const ENV_COMMENT_RE = /\s+#.*$/;
+const LINE_SPLIT_RE = /\r?\n/;
 
 const stripLoopSuffix = (value: string): string =>
   value.replace(LOOP_WORKTREE_SUFFIX_RE, "") || value;
@@ -978,7 +980,7 @@ const unquoteEnvValue = (raw: string): string | undefined => {
     value = end >= 0 ? value.slice(1, end) : value.slice(1);
     value = value.replaceAll('\\"', '"').replaceAll("\\\\", "\\");
   } else {
-    value = value.replace(/\s+#.*$/, "").trim();
+    value = value.replace(ENV_COMMENT_RE, "").trim();
   }
   return value || undefined;
 };
@@ -990,7 +992,7 @@ const envFileValue = (file: string, key: string): string | undefined => {
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`^\\s*(?:export\\s+)?${escapedKey}\\s*=\\s*(.*)$`);
   try {
-    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+    for (const line of readFileSync(file, "utf8").split(LINE_SPLIT_RE)) {
       const match = pattern.exec(line);
       if (match) {
         return unquoteEnvValue(match[1] ?? "");

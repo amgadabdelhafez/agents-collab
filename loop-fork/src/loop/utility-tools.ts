@@ -251,6 +251,9 @@ const DANGEROUS_COMMAND_OPTIONS = new Set([
 ]);
 const GIT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const GIT_BRANCH_PATTERN_RE = /^[A-Za-z0-9._/*?-]{1,128}$/;
+const LOCAL_BINARY_NAME_RE = /^[A-Za-z0-9_.-]+$/;
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
+const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
 const DEPENDENCY_FILES = new Set([
   "bun.lock",
   "bun.lockb",
@@ -875,7 +878,7 @@ const parseCommandPolicy = (
   if (
     requireLocalBinary !== undefined &&
     (typeof requireLocalBinary !== "string" ||
-      !/^[A-Za-z0-9_.-]+$/.test(requireLocalBinary))
+      !LOCAL_BINARY_NAME_RE.test(requireLocalBinary))
   ) {
     throw new ToolPolicyError(
       "invalid_policy",
@@ -1221,13 +1224,13 @@ export class UtilityToolBroker {
   async applyPatchProposal(
     input: GuardedPatchApplyInput
   ): Promise<GuardedPatchApplyResult> {
-    if (!/^[0-9a-f]{64}$/i.test(input.expectedPatchSha256)) {
+    if (!SHA256_HEX_RE.test(input.expectedPatchSha256)) {
       throw new ToolPolicyError(
         "patch_denied",
         "Expected patch SHA-256 is invalid"
       );
     }
-    if (!/^[0-9a-f]{64}$/i.test(input.expectedManifestSha256)) {
+    if (!SHA256_HEX_RE.test(input.expectedManifestSha256)) {
       throw new ToolPolicyError(
         "patch_denied",
         "Expected manifest SHA-256 is invalid"
@@ -1410,8 +1413,7 @@ export class UtilityToolBroker {
         typeof value.path !== "string" ||
         !(
           value.sha256 === null ||
-          (typeof value.sha256 === "string" &&
-            /^[0-9a-f]{64}$/i.test(value.sha256))
+          (typeof value.sha256 === "string" && SHA256_HEX_RE.test(value.sha256))
         )
       ) {
         throw new ToolPolicyError(
@@ -2246,7 +2248,7 @@ export class UtilityToolBroker {
       ["baseRef", baseRef],
       ["headRef", headRef],
     ] as const) {
-      if (ref && !/^[0-9a-f]{7,64}$/i.test(ref)) {
+      if (ref && !COMMIT_HASH_RE.test(ref)) {
         throw new ToolPolicyError(
           "invalid_arguments",
           `${label} must be a literal commit hash`

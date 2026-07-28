@@ -25,6 +25,10 @@ const COMMON_CREDENTIAL_RE =
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|glpat-[A-Za-z0-9_-]{20,})\b/g;
 const REDACTED = "[REDACTED]";
 const TOOL_ERROR_CODE_RE = /^[a-z][a-z0-9_-]{0,39}$/;
+const LEGACY_COMPLETED_PANE_RE =
+  /^Completed with \d+ tool calls?, \d+ artifacts?, and \d+ checks?\.$/;
+const LEGACY_FAILED_PANE_RE =
+  /^(?:Nanny|Au Pair) failed closed; requester notified\.$/;
 const MAX_OBSERVABILITY_NUMBER = Number.MAX_SAFE_INTEGER;
 
 export type UtilityTranscriptKind = "request" | "response" | "tool";
@@ -605,9 +609,7 @@ const isLegacyPanePlaceholder = (value: string | undefined): boolean => {
     return false;
   }
   return (
-    /^Completed with \d+ tool calls?, \d+ artifacts?, and \d+ checks?\.$/.test(
-      text
-    ) || /^(?:Nanny|Au Pair) failed closed; requester notified\.$/.test(text)
+    LEGACY_COMPLETED_PANE_RE.test(text) || LEGACY_FAILED_PANE_RE.test(text)
   );
 };
 

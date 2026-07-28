@@ -1123,9 +1123,13 @@ test("loads a repository policy for local offline npx vitest checks", async () =
         writeScopes: ["src"],
       },
       {
-        runCommand: async (request) => {
+        runCommand: (request) => {
           captured = request;
-          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+          return Promise.resolve({
+            exitCode: 0,
+            stderr: "",
+            stdout: "vitest pass",
+          });
         },
       }
     );
@@ -1170,9 +1174,13 @@ test("supports a local offline vitest check without repository mutation", async 
         writeScopes: [],
       },
       {
-        runCommand: async (request) => {
+        runCommand: (request) => {
           captured = request;
-          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+          return Promise.resolve({
+            exitCode: 0,
+            stderr: "",
+            stdout: "vitest pass",
+          });
         },
       }
     );
@@ -1212,9 +1220,13 @@ test("resolves a monorepo package-local vitest from the declared cwd", async () 
         writeScopes: [],
       },
       {
-        runCommand: async (request) => {
+        runCommand: (request) => {
           captured = request;
-          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+          return Promise.resolve({
+            exitCode: 0,
+            stderr: "",
+            stdout: "vitest pass",
+          });
         },
       }
     );

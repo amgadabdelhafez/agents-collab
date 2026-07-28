@@ -10,7 +10,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "bun";
-import { dispatchBridgeMessage } from "./bridge-dispatch";
+import {
+  dispatchBridgeMessage,
+  type ImmediateBridgeDelivery,
+} from "./bridge-dispatch";
 import {
   deliverCodexBridgeMessage,
   deliverTmuxBridgeMessage,
@@ -673,6 +676,14 @@ const CONTEXT_COMPACT_RE =
 const GOVERNESS_PROMPT_RE = /\bgoverness:/i;
 const AVAILABLE_LIMIT_RESET_RE =
   /\byou have\s+\d+\s+usage limit resets?\s+available\b/gi;
+const LINE_SPLIT_RE = /\r?\n/;
+const TRAILING_DECIMAL_ZERO_RE = /\.0$/;
+const TRAILING_DECIMAL_ZEROES_RE = /\.0+$/;
+const MODEL_FAMILY_SEPARATOR_RE = /[-_]/;
+const BRIDGE_SEND_TOOL_RE = /^mcp__loop-bridge-.+__send_message$/;
+const BRIDGE_RECEIVE_TOOL_RE = /^mcp__loop-bridge-.+__receive_messages$/;
+const NONEMPTY_COMPOSER_RE = /^\s*[›❯>]\s+\S/;
+const STARTED_TMUX_SESSION_RE = /started tmux session "([^"]+)"/;
 const parsePaneCtxRemainingPct = (paneText: string): number | undefined => {
   const match = paneText.match(PANE_CTX_RE);
   if (!match) {
@@ -694,7 +705,7 @@ const SESSION_LIMIT_TAIL_LINES = 20;
 
 const isSessionLimited = (paneText: string): boolean =>
   paneText
-    .split(/\r?\n/)
+    .split(LINE_SPLIT_RE)
     .filter((line) => line.trim().length > 0)
     .slice(-SESSION_LIMIT_TAIL_LINES)
     .join("\n")
@@ -920,10 +931,12 @@ const fmtTokens = (n: number): string => {
 };
 
 const fmtTokenLimit = (n: number): string =>
-  n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n);
+  n >= 1000
+    ? `${(n / 1000).toFixed(1).replace(TRAILING_DECIMAL_ZERO_RE, "")}k`
+    : String(n);
 
 const fmtGb = (n: number): string =>
-  `${n.toFixed(n >= 10 ? 1 : 2).replace(/\.0+$/, "")}GB`;
+  `${n.toFixed(n >= 10 ? 1 : 2).replace(TRAILING_DECIMAL_ZEROES_RE, "")}GB`;
 
 const ANSI = {
   blue: "\x1b[34m",
@@ -1004,7 +1017,7 @@ const judgeIdFromModel = (model: string): string => {
   if (name.includes("gemma")) {
     return "gemma";
   }
-  return name.split(/[-_]/)[0] || "llm";
+  return name.split(MODEL_FAMILY_SEPARATOR_RE)[0] || "llm";
 };
 
 const primaryJudge = (config: GovernessConfig): LocalLlmJudgeConfig =>
@@ -1079,8 +1092,12 @@ const usageLimitWindows = (u: AgentUsage): UsageLimitWindow[] => {
   ];
 };
 
-const limitKindCell = (kind: UsageLimitWindow["kind"]): string =>
-  kind === "session" ? "S" : kind === "weekly" ? "W" : "A";
+const limitKindCell = (kind: UsageLimitWindow["kind"]): string => {
+  if (kind === "session") {
+    return "S";
+  }
+  return kind === "weekly" ? "W" : "A";
+};
 
 const pctCell = (pct: number): string =>
   Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
@@ -1222,7 +1239,12 @@ const modeCell = (u: AgentUsage): string => {
   if (!raw) {
     return "—";
   }
-  const mode = raw === "standard" ? "std" : raw === "priority" ? "fast" : raw;
+  let mode = raw;
+  if (raw === "standard") {
+    mode = "std";
+  } else if (raw === "priority") {
+    mode = "fast";
+  }
   return u.creditCostMultiplier
     ? `${mode}/${multiplierLabel(u.creditCostMultiplier)}`
     : mode;
@@ -1836,12 +1858,12 @@ const renderAgentRow = (
     row.usage.cacheReadTokens + row.usage.cacheCreateTokens
   );
   const outputTok = tokenCell(row.usage.outputTokens);
-  const cost =
-    row.usage.costEstimateCoveragePct === 0
-      ? "unpriced"
-      : row.usage.costUsd > 0
-        ? `$${row.usage.costUsd.toFixed(2)}`
-        : "—";
+  let cost = "—";
+  if (row.usage.costEstimateCoveragePct === 0) {
+    cost = "unpriced";
+  } else if (row.usage.costUsd > 0) {
+    cost = `$${row.usage.costUsd.toFixed(2)}`;
+  }
   const burn = costBurnCell(row.usage, meta.stats.activeMs[agent] ?? 0);
   const spend = `${cost}/${burn}`;
   const windows = usageLimitWindows(row.usage);
@@ -1930,6 +1952,18 @@ const utilityAge = (
   return Number.isFinite(latestMs) ? fmtDuration(nowMs - latestMs) : "—";
 };
 
+const utilityModelCell = (
+  snapshot: UtilityObservabilitySnapshot,
+  role: "au pair" | "nanny"
+): string => {
+  if (snapshot.model) {
+    return role === "nanny"
+      ? judgeIdFromModel(snapshot.model)
+      : shortLocalModel(snapshot.model);
+  }
+  return role === "nanny" ? "qwen" : "glm-5.2";
+};
+
 const renderUtilityAgentRow = (
   snapshot: UtilityObservabilitySnapshot,
   meta: BoardMeta,
@@ -1948,17 +1982,7 @@ const renderUtilityAgentRow = (
     colorCell(ANSI.green, role, HELPER_COL.agent),
     colorCell(utilityStateColor(state), `● ${state}`, HELPER_COL.state),
     fitCell(utilityAge(snapshot, meta.nowMs), HELPER_COL.age),
-    colorCell(
-      ANSI.green,
-      snapshot.model
-        ? role === "nanny"
-          ? judgeIdFromModel(snapshot.model)
-          : shortLocalModel(snapshot.model)
-        : role === "nanny"
-          ? "qwen"
-          : "glm-5.2",
-      HELPER_COL.model
-    ),
+    colorCell(ANSI.green, utilityModelCell(snapshot, role), HELPER_COL.model),
     fitCell(run, HELPER_COL.run),
     fitCell(`${snapshot.active}/${snapshot.queued}`, HELPER_COL.context),
     fitCell(String(snapshot.contextInsufficient), HELPER_COL.limits),
@@ -2049,7 +2073,7 @@ const readGovernessMessageCountsFromLog = (
 ): Record<string, number> => {
   const counts: Record<string, number> = {};
   try {
-    for (const line of readFileSync(logFile, "utf8").split(/\r?\n/)) {
+    for (const line of readFileSync(logFile, "utf8").split(LINE_SPLIT_RE)) {
       if (!line.trim()) {
         continue;
       }
@@ -2375,12 +2399,12 @@ const bridgeLatestFor = (
   target: Agent
 ): BridgeMessage | undefined => latest[source]?.[target];
 
-const bridgeAgentColor = (agent: string): string =>
-  agent === "claude"
-    ? ANSI.magenta
-    : agent === "codex"
-      ? ANSI.cyan
-      : ANSI.green;
+const bridgeAgentColor = (agent: string): string => {
+  if (agent === "claude") {
+    return ANSI.magenta;
+  }
+  return agent === "codex" ? ANSI.cyan : ANSI.green;
+};
 
 const renderBridgeDirection = (source: string, target: string): string =>
   [
@@ -2536,11 +2560,10 @@ const emptyToolGroups = (): ToolGroups => ({
 });
 
 const isBridgeSendTool = (name: string): boolean =>
-  name === "send_message" || /^mcp__loop-bridge-.+__send_message$/.test(name);
+  name === "send_message" || BRIDGE_SEND_TOOL_RE.test(name);
 
 const isBridgeRecvTool = (name: string): boolean =>
-  name === "receive_messages" ||
-  /^mcp__loop-bridge-.+__receive_messages$/.test(name);
+  name === "receive_messages" || BRIDGE_RECEIVE_TOOL_RE.test(name);
 
 const addToolGroup = (
   groups: ToolGroups,
@@ -2599,7 +2622,7 @@ const renderToolCountCell = (text: string, width: number): string =>
     : paint(ANSI.yellow, fitCell(text, width));
 
 const bridgeToolText = (groups: ToolGroups): string => {
-  const parts = [];
+  const parts: string[] = [];
   if (groups.bridgeSend > 0) {
     parts.push(`→${fmtTokens(groups.bridgeSend)}`);
   }
@@ -2618,7 +2641,7 @@ const bridgeActivityText = (
   meta: BoardMeta
 ): string => {
   const bridge = bridgeFor(row.liveness.agent, meta.bridge);
-  const parts = [];
+  const parts: string[] = [];
   const humanPrompts = row.usage.humanMessages;
   if (humanPrompts > 0) {
     parts.push(`human ${fmtTokens(humanPrompts)}`);
@@ -2788,7 +2811,7 @@ const structuredSummaryValue = (
 ): string | undefined => {
   const prefix = `${label}:`;
   const line = summary
-    .split(/\r?\n/)
+    .split(LINE_SPLIT_RE)
     .find((candidate) => candidate.trimStart().startsWith(prefix));
   const value = line?.trimStart().slice(prefix.length).trim();
   return value || undefined;
@@ -2980,6 +3003,15 @@ interface ConsensusJudgeResult {
   usageByJudge: LocalLlmUsageByJudge;
 }
 
+const recoveryActionFor = (
+  level: RecoveryDecision["level"]
+): GovernessAction | undefined => {
+  if (level === "answer-prompt" || level === "nudge") {
+    return level;
+  }
+  return level === "restart" ? "restart-agent" : undefined;
+};
+
 // Run the recovery ladder for a suspect agent; returns the taken action (if any).
 const recoverAgent = (
   info: GovernessAgentInfo,
@@ -2999,14 +3031,7 @@ const recoverAgent = (
       nowMs: ctx.nowMs,
     }
   );
-  const recoveryAction: GovernessAction | undefined =
-    decision.level === "answer-prompt"
-      ? "answer-prompt"
-      : decision.level === "nudge"
-        ? "nudge"
-        : decision.level === "restart"
-          ? "restart-agent"
-          : undefined;
+  const recoveryAction = recoveryActionFor(decision.level);
   if (recoveryAction) {
     const policy = decideGovernessPolicy(recoveryAction, {
       confirmed: false,
@@ -3717,7 +3742,7 @@ const restoreContextMessage = (
   const restoredName = capitalize(restored);
   const temporaryName = temporary ? capitalize(temporary) : "The other agent";
   const summary = state.summary
-    .split(/\r?\n/)
+    .split(LINE_SPLIT_RE)
     .map((line) => line.trim())
     .filter(Boolean)
     .join(" ");
@@ -3985,24 +4010,26 @@ export const createGovernessRuntimeAdapter = (
   };
   return {
     agent: info.agent,
-    checkpoint: async () => {
+    checkpoint: () => {
       const event = deps.readHooks(info.hookFile).at(-1);
-      return event
-        ? {
-            agent: info.agent,
-            at: event.ts,
-            reference: `${event.event}:${event.ts}`,
-          }
-        : undefined;
+      return Promise.resolve(
+        event
+          ? {
+              agent: info.agent,
+              at: event.ts,
+              reference: `${event.event}:${event.ts}`,
+            }
+          : undefined
+      );
     },
-    observe: async () => {
+    observe: () => {
       const evidence = deps.paneCommand?.(info.pane) ?? "unknown";
       const alive = !agentHasExited(info.agent, evidence);
-      return {
+      return Promise.resolve({
         alive,
         evidence,
         state: explicitAgentState(displayState, alive),
-      };
+      });
     },
     requestDrain: (control) => deliver(control),
     requestExit: (control) => deliver(control, true),
@@ -4080,11 +4107,11 @@ const directInputIsSafe = (
   if (events.at(-1)?.event !== "Stop") {
     return false;
   }
-  const tail = deps.capturePane(info.pane).split(/\r?\n/).slice(-10);
+  const tail = deps.capturePane(info.pane).split(LINE_SPLIT_RE).slice(-10);
   // Both Codex and Claude prefix a non-empty composer with one of these prompt
   // glyphs. A Stop hook alone proves turn completion, not that the human has
   // not started typing since then.
-  return !tail.some((line) => /^\s*[›❯>]\s+\S/.test(line));
+  return !tail.some((line) => NONEMPTY_COMPOSER_RE.test(line));
 };
 
 const notifyHandoverAgents = async (
@@ -5145,12 +5172,13 @@ export const governessTick = async (
     }
   }
   let { history, recoveries, llmUsage } = runState;
-  let llmUsageByJudge =
-    Object.keys(runState.llmUsageByJudge).length > 0
-      ? runState.llmUsageByJudge
-      : runState.llmUsage.totalTokens > 0 || runState.llmUsage.calls > 0
-        ? { [primaryJudge(config).id]: runState.llmUsage }
-        : runState.llmUsageByJudge;
+  let llmUsageByJudge = runState.llmUsageByJudge;
+  if (
+    Object.keys(llmUsageByJudge).length === 0 &&
+    (runState.llmUsage.totalTokens > 0 || runState.llmUsage.calls > 0)
+  ) {
+    llmUsageByJudge = { [primaryJudge(config).id]: runState.llmUsage };
+  }
   let llmOffline = false;
   const llmOfflineByJudge: Record<string, boolean> = {};
   const rows: AgentRow[] = [];
@@ -5445,26 +5473,30 @@ const sendGovernessBridgeMessage = async (
   message: string,
   options: BridgeEnqueueOptions = {}
 ): Promise<BridgeSendStatus> => {
+  let deliver: ImmediateBridgeDelivery | undefined;
+  if (target === "codex") {
+    deliver = async (entry) => {
+      if (readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy") {
+        return false;
+      }
+      return (
+        (await deliverCodexBridgeMessage(runDir, entry)) ||
+        (await deliverTmuxBridgeMessage(runDir, entry))
+      );
+    };
+  } else if (
+    target === "cursor" ||
+    target === "gemini" ||
+    target === "copilot"
+  ) {
+    deliver = (entry) => deliverTmuxBridgeMessage(runDir, entry);
+  }
   const result = await dispatchBridgeMessage(
     runDir,
     source,
     target,
     message,
-    target === "codex"
-      ? async (entry) => {
-          if (
-            readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy"
-          ) {
-            return false;
-          }
-          return (
-            (await deliverCodexBridgeMessage(runDir, entry)) ||
-            (await deliverTmuxBridgeMessage(runDir, entry))
-          );
-        }
-      : target === "cursor" || target === "gemini" || target === "copilot"
-        ? (entry) => deliverTmuxBridgeMessage(runDir, entry)
-        : undefined,
+    deliver,
     undefined,
     options
   );
@@ -5576,7 +5608,7 @@ export const defaultGovernessDeps = (
         ok: false,
       };
     }
-    const session = stdout.match(/started tmux session "([^"]+)"/)?.[1];
+    const session = stdout.match(STARTED_TMUX_SESSION_RE)?.[1];
     if (!session) {
       return {
         error: "replacement command succeeded without reporting a tmux session",
@@ -5872,11 +5904,11 @@ const localJudgesFromEnv = (
 // and LOOP_GOVERNESS_* environment overrides set at pane launch.
 export const resolveGovernessConfig = (
   runId: string,
-  env: NodeJS.ProcessEnv,
+  sourceEnv: NodeJS.ProcessEnv,
   cwd?: string,
   home?: string
 ): GovernessConfig => {
-  env = withLegacyGovernessEnv(env);
+  const env = withLegacyGovernessEnv(sourceEnv);
   const { manifest, storage } = loadRunState(runId, cwd, home);
   const session = manifest?.tmuxSession;
   if (!session) {

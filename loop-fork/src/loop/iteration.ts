@@ -20,12 +20,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const iterationCooldown = (i: number): Promise<void> =>
   i > 1 ? sleep(parseIterationCooldownMs()) : Promise.resolve();
 
-const lastSession = (agent: Agent): string =>
-  agent === "claude"
-    ? getLastClaudeSessionId()
-    : agent === "codex"
-      ? getLastCodexThreadId()
-      : "";
+const lastSession = (agent: Agent): string => {
+  if (agent === "claude") {
+    return getLastClaudeSessionId();
+  }
+  return agent === "codex" ? getLastCodexThreadId() : "";
+};
 
 export const doneText = (s: string): string => `done signal "${s}"`;
 

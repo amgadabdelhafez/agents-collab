@@ -274,14 +274,16 @@ describe("runHookEmit", () => {
     const routeRequests: Array<{ readScope?: string[] }> = [];
     const stdout: string[] = [];
     async function* stdin() {
-      yield new TextEncoder().encode(
-        JSON.stringify({
-          cwd: "/linked/packages/api",
-          hook_event_name: "PreToolUse",
-          tool_input: { command: "rg needle tests/router.test.ts" },
-          tool_name: "Bash",
-          tool_use_id: "linked-tool",
-        })
+      yield await Promise.resolve(
+        new TextEncoder().encode(
+          JSON.stringify({
+            cwd: "/linked/packages/api",
+            hook_event_name: "PreToolUse",
+            tool_input: { command: "rg needle tests/router.test.ts" },
+            tool_name: "Bash",
+            tool_use_id: "linked-tool",
+          })
+        )
       );
     }
     await runHookEmit("claude", "/run/hooks/claude.jsonl", {
@@ -619,13 +621,15 @@ describe("runHookEmit", () => {
       workspaceRoot: string | undefined
     ) => {
       async function* stdin() {
-        yield new TextEncoder().encode(
-          JSON.stringify({
-            cwd: "/linked",
-            hook_event_name: "PreToolUse",
-            tool_input: toolInput,
-            tool_name: toolName,
-          })
+        yield await Promise.resolve(
+          new TextEncoder().encode(
+            JSON.stringify({
+              cwd: "/linked",
+              hook_event_name: "PreToolUse",
+              tool_input: toolInput,
+              tool_name: toolName,
+            })
+          )
         );
       }
       await runHookEmit("claude", "/run/hooks/claude.jsonl", {
