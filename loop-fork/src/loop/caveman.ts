@@ -72,6 +72,11 @@ const upstreamIntensityRule = (mode: Exclude<CavemanMode, "off">): string => {
   throw new Error(`Pinned Caveman skill is missing the ${mode} intensity rule`);
 };
 
+const helperModeInheritance = (mode: Exclude<CavemanMode, "off">): string =>
+  mode === "lite"
+    ? ""
+    : "Inherit full baseline: drop articles; fragments OK; use short synonyms.";
+
 export const cavemanAgentGuidance = (mode: CavemanMode): string =>
   mode === "off"
     ? ""
@@ -90,6 +95,10 @@ export const cavemanHelperReinforcement = (mode: CavemanMode): string =>
     ? ""
     : [
         `CAVEMAN MODE ACTIVE (${mode}). ${upstreamIntensityRule(mode)}`,
+        "Drop filler, pleasantries, and hedging. No tool-call narration.",
+        helperModeInheritance(mode),
         "Code/commits/PRs/security: write normal.",
         "Compress final explanatory prose only. Keep commands, paths, JSON, errors, SHAs, citations, evidence, and broker results exact. Use normal prose if brevity creates ambiguity.",
-      ].join(" ");
+      ]
+        .filter(Boolean)
+        .join(" ");

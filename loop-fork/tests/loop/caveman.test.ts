@@ -43,8 +43,17 @@ test("helper reinforcement is compact and off is an exact opt-out", () => {
     "Keep articles + full sentences. Professional but tight"
   );
   expect(cavemanHelperReinforcement("lite")).not.toContain("Fragments OK");
+  expect(cavemanHelperReinforcement("lite")).toContain(
+    "Drop filler, pleasantries, and hedging. No tool-call narration."
+  );
+  expect(cavemanHelperReinforcement("full")).toContain(
+    "Inherit full baseline: drop articles; fragments OK; use short synonyms."
+  );
   expect(cavemanHelperReinforcement("ultra")).toContain(
     "Strip conjunctions when cause-then-effect stay unambiguous."
+  );
+  expect(cavemanHelperReinforcement("ultra")).toContain(
+    "Inherit full baseline: drop articles; fragments OK; use short synonyms."
   );
   expect(cavemanHelperReinforcement("ultra")).toContain(
     "State each fact once."
