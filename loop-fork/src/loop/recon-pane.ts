@@ -18,19 +18,37 @@ interface ReconViewport {
 const bounded = (value: string, width: number): string =>
   sanitizeUtilityPaneText(value).replace(/\s+/g, " ").trim().slice(0, width);
 
-const wrapped = (value: string, width: number): string[] => {
-  let safe = sanitizeUtilityPaneText(value).replace(/\s+/g, " ").trim();
-  const lines: string[] = [];
-  while (safe.length > width) {
-    const breakAt = safe.lastIndexOf(" ", width);
-    const end = breakAt >= Math.floor(width / 2) ? breakAt : width;
-    lines.push(safe.slice(0, end));
-    safe = safe.slice(end).trimStart();
+const firstUsefulLine = (value: string): string =>
+  value
+    .split(/\r?\n/)
+    .map((line) => sanitizeUtilityPaneText(line).trim())
+    .find((line) => line.length > 0 && !/^[-=]+$/.test(line)) ?? "—";
+
+const compactResultText = (value: string): string => {
+  let safe = sanitizeUtilityPaneText(value).trim();
+  safe = safe.replace(
+    /^Direct result\s+\S+(?:\s+failed)?\s*:\s*/i,
+    ""
+  );
+  const toolPayload = safe.match(/^[a-z][a-z0-9_]*\s*:\s*(\{[\s\S]*\})$/i);
+  if (toolPayload) {
+    try {
+      const parsed = JSON.parse(toolPayload[1]) as Record<string, unknown>;
+      if (typeof parsed.content === "string") {
+        safe = parsed.content;
+      }
+    } catch {
+      // Keep the sanitized original when a tool payload is only partial JSON.
+    }
   }
-  if (safe) {
-    lines.push(safe);
-  }
-  return lines.length > 0 ? lines : [""];
+  return firstUsefulLine(safe)
+    .replace(/^#+\s*/, "")
+    .replace(/^>\s*/, "")
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .replace(/^Direct\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
 };
 
 const age = (at: string): string => {
@@ -72,15 +90,32 @@ const renderRoutes = (runDir: string, width: number): string[] => {
     .slice(0, 12);
   return [
     bounded(
-      `ROUTES  routed ${routing.routed}/${routing.considered}  active ${snapshot.active}  queued ${snapshot.queued}  auto ${routing.autoRouted} explicit ${routing.explicitRouted}`,
+      `ROUTES  ${routing.routed}/${routing.considered} routed · ${snapshot.active} active · ${snapshot.queued} queued · ${routing.autoRouted} auto · ${routing.explicitRouted} asked`,
       width
     ),
     ...jobs.map((job) => {
-      const route = job.decision
-        ? `${job.decision.tierId ?? job.decision.target}/${job.decision.reason}`
-        : "pending-route";
+      const route = (() => {
+        if (!job.decision) return "queued";
+        if (job.decision.target === "driver") return "driver";
+        if (job.decision.tierId === "utility-direct") return "direct";
+        if (job.decision.tierId === "utility-nanny") return "nanny";
+        if (job.decision.tierId === "utility-au-pair") return "au pair";
+        return "utility";
+      })();
+      const state = (() => {
+        if (job.state === "completed") return "✓";
+        if (job.state === "failed") return "✗";
+        if (job.state === "running" || job.state === "claimed") return "…";
+        return "→";
+      })();
+      const reason =
+        job.decision?.target === "driver" &&
+        job.decision.reason &&
+        job.decision.reason !== "request-not-bounded"
+          ? ` (${job.decision.reason.replace(/-/g, " ")})`
+          : "";
       return bounded(
-        `${age(job.updatedAt)} ${job.jobId.slice(0, 8)} ${job.state} ${route} · ${job.request.objective}`,
+        `${age(job.updatedAt)} ${state} ${route}${reason} · ${job.request.objective}`,
         width
       );
     }),
@@ -90,22 +125,40 @@ const renderRoutes = (runDir: string, width: number): string[] => {
 const renderTools = (runDir: string, width: number): string[] => {
   const events = readToolEvents(runDir).slice(-16).reverse();
   const failed = events.filter((event) => event.ok === false).length;
+  const grouped = new Map<
+    string,
+    { count: number; detail: string; event: Record<string, unknown> }
+  >();
+  for (const event of events) {
+    const error =
+      event.error && typeof event.error === "object"
+        ? (event.error as Record<string, unknown>)
+        : undefined;
+    const detail =
+      event.ok === true
+        ? ""
+        : `${String(error?.code ?? "unknown")}: ${String(error?.message ?? "broker rejection")}`;
+    const key = [
+      String(event.jobId ?? ""),
+      String(event.tool ?? "tool"),
+      String(event.ok),
+      detail,
+    ].join("\u0000");
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      grouped.set(key, { count: 1, detail, event });
+    }
+  }
   return [
-    bounded(`TOOLS  recent ${events.length}  failed ${failed}`, width),
-    ...events.flatMap((event) => {
-      const error =
-        event.error && typeof event.error === "object"
-          ? (event.error as Record<string, unknown>)
-          : undefined;
-      const detail =
-        event.ok === true
-          ? "ok"
-          : `${String(error?.code ?? "unknown")}: ${String(error?.message ?? "broker rejection")}`;
-      return wrapped(
-        `${age(String(event.at ?? ""))} ${String(event.jobId ?? "").slice(0, 8)} ${String(event.tool ?? "tool")} · ${detail}`,
+    bounded(`TOOLS  ${events.length} recent · ${failed} failed`, width),
+    ...[...grouped.values()].map(({ count, detail, event }) =>
+      bounded(
+        `${age(String(event.at ?? ""))} ${event.ok === true ? "✓" : "✗"} ${String(event.tool ?? "tool")}${count > 1 ? ` ×${count}` : ""}${detail ? ` · ${detail}` : ""}`,
         width
-      );
-    }),
+      )
+    ),
   ];
 };
 
@@ -113,26 +166,31 @@ const renderResults = (runDir: string, width: number): string[] => {
   const pending = readPendingBridgeMessages(runDir).filter(
     (message) => message.source === "utility"
   );
-  const results = readUtilityJobsForObservability(runDir)
+  const pendingTaskIds = new Set(
+    pending.flatMap((message) => (message.taskId ? [message.taskId] : []))
+  );
+  const allResults = readUtilityJobsForObservability(runDir)
     .filter((job) => job.result)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  const results = allResults
+    .filter((job) => !pendingTaskIds.has(job.jobId))
     .slice(0, 12);
   return [
     bounded(
-      `RESULTS  finished ${results.length}  bridge pending ${pending.length}`,
+      `RESULTS  ${Math.min(allResults.length, 12)} recent · ${pending.length} awaiting delivery`,
       width
     ),
     ...pending
       .slice(0, 4)
       .map((message) =>
         bounded(
-          `pending→${message.target} ${message.taskId?.slice(0, 8) ?? "no-task"} · ${message.message}`,
+          `→ ${message.target} awaiting · ${compactResultText(message.message)}`,
           width
         )
       ),
     ...results.map((job) =>
       bounded(
-        `${age(job.updatedAt)} ${job.jobId.slice(0, 8)} ${job.result?.status ?? job.state} · ${job.result?.blocker ?? job.result?.summary ?? ""}`,
+        `${age(job.updatedAt)} ${job.result?.status === "failed" || job.state === "failed" ? "✗" : "✓"} ${compactResultText(job.result?.blocker ?? job.result?.summary ?? "")}`,
         width
       )
     ),
@@ -159,13 +217,22 @@ export const runReconPane = async (
   runDir: string,
   index: ReconPaneIndex
 ): Promise<void> => {
+  let previous = "";
+  if (process.stdout.isTTY) {
+    process.stdout.write("\u001b[?1049h\u001b[?25l");
+    process.once("exit", () => {
+      process.stdout.write("\u001b[?25h\u001b[?1049l");
+    });
+  }
   for (;;) {
-    process.stdout.write(
-      `\u001b[2J\u001b[H${renderReconPane(runDir, index, {
-        columns: process.stdout.columns,
-        rows: process.stdout.rows,
-      })}\n`
-    );
+    const rendered = renderReconPane(runDir, index, {
+      columns: process.stdout.columns,
+      rows: process.stdout.rows,
+    });
+    if (rendered !== previous) {
+      process.stdout.write(`\u001b[2J\u001b[H${rendered}`);
+      previous = rendered;
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 };

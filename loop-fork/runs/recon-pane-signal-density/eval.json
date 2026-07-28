@@ -1,0 +1,28 @@
+{
+  "task_id": "recon-pane-signal-density",
+  "status": "pass",
+  "required": [
+    "unit",
+    "build"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/recon-pane-signal-density/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/recon-pane-signal-density/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/recon-pane-signal-density/artifacts/unit/attempt-002.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/recon-pane-signal-density/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/recon-pane-signal-density/artifacts/build/attempt-002.log",
+      "latest_attempt_meta": "runs/recon-pane-signal-density/artifacts/build/attempt-002.json"
+    }
+  }
+}

@@ -736,6 +736,36 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "@loop_label",
       "results.repo-loop-1",
     ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "split-window",
+      "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-p",
+      "55",
+      "-t",
+      "%45",
+      "-c",
+      repoDir,
+      expect.stringContaining("__recon-pane"),
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "split-window",
+      "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-p",
+      "61",
+      "-t",
+      "%46",
+      "-c",
+      repoDir,
+      expect.stringContaining("__recon-pane"),
+    ]);
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
