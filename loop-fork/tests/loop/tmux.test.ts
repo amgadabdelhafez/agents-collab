@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { runGit } from "../../src/loop/git";
@@ -553,7 +560,18 @@ test("runInTmux writes paired session refs before starting governess", async () 
         sendText: (): void => undefined,
         sleep: () => Promise.resolve(),
         startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
-        startPersistentAgentSession: () => Promise.resolve(undefined),
+        startPersistentAgentSession: (_agent, _opts, _sessionId, launch) => {
+          const hooksPath = join(runDir, "codex-home", "hooks.json");
+          events.push(
+            `start-codex:${existsSync(hooksPath)}:${launch?.codexLaunch?.env?.LOOP_NATIVE_SUBAGENT_MODE ?? ""}`
+          );
+          if (existsSync(hooksPath)) {
+            events.push(
+              `codex-hook-event:${readFileSync(hooksPath, "utf8").includes("PreToolUse")}`
+            );
+          }
+          return Promise.resolve(undefined);
+        },
         spawn: (args: string[]) => {
           calls.push(args);
           if (args.some((arg) => arg.includes("__governess"))) {
@@ -620,6 +638,8 @@ test("runInTmux writes paired session refs before starting governess", async () 
     );
 
     expect(delegated).toBe(true);
+    expect(events).toContain("start-codex:true:utility-first");
+    expect(events).toContain("codex-hook-event:true");
     expect(events).toContain("manifest:codex-thread-1:%41:repo-loop-1:0.2");
     expect(events).toContain(
       "spawn-governess:codex-thread-1:%41:repo-loop-1:0.2"

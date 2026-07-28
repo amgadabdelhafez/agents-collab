@@ -511,8 +511,8 @@ export const claudeNativeFallbackDefinition = (): Record<
     model: "inherit",
     permissionMode: "plan",
     prompt:
-      "Inspect only the exact scopes and objective injected by the Governess lease. Use Read, Grep, and Glob only. Do not write, edit, execute commands, use MCP or web tools, ask the human, make authority decisions, or create descendants. Return concise file-backed evidence to the parent and stop.",
-    tools: ["Read", "Grep", "Glob"],
+      "Inspect only existing regular files within the exact scopes and objective injected by the Governess lease. Use Read and file-targeted Grep only; recursive directory inspection is denied. Do not write, edit, execute commands, use MCP or web tools, ask the human, make authority decisions, or create descendants. Return concise file-backed evidence to the parent and stop.",
+    tools: ["Read", "Grep"],
   },
 });
 
@@ -1451,7 +1451,8 @@ const cleanupFailedPairedSessionStart = (
 const preparePersistentTmuxLaunch = async (
   deps: TmuxDeps,
   opts: Options,
-  manifest: RunManifest
+  manifest: RunManifest,
+  nativeSubagentMode: NativeSubagentMode
 ): Promise<{
   claudeSessionId: string;
   codexRemoteUrl: string;
@@ -1468,13 +1469,20 @@ const preparePersistentTmuxLaunch = async (
 
   if (pair.includes("codex")) {
     const codexKind = opts.agent === "codex" ? "work" : "review";
+    const {
+      LOOP_NATIVE_SUBAGENT_MODE: _ambientNativeSubagentMode,
+      ...codexBaseEnv
+    } = deps.env;
+    if (nativeSubagentMode !== "off") {
+      codexBaseEnv.LOOP_NATIVE_SUBAGENT_MODE = nativeSubagentMode;
+    }
     await deps.startPersistentAgentSession(
       "codex",
       opts,
       manifest.codexThreadId || opts.pairedSessionIds?.codex || undefined,
       {
         codexLaunch: {
-          env: codexHomeEnv(opts.codexHome),
+          env: codexHomeEnv(opts.codexHome, codexBaseEnv),
           orphanOnExit: true,
         },
       },
@@ -1825,6 +1833,17 @@ const startPairedSession = async (
     );
     return session;
   }
+  const nativeSubagentMode = launch.opts.governess
+    ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)
+    : "off";
+  // Codex app-server loads hooks at process startup, so persist the run-scoped
+  // hook config before booting its persistent transport.
+  const governessHooks = prepareGovernessHooks(
+    deps,
+    launch.opts,
+    storage.runDir,
+    paneAgents
+  );
   const hadAgentSession: Record<Agent, boolean> = {
     claude: Boolean(
       manifest.claudeSessionId || launch.opts.pairedSessionIds?.claude
@@ -1848,7 +1867,8 @@ const startPairedSession = async (
     const persistent = await preparePersistentTmuxLaunch(
       deps,
       launch.opts,
-      manifest
+      manifest,
+      nativeSubagentMode
     );
     claudeSessionId = persistent.claudeSessionId;
     codexRemoteUrl = persistent.codexRemoteUrl;
@@ -1873,9 +1893,6 @@ const startPairedSession = async (
       join(storage.runDir, "claude-mcp.json"))
     : undefined;
   try {
-    const nativeSubagentMode = launch.opts.governess
-      ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)
-      : "off";
     const env = [
       ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
       `${RUN_BASE_ENV}=${runBase}`,
@@ -1907,12 +1924,6 @@ const startPairedSession = async (
           storage.runId,
           claudeChannelServer ?? ""
         );
-    const governessHooks = prepareGovernessHooks(
-      deps,
-      launch.opts,
-      storage.runDir,
-      paneAgents
-    );
     const leftCommand = buildShellCommand([
       "env",
       ...env,

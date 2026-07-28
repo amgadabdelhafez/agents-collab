@@ -107,6 +107,17 @@ test("native fallback requests require utility evidence and reject protected sco
     createNativeFallbackRequest({
       acceptanceCriteria: ["inspect"],
       evidenceTaskIds: ["task-1"],
+      fallbackReason: "utility-failed",
+      kind: "review",
+      objective: "Review the repository root",
+      readScope: ["."],
+      requester: "claude",
+    })
+  ).toThrow("non-root");
+  expect(() =>
+    createNativeFallbackRequest({
+      acceptanceCriteria: ["inspect"],
+      evidenceTaskIds: ["task-1"],
       fallbackReason: "human-authorized",
       humanAuthorized: false,
       kind: "review",
@@ -188,7 +199,12 @@ test("Governess grants one lease and provider hooks consume and close it once", 
       runDir,
     });
     expect(started.lease?.state).toBe("running");
-    const child = nativeFallbackForChild(runDir, "claude", "child-1");
+    const child = nativeFallbackForChild(
+      runDir,
+      "claude",
+      "child-1",
+      1_004_500
+    );
     if (!child) {
       throw new Error("expected a bound native child");
     }
@@ -257,6 +273,64 @@ test("unused native fallback lease expires and stale epochs cannot grant", () =>
   }
 });
 
+test("running native fallback expires before further tools or completion", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-native-runtime-expiry-"));
+  try {
+    activateUtilityEpoch(runDir, 12);
+    settledUtilityJob(runDir, "codex", "utility-runtime-expiry");
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest(
+        "codex",
+        "utility-runtime-expiry",
+        "native-runtime-expiry"
+      )
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 12,
+      mode: "utility-first",
+      nowMs: 3_000_000,
+      runDir,
+    });
+    consumeNativeFallbackLease({
+      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      mode: "utility-first",
+      nowMs: 3_001_000,
+      provider: "codex",
+      runDir,
+      toolName: "spawn_agent",
+    });
+    bindNativeFallbackStart({
+      agentId: "runtime-child",
+      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      nowMs: 3_002_000,
+      provider: "codex",
+      runDir,
+    });
+
+    expect(
+      nativeFallbackForChild(runDir, "codex", "runtime-child", 3_300_999)?.state
+    ).toBe("running");
+    expect(
+      nativeFallbackForChild(runDir, "codex", "runtime-child", 3_301_001)
+    ).toBeUndefined();
+    expect(
+      completeNativeFallback({
+        agentId: "runtime-child",
+        nowMs: 3_301_002,
+        provider: "codex",
+        runDir,
+      })
+    ).toMatchObject({
+      allowed: false,
+      reason: "native-child-lease-missing",
+    });
+    expect(readNativeFallbackRequests(runDir)[0]?.state).toBe("expired");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("loop-scoped provider definitions enforce one read-only fallback", () => {
   const utilityFirst = buildLoopCodexConfig("/repo", "utility-first");
   expect(utilityFirst).toContain("[agents]");
@@ -266,16 +340,24 @@ test("loop-scoped provider definitions enforce one read-only fallback", () => {
   expect(buildLoopCodexConfig("/repo", "off")).not.toContain("[agents]");
   const codexFallback = buildLoopCodexFallbackAgent();
   expect(codexFallback).toContain('sandbox_mode = "read-only"');
+  expect(codexFallback).toContain("allow_login_shell = false");
   expect(codexFallback).toContain('web_search = "disabled"');
   expect(codexFallback).toContain("multi_agent = false");
-  expect(codexFallback).toContain("shell_tool = false");
+  expect(codexFallback).toContain("shell_tool = true");
   expect(codexFallback).toContain("unified_exec = false");
+  expect(codexFallback).toContain("absolute system binaries");
+  expect(codexFallback).toContain("[shell_environment_policy]");
+  expect(codexFallback).toContain('inherit = "none"');
+  expect(codexFallback).toContain('PATH = "/usr/bin:/bin"');
+  expect(codexFallback).toContain("experimental_use_profile = false");
+  expect(codexFallback).not.toContain("rg --no-config");
+  expect(codexFallback).not.toContain("rg --files");
   expect(codexFallback).toContain("[mcp_servers.loop-bridge]");
   expect(codexFallback).toContain("enabled = false");
 
   const claude =
     claudeNativeFallbackDefinition()[CLAUDE_NATIVE_FALLBACK_PROFILE];
-  expect(claude?.tools).toEqual(["Read", "Grep", "Glob"]);
+  expect(claude?.tools).toEqual(["Read", "Grep"]);
   expect(claude?.maxTurns).toBe(8);
   expect(claudeNativeSubagentArgs("strict")).toEqual([
     "--disallowedTools",

@@ -1,6 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import {
   appendDelegationEvent,
   classifyDelegationIntent,
@@ -27,6 +40,11 @@ import {
   type UtilityRouteRequestInput,
 } from "../task-router";
 import type { Agent, HookEvent } from "../types";
+import {
+  isUtilityProtectedPath,
+  normalizeUtilityPolicyPath,
+  utilityPathWithin,
+} from "../utility-path-policy";
 import {
   buildUtilityWorkerEnvironment,
   resolveUtilityRuntimeConfig,
@@ -225,16 +243,11 @@ const preToolDelegationOutput = (taskId: string): string =>
     },
   });
 
-const preToolDecisionOutput = (
-  decision: "allow" | "deny",
-  reason: string,
-  additionalContext?: string
-): string =>
+const preToolDecisionOutput = (reason: string): string =>
   JSON.stringify({
     hookSpecificOutput: {
-      ...(additionalContext ? { additionalContext } : {}),
       hookEventName: "PreToolUse",
-      permissionDecision: decision,
+      permissionDecision: "deny",
       permissionDecisionReason: reason,
     },
   });
@@ -273,13 +286,17 @@ const isNativeSpawnTool = (toolName: string): boolean =>
   toolName === "spawn_agent" ||
   toolName.endsWith("__spawn_agent");
 
-const nativeChildContext = (snapshot: NativeFallbackSnapshot): string =>
+const nativeChildContext = (
+  snapshot: NativeFallbackSnapshot,
+  repoRoot: string
+): string =>
   [
     `You are the single Governess-leased read-only native fallback for ${snapshot.request.requester}.`,
     `Objective: ${snapshot.request.objective}`,
+    `Canonical repository root: ${repoRoot}`,
     `Allowed read scopes: ${snapshot.request.readScope.join(", ")}`,
     `Acceptance: ${snapshot.request.acceptanceCriteria.join("; ")}`,
-    "Use only bounded inspection tools inside those scopes. Do not write, edit, run mutating commands, use MCP or web tools, ask the human, create descendants, or make product/architecture/release decisions. Return concise evidence to the parent and stop.",
+    "Inspect only existing regular files inside those scopes; directory-recursive operations are denied. Do not write, edit, run mutating commands, use MCP or web tools, ask the human, create descendants, or make product/architecture/release decisions. Return concise evidence to the parent and stop.",
   ].join("\n");
 
 const nativeToolPath = (
@@ -298,41 +315,371 @@ const repoRelativeHookPath = (
   cwd: string,
   candidate: string
 ): string | undefined => {
-  const absolute = isAbsolute(candidate)
-    ? resolve(candidate)
-    : resolve(cwd, candidate);
-  const rel = relative(resolve(repoRoot), absolute).replaceAll("\\", "/");
-  return rel && !rel.startsWith("../") && rel !== ".." ? rel : undefined;
+  try {
+    const canonicalRoot = realpathSync(resolve(repoRoot));
+    const absolute = isAbsolute(candidate)
+      ? resolve(candidate)
+      : resolve(cwd, candidate);
+    const canonicalCandidate = realpathSync(absolute);
+    const rel = relative(canonicalRoot, canonicalCandidate).replaceAll(
+      "\\",
+      "/"
+    );
+    if (rel.startsWith("../") || rel === "..") {
+      return undefined;
+    }
+    return rel || ".";
+  } catch {
+    return undefined;
+  }
 };
 
-const nativeChildInspectionAllowed = (
+const nativeCanonicalScopeAllows = (
+  snapshot: NativeFallbackSnapshot,
+  manifestRoot: string,
+  relativePath: string
+): boolean => {
+  const normalizedPath = normalizeUtilityPolicyPath(relativePath);
+  if (!normalizedPath || isUtilityProtectedPath(normalizedPath)) {
+    return false;
+  }
+  return snapshot.request.readScope.some((scope) => {
+    const canonicalScope = repoRelativeHookPath(
+      manifestRoot,
+      manifestRoot,
+      scope
+    );
+    if (!canonicalScope || isUtilityProtectedPath(canonicalScope)) {
+      return false;
+    }
+    return utilityPathWithin(normalizedPath, canonicalScope);
+  });
+};
+
+const MAX_NATIVE_FILE_BYTES = 1024 * 1024;
+
+const hookPathIsRegularFile = (cwd: string, candidate: string): boolean => {
+  try {
+    const absolute = isAbsolute(candidate)
+      ? resolve(candidate)
+      : resolve(cwd, candidate);
+    const stats = statSync(absolute);
+    return stats.isFile() && stats.size <= MAX_NATIVE_FILE_BYTES;
+  } catch {
+    return false;
+  }
+};
+
+const SHELL_WHITESPACE_RE = /\s/;
+const SED_PRINT_SCRIPT_RE = /^\d+(?:,\d+)?p$/;
+const UNSIGNED_INTEGER_RE = /^\d+$/;
+const MAX_NATIVE_COMMAND_CHARS = 8192;
+const MAX_NATIVE_FILE_OPERANDS = 8;
+const MAX_NATIVE_READ_LINES = 500;
+
+const simpleShellWords = (command: string): string[] | undefined => {
+  if (command.length === 0 || command.length > MAX_NATIVE_COMMAND_CHARS) {
+    return undefined;
+  }
+  const words: string[] = [];
+  let current = "";
+  let quoted = false;
+  let wordStarted = false;
+  for (const character of command) {
+    if (character === "'") {
+      quoted = !quoted;
+      wordStarted = true;
+      continue;
+    }
+    if (quoted) {
+      current += character;
+      continue;
+    }
+    if (character === "\n" || character === "\r" || character === "\0") {
+      return undefined;
+    }
+    if (SHELL_WHITESPACE_RE.test(character)) {
+      if (wordStarted) {
+        words.push(current);
+        current = "";
+        wordStarted = false;
+      }
+      continue;
+    }
+    if (';&|><`$(){}\\"~*?[]#!'.includes(character)) {
+      return undefined;
+    }
+    current += character;
+    wordStarted = true;
+  }
+  if (quoted) {
+    return undefined;
+  }
+  if (wordStarted) {
+    words.push(current);
+  }
+  return words.length > 0 ? words : undefined;
+};
+
+type TrustedCodexExecutable = "head" | "sed" | "stat" | "tail" | "wc";
+
+interface BoundedCodexCommand {
+  executable: TrustedCodexExecutable;
+  paths: string[];
+  requestedExecutable: string;
+}
+
+const TRUSTED_CODEX_EXECUTABLE_NAMES = new Set<TrustedCodexExecutable>([
+  "head",
+  "sed",
+  "stat",
+  "tail",
+  "wc",
+]);
+
+const trustedCodexExecutableName = (
+  value: string | undefined
+): TrustedCodexExecutable | undefined => {
+  if (!(value && isAbsolute(value))) {
+    return undefined;
+  }
+  const name = basename(value);
+  return TRUSTED_CODEX_EXECUTABLE_NAMES.has(name as TrustedCodexExecutable)
+    ? (name as TrustedCodexExecutable)
+    : undefined;
+};
+
+const boundedNativeLineCount = (value: string | undefined): boolean => {
+  if (!(value && UNSIGNED_INTEGER_RE.test(value))) {
+    return false;
+  }
+  const count = Number(value);
+  return (
+    Number.isSafeInteger(count) && count > 0 && count <= MAX_NATIVE_READ_LINES
+  );
+};
+
+const boundedSedPrintScript = (value: string | undefined): boolean => {
+  if (!(value && SED_PRINT_SCRIPT_RE.test(value))) {
+    return false;
+  }
+  const [startText, endText = startText] = value.slice(0, -1).split(",");
+  const start = Number(startText);
+  const end = Number(endText);
+  return (
+    Number.isSafeInteger(start) &&
+    Number.isSafeInteger(end) &&
+    start > 0 &&
+    start <= end &&
+    end <= MAX_NATIVE_READ_LINES
+  );
+};
+
+const boundedNativePaths = (paths: string[]): boolean =>
+  paths.length > 0 &&
+  paths.length <= MAX_NATIVE_FILE_OPERANDS &&
+  paths.every((path) => path.length > 0 && !path.startsWith("-"));
+
+const boundedCodexCommand = (
+  command: string
+): BoundedCodexCommand | undefined => {
+  const words = simpleShellWords(command);
+  if (!words) {
+    return undefined;
+  }
+  const executable = trustedCodexExecutableName(words[0]);
+  if (!executable) {
+    return undefined;
+  }
+  if (executable === "sed") {
+    const paths = words.slice(3);
+    return words.length >= 4 &&
+      words[1] === "-n" &&
+      boundedSedPrintScript(words[2]) &&
+      boundedNativePaths(paths)
+      ? {
+          executable: "sed",
+          paths,
+          requestedExecutable: words[0] as string,
+        }
+      : undefined;
+  }
+  const separator = words.indexOf("--");
+  if (separator < 1 || separator === words.length - 1) {
+    return undefined;
+  }
+  const prefix = words.slice(1, separator);
+  const paths = words.slice(separator + 1);
+  if (!boundedNativePaths(paths)) {
+    return undefined;
+  }
+  if (executable === "head" || executable === "tail") {
+    return prefix.length === 0 ||
+      (prefix.length === 2 &&
+        prefix[0] === "-n" &&
+        boundedNativeLineCount(prefix[1]))
+      ? {
+          executable,
+          paths,
+          requestedExecutable: words[0] as string,
+        }
+      : undefined;
+  }
+  if (executable === "wc") {
+    return prefix.length === 0 ||
+      (prefix.length === 1 && ["-c", "-l", "-w"].includes(prefix[0] ?? ""))
+      ? {
+          executable,
+          paths,
+          requestedExecutable: words[0] as string,
+        }
+      : undefined;
+  }
+  if (executable === "stat") {
+    return prefix.length === 0
+      ? {
+          executable,
+          paths,
+          requestedExecutable: words[0] as string,
+        }
+      : undefined;
+  }
+  return undefined;
+};
+
+const TRUSTED_CODEX_EXECUTABLES: Record<
+  TrustedCodexExecutable,
+  readonly string[]
+> = {
+  head: ["/usr/bin/head", "/bin/head"],
+  sed: ["/usr/bin/sed", "/bin/sed"],
+  stat: ["/usr/bin/stat", "/bin/stat"],
+  tail: ["/usr/bin/tail", "/bin/tail"],
+  wc: ["/usr/bin/wc", "/bin/wc"],
+};
+
+const trustedCodexExecutable = (
+  executable: TrustedCodexExecutable
+): string | undefined => {
+  for (const candidate of TRUSTED_CODEX_EXECUTABLES[executable]) {
+    try {
+      const canonical = realpathSync(candidate);
+      if (statSync(canonical).isFile()) {
+        return canonical;
+      }
+    } catch {
+      // Try the next fixed system location; never consult ambient PATH.
+    }
+  }
+  return undefined;
+};
+
+interface NativeChildInspectionDecision {
+  allowed: boolean;
+}
+
+const nativeChildInspectionDecision = (
   snapshot: NativeFallbackSnapshot,
   raw: Record<string, unknown>,
   manifestRoot: string,
   toolName: string
-): boolean => {
+): NativeChildInspectionDecision => {
   const toolInput = asRecord(raw.tool_input ?? raw.toolInput);
   const cwd =
+    firstString(toolInput, ["workdir", "cwd"]) ??
     firstString(raw, ["cwd", "working_directory", "workingDirectory"]) ??
     manifestRoot;
-  if (toolName === "Read" || toolName === "Grep" || toolName === "Glob") {
+  if (toolName === "Read" || toolName === "Grep") {
     const path = nativeToolPath(toolInput);
     const relativePath = path
       ? repoRelativeHookPath(manifestRoot, cwd, path)
       : undefined;
-    return Boolean(
-      relativePath && nativeFallbackScopeAllows(snapshot, relativePath)
-    );
+    return {
+      allowed: Boolean(
+        relativePath &&
+          path &&
+          hookPathIsRegularFile(cwd, path) &&
+          nativeFallbackScopeAllows(snapshot, relativePath) &&
+          nativeCanonicalScopeAllows(snapshot, manifestRoot, relativePath)
+      ),
+    };
   }
-  return false;
+  if (
+    snapshot.provider === "codex" &&
+    (toolName === "Bash" ||
+      toolName === "shell_command" ||
+      toolName === "exec_command")
+  ) {
+    const command = firstString(toolInput, ["command"]);
+    const bounded = command ? boundedCodexCommand(command) : undefined;
+    const requestedWorkdir = firstString(toolInput, ["workdir"]);
+    if (!bounded || toolInput.login !== false || !requestedWorkdir) {
+      return { allowed: false };
+    }
+    let canonicalRoot: string;
+    try {
+      canonicalRoot = realpathSync(manifestRoot);
+      if (realpathSync(requestedWorkdir) !== canonicalRoot) {
+        return { allowed: false };
+      }
+    } catch {
+      return { allowed: false };
+    }
+    for (const candidate of bounded.paths) {
+      if (!isAbsolute(candidate)) {
+        return { allowed: false };
+      }
+      const relativePath = repoRelativeHookPath(manifestRoot, cwd, candidate);
+      if (
+        !(
+          relativePath &&
+          hookPathIsRegularFile(cwd, candidate) &&
+          nativeFallbackScopeAllows(snapshot, relativePath) &&
+          nativeCanonicalScopeAllows(snapshot, manifestRoot, relativePath)
+        )
+      ) {
+        return { allowed: false };
+      }
+      try {
+        if (realpathSync(candidate) !== resolve(candidate)) {
+          return { allowed: false };
+        }
+      } catch {
+        return { allowed: false };
+      }
+    }
+    const executable = trustedCodexExecutable(bounded.executable);
+    try {
+      if (
+        !executable ||
+        realpathSync(bounded.requestedExecutable) !== executable
+      ) {
+        return { allowed: false };
+      }
+    } catch {
+      return { allowed: false };
+    }
+    return { allowed: true };
+  }
+  return { allowed: false };
 };
+
+interface NativeSubagentHookResult {
+  handled: true;
+  output?: string;
+}
+
+const handledNativeHook = (output?: string): NativeSubagentHookResult => ({
+  handled: true,
+  ...(output ? { output } : {}),
+});
 
 const handleNativeSubagentHook = (
   agent: Agent,
   hookFile: string,
   payload: unknown,
   deps: HookEmitDeps
-): string | undefined => {
+): NativeSubagentHookResult | undefined => {
   const raw = asRecord(payload);
   const event = hookEventName(raw);
   if (
@@ -348,12 +695,17 @@ const handleNativeSubagentHook = (
   const mode = resolveNativeSubagentMode(
     (deps.env ?? process.env).LOOP_NATIVE_SUBAGENT_MODE
   );
+  if (mode === "off") {
+    return undefined;
+  }
   const agentId = hookAgentId(raw);
   const agentType = hookAgentType(raw);
   if (event === "SubagentStart") {
     if (!agentId) {
-      return subagentStartOutput(
-        "Governess could not bind this native child because the provider omitted its agent id. Do not call tools; return immediately."
+      return handledNativeHook(
+        subagentStartOutput(
+          "Governess could not bind this native child because the provider omitted its agent id. Do not call tools; return immediately."
+        )
       );
     }
     try {
@@ -363,14 +715,22 @@ const handleNativeSubagentHook = (
         provider: agent,
         runDir,
       });
-      return subagentStartOutput(
-        decision.allowed && decision.lease
-          ? nativeChildContext(decision.lease)
-          : `Governess denied this unleased native child (${decision.reason}). Do not call tools; return immediately.`
+      const manifest = (deps.readManifest ?? readRunManifest)(
+        join(runDir, "manifest.json")
+      );
+      const repoRoot = manifest?.cwd ? realpathSync(manifest.cwd) : undefined;
+      return handledNativeHook(
+        subagentStartOutput(
+          decision.allowed && decision.lease && repoRoot
+            ? nativeChildContext(decision.lease, repoRoot)
+            : `Governess denied this unleased native child (${decision.reason}). Do not call tools; return immediately.`
+        )
       );
     } catch {
-      return subagentStartOutput(
-        "Governess native lease state is unavailable. Fail closed: do not call tools; return immediately."
+      return handledNativeHook(
+        subagentStartOutput(
+          "Governess native lease state is unavailable. Fail closed: do not call tools; return immediately."
+        )
       );
     }
   }
@@ -382,7 +742,7 @@ const handleNativeSubagentHook = (
         // Stop telemetry is best-effort; expiry still releases the slot.
       }
     }
-    return undefined;
+    return handledNativeHook();
   }
   const toolName = firstString(raw, ["tool_name", "toolName", "tool"]);
   const toolUseId = firstString(raw, ["tool_use_id", "toolUseId"]);
@@ -395,15 +755,12 @@ const handleNativeSubagentHook = (
       const manifest = (deps.readManifest ?? readRunManifest)(
         join(runDir, "manifest.json")
       );
-      if (
-        snapshot &&
-        manifest?.cwd &&
-        nativeChildInspectionAllowed(snapshot, raw, manifest.cwd, toolName)
-      ) {
-        return preToolDecisionOutput(
-          "allow",
-          "Governess read-only native fallback scope permits this inspection."
-        );
+      const inspection =
+        snapshot && manifest?.cwd
+          ? nativeChildInspectionDecision(snapshot, raw, manifest.cwd, toolName)
+          : undefined;
+      if (inspection?.allowed) {
+        return handledNativeHook();
       }
       const reason = snapshot
         ? `native-child-tool-denied:${toolName}`
@@ -418,14 +775,16 @@ const handleNativeSubagentHook = (
         toolUseId,
         type: "child-tool-denied",
       });
-      return preToolDecisionOutput(
-        "deny",
-        `${reason}. Native fallback children are read-only, scope-bound, and cannot use shell mutations, MCP, web, human-input, or descendant-agent tools.`
+      return handledNativeHook(
+        preToolDecisionOutput(
+          `${reason}. Native fallback children are read-only, scope-bound, and cannot use shell mutations, MCP, web, human-input, or descendant-agent tools.`
+        )
       );
     } catch {
-      return preToolDecisionOutput(
-        "deny",
-        "Governess native child policy is unavailable; the tool failed closed."
+      return handledNativeHook(
+        preToolDecisionOutput(
+          "Governess native child policy is unavailable; the tool failed closed."
+        )
       );
     }
   }
@@ -442,23 +801,21 @@ const handleNativeSubagentHook = (
       toolUseId,
     });
     if (!decision.allowed) {
-      return preToolDecisionOutput(
-        "deny",
-        `${decision.reason}. Use Direct, Nanny, or Au Pair first; then request_native_fallback, wait for a Governess grant, and spawn only ${nativeFallbackProfile(agent) ?? "the loop read-only profile"}.`
+      return handledNativeHook(
+        preToolDecisionOutput(
+          `${decision.reason}. Use Direct, Nanny, or Au Pair first; then request_native_fallback, wait for a Governess grant, and spawn only ${nativeFallbackProfile(agent) ?? "the loop read-only profile"}.`
+        )
       );
     }
     if (!decision.lease) {
-      return undefined;
+      return handledNativeHook();
     }
-    return preToolDecisionOutput(
-      "allow",
-      "Governess consumed the one native fallback lease.",
-      nativeChildContext(decision.lease)
-    );
+    return handledNativeHook();
   } catch {
-    return preToolDecisionOutput(
-      "deny",
-      "Governess native lease state is unavailable; native spawning failed closed."
+    return handledNativeHook(
+      preToolDecisionOutput(
+        "Governess native lease state is unavailable; native spawning failed closed."
+      )
     );
   }
 };
@@ -717,7 +1074,7 @@ export const runHookEmit = async (
       payload = { hook_event_name: "raw", detail: text.trim().slice(0, 200) };
     }
     const at = now();
-    let nativeDecision: string | undefined;
+    let nativeDecision: NativeSubagentHookResult | undefined;
     try {
       nativeDecision = handleNativeSubagentHook(agent, hookFile, payload, deps);
     } catch {
@@ -729,13 +1086,16 @@ export const runHookEmit = async (
         (Boolean(hookAgentId(raw)) ||
           Boolean(toolName && isNativeSpawnTool(toolName)))
       ) {
-        nativeDecision = preToolDecisionOutput(
-          "deny",
-          "Governess native policy failed closed after an internal hook error."
+        nativeDecision = handledNativeHook(
+          preToolDecisionOutput(
+            "Governess native policy failed closed after an internal hook error."
+          )
         );
       } else if (hookEvent === "SubagentStart") {
-        nativeDecision = subagentStartOutput(
-          "Governess native policy failed closed after an internal hook error. Do not call tools; return immediately."
+        nativeDecision = handledNativeHook(
+          subagentStartOutput(
+            "Governess native policy failed closed after an internal hook error. Do not call tools; return immediately."
+          )
         );
       }
     }
@@ -750,10 +1110,12 @@ export const runHookEmit = async (
     } catch {
       // The native decision above remains authoritative if telemetry is down.
     }
-    if (nativeDecision) {
+    if (nativeDecision?.output) {
       (deps.writeStdout ?? ((value) => process.stdout.write(value)))(
-        `${nativeDecision}\n`
+        `${nativeDecision.output}\n`
       );
+    }
+    if (nativeDecision?.handled) {
       return;
     }
     const decision = handlePreToolDelegation(

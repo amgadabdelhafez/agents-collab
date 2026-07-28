@@ -1033,7 +1033,13 @@ export const delegationWorkspaceHint = (
   toolName: string,
   toolInput: unknown
 ): string | undefined => {
-  if (!(toolName === "Bash" || toolName === "exec_command")) {
+  if (
+    !(
+      toolName === "Bash" ||
+      toolName === "shell_command" ||
+      toolName === "exec_command"
+    )
+  ) {
     return undefined;
   }
   const input = isRecord(toolInput) ? toolInput : {};
@@ -2232,7 +2238,11 @@ export const classifyDelegationIntent = (
   // (search_repo is text-only; run_check allowlists only bun test / npx vitest),
   // so a scoped-glob request could never be satisfied. It falls through to the
   // fail-closed default below.
-  if (intent.toolName === "Bash" || intent.toolName === "exec_command") {
+  if (
+    intent.toolName === "Bash" ||
+    intent.toolName === "shell_command" ||
+    intent.toolName === "exec_command"
+  ) {
     return classifyBash(intent, input);
   }
   return { eligible: false, ...exempt(intent, "tool-not-enforceable") };

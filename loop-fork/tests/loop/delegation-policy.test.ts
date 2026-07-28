@@ -201,6 +201,16 @@ describe("delegation classifier", () => {
     });
   });
 
+  test("recognizes the current Codex shell_command tool", () => {
+    expect(
+      classify("shell_command", { command: "git status --short" })
+    ).toMatchObject({
+      eligible: true,
+      operation: "git-status",
+      request: { executionProfile: "git-status", readScope: ["."] },
+    });
+  });
+
   test.each([
     ["git show --stat 53a8d5dd | head -60", "show-stat"],
     ["git show --stat --format='' 53a8d5dd | tail -30", "show-stat"],

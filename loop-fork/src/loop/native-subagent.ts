@@ -218,11 +218,13 @@ const normalizedReadScopes = (values: readonly string[]): string[] => {
   }
   const normalized = values.map(normalizeUtilityPolicyPath);
   if (
-    normalized.some((path) => !path || isUtilityProtectedPath(path)) ||
+    normalized.some(
+      (path) => !path || path === "." || isUtilityProtectedPath(path)
+    ) ||
     new Set(normalized).size !== normalized.length
   ) {
     throw new Error(
-      "read_scope must contain unique repo-relative non-protected paths"
+      "read_scope must contain unique non-root repo-relative non-protected paths"
     );
   }
   return normalized;
@@ -863,6 +865,9 @@ export const completeNativeFallback = (input: {
   withNativeLock(input.runDir, () => {
     const paths = nativeFallbackPaths(input.runDir);
     const events = readEvents(paths.eventsFile);
+    const nowMs = input.nowMs ?? Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    expireSnapshots(paths, events, nowMs, nowIso);
     const snapshot = foldSnapshots(events).find(
       (candidate) =>
         candidate.agentId === input.agentId &&
@@ -872,7 +877,6 @@ export const completeNativeFallback = (input: {
     if (!snapshot) {
       return { allowed: false, reason: "native-child-lease-missing" };
     }
-    const nowIso = new Date(input.nowMs ?? Date.now()).toISOString();
     appendEvent(
       paths.eventsFile,
       eventForTransition(snapshot, "completed", "completed", nowIso, {
@@ -893,14 +897,20 @@ export const completeNativeFallback = (input: {
 export const nativeFallbackForChild = (
   runDir: string,
   provider: Agent,
-  agentId: string
+  agentId: string,
+  nowMs = Date.now()
 ): NativeFallbackSnapshot | undefined =>
-  readNativeFallbackRequests(runDir).find(
-    (snapshot) =>
-      snapshot.provider === provider &&
-      snapshot.agentId === agentId &&
-      snapshot.state === "running"
-  );
+  withNativeLock(runDir, () => {
+    const paths = nativeFallbackPaths(runDir);
+    const events = readEvents(paths.eventsFile);
+    expireSnapshots(paths, events, nowMs, new Date(nowMs).toISOString());
+    return foldSnapshots(events).find(
+      (snapshot) =>
+        snapshot.provider === provider &&
+        snapshot.agentId === agentId &&
+        snapshot.state === "running"
+    );
+  });
 
 export const nativeFallbackScopeAllows = (
   snapshot: NativeFallbackSnapshot,

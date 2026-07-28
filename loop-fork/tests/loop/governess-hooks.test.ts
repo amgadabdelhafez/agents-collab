@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,6 +23,7 @@ import {
 import {
   appendNativeFallbackRequest,
   CLAUDE_NATIVE_FALLBACK_PROFILE,
+  CODEX_NATIVE_FALLBACK_PROFILE,
   createNativeFallbackRequest,
   processPendingNativeFallbackRequests,
   readNativeFallbackRequests,
@@ -176,6 +184,55 @@ describe("runHookEmit", () => {
     });
     expect(stdout.join("")).toContain("task_status");
     expect(stdout.join("")).toContain("get_task_result");
+  });
+
+  test("enforce mode routes the current Codex shell_command tool", async () => {
+    const delegationEvents: unknown[] = [];
+    const routeRequests: unknown[] = [];
+    const stdout: string[] = [];
+    await runHookEmit("codex", "/run/hooks/codex.jsonl", {
+      append: () => undefined,
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "codex-job-1" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: () => "/repo",
+      stdin: stdinPayload({
+        cwd: "/repo",
+        hook_event_name: "PreToolUse",
+        tool_input: { command: "git status --short", workdir: "/repo" },
+        tool_name: "shell_command",
+        tool_use_id: "codex-tool-1",
+      }),
+      writeStdout: (value) => stdout.push(value),
+    });
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        idempotencyKey: "auto:codex:codex-tool-1",
+        kind: "inspect",
+        requester: "codex",
+      }),
+    ]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({
+        disposition: "auto-routed",
+        operation: "git-status",
+        taskId: "codex-job-1",
+      }),
+    ]);
+    expect(JSON.parse(stdout.join(""))).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+      },
+    });
   });
 
   test.each([
@@ -694,6 +751,14 @@ describe("runHookEmit", () => {
     const repo = join(runDir, "repo");
     const hookFile = join(runDir, "hooks", "claude.jsonl");
     try {
+      mkdirSync(join(repo, "src", "parser"), { recursive: true });
+      writeFileSync(join(repo, "src", "parser", "index.ts"), "export {};\n");
+      mkdirSync(join(runDir, "outside"), { recursive: true });
+      writeFileSync(join(runDir, "outside", "secret.txt"), "secret\n");
+      symlinkSync(
+        join(runDir, "outside"),
+        join(repo, "src", "parser", "escape")
+      );
       const utility = createUtilityRouteRequest({
         acceptanceCriteria: ["return evidence"],
         authority: {},
@@ -754,9 +819,7 @@ describe("runHookEmit", () => {
         tool_name: "Agent",
         tool_use_id: "spawn-1",
       });
-      expect(spawn).toMatchObject({
-        hookSpecificOutput: { permissionDecision: "allow" },
-      });
+      expect(spawn).toEqual({});
 
       const start = await invoke({
         agent_id: "child-hook-1",
@@ -775,8 +838,30 @@ describe("runHookEmit", () => {
         tool_input: { file_path: join(repo, "src/parser/index.ts") },
         tool_name: "Read",
       });
-      expect(read).toMatchObject({
-        hookSpecificOutput: { permissionDecision: "allow" },
+      expect(read).toEqual({});
+
+      const recursive = await invoke({
+        agent_id: "child-hook-1",
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: { path: join(repo, "src/parser"), pattern: "export" },
+        tool_name: "Grep",
+      });
+      expect(recursive).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+
+      const symlinkEscape = await invoke({
+        agent_id: "child-hook-1",
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: {
+          file_path: join(repo, "src/parser/escape/secret.txt"),
+        },
+        tool_name: "Read",
+      });
+      expect(symlinkEscape).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
       });
 
       const write = await invoke({
@@ -810,6 +895,330 @@ describe("runHookEmit", () => {
         hook_event_name: "SubagentStop",
       });
       expect(readNativeFallbackRequests(runDir)[0]?.state).toBe("completed");
+    } finally {
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  });
+
+  test("Codex fallback permits only bounded simple inspection commands", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "loop-native-codex-hook-"));
+    const repo = join(runDir, "repo");
+    const hookFile = join(runDir, "hooks", "codex.jsonl");
+    try {
+      mkdirSync(join(repo, "src", "parser"), { recursive: true });
+      writeFileSync(join(repo, "src", "parser", "index.ts"), "export {};\n");
+      writeFileSync(join(repo, "src", "parser", "second-command"), "noop\n");
+      writeFileSync(
+        join(repo, "src", "parser", "oversized.ts"),
+        Buffer.alloc(1024 * 1024 + 1)
+      );
+      writeFileSync(join(repo, "outside.ts"), "export {};\n");
+      const utility = createUtilityRouteRequest({
+        acceptanceCriteria: ["return evidence"],
+        authority: {},
+        id: "utility-codex-evidence",
+        kind: "inspect",
+        objective: "Inspect one source file",
+        readScope: ["src/parser/index.ts"],
+        requester: "codex",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      });
+      appendUtilityRouteRequest(runDir, utility);
+      transitionUtilityJob(runDir, utility.id, "routed-driver", {
+        decision: { reason: "request-not-bounded", target: "driver" },
+      });
+      activateUtilityEpoch(runDir, 42);
+      appendNativeFallbackRequest(
+        runDir,
+        createNativeFallbackRequest({
+          acceptanceCriteria: ["return exact parser evidence"],
+          evidenceTaskIds: [utility.id],
+          fallbackReason: "utility-ineligible",
+          id: "native-codex-hook-request",
+          kind: "explore",
+          objective: "Trace the parser implementation",
+          readScope: ["src/parser"],
+          requester: "codex",
+        })
+      );
+      processPendingNativeFallbackRequests({
+        epoch: 42,
+        mode: "utility-first",
+        runDir,
+      });
+
+      const invoke = async (
+        payload: unknown
+      ): Promise<Record<string, unknown>> => {
+        let output = "";
+        await runHookEmit("codex", hookFile, {
+          env: { LOOP_NATIVE_SUBAGENT_MODE: "utility-first" },
+          readManifest: () => ({ cwd: repo }),
+          stdin: stdinPayload(payload),
+          writeStdout: (value) => {
+            output += value;
+          },
+        });
+        return output.trim()
+          ? (JSON.parse(output) as Record<string, unknown>)
+          : {};
+      };
+
+      expect(
+        await invoke({
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: { agent_type: CODEX_NATIVE_FALLBACK_PROFILE },
+          tool_name: "spawn_agent",
+          tool_use_id: "codex-spawn-1",
+        })
+      ).toEqual({});
+      await invoke({
+        agent_id: "codex-child-1",
+        agent_type: CODEX_NATIVE_FALLBACK_PROFILE,
+        cwd: repo,
+        hook_event_name: "SubagentStart",
+      });
+
+      const canonicalRepo = realpathSync(repo);
+      const canonicalFile = join(canonicalRepo, "src/parser/index.ts");
+      const canonicalOversized = join(canonicalRepo, "src/parser/oversized.ts");
+      const systemSed = realpathSync("/usr/bin/sed");
+      const systemHead = realpathSync("/usr/bin/head");
+
+      const boundedSed = await invoke({
+        agent_id: "codex-child-1",
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: {
+          command: `${systemSed} -n '1,20p' ${canonicalFile}`,
+          login: false,
+          workdir: canonicalRepo,
+        },
+        tool_name: "Bash",
+      });
+      expect(boundedSed).toEqual({});
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: "rg --no-config 'export' -- src/parser/index.ts",
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemHead} -n 20 -- ${canonicalOversized}`,
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "Bash",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemHead} -n 501 -- ${canonicalFile}`,
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "Bash",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: "rg --no-config '' AGENTS.md -- src/parser/index.ts",
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "Bash",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: "rg 'export' -- src/parser/index.ts",
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: "rg --no-config 'export' -- src/parser",
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemSed} -n '1,20p' ${join(canonicalRepo, "outside.ts")}`,
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemSed} -n '1,20p' ${canonicalFile}; uname -a`,
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemSed} -n '1,20p' ${canonicalFile}\n${join(canonicalRepo, "src/parser/second-command")}`,
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `sed -n '1,20p' ${canonicalFile}`,
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemSed} -n '1,20p' ${canonicalFile}`,
+            login: true,
+            workdir: canonicalRepo,
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+      expect(
+        await invoke({
+          agent_id: "codex-child-1",
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemSed} -n '1,20p' ${canonicalFile}`,
+            login: false,
+            workdir: join(canonicalRepo, "src"),
+          },
+          tool_name: "shell_command",
+        })
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+    } finally {
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  });
+
+  test("off mode leaves native root, lifecycle, and child hooks untouched", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "loop-native-hook-off-"));
+    try {
+      const invoke = async (payload: unknown): Promise<string> => {
+        let output = "";
+        await runHookEmit("codex", join(runDir, "hooks", "codex.jsonl"), {
+          env: { LOOP_NATIVE_SUBAGENT_MODE: "off" },
+          stdin: stdinPayload(payload),
+          writeStdout: (value) => {
+            output += value;
+          },
+        });
+        return output;
+      };
+      expect(
+        await invoke({
+          hook_event_name: "PreToolUse",
+          tool_name: "spawn_agent",
+        })
+      ).toBe("");
+      expect(
+        await invoke({
+          agent_id: "ordinary-child",
+          hook_event_name: "SubagentStart",
+        })
+      ).toBe("");
+      expect(
+        await invoke({
+          agent_id: "ordinary-child",
+          hook_event_name: "PreToolUse",
+          tool_input: { command: "git status" },
+          tool_name: "shell_command",
+        })
+      ).toBe("");
     } finally {
       rmSync(runDir, { force: true, recursive: true });
     }

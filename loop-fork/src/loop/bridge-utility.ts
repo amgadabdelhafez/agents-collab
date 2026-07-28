@@ -328,7 +328,7 @@ export const UTILITY_BRIDGE_TOOLS = [
         objective: { minLength: 1, type: "string" },
         read_scope: {
           description:
-            "One through eight exact repo-relative, non-protected paths available to the read-only fallback.",
+            "One through eight non-root repo-relative, non-protected scopes. The fallback may inspect only explicitly targeted existing regular files inside them; recursive directory reads are denied.",
           items: { minLength: 1, type: "string" },
           maxItems: 8,
           minItems: 1,
