@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -21,8 +27,10 @@ import {
   resolveGovernessConfig,
   runGoverness,
   sendRenameCommands,
+  watchRunSpend,
 } from "../../src/loop/governess";
 import type { EscalationEvent } from "../../src/loop/governess-notify";
+import { resolveSpendConfig } from "../../src/loop/governess-spend";
 import {
   createRunManifest,
   resolveRunStorage,
@@ -134,6 +142,7 @@ const baseConfig = (
   roleBalanceEnabled: false,
   runId: "1",
   session: "s",
+  spend: resolveSpendConfig({}),
   tickMs: 15_000,
   url: "http://127.0.0.1:8082",
   usageTrackerTimeoutMs: 1500,
@@ -2353,4 +2362,76 @@ test("sendRenameCommands preserves a user draft after a Stop hook", () => {
   );
   expect(spies.texts).toEqual([]);
   expect(spies.sends).toEqual([]);
+});
+
+// --- run-level spend watch wiring -------------------------------------------
+
+const spendRunDir = (jobCosts: [string, number][]): string => {
+  const dir = mkdtempSync(join(tmpdir(), "governess-spend-"));
+  mkdirSync(join(dir, "utility"), { recursive: true });
+  writeFileSync(
+    join(dir, "utility", "usage.jsonl"),
+    jobCosts
+      .map(([jobId, cost]) => JSON.stringify({ jobId, usage: { cost } }))
+      .join("\n")
+  );
+  return dir;
+};
+
+test("watchRunSpend journals every tick and stays quiet while spend is low", () => {
+  const runDir = spendRunDir([["a", 0.1]]);
+  const runState = freshRunState();
+  const config = baseConfig({ runDir, runId: "run-spend-quiet" });
+  const events = watchRunSpend(runState, 42, config, 1_000_000);
+  expect(events).toEqual([]);
+  const journal = readFileSync(join(runDir, "spend-watch.jsonl"), "utf8");
+  const line = JSON.parse(journal.trim());
+  expect(line.billableUsd).toBeCloseTo(0.1, 6);
+  // The subscription total is carried for context but is not billable cash.
+  expect(line.attributedUsd).toBe(42);
+  expect(line.level).toBe("ok");
+  expect(line.mode).toBe("observe");
+  rmSync(runDir, { force: true, recursive: true });
+});
+
+test("watchRunSpend escalates once when billable spend crosses a threshold", () => {
+  const runDir = spendRunDir([["a", 7.5]]);
+  const runState = freshRunState();
+  const config = baseConfig({ runDir, runId: "run-spend-alert" });
+  const first = watchRunSpend(runState, 0, config, 1_000_000);
+  expect(first).toHaveLength(1);
+  expect(first[0]?.kind).toBe("budget");
+  expect(first[0]?.message).toContain("run-spend-alert");
+  expect(watchRunSpend(runState, 0, config, 1_060_000)).toEqual([]);
+  rmSync(runDir, { force: true, recursive: true });
+});
+
+test("watchRunSpend never enforces in the default observe mode", () => {
+  const runDir = spendRunDir([["a", 500]]);
+  const runState = freshRunState();
+  const config = baseConfig({ runDir, runId: "run-spend-observe" });
+  // Two samples a long way apart in value: a genuine runaway shape.
+  watchRunSpend(runState, 0, config, 1_000_000);
+  writeFileSync(
+    join(runDir, "utility", "usage.jsonl"),
+    JSON.stringify({ jobId: "a", usage: { cost: 5000 } })
+  );
+  watchRunSpend(runState, 0, config, 1_000_000 + 600_000);
+  const lines = readFileSync(join(runDir, "spend-watch.jsonl"), "utf8")
+    .split("\n")
+    .filter((entry) => entry.trim())
+    .map((entry) => JSON.parse(entry));
+  const last = lines.at(-1);
+  expect(last.level).toBe("runaway");
+  expect(last.killRequested).toBe(true);
+  expect(last.enforced).toBe(false);
+  expect(last.wouldKill).toBe(true);
+  rmSync(runDir, { force: true, recursive: true });
+});
+
+test("watchRunSpend is inert without a run directory", () => {
+  const runState = freshRunState();
+  const config = baseConfig({ runDir: undefined });
+  expect(watchRunSpend(runState, 99, config, 1_000_000)).toEqual([]);
+  expect(runState.spendHistory).toEqual([]);
 });

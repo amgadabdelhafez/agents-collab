@@ -106,6 +106,12 @@ Environment:
   LOOP_UTILITY_PROVIDER_SORT=<strategy>      balanced, price, throughput, latency, or tool-call-quality
   LOOP_UTILITY_COST_QUALITY=<0..10>          Workspace cost/quality preference (default: 7)
   LOOP_UTILITY_ALLOWED_TIERS=<patterns>      Comma-separated tier wildcard allowlist
+  LOOP_SPEND_MODE=<mode>                     Run-level spend watch: observe (default, never kills), alert, or enforce
+  LOOP_SPEND_NOTICE_USD=<amount>             Billable run spend that raises a notice (default: 2)
+  LOOP_SPEND_ALERT_USD=<amount>              Billable run spend that raises an alert (default: 5)
+  LOOP_SPEND_KILL_USD=<amount>               Billable run spend needed for a runaway (default: 25)
+  LOOP_SPEND_RUNAWAY_USD_PER_HOUR=<amount>   Burn rate also required for a runaway (default: 20)
+  LOOP_SPEND_RUNAWAY_WINDOW_MS=<ms>          Window the burn rate is measured over (default: 600000)
   LOOP_USAGE_TRACKER_URL=<url>             Usage Tracker API URL for governess RL limits (default: ${DEFAULT_USAGE_TRACKER_URL})
   LOOP_USAGE_TRACKER_SECRET=<secret>        Bearer token for Usage Tracker /stats (falls back to USAGE_TRACKER_SECRET)
 

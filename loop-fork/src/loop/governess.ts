@@ -100,6 +100,17 @@ import {
   type GovernessRuntimeAdapter,
   lifecycleEventFromEvidence,
 } from "./governess-runtime";
+import {
+  appendSpendJournal,
+  evaluateSpend,
+  readBillableSpendUsd,
+  recordSpendSample,
+  resolveSpendConfig,
+  type SpendConfig,
+  type SpendNotified,
+  type SpendSample,
+  spendEscalations,
+} from "./governess-spend";
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
   applyUsageTrackerPricing,
@@ -222,6 +233,8 @@ export interface GovernessConfig {
   runDir?: string;
   runId: string;
   session: string;
+  // Run-level spend watch over real OpenRouter cash. Observe-only by default.
+  spend: SpendConfig;
   // Persisted run-state file, so stats survive governess restarts.
   stateFile?: string;
   tickMs: number;
@@ -368,6 +381,10 @@ export interface GovernessRunState {
   paneTitles: Record<string, string>;
   recoveries: number;
   roles: RoleState;
+  // Sliding window of cumulative billable spend, for the runaway burn rate.
+  spendHistory: SpendSample[];
+  // Which spend levels have already escalated this run.
+  spendNotified: SpendNotified;
   stats: SessionStats;
   summary: string;
   summaryTick: number;
@@ -393,6 +410,37 @@ const readCountMap = (value: unknown): Record<string, number> => {
   for (const [key, count] of Object.entries(value)) {
     if (typeof count === "number" && Number.isFinite(count) && count > 0) {
       out[key] = count;
+    }
+  }
+  return out;
+};
+
+// Spend samples survive a governess respawn so the burn-rate window is not
+// reset (and a runaway not forgotten) by a restart.
+const readSpendHistory = (value: unknown): SpendSample[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    const sample = entry as Partial<SpendSample> | null;
+    return sample &&
+      typeof sample.atMs === "number" &&
+      Number.isFinite(sample.atMs) &&
+      typeof sample.billableUsd === "number" &&
+      Number.isFinite(sample.billableUsd)
+      ? [{ atMs: sample.atMs, billableUsd: sample.billableUsd }]
+      : [];
+  });
+};
+
+const readSpendNotified = (value: unknown): SpendNotified => {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+  const out: SpendNotified = {};
+  for (const level of ["notice", "alert", "runaway"] as const) {
+    if ((value as Record<string, unknown>)[level] === true) {
+      out[level] = true;
     }
   }
   return out;
@@ -577,6 +625,8 @@ export const freshRunState = (): GovernessRunState => ({
   paneTitles: {},
   recoveries: 0,
   roles: {},
+  spendHistory: [],
+  spendNotified: {},
   stats: { activeMs: {}, humanIdleMs: 0, idleMs: {} },
   summary: "",
   summaryTick: -1,
@@ -5132,6 +5182,42 @@ const collectEscalations = (
   return events;
 };
 
+// Run-level spend watch. Reads real OpenRouter cash from the utility usage
+// journal, folds in the subscription API-equivalent total for context, records
+// the decision, and returns any escalations.
+//
+// This never gates a job. The 2026-07-26 removals deleted per-job cost/token/
+// step ceilings precisely because they failed work in flight; enforcement here
+// is run-scoped, requires a confirmed runaway, and is off unless the operator
+// sets LOOP_SPEND_MODE=enforce.
+export const watchRunSpend = (
+  runState: GovernessRunState,
+  attributedUsd: number,
+  config: GovernessConfig,
+  nowMs: number
+): EscalationEvent[] => {
+  if (!config.runDir) {
+    return [];
+  }
+  const billable = readBillableSpendUsd(config.runDir);
+  runState.spendHistory = recordSpendSample(
+    runState.spendHistory,
+    nowMs,
+    billable.billableUsd
+  );
+  const decision = evaluateSpend(
+    {
+      attributedUsd,
+      billableUsd: billable.billableUsd,
+      jobs: billable.jobs,
+    },
+    config.spend,
+    runState.spendHistory
+  );
+  appendSpendJournal(config.runDir, decision, nowMs);
+  return spendEscalations(decision, runState.spendNotified, config.runId);
+};
+
 // One control-loop tick: detect → (judge suspects) → recover → summarize → render.
 export const governessTick = async (
   states: Map<Agent, AgentLivenessState>,
@@ -5247,6 +5333,9 @@ export const governessTick = async (
     totalCost,
     config
   )) {
+    deps.notify(config.ntfyUrl, event);
+  }
+  for (const event of watchRunSpend(runState, totalCost, config, nowMs)) {
     deps.notify(config.ntfyUrl, event);
   }
 
@@ -5424,6 +5513,8 @@ export const loadGovernessState = (
       paneTitles: readStringMap(parsed.paneTitles),
       recoveries: typeof parsed.recoveries === "number" ? parsed.recoveries : 0,
       roles: readRoleState(parsed.roles),
+      spendHistory: readSpendHistory(parsed.spendHistory),
+      spendNotified: readSpendNotified(parsed.spendNotified),
       stats: {
         activeMs: stats.activeMs ?? {},
         humanIdleMs: stats.humanIdleMs ?? 0,
@@ -6009,6 +6100,7 @@ export const resolveGovernessConfig = (
     runDir: storage.runDir,
     manifestPath: storage.manifestPath,
     session,
+    spend: resolveSpendConfig(env),
     stateFile,
     tickMs: envSeconds(
       env,
