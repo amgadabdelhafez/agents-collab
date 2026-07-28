@@ -1557,7 +1557,7 @@ export class UtilityToolBroker {
         "This file-read profile has no valid exact read boundary"
       );
     }
-    const expected = this.exactRead as Record<string, unknown>;
+    const expected = this.exactRead as unknown as Record<string, unknown>;
     const expectedKeys = Object.keys(expected).sort();
     const actualKeys = Object.keys(args).sort();
     if (

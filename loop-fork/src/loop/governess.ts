@@ -3077,7 +3077,7 @@ const outcomeUsage = (outcome: JudgeOutcome): LocalLlmUsage =>
   outcome.usage ?? localLlmUsageFromTokens(outcome.tokens ?? 0);
 
 const judgeStateSummary = (result: LocalJudgeResult): string =>
-  result.outcome.ok
+  "verdict" in result.outcome
     ? `${result.judge.id}:${result.outcome.verdict.state}`
     : `${result.judge.id}:${result.outcome.reason}`;
 
@@ -3089,7 +3089,7 @@ const consensusJudgeResult = (
   for (const result of results) {
     usageByJudge[result.judge.id] = outcomeUsage(result.outcome);
     llmOfflineByJudge[result.judge.id] =
-      !result.outcome.ok && result.outcome.reason === "unreachable";
+      "reason" in result.outcome && result.outcome.reason === "unreachable";
   }
   const usage = sumLocalLlmUsageByJudge(usageByJudge);
   const llmOffline = Object.values(llmOfflineByJudge).some(Boolean);
@@ -3359,8 +3359,8 @@ const processAgent = async (
   );
   const { outcome } = judged;
   const llmUsage = judged.usage;
-  row.verdict = outcome.ok ? outcome.verdict : outcome.fallback;
-  if (!outcome.ok && outcome.reason === "unreachable") {
+  row.verdict = "verdict" in outcome ? outcome.verdict : outcome.fallback;
+  if ("reason" in outcome && outcome.reason === "unreachable") {
     return {
       ...base,
       history: ctx.history,

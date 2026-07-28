@@ -650,7 +650,7 @@ const consumeFrames = (
   onEnd?: () => void
 ): Promise<void> =>
   new Promise((resolve, reject) => {
-    let buffer = Buffer.alloc(0);
+    let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
     const onData = (chunk: Buffer | string): void => {
       try {

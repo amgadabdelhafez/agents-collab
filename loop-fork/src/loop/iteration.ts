@@ -15,7 +15,8 @@ const parseIterationCooldownMs = (): number => {
   }
   return parsed;
 };
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export const iterationCooldown = (i: number): Promise<void> =>
   i > 1 ? sleep(parseIterationCooldownMs()) : Promise.resolve();

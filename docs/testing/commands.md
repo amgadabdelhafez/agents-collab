@@ -1,52 +1,46 @@
-# Test Commands
-> Authoritative list of how to run every test type. Agents and hooks use this.
+# Test commands
 
-## Unit tests
-
-```bash
-# Run all unit tests
-[your-unit-test-command]
-
-# Run tests for a single module
-[your-unit-test-command] [module-path]
-```
-
-## Integration tests
+## Focused unit tests
 
 ```bash
-[your-integration-test-command]
+cd loop-fork
+bun test tests/loop/<module>.test.ts
 ```
 
-## End-to-end / browser tests
+## Integration test
 
 ```bash
-[your-e2e-command]
-# Uses Playwright/Cypress/other. Requires app to be running.
+cd loop-fork
+bun test tests/loop/00-paired-loop.integration.test.ts
 ```
 
-## Snapshot / golden tests
+## Repository checks
 
 ```bash
-[your-snapshot-command]
-# Update snapshots: [update-command]
+cd loop-fork
+bun run check
+bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts
+bun run build
+bun run test:ci
 ```
 
-## Full verify suite (used by hooks and CI)
+`bun run test:ci` deliberately runs each test file in sorted order. This catches
+module-state leaks and lifecycle bugs that an isolated focused test can miss.
+
+## Full task verification
 
 ```bash
-scripts/verify.sh
-# Runs: lint → typecheck → unit → integration → e2e (if app running)
+scripts/verify.sh <feature> <task-id>
 ```
 
-## Coverage report
+The task must already have `runs/<task-id>/eval.json` with an empty
+`baseline_failures` list. The verifier runs lint, typecheck, build, the complete
+sequential test suite, and the baseline gate.
+
+## UI capture
 
 ```bash
-[your-coverage-command]
-# Threshold: 70% minimum per subsystem (see quality-scorecard.md)
+scripts/capture-ui.sh --out runs/<task-id>/screenshots/
 ```
 
-## Notes
-
-- Integration tests require [describe any setup — DB, env vars, running services].
-- E2E tests require the app running at `[URL]`. Start with: `[start-command]`.
-- Flaky tests are tracked in `docs/quality/quality-scorecard.md` → Debt register.
+UI capture is required only for tasks that change rendered UI behavior.

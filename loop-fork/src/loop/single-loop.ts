@@ -10,13 +10,13 @@ import {
 import { runDraftPrStep } from "./pr";
 import { buildWorkPrompt } from "./prompts";
 import { resolveReviewers, runReview } from "./review";
-import type { Options } from "./types";
+import type { Agent, Options } from "./types";
 import { hasSignal } from "./utils";
 
 const runIterations = async (
   task: string,
   opts: Options,
-  reviewers: string[]
+  reviewers: Agent[]
 ) => {
   let reviewNotes = "";
   let sessionId = opts.sessionId;

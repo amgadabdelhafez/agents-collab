@@ -358,6 +358,7 @@ const prepareRunState = (opts: Options, cwd: string): PairedState => {
     usedResume: {
       claude: false,
       codex: false,
+      copilot: false,
       cursor: false,
       gemini: false,
     },

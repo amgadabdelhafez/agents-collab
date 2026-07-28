@@ -434,6 +434,15 @@ const terminalWorkerJobs = (jobs: UtilityJobSnapshot[]): UtilityJobSnapshot[] =>
     ["completed", "failed", "escalated", "canceled"].includes(job.state)
   );
 
+interface UtilityPerformanceTotals {
+  cachedInputTokens: number;
+  costUsd: number;
+  durationMs: number;
+  inputTokens: number;
+  tokens: number;
+  toolCalls: number;
+}
+
 const performanceSnapshot = (
   jobs: UtilityJobSnapshot[],
   events: Map<string, Record<string, unknown>>
@@ -449,7 +458,7 @@ const performanceSnapshot = (
   if (finished.length === 0) {
     return emptyPerformance();
   }
-  const totals = measured.reduce(
+  const totals = measured.reduce<UtilityPerformanceTotals>(
     (sum, event) => {
       const usage = recordAt(event, "usage") ?? {};
       sum.cachedInputTokens = saturatingAdd(

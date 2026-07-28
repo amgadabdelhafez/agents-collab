@@ -9,7 +9,8 @@
 - `bun run build` exits zero.
 - `git diff --check` exits zero.
 - Parsed historical JSON before and after formatting is identical.
-- `TASK_ID=baseline-cleanup scripts/verify.sh` exits zero.
+- `scripts/verify.sh baseline-cleanup baseline-cleanup` executes real lint,
+  typecheck, build, tests, and baseline-allowlist checks and exits zero.
 - Independent review reports no actionable correctness finding.
 
 ## Rollback conditions
@@ -18,4 +19,3 @@
   cleanup.
 - Any historical JSON key or value changes.
 - The active loop or global runtime is modified.
-

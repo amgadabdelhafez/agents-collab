@@ -6,7 +6,8 @@
    behavior-preserving source changes or tightly scoped, justified suppressions
    only where the rule conflicts with protocol-level code.
 3. Prove historical JSON semantic equality across mechanical formatting.
-4. Run focused lifecycle tests, the full sequential suite, repository check,
+4. Replace the placeholder project verifier with the real Loop gates and an
+   empty named baseline-failure check.
+5. Run focused lifecycle tests, the full sequential suite, repository check,
    build, diff validation, project verification, and independent review.
-5. Record all evidence in `runs/baseline-cleanup/eval.json`.
-
+6. Record all evidence in `runs/baseline-cleanup/eval.json`.

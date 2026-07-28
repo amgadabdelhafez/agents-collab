@@ -93,7 +93,7 @@ export const connectWs = (url: string): Promise<WsClient> => {
   return new Promise((resolve, reject) => {
     let handshakeDone = false;
     let httpBuffer = "";
-    let frameBuffer = new Uint8Array(0);
+    let frameBuffer: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
     let closed = false;
 
     const client: WsClient = {

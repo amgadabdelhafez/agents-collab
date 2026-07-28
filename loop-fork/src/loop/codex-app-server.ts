@@ -915,9 +915,13 @@ class AppServerClient {
   }
 
   private async consumeFrames(proc: ReturnType<typeof spawn>): Promise<void> {
+    const { stderr, stdout } = proc;
+    if (typeof stdout === "number" || typeof stderr === "number") {
+      throw new Error("codex app-server requires piped output streams");
+    }
     await Promise.all([
-      this.drainStream(proc.stdout),
-      this.consumeStream(proc.stderr, this.handleStdErrLine),
+      this.drainStream(stdout),
+      this.consumeStream(stderr, this.handleStdErrLine),
     ]);
   }
 
@@ -1275,7 +1279,11 @@ class AppServerClient {
     if (this.ws) {
       this.ws.send(data);
     } else if (this.child) {
-      this.child.stdin.write(data);
+      const { stdin } = this.child;
+      if (typeof stdin === "number") {
+        throw new Error("codex app-server requires a piped input stream");
+      }
+      stdin.write(data);
     }
   }
 

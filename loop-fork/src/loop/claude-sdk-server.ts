@@ -272,8 +272,12 @@ class ClaudeSdkClient {
         }
       );
 
-      this.consumeStdout(this.child.stdout);
-      pipeToStderr(this.child.stderr);
+      const { stderr, stdout } = this.child;
+      if (typeof stdout === "number" || typeof stderr === "number") {
+        throw new Error("claude sdk server requires piped output streams");
+      }
+      this.consumeStdout(stdout);
+      pipeToStderr(stderr);
       this.child.exited
         .then((code) => {
           this.earlyExitCode = typeof code === "number" ? code : 1;

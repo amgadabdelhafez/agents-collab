@@ -385,8 +385,13 @@ const parseCompletion = (payload: unknown): ParsedCompletion | undefined => {
   if (!(isRecord(choice) && isRecord(choice.message))) {
     return undefined;
   }
-  const content = choice.message.content;
-  if (!(typeof content === "string" || content === null)) {
+  const rawContent = choice.message.content;
+  let content: string | null;
+  if (typeof rawContent === "string") {
+    content = rawContent;
+  } else if (rawContent === null) {
+    content = null;
+  } else {
     return undefined;
   }
   const toolCalls = parseToolCalls(choice.message.tool_calls);
@@ -593,7 +598,7 @@ export const openAICompatibleChat = async (
       now,
       timeoutMs,
     });
-    if (!attempt.ok) {
+    if ("error" in attempt) {
       return {
         attempts,
         durationMs: Math.max(0, now() - startedAt),

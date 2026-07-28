@@ -24,6 +24,9 @@ currently claim a clean release baseline:
    and Caveman behavior.
 6. The active loop and globally installed runtime must not be restarted or
    replaced by this task.
+7. `scripts/verify.sh` must execute the real Loop lint, typecheck, build, and
+   sequential test commands, and must reject any non-empty or count-based
+   baseline-failure allowance.
 
 ## Non-goals
 
@@ -31,4 +34,3 @@ currently claim a clean release baseline:
 - No broad lint-rule disablement to hide existing findings.
 - No deletion or regeneration of historical run evidence.
 - No remote push or live-loop deployment.
-

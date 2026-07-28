@@ -273,7 +273,7 @@ class CodexTmuxProxy {
 
   async start(): Promise<void> {
     await this.connectUpstream();
-    this.proxyServer = serve({
+    this.proxyServer = serve<ProxySocketData>({
       fetch: (request, server) => {
         const path = new URL(request.url).pathname;
         if (path === "/healthz" || path === "/readyz") {

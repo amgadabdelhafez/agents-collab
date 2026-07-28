@@ -1307,7 +1307,7 @@ const runLegacyUtilityConversation = async (input: {
     modelCalls += 1;
     usage = addUsage(usage, response.usage);
     input.onProgress(progress());
-    if (!response.ok) {
+    if ("error" in response) {
       throw new Error(response.error.message);
     }
     messages.push(response.message);

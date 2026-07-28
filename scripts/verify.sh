@@ -1,68 +1,37 @@
 #!/usr/bin/env bash
-# scripts/verify.sh
-# Full verify suite. Run by hooks on task completion and in CI.
-# Usage: scripts/verify.sh [--feature <name>] [--task-id <id>]
+# Full Loop verification suite. Usage: scripts/verify.sh [feature] [task-id]
 set -euo pipefail
 
-FEATURE="${1:-}"
+FEATURE="${1:-loop-fork}"
 TASK_ID="${2:-unknown}"
 ARTIFACTS_DIR="runs/${TASK_ID}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+cd "${REPO_ROOT}"
 echo "=== verify.sh: task=${TASK_ID} feature=${FEATURE} ==="
 
-# 1. Lint
 echo "--- lint ---"
-# Replace with your actual lint command:
-# npm run lint || yarn lint || ruff check . etc.
-echo "[CONFIGURE: add lint command]"
+(cd loop-fork && bun run check)
 
-# 2. Typecheck
 echo "--- typecheck ---"
-# Replace with your actual typecheck command:
-# npx tsc --noEmit || mypy . etc.
-echo "[CONFIGURE: add typecheck command]"
+(cd loop-fork && bunx tsc --noEmit --skipLibCheck --types bun-types \
+  --moduleResolution bundler --module preserve --target esnext \
+  src/cli.ts src/loop/caveman-skill.d.ts)
 
-# 3. Unit tests
-echo "--- unit tests ---"
-# Replace with your actual test command:
-# npm test || pytest etc.
-echo "[CONFIGURE: add unit test command]"
+echo "--- build ---"
+(cd loop-fork && bun run build)
 
-# 4. Integration tests (if available)
-echo "--- integration tests ---"
-# if command -v [integration-test-command] &>/dev/null; then
-#   [integration-test-command]
-# fi
-echo "[CONFIGURE: add integration test command or remove this block]"
+echo "--- tests ---"
+(cd loop-fork && bun run test:ci)
 
-# 5. Capture UI if app is running (non-fatal)
-if [ -n "${APP_URL:-}" ]; then
-  echo "--- UI capture ---"
-  bash scripts/capture-ui.sh --out "${ARTIFACTS_DIR}/screenshots/" || \
-    echo "WARNING: UI capture failed (non-fatal)"
-fi
-
-# 6. Write eval stub if task-id is set
-if [ "${TASK_ID}" != "unknown" ]; then
-  mkdir -p "${ARTIFACTS_DIR}"
-  if [ ! -f "${ARTIFACTS_DIR}/eval.json" ]; then
-    cat > "${ARTIFACTS_DIR}/eval.json" <<EOF
-{
-  "task_id": "${TASK_ID}",
-  "feature": "${FEATURE}",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "checks": {
-    "functional": {"passed": 0, "failed": 0, "details": []},
-    "ui": {"passed": 0, "failed": 0, "screenshots": []},
-    "performance": {"passed": 0, "failed": 0, "details": []},
-    "regression": {"passed": 0, "failed": 0, "details": []}
-  },
-  "verdict": "pending",
-  "notes": "Stub written by verify.sh. Evaluator agent must update verdict."
-}
-EOF
-    echo "eval.json stub written to ${ARTIFACTS_DIR}/eval.json"
+if [[ "${TASK_ID}" != "unknown" ]]; then
+  EVAL_FILE="${ARTIFACTS_DIR}/eval.json"
+  if [[ ! -f "${EVAL_FILE}" ]]; then
+    echo "missing required eval: ${EVAL_FILE}" >&2
+    exit 1
   fi
+  echo "--- baseline allowlist ---"
+  python3 scripts/check-baseline-allowlist.py "${EVAL_FILE}"
 fi
 
 echo "=== verify.sh complete ==="
