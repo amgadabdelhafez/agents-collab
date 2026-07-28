@@ -13,5 +13,5 @@ Live acceptance:
 
 - `harvto-loop-59` contains purpose-named recon panes below the existing panes.
 - Claude and Codex retain their original pane IDs and PIDs.
-- The active T4 batch process is not interrupted.
+- The T4 batch is allowed to progress and finish naturally without a forced restart.
 - Governess and helper panes use the integrated binary and continue repainting.
