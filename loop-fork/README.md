@@ -146,7 +146,7 @@ Paired runs integrate [JuliusBrussee/caveman](https://github.com/JuliusBrussee/c
 - Nanny and Au Pair default to `full`: the compact upstream reinforcement is added once to each helper system prompt.
 - `--caveman <off|lite|full|ultra>` and `--helper-caveman <off|lite|full|ultra>` override those defaults. `LOOP_CAVEMAN_MODE` and `LOOP_HELPER_CAVEMAN_MODE` provide environment defaults.
 - Selected modes are stored in the run manifest, restored on resume, and shown in Governess with the pinned upstream revision.
-- Non-tmux paired invocations receive the selected guidance on every agent call. A live tmux run retains its persisted main mode; start a new loop to change it.
+- Non-tmux paired invocations receive the selected guidance on every agent call. A live tmux run retains its persisted main and helper modes; start a new loop to change them.
 - Loop adds an exactness boundary: code, commands, paths, URLs, JSON, errors, commit SHAs, bridge identifiers, verdicts, citations, evidence, and broker results must remain exact.
 
 This integration does not install Caveman globally, add Cavecrew roles, or wrap the bridge with the pre-1.0 `caveman-shrink` tool. Routing and permissions remain Governess-owned. Caveman's upstream estimate is about 65% shorter output, but its full skill costs roughly 1–1.5k input tokens per main-agent turn, so `lite` can be net-negative on already terse tasks; use `off` when compression does not pay for itself.

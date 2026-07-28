@@ -35,7 +35,8 @@ execute an unpinned remote script.
 7. New modes apply at new session launch. Resuming an existing paired run retains
    its persisted modes. A non-tmux resume can explicitly override them because
    every agent invocation receives the guidance; a live tmux resume rejects a
-   different main-agent mode because its existing panes cannot be re-prompted.
+   different main-agent or helper mode because its existing panes and Governess
+   cannot be re-prompted or reconfigured in place.
 
 ## Explicit non-goals
 

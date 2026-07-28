@@ -130,6 +130,47 @@ const pairedSessionIds = (
   return { claude, codex, copilot, cursor, gemini };
 };
 
+const applyLiveTmuxModeContract = (
+  opts: Options,
+  manifest: RunManifest | undefined,
+  livePersistedTmux: boolean
+): void => {
+  if (!livePersistedTmux) {
+    return;
+  }
+  if (
+    manifest?.cavemanMode &&
+    opts.cavemanModeSource === "cli" &&
+    opts.cavemanMode !== manifest.cavemanMode
+  ) {
+    throw new Error(
+      `Cannot change --caveman from ${manifest.cavemanMode} to ${opts.cavemanMode} while reusing live tmux agents; start a new loop so both agents receive the selected guidance`
+    );
+  }
+  if (
+    manifest?.helperCavemanMode &&
+    opts.helperCavemanModeSource === "cli" &&
+    opts.helperCavemanMode !== manifest.helperCavemanMode
+  ) {
+    throw new Error(
+      `Cannot change --helper-caveman from ${manifest.helperCavemanMode} to ${opts.helperCavemanMode} while reusing a live Governess; start a new loop so helpers receive the selected guidance`
+    );
+  }
+  if (manifest?.helperCavemanMode) {
+    return;
+  }
+  if (
+    opts.helperCavemanModeSource === "cli" &&
+    opts.helperCavemanMode !== "off"
+  ) {
+    throw new Error(
+      "Cannot apply a non-off --helper-caveman mode to a legacy live Governess; start a new loop so helpers receive the selected guidance"
+    );
+  }
+  opts.helperCavemanMode = "off";
+  opts.helperCavemanModeSource = "manifest";
+};
+
 export const resolvePreparedRunState = (
   opts: Options,
   cwd = process.cwd(),
@@ -196,16 +237,7 @@ export const applyPairedOptions = (
   // prompt contract bound to those actual agents instead of a new CLI default.
   restorePersistedTmuxPair(opts, manifest, livePersistedTmux);
   opts.pairWith ??= defaultPeerAgent(opts.agent);
-  if (
-    livePersistedTmux &&
-    manifest?.cavemanMode &&
-    opts.cavemanModeSource === "cli" &&
-    opts.cavemanMode !== manifest.cavemanMode
-  ) {
-    throw new Error(
-      `Cannot change --caveman from ${manifest.cavemanMode} to ${opts.cavemanMode} while reusing live tmux agents; start a new loop so both agents receive the selected guidance`
-    );
-  }
+  applyLiveTmuxModeContract(opts, manifest, livePersistedTmux);
   const resumedSessionIds = pairedSessionIds(
     opts,
     manifest,

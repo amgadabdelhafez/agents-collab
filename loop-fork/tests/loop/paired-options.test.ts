@@ -282,12 +282,14 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
     expect(reusedTmux).toMatchObject({
       agent: "claude",
       cavemanMode: "off",
+      helperCavemanMode: "off",
       pairWith: "codex",
     });
     expect(readRunManifest(liveTmuxStorage.manifestPath)).toMatchObject({
       cavemanMode: "off",
       claudeSessionId: "live-legacy-claude",
       codexThreadId: "live-legacy-codex",
+      helperCavemanMode: "off",
     });
     const liveModeChange = makeOptions({
       cavemanMode: "full",
@@ -300,6 +302,20 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       preparePairedRun(liveModeChange, alternatePairCwd, () => true)
     ).toThrow(
       "Cannot change --caveman from off to full while reusing live tmux agents"
+    );
+    const liveHelperModeChange = makeOptions({
+      cavemanMode: "off",
+      cavemanModeSource: "cli",
+      helperCavemanMode: "full",
+      helperCavemanModeSource: "cli",
+      pairedMode: true,
+      resumeRunId: "75",
+      tmux: true,
+    });
+    expect(() =>
+      preparePairedRun(liveHelperModeChange, alternatePairCwd, () => true)
+    ).toThrow(
+      "Cannot change --helper-caveman from off to full while reusing a live Governess"
     );
 
     const staleTmuxStorage = resolveRunStorage("76", alternatePairCwd, home);
