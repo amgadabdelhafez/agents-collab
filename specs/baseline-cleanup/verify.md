@@ -11,6 +11,9 @@
 - Parsed historical JSON before and after formatting is identical.
 - `scripts/verify.sh baseline-cleanup baseline-cleanup` executes real lint,
   typecheck, build, tests, and baseline-allowlist checks and exits zero.
+- `scripts/verify.sh` without a task identity exits two before running checks.
+- The baseline gate rejects pending evals, non-empty lists, legacy status
+  labels, and count/boolean allowances.
 - Independent review reports no actionable correctness finding.
 
 ## Rollback conditions

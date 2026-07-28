@@ -33,9 +33,11 @@ module-state leaks and lifecycle bugs that an isolated focused test can miss.
 scripts/verify.sh <feature> <task-id>
 ```
 
-The task must already have `runs/<task-id>/eval.json` with an empty
-`baseline_failures` list. The verifier runs lint, typecheck, build, the complete
-sequential test suite, and the baseline gate.
+Both arguments are required. The task must already have a passing
+`runs/<task-id>/eval.json` with an empty `baseline_failures` list. The verifier
+runs lint, typecheck, build, the complete sequential test suite, and the
+baseline gate. Missing task identity and legacy count/status allowances fail
+closed.
 
 ## UI capture
 

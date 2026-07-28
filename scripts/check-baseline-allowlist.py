@@ -5,7 +5,7 @@ import json
 import sys
 
 ALLOWLIST_KEY = "baseline_failures"
-RETIRED_VERDICT = "pass_with_baseline_failures"
+PASS_VALUE = "pass"
 
 
 def walk(node, path="$"):
@@ -19,6 +19,17 @@ def walk(node, path="$"):
             yield from walk(value, f"{path}[{index}]")
 
 
+def is_inactive_allowance(value):
+    return value is None or value is False or value == 0 or value == "" or value == []
+
+
+def is_baseline_failure_label(value):
+    if not isinstance(value, str):
+        return False
+    normalized = value.lower().replace("-", "_")
+    return "baseline" in normalized and "fail" in normalized
+
+
 def main(argv):
     if len(argv) != 2:
         print(f"usage: {argv[0]} <eval.json>", file=sys.stderr)
@@ -29,11 +40,25 @@ def main(argv):
 
     errors = []
     allowlists = []
+    outcome = document.get("verdict", document.get("result"))
+    if outcome != PASS_VALUE:
+        errors.append(
+            f"$.verdict/result: expected {PASS_VALUE!r}, got {outcome!r}"
+        )
     for path, key, value in walk(document):
-        if key in ("result", "verdict") and value == RETIRED_VERDICT:
-            errors.append(f"{path}: retired verdict {RETIRED_VERDICT!r}")
+        normalized_key = key.lower().replace("-", "_")
+        if key in ("result", "status", "verdict") and is_baseline_failure_label(
+            value
+        ):
+            errors.append(f"{path}: baseline-failure status is not allowed: {value!r}")
         if key == ALLOWLIST_KEY:
             allowlists.append((path, value))
+        elif (
+            "baseline" in normalized_key
+            and "fail" in normalized_key
+            and not is_inactive_allowance(value)
+        ):
+            errors.append(f"{path}: count or flag allowance is not allowed: {value!r}")
 
     if not allowlists:
         errors.append(f"missing required {ALLOWLIST_KEY!r} list")

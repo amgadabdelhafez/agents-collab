@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Full Loop verification suite. Usage: scripts/verify.sh [feature] [task-id]
+# Full Loop verification suite. Usage: scripts/verify.sh <feature> <task-id>
 set -euo pipefail
 
-FEATURE="${1:-loop-fork}"
-TASK_ID="${2:-unknown}"
+if [[ "$#" -ne 2 || -z "${1}" || -z "${2}" ]]; then
+  echo "usage: scripts/verify.sh <feature> <task-id>" >&2
+  echo "a task id is required so eval and baseline gates cannot be skipped" >&2
+  exit 2
+fi
+
+FEATURE="${1}"
+TASK_ID="${2}"
 ARTIFACTS_DIR="runs/${TASK_ID}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -24,14 +30,12 @@ echo "--- build ---"
 echo "--- tests ---"
 (cd loop-fork && bun run test:ci)
 
-if [[ "${TASK_ID}" != "unknown" ]]; then
-  EVAL_FILE="${ARTIFACTS_DIR}/eval.json"
-  if [[ ! -f "${EVAL_FILE}" ]]; then
-    echo "missing required eval: ${EVAL_FILE}" >&2
-    exit 1
-  fi
-  echo "--- baseline allowlist ---"
-  python3 scripts/check-baseline-allowlist.py "${EVAL_FILE}"
+EVAL_FILE="${ARTIFACTS_DIR}/eval.json"
+if [[ ! -f "${EVAL_FILE}" ]]; then
+  echo "missing required eval: ${EVAL_FILE}" >&2
+  exit 1
 fi
+echo "--- baseline allowlist ---"
+python3 scripts/check-baseline-allowlist.py "${EVAL_FILE}"
 
 echo "=== verify.sh complete ==="

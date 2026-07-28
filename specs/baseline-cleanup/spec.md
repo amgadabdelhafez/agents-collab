@@ -26,7 +26,8 @@ currently claim a clean release baseline:
    replaced by this task.
 7. `scripts/verify.sh` must execute the real Loop lint, typecheck, build, and
    sequential test commands, and must reject any non-empty or count-based
-   baseline-failure allowance.
+   baseline-failure allowance. Missing task identity must fail closed rather
+   than skip the eval gate.
 
 ## Non-goals
 
