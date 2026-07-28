@@ -217,6 +217,35 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       cavemanModeSource: "default",
       helperCavemanMode: "full",
     });
+
+    const changedPairStorage = resolveRunStorage("74", process.cwd(), home);
+    writeRunManifest(
+      changedPairStorage.manifestPath,
+      createRunManifest({
+        claudeSessionId: "out-of-pair-legacy-claude",
+        cwd: process.cwd(),
+        mode: "paired",
+        pid: 1234,
+        repoId: changedPairStorage.repoId,
+        runId: "74",
+        state: "working",
+      })
+    );
+    const changedPair = makeOptions({
+      cavemanMode: "lite",
+      cavemanModeSource: "default",
+      helperCavemanMode: "full",
+      helperCavemanModeSource: "default",
+      pairWith: "copilot",
+      pairedMode: true,
+      resumeRunId: "74",
+    });
+    preparePairedRun(changedPair, process.cwd());
+    expect(changedPair.cavemanMode).toBe("lite");
+    expect(readRunManifest(changedPairStorage.manifestPath)).toMatchObject({
+      cavemanMode: "lite",
+      claudeSessionId: "",
+    });
   } finally {
     if (originalHome === undefined) {
       Reflect.deleteProperty(process.env, "HOME");

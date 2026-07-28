@@ -244,16 +244,22 @@ export const preparePairedRun = (
   applyPairedOptions(opts, storage, existing, allowRawSessionFallback, cwd);
 
   const resumable = canResumePairedManifest(existing) ? existing : undefined;
+  const selectedAgents = new Set([opts.agent, opts.pairWith]);
   const manifest = existing
     ? touchRunManifest(
         {
           ...existing,
           cavemanMode: opts.cavemanMode,
           claudeChannelServer: resolveClaudeBridgeServer(storage, existing),
-          claudeSessionId:
-            resumable?.claudeSessionId || opts.pairedSessionIds?.claude || "",
-          codexThreadId:
-            resumable?.codexThreadId || opts.pairedSessionIds?.codex || "",
+          // A stored binding outside the selected pair cannot receive this
+          // run's prompt contract. Drop it instead of later treating that
+          // legacy session as if it had received the persisted mode.
+          claudeSessionId: selectedAgents.has("claude")
+            ? resumable?.claudeSessionId || opts.pairedSessionIds?.claude || ""
+            : "",
+          codexThreadId: selectedAgents.has("codex")
+            ? resumable?.codexThreadId || opts.pairedSessionIds?.codex || ""
+            : "",
           cwd,
           mode: "paired",
           helperCavemanMode: opts.helperCavemanMode,
