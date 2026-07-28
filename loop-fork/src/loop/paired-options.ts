@@ -284,9 +284,13 @@ export const applyPairedOptions = (
   opts.codexMcpConfigArgs = buildCodexBridgeConfigArgs(storage.runDir, "codex");
   opts.codexHome = ensureLoopCodexHome(storage.runDir, cwd, {
     ...process.env,
-    LOOP_NATIVE_SUBAGENT_MODE: opts.governess
-      ? process.env.LOOP_NATIVE_SUBAGENT_MODE
-      : "off",
+    // Only the tmux topology starts Governess and installs provider hooks.
+    // Legacy foreground paired runs stay explicitly outside this policy rather
+    // than advertising utility-first while leaving native spawning ungated.
+    LOOP_NATIVE_SUBAGENT_MODE:
+      opts.governess && opts.tmux
+        ? process.env.LOOP_NATIVE_SUBAGENT_MODE
+        : "off",
   });
   opts.geminiMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "gemini");
   // Inject bridge MCP into project-level config only for agents in this pair

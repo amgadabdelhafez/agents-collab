@@ -29,6 +29,7 @@ import {
   consumeNativeFallbackLease,
   type NativeFallbackSnapshot,
   nativeFallbackForChild,
+  nativeFallbackForProvider,
   nativeFallbackProfile,
   nativeFallbackScopeAllows,
   recordNativeFallbackDenial,
@@ -227,6 +228,7 @@ interface HookEmitDeps {
     request: ReturnType<typeof createUtilityRouteRequest>
   ) => { jobId: string };
   env?: NodeJS.ProcessEnv;
+  nativeChildContext?: boolean;
   now?: () => string;
   readManifest?: (path: string) => { cwd: string } | undefined;
   resolveWorkspaceRoot?: (runRoot: string, path: string) => string | undefined;
@@ -749,9 +751,11 @@ const handleNativeSubagentHook = (
   if (!toolName) {
     return undefined;
   }
-  if (agentId) {
+  if (agentId || deps.nativeChildContext) {
     try {
-      const snapshot = nativeFallbackForChild(runDir, agent, agentId);
+      const snapshot = agentId
+        ? nativeFallbackForChild(runDir, agent, agentId)
+        : nativeFallbackForProvider(runDir, agent);
       const manifest = (deps.readManifest ?? readRunManifest)(
         join(runDir, "manifest.json")
       );
@@ -766,7 +770,7 @@ const handleNativeSubagentHook = (
         ? `native-child-tool-denied:${toolName}`
         : "unleased-native-child-tool-denied";
       recordNativeFallbackDenial(runDir, {
-        agentId,
+        agentId: agentId ?? snapshot?.agentId,
         agentType,
         provider: agent,
         reason,
@@ -1083,7 +1087,8 @@ export const runHookEmit = async (
       const toolName = firstString(raw, ["tool_name", "toolName", "tool"]);
       if (
         hookEvent === "PreToolUse" &&
-        (Boolean(hookAgentId(raw)) ||
+        (deps.nativeChildContext ||
+          Boolean(hookAgentId(raw)) ||
           Boolean(toolName && isNativeSpawnTool(toolName)))
       ) {
         nativeDecision = handledNativeHook(

@@ -391,6 +391,50 @@ test("running native fallback expires before further tools or completion", () =>
   }
 });
 
+test("a new Governess epoch immediately fences a running native child", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-native-epoch-fence-"));
+  try {
+    activateUtilityEpoch(runDir, 31);
+    settledUtilityJob(runDir, "codex", "utility-epoch-fence");
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest("codex", "utility-epoch-fence", "native-epoch-fence")
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 31,
+      mode: "utility-first",
+      nowMs: 4_000_000,
+      runDir,
+    });
+    consumeNativeFallbackLease({
+      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      mode: "utility-first",
+      nowMs: 4_001_000,
+      provider: "codex",
+      runDir,
+      toolName: "spawn_agent",
+    });
+    bindNativeFallbackStart({
+      agentId: "epoch-child",
+      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      nowMs: 4_002_000,
+      provider: "codex",
+      runDir,
+    });
+
+    activateUtilityEpoch(runDir, 32);
+    expect(
+      nativeFallbackForChild(runDir, "codex", "epoch-child", 4_003_000)
+    ).toBeUndefined();
+    expect(readNativeFallbackRequests(runDir)[0]).toMatchObject({
+      reason: "native-fallback-stale-epoch",
+      state: "expired",
+    });
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("loop-scoped provider definitions enforce one read-only fallback", () => {
   const utilityFirst = buildLoopCodexConfig("/repo", "utility-first");
   expect(utilityFirst).toContain("[agents]");
@@ -398,7 +442,9 @@ test("loop-scoped provider definitions enforce one read-only fallback", () => {
   expect(utilityFirst).toContain("max_concurrent_threads_per_session = 1");
   expect(buildLoopCodexConfig("/repo", "strict")).toContain("enabled = false");
   expect(buildLoopCodexConfig("/repo", "off")).not.toContain("[agents]");
-  const codexFallback = buildLoopCodexFallbackAgent();
+  const codexFallback = buildLoopCodexFallbackAgent(
+    "loop __hook-emit codex /run/hooks/codex-native-child.jsonl native-child"
+  );
   expect(codexFallback).toContain('sandbox_mode = "read-only"');
   expect(codexFallback).toContain("allow_login_shell = false");
   expect(codexFallback).toContain('web_search = "disabled"');
@@ -415,6 +461,8 @@ test("loop-scoped provider definitions enforce one read-only fallback", () => {
   expect(codexFallback).toContain("[mcp_servers.loop-bridge]");
   expect(codexFallback).toContain('url = "http://127.0.0.1:1/mcp"');
   expect(codexFallback).toContain("enabled = false");
+  expect(codexFallback).toContain("[[hooks.PreToolUse]]");
+  expect(codexFallback).toContain("native-child");
 
   const claude =
     claudeNativeFallbackDefinition()[CLAUDE_NATIVE_FALLBACK_PROFILE];

@@ -20,14 +20,17 @@ Make the paired-loop delegation order enforceable:
 5. Claude and Codex retain architecture, ambiguity, authority, integration,
    patch application, and final review.
 
-The default is `utility-first`. A `strict` mode removes provider-native
-subagents entirely. An explicit `off` compatibility mode leaves native
-subagents outside this policy.
+The governed tmux topology defaults to `utility-first`. A `strict` mode removes
+provider-native subagents entirely. An explicit `off` compatibility mode leaves
+native subagents outside this policy; legacy non-tmux pairing resolves to this
+mode because it has no Governess process or provider-hook lifecycle.
 
 ## Required behavior
 
 1. `LOOP_NATIVE_SUBAGENT_MODE` accepts `utility-first`, `strict`, or `off` and
-   defaults to `utility-first`. Unknown values fail closed to `strict`.
+   defaults governed tmux runs to `utility-first`. Unknown values fail closed
+   to `strict`; non-tmux paired compatibility runs resolve to `off` rather than
+   claiming enforcement without a Governess.
 2. In `utility-first`, Codex is configured for one concurrent spawned thread.
    Claude receives one session-local custom fallback profile. Both provider
    hooks observe per-tool and subagent lifecycle events.
@@ -59,9 +62,10 @@ subagents outside this policy.
    `shell_command` tool accepts only a small inspection grammar with explicit
    existing regular-file operands. Approved calls must already name a fixed
    system binary, a canonical absolute operand, `login=false`, and the
-   canonical repo workdir; the profile supplies a clean environment. Provider
-   hooks reject every other command or unsafe tool whenever a tool event is
-   identified as coming from a native child.
+   canonical repo workdir; the profile supplies a clean environment. A hook in
+   that exact profile applies the child policy without relying on an
+   undocumented `agent_id` in Codex `PreToolUse`; provider hooks reject every
+   other command or unsafe tool.
 9. `SubagentStart` binds the consumed lease to the provider child and injects
    the exact read scopes and acceptance contract. `SubagentStop` closes the
    lease. Orphaned consumed/running leases time out fail closed.
@@ -87,8 +91,9 @@ subagents outside this policy.
   provider lifecycle observation, and pane rendering are adapters around its
   durable lease state.
 - One slot is run-wide across Claude and Codex, not one per provider.
-- Leases are requester-, epoch-, profile-, scope-, and time-bound and are
-  consumed at most once under a file lock.
+- Leases are requester-, epoch-, profile-, scope-, and time-bound, are consumed
+  at most once under a file lock, and expire immediately when the Governess
+  epoch advances.
 - Missing manifests, malformed journals, stale epochs, unknown modes,
   protected scopes, symlink escapes, missing utility evidence, or hook errors
   deny a native spawn. Ordinary non-native hook telemetry remains best-effort.

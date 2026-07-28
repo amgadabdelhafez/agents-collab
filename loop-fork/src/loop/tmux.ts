@@ -19,7 +19,7 @@ import {
   DEFAULT_HELPER_CAVEMAN_MODE,
 } from "./caveman";
 import { getCodexAppServerUrl, getLastCodexThreadId } from "./codex-app-server";
-import { codexHomeEnv } from "./codex-home";
+import { codexHomeEnv, writeLoopCodexFallbackAgent } from "./codex-home";
 import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   findCodexTmuxProxyPort,
@@ -990,7 +990,8 @@ const prepareGovernessHooks = (
   deps: TmuxDeps,
   opts: Options,
   runDir: string,
-  paneAgents: { left: Agent; right: Agent }
+  paneAgents: { left: Agent; right: Agent },
+  nativeSubagentMode: NativeSubagentMode
 ): GovernessHookConfig => {
   if (!opts.governess) {
     return { codexBypassHookTrust: false };
@@ -1013,6 +1014,17 @@ const prepareGovernessHooks = (
         join(opts.codexHome, "hooks.json"),
         buildCodexHooksJson(command)
       );
+      if (nativeSubagentMode === "utility-first") {
+        writeLoopCodexFallbackAgent(
+          opts.codexHome,
+          buildHookCommand(
+            deps.launchArgv,
+            agent,
+            join(hooksDir, `${agent}-native-child.jsonl`),
+            "native-child"
+          )
+        );
+      }
     }
   }
   return {
@@ -1843,7 +1855,8 @@ const startPairedSession = async (
     deps,
     launch.opts,
     storage.runDir,
-    paneAgents
+    paneAgents,
+    nativeSubagentMode
   );
   const hadAgentSession: Record<Agent, boolean> = {
     claude: Boolean(

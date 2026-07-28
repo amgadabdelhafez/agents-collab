@@ -1,6 +1,7 @@
 # Utility-first native fallback verification
 
-- Default mode is `utility-first`; unknown mode is `strict`; `off` is explicit.
+- Governed tmux default mode is `utility-first`; unknown mode is `strict`;
+  legacy non-tmux pairing and explicit `off` remain outside this policy.
 - Codex config has one native thread in utility-first and disables agents in
   strict. Its fallback profile is read-only; disables unified execution, web
   search, the loop bridge MCP server, remote plugins, and descendants; and
@@ -21,11 +22,13 @@
 - Native child hooks deny file mutation, MCP, web, user-input, nested-agent,
   unscoped, recursive-directory, compound-command, and symlink-escape attempts.
   Claude may use file-targeted inspection tools; Codex may use only the
-  documented bounded read commands.
+  documented bounded read commands. Codex child calls are recognized by an
+  inline fallback-profile hook even when `PreToolUse` omits `agent_id`.
 - Explicit `off` mode leaves root spawn, lifecycle, and child tool events
   outside the native fallback policy.
-- Start/stop events bind and close the lease; lifecycle and denial reasons are
-  visible in the Governess board at normal width.
+- Start/stop events bind and close the lease; a new Governess epoch immediately
+  fences a running child; lifecycle and denial reasons are visible in the
+  Governess board at normal width.
 - Small viewports retain Claude, Codex, Nanny, and Au Pair rows.
 - Focused tests, `bun run check`, TypeScript, build, `bun run test:ci`,
   base-aware `git diff --check`, and

@@ -587,8 +587,19 @@ const expireSnapshots = (
   nowMs: number,
   nowIso: string
 ): void => {
+  const activeEpoch = readPositiveEpoch(paths.utilityEpochFile);
   for (const snapshot of foldSnapshots(events)) {
     if (!ACTIVE_NATIVE_STATES.has(snapshot.state)) {
+      continue;
+    }
+    if (!activeEpoch || snapshot.epoch !== activeEpoch) {
+      appendEvent(
+        paths.eventsFile,
+        eventForTransition(snapshot, "expired", "expired", nowIso, {
+          reason: "native-fallback-stale-epoch",
+        }),
+        events
+      );
       continue;
     }
     const expiry =
@@ -920,6 +931,25 @@ export const nativeFallbackForChild = (
         snapshot.provider === provider &&
         snapshot.agentId === agentId &&
         snapshot.state === "running"
+    );
+  });
+
+// Codex 0.145 does not document `agent_id` on child PreToolUse payloads. A
+// profile-specific hook is therefore the supported identity boundary: once it
+// is running inside the one allowed profile, resolve the only current Codex
+// lease instead of trusting an absent or invented payload field.
+export const nativeFallbackForProvider = (
+  runDir: string,
+  provider: Agent,
+  nowMs = Date.now()
+): NativeFallbackSnapshot | undefined =>
+  withNativeLock(runDir, () => {
+    const paths = nativeFallbackPaths(runDir);
+    const events = readEvents(paths.eventsFile);
+    expireSnapshots(paths, events, nowMs, new Date(nowMs).toISOString());
+    return foldSnapshots(events).find(
+      (snapshot) =>
+        snapshot.provider === provider && snapshot.state === "running"
     );
   });
 

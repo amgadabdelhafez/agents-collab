@@ -67,10 +67,13 @@ or claim authority.
 - Missing evidence, stale epochs, malformed journals, protected paths, and
   unknown risk fail closed.
 - Utility edits are patch proposals in P0. They are not applied automatically.
-- Provider-native delegation is utility-first. The current Governess epoch may
-  lease one run-wide read-only fallback for 120 seconds after settled utility
-  evidence; strict mode disables native agents. Hooks atomically consume the
-  lease, bind the child lifecycle, scope reads, and deny mutation or descendants.
+- Provider-native delegation is utility-first in governed tmux runs. The
+  current Governess epoch may lease one run-wide read-only fallback for 120
+  seconds after settled utility evidence; strict mode disables native agents.
+  Hooks atomically consume the lease, bind the child lifecycle, scope reads,
+  and deny mutation or descendants. Codex's fallback profile carries its own
+  child-tool hook because Codex 0.145 does not document `agent_id` on
+  `PreToolUse`; advancing the Governess epoch immediately fences the child.
 - Credentials stay in the provider process environment and are removed from
   tool child environments and traces.
 - Pane and external-supervisor availability never determine job availability.

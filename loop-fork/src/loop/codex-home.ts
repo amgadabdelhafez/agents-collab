@@ -64,7 +64,9 @@ export const buildLoopCodexConfig = (
   ].join("\n");
 };
 
-export const buildLoopCodexFallbackAgent = (): string =>
+export const buildLoopCodexFallbackAgent = (
+  nativeChildHookCommand?: string
+): string =>
   // Standalone agent layers must declare a transport even for a disabled MCP
   // server; use an inert loopback URL so the layer parses before parent merge.
   [
@@ -104,7 +106,32 @@ export const buildLoopCodexFallbackAgent = (): string =>
     'url = "http://127.0.0.1:1/mcp"',
     "enabled = false",
     "",
+    ...(nativeChildHookCommand
+      ? [
+          "[[hooks.PreToolUse]]",
+          'matcher = ".*"',
+          "",
+          "[[hooks.PreToolUse.hooks]]",
+          'type = "command"',
+          `command = ${JSON.stringify(nativeChildHookCommand)}`,
+          "timeout = 30",
+          "",
+        ]
+      : []),
   ].join("\n");
+
+export const writeLoopCodexFallbackAgent = (
+  codexHome: string,
+  nativeChildHookCommand?: string
+): void => {
+  const agentsDir = join(codexHome, "agents");
+  mkdirSync(agentsDir, { recursive: true });
+  writeFileSync(
+    join(agentsDir, `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`),
+    buildLoopCodexFallbackAgent(nativeChildHookCommand),
+    "utf8"
+  );
+};
 
 const ensureAuthFile = (codexHome: string, filename: string): void => {
   const sourceHome = sourceCodexHome();
@@ -143,13 +170,7 @@ export const ensureLoopCodexHome = (
     "utf8"
   );
   if (mode === "utility-first") {
-    const agentsDir = join(codexHome, "agents");
-    mkdirSync(agentsDir, { recursive: true });
-    writeFileSync(
-      join(agentsDir, `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`),
-      buildLoopCodexFallbackAgent(),
-      "utf8"
-    );
+    writeLoopCodexFallbackAgent(codexHome);
   }
   for (const filename of AUTH_FILES) {
     ensureAuthFile(codexHome, filename);

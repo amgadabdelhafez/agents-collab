@@ -416,7 +416,7 @@ test("preparePairedOptions writes a readable Claude bridge server for fresh runs
   }
 });
 
-test("preparePairedOptions creates a loop-scoped Codex home without global MCP config", () => {
+test("preparePairedOptions keeps non-tmux native policy off without global MCP config", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;
   const originalRunId = process.env.LOOP_RUN_ID;
@@ -424,7 +424,11 @@ test("preparePairedOptions creates a loop-scoped Codex home without global MCP c
   Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
 
   try {
-    const opts = makeOptions({ pairedMode: true });
+    const opts = makeOptions({
+      governess: true,
+      pairedMode: true,
+      tmux: false,
+    });
 
     preparePairedOptions(opts, process.cwd(), true);
 
@@ -440,6 +444,7 @@ test("preparePairedOptions creates a loop-scoped Codex home without global MCP c
     expect(config).toContain('model_reasoning_effort = "xhigh"');
     expect(config).toContain('service_tier = "standard"');
     expect(config).toContain(`[projects.${JSON.stringify(process.cwd())}]`);
+    expect(config).not.toContain("[agents]");
     expect(config).not.toContain("[mcp_servers.");
     expect(config).not.toContain("[plugins.");
   } finally {

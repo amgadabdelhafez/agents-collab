@@ -23,9 +23,12 @@ const quoteArg = (value: string): string =>
 export const buildHookCommand = (
   launchArgv: string[],
   agent: Agent,
-  hookFile: string
+  hookFile: string,
+  context?: "native-child"
 ): string =>
-  [...launchArgv, "__hook-emit", agent, hookFile].map(quoteArg).join(" ");
+  [...launchArgv, "__hook-emit", agent, hookFile, ...(context ? [context] : [])]
+    .map(quoteArg)
+    .join(" ");
 
 const buildHookConfig = (
   events: readonly string[],

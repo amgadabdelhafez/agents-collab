@@ -175,13 +175,21 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
     return true;
   }
   if (argv[0] === HOOK_EMIT_SUBCOMMAND) {
-    const [source, hookFile] = argv.slice(1);
-    if (!(isAgent(source) && hookFile)) {
+    const [source, hookFile, context] = argv.slice(1);
+    if (
+      !(
+        isAgent(source) &&
+        hookFile &&
+        (context === undefined || context === "native-child")
+      )
+    ) {
       throw new Error(
-        "Usage: loop __hook-emit <claude|codex|gemini|cursor|copilot> <hook-file>"
+        "Usage: loop __hook-emit <claude|codex|gemini|cursor|copilot> <hook-file> [native-child]"
       );
     }
-    await runHookEmit(source, hookFile);
+    await runHookEmit(source, hookFile, {
+      nativeChildContext: context === "native-child",
+    });
     return true;
   }
   if (

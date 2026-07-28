@@ -950,11 +950,13 @@ describe("runHookEmit", () => {
       });
 
       const invoke = async (
-        payload: unknown
+        payload: unknown,
+        nativeChildContext = false
       ): Promise<Record<string, unknown>> => {
         let output = "";
         await runHookEmit("codex", hookFile, {
           env: { LOOP_NATIVE_SUBAGENT_MODE: "utility-first" },
+          nativeChildContext,
           readManifest: () => ({ cwd: repo }),
           stdin: stdinPayload(payload),
           writeStdout: (value) => {
@@ -1000,6 +1002,37 @@ describe("runHookEmit", () => {
         tool_name: "Bash",
       });
       expect(boundedSed).toEqual({});
+      const documentedChildPayload = await invoke(
+        {
+          cwd: repo,
+          hook_event_name: "PreToolUse",
+          tool_input: {
+            command: `${systemSed} -n '1,20p' ${canonicalFile}`,
+            login: false,
+            workdir: canonicalRepo,
+          },
+          tool_name: "Bash",
+        },
+        true
+      );
+      expect(documentedChildPayload).toEqual({});
+      expect(
+        await invoke(
+          {
+            cwd: repo,
+            hook_event_name: "PreToolUse",
+            tool_input: {
+              command: `${systemSed} -n '1,20p' ${join(canonicalRepo, "outside.ts")}`,
+              login: false,
+              workdir: canonicalRepo,
+            },
+            tool_name: "Bash",
+          },
+          true
+        )
+      ).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
       expect(
         await invoke({
           agent_id: "codex-child-1",
@@ -1292,6 +1325,17 @@ describe("hook settings generators", () => {
     expect(command).toContain("__hook-emit");
     expect(command).toContain("claude");
     expect(command).toContain("/run/hooks/claude.jsonl");
+  });
+
+  test("builds an explicit profile-specific native child command", () => {
+    expect(
+      buildHookCommand(
+        ["bun", "src/cli.ts"],
+        "codex",
+        "/run/hooks/codex-native-child.jsonl",
+        "native-child"
+      )
+    ).toContain("'native-child'");
   });
 
   test("Claude settings register every Claude hook event", () => {

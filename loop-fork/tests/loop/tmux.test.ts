@@ -548,7 +548,6 @@ test("runInTmux writes paired session refs before starting governess", async () 
         env: {
           CLAUDE_CONFIG_DIR: "/tmp/loop-claude",
           LOOP_GOVERNESS_AGENT_RENAME: "1",
-          LOOP_NATIVE_SUBAGENT_MODE: "off",
         },
         findBinary: () => true,
         getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
@@ -579,6 +578,15 @@ test("runInTmux writes paired session refs before starting governess", async () 
               `codex-hook-event:${readFileSync(hooksPath, "utf8").includes("PreToolUse")}`
             );
           }
+          const fallbackPath = join(
+            runDir,
+            "codex-home",
+            "agents",
+            "loop_readonly_fallback.toml"
+          );
+          events.push(
+            `codex-child-hook:${existsSync(fallbackPath) && readFileSync(fallbackPath, "utf8").includes("native-child")}`
+          );
           return Promise.resolve(undefined);
         },
         spawn: (args: string[]) => {
@@ -647,8 +655,9 @@ test("runInTmux writes paired session refs before starting governess", async () 
     );
 
     expect(delegated).toBe(true);
-    expect(events).toContain("start-codex:true:off");
+    expect(events).toContain("start-codex:true:utility-first");
     expect(events).toContain("codex-hook-event:true");
+    expect(events).toContain("codex-child-hook:true");
     expect(events).toContain("manifest:codex-thread-1:%41:repo-loop-1:0.2");
     expect(events).toContain(
       "spawn-governess:codex-thread-1:%41:repo-loop-1:0.2"
@@ -669,17 +678,6 @@ test("runInTmux writes paired session refs before starting governess", async () 
         )
         .every((args) =>
           args.at(-1)?.includes("'CLAUDE_CONFIG_DIR=/tmp/loop-claude'")
-        )
-    ).toBe(true);
-    expect(
-      calls
-        .filter(
-          (args) =>
-            args[0] === "tmux" &&
-            (args[1] === "new-session" || args[1] === "split-window")
-        )
-        .some((args) =>
-          args.at(-1)?.includes("'LOOP_NATIVE_SUBAGENT_MODE=off'")
         )
     ).toBe(true);
     expect(
