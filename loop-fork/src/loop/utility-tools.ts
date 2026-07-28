@@ -301,7 +301,8 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
     type: "function",
     function: {
       name: "read_file",
-      description: "Read a bounded line range from a declared repository file.",
+      description:
+        "Read at most 500 lines from a declared repository file. Split larger reads into non-overlapping ranges of 500 lines or fewer.",
       parameters: objectSchema(
         {
           endLine: { minimum: 1, type: "integer" },
@@ -1618,9 +1619,11 @@ export class UtilityToolBroker {
     }
     const scopes = mode === "read" ? this.readScopes : this.writeScopes;
     if (!scopes.some((scope) => inScope(path, scope))) {
+      const shown = scopes.slice(0, 4);
+      const allowed = `${shown.join(", ")}${scopes.length > shown.length ? ` (+${scopes.length - shown.length} more)` : ""}`;
       throw new ToolPolicyError(
         "scope_denied",
-        `Path is outside declared ${mode} scope: ${path}`
+        `Path is outside declared ${mode} scope: ${path}. Allowed ${mode} scope(s): ${allowed || "none"}. Retry only inside a listed scope or return CONTEXT_INSUFFICIENT.`
       );
     }
     if (
@@ -1969,7 +1972,7 @@ export class UtilityToolBroker {
     if (lastLines !== undefined && lastLines > 500) {
       throw new ToolPolicyError(
         "invalid_arguments",
-        "lastLines exceeds the bounded read limit"
+        "lastLines exceeds the bounded read limit of 500; retry with lastLines <= 500"
       );
     }
     const startLine =
@@ -1983,7 +1986,7 @@ export class UtilityToolBroker {
     if (lastLines === undefined && requestedEnd - startLine + 1 > 500) {
       throw new ToolPolicyError(
         "invalid_arguments",
-        "Requested file range exceeds the bounded read limit"
+        "Requested file range exceeds the bounded read limit of 500 lines; retry with endLine <= startLine + 499 and use another non-overlapping call only if needed"
       );
     }
     const endLine = Math.min(requestedEnd, lines.length);

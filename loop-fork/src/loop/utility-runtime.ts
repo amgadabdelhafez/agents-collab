@@ -1055,6 +1055,8 @@ const utilitySystemPrompt = (role = "utility helper"): string =>
     "Never expand scope, access secrets, change dependencies, make product decisions, or perform remote/destructive actions.",
     "For edits, produce a minimal unified diff with propose_patch; it is reviewed/applied by a main agent.",
     "For exact file line counts, use count_lines; never emulate wc with run_check or by reading full file contents.",
+    "A read_file call can return at most 500 lines. Use count_lines or search_repo to target evidence, then read non-overlapping ranges of 500 lines or fewer.",
+    "On scope_denied, use only an exact allowed scope named by the broker; never retry a parent or sibling path. On any other rejection, follow the broker's correction literally and do not submit another invalid sibling call in that round.",
     "Do not repeat a rejected or identical tool call; change approach once, then stop if no safe tool can make progress.",
     "If the declared context and available tools are insufficient, do not guess or retry; reply exactly CONTEXT_INSUFFICIENT: followed by a terse reason.",
     "Finish with a terse result: outcome, evidence/checks, artifact paths, and blocker if any.",

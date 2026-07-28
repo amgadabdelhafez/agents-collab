@@ -837,6 +837,71 @@ test("unprofiled bounded inspections persist Nanny ownership without spilling to
   }
 });
 
+test("a three-document audit without narrative context refs reaches Au Pair", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-au-pair-document-audit-"));
+  const runDir = join(repoRoot, ".loop", "runs", "au-pair-document-audit");
+  mkdirSync(join(repoRoot, "docs"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repoRoot, "STATUS.md"), "accepted shut\n");
+  writeFileSync(join(repoRoot, "docs", "result.md"), "RULING 20\n");
+  writeFileSync(join(repoRoot, "docs", "comment.md"), "no retry\n");
+  appendUtilityRouteRequest(
+    runDir,
+    createUtilityRouteRequest({
+      acceptanceCriteria: [
+        "report every ruling occurrence",
+        "flag inconsistent dispositions",
+        "cite exact paths and lines",
+      ],
+      authority: {},
+      id: "three-document-audit",
+      kind: "inspect",
+      objective:
+        "Audit three carrying documents for complete internally consistent wind-down language",
+      readScope: ["STATUS.md", "docs/result.md", "docs/comment.md"],
+      requester: "codex",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    })
+  );
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "codex",
+        epoch: 25,
+        peer: "claude",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_AU_PAIR_ENABLED: "1",
+        LOOP_AU_PAIR_URL: "http://127.0.0.1:9998/v1/chat/completions",
+        LOOP_NANNY_ENABLED: "1",
+        LOOP_NANNY_URL: "http://127.0.0.1:9999/v1/chat/completions",
+      },
+      {
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return true;
+        },
+      }
+    );
+    expect(spawned).toEqual(["three-document-audit"]);
+    expect(readUtilityJob(runDir, "three-document-audit")).toMatchObject({
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-au-pair",
+      },
+      state: "routed-utility",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("a full Nanny slot does not block eligible Au Pair work in the same tick", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-independent-tier-slots-"));
   const runDir = join(repoRoot, ".loop", "runs", "independent-tier-slots");

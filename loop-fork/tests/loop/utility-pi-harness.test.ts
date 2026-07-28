@@ -278,6 +278,125 @@ test("Pi counts a rejected sibling batch as one model round and can adapt", asyn
   }
 });
 
+test("Pi receives the exact 500-line correction and adapts its next read", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-range-adaptation-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-range-adaptation");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "many-lines.txt"),
+    `${Array.from({ length: 600 }, (_, index) => `line-${index + 1}`).join("\n")}\n`
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return source-backed evidence"],
+    authority: {},
+    id: "pi-range-adaptation-job",
+    kind: "inspect",
+    objective: "Read bounded evidence after correcting one oversized range",
+    readScope: ["src/many-lines.txt"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 97);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 97,
+  });
+  const bodies: Record<string, unknown>[] = [];
+  const server = serve({
+    fetch: async (incoming) => {
+      bodies.push((await incoming.json()) as Record<string, unknown>);
+      if (bodies.length === 1) {
+        return response([
+          event({ role: "assistant" }),
+          event({
+            tool_calls: [
+              {
+                function: {
+                  arguments:
+                    '{"path":"src/many-lines.txt","startLine":1,"endLine":600}',
+                  name: "read_file",
+                },
+                id: "oversized-read",
+                index: 0,
+                type: "function",
+              },
+            ],
+          }),
+          event({}, "tool_calls"),
+        ]);
+      }
+      if (bodies.length === 2) {
+        return response([
+          event({ role: "assistant" }),
+          event({
+            tool_calls: [
+              {
+                function: {
+                  arguments:
+                    '{"path":"src/many-lines.txt","startLine":1,"endLine":500}',
+                  name: "read_file",
+                },
+                id: "bounded-read",
+                index: 0,
+                type: "function",
+              },
+            ],
+          }),
+          event({}, "tool_calls"),
+        ]);
+      }
+      return response([
+        event({ role: "assistant" }),
+        event({ content: "Corrected the range and read bounded evidence." }),
+        event({}, "stop"),
+      ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+
+  try {
+    await runUtilityWorker(runDir, 97, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      LOOP_NANNY_MODEL: "fake-nanny",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    expect(bodies).toHaveLength(3);
+    expect(JSON.stringify(bodies[1])).toContain(
+      "bounded read limit of 500 lines"
+    );
+    expect(JSON.stringify(bodies[1])).toContain("endLine <= startLine + 499");
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        status: "completed",
+        summary: "Corrected the range and read bounded evidence.",
+      },
+      state: "completed",
+    });
+    const toolEvents = readFileSync(
+      join(runDir, "utility", "tool-events.jsonl"),
+      "utf8"
+    );
+    expect(toolEvents).toContain('"ok":false');
+    expect(toolEvents).toContain('"ok":true');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("Pi fails after three rejected model rounds with exact broker evidence", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-rejection-limit-"));
   const runDir = join(repoRoot, ".loop", "runs", "pi-rejection-limit");

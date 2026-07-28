@@ -696,6 +696,134 @@ test.each([
   rmSync(root, { recursive: true, force: true });
 });
 
+test("route_task rejects narrative context refs before creating a doomed job", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["cite every occurrence"],
+          context_refs: [
+            "Supervisor ruling: accepted shut",
+            "/private/tmp/repo/docs/result.md",
+          ],
+          kind: "inspect",
+          objective: "Audit three carrying documents",
+          read_scope: ["STATUS.md", "docs/result.md", "docs/comment.md"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain(
+    "context_refs accepts only unique repo-relative README.md"
+  );
+  expect(result.stdout).toContain(
+    "put narrative facts, SHAs, source files, and absolute paths in objective or acceptance_criteria"
+  );
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("route_task persists a structured bounded read plan", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["return bounded evidence"],
+          context_refs: ["docs/guide.md"],
+          execution_plan: [
+            {
+              execution_profile: "git-status",
+              objective: "Inspect worktree state",
+              read_scope: ["."],
+            },
+            {
+              execution_profile: "file-read",
+              execution_read: {
+                end_line: 5,
+                path: "README.md",
+                start_line: 1,
+              },
+              objective: "Read the exact introduction",
+              read_scope: ["README.md"],
+            },
+            {
+              execution_output: { line_limit: 20, position: "head" },
+              execution_profile: "search",
+              objective: "Search the declared docs scope",
+              read_scope: ["docs"],
+            },
+          ],
+          execution_profile: "read-plan",
+          kind: "inspect",
+          objective: "Run one structured bounded inspection plan",
+          read_scope: [".", "README.md", "docs"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+
+  const routed = JSON.parse(toolText(result.stdout, 1)) as {
+    state: string;
+    taskId: string;
+  };
+  expect(routed.state).toBe("pending-route");
+  const records = readFileSync(
+    join(runDir, "utility", "jobs.jsonl"),
+    "utf8"
+  )
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const request = records[0]?.request as Record<string, unknown>;
+  expect(request.executionProfile).toBe("read-plan");
+  expect(request.executionPlan).toEqual([
+    {
+      executionProfile: "git-status",
+      objective: "Inspect worktree state",
+      readScope: ["."],
+    },
+    {
+      executionProfile: "file-read",
+      executionRead: {
+        endLine: 5,
+        path: "README.md",
+        startLine: 1,
+      },
+      objective: "Read the exact introduction",
+      readScope: ["README.md"],
+    },
+    {
+      executionOutput: { lineLimit: 20, position: "head" },
+      executionProfile: "search",
+      objective: "Search the declared docs scope",
+      readScope: ["docs"],
+    },
+  ]);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("route_task drains only older unclaimed helper results for its caller", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -1791,6 +1919,16 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   expect(
     tools.find((tool) => tool.name === "route_task")?.description
   ).toContain("Every terminal outcome returns to this requester");
+  const routeTask = tools.find((tool) => tool.name === "route_task") as {
+    inputSchema?: {
+      properties?: Record<string, { description?: string }>;
+    };
+  };
+  expect(routeTask.inputSchema?.properties).toHaveProperty("execution_plan");
+  expect(routeTask.inputSchema?.properties).toHaveProperty("execution_read");
+  expect(routeTask.inputSchema?.properties?.context_refs?.description).toContain(
+    "Never put prose, SHAs, source files, or absolute paths here"
+  );
   rmSync(root, { recursive: true, force: true });
 });
 
