@@ -18,6 +18,8 @@ Description: Fix Loop 57 helper routing stalls, broker diagnostics and tool use,
   `route_task` response and derived bridge pending from the real bridge inbox.
 - Anchored Governess summaries to current human instructions and filtered
   terminal composer placeholders.
+- Preserved the launch prompt's `Task:` objective while excluding automatic
+  bridge/helper deliveries from human-message extraction and objective choice.
 - Added three read-only Recon panes for route, tool, and result/bridge truth.
 - Added an explicit regression proving a full Nanny slot does not block an
   eligible Au Pair job in the same routing tick.
@@ -35,7 +37,7 @@ are runtime contract failures rather than a need for broader permissions.
 - Independent local Qwen review returned `pass` with no findings. See
   `independent-review.md`.
 - Installed binary SHA-256:
-  `9933f48ccd605eda6a3d25407b92a2c4fe27933f676211c333978a07ccc2db2e`.
+  `ecc0e1f4743769eaf682ea96b42b30b48b4edc4108f2819cf29d6f663feb1c9b`.
 - Hot-swapped only Governess, Nanny, and Au Pair. Live Claude pane `%0` stayed
   PID `70452`; Codex pane `%1` stayed PID `70454`.
 - Added live Recon panes `%6`, `%7`, `%8`; resized Governess to 187/234 columns
@@ -46,6 +48,9 @@ are runtime contract failures rather than a need for broader permissions.
 - No `route-selected` collision was written after the new Governess epoch; the
   last historical collision remains at `2026-07-28T00:36:05.545Z`.
 - Live bridge pending remained zero and Recon showed the completed canary.
+- The canary delivery exposed and then verified the final summary edge case:
+  after the Governess-only reload, the live Objective returned exactly to
+  `Loop-57 — EXECUTION: analyser → marked clip → R12(b) measurement → census → T1′ floor → (if open) T4`.
 - Regression marker: `utility event id collision: route-selected`.
 - Regression marker: three sibling `not_found` calls must count as one rejected
   model round, not exhaust the breaker before the model can adapt.

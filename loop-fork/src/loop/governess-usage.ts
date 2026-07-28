@@ -717,6 +717,8 @@ const MAX_HUMAN_MESSAGE_CHARS = 260;
 const WHITESPACE_RE = /\s+/g;
 const BRIDGE_DELIVERY_PREFIX_RE =
   /^(claude|codex|copilot|cursor|gemini)\s*:/i;
+const INJECTED_TASK_SECTION_RE =
+  /(?:^|\n)\s*Task:\s*(?:\n\s*)?(?:#{1,6}\s*)?([^\n]+)/i;
 // User turns that are actually harness/tooling injections, not real requests.
 const INJECTED_MARKERS = [
   "Base directory for this skill",
@@ -728,6 +730,7 @@ const INJECTED_MARKERS = [
 const INJECTED_PREFIXES = [
   "# AGENTS.md instructions",
   "Agent-to-agent pair programming:",
+  "[bridge ",
   "/compact governess:",
   "governess:",
   "[Request interrupted by user",
@@ -749,6 +752,17 @@ const textFromContent = (content: unknown): string => {
 };
 
 const cleanHuman = (raw: string): string | undefined => {
+  if (raw.trimStart().startsWith("Agent-to-agent pair programming:")) {
+    const task = INJECTED_TASK_SECTION_RE.exec(raw)?.[1]
+      ?.replace(WHITESPACE_RE, " ")
+      .trim();
+    if (task) {
+      const objective = `Task: ${task}`;
+      return objective.length > MAX_HUMAN_MESSAGE_CHARS
+        ? `${objective.slice(0, MAX_HUMAN_MESSAGE_CHARS)}…`
+        : objective;
+    }
+  }
   const text = raw.replace(WHITESPACE_RE, " ").trim();
   if (
     !text ||

@@ -22,8 +22,9 @@ and the requested bottom Recon row is absent.
 5. A main agent's next `route_task` response atomically includes older,
    unclaimed utility results addressed to that agent. Peer messages are not
    consumed.
-6. Governess Objective is derived from current-session human instructions, not
-   terminal placeholders or prior-session summaries.
+6. Governess Objective is derived from the launch `Task:` and current-session
+   human instructions, not terminal placeholders, bridge/helper deliveries, or
+   prior-session summaries.
 7. The tmux layout is `Claude | Codex`, then `Governess | Nanny/Au Pair`, then
    read-only `Recon 1 | Recon 2 | Recon 3`; Recon viewers expose route, tool, and
    result/bridge truth without owning any runtime decisions.

@@ -16,6 +16,8 @@ Task completed 2026-07-28T01:16:56Z, mode planned.
   `route_task` response and derived bridge pending from the real bridge inbox.
 - Anchored Governess summaries to current human instructions and filtered
   terminal composer placeholders.
+- Preserved the launch `Task:` objective and excluded automatic bridge/helper
+  deliveries from summary objective selection.
 - Added three read-only Recon panes for route, tool, and result/bridge truth.
 - Added an explicit regression proving a full Nanny slot does not block an
   eligible Au Pair job in the same routing tick.

@@ -2490,6 +2490,7 @@ const MARKDOWN_HEADING_PREFIX_RE = /^#{1,6}\s+/;
 const MARKDOWN_OBJECTIVE_LINE_RE = /^#{1,6}\s+\S/;
 const TASK_OBJECTIVE_LINE_RE = /^Task:\s*\S/i;
 const TASK_PREFIX_RE = /^Task:\s*/i;
+const GENERATED_OBJECTIVE_MESSAGE_RE = /^\s*\[(?:bridge|channel)\b/i;
 const BRIDGE_LATEST_WIDTH = 54;
 
 const bridgeLatestFor = (
@@ -3806,7 +3807,9 @@ const cleanObjectiveLine = (line: string): string =>
 export const authoritativeSummaryObjective = (
   humanMessages: readonly string[]
 ): string | undefined => {
-  const messages = [...humanMessages].reverse();
+  const messages = humanMessages
+    .filter((message) => !GENERATED_OBJECTIVE_MESSAGE_RE.test(message))
+    .reverse();
   for (const message of messages) {
     const explicit = message
       .split("\n")

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyPricing,
   readAgentUsage,
+  readHumanMessages,
   summarizeClaude,
   summarizeCodex,
 } from "../../src/loop/governess-usage";
@@ -14,6 +15,42 @@ const claudeLine = (
   usage: Record<string, unknown>,
   model = "claude-opus-4-8"
 ): string => JSON.stringify({ message: { model, usage }, timestamp: ts });
+
+test("human message extraction keeps the launch task and drops bridge results", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-codex-human-messages-"));
+  const thread = "019f-human-message-test";
+  const sessionDir = join(root, "sessions", "2026", "07", "28");
+  mkdirSync(sessionDir, { recursive: true });
+  const userMessage = (text: string): string =>
+    JSON.stringify({
+      payload: {
+        content: [{ text, type: "input_text" }],
+        role: "user",
+        type: "message",
+      },
+      type: "response_item",
+    });
+  writeFileSync(
+    join(sessionDir, `rollout-2026-07-28T00-00-00-${thread}.jsonl`),
+    [
+      userMessage(
+        "Agent-to-agent pair programming: Claude is primary.\n\nTask:\n# Loop-57 — EXECUTION: analyser to census\n\nMore harness guidance."
+      ),
+      userMessage("fix the test"),
+      userMessage(
+        "[bridge type=handover task=abc] Helper: result with a false objective"
+      ),
+    ].join("\n")
+  );
+  try {
+    expect(readHumanMessages("codex", thread, root)).toEqual([
+      "Task: Loop-57 — EXECUTION: analyser to census",
+      "fix the test",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("summarizeClaude sums usage across assistant turns and tracks context", () => {
   const text = [

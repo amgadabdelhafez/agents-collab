@@ -3,7 +3,9 @@
 ## Automated
 
 - Harness unit attempt 002: `bun run test:ci` passed with 1,099 tests and zero
-  failures. Artifact: `artifacts/unit/verify.log`.
+  failures. Artifact: `artifacts/unit/verify.log`. After the live summary
+  canary exposed bridge-envelope pollution, two regressions were added and the
+  full suite passed again with 1,101 tests and zero failures.
 - Focused changed-area suite: 547 tests passed.
 - Post-refactor Pi/Governess/Recon/Tmux suite: 140 tests passed.
 - Independent tier-capacity regression file: 45 tests passed.
@@ -22,7 +24,7 @@ Local Qwen returned `pass` with no findings. See `independent-review.md`.
 ## Live Loop 57
 
 - Installed binary SHA-256:
-  `9933f48ccd605eda6a3d25407b92a2c4fe27933f676211c333978a07ccc2db2e`.
+  `ecc0e1f4743769eaf682ea96b42b30b48b4edc4108f2819cf29d6f663feb1c9b`.
 - Claude `%0` remained PID `70452`; Codex `%1` remained PID `70454`.
 - Hot-swapped Governess `%2`, Nanny `%4`, and Au Pair `%3` only.
 - Added Recon `%6`, `%7`, `%8` as the full-width bottom row.
@@ -34,5 +36,5 @@ Local Qwen returned `pass` with no findings. See `independent-review.md`.
 - Routing advanced from 11/87 to 12/88; bridge pending remained zero.
 - No route event collision occurred after the hot-swap. The last historical
   collision was at `2026-07-28T00:36:05.545Z`.
-- Governess summary contains a real Loop 57 objective and no composer
-  placeholder.
+- Governess summary Objective is exactly the launch mission after a real helper
+  delivery; bridge envelopes and composer placeholders are excluded.

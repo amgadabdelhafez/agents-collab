@@ -59,6 +59,16 @@ test("summary objective prefers the current loop heading over a terse follow-up"
   ).toBe("Loop-57 — EXECUTION: increase helper throughput");
 });
 
+test("summary objective ignores a newer bridge helper result", () => {
+  expect(
+    authoritativeSummaryObjective([
+      "Task: Loop-57 — EXECUTION: increase helper throughput",
+      "fix it",
+      "[bridge type=handover task=abc] Helper: result ## Notes on other matches",
+    ])
+  ).toBe("Loop-57 — EXECUTION: increase helper throughput");
+});
+
 const IDLE_MS = 60_000;
 const START_MS = 1_000_000;
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
