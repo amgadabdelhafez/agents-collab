@@ -767,6 +767,15 @@ test.each([
       "future-profile" as UtilityRouteRequest["executionProfile"],
     kind: "command",
   }),
+  {
+    ...makeRequest({
+      executionProfile: "read-plan",
+      kind: "inspect",
+      readScope: ["src/parser.ts"],
+      writeScope: [],
+    }),
+    executionPlan: [null] as unknown as UtilityRouteRequest["executionPlan"],
+  },
 ])("keeps malformed persisted execution metadata with the driver", (request) => {
   expect(routeUtilityRequest(request, context())).toEqual({
     reason: "request-not-bounded",

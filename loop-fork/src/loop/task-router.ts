@@ -401,13 +401,29 @@ const touchesProtectedPath = (
       ? [request.executionRead.path]
       : []),
     ...(Array.isArray(request.executionPlan)
-      ? request.executionPlan.flatMap((step) => [
-          ...(Array.isArray(step.readScope) ? step.readScope : []),
-          ...(typeof step.executionCwd === "string" ? [step.executionCwd] : []),
-          ...(typeof step.executionRead?.path === "string"
-            ? [step.executionRead.path]
-            : []),
-        ])
+      ? (request.executionPlan as unknown[]).flatMap((rawStep) => {
+          if (
+            !rawStep ||
+            typeof rawStep !== "object" ||
+            Array.isArray(rawStep)
+          ) {
+            return [];
+          }
+          const step = rawStep as Record<string, unknown>;
+          const executionRead = step.executionRead;
+          return [
+            ...(Array.isArray(step.readScope) ? step.readScope : []),
+            ...(typeof step.executionCwd === "string"
+              ? [step.executionCwd]
+              : []),
+            ...(executionRead &&
+            typeof executionRead === "object" &&
+            !Array.isArray(executionRead) &&
+            typeof (executionRead as Record<string, unknown>).path === "string"
+              ? [(executionRead as Record<string, unknown>).path]
+              : []),
+          ];
+        })
       : []),
   ]
     .filter((path): path is string => typeof path === "string")
