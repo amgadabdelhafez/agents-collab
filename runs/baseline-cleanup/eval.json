@@ -1,0 +1,116 @@
+{
+  "task_id": "baseline-cleanup",
+  "feature": "baseline-cleanup",
+  "timestamp": "2026-07-28T19:19:00Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "root_cause": {
+    "bridge": "The stale-tmux dispatch test called the user's real tmux server instead of a deterministic liveness probe.",
+    "governess_exit": "Handover tests inherited real capture-pane and replacement-session probes from defaultGovernessDeps.",
+    "style": "Historical evidence and legacy state-machine modules predated the repository-wide Ultracite gate."
+  },
+  "checks": {
+    "bridge_lifecycle": {
+      "status": "pass",
+      "command": "bun test tests/loop/bridge.test.ts",
+      "passed": 80,
+      "failed": 0,
+      "lingering_runner": false
+    },
+    "governess_exit_lifecycle": {
+      "status": "pass",
+      "command": "bun test tests/loop/governess-exit.test.ts",
+      "passed": 16,
+      "failed": 0,
+      "lingering_runner": false
+    },
+    "focused_regression": {
+      "status": "pass",
+      "passed": 582,
+      "failed": 0,
+      "assertions": 1838,
+      "files": 11
+    },
+    "full_suite": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "note": "The authoritative sorted, one-file-at-a-time suite exited zero without a timeout or dangling process."
+    },
+    "repository_style": {
+      "status": "pass",
+      "command": "bun run check",
+      "before": { "errors": 347, "warnings": 1 },
+      "after": { "errors": 0, "warnings": 0 },
+      "files_checked": 541
+    },
+    "typecheck": {
+      "status": "pass",
+      "command": "bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts",
+      "before_errors": 34,
+      "after_errors": 0
+    },
+    "historical_json_semantics": {
+      "status": "pass",
+      "files": 431,
+      "canonical_digest_before": "3f501ea177c615f6857711f204aab0ebaf9b21484258fa4614f170f7f098646b",
+      "canonical_digest_after": "3f501ea177c615f6857711f204aab0ebaf9b21484258fa4614f170f7f098646b"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "project_verify": {
+      "status": "pass",
+      "command": "scripts/verify.sh baseline-cleanup baseline-cleanup",
+      "note": "The real fail-closed verifier passed lint, typecheck, build, every sorted test file, and the empty baseline gate on commit 895e22f."
+    },
+    "baseline_gate": {
+      "status": "pass",
+      "command": "bun test tests/baseline-gate.test.ts",
+      "passed": 7,
+      "failed": 0,
+      "note": "Missing task identity, pending verdicts, non-empty lists, legacy baseline status labels, and count or boolean allowances all fail closed."
+    }
+  },
+  "lint_policy": {
+    "complexity_exceptions": [
+      "src/loop/governess-usage.ts",
+      "src/loop/governess.ts",
+      "src/loop/hooks/emit.ts",
+      "src/loop/tmux.ts",
+      "src/loop/utility-runtime.ts",
+      "src/loop/utility-workspace.ts"
+    ],
+    "note": "The complexity exception is limited to six named legacy protocol/state-machine modules; all other rules and all new modules remain gated. ANSI control-byte matching is excepted only in four named sanitizer/test files, and top-level-regex allocation is disabled only for one-shot test assertions."
+  },
+  "independent_reviews": [
+    {
+      "commit": "ac69b79",
+      "session": "019faa1c-b22c-7b42-a4ba-e8d237ea89fe",
+      "verdict": "pass",
+      "scope": "Behavior-preserving lint and complexity refactors"
+    },
+    {
+      "commit": "fbf6ab9",
+      "session": "019faa26-7404-7a00-b6ad-0468e1d86ece",
+      "verdict": "finding_resolved",
+      "scope": "Release verifier and TypeScript baseline",
+      "finding": "No-argument verification skipped the task eval gate; fixed by 895e22f."
+    },
+    {
+      "commit": "895e22f",
+      "session": "019faa29-c2a7-7350-9056-bf1c7c431e3d",
+      "verdict": "pass",
+      "scope": "Fail-closed task evidence and baseline allowance gate"
+    }
+  ],
+  "deployment": {
+    "active_loop_restarted": false,
+    "global_runtime_reinstalled": false,
+    "remote_push": false
+  }
+}
