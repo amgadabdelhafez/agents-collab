@@ -226,6 +226,33 @@ test("resolveTask primes paired planning sessions before agent turns", async () 
   );
 });
 
+test("paired plan and plan-review prompts receive Caveman guidance", async () => {
+  const { resolveTask, runAgentMock } = await loadResolveTask({
+    isFile: (path) => path === "PLAN.md",
+    readPrompt: async () => "generated plan task",
+    runAgent: async () => ({
+      combined: "",
+      exitCode: 0,
+      parsed: "",
+    }),
+  });
+
+  await resolveTask(
+    makeOptions("ship feature", {
+      cavemanMode: "full",
+      cavemanModeSource: "cli",
+      pairedMode: true,
+    })
+  );
+
+  expect(runAgentMock.mock.calls[0]?.[1]).toContain(
+    "CAVEMAN MODE ACTIVE — level: full"
+  );
+  expect(runAgentMock.mock.calls[1]?.[1]).toContain(
+    "CAVEMAN MODE ACTIVE — level: full"
+  );
+});
+
 test("resolveTask reviews PLAN.md with other model by default in plain-text flow", async () => {
   const { resolveTask, runAgentMock } = await loadResolveTask({
     isFile: (path) => path === "PLAN.md",

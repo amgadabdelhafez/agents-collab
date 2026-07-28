@@ -1,4 +1,5 @@
 import { defaultPeerAgent } from "./agents";
+import { cavemanAgentGuidance, DEFAULT_CAVEMAN_MODE } from "./caveman";
 import { preparePairedOptions } from "./paired-options";
 import { buildPlanPrompt, buildPlanReviewPrompt } from "./prompts";
 import { runAgent, runReviewerAgent } from "./runner";
@@ -49,13 +50,23 @@ const runPlanReviewer = (agent: Agent, prompt: string, opts: Options) => {
     : runReviewerAgent(agent, prompt, opts);
 };
 
+const withPairedCavemanGuidance = (prompt: string, opts: Options): string => {
+  if (!opts.pairedMode) {
+    return prompt;
+  }
+  const guidance = cavemanAgentGuidance(
+    opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE
+  );
+  return guidance ? `${prompt}\n\n${guidance}` : prompt;
+};
+
 const runPlanMode = async (opts: Options, task: string): Promise<void> => {
   if (opts.pairedMode) {
     preparePairedOptions(opts, process.cwd(), false);
   }
 
   console.log("\n[loop] prompt text detected. creating PLAN.md first.");
-  const planPrompt = buildPlanPrompt(task);
+  const planPrompt = withPairedCavemanGuidance(buildPlanPrompt(task), opts);
   const result = await runPlanAgent(opts.agent, planPrompt, opts);
 
   if (result.exitCode !== 0) {
@@ -78,7 +89,10 @@ const runPlanMode = async (opts: Options, task: string): Promise<void> => {
     return;
   }
   console.log(`\n[loop] reviewing PLAN.md with ${reviewer}.`);
-  const reviewPrompt = buildPlanReviewPrompt(task);
+  const reviewPrompt = withPairedCavemanGuidance(
+    buildPlanReviewPrompt(task),
+    opts
+  );
   const review = await runPlanReviewer(reviewer, reviewPrompt, opts);
   if (review.exitCode !== 0) {
     console.error(
