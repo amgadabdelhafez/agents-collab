@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   CLAUDE_HOOK_EVENTS,
   CODEX_HOOK_EVENTS,
@@ -10,8 +13,27 @@ import {
   buildCodexHooksJson,
   buildHookCommand,
 } from "../../src/loop/hooks/settings";
+import {
+  appendNativeFallbackRequest,
+  CLAUDE_NATIVE_FALLBACK_PROFILE,
+  createNativeFallbackRequest,
+  processPendingNativeFallbackRequests,
+  readNativeFallbackRequests,
+} from "../../src/loop/native-subagent";
+import { createUtilityRouteRequest } from "../../src/loop/task-router";
+import {
+  activateUtilityEpoch,
+  appendUtilityRouteRequest,
+  transitionUtilityJob,
+} from "../../src/loop/utility-store";
 
 const NOW = "2026-07-04T12:00:00.000Z";
+
+const stdinPayload = (payload: unknown): AsyncIterable<Uint8Array> =>
+  (async function* encodedPayload() {
+    await Promise.resolve();
+    yield new TextEncoder().encode(JSON.stringify(payload));
+  })();
 
 describe("normalizeHookPayload", () => {
   test("maps a Claude PostToolUse payload to a normalized event", () => {
@@ -666,6 +688,188 @@ describe("runHookEmit", () => {
       }),
     ]);
   });
+
+  test("consumes one lease, binds the read-only child, and blocks mutation", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "loop-native-hook-"));
+    const repo = join(runDir, "repo");
+    const hookFile = join(runDir, "hooks", "claude.jsonl");
+    try {
+      const utility = createUtilityRouteRequest({
+        acceptanceCriteria: ["return evidence"],
+        authority: {},
+        id: "utility-hook-evidence",
+        kind: "inspect",
+        objective: "Inspect one source file",
+        readScope: ["src/parser/index.ts"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      });
+      appendUtilityRouteRequest(runDir, utility);
+      transitionUtilityJob(runDir, utility.id, "routed-driver", {
+        decision: { reason: "request-not-bounded", target: "driver" },
+      });
+      activateUtilityEpoch(runDir, 41);
+      appendNativeFallbackRequest(
+        runDir,
+        createNativeFallbackRequest({
+          acceptanceCriteria: ["return exact parser evidence"],
+          evidenceTaskIds: [utility.id],
+          fallbackReason: "utility-ineligible",
+          id: "native-hook-request",
+          kind: "explore",
+          objective: "Trace the parser implementation",
+          readScope: ["src/parser"],
+          requester: "claude",
+        })
+      );
+      processPendingNativeFallbackRequests({
+        epoch: 41,
+        mode: "utility-first",
+        runDir,
+      });
+
+      const invoke = async (
+        payload: unknown
+      ): Promise<Record<string, unknown>> => {
+        let output = "";
+        await runHookEmit("claude", hookFile, {
+          env: { LOOP_NATIVE_SUBAGENT_MODE: "utility-first" },
+          readManifest: () => ({ cwd: repo }),
+          stdin: stdinPayload(payload),
+          writeStdout: (value) => {
+            output += value;
+          },
+        });
+        return output.trim()
+          ? (JSON.parse(output) as Record<string, unknown>)
+          : {};
+      };
+
+      const spawn = await invoke({
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: { subagent_type: CLAUDE_NATIVE_FALLBACK_PROFILE },
+        tool_name: "Agent",
+        tool_use_id: "spawn-1",
+      });
+      expect(spawn).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "allow" },
+      });
+
+      const start = await invoke({
+        agent_id: "child-hook-1",
+        agent_type: CLAUDE_NATIVE_FALLBACK_PROFILE,
+        cwd: repo,
+        hook_event_name: "SubagentStart",
+      });
+      expect(JSON.stringify(start)).toContain(
+        "Allowed read scopes: src/parser"
+      );
+
+      const read = await invoke({
+        agent_id: "child-hook-1",
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: { file_path: join(repo, "src/parser/index.ts") },
+        tool_name: "Read",
+      });
+      expect(read).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "allow" },
+      });
+
+      const write = await invoke({
+        agent_id: "child-hook-1",
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: { file_path: join(repo, "src/parser/index.ts") },
+        tool_name: "Write",
+      });
+      expect(write).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+
+      const shell = await invoke({
+        agent_id: "child-hook-1",
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: {
+          command: "sed -n '1,20p' src/parser/index.ts",
+        },
+        tool_name: "Bash",
+      });
+      expect(shell).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+
+      await invoke({
+        agent_id: "child-hook-1",
+        agent_type: CLAUDE_NATIVE_FALLBACK_PROFILE,
+        cwd: repo,
+        hook_event_name: "SubagentStop",
+      });
+      expect(readNativeFallbackRequests(runDir)[0]?.state).toBe("completed");
+    } finally {
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  });
+
+  test("strict mode blocks Codex native spawn without a lease", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "loop-native-hook-strict-"));
+    let output = "";
+    try {
+      await runHookEmit("codex", join(runDir, "hooks", "codex.jsonl"), {
+        env: { LOOP_NATIVE_SUBAGENT_MODE: "strict" },
+        stdin: stdinPayload({
+          cwd: join(runDir, "repo"),
+          hook_event_name: "PreToolUse",
+          tool_input: { agent_type: "loop_readonly_fallback" },
+          tool_name: "spawn_agent",
+        }),
+        writeStdout: (value) => {
+          output += value;
+        },
+      });
+      expect(JSON.parse(output)).toMatchObject({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringContaining("strict-mode"),
+        },
+      });
+    } finally {
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  });
+
+  test("native spawn still fails closed when hook telemetry cannot append", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "loop-native-hook-append-"));
+    let output = "";
+    try {
+      await runHookEmit("codex", join(runDir, "hooks", "codex.jsonl"), {
+        append: () => {
+          throw new Error("telemetry unavailable");
+        },
+        env: { LOOP_NATIVE_SUBAGENT_MODE: "strict" },
+        stdin: stdinPayload({
+          hook_event_name: "PreToolUse",
+          tool_input: { agent_type: "loop_readonly_fallback" },
+          tool_name: "spawn_agent",
+        }),
+        writeStdout: (value) => {
+          output += value;
+        },
+      });
+      expect(JSON.parse(output)).toMatchObject({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringContaining("strict-mode"),
+        },
+      });
+    } finally {
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  });
 });
 
 describe("hook settings generators", () => {
@@ -692,11 +896,18 @@ describe("hook settings generators", () => {
     });
   });
 
-  test("Codex hooks.json registers only coarse turn events", () => {
+  test("Codex hooks.json registers tool and subagent lifecycle events", () => {
     const hooks = buildCodexHooksJson(command);
     expect(Object.keys(hooks.hooks).sort()).toEqual(
       [...CODEX_HOOK_EVENTS].sort()
     );
-    expect(hooks.hooks.PostToolUse).toBeUndefined();
+    expect(hooks.hooks.PreToolUse?.[0]?.hooks[0]).toEqual({
+      command,
+      type: "command",
+    });
+    expect(hooks.hooks.SubagentStart?.[0]?.hooks[0]).toEqual({
+      command,
+      type: "command",
+    });
   });
 });

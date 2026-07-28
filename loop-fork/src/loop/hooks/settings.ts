@@ -40,6 +40,7 @@ const buildHookConfig = (
 export const buildClaudeHookSettings = (command: string): HookConfig =>
   buildHookConfig(CLAUDE_HOOK_EVENTS, command);
 
-// Codex reads this from `$CODEX_HOME/hooks.json`; only coarse turn events exist.
+// Codex reads this from `$CODEX_HOME/hooks.json`; current releases support the
+// same tool and native-subagent lifecycle guardrails used for Claude.
 export const buildCodexHooksJson = (command: string): HookConfig =>
   buildHookConfig(CODEX_HOOK_EVENTS, command);

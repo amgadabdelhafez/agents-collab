@@ -6,6 +6,14 @@ import {
   makeDelegationEvent,
 } from "./delegation-policy";
 import {
+  appendNativeFallbackRequest,
+  createNativeFallbackRequest,
+  type NativeFallbackKind,
+  type NativeFallbackReason,
+  type NativeFallbackSnapshot,
+  readNativeFallbackRequests,
+} from "./native-subagent";
+import {
   createUtilityRouteRequest,
   MAX_UTILITY_CONTEXT_REFS,
   type UtilityAuthorityFlags,
@@ -36,6 +44,8 @@ export const UTILITY_BRIDGE_TOOL_NAMES = [
   "task_status",
   "get_task_result",
   "apply_task_patch",
+  "request_native_fallback",
+  "native_fallback_status",
 ] as const;
 export type UtilityBridgeToolName = (typeof UTILITY_BRIDGE_TOOL_NAMES)[number];
 
@@ -278,6 +288,80 @@ export const UTILITY_BRIDGE_TOOLS = [
       type: "object",
     },
     name: "apply_task_patch",
+  },
+  {
+    annotations: ROUTE_TASK_ANNOTATIONS,
+    description:
+      "Request the one governed provider-native fallback only after Direct, Nanny, or Au Pair has produced a settled route or terminal result that cannot finish the bounded read-only exploration/review. Supply those task IDs as evidence. Governess grants at most one short-lived run-wide lease; the next native Agent/spawn_agent call must use the loop-readonly-fallback profile. Main agents cannot self-assert a human exception.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        acceptance_criteria: {
+          items: { minLength: 1, type: "string" },
+          maxItems: 4,
+          minItems: 1,
+          type: "array",
+        },
+        evidence_task_ids: {
+          description:
+            "One through three settled route_task IDs owned by this requester. A supervisor-authorized human exception may omit them.",
+          items: { minLength: 1, type: "string" },
+          maxItems: 3,
+          type: "array",
+        },
+        fallback_reason: {
+          enum: [
+            "utility-ineligible",
+            "utility-failed",
+            "utility-context-insufficient",
+            "independent-review",
+            "human-authorized",
+          ],
+          type: "string",
+        },
+        human_authorized: {
+          description:
+            "Supervisor-only assertion that the human explicitly requested a native fallback.",
+          type: "boolean",
+        },
+        kind: { enum: ["explore", "review"], type: "string" },
+        objective: { minLength: 1, type: "string" },
+        read_scope: {
+          description:
+            "One through eight exact repo-relative, non-protected paths available to the read-only fallback.",
+          items: { minLength: 1, type: "string" },
+          maxItems: 8,
+          minItems: 1,
+          type: "array",
+        },
+        requester: {
+          description: "Required only for supervisor submissions.",
+          enum: ["claude", "codex"],
+          type: "string",
+        },
+      },
+      required: [
+        "objective",
+        "kind",
+        "fallback_reason",
+        "read_scope",
+        "acceptance_criteria",
+      ],
+      type: "object",
+    },
+    name: "request_native_fallback",
+  },
+  {
+    annotations: READ_ONLY_ANNOTATIONS,
+    description:
+      "Read a governed native fallback request, lease, and lifecycle state. Spawn only after this returns granted.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: { request_id: { minLength: 1, type: "string" } },
+      required: ["request_id"],
+      type: "object",
+    },
+    name: "native_fallback_status",
   },
 ] as const;
 
@@ -719,6 +803,123 @@ const authorityFlags = (value: unknown): UtilityAuthorityFlags => {
 const taskId = (args: Record<string, unknown>): string =>
   requiredString(args, "task_id");
 
+const nativeFallbackKind = (value: unknown): NativeFallbackKind => {
+  if (value === "explore" || value === "review") {
+    return value;
+  }
+  throw new UtilityBridgeInputError("kind must be explore or review");
+};
+
+const nativeFallbackReason = (value: unknown): NativeFallbackReason => {
+  if (
+    value === "utility-ineligible" ||
+    value === "utility-failed" ||
+    value === "utility-context-insufficient" ||
+    value === "independent-review" ||
+    value === "human-authorized"
+  ) {
+    return value;
+  }
+  throw new UtilityBridgeInputError("fallback_reason is invalid");
+};
+
+const requestNativeFallback = (
+  runDir: string,
+  source: UtilityBridgeSource,
+  args: Record<string, unknown>
+): { requestId: string; state: string } => {
+  const delegatedRequester = args.requester;
+  const requester =
+    source === "supervisor" &&
+    (delegatedRequester === "claude" || delegatedRequester === "codex")
+      ? delegatedRequester
+      : source;
+  if (requester === "supervisor") {
+    throw new UtilityBridgeInputError(
+      "supervisor request_native_fallback requires requester=claude|codex"
+    );
+  }
+  if (requester !== "claude" && requester !== "codex") {
+    throw new UtilityBridgeInputError(
+      "native fallback is available only to Claude or Codex"
+    );
+  }
+  if (
+    source !== "supervisor" &&
+    delegatedRequester !== undefined &&
+    delegatedRequester !== source
+  ) {
+    throw new UtilityBridgeInputError(
+      "main agents cannot override the native fallback requester"
+    );
+  }
+  const humanAuthorized = args.human_authorized === true;
+  if (humanAuthorized && source !== "supervisor") {
+    throw new UtilityBridgeInputError(
+      "only the supervisor can assert a human-authorized native fallback"
+    );
+  }
+  try {
+    const request = createNativeFallbackRequest({
+      acceptanceCriteria: stringArray(args, "acceptance_criteria"),
+      evidenceTaskIds: stringArray(args, "evidence_task_ids"),
+      fallbackReason: nativeFallbackReason(args.fallback_reason),
+      humanAuthorized,
+      kind: nativeFallbackKind(args.kind),
+      objective: requiredString(args, "objective"),
+      readScope: stringArray(args, "read_scope"),
+      requester,
+    });
+    const snapshot = appendNativeFallbackRequest(runDir, request);
+    return { requestId: request.id, state: snapshot.state };
+  } catch (error) {
+    throw new UtilityBridgeInputError(
+      error instanceof Error
+        ? error.message
+        : "native fallback request failed closed"
+    );
+  }
+};
+
+const nativeFallbackStatus = (
+  runDir: string,
+  source: UtilityBridgeSource,
+  args: Record<string, unknown>
+): unknown => {
+  const requestId = requiredString(args, "request_id");
+  let snapshot: NativeFallbackSnapshot | undefined;
+  try {
+    snapshot = readNativeFallbackRequests(runDir).find(
+      (candidate) => candidate.request.id === requestId
+    );
+  } catch (error) {
+    throw new UtilityBridgeInputError(
+      error instanceof Error
+        ? error.message
+        : "native fallback journal failed closed"
+    );
+  }
+  if (!snapshot) {
+    throw new UtilityBridgeInputError("unknown native fallback request_id");
+  }
+  if (source !== "supervisor" && snapshot.request.requester !== source) {
+    throw new UtilityBridgeInputError(
+      "native fallback status is restricted to its requester"
+    );
+  }
+  return {
+    agentId: snapshot.agentId,
+    agentType: snapshot.agentType,
+    epoch: snapshot.epoch,
+    expiresAt: snapshot.expiresAt,
+    reason: snapshot.reason,
+    requestId,
+    runtimeExpiresAt: snapshot.runtimeExpiresAt,
+    state: snapshot.state,
+    updatedAt: snapshot.updatedAt,
+  };
+};
+
 const routeTask = (
   runDir: string,
   source: UtilityBridgeSource,
@@ -829,6 +1030,12 @@ export const callUtilityBridgeTool = async (
 ): Promise<unknown> => {
   if (name === "route_task") {
     return routeTask(runDir, source, args);
+  }
+  if (name === "request_native_fallback") {
+    return requestNativeFallback(runDir, source, args);
+  }
+  if (name === "native_fallback_status") {
+    return nativeFallbackStatus(runDir, source, args);
   }
   if (name === "apply_task_patch") {
     if (source === "supervisor") {

@@ -2,11 +2,13 @@
 
 - Default mode is `utility-first`; unknown mode is `strict`; `off` is explicit.
 - Codex config has one native thread in utility-first and disables agents in
-  strict. Its fallback profile is read-only and disables descendants.
+  strict. Its fallback profile is read-only and disables shell/unified
+  execution, web search, the loop bridge MCP server, remote plugins, and
+  descendants.
 - Claude utility-first launch defines only the bounded read-only fallback
   profile; strict launch disallows `Agent` and legacy `Task`.
 - A main-agent fallback request needs exact safe scopes and one through three
-  terminal utility jobs owned by that requester. Supervisor human exceptions
+  settled utility jobs owned by that requester. Supervisor human exceptions
   are explicit and cannot be self-asserted by a main agent.
 - Governess grants one current-epoch lease, denies a competing request, and
   expires an unused or orphaned lease.

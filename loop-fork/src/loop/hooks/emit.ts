@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   appendDelegationEvent,
   classifyDelegationIntent,
@@ -10,6 +10,17 @@ import {
   makeDelegationEvent,
   resolveUtilityDelegationMode,
 } from "../delegation-policy";
+import {
+  bindNativeFallbackStart,
+  completeNativeFallback,
+  consumeNativeFallbackLease,
+  type NativeFallbackSnapshot,
+  nativeFallbackForChild,
+  nativeFallbackProfile,
+  nativeFallbackScopeAllows,
+  recordNativeFallbackDenial,
+  resolveNativeSubagentMode,
+} from "../native-subagent";
 import { readRunManifest } from "../run-state";
 import {
   createUtilityRouteRequest,
@@ -25,21 +36,27 @@ import { resolveVerifiedUtilityWorkspaceRoot } from "../utility-workspace";
 
 export const HOOK_EMIT_SUBCOMMAND = "__hook-emit";
 
-// Claude and Codex hook payloads share the same shape (hook_event_name + tool
-// fields). Codex exposes only coarse turn-level events; Claude adds per-tool
-// events. We register the events each agent actually supports.
+// Claude and current Codex hook payloads share the same hook_event_name + tool
+// field convention. Register tool and native-subagent lifecycle events for
+// both providers so the same Governess adapters can observe them.
 export const CLAUDE_HOOK_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
   "PreToolUse",
   "PostToolUse",
   "Notification",
+  "SubagentStart",
+  "SubagentStop",
   "Stop",
 ] as const;
 
 export const CODEX_HOOK_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
+  "PreToolUse",
+  "PostToolUse",
+  "SubagentStart",
+  "SubagentStop",
   "Stop",
 ] as const;
 
@@ -208,6 +225,244 @@ const preToolDelegationOutput = (taskId: string): string =>
     },
   });
 
+const preToolDecisionOutput = (
+  decision: "allow" | "deny",
+  reason: string,
+  additionalContext?: string
+): string =>
+  JSON.stringify({
+    hookSpecificOutput: {
+      ...(additionalContext ? { additionalContext } : {}),
+      hookEventName: "PreToolUse",
+      permissionDecision: decision,
+      permissionDecisionReason: reason,
+    },
+  });
+
+const subagentStartOutput = (additionalContext: string): string =>
+  JSON.stringify({
+    hookSpecificOutput: {
+      additionalContext,
+      hookEventName: "SubagentStart",
+    },
+  });
+
+const hookEventName = (raw: Record<string, unknown>): string | undefined =>
+  firstString(raw, ["hook_event_name", "hookEventName", "event", "type"]);
+
+const hookAgentId = (raw: Record<string, unknown>): string | undefined =>
+  firstString(raw, ["agent_id", "agentId"]);
+
+const hookAgentType = (
+  raw: Record<string, unknown>,
+  input: Record<string, unknown> = asRecord(raw.tool_input ?? raw.toolInput)
+): string | undefined =>
+  firstString(raw, ["agent_type", "agentType"]) ??
+  firstString(input, [
+    "subagent_type",
+    "subagentType",
+    "agent_type",
+    "agentType",
+    "profile",
+    "role",
+  ]);
+
+const isNativeSpawnTool = (toolName: string): boolean =>
+  toolName === "Agent" ||
+  toolName === "Task" ||
+  toolName === "spawn_agent" ||
+  toolName.endsWith("__spawn_agent");
+
+const nativeChildContext = (snapshot: NativeFallbackSnapshot): string =>
+  [
+    `You are the single Governess-leased read-only native fallback for ${snapshot.request.requester}.`,
+    `Objective: ${snapshot.request.objective}`,
+    `Allowed read scopes: ${snapshot.request.readScope.join(", ")}`,
+    `Acceptance: ${snapshot.request.acceptanceCriteria.join("; ")}`,
+    "Use only bounded inspection tools inside those scopes. Do not write, edit, run mutating commands, use MCP or web tools, ask the human, create descendants, or make product/architecture/release decisions. Return concise evidence to the parent and stop.",
+  ].join("\n");
+
+const nativeToolPath = (
+  toolInput: Record<string, unknown>
+): string | undefined =>
+  firstString(toolInput, [
+    "file_path",
+    "filePath",
+    "path",
+    "directory",
+    "root",
+  ]);
+
+const repoRelativeHookPath = (
+  repoRoot: string,
+  cwd: string,
+  candidate: string
+): string | undefined => {
+  const absolute = isAbsolute(candidate)
+    ? resolve(candidate)
+    : resolve(cwd, candidate);
+  const rel = relative(resolve(repoRoot), absolute).replaceAll("\\", "/");
+  return rel && !rel.startsWith("../") && rel !== ".." ? rel : undefined;
+};
+
+const nativeChildInspectionAllowed = (
+  snapshot: NativeFallbackSnapshot,
+  raw: Record<string, unknown>,
+  manifestRoot: string,
+  toolName: string
+): boolean => {
+  const toolInput = asRecord(raw.tool_input ?? raw.toolInput);
+  const cwd =
+    firstString(raw, ["cwd", "working_directory", "workingDirectory"]) ??
+    manifestRoot;
+  if (toolName === "Read" || toolName === "Grep" || toolName === "Glob") {
+    const path = nativeToolPath(toolInput);
+    const relativePath = path
+      ? repoRelativeHookPath(manifestRoot, cwd, path)
+      : undefined;
+    return Boolean(
+      relativePath && nativeFallbackScopeAllows(snapshot, relativePath)
+    );
+  }
+  return false;
+};
+
+const handleNativeSubagentHook = (
+  agent: Agent,
+  hookFile: string,
+  payload: unknown,
+  deps: HookEmitDeps
+): string | undefined => {
+  const raw = asRecord(payload);
+  const event = hookEventName(raw);
+  if (
+    !(
+      event === "PreToolUse" ||
+      event === "SubagentStart" ||
+      event === "SubagentStop"
+    )
+  ) {
+    return undefined;
+  }
+  const runDir = dirname(dirname(hookFile));
+  const mode = resolveNativeSubagentMode(
+    (deps.env ?? process.env).LOOP_NATIVE_SUBAGENT_MODE
+  );
+  const agentId = hookAgentId(raw);
+  const agentType = hookAgentType(raw);
+  if (event === "SubagentStart") {
+    if (!agentId) {
+      return subagentStartOutput(
+        "Governess could not bind this native child because the provider omitted its agent id. Do not call tools; return immediately."
+      );
+    }
+    try {
+      const decision = bindNativeFallbackStart({
+        agentId,
+        agentType,
+        provider: agent,
+        runDir,
+      });
+      return subagentStartOutput(
+        decision.allowed && decision.lease
+          ? nativeChildContext(decision.lease)
+          : `Governess denied this unleased native child (${decision.reason}). Do not call tools; return immediately.`
+      );
+    } catch {
+      return subagentStartOutput(
+        "Governess native lease state is unavailable. Fail closed: do not call tools; return immediately."
+      );
+    }
+  }
+  if (event === "SubagentStop") {
+    if (agentId) {
+      try {
+        completeNativeFallback({ agentId, provider: agent, runDir });
+      } catch {
+        // Stop telemetry is best-effort; expiry still releases the slot.
+      }
+    }
+    return undefined;
+  }
+  const toolName = firstString(raw, ["tool_name", "toolName", "tool"]);
+  const toolUseId = firstString(raw, ["tool_use_id", "toolUseId"]);
+  if (!toolName) {
+    return undefined;
+  }
+  if (agentId) {
+    try {
+      const snapshot = nativeFallbackForChild(runDir, agent, agentId);
+      const manifest = (deps.readManifest ?? readRunManifest)(
+        join(runDir, "manifest.json")
+      );
+      if (
+        snapshot &&
+        manifest?.cwd &&
+        nativeChildInspectionAllowed(snapshot, raw, manifest.cwd, toolName)
+      ) {
+        return preToolDecisionOutput(
+          "allow",
+          "Governess read-only native fallback scope permits this inspection."
+        );
+      }
+      const reason = snapshot
+        ? `native-child-tool-denied:${toolName}`
+        : "unleased-native-child-tool-denied";
+      recordNativeFallbackDenial(runDir, {
+        agentId,
+        agentType,
+        provider: agent,
+        reason,
+        requestId: snapshot?.request.id,
+        toolName,
+        toolUseId,
+        type: "child-tool-denied",
+      });
+      return preToolDecisionOutput(
+        "deny",
+        `${reason}. Native fallback children are read-only, scope-bound, and cannot use shell mutations, MCP, web, human-input, or descendant-agent tools.`
+      );
+    } catch {
+      return preToolDecisionOutput(
+        "deny",
+        "Governess native child policy is unavailable; the tool failed closed."
+      );
+    }
+  }
+  if (!isNativeSpawnTool(toolName)) {
+    return undefined;
+  }
+  try {
+    const decision = consumeNativeFallbackLease({
+      agentType,
+      mode,
+      provider: agent,
+      runDir,
+      toolName,
+      toolUseId,
+    });
+    if (!decision.allowed) {
+      return preToolDecisionOutput(
+        "deny",
+        `${decision.reason}. Use Direct, Nanny, or Au Pair first; then request_native_fallback, wait for a Governess grant, and spawn only ${nativeFallbackProfile(agent) ?? "the loop read-only profile"}.`
+      );
+    }
+    if (!decision.lease) {
+      return undefined;
+    }
+    return preToolDecisionOutput(
+      "allow",
+      "Governess consumed the one native fallback lease.",
+      nativeChildContext(decision.lease)
+    );
+  } catch {
+    return preToolDecisionOutput(
+      "deny",
+      "Governess native lease state is unavailable; native spawning failed closed."
+    );
+  }
+};
+
 const rootDelegationRequest = (
   request: UtilityRouteRequestInput,
   workspaceRoot: string,
@@ -276,9 +531,6 @@ const handlePreToolDelegation = (
   at: string,
   deps: HookEmitDeps
 ): string | undefined => {
-  if (agent !== "claude") {
-    return undefined;
-  }
   const raw = asRecord(payload);
   if (
     firstString(raw, ["hook_event_name", "hookEventName", "event", "type"]) !==
@@ -333,7 +585,7 @@ const handlePreToolDelegation = (
           fingerprint: candidateFingerprint,
           operation: "tool-use",
           reason: "workspace-unverified",
-          source: "claude-hook",
+          source: agent === "claude" ? "claude-hook" : "codex-hook",
         },
         at
       )
@@ -358,7 +610,7 @@ const handlePreToolDelegation = (
           fingerprint: classification.fingerprint,
           operation: "tool-use",
           reason: classification.reason,
-          source: "claude-hook",
+          source: agent === "claude" ? "claude-hook" : "codex-hook",
         },
         at
       )
@@ -383,7 +635,7 @@ const handlePreToolDelegation = (
             mode === "observe"
               ? "delegation-mode-observe"
               : `utility-unavailable:${config.availability.code}`,
-          source: "claude-hook",
+          source: agent === "claude" ? "claude-hook" : "codex-hook",
         },
         at
       )
@@ -413,7 +665,7 @@ const handlePreToolDelegation = (
           fingerprint: classification.fingerprint,
           operation: classification.operation,
           reason: classification.reason,
-          source: "claude-hook",
+          source: agent === "claude" ? "claude-hook" : "codex-hook",
           taskId: job.jobId,
         },
         at
@@ -430,7 +682,7 @@ const handlePreToolDelegation = (
           fingerprint: classification.fingerprint,
           operation: classification.operation,
           reason: "automatic-route-failed-open",
-          source: "claude-hook",
+          source: agent === "claude" ? "claude-hook" : "codex-hook",
         },
         at
       )
@@ -440,8 +692,9 @@ const handlePreToolDelegation = (
 };
 
 // Runs as `loop __hook-emit <agent> <hookFile>`. Reads one hook payload on
-// stdin, appends a normalized JSONL line, and NEVER fails the calling agent:
-// any error is swallowed so a hook problem cannot block Claude/Codex.
+// stdin and appends a normalized JSONL line. Ordinary telemetry remains
+// best-effort; native spawn/child policy is evaluated before that telemetry so
+// a hook-journal write failure cannot bypass the lease gate.
 export const runHookEmit = async (
   agent: Agent,
   hookFile: string,
@@ -464,13 +717,45 @@ export const runHookEmit = async (
       payload = { hook_event_name: "raw", detail: text.trim().slice(0, 200) };
     }
     const at = now();
-    const event = {
-      ...normalizeHookPayload(agent, payload, at),
-      eventId: randomUUID(),
-      sequence: nextHookSequence(hookFile),
-      source: "agent-hook" as const,
-    };
-    append(hookFile, `${JSON.stringify(event)}\n`);
+    let nativeDecision: string | undefined;
+    try {
+      nativeDecision = handleNativeSubagentHook(agent, hookFile, payload, deps);
+    } catch {
+      const raw = asRecord(payload);
+      const hookEvent = hookEventName(raw);
+      const toolName = firstString(raw, ["tool_name", "toolName", "tool"]);
+      if (
+        hookEvent === "PreToolUse" &&
+        (Boolean(hookAgentId(raw)) ||
+          Boolean(toolName && isNativeSpawnTool(toolName)))
+      ) {
+        nativeDecision = preToolDecisionOutput(
+          "deny",
+          "Governess native policy failed closed after an internal hook error."
+        );
+      } else if (hookEvent === "SubagentStart") {
+        nativeDecision = subagentStartOutput(
+          "Governess native policy failed closed after an internal hook error. Do not call tools; return immediately."
+        );
+      }
+    }
+    try {
+      const event = {
+        ...normalizeHookPayload(agent, payload, at),
+        eventId: randomUUID(),
+        sequence: nextHookSequence(hookFile),
+        source: "agent-hook" as const,
+      };
+      append(hookFile, `${JSON.stringify(event)}\n`);
+    } catch {
+      // The native decision above remains authoritative if telemetry is down.
+    }
+    if (nativeDecision) {
+      (deps.writeStdout ?? ((value) => process.stdout.write(value)))(
+        `${nativeDecision}\n`
+      );
+      return;
+    }
     const decision = handlePreToolDelegation(
       agent,
       hookFile,

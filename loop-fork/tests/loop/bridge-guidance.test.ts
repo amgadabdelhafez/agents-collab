@@ -43,6 +43,22 @@ test("delegation guidance states the exact context and decomposition contract", 
   expect(guidance).toContain("Reserve an active edit packet's write_scope");
   expect(guidance).toContain("full-agent-only guarded apply tool");
   expect(guidance).toContain("Do not split a cohesive small edit");
+  expect(guidance).toContain('call "request_native_fallback"');
+  expect(guidance).toContain('poll "native_fallback_status"');
+  expect(guidance).toContain("Never spawn another profile or a descendant");
+});
+
+test("native fallback tools describe the governed evidence and status contract", () => {
+  const request = UTILITY_BRIDGE_TOOLS.find(
+    (tool) => tool.name === "request_native_fallback"
+  );
+  const status = UTILITY_BRIDGE_TOOLS.find(
+    (tool) => tool.name === "native_fallback_status"
+  );
+  expect(JSON.stringify(request)).toContain("settled route_task IDs");
+  expect(JSON.stringify(request)).toContain("one short-lived run-wide lease");
+  expect(JSON.stringify(request)).toContain("human_authorized");
+  expect(status?.annotations.readOnlyHint).toBe(true);
 });
 
 test("route_task describes the deterministic small-edit contract", () => {

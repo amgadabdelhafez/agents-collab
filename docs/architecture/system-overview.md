@@ -19,6 +19,10 @@ loop CLI / tmux launcher
                                       ├─ Nanny ──Pi──► local Qwen + broker
                                       └─ Au Pair ─Pi──► OpenRouter GLM + broker
 
+provider-native Agent/spawn_agent ──PreToolUse──► Governess native lease
+                                                  ├─ strict: denied
+                                                  └─ one read-only fallback
+
 Separate read-only Nanny and Au Pair panes observe their filtered job streams.
 An external bridge supervisor can submit/observe messages, but is not a route
 or claim authority.
@@ -39,6 +43,7 @@ or claim authority.
 | Au Pair | Larger bounded reasoning and patch proposals on GLM through Pi | Main-agent judgment, automatic patch application, or fallback to Nanny |
 | Tool broker | Scope, path, command, environment, time/output policy | Choosing tasks or applying proposed patches |
 | Pi runtime | Ephemeral provider/model sessions, tool lifecycle, usage/cost, redacted lifecycle trace | Routing, repository permission, persistent chat, or provider fallback |
+| Native fallback | One leased read-only provider child for bounded exploration or independent review after settled utility evidence | Worker pool, edits, shell mutation, MCP/web access, descendants, authority, or final review |
 
 ## Architecture invariants
 
@@ -62,6 +67,10 @@ or claim authority.
 - Missing evidence, stale epochs, malformed journals, protected paths, and
   unknown risk fail closed.
 - Utility edits are patch proposals in P0. They are not applied automatically.
+- Provider-native delegation is utility-first. The current Governess epoch may
+  lease one run-wide read-only fallback for 120 seconds after settled utility
+  evidence; strict mode disables native agents. Hooks atomically consume the
+  lease, bind the child lifecycle, scope reads, and deny mutation or descendants.
 - Credentials stay in the provider process environment and are removed from
   tool child environments and traces.
 - Pane and external-supervisor availability never determine job availability.
@@ -70,9 +79,9 @@ or claim authority.
 
 1. **Delegation:** a main agent calls `route_task`, or Claude's hook recognizes
    an exact low-risk mechanical intent and appends the same bounded request
-   before denying the direct call. Codex's current per-turn-only hook surface is
-   prompt-enforced and its app-server commands are measured for missed eligible
-   calls. All adoption events are compactly journaled.
+   before denying the direct call. Current Codex and Claude per-tool hooks apply
+   the same route adoption and native-fallback gate. All adoption and native
+   lease events are compactly journaled.
 2. **Routing:** Governess reads pending requests, applies deterministic policy,
    records Direct, Nanny, or Au Pair as the one owner, and starts a detached
    process only for eligible work. Peer/driver/escalation routes return through
@@ -87,6 +96,10 @@ or claim authority.
    bridge.
 5. **Recovery:** a new Governess epoch fences orphaned claims; time-limited jobs
    fail closed and return an escalation rather than being silently replayed.
+6. **Native fallback:** after a settled helper result or route, a main agent may
+   request bounded read-only exploration/review. Governess grants one current-
+   epoch lease; the next exact fallback-profile spawn consumes it, lifecycle
+   hooks bind/close it, and every other fleet or child mutation attempt is denied.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.

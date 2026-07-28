@@ -344,7 +344,7 @@ test("startAppServer normalizes codex bridge config args before spawning", async
     configValues: buildCodexBridgeConfigArgs("/tmp/loop-run", "codex"),
   });
 
-  expect(lastSpawnCommand.filter((value) => value === "-c")).toHaveLength(9);
+  expect(lastSpawnCommand.filter((value) => value === "-c")).toHaveLength(11);
   expect(lastSpawnCommand).toContain("app-server");
   expect(lastSpawnCommand).not.toContain("-c,-c");
   const bridgeArgs = lastSpawnCommand.slice(
@@ -366,6 +366,10 @@ test("startAppServer normalizes codex bridge config args before spawning", async
     'mcp_servers.loop-bridge.tools.get_task_result.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.apply_task_patch.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.request_native_fallback.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.native_fallback_status.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.bridge_status.approval_mode="approve"',
     "-c",

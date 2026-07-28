@@ -11,6 +11,8 @@ const CODEX_AUTO_APPROVED_BRIDGE_TOOLS = [
   "task_status",
   "get_task_result",
   "apply_task_patch",
+  "request_native_fallback",
+  "native_fallback_status",
   "bridge_status",
   "receive_messages",
 ] as const;

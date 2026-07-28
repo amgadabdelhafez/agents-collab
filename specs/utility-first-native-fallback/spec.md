@@ -34,13 +34,14 @@ subagents outside this policy.
 3. A main agent requests a native fallback through the loop bridge. The packet
    names one objective, `explore` or `review`, one through eight repo-relative
    non-protected read scopes, acceptance criteria, a reason, and one through
-   three terminal utility task IDs owned by that requester.
+   three settled utility task IDs owned by that requester. A settled task has
+   either a terminal result or a deterministic non-utility route decision.
 4. Only the supervisor may omit utility task evidence for an explicitly
    human-authorized fallback. Main agents cannot self-assert that exception or
    override the requester identity.
 5. The bridge durably records a pending request. The current Governess epoch
    deterministically grants or denies it on a later tick. It grants only when
-   the evidence still exists, the request remains safe, and no granted,
+   the settled evidence still exists, the request remains safe, and no granted,
    consumed, or running fallback occupies the single run-wide slot.
 6. A grant expires after 120 seconds if unused. The next matching provider
    native spawn by the requester atomically consumes it. A missing, stale,
@@ -50,9 +51,10 @@ subagents outside this policy.
    That profile exposes `Read`, `Grep`, and `Glob` only, runs in the foreground,
    has a bounded turn count, and cannot invoke MCP tools or descendants.
 8. Codex may spawn only the loop-scoped `loop_readonly_fallback` profile. Its
-   configuration is read-only and disables descendant agents. Provider hooks
-   additionally deny mutation, shell, MCP, web, user-input, and nested-agent
-   tools whenever a tool event is identified as coming from a native child.
+   configuration is read-only, disables shell/unified execution, web search,
+   the loop bridge MCP server, remote plugins, and descendant agents. Provider
+   hooks additionally deny unsafe tools whenever a tool event is identified as
+   coming from a native child.
 9. `SubagentStart` binds the consumed lease to the provider child and injects
    the exact read scopes and acceptance contract. `SubagentStop` closes the
    lease. Orphaned consumed/running leases time out fail closed.

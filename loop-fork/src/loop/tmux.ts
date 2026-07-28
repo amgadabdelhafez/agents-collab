@@ -43,12 +43,14 @@ import {
 } from "./hooks/settings";
 import { buildLaunchArgv } from "./launch";
 import { withLegacyGovernessEnv } from "./legacy-governess-compat";
+import {
+  CLAUDE_NATIVE_FALLBACK_PROFILE,
+  type NativeSubagentMode,
+  resolveNativeSubagentMode,
+} from "./native-subagent";
 import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
-import {
-  SESSION_STATE_GUIDANCE,
-  SPAWN_TEAM_WITH_WORKTREE_ISOLATION,
-} from "./prompts";
+import { SESSION_STATE_GUIDANCE } from "./prompts";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
 import {
   type RunManifest,
@@ -327,7 +329,9 @@ const buildPrimaryPrompt = (
   if (cavemanGuidance) {
     parts.push(cavemanGuidance);
   }
-  parts.push(SPAWN_TEAM_WITH_WORKTREE_ISOLATION);
+  parts.push(
+    "Do not proactively create provider-native subagents or a native agent fleet. Use Direct, Nanny, and Au Pair first; a provider-native fallback is allowed only through the Governess lease described below."
+  );
   parts.push(pairedBridgeGuidance(opts.agent, peerAgentName, serverName));
   parts.push(pairedWorkflowGuidance(opts, opts.agent));
   parts.push(
@@ -387,7 +391,7 @@ const buildInteractivePrimaryPrompt = (
     parts.push(cavemanGuidance);
   }
   parts.push(
-    `${SPAWN_TEAM_WITH_WORKTREE_ISOLATION} Apply that once the human gives you a concrete task.`
+    "Once the human gives you a concrete task, do not proactively create provider-native subagents or a native agent fleet. Use Direct, Nanny, and Au Pair first; a provider-native fallback is allowed only through the Governess lease described below."
   );
   parts.push(pairedBridgeGuidance(opts.agent, peerAgentName, serverName));
   parts.push(pairedWorkflowGuidance(opts, opts.agent));
@@ -485,6 +489,45 @@ const resolveTmuxModel = (agent: Agent, opts: Options): string => {
     : (opts.cursorReviewerModel ?? opts.cursorModel);
 };
 
+export const claudeNativeFallbackDefinition = (): Record<
+  string,
+  Record<string, unknown>
+> => ({
+  [CLAUDE_NATIVE_FALLBACK_PROFILE]: {
+    background: false,
+    description:
+      "Governess-leased read-only explorer or independent reviewer. Use only after the bridge reports a granted native fallback lease.",
+    disallowedTools: [
+      "Agent",
+      "Task",
+      "Bash",
+      "Edit",
+      "Write",
+      "WebFetch",
+      "WebSearch",
+      "AskUserQuestion",
+    ],
+    maxTurns: 8,
+    model: "inherit",
+    permissionMode: "plan",
+    prompt:
+      "Inspect only the exact scopes and objective injected by the Governess lease. Use Read, Grep, and Glob only. Do not write, edit, execute commands, use MCP or web tools, ask the human, make authority decisions, or create descendants. Return concise file-backed evidence to the parent and stop.",
+    tools: ["Read", "Grep", "Glob"],
+  },
+});
+
+export const claudeNativeSubagentArgs = (
+  mode: NativeSubagentMode
+): string[] => {
+  if (mode === "strict") {
+    return ["--disallowedTools", "Agent", "Task"];
+  }
+  if (mode === "utility-first") {
+    return ["--agents", JSON.stringify(claudeNativeFallbackDefinition())];
+  }
+  return [];
+};
+
 const buildClaudeCommand = (
   sessionId: string,
   model: string,
@@ -492,7 +535,8 @@ const buildClaudeCommand = (
   resume: boolean,
   prompt?: string,
   settingsPath?: string,
-  mcpConfigPath?: string
+  mcpConfigPath?: string,
+  nativeSubagentMode: NativeSubagentMode = "off"
 ): string[] => {
   const args = [
     "claude",
@@ -508,6 +552,7 @@ const buildClaudeCommand = (
     "--dangerously-load-development-channels",
     `server:${channelServer}`,
     "--dangerously-skip-permissions",
+    ...claudeNativeSubagentArgs(nativeSubagentMode),
   ];
   if (settingsPath) {
     args.push("--settings", settingsPath);
@@ -523,17 +568,28 @@ const buildCodexCommand = (
   model: string,
   configValues: string[],
   prompt?: string,
-  bypassHookTrust?: boolean
+  bypassHookTrust?: boolean,
+  nativeSubagentMode: NativeSubagentMode = "off"
 ): string[] => {
   const defaultConfigArgs = DEFAULT_CODEX_CONFIG_VALUES.flatMap((value) => [
     "-c",
     value,
   ]);
+  const nativeConfigArgs = (() => {
+    if (nativeSubagentMode === "strict") {
+      return ["-c", "agents.enabled=false"];
+    }
+    if (nativeSubagentMode === "utility-first") {
+      return ["-c", "agents.max_concurrent_threads_per_session=1"];
+    }
+    return [];
+  })();
   const args = [
     "codex",
     "-m",
     model,
     ...defaultConfigArgs,
+    ...nativeConfigArgs,
     ...configValues,
     "--enable",
     "tui_app_server",
@@ -1103,6 +1159,7 @@ const governessEnv = (
     ...passEnv(env, "CLAUDE_CONFIG_DIR"),
     `LOOP_CAVEMAN_MODE=${opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE}`,
     `LOOP_HELPER_CAVEMAN_MODE=${opts.helperCavemanMode ?? DEFAULT_HELPER_CAVEMAN_MODE}`,
+    `LOOP_NATIVE_SUBAGENT_MODE=${resolveNativeSubagentMode(env.LOOP_NATIVE_SUBAGENT_MODE)}`,
     `LOOP_GOVERNESS_IDLE=${opts.governessIdleSeconds}`,
     `LOOP_GOVERNESS_COOLDOWN=${opts.governessCooldownSeconds}`,
     `LOOP_GOVERNESS_MAX=${opts.governessMaxRecoveries}`,
@@ -1475,6 +1532,7 @@ const buildPairedAgentCommand = ({
   codexBypassHookTrust,
   codexProxyUrl,
   hadSession,
+  nativeSubagentMode,
   opts,
   prompt,
 }: {
@@ -1486,6 +1544,7 @@ const buildPairedAgentCommand = ({
   codexBypassHookTrust?: boolean;
   codexProxyUrl: string;
   hadSession: boolean;
+  nativeSubagentMode: NativeSubagentMode;
   opts: Options;
   prompt?: string;
 }): string[] => {
@@ -1501,7 +1560,8 @@ const buildPairedAgentCommand = ({
       hadSession,
       prompt,
       claudeSettingsPath,
-      claudeMcpConfigPath
+      claudeMcpConfigPath,
+      nativeSubagentMode
     );
   }
   if (agent === "codex") {
@@ -1516,7 +1576,8 @@ const buildPairedAgentCommand = ({
       model,
       opts.codexMcpConfigArgs,
       prompt,
-      codexBypassHookTrust
+      codexBypassHookTrust,
+      nativeSubagentMode
     );
   }
   if (agent === "gemini") {
@@ -1812,10 +1873,16 @@ const startPairedSession = async (
       join(storage.runDir, "claude-mcp.json"))
     : undefined;
   try {
+    const nativeSubagentMode = launch.opts.governess
+      ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)
+      : "off";
     const env = [
       ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
       `${RUN_BASE_ENV}=${runBase}`,
       `${RUN_ID_ENV}=${storage.runId}`,
+      ...(nativeSubagentMode === "off"
+        ? []
+        : [`LOOP_NATIVE_SUBAGENT_MODE=${nativeSubagentMode}`]),
       ...(launch.opts.cavemanMode
         ? [`LOOP_CAVEMAN_MODE=${launch.opts.cavemanMode}`]
         : []),
@@ -1858,6 +1925,7 @@ const startPairedSession = async (
         codexBypassHookTrust: governessHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.left],
+        nativeSubagentMode,
         opts: launch.opts,
         prompt: leftPrompt,
       }),
@@ -1874,6 +1942,7 @@ const startPairedSession = async (
         codexBypassHookTrust: governessHooks.codexBypassHookTrust,
         codexProxyUrl,
         hadSession: hadAgentSession[paneAgents.right],
+        nativeSubagentMode,
         opts: launch.opts,
         prompt: rightPrompt,
       }),

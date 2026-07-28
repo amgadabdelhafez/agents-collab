@@ -1618,7 +1618,10 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).toContain("Use Au Pair");
   expect(primaryPrompt).toContain("Governess chooses the tier");
   expect(primaryPrompt).toContain("keep lower-tier work in flight");
-  expect(primaryPrompt).toContain("worktree isolation");
+  expect(primaryPrompt).toContain("Do not proactively create");
+  expect(primaryPrompt).toContain("Use Direct, Nanny, and Au Pair first");
+  expect(primaryPrompt).toContain("Governess lease");
+  expect(primaryPrompt).not.toContain("Spawn a team of agents");
   expect(peerPrompt).toContain("You are the reviewer/support agent.");
   expect(peerPrompt).toContain("request validation every few concrete steps");
   expect(peerPrompt).toContain("keeps PLAN.md and status.md current");
@@ -1786,7 +1789,9 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
     "Ask Claude for validation and feedback after every few concrete steps"
   );
   expect(primaryPrompt).toContain('"mcp__loop_bridge__send_message"');
-  expect(primaryPrompt).toContain("worktree isolation");
+  expect(primaryPrompt).toContain("do not proactively create");
+  expect(primaryPrompt).toContain("Use Direct, Nanny, and Au Pair first");
+  expect(primaryPrompt).not.toContain("Spawn a team of agents");
   expect(primaryPrompt).toContain("Human/founder/supervisor reporting:");
   expect(primaryPrompt).toContain("Internal agent communication:");
   expect(peerPrompt).toContain("No task has been assigned yet.");

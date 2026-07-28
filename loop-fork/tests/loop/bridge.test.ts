@@ -696,6 +696,92 @@ test.each([
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge native fallback request is pending until Governess grants it", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const request = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["return exact source evidence"],
+          evidence_task_ids: ["prior-helper-task"],
+          fallback_reason: "utility-ineligible",
+          kind: "explore",
+          objective: "Trace one bounded parser path",
+          read_scope: ["src/parser"],
+        },
+        name: "request_native_fallback",
+      },
+    })
+  );
+  const requested = JSON.parse(toolText(request.stdout, 1)) as {
+    requestId: string;
+    state: string;
+  };
+  expect(requested.state).toBe("pending");
+
+  const status = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeFrame({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: { request_id: requested.requestId },
+        name: "native_fallback_status",
+      },
+    })
+  );
+  expect(JSON.parse(toolText(status.stdout, 2))).toMatchObject({
+    requestId: requested.requestId,
+    state: "pending",
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("only supervisor can assert a human-authorized native fallback", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const call = (requester?: "claude") =>
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["return exact source evidence"],
+          fallback_reason: "human-authorized",
+          human_authorized: true,
+          kind: "review",
+          objective: "Perform the explicitly requested read-only review",
+          read_scope: ["src/parser"],
+          ...(requester ? { requester } : {}),
+        },
+        name: "request_native_fallback",
+      },
+    });
+
+  const denied = await runBridgeProcess(runDir, "claude", call());
+  expect(denied.stdout).toContain(
+    "only the supervisor can assert a human-authorized native fallback"
+  );
+
+  const allowed = await runBridgeProcess(runDir, "supervisor", call("claude"));
+  expect(JSON.parse(toolText(allowed.stdout, 1))).toMatchObject({
+    state: "pending",
+  });
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("route_task gives edit-specific recovery guidance", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -1971,13 +2057,15 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
       }),
     ])
   );
-  expect(tools).toHaveLength(7);
+  expect(tools).toHaveLength(9);
   expect(tools.map((tool) => tool.name)).toEqual(
     expect.arrayContaining([
       "route_task",
       "task_status",
       "get_task_result",
       "apply_task_patch",
+      "request_native_fallback",
+      "native_fallback_status",
     ])
   );
   expect(tools.some((tool) => tool.name === "reply")).toBe(false);
@@ -2033,7 +2121,7 @@ test("bridge MCP advertises only the Codex-visible bridge tools", async () => {
   expect(result.stderr).toBe("");
   expect(result.stdout).not.toContain('"claude/channel":{}');
   const tools = listedTools(result.stdout);
-  expect(tools).toHaveLength(7);
+  expect(tools).toHaveLength(9);
   expect(tools).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -3969,6 +4057,10 @@ test("bridge config helper builds the bridge MCP entry point for Codex", async (
     'mcp_servers.loop-bridge.tools.get_task_result.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.apply_task_patch.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.request_native_fallback.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.native_fallback_status.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.bridge_status.approval_mode="approve"',
     "-c",

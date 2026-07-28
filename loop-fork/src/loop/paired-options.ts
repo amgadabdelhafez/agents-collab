@@ -282,7 +282,12 @@ export const applyPairedOptions = (
   );
   opts.cursorMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "cursor");
   opts.codexMcpConfigArgs = buildCodexBridgeConfigArgs(storage.runDir, "codex");
-  opts.codexHome = ensureLoopCodexHome(storage.runDir, cwd);
+  opts.codexHome = ensureLoopCodexHome(storage.runDir, cwd, {
+    ...process.env,
+    LOOP_NATIVE_SUBAGENT_MODE: opts.governess
+      ? process.env.LOOP_NATIVE_SUBAGENT_MODE
+      : "off",
+  });
   opts.geminiMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "gemini");
   // Inject bridge MCP into project-level config only for agents in this pair
   const projectDir = cwd;

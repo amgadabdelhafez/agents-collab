@@ -12,6 +12,11 @@ import {
   DEFAULT_CODEX_REASONING_EFFORT,
   DEFAULT_CODEX_SERVICE_TIER,
 } from "./constants";
+import {
+  CODEX_NATIVE_FALLBACK_PROFILE,
+  type NativeSubagentMode,
+  resolveNativeSubagentMode,
+} from "./native-subagent";
 
 const LOOP_CODEX_HOME_DIR = "codex-home";
 const AUTH_FILES = ["auth.json"] as const;
@@ -28,8 +33,22 @@ const sourceCodexHome = (): string | undefined => {
 
 const tomlKey = (value: string): string => JSON.stringify(value);
 
-const buildLoopCodexConfig = (cwd: string): string =>
-  [
+export const buildLoopCodexConfig = (
+  cwd: string,
+  mode: NativeSubagentMode = "utility-first"
+): string => {
+  const agents =
+    mode === "off"
+      ? []
+      : [
+          "[agents]",
+          `enabled = ${mode === "strict" ? "false" : "true"}`,
+          ...(mode === "utility-first"
+            ? ["max_concurrent_threads_per_session = 1"]
+            : []),
+          "",
+        ];
+  return [
     'approval_policy = "never"',
     'sandbox_mode = "danger-full-access"',
     `model = ${JSON.stringify(DEFAULT_CODEX_MODEL)}`,
@@ -38,8 +57,41 @@ const buildLoopCodexConfig = (cwd: string): string =>
     )}`,
     `service_tier = ${JSON.stringify(DEFAULT_CODEX_SERVICE_TIER)}`,
     "",
+    ...agents,
     `[projects.${tomlKey(cwd)}]`,
     'trust_level = "trusted"',
+    "",
+  ].join("\n");
+};
+
+export const buildLoopCodexFallbackAgent = (): string =>
+  [
+    `name = ${JSON.stringify(CODEX_NATIVE_FALLBACK_PROFILE)}`,
+    'description = "Governess-leased read-only explorer or independent reviewer."',
+    'sandbox_mode = "read-only"',
+    'approval_policy = "never"',
+    'web_search = "disabled"',
+    'developer_instructions = """',
+    "Inspect only the exact scopes and objective injected by the Governess lease.",
+    "Do not write, edit, mutate, use network or MCP tools, ask the human, make authority decisions, or spawn descendants.",
+    "Use bounded read-only inspection, cite concrete file evidence, return a concise result to the parent, and stop.",
+    '"""',
+    "",
+    "[agents]",
+    "enabled = false",
+    "",
+    "[features]",
+    "multi_agent = false",
+    "remote_plugin = false",
+    "shell_tool = false",
+    "unified_exec = false",
+    "",
+    "[tools]",
+    "view_image = false",
+    "web_search = false",
+    "",
+    "[mcp_servers.loop-bridge]",
+    "enabled = false",
     "",
   ].join("\n");
 
@@ -68,15 +120,26 @@ const ensureAuthFile = (codexHome: string, filename: string): void => {
 
 export const ensureLoopCodexHome = (
   runDir: string,
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  env: NodeJS.ProcessEnv = process.env
 ): string => {
   const codexHome = join(runDir, LOOP_CODEX_HOME_DIR);
+  const mode = resolveNativeSubagentMode(env.LOOP_NATIVE_SUBAGENT_MODE);
   mkdirSync(codexHome, { recursive: true });
   writeFileSync(
     join(codexHome, "config.toml"),
-    buildLoopCodexConfig(cwd),
+    buildLoopCodexConfig(cwd, mode),
     "utf8"
   );
+  if (mode === "utility-first") {
+    const agentsDir = join(codexHome, "agents");
+    mkdirSync(agentsDir, { recursive: true });
+    writeFileSync(
+      join(agentsDir, `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`),
+      buildLoopCodexFallbackAgent(),
+      "utf8"
+    );
+  }
   for (const filename of AUTH_FILES) {
     ensureAuthFile(codexHome, filename);
   }

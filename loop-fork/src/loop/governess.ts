@@ -115,6 +115,13 @@ import {
   withLegacyGovernessEnv,
 } from "./legacy-governess-compat";
 import {
+  type NativeFallbackObservability,
+  type NativeSubagentMode,
+  processPendingNativeFallbackRequests,
+  readNativeFallbackObservability,
+  resolveNativeSubagentMode,
+} from "./native-subagent";
+import {
   loadRunState,
   type RunManifest,
   readRunManifest,
@@ -233,6 +240,7 @@ export interface GovernessConfig {
   model: string;
   // On-disk size (GB) of the local LLM, shown in the footer.
   modelSizeGb?: number;
+  nativeSubagentMode?: NativeSubagentMode;
   // ntfy topic URL for remote escalation; escalation is off when unset.
   ntfyUrl?: string;
   roleBalanceEnabled: boolean;
@@ -1363,6 +1371,7 @@ interface BoardMeta {
   maxColumns?: number;
   maxRows?: number;
   nanny?: UtilityObservabilitySnapshot;
+  nativeFallback?: NativeFallbackObservability;
   nowMs: number;
   recoveries: number;
   roles: RoleState;
@@ -2063,6 +2072,42 @@ const renderWorkerDetailRows = (
       truncate(contextLine, width)
     ),
   ];
+};
+
+const renderNativeFallbackRow = (
+  snapshot: NativeFallbackObservability,
+  meta: BoardMeta
+): string => {
+  const width = Math.max(1, meta.maxColumns ?? 176);
+  const line = ` native · mode ${snapshot.mode} · slot ${snapshot.slot} ${snapshot.active}/1 · requests ${snapshot.requests} grants ${snapshot.grants} done ${snapshot.completed} · denied ${snapshot.denied} expired ${snapshot.expired} blocked ${snapshot.blockedAttempts}${snapshot.latestReason ? ` · latest ${snapshot.latestReason.replaceAll("-", " ")}` : ""}`;
+  return paint(
+    snapshot.blockedAttempts > 0 || snapshot.denied > 0
+      ? ANSI.yellow
+      : ANSI.dim,
+    truncate(line, width)
+  );
+};
+
+const readNativeFallbackBoard = (
+  runDir: string,
+  mode: NativeSubagentMode
+): NativeFallbackObservability => {
+  try {
+    return readNativeFallbackObservability(runDir, mode);
+  } catch {
+    return {
+      active: 0,
+      blockedAttempts: 0,
+      completed: 0,
+      denied: 0,
+      expired: 0,
+      grants: 0,
+      latestReason: "journal-unavailable-fail-closed",
+      mode: "strict",
+      requests: 0,
+      slot: "open",
+    };
+  }
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -2923,12 +2968,16 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const workerDetailLines = meta.utility
     ? renderWorkerDetailRows(meta.utility, meta)
     : [];
+  const nativeFallbackLines = meta.nativeFallback
+    ? [renderNativeFallbackRow(meta.nativeFallback, meta)]
+    : [];
   const fullTop = [
     statusLine,
     ...identityRows,
     ...bridgeLines,
     ...workerRoutingLines,
     ...workerDetailLines,
+    ...nativeFallbackLines,
   ];
   const maxRows = meta.maxRows;
   let top = fullTop;
@@ -2948,12 +2997,18 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
       0,
       Math.max(0, spare)
     );
+    spare -= visibleWorkerDetailLines.length;
+    const visibleNativeFallbackLines = nativeFallbackLines.slice(
+      0,
+      Math.max(0, spare)
+    );
     top = [
       statusLine,
       ...visibleIdentityRows,
       ...visibleBridgeLines,
       ...visibleRoutingLines,
       ...visibleWorkerDetailLines,
+      ...visibleNativeFallbackLines,
     ].slice(0, maxRows);
   }
   const footerBudget =
@@ -5292,6 +5347,11 @@ export const governessTick = async (
       ? {
           auPair: readUtilityObservability(config.runDir, UTILITY_AU_PAIR_TIER),
           nanny: readUtilityObservability(config.runDir, UTILITY_NANNY_TIER),
+          nativeFallback: readNativeFallbackBoard(
+            config.runDir,
+            config.nativeSubagentMode ??
+              resolveNativeSubagentMode(process.env.LOOP_NATIVE_SUBAGENT_MODE)
+          ),
           utility: readUtilityObservability(config.runDir),
         }
       : {}),
@@ -6031,6 +6091,9 @@ export const resolveGovernessConfig = (
         : DEFAULT_GOVERNESS_MAX_RECOVERIES,
     model,
     modelSizeGb: primaryLocalJudge.modelSizeGb,
+    nativeSubagentMode: resolveNativeSubagentMode(
+      env.LOOP_NATIVE_SUBAGENT_MODE
+    ),
     ntfyUrl: env.LOOP_GOVERNESS_NTFY || undefined,
     roleBalanceEnabled: envEnabled(env.LOOP_GOVERNESS_ROLE_BALANCE),
     runId,
@@ -6361,6 +6424,32 @@ export const runGoverness = async (
             epoch: acquiredEpoch,
             error: error instanceof Error ? error.message : String(error),
             event: "utility-routing-failed-closed",
+          });
+        }
+      }
+      if (config.runDir) {
+        try {
+          const processed = processPendingNativeFallbackRequests({
+            epoch: acquiredEpoch,
+            mode:
+              config.nativeSubagentMode ??
+              resolveNativeSubagentMode(process.env.LOOP_NATIVE_SUBAGENT_MODE),
+            runDir: config.runDir,
+          });
+          if (processed > 0) {
+            deps.appendLog(config.logFile, {
+              at: lifecycleAt,
+              epoch: acquiredEpoch,
+              event: "native-fallback-requests-processed",
+              processed,
+            });
+          }
+        } catch (error) {
+          deps.appendLog(config.logFile, {
+            at: lifecycleAt,
+            epoch: acquiredEpoch,
+            error: error instanceof Error ? error.message : String(error),
+            event: "native-fallback-routing-failed-closed",
           });
         }
       }

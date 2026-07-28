@@ -27,6 +27,11 @@ import {
 
 import type { EscalationEvent } from "../../src/loop/governess-notify";
 import {
+  appendNativeFallbackRequest,
+  createNativeFallbackRequest,
+  processPendingNativeFallbackRequests,
+} from "../../src/loop/native-subagent";
+import {
   createRunManifest,
   resolveRunStorage,
   writeRunManifest,
@@ -1783,6 +1788,25 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
         summary: "Found the active worker configuration in utility-runtime.ts.",
       },
     });
+    appendNativeFallbackRequest(
+      runDir,
+      createNativeFallbackRequest({
+        acceptanceCriteria: ["return independent file-backed findings"],
+        evidenceTaskIds: [request.id],
+        fallbackReason: "independent-review",
+        id: "board-native-fallback",
+        kind: "review",
+        objective: "Independently review the bounded worker configuration",
+        readScope: ["src/loop"],
+        requester: "claude",
+      })
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 1,
+      mode: "utility-first",
+      nowMs: START_MS,
+      runDir,
+    });
     writeFileSync(
       join(runDir, "utility", "usage.jsonl"),
       `${JSON.stringify({
@@ -1923,6 +1947,9 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
     );
     expect(board).toContain(
       "context · 1/2 capsules 50% · refs 1 · latest v1 bbbbbbbb · misses 0 · tool failures 1 · top broker invalid arguments 1"
+    );
+    expect(board).toContain(
+      "native · mode utility-first · slot granted 1/1 · requests 1 grants 1 done 0 · denied 0 expired 0 blocked 0 · latest independent review"
     );
     expect(board).not.toContain("Project: must remain hidden");
     expect(board).not.toContain("docs/worker.md");

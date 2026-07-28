@@ -63,7 +63,7 @@ export interface DelegationTelemetryEvent {
   fingerprint: string;
   operation: DelegationOperation | UtilityRequestKind;
   reason: string;
-  source: "bridge" | "claude-hook" | "codex-app-server";
+  source: "bridge" | "claude-hook" | "codex-app-server" | "codex-hook";
   taskId?: string;
 }
 

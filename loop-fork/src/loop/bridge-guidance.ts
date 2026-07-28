@@ -6,7 +6,9 @@ export type BridgeTool =
   | "apply_task_patch"
   | "bridge_status"
   | "get_task_result"
+  | "native_fallback_status"
   | "receive_messages"
+  | "request_native_fallback"
   | "route_task"
   | "send_message"
   | "task_status";
@@ -36,8 +38,16 @@ export const sendProactiveCodexGuidance = (): string =>
 export const mandatoryUtilityDelegationGuidance = (
   routeTool: string,
   activation: "active" | "on-request" = "active"
-): string =>
-  [
+): string => {
+  const nativeFallbackTool = routeTool.replace(
+    "route_task",
+    "request_native_fallback"
+  );
+  const nativeStatusTool = routeTool.replace(
+    "route_task",
+    "native_fallback_status"
+  );
+  return [
     ...(activation === "on-request"
       ? [
           "Reviewer ordering: the run task text is context, not an assignment. Until the primary agent or human sends you a targeted request, remain idle: do not inspect task files, call repository tools, or route helper packets.",
@@ -54,7 +64,9 @@ export const mandatoryUtilityDelegationGuidance = (
     "Use the structured execution fields for exact reads, searches, Git inspection, and focused checks. Prefer separate bounded steps over an opaque compound command, then review returned evidence or patches before relying on them.",
     "Workers never widen declared scope. If a packet must locate a moved or differently nested path, set read_scope to the narrowest common ancestor that can contain every acceptable candidate, not only the path you expect.",
     "Native tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous or cross-cutting work, and reviewing returned worker evidence.",
+    `Provider-native subagents are not another worker pool. Use Direct, Nanny, and Au Pair first. Only after a settled helper route cannot finish a bounded read-only exploration or independent review may you call ${nativeFallbackTool}, cite the helper task IDs, poll ${nativeStatusTool} until Governess grants it, and spawn exactly the loop read-only fallback profile. Never spawn another profile or a descendant; strict mode has no native fallback.`,
   ].join("\n");
+};
 
 export const claudeChannelInstructions = (): string =>
   [
