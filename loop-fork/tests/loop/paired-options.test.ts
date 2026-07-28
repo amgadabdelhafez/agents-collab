@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeChannelServerName } from "../../src/loop/bridge-config";
@@ -218,12 +218,14 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       helperCavemanMode: "full",
     });
 
-    const changedPairStorage = resolveRunStorage("74", process.cwd(), home);
+    const alternatePairCwd = join(home, "alternate-pair-project");
+    mkdirSync(alternatePairCwd, { recursive: true });
+    const changedPairStorage = resolveRunStorage("74", alternatePairCwd, home);
     writeRunManifest(
       changedPairStorage.manifestPath,
       createRunManifest({
         claudeSessionId: "out-of-pair-legacy-claude",
-        cwd: process.cwd(),
+        cwd: alternatePairCwd,
         mode: "paired",
         pid: 1234,
         repoId: changedPairStorage.repoId,
@@ -240,20 +242,20 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       pairedMode: true,
       resumeRunId: "74",
     });
-    preparePairedRun(changedPair, process.cwd());
+    preparePairedRun(changedPair, alternatePairCwd);
     expect(changedPair.cavemanMode).toBe("lite");
     expect(readRunManifest(changedPairStorage.manifestPath)).toMatchObject({
       cavemanMode: "lite",
       claudeSessionId: "",
     });
 
-    const liveTmuxStorage = resolveRunStorage("75", process.cwd(), home);
+    const liveTmuxStorage = resolveRunStorage("75", alternatePairCwd, home);
     writeRunManifest(
       liveTmuxStorage.manifestPath,
       createRunManifest({
         claudeSessionId: "live-legacy-claude",
         codexThreadId: "live-legacy-codex",
-        cwd: process.cwd(),
+        cwd: alternatePairCwd,
         mode: "paired",
         pid: 1234,
         primaryAgent: "claude",
@@ -276,7 +278,7 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       resumeRunId: "75",
       tmux: true,
     });
-    preparePairedRun(reusedTmux, process.cwd(), () => true);
+    preparePairedRun(reusedTmux, alternatePairCwd, () => true);
     expect(reusedTmux).toMatchObject({
       agent: "claude",
       cavemanMode: "off",
@@ -288,13 +290,13 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       codexThreadId: "live-legacy-codex",
     });
 
-    const staleTmuxStorage = resolveRunStorage("76", process.cwd(), home);
+    const staleTmuxStorage = resolveRunStorage("76", alternatePairCwd, home);
     writeRunManifest(
       staleTmuxStorage.manifestPath,
       createRunManifest({
         claudeSessionId: "stale-legacy-claude",
         codexThreadId: "stale-legacy-codex",
-        cwd: process.cwd(),
+        cwd: alternatePairCwd,
         mode: "paired",
         pid: 1234,
         primaryAgent: "claude",
@@ -317,7 +319,7 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       resumeRunId: "76",
       tmux: true,
     });
-    preparePairedRun(staleTmux, process.cwd(), () => false);
+    preparePairedRun(staleTmux, alternatePairCwd, () => false);
     expect(staleTmux).toMatchObject({
       agent: "codex",
       cavemanMode: "off",
