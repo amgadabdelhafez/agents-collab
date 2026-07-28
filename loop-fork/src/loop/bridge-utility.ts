@@ -7,12 +7,24 @@ import {
 } from "./delegation-policy";
 import {
   createUtilityRouteRequest,
+  MAX_UTILITY_CONTEXT_REFS,
   type UtilityAuthorityFlags,
   type UtilityCapability,
+  type UtilityExecutionProfile,
+  type UtilityGitInspectionRequest,
+  type UtilityOutputRequest,
+  type UtilityReadPlanStep,
+  type UtilityReadRequest,
   type UtilityRequestKind,
   type UtilityRisk,
+  type UtilityRouteRequest,
+  utilityRequestIsBounded,
 } from "./task-router";
 import type { Agent } from "./types";
+import {
+  isUtilityContextRefPath,
+  normalizeUtilityPolicyPath,
+} from "./utility-path-policy";
 import { applyUtilityJobPatch } from "./utility-runtime";
 
 type UtilityBridgeSource = Agent | "supervisor";
@@ -40,11 +52,93 @@ const READ_ONLY_ANNOTATIONS = {
   readOnlyHint: true,
 };
 
+const EXECUTION_PROFILE_VALUES = [
+  "file-list",
+  "file-read",
+  "focused-check",
+  "git-diff",
+  "git-inspect",
+  "git-status",
+  "read-plan",
+  "search",
+] as const;
+const READ_PLAN_PROFILE_VALUES = EXECUTION_PROFILE_VALUES.filter(
+  (profile) => profile !== "read-plan"
+);
+const STRING_ARRAY_SCHEMA = {
+  items: { minLength: 1, type: "string" },
+  type: "array",
+} as const;
+const EXECUTION_READ_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    end_line: { minimum: 1, type: "integer" },
+    last_lines: { maximum: 500, minimum: 1, type: "integer" },
+    path: { minLength: 1, type: "string" },
+    start_line: { minimum: 1, type: "integer" },
+  },
+  required: ["path"],
+  type: "object",
+} as const;
+const EXECUTION_OUTPUT_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    exclude_lines: { ...STRING_ARRAY_SCHEMA, maxItems: 16 },
+    include_lines: { ...STRING_ARRAY_SCHEMA, maxItems: 16 },
+    line_limit: { maximum: 500, minimum: 1, type: "integer" },
+    position: { enum: ["head", "tail"], type: "string" },
+    stderr: { enum: ["merge", "omit"], type: "string" },
+    strip_ansi: { type: "boolean" },
+  },
+  type: "object",
+} as const;
+const EXECUTION_GIT_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    action: {
+      enum: [
+        "branch-list",
+        "current-branch",
+        "log",
+        "object-type",
+        "resolve-ref",
+        "show-stat",
+        "worktree-list",
+      ],
+      type: "string",
+    },
+    include_metadata: { type: "boolean" },
+    limit: { maximum: 50, minimum: 1, type: "integer" },
+    pattern: { minLength: 1, type: "string" },
+    ref: { minLength: 1, type: "string" },
+  },
+  required: ["action"],
+  type: "object",
+} as const;
+const READ_PLAN_STEP_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    execution_argv: STRING_ARRAY_SCHEMA,
+    execution_cwd: { minLength: 1, type: "string" },
+    execution_git: EXECUTION_GIT_SCHEMA,
+    execution_output: EXECUTION_OUTPUT_SCHEMA,
+    execution_profile: {
+      enum: READ_PLAN_PROFILE_VALUES,
+      type: "string",
+    },
+    execution_read: EXECUTION_READ_SCHEMA,
+    objective: { minLength: 1, type: "string" },
+    read_scope: { ...STRING_ARRAY_SCHEMA, maxItems: 4, minItems: 1 },
+  },
+  required: ["execution_profile", "objective", "read_scope"],
+  type: "object",
+} as const;
+
 export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. Workers never widen scope: when locating a moved path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
+      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -63,11 +157,28 @@ export const UTILITY_BRIDGE_TOOLS = [
           type: "object",
         },
         context_refs: {
+          description:
+            "Optional project-context document paths only: repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md. Never put prose, SHAs, source files, or absolute paths here; use objective/acceptance_criteria instead.",
           items: { maxLength: 500, type: "string" },
-          maxItems: 6,
+          maxItems: MAX_UTILITY_CONTEXT_REFS,
           type: "array",
         },
         estimated_cost_usd: { minimum: 0, type: "number" },
+        execution_argv: STRING_ARRAY_SCHEMA,
+        execution_cwd: { minLength: 1, type: "string" },
+        execution_git: EXECUTION_GIT_SCHEMA,
+        execution_output: EXECUTION_OUTPUT_SCHEMA,
+        execution_plan: {
+          items: READ_PLAN_STEP_SCHEMA,
+          maxItems: 12,
+          minItems: 1,
+          type: "array",
+        },
+        execution_profile: {
+          enum: EXECUTION_PROFILE_VALUES,
+          type: "string",
+        },
+        execution_read: EXECUTION_READ_SCHEMA,
         idempotency_key: { type: "string" },
         kind: {
           enum: ["inspect", "edit", "command", "review", "design", "authority"],
@@ -165,6 +276,328 @@ const stringArray = (args: Record<string, unknown>, key: string): string[] => {
     throw new UtilityBridgeInputError(`${key} must be a string array`);
   }
   return value as string[];
+};
+
+const optionalString = (
+  args: Record<string, unknown>,
+  key: string
+): string | undefined => {
+  const value = args[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    throw new UtilityBridgeInputError(`${key} must be a non-empty string`);
+  }
+  return value;
+};
+
+const optionalRecord = (
+  args: Record<string, unknown>,
+  key: string
+): Record<string, unknown> | undefined => {
+  const value = args[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new UtilityBridgeInputError(`${key} must be an object`);
+  }
+  return value;
+};
+
+const rejectUnknownKeys = (
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  label: string
+): void => {
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+  if (unknown) {
+    throw new UtilityBridgeInputError(
+      `${label} contains unsupported key: ${unknown}`
+    );
+  }
+};
+
+const optionalPositiveInteger = (
+  args: Record<string, unknown>,
+  key: string
+): number | undefined => {
+  const value = args[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!(Number.isSafeInteger(value) && (value as number) > 0)) {
+    throw new UtilityBridgeInputError(`${key} must be a positive integer`);
+  }
+  return value as number;
+};
+
+const optionalBoolean = (
+  args: Record<string, unknown>,
+  key: string
+): boolean | undefined => {
+  const value = args[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new UtilityBridgeInputError(`${key} must be boolean`);
+  }
+  return value;
+};
+
+const optionalEnum = <T extends string>(
+  args: Record<string, unknown>,
+  key: string,
+  values: readonly T[]
+): T | undefined => {
+  const value = args[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !values.includes(value as T)) {
+    throw new UtilityBridgeInputError(`${key} is invalid`);
+  }
+  return value as T;
+};
+
+const contextReferences = (args: Record<string, unknown>): string[] => {
+  const values = stringArray(args, "context_refs");
+  if (values.length > MAX_UTILITY_CONTEXT_REFS) {
+    throw new UtilityBridgeInputError(
+      `context_refs accepts at most ${MAX_UTILITY_CONTEXT_REFS} paths`
+    );
+  }
+  if (values.some((value) => !isUtilityContextRefPath(value))) {
+    throw new UtilityBridgeInputError(
+      "context_refs accepts only unique repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts, SHAs, source files, and absolute paths in objective or acceptance_criteria"
+    );
+  }
+  const normalized = values.map(normalizeUtilityPolicyPath);
+  if (
+    new Set(normalized).size !== normalized.length ||
+    normalized.some((value) => !isUtilityContextRefPath(value))
+  ) {
+    throw new UtilityBridgeInputError(
+      "context_refs accepts only unique repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts, SHAs, source files, and absolute paths in objective or acceptance_criteria"
+    );
+  }
+  return normalized;
+};
+
+const executionProfile = (
+  args: Record<string, unknown>,
+  key = "execution_profile",
+  values: readonly UtilityExecutionProfile[] = EXECUTION_PROFILE_VALUES
+): UtilityExecutionProfile | undefined => optionalEnum(args, key, values);
+
+const executionRead = (
+  args: Record<string, unknown>,
+  key = "execution_read"
+): UtilityReadRequest | undefined => {
+  const value = optionalRecord(args, key);
+  if (!value) {
+    return undefined;
+  }
+  rejectUnknownKeys(
+    value,
+    ["end_line", "last_lines", "path", "start_line"],
+    key
+  );
+  const endLine = optionalPositiveInteger(value, "end_line");
+  const lastLines = optionalPositiveInteger(value, "last_lines");
+  const startLine = optionalPositiveInteger(value, "start_line");
+  return {
+    ...(endLine === undefined ? {} : { endLine }),
+    ...(lastLines === undefined ? {} : { lastLines }),
+    path: requiredString(value, "path"),
+    ...(startLine === undefined ? {} : { startLine }),
+  };
+};
+
+const executionOutput = (
+  args: Record<string, unknown>,
+  key = "execution_output"
+): UtilityOutputRequest | undefined => {
+  const value = optionalRecord(args, key);
+  if (!value) {
+    return undefined;
+  }
+  rejectUnknownKeys(
+    value,
+    [
+      "exclude_lines",
+      "include_lines",
+      "line_limit",
+      "position",
+      "stderr",
+      "strip_ansi",
+    ],
+    key
+  );
+  const excludeLines =
+    value.exclude_lines === undefined
+      ? undefined
+      : stringArray(value, "exclude_lines");
+  const includeLines =
+    value.include_lines === undefined
+      ? undefined
+      : stringArray(value, "include_lines");
+  const lineLimit = optionalPositiveInteger(value, "line_limit");
+  const position = optionalEnum(value, "position", ["head", "tail"] as const);
+  const stderr = optionalEnum(value, "stderr", ["merge", "omit"] as const);
+  const stripAnsi = optionalBoolean(value, "strip_ansi");
+  return {
+    ...(excludeLines ? { excludeLines } : {}),
+    ...(includeLines ? { includeLines } : {}),
+    ...(lineLimit === undefined ? {} : { lineLimit }),
+    ...(position ? { position } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(stripAnsi === undefined ? {} : { stripAnsi }),
+  };
+};
+
+const executionGit = (
+  args: Record<string, unknown>,
+  key = "execution_git"
+): UtilityGitInspectionRequest | undefined => {
+  const value = optionalRecord(args, key);
+  if (!value) {
+    return undefined;
+  }
+  rejectUnknownKeys(
+    value,
+    ["action", "include_metadata", "limit", "pattern", "ref"],
+    key
+  );
+  const action = optionalEnum(value, "action", [
+    "branch-list",
+    "current-branch",
+    "log",
+    "object-type",
+    "resolve-ref",
+    "show-stat",
+    "worktree-list",
+  ] as const);
+  if (!action) {
+    throw new UtilityBridgeInputError(`${key}.action is required`);
+  }
+  const includeMetadata = optionalBoolean(value, "include_metadata");
+  const limit = optionalPositiveInteger(value, "limit");
+  const pattern = optionalString(value, "pattern");
+  const ref = optionalString(value, "ref");
+  return {
+    action,
+    ...(includeMetadata === undefined ? {} : { includeMetadata }),
+    ...(limit === undefined ? {} : { limit }),
+    ...(pattern ? { pattern } : {}),
+    ...(ref ? { ref } : {}),
+  };
+};
+
+const executionPlan = (
+  args: Record<string, unknown>
+): UtilityReadPlanStep[] | undefined => {
+  const value = args.execution_plan;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new UtilityBridgeInputError("execution_plan must be an array");
+  }
+  return value.map((raw, index) => {
+    if (!isRecord(raw)) {
+      throw new UtilityBridgeInputError(
+        `execution_plan[${index}] must be an object`
+      );
+    }
+    rejectUnknownKeys(
+      raw,
+      [
+        "execution_argv",
+        "execution_cwd",
+        "execution_git",
+        "execution_output",
+        "execution_profile",
+        "execution_read",
+        "objective",
+        "read_scope",
+      ],
+      `execution_plan[${index}]`
+    );
+    const profile = executionProfile(
+      raw,
+      "execution_profile",
+      READ_PLAN_PROFILE_VALUES
+    );
+    if (!profile || profile === "read-plan") {
+      throw new UtilityBridgeInputError(
+        `execution_plan[${index}].execution_profile is invalid`
+      );
+    }
+    const executionArgv =
+      raw.execution_argv === undefined
+        ? undefined
+        : stringArray(raw, "execution_argv");
+    const executionCwd = optionalString(raw, "execution_cwd");
+    const parsedExecutionGit = executionGit(raw);
+    const parsedExecutionOutput = executionOutput(raw);
+    const parsedExecutionRead = executionRead(raw);
+    return {
+      ...(executionArgv ? { executionArgv } : {}),
+      ...(executionCwd ? { executionCwd } : {}),
+      ...(parsedExecutionGit ? { executionGit: parsedExecutionGit } : {}),
+      ...(parsedExecutionOutput
+        ? { executionOutput: parsedExecutionOutput }
+        : {}),
+      executionProfile: profile,
+      ...(parsedExecutionRead ? { executionRead: parsedExecutionRead } : {}),
+      objective: requiredString(raw, "objective"),
+      readScope: stringArray(raw, "read_scope"),
+    } as UtilityReadPlanStep;
+  });
+};
+
+type UtilityExecutionMetadata = Partial<
+  Pick<
+    UtilityRouteRequest,
+    | "executionArgv"
+    | "executionCwd"
+    | "executionGit"
+    | "executionOutput"
+    | "executionPlan"
+    | "executionProfile"
+    | "executionRead"
+  >
+>;
+
+const executionMetadata = (
+  args: Record<string, unknown>
+): UtilityExecutionMetadata => {
+  const parsedExecutionProfile = executionProfile(args);
+  const parsedExecutionRead = executionRead(args);
+  const parsedExecutionOutput = executionOutput(args);
+  const parsedExecutionGit = executionGit(args);
+  const parsedExecutionPlan = executionPlan(args);
+  const parsedExecutionArgv =
+    args.execution_argv === undefined
+      ? undefined
+      : stringArray(args, "execution_argv");
+  const parsedExecutionCwd = optionalString(args, "execution_cwd");
+  return {
+    ...(parsedExecutionArgv ? { executionArgv: parsedExecutionArgv } : {}),
+    ...(parsedExecutionCwd ? { executionCwd: parsedExecutionCwd } : {}),
+    ...(parsedExecutionGit ? { executionGit: parsedExecutionGit } : {}),
+    ...(parsedExecutionOutput
+      ? { executionOutput: parsedExecutionOutput }
+      : {}),
+    ...(parsedExecutionPlan ? { executionPlan: parsedExecutionPlan } : {}),
+    ...(parsedExecutionProfile
+      ? { executionProfile: parsedExecutionProfile }
+      : {}),
+    ...(parsedExecutionRead ? { executionRead: parsedExecutionRead } : {}),
+  };
 };
 
 const requestKind = (value: unknown): UtilityRequestKind => {
@@ -305,8 +738,9 @@ const routeTask = (
   const request = createUtilityRouteRequest({
     acceptanceCriteria: stringArray(args, "acceptance_criteria"),
     authority: authorityFlags(args.authority),
-    contextRefs: stringArray(args, "context_refs"),
+    contextRefs: contextReferences(args),
     ...(typeof estimatedCostUsd === "number" ? { estimatedCostUsd } : {}),
+    ...executionMetadata(args),
     ...(typeof args.idempotency_key === "string"
       ? { idempotencyKey: hashDelegationFingerprint(args.idempotency_key) }
       : {}),
@@ -318,6 +752,14 @@ const routeTask = (
     risk: requestRisk(args.risk),
     writeScope: stringArray(args, "write_scope"),
   });
+  if (
+    (kind === "inspect" || kind === "edit" || kind === "command") &&
+    !utilityRequestIsBounded(request)
+  ) {
+    throw new UtilityBridgeInputError(
+      "route_task utility packet is not deterministically bounded; use non-empty exact scopes and an execution_profile/execution_plan whose fields match the advertised contract"
+    );
+  }
   const job = appendUtilityRouteRequest(runDir, request);
   appendDelegationEvent(
     runDir,

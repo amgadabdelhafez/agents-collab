@@ -367,12 +367,19 @@ test("lists one bounded directory without exposing protected entries", async () 
         name: "list_files",
       })
     ).toMatchObject({ error: { code: "path_denied" }, ok: false });
-    expect(
-      await broker.execute({
-        arguments: { path: "tests" },
-        name: "list_files",
-      })
-    ).toMatchObject({ error: { code: "scope_denied" }, ok: false });
+    const outsideScope = await broker.execute({
+      arguments: { path: "tests" },
+      name: "list_files",
+    });
+    expect(outsideScope).toMatchObject({
+      error: {
+        code: "scope_denied",
+        message: expect.stringContaining(
+          "Allowed read scope(s): src. Retry only inside a listed scope"
+        ),
+      },
+      ok: false,
+    });
     const fileBroker = await createUtilityToolBroker({
       allowedTools: ["list_files"],
       artifactDir: ".utility-artifacts",
@@ -480,9 +487,19 @@ test("broker caps range reads even when exact metadata is tampered", async () =>
       repoRoot: root,
       writeScopes: [],
     });
-    expect(
-      await broker.execute({ arguments: exactRead, name: "read_file" })
-    ).toMatchObject({ error: { code: "invalid_arguments" }, ok: false });
+    const rejected = await broker.execute({
+      arguments: exactRead,
+      name: "read_file",
+    });
+    const rejectedMessage = String(rejected.error?.message);
+    expect(rejected).toMatchObject({
+      error: {
+        code: "invalid_arguments",
+      },
+      ok: false,
+    });
+    expect(rejectedMessage).toContain("bounded read limit of 500 lines");
+    expect(rejectedMessage).toContain("endLine <= startLine + 499");
   });
 });
 

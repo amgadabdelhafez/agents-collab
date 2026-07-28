@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   bridgeToolName,
+  mandatoryUtilityDelegationGuidance,
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "../../src/loop/bridge-guidance";
@@ -20,6 +21,18 @@ test("paired guidance requires one bridge transport", () => {
     "sole peer-delivery transport"
   );
   expect(singleBridgeTransportGuidance).toContain("tmux send-keys");
+});
+
+test("delegation guidance states the exact context and decomposition contract", () => {
+  const guidance = mandatoryUtilityDelegationGuidance('"route_task"');
+  expect(guidance).toContain(
+    "context_refs is optional and accepts only repo-relative README.md"
+  );
+  expect(guidance).toContain("put narrative facts, SHAs, source paths");
+  expect(guidance).toContain("at most two read scopes");
+  expect(guidance).toContain("keep cross-file judgment together for Au Pair");
+  expect(guidance).toContain("structured execution fields");
+  expect(guidance).toContain("truthful risk");
 });
 
 test("quotedBridgeTool wraps the resolved bridge tool name", () => {

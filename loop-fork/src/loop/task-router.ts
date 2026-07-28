@@ -804,7 +804,9 @@ const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
   );
 };
 
-const requestIsBounded = (request: UtilityRouteRequest): boolean => {
+export const utilityRequestIsBounded = (
+  request: UtilityRouteRequest
+): boolean => {
   if (!(request.objective.trim() && request.acceptanceCriteria.length > 0)) {
     return false;
   }
@@ -968,7 +970,7 @@ export const routeUtilityRequest = (
   if (!UTILITY_KINDS.has(request.kind)) {
     return driverDecision("unsupported-kind");
   }
-  if (!requestIsBounded(request)) {
+  if (!utilityRequestIsBounded(request)) {
     return driverDecision("request-not-bounded");
   }
   if (request.risk !== "low") {
