@@ -10,7 +10,7 @@ export const DEFAULT_HELPER_CAVEMAN_MODE: CavemanMode = "full";
 
 const CAVEMAN_MODES = new Set<CavemanMode>(["off", "lite", "full", "ultra"]);
 const FRONTMATTER_RE = /^---[\s\S]*?---\s*/;
-const INTENSITY_TABLE_ROW_RE = /^\|\s*\*\*(\S+?)\*\*\s*\|/;
+const INTENSITY_TABLE_ROW_RE = /^\|\s*\*\*(\S+?)\*\*\s*\|\s*(.*?)\s*\|\s*$/;
 const INTENSITY_EXAMPLE_RE = /^- (\S+?):\s/;
 
 const LOOP_EXACTNESS_OVERLAY = [
@@ -62,6 +62,16 @@ const filteredUpstreamSkill = (mode: Exclude<CavemanMode, "off">): string =>
     .join("\n")
     .trim();
 
+const upstreamIntensityRule = (mode: Exclude<CavemanMode, "off">): string => {
+  for (const line of stripFrontmatter(cavemanSkillMarkdown).split("\n")) {
+    const match = line.match(INTENSITY_TABLE_ROW_RE);
+    if (match?.[1] === mode && match[2]) {
+      return match[2];
+    }
+  }
+  throw new Error(`Pinned Caveman skill is missing the ${mode} intensity rule`);
+};
+
 export const cavemanAgentGuidance = (mode: CavemanMode): string =>
   mode === "off"
     ? ""
@@ -72,13 +82,14 @@ export const cavemanAgentGuidance = (mode: CavemanMode): string =>
         LOOP_EXACTNESS_OVERLAY,
       ].join("\n\n");
 
-// This is the compact per-turn reinforcement used by Caveman's upstream
-// UserPromptSubmit hook. Helpers get it once in their system prompt instead of
-// paying the full ~1–1.5k-token skill cost on every model round.
+// Helpers get the selected upstream intensity row plus the hook's compact
+// boundaries once in their system prompt, avoiding the full skill cost on
+// every model round while retaining meaningful lite/full/ultra semantics.
 export const cavemanHelperReinforcement = (mode: CavemanMode): string =>
   mode === "off"
     ? ""
     : [
-        `CAVEMAN MODE ACTIVE (${mode}). Drop articles/filler/pleasantries/hedging. Fragments OK. Code/commits/security: write normal.`,
+        `CAVEMAN MODE ACTIVE (${mode}). ${upstreamIntensityRule(mode)}`,
+        "Code/commits/PRs/security: write normal.",
         "Compress final explanatory prose only. Keep commands, paths, JSON, errors, SHAs, citations, evidence, and broker results exact. Use normal prose if brevity creates ambiguity.",
       ].join(" ");

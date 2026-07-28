@@ -37,7 +37,17 @@ test("Loop exactness overlay protects machine-readable artifacts", () => {
 
 test("helper reinforcement is compact and off is an exact opt-out", () => {
   expect(cavemanHelperReinforcement("full")).toContain(
-    "CAVEMAN MODE ACTIVE (full). Drop articles/filler/pleasantries/hedging."
+    "CAVEMAN MODE ACTIVE (full). Drop articles, fragments OK, short synonyms."
+  );
+  expect(cavemanHelperReinforcement("lite")).toContain(
+    "Keep articles + full sentences. Professional but tight"
+  );
+  expect(cavemanHelperReinforcement("lite")).not.toContain("Fragments OK");
+  expect(cavemanHelperReinforcement("ultra")).toContain(
+    "Strip conjunctions when cause-then-effect stay unambiguous."
+  );
+  expect(cavemanHelperReinforcement("ultra")).toContain(
+    "State each fact once."
   );
   expect(cavemanAgentGuidance("off")).toBe("");
   expect(cavemanHelperReinforcement("off")).toBe("");
