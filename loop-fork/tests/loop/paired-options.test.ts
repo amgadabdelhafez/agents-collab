@@ -1,8 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeChannelServerName } from "../../src/loop/bridge-config";
+import { CODEX_NATIVE_FALLBACK_PROFILE } from "../../src/loop/native-subagent";
 import {
   preparePairedOptions,
   preparePairedRun,
@@ -559,7 +567,7 @@ test("preparePairedOptions ignores stored session ids from a completed paired ru
   }
 });
 
-test("preparePairedRun clears a stale tmux session outside tmux mode", () => {
+test("preparePairedRun clears stale tmux state and Codex governance outside tmux mode", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;
   const originalRunId = process.env.LOOP_RUN_ID;
@@ -586,6 +594,19 @@ test("preparePairedRun clears a stale tmux session outside tmux mode", () => {
         "2026-03-22T10:00:00.000Z"
       )
     );
+    const codexHome = join(storage.runDir, "codex-home");
+    const fallbackProfile = join(
+      codexHome,
+      "agents",
+      `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`
+    );
+    mkdirSync(join(codexHome, "agents"), { recursive: true });
+    writeFileSync(join(codexHome, "hooks.json"), '{"hooks":{}}\n', "utf8");
+    writeFileSync(
+      fallbackProfile,
+      `name = "${CODEX_NATIVE_FALLBACK_PROFILE}"\n`,
+      "utf8"
+    );
     const opts = makeOptions({ resumeRunId: "alpha", tmux: false });
 
     const prepared = preparePairedRun(opts, process.cwd());
@@ -595,6 +616,11 @@ test("preparePairedRun clears a stale tmux session outside tmux mode", () => {
     expect(readRunManifest(storage.manifestPath)?.tmuxSession).toBeUndefined();
     expect(readRunManifest(storage.manifestPath)?.codexRemoteUrl).toBe(
       "ws://127.0.0.1:4500"
+    );
+    expect(existsSync(join(codexHome, "hooks.json"))).toBe(false);
+    expect(existsSync(fallbackProfile)).toBe(false);
+    expect(readFileSync(join(codexHome, "config.toml"), "utf8")).not.toContain(
+      "[agents]"
     );
   } finally {
     if (originalHome === undefined) {

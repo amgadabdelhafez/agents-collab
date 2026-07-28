@@ -1,6 +1,6 @@
 # Dependency Map
 
-Last updated: <!-- 2026-07-27 by refresh-dependency-map.sh -->
+Last updated: <!-- 2026-07-28 by refresh-dependency-map.sh -->
 
 ## Modules
 
@@ -12,18 +12,18 @@ Last updated: <!-- 2026-07-27 by refresh-dependency-map.sh -->
 
 [Bridge]
   owns: src/loop/bridge*.ts
-  exposes: send_message, route_task, task_status, get_task_result
-  consumes: bridge JSONL, utility job API, runtime delivery adapters
+  exposes: send_message, route_task, task_status, get_task_result, request_native_fallback, native_fallback_status
+  consumes: bridge JSONL, utility/native-fallback journals, runtime delivery adapters
 
 [Delegation policy]
-  owns: delegation-policy.ts, Claude PreToolUse integration, Codex proxy observation
-  exposes: exact mechanical classifier and compact adoption telemetry
-  consumes: run manifest, utility job API, app-server item notifications
+  owns: delegation-policy.ts, Claude/Codex PreToolUse integration, Codex proxy observation
+  exposes: exact mechanical classifier, utility adoption, native-spawn gating, and compact telemetry
+  consumes: run manifest, utility/native-fallback APIs, app-server item notifications
 
 [Governess]
   owns: src/loop/governess*.ts
-  exposes: fenced control and route-processing loop
-  consumes: pane/hooks/usage evidence, bridge, utility routing controller
+  exposes: fenced control, route processing, and native-fallback lease decisions
+  consumes: pane/hooks/usage evidence, bridge, utility routing controller, native-fallback journal
 
 [Utility control]
   owns: task-router.ts, utility-execution-tier.ts, utility-store.ts, utility-context.ts, utility-runtime.ts
@@ -44,6 +44,11 @@ Last updated: <!-- 2026-07-27 by refresh-dependency-map.sh -->
   owns: utility-tools.ts
   exposes: search/read/status/diff/check/patch-proposal tools
   consumes: declared repository scopes and literal allowlists
+
+[Native fallback control]
+  owns: native-subagent.ts, loop-scoped provider profiles, provider hooks
+  exposes: one short-lived read-only provider lease or strict zero-native mode
+  consumes: settled utility evidence, current Governess epoch, provider lifecycle events
 ```
 
 ## Dependency graph
@@ -52,18 +57,24 @@ Last updated: <!-- 2026-07-27 by refresh-dependency-map.sh -->
 main agents ──MCP──► bridge ──append──► utility store
     │                                  ▲
     ├─ Claude exact PreToolUse ────────┤
-    └─ Codex app-server observation ──► delegation telemetry
+    └─ Codex exact PreToolUse/proxy ──► delegation telemetry
                                   ▲           │
                                   │           ▼
 Governess ──route/epoch───────────┴────► task router + execution tier
     │                                         │ one owner
-    └──────────── spawn detached ─────────────▼
-                                         bounded helper
-                                         ├─► Direct ───────────────┐
-                                         ├─► Nanny ──Pi──► Qwen   ├─► tool broker
-                                         ├─► Au Pair ─Pi──► GLM   │
-                                         ├─► context capsule ─────┘
-                                         └─► bridge ──compact result──► requester
+    ├──────────── spawn detached ─────────────▼
+    │                                    bounded helper
+    │                                    ├─► Direct ───────────────┐
+    │                                    ├─► Nanny ──Pi──► Qwen   ├─► tool broker
+    │                                    ├─► Au Pair ─Pi──► GLM   │
+    │                                    ├─► context capsule ─────┘
+    │                                    └─► bridge ──compact result──► requester
+    │
+    └─ current epoch + settled utility evidence ─► native fallback journal
+                                                      │ one leased slot
+provider Agent/spawn_agent ──PreToolUse/profile hook───┘
+                                                      ▼
+                                              read-only native child
 
 Nanny pane / Au Pair pane ──read only──► filtered utility store view
 optional bridge supervisor ──messages/route request──► bridge
@@ -79,6 +90,7 @@ optional bridge supervisor ──messages/route request──► bridge
 | Background jobs | Utility store/runtime | `utility/jobs.jsonl`, stale-claim fencing |
 | Cost and tokens | Provider adapter/runtime | `utility/usage.jsonl` |
 | Delegation adoption | Delegation policy, hook, and Codex proxy | `utility/delegation.jsonl` |
+| Native fallback | Governess lease store and provider hooks | `native-fallback/events.jsonl`, hook journals, Governess board |
 | Large outputs | Tool broker | patch/report artifacts referenced by result |
 | Visibility | Governess and optional utility pane | pane output; never a control dependency |
 
@@ -93,4 +105,4 @@ optional bridge supervisor ──messages/route request──► bridge
 | Tool broker | Worker prompt, scope tests, secret/command policy | This is the host security boundary |
 | Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
-| Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts | Claude can enforce pre-tool; Codex is observation-only until a supported per-tool hook exists |
+| Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption and native fallback before supported local tool calls |

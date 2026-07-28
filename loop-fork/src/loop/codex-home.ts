@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +21,17 @@ import {
 
 const LOOP_CODEX_HOME_DIR = "codex-home";
 const AUTH_FILES = ["auth.json"] as const;
+
+const removeLoopCodexGovernance = (codexHome: string): void => {
+  for (const path of [
+    join(codexHome, "hooks.json"),
+    join(codexHome, "agents", `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`),
+  ]) {
+    if (existsSync(path)) {
+      unlinkSync(path);
+    }
+  }
+};
 
 const sourceCodexHome = (): string | undefined => {
   if (process.env.CODEX_HOME?.trim()) {
@@ -171,6 +183,12 @@ export const ensureLoopCodexHome = (
   );
   if (mode === "utility-first") {
     writeLoopCodexFallbackAgent(codexHome);
+  } else {
+    // A run-scoped CODEX_HOME survives topology changes. Foreground/off and
+    // strict startup must not inherit hooks or a child profile written by an
+    // earlier governed tmux launch; tmux reinstalls current hooks after this
+    // cleanup when Governess is actually present.
+    removeLoopCodexGovernance(codexHome);
   }
   for (const filename of AUTH_FILES) {
     ensureAuthFile(codexHome, filename);
