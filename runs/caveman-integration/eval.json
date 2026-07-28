@@ -1,7 +1,7 @@
 {
   "task_id": "caveman-integration",
   "feature": "caveman-integration",
-  "timestamp": "2026-07-28T18:35:11Z",
+  "timestamp": "2026-07-28T18:41:12Z",
   "verdict": "pass_with_baseline_failures",
   "upstream": {
     "repository": "https://github.com/JuliusBrussee/caveman",
@@ -13,7 +13,8 @@
     "main_default": "lite",
     "helper_default": "full",
     "supported_modes": ["off", "lite", "full", "ultra"],
-    "legacy_resumed_main_mode": "off",
+    "legacy_live_tmux_main_mode": "off",
+    "legacy_non_tmux_main_mode": "default_or_explicit",
     "live_tmux_pair_liveness_probe": true,
     "routing_authority_changed": false,
     "global_caveman_installer_run": false,
@@ -23,9 +24,9 @@
   "checks": {
     "focused_tests": {
       "status": "pass",
-      "passed": 262,
+      "passed": 276,
       "failed": 0,
-      "assertions": 1143,
+      "assertions": 1176,
       "files": [
         "tests/loop/caveman.test.ts",
         "tests/loop/utility-runtime.test.ts",
@@ -34,7 +35,8 @@
         "tests/loop/args.test.ts",
         "tests/loop/run-state.test.ts",
         "tests/loop/paired-options.test.ts",
-        "tests/loop/governess.test.ts"
+        "tests/loop/governess.test.ts",
+        "tests/loop/task.test.ts"
       ]
     },
     "targeted_typecheck": {
@@ -167,12 +169,31 @@
       "session": "019faa01-a99e-73c1-8ecd-ad53fc4b6c64",
       "verdict": "pass",
       "scope": "Live helper-mode persistence and legacy helper migration"
+    },
+    {
+      "base": "47706b5",
+      "head": "3be352e",
+      "session": "019faa02-c1cf-7363-9179-9573483fedcf",
+      "verdict": "finding_fixed",
+      "finding": "Legacy non-tmux resumes were incorrectly forced to Caveman off even though every prompt is resent."
+    },
+    {
+      "commit": "2fe3ce8",
+      "session": "019faa04-5a4b-76e2-a927-d27976df9571",
+      "verdict": "finding_fixed",
+      "finding": "Paired planning and plan-review prompts were missing Caveman guidance."
+    },
+    {
+      "commit": "94f6bf5",
+      "session": "019faa06-efd6-7243-87e0-02a489d0a31d",
+      "verdict": "pass",
+      "scope": "Paired planning and plan-review prompt coverage"
     }
   ],
   "deployment": {
     "integration_branch": "codex/pi-command-intake-prompts",
     "installed_binary": "/Users/amgad/.local/bin/loop",
-    "installed_commit": "b51ebeb29d8154f56b440f5c771ea622890a9c5d",
+    "installed_commit": "94f6bf52639f269169dd7d567e8323c8936870d0",
     "active_loop_restarted": false,
     "activation": "New loop sessions only"
   },
