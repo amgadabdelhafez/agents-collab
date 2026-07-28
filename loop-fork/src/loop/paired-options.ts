@@ -161,6 +161,19 @@ export const applyPairedOptions = (
   opts.cavemanModeSource ??= "default";
   opts.helperCavemanMode ??= DEFAULT_HELPER_CAVEMAN_MODE;
   opts.helperCavemanModeSource ??= "default";
+  const resumesLegacyMainSession =
+    !manifest?.cavemanMode &&
+    ((manifest ? canResumePairedManifest(manifest) : false) ||
+      (allowRawSessionFallback && Boolean(opts.sessionId?.trim())));
+  if (resumesLegacyMainSession) {
+    if (opts.cavemanModeSource === "cli" && opts.cavemanMode !== "off") {
+      throw new Error(
+        "Cannot apply a non-off --caveman mode to a legacy resumed agent session; start a new loop so the agent receives the selected guidance"
+      );
+    }
+    opts.cavemanMode = "off";
+    opts.cavemanModeSource = "manifest";
+  }
   if (manifest?.cavemanMode && opts.cavemanModeSource !== "cli") {
     opts.cavemanMode = manifest.cavemanMode;
     opts.cavemanModeSource = "manifest";

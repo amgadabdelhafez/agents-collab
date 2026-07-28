@@ -67,6 +67,8 @@ test("preparePairedOptions accepts a raw session id without creating a paired ma
     expect(opts.pairedSessionIds).toEqual({
       claude: "claude-session-raw",
     });
+    expect(opts.cavemanMode).toBe("off");
+    expect(opts.cavemanModeSource).toBe("manifest");
   } finally {
     if (originalHome === undefined) {
       Reflect.deleteProperty(process.env, "HOME");
@@ -130,6 +132,63 @@ test("paired resumes restore Caveman modes unless CLI explicitly overrides", () 
     expect(readRunManifest(storage.manifestPath)).toMatchObject({
       cavemanMode: "off",
       helperCavemanMode: "off",
+    });
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("legacy resumed sessions stay Caveman-off until a new agent session", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  const storage = resolveRunStorage("72", process.cwd(), home);
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      claudeSessionId: "legacy-claude-session",
+      cwd: process.cwd(),
+      mode: "paired",
+      pid: 1234,
+      repoId: storage.repoId,
+      runId: "72",
+      state: "working",
+    })
+  );
+
+  try {
+    const impossibleOverride = makeOptions({
+      cavemanMode: "full",
+      cavemanModeSource: "cli",
+      pairedMode: true,
+      resumeRunId: "72",
+    });
+    expect(() => preparePairedRun(impossibleOverride, process.cwd())).toThrow(
+      "Cannot apply a non-off --caveman mode to a legacy resumed agent session"
+    );
+
+    const resumed = makeOptions({
+      cavemanMode: "lite",
+      cavemanModeSource: "default",
+      helperCavemanMode: "full",
+      helperCavemanModeSource: "default",
+      pairedMode: true,
+      resumeRunId: "72",
+    });
+    preparePairedRun(resumed, process.cwd());
+    expect(resumed).toMatchObject({
+      cavemanMode: "off",
+      cavemanModeSource: "manifest",
+      helperCavemanMode: "full",
+    });
+    expect(readRunManifest(storage.manifestPath)).toMatchObject({
+      cavemanMode: "off",
+      helperCavemanMode: "full",
     });
   } finally {
     if (originalHome === undefined) {
