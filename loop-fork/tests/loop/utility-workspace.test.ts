@@ -513,6 +513,7 @@ test("routing persists the adopted root and the worker reads the linked checkout
       {
         LOOP_UTILITY_ENABLED: "1",
         LOOP_UTILITY_HARNESS: "legacy",
+        LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
         LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
       },
       { spawnWorker: () => true }
@@ -527,6 +528,7 @@ test("routing persists the adopted root and the worker reads the linked checkout
       LOOP_UTILITY_ENABLED: "1",
       LOOP_UTILITY_HARNESS: "legacy",
       LOOP_UTILITY_MODEL: "local-test",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
       LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
     });
     expect(toolResult).toContain("active linked checkout");

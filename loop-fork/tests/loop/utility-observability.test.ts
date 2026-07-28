@@ -175,6 +175,7 @@ test("routing observability counts candidates rejected before job creation", () 
       considered: 4,
       explicitRouted: 0,
       pending: 0,
+      promptPackets: 0,
       reasons: {
         "compound-or-unsafe-command": 1,
         "command-not-in-delegation-grammar": 1,
@@ -184,6 +185,7 @@ test("routing observability counts candidates rejected before job creation", () 
       retained: 1,
       routed: 0,
       skipped: 3,
+      structuredPlans: 0,
       unsafe: 2,
     });
   } finally {

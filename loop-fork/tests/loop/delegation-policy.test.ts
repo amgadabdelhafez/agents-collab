@@ -205,8 +205,11 @@ describe("delegation classifier", () => {
     ["git show --stat 53a8d5dd | head -60", "show-stat"],
     ["git show --stat --format='' 53a8d5dd | tail -30", "show-stat"],
     ["git log --oneline -3 origin/main", "log"],
+    ["git log --oneline -3", "log"],
     ["git rev-parse origin/main", "resolve-ref"],
     ["git branch -a --list '*loop51*'", "branch-list"],
+    ["git branch --show-current", "current-branch"],
+    ["git worktree list", "worktree-list"],
     ["git cat-file -t 53a8d5dd", "object-type"],
   ])("routes broker-satisfiable Git metadata command %s", (command, marker) => {
     const classified = classify("Bash", { command });
@@ -346,7 +349,7 @@ describe("delegation classifier", () => {
     });
   });
 
-  test("routes a two-to-six stage literal read plan with the union of safe scopes", () => {
+  test("routes a bounded multi-stage literal read plan with the union of safe scopes", () => {
     expect(
       classify("Bash", {
         command:
@@ -474,7 +477,7 @@ describe("delegation classifier", () => {
     "rg -n route src && curl https://example.com",
     "rg -n route src && ps aux",
     "rg -n route src | wc -l && git status --short",
-    "git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short",
+    "git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short",
   ])("keeps unsafe or oversized read-plan neighbor direct: %s", (command) => {
     expect(classify("Bash", { command })).toMatchObject({
       eligible: false,
@@ -702,8 +705,142 @@ describe("delegation classifier", () => {
     });
   });
 
+  test("routes mixed bounded inspection and focused-check stages as one structured plan", () => {
+    expect(
+      classify("Bash", {
+        command:
+          'git status --short; echo "=== focused ==="; bun test tests/router.test.ts; head -25 src/core.js',
+      })
+    ).toMatchObject({
+      eligible: true,
+      operation: "read-plan",
+      request: {
+        executionProfile: "read-plan",
+        kind: "command",
+        readScope: [".", "tests/router.test.ts", "src/core.js"],
+        requiredCapabilities: ["inspect", "bounded-command", "focused-verify"],
+        executionPlan: [
+          { executionProfile: "git-status", readScope: ["."] },
+          {
+            executionArgv: ["bun", "test", "tests/router.test.ts"],
+            executionCwd: ".",
+            executionProfile: "focused-check",
+            readScope: [".", "tests/router.test.ts"],
+          },
+          {
+            executionProfile: "file-read",
+            executionRead: {
+              endLine: 25,
+              path: "src/core.js",
+              startLine: 1,
+            },
+            readScope: ["src/core.js"],
+          },
+        ],
+      },
+    });
+  });
+
+  test("routes bounded literal grep alternatives through reasoning-backed search", () => {
+    expect(
+      classify("Bash", {
+        command:
+          'grep -n "accepted\\|certif\\|CALIBRATION" src/core.js | head -40',
+      })
+    ).toMatchObject({
+      eligible: true,
+      operation: "scoped-search",
+      request: {
+        executionOutput: { lineLimit: 40, position: "head" },
+        executionProfile: "search",
+        readScope: ["src/core.js"],
+      },
+    });
+  });
+
+  test("persists bounded focused-check presentation filters", () => {
+    expect(
+      classify("Bash", {
+        command:
+          "npx vitest run tests/router.test.ts 2>&1 | sed -e 's/\\x1b\\[[0-9;]*m//g' | grep -E 'Test Files|Tests |FAIL ' | tail -25",
+      })
+    ).toMatchObject({
+      eligible: true,
+      operation: "focused-check",
+      request: {
+        executionArgv: ["npx", "vitest", "run", "tests/router.test.ts"],
+        executionOutput: {
+          includeLines: ["Test Files", "Tests ", "FAIL "],
+          lineLimit: 25,
+          position: "tail",
+          stderr: "merge",
+          stripAnsi: true,
+        },
+        executionProfile: "focused-check",
+      },
+    });
+  });
+
+  test("routes exact node syntax checks but rejects semantic pipelines", () => {
+    expect(
+      classify("Bash", { command: "node --check src/core.js" })
+    ).toMatchObject({
+      eligible: true,
+      operation: "focused-check",
+      request: {
+        executionArgv: ["node", "--check", "src/core.js"],
+      },
+    });
+    for (const command of [
+      "npx vitest run tests/router.test.ts | grep -E '^Tests.*passed$'",
+      "npx vitest run tests/router.test.ts | sed -n '1,4p'",
+    ]) {
+      expect(classify("Bash", { command })).toMatchObject({ eligible: false });
+    }
+  });
+
+  test("normalizes exact awk ranges and compact head counts", () => {
+    expect(
+      classify("Bash", { command: "awk 'NR >= 10&&NR <= 25' src/core.js" })
+    ).toMatchObject({
+      eligible: true,
+      request: {
+        executionRead: {
+          endLine: 25,
+          path: "src/core.js",
+          startLine: 10,
+        },
+      },
+    });
+    expect(classify("Bash", { command: "head -25 src/core.js" })).toMatchObject(
+      {
+        eligible: true,
+        request: {
+          executionRead: {
+            endLine: 25,
+            path: "src/core.js",
+            startLine: 1,
+          },
+        },
+      }
+    );
+  });
+
+  test("treats a terminal cat as a no-op only after an otherwise safe stage", () => {
+    expect(
+      classify("Bash", { command: "git status --short | cat" })
+    ).toMatchObject({
+      eligible: true,
+      operation: "git-status",
+    });
+    expect(classify("Bash", { command: "cat | cat" })).toMatchObject({
+      eligible: false,
+    });
+  });
+
   test.each([
     "npx vitest run",
+    "./node_modules/.bin/vitest run tests/router.test.ts",
     "npx vitest run --coverage tests/router.test.ts",
     "npx vitest run tests/router.test.ts --update",
     "npx vitest watch tests/router.test.ts",
@@ -715,7 +852,6 @@ describe("delegation classifier", () => {
     "npx vitest run tests/router.test.ts && git commit -m nope",
     "ls -R src",
     "ls /etc",
-    "grep -E 'route|worker' src",
     "grep 'route.*worker' src",
     "grep --include '*.ts' route src",
     "awk '{print $1}' src/core.js",

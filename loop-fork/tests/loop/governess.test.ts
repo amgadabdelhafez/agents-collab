@@ -1866,7 +1866,7 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
     expect(auPairRow?.length).toBeLessThanOrEqual(176);
     expect(board.split("\n").every((line) => line.length <= 176)).toBe(true);
     expect(board).toContain(
-      "routing · considered 3 · routed helpers 2 · actionable 0 · retained 0 · unsafe 1 · pending 0 · adoption auto 1 explicit 1"
+      "routing · considered 3 · routed helpers 2 · actionable 0 · retained 0 · unsafe 1 · pending 0 · adoption auto 1 explicit 1 packets 1 plans 0"
     );
     expect(board).toContain(
       "bridge helper msgs · in 2 latest — · out 2 latest — · pending 0"

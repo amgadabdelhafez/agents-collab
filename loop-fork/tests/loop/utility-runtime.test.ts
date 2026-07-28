@@ -415,6 +415,54 @@ test("structured mixed plans retain exact slices and output filters", async () =
   }
 });
 
+test("structured focused-check stages expose only their exact run_check boundary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-read-plan-check-"));
+  try {
+    mkdirSync(join(root, "tests"));
+    writeFileSync(join(root, "tests", "sample.test.ts"), "test\n");
+    const broker = await createUtilityReadPlanBroker({
+      artifactDir: ".utility-artifacts",
+      executionPlan: [
+        {
+          executionArgv: ["bun", "test", "tests/sample.test.ts"],
+          executionCwd: ".",
+          executionProfile: "focused-check",
+          objective: "Run exact focused test",
+          readScope: [".", "tests/sample.test.ts"],
+        },
+      ],
+      repoRoot: root,
+    });
+    expect(broker.definitions.map((tool) => tool.function.name)).toEqual([
+      "run_check",
+    ]);
+    expect(
+      await broker.execute({ arguments: {}, name: "git_status" })
+    ).toMatchObject({ error: { code: "tool_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: {
+          argv: ["bun", "test", "tests/other.test.ts"],
+          cwd: ".",
+        },
+        name: "run_check",
+      })
+    ).toMatchObject({ error: { code: "command_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: {
+          argv: ["bun", "test", "tests/sample.test.ts"],
+          cwd: ".",
+        },
+        name: "run_check",
+      })
+    ).toMatchObject({ ok: true });
+    expect(() => broker.assertComplete?.()).not.toThrow();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("file-read runtime carries an exact broker range and fails closed without one", () => {
   const exactRequest = createUtilityRouteRequest({
     acceptanceCriteria: ["return the exact slice"],

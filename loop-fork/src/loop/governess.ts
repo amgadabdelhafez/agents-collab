@@ -1969,7 +1969,7 @@ const renderWorkerRoutingRows = (
 ): string[] => {
   const width = Math.max(1, meta.maxColumns ?? 176);
   const routing = snapshot.routing;
-  const decisions = ` routing · considered ${routing.considered} · routed helpers ${routing.routed} · actionable ${routing.actionable} · retained ${routing.retained} · unsafe ${routing.unsafe} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted}`;
+  const decisions = ` routing · considered ${routing.considered} · routed helpers ${routing.routed} · actionable ${routing.actionable} · retained ${routing.retained} · unsafe ${routing.unsafe} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted} packets ${routing.promptPackets} plans ${routing.structuredPlans}`;
   const reasons = Object.entries(routing.reasons)
     .sort(
       (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])

@@ -234,6 +234,9 @@ const rootDelegationRequest = (
       ? {
           executionPlan: request.executionPlan.map((step) => ({
             ...step,
+            ...(step.executionCwd
+              ? { executionCwd: rootScope(step.executionCwd) }
+              : {}),
             ...(step.executionRead
               ? {
                   executionRead: {

@@ -174,6 +174,7 @@ export const resolveUtilityRequestWorkspace = (
     ...(request.executionPlan
       ? request.executionPlan.flatMap((step) => [
           ...step.readScope,
+          ...(step.executionCwd ? [step.executionCwd] : []),
           ...(step.executionRead ? [step.executionRead.path] : []),
         ])
       : []),
@@ -238,11 +239,15 @@ export const resolveUtilityRequestWorkspace = (
     executionPlan = [];
     for (const step of request.executionPlan) {
       const stepReadScope = normalizeScopes(step.readScope);
+      const stepExecutionCwd = step.executionCwd
+        ? normalizeScopes([step.executionCwd])?.[0]
+        : undefined;
       const stepExecutionReadPath = step.executionRead
         ? normalizeScopes([step.executionRead.path])?.[0]
         : undefined;
       if (
         !stepReadScope ||
+        (step.executionCwd !== undefined && !stepExecutionCwd) ||
         (step.executionRead !== undefined && !stepExecutionReadPath)
       ) {
         executionPlanIsValid = false;
@@ -250,6 +255,7 @@ export const resolveUtilityRequestWorkspace = (
       }
       executionPlan.push({
         ...step,
+        ...(stepExecutionCwd ? { executionCwd: stepExecutionCwd } : {}),
         ...(step.executionRead && stepExecutionReadPath
           ? {
               executionRead: {

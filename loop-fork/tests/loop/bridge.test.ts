@@ -1650,6 +1650,10 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   );
   expect(result.stdout).toContain("Delegation is mandatory");
   expect(result.stdout).toContain('call \\"route_task\\" before using');
+  expect(result.stdout).toContain("one to three independent bounded packets");
+  expect(result.stdout).toContain("Use Nanny");
+  expect(result.stdout).toContain("Use Au Pair");
+  expect(result.stdout).toContain("Governess chooses the tier");
   expect(result.stdout).toContain('"id":2');
   expect(result.stdout).toContain('"result":{}');
   expect(result.stdout).toContain('"id":3');
@@ -1698,6 +1702,9 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
     ])
   );
   expect(tools.some((tool) => tool.name === "reply")).toBe(false);
+  expect(
+    tools.find((tool) => tool.name === "route_task")?.description
+  ).toContain("one to three packets early");
   rmSync(root, { recursive: true, force: true });
 });
 

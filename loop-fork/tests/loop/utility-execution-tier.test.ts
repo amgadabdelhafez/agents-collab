@@ -69,6 +69,46 @@ describe("utility execution tier classification", () => {
     });
   });
 
+  test("fully exact mixed plans bypass every model", () => {
+    const request = createUtilityRouteRequest({
+      acceptanceCriteria: ["return status and focused test evidence"],
+      authority: {},
+      executionPlan: [
+        {
+          executionProfile: "git-status",
+          objective: "Inspect status",
+          readScope: ["."],
+        },
+        {
+          executionArgv: ["bun", "test", "tests/unit.test.ts"],
+          executionCwd: ".",
+          executionProfile: "focused-check",
+          objective: "Run focused test",
+          readScope: [".", "tests/unit.test.ts"],
+        },
+      ],
+      executionProfile: "read-plan",
+      kind: "command",
+      objective: "Inspect and verify",
+      readScope: [".", "tests/unit.test.ts"],
+      requester: "codex",
+      requiredCapabilities: ["inspect", "bounded-command", "focused-verify"],
+      risk: "low",
+      writeScope: [],
+    });
+    expect(classifyUtilityExecution(request)).toBe(UTILITY_DIRECT_TIER);
+    expect(directUtilityCalls(request)).toEqual([
+      { arguments: {}, name: "git_status" },
+      {
+        arguments: {
+          argv: ["bun", "test", "tests/unit.test.ts"],
+          cwd: ".",
+        },
+        name: "run_check",
+      },
+    ]);
+  });
+
   test("small structured read-only reasoning goes to Nanny", () => {
     expect(
       classifyUtilityExecution(

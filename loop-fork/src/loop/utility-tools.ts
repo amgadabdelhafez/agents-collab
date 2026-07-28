@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants, type Dirent } from "node:fs";
+import { type Dirent, constants as fsConstants } from "node:fs";
 import {
   access,
   lstat,
@@ -106,9 +106,12 @@ export interface UtilityExactRead {
 }
 
 export interface UtilityOutputBoundary {
+  excludeLines?: string[];
+  includeLines?: string[];
   lineLimit?: number;
   position?: "head" | "tail";
   stderr?: "merge" | "omit";
+  stripAnsi?: boolean;
 }
 
 export interface UtilityToolBrokerConfig {
@@ -194,6 +197,7 @@ const DEFAULT_LIMITS: UtilityToolLimits = {
 
 const DEFAULT_COMMAND_ALLOWLIST: readonly UtilityCommandPolicy[] = [
   { executable: "bun", prefixes: [["test"]] },
+  { executable: "node", prefixes: [["--check"]] },
   {
     executable: "npx",
     prefixes: [["vitest", "run"]],
@@ -221,6 +225,9 @@ const SECRET_ENV_NAME =
   /(?:api[_-]?key|auth|cookie|credential|password|secret|session|token)/i;
 const SHELL_META = /[;&|`$<>\n\r\0]/;
 const LINE_BREAK = /\r?\n/;
+const LINE_MATCHER_CONTROL_RE = /[\n\r\0]/;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI SGR escape matcher
+const ANSI_SGR_RE = /\u001b\[[0-9;]*m/g;
 const FORBIDDEN_PATCH_OPERATION =
   /^(?:deleted file mode|rename from|rename to|old mode|new mode|GIT binary patch|Binary files )/m;
 const SHELL_EXECUTABLES = new Set([
@@ -348,7 +355,7 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
     function: {
       name: "git_inspect",
       description:
-        "Run one bounded read-only Git metadata query: resolve-ref, log, show-stat, branch-list, or object-type.",
+        "Run one bounded read-only Git metadata query: resolve-ref, log, show-stat, branch-list, current-branch, worktree-list, or object-type.",
       parameters: objectSchema(
         {
           action: {
@@ -357,6 +364,8 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
               "log",
               "show-stat",
               "branch-list",
+              "current-branch",
+              "worktree-list",
               "object-type",
             ],
             type: "string",
@@ -416,7 +425,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const outputBoundaryIsValid = (value: UtilityOutputBoundary): boolean => {
   const keys = Object.keys(value);
-  if (keys.some((key) => !["lineLimit", "position", "stderr"].includes(key))) {
+  if (
+    keys.some(
+      (key) =>
+        ![
+          "excludeLines",
+          "includeLines",
+          "lineLimit",
+          "position",
+          "stderr",
+          "stripAnsi",
+        ].includes(key)
+    )
+  ) {
     return false;
   }
   const hasFilter =
@@ -426,12 +447,31 @@ const outputBoundaryIsValid = (value: UtilityOutputBoundary): boolean => {
     (value.lineLimit as number) > 0 &&
     (value.lineLimit as number) <= 500 &&
     (value.position === "head" || value.position === "tail");
+  const validLineMatchers = (candidate: unknown): boolean =>
+    candidate === undefined ||
+    (Array.isArray(candidate) &&
+      candidate.length >= 1 &&
+      candidate.length <= 16 &&
+      candidate.every(
+        (entry) =>
+          typeof entry === "string" &&
+          entry.length >= 1 &&
+          entry.length <= 80 &&
+          !LINE_MATCHER_CONTROL_RE.test(entry)
+      ));
   return (
     (!hasFilter || validFilter) &&
     (value.stderr === undefined ||
       value.stderr === "merge" ||
       value.stderr === "omit") &&
-    (hasFilter || value.stderr !== undefined)
+    (value.stripAnsi === undefined || typeof value.stripAnsi === "boolean") &&
+    validLineMatchers(value.includeLines) &&
+    validLineMatchers(value.excludeLines) &&
+    (hasFilter ||
+      value.stderr !== undefined ||
+      value.stripAnsi === true ||
+      value.includeLines !== undefined ||
+      value.excludeLines !== undefined)
   );
 };
 
@@ -487,16 +527,36 @@ const boundCommandOutput = (
       bounded.stdout && bounded.stderr && !bounded.stdout.endsWith("\n")
         ? "\n"
         : "";
-    bounded.stdout = sliceBoundedText(
-      `${bounded.stdout}${separator}${bounded.stderr ?? ""}`,
-      boundary
-    ).text;
+    bounded.stdout = `${bounded.stdout}${separator}${bounded.stderr ?? ""}`;
     bounded.stderr = "";
-    return bounded;
+  } else if (boundary.stderr === "omit") {
+    bounded.stderr = "";
   }
-  bounded.stdout = sliceBoundedText(bounded.stdout, boundary).text;
-  if (boundary.stderr === "omit") {
-    bounded.stderr = "";
+  const filterText = (value: string): string => {
+    let next = boundary.stripAnsi ? value.replace(ANSI_SGR_RE, "") : value;
+    if (boundary.includeLines || boundary.excludeLines) {
+      const trailingNewline = next.endsWith("\n");
+      const lines = next.length === 0 ? [] : next.split(LINE_BREAK);
+      if (lines.at(-1) === "") {
+        lines.pop();
+      }
+      next = lines
+        .filter(
+          (line) =>
+            (!boundary.includeLines ||
+              boundary.includeLines.some((needle) => line.includes(needle))) &&
+            !boundary.excludeLines?.some((needle) => line.includes(needle))
+        )
+        .join("\n");
+      if (trailingNewline && next.length > 0) {
+        next += "\n";
+      }
+    }
+    return sliceBoundedText(next, boundary).text;
+  };
+  bounded.stdout = filterText(bounded.stdout);
+  if (typeof bounded.stderr === "string") {
+    bounded.stderr = filterText(bounded.stderr);
   }
   return bounded;
 };
@@ -664,6 +724,57 @@ const exactArgumentKeys = (
       `${label} contains unsupported key: ${unknown}`
     );
   }
+};
+
+const requireBoundedGitRef = (args: Record<string, unknown>): string => {
+  const ref = requireString(args, "ref");
+  if (!GIT_REF_RE.test(ref) || ref.includes("..")) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      "ref must be a bounded literal Git ref"
+    );
+  }
+  return ref;
+};
+
+const gitInspectNoArgArgv = (
+  action: string,
+  args: Record<string, unknown>
+): string[] | undefined => {
+  if (action !== "current-branch" && action !== "worktree-list") {
+    return undefined;
+  }
+  exactArgumentKeys(args, new Set(["action"]), "git_inspect");
+  return action === "current-branch"
+    ? ["git", "branch", "--show-current"]
+    : ["git", "worktree", "list"];
+};
+
+const gitInspectLogArgv = (args: Record<string, unknown>): string[] => {
+  exactArgumentKeys(args, new Set(["action", "limit", "ref"]), "git_inspect");
+  const limit = optionalPositiveInteger(args, "limit") ?? 10;
+  if (limit > 50) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      "log limit cannot exceed 50"
+    );
+  }
+  const ref = optionalString(args, "ref");
+  if (ref !== undefined && (!GIT_REF_RE.test(ref) || ref.includes(".."))) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      "ref must be a bounded literal Git ref"
+    );
+  }
+  return [
+    "git",
+    "log",
+    "--no-decorate",
+    "--oneline",
+    "-n",
+    String(limit),
+    ref ?? "HEAD",
+  ];
 };
 
 const validatePolicyToken = (value: unknown, label: string): string => {
@@ -2010,23 +2121,20 @@ export class UtilityToolBroker {
     args: Record<string, unknown>
   ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
     const action = requireString(args, "action");
-    const gitRef = (): string => {
-      const ref = requireString(args, "ref");
-      if (!GIT_REF_RE.test(ref) || ref.includes("..")) {
-        throw new ToolPolicyError(
-          "invalid_arguments",
-          "ref must be a bounded literal Git ref"
-        );
-      }
-      return ref;
-    };
-    let argv: string[];
-    if (action === "resolve-ref") {
+    let argv = gitInspectNoArgArgv(action, args);
+    if (argv) {
+      // The helper validated that these actions carry no hidden arguments.
+    } else if (action === "resolve-ref") {
       exactArgumentKeys(args, new Set(["action", "ref"]), "git_inspect");
-      argv = ["git", "rev-parse", "--verify", `${gitRef()}^{commit}`];
+      argv = [
+        "git",
+        "rev-parse",
+        "--verify",
+        `${requireBoundedGitRef(args)}^{commit}`,
+      ];
     } else if (action === "object-type") {
       exactArgumentKeys(args, new Set(["action", "ref"]), "git_inspect");
-      argv = ["git", "cat-file", "-t", gitRef()];
+      argv = ["git", "cat-file", "-t", requireBoundedGitRef(args)];
     } else if (action === "branch-list") {
       exactArgumentKeys(args, new Set(["action", "pattern"]), "git_inspect");
       const pattern = requireString(args, "pattern");
@@ -2038,27 +2146,7 @@ export class UtilityToolBroker {
       }
       argv = ["git", "branch", "--all", "--list", pattern];
     } else if (action === "log") {
-      exactArgumentKeys(
-        args,
-        new Set(["action", "limit", "ref"]),
-        "git_inspect"
-      );
-      const limit = optionalPositiveInteger(args, "limit") ?? 10;
-      if (limit > 50) {
-        throw new ToolPolicyError(
-          "invalid_arguments",
-          "log limit cannot exceed 50"
-        );
-      }
-      argv = [
-        "git",
-        "log",
-        "--no-decorate",
-        "--oneline",
-        "-n",
-        String(limit),
-        gitRef(),
-      ];
+      argv = gitInspectLogArgv(args);
     } else if (action === "show-stat") {
       exactArgumentKeys(
         args,
@@ -2072,7 +2160,7 @@ export class UtilityToolBroker {
         "--no-ext-diff",
         "--stat",
         includeMetadata ? "--format=fuller" : "--format=",
-        gitRef(),
+        requireBoundedGitRef(args),
         "--",
         ".",
         ...this.gitExclusions(),

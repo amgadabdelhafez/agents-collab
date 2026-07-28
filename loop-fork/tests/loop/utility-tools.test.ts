@@ -399,8 +399,11 @@ test("git_inspect runs only literal bounded read-only metadata commands", async 
     for (const args of [
       { action: "resolve-ref", ref: "origin/main" },
       { action: "log", limit: 3, ref: "origin/main" },
+      { action: "log", limit: 2 },
       { action: "show-stat", includeMetadata: false, ref: "53a8d5dd" },
       { action: "branch-list", pattern: "*loop51*" },
+      { action: "current-branch" },
+      { action: "worktree-list" },
       { action: "object-type", ref: "53a8d5dd" },
     ]) {
       expect(
@@ -411,15 +414,19 @@ test("git_inspect runs only literal bounded read-only metadata commands", async 
     expect(requests.map((request) => request.argv.slice(0, 3))).toEqual([
       ["git", "rev-parse", "--verify"],
       ["git", "log", "--no-decorate"],
+      ["git", "log", "--no-decorate"],
       ["git", "show", "--no-ext-diff"],
       ["git", "branch", "--all"],
+      ["git", "branch", "--show-current"],
+      ["git", "worktree", "list"],
       ["git", "cat-file", "-t"],
     ]);
     expect(requests[1]?.argv).toContain("-n");
     expect(requests[1]?.argv).toContain("3");
-    expect(requests[2]?.argv).toContain("--stat");
-    expect(requests[2]?.argv).toContain("--format=");
-    expect(requests[2]?.argv).toContain(":(exclude,glob,icase)**/.claude/**");
+    expect(requests[2]?.argv.at(-1)).toBe("HEAD");
+    expect(requests[3]?.argv).toContain("--stat");
+    expect(requests[3]?.argv).toContain("--format=");
+    expect(requests[3]?.argv).toContain(":(exclude,glob,icase)**/.claude/**");
     expect(requests.every((request) => request.env.CI === "1")).toBe(true);
 
     for (const args of [
@@ -432,7 +439,7 @@ test("git_inspect runs only literal bounded read-only metadata commands", async 
         await broker.execute({ arguments: args, name: "git_inspect" })
       ).toMatchObject({ error: { code: "invalid_arguments" }, ok: false });
     }
-    expect(requests).toHaveLength(5);
+    expect(requests).toHaveLength(8);
   });
 });
 
@@ -611,6 +618,49 @@ test("broker enforces merged tail output for a focused check", async () => {
       ok: true,
       stderr: "",
       stdout: "error-one\nerror-two\n",
+    });
+  });
+});
+
+test("broker applies literal presentation filters without a shell", async () => {
+  await withRepo(async (root) => {
+    const argv = ["bun", "test", "tests/example.test.ts"];
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["run_check"],
+        artifactDir: ".utility-artifacts",
+        commandCwds: ["."],
+        exactCommand: argv,
+        outputBoundary: {
+          excludeLines: ["SKIP"],
+          includeLines: ["Tests ", "FAIL "],
+          lineLimit: 2,
+          position: "tail",
+          stderr: "merge",
+          stripAnsi: true,
+        },
+        readScopes: ["tests/example.test.ts"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: async () => ({
+          exitCode: 1,
+          stderr: "\u001b[31mFAIL suite\u001b[0m\nSKIP Tests old\n",
+          stdout: "setup\nTests 7 passed\nTests 1 failed\n",
+        }),
+      }
+    );
+    expect(
+      await broker.execute({
+        arguments: { argv, cwd: "." },
+        name: "run_check",
+      })
+    ).toMatchObject({
+      exitCode: 1,
+      ok: true,
+      stderr: "",
+      stdout: "Tests 1 failed\nFAIL suite\n",
     });
   });
 });

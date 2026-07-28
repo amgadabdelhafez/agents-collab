@@ -472,6 +472,77 @@ test("routes a bounded read-plan profile without command or write authority", ()
   });
 });
 
+test("routes a mixed structured plan with one exact focused-check stage", () => {
+  const request = makeRequest({
+    executionPlan: [
+      {
+        executionProfile: "git-status",
+        objective: "Inspect status",
+        readScope: ["."],
+      },
+      {
+        executionArgv: ["bun", "test", "tests/router.test.ts"],
+        executionCwd: ".",
+        executionProfile: "focused-check",
+        objective: "Run the focused router test",
+        readScope: [".", "tests/router.test.ts"],
+      },
+    ],
+    executionProfile: "read-plan",
+    kind: "command",
+    objective: "Inspect status and run the exact focused test",
+    readScope: [".", "tests/router.test.ts"],
+    requiredCapabilities: ["inspect", "bounded-command", "focused-verify"],
+    writeScope: [],
+  });
+  expect(routeUtilityRequest(request, context())).toEqual({
+    reason: "utility-eligible",
+    target: "utility",
+    tierId: "cheap-oss",
+  });
+  expect(request.executionPlan?.[1]).toMatchObject({
+    executionArgv: ["bun", "test", "tests/router.test.ts"],
+    executionCwd: ".",
+  });
+});
+
+test.each([
+  {
+    executionArgv: ["bun", "test", "tests/router.test.ts"],
+    executionProfile: "focused-check" as const,
+    objective: "Missing cwd",
+    readScope: [".", "tests/router.test.ts"],
+  },
+  {
+    executionArgv: ["bun", "test", "../outside.test.ts"],
+    executionCwd: ".",
+    executionProfile: "focused-check" as const,
+    objective: "Outside scope",
+    readScope: [".", "tests/router.test.ts"],
+  },
+  {
+    executionArgv: ["git", "commit", "-am", "nope"],
+    executionCwd: ".",
+    executionProfile: "focused-check" as const,
+    objective: "Mutation",
+    readScope: ["."],
+  },
+])("rejects malformed or unsafe focused-check plan stage", (stage) => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        executionPlan: [stage],
+        executionProfile: "read-plan",
+        kind: "command",
+        readScope: stage.readScope,
+        requiredCapabilities: ["bounded-command", "focused-verify"],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({ reason: "request-not-bounded", target: "driver" });
+});
+
 test.each([
   makeRequest({ executionProfile: "read-plan", kind: "inspect" }),
   makeRequest({

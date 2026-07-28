@@ -97,9 +97,9 @@ const MAX_WORKSPACE_HINT_PREFIX = 1024;
 const MAX_PATTERN_LENGTH = 256;
 const MAX_SCOPES = 4;
 const MAX_READ_PLAN_SCOPES = 12;
-const MAX_READ_PLAN_STEPS = 6;
+const MAX_READ_PLAN_STEPS = 8;
 const MAX_READ_PLAN_LABEL_STAGES = 6;
-const MAX_READ_PLAN_TOTAL_STAGES = 12;
+const MAX_READ_PLAN_TOTAL_STAGES = 14;
 const LARGE_READ_MIN_LINES = 200;
 const MAX_SOURCE_SLICE_LINES = 500;
 const SHELL_META = new Set([";", "&", "|", "`", "$", "<", ">", "(", ")"]);
@@ -108,9 +108,10 @@ const TRAILING_SLASH_RE = /\/$/;
 const GLOB_META_RE = /[?*[\]{}]/;
 const WHITESPACE_RE = /\s/;
 const SOURCE_SLICE_RE = /^(\d+),(\d+)p$/;
-const AWK_PREFIX_SLICE_RE = /^NR<=(\d+)$/;
-const AWK_RANGE_SLICE_RE = /^NR>=(\d+) && NR<=(\d+)$/;
+const AWK_PREFIX_SLICE_RE = /^NR\s*<=\s*(\d+)$/;
+const AWK_RANGE_SLICE_RE = /^NR\s*>=\s*(\d+)\s*&&\s*NR\s*<=\s*(\d+)$/;
 const REGEX_META_RE = /[\\.^$|?*+()[\]{}]/;
+const PRESENTATION_LITERAL_META_RE = /[\\.^$?*+()[\]{}]/;
 const DIGITS_RE = /^\d+$/;
 const FILTER_COUNT_FLAG_RE = /^-\d+$/;
 const GREP_COMMAND_FLAGS_RE = /^-[Finr]+$/;
@@ -777,47 +778,154 @@ const describeOutputFilter = (filter: OutputFilter): string => {
 interface SafeCompound {
   argv: string[];
   cdTarget?: string;
+  excludeLines?: string[];
   filter?: OutputFilter;
+  includeLines?: string[];
   stderr?: "merge" | "omit";
+  stripAnsi?: boolean;
 }
 
-// Structural parse of `[cd <path> &&] base [2>/dev/null] [| filter]`. Every
-// other compound shape returns undefined so classifyBash keeps failing closed.
+const literalPresentationAlternatives = (
+  pattern: string
+): string[] | undefined => {
+  const alternatives = pattern.split("|");
+  if (
+    alternatives.length < 1 ||
+    alternatives.length > 16 ||
+    alternatives.some(
+      (part) =>
+        part.length < 1 ||
+        part.length > 80 ||
+        PRESENTATION_LITERAL_META_RE.test(part)
+    )
+  ) {
+    return undefined;
+  }
+  return alternatives;
+};
+
+const parsePresentationGrep = (
+  tokens: ShellToken[]
+): Pick<SafeCompound, "excludeLines" | "includeLines"> | undefined => {
+  const words = wordValues(tokens);
+  if (!words || words[0] !== "grep") {
+    return undefined;
+  }
+  let index = 1;
+  let exclude = false;
+  if (words[index]?.startsWith("-")) {
+    const flags = (words[index] as string).slice(1);
+    if (!flags || [...flags].some((flag) => !["E", "a", "v"].includes(flag))) {
+      return undefined;
+    }
+    exclude = flags.includes("v");
+    index += 1;
+  }
+  if (words.length !== index + 1) {
+    return undefined;
+  }
+  const alternatives = literalPresentationAlternatives(words[index] ?? "");
+  if (!alternatives) {
+    return undefined;
+  }
+  return exclude
+    ? { excludeLines: alternatives }
+    : { includeLines: alternatives };
+};
+
+const isAnsiStripSed = (tokens: ShellToken[]): boolean => {
+  const words = wordValues(tokens);
+  if (!words || words[0] !== "sed") {
+    return false;
+  }
+  const expression = words[1] === "-e" ? words[2] : words[1];
+  const expectedLength = words[1] === "-e" ? 3 : 2;
+  return (
+    words.length === expectedLength &&
+    (expression === "s/\\x1b\\[[0-9;]*m//g" ||
+      expression === "s/\\x1B\\[[0-9;]*m//g")
+  );
+};
+
+const splitCompoundCwd = (
+  tokens: ShellToken[]
+): { cdTarget?: string; rest: ShellToken[] } | undefined => {
+  const chained = splitTokens(tokens, "and");
+  if (chained.length === 1) {
+    return { rest: chained[0] ?? [] };
+  }
+  if (chained.length !== 2) {
+    return undefined;
+  }
+  const lead = wordValues(chained[0] ?? []);
+  const cdTarget = lead?.[1];
+  if (
+    lead?.length !== 2 ||
+    lead[0] !== "cd" ||
+    !cdTarget ||
+    cdTarget.startsWith("-") ||
+    GLOB_META_RE.test(cdTarget)
+  ) {
+    return undefined;
+  }
+  return { cdTarget, rest: chained[1] ?? [] };
+};
+
+const parsePresentationPipeline = (
+  stages: ShellToken[][]
+): Omit<SafeCompound, "argv" | "cdTarget" | "stderr"> | undefined => {
+  const presentation: Omit<SafeCompound, "argv" | "cdTarget" | "stderr"> = {};
+  for (const [offset, stage] of stages.entries()) {
+    const terminal = offset === stages.length - 1;
+    const parsedFilter = parseOutputFilter(stage);
+    const parsedGrep = parsePresentationGrep(stage);
+    const passthrough = wordValues(stage);
+    if (parsedFilter && terminal && !presentation.filter) {
+      presentation.filter = parsedFilter;
+    } else if (
+      passthrough?.length === 1 &&
+      passthrough[0] === "cat" &&
+      terminal
+    ) {
+      // `cat` is an explicit no-op often used to force stream consumption.
+    } else if (isAnsiStripSed(stage) && !presentation.stripAnsi) {
+      presentation.stripAnsi = true;
+    } else if (
+      parsedGrep?.includeLines &&
+      !presentation.includeLines &&
+      !presentation.excludeLines
+    ) {
+      presentation.includeLines = parsedGrep.includeLines;
+    } else if (
+      parsedGrep?.excludeLines &&
+      !presentation.excludeLines &&
+      !presentation.includeLines
+    ) {
+      presentation.excludeLines = parsedGrep.excludeLines;
+    } else {
+      return undefined;
+    }
+  }
+  return presentation;
+};
+
+// Structural parse of `[cd <path> &&] base [2>/dev/null]` followed by at
+// most three bounded presentation stages. The presentation pipeline is
+// persisted as broker metadata and never handed to a shell.
 const decomposeSafeCompound = (
   tokens: ShellToken[]
 ): SafeCompound | undefined => {
-  const chained = splitTokens(tokens, "and");
-  if (chained.length > 2) {
+  const scoped = splitCompoundCwd(tokens);
+  if (!scoped) {
     return undefined;
   }
-  let cdTarget: string | undefined;
-  let rest = chained[0] ?? [];
-  if (chained.length === 2) {
-    const lead = wordValues(chained[0] ?? []);
-    if (
-      !lead ||
-      lead.length !== 2 ||
-      lead[0] !== "cd" ||
-      !lead[1] ||
-      // `cd -` is $OLDPWD and `cd -<opt>` is an option, neither a literal path.
-      lead[1].startsWith("-") ||
-      GLOB_META_RE.test(lead[1])
-    ) {
-      return undefined;
-    }
-    cdTarget = lead[1];
-    rest = chained[1] ?? [];
-  }
-  const piped = splitTokens(rest, "pipe");
-  if (piped.length > 2) {
+  const piped = splitTokens(scoped.rest, "pipe");
+  if (piped.length > 4) {
     return undefined;
   }
-  let filter: OutputFilter | undefined;
-  if (piped.length === 2) {
-    filter = parseOutputFilter(piped[1] ?? []);
-    if (!filter) {
-      return undefined;
-    }
+  const presentation = parsePresentationPipeline(piped.slice(1));
+  if (!presentation) {
+    return undefined;
   }
   let base = piped[0] ?? [];
   const stderrToken = base.at(-1)?.kind;
@@ -832,8 +940,8 @@ const decomposeSafeCompound = (
   }
   return {
     argv,
-    ...(cdTarget === undefined ? {} : { cdTarget }),
-    ...(filter === undefined ? {} : { filter }),
+    ...presentation,
+    ...(scoped.cdTarget === undefined ? {} : { cdTarget: scoped.cdTarget }),
     ...(stderr ? { stderr } : {}),
   };
 };
@@ -930,10 +1038,12 @@ const scopesFrom = (
 
 type GitInspectionAction =
   | "branch-list"
+  | "current-branch"
   | "log"
   | "object-type"
   | "resolve-ref"
-  | "show-stat";
+  | "show-stat"
+  | "worktree-list";
 
 interface GitInspectionQuery {
   action: GitInspectionAction;
@@ -991,8 +1101,8 @@ const parseGitLogInspection = (
       return undefined;
     }
   }
-  return oneline && ref && limit && limit <= 50
-    ? { action: "log", limit, ref }
+  return oneline && limit && limit <= 50
+    ? { action: "log", limit, ...(ref ? { ref } : {}) }
     : undefined;
 };
 
@@ -1001,6 +1111,16 @@ const parseGitInspection = (
 ): GitInspectionQuery | undefined => {
   if (argv[0] !== "git") {
     return undefined;
+  }
+  if (
+    argv[1] === "branch" &&
+    argv[2] === "--show-current" &&
+    argv.length === 3
+  ) {
+    return { action: "current-branch" };
+  }
+  if (argv[1] === "worktree" && argv[2] === "list" && argv.length === 3) {
+    return { action: "worktree-list" };
   }
   if (argv[1] === "rev-parse" && argv.length === 3 && safeGitRef(argv[2])) {
     return { action: "resolve-ref", ref: argv[2] };
@@ -1248,20 +1368,31 @@ const classifyFocusedCheck = (
   intent: DelegationToolIntent,
   argv: string[]
 ): DelegationClassification | undefined => {
+  const normalizedArgv = [...argv];
   let pathStart: number | undefined;
-  if (argv[0] === "bun" && argv[1] === "test") {
+  let requiredPathCount: number | undefined;
+  if (normalizedArgv[0] === "bun" && normalizedArgv[1] === "test") {
     pathStart = 2;
-  } else if (argv[0] === "npx" && argv[1] === "vitest" && argv[2] === "run") {
+  } else if (
+    normalizedArgv[0] === "npx" &&
+    normalizedArgv[1] === "vitest" &&
+    normalizedArgv[2] === "run"
+  ) {
     pathStart = 3;
+  } else if (normalizedArgv[0] === "node" && normalizedArgv[1] === "--check") {
+    pathStart = 2;
+    requiredPathCount = 1;
   } else {
     return undefined;
   }
-  const requestedPaths = argv.slice(pathStart);
+  const requestedPaths = normalizedArgv.slice(pathStart);
   if (requestedPaths.length < 1) {
     return undefined;
   }
   if (
     requestedPaths.length > MAX_SCOPES ||
+    (requiredPathCount !== undefined &&
+      requestedPaths.length !== requiredPathCount) ||
     requestedPaths.some((path) => path.startsWith("-"))
   ) {
     return {
@@ -1302,7 +1433,7 @@ const classifyFocusedCheck = (
   }
   const scopes = [executionCwd, ...(testScopes as string[])];
   const executionArgv = [
-    ...argv.slice(0, pathStart),
+    ...normalizedArgv.slice(0, pathStart),
     ...(testScopes as string[]),
   ];
   const classified = request(
@@ -1449,13 +1580,51 @@ const classifyCatCommand = (
   };
 };
 
-const classifyGrepCommand = (
-  intent: DelegationToolIntent,
-  argv: string[]
-): DelegationClassification | undefined => {
-  if (argv[0] !== "grep") {
+const escapeRegexLiteral = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// GNU/BSD basic grep commonly spells alternation as `\|`. Accept only a
+// bounded list of literal alternatives, with optional whole-line anchors, and
+// translate it to the JavaScript regex used by search_repo. Every other regex
+// feature remains reasoning/native-only so this never becomes a general regex
+// grammar hidden behind grep.
+const basicLiteralAlternation = (pattern: string): string | undefined => {
+  if (!pattern.includes("\\|")) {
     return undefined;
   }
+  const alternatives = pattern.split("\\|");
+  if (
+    alternatives.length < 2 ||
+    alternatives.length > 16 ||
+    alternatives.some((alternative) => alternative.length === 0)
+  ) {
+    return undefined;
+  }
+  const translated: string[] = [];
+  for (const alternative of alternatives) {
+    const anchoredStart = alternative.startsWith("^");
+    const anchoredEnd = alternative.endsWith("$");
+    const start = anchoredStart ? 1 : 0;
+    const end = anchoredEnd ? -1 : undefined;
+    const body = alternative.slice(start, end);
+    if (!body || body.includes("\\") || body.length > 80) {
+      return undefined;
+    }
+    translated.push(
+      `${anchoredStart ? "^" : ""}${escapeRegexLiteral(body)}${anchoredEnd ? "$" : ""}`
+    );
+  }
+  return `(?:${translated.join("|")})`;
+};
+
+interface GrepFlags {
+  caseSensitive: boolean;
+  fixed: boolean;
+  index: number;
+  lineNumbers: boolean;
+}
+
+const parseGrepFlags = (argv: string[]): GrepFlags | undefined => {
   let index = 1;
   let fixed = false;
   let caseSensitive = true;
@@ -1473,16 +1642,31 @@ const classifyGrepCommand = (
       "--recursive": "r",
     }[flag];
     if (!(longFlag || GREP_COMMAND_FLAGS_RE.test(flag))) {
-      return {
-        eligible: false,
-        ...exempt(intent, "unsupported-grep-option"),
-      };
+      return undefined;
     }
     fixed ||= (longFlag ?? flag).includes("F");
     lineNumbers ||= (longFlag ?? flag).includes("n");
     caseSensitive &&= !(longFlag ?? flag).includes("i");
     index += 1;
   }
+  return { caseSensitive, fixed, index, lineNumbers };
+};
+
+const classifyGrepCommand = (
+  intent: DelegationToolIntent,
+  argv: string[]
+): DelegationClassification | undefined => {
+  if (argv[0] !== "grep") {
+    return undefined;
+  }
+  const flags = parseGrepFlags(argv);
+  if (!flags) {
+    return {
+      eligible: false,
+      ...exempt(intent, "unsupported-grep-option"),
+    };
+  }
+  const { caseSensitive, fixed, index, lineNumbers } = flags;
   const pattern = argv[index];
   const pathArgs = argv.slice(index + 1);
   if (pathArgs.some((value) => value.startsWith("-"))) {
@@ -1522,11 +1706,13 @@ const classifyGrepCommand = (
       ),
     };
   }
+  const boundedAlternation =
+    !fixed && pattern ? basicLiteralAlternation(pattern) : undefined;
   if (
     !pattern ||
     pattern.length > MAX_PATTERN_LENGTH ||
     SECRET_VALUE.test(pattern) ||
-    (!fixed && REGEX_META_RE.test(pattern))
+    (!fixed && REGEX_META_RE.test(pattern) && !boundedAlternation)
   ) {
     return {
       eligible: false,
@@ -1540,13 +1726,15 @@ const classifyGrepCommand = (
       ...exempt(intent, "search-without-safe-scope"),
     };
   }
+  const searchPattern = boundedAlternation ?? pattern;
+  const regex = boundedAlternation !== undefined;
   return {
     eligible: true,
     ...request(
       intent,
       "scoped-search",
       "inspect",
-      `Search for the literal string ${JSON.stringify(pattern)} under ${JSON.stringify(scopes)} using search_repo with regex=false and caseSensitive=${caseSensitive}.`,
+      `Search for the ${regex ? "bounded literal-alternation regex" : "literal string"} ${JSON.stringify(searchPattern)} under ${JSON.stringify(scopes)} using search_repo with regex=${regex} and caseSensitive=${caseSensitive}.`,
       [
         "Return matching paths and exact line references without changing files.",
       ],
@@ -1584,6 +1772,18 @@ const parseSedOrHeadSlice = (argv: string[]): SourceSliceQuery | undefined => {
     return {
       end: Number(argv[2]),
       file: argv[3] as string,
+      start: 1,
+      tail: false,
+    };
+  }
+  if (
+    argv[0] === "head" &&
+    argv.length === 3 &&
+    FILTER_COUNT_FLAG_RE.test(argv[1] ?? "")
+  ) {
+    return {
+      end: Number((argv[1] as string).slice(1)),
+      file: argv[2] as string,
       start: 1,
       tail: false,
     };
@@ -1686,7 +1886,15 @@ const withCompoundOutputBoundary = (
   classified: EligibleDelegationIntent & { eligible: true },
   compound: SafeCompound
 ): DelegationClassification => {
-  if (!(compound.filter || compound.stderr)) {
+  if (
+    !(
+      compound.excludeLines ||
+      compound.filter ||
+      compound.includeLines ||
+      compound.stderr ||
+      compound.stripAnsi
+    )
+  ) {
     return classified;
   }
   const bound = compound.filter
@@ -1697,13 +1905,20 @@ const withCompoundOutputBoundary = (
     request: {
       ...classified.request,
       executionOutput: {
+        ...(compound.excludeLines
+          ? { excludeLines: compound.excludeLines }
+          : {}),
         ...(compound.filter
           ? {
               lineLimit: compound.filter.count ?? 10,
               position: compound.filter.cmd,
             }
           : {}),
+        ...(compound.includeLines
+          ? { includeLines: compound.includeLines }
+          : {}),
         ...(compound.stderr ? { stderr: compound.stderr } : {}),
+        ...(compound.stripAnsi ? { stripAnsi: true } : {}),
       },
       ...(bound
         ? {
@@ -1721,6 +1936,7 @@ const withCompoundOutputBoundary = (
 const READ_PLAN_PROFILES = new Set<UtilityExecutionProfile>([
   "file-list",
   "file-read",
+  "focused-check",
   "git-diff",
   "git-inspect",
   "git-status",
@@ -1737,7 +1953,8 @@ const classifyReadOnlyArgv = (
   classifyGrepCommand(intent, argv) ??
   classifyDirectoryList(intent, argv) ??
   classifyCatCommand(intent, argv) ??
-  classifySourceSlice(intent, argv);
+  classifySourceSlice(intent, argv) ??
+  classifyFocusedCheck(intent, argv);
 
 const isLiteralEchoLabel = (tokens: ShellToken[]): boolean => {
   const words = wordValues(tokens);
@@ -1747,7 +1964,10 @@ const isLiteralEchoLabel = (tokens: ShellToken[]): boolean => {
   const label = words.slice(1);
   return (
     !label.some(
-      (word) => word.startsWith("-") || word.includes("$") || word.includes("`")
+      (word) =>
+        (word.startsWith("-") && !word.startsWith("---")) ||
+        word.includes("$") ||
+        word.includes("`")
     ) && label.join(" ").length <= 160
   );
 };
@@ -1762,12 +1982,7 @@ const classifyReadPlanSegment = (
   segment: ShellToken[]
 ): ClassifiedReadPlanSegment | undefined => {
   const compound = decomposeSafeCompound(segment);
-  if (
-    !compound ||
-    compound.cdTarget ||
-    compound.argv[0]?.includes("/") ||
-    compound.argv[0]?.includes("\\")
-  ) {
+  if (!compound || compound.cdTarget) {
     return undefined;
   }
   const classified = classifyReadOnlyArgv(intent, compound.argv);
@@ -1784,8 +1999,11 @@ const classifyReadPlanSegment = (
   }
   if (executionProfile === "read-plan") {
     if (
+      compound.excludeLines ||
       compound.filter ||
+      compound.includeLines ||
       compound.stderr ||
+      compound.stripAnsi ||
       !bounded.request.executionPlan?.length
     ) {
       return undefined;
@@ -1798,14 +2016,72 @@ const classifyReadPlanSegment = (
   return {
     classification: bounded,
     steps: [
-      readPlanStep(
-        executionProfile,
-        bounded.request.objective,
-        bounded.request.readScope,
-        bounded.request.executionRead,
-        bounded.request.executionOutput
-      ),
+      {
+        ...readPlanStep(
+          executionProfile,
+          bounded.request.objective,
+          bounded.request.readScope,
+          bounded.request.executionRead,
+          bounded.request.executionOutput
+        ),
+        ...(bounded.request.executionArgv
+          ? { executionArgv: [...bounded.request.executionArgv] }
+          : {}),
+        ...(bounded.request.executionCwd
+          ? { executionCwd: bounded.request.executionCwd }
+          : {}),
+      },
     ],
+  };
+};
+
+const classifyReadPlanSegments = (
+  intent: DelegationToolIntent,
+  segments: ShellToken[][]
+):
+  | {
+      classifications: EligibleDelegationIntent[];
+      executionPlan: UtilityReadPlanStep[];
+    }
+  | undefined => {
+  const classifications: EligibleDelegationIntent[] = [];
+  const executionPlan: UtilityReadPlanStep[] = [];
+  let labelStages = 0;
+  for (const segment of segments) {
+    if (isLiteralEchoLabel(segment)) {
+      labelStages += 1;
+      if (labelStages > MAX_READ_PLAN_LABEL_STAGES) {
+        return undefined;
+      }
+      continue;
+    }
+    const classified = classifyReadPlanSegment(intent, segment);
+    if (!classified) {
+      return undefined;
+    }
+    executionPlan.push(...classified.steps);
+    classifications.push(classified.classification);
+  }
+  return { classifications, executionPlan };
+};
+
+const readPlanIntentAtCwd = (
+  intent: DelegationToolIntent,
+  cdTarget: string | undefined
+): DelegationToolIntent | undefined => {
+  if (!cdTarget) {
+    return intent;
+  }
+  const rel = safeScope(intent.repoRoot, intent.cwd, cdTarget, true);
+  if (!rel) {
+    return undefined;
+  }
+  return {
+    ...intent,
+    cwd:
+      rel === "."
+        ? resolve(intent.repoRoot)
+        : join(resolve(intent.repoRoot), rel),
   };
 };
 
@@ -1819,38 +2095,16 @@ const classifyReadPlan = (
   if (segments.length < 2 || segments.length > MAX_READ_PLAN_TOTAL_STAGES) {
     return undefined;
   }
-  let scoped = intent;
-  if (cdTarget) {
-    const rel = safeScope(intent.repoRoot, intent.cwd, cdTarget, true);
-    if (!rel) {
-      return undefined;
-    }
-    scoped = {
-      ...intent,
-      cwd:
-        rel === "."
-          ? resolve(intent.repoRoot)
-          : join(resolve(intent.repoRoot), rel),
-    };
+  const scoped = readPlanIntentAtCwd(intent, cdTarget);
+  if (!scoped) {
+    return undefined;
   }
-  const classifiedStages: EligibleDelegationIntent[] = [];
-  const executionPlan: UtilityReadPlanStep[] = [];
-  let labelStages = 0;
-  for (const segment of segments) {
-    if (isLiteralEchoLabel(segment)) {
-      labelStages += 1;
-      if (labelStages > MAX_READ_PLAN_LABEL_STAGES) {
-        return undefined;
-      }
-      continue;
-    }
-    const classified = classifyReadPlanSegment(scoped, segment);
-    if (!classified) {
-      return undefined;
-    }
-    executionPlan.push(...classified.steps);
-    classifiedStages.push(classified.classification);
+  const classified = classifyReadPlanSegments(scoped, segments);
+  if (!classified) {
+    return undefined;
   }
+  const classifiedStages = classified.classifications;
+  const { executionPlan } = classified;
   const scopes = [
     ...new Set(classifiedStages.flatMap((stage) => stage.request.readScope)),
   ];
@@ -1864,19 +2118,24 @@ const classifyReadPlan = (
   ) {
     return undefined;
   }
+  const includesFocusedCheck = executionPlan.some(
+    (step) => step.executionProfile === "focused-check"
+  );
   return {
     eligible: true,
     ...withExecutionPlan(
       request(
         intent,
         "read-plan",
-        "inspect",
-        `Execute these ${classifiedStages.length} bounded read-only inspection stages in order using only broker tools: ${JSON.stringify(classifiedStages.map((stage) => stage.request.objective))}.`,
+        includesFocusedCheck ? "command" : "inspect",
+        `Execute these ${classifiedStages.length} bounded ${includesFocusedCheck ? "inspection/check" : "read-only inspection"} stages in order using only their stage-scoped broker tools: ${JSON.stringify(classifiedStages.map((stage) => stage.request.objective))}.`,
         [
-          "Return concise evidence for every stage in order without changing files or invoking commands.",
+          `Return concise evidence for every stage in order without changing files${includesFocusedCheck ? "; run only the exact declared focused checks" : " or invoking commands"}.`,
         ],
         scopes,
-        ["inspect"]
+        includesFocusedCheck
+          ? ["inspect", "bounded-command", "focused-verify"]
+          : ["inspect"]
       ),
       executionPlan
     ),
@@ -1918,13 +2177,14 @@ const classifyBash = (
     };
   }
   const argv = compound.argv;
-  if (argv[0]?.includes("/") || argv[0]?.includes("\\")) {
+  const focusedCheck = classifyFocusedCheck(scoped, argv);
+  if (!focusedCheck && (argv[0]?.includes("/") || argv[0]?.includes("\\"))) {
     return {
       eligible: false,
       ...exempt(intent, "executable-path-not-allowed"),
     };
   }
-  const classified = classifyFocusedCheck(scoped, argv) ??
+  const classified = focusedCheck ??
     classifyReadOnlyArgv(scoped, argv) ?? {
       eligible: false,
       ...exempt(scoped, "command-not-in-delegation-grammar"),

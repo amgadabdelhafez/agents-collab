@@ -17,6 +17,19 @@ const NANNY_MAX_UNPROFILED_REQUEST_CHARS = 6000;
 const directReadPlanCall = (
   step: UtilityReadPlanStep
 ): UtilityToolCall | undefined => {
+  if (
+    step.executionProfile === "focused-check" &&
+    step.executionArgv &&
+    step.executionCwd
+  ) {
+    return {
+      arguments: {
+        argv: [...step.executionArgv],
+        cwd: step.executionCwd,
+      },
+      name: "run_check",
+    };
+  }
   if (step.executionProfile === "file-read" && step.executionRead) {
     return { arguments: step.executionRead, name: "read_file" };
   }

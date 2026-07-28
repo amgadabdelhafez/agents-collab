@@ -120,10 +120,12 @@ export interface UtilityRoutingObservability {
   considered: number;
   explicitRouted: number;
   pending: number;
+  promptPackets: number;
   reasons: Record<string, number>;
   retained: number;
   routed: number;
   skipped: number;
+  structuredPlans: number;
   unsafe: number;
 }
 
@@ -171,6 +173,16 @@ const routingSnapshot = (
   ).length;
   const explicitRouted = events.filter(
     (event) => event.disposition === "explicit-routed"
+  ).length;
+  const promptPackets = events.filter(
+    (event) =>
+      event.disposition === "explicit-routed" && event.source === "bridge"
+  ).length;
+  const structuredPlans = events.filter(
+    (event) =>
+      event.operation === "read-plan" &&
+      (event.disposition === "auto-routed" ||
+        event.disposition === "explicit-routed")
   ).length;
   const unroutedCandidates = events.filter((event) =>
     [
@@ -222,10 +234,12 @@ const routingSnapshot = (
     considered: jobs.length + unroutedCandidates.length,
     explicitRouted,
     pending: jobs.filter((job) => !job.decision).length,
+    promptPackets,
     reasons,
     retained,
     routed: routedJobs.length,
     skipped: actionable + unsafe,
+    structuredPlans,
     unsafe,
   };
 };
@@ -676,10 +690,12 @@ export const readUtilityObservability = (
         considered: 0,
         explicitRouted: 0,
         pending: 0,
+        promptPackets: 0,
         reasons: {},
         retained: 0,
         routed: 0,
         skipped: 0,
+        structuredPlans: 0,
         unsafe: 0,
       },
       transcript: [],

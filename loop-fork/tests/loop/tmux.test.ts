@@ -1500,6 +1500,11 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).toContain("Never duplicate a bridge message");
   expect(primaryPrompt).toContain("Delegation is mandatory");
   expect(primaryPrompt).toContain('"mcp__loop_bridge__route_task"');
+  expect(primaryPrompt).toContain("one to three independent bounded packets");
+  expect(primaryPrompt).toContain("Use Nanny");
+  expect(primaryPrompt).toContain("Use Au Pair");
+  expect(primaryPrompt).toContain("Governess chooses the tier");
+  expect(primaryPrompt).toContain("keep lower-tier work in flight");
   expect(primaryPrompt).toContain("worktree isolation");
   expect(peerPrompt).toContain("You are the reviewer/support agent.");
   expect(peerPrompt).toContain("request validation every few concrete steps");
@@ -1513,6 +1518,8 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(peerPrompt).toContain("Do not take over the task or create the PR");
   expect(peerPrompt).toContain("Wait for Codex to send you a targeted request");
   expect(peerPrompt).toContain("Delegation is mandatory");
+  expect(peerPrompt).toContain("one to three independent bounded packets");
+  expect(peerPrompt).toContain("Governess chooses the tier");
   expect(peerPrompt).toContain("sole peer-delivery transport");
   expect(peerPrompt).not.toContain('"reply"');
   expect(peerPrompt).toContain(

@@ -33,7 +33,13 @@ export const sendProactiveCodexGuidance = (): string =>
   `Use "send_message" with ${bridgeTargetLiteral("codex")} for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.`;
 
 export const mandatoryUtilityDelegationGuidance = (routeTool: string): string =>
-  `Delegation is mandatory for clearly bounded mechanical inspection, repository search/status/diff, small scoped edits, and focused verification that do not require current-session judgment: call ${routeTool} before using a native repository tool. Native tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous or cross-cutting work, and reviewing returned worker evidence.`;
+  [
+    `Delegation is mandatory for clearly bounded work that does not require current-session judgment: call ${routeTool} before using a native repository tool, even when you could do the work yourself.`,
+    "At the start of each concrete task, identify one to three independent bounded packets and submit them immediately; while continuing the critical path, keep lower-tier work in flight when another safe packet is available.",
+    "Use Nanny for small local-Qwen inspection, extraction, classification, and concise summaries. Use Au Pair for bounded multi-step inspection, small scoped edits, and focused verification. Exact deterministic work may run Direct. Governess chooses the tier; never request or assume a tier yourself.",
+    "Each packet must state one objective, exact read/write scopes, risk and authority flags, required capabilities, concise acceptance criteria, and only the minimal context references needed. Prefer separate packets over an opaque compound command, then review returned evidence or patches before relying on them.",
+    "Native tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous or cross-cutting work, and reviewing returned worker evidence.",
+  ].join("\n");
 
 export const claudeChannelInstructions = (): string =>
   [

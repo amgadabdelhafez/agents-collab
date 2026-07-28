@@ -8,6 +8,7 @@ import {
 } from "./utility-path-policy";
 
 export const MAX_UTILITY_CONTEXT_REFS = 6;
+const LINE_MATCHER_CONTROL_RE = /[\n\r\0]/;
 
 export type UtilityRequestKind =
   | "inspect"
@@ -75,17 +76,22 @@ export interface UtilityReadRequest {
 }
 
 export interface UtilityOutputRequest {
+  excludeLines?: string[];
+  includeLines?: string[];
   lineLimit?: number;
   position?: "head" | "tail";
   stderr?: "merge" | "omit";
+  stripAnsi?: boolean;
 }
 
 export type UtilityReadPlanProfile = Exclude<
   UtilityExecutionProfile,
-  "focused-check" | "read-plan"
+  "read-plan"
 >;
 
 export interface UtilityReadPlanStep {
+  executionArgv?: string[];
+  executionCwd?: string;
   executionOutput?: UtilityOutputRequest;
   executionProfile: UtilityReadPlanProfile;
   executionRead?: UtilityReadRequest;
@@ -240,6 +246,7 @@ const UTILITY_EXECUTION_PROFILES = new Set<UtilityExecutionProfile>([
 const UTILITY_READ_PLAN_PROFILES = new Set<UtilityReadPlanProfile>([
   "file-list",
   "file-read",
+  "focused-check",
   "git-diff",
   "git-inspect",
   "git-status",
@@ -297,6 +304,12 @@ export const createUtilityRouteRequest = (
     ...(input.executionPlan
       ? {
           executionPlan: input.executionPlan.map((step) => ({
+            ...(step.executionArgv
+              ? { executionArgv: [...step.executionArgv] }
+              : {}),
+            ...(step.executionCwd
+              ? { executionCwd: normalizePath(step.executionCwd) }
+              : {}),
             ...(step.executionOutput
               ? { executionOutput: { ...step.executionOutput } }
               : {}),
@@ -365,6 +378,7 @@ const touchesProtectedPath = (
     ...(Array.isArray(request.executionPlan)
       ? request.executionPlan.flatMap((step) => [
           ...(Array.isArray(step.readScope) ? step.readScope : []),
+          ...(typeof step.executionCwd === "string" ? [step.executionCwd] : []),
           ...(typeof step.executionRead?.path === "string"
             ? [step.executionRead.path]
             : []),
@@ -432,17 +446,23 @@ const executionReadValueIsBounded = (
 const executionReadIsBounded = (request: UtilityRouteRequest): boolean =>
   executionReadValueIsBounded(request.executionRead, request.readScope);
 
-const focusedCheckIsBounded = (request: UtilityRouteRequest): boolean => {
-  const argv = request.executionArgv;
-  const cwd = request.executionCwd;
-  if (request.kind !== "command" || !argv || !cwd) {
+const focusedCheckFieldsAreBounded = (
+  argv: readonly string[] | undefined,
+  cwd: string | undefined,
+  readScope: readonly string[]
+): boolean => {
+  if (!(argv && cwd)) {
     return false;
   }
   let pathStart: number | undefined;
+  let requiredPathCount: number | undefined;
   if (argv[0] === "bun" && argv[1] === "test") {
     pathStart = 2;
   } else if (argv[0] === "npx" && argv[1] === "vitest" && argv[2] === "run") {
     pathStart = 3;
+  } else if (argv[0] === "node" && argv[1] === "--check") {
+    pathStart = 2;
+    requiredPathCount = 1;
   }
   if (pathStart === undefined) {
     return false;
@@ -451,14 +471,24 @@ const focusedCheckIsBounded = (request: UtilityRouteRequest): boolean => {
   if (
     paths.length < 1 ||
     paths.length > 4 ||
-    paths.some(
-      (path) => path.startsWith("-") || !request.readScope.includes(path)
-    )
+    (requiredPathCount !== undefined && paths.length !== requiredPathCount) ||
+    paths.some((path) => path.startsWith("-") || !readScope.includes(path))
   ) {
     return false;
   }
   const exactScopes = new Set([cwd, ...paths]);
-  return request.readScope.every((scope) => exactScopes.has(scope));
+  return readScope.every((scope) => exactScopes.has(scope));
+};
+
+const focusedCheckIsBounded = (request: UtilityRouteRequest): boolean => {
+  if (request.kind !== "command") {
+    return false;
+  }
+  return focusedCheckFieldsAreBounded(
+    request.executionArgv,
+    request.executionCwd,
+    request.readScope
+  );
 };
 
 const executionOutputValueIsBounded = (
@@ -479,7 +509,15 @@ const executionOutputValueIsBounded = (
   const value = input as Record<string, unknown>;
   if (
     Object.keys(value).some(
-      (key) => !["lineLimit", "position", "stderr"].includes(key)
+      (key) =>
+        ![
+          "excludeLines",
+          "includeLines",
+          "lineLimit",
+          "position",
+          "stderr",
+          "stripAnsi",
+        ].includes(key)
     )
   ) {
     return false;
@@ -494,9 +532,36 @@ const executionOutputValueIsBounded = (
     value.stderr === undefined ||
     value.stderr === "merge" ||
     value.stderr === "omit";
+  const validLineMatchers = (candidate: unknown): boolean =>
+    candidate === undefined ||
+    (Array.isArray(candidate) &&
+      candidate.length >= 1 &&
+      candidate.length <= 16 &&
+      candidate.every(
+        (entry) =>
+          typeof entry === "string" &&
+          entry.length >= 1 &&
+          entry.length <= 80 &&
+          !LINE_MATCHER_CONTROL_RE.test(entry)
+      ));
+  const validStripAnsi =
+    value.stripAnsi === undefined || typeof value.stripAnsi === "boolean";
+  const hasCommandPresentation =
+    value.stripAnsi !== undefined ||
+    value.includeLines !== undefined ||
+    value.excludeLines !== undefined;
   return (
     validStderr &&
-    (hasLineFilter ? validLineFilter : value.stderr !== undefined)
+    validStripAnsi &&
+    validLineMatchers(value.includeLines) &&
+    validLineMatchers(value.excludeLines) &&
+    (!hasCommandPresentation || profile === "focused-check") &&
+    (hasLineFilter
+      ? validLineFilter
+      : value.stderr !== undefined ||
+        value.stripAnsi === true ||
+        value.includeLines !== undefined ||
+        value.excludeLines !== undefined)
   );
 };
 
@@ -506,6 +571,78 @@ const executionOutputIsBounded = (request: UtilityRouteRequest): boolean =>
     request.executionProfile
   );
 
+const READ_PLAN_STEP_KEYS = new Set([
+  "executionOutput",
+  "executionArgv",
+  "executionCwd",
+  "executionProfile",
+  "executionRead",
+  "objective",
+  "readScope",
+]);
+
+const executionPlanProfileFieldsAreBounded = (
+  step: Record<string, unknown>,
+  scopes: string[]
+): boolean => {
+  if (step.executionProfile === "focused-check") {
+    return focusedCheckFieldsAreBounded(
+      step.executionArgv as string[] | undefined,
+      step.executionCwd as string | undefined,
+      scopes
+    );
+  }
+  if (step.executionArgv !== undefined || step.executionCwd !== undefined) {
+    return false;
+  }
+  if (
+    step.executionProfile !== "file-read" &&
+    step.executionRead !== undefined
+  ) {
+    return false;
+  }
+  return !(
+    (step.executionProfile === "git-inspect" ||
+      step.executionProfile === "git-status") &&
+    (scopes.length !== 1 || scopes[0] !== ".")
+  );
+};
+
+const executionPlanStepIsBounded = (
+  rawStep: unknown
+): rawStep is UtilityReadPlanStep => {
+  if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
+    return false;
+  }
+  const step = rawStep as Record<string, unknown>;
+  if (
+    Object.keys(step).some((key) => !READ_PLAN_STEP_KEYS.has(key)) ||
+    typeof step.executionProfile !== "string" ||
+    !UTILITY_READ_PLAN_PROFILES.has(
+      step.executionProfile as UtilityReadPlanProfile
+    ) ||
+    typeof step.objective !== "string" ||
+    step.objective.trim().length === 0 ||
+    !Array.isArray(step.readScope) ||
+    step.readScope.length < 1 ||
+    step.readScope.length > 4 ||
+    step.readScope.some(
+      (scope) => typeof scope !== "string" || scope.trim().length === 0
+    )
+  ) {
+    return false;
+  }
+  const scopes = step.readScope as string[];
+  return (
+    executionOutputValueIsBounded(
+      step.executionOutput,
+      step.executionProfile
+    ) &&
+    executionReadValueIsBounded(step.executionRead, scopes) &&
+    executionPlanProfileFieldsAreBounded(step, scopes)
+  );
+};
+
 const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
   const input = request.executionPlan as unknown;
   if (input === undefined) {
@@ -513,7 +650,7 @@ const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
   }
   if (
     request.executionProfile !== "read-plan" ||
-    request.kind !== "inspect" ||
+    (request.kind !== "inspect" && request.kind !== "command") ||
     request.executionArgv !== undefined ||
     request.executionCwd !== undefined ||
     request.executionOutput !== undefined ||
@@ -526,56 +663,18 @@ const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
   }
   const planScope = new Set<string>();
   for (const rawStep of input) {
-    if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
+    if (!executionPlanStepIsBounded(rawStep)) {
       return false;
     }
-    const step = rawStep as Record<string, unknown>;
-    if (
-      Object.keys(step).some(
-        (key) =>
-          ![
-            "executionOutput",
-            "executionProfile",
-            "executionRead",
-            "objective",
-            "readScope",
-          ].includes(key)
-      ) ||
-      typeof step.executionProfile !== "string" ||
-      !UTILITY_READ_PLAN_PROFILES.has(
-        step.executionProfile as UtilityReadPlanProfile
-      ) ||
-      typeof step.objective !== "string" ||
-      step.objective.trim().length === 0 ||
-      !Array.isArray(step.readScope) ||
-      step.readScope.length < 1 ||
-      step.readScope.length > 4 ||
-      step.readScope.some(
-        (scope) => typeof scope !== "string" || scope.trim().length === 0
-      ) ||
-      !executionOutputValueIsBounded(
-        step.executionOutput,
-        step.executionProfile
-      ) ||
-      !executionReadValueIsBounded(
-        step.executionRead,
-        step.readScope as string[]
-      ) ||
-      (step.executionProfile !== "file-read" &&
-        step.executionRead !== undefined) ||
-      ((step.executionProfile === "git-inspect" ||
-        step.executionProfile === "git-status") &&
-        !(
-          step.readScope.length === 1 && (step.readScope as string[])[0] === "."
-        ))
-    ) {
-      return false;
-    }
-    for (const scope of step.readScope as string[]) {
+    for (const scope of rawStep.readScope) {
       planScope.add(scope);
     }
   }
   return (
+    (request.kind === "command" ||
+      !(input as UtilityReadPlanStep[]).some(
+        (step) => step.executionProfile === "focused-check"
+      )) &&
     planScope.size <= 12 &&
     planScope.size === request.readScope.length &&
     request.readScope.every((scope) => planScope.has(scope))

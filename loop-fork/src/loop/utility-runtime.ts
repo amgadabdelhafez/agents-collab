@@ -1875,9 +1875,21 @@ export const createUtilityReadPlanBroker = async (input: {
           `structured ${step.executionProfile} requires explicit repository scope`
         );
       }
+      if (
+        step.executionProfile === "focused-check" &&
+        !(step.executionArgv?.length && step.executionCwd)
+      ) {
+        throw new Error("structured focused-check requires exact argv and cwd");
+      }
       return createUtilityToolBroker({
         allowedTools,
         artifactDir: input.artifactDir,
+        ...(step.executionProfile === "focused-check"
+          ? {
+              commandCwds: [step.executionCwd as string],
+              exactCommand: step.executionArgv as string[],
+            }
+          : {}),
         ...(step.executionRead ? { exactRead: step.executionRead } : {}),
         ...(step.executionOutput
           ? { outputBoundary: step.executionOutput }
@@ -1885,7 +1897,10 @@ export const createUtilityReadPlanBroker = async (input: {
         ...(input.protectedPaths
           ? { protectedPaths: input.protectedPaths }
           : {}),
-        readScopes: step.readScope,
+        readScopes:
+          step.executionProfile === "focused-check"
+            ? step.readScope.filter((scope) => scope !== step.executionCwd)
+            : step.readScope,
         repoRoot: input.repoRoot,
         writeScopes: [],
       });

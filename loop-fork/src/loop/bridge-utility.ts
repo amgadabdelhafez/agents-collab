@@ -42,7 +42,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit a small bounded task for Governess routing to Direct, Nanny, Au Pair, a peer, the driver, or human escalation.",
+      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. Review every returned result or patch.",
     inputSchema: {
       additionalProperties: false,
       properties: {
