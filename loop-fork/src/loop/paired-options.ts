@@ -55,6 +55,26 @@ const resolveClaudeBridgeServer = (
     manifest?.claudeChannelServer
   );
 
+const restorePersistedTmuxPair = (
+  opts: Options,
+  manifest: RunManifest | undefined
+): void => {
+  const left = manifest?.tmuxPaneLeftAgent;
+  const right = manifest?.tmuxPaneRightAgent;
+  if (
+    !(opts.tmux && manifest?.tmuxSession && left && right && left !== right)
+  ) {
+    return;
+  }
+  const storedPair = [left, right];
+  const primary =
+    manifest.primaryAgent && storedPair.includes(manifest.primaryAgent)
+      ? manifest.primaryAgent
+      : left;
+  opts.agent = primary;
+  opts.pairWith = primary === left ? right : left;
+};
+
 const resolveRequestedRunState = (
   opts: Options,
   cwd: string
@@ -161,6 +181,9 @@ export const applyPairedOptions = (
   opts.cavemanModeSource ??= "default";
   opts.helperCavemanMode ??= DEFAULT_HELPER_CAVEMAN_MODE;
   opts.helperCavemanModeSource ??= "default";
+  // Reusing an existing tmux session reuses its panes. Keep routing and the
+  // prompt contract bound to those actual agents instead of a new CLI default.
+  restorePersistedTmuxPair(opts, manifest);
   opts.pairWith ??= defaultPeerAgent(opts.agent);
   const resumedSessionIds = pairedSessionIds(
     opts,

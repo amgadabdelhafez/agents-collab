@@ -246,6 +246,47 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       cavemanMode: "lite",
       claudeSessionId: "",
     });
+
+    const liveTmuxStorage = resolveRunStorage("75", process.cwd(), home);
+    writeRunManifest(
+      liveTmuxStorage.manifestPath,
+      createRunManifest({
+        claudeSessionId: "live-legacy-claude",
+        codexThreadId: "live-legacy-codex",
+        cwd: process.cwd(),
+        mode: "paired",
+        pid: 1234,
+        primaryAgent: "claude",
+        repoId: liveTmuxStorage.repoId,
+        runId: "75",
+        state: "working",
+        tmuxPaneLeftAgent: "claude",
+        tmuxPaneRightAgent: "codex",
+        tmuxSession: "repo-loop-75",
+      })
+    );
+    const reusedTmux = makeOptions({
+      agent: "codex",
+      cavemanMode: "lite",
+      cavemanModeSource: "default",
+      helperCavemanMode: "full",
+      helperCavemanModeSource: "default",
+      pairWith: "copilot",
+      pairedMode: true,
+      resumeRunId: "75",
+      tmux: true,
+    });
+    preparePairedRun(reusedTmux, process.cwd());
+    expect(reusedTmux).toMatchObject({
+      agent: "claude",
+      cavemanMode: "off",
+      pairWith: "codex",
+    });
+    expect(readRunManifest(liveTmuxStorage.manifestPath)).toMatchObject({
+      cavemanMode: "off",
+      claudeSessionId: "live-legacy-claude",
+      codexThreadId: "live-legacy-codex",
+    });
   } finally {
     if (originalHome === undefined) {
       Reflect.deleteProperty(process.env, "HOME");
