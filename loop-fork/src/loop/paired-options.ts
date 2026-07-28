@@ -1,3 +1,4 @@
+import { spawnSync } from "bun";
 import { defaultPeerAgent } from "./agents";
 import {
   buildCodexBridgeConfigArgs,
@@ -36,6 +37,16 @@ export interface PreparedPairedRun {
   storage: RunStorage;
 }
 
+type TmuxSessionProbe = (session: string) => boolean;
+
+const isTmuxSessionLive: TmuxSessionProbe = (session) => {
+  const result = spawnSync(["tmux", "has-session", "-t", session], {
+    stderr: "ignore",
+    stdout: "ignore",
+  });
+  return result.exitCode === 0;
+};
+
 interface RequestedRunState {
   allowRawSessionFallback: boolean;
   runId?: string;
@@ -57,13 +68,12 @@ const resolveClaudeBridgeServer = (
 
 const restorePersistedTmuxPair = (
   opts: Options,
-  manifest: RunManifest | undefined
+  manifest: RunManifest | undefined,
+  livePersistedTmux: boolean
 ): void => {
   const left = manifest?.tmuxPaneLeftAgent;
   const right = manifest?.tmuxPaneRightAgent;
-  if (
-    !(opts.tmux && manifest?.tmuxSession && left && right && left !== right)
-  ) {
+  if (!(livePersistedTmux && left && right && left !== right)) {
     return;
   }
   const storedPair = [left, right];
@@ -175,7 +185,8 @@ export const applyPairedOptions = (
   storage: RunStorage,
   manifest: RunManifest | undefined,
   allowRawSessionFallback = false,
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  livePersistedTmux = false
 ): void => {
   opts.cavemanMode ??= DEFAULT_CAVEMAN_MODE;
   opts.cavemanModeSource ??= "default";
@@ -183,7 +194,7 @@ export const applyPairedOptions = (
   opts.helperCavemanModeSource ??= "default";
   // Reusing an existing tmux session reuses its panes. Keep routing and the
   // prompt contract bound to those actual agents instead of a new CLI default.
-  restorePersistedTmuxPair(opts, manifest);
+  restorePersistedTmuxPair(opts, manifest, livePersistedTmux);
   opts.pairWith ??= defaultPeerAgent(opts.agent);
   const resumedSessionIds = pairedSessionIds(
     opts,
@@ -193,7 +204,8 @@ export const applyPairedOptions = (
   const pairedAgents = [opts.agent, opts.pairWith];
   const resumesLegacyMainSession =
     !manifest?.cavemanMode &&
-    pairedAgents.some((agent) => Boolean(resumedSessionIds?.[agent]));
+    (livePersistedTmux ||
+      pairedAgents.some((agent) => Boolean(resumedSessionIds?.[agent])));
   if (resumesLegacyMainSession) {
     if (opts.cavemanModeSource === "cli" && opts.cavemanMode !== "off") {
       throw new Error(
@@ -248,23 +260,45 @@ export const applyPairedOptions = (
 export const preparePairedOptions = (
   opts: Options,
   cwd = process.cwd(),
-  createManifest = true
+  createManifest = true,
+  sessionProbe: TmuxSessionProbe = isTmuxSessionLive
 ): void => {
   const { allowRawSessionFallback, manifest, storage } =
     resolvePreparedRunState(opts, cwd, createManifest);
-  applyPairedOptions(opts, storage, manifest, allowRawSessionFallback, cwd);
+  const livePersistedTmux = Boolean(
+    opts.tmux && manifest?.tmuxSession && sessionProbe(manifest.tmuxSession)
+  );
+  applyPairedOptions(
+    opts,
+    storage,
+    manifest,
+    allowRawSessionFallback,
+    cwd,
+    livePersistedTmux
+  );
 };
 
 export const preparePairedRun = (
   opts: Options,
-  cwd = process.cwd()
+  cwd = process.cwd(),
+  sessionProbe: TmuxSessionProbe = isTmuxSessionLive
 ): PreparedPairedRun => {
   const {
     allowRawSessionFallback,
     manifest: existing,
     storage,
   } = resolvePreparedRunState(opts, cwd);
-  applyPairedOptions(opts, storage, existing, allowRawSessionFallback, cwd);
+  const livePersistedTmux = Boolean(
+    opts.tmux && existing?.tmuxSession && sessionProbe(existing.tmuxSession)
+  );
+  applyPairedOptions(
+    opts,
+    storage,
+    existing,
+    allowRawSessionFallback,
+    cwd,
+    livePersistedTmux
+  );
 
   const resumable = canResumePairedManifest(existing) ? existing : undefined;
   const selectedAgents = new Set([opts.agent, opts.pairWith]);
@@ -277,12 +311,16 @@ export const preparePairedRun = (
           // A stored binding outside the selected pair cannot receive this
           // run's prompt contract. Drop it instead of later treating that
           // legacy session as if it had received the persisted mode.
-          claudeSessionId: selectedAgents.has("claude")
-            ? resumable?.claudeSessionId || opts.pairedSessionIds?.claude || ""
-            : "",
-          codexThreadId: selectedAgents.has("codex")
-            ? resumable?.codexThreadId || opts.pairedSessionIds?.codex || ""
-            : "",
+          claudeSessionId:
+            livePersistedTmux || selectedAgents.has("claude")
+              ? resumable?.claudeSessionId ||
+                opts.pairedSessionIds?.claude ||
+                ""
+              : "",
+          codexThreadId:
+            livePersistedTmux || selectedAgents.has("codex")
+              ? resumable?.codexThreadId || opts.pairedSessionIds?.codex || ""
+              : "",
           cwd,
           mode: "paired",
           helperCavemanMode: opts.helperCavemanMode,
