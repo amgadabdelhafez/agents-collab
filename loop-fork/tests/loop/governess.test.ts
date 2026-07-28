@@ -83,7 +83,9 @@ test("governess observes agents through persisted post-split pane targets", () =
   writeRunManifest(
     storage.manifestPath,
     createRunManifest({
+      cavemanMode: "full",
       cwd,
+      helperCavemanMode: "ultra",
       mode: "paired",
       pid: 1234,
       repoId: storage.repoId,
@@ -103,6 +105,8 @@ test("governess observes agents through persisted post-split pane targets", () =
       { agent: "claude", pane: "repo-loop-91:0.0" },
       { agent: "codex", pane: "repo-loop-91:0.2" },
     ]);
+    expect(config.cavemanMode).toBe("full");
+    expect(config.helperCavemanMode).toBe("ultra");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -1615,6 +1619,8 @@ test("board shows input, cached, and output token details", async () => {
         { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
         { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
       ],
+      cavemanMode: "full",
+      helperCavemanMode: "ultra",
     }),
     deps,
     {
@@ -1668,7 +1674,10 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain(
     "nanny model · m · ok · 3 calls · 2k tok (i900 c500 o100) · cache 20% · slots 10/10 · mem 1.82GB"
   );
-  expect(visibleBoard).toContain("runtime · 40L h2048 ctx262k");
+  expect(visibleBoard).toContain("@0d95a81 · 40L h2048 ctx262k");
+  expect(visibleBoard).toContain(
+    "runtime · caveman main full / helpers ultra @0d95a81"
+  );
   expect(visibleBoard).toContain("bf16 q4/g64");
   expect(visibleBoard).toContain("MoE 256e/8");
   expect(visibleBoard).toContain("batch 8/32 · step 2048");

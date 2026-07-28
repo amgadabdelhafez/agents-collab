@@ -148,10 +148,12 @@ test("manifest helpers write, read, and touch run metadata", () => {
   const manifestPath = join(dir, "manifest.json");
   const manifest = createRunManifest(
     {
+      cavemanMode: "lite",
       claudeSessionId: "claude-1",
       codexRemoteUrl: "ws://127.0.0.1:4500",
       codexThreadId: "codex-1",
       cwd: "/repo",
+      helperCavemanMode: "full",
       mode: "paired",
       pid: 1234,
       repoId: "repo-abc123",
@@ -173,6 +175,10 @@ test("manifest helpers write, read, and touch run metadata", () => {
   const touched = touchRunManifest(manifest, "2026-03-22T11:00:00.000Z");
 
   expect(loaded).toEqual(manifest);
+  expect(loaded).toMatchObject({
+    cavemanMode: "lite",
+    helperCavemanMode: "full",
+  });
   expect(touched.updatedAt).toBe("2026-03-22T11:00:00.000Z");
   expect(touched.createdAt).toBe(manifest.createdAt);
   rmSync(dir, { recursive: true, force: true });

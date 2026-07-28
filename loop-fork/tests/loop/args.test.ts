@@ -1,6 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
 import { parseArgs } from "../../src/loop/args";
 import {
+  DEFAULT_CAVEMAN_MODE,
+  DEFAULT_HELPER_CAVEMAN_MODE,
+} from "../../src/loop/caveman";
+import {
   DEFAULT_CODEX_MODEL,
   DEFAULT_DONE_SIGNAL,
   DEFAULT_MAX_ITERATIONS,
@@ -8,6 +12,8 @@ import {
 } from "../../src/loop/constants";
 
 const ORIGINAL_LOOP_CODEX_MODEL = process.env.LOOP_CODEX_MODEL;
+const ORIGINAL_LOOP_CAVEMAN_MODE = process.env.LOOP_CAVEMAN_MODE;
+const ORIGINAL_LOOP_HELPER_CAVEMAN_MODE = process.env.LOOP_HELPER_CAVEMAN_MODE;
 const originalExit = process.exit;
 const originalLog = console.log;
 const CONFLICT_ONLY_MODE_ERROR = "Cannot combine multiple --*-only flags.";
@@ -24,8 +30,18 @@ const restoreModelEnv = (): void => {
   process.env.LOOP_CODEX_MODEL = ORIGINAL_LOOP_CODEX_MODEL;
 };
 
+const restoreEnv = (name: string, original: string | undefined): void => {
+  if (original === undefined) {
+    Reflect.deleteProperty(process.env, name);
+  } else {
+    process.env[name] = original;
+  }
+};
+
 afterEach(() => {
   restoreModelEnv();
+  restoreEnv("LOOP_CAVEMAN_MODE", ORIGINAL_LOOP_CAVEMAN_MODE);
+  restoreEnv("LOOP_HELPER_CAVEMAN_MODE", ORIGINAL_LOOP_HELPER_CAVEMAN_MODE);
   process.exit = originalExit;
   console.log = originalLog;
 });
@@ -66,6 +82,8 @@ test("parseArgs prints version and exits when -v is passed", () => {
 
 test("parseArgs returns expected defaults when proof is omitted", () => {
   clearModelEnv();
+  Reflect.deleteProperty(process.env, "LOOP_CAVEMAN_MODE");
+  Reflect.deleteProperty(process.env, "LOOP_HELPER_CAVEMAN_MODE");
   const opts = parseArgs([]);
 
   expect(opts.agent).toBe("claude");
@@ -76,12 +94,43 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   expect(opts.maxIterations).toBe(DEFAULT_MAX_ITERATIONS);
   expect(opts.codexModel).toBe(DEFAULT_CODEX_MODEL);
   expect(opts.governess).toBe(true);
+  expect(opts.cavemanMode).toBe(DEFAULT_CAVEMAN_MODE);
+  expect(opts.helperCavemanMode).toBe(DEFAULT_HELPER_CAVEMAN_MODE);
   expect(opts.promptInput).toBeUndefined();
   expect(opts.review).toBe("claudex");
   expect(opts.reviewPlan).toBeUndefined();
   expect(opts.resumeRunId).toBeUndefined();
   expect(opts.tmux).toBe(false);
   expect(opts.worktree).toBe(false);
+});
+
+test("parseArgs accepts Caveman CLI and environment modes", () => {
+  process.env.LOOP_CAVEMAN_MODE = "full";
+  process.env.LOOP_HELPER_CAVEMAN_MODE = "lite";
+  const fromEnv = parseArgs([]);
+  expect(fromEnv).toMatchObject({
+    cavemanMode: "full",
+    cavemanModeSource: "env",
+    helperCavemanMode: "lite",
+    helperCavemanModeSource: "env",
+  });
+
+  const fromCli = parseArgs(["--caveman=ultra", "--helper-caveman", "off"]);
+  expect(fromCli).toMatchObject({
+    cavemanMode: "ultra",
+    cavemanModeSource: "cli",
+    helperCavemanMode: "off",
+    helperCavemanModeSource: "cli",
+  });
+});
+
+test("parseArgs rejects invalid Caveman modes before launch", () => {
+  expect(() => parseArgs(["--caveman", "banana"])).toThrow(
+    "Invalid --caveman value: banana; expected off, lite, full, or ultra"
+  );
+  expect(() => parseArgs(["--helper-caveman=wenyan-full"])).toThrow(
+    "Invalid --helper-caveman value: wenyan-full"
+  );
 });
 
 test("parseArgs uses LOOP_CODEX_MODEL when present", () => {

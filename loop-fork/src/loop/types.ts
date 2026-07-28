@@ -1,4 +1,6 @@
 export type Agent = "claude" | "codex" | "gemini" | "cursor" | "copilot";
+export type CavemanMode = "off" | "lite" | "full" | "ultra";
+export type CavemanModeSource = "cli" | "default" | "env" | "manifest";
 export type Format = "pretty" | "raw";
 export type ReviewMode = Agent | "claudex";
 export type PlanReviewMode = Agent | "other" | "none";
@@ -43,7 +45,9 @@ export type ValueFlag =
   | "governessMaxRecoveries"
   | "governessUrl"
   | "governessModel"
-  | "governessHeight";
+  | "governessHeight"
+  | "cavemanMode"
+  | "helperCavemanMode";
 
 export type GovernessAgentState =
   | "working"
@@ -320,6 +324,8 @@ export interface RoleBalanceResult {
 
 export interface Options {
   agent: Agent;
+  cavemanMode: CavemanMode;
+  cavemanModeSource: CavemanModeSource;
   governess?: boolean;
   governessCooldownSeconds: number;
   governessDryRun?: boolean;
@@ -347,6 +353,8 @@ export interface Options {
   geminiMcpConfigPath?: string;
   geminiModel: string;
   geminiReviewerModel?: string;
+  helperCavemanMode: CavemanMode;
+  helperCavemanModeSource: CavemanModeSource;
   maxIterations: number;
   pairedMode?: boolean;
   pairedSessionIds?: PairedSessionIds;

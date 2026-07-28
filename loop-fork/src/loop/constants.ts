@@ -1,4 +1,5 @@
 import pkg from "../../package.json";
+import { DEFAULT_CAVEMAN_MODE, DEFAULT_HELPER_CAVEMAN_MODE } from "./caveman";
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
@@ -67,6 +68,8 @@ Options:
   --cursor-model <model>                   Override cursor model (default: ${DEFAULT_CURSOR_MODEL})
   --cursor-reviewer-model <model>          Override cursor review model
   --claude-reviewer-model <model>          Override claude review model
+  --caveman <off|lite|full|ultra>          Main-agent output compression (default: ${DEFAULT_CAVEMAN_MODE})
+  --helper-caveman <off|lite|full|ultra>   Nanny/Au Pair output compression (default: ${DEFAULT_HELPER_CAVEMAN_MODE})
   --format <pretty|raw>                    Log format (default: pretty)
   --review [agent|claudex]                 Single-agent completion review mode (default: claudex)
   --review-plan [other|agent|none]         Review PLAN.md after plain-text planning (default: other)
@@ -105,6 +108,8 @@ Environment:
   LOOP_NANNY_URL=<url>                       Nanny local Pi endpoint (default: 127.0.0.1:8082)
   LOOP_NANNY_MODEL=<model>                   Nanny local Qwen model
   LOOP_NANNY_MAX_CONCURRENCY=<1..2>          Concurrent Nanny slots (default: 1)
+  LOOP_CAVEMAN_MODE=<mode>                    Main-agent Caveman mode: off, lite, full, or ultra
+  LOOP_HELPER_CAVEMAN_MODE=<mode>             Nanny/Au Pair Caveman mode: off, lite, full, or ultra
   LOOP_UTILITY_HARNESS=pi-sdk|legacy         Helper harness (default: pi-sdk)
   LOOP_UTILITY_PANE=0                        Hide the default Nanny and Au Pair pane column
   LOOP_UTILITY_PANE_WIDTH=<columns|percent>  Nanny and Au Pair column width (default: 20%)
@@ -155,4 +160,6 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "--governess-url": "governessUrl",
   "--governess-model": "governessModel",
   "--governess-height": "governessHeight",
+  "--caveman": "cavemanMode",
+  "--helper-caveman": "helperCavemanMode",
 };

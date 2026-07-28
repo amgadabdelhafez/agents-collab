@@ -7,6 +7,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { spawn } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
+import {
+  cavemanHelperReinforcement,
+  DEFAULT_HELPER_CAVEMAN_MODE,
+  parseCavemanMode,
+} from "./caveman";
 import { buildLaunchArgv } from "./launch";
 import {
   type OpenAICompatibleMessage,
@@ -30,7 +35,7 @@ import {
   type UtilityTier,
   type UtilityTierSelectionStrategy,
 } from "./task-router";
-import type { Agent } from "./types";
+import type { Agent, CavemanMode } from "./types";
 import {
   buildUtilityContextCapsule,
   persistUtilityContextCapsule,
@@ -145,6 +150,7 @@ export interface UtilityRuntimeConfig {
   enabled: boolean;
   endpoint: string;
   harness: "legacy" | "pi-sdk";
+  helperCavemanMode: CavemanMode;
   maxClaimWaitMs: number;
   maxConcurrentJobs: number;
   maxJobRuntimeMs: number;
@@ -375,6 +381,7 @@ export const buildUtilityWorkerEnvironment = (
       value !== undefined &&
       !UTILITY_SECRET_ENV_NAMES.has(name) &&
       (WORKER_ENV_NAMES.has(name) ||
+        name === "LOOP_HELPER_CAVEMAN_MODE" ||
         name.startsWith("LOOP_UTILITY_") ||
         name.startsWith("LOOP_NANNY_") ||
         name.startsWith("LOOP_AU_PAIR_"))
@@ -448,6 +455,12 @@ export const resolveUtilityRuntimeConfig = (
       env.LOOP_UTILITY_HARNESS?.trim().toLowerCase() === "legacy"
         ? "legacy"
         : "pi-sdk",
+    helperCavemanMode: env.LOOP_HELPER_CAVEMAN_MODE?.trim()
+      ? parseCavemanMode(
+          env.LOOP_HELPER_CAVEMAN_MODE,
+          "LOOP_HELPER_CAVEMAN_MODE"
+        )
+      : DEFAULT_HELPER_CAVEMAN_MODE,
     maxClaimWaitMs: positiveNumber(env.LOOP_UTILITY_MAX_CLAIM_WAIT_MS, 30_000),
     maxConcurrentJobs: boundedInteger(
       env.LOOP_AU_PAIR_MAX_CONCURRENCY ?? env.LOOP_UTILITY_MAX_CONCURRENCY,
@@ -1047,8 +1060,11 @@ const emptyUsage = (): OpenAICompatibleUsage => ({
   totalTokens: 0,
 });
 
-const utilitySystemPrompt = (role = "utility helper"): string =>
-  [
+export const utilitySystemPrompt = (
+  role = "utility helper",
+  cavemanMode: CavemanMode = DEFAULT_HELPER_CAVEMAN_MODE
+): string => {
+  const parts = [
     `You are ${role}, a bounded helper beneath two main coding agents.`,
     "The user message is one immutable, versioned utility context capsule for this job.",
     "Do only the declared objective and acceptance criteria. Use tools for evidence.",
@@ -1062,7 +1078,13 @@ const utilitySystemPrompt = (role = "utility helper"): string =>
     "Do not repeat a rejected or identical tool call; change approach once, then stop if no safe tool can make progress.",
     "If the declared context and available tools are insufficient, do not guess or retry; reply exactly CONTEXT_INSUFFICIENT: followed by a terse reason.",
     "Finish with a terse result: outcome, evidence/checks, artifact paths, and blocker if any.",
-  ].join(" ");
+  ];
+  const reinforcement = cavemanHelperReinforcement(cavemanMode);
+  if (reinforcement) {
+    parts.push(reinforcement);
+  }
+  return parts.join(" ");
+};
 
 export const parseUtilityContextInsufficient = (
   value: string
@@ -1198,7 +1220,10 @@ const runLegacyUtilityConversation = async (input: {
   const role = utilityRoleName(input.tierId);
   const messages: OpenAICompatibleMessage[] = [
     {
-      content: utilitySystemPrompt(utilityRoleName(input.tierId)),
+      content: utilitySystemPrompt(
+        utilityRoleName(input.tierId),
+        input.config.helperCavemanMode
+      ),
       role: "system",
     },
     { content: utilityContextPrompt(input.capsule), role: "user" },
@@ -1736,7 +1761,10 @@ const runPiUtilityConversation = async (input: {
   const created = await createEphemeralPiAgent({
     cwd: input.cwd,
     provider: providerSpecForTier(input.config, input.tierId),
-    systemPrompt: utilitySystemPrompt(utilityRoleName(input.tierId)),
+    systemPrompt: utilitySystemPrompt(
+      utilityRoleName(input.tierId),
+      input.config.helperCavemanMode
+    ),
     tools,
   });
   session = created.session;

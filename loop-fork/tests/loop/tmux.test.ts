@@ -1650,6 +1650,39 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   );
 });
 
+test("paired prompts apply Caveman guidance with an exact off switch", () => {
+  const defaults = makePairedOptions();
+  const primary = tmuxInternals.buildPrimaryPrompt(
+    "Ship feature",
+    defaults,
+    "1",
+    ""
+  );
+  const peer = tmuxInternals.buildPeerPrompt(
+    "Ship feature",
+    defaults,
+    "claude",
+    "1",
+    ""
+  );
+  expect(primary).toContain("CAVEMAN MODE ACTIVE — level: lite");
+  expect(peer).toContain("CAVEMAN MODE ACTIVE — level: lite");
+  expect(primary).toContain(
+    "Preserve code, commands, paths, URLs, JSON, errors, SHAs"
+  );
+
+  const off = makePairedOptions({
+    cavemanMode: "off",
+    cavemanModeSource: "cli",
+  });
+  expect(
+    tmuxInternals.buildInteractivePrimaryPrompt(off, "1", "")
+  ).not.toContain("CAVEMAN MODE");
+  expect(
+    tmuxInternals.buildInteractivePeerPrompt(off, "claude", "1", "")
+  ).not.toContain("CAVEMAN MODE");
+});
+
 test("tmux prompts make Claude the context steward and Codex recent-focused", () => {
   const opts = makePairedOptions({ agent: "claude", pairWith: "codex" });
   const primaryPrompt = tmuxInternals.buildPrimaryPrompt(

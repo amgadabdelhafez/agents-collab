@@ -13,6 +13,11 @@ import {
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "./bridge-guidance";
+import {
+  cavemanAgentGuidance,
+  DEFAULT_CAVEMAN_MODE,
+  DEFAULT_HELPER_CAVEMAN_MODE,
+} from "./caveman";
 import { getCodexAppServerUrl, getLastCodexThreadId } from "./codex-app-server";
 import { codexHomeEnv } from "./codex-home";
 import {
@@ -308,6 +313,12 @@ const buildPrimaryPrompt = (
     `Your peer is ${peer}. Do the initial pass yourself, then use ${quotedBridgeTool(opts.agent, "send_message")} when you want review or targeted help from ${peer}.`,
   ];
   appendProofPrompt(parts, opts.proof);
+  const cavemanGuidance = cavemanAgentGuidance(
+    opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE
+  );
+  if (cavemanGuidance) {
+    parts.push(cavemanGuidance);
+  }
   parts.push(SPAWN_TEAM_WITH_WORKTREE_ISOLATION);
   parts.push(pairedBridgeGuidance(opts.agent, peerAgentName, serverName));
   parts.push(pairedWorkflowGuidance(opts, opts.agent));
@@ -332,6 +343,12 @@ const buildPeerPrompt = (
     `You are ${capitalize(agent)}. Do not start implementing or verifying this task on your own.`,
   ];
   appendProofPrompt(parts, opts.proof);
+  const cavemanGuidance = cavemanAgentGuidance(
+    opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE
+  );
+  if (cavemanGuidance) {
+    parts.push(cavemanGuidance);
+  }
   parts.push(pairedBridgeGuidance(agent, opts.agent, serverName, "on-request"));
   parts.push(pairedWorkflowGuidance(opts, agent));
   parts.push(
@@ -355,6 +372,12 @@ const buildInteractivePrimaryPrompt = (
     `Your peer is ${peer}. Use ${quotedBridgeTool(opts.agent, "send_message")} for review or help once the human gives you a task.`,
   ];
   appendProofPrompt(parts, opts.proof);
+  const cavemanGuidance = cavemanAgentGuidance(
+    opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE
+  );
+  if (cavemanGuidance) {
+    parts.push(cavemanGuidance);
+  }
   parts.push(
     `${SPAWN_TEAM_WITH_WORKTREE_ISOLATION} Apply that once the human gives you a concrete task.`
   );
@@ -391,6 +414,12 @@ const buildInteractivePeerPrompt = (
     `You are ${capitalize(agent)}. Stay idle until ${primary} sends a specific request or the human clearly assigns you separate work.`,
   ];
   appendProofPrompt(parts, opts.proof);
+  const cavemanGuidance = cavemanAgentGuidance(
+    opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE
+  );
+  if (cavemanGuidance) {
+    parts.push(cavemanGuidance);
+  }
   parts.push(pairedBridgeGuidance(agent, opts.agent, serverName, "on-request"));
   parts.push(pairedWorkflowGuidance(opts, agent));
   parts.push(
@@ -1062,6 +1091,8 @@ const governessEnv = (
   const env = withLegacyGovernessEnv(inputEnv);
   return [
     ...passEnv(env, "CLAUDE_CONFIG_DIR"),
+    `LOOP_CAVEMAN_MODE=${opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE}`,
+    `LOOP_HELPER_CAVEMAN_MODE=${opts.helperCavemanMode ?? DEFAULT_HELPER_CAVEMAN_MODE}`,
     `LOOP_GOVERNESS_IDLE=${opts.governessIdleSeconds}`,
     `LOOP_GOVERNESS_COOLDOWN=${opts.governessCooldownSeconds}`,
     `LOOP_GOVERNESS_MAX=${opts.governessMaxRecoveries}`,
@@ -1775,6 +1806,12 @@ const startPairedSession = async (
       ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
       `${RUN_BASE_ENV}=${runBase}`,
       `${RUN_ID_ENV}=${storage.runId}`,
+      ...(launch.opts.cavemanMode
+        ? [`LOOP_CAVEMAN_MODE=${launch.opts.cavemanMode}`]
+        : []),
+      ...(launch.opts.helperCavemanMode
+        ? [`LOOP_HELPER_CAVEMAN_MODE=${launch.opts.helperCavemanMode}`]
+        : []),
       ...(launch.opts.codexHome ? [`CODEX_HOME=${launch.opts.codexHome}`] : []),
     ];
     const leftPrompt = hadAgentSession[paneAgents.left]

@@ -1,3 +1,4 @@
+import { defaultPeerAgent } from "./agents";
 import {
   buildCodexBridgeConfigArgs,
   claudeChannelServerName,
@@ -5,8 +6,8 @@ import {
   injectProjectBridgeConfig,
   resolveClaudeChannelServerName,
 } from "./bridge-config";
+import { DEFAULT_CAVEMAN_MODE, DEFAULT_HELPER_CAVEMAN_MODE } from "./caveman";
 import { ensureLoopCodexHome } from "./codex-home";
-import { defaultPeerAgent } from "./agents";
 import {
   createRunManifest,
   ensureRunStorage,
@@ -129,11 +130,13 @@ export const resolvePreparedRunState = (
   }
 
   const manifest = createRunManifest({
+    cavemanMode: opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE,
     claudeChannelServer: claudeChannelServerName(storage.runId, storage.repoId),
     claudeSessionId: "",
     codexThreadId: "",
     cwd,
     mode: "paired",
+    helperCavemanMode: opts.helperCavemanMode ?? DEFAULT_HELPER_CAVEMAN_MODE,
     pid: process.pid,
     repoId: storage.repoId,
     runId: storage.runId,
@@ -154,6 +157,22 @@ export const applyPairedOptions = (
   allowRawSessionFallback = false,
   cwd = process.cwd()
 ): void => {
+  opts.cavemanMode ??= DEFAULT_CAVEMAN_MODE;
+  opts.cavemanModeSource ??= "default";
+  opts.helperCavemanMode ??= DEFAULT_HELPER_CAVEMAN_MODE;
+  opts.helperCavemanModeSource ??= "default";
+  if (manifest?.cavemanMode && opts.cavemanModeSource !== "cli") {
+    opts.cavemanMode = manifest.cavemanMode;
+    opts.cavemanModeSource = "manifest";
+  }
+  if (manifest?.helperCavemanMode && opts.helperCavemanModeSource !== "cli") {
+    opts.helperCavemanMode = manifest.helperCavemanMode;
+    opts.helperCavemanModeSource = "manifest";
+  }
+  // Hook-triggered utility jobs resolve their runtime from process.env. Keep
+  // the effective (possibly resumed) modes aligned with tmux-launched panes.
+  process.env.LOOP_CAVEMAN_MODE = opts.cavemanMode;
+  process.env.LOOP_HELPER_CAVEMAN_MODE = opts.helperCavemanMode;
   opts.pairWith ??= defaultPeerAgent(opts.agent);
   opts.claudeMcpConfigPath = ensureAgentBridgeConfig(
     storage.runDir,
@@ -215,6 +234,7 @@ export const preparePairedRun = (
     ? touchRunManifest(
         {
           ...existing,
+          cavemanMode: opts.cavemanMode,
           claudeChannelServer: resolveClaudeBridgeServer(storage, existing),
           claudeSessionId:
             resumable?.claudeSessionId || opts.pairedSessionIds?.claude || "",
@@ -222,6 +242,7 @@ export const preparePairedRun = (
             resumable?.codexThreadId || opts.pairedSessionIds?.codex || "",
           cwd,
           mode: "paired",
+          helperCavemanMode: opts.helperCavemanMode,
           pid: process.pid,
           state: resumable?.state ?? "submitted",
           // Non-tmux resumes should not preserve a dead tmux routing hint.
@@ -230,6 +251,7 @@ export const preparePairedRun = (
         new Date().toISOString()
       )
     : createRunManifest({
+        cavemanMode: opts.cavemanMode,
         claudeChannelServer: claudeChannelServerName(
           storage.runId,
           storage.repoId
@@ -238,6 +260,7 @@ export const preparePairedRun = (
         codexThreadId: opts.pairedSessionIds?.codex ?? "",
         cwd,
         mode: "paired",
+        helperCavemanMode: opts.helperCavemanMode,
         pid: process.pid,
         repoId: storage.repoId,
         runId: storage.runId,

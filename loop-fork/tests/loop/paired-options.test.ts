@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,21 @@ import {
 import type { Options } from "../../src/loop/types";
 
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-paired-"));
+const ORIGINAL_CAVEMAN_MODE = process.env.LOOP_CAVEMAN_MODE;
+const ORIGINAL_HELPER_CAVEMAN_MODE = process.env.LOOP_HELPER_CAVEMAN_MODE;
+
+afterEach(() => {
+  for (const [name, value] of [
+    ["LOOP_CAVEMAN_MODE", ORIGINAL_CAVEMAN_MODE],
+    ["LOOP_HELPER_CAVEMAN_MODE", ORIGINAL_HELPER_CAVEMAN_MODE],
+  ] as const) {
+    if (value === undefined) {
+      Reflect.deleteProperty(process.env, name);
+    } else {
+      process.env[name] = value;
+    }
+  }
+});
 
 const makeOptions = (overrides: Partial<Options> = {}): Options => ({
   agent: "codex",
@@ -62,6 +77,65 @@ test("preparePairedOptions accepts a raw session id without creating a paired ma
       Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
     } else {
       process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("paired resumes restore Caveman modes unless CLI explicitly overrides", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  const storage = resolveRunStorage("71", process.cwd(), home);
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      cavemanMode: "full",
+      cwd: process.cwd(),
+      helperCavemanMode: "ultra",
+      mode: "paired",
+      pid: 1234,
+      repoId: storage.repoId,
+      runId: "71",
+      state: "working",
+    })
+  );
+
+  try {
+    const resumed = makeOptions({
+      cavemanMode: "lite",
+      cavemanModeSource: "default",
+      helperCavemanMode: "full",
+      helperCavemanModeSource: "default",
+      pairedMode: true,
+      resumeRunId: "71",
+    });
+    preparePairedRun(resumed, process.cwd());
+    expect(resumed).toMatchObject({
+      cavemanMode: "full",
+      cavemanModeSource: "manifest",
+      helperCavemanMode: "ultra",
+      helperCavemanModeSource: "manifest",
+    });
+
+    const overridden = makeOptions({
+      cavemanMode: "off",
+      cavemanModeSource: "cli",
+      helperCavemanMode: "off",
+      helperCavemanModeSource: "cli",
+      pairedMode: true,
+      resumeRunId: "71",
+    });
+    preparePairedRun(overridden, process.cwd());
+    expect(readRunManifest(storage.manifestPath)).toMatchObject({
+      cavemanMode: "off",
+      helperCavemanMode: "off",
+    });
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
     }
     rmSync(home, { recursive: true, force: true });
   }

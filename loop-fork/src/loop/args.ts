@@ -1,17 +1,22 @@
 import { env } from "bun";
 import { defaultPeerAgent, isAgent } from "./agents";
 import {
+  DEFAULT_CAVEMAN_MODE,
+  DEFAULT_HELPER_CAVEMAN_MODE,
+  parseCavemanMode,
+} from "./caveman";
+import {
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_COPILOT_MODEL,
+  DEFAULT_CURSOR_MODEL,
+  DEFAULT_DONE_SIGNAL,
+  DEFAULT_GEMINI_MODEL,
   DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
   DEFAULT_GOVERNESS_HEIGHT,
   DEFAULT_GOVERNESS_IDLE_SECONDS,
   DEFAULT_GOVERNESS_MAX_RECOVERIES,
   DEFAULT_GOVERNESS_MODEL,
   DEFAULT_GOVERNESS_URL,
-  DEFAULT_CODEX_MODEL,
-  DEFAULT_COPILOT_MODEL,
-  DEFAULT_CURSOR_MODEL,
-  DEFAULT_DONE_SIGNAL,
-  DEFAULT_GEMINI_MODEL,
   DEFAULT_MAX_ITERATIONS,
   HELP,
   LOOP_VERSION,
@@ -227,6 +232,14 @@ const applyValueFlag = (
         value,
         "Invalid --governess-height value: cannot be empty"
       );
+      return;
+    case "cavemanMode":
+      opts.cavemanMode = parseCavemanMode(value, "--caveman");
+      opts.cavemanModeSource = "cli";
+      return;
+    case "helperCavemanMode":
+      opts.helperCavemanMode = parseCavemanMode(value, "--helper-caveman");
+      opts.helperCavemanModeSource = "cli";
       return;
     default: {
       const exhaustive: never = flag;
@@ -459,6 +472,42 @@ const parseModelArg = (
   }
 };
 
+interface ParsedValueArg {
+  flag: ValueFlag;
+  nextIndex: number;
+  value: string;
+}
+
+const parseValueArg = (
+  argv: string[],
+  index: number,
+  arg: string
+): ParsedValueArg | undefined => {
+  const spacedFlag = VALUE_FLAGS[arg];
+  if (spacedFlag) {
+    const value = argv[index + 1];
+    if (!value) {
+      throw new Error(`Missing value for ${arg}`);
+    }
+    return {
+      flag: spacedFlag,
+      nextIndex: index + 2,
+      value,
+    };
+  }
+  const equalsFlag = [
+    ["--caveman=", "cavemanMode"],
+    ["--helper-caveman=", "helperCavemanMode"],
+  ].find(([prefix]) => arg.startsWith(prefix)) as
+    | [string, "cavemanMode" | "helperCavemanMode"]
+    | undefined;
+  if (!equalsFlag) {
+    return undefined;
+  }
+  const [prefix, flag] = equalsFlag;
+  return { flag, nextIndex: index + 1, value: arg.slice(prefix.length) };
+};
+
 const consumeArg = (
   argv: string[],
   index: number,
@@ -539,14 +588,10 @@ const consumeArg = (
     return { nextIndex: index + 1, stop: false, onlyAgent };
   }
 
-  const flag = VALUE_FLAGS[arg];
-  if (flag) {
-    const value = argv[index + 1];
-    if (!value) {
-      throw new Error(`Missing value for ${arg}`);
-    }
-    applyValueFlag(flag, value, opts, onlyAgent);
-    return { nextIndex: index + 2, stop: false, onlyAgent };
+  const valueArg = parseValueArg(argv, index, arg);
+  if (valueArg) {
+    applyValueFlag(valueArg.flag, valueArg.value, opts, onlyAgent);
+    return { nextIndex: valueArg.nextIndex, stop: false, onlyAgent };
   }
 
   if (arg.startsWith("-")) {
@@ -560,8 +605,14 @@ const consumeArg = (
 export const parseArgs = (argv: string[]): Options => {
   const normalizedArgv = normalizeLegacyGovernessArgs(argv);
   const runtimeEnv = withLegacyGovernessEnv(env);
+  const cavemanEnv = runtimeEnv.LOOP_CAVEMAN_MODE?.trim();
+  const helperCavemanEnv = runtimeEnv.LOOP_HELPER_CAVEMAN_MODE?.trim();
   const opts: Options = {
     agent: "claude",
+    cavemanMode: cavemanEnv
+      ? parseCavemanMode(cavemanEnv, "LOOP_CAVEMAN_MODE")
+      : DEFAULT_CAVEMAN_MODE,
+    cavemanModeSource: cavemanEnv ? "env" : "default",
     doneSignal: DEFAULT_DONE_SIGNAL,
     proof: "",
     format: "pretty",
@@ -570,6 +621,10 @@ export const parseArgs = (argv: string[]): Options => {
     copilotModel: runtimeEnv.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
     cursorModel: runtimeEnv.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
     geminiModel: runtimeEnv.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    helperCavemanMode: helperCavemanEnv
+      ? parseCavemanMode(helperCavemanEnv, "LOOP_HELPER_CAVEMAN_MODE")
+      : DEFAULT_HELPER_CAVEMAN_MODE,
+    helperCavemanModeSource: helperCavemanEnv ? "env" : "default",
     governessIdleSeconds: DEFAULT_GOVERNESS_IDLE_SECONDS,
     governessCooldownSeconds: DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
     governessMaxRecoveries: DEFAULT_GOVERNESS_MAX_RECOVERIES,

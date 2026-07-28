@@ -23,6 +23,7 @@ import {
   type BridgeMessage,
   readBridgeEvents,
 } from "./bridge-store";
+import { CAVEMAN_UPSTREAM_SHORT_SHA } from "./caveman";
 import {
   DEFAULT_GOVERNESS_CONFIDENCE,
   DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
@@ -123,6 +124,7 @@ import type {
   AgentLiveness,
   AgentLivenessState,
   AgentUsage,
+  CavemanMode,
   GovernessVerdict,
   HookEvent,
   JudgeOutcome,
@@ -195,6 +197,7 @@ export interface GovernessConfig {
   agents: GovernessAgentInfo[];
   // Session cost ceiling (USD) for the budget line + escalation; 0 disables.
   budgetUsd: number;
+  cavemanMode?: CavemanMode;
   confidence: number;
   cooldownMs: number;
   // Run manifest creation time, for session uptime.
@@ -206,6 +209,7 @@ export interface GovernessConfig {
   epoch?: number;
   // How long an agent may sit waiting-for-human before we escalate.
   escalateIdleMs: number;
+  helperCavemanMode?: CavemanMode;
   idleMs: number;
   initialDriver?: Agent;
   journalFile?: string;
@@ -1325,7 +1329,9 @@ interface BoardMeta {
   bridge: BridgeCounts;
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
+  cavemanMode?: CavemanMode;
   governessMessages: Record<string, number>;
+  helperCavemanMode?: CavemanMode;
   identity: string;
   initialDriver?: Agent;
   judgeMode: LocalLlmJudgeMode;
@@ -2758,6 +2764,13 @@ const renderLocalLlmRuntimeRow = (
   const runtime = meta.llmRuntimeByJudge[judge.id];
   return [
     paint(ANSI.dim, " runtime · "),
+    paint(
+      ANSI.cyan,
+      meta.cavemanMode === "off" && meta.helperCavemanMode === "off"
+        ? `caveman off @${CAVEMAN_UPSTREAM_SHORT_SHA}`
+        : `caveman main ${meta.cavemanMode ?? "lite"} / helpers ${meta.helperCavemanMode ?? "full"} @${CAVEMAN_UPSTREAM_SHORT_SHA}`
+    ),
+    paint(ANSI.dim, " · "),
     paint(ANSI.cyan, localLlmArch(runtime)),
     paint(ANSI.dim, " · "),
     paint(ANSI.magenta, `${localLlmDtype(runtime)} ${localLlmQuant(runtime)}`),
@@ -5236,6 +5249,8 @@ export const governessTick = async (
     bridge: deps.readBridge(config.transcriptPath),
     bridgeLatest: deps.readBridgeLatest(config.runDir),
     budgetUsd: config.budgetUsd,
+    cavemanMode: config.cavemanMode,
+    helperCavemanMode: config.helperCavemanMode,
     initialDriver: config.initialDriver,
     judgeMode: config.judgeMode,
     llmJudges: judges,
@@ -5935,6 +5950,7 @@ export const resolveGovernessConfig = (
     agentRenameEnabled: agentRenameEnabledFromEnv(env),
     agents,
     budgetUsd: Number.isFinite(budget) && budget > 0 ? budget : 0,
+    cavemanMode: manifest?.cavemanMode,
     confidence: envConfidence(env),
     cooldownMs: envSeconds(
       env,
@@ -5955,6 +5971,7 @@ export const resolveGovernessConfig = (
       DEFAULT_GOVERNESS_IDLE_SECONDS
     ),
     initialDriver: manifest?.primaryAgent,
+    helperCavemanMode: manifest?.helperCavemanMode,
     journalFile: join(storage.runDir, "governess-control.jsonl"),
     logFile: join(storage.runDir, "governess.jsonl"),
     llmDecodeConcurrency: envPositiveInt(

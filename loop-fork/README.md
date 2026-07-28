@@ -138,6 +138,18 @@ That directory contains a minimal Codex config and reuses the normal Codex auth 
 
 Single-agent Codex runs outside paired mode still use the normal Codex configuration unless you set `CODEX_HOME` yourself.
 
+### Caveman output compression
+
+Paired runs integrate [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) as an output-style layer. The dependency is pinned to commit `0d95a81d35a9f2d123a5e9430d1cfc43d55f1bb0`; its MIT notice is retained in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+- Main Claude/Codex prompts default to `lite`: concise full sentences with Caveman's safety and Auto-Clarity rules.
+- Nanny and Au Pair default to `full`: the compact upstream reinforcement is added once to each helper system prompt.
+- `--caveman <off|lite|full|ultra>` and `--helper-caveman <off|lite|full|ultra>` override those defaults. `LOOP_CAVEMAN_MODE` and `LOOP_HELPER_CAVEMAN_MODE` provide environment defaults.
+- Selected modes are stored in the run manifest, restored on resume, and shown in Governess with the pinned upstream revision.
+- Loop adds an exactness boundary: code, commands, paths, URLs, JSON, errors, commit SHAs, bridge identifiers, verdicts, citations, evidence, and broker results must remain exact.
+
+This integration does not install Caveman globally, add Cavecrew roles, or wrap the bridge with the pre-1.0 `caveman-shrink` tool. Routing and permissions remain Governess-owned. Caveman's upstream estimate is about 65% shorter output, but its full skill costs roughly 1–1.5k input tokens per main-agent turn, so `lite` can be net-negative on already terse tasks; use `off` when compression does not pay for itself.
+
 ### Governess pane
 
 Paired tmux runs add a control row under the two agents. Governess occupies the left four-fifths and is the deterministic watchdog/router. The right fifth is split into read-only `nanny.<session>` and `au-pair.<session>` panes: Nanny shows small bounded jobs assigned to local Qwen, while Au Pair shows larger bounded GLM jobs. Exact structured reads/checks use Direct and call no model. A job has one owner; Nanny failures or capacity do not silently spill into Au Pair.
@@ -239,6 +251,8 @@ It restarts against a fresh Codex thread after the app-server drop.
 - `--session <id>`: resume from a paired run id or stored Claude/Codex session id. In single-agent mode, raw session/thread ids are passed through directly.
 - `--tmux`: run `loop` in a detached tmux session so it survives SSH disconnects. In paired mode, Claude and Codex open side-by-side in the same tmux workspace. With no prompt and no proof, paired mode starts an interactive workspace and waits for the first task. Session name format: `repo-loop-X`
 - `--worktree`: create and run inside a fresh git worktree + branch automatically. Resumed run ids re-enter or recreate the matching worktree when possible. Worktree/branch format: `repo-loop-X`
+- `--caveman <off|lite|full|ultra>`: main paired-agent output compression (default: `lite`; env: `LOOP_CAVEMAN_MODE`)
+- `--helper-caveman <off|lite|full|ultra>`: Nanny/Au Pair output compression (default: `full`; env: `LOOP_HELPER_CAVEMAN_MODE`)
 - `-h, --help`: help
 
 ## FAQ
@@ -312,6 +326,9 @@ loop --worktree --proof "Use {skill} to verify your changes" "Implement {feature
 
 # run in detached tmux session in a fresh git worktree automatically
 loop --tmux --worktree --proof "Use {skill} to verify your changes" "Implement {feature}"
+
+# disable output compression for all agents and helpers
+loop --caveman off --helper-caveman off
 ```
 
 ## License

@@ -29,6 +29,7 @@ import {
   resolveUtilityRuntimeConfig,
   runUtilityWorker,
   utilityBrokerBoundary,
+  utilitySystemPrompt,
   utilityToolsForExecutionProfile,
 } from "../../src/loop/utility-runtime";
 import {
@@ -185,11 +186,26 @@ test("OpenRouter GLM is the default but remains disabled without a credential", 
   expect(config.availability.code).toBe("key-file-disabled");
   expect(config.providerSort).toBe("balanced");
   expect(config.harness).toBe("pi-sdk");
+  expect(config.helperCavemanMode).toBe("full");
   expect(config.maxConcurrentJobs).toBe(4);
   expect(config.nannyMaxConcurrentJobs).toBe(1);
   expect(config).not.toHaveProperty("maxSteps");
   expect(config).not.toHaveProperty("maxTokens");
   expect(config).not.toHaveProperty("maxTotalTokens");
+});
+
+test("helper Caveman mode is validated and applied once to the system prompt", () => {
+  expect(
+    resolveUtilityRuntimeConfig({ LOOP_HELPER_CAVEMAN_MODE: "ultra" })
+      .helperCavemanMode
+  ).toBe("ultra");
+  expect(utilitySystemPrompt("Nanny", "full")).toContain(
+    "CAVEMAN MODE ACTIVE (full)"
+  );
+  expect(utilitySystemPrompt("Nanny", "off")).not.toContain("CAVEMAN MODE");
+  expect(() =>
+    resolveUtilityRuntimeConfig({ LOOP_HELPER_CAVEMAN_MODE: "invalid" })
+  ).toThrow("Invalid LOOP_HELPER_CAVEMAN_MODE value");
 });
 
 test("Au Pair and Nanny role-specific switches override compatibility names", () => {
@@ -532,6 +548,7 @@ test("detached utility worker environment is allowlist-built, not inherited", ()
       LOOP_UTILITY_API_KEY: "direct-secret",
       LOOP_UTILITY_API_KEY_FILE: "/safe/openrouter.key",
       LOOP_UTILITY_MODEL: "local-model",
+      LOOP_HELPER_CAVEMAN_MODE: "ultra",
       OPENROUTER_API_KEY: "openrouter-secret",
       PATH: "/bin",
       RANDOM_TOKEN: "unrelated-secret",
@@ -541,6 +558,7 @@ test("detached utility worker environment is allowlist-built, not inherited", ()
     HOME: "/Users/example",
     LOOP_UTILITY_API_KEY_FILE: "/safe/openrouter.key",
     LOOP_UTILITY_MODEL: "local-model",
+    LOOP_HELPER_CAVEMAN_MODE: "ultra",
     NO_COLOR: "1",
     PATH: "/bin",
   });

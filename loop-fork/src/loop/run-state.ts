@@ -18,6 +18,7 @@ import {
 import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import type {
   Agent,
+  CavemanMode,
   ReviewStatus,
   RunLifecycleState,
   RunStatus,
@@ -56,6 +57,7 @@ export interface RunStorage {
 }
 
 export interface RunManifest {
+  cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
   claudeSessionId: string;
   codexRemoteUrl?: string;
@@ -63,6 +65,7 @@ export interface RunManifest {
   createdAt: string;
   cwd: string;
   governess?: boolean;
+  helperCavemanMode?: CavemanMode;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
@@ -136,6 +139,7 @@ interface RepoIdDeps {
 }
 
 interface RunManifestInput {
+  cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
   claudeSessionId?: string;
   codexRemoteUrl?: string;
@@ -143,6 +147,7 @@ interface RunManifestInput {
   createdAt?: string;
   cwd: string;
   governess?: boolean;
+  helperCavemanMode?: CavemanMode;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
@@ -162,6 +167,15 @@ interface RunManifestInput {
   tmuxSession?: string;
   updatedAt?: string;
 }
+
+const cavemanManifestFields = (
+  input: Pick<RunManifestInput, "cavemanMode" | "helperCavemanMode">
+): Pick<RunManifest, "cavemanMode" | "helperCavemanMode"> => ({
+  ...(input.cavemanMode ? { cavemanMode: input.cavemanMode } : {}),
+  ...(input.helperCavemanMode
+    ? { helperCavemanMode: input.helperCavemanMode }
+    : {}),
+});
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -228,6 +242,19 @@ const firstAgent = (
 ): Agent | undefined => {
   const value = firstString(obj, keys);
   return value && isAgent(value) ? value : undefined;
+};
+
+const firstCavemanMode = (
+  obj: Record<string, unknown>,
+  keys: string[]
+): CavemanMode | undefined => {
+  const value = firstString(obj, keys);
+  return value === "off" ||
+    value === "lite" ||
+    value === "full" ||
+    value === "ultra"
+    ? value
+    : undefined;
 };
 
 const optionalRunId = (runId: string | undefined): string | undefined => {
@@ -495,6 +522,7 @@ export const createRunManifest = (
     parseRunLifecycleState(undefined, input.status) ??
     "submitted";
   return {
+    ...cavemanManifestFields(input),
     ...(input.claudeChannelServer
       ? { claudeChannelServer: input.claudeChannelServer }
       : {}),
@@ -564,6 +592,11 @@ const readOptionalRunManifestFields = (
     "codex_remote_url",
   ]);
   const primaryAgent = firstAgent(parsed, ["primaryAgent", "primary_agent"]);
+  const cavemanMode = firstCavemanMode(parsed, ["cavemanMode", "caveman_mode"]);
+  const helperCavemanMode = firstCavemanMode(parsed, [
+    "helperCavemanMode",
+    "helper_caveman_mode",
+  ]);
   const tmuxSession = firstString(parsed, ["tmuxSession", "tmux_session"]);
   const tmuxPaneLeftAgent = firstAgent(parsed, [
     "tmuxPaneLeftAgent",
@@ -603,10 +636,12 @@ const readOptionalRunManifestFields = (
   const governess =
     parsed.governess === true || parsed[LEGACY_MANIFEST_KEYS.enabled] === true;
   return {
+    ...(cavemanMode ? { cavemanMode } : {}),
     ...(claudeChannelServer ? { claudeChannelServer } : {}),
     ...(codexRemoteUrl ? { codexRemoteUrl } : {}),
     ...(governess ? { governess: true } : {}),
     ...(primaryAgent ? { primaryAgent } : {}),
+    ...(helperCavemanMode ? { helperCavemanMode } : {}),
     ...(tmuxPaneGoverness ? { tmuxPaneGoverness } : {}),
     ...(tmuxPaneAuPair ? { tmuxPaneAuPair } : {}),
     ...(tmuxPaneLeft ? { tmuxPaneLeft } : {}),
