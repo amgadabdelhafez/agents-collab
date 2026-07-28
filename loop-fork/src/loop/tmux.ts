@@ -1137,8 +1137,10 @@ export const composeAuPairPaneTitle = (session: string): string =>
 export const composeNannyPaneTitle = (session: string): string =>
   `nanny.${session}`;
 
+const RECON_PANE_NAMES = ["routes", "tools", "results"] as const;
+
 export const composeReconPaneTitle = (session: string, index: number): string =>
-  `recon${index}.${session}`;
+  `${RECON_PANE_NAMES[index - 1] ?? `recon${index}`}.${session}`;
 
 /** Compatibility alias for integrations that still import the old title helper. */
 export const composeWorkerPaneTitle = composeAuPairPaneTitle;

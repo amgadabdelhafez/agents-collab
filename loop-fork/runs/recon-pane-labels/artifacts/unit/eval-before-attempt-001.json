@@ -1,0 +1,12 @@
+{
+  "task_id": "recon-pane-labels",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

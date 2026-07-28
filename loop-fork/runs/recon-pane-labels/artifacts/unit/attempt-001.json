@@ -1,0 +1,17 @@
+{
+  "task_id": "recon-pane-labels",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-28T02:24:56Z",
+  "ended_at": "2026-07-28T02:24:56Z",
+  "artifact": "runs/recon-pane-labels/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/tmux.test.ts",
+    "tests/loop/recon-pane.test.ts"
+  ]
+}

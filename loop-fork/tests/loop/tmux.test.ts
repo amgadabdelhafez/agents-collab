@@ -714,9 +714,27 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "set-option",
       "-p",
       "-t",
+      "%45",
+      "@loop_label",
+      "routes.repo-loop-1",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      "%46",
+      "@loop_label",
+      "tools.repo-loop-1",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
       "%47",
       "@loop_label",
-      "recon3.repo-loop-1",
+      "results.repo-loop-1",
     ]);
   } finally {
     rmSync(home, { force: true, recursive: true });
