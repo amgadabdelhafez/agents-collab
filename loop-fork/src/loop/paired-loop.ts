@@ -17,6 +17,7 @@ import type { BridgeMessage } from "./bridge-store";
 import { cavemanAgentGuidance, DEFAULT_CAVEMAN_MODE } from "./caveman";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
+import { INTERNAL_AGENT_COMMUNICATION_GUIDANCE } from "./communication-guidance";
 import {
   doneText,
   formatFollowUp,
@@ -113,6 +114,7 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
     "Paired mode:",
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
     singleBridgeTransportGuidance,
+    INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
     mandatoryUtilityDelegationGuidance(
       quotedBridgeTool(agent, "route_task"),
       agent === opts.agent ? "active" : "on-request"
@@ -166,6 +168,7 @@ const reviewBridgePrompt = (
     `Review this completed work for the task below and verify it in the current repo.\n\nTask:\n${task.trim()}`,
     "Focus your review on unstaged changes (the diff produced by `git diff`). Run checks/tests/commands as needed.",
     opts.proof ? `Proof requirements:\n${opts.proof.trim()}` : "",
+    INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
     reviewDeliveryGuidance(reviewer, opts),
     `If review is needed, end your response with exactly "<review>FAIL</review>" on the final non-empty line. Nothing may follow this line.`,
     `If the work is complete, end with exactly "<review>PASS</review>" on the final non-empty line. No extra content after this line.`,
@@ -184,6 +187,7 @@ const forwardBridgePrompt = (entry: BridgeMessage): string => {
       ? [
           formatBridgeDeliveryMessage(entry),
           "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
+          INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
           replyGuidance,
           "Do not acknowledge receipt without new information.",
         ]
@@ -191,6 +195,7 @@ const forwardBridgePrompt = (entry: BridgeMessage): string => {
           `Message from ${bridgeSourceLabel(source)} via the loop bridge:`,
           message.trim(),
           "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
+          INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
           replyGuidance,
           "Do not acknowledge receipt without new information.",
         ]

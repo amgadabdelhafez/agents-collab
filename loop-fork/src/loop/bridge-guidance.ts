@@ -1,4 +1,5 @@
 import { BRIDGE_SERVER, CLAUDE_CHANNEL_USER } from "./bridge-constants";
+import { INTERNAL_AGENT_COMMUNICATION_GUIDANCE } from "./communication-guidance";
 import type { Agent } from "./types";
 
 export type BridgeTool =
@@ -56,6 +57,7 @@ export const claudeChannelInstructions = (): string =>
   [
     `Messages from the Codex agent arrive as <channel source="${BRIDGE_SERVER}" chat_id="..." user="${CLAUDE_CHANNEL_USER}" ...>. The chat_id is informational only.`,
     sendProactiveCodexGuidance(),
+    INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
     mandatoryUtilityDelegationGuidance('"route_task"'),
     "Never answer the human when the inbound message came from Codex. Send the response back through the bridge tools instead.",
     bridgeStatusStuckGuidance,

@@ -192,7 +192,7 @@ export const handoverRequest = (bundleFile: string, epoch: number): string =>
     `Before exiting, atomically write a JSON handover bundle to ${bundleFile}.`,
     `It must be exactly one object with: status="ready", epoch=${epoch}, your agent name in agent, gitHead, summary, next, and string arrays dirtyFiles, checks, blockers.`,
     "Update PLAN.md and status.md where present, then write the bundle only after those updates and your current atomic step are complete.",
-    "Send the peer a concise final handover if useful, then exit your own agent TUI. The governess will not launch the replacement until every valid bundle exists and every agent has exited.",
+    "Send the peer an evidence-dense final handover if useful: lead with the next action, then exact changed scope, checks/results, blockers, risks, and unknowns. Do not omit review evidence merely to be concise. Then exit your own agent TUI. The governess will not launch the replacement until every valid bundle exists and every agent has exited.",
   ].join(" ");
 
 export const HANDOVER_CONTINUATION_PROMPT = [

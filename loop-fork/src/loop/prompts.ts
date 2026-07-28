@@ -1,3 +1,7 @@
+import {
+  HUMAN_REPORTING_GUIDANCE,
+  INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
+} from "./communication-guidance";
 import { NEWLINE_RE, REVIEW_FAIL, REVIEW_PASS } from "./constants";
 
 export const SPAWN_TEAM_WITH_WORKTREE_ISOLATION =
@@ -48,6 +52,7 @@ export const buildPlanPrompt = (task: string): string =>
     "Create or update PLAN.md in the current repo with a clear implementation plan.",
     "Create or update status.md with a concise session entry, current state, open questions, and next step.",
     SESSION_STATE_GUIDANCE,
+    HUMAN_REPORTING_GUIDANCE,
     "Only write the plan in this step. Enter plan mode. Do not implement code yet.",
   ].join("\n\n");
 
@@ -58,6 +63,7 @@ export const buildPlanReviewPrompt = (task: string): string =>
     "Review PLAN.md for correctness, missing steps, and verification gaps.",
     "Update PLAN.md directly if needed.",
     "Check that status.md exists or that PLAN.md explicitly calls out when it should be created before implementation.",
+    INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
     "Only edit PLAN.md in this step. Enter plan mode. Do not implement code yet.",
   ].join("\n\n");
 
@@ -84,6 +90,7 @@ export const buildWorkPrompt = (
   );
   parts.push(SESSION_STATE_GUIDANCE);
   parts.push(HUMAN_CLARIFICATION_GUIDANCE);
+  parts.push(HUMAN_REPORTING_GUIDANCE);
   return parts.join("\n\n");
 };
 
@@ -111,6 +118,7 @@ export const buildReviewPrompt = (
   parts.push(
     "Check that PLAN.md and status.md are current enough for a next session to understand what was done, what proof ran, and what remains."
   );
+  parts.push(INTERNAL_AGENT_COMMUNICATION_GUIDANCE);
   parts.push(
     `${SPAWN_TEAM_WITH_WORKTREE_ISOLATION} The final line must be one of the two review signals on its own line, with no surrounding comments or markdown, and it must not include "${doneSignal}".`
   );

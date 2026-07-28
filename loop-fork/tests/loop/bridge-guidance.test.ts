@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   bridgeToolName,
+  claudeChannelInstructions,
   mandatoryUtilityDelegationGuidance,
   quotedBridgeTool,
   singleBridgeTransportGuidance,
@@ -33,6 +34,14 @@ test("delegation guidance states the exact context and decomposition contract", 
   expect(guidance).toContain("keep cross-file judgment together for Au Pair");
   expect(guidance).toContain("structured execution fields");
   expect(guidance).toContain("truthful risk");
+});
+
+test("Claude channel guidance preserves evidence-dense peer traffic", () => {
+  const guidance = claudeChannelInstructions();
+  expect(guidance).toContain("Internal agent communication:");
+  expect(guidance).toContain("No arbitrary item cap applies");
+  expect(guidance).toContain("commands/results");
+  expect(guidance).toContain("Separate observed facts from inference");
 });
 
 test("quotedBridgeTool wraps the resolved bridge tool name", () => {

@@ -26,6 +26,10 @@ import {
   waitForCodexTmuxProxy,
 } from "./codex-tmux-proxy";
 import {
+  HUMAN_REPORTING_GUIDANCE,
+  INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
+} from "./communication-guidance";
+import {
   DEFAULT_CLAUDE_DRIVER_EFFORT,
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_CONFIG_VALUES,
@@ -204,7 +208,7 @@ const humanClarificationGuidance = (): string =>
   "Use AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.";
 
 const reviewerCheckpointGuidance = (peer: string): string =>
-  `Ask ${peer} for validation and feedback after every few concrete steps, after any meaningful design choice, and before finalizing. Keep requests specific: summarize what changed, what proof ran, and what decision or risk you want checked.`;
+  `Ask ${peer} for validation and feedback after every few concrete steps, after any meaningful design choice, and before finalizing. Lead with the review purpose and requested decision; include exact changed scope, proof commands/results, risks, unknowns, and relevant failed paths.`;
 
 const reviewerSessionStateGuidance = (primary: string): string =>
   `When reviewing, check that ${primary} keeps PLAN.md and status.md current enough for handoff: what changed, proof/checks run, open questions, risks, and next steps.`;
@@ -249,6 +253,7 @@ const pairedBridgeGuidance = (
     return [
       `Your bridge MCP server is "${serverName}". Use ${quotedClaudeTmuxBridgeTool(serverName, "send_message")} with target: "${target}" for ${peer}-facing messages, including replies to inbound ${peer} channel messages; do not send ${peer}-facing responses as a human-facing message.`,
       singleBridgeTransportGuidance,
+      INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
       mandatoryUtilityDelegationGuidance(
         quotedClaudeTmuxBridgeTool(serverName, "route_task"),
         activation
@@ -261,6 +266,7 @@ const pairedBridgeGuidance = (
   return [
     `Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with target: "${target}" for ${peer}-facing messages, not a human-facing message.`,
     singleBridgeTransportGuidance,
+    INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
     mandatoryUtilityDelegationGuidance(
       quotedBridgeTool(agent, "route_task"),
       activation
@@ -284,6 +290,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
       "After both pass, handle the PR yourself: create a draft PR or send a follow-up commit to the existing PR.",
       SESSION_STATE_GUIDANCE,
       humanClarificationGuidance(),
+      HUMAN_REPORTING_GUIDANCE,
     ].join("\n");
   }
 
@@ -296,6 +303,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
     reviewerSessionStateGuidance(primary),
     "Send either clear actionable feedback or an explicit approval.",
     humanClarificationGuidance(),
+    HUMAN_REPORTING_GUIDANCE,
   ].join("\n");
 };
 

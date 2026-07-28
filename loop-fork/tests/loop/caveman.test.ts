@@ -33,6 +33,9 @@ test("Loop exactness overlay protects machine-readable artifacts", () => {
   expect(guidance).toContain(
     "Use normal clear prose whenever compression could make ordering, authority, scope, or safety ambiguous."
   );
+  expect(guidance).toContain(
+    "Keep human/founder/supervisor reports action-first. Keep internal bridge, review, and handoff traffic evidence-dense"
+  );
 });
 
 test("helper reinforcement is compact and off is an exact opt-out", () => {

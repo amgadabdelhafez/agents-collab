@@ -276,6 +276,9 @@ test("non-tmux paired prompts apply Caveman guidance with an exact off switch", 
     );
   });
   expect(prompts[0]).toContain("CAVEMAN MODE ACTIVE — level: full");
+  expect(prompts[0]).toContain("Human/founder/supervisor reporting:");
+  expect(prompts[0]).toContain("Internal agent communication:");
+  expect(prompts[0]).toContain("No arbitrary item cap applies");
 
   prompts.length = 0;
   await withTempHome("13", async () => {
@@ -824,6 +827,8 @@ test("runPairedLoop delivers peer messages back to the primary agent", async () 
       "Please verify the implementation details."
     );
     expect(calls[1]?.prompt).toContain("Do not reply to the human.");
+    expect(calls[1]?.prompt).toContain("Internal agent communication:");
+    expect(calls[1]?.prompt).toContain("No arbitrary item cap applies");
     expect(calls[1]?.prompt).toContain('"mcp__loop_bridge__send_message"');
     expect(calls[2]?.agent).toBe("claude");
     expect(calls[2]?.prompt).toContain(
@@ -898,6 +903,9 @@ test("runPairedLoop uses the paired peer reviewer in paired mode", async () => {
     expect(reviewPrompts.map((entry) => entry.agent)).toEqual(["codex"]);
     expect(reviewPrompts[0]?.prompt).toContain(
       "concrete file paths, commands, and code locations that must change"
+    );
+    expect(reviewPrompts[0]?.prompt).toContain(
+      "Separate observed facts from inference"
     );
     expect(reviewPrompts[0]?.prompt).toContain(
       'send the actionable notes to Claude with "mcp__loop_bridge__send_message" using target: "claude"'

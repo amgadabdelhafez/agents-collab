@@ -1,6 +1,7 @@
 import cavemanSkillMarkdown from "caveman-installer/skills/caveman/SKILL.md" with {
   type: "text",
 };
+import { CAVEMAN_AUDIENCE_BOUNDARY } from "./communication-guidance";
 import type { CavemanMode } from "./types";
 
 export const CAVEMAN_UPSTREAM_SHA = "0d95a81d35a9f2d123a5e9430d1cfc43d55f1bb0";
@@ -16,6 +17,7 @@ const INTENSITY_EXAMPLE_RE = /^- (\S+?):\s/;
 const LOOP_EXACTNESS_OVERLAY = [
   "Loop compatibility boundary:",
   "- Compress explanatory prose and final summaries only.",
+  `- ${CAVEMAN_AUDIENCE_BOUNDARY}`,
   "- Preserve code, commands, paths, URLs, JSON, errors, SHAs, resolver output, bridge identifiers, verdict text, citations, and evidence exactly.",
   "- Use normal clear prose whenever compression could make ordering, authority, scope, or safety ambiguous.",
 ].join("\n");

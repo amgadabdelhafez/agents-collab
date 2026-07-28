@@ -14,6 +14,8 @@ test("buildPlanPrompt asks for PLAN.md", () => {
   expect(prompt).toContain("Create or update PLAN.md");
   expect(prompt).toContain("Create or update status.md");
   expect(prompt).toContain("Session state:");
+  expect(prompt).toContain("Human/founder/supervisor reporting:");
+  expect(prompt).toContain("result, decision, blocker");
   expect(prompt).toContain("Do not implement code yet.");
 });
 
@@ -24,6 +26,8 @@ test("buildPlanReviewPrompt asks to review PLAN.md only", () => {
   expect(prompt).toContain("Review PLAN.md");
   expect(prompt).toContain("Update PLAN.md directly if needed.");
   expect(prompt).toContain("Check that status.md exists");
+  expect(prompt).toContain("Internal agent communication:");
+  expect(prompt).toContain("No arbitrary item cap applies");
   expect(prompt).toContain("Only edit PLAN.md in this step.");
 });
 
@@ -44,6 +48,8 @@ test("buildWorkPrompt keeps task, optional sections, and done instruction", () =
   expect(prompt).toContain("Maintain `PLAN.md` and `status.md`");
   expect(prompt).toContain("running handoff");
   expect(prompt).toContain("what should happen next");
+  expect(prompt).toContain("Make state visible immediately");
+  expect(prompt).toContain("at most one concrete action");
   expect(prompt).toContain("worktree isolation");
 });
 
@@ -80,6 +86,8 @@ test("buildReviewPrompt includes strict review signal instructions", () => {
     "concrete file paths, commands, and code locations that must change."
   );
   expect(prompt).toContain("PLAN.md and status.md are current");
+  expect(prompt).toContain("Machine-reviewed: evidence density wins");
+  expect(prompt).toContain("Separate observed facts from inference");
   expect(prompt).toContain("Proof requirements:\nmust pass ci");
   expect(prompt).toContain("worktree isolation");
   expect(prompt).toContain("must not include");

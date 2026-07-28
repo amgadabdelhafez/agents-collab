@@ -1605,6 +1605,11 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).not.toContain("Wait briefly if it arrives");
   expect(primaryPrompt).toContain('"mcp__loop_bridge__send_message"');
   expect(primaryPrompt).toContain("sole peer-delivery transport");
+  expect(primaryPrompt).toContain("Human/founder/supervisor reporting:");
+  expect(primaryPrompt).toContain("Make state visible immediately");
+  expect(primaryPrompt).toContain("Internal agent communication:");
+  expect(primaryPrompt).toContain("No arbitrary item cap applies");
+  expect(primaryPrompt).toContain("commands/results");
   expect(primaryPrompt).toContain("Never duplicate a bridge message");
   expect(primaryPrompt).toContain("Delegation is mandatory");
   expect(primaryPrompt).toContain('"mcp__loop_bridge__route_task"');
@@ -1638,6 +1643,9 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(peerPrompt).toContain("one to three independent bounded packets");
   expect(peerPrompt).toContain("Governess chooses the tier");
   expect(peerPrompt).toContain("sole peer-delivery transport");
+  expect(peerPrompt).toContain("Human/founder/supervisor reporting:");
+  expect(peerPrompt).toContain("Internal agent communication:");
+  expect(peerPrompt).toContain("Separate observed facts from inference");
   expect(peerPrompt).not.toContain('"reply"');
   expect(peerPrompt).toContain(
     'Use "mcp__loop-bridge-repo-123-1__send_message" with target: "codex" for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.'
@@ -1779,6 +1787,8 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
   );
   expect(primaryPrompt).toContain('"mcp__loop_bridge__send_message"');
   expect(primaryPrompt).toContain("worktree isolation");
+  expect(primaryPrompt).toContain("Human/founder/supervisor reporting:");
+  expect(primaryPrompt).toContain("Internal agent communication:");
   expect(peerPrompt).toContain("No task has been assigned yet.");
   expect(peerPrompt).toContain("human-driven interactive run");
   expect(peerPrompt).toContain("keeps PLAN.md and status.md current");
@@ -1793,6 +1803,8 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
     "do not inspect task files, call repository tools, or route helper packets"
   );
   expect(peerPrompt).toContain("human clearly assigns you separate work");
+  expect(peerPrompt).toContain("Human/founder/supervisor reporting:");
+  expect(peerPrompt).toContain("Internal agent communication:");
   expect(peerPrompt).not.toContain('"reply"');
   expect(peerPrompt).toContain(
     'Use "mcp__loop-bridge-repo-123-1__send_message" with target: "codex" for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.'
