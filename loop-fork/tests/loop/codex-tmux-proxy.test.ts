@@ -423,9 +423,7 @@ test("codex tmux proxy reloads MCP servers after a closed loop bridge call", asy
       })
     );
     await waitFor(() =>
-      upstreamFrames.some(
-        (frame) => frame.method === "config/mcpServer/reload"
-      )
+      upstreamFrames.some((frame) => frame.method === "config/mcpServer/reload")
     );
   } finally {
     tui?.close();

@@ -8,9 +8,5 @@
   "started_at": "2026-07-25T22:36:16Z",
   "ended_at": "2026-07-25T22:36:17Z",
   "artifact": "runs/governess-header-identity/artifacts/unit/attempt-002.log",
-  "command": [
-    "bun",
-    "test",
-    "tests/loop/governess.test.ts"
-  ]
+  "command": ["bun", "test", "tests/loop/governess.test.ts"]
 }

@@ -6,15 +6,9 @@
   "prompt_path": "runs/worker-routing-live-integration/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-27T06:16:15Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "stale-live-worker-router-binary"
-    ],
-    "symptom": [
-      "Live governess does not run the merged widened classifier."
-    ],
+    "enabled": ["yes"],
+    "id": ["stale-live-worker-router-binary"],
+    "symptom": ["Live governess does not run the merged widened classifier."],
     "guard": [
       "combined focused routing/governess suites plus live binary hash and pane PID checks"
     ]

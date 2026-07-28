@@ -46,7 +46,9 @@ export const migrateLegacyGovernessState = (
   }
   if (existsSync(canonicalStateFile)) {
     try {
-      const canonical = JSON.parse(readFileSync(canonicalStateFile, "utf8")) as {
+      const canonical = JSON.parse(
+        readFileSync(canonicalStateFile, "utf8")
+      ) as {
         governessEpoch?: number;
       };
       if ((canonical.governessEpoch ?? 0) > 0) {

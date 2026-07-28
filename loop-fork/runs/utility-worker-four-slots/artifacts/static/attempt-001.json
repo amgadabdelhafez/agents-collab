@@ -8,9 +8,5 @@
   "started_at": "2026-07-27T15:44:50Z",
   "ended_at": "2026-07-27T15:44:50Z",
   "artifact": "runs/utility-worker-four-slots/artifacts/static/attempt-001.log",
-  "command": [
-    "bun",
-    "run",
-    "check"
-  ]
+  "command": ["bun", "run", "check"]
 }

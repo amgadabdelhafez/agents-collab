@@ -3,12 +3,20 @@
   "timestamp": "2026-07-26T04:43:00Z",
   "evaluator": "live Claude and Codex peer agents",
   "checks": {
-    "focused_tests": {"passed": 56, "failed": 0},
-    "build": {"passed": true},
-    "diff_check": {"passed": true},
-    "live_inbound": {"passed": true, "request_id": "6054874c-2365-4a03-8572-8c74e4952a82", "reason": "sent to claude tmux pane"},
-    "live_outbound": {"passed": true, "message_id": "bfcd8df0-7a04-439e-8e8a-40335825d6cf", "reason": "submitted through visible codex tmux pane"},
-    "pending": {"claude": 0, "codex": 0}
+    "focused_tests": { "passed": 56, "failed": 0 },
+    "build": { "passed": true },
+    "diff_check": { "passed": true },
+    "live_inbound": {
+      "passed": true,
+      "request_id": "6054874c-2365-4a03-8572-8c74e4952a82",
+      "reason": "sent to claude tmux pane"
+    },
+    "live_outbound": {
+      "passed": true,
+      "message_id": "bfcd8df0-7a04-439e-8e8a-40335825d6cf",
+      "reason": "submitted through visible codex tmux pane"
+    },
+    "pending": { "claude": 0, "codex": 0 }
   },
   "baseline": {
     "full_suite": "613 pass, 4 unrelated Codex model/config expectation failures",

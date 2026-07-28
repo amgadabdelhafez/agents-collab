@@ -280,12 +280,12 @@ interface Spies {
     status: BridgeSendStatus;
     target: Agent;
   }[];
+  governessPaneIdentities: [string, string][];
   judged: number;
   judgeRequests: JudgeRequest[];
   logs: unknown[];
   notifies: EscalationEvent[];
   paneBorderInits: string[];
-  governessPaneIdentities: [string, string][];
   paneLabels: [string, string][];
   respawns: string[];
   roleBalanceRequests: RoleBalanceRequest[];

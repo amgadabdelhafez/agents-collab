@@ -15,11 +15,17 @@ import {
 import { buildLaunchArgv } from "./launch";
 import {
   type OpenAICompatibleMessage,
-  type OpenAICompatibleToolCall,
   type OpenAICompatibleTraceEvent,
   type OpenAICompatibleUsage,
   openAICompatibleChat,
 } from "./openai-compatible";
+import {
+  createEphemeralPiAgent,
+  normalizePiUsage,
+  PI_VERSION,
+  type PiProviderSpec,
+  piProviderId,
+} from "./pi-runtime";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
   routeUtilityRequest,
@@ -42,6 +48,15 @@ import {
   type UtilityContextCapsule,
   utilityContextPrompt,
 } from "./utility-context";
+import {
+  classifyUtilityExecution,
+  directUtilityCalls,
+  UTILITY_AU_PAIR_TIER,
+  UTILITY_DIRECT_TIER,
+  UTILITY_NANNY_TIER,
+  type UtilityExecutionTierId,
+  utilityRoleName,
+} from "./utility-execution-tier";
 import {
   readUtilityObservability,
   sanitizeUtilityPaneText,
@@ -72,22 +87,6 @@ import {
   resolveUtilityRequestWorkspace,
   verifyAdoptedUtilityWorkspace,
 } from "./utility-workspace";
-import {
-  createEphemeralPiAgent,
-  normalizePiUsage,
-  PI_VERSION,
-  piProviderId,
-  type PiProviderSpec,
-} from "./pi-runtime";
-import {
-  classifyUtilityExecution,
-  directUtilityCalls,
-  UTILITY_AU_PAIR_TIER,
-  UTILITY_DIRECT_TIER,
-  type UtilityExecutionTierId,
-  UTILITY_NANNY_TIER,
-  utilityRoleName,
-} from "./utility-execution-tier";
 
 export const UTILITY_WORKER_SUBCOMMAND = "__utility-worker";
 export const UTILITY_PANE_SUBCOMMAND = "__utility-pane";
@@ -1125,8 +1124,8 @@ type UtilityConversationProgress = Pick<
 interface UtilityConversationBroker {
   assertComplete?: () => void;
   readonly definitions: readonly UtilityToolDefinition[];
-  readonly registeredDefinitions?: readonly UtilityToolDefinition[];
   execute(call: UtilityToolCall): Promise<UtilityToolResult>;
+  readonly registeredDefinitions?: readonly UtilityToolDefinition[];
 }
 
 const recordToolResult = (
@@ -1591,7 +1590,9 @@ const assertPiToolCallAllowed = (
     input.state.lastToolCallFingerprint = fingerprint;
     input.state.repeatedToolCallCount = 1;
   }
-  if (input.state.repeatedToolCallCount >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS) {
+  if (
+    input.state.repeatedToolCallCount >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS
+  ) {
     const message = `helper stopped before third consecutive identical tool call: ${tool}`;
     input.onFatal(message);
     throw new Error(message);
@@ -1617,15 +1618,16 @@ const recordPiToolResult = (
     usage: input.state.usage,
   });
   if (
-    input.state.consecutiveBrokerRejections >=
-    MAX_CONSECUTIVE_BROKER_REJECTIONS
+    input.state.consecutiveBrokerRejections >= MAX_CONSECUTIVE_BROKER_REJECTIONS
   ) {
     const message = piBrokerRejectionLimitMessage(input.state, name);
     input.onFatal(message);
     throw new Error(message);
   }
   if (!result.ok) {
-    throw new Error(result.error?.message ?? `${name} was rejected by the broker`);
+    throw new Error(
+      result.error?.message ?? `${name} was rejected by the broker`
+    );
   }
 };
 
@@ -1635,12 +1637,7 @@ const piToolDefinitions = (input: PiToolDefinitionInput): ToolDefinition[] =>
       description: definition.function.description,
       executionMode: "sequential",
       execute: async (_toolCallId, args, signal) => {
-        assertPiToolCallAllowed(
-          input,
-          definition.function.name,
-          args,
-          signal
-        );
+        assertPiToolCallAllowed(input, definition.function.name, args, signal);
         const { name, result } = await executeUtilityBrokerCall({
           assertActive: input.assertActive,
           broker: input.broker,

@@ -1,12 +1,7 @@
 {
   "task_id": "lower-agent-release-integration",
   "status": "pass",
-  "required": [
-    "unit",
-    "integration",
-    "smoke",
-    "release"
-  ],
+  "required": ["unit", "integration", "smoke", "release"],
   "dimensions": {
     "unit": {
       "status": "pass",

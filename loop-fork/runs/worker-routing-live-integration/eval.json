@@ -4,11 +4,7 @@
   "verdict": "pass",
   "evaluated_at": "2026-07-27T06:10:13Z",
   "evaluator": "independent Codex evaluator",
-  "required": [
-    "unit",
-    "integration",
-    "smoke"
-  ],
+  "required": ["unit", "integration", "smoke"],
   "dimensions": {
     "unit": {
       "status": "pass",

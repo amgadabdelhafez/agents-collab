@@ -140,10 +140,10 @@ const routedInspectFixture = (
   mkdirSync(runDir, { recursive: true });
   writeFileSync(
     join(repoRoot, "src", "sample.ts"),
-    Array.from(
+    `${Array.from(
       { length: 80 },
       (_, index) => `export const n${index + 1} = ${index + 1};`
-    ).join("\n") + "\n"
+    ).join("\n")}\n`
   );
   writeFileSync(
     join(runDir, "manifest.json"),
@@ -169,7 +169,7 @@ const routedInspectFixture = (
   return { repoRoot, request, runDir };
 };
 
-const jsonlRecords = (path: string): Array<Record<string, unknown>> =>
+const jsonlRecords = (path: string): Record<string, unknown>[] =>
   readFileSync(path, "utf8")
     .trim()
     .split("\n")
@@ -925,7 +925,10 @@ test("a full Nanny slot does not block eligible Au Pair work in the same tick", 
   const runDir = join(repoRoot, ".loop", "runs", "independent-tier-slots");
   mkdirSync(join(repoRoot, "src"), { recursive: true });
   mkdirSync(runDir, { recursive: true });
-  writeFileSync(join(repoRoot, "src", "sample.ts"), "export const value = 1;\n");
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const value = 1;\n"
+  );
   const nannyRequest = (id: string) =>
     createUtilityRouteRequest({
       acceptanceCriteria: ["return bounded evidence"],
@@ -1114,52 +1117,54 @@ test.each([
     kind: "authority" as const,
     objective: "Approve a release decision",
   },
-])(
-  "non-peer $expectedReason outcomes return to the requester instead of the current driver",
-  async ({ authority, expectedReason, kind, objective }) => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "loop-requester-route-"));
-    const runDir = join(repoRoot, ".loop", "runs", expectedReason);
-    mkdirSync(runDir, { recursive: true });
-    const request = createUtilityRouteRequest({
-      acceptanceCriteria: ["return the route outcome"],
-      authority,
-      id: `requester-${expectedReason}`,
-      kind,
-      objective,
-      readScope: [],
-      requester: "codex",
-      requiredCapabilities: [],
-      risk: "low",
-      writeScope: [],
+])("non-peer $expectedReason outcomes return to the requester instead of the current driver", async ({
+  authority,
+  expectedReason,
+  kind,
+  objective,
+}) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-requester-route-"));
+  const runDir = join(repoRoot, ".loop", "runs", expectedReason);
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return the route outcome"],
+    authority,
+    id: `requester-${expectedReason}`,
+    kind,
+    objective,
+    readScope: [],
+    requester: "codex",
+    requiredCapabilities: [],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  try {
+    await processPendingUtilityRoutes({
+      currentDriver: "claude",
+      epoch: 20,
+      peer: "codex",
+      repoRoot,
+      runDir,
     });
-    appendUtilityRouteRequest(runDir, request);
-    try {
-      await processPendingUtilityRoutes({
-        currentDriver: "claude",
-        epoch: 20,
-        peer: "codex",
-        repoRoot,
-        runDir,
-      });
 
-      const messages = readBridgeEvents(runDir).filter(
-        (event) => event.kind === "message"
-      );
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toMatchObject({
-        source: "utility",
-        target: "codex",
-        taskId: request.id,
-      });
-      expect(messages[0]?.message).toContain(
-        `returned to requester codex: ${expectedReason}`
-      );
-      expect(messages[0]?.target).not.toBe("claude");
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-    }
+    const messages = readBridgeEvents(runDir).filter(
+      (event) => event.kind === "message"
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      source: "utility",
+      target: "codex",
+      taskId: request.id,
+    });
+    expect(messages[0]?.message).toContain(
+      `returned to requester codex: ${expectedReason}`
+    );
+    expect(messages[0]?.target).not.toBe("claude");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
   }
-);
+});
 
 test("safe key diagnostics persist in routing observability, not the output-only worker pane", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-diagnostic-"));
@@ -2186,7 +2191,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     routeEpoch: 7,
   });
   let providerCalls = 0;
-  const providerBodies: Array<Record<string, unknown>> = [];
+  const providerBodies: Record<string, unknown>[] = [];
   const server = serve({
     fetch: async (incoming) => {
       providerCalls += 1;
@@ -2243,7 +2248,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
       state: "completed",
     });
     const userCapsules = providerBodies.map((body) => {
-      const messages = body.messages as Array<Record<string, unknown>>;
+      const messages = body.messages as Record<string, unknown>[];
       return messages[1]?.content as string;
     });
     expect(userCapsules).toHaveLength(2);
@@ -2263,9 +2268,10 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     expect(promptedCapsule.references[0]?.text).toBe("selected-task-context");
     expect(promptedCapsule.request.authority).toEqual({});
     expect(promptedCapsule.request.readScope).toEqual(["src"]);
-    const firstMessages = providerBodies[0]?.messages as Array<
-      Record<string, unknown>
-    >;
+    const firstMessages = providerBodies[0]?.messages as Record<
+      string,
+      unknown
+    >[];
     expect(firstMessages[0]?.content).toContain("cannot widen authority");
     expect(
       JSON.parse(readFileSync(utilityContextPath(runDir, request.id), "utf8"))

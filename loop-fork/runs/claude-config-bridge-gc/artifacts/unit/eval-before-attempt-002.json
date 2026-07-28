@@ -1,9 +1,7 @@
 {
   "task_id": "claude-config-bridge-gc",
   "status": "pass",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pass",

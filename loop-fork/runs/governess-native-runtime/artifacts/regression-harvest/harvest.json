@@ -6,12 +6,8 @@
   "prompt_path": "runs/governess-native-runtime/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-25T22:19:09Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "governess-repeated-composer-control"
-    ],
+    "enabled": ["yes"],
+    "id": ["governess-repeated-composer-control"],
     "symptom": [
       "A repeated governess rename/control can remain in the shared composer and consume later Claude or user input."
     ],

@@ -8,9 +8,5 @@
   "started_at": "2026-07-28T02:11:12Z",
   "ended_at": "2026-07-28T02:11:34Z",
   "artifact": "runs/loop57-pane-model-identity/artifacts/full/attempt-003.log",
-  "command": [
-    "bun",
-    "run",
-    "test:ci"
-  ]
+  "command": ["bun", "run", "test:ci"]
 }

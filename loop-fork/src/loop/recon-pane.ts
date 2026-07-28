@@ -26,10 +26,7 @@ const firstUsefulLine = (value: string): string =>
 
 const compactResultText = (value: string): string => {
   let safe = sanitizeUtilityPaneText(value).trim();
-  safe = safe.replace(
-    /^Direct result\s+\S+(?:\s+failed)?\s*:\s*/i,
-    ""
-  );
+  safe = safe.replace(/^Direct result\s+\S+(?:\s+failed)?\s*:\s*/i, "");
   const toolPayload = safe.match(/^[a-z][a-z0-9_]*\s*:\s*(\{[\s\S]*\})$/i);
   if (toolPayload) {
     try {
@@ -95,17 +92,33 @@ const renderRoutes = (runDir: string, width: number): string[] => {
     ),
     ...jobs.map((job) => {
       const route = (() => {
-        if (!job.decision) return "queued";
-        if (job.decision.target === "driver") return "driver";
-        if (job.decision.tierId === "utility-direct") return "direct";
-        if (job.decision.tierId === "utility-nanny") return "nanny";
-        if (job.decision.tierId === "utility-au-pair") return "au pair";
+        if (!job.decision) {
+          return "queued";
+        }
+        if (job.decision.target === "driver") {
+          return "driver";
+        }
+        if (job.decision.tierId === "utility-direct") {
+          return "direct";
+        }
+        if (job.decision.tierId === "utility-nanny") {
+          return "nanny";
+        }
+        if (job.decision.tierId === "utility-au-pair") {
+          return "au pair";
+        }
         return "utility";
       })();
       const state = (() => {
-        if (job.state === "completed") return "✓";
-        if (job.state === "failed") return "✗";
-        if (job.state === "running" || job.state === "claimed") return "…";
+        if (job.state === "completed") {
+          return "✓";
+        }
+        if (job.state === "failed") {
+          return "✗";
+        }
+        if (job.state === "running" || job.state === "claimed") {
+          return "…";
+        }
         return "→";
       })();
       const reason =

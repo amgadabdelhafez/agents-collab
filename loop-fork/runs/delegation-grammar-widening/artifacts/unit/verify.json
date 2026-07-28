@@ -8,9 +8,5 @@
   "started_at": "2026-07-27T02:16:25Z",
   "ended_at": "2026-07-27T02:16:25Z",
   "artifact": "runs/delegation-grammar-widening/artifacts/unit/attempt-002.log",
-  "command": [
-    "bun",
-    "test",
-    "tests/loop/delegation-policy.test.ts"
-  ]
+  "command": ["bun", "test", "tests/loop/delegation-policy.test.ts"]
 }

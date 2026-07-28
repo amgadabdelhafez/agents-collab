@@ -6,23 +6,13 @@
   "prompt_path": "runs/recon-pane-signal-density/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-28T02:36:12Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "compact-recon-pane-signal"
-    ],
-    "symptom": [
-      "Recon dashboards repeated IDs, wrappers, duplicate calls,"
-    ],
-    "guard": [
-      "tests/loop/recon-pane.test.ts"
-    ]
+    "enabled": ["yes"],
+    "id": ["compact-recon-pane-signal"],
+    "symptom": ["Recon dashboards repeated IDs, wrappers, duplicate calls,"],
+    "guard": ["tests/loop/recon-pane.test.ts"]
   },
   "symptom_lines": [
     "Recon dashboards repeated IDs, wrappers, duplicate calls,"
   ],
-  "test_lines": [
-    "tests/loop/recon-pane.test.ts"
-  ]
+  "test_lines": ["tests/loop/recon-pane.test.ts"]
 }

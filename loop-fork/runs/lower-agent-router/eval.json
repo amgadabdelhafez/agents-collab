@@ -1,11 +1,7 @@
 {
   "task_id": "lower-agent-router",
   "status": "pass",
-  "required": [
-    "unit",
-    "independent",
-    "live-canary"
-  ],
+  "required": ["unit", "independent", "live-canary"],
   "dimensions": {
     "unit": {
       "status": "pass",

@@ -1,9 +1,7 @@
 {
   "task_id": "babysitter-no-repeat-compact",
   "status": "pass",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pass",

@@ -1,11 +1,7 @@
 {
   "task_id": "worker-routing-live-integration",
   "status": "fail",
-  "required": [
-    "unit",
-    "integration",
-    "smoke"
-  ],
+  "required": ["unit", "integration", "smoke"],
   "dimensions": {
     "unit": {
       "status": "pass",

@@ -302,7 +302,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
 const buildPrimaryPrompt = (
   task: string,
   opts: Options,
-  runId: string,
+  _runId: string,
   serverName: string
 ): string => {
   const peerAgentName = pairedPeer(opts);
@@ -333,7 +333,7 @@ const buildPeerPrompt = (
   task: string,
   opts: Options,
   agent: Agent,
-  runId: string,
+  _runId: string,
   serverName: string
 ): string => {
   const primary = capitalize(opts.agent);
@@ -360,7 +360,7 @@ const buildPeerPrompt = (
 
 const buildInteractivePrimaryPrompt = (
   opts: Options,
-  runId: string,
+  _runId: string,
   serverName: string
 ): string => {
   const peerAgentName = pairedPeer(opts);
@@ -403,7 +403,7 @@ const buildInteractivePrimaryPrompt = (
 const buildInteractivePeerPrompt = (
   opts: Options,
   agent: Agent,
-  runId: string,
+  _runId: string,
   serverName: string
 ): string => {
   const primary = capitalize(opts.agent);

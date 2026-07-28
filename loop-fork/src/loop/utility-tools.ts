@@ -1325,7 +1325,7 @@ export class UtilityToolBroker {
     requested: string,
     extension: string
   ): Promise<{ absolute: string; relative: string }> {
-    if (!isAbsolute(requested) || !requested.endsWith(extension)) {
+    if (!(isAbsolute(requested) && requested.endsWith(extension))) {
       throw new ToolPolicyError(
         "patch_denied",
         "Patch artifact path is invalid"
@@ -1340,8 +1340,10 @@ export class UtilityToolBroker {
     }
     const canonical = await realpath(requested);
     if (
-      !isContained(this.repoRoot, canonical) ||
-      !isContained(this.artifactDir, canonical)
+      !(
+        isContained(this.repoRoot, canonical) &&
+        isContained(this.artifactDir, canonical)
+      )
     ) {
       throw new ToolPolicyError(
         "patch_denied",
@@ -1364,7 +1366,7 @@ export class UtilityToolBroker {
         "Patch proposal manifest is invalid"
       );
     }
-    if (!isRecord(parsed) || !Array.isArray(parsed.preimages)) {
+    if (!(isRecord(parsed) && Array.isArray(parsed.preimages))) {
       throw new ToolPolicyError(
         "patch_denied",
         "Patch proposal manifest has an invalid shape"

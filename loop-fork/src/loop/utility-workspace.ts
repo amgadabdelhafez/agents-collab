@@ -17,7 +17,7 @@ export interface UtilityWorkspaceFailure {
 
 const isContained = (root: string, target: string): boolean => {
   const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || !(rel.startsWith("..") || isAbsolute(rel));
 };
 
 const nearestExistingPath = (value: string): string | undefined => {
@@ -127,8 +127,7 @@ export const resolveVerifiedUtilityWorkspaceRoot = (
   const targetIdentity = gitWorkspaceIdentity(target);
   const registeredRoots = registeredWorktreeRoots(canonicalRunRoot);
   if (
-    !runIdentity ||
-    !targetIdentity ||
+    !(runIdentity && targetIdentity) ||
     runIdentity.commonDir !== targetIdentity.commonDir ||
     !registeredRoots?.has(targetIdentity.root) ||
     !isContained(targetIdentity.root, target)
@@ -205,8 +204,7 @@ export const resolveUtilityRequestWorkspace = (
       if (!isContained(canonicalRunRoot, target)) {
         const identity = gitWorkspaceIdentity(target);
         if (
-          !runIdentity ||
-          !identity ||
+          !(runIdentity && identity) ||
           identity.commonDir !== runIdentity.commonDir ||
           !registeredRoots?.has(identity.root) ||
           !isContained(identity.root, target)
@@ -339,8 +337,7 @@ export const verifyAdoptedUtilityWorkspace = (
   const workspaceIdentity = gitWorkspaceIdentity(canonicalWorkspaceRoot);
   const registeredRoots = registeredWorktreeRoots(canonicalRunRoot);
   if (
-    !runIdentity ||
-    !workspaceIdentity ||
+    !(runIdentity && workspaceIdentity) ||
     runIdentity.commonDir !== workspaceIdentity.commonDir ||
     !registeredRoots?.has(canonicalWorkspaceRoot) ||
     workspaceIdentity.root !== canonicalWorkspaceRoot

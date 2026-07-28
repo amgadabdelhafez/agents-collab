@@ -1,8 +1,8 @@
 import {
   decideGovernessControlReconciliation,
-  governessHookEventReference,
   type GovernessControlReconciliation,
   type GovernessControlRecord,
+  governessHookEventReference,
 } from "./governess-journal";
 import type { GovernessLifecycleEvent } from "./governess-runtime";
 import type { Agent, HookEvent } from "./types";

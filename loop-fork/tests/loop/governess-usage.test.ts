@@ -201,7 +201,10 @@ test("summarizeClaude ignores synthetic zero-usage error entries for model and c
 
 test("summarizeClaude counts agent messages and genuine human prompts", () => {
   const text = [
-    JSON.stringify({ type: "user", message: { role: "user", content: "do X" } }),
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "do X" },
+    }),
     JSON.stringify({
       type: "user",
       message: {
@@ -211,11 +214,17 @@ test("summarizeClaude counts agent messages and genuine human prompts", () => {
     }),
     JSON.stringify({
       type: "user",
-      message: { role: "user", content: "governess: Codex is at/near session limit" },
+      message: {
+        role: "user",
+        content: "governess: Codex is at/near session limit",
+      },
     }),
     JSON.stringify({
       type: "user",
-      message: { role: "user", content: "[Request interrupted by user for tool use]" },
+      message: {
+        role: "user",
+        content: "[Request interrupted by user for tool use]",
+      },
     }),
     JSON.stringify({
       type: "user",
@@ -226,11 +235,18 @@ test("summarizeClaude counts agent messages and genuine human prompts", () => {
       message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
     }),
     // meta reminder — not a human prompt
-    JSON.stringify({ type: "user", isMeta: true, message: { role: "user", content: "<reminder>" } }),
+    JSON.stringify({
+      type: "user",
+      isMeta: true,
+      message: { role: "user", content: "<reminder>" },
+    }),
     // tool result — not a human prompt
     JSON.stringify({
       type: "user",
-      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "r" }] },
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "x", content: "r" }],
+      },
     }),
     JSON.stringify({
       type: "assistant",
@@ -311,7 +327,9 @@ test("summarizeCodex counts messages by role", () => {
         content: [{ type: "input_text", text: "/compact governess: resume" }],
       },
     }),
-    JSON.stringify({ payload: { type: "message", role: "assistant", content: [] } }),
+    JSON.stringify({
+      payload: { type: "message", role: "assistant", content: [] },
+    }),
     JSON.stringify({ payload: { type: "reasoning" } }),
     JSON.stringify({ role: "assistant" }),
   ].join("\n");
@@ -402,8 +420,16 @@ test("summarizeCodex tracks reasoning effort from turn context", () => {
     JSON.stringify({
       payload: {
         info: {
-          total_token_usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105 },
-          last_token_usage: { input_tokens: 100, output_tokens: 5, total_tokens: 105 },
+          total_token_usage: {
+            input_tokens: 100,
+            output_tokens: 5,
+            total_tokens: 105,
+          },
+          last_token_usage: {
+            input_tokens: 100,
+            output_tokens: 5,
+            total_tokens: 105,
+          },
         },
       },
       type: "event_msg",
@@ -521,7 +547,10 @@ test("summarizeCodex counts compactions using the prior context snapshot", () =>
       payload: { message: "" },
     }),
     // Codex logs this too, but it is only a notification for the same event.
-    JSON.stringify({ type: "event_msg", payload: { type: "context_compacted" } }),
+    JSON.stringify({
+      type: "event_msg",
+      payload: { type: "context_compacted" },
+    }),
     JSON.stringify({
       payload: {
         rate_limits: {
@@ -550,10 +579,21 @@ test("summarizeCodex takes the last token-count event as cumulative usage", () =
       payload: { model: "gpt-5.5", model_context_window: 300_000 },
       timestamp: "2026-07-04T00:00:00Z",
     }),
-    JSON.stringify({ payload: { info: { input_tokens: 100, output_tokens: 5, total_tokens: 105 } } }),
+    JSON.stringify({
+      payload: {
+        info: { input_tokens: 100, output_tokens: 5, total_tokens: 105 },
+      },
+    }),
     JSON.stringify({
       timestamp: "2026-07-04T00:10:00Z",
-      payload: { info: { input_tokens: 4000, output_tokens: 300, cached_input_tokens: 3900, total_tokens: 4300 } },
+      payload: {
+        info: {
+          input_tokens: 4000,
+          output_tokens: 300,
+          cached_input_tokens: 3900,
+          total_tokens: 4300,
+        },
+      },
     }),
   ].join("\n");
   const u = summarizeCodex(text);

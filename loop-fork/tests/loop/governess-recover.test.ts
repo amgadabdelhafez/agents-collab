@@ -1,13 +1,13 @@
 import { expect, mock, test } from "bun:test";
-import type { Agent } from "../../src/loop/types";
 import {
+  decideRecovery,
+  executeRecovery,
   type GovernessState,
   type GovernessVerdict,
-  decideRecovery,
   type RecoveryDeps,
   type RecoveryHistoryEntry,
-  executeRecovery,
 } from "../../src/loop/governess-recover";
+import type { Agent } from "../../src/loop/types";
 
 const AGENT: Agent = "claude";
 const NOW_ISO = "2026-07-04T00:00:00.000Z";
@@ -18,12 +18,14 @@ const verdict = (
   confidence: number
 ): GovernessVerdict => ({ confidence, state, summary: "" });
 
-const gateOpts = (overrides: Partial<{
-  confidence: number;
-  cooldownMs: number;
-  maxRecoveries: number;
-  nowMs: number;
-}> = {}) => ({
+const gateOpts = (
+  overrides: Partial<{
+    confidence: number;
+    cooldownMs: number;
+    maxRecoveries: number;
+    nowMs: number;
+  }> = {}
+) => ({
   confidence: 0.5,
   cooldownMs: 60_000,
   maxRecoveries: 3,
@@ -234,7 +236,11 @@ test("executeRecovery non-dryRun restart invokes restart once and logs", () => {
 test("executeRecovery non-dryRun answer-prompt invokes answerPrompt once", () => {
   const deps = makeDeps();
   executeRecovery(
-    { agent: AGENT, level: "answer-prompt", reason: "escalate to answer-prompt" },
+    {
+      agent: AGENT,
+      level: "answer-prompt",
+      reason: "escalate to answer-prompt",
+    },
     deps,
     { dryRun: false, nowIso: NOW_ISO }
   );

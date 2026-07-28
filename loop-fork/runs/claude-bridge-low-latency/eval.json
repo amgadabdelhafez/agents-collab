@@ -1,11 +1,7 @@
 {
   "task_id": "claude-bridge-low-latency",
   "status": "pass",
-  "required": [
-    "unit",
-    "independent-review",
-    "live-runtime"
-  ],
+  "required": ["unit", "independent-review", "live-runtime"],
   "dimensions": {
     "unit": {
       "status": "pass",

@@ -1,10 +1,7 @@
 {
   "task_id": "recon-pane-signal-density",
   "status": "pass",
-  "required": [
-    "unit",
-    "build"
-  ],
+  "required": ["unit", "build"],
   "dimensions": {
     "unit": {
       "status": "pass",

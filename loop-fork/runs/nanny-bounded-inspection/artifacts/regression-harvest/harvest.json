@@ -6,23 +6,13 @@
   "prompt_path": "runs/nanny-bounded-inspection/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-27T23:06:26Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "nanny-empty-inspection-band"
-    ],
-    "symptom": [
-      "Nanny shows advisory calls but receives zero utility jobs."
-    ],
-    "guard": [
-      "tests/loop/utility-execution-tier.test.ts"
-    ]
+    "enabled": ["yes"],
+    "id": ["nanny-empty-inspection-band"],
+    "symptom": ["Nanny shows advisory calls but receives zero utility jobs."],
+    "guard": ["tests/loop/utility-execution-tier.test.ts"]
   },
   "symptom_lines": [
     "Nanny shows advisory calls but receives zero utility jobs."
   ],
-  "test_lines": [
-    "tests/loop/utility-execution-tier.test.ts"
-  ]
+  "test_lines": ["tests/loop/utility-execution-tier.test.ts"]
 }

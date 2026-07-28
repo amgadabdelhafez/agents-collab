@@ -1,11 +1,7 @@
 {
   "task_id": "automatic-worker-tool-widening",
   "status": "pending",
-  "required": [
-    "unit",
-    "independent-review",
-    "live-runtime"
-  ],
+  "required": ["unit", "independent-review", "live-runtime"],
   "dimensions": {
     "unit": {
       "status": "pending"

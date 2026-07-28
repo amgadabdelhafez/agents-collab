@@ -1,9 +1,7 @@
 {
   "task_id": "loop57-runtime-fixes",
   "status": "pass",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pass",

@@ -1,9 +1,7 @@
 {
   "task_id": "worker-routing-live-integration",
   "status": "pending",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pending"

@@ -1,11 +1,7 @@
 {
   "task_id": "loop57-au-pair-recovery",
   "status": "pass",
-  "required": [
-    "unit",
-    "full",
-    "build"
-  ],
+  "required": ["unit", "full", "build"],
   "dimensions": {
     "unit": {
       "status": "pass",

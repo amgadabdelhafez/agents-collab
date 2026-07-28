@@ -6,23 +6,13 @@
   "prompt_path": "runs/loop57-pane-model-identity/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-28T02:20:58Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "helper-pane-model-identity"
-    ],
-    "symptom": [
-      "Helper pane lines repeated role titles and hid the model."
-    ],
-    "guard": [
-      "tests/loop/utility-runtime.test.ts"
-    ]
+    "enabled": ["yes"],
+    "id": ["helper-pane-model-identity"],
+    "symptom": ["Helper pane lines repeated role titles and hid the model."],
+    "guard": ["tests/loop/utility-runtime.test.ts"]
   },
   "symptom_lines": [
     "Helper pane lines repeated role titles and hid the model."
   ],
-  "test_lines": [
-    "tests/loop/utility-runtime.test.ts"
-  ]
+  "test_lines": ["tests/loop/utility-runtime.test.ts"]
 }

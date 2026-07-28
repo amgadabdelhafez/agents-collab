@@ -84,7 +84,6 @@ import {
   LOCAL_LLM_JUDGE_MAX_TOKENS,
   LOCAL_LLM_SUMMARY_MAX_TOKENS,
   LOCAL_LLM_TEMPERATURE,
-  LOCAL_LLM_WAITING_MAX_TOKENS,
   labelPanes,
   summarizeSession,
 } from "./governess-llm";
@@ -144,14 +143,14 @@ import type {
   WaitingResult,
 } from "./types";
 import {
+  UTILITY_AU_PAIR_TIER,
+  UTILITY_NANNY_TIER,
+} from "./utility-execution-tier";
+import {
   readUtilityObservability,
   type UtilityObservabilitySnapshot,
 } from "./utility-observability";
 import { processPendingUtilityRoutes } from "./utility-runtime";
-import {
-  UTILITY_AU_PAIR_TIER,
-  UTILITY_NANNY_TIER,
-} from "./utility-execution-tier";
 import { activateUtilityEpoch } from "./utility-store";
 
 export const GOVERNESS_SUBCOMMAND = "__governess";
@@ -1341,8 +1340,8 @@ interface BoardMeta {
   llmUsageByJudge: LocalLlmUsageByJudge;
   maxColumns?: number;
   maxRows?: number;
-  nowMs: number;
   nanny?: UtilityObservabilitySnapshot;
+  nowMs: number;
   recoveries: number;
   roles: RoleState;
   stats: SessionStats;
@@ -1963,11 +1962,7 @@ const renderUtilityAgentRow = (
     fitCell(run, HELPER_COL.run),
     fitCell(`${snapshot.active}/${snapshot.queued}`, HELPER_COL.context),
     fitCell(String(snapshot.contextInsufficient), HELPER_COL.limits),
-    colorCell(
-      ANSI.yellow,
-      utilityCostCell(usage.costUsd),
-      HELPER_COL.spend
-    ),
+    colorCell(ANSI.yellow, utilityCostCell(usage.costUsd), HELPER_COL.spend),
     colorCell(ANSI.yellow, tokens, HELPER_COL.tokens),
     colorCell(ANSI.yellow, activity, HELPER_COL.activity),
   ].join(" ")}`;
@@ -1980,10 +1975,9 @@ const renderWorkerRoutingRows = (
   const width = Math.max(1, meta.maxColumns ?? 176);
   const routing = snapshot.routing;
   const decisions = ` routing · ${routing.routed}/${routing.considered} helpers ${workerPercentage(routing.routed, routing.considered)} · active ${snapshot.active} queued ${snapshot.queued} · actionable ${routing.actionable} · kept ${routing.retained} · unsafe ${routing.unsafe} · auto ${routing.autoRouted} explicit ${routing.explicitRouted} · packets ${routing.promptPackets} plans ${routing.structuredPlans}`;
-  const reasonEntries = Object.entries(routing.reasons)
-    .sort(
-      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
-    );
+  const reasonEntries = Object.entries(routing.reasons).sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
+  );
   const reasonLabels: Record<string, string> = {
     "command-not-bounded": "command broad",
     "compound-or-unsafe-command": "compound/unsafe",
@@ -2872,10 +2866,10 @@ const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
       );
     }
   }
-  return [
-    ...modelLines,
-    ...summaryLines.slice(-reservedSummary),
-  ].slice(0, maxRows);
+  return [...modelLines, ...summaryLines.slice(-reservedSummary)].slice(
+    0,
+    maxRows
+  );
 };
 
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
@@ -3735,7 +3729,7 @@ const restoreContextMessage = (
 
 const restoreTemporaryDriverMessage = (
   restored: Agent,
-  temporary: Agent
+  _temporary: Agent
 ): string =>
   [
     `governess: ${capitalize(restored)}'s limit reset.`,

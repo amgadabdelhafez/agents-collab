@@ -256,7 +256,10 @@ const compactPreTokens = (
   );
 };
 
-const setRateLimits = (usage: AgentUsage, rec: Record<string, unknown>): void => {
+const setRateLimits = (
+  usage: AgentUsage,
+  rec: Record<string, unknown>
+): void => {
   const payload = asRecord(rec.payload);
   const rateLimits = asRecord(rec.rate_limits ?? payload.rate_limits);
   const primary = asRecord(rateLimits.primary);
@@ -272,12 +275,12 @@ const setRateLimits = (usage: AgentUsage, rec: Record<string, unknown>): void =>
 };
 
 const applyCostRate = (usage: AgentUsage): void => {
-  if (!usage.firstTs || !usage.lastTs || usage.costUsd <= 0) {
+  if (!(usage.firstTs && usage.lastTs) || usage.costUsd <= 0) {
     return;
   }
   const first = Date.parse(usage.firstTs);
   const last = Date.parse(usage.lastTs);
-  if (!Number.isFinite(first) || !Number.isFinite(last) || last <= first) {
+  if (!(Number.isFinite(first) && Number.isFinite(last)) || last <= first) {
     return;
   }
   usage.costRateUsdPerHour = usage.costUsd / ((last - first) / MS_PER_HOUR);
@@ -309,7 +312,9 @@ export const summarizeClaude = (text: string): AgentUsage => {
       usage.compactions += 1;
       usage.compactedContextTokens += compactPreTokens(rec);
       usage.lastCompactionTs =
-        typeof rec.timestamp === "string" ? rec.timestamp : usage.lastCompactionTs;
+        typeof rec.timestamp === "string"
+          ? rec.timestamp
+          : usage.lastCompactionTs;
       contextSamples.length = 0;
     }
     const message = asRecord(rec.message);
@@ -317,14 +322,18 @@ export const summarizeClaude = (text: string): AgentUsage => {
     const meta = rec.isMeta === true || rec.isSidechain === true;
     if (role === "assistant") {
       const key = claudeAssistantKey(rec, message);
-      if (!key || !seenAssistantMessages.has(key)) {
+      if (!(key && seenAssistantMessages.has(key))) {
         usage.messages += 1;
       }
       countClaudeAssistantBlocks(usage, message.content);
       if (key) {
         seenAssistantMessages.add(key);
       }
-    } else if (role === "user" && !meta && cleanHumanFromContent(message.content)) {
+    } else if (
+      role === "user" &&
+      !meta &&
+      cleanHumanFromContent(message.content)
+    ) {
       usage.humanMessages += 1;
     }
     const u = asRecord(message.usage);
@@ -490,7 +499,9 @@ export const summarizeCodex = (text: string): AgentUsage => {
       str(payload.model_reasoning_effort) ??
       usage.reasoningEffort;
     usage.serviceTier =
-      str(payload.service_tier) ?? str(payload.serviceTier) ?? usage.serviceTier;
+      str(payload.service_tier) ??
+      str(payload.serviceTier) ??
+      usage.serviceTier;
     usage.speed = str(payload.speed) ?? usage.speed;
     const payloadContextWindow = num(payload.model_context_window);
     if (payloadContextWindow > 0) {
@@ -499,7 +510,10 @@ export const summarizeCodex = (text: string): AgentUsage => {
     const role = findRole(rec);
     if (role === "assistant") {
       usage.messages += 1;
-    } else if (role === "user" && cleanHumanFromContent(payload.content ?? rec.content)) {
+    } else if (
+      role === "user" &&
+      cleanHumanFromContent(payload.content ?? rec.content)
+    ) {
       usage.humanMessages += 1;
     }
     const info = findInfoTokens(rec);
@@ -521,7 +535,9 @@ export const summarizeCodex = (text: string): AgentUsage => {
       usage.compactedContextTokens += compactPreTokens(rec, latestContext);
       usage.dataConfidence = "approx";
       usage.lastCompactionTs =
-        typeof rec.timestamp === "string" ? rec.timestamp : usage.lastCompactionTs;
+        typeof rec.timestamp === "string"
+          ? rec.timestamp
+          : usage.lastCompactionTs;
       contextSamples.length = 0;
       return;
     }
@@ -563,10 +579,7 @@ const applyCodexHistoryMode = (
   sessionRef: string,
   codexHome?: string
 ): void => {
-  const roots = [
-    ...(codexHome ? [codexHome] : []),
-    join(homedir(), ".codex"),
-  ];
+  const roots = [...(codexHome ? [codexHome] : []), join(homedir(), ".codex")];
   let mode: "fast" | "standard" | undefined;
   for (const root of roots) {
     const path = join(root, "history.jsonl");
@@ -715,8 +728,7 @@ const findCodexTranscript = (
 const MAX_HUMAN_MESSAGES = 16;
 const MAX_HUMAN_MESSAGE_CHARS = 260;
 const WHITESPACE_RE = /\s+/g;
-const BRIDGE_DELIVERY_PREFIX_RE =
-  /^(claude|codex|copilot|cursor|gemini)\s*:/i;
+const BRIDGE_DELIVERY_PREFIX_RE = /^(claude|codex|copilot|cursor|gemini)\s*:/i;
 const INJECTED_TASK_SECTION_RE =
   /(?:^|\n)\s*Task:\s*(?:\n\s*)?(?:#{1,6}\s*)?([^\n]+)/i;
 // User turns that are actually harness/tooling injections, not real requests.

@@ -84,8 +84,7 @@ for (const hook of records(join(runDir, "hooks", "claude.jsonl"))) {
     replayCwd
   );
   if (
-    !currentWorkspace &&
-    !existsSync(historicalWorktree) &&
+    !(currentWorkspace || existsSync(historicalWorktree)) &&
     (replayCwd === historicalWorktree ||
       replayCwd.startsWith(`${historicalWorktree}/`))
   ) {

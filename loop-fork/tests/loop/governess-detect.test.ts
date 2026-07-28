@@ -14,10 +14,11 @@ const IDLE_MS = 30_000;
 const iso = (offsetMs: number): string =>
   new Date(BASE_MS + offsetMs).toISOString();
 
-const input = (
-  paneHash: string,
-  lastEventTs?: string
-): AgentLivenessInput => ({ agent: "claude", paneHash, lastEventTs });
+const input = (paneHash: string, lastEventTs?: string): AgentLivenessInput => ({
+  agent: "claude",
+  paneHash,
+  lastEventTs,
+});
 
 test("initLivenessState seeds a stable-since-now state with no event", () => {
   const state = initLivenessState("claude", BASE_MS, "hash-0");
@@ -109,12 +110,7 @@ test("recovered: a pane-hash change resets stability and clears suspect", () => 
 test("no events ever with a stable pane yields infinite age and stale events", () => {
   const state = initLivenessState("claude", BASE_MS, "frozen");
   const nowMs = BASE_MS + IDLE_MS * 3;
-  const { liveness } = updateLiveness(
-    state,
-    input("frozen"),
-    nowMs,
-    IDLE_MS
-  );
+  const { liveness } = updateLiveness(state, input("frozen"), nowMs, IDLE_MS);
   expect(liveness.lastEventAgeMs).toBe(Number.POSITIVE_INFINITY);
   expect(liveness.lastEventAgeMs >= IDLE_MS).toBe(true);
   expect(liveness.paneStable).toBe(true);

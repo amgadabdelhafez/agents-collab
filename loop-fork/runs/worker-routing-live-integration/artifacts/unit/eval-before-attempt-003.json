@@ -4,11 +4,7 @@
   "verdict": "fail",
   "evaluated_at": "2026-07-27T06:06:54Z",
   "evaluator": "independent Codex evaluator",
-  "required": [
-    "unit",
-    "integration",
-    "smoke"
-  ],
+  "required": ["unit", "integration", "smoke"],
   "dimensions": {
     "unit": {
       "status": "fail",

@@ -67,14 +67,14 @@ export interface GovernessVerdict {
 // One normalized hook event, appended as a JSONL line by both agents' hooks.
 export interface HookEvent {
   agent: Agent;
-  // Stable event identity and per-agent order are authored by the hook
-  // process, not inferred from terminal prose by the governess.
-  eventId?: string;
   cwd?: string;
   detail?: string;
   // True when the payload indicates a failed tool call / error.
   error?: boolean;
   event: string;
+  // Stable event identity and per-agent order are authored by the hook
+  // process, not inferred from terminal prose by the governess.
+  eventId?: string;
   sequence?: number;
   source?: "agent-hook" | "codex-app-server" | "tmux-fallback";
   state?:
@@ -326,15 +326,6 @@ export interface Options {
   agent: Agent;
   cavemanMode: CavemanMode;
   cavemanModeSource: CavemanModeSource;
-  governess?: boolean;
-  governessCooldownSeconds: number;
-  governessDryRun?: boolean;
-  governessHeight: string;
-  governessIdleSeconds: number;
-  governessLlmTrace?: string;
-  governessMaxRecoveries: number;
-  governessModel: string;
-  governessUrl: string;
   claudeMcpConfigPath?: string;
   claudePersistentSession?: boolean;
   claudeReviewerModel?: string;
@@ -353,6 +344,15 @@ export interface Options {
   geminiMcpConfigPath?: string;
   geminiModel: string;
   geminiReviewerModel?: string;
+  governess?: boolean;
+  governessCooldownSeconds: number;
+  governessDryRun?: boolean;
+  governessHeight: string;
+  governessIdleSeconds: number;
+  governessLlmTrace?: string;
+  governessMaxRecoveries: number;
+  governessModel: string;
+  governessUrl: string;
   helperCavemanMode: CavemanMode;
   helperCavemanModeSource: CavemanModeSource;
   maxIterations: number;

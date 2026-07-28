@@ -1,11 +1,7 @@
 {
   "task_id": "utility-worker-four-slots",
   "status": "fail",
-  "required": [
-    "unit",
-    "regression",
-    "build"
-  ],
+  "required": ["unit", "regression", "build"],
   "dimensions": {
     "unit": {
       "status": "pass",

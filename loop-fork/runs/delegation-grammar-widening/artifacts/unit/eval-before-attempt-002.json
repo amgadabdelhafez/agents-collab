@@ -1,9 +1,7 @@
 {
   "task_id": "delegation-grammar-widening",
   "status": "pass",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pass",

@@ -4,17 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GovernessConfig } from "../../src/loop/governess";
 import {
-  compactGovernessCycleSnapshot,
-  decideGovernessCycle,
-  type GovernessObservationSnapshot,
-} from "../../src/loop/governess-cycle";
-import {
   createGovernessRuntimeAdapter,
   defaultGovernessDeps,
   freshRunState,
   loadGovernessState,
   saveGovernessState,
 } from "../../src/loop/governess";
+import {
+  compactGovernessCycleSnapshot,
+  decideGovernessCycle,
+  type GovernessObservationSnapshot,
+} from "../../src/loop/governess-cycle";
 import {
   acceptGovernessHandoff,
   governessHandoffFile,

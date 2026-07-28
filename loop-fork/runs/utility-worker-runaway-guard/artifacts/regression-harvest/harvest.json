@@ -6,23 +6,11 @@
   "prompt_path": "runs/utility-worker-runaway-guard/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-27T16:16:55Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "utility-worker-denial-runaway"
-    ],
-    "symptom": [
-      "A broker-denied tool call was retried hundreds of times."
-    ],
-    "guard": [
-      "tests/loop/utility-runtime.test.ts"
-    ]
+    "enabled": ["yes"],
+    "id": ["utility-worker-denial-runaway"],
+    "symptom": ["A broker-denied tool call was retried hundreds of times."],
+    "guard": ["tests/loop/utility-runtime.test.ts"]
   },
-  "symptom_lines": [
-    "A broker-denied tool call was retried hundreds of times."
-  ],
-  "test_lines": [
-    "tests/loop/utility-runtime.test.ts"
-  ]
+  "symptom_lines": ["A broker-denied tool call was retried hundreds of times."],
+  "test_lines": ["tests/loop/utility-runtime.test.ts"]
 }

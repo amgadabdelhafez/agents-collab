@@ -1,9 +1,7 @@
 {
   "task_id": "babysitter-pane",
   "status": "pass",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pass",

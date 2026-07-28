@@ -1,9 +1,7 @@
 {
   "task_id": "claude-config-bridge-gc",
   "status": "pending",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pending"

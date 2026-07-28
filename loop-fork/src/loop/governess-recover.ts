@@ -98,9 +98,9 @@ export const decideRecovery = (
 /** Effectful side-doors for {@link executeRecovery}, injected for testability. */
 export interface RecoveryDeps {
   answerPrompt: (agent: Agent) => void;
+  log: (entry: RecoveryHistoryEntry, dryRun: boolean) => void;
   nudge: (agent: Agent) => void;
   restart: (agent: Agent) => void;
-  log: (entry: RecoveryHistoryEntry, dryRun: boolean) => void;
 }
 
 const runExecutor = (

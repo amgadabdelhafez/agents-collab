@@ -102,7 +102,8 @@ test("Recon panes project route, exact tool failure, and pending result truth", 
       "utility",
       "codex",
       `Direct result ${request.id}: read_file: ${JSON.stringify({
-        content: "# Scope denied by exact broker boundary\n\nRaw details follow.",
+        content:
+          "# Scope denied by exact broker boundary\n\nRaw details follow.",
       })}`,
       { taskId: request.id }
     );
@@ -124,9 +125,9 @@ test("Recon panes project route, exact tool failure, and pending result truth", 
       "→ codex awaiting · Scope denied by exact broker boundary"
     );
     expect(results).toContain("✓ Material shift found");
-    expect(results.match(/Scope denied by exact broker boundary/g)).toHaveLength(
-      1
-    );
+    expect(
+      results.match(/Scope denied by exact broker boundary/g)
+    ).toHaveLength(1);
     expect(results).not.toContain("Direct result");
     expect(results).not.toContain('{"content"');
     expect(results).not.toContain(request.id.slice(0, 8));

@@ -6,12 +6,8 @@
   "prompt_path": "runs/claude-config-bridge-gc/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-28T05:05:12Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "claude-config-bridge-leak"
-    ],
+    "enabled": ["yes"],
+    "id": ["claude-config-bridge-leak"],
     "symptom": [
       "governess smoke runs register loop MCP servers and sessions in the real Claude home config"
     ],

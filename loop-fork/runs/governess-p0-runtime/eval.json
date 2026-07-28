@@ -1,9 +1,7 @@
 {
   "task_id": "governess-p0-runtime",
   "status": "pass",
-  "required": [
-    "unit"
-  ],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pass",

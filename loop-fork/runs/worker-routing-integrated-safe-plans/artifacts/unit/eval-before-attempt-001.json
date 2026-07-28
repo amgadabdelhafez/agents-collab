@@ -1,11 +1,7 @@
 {
   "task_id": "worker-routing-integrated-safe-plans",
   "status": "pending",
-  "required": [
-    "unit",
-    "independent-review",
-    "live-runtime"
-  ],
+  "required": ["unit", "independent-review", "live-runtime"],
   "dimensions": {
     "unit": {
       "status": "pending"

@@ -8,9 +8,5 @@
   "started_at": "2026-07-28T03:11:50Z",
   "ended_at": "2026-07-28T03:11:50Z",
   "artifact": "runs/governess-column-alignment/artifacts/unit/attempt-001.log",
-  "command": [
-    "bun",
-    "test",
-    "tests/loop/governess.test.ts"
-  ]
+  "command": ["bun", "test", "tests/loop/governess.test.ts"]
 }

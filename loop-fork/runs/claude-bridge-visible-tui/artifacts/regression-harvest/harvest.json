@@ -6,23 +6,15 @@
   "prompt_path": "runs/claude-bridge-visible-tui/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-26T04:46:33Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "claude-channel-false-delivery-after-session-transition"
-    ],
+    "enabled": ["yes"],
+    "id": ["claude-channel-false-delivery-after-session-transition"],
     "symptom": [
       "Claude misses bridge rulings while the ledger reports delivery."
     ],
-    "guard": [
-      "tests/loop/bridge.test.ts"
-    ]
+    "guard": ["tests/loop/bridge.test.ts"]
   },
   "symptom_lines": [
     "Claude misses bridge rulings while the ledger reports delivery."
   ],
-  "test_lines": [
-    "tests/loop/bridge.test.ts"
-  ]
+  "test_lines": ["tests/loop/bridge.test.ts"]
 }
