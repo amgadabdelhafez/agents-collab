@@ -220,6 +220,86 @@
       "spec_path": "specs/nanny-bounded-inspection.md"
     },
     {
+      "id": "loop57-runtime-fixes",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-28T00:31:44Z",
+      "run_dir": "runs/loop57-runtime-fixes",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T01:16:56Z",
+      "spec_path": "specs/loop57-runtime-fixes.md"
+    },
+    {
+      "id": "loop57-au-pair-recovery",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-28T01:29:28Z",
+      "run_dir": "runs/loop57-au-pair-recovery",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T02:02:34Z",
+      "spec_path": "specs/loop57-au-pair-recovery.md"
+    },
+    {
+      "id": "loop57-pane-model-identity",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-28T02:04:14Z",
+      "run_dir": "runs/loop57-pane-model-identity",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T02:20:58Z",
+      "spec_path": "specs/loop57-pane-model-identity.md"
+    },
+    {
+      "id": "recon-pane-labels",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-28T02:23:48Z",
+      "run_dir": "runs/recon-pane-labels",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T02:26:15Z",
+      "spec_path": "specs/recon-pane-labels.md"
+    },
+    {
+      "id": "recon-pane-signal-density",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-28T02:29:20Z",
+      "run_dir": "runs/recon-pane-signal-density",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T02:36:12Z",
+      "spec_path": "specs/recon-pane-signal-density.md"
+    },
+    {
+      "id": "recon-pane-width-followup",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-28T02:48:57Z",
+      "run_dir": "runs/recon-pane-width-followup",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T02:49:37Z",
+      "spec_path": "specs/recon-pane-width-followup.md"
+    },
+    {
+      "id": "governess-pane-cleanup",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-28T02:55:36Z",
+      "run_dir": "runs/governess-pane-cleanup",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T03:08:15Z",
+      "spec_path": "specs/governess-pane-cleanup.md"
+    },
+    {
+      "id": "governess-column-alignment",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-28T03:10:33Z",
+      "run_dir": "runs/governess-column-alignment",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T03:13:11Z",
+      "spec_path": "specs/governess-column-alignment.md"
+    },
+    {
       "id": "claude-config-bridge-gc",
       "mode": "planned",
       "status": "done",

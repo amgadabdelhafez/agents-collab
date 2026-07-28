@@ -75,6 +75,7 @@ export interface RunManifest {
   tmuxPaneLeft?: string;
   tmuxPaneLeftAgent?: Agent;
   tmuxPaneNanny?: string;
+  tmuxPaneRecon?: string[];
   tmuxPaneRight?: string;
   tmuxPaneRightAgent?: Agent;
   tmuxPaneUtility?: string;
@@ -149,13 +150,14 @@ interface RunManifestInput {
   runId: string;
   state?: RunLifecycleState;
   status?: string;
-  tmuxPaneGoverness?: string;
   tmuxPaneAuPair?: string;
+  tmuxPaneGoverness?: string;
   tmuxPaneLeft?: string;
   tmuxPaneLeftAgent?: Agent;
+  tmuxPaneNanny?: string;
+  tmuxPaneRecon?: string[];
   tmuxPaneRight?: string;
   tmuxPaneRightAgent?: Agent;
-  tmuxPaneNanny?: string;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt?: string;
@@ -178,6 +180,23 @@ const firstString = (
     const value = asString(obj[key]);
     if (value) {
       return value;
+    }
+  }
+  return undefined;
+};
+
+const firstStringArray = (
+  obj: Record<string, unknown>,
+  keys: string[]
+): string[] | undefined => {
+  for (const key of keys) {
+    const value = obj[key];
+    if (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.every((entry) => typeof entry === "string" && entry.length > 0)
+    ) {
+      return [...value];
     }
   }
   return undefined;
@@ -505,6 +524,9 @@ export const createRunManifest = (
       : {}),
     ...(input.tmuxPaneAuPair ? { tmuxPaneAuPair: input.tmuxPaneAuPair } : {}),
     ...(input.tmuxPaneNanny ? { tmuxPaneNanny: input.tmuxPaneNanny } : {}),
+    ...(input.tmuxPaneRecon?.length
+      ? { tmuxPaneRecon: [...input.tmuxPaneRecon] }
+      : {}),
     ...(input.tmuxPaneUtility
       ? { tmuxPaneUtility: input.tmuxPaneUtility }
       : {}),
@@ -574,6 +596,10 @@ const readOptionalRunManifestFields = (
     "tmuxPaneNanny",
     "tmux_pane_nanny",
   ]);
+  const tmuxPaneRecon = firstStringArray(parsed, [
+    "tmuxPaneRecon",
+    "tmux_pane_recon",
+  ]);
   const governess =
     parsed.governess === true || parsed[LEGACY_MANIFEST_KEYS.enabled] === true;
   return {
@@ -588,6 +614,7 @@ const readOptionalRunManifestFields = (
     ...(tmuxPaneRight ? { tmuxPaneRight } : {}),
     ...(tmuxPaneRightAgent ? { tmuxPaneRightAgent } : {}),
     ...(tmuxPaneNanny ? { tmuxPaneNanny } : {}),
+    ...(tmuxPaneRecon ? { tmuxPaneRecon } : {}),
     ...(tmuxPaneUtility ? { tmuxPaneUtility } : {}),
     ...(tmuxSession ? { tmuxSession } : {}),
   };

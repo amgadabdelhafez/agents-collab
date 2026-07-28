@@ -1,0 +1,16 @@
+{
+  "task_id": "loop57-au-pair-recovery",
+  "dimension": "build",
+  "attempt": "006",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-28T02:01:16Z",
+  "ended_at": "2026-07-28T02:01:17Z",
+  "artifact": "runs/loop57-au-pair-recovery/artifacts/build/attempt-006.log",
+  "command": [
+    "bun",
+    "run",
+    "build"
+  ]
+}

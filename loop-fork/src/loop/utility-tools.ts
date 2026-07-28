@@ -1704,6 +1704,87 @@ export class UtilityToolBroker {
     return { absolute: canonical, relative: canonicalRelative };
   }
 
+  private async missingReadPathCandidates(
+    requested: string
+  ): Promise<string[]> {
+    const requestedName = basename(normalizeRequestedPath(requested));
+    const candidates: string[] = [];
+    const pending = [...this.readScopes];
+    const visited = new Set<string>();
+    while (
+      pending.length > 0 &&
+      visited.size < this.limits.maxSearchFiles &&
+      candidates.length < 3
+    ) {
+      const lexical = normalizeRequestedPath(pending.shift() ?? ".");
+      if (visited.has(lexical) || this.isProtected(lexical)) {
+        continue;
+      }
+      visited.add(lexical);
+      const inspected = await this.inspectMissingReadPath(
+        lexical,
+        requestedName,
+        Math.max(0, this.limits.maxSearchFiles - visited.size - pending.length)
+      );
+      if (inspected.candidate) {
+        candidates.push(inspected.candidate);
+      }
+      pending.push(...inspected.children);
+    }
+    return [...new Set(candidates)].sort();
+  }
+
+  private async inspectMissingReadPath(
+    lexical: string,
+    requestedName: string,
+    maxChildren: number
+  ): Promise<{ candidate?: string; children: string[] }> {
+    this.assertScope(lexical, "read");
+    const absolute = resolve(this.repoRoot, lexical);
+    const stat = await lstat(absolute).catch(() => undefined);
+    if (!stat || stat.isSymbolicLink()) {
+      return { children: [] };
+    }
+    if (stat.isFile()) {
+      return basename(lexical) === requestedName
+        ? { candidate: lexical, children: [] }
+        : { children: [] };
+    }
+    if (!stat.isDirectory()) {
+      return { children: [] };
+    }
+    const entries = await readdir(absolute, { withFileTypes: true });
+    return {
+      children: entries
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .slice(0, maxChildren)
+        .map((entry) =>
+          lexical === "." ? entry.name : `${lexical}/${entry.name}`
+        ),
+    };
+  }
+
+  private async resolveReadTarget(
+    requested: string
+  ): Promise<{ absolute: string; relative: string }> {
+    try {
+      return await this.resolvePath(requested, "read", true);
+    } catch (error) {
+      if (!(error instanceof ToolPolicyError) || error.code !== "not_found") {
+        throw error;
+      }
+      const candidates = await this.missingReadPathCandidates(requested);
+      const suggestion =
+        candidates.length > 0
+          ? ` In-scope candidate${candidates.length === 1 ? "" : "s"}: ${candidates.join(", ")}`
+          : "";
+      throw new ToolPolicyError(
+        "not_found",
+        `Path does not exist: ${requested}.${suggestion}`
+      );
+    }
+  }
+
   private async resolveCommandCwd(
     requested: string
   ): Promise<{ absolute: string; relative: string }> {
@@ -1852,11 +1933,8 @@ export class UtilityToolBroker {
       new Set(["endLine", "lastLines", "path", "startLine"]),
       "read_file arguments"
     );
-    const target = await this.resolvePath(
-      requireString(args, "path"),
-      "read",
-      true
-    );
+    const requested = requireString(args, "path");
+    const target = await this.resolveReadTarget(requested);
     const stat = await lstat(target.absolute);
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new ToolPolicyError(
@@ -1948,12 +2026,6 @@ export class UtilityToolBroker {
       );
     }
     const target = await this.resolvePath(requested, "read", true);
-    if (!this.readScopes.includes(target.relative)) {
-      throw new ToolPolicyError(
-        "scope_denied",
-        `Directory listing is outside its exact declared scope: ${requested}`
-      );
-    }
     const stat = await lstat(target.absolute);
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new ToolPolicyError(

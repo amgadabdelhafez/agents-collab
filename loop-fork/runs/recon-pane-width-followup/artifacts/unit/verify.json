@@ -1,0 +1,17 @@
+{
+  "task_id": "recon-pane-width-followup",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-28T02:49:28Z",
+  "ended_at": "2026-07-28T02:49:28Z",
+  "artifact": "runs/recon-pane-width-followup/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/tmux.test.ts",
+    "tests/loop/recon-pane.test.ts"
+  ]
+}

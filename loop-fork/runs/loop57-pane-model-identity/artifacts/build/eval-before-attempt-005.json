@@ -1,0 +1,38 @@
+{
+  "task_id": "loop57-pane-model-identity",
+  "status": "pass",
+  "required": [
+    "unit",
+    "full",
+    "build"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/loop57-pane-model-identity/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "005",
+      "latest_attempt_artifact": "runs/loop57-pane-model-identity/artifacts/unit/attempt-005.log",
+      "latest_attempt_meta": "runs/loop57-pane-model-identity/artifacts/unit/attempt-005.json"
+    },
+    "full": {
+      "status": "pass",
+      "artifact": "runs/loop57-pane-model-identity/artifacts/full/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "005",
+      "latest_attempt_artifact": "runs/loop57-pane-model-identity/artifacts/full/attempt-005.log",
+      "latest_attempt_meta": "runs/loop57-pane-model-identity/artifacts/full/attempt-005.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/loop57-pane-model-identity/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/loop57-pane-model-identity/artifacts/build/attempt-004.log",
+      "latest_attempt_meta": "runs/loop57-pane-model-identity/artifacts/build/attempt-004.json"
+    }
+  }
+}

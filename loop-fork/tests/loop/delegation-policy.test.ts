@@ -216,7 +216,11 @@ describe("delegation classifier", () => {
     expect(classified).toMatchObject({
       eligible: true,
       operation: "git-inspect",
-      request: { executionProfile: "git-inspect", readScope: ["."] },
+      request: {
+        executionGit: { action: marker },
+        executionProfile: "git-inspect",
+        readScope: ["."],
+      },
     });
     if (classified.eligible) {
       expect(classified.request.objective).toContain(marker);
@@ -235,13 +239,44 @@ describe("delegation classifier", () => {
     });
     expect(classified).toMatchObject({
       eligible: true,
-      operation: "git-inspect",
-      request: { executionProfile: "git-inspect", readScope: ["."] },
+      operation: "read-plan",
+      request: {
+        executionProfile: "read-plan",
+        executionPlan: [
+          { executionGit: { action: "resolve-ref", ref: "origin/main" } },
+          { executionGit: { action: "log", limit: 3, ref: "origin/main" } },
+          { executionGit: { action: "branch-list", pattern: "*loop51*" } },
+        ],
+        readScope: ["."],
+      },
     });
     if (classified.eligible) {
       expect(classified.request.objective).toContain("resolve-ref");
       expect(classified.request.objective).toContain("branch-list");
     }
+  });
+
+  test("decomposes the Loop 57 mixed Git inspection plan into exact stages", () => {
+    expect(
+      classify("Bash", {
+        command:
+          "git log --oneline -3 && git status --short | head -20 && git worktree list",
+      })
+    ).toMatchObject({
+      eligible: true,
+      operation: "read-plan",
+      request: {
+        executionPlan: [
+          { executionGit: { action: "log", limit: 3 } },
+          {
+            executionOutput: { lineLimit: 20, position: "head" },
+            executionProfile: "git-status",
+          },
+          { executionGit: { action: "worktree-list" } },
+        ],
+        executionProfile: "read-plan",
+      },
+    });
   });
 
   test.each([

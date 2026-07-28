@@ -18,6 +18,7 @@ import {
 import type {
   UtilityCapability,
   UtilityExecutionProfile,
+  UtilityGitInspectionRequest,
   UtilityOutputRequest,
   UtilityReadPlanStep,
   UtilityReadRequest,
@@ -400,6 +401,14 @@ const withExecutionPlan = (
 ): EligibleDelegationIntent => ({
   ...classified,
   request: { ...classified.request, executionPlan },
+});
+
+const withExecutionGit = (
+  classified: EligibleDelegationIntent,
+  executionGit: UtilityGitInspectionRequest
+): EligibleDelegationIntent => ({
+  ...classified,
+  request: { ...classified.request, executionGit },
 });
 
 const readPlanStep = (
@@ -1046,23 +1055,16 @@ const scopesFrom = (
   return scopes.every(Boolean) ? (scopes as string[]) : undefined;
 };
 
-type GitInspectionAction =
-  | "branch-list"
-  | "current-branch"
-  | "log"
-  | "object-type"
-  | "resolve-ref"
-  | "show-stat"
-  | "worktree-list";
-
-interface GitInspectionQuery {
-  action: GitInspectionAction;
-  includeMetadata?: boolean;
-  limit?: number;
+interface GitInspectionQuery extends UtilityGitInspectionRequest {
   outputBound?: string;
-  pattern?: string;
-  ref?: string;
 }
+
+const executableGitInspection = (
+  query: GitInspectionQuery
+): UtilityGitInspectionRequest => {
+  const { outputBound: _outputBound, ...executionGit } = query;
+  return executionGit;
+};
 
 const safeGitRef = (value: string | undefined): value is string =>
   Boolean(value && GIT_REF_RE.test(value) && !value.includes(".."));
@@ -1159,60 +1161,6 @@ const parseGitInspection = (
   return argv[1] === "log" ? parseGitLogInspection(argv) : undefined;
 };
 
-const parseGitInspectionSegment = (
-  tokens: ShellToken[]
-): GitInspectionQuery | undefined => {
-  const piped = splitTokens(tokens, "pipe");
-  if (piped.length > 2) {
-    return undefined;
-  }
-  const filter =
-    piped.length === 2 ? parseOutputFilter(piped[1] ?? []) : undefined;
-  if (piped.length === 2 && !filter) {
-    return undefined;
-  }
-  let base = piped[0] ?? [];
-  if (base.at(-1)?.kind === "quiet-stderr") {
-    base = base.slice(0, -1);
-  }
-  const argv = wordValues(base);
-  const query = argv ? parseGitInspection(argv) : undefined;
-  if (!query) {
-    return undefined;
-  }
-  return filter
-    ? { ...query, outputBound: describeOutputFilter(filter) }
-    : query;
-};
-
-const classifyGitInspectionChain = (
-  intent: DelegationToolIntent,
-  tokens: ShellToken[]
-): DelegationClassification | undefined => {
-  const segments = splitTokens(tokens, "and");
-  if (segments.length < 2 || segments.length > 4) {
-    return undefined;
-  }
-  const queries = segments.map(parseGitInspectionSegment);
-  if (queries.some((query) => !query)) {
-    return undefined;
-  }
-  return {
-    eligible: true,
-    ...request(
-      intent,
-      "git-inspect",
-      "inspect",
-      `Inspect repository metadata for these exact bounded queries: ${JSON.stringify(queries)}.`,
-      [
-        "Return the requested Git metadata in order without changing the repository.",
-      ],
-      ["."],
-      ["inspect"]
-    ),
-  };
-};
-
 const classifyGit = (
   intent: DelegationToolIntent,
   argv: string[]
@@ -1224,14 +1172,19 @@ const classifyGit = (
   if (inspection) {
     return {
       eligible: true,
-      ...request(
-        intent,
-        "git-inspect",
-        "inspect",
-        `Inspect repository metadata for this exact bounded query: ${JSON.stringify(inspection)}.`,
-        ["Return the requested Git metadata without changing the repository."],
-        ["."],
-        ["inspect"]
+      ...withExecutionGit(
+        request(
+          intent,
+          "git-inspect",
+          "inspect",
+          `Inspect repository metadata for this exact bounded query: ${JSON.stringify(inspection)}.`,
+          [
+            "Return the requested Git metadata without changing the repository.",
+          ],
+          ["."],
+          ["inspect"]
+        ),
+        executableGitInspection(inspection)
       ),
     };
   }
@@ -2101,6 +2054,9 @@ const classifyReadPlanSegment = (
         ...(bounded.request.executionCwd
           ? { executionCwd: bounded.request.executionCwd }
           : {}),
+        ...(bounded.request.executionGit
+          ? { executionGit: { ...bounded.request.executionGit } }
+          : {}),
       },
     ],
   };
@@ -2219,12 +2175,6 @@ const classifyBash = (
 ): DelegationClassification => {
   const command = asString(input.command);
   const tokens = command ? literalTokens(command) : undefined;
-  const gitInspectionChain = tokens
-    ? classifyGitInspectionChain(intent, tokens)
-    : undefined;
-  if (gitInspectionChain) {
-    return gitInspectionChain;
-  }
   const readPlan = tokens ? classifyReadPlan(intent, tokens) : undefined;
   if (readPlan) {
     return readPlan;

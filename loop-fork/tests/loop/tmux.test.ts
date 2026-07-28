@@ -572,6 +572,27 @@ test("runInTmux writes paired session refs before starting governess", async () 
             return { exitCode: 0, stderr: "", stdout: "%40\n" };
           }
           if (args[0] === "tmux" && args[1] === "split-window") {
+            if (
+              args.some(
+                (arg) => arg.includes("__recon-pane") && arg.includes("'1'")
+              )
+            ) {
+              return { exitCode: 0, stderr: "", stdout: "%45\n" };
+            }
+            if (
+              args.some(
+                (arg) => arg.includes("__recon-pane") && arg.includes("'2'")
+              )
+            ) {
+              return { exitCode: 0, stderr: "", stdout: "%46\n" };
+            }
+            if (
+              args.some(
+                (arg) => arg.includes("__recon-pane") && arg.includes("'3'")
+              )
+            ) {
+              return { exitCode: 0, stderr: "", stdout: "%47\n" };
+            }
             if (args.some((arg) => arg.includes("__au-pair-pane"))) {
               return { exitCode: 0, stderr: "", stdout: "%42\n" };
             }
@@ -674,6 +695,80 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(manifest.tmuxPaneNanny).toBe("%44");
     expect(manifest.tmuxPaneRight).toBe("%41");
     expect(manifest.tmuxPaneGoverness).toBe("%43");
+    expect(manifest.tmuxPaneRecon).toEqual(["%45", "%46", "%47"]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "split-window",
+      "-v",
+      "-f",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-l",
+      "15%",
+      "-t",
+      "repo-loop-1:0",
+      "-c",
+      repoDir,
+      expect.stringContaining("__recon-pane"),
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      "%45",
+      "@loop_label",
+      "routes.repo-loop-1",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      "%46",
+      "@loop_label",
+      "tools.repo-loop-1",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      "%47",
+      "@loop_label",
+      "results.repo-loop-1",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "split-window",
+      "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-p",
+      "49",
+      "-t",
+      "%45",
+      "-c",
+      repoDir,
+      expect.stringContaining("__recon-pane"),
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "split-window",
+      "-h",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-p",
+      "68",
+      "-t",
+      "%46",
+      "-c",
+      repoDir,
+      expect.stringContaining("__recon-pane"),
+    ]);
   } finally {
     rmSync(home, { force: true, recursive: true });
   }
@@ -697,6 +792,14 @@ test("the Nanny/Au Pair column defaults to the right fifth with an explicit opt-
   expect(
     tmuxInternals.utilityPaneWidth({ LOOP_UTILITY_PANE_WIDTH: "invalid" })
   ).toBe("20%");
+  expect(tmuxInternals.reconPaneCount({})).toBe(3);
+  expect(tmuxInternals.reconPaneCount({ LOOP_RECON_PANES: "0" })).toBe(0);
+  expect(tmuxInternals.reconPaneCount({ LOOP_RECON_PANES: "2" })).toBe(2);
+  expect(tmuxInternals.reconPaneCount({ LOOP_RECON_PANES: "9" })).toBe(3);
+  expect(tmuxInternals.reconPaneHeight({})).toBe("15%");
+  expect(tmuxInternals.reconPaneHeight({ LOOP_RECON_HEIGHT: "12%" })).toBe(
+    "12%"
+  );
 });
 
 test("governed layout preserves legacy numeric fallbacks without tmux stdout", async () => {

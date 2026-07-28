@@ -24,6 +24,11 @@ import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
 } from "./loop/legacy-governess-compat";
+import {
+  RECON_PANE_SUBCOMMAND,
+  type ReconPaneIndex,
+  runReconPane,
+} from "./loop/recon-pane";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 import {
@@ -120,8 +125,24 @@ const utilityPaneTier = (
   return undefined;
 };
 
+const runReconPaneSubcommand = async (argv: string[]): Promise<boolean> => {
+  if (argv[0] !== RECON_PANE_SUBCOMMAND) {
+    return false;
+  }
+  const [runDir, rawIndex] = argv.slice(1);
+  const index = Number.parseInt(rawIndex ?? "", 10) as ReconPaneIndex;
+  if (!(runDir && (index === 1 || index === 2 || index === 3))) {
+    throw new Error("Usage: loop __recon-pane <run-dir> <1|2|3>");
+  }
+  await runReconPane(runDir, index);
+  return true;
+};
+
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
+  if (await runReconPaneSubcommand(argv)) {
+    return true;
+  }
   if (argv[0] === BRIDGE_SUBCOMMAND) {
     const { runDir, source } = parseBridgeArgs(argv.slice(1));
     await runBridgeMcpServer(runDir, source);

@@ -163,6 +163,210 @@ test("Nanny executes a brokered Pi tool turn with durable evidence", async () =>
   }
 });
 
+test("Pi counts a rejected sibling batch as one model round and can adapt", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-rejection-round-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-rejection-round");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const needle = 1;\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return source-backed evidence"],
+    authority: {},
+    executionProfile: "search",
+    id: "pi-rejection-round-job",
+    kind: "inspect",
+    objective: "Find needle after adapting from a rejected path batch",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 95);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 95,
+  });
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        return response([
+          event({ role: "assistant" }),
+          event({
+            tool_calls: [1, 2, 3].map((index) => ({
+              function: {
+                arguments: JSON.stringify({
+                  paths: [`outside-${index}`],
+                  query: "needle",
+                }),
+                name: "search_repo",
+              },
+              id: `rejected-${index}`,
+              index: index - 1,
+              type: "function",
+            })),
+          }),
+          event({}, "tool_calls"),
+        ]);
+      }
+      if (providerCalls === 2) {
+        return response([
+          event({ role: "assistant" }),
+          event({
+            tool_calls: [
+              {
+                function: {
+                  arguments: '{"query":"needle","paths":["src"]}',
+                  name: "search_repo",
+                },
+                id: "adapted-search",
+                index: 0,
+                type: "function",
+              },
+            ],
+          }),
+          event({}, "tool_calls"),
+        ]);
+      }
+      return response([
+        event({ role: "assistant" }),
+        event({ content: "Adapted and found needle in src/sample.ts." }),
+        event({}, "stop"),
+      ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+  try {
+    await runUtilityWorker(runDir, 95, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      LOOP_NANNY_MODEL: "fake-nanny",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    expect(providerCalls).toBe(3);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        status: "completed",
+        summary: "Adapted and found needle in src/sample.ts.",
+      },
+      state: "completed",
+    });
+    const toolEvents = readFileSync(
+      join(runDir, "utility", "tool-events.jsonl"),
+      "utf8"
+    );
+    expect(toolEvents.match(/"ok":false/g)).toHaveLength(3);
+    expect(toolEvents).toContain('"code":"scope_denied"');
+    expect(toolEvents).toContain('"ok":true');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("Pi fails after three rejected model rounds with exact broker evidence", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-rejection-limit-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-rejection-limit");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const value = 1;\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return bounded evidence"],
+    authority: {},
+    executionProfile: "search",
+    id: "pi-rejection-limit-job",
+    kind: "inspect",
+    objective: "Search only the declared source scope",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 96);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 96,
+  });
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      return response([
+        event({ role: "assistant" }),
+        event({
+          tool_calls: [
+            {
+              function: {
+                arguments: JSON.stringify({
+                  paths: [`outside-${providerCalls}`],
+                  query: "value",
+                }),
+                name: "search_repo",
+              },
+              id: `rejected-round-${providerCalls}`,
+              index: 0,
+              type: "function",
+            },
+          ],
+        }),
+        event({}, "tool_calls"),
+      ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+  try {
+    await runUtilityWorker(runDir, 96, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      LOOP_NANNY_MODEL: "fake-nanny",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    expect(providerCalls).toBe(3);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        blocker: expect.stringContaining(
+          "3 consecutive broker-rejected model rounds without progress (last error: scope_denied from search_repo:"
+        ),
+        status: "failed",
+      },
+      state: "failed",
+    });
+    expect(readUtilityJob(runDir, request.id)?.result?.blocker).toContain(
+      "Path is outside declared read scope: outside-3"
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("Direct exact reads produce evidence without contacting a model", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-direct-"));
   const runDir = join(repoRoot, ".loop", "runs", "pi-direct");

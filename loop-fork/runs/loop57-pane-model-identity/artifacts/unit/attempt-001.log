@@ -1,0 +1,109 @@
+task_id: loop57-pane-model-identity
+dimension: unit
+attempt: 001
+started_at: 2026-07-28T02:04:39Z
+command: bun test tests/loop/utility-observability.test.ts tests/loop/utility-runtime.test.ts tests/loop/utility-tools.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-tools.test.ts:
+(pass) publishes provider-agnostic definitions for bounded tools [0.31ms]
+(pass) exposes and enforces only the tools allowed for an exact request [5.21ms]
+(pass) reads and searches only declared non-secret scope [5.09ms]
+(pass) missing reads suggest only bounded in-scope filename matches [4.41ms]
+(pass) lists one bounded directory without exposing protected entries [4.88ms]
+(pass) directory listing truncates before the shared output byte limit [3.69ms]
+(pass) reads an exact bounded tail without widening file authority [4.28ms]
+(pass) broker enforces the persisted exact read range against model deviation [3.80ms]
+(pass) broker caps range reads even when exact metadata is tampered [3.82ms]
+(pass) a malformed automatic file-read boundary fails closed [3.74ms]
+(pass) reads a bounded range from a regular file larger than 128 KiB [3.94ms]
+(pass) search rejects matching output larger than the broker output budget [4.01ms]
+(pass) git_inspect runs only literal bounded read-only metadata commands [4.48ms]
+(pass) central protected-path policy denies credential and agent settings [4.10ms]
+(pass) rejects traversal and symlink escape [4.38ms]
+(pass) runs literal allowlisted argv with a scrubbed environment [4.08ms]
+(pass) broker enforces merged tail output for a focused check [3.88ms]
+(pass) broker applies literal presentation filters without a shell [4.06ms]
+(pass) broker slices list output and marks the listing truncated [4.92ms]
+(pass) explicit focused cwd is exact while legacy read-scope cwd remains contained [3.86ms]
+(pass) focused check cwd does not widen its exact file authority [3.72ms]
+(pass) focused checks reject files above the configured input bound [4.04ms]
+(pass) broker rejects a tampered focused check with more than four files [5.21ms]
+(pass) git_diff supports bounded commit comparison and diff check [5.79ms]
+(pass) loads a repository policy for local offline npx vitest checks [4.74ms]
+(pass) supports a local offline vitest check without repository mutation [4.03ms]
+(pass) resolves a monorepo package-local vitest from the declared cwd [4.68ms]
+(pass) repository command policy fails closed when malformed or open-world [3.71ms]
+(pass) repository npx policy refuses a missing local binary [3.78ms]
+(pass) rejects timed out and oversized command output [4.36ms]
+(pass) stores a validated patch proposal without modifying the source [4.61ms]
+(pass) guarded apply revalidates write scope and dependency targets [5.30ms]
+(pass) guarded apply refuses symlink escapes from write scope [4.32ms]
+(pass) guarded apply refuses an in-repository symlink write-scope escape [3.77ms]
+(pass) environment scrubbing is allowlist based [0.04ms]
+
+tests/loop/utility-observability.test.ts:
+(pass) utility observability safely handles absent and malformed journals [1.84ms]
+(pass) utility observability saturates malformed numeric artifacts [2.61ms]
+(pass) routing observability counts candidates rejected before job creation [0.66ms]
+(pass) utility observability totals worker usage and builds a safe transcript [3.40ms]
+
+tests/loop/utility-runtime.test.ts:
+(pass) OpenRouter GLM is the default but remains disabled without a credential [0.35ms]
+(pass) Au Pair and Nanny role-specific switches override compatibility names [0.06ms]
+(pass) worker concurrency is configurable within a bounded range
+(pass) auto execution profiles expose only satisfiable broker tools [0.07ms]
+(pass) structured cat plans cannot invoke Git tools [1.01ms]
+(pass) structured Git metadata rejects forged narrow file scope [0.29ms]
+(pass) structured multi-directory plans cannot read content or cross stages [0.92ms]
+(pass) structured mixed plans retain exact slices and output filters [0.90ms]
+(pass) structured focused-check stages expose only their exact run_check boundary [15.55ms]
+(pass) file-read runtime carries an exact broker range and fails closed without one [0.17ms]
+(pass) a mode-0600 key file enables the tier without exporting the secret [0.27ms]
+(pass) detached utility worker environment is allowlist-built, not inherited
+(pass) governess passes only the minimal key-file worker environment [2.41ms]
+(pass) governess route processing dispatches eligible work without provider I/O [1.14ms]
+(pass) worker routing ignores cost estimates [2.23ms]
+(pass) the default worker pool runs four jobs and leaves a fifth pending [4.38ms]
+(pass) unprofiled bounded inspections persist Nanny ownership without spilling to Au Pair [1.51ms]
+(pass) a full Nanny slot does not block eligible Au Pair work in the same tick [2.65ms]
+(pass) unprofiled bounded inspections fail closed when Nanny is unavailable [1.53ms]
+(pass) peer-routed reviews preserve the requester and ask the peer to act [1.13ms]
+(pass) non-peer request-not-bounded outcomes return to the requester instead of the current driver [1.58ms]
+(pass) non-peer authority-needs-human outcomes return to the requester instead of the current driver [1.08ms]
+(pass) safe key diagnostics persist in routing observability, not the output-only worker pane [1.56ms]
+(pass) spawn failure terminates the job instead of stranding routed utility work [1.70ms]
+(pass) an unclaimed routed job fails closed after its claim deadline [1.50ms]
+(pass) a dead claimed worker fails immediately and releases its write scope [2.46ms]
+(pass) a live worker remains claimed before its external runtime deadline [1.89ms]
+(pass) governess externally terminates a live worker past its runtime [2.38ms]
+(pass) terminal completion racing the reaper is preserved [1.91ms]
+(pass) overlapping utility writes are not dispatched concurrently [2.01ms]
+(pass) worker pane is a colored output-only request, tool, and response stream [2.81ms]
+(pass) utility pane keeps a failed worker response visible within its viewport [1.10ms]
+(pass) Nanny and Au Pair panes show only their own tier [2.52ms]
+(pass) Nanny pane includes local Qwen governess advisory usage [0.35ms]
+(pass) a new governess epoch fences an orphaned utility claim [1.74ms]
+(pass) requester routing is relative to the requester, not the current driver [1.61ms]
+(pass) a full agent applies a completed utility patch with pre/postimage journal proof [15.86ms]
+(pass) guarded patch application refuses wrong hashes and proposal-time drift [3.26ms]
+(pass) utility worker completes against an OpenAI-compatible local endpoint [8.10ms]
+(pass) context-insufficient response escalates once without evidence retries [4.60ms]
+(pass) worker tools cannot read their persisted context capsule [4.73ms]
+(pass) utility worker stops after three consecutive broker rejections [5.09ms]
+(pass) a successful broker call resets the consecutive rejection breaker [5.60ms]
+(pass) utility worker refuses to execute a third identical tool call [4.66ms]
+(pass) utility worker stops before a sixty-fifth model call [36.03ms]
+(pass) utility worker rejects prose-only completion without repository evidence [3.96ms]
+(pass) a failing focused check cannot satisfy command completion evidence [18.79ms]
+
+ 86 pass
+ 0 fail
+ 362 expect() calls
+Ran 86 tests across 3 files. [348.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-28T02:04:39Z

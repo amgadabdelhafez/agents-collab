@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readPendingBridgeMessages } from "./bridge-store";
 import {
   delegationSkipCategory,
   readDelegationEvents,
@@ -33,6 +34,7 @@ export interface UtilityTranscriptEntry {
   jobId: string;
   kind: UtilityTranscriptKind;
   label: string;
+  model?: string;
   text: string;
   usage?: UtilityTranscriptUsage;
 }
@@ -245,6 +247,7 @@ const routingSnapshot = (
 };
 
 const messageSnapshot = (
+  runDir: string,
   jobs: UtilityJobSnapshot[]
 ): UtilityMessageObservability => {
   const inbound = jobs
@@ -261,12 +264,19 @@ const messageSnapshot = (
     .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
   const latestInboundAt = inbound.at(-1)?.request.createdAt;
   const latestOutboundAt = outbound.at(-1)?.updatedAt;
+  const jobIds = new Set(jobs.map((job) => job.jobId));
+  const pendingResults = readPendingBridgeMessages(runDir).filter(
+    (message) =>
+      message.source === "utility" &&
+      message.taskId !== undefined &&
+      jobIds.has(message.taskId)
+  );
   return {
     inbound: inbound.length,
     ...(latestInboundAt ? { latestInboundAt } : {}),
     ...(latestOutboundAt ? { latestOutboundAt } : {}),
     outbound: outbound.length,
-    pending: Math.max(0, inbound.length - outbound.length),
+    pending: pendingResults.length,
   };
 };
 
@@ -671,6 +681,12 @@ const transcriptFor = (
   usageEvents: Map<string, Record<string, unknown>>,
   toolEvents: Record<string, unknown>[]
 ): UtilityTranscriptEntry[] => {
+  const modelByJobId = new Map(
+    [...usageEvents].flatMap(([jobId, event]) => {
+      const model = stringAt(event, "model");
+      return model ? [[jobId, model] as const] : [];
+    })
+  );
   const entries = jobs.flatMap((job) => {
     const result = jobResultEntry(job, usageEvents.get(job.jobId));
     return result ? [jobRequestEntry(job), result] : [jobRequestEntry(job)];
@@ -678,6 +694,10 @@ const transcriptFor = (
   entries.push(...toolEntries(toolEvents, jobs));
   return entries
     .filter((entry) => entry.text)
+    .map((entry) => {
+      const model = modelByJobId.get(entry.jobId);
+      return model ? { ...entry, model } : entry;
+    })
     .sort((left, right) => left.at.localeCompare(right.at));
 };
 
@@ -762,7 +782,7 @@ export const readUtilityObservability = (
     failures: failureSnapshot(toolEvents),
     jobsTotal: jobs.length,
     latestDetail,
-    messages: messageSnapshot(jobs),
+    messages: messageSnapshot(runDir, jobs),
     ...(latest
       ? {
           latestAt: latest.updatedAt,

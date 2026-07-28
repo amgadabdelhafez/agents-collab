@@ -1,0 +1,19 @@
+{
+  "task_id": "loop57-au-pair-recovery",
+  "dimension": "focused",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-28T01:45:07Z",
+  "ended_at": "2026-07-28T01:45:16Z",
+  "artifact": "runs/loop57-au-pair-recovery/artifacts/focused/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/utility-tools.test.ts",
+    "tests/loop/utility-runtime.test.ts",
+    "tests/loop/bridge.test.ts",
+    "tests/loop/tmux.test.ts"
+  ]
+}

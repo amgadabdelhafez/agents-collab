@@ -696,10 +696,87 @@ test.each([
   rmSync(root, { recursive: true, force: true });
 });
 
+test("route_task drains only older unclaimed helper results for its caller", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const bridge = await loadBridge();
+  const helper = bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "codex",
+    "completed old helper result",
+    { taskId: "old-helper" }
+  );
+  bridge.appendBridgeMessage(runDir, "claude", "codex", "peer message");
+  bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "claude",
+    "other requester result",
+    { taskId: "other-helper" }
+  );
+  const claimed = bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "codex",
+    "claimed helper result",
+    { taskId: "claimed-helper" }
+  );
+  const claimDir = join(runDir, "bridge-delivery-claims");
+  mkdirSync(claimDir, { recursive: true });
+  writeFileSync(
+    join(claimDir, `${createHash("sha256").update(claimed.id).digest("hex")}.lock`),
+    "claimed\n"
+  );
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["locate it"],
+          kind: "inspect",
+          objective: "Locate another bounded definition",
+          read_scope: ["src/loop"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+  const routed = JSON.parse(toolText(result.stdout, 1)) as {
+    priorHelperResults?: Array<{ id: string; message: string }>;
+  };
+  expect(routed.priorHelperResults).toEqual([
+    expect.objectContaining({ id: helper.id, message: "completed old helper result" }),
+  ]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ message: "peer message" }),
+      expect.objectContaining({ message: "other requester result" }),
+      expect.objectContaining({ message: "claimed helper result" }),
+    ])
+  );
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(3);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("external supervisor can submit a task with an explicit result target", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
+  const bridge = await loadBridge();
+  bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "codex",
+    "supervisor must not consume this",
+    { taskId: "supervisor-helper" }
+  );
   const result = await runBridgeProcess(
     runDir,
     "supervisor",
@@ -723,6 +800,9 @@ test("external supervisor can submit a task with an explicit result target", asy
   expect(JSON.parse(toolText(result.stdout, 1))).toMatchObject({
     state: "pending-route",
   });
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining({ message: "supervisor must not consume this" }),
+  ]);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -1705,6 +1785,12 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   expect(
     tools.find((tool) => tool.name === "route_task")?.description
   ).toContain("one to three packets early");
+  expect(
+    tools.find((tool) => tool.name === "route_task")?.description
+  ).toContain("narrowest common ancestor");
+  expect(
+    tools.find((tool) => tool.name === "route_task")?.description
+  ).toContain("Every terminal outcome returns to this requester");
   rmSync(root, { recursive: true, force: true });
 });
 

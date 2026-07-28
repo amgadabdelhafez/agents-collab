@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -248,9 +249,78 @@ test("reads and searches only declared non-secret scope", async () => {
   });
 });
 
+test("missing reads suggest only bounded in-scope filename matches", async () => {
+  await withRepo(async (root) => {
+    await mkdir(join(root, "src", "nested"));
+    await writeFile(
+      join(root, "src", "nested", "moved.ts"),
+      "export const moved = true;\n"
+    );
+    await writeFile(join(root, "tests", "moved.ts"), "outside narrow scope\n");
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["read_file"],
+      artifactDir: ".utility-artifacts",
+      readScopes: ["src"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+
+    const result = await broker.execute({
+      arguments: { path: "src/moved.ts" },
+      name: "read_file",
+    });
+    const errorMessage = String(result.error?.message ?? "");
+    expect(errorMessage).toContain("In-scope candidate: src/nested/moved.ts");
+    expect(errorMessage.includes("tests/moved.ts")).toBe(false);
+    expect(result).toMatchObject({
+      error: {
+        code: "not_found",
+      },
+      ok: false,
+    });
+    expect(result.data).toBeUndefined();
+  });
+});
+
+test("missing-path suggestions do not traverse a symlinked read-scope root", async () => {
+  await withRepo(async (root) => {
+    const outside = await mkdtemp(join(tmpdir(), "utility-candidate-outside-"));
+    try {
+      await mkdir(join(outside, "nested"));
+      await writeFile(join(outside, "nested", "missing.ts"), "outside\n");
+      await symlink(outside, join(root, "src", "linked-outside"));
+      expect(
+        (await lstat(join(root, "src", "linked-outside"))).isSymbolicLink()
+      ).toBe(true);
+      const broker = await createUtilityToolBroker({
+        allowedTools: ["read_file"],
+        artifactDir: ".utility-artifacts",
+        readScopes: ["src/linked-outside"],
+        repoRoot: root,
+        writeScopes: [],
+      });
+
+      const result = await broker.execute({
+        arguments: { path: "src/linked-outside/missing.ts" },
+        name: "read_file",
+      });
+      expect(result).toMatchObject({
+        error: { code: "not_found" },
+        ok: false,
+      });
+      expect(result.error?.message).not.toContain("In-scope candidate");
+      expect(result.data).toBeUndefined();
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+});
+
 test("lists one bounded directory without exposing protected entries", async () => {
   await withRepo(async (root) => {
     await writeFile(join(root, "src", ".ordinary-hidden"), "ok\n");
+    await mkdir(join(root, "src", "nested"));
+    await writeFile(join(root, "src", "nested", "child.ts"), "export {};\n");
     await mkdir(join(root, "src", ".git"));
     await writeFile(join(root, "src", ".git", "config"), "secret\n");
     const broker = await createUtilityToolBroker({
@@ -281,7 +351,25 @@ test("lists one bounded directory without exposing protected entries", async () 
     expect(JSON.stringify(result)).not.toContain("src/.git");
     expect(
       await broker.execute({
+        arguments: { path: "src/nested" },
+        name: "list_files",
+      })
+    ).toMatchObject({
+      data: {
+        entries: [expect.objectContaining({ path: "src/nested/child.ts" })],
+        path: "src/nested",
+      },
+      ok: true,
+    });
+    expect(
+      await broker.execute({
         arguments: { path: "src/hello.ts" },
+        name: "list_files",
+      })
+    ).toMatchObject({ error: { code: "path_denied" }, ok: false });
+    expect(
+      await broker.execute({
+        arguments: { path: "tests" },
         name: "list_files",
       })
     ).toMatchObject({ error: { code: "scope_denied" }, ok: false });

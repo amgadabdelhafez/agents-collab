@@ -1,0 +1,30 @@
+{
+  "task_id": "loop57-runtime-fixes",
+  "scanned_at": "2026-07-28T01:16:55Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-28T01:16:55Z",
+      "task_id": "loop57-runtime-fixes",
+      "signal": "loc_growth",
+      "file": "src/loop/recon-pane.ts",
+      "before_loc": 0,
+      "after_loc": 171,
+      "delta_loc": 171,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-28T01:16:55Z",
+      "task_id": "loop57-runtime-fixes",
+      "signal": "loc_growth",
+      "file": "src/loop/tmux.ts",
+      "before_loc": 2053,
+      "after_loc": 2179,
+      "delta_loc": 126,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

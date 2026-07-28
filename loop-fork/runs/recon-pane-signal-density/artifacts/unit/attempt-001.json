@@ -1,0 +1,17 @@
+{
+  "task_id": "recon-pane-signal-density",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-28T02:34:25Z",
+  "ended_at": "2026-07-28T02:34:25Z",
+  "artifact": "runs/recon-pane-signal-density/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/recon-pane.test.ts",
+    "tests/loop/tmux.test.ts"
+  ]
+}

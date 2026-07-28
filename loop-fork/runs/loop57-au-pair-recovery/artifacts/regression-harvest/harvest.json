@@ -1,0 +1,28 @@
+{
+  "task_id": "loop57-au-pair-recovery",
+  "status": "created",
+  "bug_id": "utility-route-requester-affinity",
+  "regression_path": "evals/regression/utility-route-requester-affinity.md",
+  "prompt_path": "runs/loop57-au-pair-recovery/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-28T02:02:34Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "utility-route-requester-affinity"
+    ],
+    "symptom": [
+      "Codex-originated fallback results were delivered to Claude."
+    ],
+    "guard": [
+      "tests/loop/utility-runtime.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Codex-originated fallback results were delivered to Claude."
+  ],
+  "test_lines": [
+    "tests/loop/utility-runtime.test.ts"
+  ]
+}

@@ -69,11 +69,32 @@ describe("utility execution tier classification", () => {
     });
   });
 
+  test("exact Git inspections bypass every model", () => {
+    const request = inspectRequest({
+      executionGit: { action: "log", limit: 3, ref: "HEAD" },
+      executionProfile: "git-inspect",
+      readScope: ["."],
+    });
+    expect(classifyUtilityExecution(request)).toBe(UTILITY_DIRECT_TIER);
+    expect(directUtilityCalls(request)).toEqual([
+      {
+        arguments: { action: "log", limit: 3, ref: "HEAD" },
+        name: "git_inspect",
+      },
+    ]);
+  });
+
   test("fully exact mixed plans bypass every model", () => {
     const request = createUtilityRouteRequest({
       acceptanceCriteria: ["return status and focused test evidence"],
       authority: {},
       executionPlan: [
+        {
+          executionGit: { action: "worktree-list" },
+          executionProfile: "git-inspect",
+          objective: "List registered worktrees",
+          readScope: ["."],
+        },
         {
           executionProfile: "git-status",
           objective: "Inspect status",
@@ -98,6 +119,7 @@ describe("utility execution tier classification", () => {
     });
     expect(classifyUtilityExecution(request)).toBe(UTILITY_DIRECT_TIER);
     expect(directUtilityCalls(request)).toEqual([
+      { arguments: { action: "worktree-list" }, name: "git_inspect" },
       { arguments: {}, name: "git_status" },
       {
         arguments: {

@@ -235,6 +235,8 @@ export interface SummaryAgentContext {
 
 export interface SummaryRequest {
   agents: SummaryAgentContext[];
+  // Deterministic objective derived from current-session human instructions.
+  authoritativeObjective?: string;
   // Human instructions given during the session (verbatim, most recent last).
   humanMessages?: string[];
   model: string;

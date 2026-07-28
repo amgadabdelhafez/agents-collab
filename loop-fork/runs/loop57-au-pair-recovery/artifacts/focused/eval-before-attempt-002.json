@@ -1,0 +1,48 @@
+{
+  "task_id": "loop57-au-pair-recovery",
+  "status": "pass",
+  "required": [
+    "unit",
+    "full",
+    "build",
+    "focused"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/loop57-au-pair-recovery/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/loop57-au-pair-recovery/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/loop57-au-pair-recovery/artifacts/unit/attempt-001.json"
+    },
+    "full": {
+      "status": "pass",
+      "artifact": "runs/loop57-au-pair-recovery/artifacts/full/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/loop57-au-pair-recovery/artifacts/full/attempt-002.log",
+      "latest_attempt_meta": "runs/loop57-au-pair-recovery/artifacts/full/attempt-002.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/loop57-au-pair-recovery/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/loop57-au-pair-recovery/artifacts/build/attempt-003.log",
+      "latest_attempt_meta": "runs/loop57-au-pair-recovery/artifacts/build/attempt-003.json"
+    },
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/loop57-au-pair-recovery/artifacts/focused/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/loop57-au-pair-recovery/artifacts/focused/attempt-001.log",
+      "latest_attempt_meta": "runs/loop57-au-pair-recovery/artifacts/focused/attempt-001.json"
+    }
+  }
+}

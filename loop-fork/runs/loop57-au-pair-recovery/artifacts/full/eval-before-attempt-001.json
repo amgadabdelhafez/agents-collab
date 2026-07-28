@@ -1,0 +1,18 @@
+{
+  "task_id": "loop57-au-pair-recovery",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/loop57-au-pair-recovery/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/loop57-au-pair-recovery/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/loop57-au-pair-recovery/artifacts/unit/attempt-001.json"
+    }
+  }
+}

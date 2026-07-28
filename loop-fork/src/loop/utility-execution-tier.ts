@@ -36,6 +36,9 @@ const directReadPlanCall = (
   if (step.executionProfile === "file-list" && step.readScope.length === 1) {
     return { arguments: { path: step.readScope[0] }, name: "list_files" };
   }
+  if (step.executionProfile === "git-inspect" && step.executionGit) {
+    return { arguments: { ...step.executionGit }, name: "git_inspect" };
+  }
   if (
     step.executionProfile === "git-status" &&
     step.readScope.length === 1 &&
@@ -77,6 +80,9 @@ export const directUtilityCalls = (
         name: "run_check",
       },
     ];
+  }
+  if (request.executionProfile === "git-inspect" && request.executionGit) {
+    return [{ arguments: { ...request.executionGit }, name: "git_inspect" }];
   }
   if (request.executionProfile !== "read-plan") {
     return undefined;

@@ -46,6 +46,7 @@ export const mandatoryUtilityDelegationGuidance = (
     "At the start of each assigned concrete request, identify one to three independent bounded packets and submit them immediately; while continuing the critical path, keep lower-tier work in flight when another safe packet is available.",
     "Use Nanny for small local-Qwen inspection, extraction, classification, and concise summaries. Use Au Pair for bounded multi-step inspection, small scoped edits, and focused verification. Exact deterministic work may run Direct. Governess chooses the tier; never request or assume a tier yourself.",
     "Each packet must state one objective, exact read/write scopes, risk and authority flags, required capabilities, concise acceptance criteria, and only the minimal context references needed. Prefer separate packets over an opaque compound command, then review returned evidence or patches before relying on them.",
+    "Workers never widen declared scope. If a packet must locate a moved or differently nested path, set read_scope to the narrowest common ancestor that can contain every acceptable candidate, not only the path you expect.",
     "Native tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous or cross-cutting work, and reviewing returned worker evidence.",
   ].join("\n");
 

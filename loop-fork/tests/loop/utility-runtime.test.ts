@@ -837,6 +837,82 @@ test("unprofiled bounded inspections persist Nanny ownership without spilling to
   }
 });
 
+test("a full Nanny slot does not block eligible Au Pair work in the same tick", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-independent-tier-slots-"));
+  const runDir = join(repoRoot, ".loop", "runs", "independent-tier-slots");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repoRoot, "src", "sample.ts"), "export const value = 1;\n");
+  const nannyRequest = (id: string) =>
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["return bounded evidence"],
+      authority: {},
+      id,
+      kind: "inspect" as const,
+      objective: `Inspect the bounded source file for ${id}`,
+      readScope: ["src/sample.ts"],
+      requester: "claude" as const,
+      requiredCapabilities: ["inspect" as const],
+      risk: "low" as const,
+      writeScope: [],
+    });
+  appendUtilityRouteRequest(runDir, nannyRequest("nanny-active"));
+  const spawned: string[] = [];
+  const context = {
+    currentDriver: "claude" as const,
+    epoch: 24,
+    peer: "codex" as const,
+    repoRoot,
+    runDir,
+  };
+  const env = {
+    LOOP_AU_PAIR_ENABLED: "1",
+    LOOP_AU_PAIR_MAX_CONCURRENCY: "4",
+    LOOP_AU_PAIR_URL: "http://127.0.0.1:9998/v1/chat/completions",
+    LOOP_NANNY_ENABLED: "1",
+    LOOP_NANNY_MAX_CONCURRENCY: "1",
+    LOOP_NANNY_URL: "http://127.0.0.1:9999/v1/chat/completions",
+  };
+  const deps = {
+    spawnWorker: ({ jobId }: { jobId: string }) => {
+      spawned.push(jobId);
+      return true;
+    },
+  };
+  try {
+    await processPendingUtilityRoutes(context, env, deps);
+    appendUtilityRouteRequest(runDir, nannyRequest("nanny-waiting"));
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["propose one scoped edit"],
+        authority: {},
+        id: "au-pair-ready",
+        kind: "edit",
+        objective: "Propose a bounded update to the sample value",
+        readScope: ["src/sample.ts"],
+        requester: "claude",
+        requiredCapabilities: ["inspect", "scoped-edit"],
+        risk: "low",
+        writeScope: ["src/sample.ts"],
+      })
+    );
+
+    await processPendingUtilityRoutes(context, env, deps);
+
+    expect(spawned).toEqual(["nanny-active", "au-pair-ready"]);
+    expect(readUtilityJob(runDir, "nanny-waiting")?.state).toBe(
+      "pending-route"
+    );
+    expect(readUtilityJob(runDir, "au-pair-ready")).toMatchObject({
+      decision: { tierId: "utility-au-pair" },
+      state: "routed-utility",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("unprofiled bounded inspections fail closed when Nanny is unavailable", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-nanny-unavailable-"));
   const runDir = join(repoRoot, ".loop", "runs", "nanny-unavailable");
@@ -941,6 +1017,66 @@ test("peer-routed reviews preserve the requester and ask the peer to act", async
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test.each([
+  {
+    authority: {},
+    expectedReason: "request-not-bounded",
+    kind: "inspect" as const,
+    objective: "Inspect an intentionally unbounded request",
+  },
+  {
+    authority: { release: true },
+    expectedReason: "authority-needs-human",
+    kind: "authority" as const,
+    objective: "Approve a release decision",
+  },
+])(
+  "non-peer $expectedReason outcomes return to the requester instead of the current driver",
+  async ({ authority, expectedReason, kind, objective }) => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "loop-requester-route-"));
+    const runDir = join(repoRoot, ".loop", "runs", expectedReason);
+    mkdirSync(runDir, { recursive: true });
+    const request = createUtilityRouteRequest({
+      acceptanceCriteria: ["return the route outcome"],
+      authority,
+      id: `requester-${expectedReason}`,
+      kind,
+      objective,
+      readScope: [],
+      requester: "codex",
+      requiredCapabilities: [],
+      risk: "low",
+      writeScope: [],
+    });
+    appendUtilityRouteRequest(runDir, request);
+    try {
+      await processPendingUtilityRoutes({
+        currentDriver: "claude",
+        epoch: 20,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      });
+
+      const messages = readBridgeEvents(runDir).filter(
+        (event) => event.kind === "message"
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        source: "utility",
+        target: "codex",
+        taskId: request.id,
+      });
+      expect(messages[0]?.message).toContain(
+        `returned to requester codex: ${expectedReason}`
+      );
+      expect(messages[0]?.target).not.toBe("claude");
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  }
+);
 
 test("safe key diagnostics persist in routing observability, not the output-only worker pane", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-diagnostic-"));
@@ -1502,12 +1638,14 @@ test("worker pane is a colored output-only request, tool, and response stream", 
     expect(pane).toContain("\u001b[36m");
     expect(pane).toContain("\u001b[34m");
     expect(pane).toContain("\u001b[32m");
-    expect(pane).toContain("AU PAIR TOOL");
+    expect(pane).toContain("GLM · search_repo ok 12ms");
     expect(pane).toContain("search_repo ok 12ms");
-    expect(pane).toContain("CODEX→AU PAIR");
+    expect(pane).toContain("CODEX→GLM");
     expect(pane).toContain("read utility-runtime.ts lines 1221–1290");
-    expect(pane).toContain("AU PAIR OK");
+    expect(pane).toContain("GLM OK");
     expect(pane).not.toContain("inspect-config");
+    expect(pane).not.toContain("glm-5.2");
+    expect(pane).not.toContain("AU PAIR");
     expect(pane).toContain("Inspected the requested lines");
     expect(pane).toContain("Found the active configuration");
     expect(pane).not.toContain("USAGE");
@@ -1537,10 +1675,10 @@ test("worker pane is a colored output-only request, tool, and response stream", 
     expect(
       compact.split("\n").every((line) => visiblePane(line).length <= 58)
     ).toBe(true);
-    expect(compact).toContain("CODEX→AU PAIR");
-    expect(compact).toContain("AU PAIR TOOL");
+    expect(compact).toContain("CODEX→GLM");
+    expect(compact).toContain("GLM · search_repo ok 12ms");
     expect(compact).toContain("search_repo ok 12ms");
-    expect(compact).toContain("AU PAIR OK");
+    expect(compact).toContain("GLM OK");
     expect(visiblePane(compact).replaceAll(/\s+/g, " ")).toContain(
       "Found the active configuration"
     );
@@ -1594,11 +1732,11 @@ test("utility pane keeps a failed worker response visible within its viewport", 
       result: {
         artifactRefs: [],
         blocker:
-          "Worker token cap exceeded before a source-backed response could be produced.",
+          "Au Pair token cap exceeded before a source-backed response could be produced.",
         checks: [],
         filesChanged: [],
         status: "failed",
-        summary: "Worker failed closed.",
+        summary: "Au Pair failed closed.",
       },
     });
 
@@ -1611,9 +1749,10 @@ test("utility pane keeps a failed worker response visible within its viewport", 
     expect(lines.length).toBeLessThanOrEqual(12);
     expect(lines.length).toBeGreaterThanOrEqual(5);
     expect(lines.every((line) => visiblePane(line).length <= 52)).toBe(true);
-    expect(pane).toContain("AU PAIR FAIL");
+    expect(pane).toContain("GLM FAIL");
+    expect(pane).toContain("GLM token cap exceeded");
     expect(pane).not.toContain("failed-pane");
-    expect(pane).toContain("Worker token cap exceeded");
+    expect(pane).not.toContain("Au Pair");
 
     const tiny = renderUtilityPane(
       runDir,
@@ -1787,7 +1926,7 @@ test("a new governess epoch fences an orphaned utility claim", async () => {
   }
 });
 
-test("peer routing is relative to the requester, not the current driver", async () => {
+test("requester routing is relative to the requester, not the current driver", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-peer-"));
   const runDir = join(repoRoot, ".loop", "runs", "peer-run");
   mkdirSync(runDir, { recursive: true });
@@ -1819,7 +1958,13 @@ test("peer routing is relative to the requester, not the current driver", async 
       },
       state: "routed-requester",
     });
-    expect(readBridgeEvents(runDir)).toEqual([]);
+    expect(readBridgeEvents(runDir)).toEqual([
+      expect.objectContaining({
+        source: "utility",
+        target: "claude",
+        taskId: request.id,
+      }),
+    ]);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -2142,7 +2287,7 @@ test("context-insufficient response escalates once without evidence retries", as
       }),
     ]);
     const pane = visiblePane(renderUtilityPane(runDir));
-    expect(pane).toContain("AU PAIR CONTEXT");
+    expect(pane).toContain("MODEL CONTEXT");
     expect(pane).toContain("Context insufficient; requester notified.");
     expect(pane).not.toContain("DO-NOT-PANE-CONTEXT-9987");
     expect(pane).not.toContain("CONTEXT_INSUFFICIENT");

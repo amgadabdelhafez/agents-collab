@@ -1,0 +1,7 @@
+{
+  "task_id": "recon-pane-signal-density",
+  "scanned_at": "2026-07-28T02:36:12Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}
