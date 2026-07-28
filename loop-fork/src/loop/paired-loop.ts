@@ -14,6 +14,7 @@ import {
   formatBridgeDeliveryMessage,
 } from "./bridge-message-format";
 import type { BridgeMessage } from "./bridge-store";
+import { cavemanAgentGuidance, DEFAULT_CAVEMAN_MODE } from "./caveman";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
 import {
@@ -279,6 +280,13 @@ const nextResumeId = (state: PairedState, agent: Agent): string | undefined => {
   return value || undefined;
 };
 
+const withCavemanGuidance = (prompt: string, opts: Options): string => {
+  const guidance = cavemanAgentGuidance(
+    opts.cavemanMode ?? DEFAULT_CAVEMAN_MODE
+  );
+  return guidance ? `${prompt}\n\n${guidance}` : prompt;
+};
+
 const tryRunPairedAgent = async (
   state: PairedState,
   agent: Agent,
@@ -286,11 +294,12 @@ const tryRunPairedAgent = async (
   kind: "review" | "work" = "work"
 ): Promise<RunResult | undefined> => {
   const sessionId = nextResumeId(state, agent);
+  const guidedPrompt = withCavemanGuidance(prompt, state.options);
   try {
     const result =
       kind === "review"
-        ? await runReviewerAgent(agent, prompt, state.options, sessionId)
-        : await runAgent(agent, prompt, state.options, sessionId);
+        ? await runReviewerAgent(agent, guidedPrompt, state.options, sessionId)
+        : await runAgent(agent, guidedPrompt, state.options, sessionId);
     updateIds(state);
     return result;
   } catch (error) {
@@ -378,7 +387,12 @@ const startPair = async (state: PairedState): Promise<void> => {
 
 const createPairedReview = (state: PairedState) =>
   createRunReviewWithPrompt(reviewBridgePrompt, (reviewer, prompt, opts) =>
-    runReviewerAgent(reviewer, prompt, opts, nextResumeId(state, reviewer))
+    runReviewerAgent(
+      reviewer,
+      withCavemanGuidance(prompt, opts),
+      opts,
+      nextResumeId(state, reviewer)
+    )
   );
 
 const handleDoneSignal = async (

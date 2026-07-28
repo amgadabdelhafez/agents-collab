@@ -196,6 +196,16 @@ export const applyPairedOptions = (
   // prompt contract bound to those actual agents instead of a new CLI default.
   restorePersistedTmuxPair(opts, manifest, livePersistedTmux);
   opts.pairWith ??= defaultPeerAgent(opts.agent);
+  if (
+    livePersistedTmux &&
+    manifest?.cavemanMode &&
+    opts.cavemanModeSource === "cli" &&
+    opts.cavemanMode !== manifest.cavemanMode
+  ) {
+    throw new Error(
+      `Cannot change --caveman from ${manifest.cavemanMode} to ${opts.cavemanMode} while reusing live tmux agents; start a new loop so both agents receive the selected guidance`
+    );
+  }
   const resumedSessionIds = pairedSessionIds(
     opts,
     manifest,

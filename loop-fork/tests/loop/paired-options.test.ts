@@ -289,6 +289,18 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
       claudeSessionId: "live-legacy-claude",
       codexThreadId: "live-legacy-codex",
     });
+    const liveModeChange = makeOptions({
+      cavemanMode: "full",
+      cavemanModeSource: "cli",
+      pairedMode: true,
+      resumeRunId: "75",
+      tmux: true,
+    });
+    expect(() =>
+      preparePairedRun(liveModeChange, alternatePairCwd, () => true)
+    ).toThrow(
+      "Cannot change --caveman from off to full while reusing live tmux agents"
+    );
 
     const staleTmuxStorage = resolveRunStorage("76", alternatePairCwd, home);
     writeRunManifest(

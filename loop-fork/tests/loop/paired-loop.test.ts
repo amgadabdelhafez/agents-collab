@@ -258,6 +258,38 @@ test("runPairedLoop starts the non-primary peer session in review mode", async (
   ]);
 });
 
+test("non-tmux paired prompts apply Caveman guidance with an exact off switch", async () => {
+  const module = await loadPairedLoop();
+  const prompts: string[] = [];
+  runAgentImpl = (_agent, prompt) => {
+    prompts.push(prompt);
+    return Promise.resolve(makeResult("<done/>"));
+  };
+
+  await withTempHome("12", async () => {
+    await module.runPairedLoop(
+      "Ship feature",
+      makeOptions({
+        cavemanMode: "full",
+        cavemanModeSource: "cli",
+      })
+    );
+  });
+  expect(prompts[0]).toContain("CAVEMAN MODE ACTIVE — level: full");
+
+  prompts.length = 0;
+  await withTempHome("13", async () => {
+    await module.runPairedLoop(
+      "Ship feature",
+      makeOptions({
+        cavemanMode: "off",
+        cavemanModeSource: "cli",
+      })
+    );
+  });
+  expect(prompts[0]).not.toContain("CAVEMAN MODE ACTIVE");
+});
+
 test("runPairedLoop resolves a stored raw session id back to its run manifest", async () => {
   const module = await loadPairedLoop();
   const home = makeTempHome();
@@ -915,7 +947,7 @@ test("runPairedLoop does not duplicate bridged peer review notes in the next pro
 
   try {
     await withTempHome("10", async (runDir) => {
-      runAgentImpl = (agent, prompt) => {
+      runAgentImpl = (_agent, prompt) => {
         if (prompt.includes("Review this completed work")) {
           appendBridgeMessage(runDir, {
             at: "2026-03-22T10:02:00.000Z",

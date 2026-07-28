@@ -33,7 +33,9 @@ execute an unpinned remote script.
 6. The selected main/helper modes are persisted in the run manifest and visible
    in Governess so a run's communication contract is auditable.
 7. New modes apply at new session launch. Resuming an existing paired run retains
-   its persisted modes unless the operator explicitly overrides them.
+   its persisted modes. A non-tmux resume can explicitly override them because
+   every agent invocation receives the guidance; a live tmux resume rejects a
+   different main-agent mode because its existing panes cannot be re-prompted.
 
 ## Explicit non-goals
 
@@ -54,4 +56,3 @@ execute an unpinned remote script.
 - Compression never changes request bodies, tool calls, tool results, or durable
   job evidence.
 - `off` produces prompts equivalent to the pre-integration behavior.
-
