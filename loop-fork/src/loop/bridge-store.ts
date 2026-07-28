@@ -432,7 +432,7 @@ export const readBridgeStatus = (runDir: string): BridgeStatus => {
   const hasTmuxSession = Boolean(tmuxSession);
   return {
     bridgeServer: BRIDGE_SERVER,
-    claudeBridgeMode: hasTmuxSession ? "local-registration" : "mcp-config",
+    claudeBridgeMode: "mcp-config",
     claudeChannelServer: runId
       ? resolveClaudeChannelServerName(
           runId,

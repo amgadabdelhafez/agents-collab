@@ -113,7 +113,8 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
     singleBridgeTransportGuidance,
     mandatoryUtilityDelegationGuidance(
-      quotedBridgeTool(agent, "route_task")
+      quotedBridgeTool(agent, "route_task"),
+      agent === opts.agent ? "active" : "on-request"
     ),
     `Ask ${peer} for validation and feedback after every few concrete steps, after meaningful design choices, and before finalizing. Include what changed, what proof ran, and what you want checked.`,
     "Use AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.",
@@ -127,9 +128,7 @@ const bridgeToolGuidance = (agent: Agent): string => {
   return [
     `You can use the MCP tools ${quotedBridgeTool(agent, "send_message")}, ${quotedBridgeTool(agent, "bridge_status")}, and ${quotedBridgeTool(agent, "receive_messages")} for direct paired-agent coordination.`,
     singleBridgeTransportGuidance,
-    mandatoryUtilityDelegationGuidance(
-      quotedBridgeTool(agent, "route_task")
-    ),
+    mandatoryUtilityDelegationGuidance(quotedBridgeTool(agent, "route_task")),
     pollingNote,
     "Do not ask the human to relay messages between agents.",
   ].join("\n");

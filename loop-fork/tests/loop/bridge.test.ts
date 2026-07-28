@@ -417,7 +417,7 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
   );
 
   expect(bridge.readBridgeRuntimeStatus(liveRunDir)).toMatchObject({
-    claudeBridgeMode: "local-registration",
+    claudeBridgeMode: "mcp-config",
     claudeChannelServer: bridge.claudeChannelServerName("8", "repo-123"),
     codexDeliveryMode: "tmux-proxy",
     hasCodexRemote: true,
@@ -425,7 +425,7 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
     hasTmuxSession: true,
   });
   expect(bridge.readBridgeRuntimeStatus(staleRunDir)).toMatchObject({
-    claudeBridgeMode: "local-registration",
+    claudeBridgeMode: "mcp-config",
     claudeChannelServer: bridge.claudeChannelServerName("9", "repo-123"),
     codexDeliveryMode: "app-server",
     hasCodexRemote: true,
@@ -1912,7 +1912,7 @@ test("bridge runtime status reports live tmux delivery with a run-scoped Claude 
   );
 
   expect(bridge.readBridgeRuntimeStatus(runDir)).toMatchObject({
-    claudeBridgeMode: "local-registration",
+    claudeBridgeMode: "mcp-config",
     claudeChannelServer: "loop-bridge-repo-123-8",
     codexDeliveryMode: "tmux",
     hasCodexRemote: false,

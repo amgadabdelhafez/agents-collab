@@ -589,6 +589,32 @@ const jobResultLabel = (job: UtilityJobSnapshot): string => {
   return job.result?.status === "completed" ? `${role} OK` : `${role} FAIL`;
 };
 
+const isLegacyPanePlaceholder = (value: string | undefined): boolean => {
+  const text = value?.trim();
+  if (!text) {
+    return false;
+  }
+  return (
+    /^Completed with \d+ tool calls?, \d+ artifacts?, and \d+ checks?\.$/.test(
+      text
+    ) || /^(?:Nanny|Au Pair) failed closed; requester notified\.$/.test(text)
+  );
+};
+
+const utilityResultDetail = (job: UtilityJobSnapshot): string => {
+  const result = job.result;
+  if (!result) {
+    return job.request.objective;
+  }
+  if (result.paneSummary && !isLegacyPanePlaceholder(result.paneSummary)) {
+    return result.paneSummary;
+  }
+  if (result.status !== "completed" && result.blocker) {
+    return result.blocker;
+  }
+  return result.summary || result.paneSummary || job.request.objective;
+};
+
 const jobResultEntry = (
   job: UtilityJobSnapshot,
   usageEvent: Record<string, unknown> | undefined
@@ -596,17 +622,13 @@ const jobResultEntry = (
   if (!job.result) {
     return undefined;
   }
-  const failed = job.result.status !== "completed";
-  const detail =
-    job.result.paneSummary ??
-    (failed ? job.result.blocker || job.result.summary : job.result.summary);
   const usage = transcriptUsage(usageEvent);
   return {
     at: job.updatedAt,
     jobId: job.jobId,
     kind: "response",
     label: jobResultLabel(job),
-    text: sanitizeUtilityPaneText(detail),
+    text: sanitizeUtilityPaneText(utilityResultDetail(job)),
     ...(usage ? { usage } : {}),
   };
 };
@@ -721,12 +743,7 @@ export const readUtilityObservability = (
   const latest = latestJob(jobs);
   const latestDecision = latestJob(allJobs.filter((job) => job.decision));
   const latestDetail = latest
-    ? sanitizeUtilityPaneText(
-        latest.result?.paneSummary ||
-          latest.result?.blocker ||
-          latest.result?.summary ||
-          latest.request.objective
-      )
+    ? sanitizeUtilityPaneText(utilityResultDetail(latest))
     : "waiting for first routed job";
   return {
     active: jobs.filter((job) => ["claimed", "running"].includes(job.state))

@@ -237,6 +237,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
         artifactRefs: [],
         checks: [],
         filesChanged: [],
+        paneSummary: "Completed with 1 tool calls, 0 artifacts, and 0 checks.",
         status: "completed",
         summary: "The active value is safe and source-backed.\u0007",
       },
@@ -269,6 +270,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
         blocker: "Au Pair token cap exceeded",
         checks: [],
         filesChanged: [],
+        paneSummary: "Au Pair failed closed; requester notified.",
         status: "failed",
         summary: "Au Pair failed closed.",
       },
@@ -428,6 +430,9 @@ test("utility observability totals worker usage and builds a safe transcript", (
     });
     const transcript = snapshot.transcript.map((entry) => entry.text).join(" ");
     expect(transcript).toContain("Au Pair token cap exceeded");
+    expect(transcript).toContain("The active value is safe and source-backed.");
+    expect(transcript).not.toContain("Completed with 1 tool calls");
+    expect(transcript).not.toContain("requester notified");
     expect(transcript).not.toContain("raw tool output");
     expect(transcript).not.toContain("Project instructions");
     expect(transcript).not.toContain("hidden prompt");

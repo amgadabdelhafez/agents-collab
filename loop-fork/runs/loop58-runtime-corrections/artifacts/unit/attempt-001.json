@@ -1,0 +1,20 @@
+{
+  "task_id": "loop58-runtime-corrections",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-28T06:16:59Z",
+  "ended_at": "2026-07-28T06:17:08Z",
+  "artifact": "runs/loop58-runtime-corrections/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/utility-runtime.test.ts",
+    "tests/loop/utility-tools.test.ts",
+    "tests/loop/delegation-policy.test.ts",
+    "tests/loop/tmux.test.ts",
+    "tests/loop/bridge.test.ts"
+  ]
+}

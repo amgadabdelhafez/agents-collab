@@ -5838,7 +5838,7 @@ export const defaultGovernessDeps = (
   },
   render: (text) => {
     // Clear the pane and print the fresh board.
-    process.stdout.write(`\x1b[2J\x1b[H${text}`);
+    process.stdout.write(`\x1b[3J\x1b[2J\x1b[H${text}`);
   },
   respawnPane: (pane) => {
     spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });

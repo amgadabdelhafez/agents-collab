@@ -1502,11 +1502,12 @@ test("worker pane is a colored output-only request, tool, and response stream", 
     expect(pane).toContain("\u001b[36m");
     expect(pane).toContain("\u001b[34m");
     expect(pane).toContain("\u001b[32m");
-    expect(pane).toContain("AU PAIR TOOL inspect-");
+    expect(pane).toContain("AU PAIR TOOL");
     expect(pane).toContain("search_repo ok 12ms");
-    expect(pane).toContain("CODEX→AU PAIR inspect-");
+    expect(pane).toContain("CODEX→AU PAIR");
     expect(pane).toContain("read utility-runtime.ts lines 1221–1290");
-    expect(pane).toContain("AU PAIR OK inspect-");
+    expect(pane).toContain("AU PAIR OK");
+    expect(pane).not.toContain("inspect-config");
     expect(pane).toContain("Inspected the requested lines");
     expect(pane).toContain("Found the active configuration");
     expect(pane).not.toContain("USAGE");
@@ -1536,10 +1537,10 @@ test("worker pane is a colored output-only request, tool, and response stream", 
     expect(
       compact.split("\n").every((line) => visiblePane(line).length <= 58)
     ).toBe(true);
-    expect(compact).toContain("CODEX→AU PAIR inspect-");
-    expect(compact).toContain("AU PAIR TOOL inspect-");
+    expect(compact).toContain("CODEX→AU PAIR");
+    expect(compact).toContain("AU PAIR TOOL");
     expect(compact).toContain("search_repo ok 12ms");
-    expect(compact).toContain("AU PAIR OK inspect-");
+    expect(compact).toContain("AU PAIR OK");
     expect(visiblePane(compact).replaceAll(/\s+/g, " ")).toContain(
       "Found the active configuration"
     );
@@ -1610,7 +1611,8 @@ test("utility pane keeps a failed worker response visible within its viewport", 
     expect(lines.length).toBeLessThanOrEqual(12);
     expect(lines.length).toBeGreaterThanOrEqual(5);
     expect(lines.every((line) => visiblePane(line).length <= 52)).toBe(true);
-    expect(pane).toContain("AU PAIR FAIL failed-p");
+    expect(pane).toContain("AU PAIR FAIL");
+    expect(pane).not.toContain("failed-pane");
     expect(pane).toContain("Worker token cap exceeded");
 
     const tiny = renderUtilityPane(
@@ -1687,7 +1689,7 @@ test("Nanny and Au Pair panes show only their own tier", () => {
   }
 });
 
-test("Nanny pane includes local Qwen governess advisory usage", () => {
+test("Nanny pane excludes governess advisory and project description", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-nanny-pane-governess-"));
   try {
     writeFileSync(
@@ -1721,9 +1723,10 @@ test("Nanny pane includes local Qwen governess advisory usage", () => {
       )
     );
 
-    expect(nanny).toContain("NANNY QWEN");
-    expect(nanny).toContain("governess advisory · 7 calls · 4321 tok");
-    expect(nanny).toContain("Reviewed pair progress");
+    expect(nanny).toContain("waiting for first request");
+    expect(nanny).not.toContain("NANNY QWEN");
+    expect(nanny).not.toContain("governess advisory");
+    expect(nanny).not.toContain("Reviewed pair progress");
     expect(auPair).not.toContain("governess advisory");
   } finally {
     rmSync(runDir, { recursive: true, force: true });

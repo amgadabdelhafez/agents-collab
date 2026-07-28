@@ -48,6 +48,7 @@ export type DelegationOperation =
   | "git-inspect"
   | "git-status"
   | "large-read"
+  | "line-count"
   | "read-plan"
   | "scoped-search"
   | "source-slice"
@@ -96,6 +97,7 @@ const MAX_COMMAND_LENGTH = 2000;
 const MAX_WORKSPACE_HINT_PREFIX = 1024;
 const MAX_PATTERN_LENGTH = 256;
 const MAX_SCOPES = 4;
+const MAX_LINE_COUNT_FILES = 8;
 const MAX_READ_PLAN_SCOPES = 12;
 const MAX_READ_PLAN_STEPS = 8;
 const MAX_READ_PLAN_LABEL_STAGES = 6;
@@ -275,6 +277,14 @@ const physicalResolve = (
 const isExistingNonFile = (target: string): boolean => {
   try {
     return !statSync(target).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const isExistingRegularFile = (target: string): boolean => {
+  try {
+    return statSync(target).isFile();
   } catch {
     return false;
   }
@@ -1458,6 +1468,66 @@ const classifyFocusedCheck = (
   };
 };
 
+const classifyLineCount = (
+  intent: DelegationToolIntent,
+  argv: string[]
+): DelegationClassification | undefined => {
+  if (argv[0] !== "wc") {
+    return undefined;
+  }
+  if (argv[1] !== "-l") {
+    return {
+      eligible: false,
+      ...exempt(intent, "command-not-in-delegation-grammar"),
+    };
+  }
+  const requestedPaths = argv.slice(2);
+  if (
+    requestedPaths.length < 1 ||
+    requestedPaths.length > MAX_LINE_COUNT_FILES ||
+    requestedPaths.some((path) => path.startsWith("-"))
+  ) {
+    return {
+      eligible: false,
+      ...exempt(intent, "line-count-not-bounded"),
+    };
+  }
+  const scopes = requestedPaths.map((path) =>
+    safeScope(intent.repoRoot, intent.cwd, path, false, true)
+  );
+  if (scopes.some((scope) => !scope)) {
+    return {
+      eligible: false,
+      ...exempt(intent, "line-count-without-safe-files"),
+    };
+  }
+  const safeScopes = scopes as string[];
+  if (
+    safeScopes.some(
+      (scope) => !isExistingRegularFile(join(intent.repoRoot, scope))
+    )
+  ) {
+    return {
+      eligible: false,
+      ...exempt(intent, "line-count-target-not-file"),
+    };
+  }
+  return {
+    eligible: true,
+    ...request(
+      intent,
+      "line-count",
+      "inspect",
+      `Count newline characters in these exact files using one count_lines call: ${JSON.stringify(safeScopes)}. Do not invoke run_check.`,
+      [
+        "Return one exact wc -l-compatible count per file without file contents.",
+      ],
+      safeScopes,
+      ["inspect"]
+    ),
+  };
+};
+
 const classifyDirectoryList = (
   intent: DelegationToolIntent,
   argv: string[]
@@ -1954,6 +2024,7 @@ const classifyReadOnlyArgv = (
   classifyDirectoryList(intent, argv) ??
   classifyCatCommand(intent, argv) ??
   classifySourceSlice(intent, argv) ??
+  classifyLineCount(intent, argv) ??
   classifyFocusedCheck(intent, argv);
 
 const isLiteralEchoLabel = (tokens: ShellToken[]): boolean => {

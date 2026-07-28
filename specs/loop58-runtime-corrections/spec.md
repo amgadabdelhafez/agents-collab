@@ -11,7 +11,7 @@ that actually launched the run:
    causing Claude to perform costly context gathering before a review request;
 3. a bounded five-file line-count request routed to Au Pair but failed with
    `command_denied` because the broker has no native line-count operation;
-4. the live processes must be refreshed without losing Codex work or silently
+4. the control/helper processes must be refreshed without losing Claude or Codex work or silently
    changing the task's release, product, or acquisition gates.
 
 ## Goal
@@ -59,17 +59,20 @@ fixes with a narrow, verified hot-swap.
 
 11. Focused tests, the full loop suite, build, diff hygiene, Harness preflight,
     and stop-gate must pass before hot-swap.
-12. Preserve the live Codex pane/process and all Harvto task worktrees. Restart
-    only surfaces whose loaded prompt/config/tool implementation must change.
-13. Remove the old home-scoped Loop-58 bridge only after its replacement is
-    live, with a recoverable config backup.
-14. Verify live reviewer dormancy, requestor-correct bridge delivery, a
-    successful bounded line-count canary, and no home-level loop bridge.
+12. Preserve both live main-agent panes/processes and all Harvto task
+    worktrees. Restart only Governess, Nanny, and Au Pair.
+13. Back up the home Claude registry, garbage-collect stale loop bridges, and
+    retain the current live Loop-58 bridge until Claude exits so its unchanged
+    pane command remains recoverable. Fresh runs must use strict run-scoped MCP
+    config and never add another home registration.
+14. Verify the dormant reviewer contract in prompt tests (it applies on the
+    next fresh reviewer launch), requestor-correct bridge delivery, a
+    successful bounded line-count canary, and no stale home-level loop bridges.
 
 ## Non-goals
 
 - Changing Harvto's task scope, T4 gate, product/release decisions, sampling
   constants, or acquisition data.
 - Giving local models general shell access.
-- Restarting or compacting Codex.
+- Restarting or compacting Claude or Codex.
 - Merging or pushing a branch.

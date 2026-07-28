@@ -110,6 +110,7 @@ test("publishes provider-agnostic definitions for bounded tools", () => {
   expect(UTILITY_TOOL_DEFINITIONS.map((tool) => tool.function.name)).toEqual([
     "search_repo",
     "read_file",
+    "count_lines",
     "list_files",
     "git_status",
     "git_diff",
@@ -117,6 +118,87 @@ test("publishes provider-agnostic definitions for bounded tools", () => {
     "run_check",
     "propose_patch",
   ]);
+});
+
+test("counts lines across bounded files without spawning a command", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", "no-final-newline.ts"), "a\nb");
+    const runCommand = mock(() =>
+      Promise.resolve({ exitCode: 0, stderr: "", stdout: "unexpected" })
+    );
+    const broker = await brokerFor(root, runCommand);
+    const result = await broker.execute({
+      arguments: {
+        paths: [
+          "src/hello.ts",
+          "src/no-final-newline.ts",
+          "tests/example.test.ts",
+        ],
+      },
+      name: "count_lines",
+    });
+
+    expect(result).toMatchObject({
+      data: {
+        files: [
+          { lines: 1, path: "src/hello.ts" },
+          { lines: 1, path: "src/no-final-newline.ts" },
+          { lines: 1, path: "tests/example.test.ts" },
+        ],
+      },
+      ok: true,
+    });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+test("rejects unsafe or oversized line-count requests", async () => {
+  await withRepo(async (root) => {
+    const broker = await brokerFor(root);
+    const empty = await broker.execute({
+      arguments: { paths: [] },
+      name: "count_lines",
+    });
+    const duplicate = await broker.execute({
+      arguments: { paths: ["src/hello.ts", "src/hello.ts"] },
+      name: "count_lines",
+    });
+    const directory = await broker.execute({
+      arguments: { paths: ["src"] },
+      name: "count_lines",
+    });
+    const outside = await broker.execute({
+      arguments: { paths: ["package.json"] },
+      name: "count_lines",
+    });
+    const tooMany = await broker.execute({
+      arguments: {
+        paths: Array.from({ length: 9 }, (_, index) => `src/file-${index}.ts`),
+      },
+      name: "count_lines",
+    });
+
+    expect(empty).toMatchObject({
+      error: { code: "invalid_arguments" },
+      ok: false,
+    });
+    expect(duplicate).toMatchObject({
+      error: { code: "invalid_arguments" },
+      ok: false,
+    });
+    expect(directory).toMatchObject({
+      error: { code: "path_denied" },
+      ok: false,
+    });
+    expect(outside).toMatchObject({
+      error: { code: "scope_denied" },
+      ok: false,
+    });
+    expect(tooMany).toMatchObject({
+      error: { code: "invalid_arguments" },
+      ok: false,
+    });
+  });
 });
 
 test("exposes and enforces only the tools allowed for an exact request", async () => {

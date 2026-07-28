@@ -3,13 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
 import {
-  registerClaudeChannelServer,
-  removeClaudeChannelServer,
-} from "./bridge-claude-registration";
-import {
   buildClaudeChannelServerConfig,
   claudeChannelServerName,
-  legacyClaudeChannelServerName,
   resolveClaudeChannelServerName,
 } from "./bridge-config";
 import {
@@ -239,7 +234,8 @@ const quotedClaudeTmuxBridgeTool = (
 const pairedBridgeGuidance = (
   agent: Agent,
   target: Agent,
-  serverName: string
+  serverName: string,
+  activation: "active" | "on-request" = "active"
 ): string => {
   const peer = capitalize(target);
   if (agent === "claude") {
@@ -247,7 +243,8 @@ const pairedBridgeGuidance = (
       `Your bridge MCP server is "${serverName}". Use ${quotedClaudeTmuxBridgeTool(serverName, "send_message")} with target: "${target}" for ${peer}-facing messages, including replies to inbound ${peer} channel messages; do not send ${peer}-facing responses as a human-facing message.`,
       singleBridgeTransportGuidance,
       mandatoryUtilityDelegationGuidance(
-        quotedClaudeTmuxBridgeTool(serverName, "route_task")
+        quotedClaudeTmuxBridgeTool(serverName, "route_task"),
+        activation
       ),
       `For a returned Au Pair edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
       `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
@@ -257,7 +254,10 @@ const pairedBridgeGuidance = (
   return [
     `Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with target: "${target}" for ${peer}-facing messages, not a human-facing message.`,
     singleBridgeTransportGuidance,
-    mandatoryUtilityDelegationGuidance(quotedBridgeTool(agent, "route_task")),
+    mandatoryUtilityDelegationGuidance(
+      quotedBridgeTool(agent, "route_task"),
+      activation
+    ),
     `For a returned Au Pair edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
     `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
   ].join("\n");
@@ -330,7 +330,7 @@ const buildPeerPrompt = (
     `You are ${capitalize(agent)}. Do not start implementing or verifying this task on your own.`,
   ];
   appendProofPrompt(parts, opts.proof);
-  parts.push(pairedBridgeGuidance(agent, opts.agent, serverName));
+  parts.push(pairedBridgeGuidance(agent, opts.agent, serverName, "on-request"));
   parts.push(pairedWorkflowGuidance(opts, agent));
   parts.push(
     `Wait for ${primary} to send you a targeted request or review ask.`
@@ -389,7 +389,7 @@ const buildInteractivePeerPrompt = (
     `You are ${capitalize(agent)}. Stay idle until ${primary} sends a specific request or the human clearly assigns you separate work.`,
   ];
   appendProofPrompt(parts, opts.proof);
-  parts.push(pairedBridgeGuidance(agent, opts.agent, serverName));
+  parts.push(pairedBridgeGuidance(agent, opts.agent, serverName, "on-request"));
   parts.push(pairedWorkflowGuidance(opts, agent));
   parts.push(
     `If ${primary} asks for a plan review, review PLAN.md only, suggest concrete fixes, and wait for the next request.`
@@ -452,7 +452,8 @@ const buildClaudeCommand = (
   channelServer: string,
   resume: boolean,
   prompt?: string,
-  settingsPath?: string
+  settingsPath?: string,
+  mcpConfigPath?: string
 ): string[] => {
   const args = [
     "claude",
@@ -462,6 +463,9 @@ const buildClaudeCommand = (
     model,
     "--effort",
     DEFAULT_CLAUDE_DRIVER_EFFORT,
+    ...(mcpConfigPath
+      ? ["--mcp-config", mcpConfigPath, "--strict-mcp-config"]
+      : []),
     "--dangerously-load-development-channels",
     `server:${channelServer}`,
     "--dangerously-skip-permissions",
@@ -1179,6 +1183,8 @@ const startNannyPane = (
   runDir: string
 ): string => {
   const command = buildShellCommand([
+    "env",
+    ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
     ...deps.launchArgv,
     NANNY_PANE_SUBCOMMAND,
     runDir,
@@ -1206,21 +1212,11 @@ const startNannyPane = (
   return pane;
 };
 
-const registerClaudeChannelServerForRun = (
-  deps: TmuxDeps,
-  serverName: string,
-  runDir: string
-): void => {
-  registerClaudeChannelServer(deps.launchArgv, serverName, runDir, (args) =>
-    deps.spawn(args)
-  );
-};
-
 const cleanupFailedPairedSessionStart = (
   deps: TmuxDeps,
   session: string,
-  serverName: string | undefined,
-  runId: string
+  _serverName: string | undefined,
+  _runId: string
 ): void => {
   try {
     if (sessionExists(session, deps.spawn)) {
@@ -1228,13 +1224,6 @@ const cleanupFailedPairedSessionStart = (
     }
   } catch {
     // Best-effort cleanup after a failed paired startup.
-  }
-  for (const name of new Set(
-    [serverName, legacyClaudeChannelServerName(runId)].filter(
-      (value): value is string => Boolean(value)
-    )
-  )) {
-    removeClaudeChannelServer(name, (args) => deps.spawn(args), deps.log);
   }
 };
 
@@ -1316,6 +1305,7 @@ const resolveTmuxPaneAgents = (
 const buildPairedAgentCommand = ({
   agent,
   claudeChannelServer,
+  claudeMcpConfigPath,
   claudeSessionId,
   claudeSettingsPath,
   codexBypassHookTrust,
@@ -1326,6 +1316,7 @@ const buildPairedAgentCommand = ({
 }: {
   agent: Agent;
   claudeChannelServer: string | undefined;
+  claudeMcpConfigPath?: string;
   claudeSessionId: string;
   claudeSettingsPath?: string;
   codexBypassHookTrust?: boolean;
@@ -1345,7 +1336,8 @@ const buildPairedAgentCommand = ({
       claudeChannelServer,
       hadSession,
       prompt,
-      claudeSettingsPath
+      claudeSettingsPath,
+      claudeMcpConfigPath
     );
   }
   if (agent === "codex") {
@@ -1649,13 +1641,10 @@ const startPairedSession = async (
         manifest.claudeChannelServer
       )
     : undefined;
-  if (claudeChannelServer) {
-    registerClaudeChannelServerForRun(
-      deps,
-      claudeChannelServer,
-      storage.runDir
-    );
-  }
+  const claudeMcpConfigPath = claudeChannelServer
+    ? (launch.opts.claudeMcpConfigPath ??
+      join(storage.runDir, "claude-mcp.json"))
+    : undefined;
   try {
     const env = [
       ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
@@ -1691,6 +1680,7 @@ const startPairedSession = async (
       ...buildPairedAgentCommand({
         agent: paneAgents.left,
         claudeChannelServer,
+        claudeMcpConfigPath,
         claudeSessionId,
         claudeSettingsPath: governessHooks.claudeSettingsPath,
         codexBypassHookTrust: governessHooks.codexBypassHookTrust,
@@ -1706,6 +1696,7 @@ const startPairedSession = async (
       ...buildPairedAgentCommand({
         agent: paneAgents.right,
         claudeChannelServer,
+        claudeMcpConfigPath,
         claudeSessionId,
         claudeSettingsPath: governessHooks.claudeSettingsPath,
         codexBypassHookTrust: governessHooks.codexBypassHookTrust,

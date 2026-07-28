@@ -903,12 +903,10 @@ describe("delegation classifier", () => {
     ["echo hello | head -2", "command-not-in-delegation-grammar"],
     // Unquoted glob metacharacters fail closed at the tokenizer (bash expands).
     ["ls src/*.ts", "compound-or-unsafe-command"],
-    // `wc -l` left the grammar: line-count on a directory target is
-    // unsatisfiable by any broker tool and cannot be told from a file lexically.
-    ["wc -l", "command-not-in-delegation-grammar"],
-    ["wc -l src", "command-not-in-delegation-grammar"],
+    ["wc -l", "line-count-not-bounded"],
+    ["wc -l src", "line-count-target-not-file"],
     ["wc -c src/loop/tmux.ts", "command-not-in-delegation-grammar"],
-    ["wc -l ../outside.txt", "command-not-in-delegation-grammar"],
+    ["wc -l ../outside.txt", "line-count-without-safe-files"],
     // An empty quoted arg must be preserved, not silently dropped: without it
     // `rg '' src` would be misread as `rg src` (pattern "src"); with it the
     // empty pattern is correctly rejected as unbounded.
@@ -950,6 +948,37 @@ describe("delegation classifier", () => {
       eligible: false,
       reason,
     });
+  });
+
+  test("routes bounded wc line counts to the native broker tool", () => {
+    const root = mkdtempSync(join(tmpdir(), "loop-line-count-"));
+    try {
+      mkdirSync(join(root, "src"));
+      mkdirSync(join(root, "tests"));
+      writeFileSync(join(root, "src", "a.ts"), "one\ntwo\n");
+      writeFileSync(join(root, "tests", "a.test.ts"), "test\n");
+      const result = classifyDelegationIntent({
+        agent: "claude",
+        cwd: root,
+        repoRoot: root,
+        toolInput: { command: "wc -l src/a.ts tests/a.test.ts" },
+        toolName: "Bash",
+        toolUseId: "wc-1",
+      });
+      expect(result).toMatchObject({
+        eligible: true,
+        operation: "line-count",
+        request: {
+          kind: "inspect",
+          readScope: ["src/a.ts", "tests/a.test.ts"],
+          requiredCapabilities: ["inspect"],
+        },
+      });
+      expect(result.request.objective).toContain("count_lines");
+      expect(result.request.objective).toContain("Do not invoke run_check");
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
   });
 
   test("keeps repeated tool attempts distinct when hook ids differ", () => {

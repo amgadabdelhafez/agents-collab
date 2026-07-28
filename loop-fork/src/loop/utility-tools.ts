@@ -32,6 +32,7 @@ import type {
 export type UtilityToolName =
   | "search_repo"
   | "read_file"
+  | "count_lines"
   | "list_files"
   | "git_status"
   | "git_diff"
@@ -266,6 +267,7 @@ const DEPENDENCY_FILES = new Set([
   "yarn.lock",
 ]);
 const DEFAULT_PROTECTED_PATHS = [...DEFAULT_UTILITY_PROTECTED_PATHS] as const;
+const MAX_LINE_COUNT_FILES = 8;
 
 const objectSchema = (
   properties: Record<string, unknown>,
@@ -308,6 +310,25 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
           startLine: { minimum: 1, type: "integer" },
         },
         ["path"]
+      ),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "count_lines",
+      description:
+        "Count newline characters in up to eight declared regular files, matching wc -l semantics without invoking a shell.",
+      parameters: objectSchema(
+        {
+          paths: {
+            items: { minLength: 1, type: "string" },
+            maxItems: MAX_LINE_COUNT_FILES,
+            minItems: 1,
+            type: "array",
+          },
+        },
+        ["paths"]
       ),
     },
   },
@@ -1559,6 +1580,8 @@ export class UtilityToolBroker {
         return { data: await this.searchRepo(requireRecord(call.arguments)) };
       case "read_file":
         return { data: await this.readFileTool(requireRecord(call.arguments)) };
+      case "count_lines":
+        return { data: await this.countLines(requireRecord(call.arguments)) };
       case "list_files":
         return { data: await this.listFiles(requireRecord(call.arguments)) };
       case "git_status":
@@ -1984,6 +2007,67 @@ export class UtilityToolBroker {
       );
     }
     return data;
+  }
+
+  private async countLines(args: Record<string, unknown>): Promise<{
+    files: { lines: number; path: string }[];
+  }> {
+    exactArgumentKeys(args, new Set(["paths"]), "count_lines arguments");
+    const requestedPaths = optionalStringArray(args, "paths");
+    if (!(requestedPaths && requestedPaths.length > 0)) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "paths must contain at least one file"
+      );
+    }
+    if (requestedPaths.length > MAX_LINE_COUNT_FILES) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        `paths exceeds the ${MAX_LINE_COUNT_FILES}-file limit`
+      );
+    }
+    const lexicalPaths = requestedPaths.map(normalizeRequestedPath);
+    if (new Set(lexicalPaths).size !== lexicalPaths.length) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "paths contains duplicate files"
+      );
+    }
+
+    const files: { lines: number; path: string }[] = [];
+    const canonicalPaths = new Set<string>();
+    for (const requestedPath of lexicalPaths) {
+      const target = await this.resolvePath(requestedPath, "read", true);
+      if (canonicalPaths.has(target.absolute)) {
+        throw new ToolPolicyError(
+          "invalid_arguments",
+          "paths resolves to duplicate files"
+        );
+      }
+      canonicalPaths.add(target.absolute);
+      const stat = await lstat(target.absolute);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new ToolPolicyError(
+          "path_denied",
+          "Only regular files can be counted"
+        );
+      }
+      if (stat.size > this.limits.maxFileBytes) {
+        throw new ToolPolicyError(
+          "output_limit",
+          "File exceeds the configured read limit"
+        );
+      }
+      const content = await readFile(target.absolute);
+      let lines = 0;
+      for (const byte of content) {
+        if (byte === 0x0a) {
+          lines += 1;
+        }
+      }
+      files.push({ lines, path: target.relative });
+    }
+    return { files };
   }
 
   private gitExclusions(): string[] {

@@ -378,10 +378,6 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
     "1",
     storage.repoId
   );
-  const claudeChannelConfig = tmuxInternals.buildClaudeChannelServerConfig(
-    ["bun", "/repo/src/cli.ts"],
-    storage.runDir
-  );
   const claudePrompt = tmuxInternals.buildPeerPrompt(
     "Ship feature",
     opts,
@@ -397,7 +393,9 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
       "opus",
       claudeChannelServer,
       false,
-      claudePrompt
+      claudePrompt,
+      undefined,
+      join(storage.runDir, "claude-mcp.json")
     ),
   ]);
   const codexCommand = tmuxInternals.buildShellCommand([
@@ -429,15 +427,6 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   ]);
   expect(calls).toEqual([
     ["tmux", "has-session", "-t", "repo-loop-1"],
-    [
-      "claude",
-      "mcp",
-      "add-json",
-      "--scope",
-      "local",
-      claudeChannelServer,
-      claudeChannelConfig,
-    ],
     [
       "tmux",
       "new-session",
@@ -1354,10 +1343,12 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
       "opus",
       claudeChannelServer,
       false,
-      claudePrompt
+      claudePrompt,
+      undefined,
+      join(storage.runDir, "claude-mcp.json")
     ),
   ]);
-  expect(calls[2]).toEqual([
+  expect(calls[1]).toEqual([
     "tmux",
     "new-session",
     "-d",
@@ -1384,7 +1375,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
       )
     ),
   ]);
-  expect(calls[3]).toEqual([
+  expect(calls[2]).toEqual([
     "tmux",
     "split-window",
     "-h",
@@ -1531,6 +1522,15 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   );
   expect(peerPrompt).toContain("Do not take over the task or create the PR");
   expect(peerPrompt).toContain("Wait for Codex to send you a targeted request");
+  expect(peerPrompt).toContain(
+    "the run task text is context, not an assignment"
+  );
+  expect(peerPrompt).toContain(
+    "do not inspect task files, call repository tools, or route helper packets"
+  );
+  expect(primaryPrompt).not.toContain(
+    "the run task text is context, not an assignment"
+  );
   expect(peerPrompt).toContain("Delegation is mandatory");
   expect(peerPrompt).toContain("one to three independent bounded packets");
   expect(peerPrompt).toContain("Governess chooses the tier");
@@ -1653,6 +1653,9 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
     "If Codex asks for a plan review, review PLAN.md only"
   );
   expect(peerPrompt).toContain("Wait for Codex to provide a concrete task");
+  expect(peerPrompt).toContain(
+    "do not inspect task files, call repository tools, or route helper packets"
+  );
   expect(peerPrompt).toContain("human clearly assigns you separate work");
   expect(peerPrompt).not.toContain('"reply"');
   expect(peerPrompt).toContain(
@@ -2260,10 +2263,6 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
     "alpha",
     storage.repoId
   );
-  const claudeChannelConfig = tmuxInternals.buildClaudeChannelServerConfig(
-    ["bun", "/repo/src/cli.ts"],
-    storage.runDir
-  );
   const claudeCommand = tmuxInternals.buildShellCommand([
     "env",
     ...env,
@@ -2271,7 +2270,10 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
       "claude-session-1",
       "opus",
       claudeChannelServer,
-      true
+      true,
+      undefined,
+      undefined,
+      join(storage.runDir, "claude-mcp.json")
     ),
   ]);
   const codexCommand = tmuxInternals.buildShellCommand([
@@ -2286,15 +2288,6 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
 
   expect(delegated).toBe(true);
   expect(calls[1]).toEqual([
-    "claude",
-    "mcp",
-    "add-json",
-    "--scope",
-    "local",
-    claudeChannelServer,
-    claudeChannelConfig,
-  ]);
-  expect(calls[2]).toEqual([
     "tmux",
     "new-session",
     "-d",
@@ -2307,7 +2300,7 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
     "/repo",
     claudeCommand,
   ]);
-  expect(calls[3]).toEqual([
+  expect(calls[2]).toEqual([
     "tmux",
     "split-window",
     "-h",
@@ -2883,7 +2876,7 @@ test("runInTmux surfaces tmux startup errors", async () => {
   ).rejects.toThrow("Failed to start tmux session: boom");
 });
 
-test("runInTmux removes the Claude bridge server when paired tmux startup fails", async () => {
+test("runInTmux never mutates home Claude MCP registration on startup failure", async () => {
   const calls: string[][] = [];
   let manifest = createRunManifest({
     cwd: "/repo",
@@ -2948,26 +2941,14 @@ test("runInTmux removes the Claude bridge server when paired tmux startup fails"
     )
   ).rejects.toThrow("Failed to start tmux session: boom");
 
-  expect(calls).toContainEqual([
-    "claude",
-    "mcp",
-    "add-json",
-    "--scope",
-    "local",
-    tmuxInternals.buildClaudeChannelServerName("1", "repo-123"),
-    tmuxInternals.buildClaudeChannelServerConfig(
-      ["bun", "/repo/src/cli.ts"],
-      storage.runDir
-    ),
-  ]);
-  expect(calls).toContainEqual([
-    "claude",
-    "mcp",
-    "remove",
-    "--scope",
-    "local",
-    tmuxInternals.buildClaudeChannelServerName("1", "repo-123"),
-  ]);
+  expect(calls.some((args) => args[0] === "claude" && args[1] === "mcp")).toBe(
+    false
+  );
+  expect(
+    calls
+      .find((args) => args[0] === "tmux" && args[1] === "new-session")
+      ?.at(-1)
+  ).toContain("--strict-mcp-config");
   expect(
     calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
   ).toBe(false);
@@ -3141,6 +3122,23 @@ test("tmux internals launch Claude in bypass mode", () => {
       false
     )
   ).not.toContain("--permission-mode");
+  expect(
+    tmuxInternals.buildClaudeCommand(
+      "claude-session-1",
+      "opus",
+      "loop-bridge-1",
+      false,
+      undefined,
+      undefined,
+      "/run/claude-mcp.json"
+    )
+  ).toEqual(
+    expect.arrayContaining([
+      "--mcp-config",
+      "/run/claude-mcp.json",
+      "--strict-mcp-config",
+    ])
+  );
 });
 
 test("tmux internals build run names", () => {

@@ -10,9 +10,9 @@
       "artifact": "runs/loop58-runtime-corrections/artifacts/unit/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/loop58-runtime-corrections/artifacts/unit/attempt-002.log",
-      "latest_attempt_meta": "runs/loop58-runtime-corrections/artifacts/unit/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/loop58-runtime-corrections/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/loop58-runtime-corrections/artifacts/unit/attempt-001.json"
     }
   }
 }
