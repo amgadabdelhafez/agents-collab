@@ -97,6 +97,7 @@ const DEFAULT_NANNY_MAX_CONCURRENT_JOBS = 1;
 const MAX_CONSECUTIVE_BROKER_REJECTIONS = 3;
 const MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS = 3;
 const EMERGENCY_MAX_MODEL_CALLS = 64;
+const MAX_PI_SYNTHESIS_RESERVE_TOOL_CALLS = 8;
 const DEFAULT_API_KEY_FILE = join(
   homedir(),
   ".config",
@@ -1057,6 +1058,7 @@ const utilitySystemPrompt = (role = "utility helper"): string =>
     "For exact file line counts, use count_lines; never emulate wc with run_check or by reading full file contents.",
     "A read_file call can return at most 500 lines. Use count_lines or search_repo to target evidence, then read non-overlapping ranges of 500 lines or fewer.",
     "On scope_denied, use only an exact allowed scope named by the broker; never retry a parent or sibling path. On any other rejection, follow the broker's correction literally and do not submit another invalid sibling call in that round.",
+    "Every successful tool result reports the remaining evidence-call budget. When it says FINALIZE_NOW, stop investigating and answer immediately from the evidence already collected, using only a required final-artifact tool if one remains; the harness closes evidence tools before the hard safety ceiling.",
     "Do not repeat a rejected or identical tool call; change approach once, then stop if no safe tool can make progress.",
     "If the declared context and available tools are insufficient, do not guess or retry; reply exactly CONTEXT_INSUFFICIENT: followed by a terse reason.",
     "Finish with a terse result: outcome, evidence/checks, artifact paths, and blocker if any.",
@@ -1467,6 +1469,8 @@ interface PiToolDefinitionInput {
     toolRounds: number;
     usage: OpenAICompatibleUsage;
   };
+  synthesisToolLimit: number;
+  synthesisToolNames: ReadonlySet<UtilityToolName>;
   toolEventFile: string;
   updateActiveTools: () => void;
 }
@@ -1502,6 +1506,29 @@ const piBrokerRejectionLimitMessage = (
   return `helper stopped after ${MAX_CONSECUTIVE_BROKER_REJECTIONS} consecutive broker-rejected model rounds without progress (last error: ${last?.code ?? "unknown"} from ${last?.tool ?? fallbackTool}: ${last?.message ?? "broker rejection"})`;
 };
 
+const piSynthesisToolLimit = (
+  request: UtilityRouteRequest,
+  maxToolCalls: number
+): number => {
+  const reserve = Math.max(
+    1,
+    Math.min(MAX_PI_SYNTHESIS_RESERVE_TOOL_CALLS, Math.floor(maxToolCalls / 4))
+  );
+  const requiredPlanCalls = request.executionPlan?.length ?? 0;
+  return Math.min(
+    maxToolCalls,
+    Math.max(1, maxToolCalls - reserve, requiredPlanCalls)
+  );
+};
+
+const piSynthesisToolNames = (
+  request: UtilityRouteRequest
+): ReadonlySet<UtilityToolName> =>
+  new Set<UtilityToolName>([
+    ...(request.kind === "edit" ? (["propose_patch"] as const) : []),
+    ...(request.kind === "command" ? (["run_check"] as const) : []),
+  ]);
+
 const assertPiToolCallAllowed = (
   input: PiToolDefinitionInput,
   tool: string,
@@ -1522,6 +1549,15 @@ const assertPiToolCallAllowed = (
     const message = `helper stopped at ${input.config.maxToolCalls}-tool-call ceiling`;
     input.onFatal(message);
     throw new Error(message);
+  }
+  if (
+    input.state.toolCalls >= input.synthesisToolLimit &&
+    !input.synthesisToolNames.has(tool as UtilityToolName)
+  ) {
+    input.updateActiveTools();
+    throw new Error(
+      "FINALIZE_NOW: evidence tool budget is closed; answer from collected evidence or submit the required final artifact"
+    );
   }
   const fingerprint = `${tool}\0${JSON.stringify(args)}`;
   if (fingerprint === input.state.lastToolCallFingerprint) {
@@ -1591,8 +1627,27 @@ const piToolDefinitions = (input: PiToolDefinitionInput): ToolDefinition[] =>
           toolEventFile: input.toolEventFile,
         });
         recordPiToolResult(input, name, result);
+        const remainingEvidenceToolCalls = Math.max(
+          0,
+          input.synthesisToolLimit - input.state.toolCalls
+        );
+        const finalizeNow = remainingEvidenceToolCalls === 0;
         return {
-          content: [{ text: JSON.stringify(result), type: "text" }],
+          content: [
+            {
+              text: JSON.stringify({
+                ...result,
+                loopHarness: {
+                  hardToolCallCeiling: input.config.maxToolCalls,
+                  instruction: finalizeNow
+                    ? "FINALIZE_NOW: tools are now closed; answer from collected evidence"
+                    : `Continue only if essential; ${remainingEvidenceToolCalls} evidence tool call(s) remain before forced synthesis`,
+                  remainingEvidenceToolCalls,
+                },
+              }),
+              type: "text",
+            },
+          ],
           details: result,
         };
       },
@@ -1648,9 +1703,19 @@ const runPiUtilityConversation = async (input: {
       void session?.abort();
     });
   };
+  const synthesisToolLimit = piSynthesisToolLimit(
+    input.request,
+    input.config.maxToolCalls
+  );
+  const synthesisToolNames = piSynthesisToolNames(input.request);
   const updateActiveTools = (): void => {
+    const forceSynthesis = state.toolCalls >= synthesisToolLimit;
     session?.setActiveToolsByName(
-      input.broker.definitions.map((definition) => definition.function.name)
+      forceSynthesis
+        ? input.broker.definitions
+            .map((definition) => definition.function.name)
+            .filter((name) => synthesisToolNames.has(name))
+        : input.broker.definitions.map((definition) => definition.function.name)
     );
   };
   const tools = piToolDefinitions({
@@ -1663,6 +1728,8 @@ const runPiUtilityConversation = async (input: {
     role,
     startedAt,
     state,
+    synthesisToolLimit,
+    synthesisToolNames,
     toolEventFile: input.toolEventFile,
     updateActiveTools,
   });
