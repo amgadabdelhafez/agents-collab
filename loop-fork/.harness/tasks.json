@@ -268,6 +268,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-28T02:36:12Z",
       "spec_path": "specs/recon-pane-signal-density.md"
+    },
+    {
+      "id": "recon-pane-width-followup",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-07-28T02:48:57Z",
+      "run_dir": "runs/recon-pane-width-followup",
+      "eval_status": "pass",
+      "ended_at": "2026-07-28T02:49:37Z",
+      "spec_path": "specs/recon-pane-width-followup.md"
     }
   ]
 }
