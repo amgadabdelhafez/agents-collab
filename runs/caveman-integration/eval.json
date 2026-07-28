@@ -1,7 +1,7 @@
 {
   "task_id": "caveman-integration",
   "feature": "caveman-integration",
-  "timestamp": "2026-07-28T18:26:30Z",
+  "timestamp": "2026-07-28T18:31:40Z",
   "verdict": "pass_with_baseline_failures",
   "upstream": {
     "repository": "https://github.com/JuliusBrussee/caveman",
@@ -23,12 +23,13 @@
   "checks": {
     "focused_tests": {
       "status": "pass",
-      "passed": 242,
+      "passed": 262,
       "failed": 0,
-      "assertions": 1055,
+      "assertions": 1142,
       "files": [
         "tests/loop/caveman.test.ts",
         "tests/loop/utility-runtime.test.ts",
+        "tests/loop/paired-loop.test.ts",
         "tests/loop/tmux.test.ts",
         "tests/loop/args.test.ts",
         "tests/loop/run-state.test.ts",
@@ -140,12 +141,25 @@
       "session": "019fa9f8-9b8e-7732-bdb3-c3a88a9aa3f1",
       "verdict": "pass",
       "scope": "Tmux liveness, legacy migration, and stale-binding correction"
+    },
+    {
+      "base": "47706b5",
+      "head": "5aafb45",
+      "session": "019fa9fb-6a02-7d43-955f-eb293b8bae49",
+      "verdict": "finding_fixed",
+      "finding": "Non-tmux paired calls lacked guidance and live tmux mode changes could drift from running panes."
+    },
+    {
+      "commit": "ba6f80e",
+      "session": "019fa9fe-3c36-74b2-afa6-3913512c58e4",
+      "verdict": "pass",
+      "scope": "Non-tmux prompt coverage and live tmux mode immutability"
     }
   ],
   "deployment": {
     "integration_branch": "codex/pi-command-intake-prompts",
     "installed_binary": "/Users/amgad/.local/bin/loop",
-    "installed_commit": "f7d1e22f2c4a7cc4997ed4ae18330cfbf1860b55",
+    "installed_commit": "ba6f80e8948378ef4667fff2db7e2d034ec37c89",
     "active_loop_restarted": false,
     "activation": "New loop sessions only"
   },
