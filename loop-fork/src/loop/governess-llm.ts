@@ -536,7 +536,9 @@ const SUMMARY_SYSTEM_PROMPT = [
   "Progress: <3-5 lines — concrete work done: files, tests, decisions, bugs>",
   "Next: <2-3 lines — the most likely next steps / what remains>",
   "Be specific about code, filenames, and tasks. Infer next steps from the",
-  "trajectory. Do not describe whether the agents are idle or active.",
+  "trajectory. Do not describe whether the agents are idle or active. When an",
+  "AUTHORITATIVE CURRENT OBJECTIVE is present, copy it exactly into Objective:",
+  "and never replace it with terminal composer text or a prior-session task.",
 ].join(" ");
 
 export const LOCAL_LLM_SUMMARY_MAX_TOKENS = 3200;
@@ -547,17 +549,34 @@ const MAX_PROMPT_HUMAN_MESSAGES = 16;
 // call; give it a generous timeout (it is a background board element).
 const SUMMARY_TIMEOUT_MS = 120_000;
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
+const OBJECTIVE_LINE_RE = /^Objective:.*$/m;
+const PROJECT_LINE_RE = /^Project:.*$/m;
+
+const summaryPaneText = (value: string): string =>
+  value
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trimStart();
+      return !(trimmed.startsWith("›") || trimmed.startsWith("❯"));
+    })
+    .join("\n")
+    .slice(-SUMMARY_PANE_CHARS);
 
 const agentSection = (a: SummaryRequest["agents"][number]): string =>
   [
     `## agent: ${a.agent}`,
     `recent actions: ${a.lastActions.slice(-SUMMARY_ACTIONS).join(" | ") || "—"}`,
     "terminal:",
-    a.paneText.slice(-SUMMARY_PANE_CHARS),
+    summaryPaneText(a.paneText),
   ].join("\n");
 
 const buildSummaryPrompt = (req: SummaryRequest): string => {
   const blocks: string[] = [];
+  if (req.authoritativeObjective) {
+    blocks.push(
+      `# AUTHORITATIVE CURRENT OBJECTIVE\n${req.authoritativeObjective}`
+    );
+  }
   if (req.projectContext) {
     blocks.push(`# PROJECT DOCS\n${req.projectContext}`);
   }
@@ -580,6 +599,19 @@ const buildSummaryPrompt = (req: SummaryRequest): string => {
     `# LIVE AGENT STATE\n${req.agents.map(agentSection).join("\n\n")}`
   );
   return blocks.join("\n\n");
+};
+
+const anchorSummaryObjective = (text: string, objective: string): string => {
+  const objectiveLine = `Objective: ${objective}`;
+  if (OBJECTIVE_LINE_RE.test(text)) {
+    return text.replace(OBJECTIVE_LINE_RE, objectiveLine);
+  }
+  const projectLine = PROJECT_LINE_RE.exec(text);
+  if (!projectLine || projectLine.index === undefined) {
+    return `${objectiveLine}\n${text}`.trim();
+  }
+  const insertAt = projectLine.index + projectLine[0].length;
+  return `${text.slice(0, insertAt)}\n${objectiveLine}${text.slice(insertAt)}`;
 };
 
 // Ask the local LLM for a short natural-language session summary.
@@ -627,7 +659,10 @@ export const summarizeSession = async (
       return { text: "", tokens: 0, usage: emptyUsage(1) };
     }
     const content = extractMessageContent(payload) ?? "";
-    const summaryText = content.replace(THINK_BLOCK_RE, "").trim();
+    const generatedText = content.replace(THINK_BLOCK_RE, "").trim();
+    const summaryText = req.authoritativeObjective
+      ? anchorSummaryObjective(generatedText, req.authoritativeObjective)
+      : generatedText;
     const usage = usageWithFallback(payload, body, summaryText);
     return {
       text: summaryText,

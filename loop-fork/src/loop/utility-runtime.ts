@@ -1437,7 +1437,18 @@ const runDirectUtilityConversation = async (input: {
   };
 };
 
-const piToolDefinitions = (input: {
+interface PiBrokerRoundState {
+  consecutiveBrokerRejections: number;
+  lastBrokerRejection?: {
+    code: string;
+    message: string;
+    modelCall: number;
+    tool: UtilityToolName;
+  };
+  modelCalls: number;
+}
+
+interface PiToolDefinitionInput {
   assertActive: () => void;
   broker: UtilityConversationBroker;
   config: UtilityRuntimeConfig;
@@ -1446,12 +1457,10 @@ const piToolDefinitions = (input: {
   onProgress: (progress: UtilityConversationProgress) => void;
   role: "Nanny" | "Au Pair";
   startedAt: number;
-  state: {
+  state: PiBrokerRoundState & {
     artifacts: UtilityArtifactReference[];
     checks: UtilityCheckResult[];
-    consecutiveBrokerRejections: number;
     lastToolCallFingerprint: string;
-    modelCalls: number;
     repeatedToolCallCount: number;
     successfulTools: Set<UtilityToolName>;
     toolCalls: number;
@@ -1460,43 +1469,117 @@ const piToolDefinitions = (input: {
   };
   toolEventFile: string;
   updateActiveTools: () => void;
-}): ToolDefinition[] =>
+}
+
+const recordPiBrokerOutcome = (
+  state: PiBrokerRoundState,
+  name: UtilityToolName,
+  result: UtilityToolResult,
+  onSuccess: () => void
+): void => {
+  if (result.ok) {
+    state.consecutiveBrokerRejections = 0;
+    state.lastBrokerRejection = undefined;
+    onSuccess();
+    return;
+  }
+  if (state.lastBrokerRejection?.modelCall !== state.modelCalls) {
+    state.consecutiveBrokerRejections += 1;
+  }
+  state.lastBrokerRejection = {
+    code: result.error?.code ?? "unknown",
+    message: result.error?.message ?? `${name} was rejected by the broker`,
+    modelCall: state.modelCalls,
+    tool: name,
+  };
+};
+
+const piBrokerRejectionLimitMessage = (
+  state: PiBrokerRoundState,
+  fallbackTool: UtilityToolName
+): string => {
+  const last = state.lastBrokerRejection;
+  return `helper stopped after ${MAX_CONSECUTIVE_BROKER_REJECTIONS} consecutive broker-rejected model rounds without progress (last error: ${last?.code ?? "unknown"} from ${last?.tool ?? fallbackTool}: ${last?.message ?? "broker rejection"})`;
+};
+
+const assertPiToolCallAllowed = (
+  input: PiToolDefinitionInput,
+  tool: string,
+  args: unknown,
+  signal?: AbortSignal
+): void => {
+  if (signal?.aborted) {
+    throw new Error(`${input.role} tool call was aborted`);
+  }
+  try {
+    input.assertActive();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    input.onFatal(message);
+    throw error;
+  }
+  if (input.state.toolCalls >= input.config.maxToolCalls) {
+    const message = `helper stopped at ${input.config.maxToolCalls}-tool-call ceiling`;
+    input.onFatal(message);
+    throw new Error(message);
+  }
+  const fingerprint = `${tool}\0${JSON.stringify(args)}`;
+  if (fingerprint === input.state.lastToolCallFingerprint) {
+    input.state.repeatedToolCallCount += 1;
+  } else {
+    input.state.lastToolCallFingerprint = fingerprint;
+    input.state.repeatedToolCallCount = 1;
+  }
+  if (input.state.repeatedToolCallCount >= MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS) {
+    const message = `helper stopped before third consecutive identical tool call: ${tool}`;
+    input.onFatal(message);
+    throw new Error(message);
+  }
+};
+
+const recordPiToolResult = (
+  input: PiToolDefinitionInput,
+  name: UtilityToolName,
+  result: UtilityToolResult
+): void => {
+  input.state.toolCalls += 1;
+  recordToolResult(name, result, input.state.artifacts, input.state.checks);
+  if (result.ok && (name !== "run_check" || result.exitCode === 0)) {
+    input.state.successfulTools.add(name);
+  }
+  recordPiBrokerOutcome(input.state, name, result, input.updateActiveTools);
+  input.onProgress({
+    durationMs: Date.now() - input.startedAt,
+    modelCalls: input.state.modelCalls,
+    toolCalls: input.state.toolCalls,
+    toolRounds: input.state.toolRounds,
+    usage: input.state.usage,
+  });
+  if (
+    input.state.consecutiveBrokerRejections >=
+    MAX_CONSECUTIVE_BROKER_REJECTIONS
+  ) {
+    const message = piBrokerRejectionLimitMessage(input.state, name);
+    input.onFatal(message);
+    throw new Error(message);
+  }
+  if (!result.ok) {
+    throw new Error(result.error?.message ?? `${name} was rejected by the broker`);
+  }
+};
+
+const piToolDefinitions = (input: PiToolDefinitionInput): ToolDefinition[] =>
   (input.broker.registeredDefinitions ?? input.broker.definitions).map(
     (definition): ToolDefinition => ({
       description: definition.function.description,
       executionMode: "sequential",
       execute: async (_toolCallId, args, signal) => {
-        if (signal?.aborted) {
-          throw new Error(`${input.role} tool call was aborted`);
-        }
-        try {
-          input.assertActive();
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          input.onFatal(message);
-          throw error;
-        }
-        if (input.state.toolCalls >= input.config.maxToolCalls) {
-          const message = `helper stopped at ${input.config.maxToolCalls}-tool-call ceiling`;
-          input.onFatal(message);
-          throw new Error(message);
-        }
-        const fingerprint = `${definition.function.name}\0${JSON.stringify(args)}`;
-        if (fingerprint === input.state.lastToolCallFingerprint) {
-          input.state.repeatedToolCallCount += 1;
-        } else {
-          input.state.lastToolCallFingerprint = fingerprint;
-          input.state.repeatedToolCallCount = 1;
-        }
-        if (
-          input.state.repeatedToolCallCount >=
-          MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS
-        ) {
-          const message = `helper stopped before third consecutive identical tool call: ${definition.function.name}`;
-          input.onFatal(message);
-          throw new Error(message);
-        }
+        assertPiToolCallAllowed(
+          input,
+          definition.function.name,
+          args,
+          signal
+        );
         const { name, result } = await executeUtilityBrokerCall({
           assertActive: input.assertActive,
           broker: input.broker,
@@ -1507,42 +1590,7 @@ const piToolDefinitions = (input: {
           jobId: input.jobId,
           toolEventFile: input.toolEventFile,
         });
-        input.state.toolCalls += 1;
-        recordToolResult(
-          name,
-          result,
-          input.state.artifacts,
-          input.state.checks
-        );
-        if (result.ok && (name !== "run_check" || result.exitCode === 0)) {
-          input.state.successfulTools.add(name);
-        }
-        if (result.ok) {
-          input.state.consecutiveBrokerRejections = 0;
-          input.updateActiveTools();
-        } else {
-          input.state.consecutiveBrokerRejections += 1;
-        }
-        input.onProgress({
-          durationMs: Date.now() - input.startedAt,
-          modelCalls: input.state.modelCalls,
-          toolCalls: input.state.toolCalls,
-          toolRounds: input.state.toolRounds,
-          usage: input.state.usage,
-        });
-        if (
-          input.state.consecutiveBrokerRejections >=
-          MAX_CONSECUTIVE_BROKER_REJECTIONS
-        ) {
-          const message = `helper stopped after ${MAX_CONSECUTIVE_BROKER_REJECTIONS} consecutive broker rejections`;
-          input.onFatal(message);
-          throw new Error(message);
-        }
-        if (!result.ok) {
-          throw new Error(
-            result.error?.message ?? `${name} was rejected by the broker`
-          );
-        }
+        recordPiToolResult(input, name, result);
         return {
           content: [{ text: JSON.stringify(result), type: "text" }],
           details: result,
@@ -1574,6 +1622,14 @@ const runPiUtilityConversation = async (input: {
     artifacts: [] as UtilityArtifactReference[],
     checks: [] as UtilityCheckResult[],
     consecutiveBrokerRejections: 0,
+    lastBrokerRejection: undefined as
+      | {
+          code: string;
+          message: string;
+          modelCall: number;
+          tool: UtilityToolName;
+        }
+      | undefined,
     lastToolCallFingerprint: "",
     modelCalls: 0,
     repeatedToolCallCount: 0,

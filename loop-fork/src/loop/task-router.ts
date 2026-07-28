@@ -84,6 +84,23 @@ export interface UtilityOutputRequest {
   stripAnsi?: boolean;
 }
 
+export type UtilityGitInspectionAction =
+  | "branch-list"
+  | "current-branch"
+  | "log"
+  | "object-type"
+  | "resolve-ref"
+  | "show-stat"
+  | "worktree-list";
+
+export interface UtilityGitInspectionRequest {
+  action: UtilityGitInspectionAction;
+  includeMetadata?: boolean;
+  limit?: number;
+  pattern?: string;
+  ref?: string;
+}
+
 export type UtilityReadPlanProfile = Exclude<
   UtilityExecutionProfile,
   "read-plan"
@@ -92,6 +109,7 @@ export type UtilityReadPlanProfile = Exclude<
 export interface UtilityReadPlanStep {
   executionArgv?: string[];
   executionCwd?: string;
+  executionGit?: UtilityGitInspectionRequest;
   executionOutput?: UtilityOutputRequest;
   executionProfile: UtilityReadPlanProfile;
   executionRead?: UtilityReadRequest;
@@ -122,6 +140,7 @@ export interface UtilityRouteRequest {
   estimatedCostUsd?: number;
   executionArgv?: string[];
   executionCwd?: string;
+  executionGit?: UtilityGitInspectionRequest;
   executionOutput?: UtilityOutputRequest;
   executionPlan?: UtilityReadPlanStep[];
   executionProfile?: UtilityExecutionProfile;
@@ -298,6 +317,7 @@ export const createUtilityRouteRequest = (
     ...(input.executionCwd
       ? { executionCwd: normalizePath(input.executionCwd) }
       : {}),
+    ...(input.executionGit ? { executionGit: { ...input.executionGit } } : {}),
     ...(input.executionOutput
       ? { executionOutput: { ...input.executionOutput } }
       : {}),
@@ -309,6 +329,9 @@ export const createUtilityRouteRequest = (
               : {}),
             ...(step.executionCwd
               ? { executionCwd: normalizePath(step.executionCwd) }
+              : {}),
+            ...(step.executionGit
+              ? { executionGit: { ...step.executionGit } }
               : {}),
             ...(step.executionOutput
               ? { executionOutput: { ...step.executionOutput } }
@@ -575,24 +598,82 @@ const READ_PLAN_STEP_KEYS = new Set([
   "executionOutput",
   "executionArgv",
   "executionCwd",
+  "executionGit",
   "executionProfile",
   "executionRead",
   "objective",
   "readScope",
 ]);
 
+const GIT_REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+const GIT_BRANCH_PATTERN_RE = /^[A-Za-z0-9._/*?-]{1,128}$/;
+
+const boundedGitRef = (value: unknown): value is string =>
+  typeof value === "string" && GIT_REF_RE.test(value) && !value.includes("..");
+
+const exactKeys = (value: Record<string, unknown>, keys: string[]): boolean =>
+  Object.keys(value).every((key) => keys.includes(key));
+
+const gitInspectionRequestIsBounded = (
+  input: unknown
+): input is UtilityGitInspectionRequest => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return false;
+  }
+  const value = input as Record<string, unknown>;
+  const action = value.action;
+  if (action === "current-branch" || action === "worktree-list") {
+    return exactKeys(value, ["action"]);
+  }
+  if (action === "log") {
+    return (
+      exactKeys(value, ["action", "limit", "ref"]) &&
+      (value.limit === undefined ||
+        (positiveSafeInteger(value.limit) && (value.limit as number) <= 50)) &&
+      (value.ref === undefined || boundedGitRef(value.ref))
+    );
+  }
+  if (action === "resolve-ref" || action === "object-type") {
+    return exactKeys(value, ["action", "ref"]) && boundedGitRef(value.ref);
+  }
+  if (action === "branch-list") {
+    return (
+      exactKeys(value, ["action", "pattern"]) &&
+      typeof value.pattern === "string" &&
+      !value.pattern.startsWith("-") &&
+      GIT_BRANCH_PATTERN_RE.test(value.pattern)
+    );
+  }
+  return (
+    action === "show-stat" &&
+    exactKeys(value, ["action", "includeMetadata", "ref"]) &&
+    boundedGitRef(value.ref) &&
+    (value.includeMetadata === undefined ||
+      typeof value.includeMetadata === "boolean")
+  );
+};
+
 const executionPlanProfileFieldsAreBounded = (
   step: Record<string, unknown>,
   scopes: string[]
 ): boolean => {
   if (step.executionProfile === "focused-check") {
-    return focusedCheckFieldsAreBounded(
-      step.executionArgv as string[] | undefined,
-      step.executionCwd as string | undefined,
-      scopes
+    return (
+      step.executionGit === undefined &&
+      focusedCheckFieldsAreBounded(
+        step.executionArgv as string[] | undefined,
+        step.executionCwd as string | undefined,
+        scopes
+      )
     );
   }
-  if (step.executionArgv !== undefined || step.executionCwd !== undefined) {
+  if (
+    step.executionArgv !== undefined ||
+    step.executionCwd !== undefined ||
+    (step.executionProfile === "git-inspect"
+      ? !gitInspectionRequestIsBounded(step.executionGit)
+      : step.executionGit !== undefined)
+  ) {
     return false;
   }
   if (
@@ -653,6 +734,7 @@ const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
     (request.kind !== "inspect" && request.kind !== "command") ||
     request.executionArgv !== undefined ||
     request.executionCwd !== undefined ||
+    request.executionGit !== undefined ||
     request.executionOutput !== undefined ||
     request.executionRead !== undefined ||
     !Array.isArray(input) ||
@@ -706,11 +788,16 @@ const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
       request.executionArgv.every(
         (argument) => typeof argument === "string" && argument.length > 0
       ));
+  const gitIsBounded =
+    request.executionProfile === "git-inspect"
+      ? gitInspectionRequestIsBounded(request.executionGit)
+      : request.executionGit === undefined;
   return (
     contextRefsAreBounded &&
     profileIsKnown &&
     cwdIsBounded &&
     argvIsBounded &&
+    gitIsBounded &&
     executionReadIsBounded(request) &&
     executionOutputIsBounded(request) &&
     executionPlanIsBounded(request)

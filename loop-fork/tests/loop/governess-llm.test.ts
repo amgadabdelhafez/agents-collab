@@ -6,6 +6,7 @@ import {
   assessRoleBalance,
   judgeAgent,
   labelPanes,
+  summarizeSession,
 } from "../../src/loop/governess-llm";
 import type {
   JudgeRequest,
@@ -86,6 +87,40 @@ test("valid strict JSON content yields ok verdict with parsed fields", async () 
     expect(outcome.verdict.confidence).toBe(0.8);
     expect(outcome.verdict.suggestedAction).toBe("prompt user");
   }
+});
+
+test("summary anchors the human objective and excludes composer placeholders", async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  const result = await summarizeSession(
+    {
+      agents: [
+        {
+          agent: "codex",
+          lastActions: [],
+          paneText: "real build output\n› Find and fix a bug in @filename",
+        },
+      ],
+      authoritativeObjective: "Loop-57 — EXECUTION: increase helper throughput",
+      humanMessages: ["# Loop-57 — EXECUTION: increase helper throughput"],
+      model: "qwen",
+      url: "http://localhost:1234",
+    },
+    {
+      fetchFn: ((_url, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return chatResponse(
+          "Project: agents-collab\nObjective: Find a bug in the specified file\nProgress: inspected routing\nNext: run tests"
+        );
+      }) as typeof fetch,
+    }
+  );
+
+  expect(result.text).toContain(
+    "Objective: Loop-57 — EXECUTION: increase helper throughput"
+  );
+  const body = JSON.stringify(requestBody);
+  expect(body).toContain("AUTHORITATIVE CURRENT OBJECTIVE");
+  expect(body).not.toContain("Find and fix a bug in @filename");
 });
 
 test("missing usage is estimated from request and response text", async () => {

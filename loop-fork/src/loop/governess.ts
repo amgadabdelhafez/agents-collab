@@ -2486,6 +2486,10 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
 
 const SPACE_RE = /\s+/;
 const SPACE_GLOBAL_RE = /\s+/g;
+const MARKDOWN_HEADING_PREFIX_RE = /^#{1,6}\s+/;
+const MARKDOWN_OBJECTIVE_LINE_RE = /^#{1,6}\s+\S/;
+const TASK_OBJECTIVE_LINE_RE = /^Task:\s*\S/i;
+const TASK_PREFIX_RE = /^Task:\s*/i;
 const BRIDGE_LATEST_WIDTH = 54;
 
 const bridgeLatestFor = (
@@ -2597,7 +2601,7 @@ const renderWorkerBridgeLine = (
 ): string => {
   const messages = snapshot.messages;
   return [
-    paint(ANSI.dim, " bridge helper msgs · "),
+    paint(ANSI.dim, " helper jobs · "),
     paint(
       ANSI.cyan,
       `in ${messages.inbound} latest ${workerMessageAge(messages.latestInboundAt, meta.nowMs)}`
@@ -2610,7 +2614,7 @@ const renderWorkerBridgeLine = (
     paint(ANSI.dim, " · "),
     paint(
       messages.pending > 0 ? ANSI.yellow : ANSI.dim,
-      `pending ${messages.pending}`
+      `bridge pending ${messages.pending}`
     ),
   ].join("");
 };
@@ -3763,7 +3767,10 @@ const gatherSummaryContext = (
   deps: GovernessDeps
 ): Pick<
   SummaryRequest,
-  "humanMessages" | "priorSummaries" | "projectContext"
+  | "authoritativeObjective"
+  | "humanMessages"
+  | "priorSummaries"
+  | "projectContext"
 > => {
   const seen = new Set<string>();
   const humanMessages: string[] = [];
@@ -3779,11 +3786,50 @@ const gatherSummaryContext = (
       }
     }
   }
+  const authoritativeObjective = authoritativeSummaryObjective(humanMessages);
   return {
+    ...(authoritativeObjective ? { authoritativeObjective } : {}),
     humanMessages,
     priorSummaries: readPriorSummaries(config.runDir),
     projectContext: readProjectContext(config.cwd),
   };
+};
+
+const cleanObjectiveLine = (line: string): string =>
+  line
+    .replace(MARKDOWN_HEADING_PREFIX_RE, "")
+    .replace(TASK_PREFIX_RE, "")
+    .replace(SPACE_GLOBAL_RE, " ")
+    .trim()
+    .slice(0, 240);
+
+export const authoritativeSummaryObjective = (
+  humanMessages: readonly string[]
+): string | undefined => {
+  const messages = [...humanMessages].reverse();
+  for (const message of messages) {
+    const explicit = message
+      .split("\n")
+      .map((line) => line.trim())
+      .find(
+        (line) =>
+          TASK_OBJECTIVE_LINE_RE.test(line) ||
+          MARKDOWN_OBJECTIVE_LINE_RE.test(line)
+      );
+    if (explicit) {
+      return cleanObjectiveLine(explicit);
+    }
+  }
+  for (const message of messages) {
+    const first = message
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (first) {
+      return cleanObjectiveLine(first);
+    }
+  }
+  return undefined;
 };
 
 // An agent counts as active when its TUI is animating (thinking) or the judge

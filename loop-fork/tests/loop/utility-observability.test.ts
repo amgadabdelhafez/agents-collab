@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { appendBridgeMessage } from "../../src/loop/bridge-store";
 import { appendDelegationEvent } from "../../src/loop/delegation-policy";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
@@ -241,6 +242,13 @@ test("utility observability totals worker usage and builds a safe transcript", (
         summary: "The active value is safe and source-backed.\u0007",
       },
     });
+    appendBridgeMessage(
+      runDir,
+      "utility",
+      "claude",
+      "completed result waiting in the bridge",
+      { taskId: completed.id }
+    );
 
     const failed = createUtilityRouteRequest({
       acceptanceCriteria: ["report evidence"],
@@ -351,6 +359,11 @@ test("utility observability totals worker usage and builds a safe transcript", (
     );
 
     const snapshot = readUtilityObservability(runDir);
+    expect(snapshot.messages).toMatchObject({
+      inbound: 2,
+      outbound: 2,
+      pending: 1,
+    });
     expect(snapshot).toMatchObject({
       active: 0,
       available: true,
@@ -376,7 +389,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
         latestInboundAt: "2026-07-26T01:01:00.000Z",
         latestOutboundAt: "2026-07-26T01:01:01.000Z",
         outbound: 2,
-        pending: 0,
+        pending: 1,
       },
       model: "z-ai/glm-5.2",
       performance: {

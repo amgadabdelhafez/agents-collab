@@ -837,6 +837,82 @@ test("unprofiled bounded inspections persist Nanny ownership without spilling to
   }
 });
 
+test("a full Nanny slot does not block eligible Au Pair work in the same tick", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-independent-tier-slots-"));
+  const runDir = join(repoRoot, ".loop", "runs", "independent-tier-slots");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repoRoot, "src", "sample.ts"), "export const value = 1;\n");
+  const nannyRequest = (id: string) =>
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["return bounded evidence"],
+      authority: {},
+      id,
+      kind: "inspect" as const,
+      objective: `Inspect the bounded source file for ${id}`,
+      readScope: ["src/sample.ts"],
+      requester: "claude" as const,
+      requiredCapabilities: ["inspect" as const],
+      risk: "low" as const,
+      writeScope: [],
+    });
+  appendUtilityRouteRequest(runDir, nannyRequest("nanny-active"));
+  const spawned: string[] = [];
+  const context = {
+    currentDriver: "claude" as const,
+    epoch: 24,
+    peer: "codex" as const,
+    repoRoot,
+    runDir,
+  };
+  const env = {
+    LOOP_AU_PAIR_ENABLED: "1",
+    LOOP_AU_PAIR_MAX_CONCURRENCY: "4",
+    LOOP_AU_PAIR_URL: "http://127.0.0.1:9998/v1/chat/completions",
+    LOOP_NANNY_ENABLED: "1",
+    LOOP_NANNY_MAX_CONCURRENCY: "1",
+    LOOP_NANNY_URL: "http://127.0.0.1:9999/v1/chat/completions",
+  };
+  const deps = {
+    spawnWorker: ({ jobId }: { jobId: string }) => {
+      spawned.push(jobId);
+      return true;
+    },
+  };
+  try {
+    await processPendingUtilityRoutes(context, env, deps);
+    appendUtilityRouteRequest(runDir, nannyRequest("nanny-waiting"));
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["propose one scoped edit"],
+        authority: {},
+        id: "au-pair-ready",
+        kind: "edit",
+        objective: "Propose a bounded update to the sample value",
+        readScope: ["src/sample.ts"],
+        requester: "claude",
+        requiredCapabilities: ["inspect", "scoped-edit"],
+        risk: "low",
+        writeScope: ["src/sample.ts"],
+      })
+    );
+
+    await processPendingUtilityRoutes(context, env, deps);
+
+    expect(spawned).toEqual(["nanny-active", "au-pair-ready"]);
+    expect(readUtilityJob(runDir, "nanny-waiting")?.state).toBe(
+      "pending-route"
+    );
+    expect(readUtilityJob(runDir, "au-pair-ready")).toMatchObject({
+      decision: { tierId: "utility-au-pair" },
+      state: "routed-utility",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("unprofiled bounded inspections fail closed when Nanny is unavailable", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-nanny-unavailable-"));
   const runDir = join(repoRoot, ".loop", "runs", "nanny-unavailable");

@@ -1,3 +1,5 @@
+import { consumeBridgeInbox } from "./bridge-dispatch";
+import { isBridgeDeliveryClaimed } from "./bridge-runtime";
 import {
   appendDelegationEvent,
   hashDelegationFingerprint,
@@ -42,7 +44,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. Review every returned result or patch.",
+      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -329,7 +331,22 @@ const routeTask = (
       taskId: job.jobId,
     })
   );
-  return { state: job.state, taskId: job.jobId };
+  const priorHelperResults =
+    source === "supervisor"
+      ? []
+      : consumeBridgeInbox(
+          runDir,
+          source,
+          "bundled into route_task response",
+          (message) =>
+            message.source === "utility" &&
+            !isBridgeDeliveryClaimed(runDir, message.id)
+        );
+  return {
+    ...(priorHelperResults.length > 0 ? { priorHelperResults } : {}),
+    state: job.state,
+    taskId: job.jobId,
+  };
 };
 
 export const callUtilityBridgeTool = async (

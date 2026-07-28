@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readPendingBridgeMessages } from "./bridge-store";
 import {
   delegationSkipCategory,
   readDelegationEvents,
@@ -245,6 +246,7 @@ const routingSnapshot = (
 };
 
 const messageSnapshot = (
+  runDir: string,
   jobs: UtilityJobSnapshot[]
 ): UtilityMessageObservability => {
   const inbound = jobs
@@ -261,12 +263,19 @@ const messageSnapshot = (
     .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
   const latestInboundAt = inbound.at(-1)?.request.createdAt;
   const latestOutboundAt = outbound.at(-1)?.updatedAt;
+  const jobIds = new Set(jobs.map((job) => job.jobId));
+  const pendingResults = readPendingBridgeMessages(runDir).filter(
+    (message) =>
+      message.source === "utility" &&
+      message.taskId !== undefined &&
+      jobIds.has(message.taskId)
+  );
   return {
     inbound: inbound.length,
     ...(latestInboundAt ? { latestInboundAt } : {}),
     ...(latestOutboundAt ? { latestOutboundAt } : {}),
     outbound: outbound.length,
-    pending: Math.max(0, inbound.length - outbound.length),
+    pending: pendingResults.length,
   };
 };
 
@@ -745,7 +754,7 @@ export const readUtilityObservability = (
     failures: failureSnapshot(toolEvents),
     jobsTotal: jobs.length,
     latestDetail,
-    messages: messageSnapshot(jobs),
+    messages: messageSnapshot(runDir, jobs),
     ...(latest
       ? {
           latestAt: latest.updatedAt,

@@ -20,6 +20,7 @@ import {
   claimUtilityJob,
   readPendingRouteRequests,
   readUtilityJob,
+  recordPendingUtilityRouteDecision,
   recordUtilityPatchApplication,
   transitionUtilityJob,
   utilityRunPaths,
@@ -127,6 +128,32 @@ test("makes event ids idempotent and rejects collisions", () => {
   appendUtilityJobEvent(runDir, event);
   expect(() =>
     appendUtilityJobEvent(runDir, { ...event, at: "different" })
+  ).toThrow("event id collision");
+});
+
+test("makes repeated pending route decisions idempotent within one epoch", () => {
+  const runDir = makeRunDir();
+  appendUtilityRouteRequest(runDir, makeRequest());
+  const decision = {
+    reason: "utility-eligible" as const,
+    target: "utility" as const,
+    tierId: "utility-nanny",
+  };
+
+  recordPendingUtilityRouteDecision(runDir, "job-1", decision, 12);
+  recordPendingUtilityRouteDecision(runDir, "job-1", decision, 12);
+
+  const job = readUtilityJob(runDir, "job-1");
+  expect(
+    job?.events.filter((event) => event.type === "route-decided")
+  ).toHaveLength(1);
+  expect(() =>
+    recordPendingUtilityRouteDecision(
+      runDir,
+      "job-1",
+      { ...decision, reason: "utility-unavailable" },
+      12
+    )
   ).toThrow("event id collision");
 });
 
@@ -425,11 +452,7 @@ test("journals a patch application after completion without reopening the job", 
     preimages: [{ path: "src/parser.ts", sha256: "b".repeat(64) }],
   };
 
-  const applied = recordUtilityPatchApplication(
-    runDir,
-    "job-1",
-    application
-  );
+  const applied = recordUtilityPatchApplication(runDir, "job-1", application);
   expect(applied.state).toBe("completed");
   expect(applied.application).toEqual(application);
   expect(

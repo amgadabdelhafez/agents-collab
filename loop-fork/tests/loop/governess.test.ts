@@ -9,6 +9,7 @@ import {
 import {
   agentRenameEnabledFromEnv,
   applyGovernessPaneIdentity,
+  authoritativeSummaryObjective,
   type BridgeSendStatus,
   composeGovernessPaneTitle,
   composeGovernessRunIdentity,
@@ -23,6 +24,7 @@ import {
   runGoverness,
   sendRenameCommands,
 } from "../../src/loop/governess";
+
 import type { EscalationEvent } from "../../src/loop/governess-notify";
 import {
   createRunManifest,
@@ -46,6 +48,16 @@ import {
   claimUtilityJob,
   transitionUtilityJob,
 } from "../../src/loop/utility-store";
+
+test("summary objective prefers the current loop heading over a terse follow-up", () => {
+  expect(
+    authoritativeSummaryObjective([
+      "# Loop-57 — EXECUTION: increase helper throughput",
+      "check now",
+      "fixs them",
+    ])
+  ).toBe("Loop-57 — EXECUTION: increase helper throughput");
+});
 
 const IDLE_MS = 60_000;
 const START_MS = 1_000_000;
@@ -1869,7 +1881,7 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
       "routing · considered 3 · routed helpers 2 · actionable 0 · retained 0 · unsafe 1 · pending 0 · adoption auto 1 explicit 1 packets 1 plans 0"
     );
     expect(board).toContain(
-      "bridge helper msgs · in 2 latest — · out 2 latest — · pending 0"
+      "helper jobs · in 2 latest — · out 2 latest — · bridge pending 0"
     );
     expect(board).toContain("routing why · protected-scope 1");
     expect(board).toContain(
@@ -1962,7 +1974,7 @@ test("Au Pair row hides the internal routed-utility state name", async () => {
     const board = stripAnsi(result.board);
     expect(board).toMatch(/au pair\s+● queued.*routed-j route/);
     expect(board).toContain(
-      "bridge helper msgs · in 1 latest — · out 0 latest — · pending 1"
+      "helper jobs · in 1 latest — · out 0 latest — · bridge pending 0"
     );
     expect(board).not.toContain("routed-utility");
   } finally {

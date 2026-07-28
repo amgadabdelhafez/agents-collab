@@ -545,6 +545,22 @@ test.each([
 
 test.each([
   makeRequest({ executionProfile: "read-plan", kind: "inspect" }),
+  makeRequest({ executionProfile: "git-inspect", kind: "inspect" }),
+  makeRequest({
+    executionGit: { action: "resolve-ref", ref: "HEAD..main" },
+    executionProfile: "git-inspect",
+    kind: "inspect",
+    readScope: ["."],
+  }),
+  makeRequest({
+    executionGit: {
+      action: "log",
+      limit: 51,
+    },
+    executionProfile: "git-inspect",
+    kind: "inspect",
+    readScope: ["."],
+  }),
   makeRequest({
     executionPlan: [
       {
@@ -580,6 +596,7 @@ test.each([
     executionPlan: [
       {
         executionProfile: "git-inspect",
+        executionGit: { action: "worktree-list" },
         objective: "Inspect Git metadata",
         readScope: ["src/example.ts"],
       },
@@ -593,6 +610,25 @@ test.each([
   expect(routeUtilityRequest(request, context())).toEqual({
     reason: "request-not-bounded",
     target: "driver",
+  });
+});
+
+test("routes a structurally exact Git inspection", () => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        executionGit: { action: "log", limit: 3, ref: "HEAD" },
+        executionProfile: "git-inspect",
+        kind: "inspect",
+        readScope: ["."],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({
+    reason: "utility-eligible",
+    target: "utility",
+    tierId: "cheap-oss",
   });
 });
 

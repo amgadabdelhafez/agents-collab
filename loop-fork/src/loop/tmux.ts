@@ -13,8 +13,8 @@ import {
   resolveClaudeChannelServerName,
 } from "./bridge-config";
 import {
-  mandatoryUtilityDelegationGuidance,
   type BridgeTool,
+  mandatoryUtilityDelegationGuidance,
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "./bridge-guidance";
@@ -45,6 +45,7 @@ import {
   SESSION_STATE_GUIDANCE,
   SPAWN_TEAM_WITH_WORKTREE_ISOLATION,
 } from "./prompts";
+import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
 import {
   type RunManifest,
   type RunStorage,
@@ -89,6 +90,7 @@ const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
 const DEFAULT_UTILITY_PANE_WIDTH = "20%";
+const DEFAULT_RECON_PANE_HEIGHT = "15%";
 const UTILITY_PANE_WIDTH_RE = /^\d+%?$/;
 
 interface SpawnResult {
@@ -822,6 +824,7 @@ interface PairedPaneTargets {
   governess?: string;
   left: string;
   nanny?: string;
+  recon?: string[];
   right: string;
   utility?: string;
 }
@@ -862,6 +865,9 @@ const updatePairedManifest = (
           : {}),
         ...(paneTargets.auPair ? { tmuxPaneAuPair: paneTargets.auPair } : {}),
         ...(paneTargets.nanny ? { tmuxPaneNanny: paneTargets.nanny } : {}),
+        ...(paneTargets.recon?.length
+          ? { tmuxPaneRecon: [...paneTargets.recon] }
+          : {}),
       },
       new Date().toISOString()
     )
@@ -1131,6 +1137,9 @@ export const composeAuPairPaneTitle = (session: string): string =>
 export const composeNannyPaneTitle = (session: string): string =>
   `nanny.${session}`;
 
+export const composeReconPaneTitle = (session: string, index: number): string =>
+  `recon${index}.${session}`;
+
 /** Compatibility alias for integrations that still import the old title helper. */
 export const composeWorkerPaneTitle = composeAuPairPaneTitle;
 
@@ -1201,6 +1210,117 @@ const startNannyPane = (
   deps.spawn(["tmux", "set-option", "-p", "-t", pane, "@loop_label", title]);
   deps.spawn(["tmux", "select-pane", "-t", pane, "-T", title]);
   return pane;
+};
+
+const reconPaneCount = (env: NodeJS.ProcessEnv): number => {
+  const raw = env.LOOP_RECON_PANES?.trim();
+  if (raw === undefined || raw === "") {
+    return 3;
+  }
+  const count = Number.parseInt(raw, 10);
+  return Number.isInteger(count) && count >= 0 && count <= 3 ? count : 3;
+};
+
+const reconPaneHeight = (env: NodeJS.ProcessEnv): string => {
+  const value = env.LOOP_RECON_HEIGHT?.trim();
+  return value && UTILITY_PANE_WIDTH_RE.test(value)
+    ? value
+    : DEFAULT_RECON_PANE_HEIGHT;
+};
+
+const labelReconPane = (
+  deps: TmuxDeps,
+  session: string,
+  pane: string,
+  index: number
+): void => {
+  const title = composeReconPaneTitle(session, index);
+  deps.spawn(["tmux", "set-option", "-p", "-t", pane, "@loop_label", title]);
+  deps.spawn(["tmux", "select-pane", "-t", pane, "-T", title]);
+};
+
+const startReconPanes = (
+  deps: TmuxDeps,
+  session: string,
+  runDir: string
+): string[] => {
+  const count = reconPaneCount(deps.env);
+  if (count === 0) {
+    return [];
+  }
+  const command = (index: number): string =>
+    buildShellCommand([
+      ...deps.launchArgv,
+      RECON_PANE_SUBCOMMAND,
+      runDir,
+      String(index),
+    ]);
+  const first = stablePaneTarget(
+    runTmuxCommand(deps, [
+      "tmux",
+      "split-window",
+      "-v",
+      "-f",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-l",
+      reconPaneHeight(deps.env),
+      "-t",
+      `${session}:0`,
+      "-c",
+      deps.cwd,
+      command(1),
+    ]),
+    `${session}:0.5`
+  );
+  const panes = [first];
+  labelReconPane(deps, session, first, 1);
+  if (count >= 2) {
+    const second = stablePaneTarget(
+      runTmuxCommand(deps, [
+        "tmux",
+        "split-window",
+        "-h",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-p",
+        count === 3 ? "67" : "50",
+        "-t",
+        first,
+        "-c",
+        deps.cwd,
+        command(2),
+      ]),
+      `${session}:0.6`
+    );
+    panes.push(second);
+    labelReconPane(deps, session, second, 2);
+    if (count === 3) {
+      const third = stablePaneTarget(
+        runTmuxCommand(deps, [
+          "tmux",
+          "split-window",
+          "-h",
+          "-P",
+          "-F",
+          "#{pane_id}",
+          "-p",
+          "50",
+          "-t",
+          second,
+          "-c",
+          deps.cwd,
+          command(3),
+        ]),
+        `${session}:0.7`
+      );
+      panes.push(third);
+      labelReconPane(deps, session, third, 3);
+    }
+  }
+  return panes;
 };
 
 const registerClaudeChannelServerForRun = (
@@ -1566,11 +1686,13 @@ const startPairedControlPanes = (
   const nanny = auPair
     ? startNannyPane(deps, session, auPair, `${session}:0.4`, runDir)
     : undefined;
+  const recon = governess ? startReconPanes(deps, session, runDir) : [];
   return {
     ...paneTargets,
     auPair,
     governess,
     nanny,
+    ...(recon.length > 0 ? { recon } : {}),
     utility: auPair,
   };
 };
@@ -1714,7 +1836,7 @@ const startPairedSession = async (
 
     const paneTargets = await createPairedPaneLayout({
       deps,
-      governess: launch.opts.governess,
+      governess: Boolean(launch.opts.governess),
       leftCommand,
       paneAgents,
       rightCommand,
@@ -1743,7 +1865,9 @@ const startPairedSession = async (
     );
     if (
       livePaneTargets.governess !== paneTargets.governess ||
-      livePaneTargets.utility !== paneTargets.utility
+      livePaneTargets.utility !== paneTargets.utility ||
+      JSON.stringify(livePaneTargets.recon) !==
+        JSON.stringify(paneTargets.recon)
     ) {
       updatePairedManifest(
         deps,
@@ -2049,5 +2173,7 @@ export const tmuxInternals = {
   stripTmuxFlag,
   utilityPaneEnabled,
   utilityPaneWidth,
+  reconPaneCount,
+  reconPaneHeight,
   worktreeAvailable,
 };

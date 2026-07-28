@@ -570,10 +570,12 @@ export const recordPendingUtilityRouteDecision = (
     if (current.state !== "pending-route") {
       return current;
     }
+    const eventId = `route-selected:${epoch}:${jobId}`;
+    const existingAt = events.find((event) => event.eventId === eventId)?.at;
     return appendLocked(paths, events, {
-      at: new Date().toISOString(),
+      at: existingAt ?? new Date().toISOString(),
       decision,
-      eventId: `route-selected:${epoch}:${jobId}`,
+      eventId,
       jobId,
       reason: decision.reason,
       state: "pending-route",

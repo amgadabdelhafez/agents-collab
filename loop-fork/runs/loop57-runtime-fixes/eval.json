@@ -1,0 +1,36 @@
+{
+  "task_id": "loop57-runtime-fixes",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/loop57-runtime-fixes/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/loop57-runtime-fixes/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/loop57-runtime-fixes/artifacts/unit/attempt-002.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/loop57-runtime-fixes/verification.md",
+      "reason": "final compiled build and diff check passed",
+      "method": "bun run build and git diff --check"
+    },
+    "independent-review": {
+      "status": "pass",
+      "artifact": "runs/loop57-runtime-fixes/independent-review.md",
+      "reason": "local Qwen found no medium or high correctness regressions",
+      "method": "independent model review"
+    },
+    "live-runtime": {
+      "status": "pass",
+      "artifact": "runs/loop57-runtime-fixes/verification.md",
+      "reason": "Loop 57 Nanny canary completed and lower-pane hot-swap preserved both main agents",
+      "method": "live tmux and journal canary"
+    }
+  }
+}
