@@ -163,6 +163,108 @@ test("Nanny executes a brokered Pi tool turn with durable evidence", async () =>
   }
 });
 
+test("Pi forces synthesis before the hard tool ceiling", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-synthesis-reserve-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-synthesis-reserve");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const needle = 1;\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return source-backed evidence"],
+    authority: {},
+    executionProfile: "search",
+    id: "pi-synthesis-reserve-job",
+    kind: "inspect",
+    objective: "Inspect the bounded source and finish before the hard ceiling",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 98);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 98,
+  });
+  const bodies: Record<string, unknown>[] = [];
+  let requestedSearches = 0;
+  const server = serve({
+    fetch: async (incoming) => {
+      const body = (await incoming.json()) as Record<string, unknown>;
+      bodies.push(body);
+      const availableTools = Array.isArray(body.tools) ? body.tools : [];
+      if (availableTools.length === 0) {
+        return response([
+          event({ role: "assistant" }),
+          event({ content: "Synthesized the bounded evidence before cutoff." }),
+          event({}, "stop"),
+        ]);
+      }
+      requestedSearches += 1;
+      return response([
+        event({ role: "assistant" }),
+        event({
+          tool_calls: [
+            {
+              function: {
+                arguments: JSON.stringify({
+                  paths: ["src"],
+                  query: `needle-${requestedSearches}`,
+                }),
+                name: "search_repo",
+              },
+              id: `search-${requestedSearches}`,
+              index: 0,
+              type: "function",
+            },
+          ],
+        }),
+        event({}, "tool_calls"),
+      ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+
+  try {
+    await runUtilityWorker(runDir, 98, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      LOOP_NANNY_MODEL: "fake-nanny",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+      LOOP_UTILITY_MAX_TOOL_CALLS: "4",
+    });
+    expect(requestedSearches).toBe(3);
+    expect(bodies).toHaveLength(4);
+    expect(JSON.stringify(bodies.at(-1))).toContain("FINALIZE_NOW");
+    expect(bodies.at(-1)?.tools ?? []).toEqual([]);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        status: "completed",
+        summary: "Synthesized the bounded evidence before cutoff.",
+      },
+      state: "completed",
+    });
+    const usage = readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8");
+    expect(usage).toContain('"toolCalls":3');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("Pi counts a rejected sibling batch as one model round and can adapt", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-rejection-round-"));
   const runDir = join(repoRoot, ".loop", "runs", "pi-rejection-round");
