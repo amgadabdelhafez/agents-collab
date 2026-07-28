@@ -32,6 +32,7 @@ afterEach(() => {
 
 interface CliModuleDeps {
   checkGitState?: () => string | undefined;
+  gcStaleClaudeBridgeRegistrations?: () => unknown;
   maybeEnterWorktree?: (opts: Options) => void | Promise<void>;
   parseArgs?: (argv: string[]) => Options;
   resolveTask?: (opts: Options) => Promise<string>;
@@ -56,6 +57,9 @@ const loadRunCli = async (
   updateOverrides: UpdateModuleDeps = {}
 ) => {
   const checkGitStateMock = mock(deps.checkGitState ?? (() => undefined));
+  const gcStaleClaudeBridgeRegistrationsMock = mock(
+    deps.gcStaleClaudeBridgeRegistrations ?? (() => undefined)
+  );
   const maybeEnterWorktreeMock = mock(
     deps.maybeEnterWorktree ?? (() => undefined)
   );
@@ -85,10 +89,10 @@ const loadRunCli = async (
   const actualClaudeSdk = await import(
     `../src/loop/claude-sdk-server?actual=${Date.now()}`
   );
-
   mock.module("../src/loop/deps", () => ({
     cliDeps: {
       checkGitState: checkGitStateMock,
+      gcStaleClaudeBridgeRegistrations: gcStaleClaudeBridgeRegistrationsMock,
       maybeEnterWorktree: maybeEnterWorktreeMock,
       parseArgs: parseArgsMock,
       resolveTask: resolveTaskMock,
@@ -123,6 +127,7 @@ const loadRunCli = async (
     checkGitStateMock,
     closeAppServerMock,
     closeClaudeSdkMock,
+    gcStaleClaudeBridgeRegistrationsMock,
     handleManualMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
@@ -199,6 +204,7 @@ test("runCli runs task flow when argv has options", async () => {
   const {
     closeAppServerMock,
     closeClaudeSdkMock,
+    gcStaleClaudeBridgeRegistrationsMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
     resolveTaskMock,
@@ -221,6 +227,7 @@ test("runCli runs task flow when argv has options", async () => {
   expect(runLoopMock).toHaveBeenCalledWith("ship feature", opts);
   expect(closeAppServerMock).toHaveBeenCalledTimes(1);
   expect(closeClaudeSdkMock).toHaveBeenCalledTimes(1);
+  expect(gcStaleClaudeBridgeRegistrationsMock).toHaveBeenCalledTimes(1);
   expect(opts.pairedMode).toBe(true);
 });
 
