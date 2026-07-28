@@ -1,0 +1,74 @@
+{
+  "task_id": "action-oriented-comms",
+  "feature": "action-oriented-comms",
+  "timestamp": "2026-07-28T19:35:06Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "upstream": {
+    "repository": "https://github.com/ayghri/i-have-adhd",
+    "reviewed_commit": "07684c4ab625dd7d1ea6e99e065f60bc0ac6a1ba",
+    "integration": "audience-aware adaptation; no global skill or hook installation"
+  },
+  "design": {
+    "human_boundary": "Founder, human, and external-supervisor reports lead with state and the exact action required, followed by the smallest supporting evidence.",
+    "internal_boundary": "Peer, reviewer, bridge, and handoff traffic leads with purpose and requested decision, then preserves exact scope, evidence, risks, unknowns, and failed paths without an item cap.",
+    "caveman_boundary": "Caveman may compress connective prose but may not remove machine-review evidence or exact identifiers.",
+    "global_plugin_installed": false,
+    "bridge_transport_changed": false,
+    "routing_policy_changed": false
+  },
+  "checks": {
+    "focused_prompt_contracts": {
+      "status": "pass",
+      "command": "bun test tests/loop/communication-guidance.test.ts tests/loop/prompts.test.ts tests/loop/bridge-guidance.test.ts tests/loop/caveman.test.ts tests/loop/tmux.test.ts tests/loop/paired-loop.test.ts tests/loop/governess-exit.test.ts",
+      "passed": 108,
+      "failed": 0,
+      "assertions": 565,
+      "files": 7
+    },
+    "repository_style": {
+      "status": "pass",
+      "command": "bun run check",
+      "errors": 0,
+      "warnings": 0,
+      "files_checked": 543
+    },
+    "typecheck": {
+      "status": "pass",
+      "command": "bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "full_suite": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "files": 59,
+      "note": "The authoritative sorted, one-file-at-a-time suite exited zero without a timeout or dangling process."
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "project_verify": {
+      "status": "pass",
+      "command": "scripts/verify.sh action-oriented-comms action-oriented-comms",
+      "note": "The fail-closed project verifier passed lint, typecheck, build, all 59 sorted test files, and the empty baseline gate."
+    }
+  },
+  "independent_reviews": [
+    {
+      "commit": "3776864",
+      "session": "019faa36-2247-7d53-bc6c-7ccdb5826e65",
+      "verdict": "pass",
+      "scope": "Audience boundary implementation and prompt-regression coverage"
+    }
+  ],
+  "deployment": {
+    "active_loop_restarted": false,
+    "global_runtime_reinstalled": false,
+    "global_upstream_plugin_installed": false,
+    "remote_push": false
+  }
+}
