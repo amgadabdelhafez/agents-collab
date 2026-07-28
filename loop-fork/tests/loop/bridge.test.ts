@@ -696,6 +696,41 @@ test.each([
   rmSync(root, { recursive: true, force: true });
 });
 
+test("route_task gives edit-specific recovery guidance", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["propose one exact patch"],
+          execution_profile: "search",
+          kind: "edit",
+          objective: "Add one parser branch",
+          read_scope: ["src/parser.ts"],
+          write_scope: ["src/parser.ts"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain(
+    "use one to four exact read files, one or two exact write files repeated in read_scope"
+  );
+  expect(result.stdout).toContain("no execution_profile, execution_plan");
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("route_task rejects narrative context refs before creating a doomed job", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");

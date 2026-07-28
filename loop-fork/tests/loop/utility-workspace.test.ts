@@ -164,16 +164,19 @@ test("edit workspace resolution accepts files and rejects directory-wide scope",
       },
       workspace: { root: realpathSync(fixture.base) },
     });
+    mkdirSync(join(fixture.unrelated, "src", "nested"));
     symlinkSync(
       join(fixture.unrelated, "src"),
       join(fixture.base, "linked-src")
     );
-    expect(
-      resolveUtilityRequestWorkspace(
-        editRequestFor("symlink-parent", "linked-src/new-file.ts"),
-        fixture.base
-      )
-    ).toEqual({ detail: "edit scopes must name exact regular files" });
+    for (const [id, path] of [
+      ["symlink-existing", "linked-src/sample.ts"],
+      ["symlink-parent", "linked-src/nested/new-file.ts"],
+    ] as const) {
+      expect(
+        resolveUtilityRequestWorkspace(editRequestFor(id, path), fixture.base)
+      ).toEqual({ detail: "edit scopes must name exact regular files" });
+    }
   } finally {
     rmSync(fixture.root, { force: true, recursive: true });
   }

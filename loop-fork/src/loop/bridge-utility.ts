@@ -781,6 +781,11 @@ const routeTask = (
     (kind === "inspect" || kind === "edit" || kind === "command") &&
     !utilityRequestIsBounded(request)
   ) {
+    if (kind === "edit") {
+      throw new UtilityBridgeInputError(
+        "route_task edit packet is not deterministically bounded; use one to four exact read files, one or two exact write files repeated in read_scope, scoped-edit capability, and no execution_profile, execution_plan, command, Git, output, or exact-read metadata"
+      );
+    }
     throw new UtilityBridgeInputError(
       "route_task utility packet is not deterministically bounded; use non-empty exact scopes and an execution_profile/execution_plan whose fields match the advertised contract"
     );

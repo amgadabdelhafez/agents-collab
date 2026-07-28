@@ -166,7 +166,7 @@ const exactEditFileScope = (
   }
   if (existsSync(target)) {
     try {
-      return lstatSync(target).isFile();
+      return realpathSync(target) === target && lstatSync(target).isFile();
     } catch {
       return false;
     }
@@ -179,7 +179,9 @@ const exactEditFileScope = (
     return false;
   }
   try {
-    return lstatSync(existing).isDirectory();
+    return (
+      realpathSync(existing) === existing && lstatSync(existing).isDirectory()
+    );
   } catch {
     return false;
   }
