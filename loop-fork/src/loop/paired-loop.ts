@@ -22,6 +22,7 @@ import {
   iterationCooldown,
   logIterationHeader,
 } from "./iteration";
+import { buildLedgerRecord, writeLedgerRecord } from "./ledger-record";
 import {
   preparePairedOptions as preparePairedOptionsImpl,
   preparePairedRun,
@@ -112,9 +113,7 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
     "Paired mode:",
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
     singleBridgeTransportGuidance,
-    mandatoryUtilityDelegationGuidance(
-      quotedBridgeTool(agent, "route_task")
-    ),
+    mandatoryUtilityDelegationGuidance(quotedBridgeTool(agent, "route_task")),
     `Ask ${peer} for validation and feedback after every few concrete steps, after meaningful design choices, and before finalizing. Include what changed, what proof ran, and what you want checked.`,
     "Use AskUserQuestion, or the equivalent user-input tool if available, whenever scope, requirements, acceptance criteria, or direction are unclear. Ask concise questions before guessing, and confirm direction when a choice would materially affect the work.",
     `Do not ask the human to relay messages between agents or answer the human on the other agent's behalf.`,
@@ -127,9 +126,7 @@ const bridgeToolGuidance = (agent: Agent): string => {
   return [
     `You can use the MCP tools ${quotedBridgeTool(agent, "send_message")}, ${quotedBridgeTool(agent, "bridge_status")}, and ${quotedBridgeTool(agent, "receive_messages")} for direct paired-agent coordination.`,
     singleBridgeTransportGuidance,
-    mandatoryUtilityDelegationGuidance(
-      quotedBridgeTool(agent, "route_task")
-    ),
+    mandatoryUtilityDelegationGuidance(quotedBridgeTool(agent, "route_task")),
     pollingNote,
     "Do not ask the human to relay messages between agents.",
   ].join("\n");
@@ -529,6 +526,35 @@ const finishRun = (
   }
   if (finalState === "failed" || finalState === "stopped") {
     appendTranscript(state, createRunResultEntry(finalState));
+  }
+  writeRunOutcome(state, finalState);
+};
+
+/**
+ * Writes the per-loop outcome record at wind-down. Best-effort by design: a
+ * telemetry failure must never turn a finished run into a crashed one.
+ */
+const writeRunOutcome = (state: PairedState, finalState: string): void => {
+  try {
+    const manifest = state.manifest;
+    const sessionIds = [
+      manifest.claudeSessionId,
+      manifest.codexThreadId,
+    ].filter((id) => id.length > 0);
+    const record = buildLedgerRecord({
+      createdAt: manifest.createdAt,
+      cwd: manifest.cwd,
+      endedAt: manifest.updatedAt,
+      finalState,
+      repoId: manifest.repoId,
+      runId: manifest.runId,
+      sessionIds,
+    });
+    writeLedgerRecord(state.storage.runDir, record);
+  } catch (error) {
+    console.error(
+      `[loop] could not write outcome record: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 };
 

@@ -20,6 +20,7 @@ import {
 } from "./loop/governess";
 import { runGovernessUtilityCommand } from "./loop/governess-replay";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
+import { LEDGER_SUBCOMMAND, runLedgerCommand } from "./loop/ledger";
 import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
@@ -48,6 +49,21 @@ const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
       !opts.promptInput?.trim() &&
       !opts.proof.trim()
   );
+
+/** Handles the named, non-task subcommands. Returns true when one ran. */
+const runNamedCommand = async (argv: string[]): Promise<boolean> => {
+  const command = argv[0]?.toLowerCase();
+  if (command === DASHBOARD_COMMAND) {
+    updateDeps.startAutoUpdateCheck();
+    await cliDeps.runPanel();
+    return true;
+  }
+  if (command === LEDGER_SUBCOMMAND) {
+    process.exitCode = runLedgerCommand(argv.slice(1));
+    return true;
+  }
+  return false;
+};
 
 const shouldAwaitAutoUpdate = (opts: Options): boolean =>
   !process.env.TMUX && isPromptlessPairedTmuxLaunch(opts);
@@ -175,9 +191,7 @@ export const runCli = async (argv: string[]): Promise<void> => {
     if (process.env.TMUX) {
       console.log(TMUX_DETACH_HINT);
     }
-    if (normalizedArgv[0]?.toLowerCase() === DASHBOARD_COMMAND) {
-      updateDeps.startAutoUpdateCheck();
-      await cliDeps.runPanel();
+    if (await runNamedCommand(normalizedArgv)) {
       return;
     }
     const opts = cliDeps.parseArgs(normalizedArgv);
