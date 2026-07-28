@@ -98,7 +98,6 @@ const MAX_CONSECUTIVE_BROKER_REJECTIONS = 3;
 const MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS = 3;
 const EMERGENCY_MAX_MODEL_CALLS = 64;
 const MAX_PI_SYNTHESIS_RESERVE_TOOL_CALLS = 8;
-const PI_SYNTHESIS_TOOL_NAMES = new Set<UtilityToolName>(["propose_patch"]);
 const DEFAULT_API_KEY_FILE = join(
   homedir(),
   ".config",
@@ -1471,6 +1470,7 @@ interface PiToolDefinitionInput {
     usage: OpenAICompatibleUsage;
   };
   synthesisToolLimit: number;
+  synthesisToolNames: ReadonlySet<UtilityToolName>;
   toolEventFile: string;
   updateActiveTools: () => void;
 }
@@ -1521,6 +1521,14 @@ const piSynthesisToolLimit = (
   );
 };
 
+const piSynthesisToolNames = (
+  request: UtilityRouteRequest
+): ReadonlySet<UtilityToolName> =>
+  new Set<UtilityToolName>([
+    ...(request.kind === "edit" ? (["propose_patch"] as const) : []),
+    ...(request.kind === "command" ? (["run_check"] as const) : []),
+  ]);
+
 const assertPiToolCallAllowed = (
   input: PiToolDefinitionInput,
   tool: string,
@@ -1544,7 +1552,7 @@ const assertPiToolCallAllowed = (
   }
   if (
     input.state.toolCalls >= input.synthesisToolLimit &&
-    !PI_SYNTHESIS_TOOL_NAMES.has(tool as UtilityToolName)
+    !input.synthesisToolNames.has(tool as UtilityToolName)
   ) {
     input.updateActiveTools();
     throw new Error(
@@ -1699,13 +1707,14 @@ const runPiUtilityConversation = async (input: {
     input.request,
     input.config.maxToolCalls
   );
+  const synthesisToolNames = piSynthesisToolNames(input.request);
   const updateActiveTools = (): void => {
     const forceSynthesis = state.toolCalls >= synthesisToolLimit;
     session?.setActiveToolsByName(
       forceSynthesis
         ? input.broker.definitions
             .map((definition) => definition.function.name)
-            .filter((name) => PI_SYNTHESIS_TOOL_NAMES.has(name))
+            .filter((name) => synthesisToolNames.has(name))
         : input.broker.definitions.map((definition) => definition.function.name)
     );
   };
@@ -1720,6 +1729,7 @@ const runPiUtilityConversation = async (input: {
     startedAt,
     state,
     synthesisToolLimit,
+    synthesisToolNames,
     toolEventFile: input.toolEventFile,
     updateActiveTools,
   });
