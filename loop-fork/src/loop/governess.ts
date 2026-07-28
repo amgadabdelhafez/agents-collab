@@ -1357,8 +1357,8 @@ const AGENT_COL = {
   limits: 25,
   spend: 12,
   tokens: 24,
-  activity: 19,
-  bridge: 14,
+  activity: 15,
+  bridge: 18,
 } as const;
 
 const AGENT_COLUMNS: [string, number][] = [
@@ -1366,18 +1366,49 @@ const AGENT_COLUMNS: [string, number][] = [
   ["STATE", AGENT_COL.state],
   ["AGE", AGENT_COL.age],
   ["MODEL", AGENT_COL.model],
-  ["RUN", AGENT_COL.run],
-  ["CONTEXT/CMP", AGENT_COL.context],
+  ["EFFORT/MODE/X", AGENT_COL.run],
+  ["CONTEXT / CMP", AGENT_COL.context],
   ["LIMITS/RESET", AGENT_COL.limits],
   ["COST/RATE", AGENT_COL.spend],
-  ["TOKENS I/C/O", AGENT_COL.tokens],
-  ["ACTIVITY", AGENT_COL.activity],
-  ["MSGS/TOOLS", AGENT_COL.bridge],
+  ["TOKENS T/I/C/O", AGENT_COL.tokens],
+  ["TEXT/THINK/TOOL", AGENT_COL.activity],
+  ["HUMAN/BRIDGE", AGENT_COL.bridge],
 ];
 
 const agentHeaderRow = paint(
   ANSI.dim,
   ` ${AGENT_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
+);
+
+const HELPER_COL = {
+  agent: AGENT_COL.agent,
+  state: AGENT_COL.state,
+  age: AGENT_COL.age,
+  model: AGENT_COL.model,
+  run: AGENT_COL.run,
+  context: AGENT_COL.context,
+  limits: AGENT_COL.limits,
+  spend: AGENT_COL.spend,
+  tokens: AGENT_COL.tokens,
+  activity: AGENT_COL.activity,
+} as const;
+
+const HELPER_COLUMNS: [string, number][] = [
+  ["HELPER", HELPER_COL.agent],
+  ["STATE", HELPER_COL.state],
+  ["AGE", HELPER_COL.age],
+  ["MODEL", HELPER_COL.model],
+  ["OK/FAIL", HELPER_COL.run],
+  ["ACTIVE/QUEUE", HELPER_COL.context],
+  ["CTX MISS", HELPER_COL.limits],
+  ["COST", HELPER_COL.spend],
+  ["TOKENS T/I/C/O", HELPER_COL.tokens],
+  ["CALLS/TOOLS", HELPER_COL.activity],
+];
+
+const helperHeaderRow = paint(
+  ANSI.dim,
+  ` ${HELPER_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
 );
 
 const rowState = (row: AgentRow): string =>
@@ -1826,11 +1857,9 @@ const renderAgentRow = (
       )
     : fitCell(rateLimit, AGENT_COL.limits);
   const tokenSummary = `${tok} i${inputTok} c${cachedTok} o${outputTok}`;
-  const activity = `${countCell(activityTotal(row.usage))} tx${countCell(
-    row.usage.textMessages
-  )} th${countCell(row.usage.thinkingMessages)} tl${countCell(
-    row.usage.toolCalls
-  )}`;
+  const activity = `${countCell(row.usage.textMessages)}/${countCell(
+    row.usage.thinkingMessages
+  )}/${countCell(row.usage.toolCalls)}`;
   const groups = groupedToolCounts(row.usage);
   const bridgeActivity = bridgeActivityText(row, groups, meta);
   return ` ${[
@@ -1886,22 +1915,6 @@ const utilityStateColor = (state: string): string => {
 const utilityCostCell = (cost: number): string =>
   cost > 0 ? `$${cost.toFixed(cost < 0.1 ? 4 : 2)}` : "—";
 
-const utilityLatestState = (snapshot: UtilityObservabilitySnapshot): string => {
-  if (snapshot.latestState === "completed") {
-    return "done";
-  }
-  if (snapshot.latestState === "failed") {
-    return "fail";
-  }
-  if (snapshot.latestState === "escalated") {
-    return "context";
-  }
-  if (snapshot.latestState === "routed-utility") {
-    return "route";
-  }
-  return snapshot.latestState ?? "—";
-};
-
 const utilityAge = (
   snapshot: UtilityObservabilitySnapshot,
   nowMs: number
@@ -1923,43 +1936,34 @@ const renderUtilityAgentRow = (
     role === "nanny"
       ? sumLocalLlmUsageByJudge(meta.llmUsageByJudge)
       : emptyLocalLlmUsage();
-  const run = `${snapshot.completed}ok/${snapshot.failed}fail`;
+  const run = `${snapshot.completed}/${snapshot.failed}`;
   const tokens = `${tokenCell(usage.totalTokens + nannyUsage.totalTokens)} i${tokenCell(usage.inputTokens + nannyUsage.inputTokens)} c${tokenCell(usage.cachedInputTokens + nannyUsage.cachedInputTokens)} o${tokenCell(usage.outputTokens + nannyUsage.outputTokens)}`;
-  const activity = `${snapshot.jobsTotal}j ${usage.modelCalls + nannyUsage.calls}c ${usage.toolCalls}tl`;
-  const latest = snapshot.latestJobId
-    ? `${snapshot.latestJobId.slice(0, 8)} ${utilityLatestState(snapshot)}`
-    : nannyUsage.calls > 0
-      ? `${nannyUsage.calls} advisory`
-      : "—";
+  const activity = `${usage.modelCalls + nannyUsage.calls}/${usage.toolCalls}`;
   return ` ${[
-    colorCell(ANSI.green, role, AGENT_COL.agent),
-    colorCell(utilityStateColor(state), `● ${state}`, AGENT_COL.state),
-    fitCell(utilityAge(snapshot, meta.nowMs), AGENT_COL.age),
+    colorCell(ANSI.green, role, HELPER_COL.agent),
+    colorCell(utilityStateColor(state), `● ${state}`, HELPER_COL.state),
+    fitCell(utilityAge(snapshot, meta.nowMs), HELPER_COL.age),
     colorCell(
       ANSI.green,
       snapshot.model
-        ? shortLocalModel(snapshot.model)
+        ? role === "nanny"
+          ? judgeIdFromModel(snapshot.model)
+          : shortLocalModel(snapshot.model)
         : role === "nanny"
           ? "qwen"
           : "glm-5.2",
-      AGENT_COL.model
+      HELPER_COL.model
     ),
-    fitCell(run, AGENT_COL.run),
-    fitCell(
-      snapshot.contextInsufficient > 0
-        ? `ctx${snapshot.contextInsufficient}`
-        : "—",
-      AGENT_COL.context
-    ),
-    fitCell("—", AGENT_COL.limits),
+    fitCell(run, HELPER_COL.run),
+    fitCell(`${snapshot.active}/${snapshot.queued}`, HELPER_COL.context),
+    fitCell(String(snapshot.contextInsufficient), HELPER_COL.limits),
     colorCell(
       ANSI.yellow,
-      `${utilityCostCell(usage.costUsd)}/—`,
-      AGENT_COL.spend
+      utilityCostCell(usage.costUsd),
+      HELPER_COL.spend
     ),
-    colorCell(ANSI.yellow, tokens, AGENT_COL.tokens),
-    colorCell(ANSI.yellow, activity, AGENT_COL.activity),
-    fitCell(latest, AGENT_COL.bridge),
+    colorCell(ANSI.yellow, tokens, HELPER_COL.tokens),
+    colorCell(ANSI.yellow, activity, HELPER_COL.activity),
   ].join(" ")}`;
 };
 
@@ -1969,13 +1973,28 @@ const renderWorkerRoutingRows = (
 ): string[] => {
   const width = Math.max(1, meta.maxColumns ?? 176);
   const routing = snapshot.routing;
-  const decisions = ` routing · considered ${routing.considered} · routed helpers ${routing.routed} · actionable ${routing.actionable} · retained ${routing.retained} · unsafe ${routing.unsafe} · pending ${routing.pending} · adoption auto ${routing.autoRouted} explicit ${routing.explicitRouted} packets ${routing.promptPackets} plans ${routing.structuredPlans}`;
-  const reasons = Object.entries(routing.reasons)
+  const decisions = ` routing · ${routing.routed}/${routing.considered} helpers ${workerPercentage(routing.routed, routing.considered)} · active ${snapshot.active} queued ${snapshot.queued} · actionable ${routing.actionable} · kept ${routing.retained} · unsafe ${routing.unsafe} · auto ${routing.autoRouted} explicit ${routing.explicitRouted} · packets ${routing.promptPackets} plans ${routing.structuredPlans}`;
+  const reasonEntries = Object.entries(routing.reasons)
     .sort(
       (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
+    );
+  const reasonLabels: Record<string, string> = {
+    "command-not-bounded": "command broad",
+    "compound-or-unsafe-command": "compound/unsafe",
+    "protected-scope": "protected",
+    "request-not-bounded": "too broad",
+    "review-stays-with-requester": "review kept",
+    "small-context-read": "small read",
+    "tool-not-enforceable": "tool blocked",
+  };
+  const reasons = reasonEntries
+    .slice(0, 4)
+    .map(
+      ([reason, count]) =>
+        `${reasonLabels[reason] ?? reason.replace(/-/g, " ")} ${count}`
     )
-    .map(([reason, count]) => `${reason} ${count}`)
     .join(" · ");
+  const remainingReasons = Math.max(0, reasonEntries.length - 4);
   const latestDetail = snapshot.latestRouteDetail?.includes("chmod 600")
     ? "key file permissions too open; chmod 600"
     : snapshot.latestRouteDetail;
@@ -1984,7 +2003,7 @@ const renderWorkerRoutingRows = (
     paint(
       routing.skipped > 0 ? ANSI.yellow : ANSI.dim,
       truncate(
-        ` routing why · ${reasons || "none"}${latestDetail ? ` · latest ${latestDetail}` : ""}`,
+        ` why · ${reasons || "none"}${remainingReasons > 0 ? ` · +${remainingReasons} more` : ""}${latestDetail ? ` · latest ${latestDetail}` : ""}`,
         width
       )
     ),
@@ -2002,20 +2021,17 @@ const renderWorkerDetailRows = (
   const performance = snapshot.performance;
   const contexts = snapshot.contexts;
   const failures = snapshot.failures;
-  const routing = snapshot.routing;
   const measured = performance.measuredJobs > 0;
-  const performanceLine = ` helpers perf · success ${performance.successfulJobs}/${performance.finishedJobs} ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · avg ${measured ? fmtDuration(performance.averageDurationMs) : "—"} · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"}`;
-  const loadLine = ` helpers load · active ${snapshot.active} · queued ${snapshot.queued} · route share ${routing.routed}/${routing.considered} ${workerPercentage(routing.routed, routing.considered)} · msgs in ${snapshot.messages.inbound} out ${snapshot.messages.outbound} pending ${snapshot.messages.pending}`;
+  const performanceLine = ` helpers · ${performance.successfulJobs}/${performance.finishedJobs} success ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · ${measured ? fmtDuration(performance.averageDurationMs) : "—"} avg · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"} · bridge ${snapshot.messages.inbound}→${snapshot.messages.outbound} pending ${snapshot.messages.pending}`;
   const latestContext = contexts.latestHash
     ? `v${contexts.latestVersion ?? "?"} ${contexts.latestHash}`
     : "none";
   const topFailure = failures.topToolError
     ? `${failures.topToolError} ${failures.topToolErrorCount}`
     : "none";
-  const contextLine = ` helpers context · capsules ${contexts.capsules}/${snapshot.jobsTotal} ${snapshot.jobsTotal > 0 ? workerPercentage(contexts.coverage, 1) : "—"} · refs ${contexts.references} · latest ${latestContext} · ctx misses ${snapshot.contextInsufficient} · tool failures ${failures.toolFailures} · top ${topFailure}`;
+  const contextLine = ` context · ${contexts.capsules}/${snapshot.jobsTotal} capsules ${snapshot.jobsTotal > 0 ? workerPercentage(contexts.coverage, 1) : "—"} · refs ${contexts.references} · latest ${latestContext} · misses ${snapshot.contextInsufficient} · tool failures ${failures.toolFailures} · top ${topFailure.replace(/_/g, " ")}`;
   return [
     paint(ANSI.green, truncate(performanceLine, width)),
-    paint(ANSI.cyan, truncate(loadLine, width)),
     paint(
       failures.toolFailures > 0 || snapshot.contextInsufficient > 0
         ? ANSI.yellow
@@ -2023,27 +2039,6 @@ const renderWorkerDetailRows = (
       truncate(contextLine, width)
     ),
   ];
-};
-
-const localLlmUsageCells = (usage: LocalLlmUsage): string[] => {
-  const calls =
-    usage.calls > 0
-      ? `${usage.calls} calls`
-      : usage.totalTokens > 0
-        ? "? calls"
-        : "0 calls";
-  const tokenText = `${fmtTokens(usage.totalTokens)} tok`;
-  if (usage.inputTokens === 0 && usage.outputTokens === 0) {
-    return [`llm ${calls}`, tokenText];
-  }
-  const splitTokens = usage.inputTokens + usage.outputTokens;
-  const unsplitTokens = Math.max(0, usage.totalTokens - splitTokens);
-  const splitParts = [
-    `${fmtTokens(usage.inputTokens)} in`,
-    `${fmtTokens(usage.outputTokens)} out`,
-    ...(unsplitTokens > 0 ? [`${fmtTokens(unsplitTokens)} unsplit`] : []),
-  ];
-  return [`llm ${calls}`, `${tokenText} (${splitParts.join(" / ")})`];
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -2286,125 +2281,6 @@ const readLocalLlmRuntime = (input: LocalLlmRuntimeInput): LocalLlmRuntime => {
 const pct = (numerator: number, denominator: number): number =>
   denominator > 0 ? Math.round((numerator / denominator) * 100) : 0;
 
-const localLlmRuntimeCell = (
-  runtime: LocalLlmRuntime | undefined,
-  usage: LocalLlmUsage
-): string[] => {
-  const parts: string[] = [];
-  const promptTokens = runtime?.promptTokens ?? usage.inputTokens;
-  const cachedPromptTokens =
-    runtime?.cachedPromptTokens ?? usage.cachedInputTokens;
-  if (promptTokens > 0) {
-    parts.push(
-      `cache hit ${pct(cachedPromptTokens, promptTokens)}% (${fmtTokens(
-        cachedPromptTokens
-      )}/${fmtTokens(promptTokens)})`
-    );
-  } else {
-    parts.push("cache hit —");
-  }
-  if (
-    runtime?.promptCacheGb !== undefined &&
-    runtime.promptCacheSequences !== undefined
-  ) {
-    const maxSequences = runtime.promptCacheMaxSequences;
-    const slotText =
-      maxSequences && maxSequences > 0
-        ? `slots ${runtime.promptCacheSequences}/${maxSequences} ${pct(
-            runtime.promptCacheSequences,
-            maxSequences
-          )}%`
-        : `slots ${runtime.promptCacheSequences}`;
-    parts.push(slotText);
-  } else {
-    parts.push("slots —");
-  }
-  const promptCacheGb = runtime?.promptCacheGb;
-  const kvCacheGb = runtime?.kvCacheGb;
-  if (promptCacheGb !== undefined || kvCacheGb !== undefined) {
-    const memoryParts = [
-      promptCacheGb === undefined ? "" : `${fmtGb(promptCacheGb)} prompt`,
-      kvCacheGb === undefined ? "" : `${fmtGb(kvCacheGb)} kv`,
-    ].filter(Boolean);
-    const totalGb = (promptCacheGb ?? 0) + (kvCacheGb ?? 0);
-    const sequences =
-      runtime?.promptCacheSequences ?? runtime?.kvCacheSequences;
-    const perSeq =
-      sequences && sequences > 0 ? ` (${fmtGb(totalGb / sequences)}/seq)` : "";
-    parts.push(
-      `cache mem ${memoryParts.join(" + ")} = ${fmtGb(totalGb)}${perSeq}`
-    );
-  } else {
-    parts.push("cache mem —");
-  }
-  return parts;
-};
-
-const localLlmModelCell = (runtime: LocalLlmRuntime | undefined): string[] => {
-  const info = runtime?.modelInfo;
-  if (!info) {
-    return [];
-  }
-  const kv =
-    info.kvHeads !== undefined && info.headDim !== undefined
-      ? `kv ${info.kvHeads}x${info.headDim}`
-      : undefined;
-  const archParts = [
-    info.layers === undefined ? "" : `${info.layers}L`,
-    info.hiddenSize === undefined ? "" : `h${info.hiddenSize}`,
-    info.attentionHeads === undefined ? "" : `attn ${info.attentionHeads}`,
-    kv ?? "",
-    info.contextTokens === undefined
-      ? ""
-      : `ctx ${fmtTokens(info.contextTokens)}`,
-    info.fullAttentionInterval === undefined
-      ? ""
-      : `full attn/${info.fullAttentionInterval}`,
-  ].filter(Boolean);
-  const implParts = [
-    info.dtype ? `dtype ${info.dtype.replace("bfloat16", "bf16")}` : "",
-    info.quantBits === undefined
-      ? ""
-      : `weights q${info.quantBits}${
-          info.quantGroupSize === undefined ? "" : `/g${info.quantGroupSize}`
-        }${info.quantMode ? ` ${info.quantMode}` : ""}`,
-    info.moeExperts === undefined
-      ? ""
-      : `moe ${info.moeExperts}e${
-          info.moeActiveExperts === undefined
-            ? ""
-            : `/${info.moeActiveExperts} active`
-        }`,
-  ].filter(Boolean);
-  const batchParts = [
-    runtime?.promptConcurrency === undefined
-      ? ""
-      : `prefill ${runtime.promptConcurrency}`,
-    runtime?.decodeConcurrency === undefined
-      ? ""
-      : `decode ${runtime.decodeConcurrency}`,
-    runtime?.prefillStepSize === undefined
-      ? ""
-      : `step ${runtime.prefillStepSize}`,
-  ].filter(Boolean);
-  return [
-    ...(archParts.length > 0 ? [`model ${archParts.join(" ")}`] : []),
-    ...(implParts.length > 0 ? [implParts.join(" · ")] : []),
-    ...(batchParts.length > 0 ? [`batch ${batchParts.join(" · ")}`] : []),
-  ];
-};
-
-const localLlmParamsCell = (_judgeMode: LocalLlmJudgeMode): string[] => [
-  `temp ${LOCAL_LLM_TEMPERATURE}`,
-  LOCAL_LLM_JUDGE_MAX_TOKENS === LOCAL_LLM_WAITING_MAX_TOKENS
-    ? `max out ${fmtTokenLimit(
-        LOCAL_LLM_JUDGE_MAX_TOKENS
-      )} judge+wait / ${fmtTokenLimit(LOCAL_LLM_SUMMARY_MAX_TOKENS)} summary`
-    : `max out ${fmtTokenLimit(LOCAL_LLM_JUDGE_MAX_TOKENS)} judge / ${fmtTokenLimit(
-        LOCAL_LLM_WAITING_MAX_TOKENS
-      )} wait / ${fmtTokenLimit(LOCAL_LLM_SUMMARY_MAX_TOKENS)} summary`,
-];
-
 // The cost cell, with a budget fraction when a budget is set (colored as it
 // crosses the 80% warn line and the 100% ceiling).
 const costCell = (
@@ -2474,7 +2350,7 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
       ? [`wall ${fmtDuration(meta.uptimeMs)}`]
       : []),
     costCell(totalCost, perHr, meta.budgetUsd),
-    `both idle total ${fmtDuration(meta.stats.humanIdleMs)}`,
+    `joint idle ${fmtDuration(meta.stats.humanIdleMs)}`,
     ...(messageCounts ? [messageCounts] : []),
     ...roleSummaryParts(meta),
     ...(errorTotal > 0 ? [paint(ANSI.red, `errors ${errorTotal}`)] : []),
@@ -2539,27 +2415,33 @@ const agentLatestSegment = (
 const renderBridgeMessage = (
   message: BridgeMessage | undefined,
   meta: BoardMeta,
-  row?: AgentRow
+  row: AgentRow | undefined,
+  showLabel: boolean
 ): string | undefined => {
-  const action = agentLatestSegment(row, " · ");
+  const action = agentLatestSegment(row, " · now ");
+  const prefix = showLabel ? " bridge " : "        ";
   if (!message) {
     const standaloneAction = agentLatestSegment(row, "");
     return standaloneAction
-      ? [paint(ANSI.dim, " bridge latest · "), standaloneAction].join("")
+      ? [paint(ANSI.dim, prefix), standaloneAction].join("")
       : undefined;
   }
   const ageMs = meta.nowMs - Date.parse(message.at);
-  const age = Number.isFinite(ageMs) ? `${fmtDuration(ageMs)} ago` : "latest";
+  const age = Number.isFinite(ageMs) ? fmtDuration(ageMs) : "latest";
   const text = truncate(
-    message.message.replace(SPACE_GLOBAL_RE, " ").trim(),
+    message.message
+      .replaceAll("**", "")
+      .replaceAll("`", "")
+      .replace(SPACE_GLOBAL_RE, " ")
+      .trim(),
     BRIDGE_LATEST_WIDTH
   );
   return [
-    paint(ANSI.dim, " bridge latest · "),
+    paint(ANSI.dim, prefix),
     renderBridgeDirection(message.source, message.target),
-    " ",
+    paint(ANSI.dim, " · "),
     paint(ANSI.yellow, age),
-    paint(ANSI.dim, `: ${text}`),
+    paint(ANSI.dim, ` · ${text}`),
     action ?? "",
   ].join("");
 };
@@ -2573,51 +2455,26 @@ const renderBridgeLatestLine = (
     agent ? rows.find((row) => row.liveness.agent === agent) : undefined;
   if (!(left && right)) {
     return rows
-      .map((row) => renderBridgeMessage(undefined, meta, row))
+      .map((row, index) =>
+        renderBridgeMessage(undefined, meta, row, index === 0)
+      )
       .filter((part): part is string => Boolean(part));
   }
   const parts = [
     renderBridgeMessage(
       bridgeLatestFor(meta.bridgeLatest, left, right),
       meta,
-      rowFor(left)
+      rowFor(left),
+      true
     ),
     renderBridgeMessage(
       bridgeLatestFor(meta.bridgeLatest, right, left),
       meta,
-      rowFor(right)
+      rowFor(right),
+      false
     ),
   ].filter((part): part is string => Boolean(part));
   return parts;
-};
-
-const workerMessageAge = (at: string | undefined, nowMs: number): string => {
-  const parsed = at ? Date.parse(at) : Number.NaN;
-  return Number.isFinite(parsed) ? fmtDuration(nowMs - parsed) : "—";
-};
-
-const renderWorkerBridgeLine = (
-  snapshot: UtilityObservabilitySnapshot,
-  meta: BoardMeta
-): string => {
-  const messages = snapshot.messages;
-  return [
-    paint(ANSI.dim, " helper jobs · "),
-    paint(
-      ANSI.cyan,
-      `in ${messages.inbound} latest ${workerMessageAge(messages.latestInboundAt, meta.nowMs)}`
-    ),
-    paint(ANSI.dim, " · "),
-    paint(
-      ANSI.green,
-      `out ${messages.outbound} latest ${workerMessageAge(messages.latestOutboundAt, meta.nowMs)}`
-    ),
-    paint(ANSI.dim, " · "),
-    paint(
-      messages.pending > 0 ? ANSI.yellow : ANSI.dim,
-      `bridge pending ${messages.pending}`
-    ),
-  ].join("");
 };
 
 const roleActionAge = (
@@ -2776,63 +2633,6 @@ const bridgeActivityText = (
   return parts.join(" ") || "—";
 };
 
-interface LocalFooterPart {
-  color: string;
-  text: string;
-}
-
-const renderLocalFooterLine = (parts: LocalFooterPart[]): string =>
-  ` ${parts
-    .map((part) => paint(part.color, part.text))
-    .join(paint(ANSI.dim, " · "))}`;
-
-const localFooterKnownColor = (text: string, color: string): string =>
-  text.includes("—") ? ANSI.dim : color;
-
-const LLM_COL = {
-  arch: 33,
-  batch: 17,
-  cached: 6,
-  calls: 5,
-  dtype: 5,
-  hit: 5,
-  id: 5,
-  input: 6,
-  memory: 6,
-  model: 27,
-  moe: 8,
-  output: 6,
-  quant: 13,
-  slots: 7,
-  status: 4,
-  tokens: 6,
-} as const;
-
-const LLM_COLUMNS: [string, number][] = [
-  ["NANNY", LLM_COL.id],
-  ["MODEL", LLM_COL.model],
-  ["STAT", LLM_COL.status],
-  ["CALLS", LLM_COL.calls],
-  ["TOK", LLM_COL.tokens],
-  ["IN", LLM_COL.input],
-  ["CACHE", LLM_COL.cached],
-  ["OUT", LLM_COL.output],
-  ["HIT", LLM_COL.hit],
-  ["SLOTS", LLM_COL.slots],
-  ["MEM", LLM_COL.memory],
-  ["ARCH", LLM_COL.arch],
-  ["DT", LLM_COL.dtype],
-  ["QNT", LLM_COL.quant],
-  ["MOE", LLM_COL.moe],
-  ["BATCH", LLM_COL.batch],
-];
-
-const localLlmTableHeader = (): string =>
-  paint(
-    ANSI.dim,
-    ` ${LLM_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
-  );
-
 const localLlmModelLabel = (judge: LocalLlmJudgeConfig): string => {
   const size = judge.modelSizeGb ? ` (${judge.modelSizeGb.toFixed(0)}GB)` : "";
   return `${shortLocalModel(judge.model)}${size}`;
@@ -2876,16 +2676,9 @@ const localLlmArch = (runtime: LocalLlmRuntime | undefined): string => {
   const parts = [
     info.layers === undefined ? "" : `${info.layers}L`,
     info.hiddenSize === undefined ? "" : `h${info.hiddenSize}`,
-    info.attentionHeads === undefined ? "" : `a${info.attentionHeads}`,
-    info.kvHeads !== undefined && info.headDim !== undefined
-      ? `kv${info.kvHeads}x${info.headDim}`
-      : "",
     info.contextTokens === undefined
       ? ""
       : `ctx${fmtTokens(info.contextTokens)}`,
-    info.fullAttentionInterval === undefined
-      ? ""
-      : `f/${info.fullAttentionInterval}`,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(" ") : "—";
 };
@@ -2900,7 +2693,7 @@ const localLlmQuant = (runtime: LocalLlmRuntime | undefined): string => {
   }
   return `q${info.quantBits}${
     info.quantGroupSize === undefined ? "" : `/g${info.quantGroupSize}`
-  }${info.quantMode ? ` ${info.quantMode}` : ""}`;
+  }`;
 };
 
 const localLlmMoe = (runtime: LocalLlmRuntime | undefined): string => {
@@ -2914,18 +2707,16 @@ const localLlmMoe = (runtime: LocalLlmRuntime | undefined): string => {
 };
 
 const localLlmBatch = (runtime: LocalLlmRuntime | undefined): string => {
-  const parts = [
-    runtime?.promptConcurrency === undefined
-      ? ""
-      : `pre${runtime.promptConcurrency}`,
+  const concurrency =
+    runtime?.promptConcurrency === undefined &&
     runtime?.decodeConcurrency === undefined
       ? ""
-      : `dec${runtime.decodeConcurrency}`,
+      : `batch ${runtime?.promptConcurrency ?? "?"}/${runtime?.decodeConcurrency ?? "?"}`;
+  const step =
     runtime?.prefillStepSize === undefined
       ? ""
-      : `st${runtime.prefillStepSize}`,
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" ") : "—";
+      : `step ${runtime.prefillStepSize}`;
+  return [concurrency, step].filter(Boolean).join(" · ") || "—";
 };
 
 const renderLocalLlmUsageRow = (
@@ -2935,64 +2726,53 @@ const renderLocalLlmUsageRow = (
   const usage = meta.llmUsageByJudge[judge.id] ?? emptyLocalLlmUsage();
   const runtime = meta.llmRuntimeByJudge[judge.id];
   const offline = meta.llmOfflineByJudge[judge.id] === true;
-  return ` ${[
-    colorCell(offline ? ANSI.red : ANSI.cyan, judge.id, LLM_COL.id),
-    colorCell(ANSI.cyan, localLlmModelLabel(judge), LLM_COL.model),
-    colorCell(
-      offline ? ANSI.red : ANSI.green,
-      offline ? "off" : "ok",
-      LLM_COL.status
+  const modelLabel = localLlmModelLabel(judge);
+  const identity = modelLabel.toLowerCase().startsWith(judge.id.toLowerCase())
+    ? modelLabel
+    : `${judge.id} ${modelLabel}`;
+  return [
+    paint(ANSI.dim, " nanny model · "),
+    paint(ANSI.cyan, identity),
+    paint(ANSI.dim, " · "),
+    paint(offline ? ANSI.red : ANSI.green, offline ? "offline" : "ok"),
+    paint(ANSI.dim, " · "),
+    paint(ANSI.green, `${usage.calls} calls`),
+    paint(ANSI.dim, " · "),
+    paint(
+      ANSI.yellow,
+      `${tokenCell(usage.totalTokens)} tok (i${tokenCell(usage.inputTokens)} c${tokenCell(usage.cachedInputTokens)} o${tokenCell(usage.outputTokens)})`
     ),
-    colorCell(
-      ANSI.green,
-      usage.calls > 0 ? String(usage.calls) : "0",
-      LLM_COL.calls
+    paint(ANSI.dim, " · "),
+    paint(ANSI.green, `cache ${localLlmCacheHit(runtime, usage)}`),
+    paint(ANSI.dim, " · "),
+    paint(ANSI.cyan, `slots ${localLlmSlots(runtime)}`),
+    paint(ANSI.dim, " · "),
+    paint(ANSI.magenta, `mem ${localLlmMemory(runtime)}`),
+  ].join("");
+};
+
+const renderLocalLlmRuntimeRow = (
+  judge: LocalLlmJudgeConfig,
+  meta: BoardMeta
+): string => {
+  const runtime = meta.llmRuntimeByJudge[judge.id];
+  return [
+    paint(ANSI.dim, " runtime · "),
+    paint(ANSI.cyan, localLlmArch(runtime)),
+    paint(ANSI.dim, " · "),
+    paint(ANSI.magenta, `${localLlmDtype(runtime)} ${localLlmQuant(runtime)}`),
+    paint(ANSI.dim, " · "),
+    paint(ANSI.magenta, `MoE ${localLlmMoe(runtime)}`),
+    paint(ANSI.dim, " · "),
+    paint(ANSI.blue, localLlmBatch(runtime)),
+    paint(ANSI.dim, " · "),
+    paint(ANSI.blue, `temp ${LOCAL_LLM_TEMPERATURE}`),
+    paint(ANSI.dim, " · "),
+    paint(
+      ANSI.blue,
+      `max out ${fmtTokenLimit(LOCAL_LLM_JUDGE_MAX_TOKENS)} judge+wait / ${fmtTokenLimit(LOCAL_LLM_SUMMARY_MAX_TOKENS)} summary`
     ),
-    colorCell(ANSI.yellow, tokenCell(usage.totalTokens), LLM_COL.tokens),
-    colorCell(ANSI.yellow, tokenCell(usage.inputTokens), LLM_COL.input),
-    colorCell(ANSI.yellow, tokenCell(usage.cachedInputTokens), LLM_COL.cached),
-    colorCell(ANSI.yellow, tokenCell(usage.outputTokens), LLM_COL.output),
-    colorCell(
-      localFooterKnownColor(localLlmCacheHit(runtime, usage), ANSI.green),
-      localLlmCacheHit(runtime, usage),
-      LLM_COL.hit
-    ),
-    colorCell(
-      localFooterKnownColor(localLlmSlots(runtime), ANSI.cyan),
-      localLlmSlots(runtime),
-      LLM_COL.slots
-    ),
-    colorCell(
-      localFooterKnownColor(localLlmMemory(runtime), ANSI.magenta),
-      localLlmMemory(runtime),
-      LLM_COL.memory
-    ),
-    colorCell(
-      localFooterKnownColor(localLlmArch(runtime), ANSI.cyan),
-      localLlmArch(runtime),
-      LLM_COL.arch
-    ),
-    colorCell(
-      localFooterKnownColor(localLlmDtype(runtime), ANSI.magenta),
-      localLlmDtype(runtime),
-      LLM_COL.dtype
-    ),
-    colorCell(
-      localFooterKnownColor(localLlmQuant(runtime), ANSI.magenta),
-      localLlmQuant(runtime),
-      LLM_COL.quant
-    ),
-    colorCell(
-      localFooterKnownColor(localLlmMoe(runtime), ANSI.magenta),
-      localLlmMoe(runtime),
-      LLM_COL.moe
-    ),
-    colorCell(
-      localFooterKnownColor(localLlmBatch(runtime), ANSI.blue),
-      localLlmBatch(runtime),
-      LLM_COL.batch
-    ),
-  ].join(" ")}`;
+  ].join("");
 };
 
 const structuredSummaryValue = (
@@ -3026,63 +2806,63 @@ const renderProgressNext = (meta: BoardMeta): string[] => {
 };
 
 const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
-  const paramCells = localLlmParamsCell(meta.judgeMode);
-  const paramParts: LocalFooterPart[] = paramCells.map((text) => ({
-    color: ANSI.blue,
-    text,
-  }));
   const summaryLines = renderProgressNext(meta);
+  const judgeLines = meta.llmJudges.map((judge) =>
+    renderLocalLlmUsageRow(judge, meta)
+  );
+  const runtimeLine = meta.llmJudges[0]
+    ? renderLocalLlmRuntimeRow(meta.llmJudges[0], meta)
+    : undefined;
   if (maxRows === undefined) {
     return [
-      localLlmTableHeader(),
-      ...meta.llmJudges.map((judge) => renderLocalLlmUsageRow(judge, meta)),
-      renderLocalFooterLine(paramParts),
+      ...judgeLines,
+      ...(runtimeLine ? [runtimeLine] : []),
       ...summaryLines,
     ];
   }
   if (maxRows <= 0) {
     return [];
   }
-  if (maxRows === 1) {
-    return [summaryLines.at(-1) ?? localLlmTableHeader()];
-  }
-  if (summaryLines.length > 0 && maxRows <= summaryLines.length + 2) {
-    const supplementalBudget = maxRows - summaryLines.length;
-    const compactLlm = meta.llmJudges[0]
-      ? renderLocalLlmUsageRow(meta.llmJudges[0], meta)
-      : renderLocalFooterLine(paramParts);
-    const supplemental: string[] = [];
-    if (supplementalBudget === 2) {
-      supplemental.push(localLlmTableHeader(), compactLlm);
-    } else if (supplementalBudget === 1) {
-      supplemental.push(compactLlm);
+  const reservedSummary = Math.min(summaryLines.length, maxRows);
+  const modelBudget = Math.max(0, maxRows - reservedSummary);
+  const modelLines: string[] = [];
+  if (modelBudget > 0) {
+    const cappedJudgeCount = Math.min(2, judgeLines.length);
+    const hasOverflow = judgeLines.length > cappedJudgeCount;
+    if (hasOverflow && modelBudget === 1) {
+      modelLines.push(judgeLines[0] as string);
+    } else if (hasOverflow) {
+      const visibleCount = Math.min(cappedJudgeCount, modelBudget - 1);
+      modelLines.push(...judgeLines.slice(0, visibleCount));
+      modelLines.push(
+        paint(
+          ANSI.dim,
+          ` … ${judgeLines.length - visibleCount} more judges (see replay/trace)`
+        )
+      );
+      if (runtimeLine && modelLines.length < modelBudget) {
+        modelLines.push(runtimeLine);
+      }
+    } else if (judgeLines.length <= modelBudget) {
+      modelLines.push(...judgeLines);
+      if (runtimeLine && modelLines.length < modelBudget) {
+        modelLines.push(runtimeLine);
+      }
+    } else {
+      const visibleCount = Math.max(0, modelBudget - 1);
+      modelLines.push(...judgeLines.slice(0, visibleCount));
+      modelLines.push(
+        paint(
+          ANSI.dim,
+          ` … ${judgeLines.length - visibleCount} more judges (see replay/trace)`
+        )
+      );
     }
-    return [...supplemental, ...summaryLines].slice(-maxRows);
   }
-  const reserved = 2 + summaryLines.length;
-  const judgeBudget = Math.max(0, maxRows - reserved);
-  const overflow = meta.llmJudges.length > judgeBudget;
-  const visibleCount = overflow
-    ? Math.max(0, judgeBudget - 1)
-    : meta.llmJudges.length;
-  const judgeLines = meta.llmJudges
-    .slice(0, visibleCount)
-    .map((judge) => renderLocalLlmUsageRow(judge, meta));
-  if (overflow && judgeBudget > 0) {
-    judgeLines.push(
-      paint(
-        ANSI.dim,
-        ` … ${meta.llmJudges.length - visibleCount} more judges (see replay/trace)`
-      )
-    );
-  }
-  const fixed = [
-    localLlmTableHeader(),
-    ...judgeLines,
-    renderLocalFooterLine(paramParts),
-    ...summaryLines,
-  ];
-  return fixed.slice(0, maxRows);
+  return [
+    ...modelLines,
+    ...summaryLines.slice(-reservedSummary),
+  ].slice(0, maxRows);
 };
 
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
@@ -3091,17 +2871,22 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...rows.map((row) => rateLimitCell(row.usage).indexOf("W"))
   );
   const statusLine = renderSummaryLine(rows, meta);
-  const agentRows = [
-    ...rows.map((row) => renderAgentRow(row, meta, weeklyLimitIndent)),
+  const primaryAgentRows = rows.map((row) =>
+    renderAgentRow(row, meta, weeklyLimitIndent)
+  );
+  const helperRows = [
     ...(meta.nanny ? [renderUtilityAgentRow(meta.nanny, meta, "nanny")] : []),
     ...(meta.auPair
       ? [renderUtilityAgentRow(meta.auPair, meta, "au pair")]
       : []),
   ];
+  const entityRows = [...primaryAgentRows, ...helperRows];
+  const identityRows = [
+    agentHeaderRow,
+    ...primaryAgentRows,
+    ...(helperRows.length > 0 ? [helperHeaderRow, ...helperRows] : []),
+  ];
   const bridgeLines = renderBridgeLatestLine(rows, meta);
-  const workerBridgeLines = meta.utility
-    ? [renderWorkerBridgeLine(meta.utility, meta)]
-    : [];
   const workerRoutingLines = meta.utility
     ? renderWorkerRoutingRows(meta.utility, meta)
     : [];
@@ -3110,30 +2895,23 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     : [];
   const fullTop = [
     statusLine,
-    agentHeaderRow,
-    ...agentRows,
+    ...identityRows,
     ...bridgeLines,
-    ...workerBridgeLines,
     ...workerRoutingLines,
     ...workerDetailLines,
   ];
   const maxRows = meta.maxRows;
   let top = fullTop;
   if (maxRows !== undefined && fullTop.length > maxRows) {
-    const agentBudget = Math.max(0, maxRows - 1);
-    const visibleAgentRows = agentRows.slice(0, agentBudget);
-    let spare = Math.max(0, maxRows - 1 - visibleAgentRows.length);
-    const showAgentHeader = visibleAgentRows.length > 0 && spare > 0;
-    if (showAgentHeader) {
-      spare -= 1;
-    }
+    const compactIdentityRows =
+      maxRows <= entityRows.length + 1 ? entityRows : identityRows;
+    const visibleIdentityRows = compactIdentityRows.slice(
+      0,
+      Math.max(0, maxRows - 1)
+    );
+    let spare = Math.max(0, maxRows - 1 - visibleIdentityRows.length);
     const visibleBridgeLines = bridgeLines.slice(0, Math.max(0, spare));
     spare -= visibleBridgeLines.length;
-    const visibleWorkerBridgeLines = workerBridgeLines.slice(
-      0,
-      Math.max(0, spare)
-    );
-    spare -= visibleWorkerBridgeLines.length;
     const visibleRoutingLines = workerRoutingLines.slice(0, Math.max(0, spare));
     spare -= visibleRoutingLines.length;
     const visibleWorkerDetailLines = workerDetailLines.slice(
@@ -3142,10 +2920,8 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     );
     top = [
       statusLine,
-      ...(showAgentHeader ? [agentHeaderRow] : []),
-      ...visibleAgentRows,
+      ...visibleIdentityRows,
       ...visibleBridgeLines,
-      ...visibleWorkerBridgeLines,
       ...visibleRoutingLines,
       ...visibleWorkerDetailLines,
     ].slice(0, maxRows);
@@ -5699,6 +5475,24 @@ const sendGovernessBridgeMessage = async (
   return result.status as BridgeSendStatus;
 };
 
+let governessAlternateScreenStarted = false;
+let previousGovernessFrame = "";
+
+const renderDefaultGovernessFrame = (text: string): void => {
+  if (process.stdout.isTTY && !governessAlternateScreenStarted) {
+    process.stdout.write("\x1b[?1049h\x1b[?25l");
+    process.once("exit", () => {
+      process.stdout.write("\x1b[?25h\x1b[?1049l");
+    });
+    governessAlternateScreenStarted = true;
+  }
+  if (text === previousGovernessFrame) {
+    return;
+  }
+  process.stdout.write(`\x1b[2J\x1b[H${text}`);
+  previousGovernessFrame = text;
+};
+
 export const defaultGovernessDeps = (
   readUsageLimits = createStableUsageLimitReader()
 ): GovernessDeps => ({
@@ -5886,8 +5680,7 @@ export const defaultGovernessDeps = (
     return livePanes >= 3;
   },
   render: (text) => {
-    // Clear the pane and print the fresh board.
-    process.stdout.write(`\x1b[2J\x1b[H${text}`);
+    renderDefaultGovernessFrame(text);
   },
   respawnPane: (pane) => {
     spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });

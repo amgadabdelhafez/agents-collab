@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-pane-cleanup",
+  "status": "created",
+  "bug_id": "governess-pane-signal-hierarchy",
+  "regression_path": "evals/regression/governess-pane-signal-hierarchy.md",
+  "prompt_path": "runs/governess-pane-cleanup/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-28T03:08:15Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "governess-pane-signal-hierarchy"
+    ],
+    "symptom": [
+      "The Governess pane was visually dense, repetitive, and"
+    ],
+    "guard": [
+      "tests/loop/governess.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "The Governess pane was visually dense, repetitive, and"
+  ],
+  "test_lines": [
+    "tests/loop/governess.test.ts"
+  ]
+}

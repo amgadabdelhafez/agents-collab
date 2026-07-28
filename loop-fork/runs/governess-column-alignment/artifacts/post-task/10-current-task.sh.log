@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active governess-column-alignment
+[pass] state/invariants/10-current-task.sh
