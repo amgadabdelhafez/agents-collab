@@ -1,0 +1,99 @@
+{
+  "task_id": "au-pair-code-delegation",
+  "feature": "au-pair-code-delegation",
+  "timestamp": "2026-07-28T20:29:49Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "accepted_code_sha": "62c735732a551d48340a772d59fb3ae5f8e154d4",
+  "behavior": {
+    "delegation": "Main agents route decided, cohesive one- or two-file code blocks as kind=edit before authoring them natively.",
+    "selection": "Governess deterministically assigns eligible edit packets to Au Pair; agents do not select a provider tier.",
+    "worker_output": "GLM may inspect one to four exact files and propose a patch, but cannot apply it.",
+    "apply_boundary": "A full agent reviews and guarded-applies the artifact after hash, preimage, exact-target, protected-path, and 64 KiB checks.",
+    "automatic_interception": false
+  },
+  "safety_boundaries": {
+    "write_files_max": 2,
+    "read_files_max": 4,
+    "patch_bytes_max": 65536,
+    "exact_regular_file_scopes": true,
+    "new_file_targets_allowed": true,
+    "directory_scopes_allowed": false,
+    "symlinked_parent_scopes_allowed": false,
+    "execution_metadata_allowed_on_edits": false,
+    "authority_allowed": false,
+    "protected_paths_allowed": false,
+    "auto_apply": false
+  },
+  "checks": {
+    "focused": {
+      "status": "pass",
+      "passed": 167,
+      "failed": 0,
+      "details": [
+        "Prompt, route schema, router, execution-tier, runtime, and broker coverage passed before independent review.",
+        "Post-review workspace and guarded-apply regressions passed 53/53.",
+        "Malformed null plan metadata and edit-specific retry guidance passed 13/13."
+      ]
+    },
+    "repository_style": {
+      "status": "pass",
+      "command": "bun run check",
+      "files_checked": 543
+    },
+    "typecheck": {
+      "status": "pass",
+      "command": "bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "full_suite": {
+      "status": "pass",
+      "command": "bun test and bun run test:ci",
+      "passed": 1154,
+      "failed": 0,
+      "assertions": 3498,
+      "files": 59
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check 2127ba5..HEAD"
+    },
+    "project_verify": {
+      "status": "pass",
+      "command": "scripts/verify.sh au-pair-code-delegation au-pair-code-delegation",
+      "note": "The fail-closed verifier passed lint, typecheck, build, all 59 sorted test files, and the empty baseline gate."
+    }
+  },
+  "independent_reviews": [
+    {
+      "commit": "45ce5f9",
+      "verdict": "findings_resolved",
+      "resolution_commits": ["45203d8", "c822998"],
+      "findings": [
+        "Guarded apply did not re-enforce exact targets for legacy artifacts.",
+        "Guarded apply did not re-enforce the patch-size ceiling for legacy artifacts.",
+        "Existing directory scopes could reach Au Pair before broker rejection."
+      ]
+    },
+    {
+      "commit": "c822998",
+      "verdict": "finding_resolved",
+      "resolution_commit": "62c7357",
+      "finding": "Malformed persisted execution plans with null entries could throw during protected-scope scanning."
+    },
+    {
+      "commit": "62c7357",
+      "verdict": "pass",
+      "scope": "SHA-bound final fix review confirmed malformed plans fail closed without changing valid-plan behavior."
+    }
+  ],
+  "deployment": {
+    "active_loop_restarted": false,
+    "global_runtime_reinstalled": false,
+    "remote_push": false,
+    "note": "Loop-60 and its active Claude/Codex panes were intentionally not respawned or hot-swapped."
+  }
+}

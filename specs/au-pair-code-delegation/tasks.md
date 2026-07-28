@@ -5,5 +5,5 @@
 - [x] Add edit-first guidance to every shared main-agent prompt surface.
 - [x] Clarify operational risk and edit fields in the route tool schema.
 - [x] Add focused prompt, schema, router, and execution-tier tests.
-- [ ] Run focused and full verification and record a passing eval.
-- [ ] Obtain independent exact-commit review.
+- [x] Run focused and full verification and record a passing eval.
+- [x] Obtain independent exact-commit review.
