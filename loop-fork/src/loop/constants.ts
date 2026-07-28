@@ -10,6 +10,8 @@ export const DEFAULT_CODEX_CONFIG_VALUES = [
   `service_tier="${DEFAULT_CODEX_SERVICE_TIER}"`,
 ] as const;
 export const DEFAULT_CLAUDE_MODEL = "opus";
+// Tmux DRIVER only — the headless SDK/judge legs stay at their own defaults.
+export const DEFAULT_CLAUDE_DRIVER_EFFORT = "max";
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
 export const DEFAULT_COPILOT_MODEL = "auto";
 export const DEFAULT_CURSOR_MODEL = "auto";
