@@ -134,6 +134,51 @@ test("linked worktree scopes resolve to one root-relative verified workspace", (
   }
 });
 
+test("edit workspace resolution accepts files and rejects directory-wide scope", () => {
+  const fixture = workspaceFixture();
+  try {
+    expect(
+      resolveUtilityRequestWorkspace(
+        editRequestFor("directory-write", "src"),
+        fixture.base
+      )
+    ).toEqual({ detail: "edit scopes must name exact regular files" });
+    expect(
+      resolveUtilityRequestWorkspace(
+        {
+          ...editRequestFor("directory-read", "src/sample.ts"),
+          readScope: ["src", "src/sample.ts"],
+        },
+        fixture.base
+      )
+    ).toEqual({ detail: "edit scopes must name exact regular files" });
+    expect(
+      resolveUtilityRequestWorkspace(
+        editRequestFor("new-file", "src/new-file.ts"),
+        fixture.base
+      )
+    ).toMatchObject({
+      request: {
+        readScope: ["src/new-file.ts"],
+        writeScope: ["src/new-file.ts"],
+      },
+      workspace: { root: realpathSync(fixture.base) },
+    });
+    symlinkSync(
+      join(fixture.unrelated, "src"),
+      join(fixture.base, "linked-src")
+    );
+    expect(
+      resolveUtilityRequestWorkspace(
+        editRequestFor("symlink-parent", "linked-src/new-file.ts"),
+        fixture.base
+      )
+    ).toEqual({ detail: "edit scopes must name exact regular files" });
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
+
 test("linked focused-check cwd resolves with the same verified workspace", () => {
   const fixture = workspaceFixture();
   try {

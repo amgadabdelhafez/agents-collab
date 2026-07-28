@@ -1245,6 +1245,12 @@ export class UtilityToolBroker {
       ".json"
     );
     const patch = await readFile(patchArtifact.absolute, "utf8");
+    if (Buffer.byteLength(patch) > this.limits.maxPatchBytes) {
+      throw new ToolPolicyError(
+        "output_limit",
+        "Patch exceeds the configured size limit"
+      );
+    }
     const patchSha256 = hash(patch);
     if (patchSha256 !== input.expectedPatchSha256.toLowerCase()) {
       throw new ToolPolicyError(
@@ -1400,7 +1406,17 @@ export class UtilityToolBroker {
     const targets = this.patchTargets(patch);
     const validated: string[] = [];
     for (const path of targets) {
-      validated.push((await this.resolvePath(path, "write", false)).relative);
+      const target = await this.resolvePath(path, "write", false);
+      if (
+        this.exactWriteScopes &&
+        !this.writeScopes.includes(target.relative)
+      ) {
+        throw new ToolPolicyError(
+          "patch_denied",
+          `Patch target is not an exact declared write file: ${target.relative}`
+        );
+      }
+      validated.push(target.relative);
     }
     return [...new Set(validated)].sort();
   }

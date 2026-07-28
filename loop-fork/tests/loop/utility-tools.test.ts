@@ -1446,6 +1446,78 @@ test("exact edit scopes cannot act as directory-wide patch authority", async () 
   });
 });
 
+test("guarded apply enforces exact scopes and patch size for legacy artifacts", async () => {
+  await withRepo(async (root) => {
+    const artifactDir = join(root, ".legacy-utility-artifacts");
+    await mkdir(artifactDir);
+    const patchPath = join(artifactDir, "legacy.patch");
+    const manifestPath = join(artifactDir, "legacy.json");
+    const patch = [
+      "diff --git a/src/hello.ts b/src/hello.ts",
+      "--- a/src/hello.ts",
+      "+++ b/src/hello.ts",
+      "@@ -1 +1 @@",
+      "-export const hello = 'world';",
+      "+export const hello = 'legacy';",
+      "",
+    ].join("\n");
+    await writeFile(patchPath, patch);
+    const manifest = JSON.stringify({
+      createdAt: "2026-07-28T12:00:00.000Z",
+      patchPath,
+      preimages: [
+        {
+          path: "src/hello.ts",
+          sha256: createHash("sha256")
+            .update("export const hello = 'world';\n")
+            .digest("hex"),
+        },
+      ],
+    });
+    await writeFile(manifestPath, manifest);
+    const apply = (
+      broker: Awaited<ReturnType<typeof createUtilityToolBroker>>
+    ) =>
+      broker.applyPatchProposal({
+        appliedBy: "codex",
+        expectedManifestSha256: createHash("sha256")
+          .update(manifest)
+          .digest("hex"),
+        expectedPatchSha256: createHash("sha256").update(patch).digest("hex"),
+        manifestPath,
+        patchPath,
+      });
+
+    const broad = await createUtilityToolBroker({
+      artifactDir: ".legacy-utility-artifacts",
+      commandAllowlist: [],
+      exactWriteScopes: true,
+      readScopes: ["src"],
+      repoRoot: root,
+      writeScopes: ["src"],
+    });
+    await expect(apply(broad)).rejects.toThrow(
+      "Patch target is not an exact declared write file"
+    );
+
+    const oversized = await createUtilityToolBroker({
+      artifactDir: ".legacy-utility-artifacts",
+      commandAllowlist: [],
+      exactWriteScopes: true,
+      limits: { maxPatchBytes: 32 },
+      readScopes: ["src/hello.ts"],
+      repoRoot: root,
+      writeScopes: ["src/hello.ts"],
+    });
+    await expect(apply(oversized)).rejects.toThrow(
+      "Patch exceeds the configured size limit"
+    );
+    expect(await readFile(join(root, "src", "hello.ts"), "utf8")).toContain(
+      "world"
+    );
+  });
+});
+
 test("guarded apply revalidates write scope and dependency targets", async () => {
   await withRepo(async (root) => {
     await writeFile(join(root, "package.json"), "{}\n");

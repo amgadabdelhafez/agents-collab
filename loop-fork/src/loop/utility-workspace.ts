@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { runGit } from "./git";
 import type {
@@ -155,6 +155,55 @@ const relativeWorkspaceResolution = (
   },
 });
 
+const exactEditFileScope = (
+  root: string,
+  scope: string,
+  allowMissing: boolean
+): boolean => {
+  const target = resolve(root, scope);
+  if (!isContained(root, target)) {
+    return false;
+  }
+  if (existsSync(target)) {
+    try {
+      return lstatSync(target).isFile();
+    } catch {
+      return false;
+    }
+  }
+  if (!allowMissing) {
+    return false;
+  }
+  const existing = nearestExistingPath(target);
+  if (!(existing && isContained(root, existing))) {
+    return false;
+  }
+  try {
+    return lstatSync(existing).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const validateExactEditScopes = (
+  resolution: UtilityWorkspaceResolution
+): UtilityWorkspaceResolution | UtilityWorkspaceFailure => {
+  if (resolution.request.kind !== "edit" || !resolution.workspace) {
+    return resolution;
+  }
+  const root = resolution.workspace.root;
+  const writeScopes = new Set(resolution.request.writeScope);
+  const validWriteScopes = resolution.request.writeScope.every((scope) =>
+    exactEditFileScope(root, scope, true)
+  );
+  const validReadScopes = resolution.request.readScope.every((scope) =>
+    exactEditFileScope(root, scope, writeScopes.has(scope))
+  );
+  return validWriteScopes && validReadScopes
+    ? resolution
+    : mismatch("edit scopes must name exact regular files");
+};
+
 export const resolveUtilityRequestWorkspace = (
   request: UtilityRouteRequest,
   runRoot: string
@@ -179,7 +228,9 @@ export const resolveUtilityRequestWorkspace = (
       : []),
   ];
   if (scopes.every((scope) => !isAbsolute(scope))) {
-    return relativeWorkspaceResolution(request, canonicalRunRoot);
+    return validateExactEditScopes(
+      relativeWorkspaceResolution(request, canonicalRunRoot)
+    );
   }
 
   const runIdentity = gitWorkspaceIdentity(canonicalRunRoot);
@@ -298,7 +349,7 @@ export const resolveUtilityRequestWorkspace = (
     root: selectedRoot,
     writeScope,
   };
-  return {
+  return validateExactEditScopes({
     request: {
       ...request,
       ...(executionCwd ? { executionCwd } : {}),
@@ -315,7 +366,7 @@ export const resolveUtilityRequestWorkspace = (
       writeScope,
     },
     workspace,
-  };
+  });
 };
 
 export const verifyAdoptedUtilityWorkspace = (
