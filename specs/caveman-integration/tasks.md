@@ -6,5 +6,5 @@
 - [x] Apply compact Caveman reinforcement to Nanny/Au Pair summaries.
 - [x] Persist and display selected modes.
 - [x] Add focused regression coverage.
-- [ ] Run full verification, build, and independent review.
-- [ ] Record evaluation evidence and install the verified runtime.
+- [x] Run full verification, build, and independent review.
+- [x] Record evaluation evidence and install the verified runtime.

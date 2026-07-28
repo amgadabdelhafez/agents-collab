@@ -1,0 +1,120 @@
+{
+  "task_id": "caveman-integration",
+  "feature": "caveman-integration",
+  "timestamp": "2026-07-28T18:11:32Z",
+  "verdict": "pass_with_baseline_failures",
+  "upstream": {
+    "repository": "https://github.com/JuliusBrussee/caveman",
+    "commit": "0d95a81d35a9f2d123a5e9430d1cfc43d55f1bb0",
+    "skill_sha256": "5e30bb56afbd0b01bd736f2da84180e76f18db4a64de8e124525d5c8dc2e8605",
+    "license": "MIT"
+  },
+  "behavior": {
+    "main_default": "lite",
+    "helper_default": "full",
+    "supported_modes": ["off", "lite", "full", "ultra"],
+    "routing_authority_changed": false,
+    "global_caveman_installer_run": false,
+    "bridge_shrink_wrapper_enabled": false,
+    "cavecrew_roles_installed": false
+  },
+  "checks": {
+    "focused_tests": {
+      "status": "pass",
+      "passed": 241,
+      "failed": 0,
+      "assertions": 1043,
+      "files": [
+        "tests/loop/caveman.test.ts",
+        "tests/loop/utility-runtime.test.ts",
+        "tests/loop/tmux.test.ts",
+        "tests/loop/args.test.ts",
+        "tests/loop/run-state.test.ts",
+        "tests/loop/paired-options.test.ts",
+        "tests/loop/governess.test.ts"
+      ]
+    },
+    "targeted_typecheck": {
+      "status": "pass",
+      "scope": "Caveman adapter, declaration, and tests"
+    },
+    "targeted_style": {
+      "status": "pass",
+      "scope": "Changed Caveman adapter and tests"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "project_verify": {
+      "status": "pass_placeholder_only",
+      "command": "scripts/verify.sh",
+      "note": "The repository script exits zero but currently contains placeholders for lint, typecheck, unit, and integration stages."
+    },
+    "full_suite": {
+      "status": "baseline_failures_only",
+      "command": "bun run test:ci",
+      "failures": [
+        "tests/loop/bridge.test.ts: stale tmux metadata case timed out and returned accepted instead of queued",
+        "tests/loop/governess-exit.test.ts: busy-agent handover case timed out with a dangling process"
+      ],
+      "baseline_reproduction": "Both failures reproduced on the clean 47706b5 integration base without the Caveman changes; all other suites passed."
+    },
+    "repository_style": {
+      "status": "baseline_failures_only",
+      "command": "bun run check",
+      "note": "The repository-wide check reports 362 pre-existing diagnostics, mainly historical runs JSON. Targeted changed-file checks pass."
+    },
+    "installed_help": {
+      "status": "pass",
+      "binary": "/Users/amgad/.local/bin/loop",
+      "evidence": [
+        "--caveman <off|lite|full|ultra> default lite",
+        "--helper-caveman <off|lite|full|ultra> default full"
+      ]
+    },
+    "governess_ui": {
+      "status": "pass_deterministic_render",
+      "evidence": "runtime · caveman main full / helpers ultra @0d95a81",
+      "note": "Covered by the Governess render test; no active loop was restarted for a live screenshot."
+    }
+  },
+  "independent_reviews": [
+    {
+      "commit": "d4b0781",
+      "session": "019fa9e4-cce9-7462-b16d-b7da9a507488",
+      "verdict": "finding_fixed",
+      "finding": "Helper mode choice did not change the compact reinforcement."
+    },
+    {
+      "commit": "2584912",
+      "session": "019fa9e8-063c-7ce2-b3ac-0f3931a6212f",
+      "verdict": "finding_fixed",
+      "finding": "Ultra needed to inherit the common Full compression baseline."
+    },
+    {
+      "commit": "d55d9ed",
+      "session": "019fa9e9-0bee-71c2-8283-69716abd9ab9",
+      "verdict": "pass"
+    },
+    {
+      "base": "47706b5",
+      "head": "d55d9ed",
+      "session": "019fa9eb-2fec-7ba2-b885-9c739d81c541",
+      "verdict": "pass",
+      "scope": "Complete integration branch"
+    }
+  ],
+  "deployment": {
+    "integration_branch": "codex/pi-command-intake-prompts",
+    "installed_binary": "/Users/amgad/.local/bin/loop",
+    "installed_commit": "d55d9edaf15e7a26a3c00872a83e41cdb1a498a5",
+    "active_loop_restarted": false,
+    "activation": "New loop sessions only"
+  },
+  "notes": "The integration pins and embeds Caveman as a prompt-style dependency. It does not claim Caveman's upstream output-reduction result for Loop workloads; a separate A/B run is required."
+}
