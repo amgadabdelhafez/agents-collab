@@ -67,8 +67,8 @@ test("preparePairedOptions accepts a raw session id without creating a paired ma
     expect(opts.pairedSessionIds).toEqual({
       claude: "claude-session-raw",
     });
-    expect(opts.cavemanMode).toBe("off");
-    expect(opts.cavemanModeSource).toBe("manifest");
+    expect(opts.cavemanMode).toBe("lite");
+    expect(opts.cavemanModeSource).toBe("default");
   } finally {
     if (originalHome === undefined) {
       Reflect.deleteProperty(process.env, "HOME");
@@ -143,7 +143,7 @@ test("paired resumes restore Caveman modes unless CLI explicitly overrides", () 
   }
 });
 
-test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
+test("legacy resumes apply only Caveman modes their agents can receive", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;
   process.env.HOME = home;
@@ -162,15 +162,27 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
   );
 
   try {
-    const impossibleOverride = makeOptions({
+    const overrideStorage = resolveRunStorage("72-cli", process.cwd(), home);
+    writeRunManifest(
+      overrideStorage.manifestPath,
+      createRunManifest({
+        claudeSessionId: "legacy-override-session",
+        cwd: process.cwd(),
+        mode: "paired",
+        pid: 1234,
+        repoId: overrideStorage.repoId,
+        runId: "72-cli",
+        state: "working",
+      })
+    );
+    const explicitOverride = makeOptions({
       cavemanMode: "full",
       cavemanModeSource: "cli",
       pairedMode: true,
-      resumeRunId: "72",
+      resumeRunId: "72-cli",
     });
-    expect(() => preparePairedRun(impossibleOverride, process.cwd())).toThrow(
-      "Cannot apply a non-off --caveman mode to a legacy resumed agent session"
-    );
+    preparePairedRun(explicitOverride, process.cwd());
+    expect(explicitOverride.cavemanMode).toBe("full");
 
     const resumed = makeOptions({
       cavemanMode: "lite",
@@ -182,12 +194,12 @@ test("legacy resumed pairs stay Caveman-off until both agents are new", () => {
     });
     preparePairedRun(resumed, process.cwd());
     expect(resumed).toMatchObject({
-      cavemanMode: "off",
-      cavemanModeSource: "manifest",
+      cavemanMode: "lite",
+      cavemanModeSource: "default",
       helperCavemanMode: "full",
     });
     expect(readRunManifest(storage.manifestPath)).toMatchObject({
-      cavemanMode: "off",
+      cavemanMode: "lite",
       helperCavemanMode: "full",
     });
 

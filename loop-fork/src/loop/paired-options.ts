@@ -246,6 +246,7 @@ export const applyPairedOptions = (
   const pairedAgents = [opts.agent, opts.pairWith];
   const resumesLegacyMainSession =
     !manifest?.cavemanMode &&
+    opts.tmux &&
     (livePersistedTmux ||
       pairedAgents.some((agent) => Boolean(resumedSessionIds?.[agent])));
   if (resumesLegacyMainSession) {
