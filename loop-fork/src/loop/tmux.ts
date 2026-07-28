@@ -1473,9 +1473,10 @@ const preparePersistentTmuxLaunch = async (
       LOOP_NATIVE_SUBAGENT_MODE: _ambientNativeSubagentMode,
       ...codexBaseEnv
     } = deps.env;
-    if (nativeSubagentMode !== "off") {
-      codexBaseEnv.LOOP_NATIVE_SUBAGENT_MODE = nativeSubagentMode;
-    }
+    // `off` is an explicit policy mode, not the absence of policy. The hook
+    // runtime defaults a missing value to utility-first, so always carry the
+    // resolved mode into the persistent app-server process.
+    codexBaseEnv.LOOP_NATIVE_SUBAGENT_MODE = nativeSubagentMode;
     await deps.startPersistentAgentSession(
       "codex",
       opts,
@@ -1897,9 +1898,9 @@ const startPairedSession = async (
       ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
       `${RUN_BASE_ENV}=${runBase}`,
       `${RUN_ID_ENV}=${storage.runId}`,
-      ...(nativeSubagentMode === "off"
-        ? []
-        : [`LOOP_NATIVE_SUBAGENT_MODE=${nativeSubagentMode}`]),
+      ...(launch.opts.governess
+        ? [`LOOP_NATIVE_SUBAGENT_MODE=${nativeSubagentMode}`]
+        : []),
       ...(launch.opts.cavemanMode
         ? [`LOOP_CAVEMAN_MODE=${launch.opts.cavemanMode}`]
         : []),

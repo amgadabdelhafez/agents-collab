@@ -352,6 +352,8 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
           agent,
           codexHome: launch?.codexLaunch?.env?.CODEX_HOME,
           kind,
+          nativeSubagentMode:
+            launch?.codexLaunch?.env?.LOOP_NATIVE_SUBAGENT_MODE,
           sessionId,
         });
         return Promise.resolve(undefined);
@@ -430,7 +432,13 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
     },
   ]);
   expect(startCalls).toEqual([
-    { agent: "codex", codexHome, kind: "work", sessionId: undefined },
+    {
+      agent: "codex",
+      codexHome,
+      kind: "work",
+      nativeSubagentMode: "off",
+      sessionId: undefined,
+    },
   ]);
   expect(calls).toEqual([
     ["tmux", "has-session", "-t", "repo-loop-1"],
@@ -540,6 +548,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
         env: {
           CLAUDE_CONFIG_DIR: "/tmp/loop-claude",
           LOOP_GOVERNESS_AGENT_RENAME: "1",
+          LOOP_NATIVE_SUBAGENT_MODE: "off",
         },
         findBinary: () => true,
         getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
@@ -638,7 +647,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     );
 
     expect(delegated).toBe(true);
-    expect(events).toContain("start-codex:true:utility-first");
+    expect(events).toContain("start-codex:true:off");
     expect(events).toContain("codex-hook-event:true");
     expect(events).toContain("manifest:codex-thread-1:%41:repo-loop-1:0.2");
     expect(events).toContain(
@@ -660,6 +669,17 @@ test("runInTmux writes paired session refs before starting governess", async () 
         )
         .every((args) =>
           args.at(-1)?.includes("'CLAUDE_CONFIG_DIR=/tmp/loop-claude'")
+        )
+    ).toBe(true);
+    expect(
+      calls
+        .filter(
+          (args) =>
+            args[0] === "tmux" &&
+            (args[1] === "new-session" || args[1] === "split-window")
+        )
+        .some((args) =>
+          args.at(-1)?.includes("'LOOP_NATIVE_SUBAGENT_MODE=off'")
         )
     ).toBe(true);
     expect(
