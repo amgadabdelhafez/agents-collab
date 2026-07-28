@@ -128,6 +128,66 @@ test("native fallback requests require utility evidence and reject protected sco
   ).toThrow("supervisor authorization");
 });
 
+test("Governess requires substantive utility evidence, not only a settled state", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-native-evidence-"));
+  try {
+    activateUtilityEpoch(runDir, 13);
+    for (const id of ["canceled-without-result", "route-without-decision"]) {
+      appendUtilityRouteRequest(
+        runDir,
+        createUtilityRouteRequest({
+          acceptanceCriteria: ["return evidence"],
+          authority: {},
+          id,
+          kind: "inspect",
+          objective: `Inspect one bounded file for ${id}`,
+          readScope: ["src/example.ts"],
+          requester: "codex",
+          requiredCapabilities: ["inspect"],
+          risk: "low",
+          writeScope: [],
+        })
+      );
+    }
+    transitionUtilityJob(runDir, "canceled-without-result", "canceled", {
+      reason: "request canceled before inspection",
+    });
+    transitionUtilityJob(runDir, "route-without-decision", "routed-driver");
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest(
+        "codex",
+        "canceled-without-result",
+        "native-canceled-evidence"
+      )
+    );
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest(
+        "codex",
+        "route-without-decision",
+        "native-route-evidence"
+      )
+    );
+
+    expect(
+      processPendingNativeFallbackRequests({
+        epoch: 13,
+        mode: "utility-first",
+        runDir,
+      })
+    ).toBe(2);
+    expect(
+      readNativeFallbackRequests(runDir).map((snapshot) => snapshot.reason)
+    ).toEqual([
+      "utility-evidence-result-missing:canceled-without-result",
+      "utility-evidence-decision-missing:route-without-decision",
+    ]);
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("Governess grants one lease and provider hooks consume and close it once", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-native-fallback-"));
   try {
@@ -353,6 +413,7 @@ test("loop-scoped provider definitions enforce one read-only fallback", () => {
   expect(codexFallback).not.toContain("rg --no-config");
   expect(codexFallback).not.toContain("rg --files");
   expect(codexFallback).toContain("[mcp_servers.loop-bridge]");
+  expect(codexFallback).toContain('url = "http://127.0.0.1:1/mcp"');
   expect(codexFallback).toContain("enabled = false");
 
   const claude =

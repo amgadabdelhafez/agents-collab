@@ -56,6 +56,11 @@ const SETTLED_UTILITY_STATES = new Set([
   "escalated",
   "canceled",
 ]);
+const NON_UTILITY_ROUTE_STATES = new Set([
+  "routed-driver",
+  "routed-peer",
+  "routed-requester",
+]);
 const ACTIVE_NATIVE_STATES = new Set<NativeFallbackState>([
   "granted",
   "consumed",
@@ -550,6 +555,12 @@ const evidenceReady = (
     }
     if (!SETTLED_UTILITY_STATES.has(job.state)) {
       return `utility-evidence-not-settled:${taskId}`;
+    }
+    if (NON_UTILITY_ROUTE_STATES.has(job.state) && !job.decision) {
+      return `utility-evidence-decision-missing:${taskId}`;
+    }
+    if (!(NON_UTILITY_ROUTE_STATES.has(job.state) || job.result)) {
+      return `utility-evidence-result-missing:${taskId}`;
     }
   }
   return "ready";

@@ -65,6 +65,8 @@ export const buildLoopCodexConfig = (
 };
 
 export const buildLoopCodexFallbackAgent = (): string =>
+  // Standalone agent layers must declare a transport even for a disabled MCP
+  // server; use an inert loopback URL so the layer parses before parent merge.
   [
     `name = ${JSON.stringify(CODEX_NATIVE_FALLBACK_PROFILE)}`,
     'description = "Governess-leased read-only explorer or independent reviewer."',
@@ -99,6 +101,7 @@ export const buildLoopCodexFallbackAgent = (): string =>
     "experimental_use_profile = false",
     "",
     "[mcp_servers.loop-bridge]",
+    'url = "http://127.0.0.1:1/mcp"',
     "enabled = false",
     "",
   ].join("\n");
