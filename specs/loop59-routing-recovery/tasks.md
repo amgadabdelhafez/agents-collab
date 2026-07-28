@@ -1,12 +1,11 @@
 # Tasks
 
-- [ ] Add exact context-reference schema and intake validation.
-- [ ] Expose and parse structured execution metadata through `route_task`.
-- [ ] Improve safe packet-decomposition guidance.
-- [ ] Correct evidence-backed Au Pair rejection adaptation.
-- [ ] Add focused regression and replay coverage.
-- [ ] Run full verification, build, and repository verify wrapper.
-- [ ] Record evaluation artifacts.
-- [ ] Integrate and hot-reload Loop-59 without agent restart.
-- [ ] Prove a live routed canary reaches its requester.
-
+- [x] Add exact context-reference schema and intake validation.
+- [x] Expose and parse structured execution metadata through `route_task`.
+- [x] Improve safe packet-decomposition guidance.
+- [x] Correct evidence-backed Au Pair rejection adaptation.
+- [x] Add focused regression and replay coverage.
+- [x] Run full verification, build, and repository verify wrapper.
+- [x] Record evaluation artifacts.
+- [x] Integrate the recovery into the installed runtime without agent restart.
+- [x] Prove a live routed canary reaches its requester.

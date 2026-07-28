@@ -1,0 +1,66 @@
+{
+  "task_id": "loop59-routing-recovery",
+  "feature": "loop59-routing-recovery",
+  "timestamp": "2026-07-28T17:15:36Z",
+  "evaluator": {
+    "implementation": "Codex active agent",
+    "independent_reviews": [
+      {"commit": "9b4eb5a", "verdict": "finding-fixed-in-415109e"},
+      {"commit": "415109e", "verdict": "pass"},
+      {"commit": "b0692bd", "verdict": "findings-fixed-in-d541f22-and-ae746ad"},
+      {"commit": "d541f22", "verdict": "finding-fixed-in-ae746ad"},
+      {"commit": "ae746ad", "verdict": "pass"}
+    ]
+  },
+  "checks": {
+    "functional": {
+      "passed": 287,
+      "failed": 0,
+      "details": [
+        "Focused bridge, router, utility runtime, and Pi harness suites passed.",
+        "Traversal references are rejected before normalization.",
+        "Queued sibling calls cannot consume the synthesis reserve.",
+        "Edit and command plans retain their final propose_patch or run_check action."
+      ]
+    },
+    "ui": {
+      "passed": 1,
+      "failed": 0,
+      "screenshots": [],
+      "details": [
+        "No UI code changed; Loop-59 had already ended, so no agent or pane was respawned."
+      ]
+    },
+    "performance": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "Pre-fix canary failed at 32 tools, 15 model calls, 124368 ms, and $0.087865798.",
+        "Post-fix canary completed at 17 tools, 9 model calls, 131848 ms, and $0.0610779803.",
+        "The completed canary used 15 fewer tool calls, 6 fewer model calls, and 30.5 percent lower model cost."
+      ]
+    },
+    "regression": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "bun run test:ci passed.",
+        "bun run build passed.",
+        "Independent exact-commit review passed after all findings were fixed."
+      ]
+    }
+  },
+  "live": {
+    "failed_canary_task": "1f7fed64-875f-44d9-a840-f4f16a197d27",
+    "completed_canary_task": "98b26258-4e72-4561-a372-36652f3ec305",
+    "workspace": "/Users/amgad/harvto",
+    "tier": "utility-au-pair",
+    "delivery": {
+      "requester": "gemini",
+      "message_type": "handover",
+      "message_id": "0f53b538-0e38-4a58-9799-0464ebdb637b"
+    }
+  },
+  "verdict": "pass",
+  "notes": "The repository-wide formatter still reports pre-existing errors in historical runs artifacts. Changed bridge and parser files pass their focused checks. The installed runtime will serve the new routing contract on the next loop launch."
+}
