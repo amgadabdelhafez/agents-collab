@@ -213,24 +213,27 @@ test("Pi forces synthesis before the hard tool ceiling", async () => {
           event({}, "stop"),
         ]);
       }
-      requestedSearches += 1;
+      const siblingCount = bodies.length === 2 ? 3 : 1;
+      const firstSearch = requestedSearches + 1;
+      requestedSearches += siblingCount;
       return response([
         event({ role: "assistant" }),
         event({
-          tool_calls: [
-            {
+          tool_calls: Array.from({ length: siblingCount }, (_, index) => {
+            const searchNumber = firstSearch + index;
+            return {
               function: {
                 arguments: JSON.stringify({
                   paths: ["src"],
-                  query: `needle-${requestedSearches}`,
+                  query: `needle-${searchNumber}`,
                 }),
                 name: "search_repo",
               },
-              id: `search-${requestedSearches}`,
-              index: 0,
+              id: `search-${searchNumber}`,
+              index,
               type: "function",
-            },
-          ],
+            };
+          }),
         }),
         event({}, "tool_calls"),
       ]);
@@ -247,8 +250,8 @@ test("Pi forces synthesis before the hard tool ceiling", async () => {
       LOOP_UTILITY_HARNESS: "pi-sdk",
       LOOP_UTILITY_MAX_TOOL_CALLS: "4",
     });
-    expect(requestedSearches).toBe(3);
-    expect(bodies).toHaveLength(4);
+    expect(requestedSearches).toBe(4);
+    expect(bodies).toHaveLength(3);
     expect(JSON.stringify(bodies.at(-1))).toContain("FINALIZE_NOW");
     expect(bodies.at(-1)?.tools ?? []).toEqual([]);
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
@@ -260,6 +263,116 @@ test("Pi forces synthesis before the hard tool ceiling", async () => {
     });
     const usage = readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8");
     expect(usage).toContain('"toolCalls":3');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("Pi preserves every required structured-plan call at the configured ceiling", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-plan-ceiling-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-plan-ceiling");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  const paths = Array.from({ length: 4 }, (_, index) =>
+    join("src", `sample-${index + 1}.ts`)
+  );
+  for (const [index, path] of paths.entries()) {
+    writeFileSync(join(repoRoot, path), `export const value = ${index + 1};\n`);
+  }
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return all four exact reads"],
+    authority: {},
+    executionPlan: paths.map((path, index) => ({
+      executionProfile: "file-read" as const,
+      executionRead: { endLine: 1, path, startLine: 1 },
+      objective: `Read exact file ${index + 1}`,
+      readScope: [path],
+    })),
+    executionProfile: "read-plan",
+    id: "pi-plan-ceiling-job",
+    kind: "inspect",
+    objective: "Execute every required bounded read-plan step",
+    readScope: paths,
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 99);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 99,
+  });
+  const bodies: Record<string, unknown>[] = [];
+  let requestedReads = 0;
+  const server = serve({
+    fetch: async (incoming) => {
+      const body = (await incoming.json()) as Record<string, unknown>;
+      bodies.push(body);
+      const availableTools = Array.isArray(body.tools) ? body.tools : [];
+      if (availableTools.length === 0) {
+        return response([
+          event({ role: "assistant" }),
+          event({ content: "Completed every exact read-plan step." }),
+          event({}, "stop"),
+        ]);
+      }
+      const path = paths[requestedReads];
+      requestedReads += 1;
+      return response([
+        event({ role: "assistant" }),
+        event({
+          tool_calls: [
+            {
+              function: {
+                arguments: JSON.stringify({
+                  endLine: 1,
+                  path,
+                  startLine: 1,
+                }),
+                name: "read_file",
+              },
+              id: `read-${requestedReads}`,
+              index: 0,
+              type: "function",
+            },
+          ],
+        }),
+        event({}, "tool_calls"),
+      ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+
+  try {
+    await runUtilityWorker(runDir, 99, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      LOOP_NANNY_MODEL: "fake-nanny",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+      LOOP_UTILITY_MAX_TOOL_CALLS: "4",
+    });
+    expect(requestedReads).toBe(4);
+    expect(bodies).toHaveLength(5);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        status: "completed",
+        summary: "Completed every exact read-plan step.",
+      },
+      state: "completed",
+    });
+    const usage = readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8");
+    expect(usage).toContain('"toolCalls":4');
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
