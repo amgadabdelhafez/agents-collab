@@ -190,6 +190,7 @@ export const runCli = async (argv: string[]): Promise<void> => {
   let shouldCloseAgents = true;
   try {
     const normalizedArgv = argv.length === 0 ? DEFAULT_TMUX_ARGV : argv;
+    cliDeps.gcStaleClaudeBridgeRegistrations();
     await updateDeps.applyStagedUpdateOnStartup();
     if (await updateDeps.handleManualUpdateCommand(normalizedArgv)) {
       return;

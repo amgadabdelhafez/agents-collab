@@ -1,0 +1,19 @@
+{
+  "task_id": "claude-config-bridge-gc",
+  "scanned_at": "2026-07-28T05:05:12Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-28T05:05:12Z",
+      "task_id": "claude-config-bridge-gc",
+      "signal": "loc_growth",
+      "file": "src/loop/claude-config-gc.ts",
+      "before_loc": 0,
+      "after_loc": 278,
+      "delta_loc": 278,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

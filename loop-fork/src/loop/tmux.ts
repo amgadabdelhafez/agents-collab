@@ -1051,6 +1051,7 @@ const governessEnv = (
 ): string[] => {
   const env = withLegacyGovernessEnv(inputEnv);
   return [
+    ...passEnv(env, "CLAUDE_CONFIG_DIR"),
     `LOOP_GOVERNESS_IDLE=${opts.governessIdleSeconds}`,
     `LOOP_GOVERNESS_COOLDOWN=${opts.governessCooldownSeconds}`,
     `LOOP_GOVERNESS_MAX=${opts.governessMaxRecoveries}`,
@@ -1142,6 +1143,8 @@ const startAuPairPane = (
   runDir: string
 ): string => {
   const command = buildShellCommand([
+    "env",
+    ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
     ...deps.launchArgv,
     AU_PAIR_PANE_SUBCOMMAND,
     runDir,
@@ -1655,6 +1658,7 @@ const startPairedSession = async (
   }
   try {
     const env = [
+      ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
       `${RUN_BASE_ENV}=${runBase}`,
       `${RUN_ID_ENV}=${storage.runId}`,
       ...(launch.opts.codexHome ? [`CODEX_HOME=${launch.opts.codexHome}`] : []),
@@ -1789,7 +1793,11 @@ const startRequestedSession = (
 
   const command = buildSessionCommand(
     deps,
-    [`${RUN_BASE_ENV}=${runBase}`, `${RUN_ID_ENV}=${requestedId}`],
+    [
+      ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
+      `${RUN_BASE_ENV}=${runBase}`,
+      `${RUN_ID_ENV}=${requestedId}`,
+    ],
     forwardedArgv
   );
   const result = deps.spawn([
@@ -1825,7 +1833,11 @@ const startAutoSession = (
 
     const command = buildSessionCommand(
       deps,
-      [`${RUN_BASE_ENV}=${runBase}`, `${RUN_ID_ENV}=${index}`],
+      [
+        ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
+        `${RUN_BASE_ENV}=${runBase}`,
+        `${RUN_ID_ENV}=${index}`,
+      ],
       forwardedArgv
     );
     const result = deps.spawn([

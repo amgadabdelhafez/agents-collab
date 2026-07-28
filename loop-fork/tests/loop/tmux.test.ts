@@ -167,7 +167,7 @@ test("runInTmux starts detached session and strips --tmux", async () => {
   const attaches: string[] = [];
   const logs: string[] = [];
   const command =
-    "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'bun' '/repo/src/cli.ts' '--proof' 'verify' 'fix bug'";
+    "'env' 'CLAUDE_CONFIG_DIR=/tmp/loop-claude' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'bun' '/repo/src/cli.ts' '--proof' 'verify' 'fix bug'";
 
   const delegated = await runInTmux(
     ["--tmux", "--proof", "verify", "fix bug"],
@@ -176,7 +176,7 @@ test("runInTmux starts detached session and strips --tmux", async () => {
         attaches.push(session);
       },
       cwd: "/repo",
-      env: {},
+      env: { CLAUDE_CONFIG_DIR: "/tmp/loop-claude" },
       findBinary: () => true,
       getTerminalSize: () => undefined,
       isInteractive: () => true,
@@ -541,7 +541,10 @@ test("runInTmux writes paired session refs before starting governess", async () 
       {
         capturePane: () => "",
         cwd: repoDir,
-        env: { LOOP_GOVERNESS_AGENT_RENAME: "1" },
+        env: {
+          CLAUDE_CONFIG_DIR: "/tmp/loop-claude",
+          LOOP_GOVERNESS_AGENT_RENAME: "1",
+        },
         findBinary: () => true,
         getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
         getLastCodexThreadId: () => "codex-thread-1",
@@ -617,6 +620,17 @@ test("runInTmux writes paired session refs before starting governess", async () 
     ).toBe(true);
     expect(
       events.some((event) => event.includes("'LOOP_GOVERNESS_AGENT_RENAME=1'"))
+    ).toBe(true);
+    expect(
+      calls
+        .filter(
+          (args) =>
+            args[0] === "tmux" &&
+            (args[1] === "new-session" || args[1] === "split-window")
+        )
+        .every((args) =>
+          args.at(-1)?.includes("'CLAUDE_CONFIG_DIR=/tmp/loop-claude'")
+        )
     ).toBe(true);
     expect(
       events.some((event) =>

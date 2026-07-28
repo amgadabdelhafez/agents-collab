@@ -36,3 +36,4 @@
 {"ts": "2026-07-27T18:33:48Z", "task_id": "utility-context-capsules", "signal": "loc_growth", "file": "src/loop/utility-runtime.ts", "before_loc": 1766, "after_loc": 1889, "delta_loc": 123, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-27T20:20:34Z", "task_id": "compound-worktree-observability", "signal": "loc_growth", "file": "src/loop/delegation-policy.ts", "before_loc": 1997, "after_loc": 2115, "delta_loc": 118, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-27T20:20:34Z", "task_id": "compound-worktree-observability", "signal": "loc_growth", "file": "src/loop/utility-observability.ts", "before_loc": 497, "after_loc": 737, "delta_loc": 240, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-28T05:05:12Z", "task_id": "claude-config-bridge-gc", "signal": "loc_growth", "file": "src/loop/claude-config-gc.ts", "before_loc": 0, "after_loc": 278, "delta_loc": 278, "threshold": 100, "severity": "indicator"}

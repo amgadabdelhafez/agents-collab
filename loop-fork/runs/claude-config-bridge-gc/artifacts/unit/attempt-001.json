@@ -1,0 +1,16 @@
+{
+  "task_id": "claude-config-bridge-gc",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-28T05:02:45Z",
+  "ended_at": "2026-07-28T05:03:04Z",
+  "artifact": "runs/claude-config-bridge-gc/artifacts/unit/attempt-001.log",
+  "command": [
+    "bash",
+    "-lc",
+    "bun test && bun run build && bunx ultracite check bunfig.toml src/cli.ts src/loop/deps.ts src/loop/claude-config-gc.ts tests/setup.ts tests/loop.test.ts tests/loop/claude-config-gc.test.ts && jq -e '(.projects[\"/private/tmp/governess-e2e.F0GKV2\"] == null) and (.projects[\"/Users/amgad/harvto\"].mcpServers[\"loop-bridge-harvto-57\"] != null)' /Users/amgad/.claude.json >/dev/null && test -d /Users/amgad/.claude/quarantine/governess-e2e-F0GKV2-20260727T215751-0700 && tmux has-session -t harvto-loop-57"
+  ]
+}
