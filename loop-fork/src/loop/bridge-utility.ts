@@ -44,7 +44,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
+      "Submit an independent bounded work packet. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped edits, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. Workers never widen scope: when locating a moved path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
     inputSchema: {
       additionalProperties: false,
       properties: {

@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active loop57-au-pair-recovery
+[pass] state/invariants/10-current-task.sh

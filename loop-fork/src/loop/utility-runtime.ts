@@ -804,15 +804,12 @@ const dispatchNonUtilityRoute = async (
   target: "driver" | "peer" | "requester" | "escalate",
   reason: string
 ): Promise<void> => {
-  if (target === "requester") {
-    return;
-  }
   const requesterPeer =
     job.request.requester === context.currentDriver
       ? context.peer
       : context.currentDriver;
   const peerRoute = target === "peer";
-  const bridgeTarget = peerRoute ? requesterPeer : context.currentDriver;
+  const bridgeTarget = peerRoute ? requesterPeer : job.request.requester;
   const message = peerRoute
     ? [
         `Peer review requested by ${job.request.requester}.`,
@@ -820,7 +817,7 @@ const dispatchNonUtilityRoute = async (
         `Objective: ${job.request.objective}`,
         `Action: perform the review and return an explicit verdict to ${job.request.requester} through the loop bridge. Act on this request.`,
       ].join(" ")
-    : `Helper route ${job.jobId} returned to ${target}: ${reason}. Objective: ${job.request.objective}`;
+    : `Helper route ${job.jobId} returned to requester ${job.request.requester}: ${reason}. Objective: ${job.request.objective}`;
   await dispatchBridgeMessage(
     context.runDir,
     peerRoute ? job.request.requester : "utility",
@@ -2392,43 +2389,14 @@ const PANE_ANSI = {
   yellow: "\u001b[33m",
 };
 
-const readNannyGovernessTranscript = (
-  runDir: string
-): UtilityTranscriptEntry[] => {
-  const stateFile = join(runDir, "governess-state.json");
-  try {
-    const state = JSON.parse(readFileSync(stateFile, "utf8")) as {
-      llmUsage?: {
-        calls?: number;
-        totalTokens?: number;
-      };
-      summary?: string;
-    };
-    const calls = Math.max(0, state.llmUsage?.calls ?? 0);
-    const totalTokens = Math.max(0, state.llmUsage?.totalTokens ?? 0);
-    const summary = sanitizeUtilityPaneText(state.summary ?? "");
-    return [
-      {
-        at: statSync(stateFile).mtime.toISOString(),
-        jobId: "governess",
-        kind: "response",
-        label: "NANNY QWEN",
-        text: [
-          `governess advisory · ${calls} calls · ${totalTokens} tok`,
-          ...(summary ? [summary] : []),
-        ].join(" · "),
-        usage: {
-          costUsd: 0,
-          durationMs: 0,
-          modelCalls: calls,
-          toolCalls: 0,
-          totalTokens,
-        },
-      },
-    ];
-  } catch {
-    return [];
+const paneModelFamilyName = (model: string): string => {
+  if (/qwen/i.test(model)) {
+    return "QWEN";
   }
+  if (/glm/i.test(model)) {
+    return "GLM";
+  }
+  return "MODEL";
 };
 
 const compactDisplayPath = (value: string): string => {
@@ -2462,6 +2430,7 @@ const PIPE_SEPARATOR_RE = /\s*\|\s*/g;
 const RESULT_PREFIX_RE = /^(?:Outcome|Result|Finding)\s*:\s*/i;
 const COMPACT_READ_PREFIX_RE = /^read\s+/i;
 const COMPACT_LINES_RE = /\s+lines\s+/i;
+const PANE_HELPER_ROLE_RE = /\b(?:Au Pair|Nanny)\b/gi;
 
 const paneResultText = (value: string): string => {
   const clean = sanitizeUtilityPaneText(value)
@@ -2548,7 +2517,8 @@ const renderTranscriptEntry = (
   entry: UtilityTranscriptEntry,
   width: number
 ): string[] => {
-  const head = `${transcriptTime(entry.at)} ${entry.label} ${entry.jobId.slice(0, 8)}`;
+  const job = entry.kind === "request" ? ` ${entry.jobId.slice(0, 8)}` : "";
+  const head = `${transcriptTime(entry.at)} ${entry.label}${job}`;
   if (entry.kind === "tool") {
     return [
       colorPaneLine(PANE_ANSI.blue, `${head} · ${entry.text || "—"}`, width),
@@ -2560,7 +2530,7 @@ const renderTranscriptEntry = (
       ...wrapPaneText(
         paneRequestText(entry.text || "—"),
         Math.max(1, width - 2),
-        1
+        2
       ).map((line) => colorPaneLine(PANE_ANSI.dim, `  ${line}`, width)),
     ];
   }
@@ -2580,6 +2550,39 @@ const compactRequestText = (entry: UtilityTranscriptEntry): string =>
     .replace(COMPACT_READ_PREFIX_RE, "")
     .replace(COMPACT_LINES_RE, " ");
 
+const modelPaneEntry = (
+  entry: UtilityTranscriptEntry,
+  fallbackModel: string
+): UtilityTranscriptEntry => {
+  const displayModel = paneModelFamilyName(entry.model ?? fallbackModel);
+  const displayText =
+    entry.kind === "response"
+      ? entry.text.replaceAll(PANE_HELPER_ROLE_RE, displayModel)
+      : entry.text;
+  if (entry.kind === "request") {
+    const requester = entry.label.split("→", 1)[0] || "REQUEST";
+    return {
+      ...entry,
+      label: `${requester}→${displayModel}`,
+      text: displayText,
+    };
+  }
+  if (entry.kind === "tool") {
+    return { ...entry, label: displayModel, text: displayText };
+  }
+  let status = "OK";
+  if (entry.label.includes("CONTEXT")) {
+    status = "CONTEXT";
+  } else if (entry.label.includes("FAIL")) {
+    status = "FAIL";
+  }
+  return {
+    ...entry,
+    label: `${displayModel} ${status}`,
+    text: displayText,
+  };
+};
+
 const renderCompactTranscriptJob = (
   entries: UtilityTranscriptEntry[],
   width: number,
@@ -2593,10 +2596,19 @@ const renderCompactTranscriptJob = (
     lines.push(
       colorPaneLine(
         PANE_ANSI.cyan,
-        `${transcriptTime(request.at)} ${request.label} ${request.jobId.slice(0, 8)} · ${compactRequestText(request)}`,
+        `${transcriptTime(request.at)} ${request.label} ${request.jobId.slice(0, 8)}`,
         width
       )
     );
+    if (maxRows >= 5) {
+      lines.push(
+        colorPaneLine(
+          PANE_ANSI.dim,
+          `  ${fitPaneLine(compactRequestText(request), Math.max(1, width - 2))}`,
+          width
+        )
+      );
+    }
   }
   if (tool && lines.length < maxRows) {
     lines.push(
@@ -2612,7 +2624,7 @@ const renderCompactTranscriptJob = (
     lines.push(
       colorPaneLine(
         color,
-        `${transcriptTime(response.at)} ${response.label} ${response.jobId.slice(0, 8)}`,
+        `${transcriptTime(response.at)} ${response.label}`,
         width
       )
     );
@@ -2677,16 +2689,13 @@ export const renderUtilityPane = (
   viewport: UtilityPaneViewport = {}
 ): string => {
   const snapshot = readUtilityObservability(runDir, viewport.tierId);
-  const paneSnapshot =
-    viewport.tierId === UTILITY_NANNY_TIER
-      ? {
-          ...snapshot,
-          transcript: [
-            ...snapshot.transcript,
-            ...readNannyGovernessTranscript(runDir),
-          ],
-        }
-      : snapshot;
+  const config = resolveUtilityRuntimeConfig(env);
+  const configuredModel =
+    viewport.tierId === UTILITY_NANNY_TIER ? config.nannyModel : config.model;
+  const workerTranscript = snapshot.transcript.map((entry) =>
+    modelPaneEntry(entry, configuredModel)
+  );
+  const paneSnapshot = { ...snapshot, transcript: workerTranscript };
   const width = paneWidth(env, viewport);
   const maxRows = paneRows(env, viewport);
   return renderUtilityTranscript(paneSnapshot, width, maxRows)
@@ -2705,7 +2714,7 @@ export const runUtilityPane = async (
         columns: process.stdout.columns,
         rows: process.stdout.rows,
         tierId,
-      })}\n`
+      })}`
     );
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }

@@ -1785,6 +1785,12 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   expect(
     tools.find((tool) => tool.name === "route_task")?.description
   ).toContain("one to three packets early");
+  expect(
+    tools.find((tool) => tool.name === "route_task")?.description
+  ).toContain("narrowest common ancestor");
+  expect(
+    tools.find((tool) => tool.name === "route_task")?.description
+  ).toContain("Every terminal outcome returns to this requester");
   rmSync(root, { recursive: true, force: true });
 });
 

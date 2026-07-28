@@ -34,6 +34,7 @@ export interface UtilityTranscriptEntry {
   jobId: string;
   kind: UtilityTranscriptKind;
   label: string;
+  model?: string;
   text: string;
   usage?: UtilityTranscriptUsage;
 }
@@ -606,9 +607,14 @@ const jobResultEntry = (
     return undefined;
   }
   const failed = job.result.status !== "completed";
-  const detail =
-    job.result.paneSummary ??
-    (failed ? job.result.blocker || job.result.summary : job.result.summary);
+  let detail: string | undefined;
+  if (job.result.reasonCode === "context-insufficient") {
+    detail = job.result.paneSummary || job.result.blocker;
+  } else if (failed) {
+    detail = job.result.blocker || job.result.summary;
+  } else {
+    detail = job.result.summary || job.result.paneSummary;
+  }
   const usage = transcriptUsage(usageEvent);
   return {
     at: job.updatedAt,
@@ -658,6 +664,12 @@ const transcriptFor = (
   usageEvents: Map<string, Record<string, unknown>>,
   toolEvents: Record<string, unknown>[]
 ): UtilityTranscriptEntry[] => {
+  const modelByJobId = new Map(
+    [...usageEvents].flatMap(([jobId, event]) => {
+      const model = stringAt(event, "model");
+      return model ? [[jobId, model] as const] : [];
+    })
+  );
   const entries = jobs.flatMap((job) => {
     const result = jobResultEntry(job, usageEvents.get(job.jobId));
     return result ? [jobRequestEntry(job), result] : [jobRequestEntry(job)];
@@ -665,6 +677,10 @@ const transcriptFor = (
   entries.push(...toolEntries(toolEvents, jobs));
   return entries
     .filter((entry) => entry.text)
+    .map((entry) => {
+      const model = modelByJobId.get(entry.jobId);
+      return model ? { ...entry, model } : entry;
+    })
     .sort((left, right) => left.at.localeCompare(right.at));
 };
 
