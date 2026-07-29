@@ -462,6 +462,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
     "tmux",
     "paste-buffer",
     "-d",
+    "-p",
     "-b",
     "repo-loop-1-claude-launch",
     "-t",
@@ -471,6 +472,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
     "tmux",
     "paste-buffer",
     "-d",
+    "-p",
     "-b",
     "repo-loop-1-codex-launch",
     "-t",
@@ -490,6 +492,9 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
 
 test("runInTmux transports a realistic 10KB prompt outside tmux commands", async () => {
   const calls: string[][] = [];
+  const submissionEvents: string[] = [];
+  const pastedPanes = new Set<string>();
+  const pasteCaptureCounts = new Map<string, number>();
   const loadedPrompts: Array<{
     buffer: string;
     content: string;
@@ -518,7 +523,22 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
   const delegated = await runInTmux(
     ["--tmux", "--proof", "verify with tests"],
     {
-      capturePane: () => "",
+      capturePane: (pane) => {
+        if (!pastedPanes.has(pane)) {
+          return "";
+        }
+        const next = (pasteCaptureCounts.get(pane) ?? 0) + 1;
+        pasteCaptureCounts.set(pane, next);
+        submissionEvents.push(`capture:${pane}:${next}`);
+        if (next < 3) {
+          return "";
+        }
+        const marker = pane.endsWith("0.0")
+          ? "❯ [Pasted text #21]"
+          : "› [Pasted Content 22083 chars]";
+        submissionEvents.push(`ready:${pane}`);
+        return marker;
+      },
       closePersistentCodexSession: () => Promise.resolve(),
       cwd: "/repo",
       env: {},
@@ -559,6 +579,14 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
         }
+        if (args[0] === "tmux" && args[1] === "paste-buffer") {
+          const pane = args.at(-1) ?? "";
+          pastedPanes.add(pane);
+          submissionEvents.push(`paste:${pane}`);
+        }
+        if (args[0] === "tmux" && args[1] === "send-keys") {
+          submissionEvents.push(`enter:${args[3] ?? ""}`);
+        }
         return { exitCode: 0, stderr: "" };
       },
       updateRunManifest: (_path, update) => {
@@ -586,6 +614,40 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
     expect(command.length).toBeLessThan(4096);
   }
   expect(calls.filter((call) => call[1] === "send-keys")).toHaveLength(2);
+  const firstEnter = submissionEvents.findIndex((event) =>
+    event.startsWith("enter:")
+  );
+  for (const pane of ["repo-loop-1:0.0", "repo-loop-1:0.1"]) {
+    expect(submissionEvents.indexOf(`paste:${pane}`)).toBeLessThan(firstEnter);
+    expect(submissionEvents.indexOf(`ready:${pane}`)).toBeLessThan(
+      submissionEvents.indexOf(`enter:${pane}`)
+    );
+  }
+});
+
+test("large-paste readiness fallback is bounded when no TUI marker appears", async () => {
+  let captureCalls = 0;
+  const delays: number[] = [];
+  const ready = await tmuxInternals.waitForLargePasteReady(
+    {
+      capturePane: () => {
+        captureCalls += 1;
+        return "";
+      },
+      sleep: (ms) => {
+        delays.push(ms);
+        return Promise.resolve();
+      },
+    },
+    "repo-loop-1:0.1",
+    "codex",
+    22_083
+  );
+
+  expect(ready).toBe(false);
+  expect(captureCalls).toBe(180);
+  expect(delays).toHaveLength(179);
+  expect(new Set(delays)).toEqual(new Set([250]));
 });
 
 test("runInTmux writes paired session refs before starting governess", async () => {
@@ -1180,6 +1242,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
     "tmux",
     "paste-buffer",
     "-d",
+    "-p",
     "-b",
     "repo-loop-1-cursor-launch",
     "-t",
@@ -1189,6 +1252,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
     "tmux",
     "paste-buffer",
     "-d",
+    "-p",
     "-b",
     "repo-loop-1-codex-launch",
     "-t",
@@ -1318,6 +1382,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
     "tmux",
     "paste-buffer",
     "-d",
+    "-p",
     "-b",
     "repo-loop-1-gemini-launch",
     "-t",
@@ -1327,6 +1392,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
     "tmux",
     "paste-buffer",
     "-d",
+    "-p",
     "-b",
     "repo-loop-1-cursor-launch",
     "-t",

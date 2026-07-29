@@ -1,0 +1,24 @@
+{
+  "task_id": "paste-submit-readiness",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit", "smoke", "full"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "method": "bun test tests/loop/tmux.test.ts",
+      "reason": "delayed Claude and Codex paste markers precede Enter; missing evidence stops after 180 polls"
+    },
+    "smoke": {
+      "status": "pass",
+      "method": "bash evals/smoke/paste-submit-readiness.sh",
+      "reason": "compiled binary waited for a delayed bracketed-paste marker and submitted with no early Enter"
+    },
+    "full": {
+      "status": "pass",
+      "method": "scripts/verify.sh paste-submit-readiness paste-submit-readiness",
+      "reason": "lint, typecheck, build, all 1,187 tests, and the empty baseline gate passed"
+    }
+  },
+  "candidate_sha256": "a8aca48e2898c42d7f07ebb3f533a671f1099646215a626659c97a419fe2d7ff"
+}

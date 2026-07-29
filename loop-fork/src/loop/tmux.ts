@@ -106,6 +106,10 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
+const LARGE_PASTE_MIN_BYTES = 16 * 1024;
+const LARGE_PASTE_READY_POLLS = 180;
+const LARGE_PASTE_READY_DELAY_MS = 250;
+const LARGE_PASTE_MARKER_RE = /\[Pasted (?:Content|text)\b[^\]]*\]/i;
 const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
 const DEFAULT_UTILITY_PANE_WIDTH = "20%";
 const DEFAULT_RECON_PANE_HEIGHT = "15%";
@@ -1850,13 +1854,38 @@ const unblockClaudePane = async (
   }
 };
 
+const waitForLargePasteReady = async (
+  deps: Pick<TmuxDeps, "capturePane" | "sleep">,
+  pane: string,
+  agent: Agent,
+  promptBytes: number | undefined
+): Promise<boolean> => {
+  if (
+    !(agent === "claude" || agent === "codex") ||
+    (promptBytes ?? 0) < LARGE_PASTE_MIN_BYTES
+  ) {
+    return true;
+  }
+  for (let attempt = 0; attempt < LARGE_PASTE_READY_POLLS; attempt += 1) {
+    if (LARGE_PASTE_MARKER_RE.test(deps.capturePane(pane))) {
+      return true;
+    }
+    if (attempt + 1 < LARGE_PASTE_READY_POLLS) {
+      await deps.sleep(LARGE_PASTE_READY_DELAY_MS);
+    }
+  }
+  return false;
+};
+
 const createPairedPaneLayout = async (input: {
   deps: TmuxDeps;
   governess: boolean;
   leftCommand: string;
+  leftPromptBytes?: number;
   leftPromptPath?: string;
   paneAgents: { left: Agent; right: Agent };
   rightCommand: string;
+  rightPromptBytes?: number;
   rightPromptPath?: string;
   runDir: string;
   session: string;
@@ -1908,11 +1937,12 @@ const createPairedPaneLayout = async (input: {
   if (input.paneAgents.right === "claude") {
     await unblockClaudePane(rightBeforeUtility, input.deps);
   }
-  const pasteLaunchPrompt = (
+  const pasteLaunchPrompt = async (
     pane: string,
     agent: Agent,
-    promptPath: string | undefined
-  ): void => {
+    promptPath: string | undefined,
+    promptBytes: number | undefined
+  ): Promise<void> => {
     if (!promptPath) {
       return;
     }
@@ -1925,21 +1955,40 @@ const createPairedPaneLayout = async (input: {
     rmSync(promptPath, { force: true });
     runTmuxCommand(
       input.deps,
-      ["tmux", "paste-buffer", "-d", "-b", buffer, "-t", pane],
+      ["tmux", "paste-buffer", "-d", "-p", "-b", buffer, "-t", pane],
       `Failed to paste ${agent} launch prompt`
     );
+    const pasteReady = await waitForLargePasteReady(
+      input.deps,
+      pane,
+      agent,
+      promptBytes
+    );
+    if (!pasteReady) {
+      input.deps.log(
+        `[loop] ${agent} large-paste render was not observed within the startup bound; submitting once.`
+      );
+    }
     runTmuxCommand(
       input.deps,
       ["tmux", "send-keys", "-t", pane, "Enter"],
       `Failed to submit ${agent} launch prompt`
     );
   };
-  pasteLaunchPrompt(left, input.paneAgents.left, input.leftPromptPath);
-  pasteLaunchPrompt(
-    rightBeforeUtility,
-    input.paneAgents.right,
-    input.rightPromptPath
-  );
+  await Promise.all([
+    pasteLaunchPrompt(
+      left,
+      input.paneAgents.left,
+      input.leftPromptPath,
+      input.leftPromptBytes
+    ),
+    pasteLaunchPrompt(
+      rightBeforeUtility,
+      input.paneAgents.right,
+      input.rightPromptPath,
+      input.rightPromptBytes
+    ),
+  ]);
   return {
     governess: input.governess ? `${input.session}:0.2` : undefined,
     left,
@@ -2177,9 +2226,15 @@ const startPairedSession = async (
       deps,
       governess: Boolean(launch.opts.governess),
       leftCommand,
+      leftPromptBytes: leftPrompt
+        ? Buffer.byteLength(leftPrompt, "utf8")
+        : undefined,
       leftPromptPath,
       paneAgents,
       rightCommand,
+      rightPromptBytes: rightPrompt
+        ? Buffer.byteLength(rightPrompt, "utf8")
+        : undefined,
       rightPromptPath,
       runDir: storage.runDir,
       session,
@@ -2526,6 +2581,7 @@ export const tmuxInternals = {
   quoteShellArg,
   sanitizeBase,
   stripTmuxFlag,
+  waitForLargePasteReady,
   utilityPaneEnabled,
   utilityPaneWidth,
   reconPaneCount,

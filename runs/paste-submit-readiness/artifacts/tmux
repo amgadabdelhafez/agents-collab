@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/homebrew/bin/tmux -L "${LOOP_SMOKE_TMUX_SOCKET}" "$@"
