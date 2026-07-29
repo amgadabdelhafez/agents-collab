@@ -678,21 +678,32 @@ test("runInTmux writes paired session refs before starting governess", async () 
           args.at(-1)?.includes("'CLAUDE_CONFIG_DIR=/tmp/loop-claude'")
         )
     ).toBe(true);
-    // Binds the COMPOSED pane command to buildPairedPaneEnv's ordering. Without
-    // this, the call site could bypass the helper with a buggy inline array and
-    // every helper-level test would still pass — which is exactly how the
-    // `env: -u: No such file or directory` launch failure shipped. `env` stops
-    // option parsing at the first operand, so the unsets must precede it here,
-    // in the string tmux actually runs.
-    for (const args of calls.filter(
-      (call) =>
-        call[0] === "tmux" &&
-        (call[1] === "new-session" || call[1] === "split-window")
-    )) {
-      const command = args.at(-1) ?? "";
-      if (!command.includes("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")) {
-        continue;
-      }
+    // Binds the COMPOSED pane command to buildPairedPaneEnv — presence AND
+    // ordering. An earlier version filtered on the marker and `continue`d,
+    // which made it vacuous: omitting the unsets entirely (or from one pane)
+    // left nothing to assert and the suite stayed green. Asserting the expected
+    // COUNT first is what makes omission a failure rather than a skip.
+    // Mis-ordering is the loud failure (`env: -u: No such file...`, exit 127);
+    // omission is the silent one that quietly restores the fleet bypass.
+    const governedCommands = calls
+      .filter(
+        (call) =>
+          call[0] === "tmux" &&
+          (call[1] === "new-session" || call[1] === "split-window")
+      )
+      .map((call) => call.at(-1) ?? "")
+      .filter((command) =>
+        command.includes("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
+      );
+    // Exactly the two agent panes: the left `new-session` and the right
+    // `split-window`. Governess, Au Pair, Nanny and the recon panes are not
+    // agent panes and legitimately carry no unsets.
+    expect(governedCommands).toHaveLength(2);
+    for (const command of governedCommands) {
+      expect(command).toContain("'-u' 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'");
+      expect(command).toContain(
+        "'-u' 'CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS'"
+      );
       const unsetAt = command.indexOf("'-u'");
       const firstAssignmentAt = command.search(/'[A-Z_]+=/);
       expect(unsetAt).toBeGreaterThanOrEqual(0);
