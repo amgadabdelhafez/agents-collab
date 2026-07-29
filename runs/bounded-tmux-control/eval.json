@@ -1,20 +1,20 @@
 {
   "task_id": "bounded-tmux-control",
   "feature": "bounded-tmux-control",
-  "timestamp": "2026-07-29T16:12:04Z",
+  "timestamp": "2026-07-29T16:34:16Z",
   "verdict": "pass",
   "baseline_failures": [],
   "required": ["unit", "full"],
   "dimensions": {
     "unit": {
       "status": "pass",
-      "method": "focused tmux timeout and lifecycle tests",
-      "reason": "80 focused launch, liveness, proxy, and Governess tests passed with zero failures"
+      "method": "focused tmux timeout, lifecycle, and install-probe tests",
+      "reason": "80 focused launch, liveness, proxy, and Governess tests plus 4 installer tests passed with zero failures"
     },
     "full": {
       "status": "pass",
       "method": "scripts/verify.sh bounded-tmux-control bounded-tmux-control",
-      "reason": "lint, source typecheck, compiled build, and the full sequential suite passed; baseline allowlist is empty"
+      "reason": "lint, source typecheck, compiled build, and the full sequential suite passed after the source-wide tmux audit correction; baseline allowlist is empty"
     },
     "independent_review": {
       "status": "pending",

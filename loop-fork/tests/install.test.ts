@@ -19,3 +19,32 @@ test("tmux nudge explains why bare loop fails without tmux", () => {
     "Install tmux with: your package manager (for example: apt install tmux)",
   ]);
 });
+
+test("tmux install probe is kill-on-timeout bounded", () => {
+  let invocation:
+    | {
+        args?: readonly string[];
+        command?: string;
+        options?: Record<string, unknown>;
+      }
+    | undefined;
+  const run = ((
+    command: string,
+    args?: readonly string[],
+    options?: Record<string, unknown>
+  ) => {
+    invocation = { args, command, options };
+    return { error: undefined, status: 0 };
+  }) as unknown as Parameters<typeof installInternals.hasTmuxInstalled>[0];
+
+  expect(installInternals.hasTmuxInstalled(run)).toBe(true);
+  expect(invocation).toEqual({
+    args: ["-V"],
+    command: "tmux",
+    options: {
+      killSignal: "SIGKILL",
+      stdio: "ignore",
+      timeout: 2000,
+    },
+  });
+});

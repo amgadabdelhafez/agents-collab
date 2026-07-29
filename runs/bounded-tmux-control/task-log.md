@@ -24,3 +24,15 @@
   full lint, source typecheck, compiled build, and sequential repository suite
   passed. The first project-verifier invocation stopped only at the expected
   pending eval verdict; the eval was then promoted with an empty baseline.
+- A post-commit source-wide tmux invocation audit found the installer-only
+  `tmux -V` probe was the sole noninteractive command without a finite bound.
+  Added a two-second SIGKILL timeout plus a regression test; the earlier
+  exact-SHA review request was withdrawn before replacement verification.
+- Replacement verification at 2026-07-29T16:34:16Z: installer tests 4 pass,
+  0 fail; lint passed; the project verifier passed lint, source typecheck,
+  compiled build, the full sequential suite, and an empty baseline allowlist.
+  Two subsequent builds reproduced binary SHA-256
+  `dc159fcf5860379f53a25483c4c2c0eae1054657219834571dd3f2a986fcddcd`.
+  The binary hash is unchanged because the corrected installer source is not
+  bundled into the runtime CLI executable; the superseding commit remains the
+  review binding for the complete source tree.

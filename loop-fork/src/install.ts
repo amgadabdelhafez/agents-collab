@@ -26,6 +26,7 @@ const TMUX_DEFAULT_MODE_NOTE =
   "The default 'loop' command opens a paired tmux workspace and will fail until tmux is installed.";
 const TMUX_MACOS_HINT = "brew install tmux";
 const TMUX_LINUX_HINT = "your package manager (for example: apt install tmux)";
+const TMUX_VERSION_TIMEOUT_MS = 2000;
 
 const tmuxInstallHint = (
   platform: NodeJS.Platform = process.platform
@@ -48,8 +49,12 @@ const tmuxNudgeLines = (
   `Install tmux with: ${tmuxInstallHint(platform)}`,
 ];
 
-const hasTmuxInstalled = (): boolean => {
-  const result = spawnSync("tmux", ["-V"], { stdio: "ignore" });
+const hasTmuxInstalled = (run: typeof spawnSync = spawnSync): boolean => {
+  const result = run("tmux", ["-V"], {
+    killSignal: "SIGKILL",
+    stdio: "ignore",
+    timeout: TMUX_VERSION_TIMEOUT_MS,
+  });
   return !result.error && result.status === 0;
 };
 
@@ -137,6 +142,7 @@ const installBinary = async (): Promise<void> => {
 };
 
 export const installInternals = {
+  hasTmuxInstalled,
   tmuxInstallHint,
   tmuxNudgeLines,
 };
