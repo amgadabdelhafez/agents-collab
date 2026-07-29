@@ -1,0 +1,12 @@
+{
+  "task_id": "driver-bootstrap-role",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-29T21:01:44Z",
+  "ended_at": "2026-07-29T21:01:44Z",
+  "artifact": "runs/driver-bootstrap-role/artifacts/unit/attempt-001.log",
+  "command": ["bun", "test", "tests/loop/tmux.test.ts"]
+}

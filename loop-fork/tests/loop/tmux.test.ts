@@ -692,6 +692,19 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
       createHash("sha256").update(content, "utf8").digest("hex")
     );
   }
+  const primaryBootstrap = loadedPrompts.find((prompt) =>
+    prompt.buffer.includes("-codex-launch")
+  )?.content;
+  const supportBootstrap = loadedPrompts.find((prompt) =>
+    prompt.buffer.includes("-claude-launch")
+  )?.content;
+  expect(primaryBootstrap).toContain("you are the primary Codex agent");
+  expect(primaryBootstrap).toContain("it is already assigned work");
+  expect(primaryBootstrap).toContain("initiate it immediately");
+  expect(primaryBootstrap).toContain("contains no mission");
+  expect(supportBootstrap).toContain("you are the supporting Claude agent");
+  expect(supportBootstrap).toContain("wait for a targeted request");
+  expect(supportBootstrap).toContain("explicitly assigns you separate work");
   const workspaceCommands = calls.filter(
     (call) => call[1] === "new-session" || call[1] === "split-window"
   );

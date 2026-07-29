@@ -521,17 +521,23 @@ interface MaterializedLaunchCharter {
   charter: RunLaunchCharter;
 }
 
+type LaunchBootstrapRole = "primary" | "support";
+
 const buildLaunchBootstrap = (
   agent: Agent,
-  charter: RunLaunchCharter
+  charter: RunLaunchCharter,
+  role: LaunchBootstrapRole
 ): string => {
   const bootstrap = [
-    `Loop bootstrap: you are the ${capitalize(agent)} agent for this run.`,
+    `Loop bootstrap: you are the ${role === "primary" ? "primary" : "supporting"} ${capitalize(agent)} agent for this run.`,
     `Your complete charter is stored at: ${charter.path}`,
     `Expected SHA-256: ${charter.sha256}`,
     "Before doing any work, read the charter file as bytes and verify its SHA-256 matches exactly.",
     "If the file is missing or the hash differs, fail closed: report the mismatch and do not proceed.",
     "After verification, read the complete charter and follow it as the authoritative run instructions.",
+    role === "primary"
+      ? "If that charter contains a concrete mission, it is already assigned work: initiate it immediately without waiting for another task assignment or role correction. If it contains no mission, keep its interactive wait instructions."
+      : "You are the support peer: wait for a targeted request unless the charter explicitly assigns you separate work.",
   ].join("\n");
   const bytes = Buffer.byteLength(bootstrap, "utf8");
   if (bytes >= MAX_LAUNCH_BOOTSTRAP_BYTES) {
@@ -545,7 +551,8 @@ const buildLaunchBootstrap = (
 const writeLaunchCharter = (
   runDir: string,
   agent: Agent,
-  prompt: string | undefined
+  prompt: string | undefined,
+  role: LaunchBootstrapRole
 ): MaterializedLaunchCharter | undefined => {
   if (!prompt) {
     return undefined;
@@ -561,7 +568,7 @@ const writeLaunchCharter = (
     path: charterPath,
     sha256: createHash("sha256").update(prompt, "utf8").digest("hex"),
   };
-  const bootstrap = buildLaunchBootstrap(agent, charter);
+  const bootstrap = buildLaunchBootstrap(agent, charter, role);
   const bootstrapPath = join(directory, `${agent}-bootstrap.txt`);
   writeFileSync(bootstrapPath, bootstrap, { encoding: "utf8", mode: 0o600 });
   chmodSync(bootstrapPath, 0o600);
@@ -2323,12 +2330,14 @@ const startPairedSession = async (
     const leftLaunch = writeLaunchCharter(
       storage.runDir,
       paneAgents.left,
-      leftPrompt
+      leftPrompt,
+      paneAgents.left === primaryAgent ? "primary" : "support"
     );
     const rightLaunch = writeLaunchCharter(
       storage.runDir,
       paneAgents.right,
-      rightPrompt
+      rightPrompt,
+      paneAgents.right === primaryAgent ? "primary" : "support"
     );
     leftPromptPath = leftLaunch?.bootstrapPath;
     rightPromptPath = rightLaunch?.bootstrapPath;
