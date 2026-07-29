@@ -52,8 +52,8 @@ mode because it has no Governess process or provider-hook lifecycle.
    the settled evidence still exists, the request remains safe, and no granted,
    consumed, or running fallback occupies the single run-wide **concurrency**
    slot. The slot bounds how many fallbacks may exist AT ONCE, not how many a
-   run may have in total: a `completed`, `expired`, or `denied` fallback frees
-   it, and a later well-evidenced request is then grantable. Denial names the
+   run may have in total: a `completed` or `expired` fallback frees it (a
+   `denied` request never held the slot), and a later well-evidenced request is then grantable. Denial names the
    occupant (`native-slot-busy:<request-id>`). Requirement 6's 120-second
    expiry exists precisely to free this slot, so a permanent one-per-run
    reading would make that expiry meaningless.

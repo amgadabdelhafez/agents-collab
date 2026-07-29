@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ import {
 } from "../../src/loop/native-subagent";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
+  buildPairedPaneEnv,
   claudeNativeFallbackDefinition,
   claudeNativeSubagentArgs,
   tmuxInternals,
@@ -670,4 +672,58 @@ test("native fallback slot is one-at-a-time: completion and expiry free it, acti
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
+});
+
+// The composed pane command must actually EXECUTE. `env` stops option parsing at
+// the first NAME=VALUE operand, so a `-u` placed after an assignment is taken as
+// the utility to run: exit 127, pane never starts, in the DEFAULT mode. A string
+// assertion would have passed against that broken build, so this runs the real
+// argv and inspects the child's environment.
+test("governed pane env unsets fleet surfaces and the composed command still runs", () => {
+  const govEnv = buildPairedPaneEnv({
+    governess: true,
+    inheritedEnv: {
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+      CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS: "1",
+    } as NodeJS.ProcessEnv,
+    nativeSubagentMode: "utility-first",
+    runBase: "/tmp/base",
+    runId: "run-1",
+  });
+
+  // Ordering invariant: every -u precedes every NAME=VALUE operand.
+  const firstAssignment = govEnv.findIndex((entry) => entry.includes("="));
+  const lastUnsetFlag = govEnv.lastIndexOf("-u");
+  expect(lastUnsetFlag).toBeGreaterThanOrEqual(0);
+  expect(lastUnsetFlag).toBeLessThan(firstAssignment);
+
+  // Behavioral: the real argv executes, and neither surface reaches the child.
+  // The inner `env` prints the child's whole environment, so this inspects what
+  // actually arrives rather than trusting a shell expansion.
+  const probe = spawnSync("env", [...govEnv, "env"], {
+    encoding: "utf8",
+    env: {
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+      CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS: "1",
+      PATH: process.env.PATH ?? "",
+    },
+  });
+  expect(probe.status).toBe(0);
+  expect(probe.stderr).toBe("");
+  expect(probe.stdout).not.toContain("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS");
+  expect(probe.stdout).not.toContain(
+    "CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS"
+  );
+  // Proves the probe is meaningful: an untouched var DOES arrive.
+  expect(probe.stdout).toContain("LOOP_RUN_ID=run-1");
+
+  // `off` claims no enforcement, so it must not strip anything.
+  const offEnv = buildPairedPaneEnv({
+    governess: false,
+    inheritedEnv: {} as NodeJS.ProcessEnv,
+    nativeSubagentMode: "off",
+    runBase: "/tmp/base",
+    runId: "run-1",
+  });
+  expect(offEnv).not.toContain("-u");
 });

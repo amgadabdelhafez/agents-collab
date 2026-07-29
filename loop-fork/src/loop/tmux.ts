@@ -928,6 +928,52 @@ const tmuxStartupMessage = (paired: boolean): string =>
     ? "[loop] starting paired tmux workspace..."
     : "[loop] starting tmux session...";
 
+/**
+ * Environment prefix for a governed pane, spliced as `env <prefix> <agent argv>`.
+ *
+ * Extracted so the ORDER is testable. `env` stops option parsing at the first
+ * `NAME=VALUE` operand, so every `-u` must precede every assignment; getting
+ * that wrong is not a weak control but a hard launch failure (exit 127) in the
+ * default mode. This was shipped once and caught only in review, because
+ * nothing executed the composed command.
+ */
+export const buildPairedPaneEnv = (input: {
+  cavemanMode?: string;
+  codexHome?: string;
+  governess: boolean;
+  helperCavemanMode?: string;
+  inheritedEnv: NodeJS.ProcessEnv;
+  nativeSubagentMode: NativeSubagentMode;
+  runBase: string;
+  runId: string;
+}): string[] => {
+  const governed =
+    input.nativeSubagentMode === "utility-first" ||
+    input.nativeSubagentMode === "strict";
+  return [
+    // Unsets first — see the doc comment above.
+    ...(governed
+      ? [
+          "-u",
+          "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+          "-u",
+          "CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS",
+        ]
+      : []),
+    ...passEnv(input.inheritedEnv, "CLAUDE_CONFIG_DIR"),
+    `${RUN_BASE_ENV}=${input.runBase}`,
+    `${RUN_ID_ENV}=${input.runId}`,
+    ...(input.governess
+      ? [`LOOP_NATIVE_SUBAGENT_MODE=${input.nativeSubagentMode}`]
+      : []),
+    ...(input.cavemanMode ? [`LOOP_CAVEMAN_MODE=${input.cavemanMode}`] : []),
+    ...(input.helperCavemanMode
+      ? [`LOOP_HELPER_CAVEMAN_MODE=${input.helperCavemanMode}`]
+      : []),
+    ...(input.codexHome ? [`CODEX_HOME=${input.codexHome}`] : []),
+  ];
+};
+
 interface PairedPaneTargets {
   auPair?: string;
   governess?: string;
@@ -1906,32 +1952,16 @@ const startPairedSession = async (
       join(storage.runDir, "claude-mcp.json"))
     : undefined;
   try {
-    const env = [
-      ...passEnv(deps.env, "CLAUDE_CONFIG_DIR"),
-      `${RUN_BASE_ENV}=${runBase}`,
-      `${RUN_ID_ENV}=${storage.runId}`,
-      ...(launch.opts.governess
-        ? [`LOOP_NATIVE_SUBAGENT_MODE=${nativeSubagentMode}`]
-        : []),
-      // Remove the fleet surface rather than only denying it. Claude Code
-      // 2.1.220 exposes `TeamCreate` when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
-      // is inherited from the launching shell, so a governed pane could be
-      // handed a whole team tool that never passes through `Agent`. Hook and
-      // disallowedTools gating still cover it; unsetting means the governed
-      // agent never sees it at all. Untouched in `off` mode, which claims no
-      // enforcement.
-      ...(nativeSubagentMode === "utility-first" ||
-      nativeSubagentMode === "strict"
-        ? ["-u", "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"]
-        : []),
-      ...(launch.opts.cavemanMode
-        ? [`LOOP_CAVEMAN_MODE=${launch.opts.cavemanMode}`]
-        : []),
-      ...(launch.opts.helperCavemanMode
-        ? [`LOOP_HELPER_CAVEMAN_MODE=${launch.opts.helperCavemanMode}`]
-        : []),
-      ...(launch.opts.codexHome ? [`CODEX_HOME=${launch.opts.codexHome}`] : []),
-    ];
+    const env = buildPairedPaneEnv({
+      cavemanMode: launch.opts.cavemanMode,
+      codexHome: launch.opts.codexHome,
+      governess: Boolean(launch.opts.governess),
+      helperCavemanMode: launch.opts.helperCavemanMode,
+      inheritedEnv: deps.env,
+      nativeSubagentMode,
+      runBase,
+      runId: storage.runId,
+    });
     const leftPrompt = hadAgentSession[paneAgents.left]
       ? undefined
       : buildLaunchPrompt(
