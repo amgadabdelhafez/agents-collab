@@ -5,4 +5,4 @@
 - [x] Re-verify PID identity immediately before `SIGTERM`.
 - [x] Add the non-fatal cross-repository sweep to normal startup maintenance.
 - [x] Add adversarial process, manifest, PID-reuse, containment, and CLI tests.
-- [ ] Run focused and full verification and record independent review evidence.
+- [x] Run focused and full verification and record independent review evidence.

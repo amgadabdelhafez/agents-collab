@@ -1,0 +1,19 @@
+{
+  "task_id": "cross-repo-stale-bridge-sweep",
+  "scanned_at": "2026-07-29T19:48:42Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-29T19:48:42Z",
+      "task_id": "cross-repo-stale-bridge-sweep",
+      "signal": "loc_growth",
+      "file": "src/loop/stale-bridge-cleanup.ts",
+      "before_loc": 0,
+      "after_loc": 364,
+      "delta_loc": 364,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

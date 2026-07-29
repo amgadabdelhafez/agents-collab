@@ -1,11 +1,17 @@
 {
   "task_id": "cross-repo-stale-bridge-sweep",
   "feature": "cross-repo-stale-bridge-sweep",
-  "timestamp": "2026-07-29T19:25:00Z",
+  "timestamp": "2026-07-29T19:47:49Z",
   "verdict": "pass",
-  "release_status": "held-pending-exact-sha-review",
+  "release_status": "deployed",
   "baseline_failures": [],
-  "required": ["focused", "full", "live_dry_run", "independent_review"],
+  "required": [
+    "focused",
+    "full",
+    "live_dry_run",
+    "independent_review",
+    "production_validation"
+  ],
   "dimensions": {
     "focused": {
       "status": "pass",
@@ -23,9 +29,14 @@
       "reason": "11 loop executables scanned; all three exact bridge candidates belonged to active run 100 and were preserved; zero signals issued"
     },
     "independent_review": {
-      "status": "pending",
+      "status": "pass",
       "method": "exact-SHA Claude supervisor review",
-      "reason": "deployment remains held until a bound CONCUR"
+      "reason": "CONCUR a77e0762-28ab-41b9-8985-e60d9d245956 bound to 8e89909bb76b5b7b26d4d87c3317b017e2546d4a; independent suite 1223/0 and matching binary hash"
+    },
+    "production_validation": {
+      "status": "pass",
+      "method": "one supervised real sweep with live run 100",
+      "reason": "11 loop executables scanned; 2 exact run-100 bridges preserved as active; 0 signaled; run-100 tmux session and standing channel remained available"
     }
   }
 }

@@ -1,0 +1,22 @@
+{
+  "task_id": "cross-repo-stale-bridge-sweep",
+  "status": "created",
+  "bug_id": "cross-repo-stale-bridge-wedge",
+  "regression_path": "evals/regression/cross-repo-stale-bridge-wedge.md",
+  "prompt_path": "runs/cross-repo-stale-bridge-sweep/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-29T19:48:42Z",
+  "markers": {
+    "enabled": ["yes"],
+    "id": ["cross-repo-stale-bridge-wedge"],
+    "symptom": [
+      "Old bridge MCP children can issue unbounded tmux probes and wedge new launches."
+    ],
+    "guard": ["tests/loop/run-process-cleanup.test.ts and tests/loop.test.ts"]
+  },
+  "symptom_lines": [
+    "Old bridge MCP children can issue unbounded tmux probes and wedge new launches."
+  ],
+  "test_lines": [
+    "tests/loop/run-process-cleanup.test.ts and tests/loop.test.ts"
+  ]
+}

@@ -352,10 +352,12 @@
     {
       "id": "cross-repo-stale-bridge-sweep",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-07-29T18:55:09Z",
       "run_dir": "runs/cross-repo-stale-bridge-sweep",
-      "eval_status": "pass"
+      "eval_status": "pass",
+      "ended_at": "2026-07-29T19:48:42Z",
+      "spec_path": "specs/cross-repo-stale-bridge-sweep.md"
     }
   ]
 }

@@ -47,4 +47,12 @@ Live run 100 is read-only. No process was signaled during investigation.
 - A broad repository `tsc --noEmit` command outside the defined verifier still
   reports the pre-existing test/source typing debt; the required source-only
   verifier command passes and this candidate adds no reported TypeScript error.
-- Deployment remains held pending exact-SHA independent review.
+- Claude independently reviewed exact SHA
+  `8e89909bb76b5b7b26d4d87c3317b017e2546d4a`, reran 1,223 tests with zero
+  failures, matched binary SHA-256
+  `23990085b21dbf7572a336346fbb8e4db083aabf32bcc65d72083299fa0282b3`,
+  and issued CONCUR in message `a77e0762-28ab-41b9-8985-e60d9d245956`.
+- Deployed the reviewed binary through `/Users/amgad/.local/bin/loop`.
+- Supervised production sweep scanned 11 loop executables, preserved both
+  exact active run-100 bridge candidates (PIDs 79992 and 80024), signaled zero,
+  and left `harvto-loop-100` plus the standing liaison channel available.

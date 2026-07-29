@@ -41,3 +41,4 @@
 {"ts": "2026-07-28T01:16:55Z", "task_id": "loop57-runtime-fixes", "signal": "loc_growth", "file": "src/loop/recon-pane.ts", "before_loc": 0, "after_loc": 171, "delta_loc": 171, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-28T01:16:55Z", "task_id": "loop57-runtime-fixes", "signal": "loc_growth", "file": "src/loop/tmux.ts", "before_loc": 2053, "after_loc": 2179, "delta_loc": 126, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-29T06:26:50Z", "task_id": "run-lifecycle-teardown", "signal": "loc_growth", "file": "src/loop/run-process-cleanup.ts", "before_loc": 0, "after_loc": 215, "delta_loc": 215, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-29T19:48:42Z", "task_id": "cross-repo-stale-bridge-sweep", "signal": "loc_growth", "file": "src/loop/stale-bridge-cleanup.ts", "before_loc": 0, "after_loc": 364, "delta_loc": 364, "threshold": 100, "severity": "indicator"}
