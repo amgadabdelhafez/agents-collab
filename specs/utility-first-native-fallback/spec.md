@@ -53,10 +53,11 @@ mode because it has no Governess process or provider-hook lifecycle.
    consumed, or running fallback occupies the single run-wide **concurrency**
    slot. The slot bounds how many fallbacks may exist AT ONCE, not how many a
    run may have in total: a `completed` or `expired` fallback frees it (a
-   `denied` request never held the slot), and a later well-evidenced request is then grantable. Denial names the
-   occupant (`native-slot-busy:<request-id>`). Requirement 6's 120-second
-   expiry exists precisely to free this slot, so a permanent one-per-run
-   reading would make that expiry meaningless.
+   `denied` request never held it), and a later well-evidenced request is then
+   grantable. Denial names the occupant (`native-slot-busy:<request-id>`).
+   Requirement 6's 120-second expiry exists precisely to free this slot, so a
+   permanent one-per-run reading would make that expiry meaningless. There is
+   deliberately no run-wide TOTAL cap; cost control is not this slot's job.
 6. A grant expires after 120 seconds if unused. The next matching provider
    native spawn by the requester atomically consumes it. A missing, stale,
    wrong-requester, wrong-profile, duplicate, or descendant spawn is denied by

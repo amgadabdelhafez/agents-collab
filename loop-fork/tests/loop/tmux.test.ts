@@ -678,6 +678,26 @@ test("runInTmux writes paired session refs before starting governess", async () 
           args.at(-1)?.includes("'CLAUDE_CONFIG_DIR=/tmp/loop-claude'")
         )
     ).toBe(true);
+    // Binds the COMPOSED pane command to buildPairedPaneEnv's ordering. Without
+    // this, the call site could bypass the helper with a buggy inline array and
+    // every helper-level test would still pass — which is exactly how the
+    // `env: -u: No such file or directory` launch failure shipped. `env` stops
+    // option parsing at the first operand, so the unsets must precede it here,
+    // in the string tmux actually runs.
+    for (const args of calls.filter(
+      (call) =>
+        call[0] === "tmux" &&
+        (call[1] === "new-session" || call[1] === "split-window")
+    )) {
+      const command = args.at(-1) ?? "";
+      if (!command.includes("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")) {
+        continue;
+      }
+      const unsetAt = command.indexOf("'-u'");
+      const firstAssignmentAt = command.search(/'[A-Z_]+=/);
+      expect(unsetAt).toBeGreaterThanOrEqual(0);
+      expect(unsetAt).toBeLessThan(firstAssignmentAt);
+    }
     expect(
       events.some((event) =>
         event.includes("'USAGE_TRACKER_URL=http://tracker.local'")

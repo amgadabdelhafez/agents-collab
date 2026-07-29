@@ -951,7 +951,18 @@ export const buildPairedPaneEnv = (input: {
     input.nativeSubagentMode === "utility-first" ||
     input.nativeSubagentMode === "strict";
   return [
-    // Unsets first — see the doc comment above.
+    // Unsets first — see the ordering note above.
+    //
+    // WHY unset rather than only deny: Claude Code 2.1.220 surfaces `TeamCreate`
+    // when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS is inherited from the operator's
+    // shell, and an observer-agent subagent fanout behind
+    // CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS. Both reach a governed pane
+    // without passing through `Agent`. The hook and the profile's
+    // `disallowedTools` still gate the team tool; removing the variables means
+    // the governed agent never sees either surface at all. The observer var is
+    // a hard precondition for its whole surface, so unsetting it closes the
+    // fanout at the source — there is no tool-name backstop for it, and none is
+    // needed. `off` mode is deliberately exempt: it claims no enforcement.
     ...(governed
       ? [
           "-u",

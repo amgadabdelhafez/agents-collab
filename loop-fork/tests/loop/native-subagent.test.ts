@@ -680,6 +680,27 @@ test("native fallback slot is one-at-a-time: completion and expiry free it, acti
 // assertion would have passed against that broken build, so this runs the real
 // argv and inspects the child's environment.
 test("governed pane env unsets fleet surfaces and the composed command still runs", () => {
+  // BOTH governed modes, not just the default: dropping "strict" from the
+  // governed predicate would silently un-govern an entire mode, and a
+  // utility-first-only test stays green through that.
+  for (const mode of ["utility-first", "strict"] as const) {
+    const modeEnv = buildPairedPaneEnv({
+      governess: true,
+      inheritedEnv: {
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+        CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS: "1",
+      } as NodeJS.ProcessEnv,
+      nativeSubagentMode: mode,
+      runBase: "/tmp/base",
+      runId: "run-1",
+    });
+    expect(modeEnv).toContain("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS");
+    expect(modeEnv).toContain("CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS");
+    expect(modeEnv.lastIndexOf("-u")).toBeLessThan(
+      modeEnv.findIndex((entry) => entry.includes("="))
+    );
+  }
+
   const govEnv = buildPairedPaneEnv({
     governess: true,
     inheritedEnv: {
