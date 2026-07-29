@@ -17,7 +17,7 @@
 | F-04 | Malformed evidence | Missing/malformed manifest or invalid budget journal fails closed. |
 | F-05 | Revalidation | Ownership or pane state changing between initial validation and action prevents respawn. |
 | F-06 | Rolling budget | Attempts 1-3 inside five minutes are allowed, attempt 4 is suppressed, and an attempt after the window is allowed. |
-| F-07 | Hook scope | Only the stable Governess pane receives a pane-scoped `pane-died` hook with canonical run/session/pane arguments. |
+| F-07 | Hook scope | Only the stable Governess pane receives a pane-scoped `pane-died` hook with canonical run/session/pane arguments, followed by one immediate reconciliation run. |
 | F-08 | Hidden dispatch | The helper runs without startup GC, update checks, or agent transport teardown. |
 | F-09 | Visible death | Dynamic border and retained-pane formats explicitly show stopped/dead state while live labels remain unchanged. |
 | F-10 | Original command | Respawn uses `tmux respawn-pane -k -t <pane>` without a replacement command. |

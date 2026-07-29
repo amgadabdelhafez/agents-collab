@@ -19,3 +19,9 @@
 - 2026-07-29T20:36:54Z — Full verifier rerun passed end to end with an empty
   named baseline allowlist. Candidate remains undeployed pending exact-SHA
   independent review.
+- 2026-07-29T20:42:18Z — Closed the split-to-hook early-exit race by running
+  the newly armed pane hook once. A second isolated tmux proof confirmed the
+  immediate live-pane run is a no-op, exits 1-3 recover with stable pane
+  identity, exit 4 is suppressed by the rolling budget and remains visibly
+  `STOPPED`, and the journal contains exactly three attempts plus suppression.
+  Full verification passed again; the earlier review request was withdrawn.

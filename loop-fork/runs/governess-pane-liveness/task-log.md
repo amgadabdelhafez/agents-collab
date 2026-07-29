@@ -24,5 +24,7 @@ the three-attempt limit keep terminal and crash-loop states honest.
 - Focused band: 99 pass, 0 fail.
 - Full sequential verifier: pass with an empty baseline allowlist.
 - Isolated tmux proof: active recovery passed; stopped-run suppression passed.
+- Immediate reconciliation proof: a live pane stayed live without a journal;
+  crashes 1-3 recovered and crash 4 stopped under the rolling budget.
 - Harvto run 100 remained read-only and live.
 - Release is held for exact-SHA independent review.

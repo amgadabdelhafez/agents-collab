@@ -1019,6 +1019,15 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(paneDiedHook?.at(-1)).toContain("%43");
     expect(calls).toContainEqual([
       "tmux",
+      "set-hook",
+      "-R",
+      "-p",
+      "-t",
+      "%43",
+      "pane-died",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
       "split-window",
       "-v",
       "-f",

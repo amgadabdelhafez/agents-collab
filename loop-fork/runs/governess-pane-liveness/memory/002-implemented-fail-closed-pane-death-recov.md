@@ -21,4 +21,6 @@ topic: implemented fail-closed pane-death recovery and passed focused plus full 
 
 - Focused and full verification pass.
 - Isolated tmux active-recovery and stopped-run-suppression proof pass.
+- Immediate hook reconciliation is a live-pane no-op and closes the
+  split-to-hook exit race; the fourth rapid crash remains visibly stopped.
 - Candidate is not deployed; Harvto run 100 remains untouched.

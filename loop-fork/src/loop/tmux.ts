@@ -1496,6 +1496,14 @@ const armGovernessPaneLiveness = (
     ],
     "Failed to arm Governess pane recovery"
   );
+  // Reconcile the narrow split-to-hook race once. A live pane is spared by
+  // the helper; a process that already exited under `-k` is recovered through
+  // the same exact ownership and restart-budget checks as a later pane death.
+  runTmuxCommand(
+    deps,
+    ["tmux", "set-hook", "-R", "-p", "-t", pane, "pane-died"],
+    "Failed to reconcile initial Governess pane liveness"
+  );
 };
 
 const utilityPaneEnabled = (env: NodeJS.ProcessEnv): boolean => {

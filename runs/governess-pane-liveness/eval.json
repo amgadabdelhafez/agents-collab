@@ -1,7 +1,7 @@
 {
   "task_id": "governess-pane-liveness",
   "feature": "governess-pane-liveness",
-  "timestamp": "2026-07-29T20:36:54Z",
+  "timestamp": "2026-07-29T20:42:18Z",
   "verdict": "pass",
   "release_status": "held-pending-exact-sha-review",
   "baseline_failures": [],
@@ -15,7 +15,7 @@
     "isolated_tmux": {
       "status": "pass",
       "method": "Dedicated tmux socket and disposable run manifest",
-      "reason": "Active exact ownership respawned and journaled; terminal ownership remained visibly dead without another attempt; live Harvto run 100 was untouched"
+      "reason": "Immediate live-pane reconciliation was a no-op; crashes 1-3 respawned with stable identity; crash 4 was budget-suppressed and visibly STOPPED; terminal ownership added no attempt; live Harvto run 100 was untouched"
     },
     "full": {
       "status": "pass",
