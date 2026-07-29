@@ -1,0 +1,26 @@
+{
+  "task_id": "fresh-session-manifest-binding",
+  "feature": "fresh-session-manifest-binding",
+  "timestamp": "2026-07-29T19:45:42Z",
+  "verdict": "pass",
+  "release_status": "held-pending-exact-sha-review",
+  "baseline_failures": [],
+  "required": ["focused", "full", "independent_review"],
+  "dimensions": {
+    "focused": {
+      "status": "pass",
+      "method": "Harness unit verification",
+      "reason": "57 paired tmux tests passed with zero failures"
+    },
+    "full": {
+      "status": "pass",
+      "method": "defined source typecheck, compiled build, and bun run test:ci",
+      "reason": "source typecheck and compiled build passed; every sequential repository test passed; baseline allowlist was empty"
+    },
+    "independent_review": {
+      "status": "pending",
+      "method": "exact-SHA Claude supervisor review",
+      "reason": "deployment remains held until a bound CONCUR"
+    }
+  }
+}

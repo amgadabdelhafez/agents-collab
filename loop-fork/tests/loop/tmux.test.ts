@@ -14,6 +14,7 @@ import { basename, dirname, join } from "node:path";
 import { runGit } from "../../src/loop/git";
 import {
   createRunManifest,
+  type RunManifest,
   resolveRunStorage,
   writeRunManifest,
 } from "../../src/loop/run-state";
@@ -295,6 +296,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
     kind?: string;
     sessionId?: string;
   }> = [];
+  const bootstrapManifests: RunManifest[] = [];
   let sessionStarted = false;
   let manifest = createRunManifest({
     cwd: "/repo",
@@ -353,6 +355,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
         return Promise.resolve(codexProxyUrl);
       },
       startPersistentAgentSession: (agent, _opts, sessionId, launch, kind) => {
+        bootstrapManifests.push(structuredClone(manifest));
         startCalls.push({
           agent,
           codexHome: launch?.codexLaunch?.env?.CODEX_HOME,
@@ -432,6 +435,16 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
       sessionId: undefined,
     },
   ]);
+  expect(bootstrapManifests).toHaveLength(1);
+  expect(bootstrapManifests[0]).toMatchObject({
+    cwd: "/repo",
+    mode: "paired",
+    pid: process.pid,
+    primaryAgent: "codex",
+    tmuxPaneLeftAgent: "claude",
+    tmuxPaneRightAgent: "codex",
+    tmuxSession: "repo-loop-1",
+  });
   expect(calls).toContainEqual([
     "tmux",
     "new-session",
@@ -1250,6 +1263,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
   const proxyCalls: string[] = [];
   const startCalls: string[] = [];
   let sessionStarted = false;
+  let manifestAtTmuxCreate: RunManifest | undefined;
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -1303,6 +1317,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
             : { exitCode: 1, stderr: "" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
+          manifestAtTmuxCreate = structuredClone(manifest);
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -1330,6 +1345,15 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
   expect(delegated).toBe(true);
   expect(startCalls).toEqual([]);
   expect(proxyCalls).toEqual([]);
+  expect(manifestAtTmuxCreate).toMatchObject({
+    cwd: "/repo",
+    mode: "paired",
+    pid: process.pid,
+    primaryAgent: "gemini",
+    tmuxPaneLeftAgent: "gemini",
+    tmuxPaneRightAgent: "cursor",
+    tmuxSession: "repo-loop-1",
+  });
   expect(calls).toContainEqual([
     "tmux",
     "new-session",
@@ -3346,6 +3370,9 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
     codexRemoteUrl: undefined,
     state: "failed",
     status: "failed",
+    tmuxPaneLeftAgent: "claude",
+    tmuxPaneRightAgent: "codex",
+    tmuxSession: "repo-loop-1",
   });
 });
 

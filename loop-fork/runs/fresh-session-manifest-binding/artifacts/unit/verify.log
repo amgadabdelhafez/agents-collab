@@ -1,0 +1,86 @@
+task_id: fresh-session-manifest-binding
+dimension: unit
+attempt: 001
+started_at: 2026-07-29T19:44:11Z
+command: bun test tests/loop/tmux.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux returns false when --tmux is not present [0.57ms]
+(pass) runInTmux starts a detached session without auto-attach when already inside tmux [0.83ms]
+(pass) runInTmux throws install message when tmux is missing
+(pass) runInTmux starts detached session and strips --tmux [0.50ms]
+(pass) runInTmux keeps explicit run id in single-agent mode [0.95ms]
+(pass) runInTmux starts paired tmux panes for Claude and Codex [2.89ms]
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [1.27ms]
+(pass) runInTmux writes paired session refs before starting governess [10.85ms]
+(pass) the Nanny/Au Pair column defaults to the right fifth with an explicit opt-out [0.02ms]
+(pass) governed layout preserves legacy numeric fallbacks without tmux stdout [8.01ms]
+(pass) runInTmux starts paired tmux panes for Cursor and Codex [1.25ms]
+(pass) runInTmux starts paired tmux panes for Gemini and Cursor without persistent transports [0.75ms]
+(pass) runInTmux releases local codex app-server handles after paired handoff [0.75ms]
+(pass) runInTmux closes the local codex app-server when the paired session is gone after attach [0.84ms]
+(pass) runInTmux starts paired interactive tmux panes without a task [0.93ms]
+(pass) runInTmux keeps the no-prompt Claude startup wait bounded [0.76ms]
+(pass) tmux prompts keep the paired review workflow explicit [0.23ms]
+(pass) paired prompts apply Caveman guidance with an exact off switch [0.08ms]
+(pass) tmux prompts make Claude the context steward and Codex recent-focused [0.09ms]
+(pass) tmux prompts respect --pair-with for non-default peers [0.09ms]
+(pass) interactive tmux prompts tell both agents to wait for the human [0.17ms]
+(pass) runInTmux auto-confirms Claude startup prompts in paired mode [0.79ms]
+(pass) runInTmux confirms wrapped Claude dev-channel prompts [0.83ms]
+(pass) runInTmux catches a delayed Claude dev-channel prompt [0.78ms]
+(pass) runInTmux confirms the current Claude bypass prompt wording [0.79ms]
+(pass) runInTmux still confirms Claude trust prompts in paired mode [0.69ms]
+(pass) runInTmux still catches a delayed Claude trust prompt [0.72ms]
+(pass) runInTmux reopens paired tmux panes without replaying the task [0.34ms]
+(pass) runInTmux resolves paired run id through an existing manifest [16.25ms]
+(pass) runInTmux rejects unknown run id before starting tmux session [8.14ms]
+(pass) runInTmux honors paired run resume from --session [15.49ms]
+(pass) runInTmux resolves paired resume from a worktree using git common dir [0.66ms]
+(pass) runInTmux strips a worktree suffix when git metadata is unavailable [0.15ms]
+(pass) runInTmux resolves raw stored session ids from --session [17.35ms]
+(pass) runInTmux ignores an unresolved raw session id in paired mode [14.28ms]
+(pass) runInTmux keeps raw --session values in single-agent mode [0.54ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-2"
+[loop] attach with: tmux attach -t repo-loop-2
+(pass) runInTmux increments session index on conflicts [0.23ms]
+[loop] starting tmux session...
+(pass) runInTmux surfaces tmux startup errors [3.59ms]
+[loop] starting tmux session...
+(pass) runInTmux fails nonzero when the tmux control plane times out [3.10ms]
+[loop] starting tmux session...
+(pass) runInTmux refuses success when post-launch session liveness is unknown [0.30ms]
+(pass) runInTmux never mutates home Claude MCP registration on startup failure [1.27ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-1"
+[loop] attach with: tmux attach -t repo-loop-1
+(pass) runInTmux skips auto-attach for non-interactive sessions [0.32ms]
+(pass) persistent Codex bootstrap failure falls back to tmux delivery [0.12ms]
+[loop] starting tmux session...
+(pass) runInTmux reports when tmux session exits before attach [7.21ms]
+(pass) tmux internals strip --tmux from forwarded args
+(pass) tmux internals build launch argv from exec path
+(pass) tmux internals build launch argv for bun-compiled binary
+(pass) tmux internals build launch argv for executable with no script arg
+(pass) tmux internals build launch argv for installed executable
+(pass) tmux internals build launch argv when bun executes installed binary
+(pass) tmux internals quote single quotes safely
+(pass) tmux internals build shell command with escaping
+(pass) tmux internals unref detached helper processes
+(pass) tmux internals launch Claude in bypass mode [0.27ms]
+(pass) tmux internals build run names
+(pass) tmux internals detect session conflicts
+(pass) tmux internals sanitize run base names
+
+ 57 pass
+ 0 fail
+ 361 expect() calls
+Ran 57 tests across 1 file. [158.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-29T19:44:11Z

@@ -1,0 +1,10 @@
+{
+  "task_id": "fresh-session-manifest-binding",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

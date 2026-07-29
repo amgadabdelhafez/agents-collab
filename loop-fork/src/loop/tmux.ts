@@ -1098,6 +1098,30 @@ interface PairedPaneTargets {
   utility?: string;
 }
 
+const bindPairedSessionIdentity = (
+  deps: TmuxDeps,
+  storage: RunStorage,
+  manifest: RunManifest,
+  session: string,
+  paneAgents: { left: Agent; right: Agent },
+  primaryAgent: Agent
+): RunManifest =>
+  deps.updateRunManifest(storage.manifestPath, (current) =>
+    touchRunManifest(
+      {
+        ...(current ?? manifest),
+        cwd: deps.cwd,
+        mode: "paired",
+        pid: process.pid,
+        primaryAgent,
+        tmuxSession: session,
+        tmuxPaneLeftAgent: paneAgents.left,
+        tmuxPaneRightAgent: paneAgents.right,
+      },
+      new Date().toISOString()
+    )
+  ) ?? manifest;
+
 const updatePairedManifest = (
   deps: TmuxDeps,
   storage: RunStorage,
@@ -2057,23 +2081,28 @@ const startPairedSession = async (
   const secondaryAgent = pairedPeer(launch.opts);
   const paneAgents = resolveTmuxPaneAgents(primaryAgent, secondaryAgent);
   if (sessionExists(session, deps.spawn)) {
-    deps.updateRunManifest(storage.manifestPath, (current) =>
-      touchRunManifest(
-        {
-          ...(current ?? manifest),
-          cwd: deps.cwd,
-          mode: "paired",
-          pid: process.pid,
-          primaryAgent,
-          tmuxSession: session,
-          tmuxPaneLeftAgent: paneAgents.left,
-          tmuxPaneRightAgent: paneAgents.right,
-        },
-        new Date().toISOString()
-      )
+    bindPairedSessionIdentity(
+      deps,
+      storage,
+      manifest,
+      session,
+      paneAgents,
+      primaryAgent
     );
     return session;
   }
+  // The session name is deterministic and already reserved by this launch
+  // path. Persist it before hooks, persistent transports, charter writes, or
+  // tmux creation so recovery and GC can associate every active manifest with
+  // the workspace being constructed.
+  manifest = bindPairedSessionIdentity(
+    deps,
+    storage,
+    manifest,
+    session,
+    paneAgents,
+    primaryAgent
+  );
   const nativeSubagentMode = launch.opts.governess
     ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)
     : "off";
