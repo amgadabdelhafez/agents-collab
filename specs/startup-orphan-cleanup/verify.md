@@ -9,7 +9,10 @@
    manifest, bridge-command mismatch, app-server-command mismatch, and
    listener mismatch are preserved.
 4. `--version` and `--help` still bypass all startup maintenance.
-5. `scripts/verify.sh startup-orphan-cleanup startup-orphan-cleanup` passes
+5. A failed tmux snapshot becomes unknown liveness, and a per-run manifest
+   repair failure is reported and skipped without aborting other cleanup or
+   deleting the retained ownership evidence.
+6. `scripts/verify.sh startup-orphan-cleanup startup-orphan-cleanup` passes
    with an empty baseline list.
-6. `runs/startup-orphan-cleanup/eval.json` records the verification and exact
+7. `runs/startup-orphan-cleanup/eval.json` records the verification and exact
    independent review gate.

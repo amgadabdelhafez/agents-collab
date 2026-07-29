@@ -18,6 +18,7 @@ import {
 import {
   createRunManifest,
   readRunManifest,
+  updateRunManifest,
   writeRunManifest,
 } from "../../src/loop/run-state";
 
@@ -439,6 +440,170 @@ test("startup GC retains app-server ownership evidence after a signal failure", 
     expect(retriedSignals).toEqual([9301]);
     expect(readRunManifest(manifestPath)?.codexAppServerPid).toBeUndefined();
     expect(readRunManifest(manifestPath)?.codexRemoteUrl).toBeUndefined();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("startup GC contains tmux snapshot failures and preserves tmux-owned runs", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const runDir = join(storageRoot, repoId, "98");
+  const logs: string[] = [];
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(
+    join(runDir, "manifest.json"),
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9800,
+      repoId,
+      runId: "98",
+      tmuxSession: "harvto-loop-98",
+    })
+  );
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        listTmuxSessions: () => {
+          throw new Error("tmux unavailable");
+        },
+        pidAlive: () => {
+          throw new Error("unknown tmux liveness must preserve the run");
+        },
+      },
+      log: (line) => logs.push(line),
+      repoId,
+      storageRoot,
+    });
+
+    expect(result).toMatchObject({ cleaned: 0, kept: 1, scanned: 1 });
+    expect(logs).toEqual([
+      "[loop] abandoned-run cleanup could not inspect tmux; preserving tmux-owned runs: tmux unavailable",
+    ]);
+    expect(readRunManifest(join(runDir, "manifest.json"))).toMatchObject({
+      state: "submitted",
+      tmuxSession: "harvto-loop-98",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("startup GC contains manifest repair failures before signaling and continues", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const failedRunDir = join(storageRoot, repoId, "93");
+  const nextRunDir = join(storageRoot, repoId, "94");
+  const failedManifestPath = join(failedRunDir, "manifest.json");
+  const nextManifestPath = join(nextRunDir, "manifest.json");
+  const logs: string[] = [];
+  const signals: number[] = [];
+  mkdirSync(failedRunDir, { recursive: true });
+  mkdirSync(nextRunDir, { recursive: true });
+  writeRunManifest(
+    failedManifestPath,
+    createRunManifest({
+      codexAppServerPid: 9301,
+      codexRemoteUrl: "ws://127.0.0.1:4530",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9300,
+      repoId,
+      runId: "93",
+    })
+  );
+  writeRunManifest(
+    nextManifestPath,
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9400,
+      repoId,
+      runId: "94",
+    })
+  );
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        commandForPid: () => "codex app-server --listen ws://127.0.0.1:4530",
+        listTmuxSessions: () => new Set(),
+        listeningPids: () => [9301],
+        pidAlive: () => false,
+        signal: (pid) => signals.push(pid),
+        updateManifest: (manifestPath, update) => {
+          if (manifestPath === failedManifestPath) {
+            throw new Error("manifest is read-only");
+          }
+          return updateRunManifest(manifestPath, update);
+        },
+      },
+      log: (line) => logs.push(line),
+      repoId,
+      storageRoot,
+    });
+
+    expect(result).toMatchObject({ cleaned: 1, kept: 1, scanned: 1 });
+    expect(signals).toEqual([]);
+    expect(logs).toEqual([
+      '[loop] abandoned-run cleanup skipped run "93": manifest is read-only',
+      '[loop] cleaned 1 abandoned run for "repo-current" (0 processes signaled)',
+    ]);
+    expect(readRunManifest(failedManifestPath)).toMatchObject({
+      codexAppServerPid: 9301,
+      codexRemoteUrl: "ws://127.0.0.1:4530",
+      state: "submitted",
+    });
+    expect(readRunManifest(nextManifestPath)).toMatchObject({
+      state: "failed",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("startup GC retains bridge registration after a signal failure", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const runDir = join(storageRoot, repoId, "95");
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(
+    join(runDir, "manifest.json"),
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9500,
+      repoId,
+      runId: "95",
+    })
+  );
+  const bridgeRecord = registerRunBridgeProcess(runDir, "claude", 9502);
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        commandForPid: () => `loop __bridge-mcp ${runDir} claude`,
+        listTmuxSessions: () => new Set(),
+        pidAlive: () => false,
+        signal: () => {
+          const error = new Error("busy") as NodeJS.ErrnoException;
+          error.code = "EBUSY";
+          throw error;
+        },
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+
+    expect(result).toMatchObject({
+      cleaned: 1,
+      killed: [],
+      skipped: [{ pid: 9502, reason: "signal-failed:EBUSY" }],
+    });
+    expect(existsSync(bridgeRecord)).toBe(true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

@@ -1,7 +1,7 @@
 {
   "task_id": "startup-orphan-cleanup",
   "feature": "startup-orphan-cleanup",
-  "timestamp": "2026-07-29T09:57:00Z",
+  "timestamp": "2026-07-29T10:22:40Z",
   "verdict": "pass",
   "baseline_failures": [],
   "required": ["unit", "full"],
@@ -9,7 +9,7 @@
     "unit": {
       "status": "pass",
       "method": "focused run-process cleanup, tmux rollback, and CLI tests",
-      "reason": "100 tests passed across failed-start rollback, current-repository process GC, explicit Governess teardown, Claude registration GC, and CLI maintenance bypass"
+      "reason": "103 tests passed across failed-start rollback, current-repository process GC, startup-maintenance failure containment, explicit Governess teardown, Claude registration GC, and CLI maintenance bypass"
     },
     "full": {
       "status": "pass",
@@ -32,6 +32,10 @@
     "launcher_alive_preserved": true,
     "strict_process_identity_reused": true,
     "signal_failure_retains_retry_evidence": true,
+    "manifest_repair_precedes_signaling": true,
+    "per_run_cleanup_failure_is_nonfatal": true,
+    "tmux_snapshot_failure_is_fail_closed": true,
+    "bridge_signal_failure_retains_registration": true,
     "run_artifacts_deleted": false,
     "live_loop_restarted": false
   }

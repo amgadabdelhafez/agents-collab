@@ -18,6 +18,12 @@
 - Settled historical runs without ownership evidence skip PID and listener
   probes. Cleanup emits one aggregate line, never deletes run artifacts, and
   retains app-server ownership evidence after signal failure.
-- Focused lifecycle verification passed 100/100; lint and TypeScript passed.
+- A final failure-containment audit found and closed a launch-safety gap:
+  tmux-snapshot errors now become unknown liveness, each stored run is isolated
+  from the next, and active-state repair must persist before any process is
+  signaled. Manifest-write failure therefore preserves all ownership evidence
+  and cannot abort the new launch. Bridge registrations are also retained after
+  signal failure for a later retry.
+- Focused lifecycle verification passed 103/103; lint passed.
 - The full repository verifier passed lint, TypeScript, compiled build, every
   sequential test file, and the empty baseline allowlist.

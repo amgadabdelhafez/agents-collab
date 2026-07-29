@@ -25,6 +25,9 @@ than the orphaned processes.
    malformed or identity-mismatched manifests must never be signaled.
 6. A provably abandoned active manifest becomes `failed` after cleanup so the
    same dead startup is not treated as running forever.
+7. Startup maintenance failures must be contained per run and must never turn
+   cleanup into a new launcher failure; failed manifest repairs retain their
+   durable ownership evidence for a later retry.
 
 ## Scope
 
