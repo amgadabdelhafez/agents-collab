@@ -1,14 +1,25 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   cleanupRunOwnedProcesses,
+  gcAbandonedRunProcesses,
   registerRunBridgeProcess,
   runProcessCleanupInternals,
   unregisterRunBridgeProcess,
 } from "../../src/loop/run-process-cleanup";
-import { createRunManifest } from "../../src/loop/run-state";
+import {
+  createRunManifest,
+  readRunManifest,
+  writeRunManifest,
+} from "../../src/loop/run-state";
 
 const makeRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-process-cleanup-"));
@@ -78,5 +89,357 @@ test("teardown requires both app-server command and owned listener port", () => 
   } finally {
     Object.assign(runProcessCleanupInternals.deps, original);
     rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("startup GC reaps only provably abandoned runs in the current repository", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const repoRuns = join(storageRoot, repoId);
+  const signals: number[] = [];
+  const logs: string[] = [];
+  let tmuxListCalls = 0;
+  const manifestFor = (
+    runId: string,
+    pid: number,
+    overrides: Parameters<typeof createRunManifest>[0] = {
+      cwd: "/repo",
+      mode: "paired",
+      pid,
+      repoId,
+      runId,
+    }
+  ) =>
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid,
+      repoId,
+      runId,
+      ...overrides,
+    });
+  const write = (runId: string, manifest: ReturnType<typeof manifestFor>) => {
+    const runDir = join(repoRuns, runId);
+    mkdirSync(runDir, { recursive: true });
+    writeRunManifest(join(runDir, "manifest.json"), manifest);
+    return runDir;
+  };
+  const abandonedDir = write(
+    "88",
+    manifestFor("88", 8800, {
+      codexAppServerPid: 8801,
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 8800,
+      repoId,
+      runId: "88",
+      state: "submitted",
+    })
+  );
+  const abandonedBridge = registerRunBridgeProcess(
+    abandonedDir,
+    "claude",
+    8802
+  );
+  write(
+    "87",
+    manifestFor("87", 8700, {
+      cwd: "/repo",
+      mode: "paired",
+      pid: 8700,
+      repoId,
+      runId: "87",
+      state: "completed",
+    })
+  );
+  const liveLauncherDir = write("89", manifestFor("89", 8900));
+  registerRunBridgeProcess(liveLauncherDir, "claude", 8902);
+  const unknownTmuxDir = write(
+    "90",
+    manifestFor("90", 9000, {
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9000,
+      repoId,
+      runId: "90",
+      tmuxSession: "unknown-loop",
+    })
+  );
+  registerRunBridgeProcess(unknownTmuxDir, "claude", 9002);
+  const liveTmuxDir = write(
+    "98",
+    manifestFor("98", 9800, {
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9800,
+      repoId,
+      runId: "98",
+      tmuxSession: "harvto-loop-98",
+    })
+  );
+  const liveBridge = registerRunBridgeProcess(liveTmuxDir, "claude", 9802);
+  const malformedDir = join(repoRuns, "bad");
+  mkdirSync(malformedDir, { recursive: true });
+  writeFileSync(join(malformedDir, "manifest.json"), "{}\n", "utf8");
+  write("91", manifestFor("92", 9100));
+  const otherRepoDir = join(storageRoot, "repo-other", "1");
+  mkdirSync(otherRepoDir, { recursive: true });
+  writeRunManifest(
+    join(otherRepoDir, "manifest.json"),
+    createRunManifest({
+      codexAppServerPid: 1111,
+      codexRemoteUrl: "ws://127.0.0.1:4511",
+      cwd: "/other",
+      mode: "paired",
+      pid: 1110,
+      repoId: "repo-other",
+      runId: "1",
+    })
+  );
+
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        commandForPid: (pid) => {
+          if (pid === 8801) {
+            return "codex app-server --listen ws://127.0.0.1:4500";
+          }
+          if (pid === 8802) {
+            return `loop __bridge-mcp ${abandonedDir} claude`;
+          }
+          throw new Error(`must not inspect process ${pid}`);
+        },
+        listTmuxSessions: () => {
+          tmuxListCalls += 1;
+          return undefined;
+        },
+        listeningPids: (port) => (port === 4500 ? [8801] : []),
+        pidAlive: (pid) => {
+          if (pid === 8700) {
+            throw new Error(
+              "settled runs without ownership need no liveness probe"
+            );
+          }
+          return pid === 8900;
+        },
+        signal: (pid) => {
+          signals.push(pid);
+        },
+      },
+      log: (line) => logs.push(line),
+      repoId,
+      storageRoot,
+    });
+
+    expect(result).toEqual({
+      cleaned: 1,
+      kept: 6,
+      killed: [8802, 8801],
+      scanned: 5,
+      skipped: [],
+    });
+    expect(tmuxListCalls).toBe(1);
+    expect(signals).toEqual([8802, 8801]);
+    expect(logs).toEqual([
+      '[loop] cleaned 1 abandoned run for "repo-current" (2 processes signaled)',
+    ]);
+    const abandonedManifest = readRunManifest(
+      join(abandonedDir, "manifest.json")
+    );
+    expect(abandonedManifest).toMatchObject({
+      state: "failed",
+      status: "failed",
+    });
+    expect(abandonedManifest?.codexAppServerPid).toBeUndefined();
+    expect(abandonedManifest?.codexRemoteUrl).toBeUndefined();
+    expect(existsSync(abandonedBridge)).toBe(false);
+    expect(existsSync(liveBridge)).toBe(true);
+    expect(readRunManifest(join(liveTmuxDir, "manifest.json"))).toMatchObject({
+      state: "submitted",
+      status: "running",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("startup GC never signals stale-run processes that fail ownership proof", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const runDir = join(storageRoot, repoId, "92");
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(
+    join(runDir, "manifest.json"),
+    createRunManifest({
+      codexAppServerPid: 9201,
+      codexRemoteUrl: "ws://127.0.0.1:4520",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9200,
+      repoId,
+      runId: "92",
+    })
+  );
+  registerRunBridgeProcess(runDir, "claude", 9202);
+  const signals: number[] = [];
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        commandForPid: (pid) =>
+          pid === 9202
+            ? "loop __bridge-mcp /another/run claude"
+            : "codex app-server --listen ws://127.0.0.1:4520",
+        listTmuxSessions: () => new Set(),
+        listeningPids: () => [],
+        pidAlive: () => false,
+        signal: (pid) => signals.push(pid),
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+    expect(result).toMatchObject({ cleaned: 1, killed: [] });
+    expect(result.skipped).toEqual([
+      { pid: 9202, reason: "bridge-command-mismatch" },
+      { pid: 9201, reason: "app-server-identity-mismatch" },
+    ]);
+    expect(signals).toEqual([]);
+    expect(readRunManifest(join(runDir, "manifest.json"))).toMatchObject({
+      state: "failed",
+      status: "failed",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("startup GC preserves a run present in the bounded tmux snapshot", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const runDir = join(storageRoot, repoId, "98");
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(
+    join(runDir, "manifest.json"),
+    createRunManifest({
+      codexAppServerPid: 9801,
+      codexRemoteUrl: "ws://127.0.0.1:4598",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9800,
+      repoId,
+      runId: "98",
+      tmuxSession: "harvto-loop-98",
+    })
+  );
+  const bridgeRecord = registerRunBridgeProcess(runDir, "claude", 9802);
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        commandForPid: (pid) => {
+          throw new Error(`live run process ${pid} must not be inspected`);
+        },
+        listTmuxSessions: () => new Set(["harvto-loop-98"]),
+        listeningPids: () => {
+          throw new Error("live run listener must not be inspected");
+        },
+        pidAlive: () => false,
+        signal: () => {
+          throw new Error("live run must not be signaled");
+        },
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+    expect(result).toEqual({
+      cleaned: 0,
+      kept: 1,
+      killed: [],
+      scanned: 1,
+      skipped: [],
+    });
+    expect(existsSync(bridgeRecord)).toBe(true);
+    expect(readRunManifest(join(runDir, "manifest.json"))).toMatchObject({
+      state: "submitted",
+      status: "running",
+      tmuxSession: "harvto-loop-98",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("startup GC retains app-server ownership evidence after a signal failure", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const runDir = join(storageRoot, repoId, "93");
+  const manifestPath = join(runDir, "manifest.json");
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      codexAppServerPid: 9301,
+      codexRemoteUrl: "ws://127.0.0.1:4530",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 9300,
+      repoId,
+      runId: "93",
+    })
+  );
+  const commonDeps = {
+    commandForPid: () => "codex app-server --listen ws://127.0.0.1:4530",
+    listTmuxSessions: () => new Set<string>(),
+    listeningPids: () => [9301],
+    pidAlive: () => false,
+  };
+  try {
+    const failed = gcAbandonedRunProcesses({
+      deps: {
+        ...commonDeps,
+        signal: () => {
+          const error = new Error(
+            "operation not permitted"
+          ) as NodeJS.ErrnoException;
+          error.code = "EPERM";
+          throw error;
+        },
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+    expect(failed).toMatchObject({
+      cleaned: 1,
+      killed: [],
+      skipped: [{ pid: 9301, reason: "signal-failed:EPERM" }],
+    });
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      codexAppServerPid: 9301,
+      codexRemoteUrl: "ws://127.0.0.1:4530",
+      state: "failed",
+    });
+
+    const retriedSignals: number[] = [];
+    const retried = gcAbandonedRunProcesses({
+      deps: {
+        ...commonDeps,
+        signal: (pid) => retriedSignals.push(pid),
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+    expect(retried).toMatchObject({ cleaned: 1, killed: [9301], skipped: [] });
+    expect(retriedSignals).toEqual([9301]);
+    expect(readRunManifest(manifestPath)?.codexAppServerPid).toBeUndefined();
+    expect(readRunManifest(manifestPath)?.codexRemoteUrl).toBeUndefined();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
   }
 });

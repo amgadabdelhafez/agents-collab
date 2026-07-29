@@ -3241,6 +3241,7 @@ test("runInTmux surfaces tmux startup errors", async () => {
 
 test("runInTmux never mutates home Claude MCP registration on startup failure", async () => {
   const calls: string[][] = [];
+  let closed = 0;
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -3264,6 +3265,10 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
       ["--tmux", "--proof", "verify with tests"],
       {
         capturePane: () => "",
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
         cwd: "/repo",
         env: {},
         findBinary: () => true,
@@ -3315,6 +3320,13 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
   expect(
     calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
   ).toBe(false);
+  expect(closed).toBe(1);
+  expect(manifest).toMatchObject({
+    codexAppServerPid: undefined,
+    codexRemoteUrl: undefined,
+    state: "failed",
+    status: "failed",
+  });
 });
 
 test("runInTmux skips auto-attach for non-interactive sessions", async () => {

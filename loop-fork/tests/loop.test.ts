@@ -32,6 +32,7 @@ afterEach(() => {
 
 interface CliModuleDeps {
   checkGitState?: () => string | undefined;
+  gcAbandonedRunProcesses?: () => unknown;
   gcStaleClaudeBridgeRegistrations?: () => unknown;
   maybeEnterWorktree?: (opts: Options) => void | Promise<void>;
   parseArgs?: (argv: string[]) => Options;
@@ -57,6 +58,9 @@ const loadRunCli = async (
   updateOverrides: UpdateModuleDeps = {}
 ) => {
   const checkGitStateMock = mock(deps.checkGitState ?? (() => undefined));
+  const gcAbandonedRunProcessesMock = mock(
+    deps.gcAbandonedRunProcesses ?? (() => undefined)
+  );
   const gcStaleClaudeBridgeRegistrationsMock = mock(
     deps.gcStaleClaudeBridgeRegistrations ?? (() => undefined)
   );
@@ -92,6 +96,7 @@ const loadRunCli = async (
   mock.module("../src/loop/deps", () => ({
     cliDeps: {
       checkGitState: checkGitStateMock,
+      gcAbandonedRunProcesses: gcAbandonedRunProcessesMock,
       gcStaleClaudeBridgeRegistrations: gcStaleClaudeBridgeRegistrationsMock,
       maybeEnterWorktree: maybeEnterWorktreeMock,
       parseArgs: parseArgsMock,
@@ -127,6 +132,7 @@ const loadRunCli = async (
     checkGitStateMock,
     closeAppServerMock,
     closeClaudeSdkMock,
+    gcAbandonedRunProcessesMock,
     gcStaleClaudeBridgeRegistrationsMock,
     handleManualMock,
     maybeEnterWorktreeMock,
@@ -204,6 +210,7 @@ test("runCli runs task flow when argv has options", async () => {
   const {
     closeAppServerMock,
     closeClaudeSdkMock,
+    gcAbandonedRunProcessesMock,
     gcStaleClaudeBridgeRegistrationsMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
@@ -227,6 +234,7 @@ test("runCli runs task flow when argv has options", async () => {
   expect(runLoopMock).toHaveBeenCalledWith("ship feature", opts);
   expect(closeAppServerMock).toHaveBeenCalledTimes(1);
   expect(closeClaudeSdkMock).toHaveBeenCalledTimes(1);
+  expect(gcAbandonedRunProcessesMock).toHaveBeenCalledTimes(1);
   expect(gcStaleClaudeBridgeRegistrationsMock).toHaveBeenCalledTimes(1);
   expect(opts.pairedMode).toBe(true);
 });
@@ -608,9 +616,13 @@ test("runCli returns early when handleManualUpdateCommand returns true", async (
   expect(runPanelMock).not.toHaveBeenCalled();
 });
 
-test("runCli handles version before startup maintenance", async () => {
+test.each([
+  "--version",
+  "--help",
+])("runCli handles %s before startup maintenance", async (flag) => {
   const {
     applyStagedMock,
+    gcAbandonedRunProcessesMock,
     gcStaleClaudeBridgeRegistrationsMock,
     parseArgsMock,
     runCli,
@@ -619,9 +631,10 @@ test("runCli handles version before startup maintenance", async () => {
     parseArgs: () => makeOptions(),
   });
 
-  await runCli(["--version"]);
+  await runCli([flag]);
 
-  expect(parseArgsMock).toHaveBeenCalledWith(["--version"]);
+  expect(parseArgsMock).toHaveBeenCalledWith([flag]);
+  expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
   expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
   expect(applyStagedMock).not.toHaveBeenCalled();
   expect(runLoopMock).not.toHaveBeenCalled();

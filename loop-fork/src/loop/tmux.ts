@@ -67,6 +67,7 @@ import {
   type RunManifest,
   type RunStorage,
   resolveExistingRunId,
+  setRunManifestState,
   touchRunManifest,
   updateRunManifest,
 } from "./run-state";
@@ -111,6 +112,7 @@ const LARGE_PASTE_READY_POLLS = 180;
 const LARGE_PASTE_READY_DELAY_MS = 250;
 const LARGE_PASTE_MARKER_RE = /\[Pasted (?:Content|text)\b[^\]]*\]/i;
 const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
+const FAILED_START_CLOSE_TIMEOUT_MS = 5000;
 const DEFAULT_UTILITY_PANE_WIDTH = "20%";
 const DEFAULT_RECON_PANE_HEIGHT = "15%";
 const UTILITY_PANE_WIDTH_RE = /^\d+%?$/;
@@ -2289,12 +2291,50 @@ const startPairedSession = async (
   } catch (error: unknown) {
     rmSync(leftPromptPath, { force: true });
     rmSync(rightPromptPath, { force: true });
+    const hadPersistentOwnership = Boolean(codexAppServerPid || codexRemoteUrl);
+    let persistentClosed = !hadPersistentOwnership;
+    if (hadPersistentOwnership) {
+      try {
+        await withTimeout(
+          deps.closePersistentCodexSession(),
+          FAILED_START_CLOSE_TIMEOUT_MS,
+          "Codex app-server failed-start cleanup timed out"
+        );
+        persistentClosed = true;
+      } catch (closeError) {
+        const detail =
+          closeError instanceof Error ? closeError.message : String(closeError);
+        deps.log(
+          `[loop] ${detail}; startup GC will retry exact owned cleanup.`
+        );
+      }
+    }
     cleanupFailedPairedSessionStart(
       deps,
       session,
       claudeChannelServer,
       storage.runId
     );
+    try {
+      deps.updateRunManifest(storage.manifestPath, (current) =>
+        current
+          ? setRunManifestState(
+              {
+                ...current,
+                ...(persistentClosed
+                  ? {
+                      codexAppServerPid: undefined,
+                      codexRemoteUrl: undefined,
+                    }
+                  : {}),
+              },
+              "failed"
+            )
+          : undefined
+      );
+    } catch {
+      // Preserve the original launch error; startup GC reads durable ownership.
+    }
     throw error;
   }
 };
