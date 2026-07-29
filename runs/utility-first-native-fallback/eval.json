@@ -1,0 +1,81 @@
+{
+  "task_id": "utility-first-native-fallback",
+  "feature": "utility-first-native-fallback",
+  "timestamp": "2026-07-29T02:05:00Z",
+  "verdict": "pass",
+  "reviewed_sha": "0d98db53f4daf1846e757654aa9d2d801154cee6",
+  "baseline_failures": [],
+  "checks": {
+    "focused": {
+      "status": "pass",
+      "evidence": "192 pass / 0 fail / 873 expect() across 6 files at 0d98db5: native-subagent 12/71, paired-options 9/53, governess-hooks 27/82, tmux 53/302, bridge 84/326, bridge-guidance 7/39"
+    },
+    "typecheck": {
+      "status": "pass",
+      "evidence": "bun run check (ultracite): checked 545 files, no fixes applied, exit 0"
+    },
+    "build": {
+      "status": "pass",
+      "evidence": "git diff --check clean at repo root, exit 0"
+    },
+    "full_suite": {
+      "status": "pass",
+      "evidence": "scripts/verify.sh utility-first-native-fallback completed; baseline allowlist empty"
+    },
+    "provider_config": {
+      "status": "pass",
+      "evidence": "Codex 0.145 parses the loop-scoped config with [agents] enabled=false and no fallback profile; Claude Code 2.1.220 binary string-scan confirms TeamCreate, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS and CLAUDE_CODE_EXPERIMENTAL_OBSERVER_AGENTS are real surfaces"
+    },
+    "live_process_safety": {
+      "status": "pass",
+      "evidence": "no live Claude, Codex, Governess, helper, bridge, or tmux pane restarted or hot-swapped; all tmux invocations in tests are mocked; reviewer independently confirmed no running process is rooted in this worktree"
+    },
+    "independent_review": {
+      "status": "pass",
+      "evidence": "four rounds, each bound to an exact SHA: 82224e9 CHANGES REQUIRED (2 blocking), 935eca8 CONCUR, 897528f CHANGES REQUIRED (1 blocking), 0d98db5 CONCUR"
+    },
+    "mutation_verification": {
+      "status": "pass",
+      "evidence": "every control confirmed to FAIL against the implementation it rejects: permanent slot, never-freeing slot, TeamCreate ungated at the parent, unsets after operands, unsets omitted at the call site, single-pane-only enforcement, per-variable drop (TEAMS-only and OBSERVER-only), and strict dropped from the governed predicate"
+    }
+  },
+  "acceptance": {
+    "default_mode": "utility-first",
+    "strict_mode": true,
+    "one_concurrent_slot": true,
+    "slot_freed_by_completion_and_expiry": true,
+    "no_run_wide_total_cap": true,
+    "governess_epoch_fencing": true,
+    "settled_utility_evidence_required": true,
+    "read_only_profiles": true,
+    "native_descendants_disabled": true,
+    "blocked_attempt_telemetry": true,
+    "teamcreate_gated_at_hook_strict_and_profile": true,
+    "experimental_fleet_env_unset_in_governed_modes": true,
+    "codex_native_disabled_provider_sandbox": true
+  },
+  "resolved_during_review": [
+    {
+      "id": "slot-semantics",
+      "summary": "Ambiguous wording read as one grant per run. Reconciled to a one-at-a-time concurrency slot, which requirement 5's state list and the 120s expiry already implied. Wording defect, not behavior; regression added covering both directions."
+    },
+    {
+      "id": "teamcreate-bypass",
+      "summary": "TeamCreate creates a fleet without routing through Agent and was ungated. Closed at the hook, strict --disallowedTools, the read-only profile, and by unsetting the experimental env vars in governed panes."
+    },
+    {
+      "id": "env-unset-placement",
+      "summary": "BLOCKING, self-inflicted: -u placed after NAME=VALUE operands made env treat it as the utility to run (exit 127) on every governed launch in the default mode. Fixed by ordering unsets first; env array extracted to buildPairedPaneEnv so the order is testable."
+    },
+    {
+      "id": "vacuous-composed-command-guard",
+      "summary": "BLOCKING, self-inflicted: the composed-command assertion filtered on the marker and continued when absent, so omitting the unsets skipped rather than failed. Fixed by asserting the expected pane count before per-variable presence and ordering."
+    }
+  ],
+  "known_limitations": [
+    "toHaveLength(2) on governed pane commands is a deliberate tripwire: adding a legitimate governed pane forces a test edit. Weaker forms go blind to a new ungoverned agent pane, so the brittleness is the point.",
+    "An equivalent mutant survives (gating the unsets on opts.governess, which is unreachable-false: no --no-governess flag exists). Recorded rather than treated as a coverage gap.",
+    "Observer-agent fanout has no tool-name backstop in isNativeSpawnTool; the env var is a hard precondition for that entire surface, so unsetting closes it at the source."
+  ],
+  "blocking_findings": []
+}
