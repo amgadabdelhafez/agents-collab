@@ -1,0 +1,18 @@
+{
+  "task_id": "governess-pane-liveness",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-29T20:34:47Z",
+  "ended_at": "2026-07-29T20:34:47Z",
+  "artifact": "runs/governess-pane-liveness/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/governess-pane-liveness.test.ts",
+    "tests/loop/tmux.test.ts",
+    "tests/loop.test.ts"
+  ]
+}

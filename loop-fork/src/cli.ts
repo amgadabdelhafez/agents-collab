@@ -18,6 +18,11 @@ import {
   resolveGovernessConfig,
   runGoverness,
 } from "./loop/governess";
+import {
+  GOVERNESS_PANE_DIED_SUBCOMMAND,
+  handleGovernessPaneDied,
+  parseGovernessPaneDiedArgs,
+} from "./loop/governess-pane-liveness";
 import { runGovernessUtilityCommand } from "./loop/governess-replay";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import {
@@ -146,6 +151,10 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
     // parseArgs prints the requested text and exits in production; true keeps
     // this branch bounded under tests that replace process.exit.
     cliDeps.parseArgs(argv);
+    return true;
+  }
+  if (argv[0] === GOVERNESS_PANE_DIED_SUBCOMMAND) {
+    handleGovernessPaneDied(parseGovernessPaneDiedArgs(argv.slice(1)));
     return true;
   }
   if (await runReconPaneSubcommand(argv)) {

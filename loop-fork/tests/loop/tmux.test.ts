@@ -13,6 +13,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { runGit } from "../../src/loop/git";
 import {
+  GOVERNESS_DEAD_PANE_BORDER_FORMAT,
+  GOVERNESS_PANE_DIED_SUBCOMMAND,
+  GOVERNESS_REMAIN_ON_EXIT_FORMAT,
+} from "../../src/loop/governess-pane-liveness";
+import {
   createRunManifest,
   type RunManifest,
   resolveRunStorage,
@@ -867,6 +872,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(events).toContain(
       "spawn-governess:codex-thread-1:%41:repo-loop-1:0.2"
     );
+    expect(events).toContain("spawn-governess:codex-thread-1:%41:%43");
     expect(events).toContain("manifest:codex-thread-1:%41:%43");
     expect(
       events.some((event) => event.includes("'LOOP_GOVERNESS_LLM_TRACE=1'"))
@@ -970,6 +976,47 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(manifest.tmuxPaneRight).toBe("%41");
     expect(manifest.tmuxPaneGoverness).toBe("%43");
     expect(manifest.tmuxPaneRecon).toEqual(["%45", "%46", "%47"]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      "%43",
+      "remain-on-exit",
+      "on",
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      "%43",
+      "remain-on-exit-format",
+      GOVERNESS_REMAIN_ON_EXIT_FORMAT,
+    ]);
+    expect(calls).toContainEqual([
+      "tmux",
+      "set-option",
+      "-t",
+      "repo-loop-1",
+      "pane-border-format",
+      GOVERNESS_DEAD_PANE_BORDER_FORMAT,
+    ]);
+    const paneDiedHook = calls.find(
+      (call) => call[1] === "set-hook" && call.includes("pane-died")
+    );
+    expect(paneDiedHook?.slice(0, 8)).toEqual([
+      "tmux",
+      "set-hook",
+      "-p",
+      "-t",
+      "%43",
+      "pane-died",
+      expect.stringContaining(GOVERNESS_PANE_DIED_SUBCOMMAND),
+    ]);
+    expect(paneDiedHook?.at(-1)).toContain(runDir);
+    expect(paneDiedHook?.at(-1)).toContain("repo-loop-1");
+    expect(paneDiedHook?.at(-1)).toContain("%43");
     expect(calls).toContainEqual([
       "tmux",
       "split-window",

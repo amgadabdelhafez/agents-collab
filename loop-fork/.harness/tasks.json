@@ -362,9 +362,17 @@
     {
       "id": "fresh-session-manifest-binding",
       "mode": "planned",
-      "status": "active",
+      "status": "parked",
       "created_at": "2026-07-29T19:36:56Z",
       "run_dir": "runs/fresh-session-manifest-binding",
+      "eval_status": "pass"
+    },
+    {
+      "id": "governess-pane-liveness",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-29T20:18:16Z",
+      "run_dir": "runs/governess-pane-liveness",
       "eval_status": "pass"
     }
   ]

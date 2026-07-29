@@ -661,3 +661,22 @@ test.each([
   expect(applyStagedMock).not.toHaveBeenCalled();
   expect(runLoopMock).not.toHaveBeenCalled();
 });
+
+test("runCli rejects malformed pane-death helper args before startup maintenance", async () => {
+  const {
+    applyStagedMock,
+    gcAbandonedRunProcessesMock,
+    gcStaleBridgeProcessesMock,
+    gcStaleClaudeBridgeRegistrationsMock,
+    runCli,
+  } = await loadRunCli();
+
+  await expect(runCli(["__governess-pane-died"])).rejects.toThrow(
+    "Usage: loop __governess-pane-died"
+  );
+
+  expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
+  expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
+  expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
+  expect(applyStagedMock).not.toHaveBeenCalled();
+});

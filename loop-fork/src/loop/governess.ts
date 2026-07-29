@@ -92,6 +92,7 @@ import {
   summarizeSession,
 } from "./governess-llm";
 import { type EscalationEvent, sendNtfy } from "./governess-notify";
+import { GOVERNESS_DEAD_PANE_BORDER_FORMAT } from "./governess-pane-liveness";
 import {
   decideGovernessPolicy,
   type GovernessAction,
@@ -5762,7 +5763,7 @@ export const defaultGovernessDeps = (
       "-t",
       session,
       "pane-border-format",
-      "#{@loop_label}",
+      GOVERNESS_DEAD_PANE_BORDER_FORMAT,
     ]);
   },
   judge: (req) => judgeAgent(req),

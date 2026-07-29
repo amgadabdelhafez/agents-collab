@@ -47,6 +47,11 @@ import {
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
 import { GOVERNESS_SUBCOMMAND } from "./governess";
 import {
+  GOVERNESS_DEAD_PANE_BORDER_FORMAT,
+  GOVERNESS_PANE_DIED_SUBCOMMAND,
+  GOVERNESS_REMAIN_ON_EXIT_FORMAT,
+} from "./governess-pane-liveness";
+import {
   buildClaudeHookSettings,
   buildCodexHooksJson,
   buildHookCommand,
@@ -1418,6 +1423,7 @@ const startGovernessPane = (
     "-P",
     "-F",
     "#{pane_id}",
+    "-k",
     "-l",
     opts.governessHeight,
     "-t",
@@ -1427,6 +1433,69 @@ const startGovernessPane = (
     command,
   ]);
   return stablePaneTarget(result, paneTarget);
+};
+
+const armGovernessPaneLiveness = (
+  deps: TmuxDeps,
+  session: string,
+  runDir: string,
+  pane: string
+): void => {
+  const recoveryCommand = buildShellCommand([
+    ...deps.launchArgv,
+    GOVERNESS_PANE_DIED_SUBCOMMAND,
+    resolve(runDir),
+    session,
+    pane,
+  ]);
+  runTmuxCommand(
+    deps,
+    ["tmux", "set-option", "-p", "-t", pane, "remain-on-exit", "on"],
+    "Failed to preserve the Governess pane on exit"
+  );
+  runTmuxCommand(
+    deps,
+    [
+      "tmux",
+      "set-option",
+      "-p",
+      "-t",
+      pane,
+      "remain-on-exit-format",
+      GOVERNESS_REMAIN_ON_EXIT_FORMAT,
+    ],
+    "Failed to configure the Governess stopped-pane message"
+  );
+  runTmuxCommand(
+    deps,
+    ["tmux", "set-option", "-t", session, "pane-border-status", "top"],
+    "Failed to configure pane-border status"
+  );
+  runTmuxCommand(
+    deps,
+    [
+      "tmux",
+      "set-option",
+      "-t",
+      session,
+      "pane-border-format",
+      GOVERNESS_DEAD_PANE_BORDER_FORMAT,
+    ],
+    "Failed to configure dead-pane visibility"
+  );
+  runTmuxCommand(
+    deps,
+    [
+      "tmux",
+      "set-hook",
+      "-p",
+      "-t",
+      pane,
+      "pane-died",
+      `run-shell -b ${quoteShellArg(recoveryCommand)}`,
+    ],
+    "Failed to arm Governess pane recovery"
+  );
 };
 
 const utilityPaneEnabled = (env: NodeJS.ProcessEnv): boolean => {
@@ -2059,6 +2128,18 @@ const startPairedControlPanes = (
       runId,
       paneTargets.governess
     );
+    // The hook validates exact durable ownership. Bind the stable pane before
+    // arming it so an early Governess exit cannot land in the gap before the
+    // full control-row manifest update below.
+    deps.updateRunManifest(join(runDir, "manifest.json"), (current) =>
+      current
+        ? touchRunManifest(
+            { ...current, tmuxPaneGoverness: governess },
+            new Date().toISOString()
+          )
+        : current
+    );
+    armGovernessPaneLiveness(deps, session, runDir, governess);
   }
   const auPair =
     governess && utilityPaneEnabled(deps.env)
