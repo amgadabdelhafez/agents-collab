@@ -1104,7 +1104,8 @@ const bindPairedSessionIdentity = (
   manifest: RunManifest,
   session: string,
   paneAgents: { left: Agent; right: Agent },
-  primaryAgent: Agent
+  primaryAgent: Agent,
+  clearPaneTargets = false
 ): RunManifest =>
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
@@ -1117,6 +1118,17 @@ const bindPairedSessionIdentity = (
         tmuxSession: session,
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRightAgent: paneAgents.right,
+        ...(clearPaneTargets
+          ? {
+              tmuxPaneAuPair: undefined,
+              tmuxPaneGoverness: undefined,
+              tmuxPaneLeft: undefined,
+              tmuxPaneNanny: undefined,
+              tmuxPaneRecon: undefined,
+              tmuxPaneRight: undefined,
+              tmuxPaneUtility: undefined,
+            }
+          : {}),
       },
       new Date().toISOString()
     )
@@ -2101,7 +2113,8 @@ const startPairedSession = async (
     manifest,
     session,
     paneAgents,
-    primaryAgent
+    primaryAgent,
+    true
   );
   const nativeSubagentMode = launch.opts.governess
     ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)

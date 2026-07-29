@@ -10,7 +10,7 @@
     "focused": {
       "status": "pass",
       "method": "Harness unit verification",
-      "reason": "57 paired tmux tests passed with zero failures"
+      "reason": "58 paired tmux tests passed with zero failures, including fresh stale-target clearing and live reattach preservation"
     },
     "full": {
       "status": "pass",

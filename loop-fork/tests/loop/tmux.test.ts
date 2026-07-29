@@ -305,6 +305,9 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
     repoId: "repo-123",
     runId: "1",
     status: "running",
+    tmuxPaneGoverness: "%old-governess",
+    tmuxPaneLeft: "%old-left",
+    tmuxPaneRight: "%old-right",
   });
   const opts = makePairedOptions();
   const codexMcpConfigArgs = ["-c", 'mcp_servers.loop-bridge.command="loop"'];
@@ -445,6 +448,9 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
     tmuxPaneRightAgent: "codex",
     tmuxSession: "repo-loop-1",
   });
+  expect(bootstrapManifests[0]?.tmuxPaneGoverness).toBeUndefined();
+  expect(bootstrapManifests[0]?.tmuxPaneLeft).toBeUndefined();
+  expect(bootstrapManifests[0]?.tmuxPaneRight).toBeUndefined();
   expect(calls).toContainEqual([
     "tmux",
     "new-session",
@@ -506,6 +512,62 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   expect(manifest.tmuxSession).toBe("repo-loop-1");
   expect(manifest.tmuxPaneLeftAgent).toBe("claude");
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
+});
+
+test("runInTmux preserves stable pane targets when reattaching a live paired session", async () => {
+  const calls: string[][] = [];
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+    tmuxPaneGoverness: "%governess",
+    tmuxPaneLeft: "%left",
+    tmuxPaneLeftAgent: "claude",
+    tmuxPaneRight: "%right",
+    tmuxPaneRightAgent: "codex",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/repo/.loop/runs/1",
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+
+  const delegated = await runInTmux(
+    ["--tmux"],
+    {
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => false,
+      log: (): void => undefined,
+      preparePairedRun: () => ({ manifest, storage }),
+      spawn: (args: string[]) => {
+        calls.push(args);
+        return { exitCode: 0, stderr: "" };
+      },
+      updateRunManifest: (_path, update) => {
+        manifest = update(manifest) ?? manifest;
+        return manifest;
+      },
+    },
+    { opts: makePairedOptions(), task: "Ship feature" }
+  );
+
+  expect(delegated).toBe(true);
+  expect(calls.some((args) => args[1] === "new-session")).toBe(false);
+  expect(manifest).toMatchObject({
+    tmuxPaneGoverness: "%governess",
+    tmuxPaneLeft: "%left",
+    tmuxPaneRight: "%right",
+    tmuxSession: "repo-loop-1",
+  });
 });
 
 test("runInTmux transports a realistic charter through hash-bound pointer bootstraps", async () => {

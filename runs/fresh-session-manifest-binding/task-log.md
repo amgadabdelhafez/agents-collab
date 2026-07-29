@@ -8,3 +8,7 @@
   because this root eval had not yet been written.
 - 2026-07-29T19:45:42Z — Full verifier rerun passed end to end with an empty
   named baseline allowlist.
+- 2026-07-29T20:01:00Z — Withdrew the first review request after finding that a
+  dead prior workspace could leave concrete pane IDs in the early-bound record.
+  The successor clears those targets only on fresh launch and proves live
+  reattach keeps them; focused coverage is now 58 pass, 0 fail.

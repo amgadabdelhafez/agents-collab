@@ -24,7 +24,9 @@ blind during the riskiest startup interval.
 
 - The change adds no process cleanup and specifically does not infer tmux
   process identity from a retained `new-session` command line.
-- Focused paired tmux tests: 57 pass, 0 fail.
+- Focused paired tmux tests: 58 pass, 0 fail. The fresh path clears concrete
+  targets from a dead prior workspace, while live reattach preserves its
+  stable pane IDs.
 - Full verifier: lint, defined source typecheck, compiled build, every sequential
   test, and empty baseline gate passed.
 - Live run 100 remained read-only.

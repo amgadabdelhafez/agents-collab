@@ -21,7 +21,8 @@ by the launch path before any asynchronous bootstrap begins.
    identities immediately after the existing-session check and before hooks,
    persistent-agent bootstrap, proxy startup, charter writes, or tmux creation.
 2. The early manifest update must preserve all existing run fields and use the
-   normal manifest timestamp/update path.
+   normal manifest timestamp/update path, except stale concrete pane targets
+   from a dead prior workspace must be cleared until new stable targets exist.
 3. An existing live tmux session must keep the current reattach behavior and
    must not be treated as a fresh launch.
 4. Successful startup must still replace the early identity-only record with
