@@ -503,6 +503,48 @@ test("broker caps range reads even when exact metadata is tampered", async () =>
   });
 });
 
+test("broker narrows an oversized model-driven read with continuation evidence", async () => {
+  await withRepo(async (root) => {
+    await writeFile(
+      join(root, "src", "many-lines.txt"),
+      `${Array.from({ length: 600 }, (_, index) => `line-${index + 1}`).join("\n")}\n`
+    );
+    const broker = await createUtilityToolBroker({
+      artifactDir: ".utility-artifacts",
+      readScopes: ["src/many-lines.txt"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+
+    const result = await broker.execute({
+      arguments: {
+        endLine: 600,
+        path: "src/many-lines.txt",
+        startLine: 1,
+      },
+      name: "read_file",
+    });
+
+    expect(result).toMatchObject({
+      data: {
+        endLine: 500,
+        nextStartLine: 501,
+        path: "src/many-lines.txt",
+        requestedEndLine: 600,
+        startLine: 1,
+        truncated: true,
+      },
+      ok: true,
+    });
+    expect(String((result.data as { content: string }).content)).toContain(
+      "line-500"
+    );
+    expect(String((result.data as { content: string }).content)).not.toContain(
+      "line-501"
+    );
+  });
+});
+
 test("a malformed automatic file-read boundary fails closed", async () => {
   await withRepo(async (root) => {
     const broker = await createUtilityToolBroker({

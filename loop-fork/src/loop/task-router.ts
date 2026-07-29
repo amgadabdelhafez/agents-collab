@@ -235,6 +235,7 @@ export interface UtilityRouteDecision {
 }
 
 export interface UtilityResolvedWorkspace {
+  executionArgv?: string[];
   executionCwd?: string;
   executionOutput?: UtilityOutputRequest;
   executionPlan?: UtilityReadPlanStep[];
@@ -851,6 +852,12 @@ export const utilityRequestIsBounded = (
   ) {
     return false;
   }
+  if (
+    request.executionProfile !== "focused-check" &&
+    (request.executionArgv !== undefined || request.executionCwd !== undefined)
+  ) {
+    return false;
+  }
   if (request.kind === "inspect") {
     return request.readScope.length > 0 && request.writeScope.length === 0;
   }
@@ -872,7 +879,17 @@ export const utilityRequestIsBounded = (
     );
   }
   if (request.kind === "command") {
-    return request.readScope.length > 0 || request.writeScope.length > 0;
+    const hasDeterministicCommand =
+      request.executionProfile === "focused-check" ||
+      (request.executionProfile === "read-plan" &&
+        request.executionPlan?.some(
+          (step) => step.executionProfile === "focused-check"
+        ) === true);
+    return (
+      hasDeterministicCommand &&
+      request.readScope.length > 0 &&
+      request.writeScope.length === 0
+    );
   }
   return false;
 };

@@ -850,6 +850,40 @@ test("route_task gives edit-specific recovery guidance", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("route_task rejects an unprofiled command with exact recovery guidance", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["run the exact focused tests"],
+          kind: "command",
+          objective: "Run tests in /private/tmp/registered-worktree",
+          read_scope: ["tests/parser.test.ts"],
+          required_capabilities: ["bounded-command", "focused-verify"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("execution_profile=focused-check");
+  expect(result.stdout).toContain("execution_cwd and execution_argv");
+  expect(result.stdout).toContain("registered linked worktree");
+  expect(result.stdout).toContain("use absolute paths");
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("route_task rejects narrative context refs before creating a doomed job", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");

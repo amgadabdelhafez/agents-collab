@@ -493,7 +493,7 @@ test("Pi counts a rejected sibling batch as one model round and can adapt", asyn
   }
 });
 
-test("Pi receives the exact 500-line correction and adapts its next read", async () => {
+test("Pi receives a safely narrowed 500-line read and continues at the next line", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-range-adaptation-"));
   const runDir = join(repoRoot, ".loop", "runs", "pi-range-adaptation");
   mkdirSync(join(repoRoot, "src"), { recursive: true });
@@ -560,7 +560,7 @@ test("Pi receives the exact 500-line correction and adapts its next read", async
               {
                 function: {
                   arguments:
-                    '{"path":"src/many-lines.txt","startLine":1,"endLine":500}',
+                    '{"path":"src/many-lines.txt","startLine":501,"endLine":600}',
                   name: "read_file",
                 },
                 id: "bounded-read",
@@ -590,10 +590,21 @@ test("Pi receives the exact 500-line correction and adapts its next read", async
       LOOP_UTILITY_HARNESS: "pi-sdk",
     });
     expect(bodies).toHaveLength(3);
-    expect(JSON.stringify(bodies[1])).toContain(
-      "bounded read limit of 500 lines"
+    const secondMessages = bodies[1]?.messages;
+    expect(Array.isArray(secondMessages)).toBe(true);
+    const toolMessage = (secondMessages as Record<string, unknown>[]).find(
+      (message) => message.role === "tool"
     );
-    expect(JSON.stringify(bodies[1])).toContain("endLine <= startLine + 499");
+    const toolResult = JSON.parse(String(toolMessage?.content));
+    expect(toolResult).toMatchObject({
+      data: {
+        endLine: 500,
+        nextStartLine: 501,
+        requestedEndLine: 600,
+        truncated: true,
+      },
+      ok: true,
+    });
     expect(readUtilityJob(runDir, request.id)).toMatchObject({
       result: {
         status: "completed",
@@ -605,8 +616,8 @@ test("Pi receives the exact 500-line correction and adapts its next read", async
       join(runDir, "utility", "tool-events.jsonl"),
       "utf8"
     );
-    expect(toolEvents).toContain('"ok":false');
-    expect(toolEvents).toContain('"ok":true');
+    expect(toolEvents).not.toContain('"ok":false');
+    expect(toolEvents.match(/"ok":true/g)).toHaveLength(2);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

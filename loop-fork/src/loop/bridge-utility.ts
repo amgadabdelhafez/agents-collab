@@ -926,6 +926,29 @@ const nativeFallbackStatus = (
   };
 };
 
+const assertRouteTaskIsBounded = (request: UtilityRouteRequest): void => {
+  const kind = request.kind;
+  if (
+    (kind !== "inspect" && kind !== "edit" && kind !== "command") ||
+    utilityRequestIsBounded(request)
+  ) {
+    return;
+  }
+  if (kind === "edit") {
+    throw new UtilityBridgeInputError(
+      "route_task edit packet is not deterministically bounded; use one to four exact read files, one or two exact write files repeated in read_scope, scoped-edit capability, and no execution_profile, execution_plan, command, Git, output, or exact-read metadata"
+    );
+  }
+  if (kind === "command") {
+    throw new UtilityBridgeInputError(
+      "route_task command packet is not deterministically executable; provide execution_profile and its exact fields. For a focused check use execution_profile=focused-check with exact execution_cwd and execution_argv path operands repeated in read_scope. To select a registered linked worktree, use absolute paths from that one worktree in read_scope, execution_cwd, and execution_argv; the harness verifies and normalizes them before execution"
+    );
+  }
+  throw new UtilityBridgeInputError(
+    "route_task utility packet is not deterministically bounded; use non-empty exact scopes and an execution_profile/execution_plan whose fields match the advertised contract"
+  );
+};
+
 const routeTask = (
   runDir: string,
   source: UtilityBridgeSource,
@@ -984,19 +1007,7 @@ const routeTask = (
     risk: requestRisk(args.risk),
     writeScope: stringArray(args, "write_scope"),
   });
-  if (
-    (kind === "inspect" || kind === "edit" || kind === "command") &&
-    !utilityRequestIsBounded(request)
-  ) {
-    if (kind === "edit") {
-      throw new UtilityBridgeInputError(
-        "route_task edit packet is not deterministically bounded; use one to four exact read files, one or two exact write files repeated in read_scope, scoped-edit capability, and no execution_profile, execution_plan, command, Git, output, or exact-read metadata"
-      );
-    }
-    throw new UtilityBridgeInputError(
-      "route_task utility packet is not deterministically bounded; use non-empty exact scopes and an execution_profile/execution_plan whose fields match the advertised contract"
-    );
-  }
+  assertRouteTaskIsBounded(request);
   const job = appendUtilityRouteRequest(runDir, request);
   appendDelegationEvent(
     runDir,

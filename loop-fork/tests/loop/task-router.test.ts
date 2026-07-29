@@ -684,7 +684,19 @@ test("normalizes and routes a structured output boundary", () => {
 });
 
 test.each([
+  makeRequest({
+    kind: "command",
+    readScope: ["tests/parser.test.ts"],
+    requiredCapabilities: ["bounded-command", "focused-verify"],
+    writeScope: [],
+  }),
   makeRequest({ executionProfile: "focused-check", kind: "command" }),
+  makeRequest({
+    executionProfile: "search",
+    kind: "command",
+    readScope: ["src/parser.ts"],
+    writeScope: [],
+  }),
   makeRequest({
     executionProfile: "file-read",
     kind: "inspect",

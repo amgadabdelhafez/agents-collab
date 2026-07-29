@@ -1,0 +1,34 @@
+{
+  "task_id": "utility-command-recovery",
+  "feature": "utility-command-recovery",
+  "timestamp": "2026-07-29T09:43:00Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit", "full"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "method": "focused utility route, workspace, tool, and Pi tests",
+      "reason": "275 tests passed across routing, bridge intake, workspace adoption, broker safety, Pi replay, runtime, and tier classification"
+    },
+    "full": {
+      "status": "pass",
+      "method": "scripts/verify.sh utility-command-recovery utility-command-recovery",
+      "reason": "lint, typecheck, compiled build, every sequential test file, and the empty baseline allowlist passed"
+    },
+    "independent_review": {
+      "status": "pending",
+      "method": "exact-SHA Claude review over the committed slice",
+      "reason": "deployment remains held until a CONCUR bound to the exact source commit"
+    }
+  },
+  "acceptance": {
+    "unprofiled_command_rejected_before_job": true,
+    "registered_worktree_argv_normalized": true,
+    "normalized_command_executed_in_adopted_root": true,
+    "dynamic_oversized_read_narrowed_with_continuation": true,
+    "exact_read_boundary_fails_closed": true,
+    "repeat_breakers_unchanged": true,
+    "live_loop_restarted": false
+  }
+}

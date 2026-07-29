@@ -2105,6 +2105,9 @@ const executionRequestForWorkspace = (
   }
   return {
     ...request,
+    ...(workspace.executionArgv
+      ? { executionArgv: workspace.executionArgv }
+      : {}),
     ...(workspace.executionCwd ? { executionCwd: workspace.executionCwd } : {}),
     ...(workspace.executionOutput
       ? { executionOutput: workspace.executionOutput }

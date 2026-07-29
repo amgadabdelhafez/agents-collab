@@ -143,6 +143,9 @@ const relativeWorkspaceResolution = (
 ): UtilityWorkspaceResolution => ({
   request,
   workspace: {
+    ...(request.executionArgv
+      ? { executionArgv: [...request.executionArgv] }
+      : {}),
     ...(request.executionCwd ? { executionCwd: request.executionCwd } : {}),
     ...(request.executionOutput
       ? { executionOutput: request.executionOutput }
@@ -276,11 +279,44 @@ export const resolveUtilityRequestWorkspace = (
     return normalized;
   };
 
+  const focusedCheckPathStart = (
+    argv: readonly string[]
+  ): number | undefined => {
+    if (argv[0] === "bun" && argv[1] === "test") {
+      return 2;
+    }
+    if (argv[0] === "npx" && argv[1] === "vitest" && argv[2] === "run") {
+      return 3;
+    }
+    if (argv[0] === "node" && argv[1] === "--check") {
+      return 2;
+    }
+    return undefined;
+  };
+
+  const normalizeFocusedCheckArgv = (
+    argv: readonly string[] | undefined
+  ): string[] | undefined => {
+    if (!argv) {
+      return undefined;
+    }
+    const pathStart = focusedCheckPathStart(argv);
+    if (pathStart === undefined) {
+      return undefined;
+    }
+    const paths = normalizeScopes(argv.slice(pathStart));
+    return paths ? [...argv.slice(0, pathStart), ...paths] : undefined;
+  };
+
   const readScope = normalizeScopes(request.readScope);
   const writeScope = normalizeScopes(request.writeScope);
   const executionCwd = request.executionCwd
     ? normalizeScopes([request.executionCwd])?.[0]
     : undefined;
+  const executionArgv =
+    request.executionProfile === "focused-check"
+      ? normalizeFocusedCheckArgv(request.executionArgv)
+      : request.executionArgv;
   const executionReadPath = request.executionRead
     ? normalizeScopes([request.executionRead.path])?.[0]
     : undefined;
@@ -293,11 +329,16 @@ export const resolveUtilityRequestWorkspace = (
       const stepExecutionCwd = step.executionCwd
         ? normalizeScopes([step.executionCwd])?.[0]
         : undefined;
+      const stepExecutionArgv =
+        step.executionProfile === "focused-check"
+          ? normalizeFocusedCheckArgv(step.executionArgv)
+          : step.executionArgv;
       const stepExecutionReadPath = step.executionRead
         ? normalizeScopes([step.executionRead.path])?.[0]
         : undefined;
       if (
         !stepReadScope ||
+        (step.executionArgv !== undefined && !stepExecutionArgv) ||
         (step.executionCwd !== undefined && !stepExecutionCwd) ||
         (step.executionRead !== undefined && !stepExecutionReadPath)
       ) {
@@ -306,6 +347,7 @@ export const resolveUtilityRequestWorkspace = (
       }
       executionPlan.push({
         ...step,
+        ...(stepExecutionArgv ? { executionArgv: stepExecutionArgv } : {}),
         ...(stepExecutionCwd ? { executionCwd: stepExecutionCwd } : {}),
         ...(step.executionRead && stepExecutionReadPath
           ? {
@@ -325,6 +367,7 @@ export const resolveUtilityRequestWorkspace = (
       writeScope &&
       selectedRoot &&
       executionPlanIsValid &&
+      (request.executionArgv === undefined || executionArgv) &&
       (request.executionCwd === undefined || executionCwd) &&
       (request.executionRead === undefined || executionReadPath)
     )
@@ -334,6 +377,7 @@ export const resolveUtilityRequestWorkspace = (
     );
   }
   const workspace = {
+    ...(executionArgv ? { executionArgv } : {}),
     ...(executionCwd ? { executionCwd } : {}),
     ...(request.executionOutput
       ? { executionOutput: request.executionOutput }
@@ -354,6 +398,7 @@ export const resolveUtilityRequestWorkspace = (
   return validateExactEditScopes({
     request: {
       ...request,
+      ...(executionArgv ? { executionArgv } : {}),
       ...(executionCwd ? { executionCwd } : {}),
       ...(request.executionRead && executionReadPath
         ? {

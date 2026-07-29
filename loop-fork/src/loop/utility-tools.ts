@@ -1106,6 +1106,65 @@ export const runUtilityCommand = async (
   return { exitCode, stderr, stdout, timedOut, truncated: budget.truncated };
 };
 
+interface UtilityReadRange {
+  endLine: number;
+  oversized: boolean;
+  requestedEndLine: number;
+  startLine: number;
+  truncated: boolean;
+}
+
+const resolveUtilityReadRange = (
+  args: Record<string, unknown>,
+  lineCount: number,
+  exactRead: boolean
+): UtilityReadRange => {
+  const lastLines = optionalPositiveInteger(args, "lastLines");
+  if (
+    lastLines !== undefined &&
+    (args.startLine !== undefined || args.endLine !== undefined)
+  ) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      "lastLines cannot be combined with startLine or endLine"
+    );
+  }
+  if (lastLines !== undefined && lastLines > 500) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      "lastLines exceeds the bounded read limit of 500; retry with lastLines <= 500"
+    );
+  }
+  const startLine =
+    lastLines === undefined
+      ? (optionalPositiveInteger(args, "startLine") ?? 1)
+      : Math.max(1, lineCount - lastLines + 1);
+  const requestedEndLine =
+    lastLines === undefined
+      ? (optionalPositiveInteger(args, "endLine") ?? lineCount)
+      : lineCount;
+  const oversized =
+    lastLines === undefined && requestedEndLine - startLine + 1 > 500;
+  if (oversized && exactRead) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      "Requested file range exceeds the bounded read limit of 500 lines; retry with endLine <= startLine + 499 and use another non-overlapping call only if needed"
+    );
+  }
+  const boundedEndLine = oversized ? startLine + 499 : requestedEndLine;
+  const endLine = Math.min(boundedEndLine, lineCount);
+  if (startLine > endLine && lineCount > 0) {
+    throw new ToolPolicyError("invalid_arguments", "startLine exceeds endLine");
+  }
+  return {
+    endLine,
+    oversized,
+    requestedEndLine,
+    startLine,
+    truncated: oversized && endLine < Math.min(requestedEndLine, lineCount),
+  };
+};
+
 export class UtilityToolBroker {
   readonly definitions: readonly UtilityToolDefinition[];
   private readonly allowedTools: ReadonlySet<UtilityToolName>;
@@ -1950,8 +2009,11 @@ export class UtilityToolBroker {
   private async readFileTool(args: Record<string, unknown>): Promise<{
     content: string;
     endLine: number;
+    nextStartLine?: number;
     path: string;
+    requestedEndLine?: number;
     startLine: number;
+    truncated?: boolean;
   }> {
     this.assertExactRead(args);
     exactArgumentKeys(
@@ -1982,43 +2044,13 @@ export class UtilityToolBroker {
     if (lines.at(-1) === "") {
       lines.pop();
     }
-    const lastLines = optionalPositiveInteger(args, "lastLines");
-    if (
-      lastLines !== undefined &&
-      (args.startLine !== undefined || args.endLine !== undefined)
-    ) {
-      throw new ToolPolicyError(
-        "invalid_arguments",
-        "lastLines cannot be combined with startLine or endLine"
-      );
-    }
-    if (lastLines !== undefined && lastLines > 500) {
-      throw new ToolPolicyError(
-        "invalid_arguments",
-        "lastLines exceeds the bounded read limit of 500; retry with lastLines <= 500"
-      );
-    }
-    const startLine =
-      lastLines === undefined
-        ? (optionalPositiveInteger(args, "startLine") ?? 1)
-        : Math.max(1, lines.length - lastLines + 1);
-    const requestedEnd =
-      lastLines === undefined
-        ? (optionalPositiveInteger(args, "endLine") ?? lines.length)
-        : lines.length;
-    if (lastLines === undefined && requestedEnd - startLine + 1 > 500) {
-      throw new ToolPolicyError(
-        "invalid_arguments",
-        "Requested file range exceeds the bounded read limit of 500 lines; retry with endLine <= startLine + 499 and use another non-overlapping call only if needed"
-      );
-    }
-    const endLine = Math.min(requestedEnd, lines.length);
-    if (startLine > endLine && lines.length > 0) {
-      throw new ToolPolicyError(
-        "invalid_arguments",
-        "startLine exceeds endLine"
-      );
-    }
+    const range = resolveUtilityReadRange(
+      args,
+      lines.length,
+      this.exactRead !== undefined
+    );
+    const { endLine, oversized, requestedEndLine, startLine, truncated } =
+      range;
     const selected = lines.slice(startLine - 1, endLine).join("\n");
     if (Buffer.byteLength(selected) > this.limits.maxOutputBytes) {
       throw new ToolPolicyError(
@@ -2026,7 +2058,15 @@ export class UtilityToolBroker {
         "Selected file range exceeds output limit"
       );
     }
-    return { content: selected, endLine, path: target.relative, startLine };
+    return {
+      content: selected,
+      endLine,
+      ...(truncated ? { nextStartLine: endLine + 1 } : {}),
+      path: target.relative,
+      ...(oversized ? { requestedEndLine } : {}),
+      startLine,
+      ...(oversized ? { truncated } : {}),
+    };
   }
 
   private async listFiles(args: Record<string, unknown>): Promise<{

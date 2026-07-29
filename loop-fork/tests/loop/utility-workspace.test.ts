@@ -51,10 +51,11 @@ const workspaceFixture = (): {
   const unrelated = join(root, "unrelated");
   mkdirSync(join(base, "src"), { recursive: true });
   writeFileSync(join(base, "src", "sample.ts"), "base checkout\n");
+  writeFileSync(join(base, "src", "check.js"), "const ready = true;\n");
   requireGit(base, ["init"]);
   requireGit(base, ["config", "user.email", "utility@example.test"]);
   requireGit(base, ["config", "user.name", "Utility Test"]);
-  requireGit(base, ["add", "src/sample.ts"]);
+  requireGit(base, ["add", "src/sample.ts", "src/check.js"]);
   requireGit(base, ["commit", "-m", "fixture"]);
   requireGit(base, ["worktree", "add", "-b", "linked-a", linkedA]);
   requireGit(base, ["worktree", "add", "-b", "linked-b", linkedB]);
@@ -182,25 +183,104 @@ test("edit workspace resolution accepts files and rejects directory-wide scope",
   }
 });
 
-test("linked focused-check cwd resolves with the same verified workspace", () => {
+test("linked focused-check cwd and argv resolve and execute in the verified workspace", async () => {
   const fixture = workspaceFixture();
   try {
-    const resolution = resolveUtilityRequestWorkspace(
-      requestFor(
-        "linked-cwd",
-        [join(fixture.linkedA, "src", "sample.ts")],
-        join(fixture.linkedA, "src")
-      ),
-      fixture.base
-    );
+    const linkedRoot = realpathSync(fixture.linkedA);
+    const absoluteFile = join(linkedRoot, "src", "check.js");
+    const request = createUtilityRouteRequest({
+      acceptanceCriteria: ["the exact syntax check passes"],
+      authority: {},
+      executionArgv: ["node", "--check", absoluteFile],
+      executionCwd: linkedRoot,
+      executionProfile: "focused-check",
+      id: "linked-cwd",
+      idempotencyKey: "linked-cwd",
+      kind: "command",
+      objective: "Run the exact linked-worktree syntax check",
+      readScope: [linkedRoot, absoluteFile],
+      requester: "claude",
+      requiredCapabilities: ["bounded-command", "focused-verify"],
+      risk: "low",
+      writeScope: [],
+    });
+    const resolution = resolveUtilityRequestWorkspace(request, fixture.base);
     expect(resolution).toMatchObject({
-      request: { executionCwd: "src", readScope: ["src/sample.ts"] },
+      request: {
+        executionArgv: ["node", "--check", "src/check.js"],
+        executionCwd: ".",
+        readScope: [".", "src/check.js"],
+      },
       workspace: {
-        executionCwd: "src",
-        readScope: ["src/sample.ts"],
-        root: realpathSync(fixture.linkedA),
+        executionArgv: ["node", "--check", "src/check.js"],
+        executionCwd: ".",
+        readScope: [".", "src/check.js"],
+        root: linkedRoot,
       },
     });
+    if (!("workspace" in resolution && resolution.workspace)) {
+      throw new Error("expected verified linked workspace");
+    }
+    const broker = await createUtilityToolBroker({
+      allowedTools: ["run_check"],
+      artifactDir: ".utility-artifacts",
+      commandCwds: [resolution.workspace.executionCwd ?? ""],
+      exactCommand: resolution.workspace.executionArgv,
+      readScopes: ["src/check.js"],
+      repoRoot: resolution.workspace.root,
+      writeScopes: [],
+    });
+    expect(
+      await broker.execute({
+        arguments: {
+          argv: ["node", "--check", "src/check.js"],
+          cwd: ".",
+        },
+        name: "run_check",
+      })
+    ).toMatchObject({ exitCode: 0, ok: true });
+
+    const runDir = join(fixture.base, ".loop", "runs", "linked-command");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "manifest.json"),
+      JSON.stringify({ cwd: fixture.base })
+    );
+    appendUtilityRouteRequest(runDir, request);
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 51,
+        peer: "codex",
+        repoRoot: fixture.base,
+        runDir,
+      },
+      {
+        LOOP_UTILITY_ENABLED: "1",
+        LOOP_UTILITY_HARNESS: "pi-sdk",
+      },
+      { spawnWorker: () => true }
+    );
+    expect(readUtilityJob(runDir, request.id)?.decision).toMatchObject({
+      target: "utility",
+      tierId: "utility-direct",
+      workspace: {
+        executionArgv: ["node", "--check", "src/check.js"],
+        executionCwd: ".",
+        root: linkedRoot,
+      },
+    });
+    await runUtilityWorker(runDir, 51, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: { status: "completed" },
+      state: "completed",
+    });
+    expect(
+      readFileSync(join(runDir, "utility", "tool-events.jsonl"), "utf8")
+    ).toContain('"exitCode":0');
   } finally {
     rmSync(fixture.root, { force: true, recursive: true });
   }
