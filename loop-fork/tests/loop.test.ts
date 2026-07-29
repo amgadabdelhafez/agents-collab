@@ -607,3 +607,22 @@ test("runCli returns early when handleManualUpdateCommand returns true", async (
   expect(runLoopMock).not.toHaveBeenCalled();
   expect(runPanelMock).not.toHaveBeenCalled();
 });
+
+test("runCli handles version before startup maintenance", async () => {
+  const {
+    applyStagedMock,
+    gcStaleClaudeBridgeRegistrationsMock,
+    parseArgsMock,
+    runCli,
+    runLoopMock,
+  } = await loadRunCli({
+    parseArgs: () => makeOptions(),
+  });
+
+  await runCli(["--version"]);
+
+  expect(parseArgsMock).toHaveBeenCalledWith(["--version"]);
+  expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
+  expect(applyStagedMock).not.toHaveBeenCalled();
+  expect(runLoopMock).not.toHaveBeenCalled();
+});

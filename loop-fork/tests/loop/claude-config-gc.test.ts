@@ -136,3 +136,43 @@ test("startup GC preserves registrations it cannot remove safely", () => {
   expect(result).toEqual({ failed: 0, kept: 1, removed: 0, scanned: 1 });
   rmSync(root, { force: true, recursive: true });
 });
+
+test("startup GC preserves a registration when tmux liveness is unknown", () => {
+  const root = makeRoot();
+  const projectPath = join(root, "project");
+  const runDir = join(root, "run");
+  const registryPath = join(root, ".claude.json");
+  mkdirSync(projectPath, { recursive: true });
+  writeManifest(runDir, {
+    pid: 999,
+    state: "working",
+    status: "running",
+    tmuxSession: "possibly-live-loop",
+  });
+  writeFileSync(
+    registryPath,
+    `${JSON.stringify({
+      projects: {
+        [projectPath]: {
+          mcpServers: {
+            "loop-bridge-unknown": bridgeConfig(runDir),
+          },
+        },
+      },
+    })}\n`,
+    "utf8"
+  );
+  const result = gcStaleClaudeBridgeRegistrations({
+    deps: {
+      pathExists: () => true,
+      pidAlive: () => false,
+      runCommand: () => {
+        throw new Error("unknown liveness must not remove the registration");
+      },
+      tmuxSessionAlive: () => undefined,
+    },
+    registryPath,
+  });
+  expect(result).toEqual({ failed: 0, kept: 1, removed: 0, scanned: 1 });
+  rmSync(root, { force: true, recursive: true });
+});

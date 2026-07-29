@@ -52,6 +52,7 @@ const INTERACTIVE_TMUX_ERROR =
   "[loop] interactive paired tmux mode must be started outside tmux.";
 const PAIRED_TMUX_HANDOFF_ERROR =
   "[loop] paired tmux launch did not hand off; not continuing in the foreground.";
+const IMMEDIATE_INFO_FLAGS = new Set(["-h", "--help", "-v", "--version"]);
 
 const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
   Boolean(
@@ -140,6 +141,13 @@ const runReconPaneSubcommand = async (argv: string[]): Promise<boolean> => {
 
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
+  if (IMMEDIATE_INFO_FLAGS.has(argv[0] ?? "")) {
+    // Version/help must never wait on startup maintenance or external tools.
+    // parseArgs prints the requested text and exits in production; true keeps
+    // this branch bounded under tests that replace process.exit.
+    cliDeps.parseArgs(argv);
+    return true;
+  }
   if (await runReconPaneSubcommand(argv)) {
     return true;
   }

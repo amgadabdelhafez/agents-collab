@@ -33,7 +33,7 @@ interface GcDependencies {
     cwd: string,
     env: NodeJS.ProcessEnv
   ) => CommandResult;
-  tmuxSessionAlive: (session: string) => boolean;
+  tmuxSessionAlive: (session: string) => boolean | undefined;
 }
 
 export interface ClaudeBridgeGcResult {
@@ -66,11 +66,25 @@ const defaultPidAlive = (pid: number): boolean => {
   }
 };
 
-const defaultTmuxSessionAlive = (session: string): boolean =>
-  spawnSync(["tmux", "has-session", "-t", session], {
-    stderr: "ignore",
-    stdout: "ignore",
-  }).exitCode === 0;
+const TMUX_LIVENESS_TIMEOUT_MS = 750;
+const CLAUDE_MCP_REMOVE_TIMEOUT_MS = 1500;
+
+const defaultTmuxSessionAlive = (session: string): boolean | undefined => {
+  try {
+    const result = spawnSync(["tmux", "has-session", "-t", session], {
+      killSignal: "SIGKILL",
+      stderr: "ignore",
+      stdout: "ignore",
+      timeout: TMUX_LIVENESS_TIMEOUT_MS,
+    });
+    if (result.signalCode) {
+      return undefined;
+    }
+    return result.exitCode === 0;
+  } catch {
+    return undefined;
+  }
+};
 
 const defaultRunCommand = (
   args: string[],
@@ -80,8 +94,10 @@ const defaultRunCommand = (
   spawnSync(args, {
     cwd,
     env,
+    killSignal: "SIGKILL",
     stderr: "pipe",
     stdout: "ignore",
+    timeout: CLAUDE_MCP_REMOVE_TIMEOUT_MS,
   });
 
 const defaultDependencies: GcDependencies = {
@@ -198,8 +214,13 @@ const staleReason = (
     return `run is ${terminalState}`;
   }
   const tmuxSession = stringField(manifest, "tmuxSession");
-  if (tmuxSession && deps.tmuxSessionAlive(tmuxSession)) {
-    return undefined;
+  if (tmuxSession) {
+    const alive = deps.tmuxSessionAlive(tmuxSession);
+    // A timed-out or failed liveness probe is unknown, not proof of death.
+    // Preserve the registration rather than disrupting a possibly live loop.
+    if (alive !== false) {
+      return undefined;
+    }
   }
   const pid = positiveIntegerField(manifest, "pid");
   if (pid && deps.pidAlive(pid)) {
