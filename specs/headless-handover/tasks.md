@@ -5,4 +5,4 @@
 - [x] Skip terminal `/exit` for an agent whose pane is affirmatively absent.
 - [x] Add headless handover and owned-teardown regression coverage.
 - [x] Run focused and full verification with an empty baseline.
-- [ ] Obtain exact-SHA independent review before deploy.
+- [x] Obtain exact-SHA independent review before deploy.

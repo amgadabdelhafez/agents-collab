@@ -22,6 +22,17 @@ the existing lifecycle owner.
 
 ## Notes
 
+Regression: yes
+Regression id: headless-handover-missing-pane
+Regression symptom: A confirmed-missing driver pane blocked graceful handover forever because it was collapsed into unknown liveness.
+Regression guard: tests/loop/governess-exit.test.ts
+
 - Harness focused verification passed 60 tests with zero failures.
 - The complete sequential repository suite passed; final verifier success is
   being re-run after recording the required eval verdict.
+- Claude independently reran the 1,217-test suite, reproduced binary SHA-256
+  `7cd14f7bf5e75381818d3fa329195677022160efd00cdfee2c1138958629d893`,
+  and issued CONCUR `872441f9-7f8e-4088-954c-81aa406616a7` bound to exact SHA
+  `c02c43fa7f021bc6163032b5b0c019e368b61d5c`.
+- The reviewed binary was installed for future processes. Live run 100 was not
+  restarted, signaled, or hot-swapped.
