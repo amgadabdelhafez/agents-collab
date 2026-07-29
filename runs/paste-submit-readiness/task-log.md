@@ -16,4 +16,20 @@
   paste-submit-readiness` passes lint, typecheck, build, all 1,187 tests, and
   the empty baseline allowlist gate.
 - Candidate SHA-256:
-  `a8aca48e2898c42d7f07ebb3f533a671f1099646215a626659c97a419fe2d7ff`.
+  `b595d362f441b25cd6aa46dc317c0283c053c2bac72f1df68d82246dfdecfc0b`.
+- Runtime bridge evidence: message
+  `9b41fc3d-23f5-4eb3-b1a8-08f2176f0961` carried a 9,279-byte review request
+  to Claude and was still streaming after 12 minutes under the legacy
+  `send-keys -l` path.
+- Runtime implementation under evaluation: every tmux bridge body now travels
+  through a mode-0600 private payload file, `tmux load-buffer`, and bracketed
+  `paste-buffer -p`; the private file and tmux buffer are deleted immediately.
+- Runtime ordering proof: a 9,279-byte Claude bridge unit test withholds the
+  paste marker for two polls and proves the new marker precedes Enter. A
+  compiled two-stage smoke repeats the check after the launch marker is already
+  visible, proving stale paste chips cannot satisfy the runtime gate.
+- Claim safety: the delivery claim remains live for 60 seconds, beyond the
+  45-second readiness bound, so another worker cannot duplicate a slow paste.
+- Updated full result: `scripts/verify.sh paste-submit-readiness
+  paste-submit-readiness` passes lint, typecheck, build, all 1,189 tests, and
+  the empty baseline allowlist gate.

@@ -6,19 +6,19 @@
   "dimensions": {
     "unit": {
       "status": "pass",
-      "method": "bun test tests/loop/tmux.test.ts",
-      "reason": "delayed Claude and Codex paste markers precede Enter; missing evidence stops after 180 polls"
+      "method": "bun test tests/loop/bridge.test.ts tests/loop/tmux.test.ts",
+      "reason": "142 focused tests prove delayed launch and runtime markers precede Enter, bridge bodies use private tmux buffers, stale markers do not satisfy the gate, and the delivery claim outlives the readiness bound"
     },
     "smoke": {
       "status": "pass",
       "method": "bash evals/smoke/paste-submit-readiness.sh",
-      "reason": "compiled binary waited for a delayed bracketed-paste marker and submitted with no early Enter"
+      "reason": "compiled binary waited for distinct delayed bracketed-paste markers for both the 10,257-byte launch charter and a subsequent 9,279-byte runtime bridge delivery, with no early Enter"
     },
     "full": {
       "status": "pass",
       "method": "scripts/verify.sh paste-submit-readiness paste-submit-readiness",
-      "reason": "lint, typecheck, build, all 1,187 tests, and the empty baseline gate passed"
+      "reason": "lint, typecheck, build, all 1,189 tests, and the empty baseline gate passed"
     }
   },
-  "candidate_sha256": "a8aca48e2898c42d7f07ebb3f533a671f1099646215a626659c97a419fe2d7ff"
+  "candidate_sha256": "b595d362f441b25cd6aa46dc317c0283c053c2bac72f1df68d82246dfdecfc0b"
 }

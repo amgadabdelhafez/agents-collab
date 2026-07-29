@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -54,7 +54,10 @@ const CLAUDE_CHANNEL_SOURCE_TYPE = "codex";
 const CLAUDE_CHANNEL_USER_ID = "codex";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
 const BRIDGE_DELIVERY_CLAIM_DIR = "bridge-delivery-claims";
-const BRIDGE_DELIVERY_CLAIM_STALE_MS = 30_000;
+// A large-paste readiness poll can hold a valid claim for up to 45 seconds.
+// Keep the stale boundary beyond that bound so another worker cannot duplicate
+// the same delivery while the target TUI is still ingesting the paste.
+const BRIDGE_DELIVERY_CLAIM_STALE_MS = 60_000;
 const BRIDGE_WORKER_IDLE_DELAY_MS = 250;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const TMUX_LEFT_PANE = "0.0";
@@ -69,6 +72,9 @@ const CLAUDE_TMUX_PROMPT_PREFIX = "❯";
 const LINE_SPLIT_RE = /\r?\n/;
 const GENERIC_TMUX_READY_POLLS = 12;
 const CLAUDE_DELIVERY_CONFIRM_POLLS = 8;
+const BRIDGE_LARGE_PASTE_MIN_BYTES = 2 * 1024;
+const BRIDGE_LARGE_PASTE_READY_POLLS = 180;
+const TUI_PASTE_MARKER_RE = /\[Pasted (?:Content|text)\b[^\]]*\]/i;
 const CLAUDE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 const containedRegularFile = (
@@ -369,6 +375,43 @@ const sendPaneText = (pane: string, text: string): boolean => {
   return result.exitCode === 0;
 };
 
+const pastePaneText = (runDir: string, pane: string, text: string): boolean => {
+  const id = randomUUID();
+  const buffer = `loop-bridge-${id}`;
+  const path = join(runDir, `.bridge-paste-${id}.txt`);
+  let bufferLoaded = false;
+  try {
+    writeFileSync(path, text, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    const loaded = bridgeRuntimeCommandDeps.spawnSync(
+      ["tmux", "load-buffer", "-b", buffer, path],
+      { stderr: "ignore" }
+    );
+    if (loaded.exitCode !== 0) {
+      return false;
+    }
+    bufferLoaded = true;
+    const pasted = bridgeRuntimeCommandDeps.spawnSync(
+      ["tmux", "paste-buffer", "-d", "-p", "-b", buffer, "-t", pane],
+      { stderr: "ignore" }
+    );
+    if (pasted.exitCode !== 0) {
+      return false;
+    }
+    bufferLoaded = false;
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(path, { force: true });
+    if (bufferLoaded) {
+      bridgeRuntimeCommandDeps.spawnSync(
+        ["tmux", "delete-buffer", "-b", buffer],
+        { stderr: "ignore" }
+      );
+    }
+  }
+};
+
 const isCodexPaneReady = (output: string): boolean => {
   if (output.includes(CODEX_TMUX_SEND_FOOTER)) {
     return true;
@@ -409,6 +452,84 @@ const claudeComposerText = (output: string): string | undefined => {
 
 export const isClaudePaneReady = (output: string): boolean =>
   claudeComposerText(output) === "";
+
+const firstMessageLine = (message: string): string =>
+  message
+    .split(LINE_SPLIT_RE)
+    .find((line) => line.trim())
+    ?.trim() ?? "";
+
+const pasteMarkers = (output: string): string[] =>
+  output.match(/\[Pasted (?:Content|text)\b[^\]]*\]/gi) ?? [];
+
+const hasNewPasteMarker = (before: string, after: string): boolean => {
+  const remaining = pasteMarkers(before);
+  for (const marker of pasteMarkers(after)) {
+    const index = remaining.findIndex(
+      (candidate) => candidate.toLowerCase() === marker.toLowerCase()
+    );
+    if (index < 0) {
+      return true;
+    }
+    remaining.splice(index, 1);
+  }
+  return false;
+};
+
+const hasBridgePasteEvidence = (
+  before: string,
+  output: string,
+  target: BridgeMessage["target"],
+  expectedFirstLine: string
+): boolean => {
+  if (hasNewPasteMarker(before, output)) {
+    return true;
+  }
+  if (!expectedFirstLine) {
+    return false;
+  }
+  if (target === "claude") {
+    const composer = claudeComposerText(output);
+    return (
+      (composer?.startsWith(expectedFirstLine) ?? false) &&
+      !claudeComposerText(before)?.startsWith(expectedFirstLine)
+    );
+  }
+  return (
+    output.includes(expectedFirstLine) && !before.includes(expectedFirstLine)
+  );
+};
+
+const waitForBridgePasteReady = async (
+  pane: string,
+  target: BridgeMessage["target"],
+  message: string,
+  before: string
+): Promise<boolean> => {
+  if (Buffer.byteLength(message, "utf8") < BRIDGE_LARGE_PASTE_MIN_BYTES) {
+    await wait(100);
+    return true;
+  }
+  const expectedFirstLine = firstMessageLine(message);
+  for (
+    let attempt = 0;
+    attempt < BRIDGE_LARGE_PASTE_READY_POLLS;
+    attempt += 1
+  ) {
+    if (
+      hasBridgePasteEvidence(
+        before,
+        capturePane(pane, target === "claude"),
+        target,
+        expectedFirstLine
+      )
+    ) {
+      return true;
+    }
+    await wait(CODEX_TMUX_READY_DELAY_MS);
+  }
+  return false;
+};
 
 export const isClaudeTurnActive = (runDir: string): boolean => {
   try {
@@ -468,7 +589,10 @@ const confirmClaudeSubmission = async (
       return "confirmed";
     }
     if (composer) {
-      if (composer === expectedComposerText) {
+      if (
+        composer === expectedComposerText ||
+        TUI_PASTE_MARKER_RE.test(composer)
+      ) {
         sawStrandedComposer = true;
       } else {
         return "foreign-draft";
@@ -548,16 +672,13 @@ const injectTmuxMessage = async (
       ? bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(runDir)
       : undefined;
   const expectedClaudeComposerText = message.split("\n")[0]?.trim() ?? "";
-  const lines = message.split("\n");
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!sendPaneText(pane, lines[index] ?? "")) {
-      return false;
-    }
-    if (index < lines.length - 1 && !sendPaneKeys(pane, ["C-j"])) {
-      return false;
-    }
+  const largePaste =
+    Buffer.byteLength(message, "utf8") >= BRIDGE_LARGE_PASTE_MIN_BYTES;
+  const beforePaste = largePaste ? capturePane(pane, target === "claude") : "";
+  if (!pastePaneText(runDir, pane, message)) {
+    return false;
   }
-  await wait(100);
+  await waitForBridgePasteReady(pane, target, message, beforePaste);
   if (!sendPaneKeys(pane, ["Enter"])) {
     return false;
   }

@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -1082,6 +1083,32 @@ test("route_task drains only older unclaimed helper results for its caller", asy
   rmSync(root, { recursive: true, force: true });
 });
 
+test("a bridge delivery claim outlives the large-paste readiness bound", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const messageId = "large-paste-claim";
+  const claimDir = join(runDir, "bridge-delivery-claims");
+  mkdirSync(claimDir, { recursive: true });
+  const createdAt = Date.now();
+  writeFileSync(
+    join(
+      claimDir,
+      `${createHash("sha256").update(messageId).digest("hex")}.lock`
+    ),
+    "claimed\n"
+  );
+  const bridge = await loadBridge();
+
+  expect(
+    bridge.isBridgeDeliveryClaimed(runDir, messageId, createdAt + 45_000)
+  ).toBe(true);
+  expect(
+    bridge.isBridgeDeliveryClaimed(runDir, messageId, createdAt + 61_000)
+  ).toBe(false);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("external supervisor can submit a task with an explicit result target", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -1217,6 +1244,103 @@ test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async 
       .filter((event) => event.kind === "delivered")
       .map((event) => event.reason)
   ).toEqual(["sent to claude tmux pane"]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("large Claude bridge delivery waits for paste rendering before Enter", async () => {
+  const events: string[] = [];
+  let loadedText = "";
+  let pasteCaptureCalls = 0;
+  let pasted = false;
+  let submitted = false;
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      let pane = "❯\n\nOpus 5 · bypass permissions on";
+      if (submitted) {
+        pane = "⏺ Working… (1s · esc to interrupt)\n\nOpus 5";
+      } else if (pasted) {
+        pasteCaptureCalls += 1;
+        events.push(`capture:${pasteCaptureCalls}`);
+        if (pasteCaptureCalls >= 3) {
+          pane = "❯ [Pasted text #1]\n\nOpus 5 · bypass permissions on";
+          events.push("ready");
+        }
+      }
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(pane, "utf8"),
+      };
+    }
+    if (args[0] === "tmux" && args[1] === "load-buffer") {
+      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
+    }
+    if (args[0] === "tmux" && args[1] === "paste-buffer") {
+      pasted = true;
+      events.push("paste");
+    }
+    if (args[0] === "tmux" && args[1] === "send-keys") {
+      submitted = args.at(-1) === "Enter";
+      if (submitted) {
+        events.push("enter");
+      }
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-large-paste",
+    kind: "message" as const,
+    message: `Review this exact evidence:\n${"x".repeat(9279)}`,
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(Buffer.byteLength(loadedText, "utf8")).toBeGreaterThan(9279);
+  expect(events.indexOf("paste")).toBeLessThan(events.indexOf("ready"));
+  expect(events.indexOf("ready")).toBeLessThan(events.indexOf("enter"));
+  expect(
+    spawnSync.mock.calls.filter(
+      ([[, command, , , key]]) => command === "send-keys" && key === "-l"
+    )
+  ).toHaveLength(0);
+  expect(
+    readdirSync(runDir).filter((name) => name.startsWith(".bridge-paste-"))
+  ).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -2714,6 +2838,7 @@ test("bridge falls back to direct Codex delivery when the stored tmux session is
 });
 
 test("bridge drains codex messages through the persisted stable pane target", async () => {
+  let loadedText = "";
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -2730,6 +2855,9 @@ test("bridge drains codex messages through the persisted stable pane target", as
     }
     if (args[0] === "tmux" && args[1] === "send-keys") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "load-buffer") {
+      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -2768,38 +2896,23 @@ test("bridge drains codex messages through the persisted stable pane target", as
 
   expect(delivered).toBe(true);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
-  expect(spawnSync.mock.calls).toEqual([
-    [
-      ["tmux", "has-session", "-t", "repo-loop-8"],
-      { stderr: "ignore", stdout: "ignore" },
-    ],
-    [
-      ["tmux", "capture-pane", "-p", "-t", "%41"],
-      { stderr: "ignore", stdout: "pipe" },
-    ],
-    [
-      ["tmux", "capture-pane", "-p", "-t", "%41"],
-      { stderr: "ignore", stdout: "pipe" },
-    ],
-    [
-      [
-        "tmux",
-        "send-keys",
-        "-t",
-        "%41",
-        "-l",
-        "--",
-        "Claude: Please check the tmux path.",
-      ],
-      { stderr: "ignore" },
-    ],
-    [["tmux", "send-keys", "-t", "%41", "Enter"], { stderr: "ignore" }],
+  expect(loadedText).toBe("Claude: Please check the tmux path.");
+  expect(
+    spawnSync.mock.calls.filter(([[, command]]) => command === "load-buffer")
+  ).toHaveLength(1);
+  expect(
+    spawnSync.mock.calls.filter(([[, command]]) => command === "paste-buffer")
+  ).toHaveLength(1);
+  expect(spawnSync.mock.calls).toContainEqual([
+    ["tmux", "send-keys", "-t", "%41", "Enter"],
+    { stderr: "ignore" },
   ]);
 
   rmSync(root, { recursive: true, force: true });
 });
 
 test("bridge drains pending cursor tmux messages through the stored pane routing", async () => {
+  let loadedText = "";
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -2813,6 +2926,9 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
     }
     if (args[0] === "tmux" && args[1] === "send-keys") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "load-buffer") {
+      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -2852,93 +2968,31 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
 
   expect(delivered).toBe(true);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
-  expect(spawnSync.mock.calls).toEqual([
+  expect(loadedText).toBe(
     [
-      ["tmux", "has-session", "-t", "repo-loop-8"],
-      { stderr: "ignore", stdout: "ignore" },
-    ],
-    [
-      ["tmux", "has-session", "-t", "repo-loop-8"],
-      { stderr: "ignore", stdout: "ignore" },
-    ],
-    [
-      ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.0"],
-      { stderr: "ignore", stdout: "pipe" },
-    ],
-    [
-      ["tmux", "capture-pane", "-p", "-t", "repo-loop-8:0.0"],
-      { stderr: "ignore", stdout: "pipe" },
-    ],
-    [
-      [
-        "tmux",
-        "send-keys",
-        "-t",
-        "repo-loop-8:0.0",
-        "-l",
-        "--",
-        "[bridge:msg-cursor-1] Message from Codex via the loop bridge:",
-      ],
-      { stderr: "ignore" },
-    ],
-    [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
-      { stderr: "ignore" },
-    ],
-    [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "-l", "--", ""],
-      { stderr: "ignore" },
-    ],
-    [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
-      { stderr: "ignore" },
-    ],
-    [
-      [
-        "tmux",
-        "send-keys",
-        "-t",
-        "repo-loop-8:0.0",
-        "-l",
-        "--",
-        "Please review the current diff and send notes back through the bridge.",
-      ],
-      { stderr: "ignore" },
-    ],
-    [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
-      { stderr: "ignore" },
-    ],
-    [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "-l", "--", ""],
-      { stderr: "ignore" },
-    ],
-    [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "C-j"],
-      { stderr: "ignore" },
-    ],
-    [
-      [
-        "tmux",
-        "send-keys",
-        "-t",
-        "repo-loop-8:0.0",
-        "-l",
-        "--",
-        "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
-      ],
-      { stderr: "ignore" },
-    ],
-    [
-      ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "Enter"],
-      { stderr: "ignore" },
-    ],
-  ]);
+      "[bridge:msg-cursor-1] Message from Codex via the loop bridge:",
+      "Please review the current diff and send notes back through the bridge.",
+      "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
+    ].join("\n\n")
+  );
+  expect(
+    spawnSync.mock.calls.filter(([[, command]]) => command === "load-buffer")
+  ).toHaveLength(1);
+  expect(
+    spawnSync.mock.calls.filter(([[, command]]) => command === "paste-buffer")
+  ).toHaveLength(1);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([[, command, , , key]]) =>
+        command === "send-keys" && (key === "-l" || key === "C-j")
+    )
+  ).toHaveLength(0);
 
   rmSync(root, { recursive: true, force: true });
 });
 
 test("bridge drains pending Claude messages through the visible tmux pane", async () => {
+  let loadedText = "";
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -2949,6 +3003,9 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
         stderr: Buffer.alloc(0),
         stdout: Buffer.from("❯\n\nOpus 5 · bypass permissions on", "utf8"),
       };
+    }
+    if (args[0] === "tmux" && args[1] === "load-buffer") {
+      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -2992,18 +3049,13 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
 
   expect(delivered).toBe(true);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
-  expect(spawnSync.mock.calls).toContainEqual([
+  expect(loadedText).toBe(
     [
-      "tmux",
-      "send-keys",
-      "-t",
-      "repo-loop-8:0.0",
-      "-l",
-      "--",
       "[bridge:msg-claude-t] Message from Gemini via the loop bridge:",
-    ],
-    { stderr: "ignore" },
-  ]);
+      "Stop and review the supervisor ruling.",
+      "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
+    ].join("\n\n")
+  );
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)

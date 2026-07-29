@@ -53,6 +53,23 @@ try:
     signal.alarm(0)
     sys.stdout.write(f"SUBMITTED {role}\r\n")
     sys.stdout.flush()
+    if role == "gemini":
+        signal.alarm(20)
+        sys.stdout.write(f"BRIDGE_READY {role}\r\n{prompt} ")
+        sys.stdout.flush()
+        read_until(b"\x1b[201~")
+        early, _, _ = select.select([fd], [], [], 1.0)
+        if early:
+            os.read(fd, 4096)
+            sys.stdout.write(f"\r\nEARLY_BRIDGE_ENTER {role}\r\n")
+            sys.stdout.flush()
+            raise SystemExit(5)
+        sys.stdout.write("[Pasted Content 9279 chars]\r\n")
+        sys.stdout.flush()
+        read_until(b"\r")
+        signal.alarm(0)
+        sys.stdout.write(f"BRIDGE_SUBMITTED {role}\r\n")
+        sys.stdout.flush()
     time.sleep(60)
 finally:
     termios.tcsetattr(fd, termios.TCSADRAIN, original)
