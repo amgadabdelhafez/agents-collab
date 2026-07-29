@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Minimal bracketed-paste TUI for compiled loop transport smoke tests."""
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import select
+import signal
+import sys
+import termios
+import time
+import tty
+
+
+START_PASTE = b"\x1b[200~"
+END_PASTE = b"\x1b[201~"
+MAX_BOOTSTRAP_BYTES = 1024
+MAX_NUDGE_BYTES = 128
+FOUNDER_SENTINEL = "BEGIN-LARGE-CHARTER"
+
+role = os.path.basename(sys.argv[0])
+prompt = "❯" if role == "claude" else "›"
+fd = sys.stdin.fileno()
+original = termios.tcgetattr(fd)
+signal.alarm(30)
+
+
+def emit(value: str) -> None:
+    sys.stdout.write(f"{value}\r\n")
+    sys.stdout.flush()
+
+
+def read_until(suffix: bytes) -> None:
+    window = bytearray()
+    while not window.endswith(suffix):
+        chunk = os.read(fd, 1)
+        if not chunk:
+            raise SystemExit(3)
+        window.extend(chunk)
+        if len(window) > len(suffix):
+            del window[0]
+
+
+def read_bracketed_paste() -> bytes:
+    read_until(START_PASTE)
+    value = bytearray()
+    while not value.endswith(END_PASTE):
+        chunk = os.read(fd, 1)
+        if not chunk:
+            raise SystemExit(3)
+        value.extend(chunk)
+    return bytes(value[: -len(END_PASTE)])
+
+
+def read_initial_submission() -> bytes:
+    """Accept startup bytes queued just before or after bracketed mode."""
+    value = bytearray()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if not ready:
+            if value:
+                break
+            continue
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            raise SystemExit(3)
+        value.extend(chunk)
+        if END_PASTE in value:
+            break
+    submitted = bytes(value).rstrip(b"\r\n")
+    start = submitted.find(START_PASTE)
+    end = submitted.rfind(END_PASTE)
+    if start >= 0 and end > start:
+        return submitted[start + len(START_PASTE) : end]
+    return submitted
+
+
+def wait_for_gate() -> None:
+    gate_dir = Path(".git")
+    if role != "gemini" or not (gate_dir / "loop-smoke-hash-gate").exists():
+        return
+    (gate_dir / f"loop-smoke-{role}.ready").touch()
+    deadline = time.monotonic() + 10
+    while not (gate_dir / "loop-smoke-continue").exists():
+        if time.monotonic() >= deadline:
+            emit(f"BOOTSTRAP_GATE_TIMEOUT {role}")
+            raise SystemExit(8)
+        time.sleep(0.05)
+
+
+def verify_bootstrap(bootstrap_bytes: bytes) -> None:
+    if len(bootstrap_bytes) >= MAX_BOOTSTRAP_BYTES:
+        emit(f"BOOTSTRAP_TOO_LARGE {role} bytes={len(bootstrap_bytes)}")
+        raise SystemExit(5)
+    bootstrap = bootstrap_bytes.decode("utf-8").replace("\r\n", "\n").replace(
+        "\r", "\n"
+    )
+    if FOUNDER_SENTINEL in bootstrap:
+        emit(f"BOOTSTRAP_BODY_LEAK {role}")
+        raise SystemExit(6)
+    path_match = re.search(
+        r"^Your complete charter is stored at: (.+)$", bootstrap, re.MULTILINE
+    )
+    hash_match = re.search(
+        r"^Expected SHA-256: ([0-9a-f]{64})$", bootstrap, re.MULTILINE
+    )
+    if not path_match or not hash_match or "fail closed" not in bootstrap:
+        emit(f"BOOTSTRAP_BINDING_MISSING {role}")
+        raise SystemExit(7)
+    wait_for_gate()
+    charter_path = Path(path_match.group(1))
+    charter = charter_path.read_bytes()
+    actual = hashlib.sha256(charter).hexdigest()
+    expected = hash_match.group(1)
+    if actual != expected:
+        emit(
+            f"BOOTSTRAP_HASH_MISMATCH {role} expected={expected} actual={actual}"
+        )
+        raise SystemExit(9)
+    emit(
+        " ".join(
+            [
+                f"BOOTSTRAP_VERIFIED {role}",
+                f"bytes={len(bootstrap_bytes)}",
+                f"charter_bytes={len(charter)}",
+                f"sha256={actual}",
+            ]
+        )
+    )
+    emit(f"WORK_STARTED {role}")
+
+
+def receive_nudge() -> None:
+    emit(f"NUDGE_READY {role}")
+    sys.stdout.write(f"{prompt} ")
+    sys.stdout.flush()
+    nudge_bytes = read_bracketed_paste()
+    nudge = nudge_bytes.decode("utf-8")
+    if len(nudge_bytes) >= MAX_NUDGE_BYTES:
+        emit(f"NUDGE_TOO_LARGE {role} bytes={len(nudge_bytes)}")
+        raise SystemExit(10)
+    if FOUNDER_SENTINEL in nudge or "COMPILED-BRIDGE-SENTINEL" in nudge:
+        emit(f"NUDGE_BODY_LEAK {role}")
+        raise SystemExit(11)
+    emit(
+        f"NUDGE_RECEIVED {role} bytes={len(nudge_bytes)} text={json.dumps(nudge)}"
+    )
+    read_until(b"\r")
+    emit(f"NUDGE_SUBMITTED {role}")
+
+
+try:
+    # TCSANOW preserves bytes that tmux may have queued immediately after pane
+    # creation. The default TCSAFLUSH would discard that bootstrap and make the
+    # smoke test a race against Python process startup.
+    tty.setraw(fd, termios.TCSANOW)
+    sys.stdout.write("\x1b[?2004h")
+    emit(f"READY {role}")
+    sys.stdout.write(f"{prompt} ")
+    sys.stdout.flush()
+    bootstrap = read_initial_submission()
+    verify_bootstrap(bootstrap)
+    signal.alarm(30)
+    receive_nudge()
+    signal.alarm(0)
+    time.sleep(60)
+finally:
+    termios.tcsetattr(fd, termios.TCSADRAIN, original)

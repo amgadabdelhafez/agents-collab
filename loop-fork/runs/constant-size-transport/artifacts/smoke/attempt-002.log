@@ -1,0 +1,26 @@
+task_id: constant-size-transport
+dimension: smoke
+attempt: 002
+started_at: 2026-07-29T18:01:53Z
+command: bash ../evals/smoke/constant-size-transport.sh
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [4.37ms]
+
+ 1 pass
+ 56 filtered out
+ 0 fail
+ 36 expect() calls
+Ran 1 test across 1 file. [39.00ms]
+$ bun build --compile --outfile loop src/cli.ts
+large-prompt smoke: session=repo-loop-1 panes=gemini:%0,cursor:%1 manifest=ok bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=1
+$ bun build --compile --outfile loop src/cli.ts
+bridge-nudge smoke: session=repo-loop-1 gemini=%1 claude=%0 nudge-bytes=53 body=ledger-only receive=complete notification=unresolved-until-pull
+constant-size transport smoke: launch-bootstrap=pass bridge-nudge=pass
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-29T18:01:59Z

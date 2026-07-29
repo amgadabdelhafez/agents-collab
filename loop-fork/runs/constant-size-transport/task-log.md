@@ -29,6 +29,23 @@ Description: Replace large inline launch charters and terminal message bodies wi
 - RULING 26 released the T4/census gate with independently matching ZERO-ADMIT
   derivations. Deployment remains held only for exact-SHA review of this
   cumulative change.
+- Claude independently verified 1,214 tests, the candidate binary hash, the
+  pointer bootstrap, and the bounded tmux control plane, then issued DISSENT on
+  exact commit `e14773a6c013c9ccaefd936d3b08d63ed055d5e0` because both committed
+  transport smoke scripts encoded the retired full-paste behavior and failed.
+- Replaced those guards with a live hash-verifying fake TUI. The launch guard
+  now verifies both agents against their run-owned charter hashes, checks
+  bootstrap size/body isolation and file modes, deliberately tampers one
+  charter to prove fail-closed behavior, and preserves named-session, pane,
+  manifest, and nonzero missing-workspace assertions.
+- The runtime guard now discovers panes from manifest agent ownership, sends a
+  9,279-byte sentinel body, proves the pane received exactly one 53-byte nudge
+  with no body or subject, proves notification did not resolve the message,
+  then drains the complete body through `receive_messages` with exactly one
+  delivered resolution.
+- The combined committed smoke passed twice under Harness. The full repository
+  verifier then passed lint, source typecheck, compiled build, the sequential
+  test suite, and the empty baseline allowlist on the final review tree.
 
 ## Why
 

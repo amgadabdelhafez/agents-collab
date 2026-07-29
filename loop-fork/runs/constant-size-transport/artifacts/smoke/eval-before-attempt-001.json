@@ -1,7 +1,7 @@
 {
   "task_id": "constant-size-transport",
   "status": "pass",
-  "required": ["unit", "smoke"],
+  "required": ["unit"],
   "dimensions": {
     "unit": {
       "status": "pass",
@@ -11,15 +11,6 @@
       "latest_attempt": "002",
       "latest_attempt_artifact": "runs/constant-size-transport/artifacts/unit/attempt-002.log",
       "latest_attempt_meta": "runs/constant-size-transport/artifacts/unit/attempt-002.json"
-    },
-    "smoke": {
-      "status": "pass",
-      "artifact": "runs/constant-size-transport/artifacts/smoke/verify.log",
-      "reason": "command exited 0",
-      "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/constant-size-transport/artifacts/smoke/attempt-002.log",
-      "latest_attempt_meta": "runs/constant-size-transport/artifacts/smoke/attempt-002.json"
     }
   }
 }

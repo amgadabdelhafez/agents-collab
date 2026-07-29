@@ -1,15 +1,20 @@
 {
   "task_id": "constant-size-transport",
   "feature": "constant-size-transport",
-  "timestamp": "2026-07-29T17:15:00Z",
+  "timestamp": "2026-07-29T18:04:00Z",
   "verdict": "pass",
   "baseline_failures": [],
-  "required": ["unit", "full", "independent_review", "release_gate"],
+  "required": ["unit", "committed_smokes", "full", "independent_review", "release_gate"],
   "dimensions": {
     "unit": {
       "status": "pass",
       "method": "Harness focused verification",
       "reason": "278 focused launch, bridge, app-server, proxy, manifest, guidance, and Governess tests passed with zero failures"
+    },
+    "committed_smokes": {
+      "status": "pass",
+      "method": "evals/smoke/constant-size-transport.sh",
+      "reason": "live pointer-bootstrap verification, controlled hash mismatch, current pane discovery, nonzero missing workspace, and ledger-only 9,279-byte bridge delivery all passed"
     },
     "full": {
       "status": "pass",

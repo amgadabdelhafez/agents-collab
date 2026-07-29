@@ -17,9 +17,9 @@
       "artifact": "runs/constant-size-transport/artifacts/smoke/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/constant-size-transport/artifacts/smoke/attempt-002.log",
-      "latest_attempt_meta": "runs/constant-size-transport/artifacts/smoke/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/constant-size-transport/artifacts/smoke/attempt-001.log",
+      "latest_attempt_meta": "runs/constant-size-transport/artifacts/smoke/attempt-001.json"
     }
   }
 }

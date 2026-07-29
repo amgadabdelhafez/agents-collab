@@ -10,6 +10,8 @@
   nudges.
 - [x] Update bridge guidance for nudge-then-pull semantics.
 - [x] Add realistic-size, recovery, race, and fail-closed regressions.
+- [x] Replace the obsolete full-paste smoke guards with executable
+  pointer-bootstrap and ledger-only bridge-delivery guards.
 - [x] Run focused and full verification and record an empty baseline.
 - [ ] Obtain exact-SHA independent review before deploy (T4/census released by
   RULING 26).
