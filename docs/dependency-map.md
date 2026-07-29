@@ -1,6 +1,6 @@
 # Dependency Map
 
-Last updated: <!-- 2026-07-28 by refresh-dependency-map.sh -->
+Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
 
 ## Modules
 
@@ -47,7 +47,7 @@ Last updated: <!-- 2026-07-28 by refresh-dependency-map.sh -->
 
 [Native fallback control]
   owns: native-subagent.ts, loop-scoped provider profiles, provider hooks
-  exposes: one short-lived read-only provider lease or strict zero-native mode
+  exposes: one short-lived Claude read-only lease, Codex fail-closed disablement, or strict zero-native mode
   consumes: settled utility evidence, current Governess epoch, provider lifecycle events
 ```
 
@@ -72,9 +72,10 @@ Governess ──route/epoch───────────┴────► t
     │
     └─ current epoch + settled utility evidence ─► native fallback journal
                                                       │ one leased slot
-provider Agent/spawn_agent ──PreToolUse/profile hook───┘
+Claude Agent ──PreToolUse/profile contract─────────────┘
                                                       ▼
                                               read-only native child
+Codex spawn_agent ──config + PreToolUse──► denied (0.145 sandbox inheritance)
 
 Nanny pane / Au Pair pane ──read only──► filtered utility store view
 optional bridge supervisor ──messages/route request──► bridge
@@ -90,7 +91,7 @@ optional bridge supervisor ──messages/route request──► bridge
 | Background jobs | Utility store/runtime | `utility/jobs.jsonl`, stale-claim fencing |
 | Cost and tokens | Provider adapter/runtime | `utility/usage.jsonl` |
 | Delegation adoption | Delegation policy, hook, and Codex proxy | `utility/delegation.jsonl` |
-| Native fallback | Governess lease store and provider hooks | `native-fallback/events.jsonl`, hook journals, Governess board |
+| Native fallback | Governess lease store and provider hooks | `native-subagents/events.jsonl`, hook journals, Governess board |
 | Large outputs | Tool broker | patch/report artifacts referenced by result |
 | Visibility | Governess and optional utility pane | pane output; never a control dependency |
 
@@ -105,4 +106,4 @@ optional bridge supervisor ──messages/route request──► bridge
 | Tool broker | Worker prompt, scope tests, secret/command policy | This is the host security boundary |
 | Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
-| Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption and native fallback before supported local tool calls |
+| Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption; Claude gates the read-only fallback while Codex native spawn fails closed |

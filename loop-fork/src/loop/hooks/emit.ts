@@ -621,7 +621,11 @@ const nativeChildInspectionDecision = (
     let canonicalRoot: string;
     try {
       canonicalRoot = realpathSync(manifestRoot);
-      if (realpathSync(requestedWorkdir) !== canonicalRoot) {
+      if (
+        !isAbsolute(requestedWorkdir) ||
+        requestedWorkdir !== canonicalRoot ||
+        realpathSync(requestedWorkdir) !== canonicalRoot
+      ) {
         return { allowed: false };
       }
     } catch {
@@ -805,10 +809,12 @@ const handleNativeSubagentHook = (
       toolUseId,
     });
     if (!decision.allowed) {
+      const recovery =
+        agent === "codex"
+          ? "Use Direct, Nanny, Au Pair, or a targeted Claude peer review; Codex native spawning is disabled because child roles inherit the full-access parent sandbox."
+          : `Use Direct, Nanny, or Au Pair first; then request_native_fallback, wait for a Governess grant, and spawn only ${nativeFallbackProfile(agent) ?? "the loop read-only profile"}.`;
       return handledNativeHook(
-        preToolDecisionOutput(
-          `${decision.reason}. Use Direct, Nanny, or Au Pair first; then request_native_fallback, wait for a Governess grant, and spawn only ${nativeFallbackProfile(agent) ?? "the loop read-only profile"}.`
-        )
+        preToolDecisionOutput(`${decision.reason}. ${recovery}`)
       );
     }
     if (!decision.lease) {

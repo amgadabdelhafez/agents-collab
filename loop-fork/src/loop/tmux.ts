@@ -19,7 +19,7 @@ import {
   DEFAULT_HELPER_CAVEMAN_MODE,
 } from "./caveman";
 import { getCodexAppServerUrl, getLastCodexThreadId } from "./codex-app-server";
-import { codexHomeEnv, writeLoopCodexFallbackAgent } from "./codex-home";
+import { codexHomeEnv } from "./codex-home";
 import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   findCodexTmuxProxyPort,
@@ -251,6 +251,10 @@ const pairedBridgeGuidance = (
   activation: "active" | "on-request" = "active"
 ): string => {
   const peer = capitalize(target);
+  const nativeFallbackGuidance =
+    agent === "codex"
+      ? "Codex native spawn is disabled in governed modes because Codex 0.145 inherits the full-access parent sandbox. Do not call spawn_agent; use Direct, Nanny, Au Pair, or a targeted Claude peer review."
+      : `Only after those utility tiers settle without completing a bounded read-only exploration or review, use ${quotedClaudeTmuxBridgeTool(serverName, "request_native_fallback")}, wait for a Governess grant, and invoke only the loop-readonly-fallback Agent profile.`;
   if (agent === "claude") {
     return [
       `Your bridge MCP server is "${serverName}". Use ${quotedClaudeTmuxBridgeTool(serverName, "send_message")} with target: "${target}" for ${peer}-facing messages, including replies to inbound ${peer} channel messages; do not send ${peer}-facing responses as a human-facing message.`,
@@ -261,6 +265,7 @@ const pairedBridgeGuidance = (
         activation
       ),
       `For a returned Au Pair edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
+      nativeFallbackGuidance,
       `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
     ].join("\n");
   }
@@ -274,6 +279,7 @@ const pairedBridgeGuidance = (
       activation
     ),
     `For a returned Au Pair edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
+    nativeFallbackGuidance,
     `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
   ].join("\n");
 };
@@ -330,7 +336,7 @@ const buildPrimaryPrompt = (
     parts.push(cavemanGuidance);
   }
   parts.push(
-    "Do not proactively create provider-native subagents or a native agent fleet. Use Direct, Nanny, and Au Pair first; a provider-native fallback is allowed only through the Governess lease described below."
+    "Do not proactively create provider-native subagents or a native agent fleet. Use Direct, Nanny, and Au Pair first; only the provider-enforceable fallback described below may receive a Governess lease."
   );
   parts.push(pairedBridgeGuidance(opts.agent, peerAgentName, serverName));
   parts.push(pairedWorkflowGuidance(opts, opts.agent));
@@ -391,7 +397,7 @@ const buildInteractivePrimaryPrompt = (
     parts.push(cavemanGuidance);
   }
   parts.push(
-    "Once the human gives you a concrete task, do not proactively create provider-native subagents or a native agent fleet. Use Direct, Nanny, and Au Pair first; a provider-native fallback is allowed only through the Governess lease described below."
+    "Once the human gives you a concrete task, do not proactively create provider-native subagents or a native agent fleet. Use Direct, Nanny, and Au Pair first; only the provider-enforceable fallback described below may receive a Governess lease."
   );
   parts.push(pairedBridgeGuidance(opts.agent, peerAgentName, serverName));
   parts.push(pairedWorkflowGuidance(opts, opts.agent));
@@ -576,11 +582,14 @@ const buildCodexCommand = (
     value,
   ]);
   const nativeConfigArgs = (() => {
-    if (nativeSubagentMode === "strict") {
+    if (
+      nativeSubagentMode === "strict" ||
+      nativeSubagentMode === "utility-first"
+    ) {
+      // Codex 0.145 gives spawned roles the parent's effective sandbox. The
+      // main agent needs write authority, so a read-only native child is not
+      // enforceable and native spawning stays disabled in governed modes.
       return ["-c", "agents.enabled=false"];
-    }
-    if (nativeSubagentMode === "utility-first") {
-      return ["-c", "agents.max_concurrent_threads_per_session=1"];
     }
     return [];
   })();
@@ -991,7 +1000,7 @@ const prepareGovernessHooks = (
   opts: Options,
   runDir: string,
   paneAgents: { left: Agent; right: Agent },
-  nativeSubagentMode: NativeSubagentMode
+  _nativeSubagentMode: NativeSubagentMode
 ): GovernessHookConfig => {
   if (!opts.governess) {
     return { codexBypassHookTrust: false };
@@ -1014,17 +1023,6 @@ const prepareGovernessHooks = (
         join(opts.codexHome, "hooks.json"),
         buildCodexHooksJson(command)
       );
-      if (nativeSubagentMode === "utility-first") {
-        writeLoopCodexFallbackAgent(
-          opts.codexHome,
-          buildHookCommand(
-            deps.launchArgv,
-            agent,
-            join(hooksDir, `${agent}-native-child.jsonl`),
-            "native-child"
-          )
-        );
-      }
     }
   }
   return {

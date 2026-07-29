@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildLoopCodexConfig,
-  buildLoopCodexFallbackAgent,
   ensureLoopCodexHome,
 } from "../../src/loop/codex-home";
 import {
@@ -12,6 +11,7 @@ import {
   bindNativeFallbackStart,
   CLAUDE_NATIVE_FALLBACK_PROFILE,
   CODEX_NATIVE_FALLBACK_PROFILE,
+  CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON,
   completeNativeFallback,
   consumeNativeFallbackLease,
   createNativeFallbackRequest,
@@ -44,7 +44,7 @@ const settledUtilityJob = (
     authority: {},
     id,
     kind: "inspect",
-    objective: "Inspect a bounded source file",
+    objective: `Inspect a bounded source file for ${id}`,
     readScope: ["src/example.ts"],
     requester,
     requiredCapabilities: ["inspect"],
@@ -142,7 +142,7 @@ test("Governess requires substantive utility evidence, not only a settled state"
           kind: "inspect",
           objective: `Inspect one bounded file for ${id}`,
           readScope: ["src/example.ts"],
-          requester: "codex",
+          requester: "claude",
           requiredCapabilities: ["inspect"],
           risk: "low",
           writeScope: [],
@@ -156,7 +156,7 @@ test("Governess requires substantive utility evidence, not only a settled state"
     appendNativeFallbackRequest(
       runDir,
       fallbackRequest(
-        "codex",
+        "claude",
         "canceled-without-result",
         "native-canceled-evidence"
       )
@@ -164,7 +164,7 @@ test("Governess requires substantive utility evidence, not only a settled state"
     appendNativeFallbackRequest(
       runDir,
       fallbackRequest(
-        "codex",
+        "claude",
         "route-without-decision",
         "native-route-evidence"
       )
@@ -193,14 +193,14 @@ test("Governess grants one lease and provider hooks consume and close it once", 
   try {
     activateUtilityEpoch(runDir, 7);
     settledUtilityJob(runDir, "claude", "utility-1");
-    settledUtilityJob(runDir, "codex", "utility-2");
+    settledUtilityJob(runDir, "claude", "utility-2");
     appendNativeFallbackRequest(
       runDir,
       fallbackRequest("claude", "utility-1", "native-1")
     );
     appendNativeFallbackRequest(
       runDir,
-      fallbackRequest("codex", "utility-2", "native-2")
+      fallbackRequest("claude", "utility-2", "native-2")
     );
 
     expect(
@@ -299,10 +299,10 @@ test("unused native fallback lease expires and stale epochs cannot grant", () =>
   const runDir = mkdtempSync(join(tmpdir(), "loop-native-expiry-"));
   try {
     activateUtilityEpoch(runDir, 11);
-    settledUtilityJob(runDir, "codex", "utility-expiry");
+    settledUtilityJob(runDir, "claude", "utility-expiry");
     appendNativeFallbackRequest(
       runDir,
-      fallbackRequest("codex", "utility-expiry", "native-expiry")
+      fallbackRequest("claude", "utility-expiry", "native-expiry")
     );
     expect(() =>
       processPendingNativeFallbackRequests({
@@ -319,15 +319,54 @@ test("unused native fallback lease expires and stale epochs cannot grant", () =>
     });
     expect(
       consumeNativeFallbackLease({
-        agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+        agentType: CLAUDE_NATIVE_FALLBACK_PROFILE,
         mode: "utility-first",
         nowMs: 2_120_001,
+        provider: "claude",
+        runDir,
+        toolName: "Agent",
+      })
+    ).toMatchObject({ allowed: false, reason: "native-lease-missing" });
+    expect(readNativeFallbackRequests(runDir)[0]?.state).toBe("expired");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("Codex native fallback is denied because its child inherits the parent sandbox", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-native-codex-disabled-"));
+  try {
+    activateUtilityEpoch(runDir, 21);
+    settledUtilityJob(runDir, "codex", "utility-codex-disabled");
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest(
+        "codex",
+        "utility-codex-disabled",
+        "native-codex-disabled"
+      )
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 21,
+      mode: "utility-first",
+      runDir,
+    });
+    expect(readNativeFallbackRequests(runDir)[0]).toMatchObject({
+      reason: CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON,
+      state: "denied",
+    });
+    expect(
+      consumeNativeFallbackLease({
+        agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+        mode: "utility-first",
         provider: "codex",
         runDir,
         toolName: "spawn_agent",
       })
-    ).toMatchObject({ allowed: false, reason: "native-lease-missing" });
-    expect(readNativeFallbackRequests(runDir)[0]?.state).toBe("expired");
+    ).toMatchObject({
+      allowed: false,
+      reason: CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON,
+    });
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
@@ -337,11 +376,11 @@ test("running native fallback expires before further tools or completion", () =>
   const runDir = mkdtempSync(join(tmpdir(), "loop-native-runtime-expiry-"));
   try {
     activateUtilityEpoch(runDir, 12);
-    settledUtilityJob(runDir, "codex", "utility-runtime-expiry");
+    settledUtilityJob(runDir, "claude", "utility-runtime-expiry");
     appendNativeFallbackRequest(
       runDir,
       fallbackRequest(
-        "codex",
+        "claude",
         "utility-runtime-expiry",
         "native-runtime-expiry"
       )
@@ -353,32 +392,33 @@ test("running native fallback expires before further tools or completion", () =>
       runDir,
     });
     consumeNativeFallbackLease({
-      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      agentType: CLAUDE_NATIVE_FALLBACK_PROFILE,
       mode: "utility-first",
       nowMs: 3_001_000,
-      provider: "codex",
+      provider: "claude",
       runDir,
-      toolName: "spawn_agent",
+      toolName: "Agent",
     });
     bindNativeFallbackStart({
       agentId: "runtime-child",
-      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      agentType: CLAUDE_NATIVE_FALLBACK_PROFILE,
       nowMs: 3_002_000,
-      provider: "codex",
+      provider: "claude",
       runDir,
     });
 
     expect(
-      nativeFallbackForChild(runDir, "codex", "runtime-child", 3_300_999)?.state
+      nativeFallbackForChild(runDir, "claude", "runtime-child", 3_300_999)
+        ?.state
     ).toBe("running");
     expect(
-      nativeFallbackForChild(runDir, "codex", "runtime-child", 3_301_001)
+      nativeFallbackForChild(runDir, "claude", "runtime-child", 3_301_001)
     ).toBeUndefined();
     expect(
       completeNativeFallback({
         agentId: "runtime-child",
         nowMs: 3_301_002,
-        provider: "codex",
+        provider: "claude",
         runDir,
       })
     ).toMatchObject({
@@ -395,10 +435,10 @@ test("a new Governess epoch immediately fences a running native child", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-native-epoch-fence-"));
   try {
     activateUtilityEpoch(runDir, 31);
-    settledUtilityJob(runDir, "codex", "utility-epoch-fence");
+    settledUtilityJob(runDir, "claude", "utility-epoch-fence");
     appendNativeFallbackRequest(
       runDir,
-      fallbackRequest("codex", "utility-epoch-fence", "native-epoch-fence")
+      fallbackRequest("claude", "utility-epoch-fence", "native-epoch-fence")
     );
     processPendingNativeFallbackRequests({
       epoch: 31,
@@ -407,24 +447,24 @@ test("a new Governess epoch immediately fences a running native child", () => {
       runDir,
     });
     consumeNativeFallbackLease({
-      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      agentType: CLAUDE_NATIVE_FALLBACK_PROFILE,
       mode: "utility-first",
       nowMs: 4_001_000,
-      provider: "codex",
+      provider: "claude",
       runDir,
-      toolName: "spawn_agent",
+      toolName: "Agent",
     });
     bindNativeFallbackStart({
       agentId: "epoch-child",
-      agentType: CODEX_NATIVE_FALLBACK_PROFILE,
+      agentType: CLAUDE_NATIVE_FALLBACK_PROFILE,
       nowMs: 4_002_000,
-      provider: "codex",
+      provider: "claude",
       runDir,
     });
 
     activateUtilityEpoch(runDir, 32);
     expect(
-      nativeFallbackForChild(runDir, "codex", "epoch-child", 4_003_000)
+      nativeFallbackForChild(runDir, "claude", "epoch-child", 4_003_000)
     ).toBeUndefined();
     expect(readNativeFallbackRequests(runDir)[0]).toMatchObject({
       reason: "native-fallback-stale-epoch",
@@ -438,31 +478,10 @@ test("a new Governess epoch immediately fences a running native child", () => {
 test("loop-scoped provider definitions enforce one read-only fallback", () => {
   const utilityFirst = buildLoopCodexConfig("/repo", "utility-first");
   expect(utilityFirst).toContain("[agents]");
-  expect(utilityFirst).toContain("enabled = true");
-  expect(utilityFirst).toContain("max_concurrent_threads_per_session = 1");
+  expect(utilityFirst).toContain("enabled = false");
+  expect(utilityFirst).not.toContain("max_concurrent_threads_per_session");
   expect(buildLoopCodexConfig("/repo", "strict")).toContain("enabled = false");
   expect(buildLoopCodexConfig("/repo", "off")).not.toContain("[agents]");
-  const codexFallback = buildLoopCodexFallbackAgent(
-    "loop __hook-emit codex /run/hooks/codex-native-child.jsonl native-child"
-  );
-  expect(codexFallback).toContain('sandbox_mode = "read-only"');
-  expect(codexFallback).toContain("allow_login_shell = false");
-  expect(codexFallback).toContain('web_search = "disabled"');
-  expect(codexFallback).toContain("multi_agent = false");
-  expect(codexFallback).toContain("shell_tool = true");
-  expect(codexFallback).toContain("unified_exec = false");
-  expect(codexFallback).toContain("absolute system binaries");
-  expect(codexFallback).toContain("[shell_environment_policy]");
-  expect(codexFallback).toContain('inherit = "none"');
-  expect(codexFallback).toContain('PATH = "/usr/bin:/bin"');
-  expect(codexFallback).toContain("experimental_use_profile = false");
-  expect(codexFallback).not.toContain("rg --no-config");
-  expect(codexFallback).not.toContain("rg --files");
-  expect(codexFallback).toContain("[mcp_servers.loop-bridge]");
-  expect(codexFallback).toContain('url = "http://127.0.0.1:1/mcp"');
-  expect(codexFallback).toContain("enabled = false");
-  expect(codexFallback).toContain("[[hooks.PreToolUse]]");
-  expect(codexFallback).toContain("native-child");
 
   const claude =
     claudeNativeFallbackDefinition()[CLAUDE_NATIVE_FALLBACK_PROFILE];
@@ -509,12 +528,7 @@ test("loop-scoped provider definitions enforce one read-only fallback", () => {
       false,
       "utility-first"
     )
-  ).toEqual(
-    expect.arrayContaining([
-      "-c",
-      "agents.max_concurrent_threads_per_session=1",
-    ])
-  );
+  ).toEqual(expect.arrayContaining(["-c", "agents.enabled=false"]));
   expect(
     tmuxInternals.buildCodexCommand(
       "http://loop.invalid",
@@ -527,21 +541,20 @@ test("loop-scoped provider definitions enforce one read-only fallback", () => {
   ).toEqual(expect.arrayContaining(["-c", "agents.enabled=false"]));
 });
 
-test("ensureLoopCodexHome writes only loop-scoped native policy", () => {
+test("ensureLoopCodexHome disables Codex native spawning without a fallback profile", () => {
   const runDir = mkdtempSync(join(tmpdir(), "loop-native-codex-home-"));
   try {
     const codexHome = ensureLoopCodexHome(runDir, "/repo", {
       LOOP_NATIVE_SUBAGENT_MODE: "utility-first",
     });
     expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toContain(
-      "max_concurrent_threads_per_session = 1"
+      "enabled = false"
     );
     expect(
-      readFileSync(
-        join(codexHome, "agents", `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`),
-        "utf8"
+      existsSync(
+        join(codexHome, "agents", `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`)
       )
-    ).toContain('sandbox_mode = "read-only"');
+    ).toBe(false);
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }

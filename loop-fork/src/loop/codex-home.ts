@@ -22,16 +22,25 @@ import {
 const LOOP_CODEX_HOME_DIR = "codex-home";
 const AUTH_FILES = ["auth.json"] as const;
 
-const removeLoopCodexGovernance = (codexHome: string): void => {
-  for (const path of [
-    join(codexHome, "hooks.json"),
-    join(codexHome, "agents", `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`),
-  ]) {
+const loopCodexFallbackAgentPath = (codexHome: string): string =>
+  join(codexHome, "agents", `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`);
+
+const removeFiles = (paths: string[]): void => {
+  for (const path of paths) {
     if (existsSync(path)) {
       unlinkSync(path);
     }
   }
 };
+
+const removeLoopCodexFallbackAgent = (codexHome: string): void =>
+  removeFiles([loopCodexFallbackAgentPath(codexHome)]);
+
+const removeLoopCodexGovernance = (codexHome: string): void =>
+  removeFiles([
+    join(codexHome, "hooks.json"),
+    loopCodexFallbackAgentPath(codexHome),
+  ]);
 
 const sourceCodexHome = (): string | undefined => {
   if (process.env.CODEX_HOME?.trim()) {
@@ -54,10 +63,12 @@ export const buildLoopCodexConfig = (
       ? []
       : [
           "[agents]",
-          `enabled = ${mode === "strict" ? "false" : "true"}`,
-          ...(mode === "utility-first"
-            ? ["max_concurrent_threads_per_session = 1"]
-            : []),
+          // Codex 0.145 reapplies the parent turn's live sandbox after loading
+          // a custom role. Because this parent must retain write authority, no
+          // Codex child can be proven read-only. Keep native agents disabled
+          // in both governed modes; utility-first's one fallback is currently
+          // the enforceable Claude profile.
+          "enabled = false",
           "",
         ];
   return [
@@ -74,75 +85,6 @@ export const buildLoopCodexConfig = (
     'trust_level = "trusted"',
     "",
   ].join("\n");
-};
-
-export const buildLoopCodexFallbackAgent = (
-  nativeChildHookCommand?: string
-): string =>
-  // Standalone agent layers must declare a transport even for a disabled MCP
-  // server; use an inert loopback URL so the layer parses before parent merge.
-  [
-    `name = ${JSON.stringify(CODEX_NATIVE_FALLBACK_PROFILE)}`,
-    'description = "Governess-leased read-only explorer or independent reviewer."',
-    'sandbox_mode = "read-only"',
-    'approval_policy = "never"',
-    "allow_login_shell = false",
-    'web_search = "disabled"',
-    'developer_instructions = """',
-    "Inspect only the exact scopes and objective injected by the Governess lease.",
-    "Do not write, edit, mutate, use network or MCP tools, ask the human, make authority decisions, or spawn descendants.",
-    "Use only absolute system binaries and canonical absolute file operands with login=false and workdir set to the canonical repository root shown in the lease context. Allowed forms (maximum 500 lines, eight files, and 1 MiB per file): /usr/bin/sed -n '1,120p' /repo/path; /usr/bin/head -n 120 -- /repo/path; /usr/bin/tail -n 120 -- /repo/path; /usr/bin/wc -l -- /repo/path; or /usr/bin/stat -- /repo/path.",
-    "The Governess hook rejects PATH-resolved executables, login shells, noncanonical workdirs or operands, recursive directory operands, compound commands, expansion, redirection, unscoped paths, symlink escapes, and every other executable. Cite concrete file evidence, return a concise result to the parent, and stop.",
-    '"""',
-    "",
-    "[agents]",
-    "enabled = false",
-    "",
-    "[features]",
-    "multi_agent = false",
-    "remote_plugin = false",
-    "shell_tool = true",
-    "unified_exec = false",
-    "",
-    "[tools]",
-    "view_image = false",
-    "web_search = false",
-    "",
-    "[shell_environment_policy]",
-    'inherit = "none"',
-    'set = { PATH = "/usr/bin:/bin", LC_ALL = "C" }',
-    "ignore_default_excludes = false",
-    "experimental_use_profile = false",
-    "",
-    "[mcp_servers.loop-bridge]",
-    'url = "http://127.0.0.1:1/mcp"',
-    "enabled = false",
-    "",
-    ...(nativeChildHookCommand
-      ? [
-          "[[hooks.PreToolUse]]",
-          'matcher = ".*"',
-          "",
-          "[[hooks.PreToolUse.hooks]]",
-          'type = "command"',
-          `command = ${JSON.stringify(nativeChildHookCommand)}`,
-          "timeout = 30",
-          "",
-        ]
-      : []),
-  ].join("\n");
-
-export const writeLoopCodexFallbackAgent = (
-  codexHome: string,
-  nativeChildHookCommand?: string
-): void => {
-  const agentsDir = join(codexHome, "agents");
-  mkdirSync(agentsDir, { recursive: true });
-  writeFileSync(
-    join(agentsDir, `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`),
-    buildLoopCodexFallbackAgent(nativeChildHookCommand),
-    "utf8"
-  );
 };
 
 const ensureAuthFile = (codexHome: string, filename: string): void => {
@@ -181,13 +123,18 @@ export const ensureLoopCodexHome = (
     buildLoopCodexConfig(cwd, mode),
     "utf8"
   );
-  if (mode === "utility-first") {
-    writeLoopCodexFallbackAgent(codexHome);
+  if (mode === "utility-first" || mode === "strict") {
+    // Remove profiles written by older builds. Codex 0.145 custom agents
+    // inherit this parent's danger-full-access sandbox, so retaining the file
+    // would advertise a read-only boundary that the provider does not enforce.
+    // Keep hooks.json in either governed mode: an already-running app-server
+    // loaded that root spawn gate at startup, and live reattachment must not
+    // erase it.
+    removeLoopCodexFallbackAgent(codexHome);
   } else {
     // A run-scoped CODEX_HOME survives topology changes. Foreground/off and
-    // strict startup must not inherit hooks or a child profile written by an
-    // earlier governed tmux launch; tmux reinstalls current hooks after this
-    // cleanup when Governess is actually present.
+    // compatibility startup must not inherit hooks or a child profile written
+    // by an earlier governed tmux launch.
     removeLoopCodexGovernance(codexHome);
   }
   for (const filename of AUTH_FILES) {

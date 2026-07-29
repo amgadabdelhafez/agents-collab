@@ -19,7 +19,8 @@ loop CLI / tmux launcher
                                       ├─ Nanny ──Pi──► local Qwen + broker
                                       └─ Au Pair ─Pi──► OpenRouter GLM + broker
 
-provider-native Agent/spawn_agent ──PreToolUse──► Governess native lease
+Claude Agent ──PreToolUse──► Governess native lease
+Codex spawn_agent ──PreToolUse/config──► denied (sandbox inheritance)
                                                   ├─ strict: denied
                                                   └─ one read-only fallback
 
@@ -71,9 +72,10 @@ or claim authority.
   current Governess epoch may lease one run-wide read-only fallback for 120
   seconds after settled utility evidence; strict mode disables native agents.
   Hooks atomically consume the lease, bind the child lifecycle, scope reads,
-  and deny mutation or descendants. Codex's fallback profile carries its own
-  child-tool hook because Codex 0.145 does not document `agent_id` on
-  `PreToolUse`; advancing the Governess epoch immediately fences the child.
+  and deny mutation or descendants. The current fallback is Claude-only:
+  Codex 0.145 reapplies the writable parent's sandbox to custom roles, so
+  governed Codex configs disable agents and never advertise a false read-only
+  boundary. Advancing the Governess epoch immediately fences the Claude child.
 - Credentials stay in the provider process environment and are removed from
   tool child environments and traces.
 - Pane and external-supervisor availability never determine job availability.

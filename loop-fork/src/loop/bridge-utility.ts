@@ -292,7 +292,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Request the one governed provider-native fallback only after Direct, Nanny, or Au Pair has produced a settled route or terminal result that cannot finish the bounded read-only exploration/review. Supply those task IDs as evidence. Governess grants at most one short-lived run-wide lease; the next native Agent/spawn_agent call must use the loop-readonly-fallback profile. Main agents cannot self-assert a human exception.",
+      "Claude may request the one governed native fallback only after Direct, Nanny, or Au Pair has produced a settled route or terminal result that cannot finish the bounded read-only exploration/review. Supply those task IDs as evidence. Governess grants at most one short-lived run-wide lease; the next Agent call must use the loop-readonly-fallback profile. Codex native spawn is disabled because Codex 0.145 inherits the full-access parent sandbox. Main agents cannot self-assert a human exception.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -335,8 +335,9 @@ export const UTILITY_BRIDGE_TOOLS = [
           type: "array",
         },
         requester: {
-          description: "Required only for supervisor submissions.",
-          enum: ["claude", "codex"],
+          description:
+            "Required only for supervisor submissions; the current enforceable native fallback provider is Claude.",
+          enum: ["claude"],
           type: "string",
         },
       },
@@ -836,12 +837,17 @@ const requestNativeFallback = (
       : source;
   if (requester === "supervisor") {
     throw new UtilityBridgeInputError(
-      "supervisor request_native_fallback requires requester=claude|codex"
+      "supervisor request_native_fallback requires requester=claude"
     );
   }
-  if (requester !== "claude" && requester !== "codex") {
+  if (requester === "codex") {
     throw new UtilityBridgeInputError(
-      "native fallback is available only to Claude or Codex"
+      "Codex native spawn is disabled because the provider inherits the full-access parent sandbox; use Direct, Nanny, Au Pair, or targeted Claude peer review"
+    );
+  }
+  if (requester !== "claude") {
+    throw new UtilityBridgeInputError(
+      "native fallback is currently available only to Claude"
     );
   }
   if (

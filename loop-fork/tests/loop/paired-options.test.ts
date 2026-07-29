@@ -636,3 +636,93 @@ test("preparePairedRun clears stale tmux state and Codex governance outside tmux
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("preparePairedRun preserves governed Codex gates and removes stale child profiles on live tmux reattach", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  const originalNativeMode = process.env.LOOP_NATIVE_SUBAGENT_MODE;
+  process.env.HOME = home;
+  process.env.LOOP_NATIVE_SUBAGENT_MODE = "utility-first";
+  Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+
+  try {
+    const storage = resolveRunStorage("alpha", process.cwd(), home);
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest(
+        {
+          claudeSessionId: "claude-session-1",
+          codexThreadId: "codex-thread-1",
+          cwd: process.cwd(),
+          mode: "paired",
+          pid: 1234,
+          repoId: storage.repoId,
+          runId: "alpha",
+          status: "running",
+          tmuxSession: "repo-loop-alpha",
+        },
+        "2026-03-22T10:00:00.000Z"
+      )
+    );
+    const codexHome = join(storage.runDir, "codex-home");
+    const hooksPath = join(codexHome, "hooks.json");
+    const fallbackProfile = join(
+      codexHome,
+      "agents",
+      `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`
+    );
+    mkdirSync(join(codexHome, "agents"), { recursive: true });
+    writeFileSync(hooksPath, '{"hooks":{"PreToolUse":[]}}\n', "utf8");
+    writeFileSync(
+      fallbackProfile,
+      `name = "${CODEX_NATIVE_FALLBACK_PROFILE}"\nsandbox_mode = "read-only"\n`,
+      "utf8"
+    );
+
+    const prepared = preparePairedRun(
+      makeOptions({ governess: true, resumeRunId: "alpha", tmux: true }),
+      process.cwd(),
+      () => true
+    );
+
+    expect(prepared.manifest.tmuxSession).toBe("repo-loop-alpha");
+    expect(readFileSync(hooksPath, "utf8")).toContain("PreToolUse");
+    expect(existsSync(fallbackProfile)).toBe(false);
+    expect(readFileSync(join(codexHome, "config.toml"), "utf8")).toContain(
+      "enabled = false"
+    );
+
+    process.env.LOOP_NATIVE_SUBAGENT_MODE = "strict";
+    writeFileSync(hooksPath, '{"hooks":{"PreToolUse":["strict"]}}\n', "utf8");
+    writeFileSync(
+      fallbackProfile,
+      `name = "${CODEX_NATIVE_FALLBACK_PROFILE}"\n`,
+      "utf8"
+    );
+    preparePairedRun(
+      makeOptions({ governess: true, resumeRunId: "alpha", tmux: true }),
+      process.cwd(),
+      () => true
+    );
+    expect(readFileSync(hooksPath, "utf8")).toContain("strict");
+    expect(existsSync(fallbackProfile)).toBe(false);
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    if (originalNativeMode === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_NATIVE_SUBAGENT_MODE");
+    } else {
+      process.env.LOOP_NATIVE_SUBAGENT_MODE = originalNativeMode;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});

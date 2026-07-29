@@ -2,13 +2,11 @@
 
 - Governed tmux default mode is `utility-first`; unknown mode is `strict`;
   legacy non-tmux pairing and explicit `off` remain outside this policy.
-- Codex config has one native thread in utility-first and disables agents in
-  strict. Its fallback profile is read-only; disables unified execution, web
-  search, the loop bridge MCP server, remote plugins, and descendants; and
-  exposes only a hook-validated `shell_command` inspection grammar over
-  existing regular files. Approved calls require fixed system binaries,
-  canonical absolute operands/workdir, a non-login shell, and clean
-  environment.
+- Codex config disables native agents in utility-first and strict because 0.145
+  inherits the writable parent's effective sandbox. Codex native requests and
+  spawn attempts fail closed with a provider-sandbox reason; no fallback role
+  file is installed. Live governed reattachment preserves the root spawn-gate
+  hook and removes stale fallback profiles from earlier builds.
 - Claude utility-first launch defines only the bounded read-only fallback
   profile; strict launch disallows `Agent` and legacy `Task`.
 - A main-agent fallback request needs exact safe scopes and one through three
@@ -20,10 +18,8 @@
   Strict, unleased, stale, duplicate, wrong-requester, wrong-profile, and
   descendant spawn calls are denied.
 - Native child hooks deny file mutation, MCP, web, user-input, nested-agent,
-  unscoped, recursive-directory, compound-command, and symlink-escape attempts.
-  Claude may use file-targeted inspection tools; Codex may use only the
-  documented bounded read commands. Codex child calls are recognized by an
-  inline fallback-profile hook even when `PreToolUse` omits `agent_id`.
+  unscoped, recursive-directory, and symlink-escape attempts. Claude may use
+  file-targeted inspection tools. Codex has no governed native-child path.
 - Explicit `off` mode leaves root spawn, lifecycle, and child tool events
   outside the native fallback policy.
 - Start/stop events bind and close the lease; a new Governess epoch immediately

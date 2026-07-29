@@ -45,6 +45,8 @@ test("delegation guidance states the exact context and decomposition contract", 
   expect(guidance).toContain("Do not split a cohesive small edit");
   expect(guidance).toContain('call "request_native_fallback"');
   expect(guidance).toContain('poll "native_fallback_status"');
+  expect(guidance).toContain("Codex native spawn is disabled");
+  expect(guidance).toContain("Only Claude");
   expect(guidance).toContain("Never spawn another profile or a descendant");
 });
 
@@ -57,6 +59,7 @@ test("native fallback tools describe the governed evidence and status contract",
   );
   expect(JSON.stringify(request)).toContain("settled route_task IDs");
   expect(JSON.stringify(request)).toContain("one short-lived run-wide lease");
+  expect(JSON.stringify(request)).toContain("Codex native spawn is disabled");
   expect(JSON.stringify(request)).toContain("human_authorized");
   expect(status?.annotations.readOnlyHint).toBe(true);
 });

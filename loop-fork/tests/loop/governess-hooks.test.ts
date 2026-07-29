@@ -24,6 +24,7 @@ import {
   appendNativeFallbackRequest,
   CLAUDE_NATIVE_FALLBACK_PROFILE,
   CODEX_NATIVE_FALLBACK_PROFILE,
+  CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON,
   createNativeFallbackRequest,
   processPendingNativeFallbackRequests,
   readNativeFallbackRequests,
@@ -900,7 +901,7 @@ describe("runHookEmit", () => {
     }
   });
 
-  test("Codex fallback permits only bounded simple inspection commands", async () => {
+  test("Codex utility-first hooks deny native spawn and every child tool", async () => {
     const runDir = mkdtempSync(join(tmpdir(), "loop-native-codex-hook-"));
     const repo = join(runDir, "repo");
     const hookFile = join(runDir, "hooks", "codex.jsonl");
@@ -948,6 +949,10 @@ describe("runHookEmit", () => {
         mode: "utility-first",
         runDir,
       });
+      expect(readNativeFallbackRequests(runDir)[0]).toMatchObject({
+        reason: CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON,
+        state: "denied",
+      });
 
       const invoke = async (
         payload: unknown,
@@ -976,7 +981,14 @@ describe("runHookEmit", () => {
           tool_name: "spawn_agent",
           tool_use_id: "codex-spawn-1",
         })
-      ).toEqual({});
+      ).toMatchObject({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringContaining(
+            CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON
+          ),
+        },
+      });
       await invoke({
         agent_id: "codex-child-1",
         agent_type: CODEX_NATIVE_FALLBACK_PROFILE,
@@ -1001,7 +1013,9 @@ describe("runHookEmit", () => {
         },
         tool_name: "Bash",
       });
-      expect(boundedSed).toEqual({});
+      expect(boundedSed).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
       const documentedChildPayload = await invoke(
         {
           cwd: repo,
@@ -1015,7 +1029,9 @@ describe("runHookEmit", () => {
         },
         true
       );
-      expect(documentedChildPayload).toEqual({});
+      expect(documentedChildPayload).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
       expect(
         await invoke(
           {

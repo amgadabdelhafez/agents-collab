@@ -39,6 +39,8 @@ export type NativeFallbackState =
 
 export const CLAUDE_NATIVE_FALLBACK_PROFILE = "loop-readonly-fallback";
 export const CODEX_NATIVE_FALLBACK_PROFILE = "loop_readonly_fallback";
+export const CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON =
+  "codex-native-readonly-sandbox-unavailable";
 export const NATIVE_FALLBACK_GRANT_TTL_MS = 120_000;
 export const NATIVE_FALLBACK_RUN_TTL_MS = 300_000;
 export const MAX_NATIVE_FALLBACK_READ_SCOPES = 8;
@@ -625,12 +627,19 @@ const pendingDenialReason = (input: {
   active?: NativeFallbackSnapshot;
   evidence: string;
   mode: NativeSubagentMode;
+  requester: Agent;
 }): string | undefined => {
   if (input.mode === "strict") {
     return "strict-mode";
   }
   if (input.mode === "off") {
     return "native-fallback-policy-off";
+  }
+  if (input.requester === "codex") {
+    // Codex 0.145 reapplies the full-access parent's sandbox after loading a
+    // custom role. A profile that says read-only is therefore not a read-only
+    // child, so Governess must never grant a Codex native lease.
+    return CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON;
   }
   if (input.evidence !== "ready" && input.evidence !== "human-authorized") {
     return input.evidence;
@@ -668,6 +677,7 @@ export const processPendingNativeFallbackRequests = (input: {
         active,
         evidence,
         mode: input.mode,
+        requester: snapshot.request.requester,
       });
       if (denial) {
         appendEvent(
@@ -785,6 +795,9 @@ export const consumeNativeFallbackLease = (input: {
     };
     if (input.mode === "strict") {
       return deny("strict-mode");
+    }
+    if (input.provider === "codex") {
+      return deny(CODEX_NATIVE_FALLBACK_UNAVAILABLE_REASON);
     }
     if (!granted) {
       return deny("native-lease-missing");

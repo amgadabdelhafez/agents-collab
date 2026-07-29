@@ -584,9 +584,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
             "agents",
             "loop_readonly_fallback.toml"
           );
-          events.push(
-            `codex-child-hook:${existsSync(fallbackPath) && readFileSync(fallbackPath, "utf8").includes("native-child")}`
-          );
+          events.push(`codex-child-profile:${existsSync(fallbackPath)}`);
           return Promise.resolve(undefined);
         },
         spawn: (args: string[]) => {
@@ -657,7 +655,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(delegated).toBe(true);
     expect(events).toContain("start-codex:true:utility-first");
     expect(events).toContain("codex-hook-event:true");
-    expect(events).toContain("codex-child-hook:true");
+    expect(events).toContain("codex-child-profile:false");
     expect(events).toContain("manifest:codex-thread-1:%41:repo-loop-1:0.2");
     expect(events).toContain(
       "spawn-governess:codex-thread-1:%41:repo-loop-1:0.2"

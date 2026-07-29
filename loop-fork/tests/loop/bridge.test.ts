@@ -747,6 +747,38 @@ test("bridge native fallback request is pending until Governess grants it", asyn
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge rejects Codex native fallback because its child sandbox inherits the parent", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const request = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["return exact source evidence"],
+          evidence_task_ids: ["prior-helper-task"],
+          fallback_reason: "utility-ineligible",
+          kind: "explore",
+          objective: "Trace one bounded parser path",
+          read_scope: ["src/parser"],
+        },
+        name: "request_native_fallback",
+      },
+    })
+  );
+
+  expect(request.stdout).toContain(
+    "Codex native spawn is disabled because the provider inherits the full-access parent sandbox"
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("only supervisor can assert a human-authorized native fallback", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");

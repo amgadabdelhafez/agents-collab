@@ -15,8 +15,8 @@ Make the paired-loop delegation order enforceable:
 1. direct deterministic execution;
 2. Nanny for bounded local inspection and summarization;
 3. Au Pair for bounded reasoning, small patch proposals, and focused proof;
-4. at most one short-lived, read-only provider-native fallback after a
-   Governess lease;
+4. at most one short-lived, provider-enforced read-only native fallback after
+   a Governess lease;
 5. Claude and Codex retain architecture, ambiguity, authority, integration,
    patch application, and final review.
 
@@ -31,10 +31,14 @@ mode because it has no Governess process or provider-hook lifecycle.
    defaults governed tmux runs to `utility-first`. Unknown values fail closed
    to `strict`; non-tmux paired compatibility runs resolve to `off` rather than
    claiming enforcement without a Governess.
-2. In `utility-first`, Codex is configured for one concurrent spawned thread.
-   Claude receives one session-local custom fallback profile. Both provider
-   hooks observe per-tool and subagent lifecycle events.
-3. A main agent requests a native fallback through the loop bridge. The packet
+2. In `utility-first`, Codex native agents are disabled because Codex 0.145
+   reapplies the full-access parent sandbox after loading a custom role, so its
+   role-local `read-only` setting is not an effective boundary. Claude receives
+   one session-local custom fallback profile. Both provider hooks observe
+   per-tool and subagent lifecycle events; Codex spawn attempts are denied and
+   journaled.
+3. Claude requests a native fallback through the loop bridge. Codex is told to
+   keep using Direct, Nanny, Au Pair, or a targeted Claude peer review. The packet
    names one objective, `explore` or `review`, one through eight non-root
    repo-relative non-protected read scopes, acceptance criteria, a reason, and
    one through three settled utility task IDs owned by that requester. A
@@ -56,22 +60,18 @@ mode because it has no Governess process or provider-hook lifecycle.
    bounded turn count, and cannot invoke MCP tools or descendants. Hook policy
    permits only explicit existing regular-file operands, not recursive
    directory reads.
-8. Codex may spawn only the loop-scoped `loop_readonly_fallback` profile. Its
-   configuration is read-only, disables unified execution, web search, the
-   loop bridge MCP server, remote plugins, and descendant agents. Its remaining
-   `shell_command` tool accepts only a small inspection grammar with explicit
-   existing regular-file operands. Approved calls must already name a fixed
-   system binary, a canonical absolute operand, `login=false`, and the
-   canonical repo workdir; the profile supplies a clean environment. A hook in
-   that exact profile applies the child policy without relying on an
-   undocumented `agent_id` in Codex `PreToolUse`; provider hooks reject every
-   other command or unsafe tool.
+8. Codex has `agents.enabled = false` in both `utility-first` and `strict`.
+   Governess never grants a Codex native lease, the bridge rejects Codex native
+   requests with the provider-sandbox reason, and the root hook retains a
+   fail-closed deny path plus telemetry if a spawn tool is nevertheless
+   surfaced. Loop setup removes any stale `loop_readonly_fallback` profile from
+   earlier builds while preserving the root hook across live tmux reattachment.
 9. `SubagentStart` binds the consumed lease to the provider child and injects
    the exact read scopes and acceptance contract. `SubagentStop` closes the
    lease. Orphaned consumed/running leases time out fail closed.
-10. `strict` writes `agents.enabled = false` for Codex and starts Claude with
-    native agent tools disallowed. Hooks retain a deny path for defense in
-    depth and telemetry when a provider still surfaces a call.
+10. `strict` additionally starts Claude with native agent tools disallowed.
+    Hooks retain a deny path for defense in depth and telemetry when a provider
+    still surfaces a call.
 11. Governess shows the effective native mode, slot state, requests, grants,
     active/finished counts, blocked attempts, and the latest fallback/denial
     reason without displacing the four agent/helper identity rows in a small
@@ -81,16 +81,16 @@ mode because it has no Governess process or provider-hook lifecycle.
 
 ## Safety boundary
 
-- A native child is inspection-only. Claude has no shell. Codex can run only
-  hook-validated, non-compound inspection commands with explicit canonical
-  in-scope regular-file paths inside its provider read-only sandbox. Recursive
-  directory inspection is denied for both providers. Neither child can edit,
+- A native child is inspection-only and currently Claude-only. It has no shell,
+  and recursive directory inspection is denied. It cannot edit,
   write, access bridge or other MCP tools, browse the network, ask the human,
   apply a utility patch, commit, push, merge, deploy, or create descendants.
 - Governess is the only grant authority. Bridge submission, hook consumption,
   provider lifecycle observation, and pane rendering are adapters around its
   durable lease state.
-- One slot is run-wide across Claude and Codex, not one per provider.
+- One slot is run-wide and currently available only to Claude. Codex remains
+  eligible for the utility tiers but not native spawning until its provider can
+  enforce a child sandbox narrower than the writable parent.
 - Leases are requester-, epoch-, profile-, scope-, and time-bound, are consumed
   at most once under a file lock, and expire immediately when the Governess
   epoch advances.
