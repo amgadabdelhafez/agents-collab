@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { type ServerWebSocket, serve } from "bun";
 import {
   appendBridgeMessage,
-  readBridgeEvents,
   readPendingBridgeMessages,
 } from "../../src/loop/bridge-store";
 import {
@@ -200,57 +199,10 @@ test("codex tmux proxy preserves a session when liveness is unknown", () => {
   ).toBe(false);
 });
 
-test("bridge delivery acknowledges only after visible pane submission", async () => {
-  const root = makeTempDir();
-  const message = appendBridgeMessage(
-    root,
-    bridgeMessage.source,
-    bridgeMessage.target,
-    bridgeMessage.message
+test("codex tmux proxy exposes no bridge-body delivery path", () => {
+  expect(codexTmuxProxyInternals).not.toHaveProperty(
+    "deliverVisibleBridgeMessage"
   );
-  const attempts: string[] = [];
-  try {
-    const delivered = await codexTmuxProxyInternals.deliverVisibleBridgeMessage(
-      root,
-      message,
-      (_runDir, candidate) => {
-        attempts.push(candidate.id);
-        return Promise.resolve(true);
-      }
-    );
-    expect(delivered).toBe(true);
-    expect(attempts).toEqual([message.id]);
-    expect(readPendingBridgeMessages(root)).toEqual([]);
-    expect(
-      readBridgeEvents(root).filter((event) => event.kind === "delivered")
-    ).toHaveLength(1);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("failed visible pane submission leaves a bridge request pending", async () => {
-  const root = makeTempDir();
-  const message = appendBridgeMessage(
-    root,
-    bridgeMessage.source,
-    bridgeMessage.target,
-    bridgeMessage.message
-  );
-  try {
-    const delivered = await codexTmuxProxyInternals.deliverVisibleBridgeMessage(
-      root,
-      message,
-      () => Promise.resolve(false)
-    );
-    expect(delivered).toBe(false);
-    expect(readPendingBridgeMessages(root)).toEqual([message]);
-    expect(
-      readBridgeEvents(root).filter((event) => event.kind === "delivered")
-    ).toHaveLength(0);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("codex tmux proxy persists newer live thread ids to the run manifest", () => {

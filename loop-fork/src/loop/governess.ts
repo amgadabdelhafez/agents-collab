@@ -5674,15 +5674,9 @@ const sendGovernessBridgeMessage = async (
 ): Promise<BridgeSendStatus> => {
   let deliver: ImmediateBridgeDelivery | undefined;
   if (target === "codex") {
-    deliver = async (entry) => {
-      if (readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy") {
-        return false;
-      }
-      return (
-        (await deliverCodexBridgeMessage(runDir, entry)) ||
-        (await deliverTmuxBridgeMessage(runDir, entry))
-      );
-    };
+    deliver = async (entry) =>
+      (await deliverCodexBridgeMessage(runDir, entry)) ||
+      (await deliverTmuxBridgeMessage(runDir, entry));
   } else if (
     target === "cursor" ||
     target === "gemini" ||

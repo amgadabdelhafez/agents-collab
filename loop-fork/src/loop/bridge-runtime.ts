@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { spawn, spawnSync } from "bun";
 import { removeClaudeChannelServer } from "./bridge-claude-registration";
 import { generatedClaudeChannelServerNames } from "./bridge-config";
@@ -27,13 +27,12 @@ import {
   bridgeChatId,
   readNextPendingBridgeMessageForTarget,
 } from "./bridge-dispatch";
-import {
-  bridgeSourceLabel,
-  formatBridgeDeliveryMessage,
-} from "./bridge-message-format";
+import { formatBridgeDeliveryMessage } from "./bridge-message-format";
 import {
   type BridgeMessage,
   type BridgeStatus,
+  lastBridgeNotificationAt,
+  markBridgeMessageNotified,
   readBridgeInbox,
   readBridgeStatus,
   readPendingBridgeMessages,
@@ -60,12 +59,14 @@ const CLAUDE_CHANNEL_SOURCE_TYPE = "codex";
 const CLAUDE_CHANNEL_USER_ID = "codex";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
 const BRIDGE_DELIVERY_CLAIM_DIR = "bridge-delivery-claims";
-// A large-paste readiness poll can hold a valid claim for up to 45 seconds.
-// Keep the stale boundary beyond that bound so another worker cannot duplicate
-// the same delivery while the target TUI is still ingesting the paste.
+const BRIDGE_NOTIFICATION_CLAIM_DIR = "bridge-notification-claims";
+// App-server acceptance can outlive a normal bridge-worker tick. Keep a claim
+// long enough that another worker cannot duplicate the same Codex turn.
 const BRIDGE_DELIVERY_CLAIM_STALE_MS = 60_000;
+const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = 15_000;
 const BRIDGE_WORKER_IDLE_DELAY_MS = 250;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
+const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
 const TMUX_LEFT_PANE = "0.0";
 const TMUX_RIGHT_PANE = "0.1";
 const CODEX_TMUX_READY_DELAY_MS = 250;
@@ -78,8 +79,7 @@ const CLAUDE_TMUX_PROMPT_PREFIX = "❯";
 const LINE_SPLIT_RE = /\r?\n/;
 const GENERIC_TMUX_READY_POLLS = 12;
 const CLAUDE_DELIVERY_CONFIRM_POLLS = 8;
-const BRIDGE_LARGE_PASTE_MIN_BYTES = 2 * 1024;
-const BRIDGE_LARGE_PASTE_READY_POLLS = 180;
+const MAX_TMUX_BRIDGE_NUDGE_BYTES = 128;
 const TUI_PASTE_MARKER_RE = /\[Pasted (?:Content|text)\b[^\]]*\]/i;
 const CLAUDE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -255,13 +255,12 @@ const deliveryClaimPath = (runDir: string, messageId: string): string => {
   return join(runDir, BRIDGE_DELIVERY_CLAIM_DIR, `${digest}.lock`);
 };
 
-const acquireDeliveryClaim = (
-  runDir: string,
-  messageId: string,
+const acquireRuntimeClaim = (
+  path: string,
+  staleMs: number,
   nowMs = Date.now()
 ): string | undefined => {
-  const path = deliveryClaimPath(runDir, messageId);
-  mkdirSync(join(runDir, BRIDGE_DELIVERY_CLAIM_DIR), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const fd = openSync(path, "wx");
@@ -274,7 +273,7 @@ const acquireDeliveryClaim = (
         return undefined;
       }
       try {
-        if (nowMs - statSync(path).mtimeMs <= BRIDGE_DELIVERY_CLAIM_STALE_MS) {
+        if (nowMs - statSync(path).mtimeMs <= staleMs) {
           return undefined;
         }
         unlinkSync(path);
@@ -285,6 +284,28 @@ const acquireDeliveryClaim = (
   }
   return undefined;
 };
+
+const acquireDeliveryClaim = (
+  runDir: string,
+  messageId: string,
+  nowMs = Date.now()
+): string | undefined =>
+  acquireRuntimeClaim(
+    deliveryClaimPath(runDir, messageId),
+    BRIDGE_DELIVERY_CLAIM_STALE_MS,
+    nowMs
+  );
+
+const acquireNotificationClaim = (
+  runDir: string,
+  target: BridgeMessage["target"],
+  nowMs: number
+): string | undefined =>
+  acquireRuntimeClaim(
+    join(runDir, BRIDGE_NOTIFICATION_CLAIM_DIR, `${target}.lock`),
+    BRIDGE_NOTIFICATION_CLAIM_STALE_MS,
+    nowMs
+  );
 
 const releaseDeliveryClaim = (path: string): void => {
   try {
@@ -479,81 +500,6 @@ const claudeComposerText = (output: string): string | undefined => {
 export const isClaudePaneReady = (output: string): boolean =>
   claudeComposerText(output) === "";
 
-const firstMessageLine = (message: string): string =>
-  message
-    .split(LINE_SPLIT_RE)
-    .find((line) => line.trim())
-    ?.trim() ?? "";
-
-const pasteMarkers = (output: string): string[] =>
-  output.match(/\[Pasted (?:Content|text)\b[^\]]*\]/gi) ?? [];
-
-const hasNewPasteMarker = (before: string, after: string): boolean => {
-  const remaining = pasteMarkers(before);
-  for (const marker of pasteMarkers(after)) {
-    const index = remaining.findIndex(
-      (candidate) => candidate.toLowerCase() === marker.toLowerCase()
-    );
-    if (index < 0) {
-      return true;
-    }
-    remaining.splice(index, 1);
-  }
-  return false;
-};
-
-const hasBridgePasteEvidence = (
-  before: string,
-  output: string,
-  target: BridgeMessage["target"],
-  expectedFirstLine: string
-): boolean => {
-  if (hasNewPasteMarker(before, output)) {
-    return true;
-  }
-  if (!expectedFirstLine) {
-    return false;
-  }
-  if (target === "claude") {
-    const composer = claudeComposerText(output);
-    return (
-      (composer?.startsWith(expectedFirstLine) ?? false) &&
-      !claudeComposerText(before)?.startsWith(expectedFirstLine)
-    );
-  }
-  return (
-    output.includes(expectedFirstLine) && !before.includes(expectedFirstLine)
-  );
-};
-
-const waitForBridgePasteReady = async (
-  pane: string,
-  target: BridgeMessage["target"],
-  message: string,
-  before: string
-): Promise<boolean> => {
-  if (Buffer.byteLength(message, "utf8") < BRIDGE_LARGE_PASTE_MIN_BYTES) {
-    await wait(100);
-    return true;
-  }
-  const expectedFirstLine = firstMessageLine(message);
-  for (
-    let attempt = 0;
-    attempt < BRIDGE_LARGE_PASTE_READY_POLLS;
-    attempt += 1
-  ) {
-    const output = capturePane(pane, target === "claude");
-    if (output === undefined) {
-      return false;
-    }
-    if (hasBridgePasteEvidence(before, output, target, expectedFirstLine)) {
-      return true;
-    }
-    await wait(CODEX_TMUX_READY_DELAY_MS);
-  }
-  return false;
-};
-
 export const isClaudeTurnActive = (runDir: string): boolean => {
   try {
     const latest = readFileSync(join(runDir, "hooks", "claude.jsonl"), "utf8")
@@ -698,21 +644,17 @@ const injectTmuxMessage = async (
   if (!(pane && ready)) {
     return false;
   }
+  if (Buffer.byteLength(message, "utf8") >= MAX_TMUX_BRIDGE_NUDGE_BYTES) {
+    return false;
+  }
   const transcriptVersion =
     target === "claude"
       ? bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(runDir)
       : undefined;
   const expectedClaudeComposerText = message.split("\n")[0]?.trim() ?? "";
-  const largePaste =
-    Buffer.byteLength(message, "utf8") >= BRIDGE_LARGE_PASTE_MIN_BYTES;
-  const beforePaste = largePaste ? capturePane(pane, target === "claude") : "";
-  if (beforePaste === undefined) {
-    return false;
-  }
   if (!pastePaneText(runDir, pane, message)) {
     return false;
   }
-  await waitForBridgePasteReady(pane, target, message, beforePaste);
   if (!sendPaneKeys(pane, ["Enter"])) {
     return false;
   }
@@ -746,7 +688,7 @@ const injectTmuxMessage = async (
 };
 
 export interface BridgeRuntimeStatus extends BridgeStatus {
-  codexDeliveryMode: "app-server" | "none" | "tmux" | "tmux-proxy";
+  codexDeliveryMode: "app-server" | "none" | "tmux";
   hasLiveTmuxSession: boolean;
   tmuxLiveness: TmuxLiveness;
 }
@@ -795,23 +737,8 @@ const tmuxPaneForTarget = (
   return paneId ? tmuxPane(manifest.tmuxSession, paneId) : undefined;
 };
 
-const formatTmuxBridgeMessage = (message: BridgeMessage): string => {
-  if (message.target === "codex") {
-    return formatBridgeDeliveryMessage(message);
-  }
-  // Cursor/Gemini can connect to the bridge MCP, but their CLIs do not turn
-  // server notifications into agent actions. In tmux mode we push the bridge
-  // message into the live pane instead of waiting for the agent to poll.
-  const trimmed = message.message.trim();
-  if (!trimmed) {
-    return "";
-  }
-  return [
-    `[bridge:${message.id.slice(0, 12)}] Message from ${bridgeSourceLabel(message.source)} via the loop bridge:`,
-    trimmed,
-    "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
-  ].join("\n\n");
-};
+export const buildTmuxBridgeNudge = (pending: number): string =>
+  `Bridge: ${pending} ${pending === 1 ? "message" : "messages"} waiting. Call receive_messages now.`;
 
 export const readBridgeRuntimeStatus = (
   runDir: string
@@ -824,15 +751,8 @@ export const readBridgeRuntimeStatus = (
       )
     : "dead";
   const hasLiveTmuxSession = tmuxLiveness === "live";
-  const tmuxMayBeLive = tmuxLiveness !== "dead";
   let codexDeliveryMode: BridgeRuntimeStatus["codexDeliveryMode"] = "none";
-  if (
-    status.hasCodexRemote &&
-    tmuxMayBeLive &&
-    paneIdForTarget(runDir, "codex")
-  ) {
-    codexDeliveryMode = "tmux-proxy";
-  } else if (status.hasCodexRemote) {
+  if (status.hasCodexRemote) {
     codexDeliveryMode = "app-server";
   } else if (hasLiveTmuxSession) {
     codexDeliveryMode = "tmux";
@@ -846,11 +766,11 @@ export const readBridgeRuntimeStatus = (
 };
 
 export const ensureBridgeWorker = (runDir: string): boolean => {
-  const status = readBridgeRuntimeStatus(runDir);
+  const status = readBridgeStatus(runDir);
   const state = parseRunLifecycleState(status.state);
   if (
     !(
-      (status.hasCodexRemote || status.tmuxLiveness !== "dead") &&
+      (status.hasCodexRemote || status.hasTmuxSession) &&
       state &&
       isActiveRunState(state)
     )
@@ -899,13 +819,11 @@ export const hasBridgeDeliveryRoute = (
   runDir: string,
   target: BridgeMessage["target"]
 ): boolean => {
-  const status = readBridgeRuntimeStatus(runDir);
+  const status = readBridgeStatus(runDir);
   if (target === "codex" && status.hasCodexRemote) {
     return true;
   }
-  return Boolean(
-    status.tmuxLiveness !== "dead" && paneIdForTarget(runDir, target)
-  );
+  return Boolean(status.hasTmuxSession && paneIdForTarget(runDir, target));
 };
 
 export const clearStaleTmuxBridgeState = (runDir: string): boolean => {
@@ -988,17 +906,21 @@ export const deliverCodexBridgeMessage = async (
   runDir: string,
   message: BridgeMessage
 ): Promise<boolean> => {
-  const status = readBridgeRuntimeStatus(runDir);
-  if (status.tmuxSession && status.tmuxLiveness === "dead") {
-    clearStaleTmuxBridgeState(runDir);
-  }
-  if (status.codexDeliveryMode === "tmux-proxy") {
-    return false;
-  }
+  const status = readBridgeStatus(runDir);
   if (!status.hasCodexRemote) {
     return false;
   }
+  if (!isMessagePending(runDir, message.id)) {
+    return false;
+  }
+  const claim = acquireDeliveryClaim(runDir, message.id);
+  if (!claim) {
+    return false;
+  }
   try {
+    if (!isMessagePending(runDir, message.id)) {
+      return false;
+    }
     const delivered = await injectCodexMessage(
       status.codexRemoteUrl,
       status.codexThreadId,
@@ -1014,12 +936,15 @@ export const deliverCodexBridgeMessage = async (
     return delivered;
   } catch {
     return false;
+  } finally {
+    releaseDeliveryClaim(claim);
   }
 };
 
 const resolveTmuxBridgeDelivery = (
   runDir: string,
-  message: BridgeMessage
+  target: BridgeMessage["target"],
+  pending: number
 ): { content: string; pane: string } | undefined => {
   const status = readBridgeRuntimeStatus(runDir);
   if (!status.tmuxSession) {
@@ -1032,8 +957,8 @@ const resolveTmuxBridgeDelivery = (
   if (status.tmuxLiveness === "unknown") {
     return undefined;
   }
-  const pane = tmuxPaneForTarget(runDir, message.target);
-  const content = formatTmuxBridgeMessage(message);
+  const pane = tmuxPaneForTarget(runDir, target);
+  const content = buildTmuxBridgeNudge(pending);
   return pane && content ? { content, pane } : undefined;
 };
 
@@ -1042,21 +967,81 @@ export const submitTmuxBridgeMessage = (
   message: BridgeMessage,
   readyAttempts?: number
 ): Promise<boolean> => {
-  const resolved = resolveTmuxBridgeDelivery(runDir, message);
-  if (!resolved) {
-    return Promise.resolve(false);
-  }
-  return injectTmuxMessage(
+  return notifyTmuxBridgeInbox(
     runDir,
-    resolved.pane,
     message.target,
-    resolved.content,
+    Date.now(),
     readyAttempts
   );
 };
 
 const isMessagePending = (runDir: string, messageId: string): boolean =>
   readPendingBridgeMessages(runDir).some((entry) => entry.id === messageId);
+
+export const notifyTmuxBridgeInbox = async (
+  runDir: string,
+  target: BridgeMessage["target"],
+  nowMs = Date.now(),
+  readyAttempts?: number
+): Promise<boolean> => {
+  const pending = readPendingBridgeMessages(runDir, nowMs).filter(
+    (entry) => entry.target === target
+  );
+  if (pending.length === 0) {
+    return false;
+  }
+  const due = pending.some((entry) => {
+    const notifiedAt = lastBridgeNotificationAt(runDir, entry.id);
+    return (
+      notifiedAt === undefined ||
+      nowMs - notifiedAt >= BRIDGE_NOTIFICATION_RETRY_MS
+    );
+  });
+  if (!due) {
+    return false;
+  }
+  const claim = acquireNotificationClaim(runDir, target, nowMs);
+  if (!claim) {
+    return false;
+  }
+  try {
+    const resolved = resolveTmuxBridgeDelivery(runDir, target, pending.length);
+    if (!resolved) {
+      return false;
+    }
+    if (!(await waitForBridgePaneReady(runDir, resolved.pane, target))) {
+      return false;
+    }
+    const stillPending = readPendingBridgeMessages(runDir, nowMs).filter(
+      (entry) => entry.target === target
+    );
+    if (stillPending.length === 0) {
+      return false;
+    }
+    const notified = await injectTmuxMessage(
+      runDir,
+      resolved.pane,
+      target,
+      buildTmuxBridgeNudge(stillPending.length),
+      readyAttempts ?? 1
+    );
+    if (!notified) {
+      return false;
+    }
+    const at = new Date(nowMs).toISOString();
+    for (const entry of stillPending) {
+      markBridgeMessageNotified(
+        runDir,
+        entry,
+        `nudged ${target} tmux inbox`,
+        at
+      );
+    }
+    return true;
+  } finally {
+    releaseDeliveryClaim(claim);
+  }
+};
 
 export const deliverTmuxBridgeMessage = async (
   runDir: string,
@@ -1065,42 +1050,10 @@ export const deliverTmuxBridgeMessage = async (
   if (!isMessagePending(runDir, message.id)) {
     return false;
   }
-  const resolved = resolveTmuxBridgeDelivery(runDir, message);
-  if (!resolved) {
-    return false;
-  }
-  // Readiness can poll for seconds; wait before claiming so a blocked message
-  // stays visible to receive_messages the whole time.
-  if (!(await waitForBridgePaneReady(runDir, resolved.pane, message.target))) {
-    return false;
-  }
-  const claim = acquireDeliveryClaim(runDir, message.id);
-  if (!claim) {
-    return false;
-  }
-  try {
-    if (!isMessagePending(runDir, message.id)) {
-      return false;
-    }
-    const delivered = await injectTmuxMessage(
-      runDir,
-      resolved.pane,
-      message.target,
-      resolved.content,
-      1
-    );
-    if (!delivered) {
-      return false;
-    }
-    acknowledgeBridgeDelivery(
-      runDir,
-      message,
-      `sent to ${message.target} tmux pane`
-    );
-    return true;
-  } finally {
-    releaseDeliveryClaim(claim);
-  }
+  await notifyTmuxBridgeInbox(runDir, message.target);
+  // A terminal nudge is not delivery. The bridge message remains pending until
+  // the target drains receive_messages, which appends the authoritative ack.
+  return false;
 };
 
 export const drainCodexTmuxMessages = (runDir: string): Promise<boolean> => {
@@ -1108,13 +1061,13 @@ export const drainCodexTmuxMessages = (runDir: string): Promise<boolean> => {
   if (!message) {
     return Promise.resolve(false);
   }
-  return deliverTmuxBridgeMessage(runDir, message);
+  return notifyTmuxBridgeInbox(runDir, "codex");
 };
 
 export const drainCodexAppServerMessages = (
   runDir: string
 ): Promise<boolean> => {
-  const status = readBridgeRuntimeStatus(runDir);
+  const status = readBridgeStatus(runDir);
   if (!status.hasCodexRemote) {
     return Promise.resolve(false);
   }
@@ -1137,27 +1090,15 @@ export const drainTmuxBridgeMessages = (runDir: string): Promise<boolean> => {
   if (status.tmuxLiveness === "unknown") {
     return Promise.resolve(false);
   }
-  const message = readPendingBridgeMessages(runDir).find((entry) => {
-    if (entry.target === "codex" && status.codexDeliveryMode === "tmux-proxy") {
-      return false;
-    }
-    return paneIdForTarget(runDir, entry.target) !== undefined;
-  });
+  const message = readPendingBridgeMessages(runDir).find(
+    (entry) =>
+      !(entry.target === "codex" && status.hasCodexRemote) &&
+      paneIdForTarget(runDir, entry.target) !== undefined
+  );
   if (!message) {
     return Promise.resolve(false);
   }
-  return deliverTmuxBridgeMessage(runDir, message);
-};
-
-const clearStaleTmuxWorkerState = (
-  runDir: string,
-  status: BridgeRuntimeStatus
-): boolean => {
-  if (!(status.tmuxSession && status.tmuxLiveness === "dead")) {
-    return true;
-  }
-  clearStaleTmuxBridgeState(runDir);
-  return status.hasCodexRemote;
+  return notifyTmuxBridgeInbox(runDir, message.target);
 };
 
 export const runBridgeWorker = async (runDir: string): Promise<void> => {
@@ -1167,21 +1108,16 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       if (claimedPid && claimedPid !== process.pid) {
         return;
       }
-      const status = readBridgeRuntimeStatus(runDir);
+      const status = readBridgeStatus(runDir);
       const state = parseRunLifecycleState(status.state);
       if (!(state && isActiveRunState(state))) {
         return;
       }
-      if (!clearStaleTmuxWorkerState(runDir, status)) {
-        return;
-      }
       const deliveredToCodex =
-        status.codexDeliveryMode !== "tmux-proxy" &&
-        status.hasCodexRemote &&
-        (await drainCodexAppServerMessages(runDir));
+        status.hasCodexRemote && (await drainCodexAppServerMessages(runDir));
       const delivered =
         deliveredToCodex || (await drainTmuxBridgeMessages(runDir));
-      if (!(status.hasCodexRemote || status.tmuxLiveness !== "dead")) {
+      if (!(status.hasCodexRemote || status.hasTmuxSession)) {
         return;
       }
       await wait(

@@ -1,12 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
 import {
@@ -64,6 +63,7 @@ import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
 import {
+  type RunLaunchCharter,
   type RunManifest,
   type RunStorage,
   resolveExistingRunId,
@@ -112,10 +112,8 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
-const LARGE_PASTE_MIN_BYTES = 16 * 1024;
-const LARGE_PASTE_READY_POLLS = 180;
-const LARGE_PASTE_READY_DELAY_MS = 250;
-const LARGE_PASTE_MARKER_RE = /\[Pasted (?:Content|text)\b[^\]]*\]/i;
+const MAX_LAUNCH_BOOTSTRAP_BYTES = 1024;
+const LAUNCH_CHARTER_DIR = "launch-charters";
 const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
 const FAILED_START_CLOSE_TIMEOUT_MS = 5000;
 const DEFAULT_UTILITY_PANE_WIDTH = "20%";
@@ -311,7 +309,7 @@ const pairedBridgeGuidance = (
       ),
       `For a returned Au Pair edit, review the patch artifact and use ${quotedClaudeTmuxBridgeTool(serverName, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
       nativeFallbackGuidance,
-      `Use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} or ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} only if delivery looks stuck.`,
+      `When the terminal says bridge messages are waiting, call ${quotedClaudeTmuxBridgeTool(serverName, "receive_messages")} immediately; use ${quotedClaudeTmuxBridgeTool(serverName, "bridge_status")} only if that pull looks stuck.`,
     ].join("\n");
   }
 
@@ -325,7 +323,7 @@ const pairedBridgeGuidance = (
     ),
     `For a returned Au Pair edit, review the patch artifact and use ${quotedBridgeTool(agent, "apply_task_patch")} with its exact SHA-256; never bypass guarded preimage verification.`,
     nativeFallbackGuidance,
-    `Use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} only if delivery looks stuck.`,
+    `When the terminal says bridge messages are waiting, call ${quotedBridgeTool(agent, "receive_messages")} immediately; use ${quotedBridgeTool(agent, "bridge_status")} only if that pull looks stuck.`,
   ].join("\n");
 };
 
@@ -513,19 +511,56 @@ const buildLaunchPrompt = (
     : buildPeerPrompt(task, launch.opts, agent, runId, serverName);
 };
 
-const writeLaunchPrompt = (
+interface MaterializedLaunchCharter {
+  bootstrapPath: string;
+  charter: RunLaunchCharter;
+}
+
+const buildLaunchBootstrap = (
+  agent: Agent,
+  charter: RunLaunchCharter
+): string => {
+  const bootstrap = [
+    `Loop bootstrap: you are the ${capitalize(agent)} agent for this run.`,
+    `Your complete charter is stored at: ${charter.path}`,
+    `Expected SHA-256: ${charter.sha256}`,
+    "Before doing any work, read the charter file as bytes and verify its SHA-256 matches exactly.",
+    "If the file is missing or the hash differs, fail closed: report the mismatch and do not proceed.",
+    "After verification, read the complete charter and follow it as the authoritative run instructions.",
+  ].join("\n");
+  const bytes = Buffer.byteLength(bootstrap, "utf8");
+  if (bytes >= MAX_LAUNCH_BOOTSTRAP_BYTES) {
+    throw new Error(
+      `Launch bootstrap for ${agent} is ${bytes} bytes; maximum is ${MAX_LAUNCH_BOOTSTRAP_BYTES - 1}.`
+    );
+  }
+  return bootstrap;
+};
+
+const writeLaunchCharter = (
+  runDir: string,
   agent: Agent,
   prompt: string | undefined
-): string | undefined => {
+): MaterializedLaunchCharter | undefined => {
   if (!prompt) {
     return undefined;
   }
-  const path = join(
-    tmpdir(),
-    `loop-launch-prompt-${agent}-${randomUUID()}.txt`
-  );
-  writeFileSync(path, prompt, { encoding: "utf8", mode: 0o600 });
-  return path;
+  const directory = resolve(runDir, LAUNCH_CHARTER_DIR);
+  mkdirSync(directory, { mode: 0o700, recursive: true });
+  chmodSync(directory, 0o700);
+  const charterPath = join(directory, `${agent}.md`);
+  writeFileSync(charterPath, prompt, { encoding: "utf8", mode: 0o600 });
+  chmodSync(charterPath, 0o600);
+  const charter: RunLaunchCharter = {
+    bytes: Buffer.byteLength(prompt, "utf8"),
+    path: charterPath,
+    sha256: createHash("sha256").update(prompt, "utf8").digest("hex"),
+  };
+  const bootstrap = buildLaunchBootstrap(agent, charter);
+  const bootstrapPath = join(directory, `${agent}-bootstrap.txt`);
+  writeFileSync(bootstrapPath, bootstrap, { encoding: "utf8", mode: 0o600 });
+  chmodSync(bootstrapPath, 0o600);
+  return { bootstrapPath, charter };
 };
 
 const resolveTmuxModel = (agent: Agent, opts: Options): string => {
@@ -1875,38 +1910,13 @@ const unblockClaudePane = async (
   }
 };
 
-const waitForLargePasteReady = async (
-  deps: Pick<TmuxDeps, "capturePane" | "sleep">,
-  pane: string,
-  agent: Agent,
-  promptBytes: number | undefined
-): Promise<boolean> => {
-  if (
-    !(agent === "claude" || agent === "codex") ||
-    (promptBytes ?? 0) < LARGE_PASTE_MIN_BYTES
-  ) {
-    return true;
-  }
-  for (let attempt = 0; attempt < LARGE_PASTE_READY_POLLS; attempt += 1) {
-    if (LARGE_PASTE_MARKER_RE.test(deps.capturePane(pane))) {
-      return true;
-    }
-    if (attempt + 1 < LARGE_PASTE_READY_POLLS) {
-      await deps.sleep(LARGE_PASTE_READY_DELAY_MS);
-    }
-  }
-  return false;
-};
-
 const createPairedPaneLayout = async (input: {
   deps: TmuxDeps;
   governess: boolean;
   leftCommand: string;
-  leftPromptBytes?: number;
   leftPromptPath?: string;
   paneAgents: { left: Agent; right: Agent };
   rightCommand: string;
-  rightPromptBytes?: number;
   rightPromptPath?: string;
   runDir: string;
   session: string;
@@ -1958,11 +1968,10 @@ const createPairedPaneLayout = async (input: {
   if (input.paneAgents.right === "claude") {
     await unblockClaudePane(rightBeforeUtility, input.deps);
   }
-  const pasteLaunchPrompt = async (
+  const pasteLaunchBootstrap = (
     pane: string,
     agent: Agent,
-    promptPath: string | undefined,
-    promptBytes: number | undefined
+    promptPath: string | undefined
   ): Promise<void> => {
     if (!promptPath) {
       return;
@@ -1973,43 +1982,23 @@ const createPairedPaneLayout = async (input: {
       ["tmux", "load-buffer", "-b", buffer, promptPath],
       `Failed to load ${agent} launch prompt`
     );
-    rmSync(promptPath, { force: true });
     runTmuxCommand(
       input.deps,
       ["tmux", "paste-buffer", "-d", "-p", "-b", buffer, "-t", pane],
       `Failed to paste ${agent} launch prompt`
     );
-    const pasteReady = await waitForLargePasteReady(
-      input.deps,
-      pane,
-      agent,
-      promptBytes
-    );
-    if (!pasteReady) {
-      input.deps.log(
-        `[loop] ${agent} large-paste render was not observed within the startup bound; submitting once.`
-      );
-    }
     runTmuxCommand(
       input.deps,
       ["tmux", "send-keys", "-t", pane, "Enter"],
       `Failed to submit ${agent} launch prompt`
     );
   };
-  await Promise.all([
-    pasteLaunchPrompt(
-      left,
-      input.paneAgents.left,
-      input.leftPromptPath,
-      input.leftPromptBytes
-    ),
-    pasteLaunchPrompt(
-      rightBeforeUtility,
-      input.paneAgents.right,
-      input.rightPromptPath,
-      input.rightPromptBytes
-    ),
-  ]);
+  pasteLaunchBootstrap(left, input.paneAgents.left, input.leftPromptPath);
+  pasteLaunchBootstrap(
+    rightBeforeUtility,
+    input.paneAgents.right,
+    input.rightPromptPath
+  );
   return {
     governess: input.governess ? `${input.session}:0.2` : undefined,
     left,
@@ -2057,7 +2046,11 @@ const startPairedSession = async (
   deps: TmuxDeps,
   launch: PairedTmuxLaunch
 ): Promise<string> => {
-  const { manifest, storage } = deps.preparePairedRun(launch.opts, deps.cwd);
+  const { manifest: preparedManifest, storage } = deps.preparePairedRun(
+    launch.opts,
+    deps.cwd
+  );
+  let manifest = preparedManifest;
   const runBase = resolveRunBase(deps.cwd, deps, storage.runId);
   const session = buildRunName(runBase, storage.runId);
   const primaryAgent = launch.opts.agent;
@@ -2208,8 +2201,40 @@ const startPairedSession = async (
           storage.runId,
           claudeChannelServer ?? ""
         );
-    leftPromptPath = writeLaunchPrompt(paneAgents.left, leftPrompt);
-    rightPromptPath = writeLaunchPrompt(paneAgents.right, rightPrompt);
+    const leftLaunch = writeLaunchCharter(
+      storage.runDir,
+      paneAgents.left,
+      leftPrompt
+    );
+    const rightLaunch = writeLaunchCharter(
+      storage.runDir,
+      paneAgents.right,
+      rightPrompt
+    );
+    leftPromptPath = leftLaunch?.bootstrapPath;
+    rightPromptPath = rightLaunch?.bootstrapPath;
+    if (leftLaunch || rightLaunch) {
+      manifest =
+        deps.updateRunManifest(storage.manifestPath, (current) =>
+          current
+            ? touchRunManifest(
+                {
+                  ...current,
+                  launchCharters: {
+                    ...current.launchCharters,
+                    ...(leftLaunch
+                      ? { [paneAgents.left]: leftLaunch.charter }
+                      : {}),
+                    ...(rightLaunch
+                      ? { [paneAgents.right]: rightLaunch.charter }
+                      : {}),
+                  },
+                },
+                new Date().toISOString()
+              )
+            : current
+        ) ?? manifest;
+    }
     const leftCommand = buildShellCommand([
       "env",
       ...env,
@@ -2247,15 +2272,9 @@ const startPairedSession = async (
       deps,
       governess: Boolean(launch.opts.governess),
       leftCommand,
-      leftPromptBytes: leftPrompt
-        ? Buffer.byteLength(leftPrompt, "utf8")
-        : undefined,
       leftPromptPath,
       paneAgents,
       rightCommand,
-      rightPromptBytes: rightPrompt
-        ? Buffer.byteLength(rightPrompt, "utf8")
-        : undefined,
       rightPromptPath,
       runDir: storage.runDir,
       session,
@@ -2308,8 +2327,6 @@ const startPairedSession = async (
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
     return session;
   } catch (error: unknown) {
-    rmSync(leftPromptPath, { force: true });
-    rmSync(rightPromptPath, { force: true });
     const hadPersistentOwnership = Boolean(codexAppServerPid || codexRemoteUrl);
     let persistentClosed = !hadPersistentOwnership;
     if (hadPersistentOwnership) {
@@ -2671,6 +2688,7 @@ export const tmuxInternals = {
   buildInteractivePeerPrompt,
   buildInteractivePrimaryPrompt,
   buildLaunchArgv,
+  buildLaunchBootstrap,
   buildLaunchPrompt,
   buildPeerPrompt,
   buildPrimaryPrompt,
@@ -2682,7 +2700,7 @@ export const tmuxInternals = {
   quoteShellArg,
   sanitizeBase,
   stripTmuxFlag,
-  waitForLargePasteReady,
+  writeLaunchCharter,
   utilityPaneEnabled,
   utilityPaneWidth,
   reconPaneCount,

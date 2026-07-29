@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +25,8 @@ import {
 import type { Options } from "../../src/loop/types";
 
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
+const makeTempRunDir = (): string =>
+  mkdtempSync(join(tmpdir(), "loop-tmux-run-"));
 
 const currentRunBase = (
   cwd: string = process.cwd(),
@@ -308,7 +312,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -491,11 +495,9 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
 });
 
-test("runInTmux transports a realistic 10KB prompt outside tmux commands", async () => {
+test("runInTmux transports a realistic charter through hash-bound pointer bootstraps", async () => {
   const calls: string[][] = [];
   const submissionEvents: string[] = [];
-  const pastedPanes = new Set<string>();
-  const pasteCaptureCounts = new Map<string, number>();
   const loadedPrompts: Array<{
     buffer: string;
     content: string;
@@ -515,7 +517,7 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -524,22 +526,7 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
   const delegated = await runInTmux(
     ["--tmux", "--proof", "verify with tests"],
     {
-      capturePane: (pane) => {
-        if (!pastedPanes.has(pane)) {
-          return "";
-        }
-        const next = (pasteCaptureCounts.get(pane) ?? 0) + 1;
-        pasteCaptureCounts.set(pane, next);
-        submissionEvents.push(`capture:${pane}:${next}`);
-        if (next < 3) {
-          return "";
-        }
-        const marker = pane.endsWith("0.0")
-          ? "❯ [Pasted text #21]"
-          : "› [Pasted Content 22083 chars]";
-        submissionEvents.push(`ready:${pane}`);
-        return marker;
-      },
+      capturePane: () => "",
       closePersistentCodexSession: () => Promise.resolve(),
       cwd: "/repo",
       env: {},
@@ -582,7 +569,6 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
         }
         if (args[0] === "tmux" && args[1] === "paste-buffer") {
           const pane = args.at(-1) ?? "";
-          pastedPanes.add(pane);
           submissionEvents.push(`paste:${pane}`);
         }
         if (args[0] === "tmux" && args[1] === "send-keys") {
@@ -601,9 +587,30 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
   expect(delegated).toBe(true);
   expect(loadedPrompts).toHaveLength(2);
   for (const prompt of loadedPrompts) {
-    expect(prompt.content).toContain(task);
-    expect(prompt.content.length).toBeGreaterThan(18_000);
-    expect(existsSync(prompt.path)).toBe(false);
+    expect(prompt.content).not.toContain(task);
+    expect(Buffer.byteLength(prompt.content, "utf8")).toBeLessThan(1024);
+    expect(prompt.content).toContain("Expected SHA-256:");
+    expect(prompt.content).toContain("fail closed");
+    expect(prompt.path.startsWith(storage.runDir)).toBe(true);
+    expect(existsSync(prompt.path)).toBe(true);
+    expect(statSync(prompt.path).mode % 0o1000).toBe(0o600);
+  }
+  expect(statSync(dirname(loadedPrompts[0]?.path ?? "")).mode % 0o1000).toBe(
+    0o700
+  );
+  expect(Object.keys(manifest.launchCharters ?? {}).sort()).toEqual([
+    "claude",
+    "codex",
+  ]);
+  for (const binding of Object.values(manifest.launchCharters ?? {})) {
+    expect(binding).toBeDefined();
+    const content = readFileSync(binding?.path ?? "", "utf8");
+    expect(statSync(binding?.path ?? "").mode % 0o1000).toBe(0o600);
+    expect(content).toContain(task);
+    expect(binding?.bytes).toBe(Buffer.byteLength(content, "utf8"));
+    expect(binding?.sha256).toBe(
+      createHash("sha256").update(content, "utf8").digest("hex")
+    );
   }
   const workspaceCommands = calls.filter(
     (call) => call[1] === "new-session" || call[1] === "split-window"
@@ -615,40 +622,11 @@ test("runInTmux transports a realistic 10KB prompt outside tmux commands", async
     expect(command.length).toBeLessThan(4096);
   }
   expect(calls.filter((call) => call[1] === "send-keys")).toHaveLength(2);
-  const firstEnter = submissionEvents.findIndex((event) =>
-    event.startsWith("enter:")
-  );
   for (const pane of ["repo-loop-1:0.0", "repo-loop-1:0.1"]) {
-    expect(submissionEvents.indexOf(`paste:${pane}`)).toBeLessThan(firstEnter);
-    expect(submissionEvents.indexOf(`ready:${pane}`)).toBeLessThan(
+    expect(submissionEvents.indexOf(`paste:${pane}`)).toBeLessThan(
       submissionEvents.indexOf(`enter:${pane}`)
     );
   }
-});
-
-test("large-paste readiness fallback is bounded when no TUI marker appears", async () => {
-  let captureCalls = 0;
-  const delays: number[] = [];
-  const ready = await tmuxInternals.waitForLargePasteReady(
-    {
-      capturePane: () => {
-        captureCalls += 1;
-        return "";
-      },
-      sleep: (ms) => {
-        delays.push(ms);
-        return Promise.resolve();
-      },
-    },
-    "repo-loop-1:0.1",
-    "codex",
-    22_083
-  );
-
-  expect(ready).toBe(false);
-  expect(captureCalls).toBe(180);
-  expect(delays).toHaveLength(179);
-  expect(new Set(delays)).toEqual(new Set([250]));
 });
 
 test("runInTmux writes paired session refs before starting governess", async () => {
@@ -1131,7 +1109,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -1284,7 +1262,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -1423,7 +1401,7 @@ test("runInTmux releases local codex app-server handles after paired handoff", a
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -1503,7 +1481,7 @@ test("runInTmux closes the local codex app-server when the paired session is gon
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -1595,7 +1573,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -1722,7 +1700,7 @@ test("runInTmux keeps the no-prompt Claude startup wait bounded", async () => {
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -1821,7 +1799,8 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).toContain("Internal agent communication:");
   expect(primaryPrompt).toContain("No arbitrary item cap applies");
   expect(primaryPrompt).toContain("commands/results");
-  expect(primaryPrompt).toContain("Never duplicate a bridge message");
+  expect(primaryPrompt).toContain("Never duplicate a bridge body");
+  expect(primaryPrompt).toContain("terminal nudge carries no message body");
   expect(primaryPrompt).toContain("Delegation is mandatory");
   expect(primaryPrompt).toContain('"mcp__loop_bridge__route_task"');
   expect(primaryPrompt).toContain("one to three independent bounded packets");
@@ -2064,7 +2043,7 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -2176,7 +2155,7 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -2259,7 +2238,7 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -2338,7 +2317,7 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -2418,7 +2397,7 @@ test("runInTmux still confirms Claude trust prompts in paired mode", async () =>
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -2494,7 +2473,7 @@ test("runInTmux still catches a delayed Claude trust prompt", async () => {
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
@@ -3295,7 +3274,7 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/repo/.loop/runs/1",
+    runDir: makeTempRunDir(),
     runId: "1",
     storageRoot: "/repo/.loop/runs",
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",

@@ -28,6 +28,7 @@ const RUNS_ROOT = join(".loop", "runs");
 const MANIFEST_FILE = "manifest.json";
 const TRANSCRIPT_FILE = "transcript.jsonl";
 const LINE_SPLIT_RE = /\r?\n/;
+const SHA256_RE = /^[a-f0-9]{64}$/u;
 const ACTIVE_RUN_STATES = new Set<RunLifecycleState>([
   "submitted",
   "working",
@@ -56,6 +57,12 @@ export interface RunStorage {
   transcriptPath: string;
 }
 
+export interface RunLaunchCharter {
+  bytes: number;
+  path: string;
+  sha256: string;
+}
+
 export interface RunManifest {
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
@@ -67,6 +74,7 @@ export interface RunManifest {
   cwd: string;
   governess?: boolean;
   helperCavemanMode?: CavemanMode;
+  launchCharters?: Partial<Record<Agent, RunLaunchCharter>>;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
@@ -257,6 +265,41 @@ const firstCavemanMode = (
     value === "ultra"
     ? value
     : undefined;
+};
+
+const readLaunchCharters = (
+  value: unknown
+): Partial<Record<Agent, RunLaunchCharter>> | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const charters: Partial<Record<Agent, RunLaunchCharter>> = {};
+  for (const [agent, candidate] of Object.entries(value)) {
+    if (!(isAgent(agent) && isRecord(candidate))) {
+      continue;
+    }
+    const path = asString(candidate.path);
+    const sha256 = asString(candidate.sha256);
+    const bytes = asInteger(candidate.bytes);
+    if (
+      path &&
+      SHA256_RE.test(sha256 ?? "") &&
+      bytes !== undefined &&
+      bytes >= 0
+    ) {
+      charters[agent] = { bytes, path, sha256: sha256 as string };
+    }
+  }
+  return Object.keys(charters).length > 0 ? charters : undefined;
+};
+
+const launchCharterManifestFields = (
+  parsed: Record<string, unknown>
+): Pick<RunManifest, "launchCharters"> => {
+  const launchCharters = readLaunchCharters(
+    parsed.launchCharters ?? parsed.launch_charters
+  );
+  return launchCharters ? { launchCharters } : {};
 };
 
 const optionalRunId = (runId: string | undefined): string | undefined => {
@@ -656,6 +699,7 @@ const readOptionalRunManifestFields = (
     ...(governess ? { governess: true } : {}),
     ...(primaryAgent ? { primaryAgent } : {}),
     ...(helperCavemanMode ? { helperCavemanMode } : {}),
+    ...launchCharterManifestFields(parsed),
     ...(tmuxPaneGoverness ? { tmuxPaneGoverness } : {}),
     ...(tmuxPaneAuPair ? { tmuxPaneAuPair } : {}),
     ...(tmuxPaneLeft ? { tmuxPaneLeft } : {}),

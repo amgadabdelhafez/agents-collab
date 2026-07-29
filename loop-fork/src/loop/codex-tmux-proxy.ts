@@ -1,15 +1,7 @@
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { serve } from "bun";
-import {
-  acknowledgeBridgeDelivery,
-  readNextPendingBridgeMessageForTarget,
-} from "./bridge-dispatch";
-import {
-  clearStaleTmuxBridgeState,
-  submitTmuxBridgeMessage,
-} from "./bridge-runtime";
-import type { BridgeMessage } from "./bridge-store";
+import { clearStaleTmuxBridgeState } from "./bridge-runtime";
 import { LOOP_VERSION } from "./constants";
 import { recordCodexAppServerDelegationCandidate } from "./delegation-policy";
 import { findFreePort } from "./ports";
@@ -24,7 +16,7 @@ import { connectWs, type WsClient } from "./ws-client";
 
 const CODEX_PROXY_BASE_PORT = 4600;
 const CODEX_PROXY_PORT_RANGE = 100;
-const DRAIN_DELAY_MS = 250;
+const LIFETIME_POLL_DELAY_MS = 250;
 const HEALTH_POLL_DELAY_MS = 150;
 const HEALTH_POLL_RETRIES = 40;
 const PROXY_STARTUP_GRACE_MS = 10_000;
@@ -42,7 +34,6 @@ const ITEM_COMPLETED_METHOD = "item/completed";
 const MCP_RELOAD_METHOD = "config/mcpServer/reload";
 const MCP_RELOAD_ID_PREFIX = "proxy-mcp-reload-";
 const MCP_RELOAD_TIMEOUT_MS = 5000;
-const DEBUG_PROXY = process.env.LOOP_DEBUG_PROXY === "1";
 
 export const CODEX_TMUX_PROXY_SUBCOMMAND = "__codex-tmux-proxy";
 
@@ -113,12 +104,6 @@ const wait = async (ms: number): Promise<void> => {
   });
 };
 
-const debugProxy = (message: string): void => {
-  if (DEBUG_PROXY) {
-    console.error(`[loop-proxy] ${message}`);
-  }
-};
-
 const extractThreadId = (value: unknown): string | undefined => {
   if (!isRecord(value)) {
     return undefined;
@@ -143,28 +128,6 @@ const persistCodexThreadId = (runDir: string, threadId: string): void => {
       new Date().toISOString()
     );
   });
-};
-
-type VisibleBridgeSubmit = (
-  runDir: string,
-  message: BridgeMessage
-) => Promise<boolean>;
-
-const deliverVisibleBridgeMessage = async (
-  runDir: string,
-  message: BridgeMessage,
-  submit: VisibleBridgeSubmit = submitTmuxBridgeMessage
-): Promise<boolean> => {
-  const delivered = await submit(runDir, message);
-  if (!delivered) {
-    return false;
-  }
-  acknowledgeBridgeDelivery(
-    runDir,
-    message,
-    "submitted through visible codex tmux pane"
-  );
-  return true;
 };
 
 const shouldStopForTmuxSession = (
@@ -228,7 +191,6 @@ class CodexTmuxProxy {
   private readonly runDir: string;
   private currentConnId = 0;
   private drainTimer: ReturnType<typeof setInterval> | undefined;
-  private initialized = false;
   private nextProxyId = 100_000;
   private proxyServer: ReturnType<typeof serve> | undefined;
   private reconnectAttemptCount = 0;
@@ -243,7 +205,6 @@ class CodexTmuxProxy {
   private threadId: string;
   private tuiSocket: ServerWebSocket<ProxySocketData> | undefined;
   private upstream: WsClient | undefined;
-  private visibleDeliveryInFlight = false;
   private readonly stoppedPromise: Promise<void>;
 
   constructor(
@@ -300,19 +261,21 @@ class CodexTmuxProxy {
         },
         open: (ws) => {
           this.currentConnId += 1;
-          this.initialized = false;
           ws.data.connId = this.currentConnId;
           this.tuiSocket = ws;
         },
       },
     });
     this.drainTimer = setInterval(() => {
-      this.drainBridgeMessages().catch((error: unknown) => {
-        debugProxy(
-          `visible bridge delivery failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      });
-    }, DRAIN_DELAY_MS);
+      const stopReason = this.stopReason();
+      if (!stopReason) {
+        return;
+      }
+      if (stopReason === "dead-tmux") {
+        clearStaleTmuxBridgeState(this.runDir);
+      }
+      this.stop();
+    }, LIFETIME_POLL_DELAY_MS);
     this.drainTimer.unref?.();
   }
 
@@ -353,15 +316,6 @@ class CodexTmuxProxy {
       this.remoteUrl = nextUrl;
     }
     return this.remoteUrl;
-  }
-
-  private resolveThreadId(): string {
-    const manifest = readRunManifest(join(this.runDir, "manifest.json"));
-    const nextThreadId = manifest?.codexThreadId || this.threadId;
-    if (nextThreadId) {
-      this.threadId = nextThreadId;
-    }
-    return this.threadId;
   }
 
   private attachUpstream(ws: WsClient): void {
@@ -549,7 +503,6 @@ class CodexTmuxProxy {
       return;
     }
     if (frame.method === INITIALIZE_METHOD) {
-      this.initialized = true;
       this.forwardToTui(JSON.stringify(proxyInitializeResponse(frame.id)));
       return;
     }
@@ -715,41 +668,6 @@ class CodexTmuxProxy {
       ? "dead-tmux"
       : undefined;
   }
-
-  private async drainBridgeMessages(): Promise<void> {
-    if (this.stopped || this.visibleDeliveryInFlight) {
-      return;
-    }
-    const stopReason = this.stopReason();
-    if (stopReason) {
-      if (stopReason === "dead-tmux") {
-        clearStaleTmuxBridgeState(this.runDir);
-      }
-      this.stop();
-      return;
-    }
-    if (
-      !(
-        this.initialized &&
-        this.resolveThreadId() &&
-        this.tuiSocket &&
-        this.upstream
-      )
-    ) {
-      return;
-    }
-    const message = readNextPendingBridgeMessageForTarget(this.runDir, "codex");
-    if (!message) {
-      return;
-    }
-
-    this.visibleDeliveryInFlight = true;
-    try {
-      await deliverVisibleBridgeMessage(this.runDir, message);
-    } finally {
-      this.visibleDeliveryInFlight = false;
-    }
-  }
 }
 
 export const findCodexTmuxProxyPort = (): Promise<number> =>
@@ -788,7 +706,6 @@ export const runCodexTmuxProxy = async (
 };
 
 export const codexTmuxProxyInternals = {
-  deliverVisibleBridgeMessage,
   isClosedLoopBridgeToolCall,
   reconnectDelayMs,
   proxyHealth,

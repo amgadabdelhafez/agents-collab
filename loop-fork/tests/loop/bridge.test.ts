@@ -421,7 +421,7 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
   expect(bridge.readBridgeRuntimeStatus(liveRunDir)).toMatchObject({
     claudeBridgeMode: "mcp-config",
     claudeChannelServer: bridge.claudeChannelServerName("8", "repo-123"),
-    codexDeliveryMode: "tmux-proxy",
+    codexDeliveryMode: "app-server",
     hasCodexRemote: true,
     hasLiveTmuxSession: true,
     hasTmuxSession: true,
@@ -487,7 +487,7 @@ test("tmux timeout preserves bridge routing as unknown without fallback delivery
   expect(result.status).toBe("queued");
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(bridge.readBridgeRuntimeStatus(runDir)).toMatchObject({
-    codexDeliveryMode: "tmux-proxy",
+    codexDeliveryMode: "app-server",
     hasLiveTmuxSession: false,
     tmuxLiveness: "unknown",
     tmuxSession: "repo-loop-unknown",
@@ -1183,7 +1183,7 @@ test("route_task drains only older unclaimed helper results for its caller", asy
   rmSync(root, { recursive: true, force: true });
 });
 
-test("a bridge delivery claim outlives the large-paste readiness bound", async () => {
+test("a bridge delivery claim outlives the app-server acceptance bound", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
   const messageId = "large-paste-claim";
@@ -1277,7 +1277,7 @@ test("external supervisor cannot apply a utility patch", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async () => {
+test("Codex-to-Claude dispatch nudges the pane without resolving delivery", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -1332,8 +1332,8 @@ test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async 
     bridge.immediateBridgeDelivery(runDir, "claude")
   );
 
-  expect(result.status).toBe("delivered");
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(result.status).toBe("queued");
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(spawnSync.mock.calls).toContainEqual([
     ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "Enter"],
     {
@@ -1345,14 +1345,81 @@ test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async 
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
-      .filter((event) => event.kind === "delivered")
+      .filter((event) => event.kind === "notified")
       .map((event) => event.reason)
-  ).toEqual(["sent to claude tmux pane"]);
+  ).toEqual(["nudged claude tmux inbox"]);
 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("large Claude bridge delivery waits for paste rendering before Enter", async () => {
+test("tmux inbox nudges throttle an unchanged inbox and allow a new message", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nOpus 5 · bypass permissions on", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptVersion = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(
+    () => `version-${transcriptVersion++}`
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeIdleClaudeRun(runDir);
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-notice-1",
+    kind: "message",
+    message: "First durable body.",
+    source: "codex",
+    target: "claude",
+  });
+  expect(await bridge.notifyTmuxBridgeInbox(runDir, "claude", 100_000)).toBe(
+    true
+  );
+  expect(await bridge.notifyTmuxBridgeInbox(runDir, "claude", 100_001)).toBe(
+    false
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:01.000Z",
+    id: "msg-notice-2",
+    kind: "message",
+    message: "Second durable body.",
+    source: "codex",
+    target: "claude",
+  });
+  expect(await bridge.notifyTmuxBridgeInbox(runDir, "claude", 100_002)).toBe(
+    true
+  );
+  expect(await bridge.notifyTmuxBridgeInbox(runDir, "claude", 100_003)).toBe(
+    false
+  );
+
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(2);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(2);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+      .map((event) => event.id)
+  ).toEqual(["msg-notice-1", "msg-notice-1", "msg-notice-2"]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("large Claude bridge bodies stay in the ledger while the pane gets a bounded nudge", async () => {
   const events: string[] = [];
   let loadedText = "";
   let pasteCaptureCalls = 0;
@@ -1432,10 +1499,14 @@ test("large Claude bridge delivery waits for paste rendering before Enter", asyn
   };
   bridge.bridgeInternals.appendBridgeEvent(runDir, message);
 
-  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
-  expect(Buffer.byteLength(loadedText, "utf8")).toBeGreaterThan(9279);
-  expect(events.indexOf("paste")).toBeLessThan(events.indexOf("ready"));
-  expect(events.indexOf("ready")).toBeLessThan(events.indexOf("enter"));
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(Buffer.byteLength(loadedText, "utf8")).toBeLessThan(128);
+  expect(loadedText).toBe(
+    "Bridge: 1 message waiting. Call receive_messages now."
+  );
+  expect(loadedText).not.toContain("Review this exact evidence");
+  expect(events.indexOf("paste")).toBeLessThan(events.indexOf("enter"));
+  expect(events).not.toContain("ready");
   expect(
     spawnSync.mock.calls.filter(
       ([[, command, , , key]]) => command === "send-keys" && key === "-l"
@@ -1444,7 +1515,12 @@ test("large Claude bridge delivery waits for paste rendering before Enter", asyn
   expect(
     readdirSync(runDir).filter((name) => name.startsWith(".bridge-paste-"))
   ).toEqual([]);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -1460,7 +1536,7 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
       const pane =
         captureCalls <= 2 || captureCalls >= 4
           ? "❯\n\nOpus 5 · bypass permissions on"
-          : "❯ [bridge:msg-claude-r] Message from Codex via the loop bridge:\n\nOpus 5";
+          : "❯ Bridge: 1 message waiting. Call receive_messages now.\n\nOpus 5";
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -1507,7 +1583,7 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
   };
   bridge.bridgeInternals.appendBridgeEvent(runDir, message);
 
-  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
   expect(
     spawnSync.mock.calls.filter(
       ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
@@ -1521,7 +1597,12 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
       timeout: 2000,
     },
   ]);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -1661,13 +1742,18 @@ test("Claude delivery injects over a dim type-ahead suggestion", async () => {
   };
   bridge.bridgeInternals.appendBridgeEvent(runDir, message);
 
-  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
   expect(
     spawnSync.mock.calls.filter(
       ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
     )
   ).toHaveLength(1);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -1841,8 +1927,13 @@ test("Claude delivery confirms when submission evidence advances into an active 
   };
   bridge.bridgeInternals.appendBridgeEvent(runDir, message);
 
-  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(true);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
   expect(
     spawnSync.mock.calls.filter(
       ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
@@ -1995,7 +2086,7 @@ test("a post-injection human draft is never submitted by fallback", async () => 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("immediate Claude delivery and worker drain submit a message once", async () => {
+test("immediate Claude notification and worker drain nudge once without delivery", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -2052,8 +2143,8 @@ test("immediate Claude delivery and worker drain submit a message once", async (
   const worker = bridge.drainTmuxBridgeMessages(runDir);
   const [result, workerDelivered] = await Promise.all([immediate, worker]);
 
-  expect(result.status).toBe("delivered");
-  expect(workerDelivered).toBe(false);
+  expect(result.status).toBe("queued");
+  expect(typeof workerDelivered).toBe("boolean");
   expect(
     spawnSync.mock.calls.filter(
       ([args]) =>
@@ -2063,9 +2154,9 @@ test("immediate Claude delivery and worker drain submit a message once", async (
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
-      .filter((event) => event.kind === "delivered")
+      .filter((event) => event.kind === "notified")
   ).toHaveLength(1);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -2661,7 +2752,7 @@ test("bridge MCP bridge_status tolerates a missing tmux binary", async () => {
   expect(result.stderr).toBe("");
   const status = toolText(result.stdout, 1);
   expect(status).toContain('"claudeChannelServer": "loop-bridge-repo-123-7"');
-  expect(status).toContain('"codexDeliveryMode": "tmux-proxy"');
+  expect(status).toContain('"codexDeliveryMode": "app-server"');
   expect(status).toContain('"hasLiveTmuxSession": false');
   expect(status).toContain('"hasTmuxSession": true');
   expect(status).toContain('"tmuxLiveness": "unknown"');
@@ -2815,7 +2906,63 @@ test("bridge delivers Claude replies directly to Codex when app-server state is 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge leaves live Codex tmux messages queued for the tmux proxy", async () => {
+test("concurrent Codex delivery attempts share one app-server claim", async () => {
+  let releaseInjection = () => undefined;
+  const injectionGate = new Promise<void>((resolve) => {
+    releaseInjection = resolve;
+  });
+  const injectCodexMessage = mock(async () => {
+    await injectionGate;
+    return true;
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-1",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "7",
+      status: "running",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claim-race",
+    kind: "message" as const,
+    message: "Deliver once despite concurrent workers.",
+    source: "claude" as const,
+    target: "codex" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  const first = bridge.deliverCodexBridgeMessage(runDir, message);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const second = await bridge.deliverCodexBridgeMessage(runDir, message);
+  expect(second).toBe(false);
+  releaseInjection();
+  await expect(first).resolves.toBe(true);
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(1);
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge sends Codex through app-server even when tmux is live", async () => {
   const injectCodexMessage = mock(async () => true);
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
@@ -2857,21 +3004,24 @@ test("bridge leaves live Codex tmux messages queued for the tmux proxy", async (
   bridge.bridgeInternals.appendBridgeEvent(runDir, message);
   const delivered = await bridge.deliverCodexBridgeMessage(runDir, message);
 
-  expect(delivered).toBe(false);
-  expect(injectCodexMessage).not.toHaveBeenCalled();
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
-    expect.objectContaining(message),
-  ]);
+  expect(delivered).toBe(true);
+  expect(injectCodexMessage).toHaveBeenCalledWith(
+    "ws://127.0.0.1:4500",
+    "codex-thread-1",
+    "Claude: Please steer this into the active turn."
+  );
+  expect(spawnSync).not.toHaveBeenCalled();
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "delivered")
-  ).toHaveLength(0);
+  ).toHaveLength(1);
 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge falls back to direct Codex delivery when the stored tmux session is stale", async () => {
+test("direct Codex delivery does not probe or rewrite stored tmux state", async () => {
   const injectCodexMessage = mock(async () => true);
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
@@ -2923,24 +3073,9 @@ test("bridge falls back to direct Codex delivery when the stored tmux session is
     "Claude: Please review the final state."
   );
   expect(readRunManifest(join(runDir, "manifest.json"))?.tmuxSession).toBe(
-    undefined
+    "repo-loop-8"
   );
-  const removeCall = spawnSync.mock.calls.find(
-    (call) => call[0]?.[0] === "claude" && call[0]?.[2] === "remove"
-  );
-  expect(removeCall).toBeDefined();
-  expect(removeCall?.[0]).toEqual([
-    "claude",
-    "mcp",
-    "remove",
-    "--scope",
-    "local",
-    bridge.claudeChannelServerName("8", "repo-123"),
-  ]);
-  expect(removeCall?.[1]).toMatchObject({
-    stderr: "pipe",
-    stdout: "ignore",
-  });
+  expect(spawnSync).not.toHaveBeenCalled();
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
 
   rmSync(root, { recursive: true, force: true });
@@ -3004,8 +3139,10 @@ test("bridge drains codex messages through the persisted stable pane target", as
   const delivered = await bridge.drainCodexTmuxMessages(runDir);
 
   expect(delivered).toBe(true);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
-  expect(loadedText).toBe("Claude: Please check the tmux path.");
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(loadedText).toBe(
+    "Bridge: 1 message waiting. Call receive_messages now."
+  );
   expect(
     spawnSync.mock.calls.filter(([[, command]]) => command === "load-buffer")
   ).toHaveLength(1);
@@ -3080,13 +3217,9 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
   const delivered = await bridge.drainTmuxBridgeMessages(runDir);
 
   expect(delivered).toBe(true);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(loadedText).toBe(
-    [
-      "[bridge:msg-cursor-1] Message from Codex via the loop bridge:",
-      "Please review the current diff and send notes back through the bridge.",
-      "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
-    ].join("\n\n")
+    "Bridge: 1 message waiting. Call receive_messages now."
   );
   expect(
     spawnSync.mock.calls.filter(([[, command]]) => command === "load-buffer")
@@ -3161,18 +3294,14 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
   const delivered = await bridge.drainTmuxBridgeMessages(runDir);
 
   expect(delivered).toBe(true);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(loadedText).toBe(
-    [
-      "[bridge:msg-claude-t] Message from Gemini via the loop bridge:",
-      "Stop and review the supervisor ruling.",
-      "Treat this as direct agent-to-agent coordination. Do not reply to the human.",
-    ].join("\n\n")
+    "Bridge: 1 message waiting. Call receive_messages now."
   );
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
-      .filter((event) => event.kind === "delivered")
+      .filter((event) => event.kind === "notified")
   ).toHaveLength(1);
 
   rmSync(root, { recursive: true, force: true });
@@ -3501,7 +3630,7 @@ test("runBridgeWorker clears stale tmux routing and exits", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("runBridgeWorker falls back to app-server delivery after stale tmux cleanup", async () => {
+test("runBridgeWorker delivers Codex without probing stale tmux state", async () => {
   let runDir = "";
   const injectCodexMessage = mock(() => {
     const manifestPath = join(runDir, "manifest.json");
@@ -3566,8 +3695,9 @@ test("runBridgeWorker falls back to app-server delivery after stale tmux cleanup
     "Claude: Please deliver this after tmux cleanup."
   );
   expect(readRunManifest(join(runDir, "manifest.json"))?.tmuxSession).toBe(
-    undefined
+    "repo-loop-8"
   );
+  expect(spawnSync).not.toHaveBeenCalled();
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
 
   rmSync(root, { recursive: true, force: true });
@@ -3693,7 +3823,7 @@ test("runBridgeWorker retries queued codex app-server messages", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("runBridgeWorker drains Claude while the Codex tmux proxy owns Codex", async () => {
+test("runBridgeWorker injects Codex directly and only nudges Claude", async () => {
   let runDir = "";
   const injectCodexMessage = mock(() => true);
   const spawnSync = mock((args: string[]) => {
@@ -3776,14 +3906,20 @@ test("runBridgeWorker drains Claude while the Codex tmux proxy owns Codex", asyn
 
   await bridge.runBridgeWorker(runDir);
 
-  expect(injectCodexMessage).not.toHaveBeenCalled();
+  expect(injectCodexMessage).toHaveBeenCalledTimes(1);
   expect(
     bridge.readPendingBridgeMessages(runDir).map((message) => message.id)
-  ).toEqual(["msg-codex-proxy-owned"]);
+  ).toEqual(["msg-claude-worker-visible"]);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "delivered")
+      .map((event) => event.id)
+  ).toEqual(["msg-codex-proxy-owned"]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
       .map((event) => event.id)
   ).toEqual(["msg-claude-worker-visible"]);
 
@@ -4624,7 +4760,12 @@ test("bridge drains pending copilot tmux messages through stored pane routing", 
   const delivered = await bridge.drainTmuxBridgeMessages(runDir);
 
   expect(delivered).toBe(true);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
 
   rmSync(root, { recursive: true, force: true });
 });

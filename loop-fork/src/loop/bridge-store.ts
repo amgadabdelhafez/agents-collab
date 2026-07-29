@@ -34,6 +34,7 @@ export type BridgeResolution =
   | "expired"
   | "superseded"
   | "dead-letter";
+export type BridgeNotificationKind = "notified";
 
 const MESSAGE_TYPES = new Set<BridgeMessageType>([
   "message",
@@ -87,7 +88,12 @@ interface BridgeAck extends BridgeBaseEvent {
   reason?: string;
 }
 
-export type BridgeEvent = BridgeAck | BridgeMessage;
+export interface BridgeNotification extends BridgeBaseEvent {
+  kind: BridgeNotificationKind;
+  reason?: string;
+}
+
+export type BridgeEvent = BridgeAck | BridgeMessage | BridgeNotification;
 
 export interface BridgeEnqueueOptions {
   artifactRefs?: string[];
@@ -256,6 +262,14 @@ const parseBridgeEvent = (
     messageById.set(id, message);
     return parseBridgeMessage(value, base, message);
   }
+  if (kind === "notified") {
+    return {
+      ...base,
+      kind,
+      reason: asString(value.reason),
+      signature: asString(value.signature),
+    };
+  }
   if (!RESOLUTIONS.has(kind as BridgeResolution)) {
     return undefined;
   }
@@ -302,6 +316,9 @@ const pendingFromEvents = (events: BridgeEvent[]): BridgeMessage[] => {
   for (const event of events) {
     if (event.kind === "message") {
       messages.set(event.id, event);
+      continue;
+    }
+    if (event.kind === "notified") {
       continue;
     }
     const pending = messages.get(event.id);
@@ -379,6 +396,40 @@ export const markBridgeMessage = (
     reason,
     new Date().toISOString()
   );
+};
+
+export const markBridgeMessageNotified = (
+  runDir: string,
+  message: BridgeMessage,
+  reason?: string,
+  at = new Date().toISOString()
+): void => {
+  appendBridgeEvent(runDir, {
+    at,
+    id: message.id,
+    kind: "notified",
+    reason,
+    signature: eventSignature(message),
+    source: message.source,
+    target: message.target,
+  });
+};
+
+export const lastBridgeNotificationAt = (
+  runDir: string,
+  messageId: string
+): number | undefined => {
+  let latest: number | undefined;
+  for (const event of readBridgeEvents(runDir)) {
+    if (event.kind !== "notified" || event.id !== messageId) {
+      continue;
+    }
+    const at = Date.parse(event.at);
+    if (Number.isFinite(at) && (latest === undefined || at > latest)) {
+      latest = at;
+    }
+  }
+  return latest;
 };
 
 export const blocksBridgeBounce = (

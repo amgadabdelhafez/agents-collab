@@ -170,6 +170,18 @@ test("manifest helpers write, read, and touch run metadata", () => {
     },
     "2026-03-22T10:00:00.000Z"
   );
+  manifest.launchCharters = {
+    claude: {
+      bytes: 8192,
+      path: "/repo/.loop/runs/9/launch-charters/claude.md",
+      sha256: "a".repeat(64),
+    },
+    codex: {
+      bytes: 9216,
+      path: "/repo/.loop/runs/9/launch-charters/codex.md",
+      sha256: "b".repeat(64),
+    },
+  };
 
   writeRunManifest(manifestPath, manifest);
   const loaded = readRunManifest(manifestPath);
@@ -179,6 +191,7 @@ test("manifest helpers write, read, and touch run metadata", () => {
   expect(loaded).toMatchObject({
     cavemanMode: "lite",
     helperCavemanMode: "full",
+    launchCharters: manifest.launchCharters,
   });
   expect(touched.updatedAt).toBe("2026-03-22T11:00:00.000Z");
   expect(touched.createdAt).toBe(manifest.createdAt);

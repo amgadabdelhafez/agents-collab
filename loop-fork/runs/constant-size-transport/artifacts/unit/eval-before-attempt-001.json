@@ -1,0 +1,10 @@
+{
+  "task_id": "constant-size-transport",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

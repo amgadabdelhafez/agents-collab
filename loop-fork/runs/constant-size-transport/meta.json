@@ -1,0 +1,7 @@
+{
+  "id": "constant-size-transport",
+  "mode": "planned",
+  "created_at": "2026-07-29T16:40:57Z",
+  "status": "active",
+  "description": "Replace large inline launch charters and terminal message bodies with hash-bound pointer bootstraps plus bridge-owned constant-size delivery."
+}

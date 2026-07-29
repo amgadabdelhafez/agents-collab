@@ -328,6 +328,14 @@
       "eval_status": "pass",
       "ended_at": "2026-07-29T06:26:50Z",
       "spec_path": "specs/run-lifecycle-teardown.md"
+    },
+    {
+      "id": "constant-size-transport",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-29T16:40:57Z",
+      "run_dir": "runs/constant-size-transport",
+      "eval_status": "pass"
     }
   ]
 }

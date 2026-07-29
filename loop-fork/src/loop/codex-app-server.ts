@@ -73,6 +73,7 @@ const METHOD_INITIALIZE = "initialize";
 const METHOD_INITIALIZED = "initialized";
 const METHOD_THREAD_START = "thread/start";
 const METHOD_THREAD_READ = "thread/read";
+const METHOD_THREAD_RESUME = "thread/resume";
 const METHOD_TURN_START = "turn/start";
 const METHOD_TURN_STEER = "turn/steer";
 const METHOD_TURN_COMPLETED = "turn/completed";
@@ -1414,6 +1415,23 @@ export const getCodexAppServerPid = (): number | undefined => {
 export const getLastCodexThreadId = (): string =>
   singleton?.getLastThreadId() ?? "";
 
+const readOrResumeCodexThread = async (
+  client: Awaited<ReturnType<typeof createRemoteAppServerClient>>,
+  threadId: string
+): Promise<unknown> => {
+  try {
+    return await client.sendRequest(METHOD_THREAD_READ, {
+      includeTurns: true,
+      threadId,
+    });
+  } catch {
+    return client.sendRequest(METHOD_THREAD_RESUME, {
+      excludeTurns: false,
+      threadId,
+    });
+  }
+};
+
 export const injectCodexMessage = async (
   remoteUrl: string,
   threadId: string,
@@ -1440,13 +1458,12 @@ export const injectCodexMessage = async (
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let activeTurnId: string | undefined;
       try {
-        const thread = await client.sendRequest(METHOD_THREAD_READ, {
-          includeTurns: true,
-          threadId,
-        });
+        const thread = await readOrResumeCodexThread(client, threadId);
         activeTurnId = extractActiveTurnId(thread);
-      } catch {
-        activeTurnId = undefined;
+      } catch (error) {
+        throw new Error(
+          `codex bridge could not read or resume thread ${threadId}: ${toError(error).message}`
+        );
       }
 
       if (activeTurnId) {

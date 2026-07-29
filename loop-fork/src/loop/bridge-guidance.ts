@@ -27,10 +27,10 @@ export const bridgeStatusStuckGuidance =
   'Use "bridge_status" only when direct delivery appears stuck.';
 
 export const receiveMessagesStuckGuidance =
-  'Use "bridge_status" or "receive_messages" only if delivery looks stuck.';
+  'When the terminal says bridge messages are waiting, call "receive_messages" immediately; use "bridge_status" only if that pull looks stuck.';
 
 export const singleBridgeTransportGuidance =
-  "The loop bridge is the sole peer-delivery transport. Never duplicate a bridge message with tmux send-keys, direct terminal injection, or a second delivery path.";
+  "The loop bridge is the sole peer-delivery transport. A terminal nudge carries no message body; pull the durable body with receive_messages. Never duplicate a bridge body with tmux send-keys, direct terminal injection, or a second delivery path.";
 
 export const sendProactiveCodexGuidance = (): string =>
   `Use "send_message" with ${bridgeTargetLiteral("codex")} for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.`;

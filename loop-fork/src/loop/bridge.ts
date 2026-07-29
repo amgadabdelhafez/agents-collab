@@ -155,15 +155,9 @@ export const immediateBridgeDelivery = (
   target: Agent
 ): ImmediateBridgeDelivery | undefined => {
   if (target === "codex") {
-    return async (entry) => {
-      if (readBridgeRuntimeStatus(runDir).codexDeliveryMode === "tmux-proxy") {
-        return false;
-      }
-      return (
-        (await deliverCodexBridgeMessage(runDir, entry)) ||
-        (await deliverTmuxBridgeMessage(runDir, entry))
-      );
-    };
+    return async (entry) =>
+      (await deliverCodexBridgeMessage(runDir, entry)) ||
+      (await deliverTmuxBridgeMessage(runDir, entry));
   }
   if (
     target === "claude" ||

@@ -1,0 +1,23 @@
+{
+  "task_id": "constant-size-transport",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-29T17:10:01Z",
+  "ended_at": "2026-07-29T17:10:15Z",
+  "artifact": "runs/constant-size-transport/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/bridge.test.ts",
+    "tests/loop/governess.test.ts",
+    "tests/loop/codex-app-server.test.ts",
+    "tests/loop/tmux.test.ts",
+    "tests/loop/codex-tmux-proxy.test.ts",
+    "tests/loop/codex-tmux-proxy.integration.test.ts",
+    "tests/loop/run-state.test.ts",
+    "tests/loop/bridge-guidance.test.ts"
+  ]
+}

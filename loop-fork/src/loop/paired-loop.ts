@@ -109,7 +109,7 @@ const pairPeer = (agent: Agent, opts: Options): Agent =>
 const bridgeGuidance = (agent: Agent, opts: Options): string => {
   const target = pairPeer(agent, opts);
   const peer = capitalize(target);
-  const pollingGuidance = `Use ${quotedBridgeTool(agent, "receive_messages")} only if ${quotedBridgeTool(agent, "bridge_status")} shows pending messages addressed to you and direct delivery looks stuck.`;
+  const pollingGuidance = `When the terminal says bridge messages are waiting, call ${quotedBridgeTool(agent, "receive_messages")} immediately. Otherwise use it only if ${quotedBridgeTool(agent, "bridge_status")} shows pending messages addressed to you and delivery looks stuck.`;
   return [
     "Paired mode:",
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
@@ -127,7 +127,7 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
 };
 
 const bridgeToolGuidance = (agent: Agent): string => {
-  const pollingNote = `Only use ${quotedBridgeTool(agent, "bridge_status")} or ${quotedBridgeTool(agent, "receive_messages")} when delivery looks stuck.`;
+  const pollingNote = `When the terminal says bridge messages are waiting, call ${quotedBridgeTool(agent, "receive_messages")} immediately; use ${quotedBridgeTool(agent, "bridge_status")} only if that pull looks stuck.`;
   return [
     `You can use the MCP tools ${quotedBridgeTool(agent, "send_message")}, ${quotedBridgeTool(agent, "bridge_status")}, and ${quotedBridgeTool(agent, "receive_messages")} for direct paired-agent coordination.`,
     singleBridgeTransportGuidance,

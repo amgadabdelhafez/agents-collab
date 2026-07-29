@@ -479,6 +479,81 @@ test("injectCodexMessage steers an active turn instead of starting a new turn", 
   });
 });
 
+test("injectCodexMessage resumes an evicted persisted thread before delivery", async () => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/read") {
+      write({ id: request.id, error: { message: "thread not loaded" } });
+      return;
+    }
+    if (request.method === "thread/resume") {
+      write({ id: request.id, result: { thread: { turns: [] } } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-resumed" } } });
+    }
+  };
+
+  await expect(
+    appServer.injectCodexMessage(
+      "ws://127.0.0.1:4500",
+      "thread-evicted",
+      "Drain the durable bridge inbox."
+    )
+  ).resolves.toBe(true);
+  const frames = wsWrites.map((line) => JSON.parse(line) as RequestFrame);
+  expect(frames.map((frame) => frame.method)).toEqual([
+    "initialize",
+    "initialized",
+    "thread/read",
+    "thread/resume",
+    "turn/start",
+  ]);
+  expect(frames[3]?.params).toEqual({
+    excludeTurns: false,
+    threadId: "thread-evicted",
+  });
+});
+
+test("injectCodexMessage fails closed when an evicted thread cannot resume", async () => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/read") {
+      write({ id: request.id, error: { message: "thread not loaded" } });
+      return;
+    }
+    if (request.method === "thread/resume") {
+      write({ id: request.id, error: { message: "rollout missing" } });
+    }
+  };
+
+  await expect(
+    appServer.injectCodexMessage(
+      "ws://127.0.0.1:4500",
+      "thread-evicted",
+      "Do not lose this message."
+    )
+  ).rejects.toThrow(
+    "codex bridge could not read or resume thread thread-evicted: rollout missing"
+  );
+  const frames = wsWrites.map((line) => JSON.parse(line) as RequestFrame);
+  expect(frames.map((frame) => frame.method)).toEqual([
+    "initialize",
+    "initialized",
+    "thread/read",
+    "thread/resume",
+  ]);
+});
+
 test("injectCodexMessage returns once turn/start is accepted", async () => {
   const appServer = await getModule();
   currentHandler = (request, write) => {
