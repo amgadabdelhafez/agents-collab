@@ -58,6 +58,7 @@ import {
   handoverRequest,
   type KeyInput,
   openRawKeyInput,
+  paneProbeFromTmuxResult,
   type ReplacementLaunchResult,
   readExitControl,
   replacementLoopArgs,
@@ -5894,7 +5895,7 @@ export const defaultGovernessDeps = (
       }
       throw error;
     }
-    return result.exitCode === 0 ? decode(result.stdout).trim() : undefined;
+    return paneProbeFromTmuxResult(result.exitCode, decode(result.stdout));
   },
   readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
   readBridgeLatest: (runDir) => readBridgeLatest(runDir),

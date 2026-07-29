@@ -1,0 +1,19 @@
+{
+  "task_id": "headless-handover",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-29T18:45:53Z",
+  "ended_at": "2026-07-29T18:45:53Z",
+  "artifact": "runs/headless-handover/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/governess-exit.test.ts",
+    "tests/loop/governess-runtime.test.ts",
+    "tests/loop/governess-recover.test.ts",
+    "tests/loop/run-process-cleanup.test.ts"
+  ]
+}

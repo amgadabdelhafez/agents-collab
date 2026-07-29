@@ -1,0 +1,85 @@
+task_id: headless-handover
+dimension: unit
+attempt: 001
+started_at: 2026-07-29T18:45:53Z
+command: bun test tests/loop/governess-exit.test.ts tests/loop/governess-runtime.test.ts tests/loop/governess-recover.test.ts tests/loop/run-process-cleanup.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-recover.test.ts:
+(pass) non-recoverable state 'working' yields level null [0.29ms]
+(pass) non-recoverable state 'waiting-human' yields level null
+(pass) non-recoverable state 'waiting-peer' yields level null
+(pass) stuck with confidence below the gate yields level null
+(pass) max recoveries reached yields level null
+(pass) cooldown active (last action within window) yields level null
+(pass) escalation: empty history escalates to answer-prompt
+(pass) escalation: one prior answer-prompt escalates to nudge [0.23ms]
+(pass) escalation: two priors escalate to restart [0.01ms]
+(pass) escalation: three priors (== max 3) yields level null [0.01ms]
+(pass) history for other agents does not affect this agent's escalation
+(pass) executeRecovery with level null returns null and calls nothing [0.05ms]
+(pass) executeRecovery dryRun logs with dryRun true and calls no executor [0.05ms]
+(pass) executeRecovery non-dryRun restart invokes restart once and logs [0.02ms]
+(pass) executeRecovery non-dryRun answer-prompt invokes answerPrompt once [0.04ms]
+
+tests/loop/governess-runtime.test.ts:
+(pass) policy separates observations, safe controls, confirmations, and forbidden work [0.19ms]
+(pass) runtime state and lifecycle sequence are explicit
+(pass) agent-authored hook evidence wins over terminal fallback state
+(pass) control journal is idempotent and replayable [2.18ms]
+(pass) journaled controls reconcile from post-dispatch agent evidence [1.31ms]
+(pass) behavioral cycle snapshots retain only transition evidence [0.64ms]
+(pass) journal rejects phase regression after transport acceptance [0.48ms]
+(pass) journal retries only failures that happened before dispatch [1.07ms]
+(pass) missing or malformed control journals fail closed [11.18ms]
+(pass) runtime adapter rejects a stale control envelope [0.19ms]
+(pass) two-phase handoff accepts only a matching ready bundle [1.17ms]
+(pass) stale governess state cannot overwrite a newer epoch [0.64ms]
+(pass) legacy compatibility maps inputs without leaking them into canonical state [0.30ms]
+
+tests/loop/run-process-cleanup.test.ts:
+(pass) teardown signals only bridge processes registered to the exact run [1.23ms]
+(pass) teardown requires both app-server command and owned listener port [0.40ms]
+(pass) startup GC reaps only provably abandoned runs in the current repository [4.21ms]
+(pass) startup GC never signals stale-run processes that fail ownership proof [0.99ms]
+(pass) startup GC preserves a run present in the bounded tmux snapshot [0.75ms]
+(pass) startup GC retains app-server ownership evidence after a signal failure [1.00ms]
+(pass) startup GC contains tmux snapshot failures and preserves tmux-owned runs [1.04ms]
+(pass) startup GC contains manifest repair failures before signaling and continues [1.10ms]
+(pass) startup GC retains bridge registration after a signal failure [0.84ms]
+
+tests/loop/governess-exit.test.ts:
+(pass) x opens a reversible menu and only explicit e or h selects an exit
+(pass) handover accepts only force teardown and launch retry keys
+(pass) persisted exit state is validated
+(pass) agent exit detection distinguishes the TUI from a dead pane or shell
+(pass) tmux pane probes preserve confirmed missing targets but not empty successful output
+(pass) replacement args preserve pairing and supply a continuation prompt
+(pass) replacement handover uses a markdown continuation file to skip replanning
+(pass) exit controls replace the status row without growing the board
+(pass) handover waits for a busy agent, notifies each once, and launches after both exit [2.77ms]
+(pass) handover never injects over a notification or permission prompt [0.24ms]
+(pass) valid ready bundles close each drained TUI exactly once before launch [0.85ms]
+(pass) headless handover skips the missing pane and reaches owned teardown after acceptance [0.82ms]
+(pass) unknown pane evidence keeps headless handover non-destructive [0.48ms]
+(pass) replacement launch failure preserves the old loop for explicit retry or teardown [0.51ms]
+(pass) handover persists launch success before marking and killing the old loop [0.62ms]
+(pass) handover launch failure never marks or kills the old loop [0.54ms]
+(pass) restart preserves the old loop when the recorded replacement is dead [0.11ms]
+(pass) restart preserves a recorded replacement while tmux liveness is unknown
+(pass) an unconfirmed replacement probe is persisted without duplicate launch [0.59ms]
+(pass) explicit stop marks the run before killing its tmux session [0.20ms]
+(pass) cleanup failure cannot prevent explicit tmux teardown [0.12ms]
+(pass) explicit teardown returns and records an unconfirmed tmux kill
+(pass) raw key input emits individual keys and restores the terminal [0.33ms]
+
+ 60 pass
+ 0 fail
+ 269 expect() calls
+Ran 60 tests across 4 files. [69.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-29T18:45:53Z

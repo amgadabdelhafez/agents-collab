@@ -1,12 +1,16 @@
 {
   "task_id": "headless-handover",
-  "status": "pending",
-  "required": [
-    "unit"
-  ],
+  "status": "pass",
+  "required": ["unit"],
   "dimensions": {
     "unit": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/headless-handover/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/headless-handover/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/headless-handover/artifacts/unit/attempt-001.json"
     }
   }
 }

@@ -20,6 +20,7 @@ import {
   handoverContinuationFile,
   handoverContinuationText,
   openRawKeyInput,
+  paneProbeFromTmuxResult,
   readExitControl,
   replacementLoopArgs,
 } from "../../src/loop/governess-exit";
@@ -82,6 +83,17 @@ test("agent exit detection distinguishes the TUI from a dead pane or shell", () 
   expect(agentHasExited("codex", "")).toBe(false);
   expect(agentHasExited("codex", undefined)).toBe(false);
   expect(agentHasExited("codex", "malformed")).toBe(false);
+});
+
+test("tmux pane probes preserve confirmed missing targets but not empty successful output", () => {
+  expect(paneProbeFromTmuxResult(0, "0:codex-aarch64-a\n")).toBe(
+    "0:codex-aarch64-a"
+  );
+  expect(paneProbeFromTmuxResult(0, "0:zsh\n")).toBe("0:zsh");
+  expect(paneProbeFromTmuxResult(1, "")).toBe("1:missing");
+  expect(paneProbeFromTmuxResult(1, "unexpected output")).toBe("1:missing");
+  expect(paneProbeFromTmuxResult(0, "\n")).toBeUndefined();
+  expect(agentHasExited("codex", paneProbeFromTmuxResult(1, ""))).toBe(true);
 });
 
 test("replacement args preserve pairing and supply a continuation prompt", () => {
@@ -419,6 +431,121 @@ test("valid ready bundles close each drained TUI exactly once before launch", as
     session: "replacement",
     status: "launched",
   });
+});
+
+test("headless handover skips the missing pane and reaches owned teardown after acceptance", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    mode: "handover",
+    notified: { claude: true, codex: true },
+  };
+  writeHandoverBundles(config, state);
+  const order: string[] = [];
+  let claudeExited = false;
+  let launches = 0;
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: (_file: string, record: unknown) =>
+      order.push(`log:${(record as { event: string }).event}`),
+    capturePane: () => "",
+    cleanupRunProcesses: () => {
+      order.push("cleanup");
+      return { killed: [321], skipped: [] };
+    },
+    fenceCurrent: () => true,
+    killSession: () => order.push("kill"),
+    launchReplacementLoop: () => {
+      launches += 1;
+      order.push("launch");
+      return { ok: true, session: "replacement" };
+    },
+    markRunStopped: () => order.push("mark"),
+    now: () => 0,
+    paneCommand: (pane: string) => {
+      if (pane.endsWith(".1")) {
+        return "1:missing";
+      }
+      return claudeExited ? "0:zsh" : "0:claude";
+    },
+    readHooks: () => [{ agent: "claude" as const, event: "Stop", ts: "now" }],
+    replacementSessionAlive: () => true,
+    replacementSessionReady: () => true,
+    saveState: () => order.push(`save:${state.exitControl.mode}`),
+    sendKeys: (pane: string, keys: string[]) =>
+      order.push(`keys:${pane}:${keys.join(",")}`),
+    sendText: (pane: string, text: string) =>
+      order.push(`text:${pane}:${text}`),
+    sleep: async () => undefined,
+  };
+
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
+  expect(order.filter((item) => item.startsWith("text:"))).toEqual([
+    "text:session:0.0:/exit",
+  ]);
+  expect(order.some((item) => item.includes("session:0.1"))).toBe(false);
+  expect(launches).toBe(0);
+
+  claudeExited = true;
+  order.length = 0;
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
+  expect(launches).toBe(1);
+  expect(state.exitControl.mode).toBe("launched");
+  expect(order).not.toContain("mark");
+  expect(order).not.toContain("cleanup");
+  expect(order).not.toContain("kill");
+
+  acceptReplacement(state);
+  order.length = 0;
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(true);
+  expect(launches).toBe(1);
+  expect(order).toEqual([
+    "save:launched",
+    "log:exit",
+    "mark",
+    "cleanup",
+    "log:run-process-cleanup",
+    "kill",
+  ]);
+});
+
+test("unknown pane evidence keeps headless handover non-destructive", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    mode: "handover",
+    notified: { claude: true, codex: true },
+  };
+  writeHandoverBundles(config, state);
+  const terminal: string[] = [];
+  let launches = 0;
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: (pane: string) => {
+      if (pane.endsWith(".1")) {
+        throw new TmuxControlUnavailableError(["capture-pane", "-t", pane]);
+      }
+      return "";
+    },
+    fenceCurrent: () => true,
+    launchReplacementLoop: () => {
+      launches += 1;
+      return { ok: true, session: "replacement" };
+    },
+    now: () => 0,
+    paneCommand: (pane: string) => (pane.endsWith(".1") ? undefined : "0:zsh"),
+    readHooks: () => [{ agent: "claude" as const, event: "Stop", ts: "now" }],
+    saveState: () => undefined,
+    sendKeys: (pane: string) => terminal.push(`keys:${pane}`),
+    sendText: (pane: string) => terminal.push(`text:${pane}`),
+    sleep: async () => undefined,
+  };
+
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
+  expect(launches).toBe(0);
+  expect(terminal).toEqual([]);
+  expect(state.exitControl.mode).toBe("handover");
 });
 
 test("replacement launch failure preserves the old loop for explicit retry or teardown", async () => {

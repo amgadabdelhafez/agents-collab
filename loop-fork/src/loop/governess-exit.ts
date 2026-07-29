@@ -160,6 +160,21 @@ const SHELL_COMMANDS = new Set([
 ]);
 const PANE_PROBE_RE = /^([01]):([^:\s]+)$/;
 
+// A bounded tmux command that returned nonzero completed its control-plane
+// round trip but could not resolve the requested pane. Preserve that as
+// affirmative missing-pane evidence. Thrown/timed-out control calls never
+// reach this normalizer and remain unknown at the caller.
+export const paneProbeFromTmuxResult = (
+  exitCode: number,
+  stdout: string
+): string | undefined => {
+  if (exitCode !== 0) {
+    return "1:missing";
+  }
+  const probe = stdout.trim();
+  return probe.length > 0 ? probe : undefined;
+};
+
 export const agentHasExited = (
   agent: Agent,
   paneProbe: string | undefined
