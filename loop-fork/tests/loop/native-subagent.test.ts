@@ -487,11 +487,15 @@ test("loop-scoped provider definitions enforce one read-only fallback", () => {
     claudeNativeFallbackDefinition()[CLAUDE_NATIVE_FALLBACK_PROFILE];
   expect(claude?.tools).toEqual(["Read", "Grep"]);
   expect(claude?.maxTurns).toBe(8);
+  // TeamCreate exists in Claude Code 2.1.220 and creates a fleet WITHOUT going
+  // through Agent, so gating Agent/Task alone left a bypass.
   expect(claudeNativeSubagentArgs("strict")).toEqual([
     "--disallowedTools",
     "Agent",
     "Task",
+    "TeamCreate",
   ]);
+  expect(claude?.disallowedTools).toContain("TeamCreate");
   expect(claudeNativeSubagentArgs("off")).toEqual([]);
 
   const claudeCommand = tmuxInternals.buildClaudeCommand(
@@ -555,6 +559,114 @@ test("ensureLoopCodexHome disables Codex native spawning without a fallback prof
         join(codexHome, "agents", `${CODEX_NATIVE_FALLBACK_PROFILE}.toml`)
       )
     ).toBe(false);
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+// The slot is a CONCURRENCY slot, not one grant per run. Requirement 5 lists the
+// occupying states exactly — granted, consumed, running — so a completed or expired
+// fallback frees it. Nothing locked that before: a refactor could have made the slot
+// permanent (starving long runs) or made it never free (unbounded fleets) and every
+// existing test would still pass. This pins both directions.
+test("native fallback slot is one-at-a-time: completion and expiry free it, active occupancy denies", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "loop-native-slot-"));
+  try {
+    activateUtilityEpoch(runDir, 11);
+    for (const id of ["utility-a", "utility-b", "utility-c", "utility-d"]) {
+      settledUtilityJob(runDir, "claude", id);
+    }
+
+    // 1. First request is granted and taken all the way to completed.
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest("claude", "utility-a", "slot-1")
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 11,
+      mode: "utility-first",
+      nowMs: 2_000_000,
+      runDir,
+    });
+    consumeNativeFallbackLease({
+      agentType: CLAUDE_NATIVE_FALLBACK_PROFILE,
+      mode: "utility-first",
+      nowMs: 2_001_000,
+      provider: "claude",
+      runDir,
+      toolName: "Agent",
+      toolUseId: "slot-tool-1",
+    });
+    bindNativeFallbackStart({
+      agentId: "slot-child-1",
+      agentType: CLAUDE_NATIVE_FALLBACK_PROFILE,
+      nowMs: 2_002_000,
+      provider: "claude",
+      runDir,
+    });
+    expect(
+      completeNativeFallback({
+        agentId: "slot-child-1",
+        nowMs: 2_003_000,
+        provider: "claude",
+        runDir,
+      }).lease?.state
+    ).toBe("completed");
+    expect(readNativeFallbackObservability(runDir, "utility-first").slot).toBe(
+      "open"
+    );
+
+    // 2. COMPLETION FREES THE SLOT: a later request is granted, not denied.
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest("claude", "utility-b", "slot-2")
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 11,
+      mode: "utility-first",
+      nowMs: 2_010_000,
+      runDir,
+    });
+    const afterCompletion = readNativeFallbackRequests(runDir).find(
+      (snapshot) => snapshot.request.id === "slot-2"
+    );
+    expect(afterCompletion?.state).toBe("granted");
+
+    // 3. AN ACTIVE GRANT OCCUPIES THE SLOT: the next request is denied, naming it.
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest("claude", "utility-c", "slot-3")
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 11,
+      mode: "utility-first",
+      nowMs: 2_011_000,
+      runDir,
+    });
+    const blocked = readNativeFallbackRequests(runDir).find(
+      (snapshot) => snapshot.request.id === "slot-3"
+    );
+    expect(blocked?.state).toBe("denied");
+    expect(blocked?.reason).toBe("native-slot-busy:slot-2");
+
+    // 4. EXPIRY FREES THE SLOT: past the 120s grant window, a new request is granted.
+    appendNativeFallbackRequest(
+      runDir,
+      fallbackRequest("claude", "utility-d", "slot-4")
+    );
+    processPendingNativeFallbackRequests({
+      epoch: 11,
+      mode: "utility-first",
+      nowMs: 2_010_000 + 121_000,
+      runDir,
+    });
+    const afterExpiry = readNativeFallbackRequests(runDir).find(
+      (snapshot) => snapshot.request.id === "slot-4"
+    );
+    expect(afterExpiry?.state).toBe("granted");
+    expect(
+      readNativeFallbackObservability(runDir, "utility-first").expired
+    ).toBeGreaterThanOrEqual(1);
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }

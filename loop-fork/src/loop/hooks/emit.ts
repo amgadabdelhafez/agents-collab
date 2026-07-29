@@ -282,9 +282,16 @@ const hookAgentType = (
     "role",
   ]);
 
+// Creation surfaces only. Claude Code 2.1.220 ships `TeamCreate` alongside
+// `Agent`/`Task` (verified by string scan of the installed binary), and it
+// creates a fleet without going through `Agent`, so gating `Agent` alone left a
+// bypass. Messaging surfaces (`SendMessage`) are deliberately NOT gated here:
+// they address agents that this policy already prevents from existing, and
+// gating them would deny legitimate bridge traffic without closing anything.
 const isNativeSpawnTool = (toolName: string): boolean =>
   toolName === "Agent" ||
   toolName === "Task" ||
+  toolName === "TeamCreate" ||
   toolName === "spawn_agent" ||
   toolName.endsWith("__spawn_agent");
 

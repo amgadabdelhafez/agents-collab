@@ -889,6 +889,23 @@ describe("runHookEmit", () => {
         hookSpecificOutput: { permissionDecision: "deny" },
       });
 
+      // PARENT-level fleet surface. TeamCreate ships in Claude Code 2.1.220 and
+      // does NOT route through Agent, so gating Agent alone left a bypass: the
+      // main agent could raise a whole team with no lease. Asserted without an
+      // `agent_id` on purpose — a child-scoped assertion proves nothing here,
+      // because the leased child's Read/Grep allowlist already denies every
+      // other tool whether or not the spawn gate knows about TeamCreate.
+      const parentTeam = await invoke({
+        cwd: repo,
+        hook_event_name: "PreToolUse",
+        tool_input: { description: "spin up reviewers" },
+        tool_name: "TeamCreate",
+        tool_use_id: "team-1",
+      });
+      expect(parentTeam).toMatchObject({
+        hookSpecificOutput: { permissionDecision: "deny" },
+      });
+
       await invoke({
         agent_id: "child-hook-1",
         agent_type: CLAUDE_NATIVE_FALLBACK_PROFILE,

@@ -506,6 +506,7 @@ export const claudeNativeFallbackDefinition = (): Record<
     disallowedTools: [
       "Agent",
       "Task",
+      "TeamCreate",
       "Bash",
       "Edit",
       "Write",
@@ -526,7 +527,7 @@ export const claudeNativeSubagentArgs = (
   mode: NativeSubagentMode
 ): string[] => {
   if (mode === "strict") {
-    return ["--disallowedTools", "Agent", "Task"];
+    return ["--disallowedTools", "Agent", "Task", "TeamCreate"];
   }
   if (mode === "utility-first") {
     return ["--agents", JSON.stringify(claudeNativeFallbackDefinition())];
@@ -1911,6 +1912,17 @@ const startPairedSession = async (
       `${RUN_ID_ENV}=${storage.runId}`,
       ...(launch.opts.governess
         ? [`LOOP_NATIVE_SUBAGENT_MODE=${nativeSubagentMode}`]
+        : []),
+      // Remove the fleet surface rather than only denying it. Claude Code
+      // 2.1.220 exposes `TeamCreate` when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
+      // is inherited from the launching shell, so a governed pane could be
+      // handed a whole team tool that never passes through `Agent`. Hook and
+      // disallowedTools gating still cover it; unsetting means the governed
+      // agent never sees it at all. Untouched in `off` mode, which claims no
+      // enforcement.
+      ...(nativeSubagentMode === "utility-first" ||
+      nativeSubagentMode === "strict"
+        ? ["-u", "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"]
         : []),
       ...(launch.opts.cavemanMode
         ? [`LOOP_CAVEMAN_MODE=${launch.opts.cavemanMode}`]

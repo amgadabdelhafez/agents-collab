@@ -101,10 +101,16 @@ or claim authority.
    bridge.
 5. **Recovery:** a new Governess epoch fences orphaned claims; time-limited jobs
    fail closed and return an escalation rather than being silently replayed.
-6. **Native fallback:** after a settled helper result or route, a main agent may
-   request bounded read-only exploration/review. Governess grants one current-
-   epoch lease; the next exact fallback-profile spawn consumes it, lifecycle
-   hooks bind/close it, and every other fleet or child mutation attempt is denied.
+6. **Native fallback:** after a settled helper result or route, **Claude** may
+   request bounded read-only exploration/review. Codex may not: Codex 0.145
+   reapplies the full-access parent sandbox after loading a custom role, so a
+   role marked read-only is not a read-only child; Codex native agents are
+   therefore disabled outright and its requests fail closed. Governess grants
+   one current-epoch lease, holding a single run-wide **concurrency** slot — a
+   completed or expired fallback frees it for a later request, but two never
+   run at once. The next exact fallback-profile spawn consumes it, lifecycle
+   hooks bind/close it, and every other fleet or child mutation attempt is
+   denied, including `TeamCreate`.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.
