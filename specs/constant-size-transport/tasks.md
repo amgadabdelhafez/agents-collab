@@ -13,5 +13,5 @@
 - [x] Replace the obsolete full-paste smoke guards with executable
   pointer-bootstrap and ledger-only bridge-delivery guards.
 - [x] Run focused and full verification and record an empty baseline.
-- [ ] Obtain exact-SHA independent review before deploy (T4/census released by
+- [x] Obtain exact-SHA independent review before deploy (T4/census released by
   RULING 26).

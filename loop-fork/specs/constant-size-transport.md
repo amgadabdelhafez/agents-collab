@@ -1,10 +1,8 @@
-# Task constant-size-transport
+# constant-size-transport
 
-Created: 2026-07-29T16:40:57Z
-Mode: planned
-Description: Replace large inline launch charters and terminal message bodies with hash-bound pointer bootstraps plus bridge-owned constant-size delivery.
+Task completed 2026-07-29T18:17:40Z, mode planned.
 
-## What I changed
+## What was built
 
 - Created the root feature spec, implementation plan, bounded task list, and
   acceptance contract before runtime edits.
@@ -27,8 +25,8 @@ Description: Replace large inline launch charters and terminal message bodies wi
 - Recorded 278 focused tests with Harness, then passed lint, source typecheck,
   compiled build, the full sequential repository suite, and an empty baseline.
 - RULING 26 released the T4/census gate with independently matching ZERO-ADMIT
-  derivations. Deployment remains held only for exact-SHA review of this
-  cumulative change.
+  derivations. At that point, deployment remained held only for exact-SHA
+  review of the cumulative change.
 - Claude independently verified 1,214 tests, the candidate binary hash, the
   pointer bootstrap, and the bounded tmux control plane, then issued DISSENT on
   exact commit `e14773a6c013c9ccaefd936d3b08d63ed055d5e0` because both committed
@@ -54,23 +52,24 @@ Description: Replace large inline launch charters and terminal message bodies wi
   passed the joint QA gate and started on the reviewed binary with both agent
   panes alive and no manual intervention.
 
-## Why
+## Decisions made
 
-- Realistic charters and bridge bodies must not be transported through terminal
-  paste paths whose correctness varies with size or tmux responsiveness.
-- Full content remains durable and inspectable; the terminal carries only a
-  hash-bound launch pointer or a constant-size inbox notification.
+- Persist complete composed launch charters inside the run directory and bind
+  them by path, byte count, and SHA-256 in the manifest.
+- Keep launch bootstraps below 1 KiB and fail closed on a hash mismatch.
+- Deliver Codex bridge messages through app-server without a tmux dependency.
+- Notify interactive non-Codex panes with a constant-size nudge; agents pull
+  bodies from `receive_messages` and only that pull resolves delivery.
+- Hold deployment for exact-SHA review plus the T4/census release.
 
-## Notes
+## Open items at completion
 
-- Live run 99 is read-only and remains on the previously deployed binary.
-- Deployment is held for exact-SHA review; RULING 26 released the T4/census
-  disposition.
-- The superseding bounded-tmux candidate is commit
-  `60213161996e1884e72eaa59e6805db09a9028eb`; its independent review is still
-  pending.
+_No entries recorded._
 
-Regression: yes
-Regression id: terminal-payload-size-coupling
-Regression symptom: Realistic launch charters and bridge bodies could block or silently fail when transported through terminal paste and tmux readiness paths.
-Regression guard: `bun test tests/loop/tmux.test.ts tests/loop/bridge.test.ts tests/loop/codex-app-server.test.ts tests/loop/codex-tmux-proxy.test.ts`
+## Trajectory
+
+- 001 - initial (2026-07-29T16:40:57Z)
+- 002 - constant-size transport specification and release gates (2026-07-29T16:52:36Z)
+- 003 - constant-size charter and bridge transport implemented (2026-07-29T17:10:00Z)
+- 004 - final constant-size transport candidate; RULING 26 release gate passed (2026-07-29T17:16:03Z)
+- 005 - committed constant-size smoke guards repaired after exact-SHA dissent (2026-07-29T18:02:25Z)
