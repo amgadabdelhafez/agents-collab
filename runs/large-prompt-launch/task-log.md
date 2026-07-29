@@ -25,3 +25,10 @@
   were present, and the manifest contained a non-empty `tmuxSession`. A
   compiled-binary negative smoke that simulated tmux returning success without
   creating a workspace exited nonzero with the expected error.
+- Independent review: Claude re-ran 1,186 tests and the live smoke, recomputed
+  the candidate hash, and issued CONCUR on exact commit
+  `7df3202f69e77c8e00dce8c727864a0b9e74a3cb` in xchan message
+  `177e8da9-946a-44d5-86ea-ce9221d28674`.
+- Deployment: `/Users/amgad/.local/bin/loop` resolves to the reviewed candidate
+  with SHA-256
+  `712672750d0f1e1a09c7759312f45020bd6c8efd4141a54b2d73f94b8c6e891c`.
