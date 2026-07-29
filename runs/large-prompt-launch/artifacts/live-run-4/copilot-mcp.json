@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "loop-bridge": {
+      "args": [
+        "__bridge-mcp",
+        "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/4",
+        "copilot"
+      ],
+      "command": "/Users/amgad/dev_projects/agents-collab-large-prompt-launch-fix/loop-fork/loop",
+      "type": "stdio"
+    }
+  }
+}

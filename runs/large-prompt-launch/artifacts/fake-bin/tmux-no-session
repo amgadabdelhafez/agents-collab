@@ -1,0 +1,5 @@
+#!/bin/sh
+if [ "${1:-}" = "has-session" ]; then
+  exit 1
+fi
+exit 0

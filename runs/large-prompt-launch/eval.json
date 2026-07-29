@@ -1,0 +1,23 @@
+{
+  "task_id": "large-prompt-launch",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit", "smoke", "live"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "method": "bun run test:ci",
+      "reason": "all test files passed with zero failures"
+    },
+    "smoke": {
+      "status": "pass",
+      "method": "bash evals/smoke/large-prompt-launch.sh",
+      "reason": "10,257-byte task launched with a named live session, expected agent panes, and a non-empty manifest tmuxSession; missing-workspace simulation exited nonzero"
+    },
+    "live": {
+      "status": "pass",
+      "artifact": "runs/large-prompt-launch/artifacts/live-smoke.md",
+      "reason": "compiled candidate launched the unchanged 10,257-byte Harvto charter on a private tmux socket"
+    }
+  }
+}

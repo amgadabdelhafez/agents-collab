@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
 import {
@@ -492,6 +499,21 @@ const buildLaunchPrompt = (
   return launch.opts.agent === agent
     ? buildPrimaryPrompt(task, launch.opts, runId, serverName)
     : buildPeerPrompt(task, launch.opts, agent, runId, serverName);
+};
+
+const writeLaunchPrompt = (
+  agent: Agent,
+  prompt: string | undefined
+): string | undefined => {
+  if (!prompt) {
+    return undefined;
+  }
+  const path = join(
+    tmpdir(),
+    `loop-launch-prompt-${agent}-${randomUUID()}.txt`
+  );
+  writeFileSync(path, prompt, { encoding: "utf8", mode: 0o600 });
+  return path;
 };
 
 const resolveTmuxModel = (agent: Agent, opts: Options): string => {
@@ -1832,8 +1854,10 @@ const createPairedPaneLayout = async (input: {
   deps: TmuxDeps;
   governess: boolean;
   leftCommand: string;
+  leftPromptPath?: string;
   paneAgents: { left: Agent; right: Agent };
   rightCommand: string;
+  rightPromptPath?: string;
   runDir: string;
   session: string;
 }): Promise<PairedPaneTargets> => {
@@ -1884,6 +1908,38 @@ const createPairedPaneLayout = async (input: {
   if (input.paneAgents.right === "claude") {
     await unblockClaudePane(rightBeforeUtility, input.deps);
   }
+  const pasteLaunchPrompt = (
+    pane: string,
+    agent: Agent,
+    promptPath: string | undefined
+  ): void => {
+    if (!promptPath) {
+      return;
+    }
+    const buffer = `${sanitizeBase(input.session)}-${agent}-launch`;
+    runTmuxCommand(
+      input.deps,
+      ["tmux", "load-buffer", "-b", buffer, promptPath],
+      `Failed to load ${agent} launch prompt`
+    );
+    rmSync(promptPath, { force: true });
+    runTmuxCommand(
+      input.deps,
+      ["tmux", "paste-buffer", "-d", "-b", buffer, "-t", pane],
+      `Failed to paste ${agent} launch prompt`
+    );
+    runTmuxCommand(
+      input.deps,
+      ["tmux", "send-keys", "-t", pane, "Enter"],
+      `Failed to submit ${agent} launch prompt`
+    );
+  };
+  pasteLaunchPrompt(left, input.paneAgents.left, input.leftPromptPath);
+  pasteLaunchPrompt(
+    rightBeforeUtility,
+    input.paneAgents.right,
+    input.rightPromptPath
+  );
   return {
     governess: input.governess ? `${input.session}:0.2` : undefined,
     left,
@@ -2053,6 +2109,8 @@ const startPairedSession = async (
     ? (launch.opts.claudeMcpConfigPath ??
       join(storage.runDir, "claude-mcp.json"))
     : undefined;
+  let leftPromptPath: string | undefined;
+  let rightPromptPath: string | undefined;
   try {
     const env = buildPairedPaneEnv({
       cavemanMode: launch.opts.cavemanMode,
@@ -2080,6 +2138,8 @@ const startPairedSession = async (
           storage.runId,
           claudeChannelServer ?? ""
         );
+    leftPromptPath = writeLaunchPrompt(paneAgents.left, leftPrompt);
+    rightPromptPath = writeLaunchPrompt(paneAgents.right, rightPrompt);
     const leftCommand = buildShellCommand([
       "env",
       ...env,
@@ -2094,7 +2154,6 @@ const startPairedSession = async (
         hadSession: hadAgentSession[paneAgents.left],
         nativeSubagentMode,
         opts: launch.opts,
-        prompt: leftPrompt,
       }),
     ]);
     const rightCommand = buildShellCommand([
@@ -2111,7 +2170,6 @@ const startPairedSession = async (
         hadSession: hadAgentSession[paneAgents.right],
         nativeSubagentMode,
         opts: launch.opts,
-        prompt: rightPrompt,
       }),
     ]);
 
@@ -2119,8 +2177,10 @@ const startPairedSession = async (
       deps,
       governess: Boolean(launch.opts.governess),
       leftCommand,
+      leftPromptPath,
       paneAgents,
       rightCommand,
+      rightPromptPath,
       runDir: storage.runDir,
       session,
     });
@@ -2172,6 +2232,8 @@ const startPairedSession = async (
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
     return session;
   } catch (error: unknown) {
+    rmSync(leftPromptPath, { force: true });
+    rmSync(rightPromptPath, { force: true });
     cleanupFailedPairedSessionStart(
       deps,
       session,

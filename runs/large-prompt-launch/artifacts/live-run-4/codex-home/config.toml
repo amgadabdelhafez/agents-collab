@@ -1,0 +1,8 @@
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+service_tier = "standard"
+
+[projects."/Users/amgad/dev_projects/agents-collab-large-prompt-launch-fix"]
+trust_level = "trusted"
