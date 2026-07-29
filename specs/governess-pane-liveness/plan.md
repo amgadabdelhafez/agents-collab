@@ -13,8 +13,9 @@ then asks tmux to respawn the recorded command.
 1. Add a focused liveness module containing helper argument parsing, ownership
    checks, durable budget parsing/journaling, and bounded respawn behavior.
 2. Dispatch the hidden helper before normal CLI startup maintenance.
-3. Configure dead-pane formatting and arm the pane-scoped hook during paired
-   workspace creation.
+3. Configure dead-pane formatting during paired workspace creation, then arm
+   and immediately reconcile the pane-scoped hook only after the complete
+   stable control layout is durable.
 4. Add unit tests for every fail-closed branch, rolling-window behavior,
    tmux command construction, and retained/live pane formatting.
 5. Run focused tests, the full verification suite, isolated tmux proof, and an

@@ -874,6 +874,9 @@ test("runInTmux writes paired session refs before starting governess", async () 
     );
     expect(events).toContain("spawn-governess:codex-thread-1:%41:%43");
     expect(events).toContain("manifest:codex-thread-1:%41:%43");
+    expect(events.indexOf("manifest:codex-thread-1:%41:%43")).toBeLessThan(
+      events.lastIndexOf("spawn-governess:codex-thread-1:%41:%43")
+    );
     expect(
       events.some((event) => event.includes("'LOOP_GOVERNESS_LLM_TRACE=1'"))
     ).toBe(true);

@@ -24,9 +24,10 @@ with a durable restart budget that prevents crash loops.
    stopped when `pane_dead` is true; frozen output must not look live.
 2. Each newly created Governess pane receives a pane-scoped `pane-died` hook
    that invokes a hidden loop lifecycle helper without running normal CLI
-   startup maintenance. After arming, the hook is run once immediately so a
-   process that exited between pane creation and hook registration is also
-   reconciled.
+   startup maintenance. The complete control layout and stable manifest must
+   be durable before the hook is armed. After arming, the hook is run once
+   immediately so a process that exited between pane creation and hook
+   registration is also reconciled.
 3. Before respawning, the helper must verify all of the following against
    current state: the manifest parses, its lifecycle state is active, its
    `tmuxSession` equals the requested session, its `tmuxPaneGoverness` equals

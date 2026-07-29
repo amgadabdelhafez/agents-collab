@@ -25,3 +25,9 @@
   identity, exit 4 is suppressed by the rolling budget and remains visibly
   `STOPPED`, and the journal contains exactly three attempts plus suppression.
   Full verification passed again; the earlier review request was withdrawn.
+- 2026-07-29T20:49:00Z — Moved hook arming after complete control-pane creation
+  and final stable-manifest persistence. `split-window -k` retains any earlier
+  Governess exit for the immediate reconciliation, while a later helper-pane
+  startup failure now tears down before any liveness hook exists. Focused and
+  full verification passed after the ordering change; the superseded review
+  request was withdrawn.

@@ -23,4 +23,6 @@ topic: implemented fail-closed pane-death recovery and passed focused plus full 
 - Isolated tmux active-recovery and stopped-run-suppression proof pass.
 - Immediate hook reconciliation is a live-pane no-op and closes the
   split-to-hook exit race; the fourth rapid crash remains visibly stopped.
+- Hook arming is ordered after complete control-pane creation and final stable
+  manifest persistence, so startup-failure teardown cannot race recovery.
 - Candidate is not deployed; Harvto run 100 remains untouched.

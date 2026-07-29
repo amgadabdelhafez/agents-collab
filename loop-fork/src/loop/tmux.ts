@@ -2136,18 +2136,6 @@ const startPairedControlPanes = (
       runId,
       paneTargets.governess
     );
-    // The hook validates exact durable ownership. Bind the stable pane before
-    // arming it so an early Governess exit cannot land in the gap before the
-    // full control-row manifest update below.
-    deps.updateRunManifest(join(runDir, "manifest.json"), (current) =>
-      current
-        ? touchRunManifest(
-            { ...current, tmuxPaneGoverness: governess },
-            new Date().toISOString()
-          )
-        : current
-    );
-    armGovernessPaneLiveness(deps, session, runDir, governess);
   }
   const auPair =
     governess && utilityPaneEnabled(deps.env)
@@ -2449,6 +2437,18 @@ const startPairedSession = async (
         paneAgents,
         primaryAgent,
         livePaneTargets
+      );
+    }
+    if (livePaneTargets.governess) {
+      // Arm only after the complete control layout and its stable pane targets
+      // are durable. `split-window -k` retains an earlier Governess exit, and
+      // the immediate hook run reconciles it without racing startup-failure
+      // cleanup for later control-pane creation.
+      armGovernessPaneLiveness(
+        deps,
+        session,
+        storage.runDir,
+        livePaneTargets.governess
       );
     }
     const primaryPane =

@@ -1,7 +1,7 @@
 {
   "task_id": "governess-pane-liveness",
   "feature": "governess-pane-liveness",
-  "timestamp": "2026-07-29T20:42:18Z",
+  "timestamp": "2026-07-29T20:49:00Z",
   "verdict": "pass",
   "release_status": "held-pending-exact-sha-review",
   "baseline_failures": [],
@@ -10,7 +10,7 @@
     "focused": {
       "status": "pass",
       "method": "Harness unit verification",
-      "reason": "99 CLI, paired tmux, and Governess liveness tests passed with zero failures"
+      "reason": "99 CLI, paired tmux, and Governess liveness tests passed with zero failures, including final-manifest-before-hook ordering and immediate reconciliation"
     },
     "isolated_tmux": {
       "status": "pass",
