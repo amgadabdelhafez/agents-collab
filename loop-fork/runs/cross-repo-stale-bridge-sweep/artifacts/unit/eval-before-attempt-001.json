@@ -1,0 +1,10 @@
+{
+  "task_id": "cross-repo-stale-bridge-sweep",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

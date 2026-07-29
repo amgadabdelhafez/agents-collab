@@ -1,0 +1,53 @@
+task_id: cross-repo-stale-bridge-sweep
+dimension: unit
+attempt: 001
+started_at: 2026-07-29T19:19:39Z
+command: bun test tests/loop/run-process-cleanup.test.ts tests/loop.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop.test.ts:
+(pass) runCli defaults empty argv to paired interactive tmux mode [14.81ms]
+(pass) runCli starts panel for dashboard command [2.17ms]
+(pass) runCli runs task flow when argv has options [2.56ms]
+(pass) runCli delegates paired tmux after resolving the task [1.93ms]
+(pass) runCli starts paired interactive tmux without resolving a task [2.33ms]
+(pass) runCli does not fall through to foreground work when paired tmux handoff returns false [1.90ms]
+(pass) runCli prints tmux detach hint first when inside tmux [1.73ms]
+(pass) runCli does not print tmux detach hint outside tmux [1.85ms]
+(pass) runCli creates worktree before resolving task when --worktree is set [1.65ms]
+(pass) runCli keeps claude-only task flow intact [2.00ms]
+(pass) runCli keeps codex-only tmux flow intact [2.11ms]
+(pass) runCli calls update hooks in correct order before task flow [1.81ms]
+(pass) runCli awaits auto-update before handing off promptless paired tmux startup [3.16ms]
+[loop] detach with Ctrl-b d
+(pass) runCli keeps promptless paired tmux inside tmux on fire-and-forget auto-update [1.84ms]
+(pass) runCli returns early when handleManualUpdateCommand returns true [1.84ms]
+(pass) runCli handles --version before startup maintenance [1.62ms]
+(pass) runCli handles --help before startup maintenance [1.72ms]
+
+tests/loop/run-process-cleanup.test.ts:
+(pass) teardown signals only bridge processes registered to the exact run [1.00ms]
+(pass) teardown requires both app-server command and owned listener port [0.29ms]
+(pass) startup GC reaps only provably abandoned runs in the current repository [5.33ms]
+(pass) startup GC never signals stale-run processes that fail ownership proof [1.40ms]
+(pass) startup GC preserves a run present in the bounded tmux snapshot [0.81ms]
+(pass) startup GC retains app-server ownership evidence after a signal failure [1.08ms]
+(pass) startup GC contains tmux snapshot failures and preserves tmux-owned runs [0.67ms]
+(pass) startup GC contains manifest repair failures before signaling and continues [1.13ms]
+(pass) startup GC retains bridge registration after a signal failure [1.03ms]
+(pass) cross-repo sweep signals only exact bridges for terminal or absent runs [1.65ms]
+(pass) cross-repo sweep ignores parent commands with embedded bridge JSON [0.19ms]
+(pass) cross-repo sweep rejects non-canonical commands and changed PID identity [0.17ms]
+(pass) cross-repo sweep preserves a contradictory active terminal manifest [0.46ms]
+(pass) cross-repo sweep contains enumeration and per-process inspection failures [0.30ms]
+
+ 31 pass
+ 0 fail
+ 150 expect() calls
+Ran 31 tests across 2 files. [78.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-29T19:19:39Z

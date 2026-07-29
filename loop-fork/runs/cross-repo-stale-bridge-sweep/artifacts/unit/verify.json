@@ -1,0 +1,17 @@
+{
+  "task_id": "cross-repo-stale-bridge-sweep",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-29T19:19:39Z",
+  "ended_at": "2026-07-29T19:19:39Z",
+  "artifact": "runs/cross-repo-stale-bridge-sweep/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/run-process-cleanup.test.ts",
+    "tests/loop.test.ts"
+  ]
+}

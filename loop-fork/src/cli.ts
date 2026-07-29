@@ -228,6 +228,7 @@ export const runCli = async (argv: string[]): Promise<void> => {
   try {
     const normalizedArgv = argv.length === 0 ? DEFAULT_TMUX_ARGV : argv;
     cliDeps.gcStaleClaudeBridgeRegistrations();
+    cliDeps.gcStaleBridgeProcesses();
     cliDeps.gcAbandonedRunProcesses();
     await updateDeps.applyStagedUpdateOnStartup();
     if (await updateDeps.handleManualUpdateCommand(normalizedArgv)) {

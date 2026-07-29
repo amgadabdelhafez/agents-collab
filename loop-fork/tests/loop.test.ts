@@ -33,6 +33,7 @@ afterEach(() => {
 interface CliModuleDeps {
   checkGitState?: () => string | undefined;
   gcAbandonedRunProcesses?: () => unknown;
+  gcStaleBridgeProcesses?: () => unknown;
   gcStaleClaudeBridgeRegistrations?: () => unknown;
   maybeEnterWorktree?: (opts: Options) => void | Promise<void>;
   parseArgs?: (argv: string[]) => Options;
@@ -60,6 +61,9 @@ const loadRunCli = async (
   const checkGitStateMock = mock(deps.checkGitState ?? (() => undefined));
   const gcAbandonedRunProcessesMock = mock(
     deps.gcAbandonedRunProcesses ?? (() => undefined)
+  );
+  const gcStaleBridgeProcessesMock = mock(
+    deps.gcStaleBridgeProcesses ?? (() => undefined)
   );
   const gcStaleClaudeBridgeRegistrationsMock = mock(
     deps.gcStaleClaudeBridgeRegistrations ?? (() => undefined)
@@ -97,6 +101,7 @@ const loadRunCli = async (
     cliDeps: {
       checkGitState: checkGitStateMock,
       gcAbandonedRunProcesses: gcAbandonedRunProcessesMock,
+      gcStaleBridgeProcesses: gcStaleBridgeProcessesMock,
       gcStaleClaudeBridgeRegistrations: gcStaleClaudeBridgeRegistrationsMock,
       maybeEnterWorktree: maybeEnterWorktreeMock,
       parseArgs: parseArgsMock,
@@ -133,6 +138,7 @@ const loadRunCli = async (
     closeAppServerMock,
     closeClaudeSdkMock,
     gcAbandonedRunProcessesMock,
+    gcStaleBridgeProcessesMock,
     gcStaleClaudeBridgeRegistrationsMock,
     handleManualMock,
     maybeEnterWorktreeMock,
@@ -211,6 +217,7 @@ test("runCli runs task flow when argv has options", async () => {
     closeAppServerMock,
     closeClaudeSdkMock,
     gcAbandonedRunProcessesMock,
+    gcStaleBridgeProcessesMock,
     gcStaleClaudeBridgeRegistrationsMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
@@ -235,6 +242,7 @@ test("runCli runs task flow when argv has options", async () => {
   expect(closeAppServerMock).toHaveBeenCalledTimes(1);
   expect(closeClaudeSdkMock).toHaveBeenCalledTimes(1);
   expect(gcAbandonedRunProcessesMock).toHaveBeenCalledTimes(1);
+  expect(gcStaleBridgeProcessesMock).toHaveBeenCalledTimes(1);
   expect(gcStaleClaudeBridgeRegistrationsMock).toHaveBeenCalledTimes(1);
   expect(opts.pairedMode).toBe(true);
 });
@@ -493,6 +501,15 @@ test("runCli calls update hooks in correct order before task flow", async () => 
     startAutoCheckMock,
   } = await loadRunCli(
     {
+      gcAbandonedRunProcesses: () => {
+        calls.push("abandonedGc");
+      },
+      gcStaleBridgeProcesses: () => {
+        calls.push("staleBridgeGc");
+      },
+      gcStaleClaudeBridgeRegistrations: () => {
+        calls.push("claudeRegistrationGc");
+      },
       parseArgs: () => opts,
       resolveTask: () => {
         calls.push("resolveTask");
@@ -521,6 +538,9 @@ test("runCli calls update hooks in correct order before task flow", async () => 
   expect(awaitAutoUpdateCheckMock).not.toHaveBeenCalled();
   expect(startAutoCheckMock).toHaveBeenCalledTimes(1);
   expect(calls).toEqual([
+    "claudeRegistrationGc",
+    "staleBridgeGc",
+    "abandonedGc",
     "applyStaged",
     "handleManual",
     "autoCheck",
@@ -623,6 +643,7 @@ test.each([
   const {
     applyStagedMock,
     gcAbandonedRunProcessesMock,
+    gcStaleBridgeProcessesMock,
     gcStaleClaudeBridgeRegistrationsMock,
     parseArgsMock,
     runCli,
@@ -635,6 +656,7 @@ test.each([
 
   expect(parseArgsMock).toHaveBeenCalledWith([flag]);
   expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
+  expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
   expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
   expect(applyStagedMock).not.toHaveBeenCalled();
   expect(runLoopMock).not.toHaveBeenCalled();
