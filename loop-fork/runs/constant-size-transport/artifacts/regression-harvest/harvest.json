@@ -6,23 +6,15 @@
   "prompt_path": "runs/constant-size-transport/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-29T18:17:40Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "terminal-payload-size-coupling"
-    ],
+    "enabled": ["yes"],
+    "id": ["terminal-payload-size-coupling"],
     "symptom": [
       "Realistic launch charters and bridge bodies could block or silently fail when transported through terminal paste and tmux readiness paths."
     ],
-    "guard": [
-      "`bash ../evals/smoke/constant-size-transport.sh`"
-    ]
+    "guard": ["`bash ../evals/smoke/constant-size-transport.sh`"]
   },
   "symptom_lines": [
     "Realistic launch charters and bridge bodies could block or silently fail when transported through terminal paste and tmux readiness paths."
   ],
-  "test_lines": [
-    "`bash ../evals/smoke/constant-size-transport.sh`"
-  ]
+  "test_lines": ["`bash ../evals/smoke/constant-size-transport.sh`"]
 }
