@@ -338,6 +338,14 @@
       "eval_status": "pass",
       "ended_at": "2026-07-29T18:17:40Z",
       "spec_path": "specs/constant-size-transport.md"
+    },
+    {
+      "id": "headless-handover",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-29T18:41:42Z",
+      "run_dir": "runs/headless-handover",
+      "eval_status": "pending"
     }
   ]
 }

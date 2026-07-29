@@ -1,0 +1,12 @@
+{
+  "task_id": "headless-handover",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "task_id": "headless-handover",
+  "feature": "headless-handover",
+  "timestamp": "2026-07-29T18:20:00Z",
+  "verdict": "pending",
+  "baseline_failures": [],
+  "required": ["unit", "full", "independent_review"],
+  "dimensions": {
+    "unit": {
+      "status": "pending",
+      "method": "Harness focused verification"
+    },
+    "full": {
+      "status": "pending",
+      "method": "scripts/verify.sh headless-handover headless-handover"
+    },
+    "independent_review": {
+      "status": "pending",
+      "method": "exact-SHA Claude review"
+    }
+  }
+}
