@@ -318,6 +318,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-28T06:26:26Z",
       "spec_path": "specs/loop58-runtime-corrections.md"
+    },
+    {
+      "id": "run-lifecycle-teardown",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-29T06:02:56Z",
+      "run_dir": "runs/run-lifecycle-teardown",
+      "eval_status": "pass",
+      "ended_at": "2026-07-29T06:26:50Z",
+      "spec_path": "specs/run-lifecycle-teardown.md"
     }
   ]
 }

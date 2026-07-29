@@ -60,6 +60,7 @@ export interface RunManifest {
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
   claudeSessionId: string;
+  codexAppServerPid?: number;
   codexRemoteUrl?: string;
   codexThreadId: string;
   createdAt: string;
@@ -142,6 +143,7 @@ interface RunManifestInput {
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
   claudeSessionId?: string;
+  codexAppServerPid?: number;
   codexRemoteUrl?: string;
   codexThreadId?: string;
   createdAt?: string;
@@ -527,6 +529,9 @@ export const createRunManifest = (
       ? { claudeChannelServer: input.claudeChannelServer }
       : {}),
     claudeSessionId: input.claudeSessionId ?? "",
+    ...(input.codexAppServerPid
+      ? { codexAppServerPid: input.codexAppServerPid }
+      : {}),
     ...(input.codexRemoteUrl ? { codexRemoteUrl: input.codexRemoteUrl } : {}),
     codexThreadId: input.codexThreadId ?? "",
     createdAt: input.createdAt ?? now,
@@ -591,6 +596,14 @@ const readOptionalRunManifestFields = (
     "codexRemoteUrl",
     "codex_remote_url",
   ]);
+  const parsedCodexAppServerPid = firstInteger(parsed, [
+    "codexAppServerPid",
+    "codex_app_server_pid",
+  ]);
+  const codexAppServerPid =
+    parsedCodexAppServerPid && parsedCodexAppServerPid > 0
+      ? parsedCodexAppServerPid
+      : undefined;
   const primaryAgent = firstAgent(parsed, ["primaryAgent", "primary_agent"]);
   const cavemanMode = firstCavemanMode(parsed, ["cavemanMode", "caveman_mode"]);
   const helperCavemanMode = firstCavemanMode(parsed, [
@@ -638,6 +651,7 @@ const readOptionalRunManifestFields = (
   return {
     ...(cavemanMode ? { cavemanMode } : {}),
     ...(claudeChannelServer ? { claudeChannelServer } : {}),
+    ...(codexAppServerPid ? { codexAppServerPid } : {}),
     ...(codexRemoteUrl ? { codexRemoteUrl } : {}),
     ...(governess ? { governess: true } : {}),
     ...(primaryAgent ? { primaryAgent } : {}),

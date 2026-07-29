@@ -18,7 +18,11 @@ import {
   DEFAULT_CAVEMAN_MODE,
   DEFAULT_HELPER_CAVEMAN_MODE,
 } from "./caveman";
-import { getCodexAppServerUrl, getLastCodexThreadId } from "./codex-app-server";
+import {
+  getCodexAppServerPid,
+  getCodexAppServerUrl,
+  getLastCodexThreadId,
+} from "./codex-app-server";
 import { codexHomeEnv } from "./codex-home";
 import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
@@ -95,6 +99,7 @@ const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_PROMPT_MAX_POLLS = 8;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_PROMPT_SETTLE_POLLS = 2;
+const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
 const DEFAULT_UTILITY_PANE_WIDTH = "20%";
 const DEFAULT_RECON_PANE_HEIGHT = "15%";
 const UTILITY_PANE_WIDTH_RE = /^\d+%?$/;
@@ -123,6 +128,7 @@ interface TmuxDeps {
   cwd: string;
   env: NodeJS.ProcessEnv;
   findBinary: (cmd: string) => boolean;
+  getCodexAppServerPid: () => number | undefined;
   getCodexAppServerUrl: () => string;
   getLastCodexThreadId: () => string;
   getTerminalSize: () => TerminalSize | undefined;
@@ -156,6 +162,26 @@ const quoteShellArg = (value: string): string =>
 
 const buildShellCommand = (argv: string[]): string =>
   argv.map(quoteShellArg).join(" ");
+
+const withTimeout = async <T>(
+  task: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
 
 const spawnDetachedProcess = (
   argv: string[],
@@ -1000,6 +1026,7 @@ const updatePairedManifest = (
   storage: RunStorage,
   manifest: RunManifest,
   claudeSessionId: string,
+  codexAppServerPid: number | undefined,
   codexRemoteUrl: string,
   codexThreadId: string,
   session: string,
@@ -1012,7 +1039,8 @@ const updatePairedManifest = (
       {
         ...(current ?? manifest),
         claudeSessionId,
-        ...(codexRemoteUrl ? { codexRemoteUrl } : {}),
+        codexAppServerPid: codexAppServerPid || undefined,
+        codexRemoteUrl: codexRemoteUrl || undefined,
         codexThreadId,
         cwd: deps.cwd,
         mode: "paired",
@@ -1523,6 +1551,7 @@ const preparePersistentTmuxLaunch = async (
   nativeSubagentMode: NativeSubagentMode
 ): Promise<{
   claudeSessionId: string;
+  codexAppServerPid?: number;
   codexRemoteUrl: string;
   codexThreadId: string;
 }> => {
@@ -1534,6 +1563,7 @@ const preparePersistentTmuxLaunch = async (
     : "";
   let codexThreadId = "";
   let codexRemoteUrl = "";
+  let codexAppServerPid: number | undefined;
 
   if (pair.includes("codex")) {
     const codexKind = opts.agent === "codex" ? "work" : "review";
@@ -1545,31 +1575,49 @@ const preparePersistentTmuxLaunch = async (
     // runtime defaults a missing value to utility-first, so always carry the
     // resolved mode into the persistent app-server process.
     codexBaseEnv.LOOP_NATIVE_SUBAGENT_MODE = nativeSubagentMode;
-    await deps.startPersistentAgentSession(
-      "codex",
-      opts,
-      manifest.codexThreadId || opts.pairedSessionIds?.codex || undefined,
-      {
-        codexLaunch: {
-          env: codexHomeEnv(opts.codexHome, codexBaseEnv),
-          orphanOnExit: true,
-        },
-      },
-      codexKind
-    );
-    codexThreadId =
-      deps.getLastCodexThreadId() ||
-      manifest.codexThreadId ||
-      opts.pairedSessionIds?.codex ||
-      "";
-    if (!codexThreadId) {
-      throw new Error("[loop] failed to resolve Codex thread for tmux launch");
-    }
-    codexRemoteUrl = deps.getCodexAppServerUrl();
-    if (!codexRemoteUrl) {
-      throw new Error(
-        "[loop] failed to resolve Codex app-server for tmux launch"
+    try {
+      await withTimeout(
+        deps.startPersistentAgentSession(
+          "codex",
+          opts,
+          manifest.codexThreadId || opts.pairedSessionIds?.codex || undefined,
+          {
+            codexLaunch: {
+              env: codexHomeEnv(opts.codexHome, codexBaseEnv),
+              orphanOnExit: true,
+            },
+          },
+          codexKind
+        ),
+        PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS,
+        "Codex app-server bootstrap timed out"
       );
+    } catch (error) {
+      await deps.closePersistentCodexSession();
+      const detail = error instanceof Error ? error.message : String(error);
+      deps.log(
+        `[loop] ${detail}; starting Codex with tmux bridge delivery instead.`
+      );
+      return { claudeSessionId, codexRemoteUrl, codexThreadId };
+    }
+    try {
+      codexThreadId =
+        deps.getLastCodexThreadId() ||
+        manifest.codexThreadId ||
+        opts.pairedSessionIds?.codex ||
+        "";
+      codexRemoteUrl = deps.getCodexAppServerUrl();
+      codexAppServerPid = deps.getCodexAppServerPid();
+      if (!(codexThreadId && codexRemoteUrl)) {
+        throw new Error("Codex app-server returned incomplete ownership state");
+      }
+    } catch (error) {
+      await deps.closePersistentCodexSession();
+      const detail = error instanceof Error ? error.message : String(error);
+      deps.log(
+        `[loop] ${detail}; starting Codex with tmux bridge delivery instead.`
+      );
+      return { claudeSessionId, codexRemoteUrl: "", codexThreadId: "" };
     }
   }
 
@@ -1578,7 +1626,12 @@ const preparePersistentTmuxLaunch = async (
     ...(claudeSessionId ? { claude: claudeSessionId } : {}),
     ...(codexThreadId ? { codex: codexThreadId } : {}),
   };
-  return { claudeSessionId, codexRemoteUrl, codexThreadId };
+  return {
+    claudeSessionId,
+    ...(codexAppServerPid ? { codexAppServerPid } : {}),
+    codexRemoteUrl,
+    codexThreadId,
+  };
 };
 
 const resolveTmuxPaneAgents = (
@@ -1930,6 +1983,7 @@ const startPairedSession = async (
     (a) => a === "claude" || a === "codex"
   );
   let claudeSessionId = "";
+  let codexAppServerPid: number | undefined;
   let codexRemoteUrl = "";
   let codexThreadId = "";
   let codexProxyUrl = "";
@@ -1941,14 +1995,51 @@ const startPairedSession = async (
       nativeSubagentMode
     );
     claudeSessionId = persistent.claudeSessionId;
+    codexAppServerPid = persistent.codexAppServerPid;
     codexRemoteUrl = persistent.codexRemoteUrl;
     codexThreadId = persistent.codexThreadId;
+    deps.updateRunManifest(storage.manifestPath, (current) =>
+      touchRunManifest(
+        {
+          ...(current ?? manifest),
+          claudeSessionId,
+          codexAppServerPid: codexAppServerPid || undefined,
+          codexRemoteUrl: codexRemoteUrl || undefined,
+          codexThreadId,
+        },
+        new Date().toISOString()
+      )
+    );
     if (codexThreadId && codexRemoteUrl) {
-      codexProxyUrl = await deps.startCodexProxy(
-        storage.runDir,
-        codexRemoteUrl,
-        codexThreadId
-      );
+      try {
+        codexProxyUrl = await deps.startCodexProxy(
+          storage.runDir,
+          codexRemoteUrl,
+          codexThreadId
+        );
+      } catch (error) {
+        await deps.closePersistentCodexSession();
+        const detail = error instanceof Error ? error.message : String(error);
+        deps.log(
+          `[loop] ${detail}; starting Codex with tmux bridge delivery instead.`
+        );
+        codexAppServerPid = undefined;
+        codexRemoteUrl = "";
+        codexThreadId = "";
+        deps.updateRunManifest(storage.manifestPath, (current) =>
+          current
+            ? touchRunManifest(
+                {
+                  ...current,
+                  codexAppServerPid: undefined,
+                  codexRemoteUrl: undefined,
+                  codexThreadId: "",
+                },
+                new Date().toISOString()
+              )
+            : undefined
+        );
+      }
     }
   }
   const claudeChannelServer = [primaryAgent, secondaryAgent].includes("claude")
@@ -2038,6 +2129,7 @@ const startPairedSession = async (
       storage,
       manifest,
       claudeSessionId,
+      codexAppServerPid,
       codexRemoteUrl,
       codexThreadId,
       session,
@@ -2064,6 +2156,7 @@ const startPairedSession = async (
         storage,
         manifest,
         claudeSessionId,
+        codexAppServerPid,
         codexRemoteUrl,
         codexThreadId,
         session,
@@ -2194,6 +2287,7 @@ const defaultDeps = (): TmuxDeps => ({
   cwd: process.cwd(),
   env: process.env,
   findBinary: (cmd: string) => commandExists(cmd),
+  getCodexAppServerPid,
   getCodexAppServerUrl,
   getLastCodexThreadId,
   getTerminalSize: () => {
@@ -2364,6 +2458,7 @@ export const tmuxInternals = {
   buildPrimaryPrompt,
   buildRunName,
   buildShellCommand,
+  preparePersistentTmuxLaunch,
   spawnDetachedProcess,
   isSessionConflict,
   quoteShellArg,

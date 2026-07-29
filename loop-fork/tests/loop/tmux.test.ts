@@ -3192,6 +3192,49 @@ test("runInTmux skips auto-attach for non-interactive sessions", async () => {
   expect(attaches).toEqual([]);
 });
 
+test("persistent Codex bootstrap failure falls back to tmux delivery", async () => {
+  const logs: string[] = [];
+  let closed = 0;
+  const opts = makePairedOptions();
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-1",
+    runId: "1",
+  });
+
+  const result = await tmuxInternals.preparePersistentTmuxLaunch(
+    {
+      closePersistentCodexSession: () => {
+        closed += 1;
+        return Promise.resolve();
+      },
+      env: {},
+      getCodexAppServerPid: () => undefined,
+      getCodexAppServerUrl: () => "",
+      getLastCodexThreadId: () => "",
+      log: (line: string) => logs.push(line),
+      makeClaudeSessionId: () => "claude-session-1",
+      startPersistentAgentSession: () =>
+        Promise.reject(new Error("transport unavailable")),
+    } as never,
+    opts,
+    manifest,
+    "utility-first"
+  );
+
+  expect(result).toEqual({
+    claudeSessionId: "claude-session-1",
+    codexRemoteUrl: "",
+    codexThreadId: "",
+  });
+  expect(closed).toBe(1);
+  expect(logs).toEqual([
+    "[loop] transport unavailable; starting Codex with tmux bridge delivery instead.",
+  ]);
+});
+
 test("runInTmux reports when tmux session exits before attach", async () => {
   const runBase = currentRunBase(process.cwd(), "1");
   await expect(

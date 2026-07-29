@@ -150,6 +150,7 @@ test("manifest helpers write, read, and touch run metadata", () => {
     {
       cavemanMode: "lite",
       claudeSessionId: "claude-1",
+      codexAppServerPid: 4321,
       codexRemoteUrl: "ws://127.0.0.1:4500",
       codexThreadId: "codex-1",
       cwd: "/repo",

@@ -122,6 +122,10 @@ import {
   resolveNativeSubagentMode,
 } from "./native-subagent";
 import {
+  cleanupRunOwnedProcesses,
+  type RunProcessCleanupResult,
+} from "./run-process-cleanup";
+import {
   loadRunState,
   type RunManifest,
   readRunManifest,
@@ -318,6 +322,9 @@ export interface GovernessDeps {
   assessRoleBalance: (req: RoleBalanceRequest) => Promise<RoleBalanceResult>;
   assessWaiting: (req: WaitingRequest) => Promise<WaitingResult>;
   capturePane: (pane: string) => string;
+  cleanupRunProcesses?: (
+    config: GovernessConfig
+  ) => RunProcessCleanupResult | undefined;
   fenceCurrent?: (config: GovernessConfig) => boolean;
   // Turn on the pane-border title strip for the whole session (idempotent).
   initPaneBorders: (session: string) => void;
@@ -4696,6 +4703,22 @@ export const stopGovernessLoop = (
     );
   }
   deps.markRunStopped?.(config, reason);
+  try {
+    const cleanup = deps.cleanupRunProcesses?.(config);
+    if (cleanup && (cleanup.killed.length > 0 || cleanup.skipped.length > 0)) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        event: "run-process-cleanup",
+        ...cleanup,
+      });
+    }
+  } catch (error) {
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      event: "run-process-cleanup-failed",
+    });
+  }
   if (record && config.journalFile) {
     transitionGovernessControl(
       config.journalFile,
@@ -5604,6 +5627,15 @@ export const defaultGovernessDeps = (
     appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
   },
   capturePane: (pane) => tmux(["capture-pane", "-p", "-t", pane]),
+  cleanupRunProcesses: (config) => {
+    if (!config.runDir) {
+      return undefined;
+    }
+    const manifest = config.manifestPath
+      ? readRunManifest(config.manifestPath)
+      : undefined;
+    return cleanupRunOwnedProcesses(config.runDir, manifest);
+  },
   fenceCurrent: (config) => {
     if (!(config.stateFile && typeof config.epoch === "number")) {
       return false;

@@ -1,0 +1,24 @@
+{
+  "task_id": "run-lifecycle-teardown",
+  "status": "created",
+  "bug_id": "governed-run-lifecycle-orphans",
+  "regression_path": "evals/regression/governed-run-lifecycle-orphans.md",
+  "prompt_path": "runs/run-lifecycle-teardown/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-29T06:26:50Z",
+  "markers": {
+    "enabled": ["yes"],
+    "id": ["governed-run-lifecycle-orphans"],
+    "symptom": [
+      "Teardown left bridge MCP processes and port 4500 owned by a detached app-server; bootstrap could remain before pane creation."
+    ],
+    "guard": [
+      "tests/loop/run-process-cleanup.test.ts and tests/loop/tmux.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Teardown left bridge MCP processes and port 4500 owned by a detached app-server; bootstrap could remain before pane creation."
+  ],
+  "test_lines": [
+    "tests/loop/run-process-cleanup.test.ts and tests/loop/tmux.test.ts"
+  ]
+}

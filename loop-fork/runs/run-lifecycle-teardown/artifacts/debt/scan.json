@@ -1,0 +1,19 @@
+{
+  "task_id": "run-lifecycle-teardown",
+  "scanned_at": "2026-07-29T06:26:50Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-29T06:26:50Z",
+      "task_id": "run-lifecycle-teardown",
+      "signal": "loc_growth",
+      "file": "src/loop/run-process-cleanup.ts",
+      "before_loc": 0,
+      "after_loc": 215,
+      "delta_loc": 215,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

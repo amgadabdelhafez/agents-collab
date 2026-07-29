@@ -558,13 +558,39 @@ test("explicit stop marks the run before killing its tmux session", () => {
     ...defaultGovernessDeps(),
     appendLog: () => order.push("log"),
     capturePane: () => "",
+    cleanupRunProcesses: () => {
+      order.push("cleanup");
+      return { killed: [], skipped: [] };
+    },
     fenceCurrent: () => true,
     killSession: () => order.push("kill"),
     markRunStopped: () => order.push("mark"),
     now: () => 0,
   };
   stopGovernessLoop(config, deps, "user requested teardown");
-  expect(order).toEqual(["log", "mark", "kill"]);
+  expect(order).toEqual(["log", "mark", "cleanup", "kill"]);
+});
+
+test("cleanup failure cannot prevent explicit tmux teardown", () => {
+  const config = handoverConfig();
+  const order: string[] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => order.push("log"),
+    capturePane: () => "",
+    cleanupRunProcesses: () => {
+      order.push("cleanup");
+      throw new Error("cleanup unavailable");
+    },
+    fenceCurrent: () => true,
+    killSession: () => order.push("kill"),
+    markRunStopped: () => order.push("mark"),
+    now: () => 0,
+  };
+
+  stopGovernessLoop(config, deps, "user requested teardown");
+
+  expect(order).toEqual(["log", "mark", "cleanup", "log", "kill"]);
 });
 
 class FakeTty extends EventEmitter {

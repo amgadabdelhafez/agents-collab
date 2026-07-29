@@ -40,9 +40,13 @@ import {
   UtilityBridgeInputError,
 } from "./bridge-utility";
 import { LOOP_VERSION } from "./constants";
+import {
+  registerRunBridgeProcess,
+  unregisterRunBridgeProcess,
+} from "./run-process-cleanup";
 import type { Agent } from "./types";
 
-type BridgeMcpSource = Agent | "supervisor";
+export type BridgeMcpSource = Agent | "supervisor";
 
 const CLAUDE_CHANNEL_CAPABILITY = "claude/channel";
 const CLAUDE_CHANNEL_FALLBACK_SWEEP_MS = 2000;
@@ -701,6 +705,12 @@ export const runBridgeMcpServer = async (
   runDir: string,
   source: BridgeMcpSource
 ): Promise<void> => {
+  let processRegistration: string | undefined;
+  try {
+    processRegistration = registerRunBridgeProcess(runDir, source);
+  } catch {
+    // The bridge remains usable if optional ownership telemetry is unavailable.
+  }
   let channelReady = false;
   let bridgeWatcher: { close: () => void } | undefined;
   let closed = false;
@@ -739,6 +749,10 @@ export const runBridgeMcpServer = async (
     if (parentSweep) {
       clearInterval(parentSweep);
       parentSweep = undefined;
+    }
+    if (processRegistration) {
+      unregisterRunBridgeProcess(processRegistration);
+      processRegistration = undefined;
     }
   };
 

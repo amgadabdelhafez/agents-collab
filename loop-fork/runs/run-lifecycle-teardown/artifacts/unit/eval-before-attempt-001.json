@@ -1,0 +1,10 @@
+{
+  "task_id": "run-lifecycle-teardown",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

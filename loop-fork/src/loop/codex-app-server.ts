@@ -1406,6 +1406,11 @@ export const hasAppServerProcess = (): boolean => getClient().hasProcess();
 export const getCodexAppServerUrl = (): string =>
   singleton?.getConnectUrl() ?? "";
 
+export const getCodexAppServerPid = (): number | undefined => {
+  const pid = singleton?.process?.pid;
+  return typeof pid === "number" && pid > 0 ? pid : undefined;
+};
+
 export const getLastCodexThreadId = (): string =>
   singleton?.getLastThreadId() ?? "";
 

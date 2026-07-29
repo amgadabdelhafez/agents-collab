@@ -1,0 +1,8 @@
+{
+  "id": "run-lifecycle-teardown",
+  "mode": "planned",
+  "created_at": "2026-07-29T06:02:56Z",
+  "status": "done",
+  "description": "Make paired startup and Governess teardown own and reap run-scoped bridge and Codex app-server processes without touching desktop services",
+  "ended_at": "2026-07-29T06:26:50Z"
+}

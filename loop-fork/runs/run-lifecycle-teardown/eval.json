@@ -1,0 +1,16 @@
+{
+  "task_id": "run-lifecycle-teardown",
+  "status": "pass",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/run-lifecycle-teardown/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/run-lifecycle-teardown/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/run-lifecycle-teardown/artifacts/unit/attempt-002.json"
+    }
+  }
+}
