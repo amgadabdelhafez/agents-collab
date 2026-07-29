@@ -145,7 +145,7 @@ test("codex tmux proxy waits briefly for the tmux session to appear", () => {
 
   expect(
     codexTmuxProxyInternals.shouldStopForTmuxSession(
-      false,
+      "dead",
       false,
       now + 1000,
       now
@@ -157,7 +157,12 @@ test("codex tmux proxy stops once the startup grace window is over", () => {
   const now = Date.now();
 
   expect(
-    codexTmuxProxyInternals.shouldStopForTmuxSession(false, false, now - 1, now)
+    codexTmuxProxyInternals.shouldStopForTmuxSession(
+      "dead",
+      false,
+      now - 1,
+      now
+    )
   ).toBe(true);
 });
 
@@ -166,7 +171,7 @@ test("codex tmux proxy stops immediately after a seen tmux session disappears", 
 
   expect(
     codexTmuxProxyInternals.shouldStopForTmuxSession(
-      false,
+      "dead",
       true,
       now + 1000,
       now
@@ -174,9 +179,22 @@ test("codex tmux proxy stops immediately after a seen tmux session disappears", 
   ).toBe(true);
   expect(
     codexTmuxProxyInternals.shouldStopForTmuxSession(
-      true,
+      "live",
       true,
       now + 1000,
+      now
+    )
+  ).toBe(false);
+});
+
+test("codex tmux proxy preserves a session when liveness is unknown", () => {
+  const now = Date.now();
+
+  expect(
+    codexTmuxProxyInternals.shouldStopForTmuxSession(
+      "unknown",
+      true,
+      now - 1000,
       now
     )
   ).toBe(false);

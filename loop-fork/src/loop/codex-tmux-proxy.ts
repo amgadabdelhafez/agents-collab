@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
-import { serve, spawnSync } from "bun";
+import { serve } from "bun";
 import {
   acknowledgeBridgeDelivery,
   readNextPendingBridgeMessageForTarget,
@@ -19,6 +19,7 @@ import {
   touchRunManifest,
   updateRunManifest,
 } from "./run-state";
+import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
 import { connectWs, type WsClient } from "./ws-client";
 
 const CODEX_PROXY_BASE_PORT = 4600;
@@ -166,24 +167,13 @@ const deliverVisibleBridgeMessage = async (
   return true;
 };
 
-const isTmuxSessionAlive = (session: string): boolean => {
-  if (!session) {
-    return false;
-  }
-  const result = spawnSync(["tmux", "has-session", "-t", session], {
-    stderr: "ignore",
-    stdout: "ignore",
-  });
-  return result.exitCode === 0;
-};
-
 const shouldStopForTmuxSession = (
-  sessionAlive: boolean,
+  liveness: TmuxLiveness,
   sawTmuxSession: boolean,
   startupDeadlineMs: number,
   nowMs: number
 ): boolean => {
-  if (sessionAlive) {
+  if (liveness === "live" || liveness === "unknown") {
     return false;
   }
   if (!sawTmuxSession && nowMs < startupDeadlineMs) {
@@ -709,15 +699,15 @@ class CodexTmuxProxy {
     if (!(manifest && isActiveRunState(manifest.state))) {
       return "inactive-run";
     }
-    const sessionAlive = manifest.tmuxSession
-      ? isTmuxSessionAlive(manifest.tmuxSession)
-      : false;
-    if (sessionAlive) {
+    const liveness = manifest.tmuxSession
+      ? tmuxSessionLiveness(manifest.tmuxSession)
+      : "dead";
+    if (liveness === "live") {
       this.sawTmuxSession = true;
       return undefined;
     }
     return shouldStopForTmuxSession(
-      sessionAlive,
+      liveness,
       this.sawTmuxSession,
       this.startupDeadlineMs,
       Date.now()

@@ -24,6 +24,7 @@ import {
   replacementLoopArgs,
 } from "../../src/loop/governess-exit";
 import { acceptGovernessHandoff } from "../../src/loop/governess-handoff";
+import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
 
 test("x opens a reversible menu and only explicit e or h selects an exit", () => {
   expect(exitKeyAction(false, "idle", "x")).toBe("menu");
@@ -551,6 +552,82 @@ test("restart preserves the old loop when the recorded replacement is dead", asy
   expect(destructive).toEqual([]);
 });
 
+test("restart preserves a recorded replacement while tmux liveness is unknown", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    handoverManifest: "pending-acceptance.json",
+    mode: "launched",
+    notified: { claude: true, codex: true },
+    replacementSession: "possibly-live-replacement",
+  };
+  const destructive: string[] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    killSession: () => destructive.push("kill"),
+    markRunStopped: () => destructive.push("mark"),
+    now: () => 0,
+    replacementSessionAlive: () => "unknown" as const,
+    replacementSessionReady: () => "unknown" as const,
+    saveState: () => undefined,
+  };
+
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
+  expect(state.exitControl.mode).toBe("launched");
+  expect(state.exitControl.replacementSession).toBe(
+    "possibly-live-replacement"
+  );
+  expect(state.exitControl.launchError).toBeUndefined();
+  expect(destructive).toEqual([]);
+});
+
+test("an unconfirmed replacement probe is persisted without duplicate launch", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    mode: "handover",
+    notified: { claude: true, codex: true },
+  };
+  writeHandoverBundles(config, state);
+  let launches = 0;
+  let replacementAlive: boolean | "unknown" = "unknown";
+  let replacementReady: boolean | "unknown" = "unknown";
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () => "",
+    fenceCurrent: () => true,
+    launchReplacementLoop: () => {
+      launches += 1;
+      return { ok: true, session: "possibly-live-replacement" };
+    },
+    now: () => 0,
+    paneCommand: () => "0:zsh",
+    replacementSessionAlive: () => replacementAlive,
+    replacementSessionReady: () => replacementReady,
+    saveState: () => undefined,
+  };
+
+  expect(await advanceHandoverControl(config, deps, state, {})).toEqual({
+    status: "waiting",
+  });
+  expect(state.exitControl.mode).toBe("launched");
+  expect(state.exitControl.replacementSession).toBe(
+    "possibly-live-replacement"
+  );
+  expect(launches).toBe(1);
+
+  replacementAlive = true;
+  replacementReady = false;
+  expect(await advanceHandoverControl(config, deps, state, {})).toEqual({
+    status: "waiting",
+  });
+  expect(state.exitControl.mode).toBe("launched");
+  expect(state.exitControl.launchError).toBeUndefined();
+  expect(launches).toBe(1);
+});
+
 test("explicit stop marks the run before killing its tmux session", () => {
   const config = handoverConfig();
   const order: string[] = [];
@@ -591,6 +668,32 @@ test("cleanup failure cannot prevent explicit tmux teardown", () => {
   stopGovernessLoop(config, deps, "user requested teardown");
 
   expect(order).toEqual(["log", "mark", "cleanup", "log", "kill"]);
+});
+
+test("explicit teardown returns and records an unconfirmed tmux kill", () => {
+  const config = handoverConfig();
+  const events: string[] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: (_file: string, record: unknown) =>
+      events.push((record as { event: string }).event),
+    cleanupRunProcesses: () => ({ killed: [], skipped: [] }),
+    fenceCurrent: () => true,
+    killSession: () => {
+      throw new TmuxControlUnavailableError([
+        "kill-session",
+        "-t",
+        config.session,
+      ]);
+    },
+    markRunStopped: () => events.push("mark"),
+    now: () => 0,
+  };
+
+  expect(() =>
+    stopGovernessLoop(config, deps, "user requested teardown")
+  ).not.toThrow();
+  expect(events).toEqual(["exit", "mark", "tmux-session-kill-unconfirmed"]);
 });
 
 class FakeTty extends EventEmitter {

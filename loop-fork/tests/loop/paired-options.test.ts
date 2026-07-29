@@ -378,6 +378,40 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
       claudeSessionId: "",
       codexThreadId: "stale-legacy-codex",
     });
+
+    const unknownTmuxStorage = resolveRunStorage("77", alternatePairCwd, home);
+    writeRunManifest(
+      unknownTmuxStorage.manifestPath,
+      createRunManifest({
+        claudeSessionId: "unknown-claude",
+        codexThreadId: "unknown-codex",
+        cwd: alternatePairCwd,
+        mode: "paired",
+        pid: 1234,
+        primaryAgent: "claude",
+        repoId: unknownTmuxStorage.repoId,
+        runId: "77",
+        state: "working",
+        tmuxPaneLeftAgent: "claude",
+        tmuxPaneRightAgent: "codex",
+        tmuxSession: "repo-loop-77",
+      })
+    );
+    const unknownTmux = makeOptions({
+      pairedMode: true,
+      resumeRunId: "77",
+      tmux: true,
+    });
+    expect(() =>
+      preparePairedRun(unknownTmux, alternatePairCwd, () => "unknown")
+    ).toThrow(
+      'tmux session "repo-loop-77" liveness is unknown; refusing to clear or duplicate it'
+    );
+    expect(readRunManifest(unknownTmuxStorage.manifestPath)).toMatchObject({
+      claudeSessionId: "unknown-claude",
+      codexThreadId: "unknown-codex",
+      tmuxSession: "repo-loop-77",
+    });
   } finally {
     if (originalHome === undefined) {
       Reflect.deleteProperty(process.env, "HOME");

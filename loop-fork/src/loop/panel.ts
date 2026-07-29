@@ -11,6 +11,10 @@ import {
 import { basename, dirname, join } from "node:path";
 import { file, spawn } from "bun";
 import { parseRunLifecycleState, runStatusFromState } from "./run-state";
+import {
+  TMUX_CONTROL_KILL_SIGNAL,
+  TMUX_CONTROL_TIMEOUT_MS,
+} from "./tmux-control";
 
 type Agent = "claude" | "codex";
 
@@ -160,11 +164,31 @@ const run = async (cmd: string[], allowFailure = false): Promise<string> => {
     stderr: "pipe",
     stdout: "pipe",
   });
+  let timedOut = false;
+  const timeout =
+    cmd[0] === "tmux"
+      ? setTimeout(() => {
+          timedOut = true;
+          proc.kill(TMUX_CONTROL_KILL_SIGNAL);
+        }, TMUX_CONTROL_TIMEOUT_MS)
+      : undefined;
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
-  ]);
+  ]).finally(() => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  });
+  if (timedOut) {
+    if (allowFailure) {
+      return "";
+    }
+    throw new Error(
+      `[loop] tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms`
+    );
+  }
   if (code !== 0 && !allowFailure) {
     const details = stderr.trim() || `exit ${code}`;
     throw new Error(`[loop] command failed: ${cmd.join(" ")} (${details})`);

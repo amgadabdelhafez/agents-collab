@@ -374,6 +374,7 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
   });
   const bridge = await loadBridge();
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeInternals.commandDeps.spawnSync = spawnSync;
   const root = makeTempDir();
   const liveRunDir = join(root, "live");
   const staleRunDir = join(root, "stale");
@@ -433,6 +434,71 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
     hasLiveTmuxSession: false,
     hasTmuxSession: true,
   });
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("tmux timeout preserves bridge routing as unknown without fallback delivery", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return {
+        exitCode: 1,
+        signalCode: "SIGKILL",
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.alloc(0),
+      };
+    }
+    throw new Error(`unexpected command: ${args.join(" ")}`);
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeInternals.commandDeps.spawnSync = spawnSync;
+  const root = makeTempDir();
+  const runDir = join(root, "unknown");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-unknown",
+      createdAt: "2026-03-27T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "10",
+      state: "running",
+      status: "running",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-unknown",
+      updatedAt: "2026-03-27T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+
+  const result = await bridge.dispatchBridgeMessage(
+    runDir,
+    "claude",
+    "codex",
+    "Preserve this request.",
+    bridge.immediateBridgeDelivery(runDir, "codex")
+  );
+
+  expect(result.status).toBe("queued");
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(bridge.readBridgeRuntimeStatus(runDir)).toMatchObject({
+    codexDeliveryMode: "tmux-proxy",
+    hasLiveTmuxSession: false,
+    tmuxLiveness: "unknown",
+    tmuxSession: "repo-loop-unknown",
+  });
+  expect(spawnSync.mock.calls[0]?.[1]).toMatchObject({
+    killSignal: "SIGKILL",
+    timeout: 2000,
+  });
+  expect(readFileSync(join(runDir, "manifest.json"), "utf8")).toContain(
+    '"tmuxSession":"repo-loop-unknown"'
+  );
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -1270,7 +1336,11 @@ test("Codex-to-Claude dispatch attempts immediate visible pane delivery", async 
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
   expect(spawnSync.mock.calls).toContainEqual([
     ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "Enter"],
-    { stderr: "ignore" },
+    {
+      killSignal: "SIGKILL",
+      stderr: "ignore",
+      timeout: 2000,
+    },
   ]);
   expect(
     bridge.bridgeInternals
@@ -1445,7 +1515,11 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
   ).toHaveLength(2);
   expect(spawnSync.mock.calls).toContainEqual([
     ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "-l", "--", " "],
-    { stderr: "ignore" },
+    {
+      killSignal: "SIGKILL",
+      stderr: "ignore",
+      timeout: 2000,
+    },
   ]);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
   rmSync(root, { recursive: true, force: true });
@@ -2587,9 +2661,10 @@ test("bridge MCP bridge_status tolerates a missing tmux binary", async () => {
   expect(result.stderr).toBe("");
   const status = toolText(result.stdout, 1);
   expect(status).toContain('"claudeChannelServer": "loop-bridge-repo-123-7"');
-  expect(status).toContain('"codexDeliveryMode": "app-server"');
+  expect(status).toContain('"codexDeliveryMode": "tmux-proxy"');
   expect(status).toContain('"hasLiveTmuxSession": false');
   expect(status).toContain('"hasTmuxSession": true');
+  expect(status).toContain('"tmuxLiveness": "unknown"');
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -2939,7 +3014,11 @@ test("bridge drains codex messages through the persisted stable pane target", as
   ).toHaveLength(1);
   expect(spawnSync.mock.calls).toContainEqual([
     ["tmux", "send-keys", "-t", "%41", "Enter"],
-    { stderr: "ignore" },
+    {
+      killSignal: "SIGKILL",
+      stderr: "ignore",
+      timeout: 2000,
+    },
   ]);
 
   rmSync(root, { recursive: true, force: true });

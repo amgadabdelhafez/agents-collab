@@ -24,6 +24,7 @@ import {
   touchRunManifest,
   writeRunManifest,
 } from "./run-state";
+import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
 import type { Options, PairedSessionIds } from "./types";
 
 export interface PreparedRunState {
@@ -37,14 +38,34 @@ export interface PreparedPairedRun {
   storage: RunStorage;
 }
 
-type TmuxSessionProbe = (session: string) => boolean;
+type TmuxSessionProbe = (session: string) => boolean | TmuxLiveness;
 
-const isTmuxSessionLive: TmuxSessionProbe = (session) => {
-  const result = spawnSync(["tmux", "has-session", "-t", session], {
-    stderr: "ignore",
-    stdout: "ignore",
-  });
-  return result.exitCode === 0;
+const isTmuxSessionLive: TmuxSessionProbe = (session) =>
+  tmuxSessionLiveness(session, spawnSync);
+
+const persistedTmuxIsLive = (
+  enabled: boolean,
+  session: string | undefined,
+  sessionProbe: TmuxSessionProbe
+): boolean => {
+  if (!(enabled && session)) {
+    return false;
+  }
+  const probed = sessionProbe(session);
+  let liveness: TmuxLiveness;
+  if (probed === true) {
+    liveness = "live";
+  } else if (probed === false) {
+    liveness = "dead";
+  } else {
+    liveness = probed;
+  }
+  if (liveness === "unknown") {
+    throw new Error(
+      `tmux session "${session}" liveness is unknown; refusing to clear or duplicate it`
+    );
+  }
+  return liveness === "live";
 };
 
 interface RequestedRunState {
@@ -317,8 +338,10 @@ export const preparePairedOptions = (
 ): void => {
   const { allowRawSessionFallback, manifest, storage } =
     resolvePreparedRunState(opts, cwd, createManifest);
-  const livePersistedTmux = Boolean(
-    opts.tmux && manifest?.tmuxSession && sessionProbe(manifest.tmuxSession)
+  const livePersistedTmux = persistedTmuxIsLive(
+    opts.tmux === true,
+    manifest?.tmuxSession,
+    sessionProbe
   );
   applyPairedOptions(
     opts,
@@ -340,8 +363,10 @@ export const preparePairedRun = (
     manifest: existing,
     storage,
   } = resolvePreparedRunState(opts, cwd);
-  const livePersistedTmux = Boolean(
-    opts.tmux && existing?.tmuxSession && sessionProbe(existing.tmuxSession)
+  const livePersistedTmux = persistedTmuxIsLive(
+    opts.tmux === true,
+    existing?.tmuxSession,
+    sessionProbe
   );
   applyPairedOptions(
     opts,

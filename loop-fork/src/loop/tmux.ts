@@ -76,6 +76,11 @@ import {
   releasePersistentCodexSession,
   startPersistentAgentSession,
 } from "./runner";
+import {
+  boundedTmuxOptions,
+  TMUX_CONTROL_TIMEOUT_MS,
+  tmuxCommandTimedOut,
+} from "./tmux-control";
 import type { Agent, Options } from "./types";
 import {
   AU_PAIR_PANE_SUBCOMMAND,
@@ -121,6 +126,7 @@ interface SpawnResult {
   exitCode: number;
   stderr: string;
   stdout?: string;
+  timedOut?: boolean;
 }
 
 interface TerminalSize {
@@ -910,8 +916,11 @@ const worktreeAvailable = (cwd: string, runName: string): boolean => {
 
 const commandExists = (cmd: string): boolean => {
   try {
-    spawnSync([cmd, "-V"], { stderr: "ignore", stdout: "ignore" });
-    return true;
+    const result = spawnSync(
+      [cmd, "-V"],
+      boundedTmuxOptions({ stderr: "ignore", stdout: "ignore" })
+    );
+    return !tmuxCommandTimedOut(result) && result.exitCode === 0;
   } catch {
     return false;
   }
@@ -939,6 +948,11 @@ const sessionExists = (
   spawnFn: TmuxDeps["spawn"]
 ): boolean => {
   const result = spawnFn(["tmux", "has-session", "-t", session]);
+  if (result.timedOut) {
+    throw new Error(
+      `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while checking session "${session}"`
+    );
+  }
   return result.exitCode === 0;
 };
 
@@ -1765,6 +1779,11 @@ const runTmuxCommand = (
   message = "Failed to start tmux session"
 ): SpawnResult => {
   const result = deps.spawn(args);
+  if (result.timedOut) {
+    throw new Error(
+      `${message}: tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms.`
+    );
+  }
   if (result.exitCode === 0) {
     return result;
   }
@@ -2435,10 +2454,21 @@ const defaultDeps = (): TmuxDeps => ({
     }
   },
   capturePane: (pane: string) => {
-    const result = spawnSync(["tmux", "capture-pane", "-p", "-t", pane], {
-      stderr: "ignore",
-      stdout: "pipe",
-    });
+    const result = spawnSync(
+      ["tmux", "capture-pane", "-p", "-t", pane],
+      boundedTmuxOptions({
+        stderr: "ignore",
+        stdout: "pipe",
+      })
+    );
+    if (tmuxCommandTimedOut(result)) {
+      throw new Error(
+        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane "${pane}"`
+      );
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to capture tmux pane "${pane}".`);
+    }
     return decode(result.stdout);
   },
   cwd: process.cwd(),
@@ -2464,12 +2494,34 @@ const defaultDeps = (): TmuxDeps => ({
   preparePairedRun,
   runGit: (cwd: string, args: string[]) => runGit(cwd, args),
   sendKeys: (pane: string, keys: string[]) => {
-    spawnSync(["tmux", "send-keys", "-t", pane, ...keys], { stderr: "ignore" });
+    const result = spawnSync(
+      ["tmux", "send-keys", "-t", pane, ...keys],
+      boundedTmuxOptions({ stderr: "ignore" })
+    );
+    if (tmuxCommandTimedOut(result)) {
+      throw new Error(
+        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while sending pane keys`
+      );
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to send keys to tmux pane "${pane}".`);
+    }
   },
   sendText: (pane: string, text: string) => {
-    spawnSync(["tmux", "send-keys", "-t", pane, "-l", "--", text], {
-      stderr: "ignore",
-    });
+    const result = spawnSync(
+      ["tmux", "send-keys", "-t", pane, "-l", "--", text],
+      boundedTmuxOptions({
+        stderr: "ignore",
+      })
+    );
+    if (tmuxCommandTimedOut(result)) {
+      throw new Error(
+        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while sending pane text`
+      );
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to send text to tmux pane "${pane}".`);
+    }
   },
   sleep: (ms: number) =>
     new Promise((resolve) => {
@@ -2498,11 +2550,20 @@ const defaultDeps = (): TmuxDeps => ({
   releasePersistentCodexSession,
   startPersistentAgentSession,
   spawn: (args: string[]) => {
-    const result = spawnSync(args, { stderr: "pipe", stdout: "pipe" });
+    const result = spawnSync(
+      args,
+      args[0] === "tmux"
+        ? boundedTmuxOptions({ stderr: "pipe", stdout: "pipe" })
+        : { stderr: "pipe", stdout: "pipe" }
+    );
+    const timedOut = args[0] === "tmux" && tmuxCommandTimedOut(result);
     return {
-      exitCode: result.exitCode,
-      stderr: decode(result.stderr),
+      exitCode: timedOut ? 124 : result.exitCode,
+      stderr: timedOut
+        ? `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms`
+        : decode(result.stderr),
       stdout: decode(result.stdout),
+      ...(timedOut ? { timedOut: true } : {}),
     };
   },
   updateRunManifest,

@@ -163,6 +163,7 @@ test("runInTmux starts a detached session without auto-attach when already insid
 test("runInTmux throws install message when tmux is missing", async () => {
   await expect(
     runInTmux(["--tmux", "--proof", "verify"], {
+      cwd: "/repo",
       env: {},
       findBinary: () => false,
     })
@@ -3237,6 +3238,46 @@ test("runInTmux surfaces tmux startup errors", async () => {
       spawn: () => ({ exitCode: 1, stderr: "boom" }),
     })
   ).rejects.toThrow("Failed to start tmux session: boom");
+});
+
+test("runInTmux fails nonzero when the tmux control plane times out", async () => {
+  await expect(
+    runInTmux(["--tmux", "--proof", "verify"], {
+      env: {},
+      findBinary: () => true,
+      spawn: () => ({
+        exitCode: 124,
+        stderr: "tmux control command timed out after 2000ms",
+        timedOut: true,
+      }),
+    })
+  ).rejects.toThrow(
+    "Failed to start tmux session: tmux control command timed out after 2000ms"
+  );
+});
+
+test("runInTmux refuses success when post-launch session liveness is unknown", async () => {
+  let calls = 0;
+  await expect(
+    runInTmux(["--tmux", "--proof", "verify"], {
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => false,
+      spawn: () => {
+        calls += 1;
+        return calls === 1
+          ? { exitCode: 0, stderr: "" }
+          : {
+              exitCode: 124,
+              stderr: "tmux control command timed out after 2000ms",
+              timedOut: true,
+            };
+      },
+    })
+  ).rejects.toThrow(
+    'tmux control command timed out after 2000ms while checking session "repo-loop-1"'
+  );
 });
 
 test("runInTmux never mutates home Claude MCP registration on startup failure", async () => {

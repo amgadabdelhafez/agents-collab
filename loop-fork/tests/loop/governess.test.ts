@@ -37,6 +37,7 @@ import {
   writeRunManifest,
 } from "../../src/loop/run-state";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
+import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
 import type {
   Agent,
   AgentLivenessState,
@@ -2379,6 +2380,41 @@ test("runGoverness reapplies pane identity on startup and every cycle", async ()
     spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")
   ).toBe(true);
   expect(closed).toBe(true);
+});
+
+test("runGoverness pauses a tick without recovery when tmux capture is unknown", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  let captureAttempts = 0;
+  deps.capturePane = () => {
+    captureAttempts += 1;
+    if (captureAttempts === 1) {
+      throw new TmuxControlUnavailableError([
+        "capture-pane",
+        "-p",
+        "-t",
+        "s:0.0",
+      ]);
+    }
+    return "stable pane text";
+  };
+  const keys = ["x", "e"];
+  deps.openKeyInput = () => ({
+    close: () => undefined,
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+
+  await runGoverness(baseConfig(), deps);
+
+  expect(captureAttempts).toBeGreaterThanOrEqual(2);
+  expect(spies.respawns).toEqual([]);
+  expect(spies.sends).toEqual([]);
+  expect(spies.logs).toContainEqual({
+    at: new Date(START_MS).toISOString(),
+    error: "tmux control unavailable: tmux capture-pane -p -t s:0.0",
+    event: "tmux-control-unavailable",
+  });
 });
 
 test("runGoverness refreshes a late Codex binding before reading usage", async () => {

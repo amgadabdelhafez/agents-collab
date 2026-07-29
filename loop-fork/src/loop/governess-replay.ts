@@ -20,6 +20,12 @@ import { decideGovernessPolicy } from "./governess-policy";
 import { driverLeaseIsCurrent } from "./governess-runtime";
 import { migrateLegacyGovernessState } from "./legacy-governess-compat";
 import { loadRunState } from "./run-state";
+import {
+  boundedTmuxOptions,
+  type TmuxLiveness,
+  tmuxCommandTimedOut,
+  tmuxSessionLiveness,
+} from "./tmux-control";
 import type { Agent } from "./types";
 
 export interface GovernessReplayIssue {
@@ -51,24 +57,25 @@ export const replayGovernessJournal = (
   };
 };
 
-const tmuxSessionAlive = (session: string): boolean =>
-  spawnSync(["tmux", "has-session", "-t", session], {
-    stderr: "ignore",
-  }).exitCode === 0;
-
-const tmuxSessionReady = (session: string): boolean => {
-  const result = spawnSync(
-    ["tmux", "list-panes", "-t", session, "-F", "#{pane_dead}"],
-    { stderr: "ignore", stdout: "pipe" }
-  );
+const tmuxSessionReady = (session: string): boolean | "unknown" => {
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    result = spawnSync(
+      ["tmux", "list-panes", "-t", session, "-F", "#{pane_dead}"],
+      boundedTmuxOptions({ stderr: "ignore", stdout: "pipe" })
+    );
+  } catch {
+    return "unknown";
+  }
+  if (tmuxCommandTimedOut(result)) {
+    return "unknown";
+  }
   if (result.exitCode !== 0) {
     return false;
   }
   return (
-    result.stdout
-      .toString()
-      .split("\n")
-      .filter((line) => line === "0").length >= 3
+    (result.stdout?.toString() ?? "").split("\n").filter((line) => line === "0")
+      .length >= 3
   );
 };
 
@@ -314,6 +321,10 @@ export const governessDoctor = (
     // Reported below.
   }
   const session = manifest?.tmuxSession;
+  const sessionLiveness: TmuxLiveness = session
+    ? tmuxSessionLiveness(session)
+    : "dead";
+  const sessionReady = session ? tmuxSessionReady(session) : false;
   const expectedAgents = [
     manifest?.tmuxPaneLeftAgent,
     manifest?.tmuxPaneRightAgent,
@@ -341,7 +352,7 @@ export const governessDoctor = (
       ? Boolean(
           state.exitControl.replacementSession &&
             state.exitControl.handoverManifest &&
-            tmuxSessionReady(state.exitControl.replacementSession) &&
+            tmuxSessionReady(state.exitControl.replacementSession) === true &&
             readGovernessHandoffAcceptance(
               state.exitControl.handoverManifest,
               state.exitControl.replacementSession
@@ -358,7 +369,7 @@ export const governessDoctor = (
     replacement: replacementReady,
     runDir: existsSync(storage.runDir),
     session: Boolean(
-      session && tmuxSessionAlive(session) && tmuxSessionReady(session)
+      session && sessionLiveness === "live" && sessionReady === true
     ),
     state: existsSync(stateFile) && state !== undefined,
     transport: existsSync(join(storage.runDir, "bridge.jsonl")),
@@ -372,6 +383,8 @@ export const governessDoctor = (
     ok: Object.values(checks).every(Boolean),
     runId,
     session,
+    sessionLiveness,
+    sessionReady,
   };
 };
 

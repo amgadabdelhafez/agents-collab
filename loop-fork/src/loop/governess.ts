@@ -132,6 +132,13 @@ import {
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
+import {
+  boundedTmuxOptions,
+  isTmuxControlUnavailableError,
+  TmuxControlUnavailableError,
+  tmuxCommandTimedOut,
+  tmuxSessionLiveness,
+} from "./tmux-control";
 import type {
   Agent,
   AgentLiveness,
@@ -356,8 +363,8 @@ export interface GovernessDeps {
     config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
   render: (text: string) => void;
-  replacementSessionAlive?: (session: string) => boolean;
-  replacementSessionReady: (session: string) => boolean;
+  replacementSessionAlive?: (session: string) => boolean | "unknown";
+  replacementSessionReady: (session: string) => boolean | "unknown";
   respawnPane: (pane: string) => void;
   saveState: (stateFile: string | undefined, state: GovernessRunState) => void;
   sendBridge: (
@@ -4169,7 +4176,16 @@ const directInputIsSafe = (
   if (events.at(-1)?.event !== "Stop") {
     return false;
   }
-  const tail = deps.capturePane(info.pane).split(LINE_SPLIT_RE).slice(-10);
+  let paneText: string;
+  try {
+    paneText = deps.capturePane(info.pane);
+  } catch (error) {
+    if (isTmuxControlUnavailableError(error)) {
+      return false;
+    }
+    throw error;
+  }
+  const tail = paneText.split(LINE_SPLIT_RE).slice(-10);
   // Both Codex and Claude prefix a non-empty composer with one of these prompt
   // glyphs. A Stop hook alone proves turn completion, not that the human has
   // not started typing since then.
@@ -4476,14 +4492,14 @@ export const advanceHandoverControl = async (
 ): Promise<HandoverAdvanceResult> => {
   if (runState.exitControl.mode === "launched") {
     const replacementSession = runState.exitControl.replacementSession;
-    const replacementAlive = Boolean(
-      replacementSession &&
-        deps.replacementSessionAlive?.(replacementSession) === true
-    );
-    const replacementReady = Boolean(
-      replacementSession &&
-        deps.replacementSessionReady(replacementSession) === true
-    );
+    const replacementAliveProbe = replacementSession
+      ? (deps.replacementSessionAlive?.(replacementSession) ?? false)
+      : false;
+    const replacementReadyProbe = replacementSession
+      ? deps.replacementSessionReady(replacementSession)
+      : false;
+    const replacementAlive = replacementAliveProbe === true;
+    const replacementReady = replacementReadyProbe === true;
     const handoverAccepted = Boolean(
       replacementSession &&
         runState.exitControl.handoverManifest &&
@@ -4496,15 +4512,26 @@ export const advanceHandoverControl = async (
       idempotencyKey: `${config.epoch}:replacement:${replacementSession ?? "missing"}:${replacementAlive}:${replacementReady}:${runState.tick}`,
       payload: JSON.stringify({
         accepted: handoverAccepted,
-        alive: replacementAlive,
-        ready: replacementReady,
+        alive: replacementAliveProbe,
+        ready: replacementReadyProbe,
         session: replacementSession,
       }),
       stream: `replacement:${replacementSession ?? "missing"}`,
     });
-    if (!(replacementSession && replacementAlive && replacementReady)) {
+    if (
+      replacementAliveProbe === "unknown" ||
+      replacementReadyProbe === "unknown"
+    ) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        event: "handover-replacement-tmux-unknown",
+        replacementSession,
+      });
+      return { status: "waiting" };
+    }
+    if (!(replacementSession && replacementAlive)) {
       const error = replacementSession
-        ? `replacement tmux session ${replacementSession} is not running or ready`
+        ? `replacement tmux session ${replacementSession} is not running`
         : "replacement session was not persisted";
       runState.exitControl = {
         ...runState.exitControl,
@@ -4518,6 +4545,14 @@ export const advanceHandoverControl = async (
       });
       deps.saveState(config.stateFile, runState);
       return { error, status: "launch-error" };
+    }
+    if (!replacementReady) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        event: "handover-replacement-not-ready",
+        replacementSession,
+      });
+      return { status: "waiting" };
     }
     if (!handoverAccepted) {
       return { status: "waiting" };
@@ -4608,20 +4643,49 @@ export const advanceHandoverControl = async (
     });
     return { error, status: "launch-error" };
   }
-  const replacementReady = Boolean(
-    launched.session && deps.replacementSessionReady(launched.session) === true
-  );
+  const replacementAliveProbe = launched.session
+    ? (deps.replacementSessionAlive?.(launched.session) ?? false)
+    : false;
+  const replacementReadyProbe = launched.session
+    ? deps.replacementSessionReady(launched.session)
+    : false;
+  const replacementAlive = replacementAliveProbe === true;
+  const replacementReady = replacementReadyProbe === true;
   recordGovernessObservation(config, deps, {
     idempotencyKey: `${config.epoch}:replacement-launch:${launched.session ?? "missing"}:${replacementReady}:${runState.tick}`,
     payload: JSON.stringify({
-      ready: replacementReady,
+      alive: replacementAliveProbe,
+      ready: replacementReadyProbe,
       session: launched.session,
     }),
     stream: `replacement-launch:${launched.session ?? "missing"}`,
   });
-  if (!(launched.session && replacementReady)) {
+  if (
+    launched.session &&
+    (replacementAliveProbe === "unknown" ||
+      replacementReadyProbe === "unknown" ||
+      (replacementAlive && !replacementReady))
+  ) {
+    runState.exitControl = {
+      ...runState.exitControl,
+      handoverManifest,
+      launchError: undefined,
+      mode: "launched",
+      replacementSession: launched.session,
+    };
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      alive: replacementAliveProbe,
+      event: "handover-replacement-pending",
+      ready: replacementReadyProbe,
+      replacementSession: launched.session,
+    });
+    deps.saveState(config.stateFile, runState);
+    return { status: "waiting" };
+  }
+  if (!(launched.session && replacementAlive && replacementReady)) {
     const error = launched.session
-      ? `replacement tmux session ${launched.session} is not ready`
+      ? `replacement tmux session ${launched.session} is not running`
       : "replacement launcher did not return a session";
     runState.exitControl = {
       ...runState.exitControl,
@@ -4719,15 +4783,33 @@ export const stopGovernessLoop = (
       event: "run-process-cleanup-failed",
     });
   }
-  if (record && config.journalFile) {
-    transitionGovernessControl(
-      config.journalFile,
-      record.controlId,
-      "accepted",
-      new Date(deps.now()).toISOString()
-    );
+  try {
+    deps.killSession?.(config.session);
+    if (record && config.journalFile) {
+      transitionGovernessControl(
+        config.journalFile,
+        record.controlId,
+        "accepted",
+        new Date(deps.now()).toISOString()
+      );
+    }
+  } catch (error) {
+    if (record && config.journalFile) {
+      transitionGovernessControl(
+        config.journalFile,
+        record.controlId,
+        "failed",
+        new Date(deps.now()).toISOString(),
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      event: "tmux-session-kill-unconfirmed",
+      session: config.session,
+    });
   }
-  deps.killSession?.(config.session);
 };
 
 export const driveHandoverControl = async (
@@ -5391,12 +5473,46 @@ export const governessTick = async (
   return { agentStates, board, llmOffline, runState, states, summaryCtxs };
 };
 
-const tmux = (args: string[]): string => {
-  const result = spawnSync(["tmux", ...args], {
-    stderr: "ignore",
-    stdout: "pipe",
-  });
-  return decode(result.stdout);
+const runBoundedTmux = (
+  args: string[],
+  options: { stderr?: "ignore" | "pipe"; stdout?: "ignore" | "pipe" } = {}
+) => {
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    result = spawnSync(
+      ["tmux", ...args],
+      boundedTmuxOptions({
+        stderr: options.stderr ?? "ignore",
+        stdout: options.stdout ?? "ignore",
+      })
+    );
+  } catch (error) {
+    throw new TmuxControlUnavailableError(args, error);
+  }
+  if (tmuxCommandTimedOut(result)) {
+    throw new TmuxControlUnavailableError(args);
+  }
+  return result;
+};
+
+const tmux = (args: string[]): string =>
+  decode(runBoundedTmux(args, { stdout: "pipe" }).stdout);
+
+const runTmuxEffect = (args: string[]): void => {
+  const result = runBoundedTmux(args);
+  if (result.exitCode !== 0) {
+    throw new Error(`tmux control failed: tmux ${args.join(" ")}`);
+  }
+};
+
+const bestEffortTmux = (args: string[]): void => {
+  try {
+    runBoundedTmux(args);
+  } catch (error) {
+    if (!isTmuxControlUnavailableError(error)) {
+      throw error;
+    }
+  }
 };
 
 // Tally bridge messages from the run transcript, keyed by sender then recipient.
@@ -5645,8 +5761,14 @@ export const defaultGovernessDeps = (
     );
   },
   initPaneBorders: (session) => {
-    tmux(["set-option", "-t", session, "pane-border-status", "top"]);
-    tmux(["set-option", "-t", session, "pane-border-format", "#{@loop_label}"]);
+    bestEffortTmux(["set-option", "-t", session, "pane-border-status", "top"]);
+    bestEffortTmux([
+      "set-option",
+      "-t",
+      session,
+      "pane-border-format",
+      "#{@loop_label}",
+    ]);
   },
   judge: (req) => judgeAgent(req),
   labelPanes: (req) => labelPanes(req),
@@ -5683,17 +5805,36 @@ export const defaultGovernessDeps = (
       }
       env.LOOP_GOVERNESS_HANDOFF_MANIFEST = manifestFile;
     }
-    const result = spawnSync(
-      [...buildLaunchArgv(), ...replacementLoopArgs(primary, peer, handoffDir)],
-      {
-        cwd: config.cwd,
-        env,
-        stderr: "pipe",
-        stdout: "pipe",
-      }
-    );
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = spawnSync(
+        [
+          ...buildLaunchArgv(),
+          ...replacementLoopArgs(primary, peer, handoffDir),
+        ],
+        {
+          cwd: config.cwd,
+          env,
+          killSignal: "SIGKILL",
+          stderr: "pipe",
+          stdout: "pipe",
+          timeout: 60_000,
+        }
+      );
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : String(error),
+        ok: false,
+      };
+    }
     const stdout = decode(result.stdout);
     const stderr = decode(result.stderr);
+    if (result.signalCode) {
+      return {
+        error: "replacement launcher timed out after 60000ms",
+        ok: false,
+      };
+    }
     if (result.exitCode !== 0) {
       return {
         error: (stderr || stdout || `exit ${result.exitCode}`).trim(),
@@ -5707,10 +5848,8 @@ export const defaultGovernessDeps = (
         ok: false,
       };
     }
-    const sessionCheck = spawnSync(["tmux", "has-session", "-t", session], {
-      stderr: "ignore",
-    });
-    if (sessionCheck.exitCode !== 0) {
+    const sessionLiveness = tmuxSessionLiveness(session);
+    if (sessionLiveness === "dead") {
       return {
         error: `replacement tmux session ${session} is not running`,
         ok: false,
@@ -5737,25 +5876,30 @@ export const defaultGovernessDeps = (
       );
   },
   killSession: (session) => {
-    spawnSync(["tmux", "kill-session", "-t", session], {
-      stderr: "ignore",
-    });
+    runBoundedTmux(["kill-session", "-t", session]);
   },
   notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
   now: () => Date.now(),
   openKeyInput: () => openRawKeyInput(),
   paneCommand: (pane) => {
-    const result = spawnSync(
-      [
-        "tmux",
-        "display-message",
-        "-p",
-        "-t",
-        pane,
-        "#{pane_dead}:#{pane_current_command}",
-      ],
-      { stderr: "ignore", stdout: "pipe" }
-    );
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = runBoundedTmux(
+        [
+          "display-message",
+          "-p",
+          "-t",
+          pane,
+          "#{pane_dead}:#{pane_current_command}",
+        ],
+        { stdout: "pipe" }
+      );
+    } catch (error) {
+      if (isTmuxControlUnavailableError(error)) {
+        return undefined;
+      }
+      throw error;
+    }
     return result.exitCode === 0 ? decode(result.stdout).trim() : undefined;
   },
   readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
@@ -5788,22 +5932,29 @@ export const defaultGovernessDeps = (
       timeoutMs: config.usageTrackerTimeoutMs,
       url: config.usageTrackerUrl,
     }),
-  replacementSessionAlive: (session) =>
-    spawnSync(["tmux", "has-session", "-t", session], {
-      stderr: "ignore",
-    }).exitCode === 0,
+  replacementSessionAlive: (session) => {
+    const liveness = tmuxSessionLiveness(session);
+    return liveness === "unknown" ? "unknown" : liveness === "live";
+  },
   replacementSessionReady: (session) => {
-    const result = spawnSync(
-      [
-        "tmux",
-        "list-panes",
-        "-t",
-        session,
-        "-F",
-        "#{pane_dead}:#{pane_current_command}",
-      ],
-      { stderr: "ignore", stdout: "pipe" }
-    );
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = runBoundedTmux(
+        [
+          "list-panes",
+          "-t",
+          session,
+          "-F",
+          "#{pane_dead}:#{pane_current_command}",
+        ],
+        { stdout: "pipe" }
+      );
+    } catch (error) {
+      if (isTmuxControlUnavailableError(error)) {
+        return "unknown";
+      }
+      throw error;
+    }
     if (result.exitCode !== 0) {
       return false;
     }
@@ -5816,26 +5967,24 @@ export const defaultGovernessDeps = (
     renderDefaultGovernessFrame(text);
   },
   respawnPane: (pane) => {
-    spawnSync(["tmux", "respawn-pane", "-k", "-t", pane], { stderr: "ignore" });
+    runTmuxEffect(["respawn-pane", "-k", "-t", pane]);
   },
   saveState: (stateFile, state) => saveGovernessState(stateFile, state),
   sendBridge: (runDir, source, target, message, options) =>
     sendGovernessBridgeMessage(runDir, source, target, message, options),
   setPaneLabel: (pane, label) => {
-    tmux(["set-option", "-p", "-t", pane, "@loop_label", label]);
+    bestEffortTmux(["set-option", "-p", "-t", pane, "@loop_label", label]);
   },
   setGovernessPaneIdentity: (pane, label) => {
     for (const args of governessPaneIdentityTmuxCommands(pane, label)) {
-      tmux(args);
+      bestEffortTmux(args);
     }
   },
   sendKeys: (pane, keys) => {
-    spawnSync(["tmux", "send-keys", "-t", pane, ...keys], { stderr: "ignore" });
+    runTmuxEffect(["send-keys", "-t", pane, ...keys]);
   },
   sendText: (pane, text) => {
-    spawnSync(["tmux", "send-keys", "-t", pane, "-l", "--", text], {
-      stderr: "ignore",
-    });
+    runTmuxEffect(["send-keys", "-t", pane, "-l", "--", text]);
   },
   sleep: (ms) =>
     new Promise((resolve) => {
@@ -6328,7 +6477,21 @@ export const runGoverness = async (
           to: change.current,
         });
       }
-      const result = await governessTick(states, tickConfig, deps, runState);
+      let result: Awaited<ReturnType<typeof governessTick>>;
+      try {
+        result = await governessTick(states, tickConfig, deps, runState);
+      } catch (error) {
+        if (!isTmuxControlUnavailableError(error)) {
+          throw error;
+        }
+        deps.appendLog(config.logFile, {
+          at: new Date(deps.now()).toISOString(),
+          error: error.message,
+          event: "tmux-control-unavailable",
+        });
+        await deps.sleep(config.tickMs);
+        continue;
+      }
       runState = result.runState;
       const lifecycleAt = new Date(deps.now()).toISOString();
       const hooksByAgent: Partial<Record<Agent, HookEvent[]>> = {};

@@ -48,6 +48,12 @@ import {
   touchRunManifest,
   updateRunManifest,
 } from "./run-state";
+import {
+  boundedTmuxOptions,
+  type TmuxLiveness,
+  tmuxCommandTimedOut,
+  tmuxSessionLiveness,
+} from "./tmux-control";
 
 const CLAUDE_CHANNEL_METHOD = "notifications/claude/channel";
 const CLAUDE_CHANNEL_SOURCE_TYPE = "codex";
@@ -339,40 +345,52 @@ const stripDimSpans = (line: string): string => {
 const tmuxPane = (session: string, paneId: string): string =>
   `${session}:${paneId}`;
 
-const capturePane = (pane: string, styled = false): string => {
-  const result = bridgeRuntimeCommandDeps.spawnSync(
-    styled
-      ? ["tmux", "capture-pane", "-p", "-e", "-t", pane]
-      : ["tmux", "capture-pane", "-p", "-t", pane],
-    {
-      stderr: "ignore",
-      stdout: "pipe",
+const capturePane = (pane: string, styled = false): string | undefined => {
+  try {
+    const result = bridgeRuntimeCommandDeps.spawnSync(
+      styled
+        ? ["tmux", "capture-pane", "-p", "-e", "-t", pane]
+        : ["tmux", "capture-pane", "-p", "-t", pane],
+      boundedTmuxOptions({
+        stderr: "ignore",
+        stdout: "pipe",
+      })
+    );
+    if (tmuxCommandTimedOut(result) || result.exitCode !== 0) {
+      return undefined;
     }
-  );
-  if (result.exitCode !== 0) {
-    return "";
+    return decodeOutput(result.stdout);
+  } catch {
+    return undefined;
   }
-  return decodeOutput(result.stdout);
 };
 
 const sendPaneKeys = (pane: string, keys: string[]): boolean => {
-  const result = bridgeRuntimeCommandDeps.spawnSync(
-    ["tmux", "send-keys", "-t", pane, ...keys],
-    {
-      stderr: "ignore",
-    }
-  );
-  return result.exitCode === 0;
+  try {
+    const result = bridgeRuntimeCommandDeps.spawnSync(
+      ["tmux", "send-keys", "-t", pane, ...keys],
+      boundedTmuxOptions({
+        stderr: "ignore",
+      })
+    );
+    return !tmuxCommandTimedOut(result) && result.exitCode === 0;
+  } catch {
+    return false;
+  }
 };
 
 const sendPaneText = (pane: string, text: string): boolean => {
-  const result = bridgeRuntimeCommandDeps.spawnSync(
-    ["tmux", "send-keys", "-t", pane, "-l", "--", text],
-    {
-      stderr: "ignore",
-    }
-  );
-  return result.exitCode === 0;
+  try {
+    const result = bridgeRuntimeCommandDeps.spawnSync(
+      ["tmux", "send-keys", "-t", pane, "-l", "--", text],
+      boundedTmuxOptions({
+        stderr: "ignore",
+      })
+    );
+    return !tmuxCommandTimedOut(result) && result.exitCode === 0;
+  } catch {
+    return false;
+  }
 };
 
 const pastePaneText = (runDir: string, pane: string, text: string): boolean => {
@@ -384,17 +402,17 @@ const pastePaneText = (runDir: string, pane: string, text: string): boolean => {
     writeFileSync(path, text, { encoding: "utf8", flag: "wx", mode: 0o600 });
     const loaded = bridgeRuntimeCommandDeps.spawnSync(
       ["tmux", "load-buffer", "-b", buffer, path],
-      { stderr: "ignore" }
+      boundedTmuxOptions({ stderr: "ignore" })
     );
-    if (loaded.exitCode !== 0) {
+    if (tmuxCommandTimedOut(loaded) || loaded.exitCode !== 0) {
       return false;
     }
     bufferLoaded = true;
     const pasted = bridgeRuntimeCommandDeps.spawnSync(
       ["tmux", "paste-buffer", "-d", "-p", "-b", buffer, "-t", pane],
-      { stderr: "ignore" }
+      boundedTmuxOptions({ stderr: "ignore" })
     );
-    if (pasted.exitCode !== 0) {
+    if (tmuxCommandTimedOut(pasted) || pasted.exitCode !== 0) {
       return false;
     }
     bufferLoaded = false;
@@ -404,10 +422,14 @@ const pastePaneText = (runDir: string, pane: string, text: string): boolean => {
   } finally {
     rmSync(path, { force: true });
     if (bufferLoaded) {
-      bridgeRuntimeCommandDeps.spawnSync(
-        ["tmux", "delete-buffer", "-b", buffer],
-        { stderr: "ignore" }
-      );
+      try {
+        bridgeRuntimeCommandDeps.spawnSync(
+          ["tmux", "delete-buffer", "-b", buffer],
+          boundedTmuxOptions({ stderr: "ignore" })
+        );
+      } catch {
+        // The delivery remains unacknowledged; a stale tmux buffer is inert.
+      }
     }
   }
 };
@@ -433,7 +455,11 @@ const waitForCodexPane = async (
   attempts = CODEX_TMUX_READY_POLLS
 ): Promise<boolean> => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (isCodexPaneReady(capturePane(pane))) {
+    const output = capturePane(pane);
+    if (output === undefined) {
+      return false;
+    }
+    if (isCodexPaneReady(output)) {
       return true;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
@@ -516,14 +542,11 @@ const waitForBridgePasteReady = async (
     attempt < BRIDGE_LARGE_PASTE_READY_POLLS;
     attempt += 1
   ) {
-    if (
-      hasBridgePasteEvidence(
-        before,
-        capturePane(pane, target === "claude"),
-        target,
-        expectedFirstLine
-      )
-    ) {
+    const output = capturePane(pane, target === "claude");
+    if (output === undefined) {
+      return false;
+    }
+    if (hasBridgePasteEvidence(before, output, target, expectedFirstLine)) {
       return true;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
@@ -578,6 +601,9 @@ const confirmClaudeSubmission = async (
   let sawStrandedComposer = false;
   for (let attempt = 0; attempt < CLAUDE_DELIVERY_CONFIRM_POLLS; attempt += 1) {
     const output = capturePane(pane, true);
+    if (output === undefined) {
+      return "unknown";
+    }
     const composer = claudeComposerText(output);
     const transcriptVersion =
       bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(runDir);
@@ -612,10 +638,11 @@ const waitForClaudePane = async (
     return false;
   }
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (
-      !isClaudeTurnActive(runDir) &&
-      isClaudePaneReady(capturePane(pane, true))
-    ) {
+    const output = capturePane(pane, true);
+    if (output === undefined) {
+      return false;
+    }
+    if (!isClaudeTurnActive(runDir) && isClaudePaneReady(output)) {
       return true;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
@@ -628,7 +655,11 @@ const waitForInteractivePane = async (
   attempts = GENERIC_TMUX_READY_POLLS
 ): Promise<boolean> => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (capturePane(pane).trim()) {
+    const output = capturePane(pane);
+    if (output === undefined) {
+      return false;
+    }
+    if (output.trim()) {
       return true;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
@@ -675,6 +706,9 @@ const injectTmuxMessage = async (
   const largePaste =
     Buffer.byteLength(message, "utf8") >= BRIDGE_LARGE_PASTE_MIN_BYTES;
   const beforePaste = largePaste ? capturePane(pane, target === "claude") : "";
+  if (beforePaste === undefined) {
+    return false;
+  }
   if (!pastePaneText(runDir, pane, message)) {
     return false;
   }
@@ -711,24 +745,10 @@ const injectTmuxMessage = async (
   );
 };
 
-const tmuxSessionExists = (session: string): boolean => {
-  try {
-    const result = bridgeRuntimeCommandDeps.spawnSync(
-      ["tmux", "has-session", "-t", session],
-      {
-        stderr: "ignore",
-        stdout: "ignore",
-      }
-    );
-    return result.exitCode === 0;
-  } catch {
-    return false;
-  }
-};
-
 export interface BridgeRuntimeStatus extends BridgeStatus {
   codexDeliveryMode: "app-server" | "none" | "tmux" | "tmux-proxy";
   hasLiveTmuxSession: boolean;
+  tmuxLiveness: TmuxLiveness;
 }
 
 const readRunManifestForBridge = (runDir: string) =>
@@ -797,13 +817,18 @@ export const readBridgeRuntimeStatus = (
   runDir: string
 ): BridgeRuntimeStatus => {
   const status = readBridgeStatus(runDir);
-  const hasLiveTmuxSession = Boolean(
-    status.tmuxSession && tmuxSessionExists(status.tmuxSession)
-  );
+  const tmuxLiveness = status.tmuxSession
+    ? tmuxSessionLiveness(
+        status.tmuxSession,
+        bridgeRuntimeCommandDeps.spawnSync
+      )
+    : "dead";
+  const hasLiveTmuxSession = tmuxLiveness === "live";
+  const tmuxMayBeLive = tmuxLiveness !== "dead";
   let codexDeliveryMode: BridgeRuntimeStatus["codexDeliveryMode"] = "none";
   if (
     status.hasCodexRemote &&
-    hasLiveTmuxSession &&
+    tmuxMayBeLive &&
     paneIdForTarget(runDir, "codex")
   ) {
     codexDeliveryMode = "tmux-proxy";
@@ -816,6 +841,7 @@ export const readBridgeRuntimeStatus = (
     ...status,
     codexDeliveryMode,
     hasLiveTmuxSession,
+    tmuxLiveness,
   };
 };
 
@@ -824,7 +850,7 @@ export const ensureBridgeWorker = (runDir: string): boolean => {
   const state = parseRunLifecycleState(status.state);
   if (
     !(
-      (status.hasCodexRemote || status.hasLiveTmuxSession) &&
+      (status.hasCodexRemote || status.tmuxLiveness !== "dead") &&
       state &&
       isActiveRunState(state)
     )
@@ -861,7 +887,11 @@ export const ensureBridgeWorker = (runDir: string): boolean => {
 export const hasLiveCodexTmuxSession = (runDir: string): boolean => {
   const manifest = readRunManifest(join(runDir, "manifest.json"));
   return Boolean(
-    manifest?.tmuxSession && tmuxSessionExists(manifest.tmuxSession)
+    manifest?.tmuxSession &&
+      tmuxSessionLiveness(
+        manifest.tmuxSession,
+        bridgeRuntimeCommandDeps.spawnSync
+      ) === "live"
   );
 };
 
@@ -873,7 +903,9 @@ export const hasBridgeDeliveryRoute = (
   if (target === "codex" && status.hasCodexRemote) {
     return true;
   }
-  return Boolean(status.hasLiveTmuxSession && paneIdForTarget(runDir, target));
+  return Boolean(
+    status.tmuxLiveness !== "dead" && paneIdForTarget(runDir, target)
+  );
 };
 
 export const clearStaleTmuxBridgeState = (runDir: string): boolean => {
@@ -941,7 +973,7 @@ export const flushClaudeChannelMessages = (
 ): void => {
   const status = readBridgeRuntimeStatus(runDir);
   if (
-    status.hasLiveTmuxSession &&
+    status.tmuxLiveness !== "dead" &&
     tmuxPaneForTarget(runDir, "claude") !== undefined
   ) {
     return;
@@ -957,7 +989,7 @@ export const deliverCodexBridgeMessage = async (
   message: BridgeMessage
 ): Promise<boolean> => {
   const status = readBridgeRuntimeStatus(runDir);
-  if (status.tmuxSession && !status.hasLiveTmuxSession) {
+  if (status.tmuxSession && status.tmuxLiveness === "dead") {
     clearStaleTmuxBridgeState(runDir);
   }
   if (status.codexDeliveryMode === "tmux-proxy") {
@@ -993,8 +1025,11 @@ const resolveTmuxBridgeDelivery = (
   if (!status.tmuxSession) {
     return undefined;
   }
-  if (!status.hasLiveTmuxSession) {
+  if (status.tmuxLiveness === "dead") {
     clearStaleTmuxBridgeState(runDir);
+    return undefined;
+  }
+  if (status.tmuxLiveness === "unknown") {
     return undefined;
   }
   const pane = tmuxPaneForTarget(runDir, message.target);
@@ -1095,8 +1130,11 @@ export const drainTmuxBridgeMessages = (runDir: string): Promise<boolean> => {
   if (!status.tmuxSession) {
     return Promise.resolve(false);
   }
-  if (!status.hasLiveTmuxSession) {
+  if (status.tmuxLiveness === "dead") {
     clearStaleTmuxBridgeState(runDir);
+    return Promise.resolve(false);
+  }
+  if (status.tmuxLiveness === "unknown") {
     return Promise.resolve(false);
   }
   const message = readPendingBridgeMessages(runDir).find((entry) => {
@@ -1115,7 +1153,7 @@ const clearStaleTmuxWorkerState = (
   runDir: string,
   status: BridgeRuntimeStatus
 ): boolean => {
-  if (!(status.tmuxSession && !status.hasLiveTmuxSession)) {
+  if (!(status.tmuxSession && status.tmuxLiveness === "dead")) {
     return true;
   }
   clearStaleTmuxBridgeState(runDir);
@@ -1143,7 +1181,7 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
         (await drainCodexAppServerMessages(runDir));
       const delivered =
         deliveredToCodex || (await drainTmuxBridgeMessages(runDir));
-      if (!(status.hasCodexRemote || status.hasLiveTmuxSession)) {
+      if (!(status.hasCodexRemote || status.tmuxLiveness !== "dead")) {
         return;
       }
       await wait(
