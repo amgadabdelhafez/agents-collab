@@ -1,9 +1,10 @@
 {
   "task_id": "utility-first-native-fallback",
   "feature": "utility-first-native-fallback",
-  "timestamp": "2026-07-29T05:30:31Z",
+  "timestamp": "2026-07-29T05:40:10Z",
   "verdict": "pass",
   "reviewed_sha": "0d98db53f4daf1846e757654aa9d2d801154cee6",
+  "deployment_hardening_sha": "28d73a3bb6f70095b304408750ac4527ba191664",
   "baseline_failures": [],
   "checks": {
     "focused": {
@@ -20,7 +21,7 @@
     },
     "full_suite": {
       "status": "pass",
-      "evidence": "scripts/verify.sh utility-first-native-fallback utility-first-native-fallback rerun at evidence-only descendant 9284b54: lint, TypeScript, compiled build, every sequential test file, and empty baseline allowlist passed"
+      "evidence": "scripts/verify.sh utility-first-native-fallback utility-first-native-fallback rerun at deployment hardening SHA 28d73a3: lint, TypeScript, compiled build, every sequential test file, and empty baseline allowlist passed"
     },
     "provider_config": {
       "status": "pass",
@@ -37,6 +38,10 @@
     "mutation_verification": {
       "status": "pass",
       "evidence": "every control confirmed to FAIL against the implementation it rejects: permanent slot, never-freeing slot, TeamCreate ungated at the parent, unsets after operands, unsets omitted at the call site, single-pane-only enforcement, per-variable drop (TEAMS-only and OBSERVER-only), and strict dropped from the governed predicate"
+    },
+    "deployment_smoke": {
+      "status": "pass",
+      "evidence": "global /Users/amgad/.local/bin/loop resolves to the freshly compiled worktree binary; SHA-256 b07859c52b8d285fe4e792a00cb71df73dcbcae49fb001e6b01983781b6e6b4c matches; loop and claude-loop --version both exit 0"
     }
   },
   "acceptance": {
@@ -70,6 +75,10 @@
     {
       "id": "vacuous-composed-command-guard",
       "summary": "BLOCKING, self-inflicted: the composed-command assertion filtered on the marker and continued when absent, so omitting the unsets skipped rather than failed. Fixed by asserting the expected pane count before per-variable presence and ordering."
+    },
+    {
+      "id": "deployment-startup-gc-hang",
+      "summary": "Deployment exposed an existing unbounded tmux liveness probe in startup Claude bridge GC. A non-responsive tmux server blocked even --version. Immediate information flags now bypass maintenance; tmux and Claude removal probes are bounded, and unknown tmux liveness preserves registrations rather than deleting a possibly live loop."
     }
   ],
   "known_limitations": [

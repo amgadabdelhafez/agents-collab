@@ -12,4 +12,7 @@
 - [x] Obtain an independent exact-commit review.
 
 Completed at reviewed SHA `0d98db53f4daf1846e757654aa9d2d801154cee6`
-(independent CONCUR, round 4). Evidence: `runs/utility-first-native-fallback/eval.json`.
+(independent CONCUR, round 4). Deployment hardening at
+`28d73a3bb6f70095b304408750ac4527ba191664` bounds pre-existing startup GC
+probes after the build smoke test exposed a non-responsive tmux server.
+Evidence: `runs/utility-first-native-fallback/eval.json`.
