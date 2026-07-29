@@ -1,7 +1,7 @@
 {
   "task_id": "utility-first-native-fallback",
   "feature": "utility-first-native-fallback",
-  "timestamp": "2026-07-29T02:05:00Z",
+  "timestamp": "2026-07-29T05:30:31Z",
   "verdict": "pass",
   "reviewed_sha": "0d98db53f4daf1846e757654aa9d2d801154cee6",
   "baseline_failures": [],
@@ -12,15 +12,15 @@
     },
     "typecheck": {
       "status": "pass",
-      "evidence": "bun run check (ultracite): checked 545 files, no fixes applied, exit 0"
+      "evidence": "scripts/verify.sh rerun at evidence-only descendant 9284b54: bunx tsc --noEmit completed with exit 0 against reviewed source SHA 0d98db5"
     },
     "build": {
       "status": "pass",
-      "evidence": "git diff --check clean at repo root, exit 0"
+      "evidence": "scripts/verify.sh rerun at evidence-only descendant 9284b54: bun build --compile --outfile loop completed with exit 0 against reviewed source SHA 0d98db5; git diff --check also clean"
     },
     "full_suite": {
       "status": "pass",
-      "evidence": "scripts/verify.sh utility-first-native-fallback completed; baseline allowlist empty"
+      "evidence": "scripts/verify.sh utility-first-native-fallback utility-first-native-fallback rerun at evidence-only descendant 9284b54: lint, TypeScript, compiled build, every sequential test file, and empty baseline allowlist passed"
     },
     "provider_config": {
       "status": "pass",
