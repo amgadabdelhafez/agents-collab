@@ -1,0 +1,28 @@
+{
+  "task_id": "informational-command-no-maintenance",
+  "status": "created",
+  "bug_id": "nested-info-runs-maintenance",
+  "regression_path": "evals/regression/nested-info-runs-maintenance.md",
+  "prompt_path": "runs/informational-command-no-maintenance/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-30T19:57:42Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "nested-info-runs-maintenance"
+    ],
+    "symptom": [
+      "Nested help/version can execute destructive startup maintenance."
+    ],
+    "guard": [
+      "bun test tests/loop.test.ts tests/loop/args.test.ts"
+    ]
+  },
+  "symptom_lines": [
+    "Nested help/version can execute destructive startup maintenance."
+  ],
+  "test_lines": [
+    "bun test tests/loop.test.ts tests/loop/args.test.ts"
+  ]
+}

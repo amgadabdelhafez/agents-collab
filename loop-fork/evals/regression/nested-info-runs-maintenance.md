@@ -1,0 +1,134 @@
+# Regression Eval: nested-info-runs-maintenance
+
+Generated: 2026-07-30T19:57:42Z
+Source task: `informational-command-no-maintenance`
+Status: draft
+
+## Failure Symptom
+
+- Nested help/version can execute destructive startup maintenance.
+
+## Guard Evidence
+
+- bun test tests/loop.test.ts tests/loop/args.test.ts
+
+## Verification Artifacts
+
+- `default-smoke`: `runs/informational-command-no-maintenance/artifacts/default-smoke/verify.log` (pass)
+- `full`: `runs/informational-command-no-maintenance/artifacts/full/verify.log` (pass)
+- `isolated-smoke`: `runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log` (pass)
+
+## Source Task Notes
+
+Run-101 is frozen read-only. Live smoke and activation remain held until its
+running Governess completes governed teardown.
+
+Focused parser and CLI tests pass 95/0. Lint, source typecheck, and compiled
+build pass. The full sequential suite passes outside the localhost-binding
+sandbox. The realistic smoke is statically validated but execution remains
+held until run-101 teardown.
+
+The mandated repository verifier also passed lint, typecheck, build, and the
+complete sequential suite, then correctly failed closed at the pending eval
+gate. Exact-SHA review and post-teardown smoke are still outstanding.
+
+Independent review then caught that rendering re-entered ambient `parseArgs`.
+The descendant uses a dedicated config-independent renderer and adds invalid
+ambient-config coverage; focused tests pass 99/0. The earlier review request is
+superseded before verdict.
+
+Smoke/lifecycle review then found that a workspace confirmed dead outside the
+inner startup catch could leave its manifest active. The descendant routes
+every confirmed-dead pre-handoff path through one exact-storage terminalizer,
+preserves completed and unknown-liveness semantics, and retains ownership
+recorded by another launcher. Focused tmux coverage passes 71/0.
+
+The smoke now seeds a fresh update throttle in every disposable home, verifies
+the complete randomized source prompt buffer at greater than 8 KiB, and
+requires the missing-workspace manifest to persist `failed/failed`. Runtime
+execution remains held until run-101 governed teardown.
+
+All paired pre-bind, layout, attach, and handoff probes now use tri-state
+liveness: only recognized no-server/no-session evidence grants failure
+authority. Timeout, thrown control errors, and unrecognized nonzero results
+preserve active state and current/external transport ownership; a fresh live
+probe overrides a stale attach error. Lint, source typecheck, compiled build,
+and the complete sequential suite pass.
+
+After run-101 teardown, the mandatory realistic smoke exposed two independent
+release blockers in the reviewed `888fe36` candidate: Darwin's long per-user
+temporary path exceeded tmux's Unix-socket pathname budget, and a cold custom
+socket's exact `No such file or directory` diagnostic was misclassified as
+unknown. The descendant uses a short physical `/tmp` root with an explicit
+103-byte budget assertion and accepts the missing-socket diagnostic only at
+the initial pre-resource probe. The same diagnostic after resource creation,
+permission failures, and overlong-path errors remain unknown.
+
+The post-teardown 10 KiB smoke now passes end to end: both agent panes are
+live, both hash-bound bootstraps verify the complete charters, tampering fails
+closed, nested help leaves the hostile manifest unchanged, and a missing
+workspace exits 1 with `failed/failed`. The certified sequential suite passes
+outside the managed endpoint-binding sandbox. Binary SHA-256 before commit is
+`ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`;
+fresh exact-SHA review and Harness evidence registration remain required.
+
+Harness `isolated-smoke` attempt 001 then passed against exact code commit
+`698e86bc77d5c34e17bda87643c628220b11f488`; the replayable log is
+`runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log`.
+The compiled binary remained reproducible at
+`ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`.
+
+Claude independently reviewed exact clean commit
+`cf2d0c961990cc0c459c8d8999c72fdf0a70d0a8` and issued CONCUR in channel
+message `dc79d52a-aadb-4627-97b8-4e6774900ec7`. The reviewer ran the complete
+sequential suite at 1318/0, reproduced the binary SHA-256
+`ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`, and
+passed the realistic launch smoke on the cold machine that exposed the prior
+candidate's regression.
+
+The first post-deploy section-4 smoke exposed a release-evidence defect: the
+script's default developer path rebuilt the canonical `loop` in place before
+launch, changing the installed bytes from reviewed `ca7df916...` to unreviewed
+`49da0ef6...`. Exact reviewed bytes were restored atomically and the launch
+gate remained held.
+
+The descendant adds an explicit prebuilt mode requiring an absolute executable
+and matching expected SHA-256. That mode skips the build, rechecks the binary
+before every isolated invocation, and enforces the hash again from the EXIT
+cleanup on both pass and failure. Incomplete configuration exits 2 before
+temporary-state creation; a self-mutating fixture proves cleanup detects drift.
+Harness `isolated-smoke` attempt 002 passed against the physical installed
+binary with a PATH wrapper that exits 97 on any `bun run build`; output binds
+`prebuilt=1` and SHA-256 `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`.
+The complete sequential test suite and formatter check pass after the change;
+a separate read-only audit found no remaining logic blocker, while preserving
+the rule that `scripts/verify.sh` and the aggregate constant-size smoke are
+pre-review tools because they still rebuild in place.
+
+The superseding fix also removes the default-mode canonical write: it compiles
+directly to `${SMOKE_ROOT}/build/loop`, executes that disposable binary, and
+deletes it in cleanup. A default 10 KiB smoke passed with `prebuilt=0` and a
+disposable binary path while candidate, canonical, and global hashes all
+remained `ca7df916...`. Harness exact-binary attempt 003 then passed with a
+wrapper forbidding both `bun build` and `bun run build`.
+Harness `default-smoke` attempt 001 banks the disposable build path and full
+10 KiB pass separately from exact installed-artifact attempt 003.
+
+Claude independently reviewed exact clean commit
+`2ca7439384f05b02c19b40af71dd1cafbc878b96` and issued CONCUR in channel
+message `fd3cff50-4c61-4a43-8d9d-67d4abf73bd7`, independently passing both
+smoke modes and preserving installed/worktree hashes at `ca7df916...`.
+Canonical source then fast-forwarded cleanly to evidence descendant
+`04dc371c46fcdec7a84ecd1c85ddbfdcd336a919`; the installed and global binaries
+remained byte-identical at `ca7df916...`, and the canonical smoke file matches
+reviewed code commit `2ca7439384f05b02c19b40af71dd1cafbc878b96` exactly.
+
+Regression: yes
+Regression id: nested-info-runs-maintenance
+Regression symptom: Nested help/version can execute destructive startup maintenance.
+Regression guard: bun test tests/loop.test.ts tests/loop/args.test.ts
+
+## Next Step
+
+Turn this draft into an executable regression check and wire it into the
+appropriate verification dimension.

@@ -2,6 +2,7 @@
   "id": "informational-command-no-maintenance",
   "mode": "planned",
   "created_at": "2026-07-30T08:13:38Z",
-  "status": "active",
-  "description": "Dispatch nested CLI help and version requests before every startup maintenance action, with exact parser semantics and isolated smoke coverage"
+  "status": "done",
+  "description": "Dispatch nested CLI help and version requests before every startup maintenance action, with exact parser semantics and isolated smoke coverage",
+  "ended_at": "2026-07-30T19:57:42Z"
 }
