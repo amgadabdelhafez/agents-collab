@@ -2480,7 +2480,13 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
         if (pollCount === 5) {
           return `❯\n\n${devChannelsPrompt}`;
         }
-        return `${devChannelsPrompt}\n\n❯ \u001B[2mTry a suggested prompt\u001B[22m`;
+        return [
+          devChannelsPrompt,
+          "",
+          "❯ \u001B[2mTry a suggested prompt\u001B[22m",
+          "────────────────────────",
+          "? for shortcuts",
+        ].join("\n");
       },
       cwd: "/repo",
       env: {},

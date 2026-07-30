@@ -188,7 +188,9 @@ def prepare_input_prompt() -> None:
     emit("CLAUDE_DEV_CHANNEL_CONFIRMED")
     sys.stdout.write("\x1b[?2004h")
     emit(f"READY {role}")
-    sys.stdout.write(f'{prompt} \x1b[2mTry "inspect this repository"\x1b[22m')
+    sys.stdout.write(f'{prompt} \x1b[2mTry "inspect this repository"\x1b[22m\r\n')
+    emit("────────────────────────")
+    emit("? for shortcuts")
     sys.stdout.flush()
 
 

@@ -2043,15 +2043,6 @@ const stablePaneTarget = (result: SpawnResult, fallback: string): string =>
 const normalizePaneText = (text: string): string =>
   text.replace(/\s+/g, " ").trim();
 
-const isClaudeInputReady = (text: string): boolean => {
-  const visibleLines = text
-    .split(LINE_SPLIT_RE)
-    .map(stripDimSpans)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return visibleLines.at(-1) === "❯";
-};
-
 type ClaudeStartupPrompt = "bypass" | "dev-channel" | "trust";
 
 const detectClaudePrompt = (text: string): ClaudeStartupPrompt | undefined => {
@@ -2074,6 +2065,33 @@ const detectClaudePrompt = (text: string): ClaudeStartupPrompt | undefined => {
     return "dev-channel";
   }
   return undefined;
+};
+
+const CLAUDE_READY_TAIL_LINES = 8;
+const CLAUDE_INPUT_PREFIX = "❯";
+
+const isClaudeInputReady = (text: string): boolean => {
+  const visibleLines = text
+    .split(LINE_SPLIT_RE)
+    .slice(-CLAUDE_READY_TAIL_LINES)
+    .map(stripDimSpans);
+  const promptIndex = visibleLines.findLastIndex((line) =>
+    line.trimStart().startsWith(CLAUDE_INPUT_PREFIX)
+  );
+  if (promptIndex < 0) {
+    return false;
+  }
+  const composer = visibleLines[promptIndex]
+    ?.trimStart()
+    .slice(CLAUDE_INPUT_PREFIX.length)
+    .trim();
+  if (composer) {
+    return false;
+  }
+  return (
+    detectClaudePrompt(visibleLines.slice(promptIndex + 1).join("\n")) ===
+    undefined
+  );
 };
 
 const unblockClaudePane = async (
