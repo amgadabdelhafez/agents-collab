@@ -1,7 +1,7 @@
 {
   "task_id": "informational-command-no-maintenance",
   "verdict": "pass",
-  "release_status": "approved-for-source-adoption-binary-unchanged",
+  "release_status": "canonical-source-adopted-binary-unchanged",
   "baseline_failures": [],
   "required": [
     "focused",

@@ -99,6 +99,10 @@
   `2ca7439384f05b02c19b40af71dd1cafbc878b96` in message
   `fd3cff50-4c61-4a43-8d9d-67d4abf73bd7`, independently passing both default
   disposable-build and exact installed-binary smoke modes with hashes unchanged.
+- 2026-07-30T17:27:00Z — Fast-forwarded canonical source cleanly to evidence
+  descendant `04dc371c46fcdec7a84ecd1c85ddbfdcd336a919`. Canonical/global binary
+  SHA-256 remains `ca7df916...`; canonical smoke source exactly matches reviewed
+  commit `2ca7439384f05b02c19b40af71dd1cafbc878b96`.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance

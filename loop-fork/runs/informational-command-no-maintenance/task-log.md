@@ -115,6 +115,10 @@ Claude independently reviewed exact clean commit
 `2ca7439384f05b02c19b40af71dd1cafbc878b96` and issued CONCUR in channel
 message `fd3cff50-4c61-4a43-8d9d-67d4abf73bd7`, independently passing both
 smoke modes and preserving installed/worktree hashes at `ca7df916...`.
+Canonical source then fast-forwarded cleanly to evidence descendant
+`04dc371c46fcdec7a84ecd1c85ddbfdcd336a919`; the installed and global binaries
+remained byte-identical at `ca7df916...`, and the canonical smoke file matches
+reviewed code commit `2ca7439384f05b02c19b40af71dd1cafbc878b96` exactly.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance
