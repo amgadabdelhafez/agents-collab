@@ -20,9 +20,10 @@
       "reason": "888fe36 review is superseded by the post-teardown cold-socket fix; fresh exact-SHA review required"
     },
     "isolated-smoke": {
-      "status": "pending",
-      "static_validation": "post-teardown direct smoke and git diff --check pass",
-      "reason": "the 10 KiB isolated smoke passes with full charter binding, fail-closed hash mismatch, and failed/failed missing-workspace evidence; Harness-bound evidence pending"
+      "status": "pass",
+      "method": "Harness verify.sh isolated-smoke attempt 001",
+      "artifact": "loop-fork/runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log",
+      "reason": "the 10 KiB isolated smoke passes with full charter binding, fail-closed hash mismatch, and failed/failed missing-workspace evidence"
     }
   }
 }

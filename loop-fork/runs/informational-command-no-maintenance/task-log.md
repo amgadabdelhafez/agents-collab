@@ -69,6 +69,12 @@ outside the managed endpoint-binding sandbox. Binary SHA-256 before commit is
 `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`;
 fresh exact-SHA review and Harness evidence registration remain required.
 
+Harness `isolated-smoke` attempt 001 then passed against exact code commit
+`698e86bc77d5c34e17bda87643c628220b11f488`; the replayable log is
+`runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log`.
+The compiled binary remained reproducible at
+`ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`.
+
 Regression: yes
 Regression id: nested-info-runs-maintenance
 Regression symptom: Nested help/version can execute destructive startup maintenance.

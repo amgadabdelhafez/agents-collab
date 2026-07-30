@@ -58,6 +58,11 @@
   hash-bound bootstraps verify, tampering fails closed, nested help is read-only,
   and missing workspace exits 1 with a durable `failed/failed` manifest. The
   certified sequential suite also passes. Fresh exact-SHA review is required.
+- 2026-07-30T16:24:35Z — Harness `isolated-smoke` attempt 001 passed against
+  exact code commit `698e86bc77d5c34e17bda87643c628220b11f488`; replayable evidence is
+  `loop-fork/runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log`.
+  The rebuilt binary remained byte-identical at SHA-256
+  `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance
