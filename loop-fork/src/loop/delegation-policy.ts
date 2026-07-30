@@ -1028,24 +1028,54 @@ const literalLeadingCdPrefixTarget = (command: string): string | undefined => {
   return undefined;
 };
 
+const isShellDelegationTool = (toolName: string): boolean =>
+  toolName === "Bash" ||
+  toolName === "shell_command" ||
+  toolName === "exec_command";
+
+export const delegationExecutionCwd = (
+  cwd: string,
+  toolName: string,
+  toolInput: unknown
+): string | undefined => {
+  if (!isShellDelegationTool(toolName)) {
+    return cwd;
+  }
+  const input = isRecord(toolInput) ? toolInput : {};
+  const workdir = asString(input.workdir);
+  if (!workdir) {
+    return cwd;
+  }
+  if (
+    workdir.includes("\0") ||
+    workdir.includes("\n") ||
+    workdir.includes("\r") ||
+    GLOB_META_RE.test(workdir)
+  ) {
+    return undefined;
+  }
+  return resolve(cwd, workdir);
+};
+
 export const delegationWorkspaceHint = (
   cwd: string,
   toolName: string,
   toolInput: unknown
 ): string | undefined => {
-  if (
-    !(
-      toolName === "Bash" ||
-      toolName === "shell_command" ||
-      toolName === "exec_command"
-    )
-  ) {
+  if (!isShellDelegationTool(toolName)) {
     return undefined;
   }
   const input = isRecord(toolInput) ? toolInput : {};
+  const executionCwd = delegationExecutionCwd(cwd, toolName, toolInput);
+  if (!executionCwd) {
+    return undefined;
+  }
   const command = asString(input.command);
   const target = command ? literalLeadingCdPrefixTarget(command) : undefined;
-  return target ? resolve(cwd, target) : undefined;
+  if (target) {
+    return resolve(executionCwd, target);
+  }
+  return executionCwd === resolve(cwd) ? undefined : executionCwd;
 };
 
 const scopesFrom = (

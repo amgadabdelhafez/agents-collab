@@ -85,8 +85,12 @@ or claim authority.
 1. **Delegation:** a main agent calls `route_task`, or Claude's hook recognizes
    an exact low-risk mechanical intent and appends the same bounded request
    before denying the direct call. Current Codex and Claude per-tool hooks apply
-   the same route adoption and native-fallback gate. All adoption and native
-   lease events are compactly journaled.
+   the same route adoption and native-fallback gate. Shell-tool classification
+   uses the literal tool `workdir` as its effective cwd and resolves a leading
+   literal `cd` from there; the selected root is accepted only after the shared
+   Git-common-directory verifier proves it is the run root or a registered
+   linked worktree. All adoption and native lease events are compactly
+   journaled.
 2. **Routing:** Governess reads pending requests, applies deterministic policy,
    records Direct, Nanny, or Au Pair as the one owner, and starts a detached
    process only for eligible work. Peer/driver/escalation routes return through

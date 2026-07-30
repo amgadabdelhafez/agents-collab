@@ -18,6 +18,7 @@ import {
   appendDelegationEvent,
   classifyDelegationIntent,
   type DelegationTelemetryEvent,
+  delegationExecutionCwd,
   delegationWorkspaceHint,
   hashDelegationFingerprint,
   makeDelegationEvent,
@@ -901,13 +902,24 @@ const resolveDelegationWorkspace = (
   toolName: string,
   toolInput: unknown,
   resolveWorkspace: NonNullable<HookEmitDeps["resolveWorkspaceRoot"]>
-): string | undefined => {
+): { commandCwd: string; workspaceRoot: string } | undefined => {
   const currentWorkspaceRoot = resolveWorkspace(runRoot, cwd);
+  const commandCwd = delegationExecutionCwd(cwd, toolName, toolInput);
+  if (!commandCwd) {
+    return undefined;
+  }
   const workspaceHint = delegationWorkspaceHint(cwd, toolName, toolInput);
   const hintedWorkspaceRoot = workspaceHint
     ? resolveWorkspace(runRoot, workspaceHint)
     : undefined;
-  return hintedWorkspaceRoot ?? currentWorkspaceRoot;
+  if (workspaceHint) {
+    return hintedWorkspaceRoot
+      ? { commandCwd, workspaceRoot: hintedWorkspaceRoot }
+      : undefined;
+  }
+  return currentWorkspaceRoot
+    ? { commandCwd, workspaceRoot: currentWorkspaceRoot }
+    : undefined;
 };
 
 const handlePreToolDelegation = (
@@ -954,14 +966,14 @@ const handlePreToolDelegation = (
   );
   const resolveWorkspace =
     deps.resolveWorkspaceRoot ?? resolveVerifiedUtilityWorkspaceRoot;
-  const workspaceRoot = resolveDelegationWorkspace(
+  const workspace = resolveDelegationWorkspace(
     manifest.cwd,
     cwd,
     toolName,
     toolInput,
     resolveWorkspace
   );
-  if (!workspaceRoot) {
+  if (!workspace) {
     appendTelemetry(
       runDir,
       makeDelegationEvent(
@@ -978,9 +990,10 @@ const handlePreToolDelegation = (
     );
     return undefined;
   }
+  const { commandCwd, workspaceRoot } = workspace;
   const classification = classifyDelegationIntent({
     agent,
-    cwd,
+    cwd: commandCwd,
     repoRoot: workspaceRoot,
     toolInput,
     toolName,

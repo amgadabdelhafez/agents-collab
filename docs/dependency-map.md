@@ -18,7 +18,7 @@ Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
 [Delegation policy]
   owns: delegation-policy.ts, Claude/Codex PreToolUse integration, Codex proxy observation
   exposes: exact mechanical classifier, utility adoption, native-spawn gating, and compact telemetry
-  consumes: run manifest, utility/native-fallback APIs, app-server item notifications
+  consumes: run manifest, hook cwd and literal shell workdir, verified Git worktree identity, utility/native-fallback APIs, app-server item notifications
 
 [Governess]
   owns: src/loop/governess*.ts

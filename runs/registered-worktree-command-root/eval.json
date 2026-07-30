@@ -1,0 +1,35 @@
+{
+  "task_id": "registered-worktree-command-root",
+  "feature": "registered-worktree-command-root",
+  "timestamp": "2026-07-30T05:27:00Z",
+  "evaluator": "codex-implementation-verification",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "focused": {
+      "passed": 276,
+      "failed": 0,
+      "command": "bun test tests/loop/delegation-policy.test.ts tests/loop/governess-hooks.test.ts tests/loop/utility-workspace.test.ts"
+    },
+    "full_per_file_suite": {
+      "status": "pass",
+      "command": "bun run test:ci"
+    },
+    "build": "pass",
+    "format_lint": "pass",
+    "diff_check": "pass"
+  },
+  "acceptance": {
+    "literal_shell_workdir_selects_verified_linked_worktree": true,
+    "relative_leading_cd_resolves_from_effective_workdir": true,
+    "unverified_explicit_workdir_fails_open": true,
+    "adopted_scopes_are_absolute": true,
+    "existing_worktree_verifier_remains_authoritative": true
+  },
+  "live_observation": {
+    "run": "harvto-loop-101",
+    "symptom": "Three recovered automatic jobs were classified from /Users/amgad/harvto even though Codex executed them in /private/tmp/harvto-loop65-base, yielding false not_found or context-insufficient results.",
+    "activation": "not activated in run 101; current-run hooks remain on their prior reviewed binary by supervisor ruling"
+  },
+  "notes": "Source verification passes. Deployment remains gated on independent exact-commit review."
+}

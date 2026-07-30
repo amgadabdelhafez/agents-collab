@@ -448,6 +448,130 @@ describe("runHookEmit", () => {
     expect(stdout.join("")).toContain('"permissionDecision":"deny"');
   });
 
+  test("adopts a verified linked worktree from the shell workdir", async () => {
+    const resolvedPaths: string[] = [];
+    const routeRequests: Array<{ readScope?: string[] }> = [];
+    await runHookEmit("codex", "/run/hooks/codex.jsonl", {
+      append: () => undefined,
+      appendDelegation: () => undefined,
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "linked-workdir-job" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
+      resolveWorkspaceRoot: (_runRoot, path) => {
+        resolvedPaths.push(path);
+        return path.startsWith("/linked") ? "/linked" : "/repo";
+      },
+      stdin: stdinPayload({
+        cwd: "/repo",
+        hook_event_name: "PreToolUse",
+        tool_input: {
+          command: "rg needle tests/router.test.ts",
+          workdir: "/linked/packages/api",
+        },
+        tool_name: "shell_command",
+        tool_use_id: "linked-workdir",
+      }),
+      writeStdout: () => undefined,
+    });
+
+    expect(resolvedPaths).toEqual(["/repo", "/linked/packages/api"]);
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        readScope: ["/linked/packages/api/tests/router.test.ts"],
+      }),
+    ]);
+  });
+
+  test("fails open when an explicit shell workdir is not verified", async () => {
+    const delegationEvents: Array<{ reason?: string }> = [];
+    const routeRequests: unknown[] = [];
+    await runHookEmit("codex", "/run/hooks/codex.jsonl", {
+      append: () => undefined,
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "must-not-route" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      resolveWorkspaceRoot: (_runRoot, path) =>
+        path === "/repo" ? "/repo" : undefined,
+      stdin: stdinPayload({
+        cwd: "/repo",
+        hook_event_name: "PreToolUse",
+        tool_input: {
+          command: "rg needle tests/router.test.ts",
+          workdir: "/unrelated/repo",
+        },
+        tool_name: "shell_command",
+        tool_use_id: "unrelated-workdir",
+      }),
+      writeStdout: () => undefined,
+    });
+
+    expect(routeRequests).toEqual([]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({
+        disposition: "skipped-candidate",
+        reason: "workspace-unverified",
+      }),
+    ]);
+  });
+
+  test("resolves a relative leading cd from the explicit shell workdir", async () => {
+    const routeRequests: Array<{ readScope?: string[] }> = [];
+    await runHookEmit("codex", "/run/hooks/codex.jsonl", {
+      append: () => undefined,
+      appendDelegation: () => undefined,
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "linked-workdir-cd-job" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
+      resolveWorkspaceRoot: (_runRoot, path) =>
+        path.startsWith("/linked") ? "/linked" : "/repo",
+      stdin: stdinPayload({
+        cwd: "/repo",
+        hook_event_name: "PreToolUse",
+        tool_input: {
+          command:
+            "cd packages/api && rg needle tests/router.test.ts && ls src",
+          workdir: "/linked",
+        },
+        tool_name: "shell_command",
+        tool_use_id: "linked-workdir-cd",
+      }),
+      writeStdout: () => undefined,
+    });
+
+    expect(routeRequests).toEqual([
+      expect.objectContaining({
+        readScope: [
+          "/linked/packages/api/tests/router.test.ts",
+          "/linked/packages/api/src",
+        ],
+      }),
+    ]);
+  });
+
   test("adopts a verified linked worktree named by a leading cd", async () => {
     const resolvedPaths: string[] = [];
     const routeRequests: Array<{
