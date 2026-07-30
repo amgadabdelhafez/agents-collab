@@ -63,6 +63,12 @@
   `loop-fork/runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log`.
   The rebuilt binary remained byte-identical at SHA-256
   `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`.
+- 2026-07-30T16:41:24Z — Claude issued exact-SHA CONCUR for clean commit
+  `cf2d0c961990cc0c459c8d8999c72fdf0a70d0a8` in channel message
+  `dc79d52a-aadb-4627-97b8-4e6774900ec7`, independently passing `test:ci`
+  1318/0, reproducing binary SHA-256
+  `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`, and
+  passing the cold-server launch smoke on the affected machine.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance

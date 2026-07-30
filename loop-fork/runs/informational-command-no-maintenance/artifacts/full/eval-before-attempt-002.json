@@ -1,6 +1,6 @@
 {
   "task_id": "informational-command-no-maintenance",
-  "status": "pass",
+  "status": "fail",
   "required": ["focused", "full", "independent-review", "isolated-smoke"],
   "dimensions": {
     "focused": {
@@ -9,13 +9,13 @@
       "reason": "99 parser/CLI cases and 76 paired tmux lifecycle cases pass with zero failures"
     },
     "full": {
-      "status": "pass",
+      "status": "fail",
       "method": "verify.sh",
-      "reason": "command exited 0",
+      "reason": "command exited 1",
       "artifact": "runs/informational-command-no-maintenance/artifacts/full/verify.log",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/full/attempt-002.log",
-      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/full/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/full/attempt-001.log",
+      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/full/attempt-001.json"
     },
     "independent-review": {
       "status": "pass",

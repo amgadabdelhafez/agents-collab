@@ -10,12 +10,8 @@
     },
     "full": {
       "status": "pass",
-      "method": "verify.sh",
-      "reason": "command exited 0",
-      "artifact": "runs/informational-command-no-maintenance/artifacts/full/verify.log",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/full/attempt-002.log",
-      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/full/attempt-002.json"
+      "method": "lint, defined source typecheck, compiled build, and bun run test:ci",
+      "reason": "all static checks and every sequential test file pass with zero baseline failures"
     },
     "independent-review": {
       "status": "pass",

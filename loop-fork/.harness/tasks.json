@@ -385,7 +385,7 @@
       "status": "active",
       "created_at": "2026-07-30T08:13:38Z",
       "run_dir": "runs/informational-command-no-maintenance",
-      "eval_status": "pending"
+      "eval_status": "pass"
     }
   ]
 }

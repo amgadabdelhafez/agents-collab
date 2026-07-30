@@ -1,0 +1,86 @@
+task_id: informational-command-no-maintenance
+dimension: full
+attempt: 001
+started_at: 2026-07-30T16:56:52Z
+command: ../scripts/verify.sh informational-command-no-maintenance informational-command-no-maintenance
+--- output ---
+=== verify.sh: task=informational-command-no-maintenance feature=informational-command-no-maintenance ===
+--- lint ---
+$ ultracite check
+runs/informational-command-no-maintenance/artifacts/full/eval-before-attempt-001.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "informational-command-no-maintenance",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"focused",
+     6    │ - ····"full",
+     7    │ - ····"independent-review",
+     8    │ - ····"isolated-smoke"
+     9    │ - ··],
+        4 │ + ··"required":·["focused",·"full",·"independent-review",·"isolated-smoke"],
+    10  5 │     "dimensions": {
+    11  6 │       "focused": {
+
+
+runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-001.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-30T16:24:35Z",
+    10 10 │     "artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bash",
+    13    │ - ····"../evals/smoke/large-prompt-launch.sh"
+    14    │ - ··]
+       11 │ + ··"command":·["bash",·"../evals/smoke/large-prompt-launch.sh"]
+    15 12 │   }
+    16 13 │
+
+
+runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.json format ━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-30T16:24:35Z",
+    10 10 │     "artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bash",
+    13    │ - ····"../evals/smoke/large-prompt-launch.sh"
+    14    │ - ··]
+       11 │ + ··"command":·["bash",·"../evals/smoke/large-prompt-launch.sh"]
+    15 12 │   }
+    16 13 │
+
+
+runs/informational-command-no-maintenance/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "informational-command-no-maintenance",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"focused",
+     6    │ - ····"full",
+     7    │ - ····"independent-review",
+     8    │ - ····"isolated-smoke"
+     9    │ - ··],
+        4 │ + ··"required":·["focused",·"full",·"independent-review",·"isolated-smoke"],
+    10  5 │     "dimensions": {
+    11  6 │       "focused": {
+
+
+Checked 625 files in 179ms. No fixes applied.
+Found 4 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+
+
+error: script "check" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-07-30T16:56:52Z

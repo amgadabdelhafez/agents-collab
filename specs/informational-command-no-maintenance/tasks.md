@@ -12,5 +12,5 @@
 - [x] Classify a cold macOS tmux socket as absent and bound the smoke socket
       path without widening cleanup authority for other control errors.
 - [x] Re-run focused and full verification with an empty baseline-failure list.
-- [ ] Record replayable evidence and obtain exact-SHA independent review.
+- [x] Record replayable evidence and obtain exact-SHA independent review.
 - [x] After run-101 teardown only, run the live smoke and consider activation.
