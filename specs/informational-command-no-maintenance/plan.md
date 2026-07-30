@@ -34,6 +34,9 @@ authority.
    eval with an empty baseline-failure list.
 6. Commit the candidate and obtain an independent exact-SHA review. Hold live
    smoke and activation until governed teardown of run-101.
+7. After teardown, bind release QA to an explicit prebuilt binary and expected
+   SHA-256 so the smoke cannot rebuild or replace the installed artifact it is
+   meant to certify.
 
 ## Risks and mitigations
 
@@ -54,3 +57,6 @@ authority.
   `/tmp` root and assert the complete socket pathname stays within 103 bytes.
 - Prompt truncation: compare the entire randomized source prompt buffer, not
   only a prefix sentinel, in every smoke manifest binding.
+- Self-mutating release evidence: make prebuilt mode opt-in and hash-bound;
+  skip `bun run build` entirely and recheck the same binary during cleanup so
+  both passing and failing smokes detect mutation.

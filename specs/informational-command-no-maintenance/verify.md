@@ -16,7 +16,10 @@
 5. The cold-server case exercises macOS's exact missing-socket diagnostic only
    at initial preflight; post-resource probes retain unknown semantics, and the
    smoke rejects socket pathnames beyond Darwin's 103-byte budget.
-6. `scripts/verify.sh` passes with zero baseline failures.
+6. Prebuilt smoke mode requires an absolute executable plus a lowercase
+   64-hex expected SHA-256, skips the build, and verifies the target hash before
+   launch and again from the cleanup trap.
+7. `scripts/verify.sh` passes with zero baseline failures.
 
 ## Required cases
 
@@ -37,6 +40,9 @@
 | permission or overlong tmux socket error | unknown; no cleanup authority |
 | completed run ends during attach | completion preserved |
 | realistic prompt charter | complete source buffer present; source >=8 KiB |
+| prebuilt binary without expected SHA-256 | exit 2 before tests or build |
+| prebuilt binary with wrong expected SHA-256 | fail before launch; binary unchanged |
+| exact prebuilt binary and matching SHA-256 | full smoke pass; target hash unchanged |
 
 ## Release gate
 

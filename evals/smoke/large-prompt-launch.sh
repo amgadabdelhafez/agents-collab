@@ -3,9 +3,43 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOOP_ROOT="${REPO_ROOT}/loop-fork"
+DEFAULT_LOOP_BINARY="${LOOP_ROOT}/loop"
+SMOKE_LOOP_BINARY="${LOOP_SMOKE_BINARY:-${DEFAULT_LOOP_BINARY}}"
+SMOKE_EXPECTED_SHA256="${LOOP_SMOKE_EXPECTED_SHA256:-}"
+SMOKE_USES_PREBUILT=0
 FIXTURES="${REPO_ROOT}/runs/large-prompt-launch/artifacts/fake-bin"
 HASH_TUI="${REPO_ROOT}/evals/smoke/fixtures/hash-bound-tui.py"
 ORIGINAL_HOME="${HOME:?large-prompt smoke requires HOME for host-isolation checks}"
+
+if [ -n "${LOOP_SMOKE_BINARY:-}" ]; then
+  SMOKE_USES_PREBUILT=1
+  if [ -z "${SMOKE_EXPECTED_SHA256}" ]; then
+    echo "large-prompt smoke: LOOP_SMOKE_BINARY requires LOOP_SMOKE_EXPECTED_SHA256" >&2
+    exit 2
+  fi
+  if ! [[ "${SMOKE_EXPECTED_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "large-prompt smoke: LOOP_SMOKE_EXPECTED_SHA256 must be 64 lowercase hex characters" >&2
+    exit 2
+  fi
+elif [ -n "${SMOKE_EXPECTED_SHA256}" ]; then
+  echo "large-prompt smoke: LOOP_SMOKE_EXPECTED_SHA256 requires LOOP_SMOKE_BINARY" >&2
+  exit 2
+fi
+
+case "${SMOKE_LOOP_BINARY}" in
+  /*) ;;
+  *)
+    echo "large-prompt smoke: loop binary path must be absolute: ${SMOKE_LOOP_BINARY}" >&2
+    exit 2
+    ;;
+esac
+
+if [ "${SMOKE_USES_PREBUILT}" -eq 1 ] && \
+  { [ ! -f "${SMOKE_LOOP_BINARY}" ] || [ ! -x "${SMOKE_LOOP_BINARY}" ]; }; then
+  echo "large-prompt smoke: prebuilt loop binary is not an executable file: ${SMOKE_LOOP_BINARY}" >&2
+  exit 2
+fi
+
 SMOKE_ROOT="$(mktemp -d "/tmp/loop-smoke.XXXXXX")"
 SMOKE_ROOT="$(cd "${SMOKE_ROOT}" && pwd -P)"
 SUCCESS_ROOT="${SMOKE_ROOT}/success"
@@ -47,6 +81,7 @@ SMOKE_LANG="C"
 
 cleanup() {
   local status=$?
+  local observed=""
   trap - EXIT
   smoke_tmux "${SUCCESS_TMUX_TMPDIR}" "${SMOKE_SOCKET}" kill-server \
     >/dev/null 2>&1 || true
@@ -56,10 +91,34 @@ cleanup() {
     >/dev/null 2>&1 || true
   smoke_tmux "${INFO_TMUX_TMPDIR}" "${INFO_SMOKE_SOCKET}" kill-server \
     >/dev/null 2>&1 || true
+  if [ "${SMOKE_USES_PREBUILT}" -eq 1 ]; then
+    observed="$(smoke_binary_sha256 2>/dev/null || true)"
+    if [ "${observed}" != "${SMOKE_EXPECTED_SHA256}" ]; then
+      echo "large-prompt smoke: cleanup: prebuilt binary hash ${observed:-missing} != expected ${SMOKE_EXPECTED_SHA256}" >&2
+      status=1
+    fi
+  fi
   rm -rf "${SMOKE_ROOT}"
   exit "${status}"
 }
 trap cleanup EXIT
+
+smoke_binary_sha256() {
+  shasum -a 256 "${SMOKE_LOOP_BINARY}" | cut -d ' ' -f 1
+}
+
+assert_prebuilt_binary_unchanged() {
+  local stage="$1"
+  local observed
+  if [ "${SMOKE_USES_PREBUILT}" -ne 1 ]; then
+    return 0
+  fi
+  observed="$(smoke_binary_sha256)"
+  if [ "${observed}" != "${SMOKE_EXPECTED_SHA256}" ]; then
+    echo "large-prompt smoke: ${stage}: prebuilt binary hash ${observed} != expected ${SMOKE_EXPECTED_SHA256}" >&2
+    exit 1
+  fi
+}
 
 assert_tmux_socket_path_budget() {
   local tmux_tmpdir="$1"
@@ -118,6 +177,7 @@ run_isolated_loop() {
   local socket="$3"
   local run_id="$4"
   shift 4
+  assert_prebuilt_binary_unchanged "before ${run_id}"
   env -i \
     "HOME=${root}/home" \
     "CLAUDE_CONFIG_DIR=${root}/claude-config" \
@@ -139,7 +199,7 @@ run_isolated_loop() {
     LOOP_RECON_PANES=0 \
     "LOOP_SMOKE_TMUX_SOCKET=${socket}" \
     LOOP_UTILITY_PANE=0 \
-    "${LOOP_ROOT}/loop" "$@"
+    "${SMOKE_LOOP_BINARY}" "$@"
 }
 
 smoke_tmux() {
@@ -281,10 +341,13 @@ assert_tmux_socket_path_budget "${FAILURE_TMUX_TMPDIR}" "${FAILURE_SMOKE_SOCKET}
 assert_tmux_socket_path_budget "${INFO_TMUX_TMPDIR}" "${INFO_SMOKE_SOCKET}"
 
 cd "${LOOP_ROOT}"
+assert_prebuilt_binary_unchanged "before launch"
 bun run test:file -- -t \
   'transports a realistic charter through hash-bound pointer bootstraps' \
   tests/loop/tmux.test.ts
-bun run build >/dev/null
+if [ "${SMOKE_USES_PREBUILT}" -ne 1 ]; then
+  bun run build >/dev/null
+fi
 
 prepare_case "${SUCCESS_ROOT}"
 prepare_case "${HASH_ROOT}"
@@ -516,5 +579,6 @@ assert_host_isolation "${FAILURE_REPO_ID}" "${FAILURE_RUN_ID}" "after failure la
 assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "at smoke completion"
 assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "at smoke completion"
 assert_host_isolation "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "at smoke completion"
+assert_prebuilt_binary_unchanged "after launch"
 
-echo "large-prompt smoke: info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
+echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"

@@ -1,6 +1,6 @@
 {
   "task_id": "informational-command-no-maintenance",
-  "status": "pending",
+  "status": "pass",
   "required": ["focused", "full", "independent-review", "isolated-smoke"],
   "dimensions": {
     "focused": {
@@ -18,9 +18,10 @@
       "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/full/attempt-002.json"
     },
     "independent-review": {
-      "status": "pending",
-      "reason": "The exact-binary smoke fix changes release evidence after dc79d52a; a fresh clean-SHA review is required before canonical source advances",
-      "method": "exact-SHA review of release-smoke descendant"
+      "status": "pass",
+      "reason": "Claude CONCUR dc79d52a-aadb-4627-97b8-4e6774900ec7 is bound to cf2d0c961990cc0c459c8d8999c72fdf0a70d0a8; reviewer independently ran test:ci 1318/0, rebuilt binary ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf, and passed the cold-server launch smoke",
+      "method": "exact-SHA independent review plus cold-machine launch smoke",
+      "signed_off_by": "claude"
     },
     "isolated-smoke": {
       "status": "pass",
@@ -28,9 +29,9 @@
       "reason": "command exited 0",
       "artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log",
       "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-002.log",
-      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-001.log",
+      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-001.json"
     }
   }
 }

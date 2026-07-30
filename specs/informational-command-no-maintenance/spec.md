@@ -52,6 +52,10 @@ follows a positional subcommand or command name.
     creation and all other control errors remain unknown, and the isolated
     smoke must keep every Darwin tmux socket pathname within the 103-byte
     pathname budget.
+11. Release QA must be able to smoke an exact prebuilt binary without invoking
+    the build or rewriting the installed path. Exact-binary mode requires an
+    explicit expected SHA-256 and proves that hash before launch and again
+    during cleanup, including failed smoke paths.
 
 ## Scope
 
@@ -72,6 +76,8 @@ follows a positional subcommand or command name.
       size without live network or real-home state.
 - [ ] A cold isolated tmux server starts normally on macOS without widening
       cleanup authority for permission or overlong-path failures.
+- [ ] Exact-binary smoke mode never rebuilds or mutates its target and fails
+      closed on a missing or mismatched expected SHA-256.
 - [ ] Focused tests and the full sequential verifier pass with zero failures.
 - [ ] A different agent issues an exact-SHA verdict before any deployment.
 - [ ] No live launcher smoke or binary activation occurs until run-101 has

@@ -1,7 +1,7 @@
 {
   "task_id": "informational-command-no-maintenance",
-  "verdict": "pass",
-  "release_status": "approved-for-canonical-deploy",
+  "verdict": "pending",
+  "release_status": "release-smoke-review-required",
   "baseline_failures": [],
   "required": ["focused", "full", "independent-review", "isolated-smoke"],
   "dimensions": {
@@ -16,16 +16,15 @@
       "reason": "the certified sequential suite passes with zero baseline failures outside the endpoint-binding sandbox"
     },
     "independent-review": {
-      "status": "pass",
-      "method": "exact-SHA independent review plus cold-machine launch smoke",
-      "signed_off_by": "claude",
-      "reason": "Claude CONCUR dc79d52a-aadb-4627-97b8-4e6774900ec7 is bound to cf2d0c961990cc0c459c8d8999c72fdf0a70d0a8; reviewer independently ran test:ci 1318/0, rebuilt binary ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf, and passed the cold-server launch smoke"
+      "status": "pending",
+      "method": "exact-SHA review of release-smoke descendant",
+      "reason": "The exact-binary smoke fix changes release evidence after dc79d52a; a fresh clean-SHA review is required before canonical source advances"
     },
     "isolated-smoke": {
       "status": "pass",
-      "method": "Harness verify.sh isolated-smoke attempt 001",
+      "method": "Harness verify.sh isolated-smoke attempt 002 with build-forbidden PATH",
       "artifact": "loop-fork/runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log",
-      "reason": "the 10 KiB isolated smoke passes with full charter binding, fail-closed hash mismatch, and failed/failed missing-workspace evidence"
+      "reason": "the exact physical installed binary ca7df916 passes the 10 KiB isolated smoke without invoking a build; its hash remains unchanged before each launch and in cleanup"
     }
   }
 }

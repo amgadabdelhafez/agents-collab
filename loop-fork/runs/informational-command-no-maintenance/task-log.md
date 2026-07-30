@@ -83,6 +83,25 @@ sequential suite at 1318/0, reproduced the binary SHA-256
 passed the realistic launch smoke on the cold machine that exposed the prior
 candidate's regression.
 
+The first post-deploy section-4 smoke exposed a release-evidence defect: the
+script's default developer path rebuilt the canonical `loop` in place before
+launch, changing the installed bytes from reviewed `ca7df916...` to unreviewed
+`49da0ef6...`. Exact reviewed bytes were restored atomically and the launch
+gate remained held.
+
+The descendant adds an explicit prebuilt mode requiring an absolute executable
+and matching expected SHA-256. That mode skips the build, rechecks the binary
+before every isolated invocation, and enforces the hash again from the EXIT
+cleanup on both pass and failure. Incomplete configuration exits 2 before
+temporary-state creation; a self-mutating fixture proves cleanup detects drift.
+Harness `isolated-smoke` attempt 002 passed against the physical installed
+binary with a PATH wrapper that exits 97 on any `bun run build`; output binds
+`prebuilt=1` and SHA-256 `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`.
+The complete sequential test suite and formatter check pass after the change;
+a separate read-only audit found no remaining logic blocker, while preserving
+the rule that `scripts/verify.sh` and the aggregate constant-size smoke are
+pre-review tools because they still rebuild in place.
+
 Regression: yes
 Regression id: nested-info-runs-maintenance
 Regression symptom: Nested help/version can execute destructive startup maintenance.

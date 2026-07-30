@@ -69,6 +69,21 @@
   1318/0, reproducing binary SHA-256
   `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`, and
   passing the cold-server launch smoke on the affected machine.
+- 2026-07-30T17:04:00Z — The post-deploy section-4 smoke passed functionally
+  but rebuilt canonical in place before launch, changing installed SHA-256
+  from reviewed `ca7df916...` to unreviewed `49da0ef6...`. Restored the exact
+  reviewed bytes atomically, verified canonical/global hashes, and held launch.
+- 2026-07-30T17:12:30Z — Harness `isolated-smoke` attempt 002 passed using the
+  physical installed binary and a PATH wrapper that fails any attempted
+  `bun run build`. The output binds `prebuilt=1`, the physical canonical path,
+  and SHA-256
+  `ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`;
+  external before/after hashes match, no tmux server or temp root remains, and
+  a separate self-mutating fixture proves EXIT cleanup detects byte drift.
+- 2026-07-30T17:13:30Z — The formatter, shell syntax check, diff check, and
+  complete sequential `test:ci` suite pass. A separate read-only audit found
+  no remaining exact-binary-mode logic blocker and confirmed post-review QA
+  must not invoke the build-bearing aggregate wrappers.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance
