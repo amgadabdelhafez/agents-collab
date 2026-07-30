@@ -1,0 +1,8 @@
+{
+  "task_id": "governess-manifest-roundtrip",
+  "feature": "governess-manifest-roundtrip",
+  "base_commit": "194fc7381b21d508c5843437ac82c1a4a5488495",
+  "branch": "codex/governess-manifest-roundtrip",
+  "live_activation": "next-loop-only",
+  "run_101_mutation": false
+}

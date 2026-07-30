@@ -1,0 +1,46 @@
+{
+  "task_id": "governess-manifest-roundtrip",
+  "feature": "governess-manifest-roundtrip",
+  "timestamp": "2026-07-30T07:23:05Z",
+  "evaluator": "independent-codex-manifest-safety-evaluator",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "base_commit": "194fc7381b21d508c5843437ac82c1a4a5488495",
+  "findings": [],
+  "checks": {
+    "focused": {
+      "passed": 197,
+      "failed": 0,
+      "commands": [
+        "bun run test:file -- tests/loop/run-state.test.ts",
+        "bun run test:file -- tests/loop/governess.test.ts",
+        "bun run test:file -- tests/loop/bridge.test.ts",
+        "bun run test:file -- tests/loop/claude-config-gc.test.ts",
+        "bun run test:file -- tests/loop/run-process-cleanup.test.ts"
+      ]
+    },
+    "full_suite": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "environment": "local loopback permissions enabled for WebSocket integration"
+    },
+    "format_lint": "pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "diff_check": "pass"
+  },
+  "acceptance": {
+    "active_false_dead_probe_is_non_mutating": true,
+    "claude_registration_gc_fails_closed_without_session": true,
+    "orphan_gc_fails_closed_without_session": true,
+    "governess_resolution_is_read_only": true,
+    "incomplete_persisted_topology_does_not_route_positionally": true,
+    "affirmatively_abandoned_run_cleanup_preserved": true,
+    "pending_bridge_message_preserved": true,
+    "run_101_untouched": true,
+    "live_activation_deferred": true
+  },
+  "infra_notes": [
+    "The first sandboxed canonical-suite attempt could not bind a loopback WebSocket port. The exact integration test and full suite passed outside the network-restricted sandbox."
+  ]
+}

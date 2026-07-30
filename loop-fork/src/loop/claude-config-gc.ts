@@ -214,6 +214,11 @@ const staleReason = (
     return `run is ${terminalState}`;
   }
   const tmuxSession = stringField(manifest, "tmuxSession");
+  if (!tmuxSession && declaresActiveRun(manifest)) {
+    // Detached workspaces routinely outlive the launcher. Missing durable tmux
+    // ownership is incomplete evidence, not proof that an active run died.
+    return undefined;
+  }
   if (tmuxSession) {
     const alive = deps.tmuxSessionAlive(tmuxSession);
     // A timed-out or failed liveness probe is unknown, not proof of death.

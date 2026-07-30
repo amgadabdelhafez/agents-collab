@@ -176,3 +176,48 @@ test("startup GC preserves a registration when tmux liveness is unknown", () => 
   expect(result).toEqual({ failed: 0, kept: 1, removed: 0, scanned: 1 });
   rmSync(root, { force: true, recursive: true });
 });
+
+test("startup GC preserves an active detached run with missing tmux ownership", () => {
+  const root = makeRoot();
+  const projectPath = join(root, "project");
+  const runDir = join(root, "run");
+  const registryPath = join(root, ".claude.json");
+  mkdirSync(projectPath, { recursive: true });
+  writeManifest(runDir, {
+    pid: 4405,
+    state: "working",
+    status: "running",
+    tmuxPaneLeft: "%0",
+    tmuxPaneRight: "%1",
+  });
+  writeFileSync(
+    registryPath,
+    `${JSON.stringify({
+      projects: {
+        [projectPath]: {
+          mcpServers: {
+            "loop-bridge-harvto-101": bridgeConfig(runDir),
+          },
+        },
+      },
+    })}\n`,
+    "utf8"
+  );
+
+  const result = gcStaleClaudeBridgeRegistrations({
+    deps: {
+      pathExists: () => true,
+      pidAlive: () => false,
+      runCommand: () => {
+        throw new Error("missing topology must not remove an active bridge");
+      },
+      tmuxSessionAlive: () => {
+        throw new Error("there is no session identifier to probe");
+      },
+    },
+    registryPath,
+  });
+
+  expect(result).toEqual({ failed: 0, kept: 1, removed: 0, scanned: 1 });
+  rmSync(root, { force: true, recursive: true });
+});

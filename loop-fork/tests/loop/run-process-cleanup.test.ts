@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -138,6 +139,7 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
       repoId,
       runId: "88",
       state: "submitted",
+      tmuxSession: "abandoned-loop",
     })
   );
   const abandonedBridge = registerRunBridgeProcess(
@@ -215,7 +217,7 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
         },
         listTmuxSessions: () => {
           tmuxListCalls += 1;
-          return undefined;
+          return new Set(["unknown-loop", "harvto-loop-98"]);
         },
         listeningPids: (port) => (port === 4500 ? [8801] : []),
         pidAlive: (pid) => {
@@ -267,6 +269,72 @@ test("startup GC reaps only provably abandoned runs in the current repository", 
   }
 });
 
+test("startup GC preserves an active detached run with missing tmux ownership", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const runDir = join(storageRoot, repoId, "101");
+  const manifestPath = join(runDir, "manifest.json");
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      codexAppServerPid: 4419,
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 4405,
+      repoId,
+      runId: "101",
+      state: "working",
+      tmuxPaneLeft: "%0",
+      tmuxPaneRight: "%1",
+    })
+  );
+  const bridgeRecord = registerRunBridgeProcess(runDir, "claude", 4591);
+  const before = readFileSync(manifestPath, "utf8");
+  const signals: number[] = [];
+
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        commandForPid: (pid) => {
+          throw new Error(`active run process ${pid} must not be inspected`);
+        },
+        listTmuxSessions: () => new Set(),
+        listeningPids: () => {
+          throw new Error("active run listener must not be inspected");
+        },
+        pidAlive: () => false,
+        signal: (pid) => signals.push(pid),
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+
+    expect(result).toEqual({
+      cleaned: 0,
+      kept: 1,
+      killed: [],
+      scanned: 1,
+      skipped: [],
+    });
+    expect(signals).toEqual([]);
+    expect(existsSync(bridgeRecord)).toBe(true);
+    expect(readFileSync(manifestPath, "utf8")).toBe(before);
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      codexAppServerPid: 4419,
+      state: "working",
+      status: "running",
+      tmuxPaneLeft: "%0",
+      tmuxPaneRight: "%1",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("startup GC never signals stale-run processes that fail ownership proof", () => {
   const root = makeRunDir();
   const storageRoot = join(root, "runs");
@@ -283,6 +351,7 @@ test("startup GC never signals stale-run processes that fail ownership proof", (
       pid: 9200,
       repoId,
       runId: "92",
+      tmuxSession: "repo-loop-92",
     })
   );
   registerRunBridgeProcess(runDir, "claude", 9202);
@@ -392,6 +461,7 @@ test("startup GC retains app-server ownership evidence after a signal failure", 
       pid: 9300,
       repoId,
       runId: "93",
+      tmuxSession: "repo-loop-93",
     })
   );
   const commonDeps = {
@@ -514,6 +584,7 @@ test("startup GC contains manifest repair failures before signaling and continue
       pid: 9300,
       repoId,
       runId: "93",
+      tmuxSession: "repo-loop-93",
     })
   );
   writeRunManifest(
@@ -524,6 +595,7 @@ test("startup GC contains manifest repair failures before signaling and continue
       pid: 9400,
       repoId,
       runId: "94",
+      tmuxSession: "repo-loop-94",
     })
   );
   try {
@@ -579,6 +651,7 @@ test("startup GC retains bridge registration after a signal failure", () => {
       pid: 9500,
       repoId,
       runId: "95",
+      tmuxSession: "repo-loop-95",
     })
   );
   const bridgeRecord = registerRunBridgeProcess(runDir, "claude", 9502);

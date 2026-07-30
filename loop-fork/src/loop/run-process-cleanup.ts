@@ -290,6 +290,11 @@ const runIsProvablyAbandoned = (
   liveTmuxSessions: ReadonlySet<string> | undefined,
   deps: RunProcessCleanupDeps
 ): boolean => {
+  if (isActiveRunState(manifest.state) && !manifest.tmuxSession) {
+    // Detached workspaces outlive their launcher PID. An active manifest with
+    // missing topology is corrupt/unknown and must be preserved for repair.
+    return false;
+  }
   if (
     manifest.tmuxSession &&
     (!liveTmuxSessions || liveTmuxSessions.has(manifest.tmuxSession))

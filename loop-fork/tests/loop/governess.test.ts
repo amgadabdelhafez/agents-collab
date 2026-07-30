@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -114,6 +120,84 @@ test("governess observes agents through persisted post-split pane targets", () =
     ]);
     expect(config.cavemanMode).toBe("full");
     expect(config.helperCavemanMode).toBe("ultra");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("governess config resolution does not rewrite restored topology", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-governess-roundtrip-"));
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("101", cwd, home);
+  mkdirSync(dirname(storage.manifestPath), { recursive: true });
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      claudeChannelServer: "loop-bridge-harvto-101",
+      claudeSessionId: "claude-session-101",
+      codexThreadId: "codex-thread-101",
+      cwd,
+      governess: true,
+      mode: "paired",
+      pid: 4405,
+      repoId: storage.repoId,
+      runId: "101",
+      state: "working",
+      tmuxPaneAuPair: "%3",
+      tmuxPaneGoverness: "%2",
+      tmuxPaneLeft: "%0",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneNanny: "%4",
+      tmuxPaneRecon: ["%5", "%6", "%7"],
+      tmuxPaneRight: "%1",
+      tmuxPaneRightAgent: "codex",
+      tmuxPaneUtility: "%3",
+      tmuxSession: "harvto-loop-101",
+    })
+  );
+  const before = readFileSync(storage.manifestPath, "utf8");
+
+  try {
+    const config = resolveGovernessConfig("101", {}, cwd, home);
+    expect(config.session).toBe("harvto-loop-101");
+    expect(config.agents.map(({ agent, pane }) => ({ agent, pane }))).toEqual([
+      { agent: "claude", pane: "%0" },
+      { agent: "codex", pane: "%1" },
+    ]);
+    expect(readFileSync(storage.manifestPath, "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("governess rejects persisted panes without their agent ownership", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-governess-topology-"));
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("101", cwd, home);
+  mkdirSync(dirname(storage.manifestPath), { recursive: true });
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      cwd,
+      mode: "paired",
+      pid: 4405,
+      repoId: storage.repoId,
+      runId: "101",
+      state: "working",
+      tmuxPaneLeft: "%0",
+      tmuxPaneRight: "%1",
+      tmuxSession: "harvto-loop-101",
+    })
+  );
+
+  try {
+    expect(() => resolveGovernessConfig("101", {}, cwd, home)).toThrow(
+      "incomplete tmux agent topology"
+    );
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

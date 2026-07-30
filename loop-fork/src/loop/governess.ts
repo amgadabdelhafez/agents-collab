@@ -6411,10 +6411,14 @@ export const resolveGovernessConfig = (
   if (!session) {
     throw new Error(`[loop] governess: no tmux session for run ${runId}`);
   }
-  if (manifest?.governess || manifest?.tmuxPaneGoverness) {
-    // Re-serialize manifests loaded through the legacy alias reader so active
-    // runs converge immediately on canonical governess keys.
-    updateRunManifest(storage.manifestPath, () => manifest);
+  if (
+    (manifest.tmuxPaneLeft || manifest.tmuxPaneRight) &&
+    (Boolean(manifest.tmuxPaneLeft) !== Boolean(manifest.tmuxPaneLeftAgent) ||
+      Boolean(manifest.tmuxPaneRight) !== Boolean(manifest.tmuxPaneRightAgent))
+  ) {
+    throw new Error(
+      `[loop] governess: incomplete tmux agent topology for run ${runId}`
+    );
   }
   const sessionRefFor = (agent: Agent): string | undefined => {
     if (agent === "claude") {

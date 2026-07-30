@@ -696,11 +696,26 @@ export interface BridgeRuntimeStatus extends BridgeStatus {
 const readRunManifestForBridge = (runDir: string) =>
   readRunManifest(join(runDir, "manifest.json"));
 
+const hasIncompletePersistedAgentTopology = (
+  manifest: ReturnType<typeof readRunManifestForBridge>
+): boolean => {
+  if (!(manifest?.tmuxPaneLeft || manifest?.tmuxPaneRight)) {
+    return false;
+  }
+  return (
+    Boolean(manifest.tmuxPaneLeft) !== Boolean(manifest.tmuxPaneLeftAgent) ||
+    Boolean(manifest.tmuxPaneRight) !== Boolean(manifest.tmuxPaneRightAgent)
+  );
+};
+
 const paneIdForTarget = (
   runDir: string,
   target: BridgeMessage["target"]
 ): string | undefined => {
   const manifest = readRunManifestForBridge(runDir);
+  if (hasIncompletePersistedAgentTopology(manifest)) {
+    return undefined;
+  }
   if (manifest?.tmuxPaneLeftAgent === target) {
     return TMUX_LEFT_PANE;
   }
@@ -724,7 +739,7 @@ const tmuxPaneForTarget = (
   target: BridgeMessage["target"]
 ): string | undefined => {
   const manifest = readRunManifestForBridge(runDir);
-  if (!manifest?.tmuxSession) {
+  if (!manifest?.tmuxSession || hasIncompletePersistedAgentTopology(manifest)) {
     return undefined;
   }
   if (manifest.tmuxPaneLeftAgent === target && manifest.tmuxPaneLeft) {
@@ -829,8 +844,8 @@ export const hasBridgeDeliveryRoute = (
 export const clearStaleTmuxBridgeState = (runDir: string): boolean => {
   let removedServerNames: string[] = [];
   const next = updateRunManifest(join(runDir, "manifest.json"), (manifest) => {
-    if (!manifest?.tmuxSession) {
-      return manifest;
+    if (!manifest?.tmuxSession || isActiveRunState(manifest.state)) {
+      return undefined;
     }
     removedServerNames = [
       manifest.claudeChannelServer,
