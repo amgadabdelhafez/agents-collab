@@ -1,7 +1,7 @@
 {
   "task_id": "test-certification-hardening",
   "feature": "test-certification-hardening",
-  "timestamp": "2026-07-30T05:44:00Z",
+  "timestamp": "2026-07-30T06:15:38Z",
   "evaluator": "codex-implementation-verification",
   "verdict": "pass",
   "baseline_failures": [],
@@ -25,11 +25,21 @@
       "command": "bun run test:ci"
     },
     "redraw_smoke": {
-      "passed": 6,
+      "passed": 21,
       "failed": 0,
-      "forced_failure_exit": 97,
-      "preserved_evidence": "/private/tmp/loop-redraw-cert.EB1WKp/tmux-redraw.09ik03",
+      "padded_path_bytes": 9250,
+      "bootstrap_failure_evidence": "/private/tmp/loop-redraw-bootstrap.QhgYAT/tmux-redraw.YMIuT5",
+      "forced_failure_exit": 96,
+      "forced_failure_evidence": "/private/tmp/loop-redraw-early-v3.sYxUFp/tmux-redraw.DGji1F",
+      "term_exit": 143,
+      "term_evidence": "/private/tmp/loop-redraw-term-v2.569RlF/tmux-redraw.C7EjG5",
+      "organic_failure_evidence": "/private/tmp/loop-redraw-organic-live.f6ZsMT/run-1/tmux-redraw.iuK3n8",
       "success_cleanup": "pass"
+    },
+    "large_prompt_launch": {
+      "status": "pass",
+      "command": "evals/smoke/large-prompt-launch.sh",
+      "evidence": "certified focused test passed; realistic charter created named session and agent panes with manifest binding; hash mismatch failed closed; missing workspace exited 1"
     },
     "format_lint": "pass",
     "typecheck": "pass",
@@ -39,12 +49,17 @@
   "findings": {
     "exit_133_reproduction": "not reproduced in three local direct-suite attempts; independently reproduced by the supervisor on candidate and base",
     "root_cause_boundary": "Bun rewrites preload argv/main to the first discovered file, so the original bare-versus-focused selector set cannot be recovered inside the runner",
-    "resolution": "all direct bun test invocations fail before assertions; explicit test:file and sorted test:ci modes use one file per process"
+    "review_dissent": "344ee6e broke the large-prompt smoke by calling direct bun test and preserved no evidence for failures before its redraw EXIT trap",
+    "organic_redraw_cause": "preserved 13-of-14 run showed the interactive Governess command was only partially injected and no state was created",
+    "resolution": "large-prompt smoke uses test:file; direct bun test fails before assertions; redraw traps arm before bootstrap and signals; Governess starts by manifest-bound respawn into a generated launcher instead of interactive send-keys"
   },
   "acceptance": {
     "no_partial_bare_certification": true,
     "failure_evidence_preserved": true,
     "failure_diagnostics_bounded": true,
+    "bootstrap_and_signal_failures_preserved": true,
+    "large_prompt_launch_green": true,
+    "long_environment_startup_green": true,
     "success_temp_cleanup": true,
     "bytes_read_honored": true,
     "empty_baseline_allowlist": true

@@ -1,26 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LOOP_ROOT="${REPO_ROOT}/loop-fork"
-LOOP_BIN="${LOOP_ROOT}/loop"
-REAL_TMUX="$(command -v tmux)"
-RUN_ID="tmux-redraw-smoke"
-SESSION="loop-tmux-redraw-smoke-$$"
-SOCKET="loop-tmux-redraw-smoke-$$"
-if [[ -n "${LOOP_SMOKE_PARENT:-}" ]]; then
-  SMOKE_ROOT="$(mktemp -d "${LOOP_SMOKE_PARENT%/}/tmux-redraw.XXXXXX")"
-else
-  SMOKE_ROOT="$(mktemp -d)"
-fi
-SMOKE_HOME="${SMOKE_ROOT}/home"
-STALL_MARKER="${SMOKE_ROOT}/stall"
-WRAPPER_BIN="${SMOKE_ROOT}/bin"
-GOVERNESS_SHELL="${SHELL:-/bin/zsh}"
-RUN_DIR=""
-STATE_FILE=""
+GOVERNESS_PANE=""
 JOURNAL_FILE=""
+REAL_TMUX=""
+RUN_DIR=""
 SMOKE_PASSED=0
+SMOKE_ROOT=""
+SMOKE_ROOT_CREATED=0
+SMOKE_STAGE="bootstrap"
+SOCKET=""
+STATE_FILE=""
 
 dump_file_tail() {
   local label="$1"
@@ -35,28 +25,97 @@ dump_file_tail() {
 }
 
 cleanup() {
+  local status=$?
+  local cleanup_status=0
+  trap - EXIT HUP INT QUIT TERM
+  set +e
   if [[ "${SMOKE_PASSED}" != "1" ]]; then
-    echo "tmux redraw smoke failed; evidence preserved: ${SMOKE_ROOT}" >&2
+    if [[ "${SMOKE_ROOT_CREATED}" == "1" && -d "${SMOKE_ROOT}" ]]; then
+      echo "tmux redraw smoke failed at ${SMOKE_STAGE}; evidence preserved: ${SMOKE_ROOT}" >&2
+    else
+      echo "tmux redraw smoke failed at ${SMOKE_STAGE}; evidence root was not created" >&2
+    fi
     if [[ -n "${STATE_FILE}" ]]; then
       dump_file_tail "governess state" "${STATE_FILE}"
     fi
     if [[ -n "${JOURNAL_FILE}" ]]; then
       dump_file_tail "governess journal" "${JOURNAL_FILE}"
     fi
-    echo "--- governess pane (last 40 lines) ---" >&2
-    "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -S -40 \
-      -t "${GOVERNESS_PANE:-}" >&2 || true
+    if [[ -n "${REAL_TMUX}" && -n "${SOCKET}" && -n "${GOVERNESS_PANE}" ]]; then
+      echo "--- governess pane (last 40 lines) ---" >&2
+      "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -S -40 \
+        -t "${GOVERNESS_PANE}" >&2 || true
+    else
+      echo "--- governess pane unavailable at ${SMOKE_STAGE} ---" >&2
+    fi
   fi
-  "${REAL_TMUX}" -L "${SOCKET}" kill-server 2>/dev/null || true
-  if [[ "${SMOKE_PASSED}" == "1" ]]; then
-    rm -rf "${SMOKE_ROOT}"
+  if [[ -n "${REAL_TMUX}" && -n "${SOCKET}" ]]; then
+    "${REAL_TMUX}" -L "${SOCKET}" kill-server 2>/dev/null || true
   fi
+  if [[ "${SMOKE_PASSED}" == "1" && "${SMOKE_ROOT_CREATED}" == "1" ]]; then
+    rm -rf -- "${SMOKE_ROOT}"
+    cleanup_status=$?
+  fi
+  if [[ "${status}" == "0" && "${cleanup_status}" != "0" ]]; then
+    status="${cleanup_status}"
+  fi
+  exit "${status}"
 }
+
+exit_for_signal() {
+  exit "$1"
+}
+
 trap cleanup EXIT
+trap 'exit_for_signal 129' HUP
+trap 'exit_for_signal 130' INT
+trap 'exit_for_signal 131' QUIT
+trap 'exit_for_signal 143' TERM
+
+if [[ -n "${LOOP_SMOKE_PARENT:-}" ]]; then
+  SMOKE_ROOT="$(mktemp -d "${LOOP_SMOKE_PARENT%/}/tmux-redraw.XXXXXX")"
+else
+  SMOKE_ROOT="$(mktemp -d)"
+fi
+SMOKE_ROOT_CREATED=1
+SMOKE_STAGE="root-created"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LOOP_ROOT="${REPO_ROOT}/loop-fork"
+LOOP_BIN="${LOOP_ROOT}/loop"
+REAL_TMUX="$(command -v tmux)"
+RUN_ID="tmux-redraw-smoke"
+SESSION="loop-tmux-redraw-smoke-$$"
+SOCKET="loop-tmux-redraw-smoke-$$"
+SMOKE_HOME="${SMOKE_ROOT}/home"
+STALL_MARKER="${SMOKE_ROOT}/stall"
+WRAPPER_BIN="${SMOKE_ROOT}/bin"
+GOVERNESS_LAUNCHER="${SMOKE_ROOT}/start-governess.sh"
+
+if [[ "${LOOP_SMOKE_FORCE_FAILURE:-}" == "after-root" ]]; then
+  echo "forced redraw-smoke failure after evidence-root creation" >&2
+  exit 96
+fi
+if [[ "${LOOP_SMOKE_WAIT_AFTER_ROOT:-}" == "1" ]]; then
+  touch "${SMOKE_ROOT}/after-root.ready"
+  while true; do
+    sleep 0.1
+  done
+fi
 
 mkdir -p "${SMOKE_HOME}" "${WRAPPER_BIN}"
 cp "${REPO_ROOT}/evals/fixtures/tmux-stall-wrapper.sh" "${WRAPPER_BIN}/tmux"
 chmod +x "${WRAPPER_BIN}/tmux"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'export HOME=%q\n' "${SMOKE_HOME}"
+  printf 'export PATH=%q\n' "${WRAPPER_BIN}:${PATH}"
+  printf 'export LOOP_GOVERNESS_TICK=1\n'
+  printf 'export LOOP_SMOKE_REAL_TMUX=%q\n' "${REAL_TMUX}"
+  printf 'export LOOP_SMOKE_STALL_MARKER=%q\n' "${STALL_MARKER}"
+  printf 'exec %q __governess %q\n' "${LOOP_BIN}" "${RUN_ID}"
+} >"${GOVERNESS_LAUNCHER}"
+chmod +x "${GOVERNESS_LAUNCHER}"
+SMOKE_STAGE="fixtures-ready"
 
 LEFT_PANE="$(
   "${REAL_TMUX}" -L "${SOCKET}" new-session -d -P -F '#{pane_id}' \
@@ -69,9 +128,10 @@ RIGHT_PANE="$(
     "while true; do printf 'Codex evidence │ 密度 🧭\\n'; sleep 1; done"
 )"
 GOVERNESS_PANE="$(
-  "${REAL_TMUX}" -L "${SOCKET}" split-window -v -P -F '#{pane_id}' \
-    -t "${LEFT_PANE}" "${GOVERNESS_SHELL}"
+  "${REAL_TMUX}" -L "${SOCKET}" split-window -v -d -P -F '#{pane_id}' \
+    -t "${LEFT_PANE}" "while true; do sleep 1; done"
 )"
+SMOKE_STAGE="panes-created"
 
 SMOKE_HOME="${SMOKE_HOME}" \
 SMOKE_LEFT="${LEFT_PANE}" \
@@ -120,9 +180,11 @@ RUN_DIR="$(
 )"
 STATE_FILE="${RUN_DIR}/governess-state.json"
 JOURNAL_FILE="${RUN_DIR}/governess.jsonl"
-GOVERNESS_COMMAND="env HOME='${SMOKE_HOME}' PATH='${WRAPPER_BIN}:${PATH}' LOOP_GOVERNESS_TICK=1 LOOP_SMOKE_REAL_TMUX='${REAL_TMUX}' LOOP_SMOKE_STALL_MARKER='${STALL_MARKER}' '${LOOP_BIN}' __governess '${RUN_ID}'"
-"${REAL_TMUX}" -L "${SOCKET}" send-keys -t "${GOVERNESS_PANE}" -l -- "${GOVERNESS_COMMAND}"
-"${REAL_TMUX}" -L "${SOCKET}" send-keys -t "${GOVERNESS_PANE}" Enter
+SMOKE_STAGE="manifest-ready"
+printf -v GOVERNESS_COMMAND 'exec %q' "${GOVERNESS_LAUNCHER}"
+"${REAL_TMUX}" -L "${SOCKET}" respawn-pane -k -t "${GOVERNESS_PANE}" \
+  "${GOVERNESS_COMMAND}"
+SMOKE_STAGE="governess-started"
 
 for _ in {1..50}; do
   if [[ -f "${STATE_FILE}" ]] && \
@@ -143,6 +205,7 @@ if [[ ! -f "${STATE_FILE}" ]] || ! \
   echo "governess did not reach the first healthy tick" >&2
   exit 1
 fi
+SMOKE_STAGE="healthy"
 
 if [[ "${LOOP_SMOKE_FORCE_FAILURE:-}" == "after-healthy" ]]; then
   echo "forced redraw-smoke failure after healthy tick" >&2
@@ -158,6 +221,7 @@ if [[ "${HEALTHY_FRAME}" == *"tmux degraded"* ]]; then
 fi
 
 touch "${STALL_MARKER}"
+SMOKE_STAGE="stall-injected"
 for _ in {1..35}; do
   if [[ -f "${STATE_FILE}" ]] && \
     bun -e '
@@ -182,6 +246,7 @@ if [[ "${DEGRADED_FRAME}" != *"tmux degraded"* ]]; then
   tail -8 "${RUN_DIR}/governess.jsonl" >&2 || true
   exit 1
 fi
+SMOKE_STAGE="degraded-rendered"
 
 rm -f "${STALL_MARKER}"
 for _ in {1..50}; do
@@ -208,4 +273,5 @@ bun -e '
   if (state.tick < 3 || state.tmuxControl) process.exit(1);
   console.log(JSON.stringify({ tick: state.tick, tmuxControl: "restored" }));
 ' "${STATE_FILE}"
+SMOKE_STAGE="complete"
 SMOKE_PASSED=1

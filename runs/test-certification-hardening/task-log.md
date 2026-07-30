@@ -25,6 +25,30 @@
   restored.
 - Lint, typecheck, compiled build, and `git diff --check`: pass.
 
+## Exact-SHA DISSENT and correction
+
+Supervisor review `af47b3b2-60ab-44c8-ae08-b76d7477db00` correctly rejected
+`344ee6e`: the large-prompt smoke still invoked direct `bun test`, and the
+redraw preservation trap armed after fallible bootstrap work.
+
+- The large-prompt smoke now invokes its filtered test through
+  `bun run test:file --`; the complete realistic launch passed with named
+  panes, manifest binding, hash mismatch fail-closed, and missing-workspace
+  exit 1.
+- Redraw cleanup now arms before repository and tmux discovery, disables
+  errexit while diagnosing, preserves the original status, and converts
+  HUP/INT/QUIT/TERM into catchable 128+signal exits.
+- Missing-tmux bootstrap exit 1, forced root-stage exit 96, and TERM exit 143
+  each printed and retained a generated evidence tree.
+- The first real 14-run sample reproduced one organic failure and preserved it
+  at `/private/tmp/loop-redraw-organic-live.f6ZsMT/run-1/tmux-redraw.iuK3n8`.
+  Its pane showed the long Governess command only partially injected; no state
+  existed. The other 13 runs passed.
+- Interactive `send-keys` plus a separate Enter is removed. The smoke now
+  creates a placeholder pane, writes the manifest with that pane ID, and then
+  respawns it into a generated, shell-escaped launcher.
+- After that correction, 20 of 20 real tmux runs passed with a 9,250-byte PATH.
+
 ## Scope
 
 No live run, routing policy, helper permission, or installed binary was changed

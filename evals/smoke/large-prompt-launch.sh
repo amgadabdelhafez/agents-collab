@@ -67,7 +67,9 @@ wait_for_pane_text() {
 }
 
 cd "${LOOP_ROOT}"
-bun test -t 'transports a realistic charter through hash-bound pointer bootstraps' tests/loop/tmux.test.ts
+bun run test:file -- -t \
+  'transports a realistic charter through hash-bound pointer bootstraps' \
+  tests/loop/tmux.test.ts
 bun run build >/dev/null
 
 mkdir -p "${SMOKE_ROOT}/home" "${SMOKE_ROOT}/repo" \
