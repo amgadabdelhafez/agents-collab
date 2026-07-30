@@ -287,7 +287,7 @@ test("runInTmux keeps explicit run id in single-agent mode", async () => {
   ]);
 });
 
-test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
+test("runInTmux starts paired panes from a cold macOS tmux socket", async () => {
   const calls: string[][] = [];
   const logs: string[] = [];
   const proxyCalls: Array<{
@@ -380,7 +380,11 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "session not found" };
+            : {
+                exitCode: 1,
+                stderr:
+                  "error connecting to /private/tmp/tmux-501/cold-smoke (No such file or directory)",
+              };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -518,6 +522,33 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
   expect(manifest.tmuxSession).toBe("repo-loop-1");
   expect(manifest.tmuxPaneLeftAgent).toBe("claude");
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
+});
+
+test.each([
+  [
+    "cold macOS socket during initial preflight",
+    "error connecting to /private/tmp/tmux-501/cold-smoke (No such file or directory)",
+    true,
+    true,
+  ],
+  [
+    "missing macOS socket after resource creation",
+    "error connecting to /private/tmp/tmux-501/cold-smoke (No such file or directory)",
+    false,
+    false,
+  ],
+  ["missing named session", "can't find session: cold-smoke", false, true],
+  ["permission failure", "permission denied", true, false],
+  [
+    "overlong socket path",
+    "error connecting to /private/tmp/tmux-501/cold-smoke (File name too long)",
+    true,
+    false,
+  ],
+] as const)("tmux absence classification handles %s without widening cleanup authority", (_label, detail, allowMissingSocket, expected) => {
+  expect(
+    tmuxInternals.isConfirmedMissingTmuxSession(detail, allowMissingSocket)
+  ).toBe(expected);
 });
 
 test("runInTmux preserves stable pane targets when reattaching a live paired session", async () => {

@@ -1,25 +1,28 @@
 {
   "task_id": "informational-command-no-maintenance",
   "verdict": "pending",
-  "release_status": "held-run-101-live",
+  "release_status": "post-teardown-qa",
   "baseline_failures": [],
-  "required": ["focused", "full", "independent_review", "isolated_smoke"],
+  "required": ["focused", "full", "independent-review", "isolated-smoke"],
   "dimensions": {
     "focused": {
       "status": "pass",
       "method": "supported single-file runners for tests/loop/args.test.ts, tests/loop.test.ts, and tests/loop/tmux.test.ts",
-      "reason": "99 parser/CLI cases and 71 paired tmux cases pass with zero failures, covering config-independent information dispatch plus strict tri-state pre-bind, layout, attach, and handoff semantics"
+      "reason": "99 parser/CLI cases and 76 paired tmux cases pass with zero failures, covering config-independent information dispatch plus scoped cold-socket and strict tri-state lifecycle semantics"
     },
     "full": {
       "status": "pass",
       "method": "lint, defined source typecheck, compiled build, and bun run test:ci",
-      "reason": "all static checks and every sequential test file pass with zero baseline failures; release remains held only on exact-SHA review and post-teardown isolated smoke"
+      "reason": "the certified sequential suite passes with zero baseline failures outside the endpoint-binding sandbox; release remains held on fresh exact-SHA review and Harness evidence registration"
     },
-    "independent_review": { "status": "pending" },
-    "isolated_smoke": {
-      "status": "held-run-101-live",
-      "static_validation": "bash -n and git diff --check pass",
-      "reason": "runtime smoke is prohibited until run-101 completes governed teardown; static fixture seeds isolated update throttling, verifies complete source prompt bytes above 8 KiB, and requires failed/failed on missing workspace"
+    "independent-review": {
+      "status": "pending",
+      "reason": "888fe36 review is superseded by the post-teardown cold-socket fix; fresh exact-SHA review required"
+    },
+    "isolated-smoke": {
+      "status": "pending",
+      "static_validation": "post-teardown direct smoke and git diff --check pass",
+      "reason": "the 10 KiB isolated smoke passes with full charter binding, fail-closed hash mismatch, and failed/failed missing-workspace evidence; Harness-bound evidence pending"
     }
   }
 }

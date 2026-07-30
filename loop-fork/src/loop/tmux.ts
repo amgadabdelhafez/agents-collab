@@ -868,6 +868,8 @@ const MAX_SESSION_ATTEMPTS = 10_000;
 const SESSION_CONFLICT_RE = /duplicate session|already exists/i;
 const NO_SESSION_RE =
   /no server running|no sessions|can't find session|couldn't find session|session.*not found/i;
+const MISSING_TMUX_SOCKET_RE =
+  /error connecting to .*\(No such file or directory\)/i;
 const LOOP_WORKTREE_SUFFIX_RE = /-loop-[a-z0-9][a-z0-9_-]*$/i;
 const ENV_COMMENT_RE = /\s+#.*$/;
 const LINE_SPLIT_RE = /\r?\n/;
@@ -1012,7 +1014,8 @@ interface HandoffSessionProbe {
 
 const probeHandoffSession = (
   session: string,
-  spawnFn: TmuxDeps["spawn"]
+  spawnFn: TmuxDeps["spawn"],
+  allowMissingSocket = false
 ): HandoffSessionProbe => {
   try {
     const result = spawnFn(["tmux", "has-session", "-t", session]);
@@ -1023,7 +1026,9 @@ const probeHandoffSession = (
       return { liveness: "live", result };
     }
     return {
-      liveness: NO_SESSION_RE.test(result.stderr) ? "dead" : "unknown",
+      liveness: isConfirmedMissingTmuxSession(result.stderr, allowMissingSocket)
+        ? "dead"
+        : "unknown",
       result,
     };
   } catch {
@@ -1071,7 +1076,7 @@ const isSessionGone = (
   if (probe.liveness === "live") {
     return false;
   }
-  if (error instanceof Error && NO_SESSION_RE.test(error.message)) {
+  if (error instanceof Error && isConfirmedMissingTmuxSession(error.message)) {
     return true;
   }
   if (probe.liveness === "unknown") {
@@ -1079,6 +1084,13 @@ const isSessionGone = (
   }
   return false;
 };
+
+const isConfirmedMissingTmuxSession = (
+  detail: string,
+  allowMissingSocket = false
+): boolean =>
+  NO_SESSION_RE.test(detail) ||
+  (allowMissingSocket && MISSING_TMUX_SOCKET_RE.test(detail));
 
 const buildSessionCommand = (
   deps: TmuxDeps,
@@ -2311,7 +2323,11 @@ const startPairedSession = async (
       return "undurable";
     }
   };
-  const existingSession = probeHandoffSession(session, deps.spawn);
+  // A cold custom socket on macOS reports `No such file or directory`, not
+  // `no server running`. It is safe to create the first session here because
+  // this launch has not created panes or transports yet. Later probes keep the
+  // same diagnostic unknown so it cannot grant cleanup authority.
+  const existingSession = probeHandoffSession(session, deps.spawn, true);
   if (existingSession.liveness === "unknown") {
     throw unknownHandoffLivenessError(session, existingSession);
   }
@@ -2972,6 +2988,7 @@ export const tmuxInternals = {
   preparePersistentTmuxLaunch,
   spawnDetachedProcess,
   isSessionConflict,
+  isConfirmedMissingTmuxSession,
   quoteShellArg,
   sanitizeBase,
   stripTmuxFlag,

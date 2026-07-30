@@ -46,6 +46,12 @@ follows a positional subcommand or command name.
 9. The realistic smoke must prove that each generated launch charter contains
    the complete source prompt bytes, with a source payload of at least 8 KiB,
    rather than accepting a leading sentinel alone.
+10. During the initial pre-resource probe, a cold tmux control socket must be
+    treated as absent when tmux reports its platform-specific
+    `No such file or directory` error. The same diagnostic after resource
+    creation and all other control errors remain unknown, and the isolated
+    smoke must keep every Darwin tmux socket pathname within the 103-byte
+    pathname budget.
 
 ## Scope
 
@@ -64,6 +70,8 @@ follows a positional subcommand or command name.
       tmux timeout/unknown cases preserve active ownership.
 - [ ] The isolated smoke verifies complete source prompt bytes at realistic
       size without live network or real-home state.
+- [ ] A cold isolated tmux server starts normally on macOS without widening
+      cleanup authority for permission or overlong-path failures.
 - [ ] Focused tests and the full sequential verifier pass with zero failures.
 - [ ] A different agent issues an exact-SHA verdict before any deployment.
 - [ ] No live launcher smoke or binary activation occurs until run-101 has

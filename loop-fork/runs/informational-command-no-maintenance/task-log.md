@@ -52,6 +52,23 @@ preserve active state and current/external transport ownership; a fresh live
 probe overrides a stale attach error. Lint, source typecheck, compiled build,
 and the complete sequential suite pass.
 
+After run-101 teardown, the mandatory realistic smoke exposed two independent
+release blockers in the reviewed `888fe36` candidate: Darwin's long per-user
+temporary path exceeded tmux's Unix-socket pathname budget, and a cold custom
+socket's exact `No such file or directory` diagnostic was misclassified as
+unknown. The descendant uses a short physical `/tmp` root with an explicit
+103-byte budget assertion and accepts the missing-socket diagnostic only at
+the initial pre-resource probe. The same diagnostic after resource creation,
+permission failures, and overlong-path errors remain unknown.
+
+The post-teardown 10 KiB smoke now passes end to end: both agent panes are
+live, both hash-bound bootstraps verify the complete charters, tampering fails
+closed, nested help leaves the hostile manifest unchanged, and a missing
+workspace exits 1 with `failed/failed`. The certified sequential suite passes
+outside the managed endpoint-binding sandbox. Binary SHA-256 before commit is
+`ca7df916f4431ade5b4e1af7d7cf33eae0c31eca0c99792cd0fe9028b43dacaf`;
+fresh exact-SHA review and Harness evidence registration remain required.
+
 Regression: yes
 Regression id: nested-info-runs-maintenance
 Regression symptom: Nested help/version can execute destructive startup maintenance.

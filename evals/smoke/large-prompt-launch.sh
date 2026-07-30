@@ -6,7 +6,8 @@ LOOP_ROOT="${REPO_ROOT}/loop-fork"
 FIXTURES="${REPO_ROOT}/runs/large-prompt-launch/artifacts/fake-bin"
 HASH_TUI="${REPO_ROOT}/evals/smoke/fixtures/hash-bound-tui.py"
 ORIGINAL_HOME="${HOME:?large-prompt smoke requires HOME for host-isolation checks}"
-SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/loop-large-prompt-smoke.XXXXXX")"
+SMOKE_ROOT="$(mktemp -d "/tmp/loop-smoke.XXXXXX")"
+SMOKE_ROOT="$(cd "${SMOKE_ROOT}" && pwd -P)"
 SUCCESS_ROOT="${SMOKE_ROOT}/success"
 HASH_ROOT="${SMOKE_ROOT}/hash"
 FAILURE_ROOT="${SMOKE_ROOT}/failure"
@@ -39,6 +40,7 @@ CHARTER_SENTINEL="BEGIN-LARGE-CHARTER-$RANDOM-$$"
 CHARTER_TRAILING_SENTINEL="END-LARGE-CHARTER-$RANDOM-$$"
 SYSTEM_PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 SMOKE_USER="$(id -un)"
+SMOKE_UID="$(id -u)"
 SMOKE_SHELL="/bin/sh"
 SMOKE_TERM="xterm-256color"
 SMOKE_LANG="C"
@@ -58,6 +60,16 @@ cleanup() {
   exit "${status}"
 }
 trap cleanup EXIT
+
+assert_tmux_socket_path_budget() {
+  local tmux_tmpdir="$1"
+  local socket="$2"
+  local socket_path="${tmux_tmpdir}/tmux-${SMOKE_UID}/${socket}"
+  if [ "${#socket_path}" -gt 103 ]; then
+    echo "large-prompt smoke: tmux socket path exceeds Darwin's 103-byte pathname budget: ${socket_path}" >&2
+    exit 1
+  fi
+}
 
 prepare_case() {
   local root="$1"
@@ -262,6 +274,11 @@ wait_for_pane_text() {
   printf '%s\n' "${output}" >&2
   return 1
 }
+
+assert_tmux_socket_path_budget "${SUCCESS_TMUX_TMPDIR}" "${SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${HASH_TMUX_TMPDIR}" "${HASH_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${FAILURE_TMUX_TMPDIR}" "${FAILURE_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${INFO_TMUX_TMPDIR}" "${INFO_SMOKE_SOCKET}"
 
 cd "${LOOP_ROOT}"
 bun run test:file -- -t \

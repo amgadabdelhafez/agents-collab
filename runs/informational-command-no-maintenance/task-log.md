@@ -45,6 +45,19 @@
   nonzero exits preserve active state and transport ownership. A fresh live
   probe overrides stale attach errors. Lint, source typecheck, compiled build,
   and the complete sequential suite pass with an empty baseline-failure list.
+- 2026-07-30T16:19:18Z — The post-teardown realistic smoke superseded reviewed
+  candidate `888fe36`: macOS's long temporary root overflowed tmux's Unix-socket
+  path, and the normal cold-socket `No such file or directory` response was
+  misclassified as unknown before any session could be created.
+- 2026-07-30T16:19:18Z — Added a short physical `/tmp` smoke root, a 103-byte
+  socket-path assertion, and scoped cold-socket recognition to the initial
+  pre-resource probe only. Later missing-socket, permission, timeout, and
+  overlong-path failures retain unknown semantics and no cleanup authority.
+- 2026-07-30T16:19:18Z — The isolated 10 KiB smoke passes outside the managed
+  socket-binding sandbox: named session and both panes exist, full charters and
+  hash-bound bootstraps verify, tampering fails closed, nested help is read-only,
+  and missing workspace exits 1 with a durable `failed/failed` manifest. The
+  certified sequential suite also passes. Fresh exact-SHA review is required.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance

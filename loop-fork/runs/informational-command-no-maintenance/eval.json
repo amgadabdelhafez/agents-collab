@@ -1,27 +1,28 @@
 {
   "task_id": "informational-command-no-maintenance",
   "status": "pending",
-  "release_status": "held-run-101-live",
+  "release_status": "post-teardown-qa",
   "baseline_failures": [],
-  "required": ["focused", "full", "independent_review", "isolated_smoke"],
+  "required": ["focused", "full", "independent-review", "isolated-smoke"],
   "dimensions": {
     "focused": {
       "status": "pass",
       "method": "supported single-file parser, CLI, and tmux test runners",
-      "reason": "99 parser/CLI cases and 71 paired tmux lifecycle cases pass with zero failures"
+      "reason": "99 parser/CLI cases and 76 paired tmux lifecycle cases pass with zero failures"
     },
     "full": {
       "status": "pass",
       "method": "lint, defined source typecheck, compiled build, and bun run test:ci",
       "reason": "all static checks and every sequential test file pass with zero baseline failures"
     },
-    "independent_review": {
-      "status": "pending"
+    "independent-review": {
+      "status": "pending",
+      "reason": "888fe36 review is superseded by the post-teardown cold-socket fix; fresh exact-SHA review required"
     },
-    "isolated_smoke": {
-      "status": "held-run-101-live",
-      "static_validation": "bash -n and git diff --check pass",
-      "reason": "fixture seeds isolated update throttling, verifies complete source prompt bytes above 8 KiB, and requires failed/failed on missing workspace"
+    "isolated-smoke": {
+      "status": "pending",
+      "static_validation": "post-teardown direct smoke and git diff --check pass",
+      "reason": "the 10 KiB isolated smoke passes after fixing cold-socket classification and bounding Darwin socket paths; Harness-bound evidence pending"
     }
   }
 }

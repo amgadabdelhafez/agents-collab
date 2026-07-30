@@ -47,5 +47,10 @@ authority.
 - False-dead cleanup: require a conclusive tmux probe before failure
   terminalization; required liveness timeouts remain nonzero without mutation,
   while optional window-option failures are logged before the required probe.
+- Cold-server ambiguity: recognize tmux's exact macOS missing-socket diagnostic
+  only during the initial pre-resource probe; keep the same diagnostic after
+  resource creation, permission failures, and path-length errors unknown.
+- Darwin socket limits: allocate the isolated smoke below a short, physical
+  `/tmp` root and assert the complete socket pathname stays within 103 bytes.
 - Prompt truncation: compare the entire randomized source prompt buffer, not
   only a prefix sentinel, in every smoke manifest binding.
