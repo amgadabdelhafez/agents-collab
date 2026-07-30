@@ -392,10 +392,12 @@
     {
       "id": "loop102-launch-hardening",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-07-30T19:58:05Z",
       "run_dir": "runs/loop102-launch-hardening",
-      "eval_status": "pending"
+      "eval_status": "pass",
+      "ended_at": "2026-07-30T21:41:29Z",
+      "spec_path": "specs/loop102-launch-hardening.md"
     }
   ]
 }

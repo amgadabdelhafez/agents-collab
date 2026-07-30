@@ -1,10 +1,8 @@
-# Task loop102-launch-hardening
+# loop102-launch-hardening
 
-Created: 2026-07-30T19:58:05Z
-Mode: planned
-Description: Make Claude bootstrap wait for positive prompt readiness and give detached paired tmux sessions usable default geometry.
+Task completed 2026-07-30T21:41:29Z, mode planned.
 
-## What I changed
+## What was built
 
 - Started from exact deployed source lineage `8c2c83b` in isolated worktree
   `/private/tmp/agents-collab-loop102-launch-hardening`.
@@ -48,19 +46,20 @@ Description: Make Claude bootstrap wait for positive prompt readiness and give d
 - Sent deployment notice `de74b4b5-3dc7-4499-88f8-96e7c6739d5c` and retained
   the prior binary at `/private/tmp/loop-pre-d86a9cd-ca7df916`.
 
-## Why
+## Decisions made
 
-Stable startup output is not proof that a TUI accepts input, and a detached
-tmux server needs explicit geometry rather than the server default.
+- Positive readiness is the final visible nonempty line equal to Claude's empty
+  `❯` composer; stable warnings are never readiness.
+- Detached paired launches use `220x60`; valid terminal dimensions remain
+  authoritative and single-agent launch behavior is unchanged.
 
-## Notes
+## Open items at completion
 
-Regression: yes
-Regression id: loop102-claude-bootstrap-readiness
-Regression symptom: Claude's startup confirmation swallowed the launch bootstrap.
-Regression guard: tests/loop/tmux.test.ts plus evals/smoke/large-prompt-launch.sh
+- None for this slice. Both run-102 liaison defects are closed with exact-binary
+  smoke, independent review, deployment, and unchanged-live-run evidence.
 
-Regression: yes
-Regression id: loop102-detached-tmux-geometry
-Regression symptom: Detached paired launch started at 80x24.
-Regression guard: tests/loop/tmux.test.ts plus evals/smoke/large-prompt-launch.sh
+## Trajectory
+
+- 001 - initial (2026-07-30T19:58:05Z)
+- 002 - Spec and acceptance contract banked from run-102 evidence; implementation not started. (2026-07-30T20:00:13Z)
+- 004 - implementation-and-green-suite (2026-07-30T21:02:08Z)

@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active loop102-launch-hardening
+[pass] state/invariants/10-current-task.sh
