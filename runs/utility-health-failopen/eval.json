@@ -1,0 +1,43 @@
+{
+  "task_id": "utility-health-failopen",
+  "feature": "utility-health-failopen",
+  "timestamp": "2026-07-30T04:50:00Z",
+  "evaluator": "codex-implementation-verification",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "focused": {
+      "passed": 84,
+      "failed": 0,
+      "command": "bun test tests/loop/utility-readiness.test.ts tests/loop/governess-hooks.test.ts tests/loop/utility-runtime.test.ts"
+    },
+    "full_suite": {
+      "passed": 1260,
+      "failed": 0,
+      "command": "bun test"
+    },
+    "redraw_smoke": {
+      "passed": 6,
+      "failed": 0,
+      "command": "for run in 1 2 3 4 5 6; do evals/smoke/tmux-redraw-backpressure.sh; done"
+    },
+    "build": "pass",
+    "format_lint": "pass",
+    "diff_check": "pass"
+  },
+  "acceptance": {
+    "selected_tier_before_denial": true,
+    "fresh_dispatcher_required": true,
+    "real_inference_success_required": true,
+    "provider_failure_circuit": true,
+    "missing_or_stale_evidence_fails_open": true,
+    "http_health_not_trusted": true
+  },
+  "live_observation": {
+    "run": "harvto-loop-101",
+    "pre_fix_symptom": "Au Pair job fa910686 remained in running state until the existing 15-minute runtime guard failed it closed; automatic hook traffic had no selected-tier inference readiness gate.",
+    "redraw_activation": "Reviewed 98f04fc binary activated in Governess pane only at a zero-active-job boundary; Claude, Codex, Nanny, Au Pair, and three recon pane PIDs were preserved.",
+    "health_patch_deployment": "pending exact-commit independent review"
+  },
+  "notes": "Source verification passes. Deployment remains gated on an independent exact-commit review; this eval does not claim the health patch is installed."
+}

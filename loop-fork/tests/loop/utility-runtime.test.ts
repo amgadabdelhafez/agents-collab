@@ -1061,6 +1061,63 @@ test("unprofiled bounded inspections fail closed when Nanny is unavailable", asy
   }
 });
 
+test("a recent Nanny inference failure opens the routing circuit", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-nanny-circuit-"));
+  const runDir = join(repoRoot, ".loop", "runs", "nanny-circuit");
+  mkdirSync(join(runDir, "utility"), { recursive: true });
+  appendFileSync(
+    join(runDir, "utility", "usage.jsonl"),
+    `${JSON.stringify({
+      at: new Date().toISOString(),
+      modelCalls: 1,
+      status: "failed",
+      tierId: "utility-nanny",
+    })}\n`
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return bounded file evidence"],
+    authority: {},
+    id: "nanny-circuit-job",
+    kind: "inspect",
+    objective: "Inspect the bounded source file",
+    readScope: ["src/sample.ts"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "claude",
+        epoch: 23,
+        peer: "codex",
+        repoRoot,
+        runDir,
+      },
+      {},
+      {
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return true;
+        },
+      }
+    );
+    expect(spawned).toEqual([]);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      decision: {
+        reason: "utility-unavailable",
+        target: "driver",
+      },
+      state: "routed-driver",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("peer-routed reviews preserve the requester and ask the peer to act", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-peer-review-"));
   const runDir = join(repoRoot, ".loop", "runs", "peer-review-run");

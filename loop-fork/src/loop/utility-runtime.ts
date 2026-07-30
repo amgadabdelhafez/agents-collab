@@ -64,6 +64,7 @@ import {
   type UtilityObservabilitySnapshot,
   type UtilityTranscriptEntry,
 } from "./utility-observability";
+import { utilityInferenceCircuitOpen } from "./utility-readiness";
 import {
   activateUtilityEpoch,
   claimUtilityJob,
@@ -561,7 +562,8 @@ const openRouterProvider = (
 
 const runtimeTier = (
   config: UtilityRuntimeConfig,
-  tierId: UtilityExecutionTierId
+  tierId: UtilityExecutionTierId,
+  runDir?: string
 ): UtilityTier => {
   if (tierId === UTILITY_DIRECT_TIER) {
     return {
@@ -582,7 +584,10 @@ const runtimeTier = (
     return {
       capabilities: ["inspect", "bounded-command", "focused-verify"],
       enabled: config.nannyEnabled,
-      healthy: config.nannyEnabled && isLoopbackEndpoint(config.nannyEndpoint),
+      healthy:
+        config.nannyEnabled &&
+        isLoopbackEndpoint(config.nannyEndpoint) &&
+        !(runDir && utilityInferenceCircuitOpen(runDir, tierId)),
       id: tierId,
       model: config.nannyModel,
       provider: "local",
@@ -598,7 +603,8 @@ const runtimeTier = (
     enabled: config.enabled,
     healthy:
       config.enabled &&
-      (Boolean(config.apiKey) || isLoopbackEndpoint(config.endpoint)),
+      (Boolean(config.apiKey) || isLoopbackEndpoint(config.endpoint)) &&
+      !(runDir && utilityInferenceCircuitOpen(runDir, tierId)),
     id: UTILITY_AU_PAIR_TIER,
     model: config.model,
     provider: isLoopbackEndpoint(config.endpoint) ? "local" : "openrouter",
@@ -915,7 +921,11 @@ const processPendingUtilityJob = async (input: {
           peer: input.context.peer,
           routingPolicy: routingPolicy(input.config),
           tiers: [
-            runtimeTier(input.config, executionTier as UtilityExecutionTierId),
+            runtimeTier(
+              input.config,
+              executionTier as UtilityExecutionTierId,
+              input.context.runDir
+            ),
           ],
         });
   let decision: UtilityRouteDecision = routedDecision;

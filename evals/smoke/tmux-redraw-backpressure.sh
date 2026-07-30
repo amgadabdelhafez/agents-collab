@@ -85,12 +85,13 @@ RUN_DIR="$(
   ' "${RUN_ID}"
 )"
 STATE_FILE="${RUN_DIR}/governess-state.json"
+JOURNAL_FILE="${RUN_DIR}/governess.jsonl"
 GOVERNESS_COMMAND="env HOME='${SMOKE_HOME}' PATH='${WRAPPER_BIN}:${PATH}' LOOP_GOVERNESS_TICK=1 LOOP_SMOKE_REAL_TMUX='${REAL_TMUX}' LOOP_SMOKE_STALL_MARKER='${STALL_MARKER}' '${LOOP_BIN}' __governess '${RUN_ID}'"
 "${REAL_TMUX}" -L "${SOCKET}" send-keys -t "${GOVERNESS_PANE}" -l -- "${GOVERNESS_COMMAND}"
 "${REAL_TMUX}" -L "${SOCKET}" send-keys -t "${GOVERNESS_PANE}" Enter
 
 for _ in {1..50}; do
-  if [[ -f "${STATE_FILE}" ]] && \
+  if [[ -f "${STATE_FILE}" && -f "${JOURNAL_FILE}" ]] && \
     bun -e '
       const state = await Bun.file(process.argv[1]).json();
       process.exit(state.tick >= 1 ? 0 : 1);

@@ -37,6 +37,10 @@ import {
 } from "../../src/loop/utility-store";
 
 const NOW = "2026-07-04T12:00:00.000Z";
+const readyUtilityReadiness = () => ({
+  ready: true,
+  reason: "ready" as const,
+});
 
 const stdinPayload = (payload: unknown): AsyncIterable<Uint8Array> =>
   (async function* encodedPayload() {
@@ -158,6 +162,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: () => "/repo",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
@@ -204,6 +209,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: () => "/repo",
       stdin: stdinPayload({
         cwd: "/repo",
@@ -301,6 +307,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: () => "/repo",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
@@ -336,6 +343,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: () => "/repo",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
@@ -345,6 +353,48 @@ describe("runHookEmit", () => {
       expect.objectContaining({
         disposition: "route-failed",
         reason: "automatic-route-failed-open",
+      }),
+    ]);
+  });
+
+  test.each([
+    "dispatcher-stale",
+    "inference-failed",
+  ] as const)("%s readiness preserves the original tool call", async (reason) => {
+    const delegationEvents: unknown[] = [];
+    const routeRequests: unknown[] = [];
+    const stdout: string[] = [];
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => undefined,
+      appendDelegation: (_runDir, event) => delegationEvents.push(event),
+      appendRoute: (_runDir, request) => {
+        routeRequests.push(request);
+        return { jobId: "must-not-route" };
+      },
+      env: {
+        LOOP_UTILITY_DELEGATION_MODE: "enforce",
+        LOOP_UTILITY_URL: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+      now: () => NOW,
+      readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: () => ({ ready: false, reason }),
+      resolveWorkspaceRoot: () => "/repo",
+      stdin: stdinPayload({
+        cwd: "/repo",
+        hook_event_name: "PreToolUse",
+        tool_input: { command: "git status --short" },
+        tool_name: "Bash",
+        tool_use_id: `readiness-${reason}`,
+      }),
+      writeStdout: (value) => stdout.push(value),
+    });
+
+    expect(stdout).toEqual([]);
+    expect(routeRequests).toEqual([]);
+    expect(delegationEvents).toEqual([
+      expect.objectContaining({
+        disposition: "observed-candidate",
+        reason: `utility-unavailable:${reason}`,
       }),
     ]);
   });
@@ -379,6 +429,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: () => "/linked",
       stdin: stdin(),
       writeStdout: (value) => stdout.push(value),
@@ -431,6 +482,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: (_runRoot, path) => {
         resolvedPaths.push(path);
         return path.startsWith("/linked") ? "/linked" : "/repo";
@@ -493,6 +545,7 @@ describe("runHookEmit", () => {
         },
         now: () => NOW,
         readManifest: () => ({ cwd: "/repo" }),
+        readUtilityReadiness: readyUtilityReadiness,
         resolveWorkspaceRoot: (_runRoot, path) => {
           resolvedPaths.push(path);
           return path.startsWith("/linked") ? "/linked" : undefined;
@@ -616,6 +669,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: () => "/linked",
       stdin: stdin(),
       writeStdout: () => undefined,
@@ -677,6 +731,7 @@ describe("runHookEmit", () => {
       },
       now: () => NOW,
       readManifest: () => ({ cwd: "/repo" }),
+      readUtilityReadiness: readyUtilityReadiness,
       resolveWorkspaceRoot: () => "/linked",
       stdin: stdin(),
       writeStdout: () => undefined,

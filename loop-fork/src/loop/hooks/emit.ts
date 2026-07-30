@@ -41,11 +41,18 @@ import {
   type UtilityRouteRequestInput,
 } from "../task-router";
 import type { Agent, HookEvent } from "../types";
+import { classifyUtilityExecution } from "../utility-execution-tier";
 import {
   isUtilityProtectedPath,
   normalizeUtilityPolicyPath,
   utilityPathWithin,
 } from "../utility-path-policy";
+import {
+  readUtilityDispatchReadiness,
+  type UtilityDispatchReadiness,
+  utilityTierAvailabilityCode,
+  utilityTierConfigured,
+} from "../utility-readiness";
 import {
   buildUtilityWorkerEnvironment,
   resolveUtilityRuntimeConfig,
@@ -231,6 +238,11 @@ interface HookEmitDeps {
   nativeChildContext?: boolean;
   now?: () => string;
   readManifest?: (path: string) => { cwd: string } | undefined;
+  readUtilityReadiness?: (
+    runDir: string,
+    tierId: ReturnType<typeof classifyUtilityExecution>,
+    nowMs: number
+  ) => UtilityDispatchReadiness;
   resolveWorkspaceRoot?: (runRoot: string, path: string) => string | undefined;
   stdin?: AsyncIterable<Uint8Array>;
   writeStdout?: (text: string) => void;
@@ -994,9 +1006,50 @@ const handlePreToolDelegation = (
   const config = resolveUtilityRuntimeConfig(
     buildUtilityWorkerEnvironment(deps.env ?? process.env)
   );
-  const utilityReady =
-    config.enabled && config.availability.code.startsWith("ready-");
-  if (mode === "observe" || !utilityReady) {
+  let routeRequest: ReturnType<typeof createUtilityRouteRequest>;
+  try {
+    const adoptedWorkspace = workspaceRoot !== resolve(manifest.cwd);
+    routeRequest = createUtilityRouteRequest({
+      ...rootDelegationRequest(
+        classification.request,
+        workspaceRoot,
+        adoptedWorkspace
+      ),
+      createdAt: at,
+    });
+  } catch {
+    appendTelemetry(
+      runDir,
+      makeDelegationEvent(
+        {
+          agent,
+          disposition: "route-failed",
+          fingerprint: classification.fingerprint,
+          operation: classification.operation,
+          reason: "automatic-route-failed-open",
+          source: agent === "claude" ? "claude-hook" : "codex-hook",
+        },
+        at
+      )
+    );
+    return undefined;
+  }
+  const tierId = classifyUtilityExecution(routeRequest);
+  const configured = utilityTierConfigured(tierId, config);
+  const readiness = configured
+    ? (deps.readUtilityReadiness ?? readUtilityDispatchReadiness)(
+        runDir,
+        tierId,
+        Date.parse(at)
+      )
+    : undefined;
+  if (mode === "observe" || !configured || !readiness?.ready) {
+    let unavailableReason = "delegation-mode-observe";
+    if (mode !== "observe") {
+      unavailableReason = configured
+        ? `utility-unavailable:${readiness?.reason ?? "readiness-error"}`
+        : `utility-unavailable:${utilityTierAvailabilityCode(tierId, config)}`;
+    }
     appendTelemetry(
       runDir,
       makeDelegationEvent(
@@ -1005,10 +1058,7 @@ const handlePreToolDelegation = (
           disposition: "observed-candidate",
           fingerprint: classification.fingerprint,
           operation: classification.operation,
-          reason:
-            mode === "observe"
-              ? "delegation-mode-observe"
-              : `utility-unavailable:${config.availability.code}`,
+          reason: unavailableReason,
           source: agent === "claude" ? "claude-hook" : "codex-hook",
         },
         at
@@ -1017,15 +1067,6 @@ const handlePreToolDelegation = (
     return undefined;
   }
   try {
-    const adoptedWorkspace = workspaceRoot !== resolve(manifest.cwd);
-    const routeRequest = createUtilityRouteRequest({
-      ...rootDelegationRequest(
-        classification.request,
-        workspaceRoot,
-        adoptedWorkspace
-      ),
-      createdAt: at,
-    });
     const job = (deps.appendRoute ?? appendUtilityRouteRequest)(
       runDir,
       routeRequest
