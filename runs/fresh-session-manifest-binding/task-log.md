@@ -12,3 +12,7 @@
   dead prior workspace could leave concrete pane IDs in the early-bound record.
   The successor clears those targets only on fresh launch and proves live
   reattach keeps them; focused coverage is now 58 pass, 0 fail.
+- 2026-07-30T01:10:38Z — The combined descendant at exact commit
+  `0292b673bdac946317af875189d14ac69fdf6c4c` received Claude CONCUR in message
+  `2b5f35d1-9c6f-4cd0-8800-d73f53167ab7` and was deployed with SHA-256
+  `cda5d9ccf69ac611bf6125f9aacb42ad1fd203a1548bc271393a1cdafa33afca`.

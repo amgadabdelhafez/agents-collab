@@ -1,11 +1,11 @@
 {
   "task_id": "fresh-session-manifest-binding",
   "feature": "fresh-session-manifest-binding",
-  "timestamp": "2026-07-29T19:45:42Z",
+  "timestamp": "2026-07-30T01:10:38Z",
   "verdict": "pass",
-  "release_status": "held-pending-exact-sha-review",
+  "release_status": "deployed",
   "baseline_failures": [],
-  "required": ["focused", "full", "independent_review"],
+  "required": ["focused", "full", "independent_review", "deployment"],
   "dimensions": {
     "focused": {
       "status": "pass",
@@ -18,9 +18,14 @@
       "reason": "source typecheck and compiled build passed; every sequential repository test passed; baseline allowlist was empty"
     },
     "independent_review": {
-      "status": "pending",
+      "status": "pass",
       "method": "exact-SHA Claude supervisor review",
-      "reason": "deployment remains held until a bound CONCUR"
+      "reason": "CONCUR message 2b5f35d1-9c6f-4cd0-8800-d73f53167ab7 binds exact commit 0292b673bdac946317af875189d14ac69fdf6c4c and explicitly verifies the early manifest binding"
+    },
+    "deployment": {
+      "status": "pass",
+      "method": "installed symlink and SHA-256 verification",
+      "reason": "/Users/amgad/.local/bin/loop resolves to the reviewed worktree and hashes to cda5d9ccf69ac611bf6125f9aacb42ad1fd203a1548bc271393a1cdafa33afca"
     }
   }
 }

@@ -71,7 +71,7 @@ with a durable restart budget that prevents crash loops.
       attempt outside the window is permitted.
 - [x] Focused tests and the repository verification suite pass with an empty
       baseline-failure list.
-- [ ] A different reviewer issues an exact-SHA CONCUR before deployment.
+- [x] A different reviewer issues an exact-SHA CONCUR before deployment.
 
 ## Out-of-scope risks
 

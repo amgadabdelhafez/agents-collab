@@ -2,8 +2,10 @@
   "id": "fresh-session-manifest-binding",
   "mode": "planned",
   "created_at": "2026-07-29T19:36:56Z",
-  "status": "parked",
+  "status": "done",
   "description": "Persist deterministic tmux session identity before asynchronous paired-launch work",
   "estimated_loc": 80,
-  "parked_at": "2026-07-29T20:18:16Z"
+  "parked_at": "2026-07-29T20:18:16Z",
+  "activated_at": "2026-07-30T01:11:46Z",
+  "ended_at": "2026-07-30T01:11:46Z"
 }

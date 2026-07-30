@@ -9,7 +9,7 @@
 - [x] **T-03** Make dead panes visibly stopped without changing live labels.
 - [x] **T-04** Add focused unit and isolated tmux lifecycle tests.
 - [x] **T-05** Run full verification and record an empty baseline-failure list.
-- [ ] **T-06** Obtain exact-SHA independent CONCUR and deploy only that binary.
+- [x] **T-06** Obtain exact-SHA independent CONCUR and deploy only that binary.
 
 ## Deliverables
 

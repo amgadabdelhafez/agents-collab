@@ -30,4 +30,6 @@ blind during the riskiest startup interval.
 - Full verifier: lint, defined source typecheck, compiled build, every sequential
   test, and empty baseline gate passed.
 - Live run 100 remained read-only.
-- Deployment remains held pending exact-SHA independent review.
+- Exact commit `0292b673bdac946317af875189d14ac69fdf6c4c` received independent
+  CONCUR and its binary was deployed with SHA-256
+  `cda5d9ccf69ac611bf6125f9aacb42ad1fd203a1548bc271393a1cdafa33afca`.

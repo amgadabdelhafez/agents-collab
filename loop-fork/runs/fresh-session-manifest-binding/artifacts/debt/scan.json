@@ -1,0 +1,30 @@
+{
+  "task_id": "fresh-session-manifest-binding",
+  "scanned_at": "2026-07-30T01:11:46Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-30T01:11:46Z",
+      "task_id": "fresh-session-manifest-binding",
+      "signal": "loc_growth",
+      "file": "src/loop/governess-pane-liveness.ts",
+      "before_loc": 0,
+      "after_loc": 341,
+      "delta_loc": 341,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-07-30T01:11:46Z",
+      "task_id": "fresh-session-manifest-binding",
+      "signal": "loc_growth",
+      "file": "src/loop/tmux.ts",
+      "before_loc": 2709,
+      "after_loc": 2840,
+      "delta_loc": 131,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

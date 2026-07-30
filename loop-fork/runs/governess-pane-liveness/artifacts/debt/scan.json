@@ -1,0 +1,19 @@
+{
+  "task_id": "governess-pane-liveness",
+  "scanned_at": "2026-07-30T01:11:38Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-30T01:11:38Z",
+      "task_id": "governess-pane-liveness",
+      "signal": "loc_growth",
+      "file": "src/loop/governess-pane-liveness.ts",
+      "before_loc": 0,
+      "after_loc": 341,
+      "delta_loc": 341,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

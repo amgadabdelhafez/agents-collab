@@ -29,4 +29,8 @@ the three-attempt limit keep terminal and crash-loop states honest.
 - Hook arming occurs after all control panes and the stable manifest are
   durable, avoiding startup-failure teardown races.
 - Harvto run 100 remained read-only and live.
-- Release is held for exact-SHA independent review.
+- Exact commit `0292b673bdac946317af875189d14ac69fdf6c4c` received independent
+  CONCUR and its binary was deployed with SHA-256
+  `cda5d9ccf69ac611bf6125f9aacb42ad1fd203a1548bc271393a1cdafa33afca`.
+- The deployed source passed the private real-tmux constant-size transport
+  smoke before loop-65 QA was countersigned.

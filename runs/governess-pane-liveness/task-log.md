@@ -31,3 +31,12 @@
   startup failure now tears down before any liveness hook exists. Focused and
   full verification passed after the ordering change; the superseded review
   request was withdrawn.
+- 2026-07-30T01:10:38Z — Claude issued exact-SHA CONCUR in message
+  `2b5f35d1-9c6f-4cd0-8800-d73f53167ab7` for commit
+  `0292b673bdac946317af875189d14ac69fdf6c4c`. The reviewed binary was deployed
+  with SHA-256 `cda5d9ccf69ac611bf6125f9aacb42ad1fd203a1548bc271393a1cdafa33afca`.
+- 2026-07-30T01:10:38Z — The deployed source passed the full constant-size
+  transport smoke on a private tmux socket: realistic charter, named session,
+  both panes, manifest identity, hash-bound bootstrap, fail-closed tamper, and
+  nonzero missing-workspace failure. Loop-65 QA was countersigned in channel
+  message `bea43c63-3c96-4f1a-8c9f-49cc55dd5e6d`.
