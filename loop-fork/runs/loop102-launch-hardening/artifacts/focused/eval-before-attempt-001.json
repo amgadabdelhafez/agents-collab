@@ -1,0 +1,38 @@
+{
+  "task_id": "loop102-launch-hardening",
+  "status": "pending",
+  "required": [
+    "unit",
+    "focused",
+    "full",
+    "build",
+    "isolated-smoke",
+    "independent-review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/loop102-launch-hardening/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/loop102-launch-hardening/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/loop102-launch-hardening/artifacts/unit/attempt-001.json"
+    },
+    "focused": {
+      "status": "pending"
+    },
+    "full": {
+      "status": "pending"
+    },
+    "build": {
+      "status": "pending"
+    },
+    "isolated-smoke": {
+      "status": "pending"
+    },
+    "independent-review": {
+      "status": "pending"
+    }
+  }
+}

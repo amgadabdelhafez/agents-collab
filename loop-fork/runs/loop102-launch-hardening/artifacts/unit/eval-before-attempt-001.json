@@ -1,0 +1,32 @@
+{
+  "task_id": "loop102-launch-hardening",
+  "status": "pending",
+  "required": [
+    "unit",
+    "focused",
+    "full",
+    "build",
+    "isolated-smoke",
+    "independent-review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "focused": {
+      "status": "pending"
+    },
+    "full": {
+      "status": "pending"
+    },
+    "build": {
+      "status": "pending"
+    },
+    "isolated-smoke": {
+      "status": "pending"
+    },
+    "independent-review": {
+      "status": "pending"
+    }
+  }
+}

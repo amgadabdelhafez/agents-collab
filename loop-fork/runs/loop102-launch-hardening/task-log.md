@@ -22,6 +22,22 @@ Description: Make Claude bootstrap wait for positive prompt readiness and give d
   source smoke, and the complete `bun run test:ci` suite. The first sandboxed
   full-suite attempt could not bind a loopback test port; the same focused test
   and full suite passed outside the socket-restricted sandbox.
+- Initial source freeze `85cd32d` was superseded before review after local QA
+  caught that Claude's normal separator/footer lines sit below its empty
+  composer. The final classifier accepts a styled dim suggestion plus normal
+  footer while still rejecting a startup modal below a stale composer.
+- Froze final source commit `d86a9cde915be5094d1d61ec0e9a8ca84b224f75`
+  and binary SHA-256
+  `1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e`.
+- The exact-prebuilt smoke passed without rebuilding or changing the candidate:
+  delayed Claude readiness verified, never-ready launch exited 1 with a failed
+  manifest and no session, the full detached layout was `220x60` with eight
+  panes, and the missing-workspace case exited 1.
+- Independent review returned `CONCUR` with no findings, bound to source commit
+  `d86a9cde915be5094d1d61ec0e9a8ca84b224f75` and binary SHA-256
+  `1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e`.
+- Harness preflight and stop-gate both passed with all six required dimensions:
+  unit, focused, full, build, isolated-smoke, and independent-review.
 
 ## Why
 

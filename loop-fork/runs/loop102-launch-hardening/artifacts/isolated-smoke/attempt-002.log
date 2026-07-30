@@ -1,0 +1,23 @@
+task_id: loop102-launch-hardening
+dimension: isolated-smoke
+attempt: 002
+started_at: 2026-07-30T21:28:46Z
+command: env LOOP_SMOKE_BINARY=/private/tmp/agents-collab-loop102-launch-hardening/loop-fork/loop LOOP_SMOKE_EXPECTED_SHA256=1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e /private/tmp/agents-collab-loop102-launch-hardening/evals/smoke/large-prompt-launch.sh
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test -t "transports a realistic charter through hash-bound pointer bootstraps" tests/loop/tmux.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [5.10ms]
+
+ 1 pass
+ 75 filtered out
+ 0 fail
+ 36 expect() calls
+Ran 1 test across 1 file. [44.00ms]
+large-prompt smoke: binary=/private/tmp/agents-collab-loop102-launch-hardening/loop-fork/loop binary-sha256=1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e prebuilt=1 info-fixture=unchanged session=repo-loop-large-prompt-success panes=gemini:%0,cursor:%1 manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=1 claude-timeout-manifest=failed detached-layout=220x60/8panes hash-mismatch=fail-closed missing-workspace-exit=1 missing-workspace-manifest=failed
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-30T21:29:14Z

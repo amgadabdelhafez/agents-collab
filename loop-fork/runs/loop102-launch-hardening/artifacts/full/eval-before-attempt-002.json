@@ -1,6 +1,6 @@
 {
   "task_id": "loop102-launch-hardening",
-  "status": "pass",
+  "status": "pending",
   "required": [
     "unit",
     "focused",
@@ -33,9 +33,9 @@
       "artifact": "runs/loop102-launch-hardening/artifacts/full/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/loop102-launch-hardening/artifacts/full/attempt-002.log",
-      "latest_attempt_meta": "runs/loop102-launch-hardening/artifacts/full/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/loop102-launch-hardening/artifacts/full/attempt-001.log",
+      "latest_attempt_meta": "runs/loop102-launch-hardening/artifacts/full/attempt-001.json"
     },
     "build": {
       "status": "pass",
@@ -51,16 +51,12 @@
       "artifact": "runs/loop102-launch-hardening/artifacts/isolated-smoke/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/loop102-launch-hardening/artifacts/isolated-smoke/attempt-002.log",
-      "latest_attempt_meta": "runs/loop102-launch-hardening/artifacts/isolated-smoke/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/loop102-launch-hardening/artifacts/isolated-smoke/attempt-001.log",
+      "latest_attempt_meta": "runs/loop102-launch-hardening/artifacts/isolated-smoke/attempt-001.json"
     },
     "independent-review": {
-      "status": "pass",
-      "artifact": "runs/loop102-launch-hardening/artifacts/independent-review/concur.txt",
-      "reason": "CONCUR bound to d86a9cde915be5094d1d61ec0e9a8ca84b224f75 and SHA-256 1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e",
-      "method": "independent exact-SHA review",
-      "signed_off_by": "exact_sha_launch_review"
+      "status": "pending"
     }
   }
 }

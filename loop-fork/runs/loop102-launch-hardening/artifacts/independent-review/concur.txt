@@ -1,0 +1,14 @@
+CONCUR
+
+Bound source commit: d86a9cde915be5094d1d61ec0e9a8ca84b224f75
+Bound binary SHA-256: 1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e
+Findings: none
+
+Evidence:
+- Reviewed from a clean detached worktree at the bound commit with base ancestry and changed-path scope verified.
+- Claude readiness recognizes a styled, empty composer after dim-placeholder stripping while rejecting an active startup modal below a stale composer.
+- Bootstrap transport begins only after positive readiness; timeout exits nonzero, sends no prompt buffer, marks the manifest failed, and cleans up the session.
+- Detached paired sessions fall back to 220x60; valid terminal geometry and single-agent behavior are preserved.
+- Focused tmux suite passed: 76 pass, 0 fail.
+- Full test suite, lint, and syntax checks passed.
+- Exact-prebuilt realistic smoke passed, including delayed readiness, timeout failure, detached eight-pane geometry, and unchanged binary hash.

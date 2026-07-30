@@ -1,0 +1,10 @@
+source_commit=d86a9cde915be5094d1d61ec0e9a8ca84b224f75
+binary_path=/private/tmp/agents-collab-loop102-launch-hardening/loop-fork/loop
+binary_sha256=1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e
+exact_prebuilt_smoke=pass
+claude_delayed_ready=verified
+claude_never_ready_exit=1
+claude_never_ready_manifest=failed
+detached_layout=220x60/8panes
+missing_workspace_exit=1
+missing_workspace_manifest=failed
