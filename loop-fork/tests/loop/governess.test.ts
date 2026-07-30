@@ -17,6 +17,7 @@ import {
   freshRunState,
   type GovernessConfig,
   type GovernessDeps,
+  governessFrameDelta,
   governessPaneIdentityTmuxCommands,
   governessTick,
   refreshGovernessAgentBindings,
@@ -2351,7 +2352,7 @@ test("governess pane identity writes the border option and native title", () => 
   ]);
 });
 
-test("runGoverness reapplies pane identity on startup and every cycle", async () => {
+test("runGoverness applies pane identity once on startup", async () => {
   const spies = freshSpies();
   const deps = makeDeps(stuck, { ms: START_MS }, spies);
   const keys = ["x", "e"];
@@ -2372,7 +2373,7 @@ test("runGoverness reapplies pane identity on startup and every cycle", async ()
     deps
   );
   expect(spies.paneBorderInits).toEqual(["harvto-loop-34"]);
-  expect(spies.governessPaneIdentities).toHaveLength(3);
+  expect(spies.governessPaneIdentities).toHaveLength(1);
   expect(
     new Set(spies.governessPaneIdentities.map((entry) => entry[1]))
   ).toEqual(new Set(["governess.harvto-loop-34"]));
@@ -2382,7 +2383,7 @@ test("runGoverness reapplies pane identity on startup and every cycle", async ()
   expect(closed).toBe(true);
 });
 
-test("runGoverness pauses a tick without recovery when tmux capture is unknown", async () => {
+test("runGoverness renders a degraded tick without recovery when tmux capture is unknown", async () => {
   const spies = freshSpies();
   const deps = makeDeps(stuck, { ms: START_MS }, spies);
   let captureAttempts = 0;
@@ -2415,6 +2416,141 @@ test("runGoverness pauses a tick without recovery when tmux capture is unknown",
     error: "tmux control unavailable: tmux capture-pane -p -t s:0.0",
     event: "tmux-control-unavailable",
   });
+});
+
+test("governessTick stops probing after one tmux failure and recovers next tick", async () => {
+  const spies = freshSpies();
+  const clock = { ms: START_MS };
+  const deps = makeDeps(stuck, clock, spies);
+  const rendered: string[] = [];
+  let unavailable = true;
+  let captureAttempts = 0;
+  deps.capturePane = () => {
+    captureAttempts += 1;
+    if (unavailable) {
+      throw new TmuxControlUnavailableError([
+        "capture-pane",
+        "-p",
+        "-t",
+        "s:0.0",
+      ]);
+    }
+    return "stable pane text";
+  };
+  deps.render = (board) => rendered.push(stripAnsi(board));
+  const config = baseConfig({
+    agents: [
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+    ],
+  });
+  const seeded = freshRunState();
+  seeded.history = [
+    { agent: "claude", level: "nudge", ts: new Date(START_MS).toISOString() },
+  ];
+
+  const degraded = await governessTick(new Map(), config, deps, seeded);
+
+  expect(captureAttempts).toBe(1);
+  expect(degraded.tmuxControlAvailable).toBe(false);
+  expect(rendered.at(-1)).toContain("tmux degraded 0s (capture-pane)");
+  expect(rendered.at(-1)).toContain("unknown");
+  expect(degraded.runState.history).toEqual(seeded.history);
+  expect(spies.judged).toBe(0);
+  expect(spies.sends).toEqual([]);
+  expect(spies.paneLabels).toEqual([]);
+  expect(spies.logs).toContainEqual({
+    at: new Date(START_MS).toISOString(),
+    error: "tmux control unavailable: tmux capture-pane -p -t s:0.0",
+    event: "tmux-control-unavailable",
+  });
+
+  unavailable = false;
+  clock.ms += 15_000;
+  const restored = await governessTick(
+    degraded.states,
+    config,
+    deps,
+    degraded.runState
+  );
+
+  expect(captureAttempts).toBe(3);
+  expect(restored.tmuxControlAvailable).toBe(true);
+  expect(stripAnsi(restored.board)).not.toContain("tmux degraded");
+  expect(spies.logs).toContainEqual({
+    at: new Date(clock.ms).toISOString(),
+    event: "tmux-control-restored",
+    unavailableMs: 15_000,
+  });
+});
+
+test("governessTick treats one batched pane-command timeout as a degraded tick", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  let captures = 0;
+  let commandBatches = 0;
+  deps.capturePane = () => {
+    captures += 1;
+    return "stable pane text";
+  };
+  deps.readPaneCommands = () => {
+    commandBatches += 1;
+    throw new TmuxControlUnavailableError(["list-panes", "-a"]);
+  };
+
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      agents: [
+        { agent: "claude", hookFile: "claude.jsonl", pane: "%0" },
+        { agent: "codex", hookFile: "codex.jsonl", pane: "%1" },
+      ],
+    }),
+    deps
+  );
+
+  expect(captures).toBe(2);
+  expect(commandBatches).toBe(1);
+  expect(result.tmuxControlAvailable).toBe(false);
+  expect(stripAnsi(result.board)).toContain("tmux degraded 0s (list-panes)");
+  expect(spies.judged).toBe(0);
+  expect(spies.paneLabels).toEqual([]);
+  expect(spies.sends).toEqual([]);
+});
+
+test("large Unicode pane output does not enlarge the bounded Governess board", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const largePane = "🧭│─ Governess evidence 密度\n".repeat(600);
+  expect(Buffer.byteLength(largePane, "utf8")).toBeGreaterThan(10_000);
+  deps.capturePane = () => largePane;
+
+  const result = await governessTick(
+    new Map(),
+    baseConfig({ viewportColumns: 120, viewportRows: 12 }),
+    deps
+  );
+
+  expect(result.tmuxControlAvailable).toBe(true);
+  expect(stripAnsi(result.board).split("\n").length).toBeLessThanOrEqual(12);
+  expect(
+    Math.max(
+      ...stripAnsi(result.board)
+        .split("\n")
+        .map((line) => line.length)
+    )
+  ).toBeLessThanOrEqual(120);
+});
+
+test("Governess frame deltas update only changed lines without clearing", () => {
+  const previous = "header\nstable\nold tail";
+  const next = "header\nstable\nnew tail";
+  const delta = governessFrameDelta(previous, next);
+
+  expect(delta).toContain("\x1b[3;1H\x1b[2Knew tail");
+  expect(delta).not.toContain("\x1b[2J");
+  expect(delta).not.toContain("stable");
+  expect(governessFrameDelta(next, next)).toBe("");
 });
 
 test("runGoverness refreshes a late Codex binding before reading usage", async () => {

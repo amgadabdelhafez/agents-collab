@@ -356,6 +356,9 @@ export interface GovernessDeps {
     codexHome?: string
   ) => string[];
   readLocalLlmRuntime: (input: LocalLlmRuntimeInput) => LocalLlmRuntime;
+  readPaneCommands?: (
+    panes: GovernessAgentInfo[]
+  ) => Partial<Record<Agent, string>>;
   readUsage: (
     agent: Agent,
     sessionRef?: string,
@@ -428,6 +431,12 @@ export interface DriverLease {
   holder: Agent;
 }
 
+export interface GovernessTmuxControlState {
+  lastFailureAtMs: number;
+  reason: string;
+  unavailableSinceMs: number;
+}
+
 // State the governess carries across ticks.
 export interface GovernessRunState {
   // Epoch ms both agents became idle together (0 = not both idle right now).
@@ -458,6 +467,7 @@ export interface GovernessRunState {
   summary: string;
   summaryTick: number;
   tick: number;
+  tmuxControl?: GovernessTmuxControlState;
   // The local LLM's read of the current both-idle episode.
   waitingAsk: string;
   waitingConfirmed: boolean;
@@ -621,6 +631,30 @@ const readRoleAction = (
 const readStringValue = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() ? value : undefined;
 
+const readTmuxControlState = (
+  value: unknown
+): GovernessTmuxControlState | undefined => {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const record = value as Partial<GovernessTmuxControlState>;
+  if (
+    typeof record.lastFailureAtMs !== "number" ||
+    !Number.isFinite(record.lastFailureAtMs) ||
+    typeof record.unavailableSinceMs !== "number" ||
+    !Number.isFinite(record.unavailableSinceMs) ||
+    typeof record.reason !== "string" ||
+    !record.reason.trim()
+  ) {
+    return undefined;
+  }
+  return {
+    lastFailureAtMs: record.lastFailureAtMs,
+    reason: record.reason,
+    unavailableSinceMs: record.unavailableSinceMs,
+  };
+};
+
 const readRoleState = (value: unknown): RoleState => {
   if (typeof value !== "object" || value === null) {
     return {};
@@ -677,10 +711,12 @@ export interface GovernessTickResult {
   agentStates: Partial<Record<Agent, string>>;
   board: string;
   llmOffline: boolean;
+  paneCommands: Partial<Record<Agent, string>>;
   runState: GovernessRunState;
   states: Map<Agent, AgentLivenessState>;
   // Per-agent contexts a background summary refresh consumes (see runGoverness).
   summaryCtxs: SummaryAgentContext[];
+  tmuxControlAvailable: boolean;
 }
 
 const hashPane = (text: string): string =>
@@ -1314,6 +1350,7 @@ interface AgentRow {
   errors: number;
   lastAction: string;
   liveness: AgentLiveness;
+  paneFresh: boolean;
   thinking: boolean;
   usage: AgentUsage;
   verdict?: GovernessVerdict;
@@ -1394,6 +1431,7 @@ interface BoardMeta {
   stats: SessionStats;
   summary: string;
   tickMs: number;
+  tmuxControl?: GovernessTmuxControlState;
   uptimeMs: number;
   utility?: UtilityObservabilitySnapshot;
   waitingForYou: WaitingForYou;
@@ -1464,7 +1502,9 @@ const helperHeaderRow = paint(
 );
 
 const rowState = (row: AgentRow): string =>
-  row.verdict?.state ?? (row.thinking ? "thinking" : "idle");
+  row.paneFresh
+    ? (row.verdict?.state ?? (row.thinking ? "thinking" : "idle"))
+    : "unknown";
 
 // Single-glyph state marker for the pane border title.
 const STATE_GLYPHS: Record<string, string> = {
@@ -1865,9 +1905,12 @@ const renderAgentRow = (
 ): string => {
   const agent = row.liveness.agent;
   const state = rowState(row);
-  const forMs = row.thinking
-    ? row.liveness.lastEventAgeMs
-    : row.liveness.paneIdleMs;
+  let forMs = Number.NaN;
+  if (row.paneFresh) {
+    forMs = row.thinking
+      ? row.liveness.lastEventAgeMs
+      : row.liveness.paneIdleMs;
+  }
   const run =
     [effortCell(row.usage), modeCell(row.usage)]
       .filter((part) => part !== "—")
@@ -2428,7 +2471,16 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     rows,
     meta.governessMessages
   );
+  const tmuxDegraded = meta.tmuxControl
+    ? paint(
+        ANSI.yellow,
+        `tmux degraded ${fmtDuration(
+          meta.nowMs - meta.tmuxControl.unavailableSinceMs
+        )} (${truncate(meta.tmuxControl.reason, 32)})`
+      )
+    : undefined;
   const parts = [
+    ...(tmuxDegraded ? [tmuxDegraded] : []),
     paint(ANSI.cyan, meta.identity),
     fmtClock(meta.nowMs),
     ...(Number.isFinite(meta.uptimeMs)
@@ -3332,9 +3384,9 @@ const processAgent = async (
   states: Map<Agent, AgentLivenessState>,
   config: GovernessConfig,
   deps: GovernessDeps,
-  ctx: AgentTickContext
+  ctx: AgentTickContext,
+  paneText: string
 ): Promise<AgentTickResult> => {
-  const paneText = deps.capturePane(info.pane);
   const events = deps.readHooks(info.hookFile);
   const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
   applyUsageLimits(usage, info.agent, ctx.usageLimits);
@@ -3372,6 +3424,7 @@ const processAgent = async (
     errors,
     lastAction: lastActionOf(events),
     liveness,
+    paneFresh: true,
     thinking,
     usage,
   };
@@ -3455,6 +3508,69 @@ const processAgent = async (
     llmOfflineByJudge: judged.llmOfflineByJudge,
     llmUsageByJudge: judged.usageByJudge,
     recoveries: ctx.recoveries + (recovered ? 1 : 0),
+  };
+};
+
+const degradedEventAgeMs = (
+  events: HookEvent[],
+  previous: AgentLivenessState,
+  nowMs: number
+): number => {
+  const timestamp = lastEventTs(events) ?? previous.lastEventTs;
+  if (!timestamp) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed)
+    ? Math.max(0, nowMs - parsed)
+    : Number.POSITIVE_INFINITY;
+};
+
+// Build a display-only row from durable evidence while tmux control is down.
+// The detector state is deliberately not advanced: elapsed time without a
+// fresh pane must never turn into a stuck verdict or recovery action.
+const processAgentWithoutPane = (
+  info: GovernessAgentInfo,
+  states: Map<Agent, AgentLivenessState>,
+  deps: GovernessDeps,
+  ctx: AgentTickContext
+): AgentTickResult => {
+  const events = deps.readHooks(info.hookFile);
+  const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
+  applyUsageLimits(usage, info.agent, ctx.usageLimits);
+  const previous =
+    states.get(info.agent) ?? initLivenessState(info.agent, ctx.nowMs);
+  if (!states.has(info.agent)) {
+    states.set(info.agent, previous);
+  }
+  const liveness: AgentLiveness = {
+    agent: info.agent,
+    lastEventAgeMs: degradedEventAgeMs(events, previous, ctx.nowMs),
+    paneIdleMs: Math.max(0, ctx.nowMs - previous.paneStableSinceMs),
+    paneStable: false,
+    suspect: false,
+  };
+  return {
+    history: ctx.history,
+    llmOffline: false,
+    llmOfflineByJudge: {},
+    llmUsage: emptyLocalLlmUsage(),
+    llmUsageByJudge: emptyLocalLlmUsageByJudge(),
+    recoveries: ctx.recoveries,
+    row: {
+      action: null,
+      errors: events.filter((event) => event.error === true).length,
+      lastAction: lastActionOf(events),
+      liveness,
+      paneFresh: false,
+      thinking: false,
+      usage,
+    },
+    summaryCtx: {
+      agent: info.agent,
+      lastActions: events.slice(-SUMMARY_ACTIONS).map(eventLabel),
+      paneText: "[tmux control unavailable; pane evidence is stale]",
+    },
   };
 };
 
@@ -3996,7 +4112,8 @@ export const createGovernessRuntimeAdapter = (
   config: GovernessConfig,
   deps: GovernessDeps,
   info: GovernessAgentInfo,
-  displayState?: string
+  displayState?: string,
+  observedPaneCommand?: string
 ): GovernessRuntimeAdapter => {
   const deliver = async (
     control: Parameters<GovernessRuntimeAdapter["sendControl"]>[0],
@@ -4094,7 +4211,8 @@ export const createGovernessRuntimeAdapter = (
       );
     },
     observe: () => {
-      const evidence = deps.paneCommand?.(info.pane) ?? "unknown";
+      const evidence =
+        observedPaneCommand ?? deps.paneCommand?.(info.pane) ?? "unknown";
       const alive = !agentHasExited(info.agent, evidence);
       return Promise.resolve({
         alive,
@@ -5347,15 +5465,86 @@ export const governessTick = async (
   const summaryCtxs: SummaryAgentContext[] = [];
   const usageLimits = await deps.readUsageLimits(config).catch(() => undefined);
 
+  const paneTexts = new Map<Agent, string>();
+  let paneCommands: Partial<Record<Agent, string>> = {};
+  let tmuxControlError: TmuxControlUnavailableError | undefined;
   for (const info of config.agents) {
-    const result = await processAgent(info, states, config, deps, {
+    try {
+      paneTexts.set(info.agent, deps.capturePane(info.pane));
+    } catch (error) {
+      if (!isTmuxControlUnavailableError(error)) {
+        throw error;
+      }
+      tmuxControlError = error;
+      break;
+    }
+  }
+  if (!tmuxControlError && deps.readPaneCommands) {
+    try {
+      paneCommands = deps.readPaneCommands(config.agents);
+      const missing = config.agents.find(
+        (info) => paneCommands[info.agent] === undefined
+      );
+      if (missing) {
+        throw new TmuxControlUnavailableError([
+          "list-panes",
+          "-t",
+          config.session,
+        ]);
+      }
+    } catch (error) {
+      if (!isTmuxControlUnavailableError(error)) {
+        throw error;
+      }
+      tmuxControlError = error;
+    }
+  }
+  const tmuxControlAvailable = tmuxControlError === undefined;
+  if (tmuxControlError) {
+    const previous = runStateIn.tmuxControl;
+    runState.tmuxControl = {
+      lastFailureAtMs: nowMs,
+      reason: tmuxControlError.args[0] ?? "control",
+      unavailableSinceMs: previous?.unavailableSinceMs ?? nowMs,
+    };
+    if (!previous) {
+      deps.appendLog(config.logFile, {
+        at: nowIso,
+        error: tmuxControlError.message,
+        event: "tmux-control-unavailable",
+      });
+    }
+  } else {
+    const previous = runStateIn.tmuxControl;
+    if (previous) {
+      deps.appendLog(config.logFile, {
+        at: nowIso,
+        event: "tmux-control-restored",
+        unavailableMs: Math.max(0, nowMs - previous.unavailableSinceMs),
+      });
+    }
+    runState.tmuxControl = undefined;
+  }
+
+  for (const info of config.agents) {
+    const context = {
       history,
       nowIso,
       nowMs,
       recoveries,
       tick: runState.tick,
       usageLimits,
-    });
+    };
+    const result = tmuxControlAvailable
+      ? await processAgent(
+          info,
+          states,
+          config,
+          deps,
+          context,
+          paneTexts.get(info.agent) ?? ""
+        )
+      : processAgentWithoutPane(info, states, deps, context);
     history = result.history;
     recoveries = result.recoveries;
     llmUsage = addLocalLlmUsage(llmUsage, result.llmUsage);
@@ -5375,7 +5564,7 @@ export const governessTick = async (
   }
 
   const roleTransitions =
-    runState.exitControl.mode === "idle"
+    tmuxControlAvailable && runState.exitControl.mode === "idle"
       ? await handleRoleTransitions(rows, config, deps, runState, nowIso)
       : { llmUsageByJudge: emptyLocalLlmUsageByJudge() };
   llmUsageByJudge = addLocalLlmUsageByJudge(
@@ -5386,8 +5575,10 @@ export const governessTick = async (
     llmUsage,
     sumLocalLlmUsageByJudge(roleTransitions.llmUsageByJudge)
   );
-  accumulateStats(runState.stats, rows, config.tickMs);
-  applyPaneLabels(config, deps, rows, runState);
+  if (tmuxControlAvailable) {
+    accumulateStats(runState.stats, rows, config.tickMs);
+    applyPaneLabels(config, deps, rows, runState);
+  }
 
   // The session summary is generated off the tick (see runGoverness) so a slow
   // local-LLM call never freezes the board; here we just render runState.summary
@@ -5399,14 +5590,18 @@ export const governessTick = async (
   runState.llmTokens = llmUsage.totalTokens;
 
   const totalCost = rows.reduce((sum, row) => sum + row.usage.costUsd, 0);
-  const waitingForYou = updateBothIdle(runState, rows, nowMs);
-  for (const event of collectEscalations(
-    runState,
-    waitingForYou,
-    totalCost,
-    config
-  )) {
-    deps.notify(config.ntfyUrl, event);
+  const waitingForYou = tmuxControlAvailable
+    ? updateBothIdle(runState, rows, nowMs)
+    : { ask: "", confirmed: false, ms: 0 };
+  if (tmuxControlAvailable) {
+    for (const event of collectEscalations(
+      runState,
+      waitingForYou,
+      totalCost,
+      config
+    )) {
+      deps.notify(config.ntfyUrl, event);
+    }
   }
 
   const uptimeMs = config.createdAt
@@ -5449,6 +5644,7 @@ export const governessTick = async (
     stats: runState.stats,
     summary: runState.summary,
     tickMs: config.tickMs,
+    tmuxControl: runState.tmuxControl,
     uptimeMs,
     ...(config.runDir
       ? {
@@ -5472,7 +5668,16 @@ export const governessTick = async (
       agentStates[info.agent] = rowState(row);
     }
   });
-  return { agentStates, board, llmOffline, runState, states, summaryCtxs };
+  return {
+    agentStates,
+    board,
+    llmOffline,
+    paneCommands,
+    runState,
+    states,
+    summaryCtxs,
+    tmuxControlAvailable,
+  };
 };
 
 const runBoundedTmux = (
@@ -5515,6 +5720,35 @@ const bestEffortTmux = (args: string[]): void => {
       throw error;
     }
   }
+};
+
+const readPaneCommandsFromTmux = (
+  panes: GovernessAgentInfo[]
+): Partial<Record<Agent, string>> => {
+  const result = runBoundedTmux(
+    [
+      "list-panes",
+      "-a",
+      "-F",
+      "#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_dead}:#{pane_current_command}",
+    ],
+    { stdout: "pipe" }
+  );
+  if (result.exitCode !== 0) {
+    return Object.fromEntries(panes.map((info) => [info.agent, "1:missing"]));
+  }
+  const probes = new Map<string, string>();
+  for (const line of decode(result.stdout).split("\n")) {
+    const [paneId, paneTarget, probe] = line.split("\t");
+    if (!(paneId && paneTarget && probe)) {
+      continue;
+    }
+    probes.set(paneId, probe);
+    probes.set(paneTarget, probe);
+  }
+  return Object.fromEntries(
+    panes.map((info) => [info.agent, probes.get(info.pane) ?? "1:missing"])
+  );
 };
 
 // Tally bridge messages from the run transcript, keyed by sender then recipient.
@@ -5597,6 +5831,7 @@ export const loadGovernessState = (
       typeof parsed.driverLease.holder === "string"
         ? parsed.driverLease
         : undefined;
+    const tmuxControl = readTmuxControlState(parsed.tmuxControl);
     return {
       governessMessages: readCountMap(parsed.governessMessages),
       bothIdleSince:
@@ -5637,6 +5872,7 @@ export const loadGovernessState = (
       summaryTick:
         typeof parsed.summaryTick === "number" ? parsed.summaryTick : -1,
       tick: typeof parsed.tick === "number" ? parsed.tick : 0,
+      ...(tmuxControl ? { tmuxControl } : {}),
       waitingAsk:
         typeof parsed.waitingAsk === "string" ? parsed.waitingAsk : "",
       waitingConfirmed: parsed.waitingConfirmed === true,
@@ -5714,6 +5950,25 @@ const sendGovernessBridgeMessage = async (
 let governessAlternateScreenStarted = false;
 let previousGovernessFrame = "";
 
+export const governessFrameDelta = (previous: string, next: string): string => {
+  if (previous === next) {
+    return "";
+  }
+  const previousLines = previous.split("\n");
+  const nextLines = next.split("\n");
+  const lineCount = Math.max(previousLines.length, nextLines.length);
+  const updates: string[] = [];
+  for (let index = 0; index < lineCount; index += 1) {
+    const before = previousLines[index] ?? "";
+    const after = nextLines[index] ?? "";
+    if (before === after) {
+      continue;
+    }
+    updates.push(`\x1b[${index + 1};1H\x1b[2K${after}`);
+  }
+  return `${updates.join("")}\x1b[H`;
+};
+
 const renderDefaultGovernessFrame = (text: string): void => {
   if (process.stdout.isTTY && !governessAlternateScreenStarted) {
     process.stdout.write("\x1b[?1049h\x1b[?25l");
@@ -5725,7 +5980,11 @@ const renderDefaultGovernessFrame = (text: string): void => {
   if (text === previousGovernessFrame) {
     return;
   }
-  process.stdout.write(`\x1b[2J\x1b[H${text}`);
+  process.stdout.write(
+    previousGovernessFrame
+      ? governessFrameDelta(previousGovernessFrame, text)
+      : `\x1b[2J\x1b[H${text}`
+  );
   previousGovernessFrame = text;
 };
 
@@ -5920,6 +6179,7 @@ export const defaultGovernessDeps = (
   readHumanMessages: (agent, sessionRef, codexHome) =>
     readHumanMessages(agent, sessionRef, codexHome),
   readLocalLlmRuntime: (input) => readLocalLlmRuntime(input),
+  readPaneCommands: (panes) => readPaneCommandsFromTmux(panes),
   readUsage: (agent, sessionRef, codexHome) =>
     readAgentUsage(agent, sessionRef, codexHome),
   readUsageLimits: (config) =>
@@ -6376,8 +6636,9 @@ export const runGoverness = async (
   const keyInput = deps.openKeyInput?.();
   let pendingKey = keyInput?.next();
   let exitMenuOpen = false;
+  let currentTmuxControlAvailable = runState.tmuxControl === undefined;
   const paneCommand = (pane: string): string | undefined =>
-    deps.paneCommand?.(pane);
+    currentTmuxControlAvailable ? deps.paneCommand?.(pane) : undefined;
   const renderExit = (board: string): void => {
     deps.render(
       renderExitControl(
@@ -6396,6 +6657,10 @@ export const runGoverness = async (
     agentStates: Partial<Record<Agent, string>>,
     board: string
   ): Promise<boolean> => {
+    if (!currentTmuxControlAvailable) {
+      renderExit(board);
+      return false;
+    }
     const stopped = await driveHandoverControl(
       config,
       deps,
@@ -6421,9 +6686,6 @@ export const runGoverness = async (
         });
         return;
       }
-      // Pane processes and tmux clients can overwrite the native title. Keep
-      // both the visible border label and pane_title pinned to this loop.
-      applyGovernessPaneIdentity(config, deps);
       // Fold any completed background work in before rendering this tick.
       const pendingLlmUsageByJudge = addLocalLlmUsageByJudge(
         addLocalLlmUsageByJudge(
@@ -6489,106 +6751,110 @@ export const runGoverness = async (
         continue;
       }
       runState = result.runState;
+      currentTmuxControlAvailable = result.tmuxControlAvailable;
       const lifecycleAt = new Date(deps.now()).toISOString();
-      const hooksByAgent: Partial<Record<Agent, HookEvent[]>> = {};
-      for (const info of config.agents) {
-        const hooks = deps.readHooks(info.hookFile);
-        hooksByAgent[info.agent] = hooks;
-        const observation = await createGovernessRuntimeAdapter(
-          config,
-          deps,
-          info,
-          result.agentStates[info.agent]
-        ).observe();
-        const previous = runState.lifecycleEvents[info.agent];
-        const event = lifecycleEventFromEvidence(previous, {
-          agent: info.agent,
-          at: lifecycleAt,
-          epoch: acquiredEpoch,
-          fallback: observation,
-          hooks,
-        });
-        if (event) {
-          runState.lifecycleEvents[info.agent] = event;
-        }
-        const runtimeProbe = {
-          lifecycle: runState.lifecycleEvents[info.agent],
-          observation,
-        };
-        recordGovernessObservation(config, deps, {
-          agent: info.agent,
-          idempotencyKey: `${acquiredEpoch}:runtime-probe:${info.agent}:${runState.tick}`,
-          payload: JSON.stringify({ ...runtimeProbe, tick: runState.tick }),
-          semanticPayload: JSON.stringify(runtimeProbe),
-          stream: `runtime-probe:${info.agent}`,
-        });
-      }
       const holder =
         runState.roles.currentDriver ??
         runState.roles.initialDriver ??
         config.initialDriver ??
         config.agents[0]?.agent;
-      const fullSnapshot: GovernessObservationSnapshot = {
-        agents: { ...runState.lifecycleEvents },
-        at: lifecycleAt,
-        controls: config.journalFile
-          ? readPendingGovernessControlHistory(config.journalFile)
-          : [],
-        epoch: acquiredEpoch,
-        ...(holder ? { holder } : {}),
-        hooks: hooksByAgent,
-        tick: runState.tick,
-      };
-      const cycleDecisions = decideGovernessCycle(fullSnapshot);
-      const snapshot = compactGovernessCycleSnapshot(
-        fullSnapshot,
-        cycleDecisions
-      );
-      executeGovernessCycle(cycleDecisions, {
-        renewDriverLease: (leaseHolder) => {
-          runState.driverLease = {
+      if (result.tmuxControlAvailable) {
+        const hooksByAgent: Partial<Record<Agent, HookEvent[]>> = {};
+        for (const info of config.agents) {
+          const hooks = deps.readHooks(info.hookFile);
+          hooksByAgent[info.agent] = hooks;
+          const observation = await createGovernessRuntimeAdapter(
+            config,
+            deps,
+            info,
+            result.agentStates[info.agent],
+            result.paneCommands[info.agent]
+          ).observe();
+          const previous = runState.lifecycleEvents[info.agent];
+          const event = lifecycleEventFromEvidence(previous, {
+            agent: info.agent,
+            at: lifecycleAt,
             epoch: acquiredEpoch,
-            expiresAt: new Date(
-              deps.now() + Math.max(config.tickMs * 3, 60_000)
-            ).toISOString(),
-            holder: leaseHolder,
-          };
-        },
-        transitionControl: (decision) => {
-          if (!config.journalFile) {
-            return;
+            fallback: observation,
+            hooks,
+          });
+          if (event) {
+            runState.lifecycleEvents[info.agent] = event;
           }
-          transitionGovernessControl(
-            config.journalFile,
-            decision.controlId,
-            decision.phase,
-            decision.at,
-            undefined,
-            { evidence: decision.evidence }
-          );
-        },
-      });
-      const cycleRecord = {
-        decisions: cycleDecisions,
-        kind: "governess-cycle" as const,
-        snapshot,
-      };
-      recordGovernessObservation(config, deps, {
-        idempotencyKey: `${acquiredEpoch}:cycle:${runState.tick}`,
-        payload: JSON.stringify(cycleRecord),
-        semanticPayload: JSON.stringify({
-          decisions: cycleDecisions,
-          kind: cycleRecord.kind,
-          snapshot: {
-            agents: snapshot.agents,
-            controls: snapshot.controls,
-            epoch: snapshot.epoch,
-            holder: snapshot.holder,
-            hooks: snapshot.hooks,
+          const runtimeProbe = {
+            lifecycle: runState.lifecycleEvents[info.agent],
+            observation,
+          };
+          recordGovernessObservation(config, deps, {
+            agent: info.agent,
+            idempotencyKey: `${acquiredEpoch}:runtime-probe:${info.agent}:${runState.tick}`,
+            payload: JSON.stringify({ ...runtimeProbe, tick: runState.tick }),
+            semanticPayload: JSON.stringify(runtimeProbe),
+            stream: `runtime-probe:${info.agent}`,
+          });
+        }
+        const fullSnapshot: GovernessObservationSnapshot = {
+          agents: { ...runState.lifecycleEvents },
+          at: lifecycleAt,
+          controls: config.journalFile
+            ? readPendingGovernessControlHistory(config.journalFile)
+            : [],
+          epoch: acquiredEpoch,
+          ...(holder ? { holder } : {}),
+          hooks: hooksByAgent,
+          tick: runState.tick,
+        };
+        const cycleDecisions = decideGovernessCycle(fullSnapshot);
+        const snapshot = compactGovernessCycleSnapshot(
+          fullSnapshot,
+          cycleDecisions
+        );
+        executeGovernessCycle(cycleDecisions, {
+          renewDriverLease: (leaseHolder) => {
+            runState.driverLease = {
+              epoch: acquiredEpoch,
+              expiresAt: new Date(
+                deps.now() + Math.max(config.tickMs * 3, 60_000)
+              ).toISOString(),
+              holder: leaseHolder,
+            };
           },
-        }),
-        stream: "governess-cycle",
-      });
+          transitionControl: (decision) => {
+            if (!config.journalFile) {
+              return;
+            }
+            transitionGovernessControl(
+              config.journalFile,
+              decision.controlId,
+              decision.phase,
+              decision.at,
+              undefined,
+              { evidence: decision.evidence }
+            );
+          },
+        });
+        const cycleRecord = {
+          decisions: cycleDecisions,
+          kind: "governess-cycle" as const,
+          snapshot,
+        };
+        recordGovernessObservation(config, deps, {
+          idempotencyKey: `${acquiredEpoch}:cycle:${runState.tick}`,
+          payload: JSON.stringify(cycleRecord),
+          semanticPayload: JSON.stringify({
+            decisions: cycleDecisions,
+            kind: cycleRecord.kind,
+            snapshot: {
+              agents: snapshot.agents,
+              controls: snapshot.controls,
+              epoch: snapshot.epoch,
+              holder: snapshot.holder,
+              hooks: snapshot.hooks,
+            },
+          }),
+          stream: "governess-cycle",
+        });
+      }
       const utilityPeer = config.agents.find(
         (info) => info.agent !== holder
       )?.agent;
@@ -6649,6 +6915,7 @@ export const runGoverness = async (
       waitingAsk = runState.waitingAsk;
 
       if (
+        result.tmuxControlAvailable &&
         runState.exitControl.mode === "idle" &&
         !summaryInFlight &&
         (summaryDue(summaryText, summaryTick, runState.tick) ||
@@ -6684,6 +6951,7 @@ export const runGoverness = async (
       // slow cadence as the summary. The composed title (glyph + agent + label)
       // is applied every tick inside governessTick; only the label lags.
       if (
+        result.tmuxControlAvailable &&
         runState.exitControl.mode === "idle" &&
         !paneLabelInFlight &&
         paneLabelsDue(paneLabelTick, runState.tick)
@@ -6735,6 +7003,7 @@ export const runGoverness = async (
       } else if (idleSince === 0) {
         assessedForIdleSince = 0;
       } else if (
+        result.tmuxControlAvailable &&
         !waitingAssessInFlight &&
         assessedForIdleSince !== idleSince &&
         deps.now() - idleSince >= BOTH_IDLE_ASSESS_MS
@@ -6764,7 +7033,10 @@ export const runGoverness = async (
           });
       }
 
-      if (await advanceHandover(result.agentStates, result.board)) {
+      if (
+        result.tmuxControlAvailable &&
+        (await advanceHandover(result.agentStates, result.board))
+      ) {
         return;
       }
 
@@ -6805,7 +7077,10 @@ export const runGoverness = async (
         } else {
           beginHandover(runState, deps.now());
         }
-        if (await advanceHandover(result.agentStates, result.board)) {
+        if (
+          result.tmuxControlAvailable &&
+          (await advanceHandover(result.agentStates, result.board))
+        ) {
           return;
         }
       }
