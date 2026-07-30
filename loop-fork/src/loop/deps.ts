@@ -1,4 +1,4 @@
-import { parseArgs } from "./args";
+import { parseArgs, renderImmediateInfo } from "./args";
 import { gcStaleClaudeBridgeRegistrations } from "./claude-config-gc";
 import { checkGitState } from "./git";
 import { runLoop } from "./main";
@@ -16,6 +16,7 @@ export const cliDeps = {
   gcStaleClaudeBridgeRegistrations,
   maybeEnterWorktree,
   parseArgs,
+  renderImmediateInfo,
   resolveTask,
   runInTmux,
   runLoop,

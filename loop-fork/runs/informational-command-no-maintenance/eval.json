@@ -7,20 +7,21 @@
   "dimensions": {
     "focused": {
       "status": "pass",
-      "method": "supported single-file parser and CLI test runners",
-      "reason": "98 focused cases pass with zero failures"
+      "method": "supported single-file parser, CLI, and tmux test runners",
+      "reason": "99 parser/CLI cases and 71 paired tmux lifecycle cases pass with zero failures"
     },
     "full": {
       "status": "pass",
-      "method": "scripts/verify.sh through the pending eval gate",
-      "reason": "lint, typecheck, build, and every sequential test pass"
+      "method": "lint, defined source typecheck, compiled build, and bun run test:ci",
+      "reason": "all static checks and every sequential test file pass with zero baseline failures"
     },
     "independent_review": {
       "status": "pending"
     },
     "isolated_smoke": {
       "status": "held-run-101-live",
-      "static_validation": "bash -n and git diff --check pass"
+      "static_validation": "bash -n and git diff --check pass",
+      "reason": "fixture seeds isolated update throttling, verifies complete source prompt bytes above 8 KiB, and requires failed/failed on missing workspace"
     }
   }
 }

@@ -103,6 +103,14 @@ test.each([
   expect(findImmediateInfoRequest([...argv])).toBeUndefined();
 });
 
+test("findImmediateInfoRequest is independent of invalid ambient config", () => {
+  process.env.LOOP_CAVEMAN_MODE = "banana";
+  process.env.LOOP_HELPER_CAVEMAN_MODE = "invalid";
+
+  expect(findImmediateInfoRequest(["collab", "--help"])).toBe("help");
+  expect(findImmediateInfoRequest(["upgrade", "--version"])).toBe("version");
+});
+
 test("parseArgs returns expected defaults when proof is omitted", () => {
   clearModelEnv();
   Reflect.deleteProperty(process.env, "LOOP_CAVEMAN_MODE");

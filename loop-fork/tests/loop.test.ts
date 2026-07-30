@@ -1,4 +1,5 @@
 import { afterEach, expect, mock, test } from "bun:test";
+import type { ImmediateInfoRequest } from "../src/loop/args";
 import type { Options } from "../src/loop/types";
 
 const makeOptions = (): Options => ({
@@ -37,6 +38,7 @@ interface CliModuleDeps {
   gcStaleClaudeBridgeRegistrations?: () => unknown;
   maybeEnterWorktree?: (opts: Options) => void | Promise<void>;
   parseArgs?: (argv: string[]) => Options;
+  renderImmediateInfo?: (request: ImmediateInfoRequest) => void;
   resolveTask?: (opts: Options) => Promise<string>;
   runInTmux?: (
     argv: string[],
@@ -72,6 +74,9 @@ const loadRunCli = async (
     deps.maybeEnterWorktree ?? (() => undefined)
   );
   const parseArgsMock = mock(deps.parseArgs ?? (() => makeOptions()));
+  const renderImmediateInfoMock = mock(
+    deps.renderImmediateInfo ?? (() => undefined)
+  );
   const resolveTaskMock = mock(deps.resolveTask ?? (async () => "task"));
   const runInTmuxMock = mock(deps.runInTmux ?? (() => false));
   const runLoopMock = mock(deps.runLoop ?? (async () => undefined));
@@ -105,6 +110,7 @@ const loadRunCli = async (
       gcStaleClaudeBridgeRegistrations: gcStaleClaudeBridgeRegistrationsMock,
       maybeEnterWorktree: maybeEnterWorktreeMock,
       parseArgs: parseArgsMock,
+      renderImmediateInfo: renderImmediateInfoMock,
       resolveTask: resolveTaskMock,
       runInTmux: runInTmuxMock,
       runLoop: runLoopMock,
@@ -143,6 +149,7 @@ const loadRunCli = async (
     handleManualMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
+    renderImmediateInfoMock,
     resolveTaskMock,
     awaitAutoUpdateCheckMock,
     runCli,
@@ -637,27 +644,28 @@ test("runCli returns early when handleManualUpdateCommand returns true", async (
 });
 
 test.each([
-  ["top-level long help", ["--help"]],
-  ["top-level short help", ["-h"]],
-  ["top-level long version", ["--version"]],
-  ["top-level short version", ["-v"]],
-  ["incident command", ["collab", "--help"]],
-  ["positional short help", ["collab", "-h"]],
-  ["positional long version", ["collab", "--version"]],
-  ["positional short version", ["collab", "-v"]],
-  ["dashboard help", ["dashboard", "--help"]],
-  ["manual update help", ["update", "--help"]],
-  ["manual upgrade version", ["upgrade", "--version"]],
-  ["governess help", ["governess", "--help"]],
-  ["governess doctor help", ["governess", "doctor", "42", "--help"]],
-  ["governess replay help", ["governess", "replay", "42", "--help"]],
+  ["top-level long help", ["--help"], "help"],
+  ["top-level short help", ["-h"], "help"],
+  ["top-level long version", ["--version"], "version"],
+  ["top-level short version", ["-v"], "version"],
+  ["incident command", ["collab", "--help"], "help"],
+  ["positional short help", ["collab", "-h"], "help"],
+  ["positional long version", ["collab", "--version"], "version"],
+  ["positional short version", ["collab", "-v"], "version"],
+  ["dashboard help", ["dashboard", "--help"], "help"],
+  ["manual update help", ["update", "--help"], "help"],
+  ["manual upgrade version", ["upgrade", "--version"], "version"],
+  ["governess help", ["governess", "--help"], "help"],
+  ["governess doctor help", ["governess", "doctor", "42", "--help"], "help"],
+  ["governess replay help", ["governess", "replay", "42", "--help"], "help"],
   [
     "governess explain version",
     ["governess", "explain", "42", "control-1", "--version"],
+    "version",
   ],
-  ["hidden helper help", ["__governess-pane-died", "--help"]],
-  ["only-mode help", ["--codex-only", "--help"]],
-] as const)("runCli handles %s before every startup action", async (_label, argv) => {
+  ["hidden helper help", ["__governess-pane-died", "--help"], "help"],
+  ["only-mode help", ["--codex-only", "--help"], "help"],
+] as const)("runCli handles %s before every startup action", async (_label, argv, expected) => {
   const {
     applyStagedMock,
     awaitAutoUpdateCheckMock,
@@ -670,6 +678,7 @@ test.each([
     handleManualMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
+    renderImmediateInfoMock,
     resolveTaskMock,
     runCli,
     runInTmuxMock,
@@ -682,7 +691,8 @@ test.each([
 
   await runCli([...argv]);
 
-  expect(parseArgsMock).toHaveBeenCalledWith([...argv]);
+  expect(renderImmediateInfoMock).toHaveBeenCalledWith(expected);
+  expect(parseArgsMock).not.toHaveBeenCalled();
   expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
   expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
   expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();

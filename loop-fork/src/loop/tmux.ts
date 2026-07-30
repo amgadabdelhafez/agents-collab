@@ -68,6 +68,7 @@ import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
 import {
+  isActiveRunState,
   type RunLaunchCharter,
   type RunManifest,
   type RunStorage,
@@ -84,9 +85,10 @@ import {
 import {
   boundedTmuxOptions,
   TMUX_CONTROL_TIMEOUT_MS,
+  type TmuxLiveness,
   tmuxCommandTimedOut,
 } from "./tmux-control";
-import type { Agent, Options } from "./types";
+import type { Agent, Options, RunLifecycleState } from "./types";
 import {
   AU_PAIR_PANE_SUBCOMMAND,
   NANNY_PANE_SUBCOMMAND,
@@ -177,6 +179,12 @@ interface TmuxDeps {
 interface PairedTmuxLaunch {
   opts: Options;
   task?: string;
+}
+
+interface StartedPairedSession {
+  preserveUnknownStart: () => void;
+  session: string;
+  terminalizeFailedStart: () => Promise<RunLifecycleState | "undurable">;
 }
 
 const quoteShellArg = (value: string): string =>
@@ -858,7 +866,8 @@ const cwdMatchesRunId = (cwd: string, runId: string): boolean => {
 
 const MAX_SESSION_ATTEMPTS = 10_000;
 const SESSION_CONFLICT_RE = /duplicate session|already exists/i;
-const NO_SESSION_RE = /no sessions|couldn't find session|session .* not found/i;
+const NO_SESSION_RE =
+  /no server running|no sessions|can't find session|couldn't find session|session.*not found/i;
 const LOOP_WORKTREE_SUFFIX_RE = /-loop-[a-z0-9][a-z0-9_-]*$/i;
 const ENV_COMMENT_RE = /\s+#.*$/;
 const LINE_SPLIT_RE = /\r?\n/;
@@ -996,10 +1005,51 @@ const sessionExists = (
   return result.exitCode === 0;
 };
 
+interface HandoffSessionProbe {
+  liveness: TmuxLiveness;
+  result?: SpawnResult;
+}
+
+const probeHandoffSession = (
+  session: string,
+  spawnFn: TmuxDeps["spawn"]
+): HandoffSessionProbe => {
+  try {
+    const result = spawnFn(["tmux", "has-session", "-t", session]);
+    if (result.timedOut) {
+      return { liveness: "unknown", result };
+    }
+    if (result.exitCode === 0) {
+      return { liveness: "live", result };
+    }
+    return {
+      liveness: NO_SESSION_RE.test(result.stderr) ? "dead" : "unknown",
+      result,
+    };
+  } catch {
+    return { liveness: "unknown" };
+  }
+};
+
+const unknownHandoffLivenessError = (
+  session: string,
+  probe: HandoffSessionProbe
+): Error => {
+  if (probe.result?.timedOut) {
+    return new Error(
+      `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while checking session "${session}"`
+    );
+  }
+  const detail = probe.result?.stderr.trim();
+  return new Error(
+    `tmux session "${session}" liveness is unknown; refusing handoff or terminalization${detail ? `: ${detail}` : "."}`
+  );
+};
+
 const keepSessionAttached = (
   session: string,
   spawnFn: TmuxDeps["spawn"]
-): void => {
+): SpawnResult =>
   spawnFn([
     "tmux",
     "set-window-option",
@@ -1008,15 +1058,27 @@ const keepSessionAttached = (
     "remain-on-exit",
     "on",
   ]);
-};
 
 const isSessionGone = (
   session: string,
   error: unknown,
   spawnFn: TmuxDeps["spawn"]
-): boolean =>
-  !sessionExists(session, spawnFn) ||
-  (error instanceof Error && NO_SESSION_RE.test(error.message));
+): boolean => {
+  const probe = probeHandoffSession(session, spawnFn);
+  if (probe.liveness === "dead") {
+    return true;
+  }
+  if (probe.liveness === "live") {
+    return false;
+  }
+  if (error instanceof Error && NO_SESSION_RE.test(error.message)) {
+    return true;
+  }
+  if (probe.liveness === "unknown") {
+    throw unknownHandoffLivenessError(session, probe);
+  }
+  return false;
+};
 
 const buildSessionCommand = (
   deps: TmuxDeps,
@@ -2158,7 +2220,7 @@ const startPairedControlPanes = (
 const startPairedSession = async (
   deps: TmuxDeps,
   launch: PairedTmuxLaunch
-): Promise<string> => {
+): Promise<StartedPairedSession> => {
   const { manifest: preparedManifest, storage } = deps.preparePairedRun(
     launch.opts,
     deps.cwd
@@ -2169,7 +2231,91 @@ const startPairedSession = async (
   const primaryAgent = launch.opts.agent;
   const secondaryAgent = pairedPeer(launch.opts);
   const paneAgents = resolveTmuxPaneAgents(primaryAgent, secondaryAgent);
-  if (sessionExists(session, deps.spawn)) {
+  const claudeChannelServer = [primaryAgent, secondaryAgent].includes("claude")
+    ? resolveClaudeChannelServerName(
+        storage.runId,
+        storage.repoId,
+        manifest.claudeChannelServer
+      )
+    : undefined;
+  let codexAppServerPid: number | undefined;
+  let codexRemoteUrl = "";
+  let ownedPersistentTransport = false;
+  let persistentCleanupCompleted = false;
+  let terminalizationResult: RunLifecycleState | undefined;
+  const preserveUnknownStart = (): void => {
+    if (!ownedPersistentTransport) {
+      return;
+    }
+    deps.releasePersistentCodexSession();
+    ownedPersistentTransport = false;
+  };
+  const terminalizeFailedStart = async (): Promise<
+    RunLifecycleState | "undurable"
+  > => {
+    if (terminalizationResult) {
+      return terminalizationResult;
+    }
+    if (ownedPersistentTransport && !persistentCleanupCompleted) {
+      try {
+        await withTimeout(
+          deps.closePersistentCodexSession(),
+          FAILED_START_CLOSE_TIMEOUT_MS,
+          "Codex app-server failed-start cleanup timed out"
+        );
+        persistentCleanupCompleted = true;
+      } catch (closeError) {
+        const detail =
+          closeError instanceof Error ? closeError.message : String(closeError);
+        deps.log(
+          `[loop] ${detail}; startup GC will retry exact owned cleanup.`
+        );
+      }
+    }
+    cleanupFailedPairedSessionStart(
+      deps,
+      session,
+      claudeChannelServer,
+      storage.runId
+    );
+    try {
+      const updated = deps.updateRunManifest(
+        storage.manifestPath,
+        (current) => {
+          if (!current) {
+            return undefined;
+          }
+          const clearedOwnership =
+            ownedPersistentTransport && persistentCleanupCompleted
+              ? {
+                  codexAppServerPid: undefined,
+                  codexRemoteUrl: undefined,
+                }
+              : {};
+          if (!isActiveRunState(current.state)) {
+            return { ...current, ...clearedOwnership };
+          }
+          return setRunManifestState(
+            { ...current, ...clearedOwnership },
+            "failed"
+          );
+        }
+      );
+      if (!updated || isActiveRunState(updated.state)) {
+        return "undurable";
+      }
+      terminalizationResult = updated.state;
+      return terminalizationResult;
+    } catch {
+      // Preserve the original launch error; startup GC reads durable ownership.
+      return "undurable";
+    }
+  };
+  const existingSession = probeHandoffSession(session, deps.spawn);
+  if (existingSession.liveness === "unknown") {
+    throw unknownHandoffLivenessError(session, existingSession);
+  }
+  if (existingSession.liveness === "live") {
     bindPairedSessionIdentity(
       deps,
       storage,
@@ -2178,7 +2324,7 @@ const startPairedSession = async (
       paneAgents,
       primaryAgent
     );
-    return session;
+    return { preserveUnknownStart, session, terminalizeFailedStart };
   }
   // The session name is deterministic and already reserved by this launch
   // path. Persist it before hooks, persistent transports, charter writes, or
@@ -2221,8 +2367,6 @@ const startPairedSession = async (
     (a) => a === "claude" || a === "codex"
   );
   let claudeSessionId = "";
-  let codexAppServerPid: number | undefined;
-  let codexRemoteUrl = "";
   let codexThreadId = "";
   let codexProxyUrl = "";
   if (needsPersistent) {
@@ -2279,14 +2423,8 @@ const startPairedSession = async (
         );
       }
     }
+    ownedPersistentTransport = Boolean(codexAppServerPid || codexRemoteUrl);
   }
-  const claudeChannelServer = [primaryAgent, secondaryAgent].includes("claude")
-    ? resolveClaudeChannelServerName(
-        storage.runId,
-        storage.repoId,
-        manifest.claudeChannelServer
-      )
-    : undefined;
   const claudeMcpConfigPath = claudeChannelServer
     ? (launch.opts.claudeMcpConfigPath ??
       join(storage.runDir, "claude-mcp.json"))
@@ -2456,52 +2594,14 @@ const startPairedSession = async (
         ? livePaneTargets.left
         : livePaneTargets.right;
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
-    return session;
+    return { preserveUnknownStart, session, terminalizeFailedStart };
   } catch (error: unknown) {
-    const hadPersistentOwnership = Boolean(codexAppServerPid || codexRemoteUrl);
-    let persistentClosed = !hadPersistentOwnership;
-    if (hadPersistentOwnership) {
-      try {
-        await withTimeout(
-          deps.closePersistentCodexSession(),
-          FAILED_START_CLOSE_TIMEOUT_MS,
-          "Codex app-server failed-start cleanup timed out"
-        );
-        persistentClosed = true;
-      } catch (closeError) {
-        const detail =
-          closeError instanceof Error ? closeError.message : String(closeError);
-        deps.log(
-          `[loop] ${detail}; startup GC will retry exact owned cleanup.`
-        );
-      }
+    const liveness = probeHandoffSession(session, deps.spawn);
+    if (liveness.liveness === "unknown") {
+      preserveUnknownStart();
+      throw unknownHandoffLivenessError(session, liveness);
     }
-    cleanupFailedPairedSessionStart(
-      deps,
-      session,
-      claudeChannelServer,
-      storage.runId
-    );
-    try {
-      deps.updateRunManifest(storage.manifestPath, (current) =>
-        current
-          ? setRunManifestState(
-              {
-                ...current,
-                ...(persistentClosed
-                  ? {
-                      codexAppServerPid: undefined,
-                      codexRemoteUrl: undefined,
-                    }
-                  : {}),
-              },
-              "failed"
-            )
-          : undefined
-      );
-    } catch {
-      // Preserve the original launch error; startup GC reads durable ownership.
-    }
+    await terminalizeFailedStart();
     throw error;
   }
 };
@@ -2776,10 +2876,21 @@ export const runInTmux = async (
     Boolean(launch?.opts.pairedMode);
   deps.log(tmuxStartupMessage(pairedLaunch));
 
-  const session =
-    pairedLaunch && launch
-      ? await startPairedSession(deps, launch)
-      : findSession(argv, deps);
+  const startedPairedSession =
+    pairedLaunch && launch ? await startPairedSession(deps, launch) : undefined;
+  const session = startedPairedSession?.session ?? findSession(argv, deps);
+  const sessionExistsForHandoff = (): boolean => {
+    try {
+      const probe = probeHandoffSession(session, deps.spawn);
+      if (probe.liveness === "unknown") {
+        throw unknownHandoffLivenessError(session, probe);
+      }
+      return probe.liveness === "live";
+    } catch (error) {
+      startedPairedSession?.preserveUnknownStart();
+      throw error;
+    }
+  };
 
   if (!session) {
     throw new Error(
@@ -2787,22 +2898,55 @@ export const runInTmux = async (
     );
   }
 
-  if (!sessionExists(session, deps.spawn)) {
+  if (!sessionExistsForHandoff()) {
+    await startedPairedSession?.terminalizeFailedStart();
     throw new Error(`tmux session "${session}" exited before attach.`);
   }
 
-  keepSessionAttached(session, deps.spawn);
+  let keepAttached: SpawnResult | undefined;
+  try {
+    keepAttached = keepSessionAttached(session, deps.spawn);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    deps.log(
+      `[loop] could not set remain-on-exit for tmux session "${session}": ${detail}; continuing to the required liveness probe.`
+    );
+  }
+  if (keepAttached?.timedOut) {
+    deps.log(
+      `[loop] timed out setting remain-on-exit for tmux session "${session}"; continuing to the required liveness probe.`
+    );
+  } else if (keepAttached && keepAttached.exitCode !== 0) {
+    if (!sessionExistsForHandoff()) {
+      await startedPairedSession?.terminalizeFailedStart();
+      throw new Error(`tmux session "${session}" exited before attach.`);
+    }
+    const detail = keepAttached.stderr ? `: ${keepAttached.stderr}` : "";
+    deps.log(
+      `[loop] could not set remain-on-exit for tmux session "${session}"${detail}; continuing with the live workspace.`
+    );
+  }
 
   deps.log(`[loop] started tmux session "${session}"`);
   deps.log(`[loop] attach with: tmux attach -t ${session}`);
-  const handedOff = insideTmux
-    ? true
-    : attachSessionIfInteractive(session, deps);
-  if (pairedLaunch && handedOff) {
-    if (sessionExists(session, deps.spawn)) {
+  let handedOff: boolean;
+  try {
+    handedOff = insideTmux ? true : attachSessionIfInteractive(session, deps);
+  } catch (error) {
+    startedPairedSession?.preserveUnknownStart();
+    throw error;
+  }
+  if (startedPairedSession && !handedOff) {
+    await startedPairedSession.terminalizeFailedStart();
+  }
+  if (startedPairedSession && handedOff) {
+    if (sessionExistsForHandoff()) {
       deps.releasePersistentCodexSession();
     } else {
-      await deps.closePersistentCodexSession();
+      const terminalized = await startedPairedSession.terminalizeFailedStart();
+      if (terminalized !== "completed") {
+        throw new Error(`tmux session "${session}" exited before handoff.`);
+      }
     }
   }
   return handedOff;

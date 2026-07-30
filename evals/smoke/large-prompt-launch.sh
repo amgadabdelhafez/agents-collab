@@ -36,6 +36,7 @@ FAILURE_RUN_ID="large-prompt-failure"
 INFO_RUN_ID="informational-no-maintenance"
 INFO_FIXTURE_RUN_ID="abandoned-fixture"
 CHARTER_SENTINEL="BEGIN-LARGE-CHARTER-$RANDOM-$$"
+CHARTER_TRAILING_SENTINEL="END-LARGE-CHARTER-$RANDOM-$$"
 SYSTEM_PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 SMOKE_USER="$(id -un)"
 SMOKE_SHELL="/bin/sh"
@@ -60,11 +61,13 @@ trap cleanup EXIT
 
 prepare_case() {
   local root="$1"
+  local update_cache="${root}/home/.cache/loop/update"
   mkdir -p \
     "${root}/bin" \
     "${root}/claude-config" \
     "${root}/codex-home" \
     "${root}/home" \
+    "${update_cache}" \
     "${root}/repo" \
     "${root}/tmp" \
     "${root}/tmux" \
@@ -75,11 +78,17 @@ prepare_case() {
     "${root}/claude-config" \
     "${root}/codex-home" \
     "${root}/home" \
+    "${root}/home/.cache" \
+    "${root}/home/.cache/loop" \
+    "${update_cache}" \
     "${root}/tmp" \
     "${root}/tmux" \
     "${root}/xdg-cache" \
     "${root}/xdg-config" \
     "${root}/xdg-data"
+  printf '{"lastCheck":"%s"}\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    >"${update_cache}/last-check.json"
+  chmod 600 "${update_cache}/last-check.json"
   git init -q "${root}/repo"
 }
 
@@ -201,9 +210,11 @@ assert_manifest_binding() {
   bun -e '
     import { readFileSync, realpathSync } from "node:fs";
     import { isAbsolute, join, relative, resolve, sep } from "node:path";
-    const [manifestPath, caseHome, caseRepo, repoId, runId, sentinel] = process.argv.slice(1);
+    const [manifestPath, caseHome, caseRepo, repoId, runId, promptPath, sentinel] = process.argv.slice(1);
     const runDir = join(caseHome, ".loop", "runs", repoId, runId);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const sourcePrompt = readFileSync(promptPath);
+    if (sourcePrompt.length < 8192) throw new Error(`source prompt too small: ${sourcePrompt.length}`);
     if (resolve(manifestPath) !== resolve(join(runDir, "manifest.json"))) throw new Error("manifest path escaped isolated run");
     if (realpathSync(manifest.cwd) !== realpathSync(caseRepo)) throw new Error(`manifest cwd mismatch: ${manifest.cwd}`);
     if (manifest.repoId !== repoId) throw new Error(`manifest repoId mismatch: ${manifest.repoId}`);
@@ -217,9 +228,11 @@ assert_manifest_binding() {
       if (!runRelative || isAbsolute(runRelative) || runRelative === ".." || runRelative.startsWith(`..${sep}`)) {
         throw new Error(`${agent} launch charter escaped isolated run`);
       }
-      if (!readFileSync(charterPath, "utf8").includes(sentinel)) throw new Error(`${agent} charter omitted randomized sentinel`);
+      const charter = readFileSync(charterPath);
+      if (!charter.toString("utf8").includes(sentinel)) throw new Error(`${agent} charter omitted randomized sentinel`);
+      if (charter.indexOf(sourcePrompt) === -1) throw new Error(`${agent} charter omitted or truncated source prompt`);
     }
-  ' "${manifest_path}" "${case_home}" "${case_repo}" "${repo_id}" "${run_id}" "${CHARTER_SENTINEL}"
+  ' "${manifest_path}" "${case_home}" "${case_repo}" "${repo_id}" "${run_id}" "${PROMPT_PATH}" "${CHARTER_SENTINEL}"
 }
 
 pane_for_agent() {
@@ -273,6 +286,7 @@ PROMPT_PATH="${SMOKE_ROOT}/charter.md"
 {
   printf '%s\n' "${CHARTER_SENTINEL}"
   awk 'BEGIN { for (i = 0; i < 10257; i++) printf "x" }'
+  printf '\n%s\n' "${CHARTER_TRAILING_SENTINEL}"
 } >"${PROMPT_PATH}"
 
 SUCCESS_REPO_ID="$(expected_repo_id "${SUCCESS_REPO}")"
@@ -474,9 +488,16 @@ assert_manifest_binding \
   "${FAILURE_REPO}" \
   "${FAILURE_REPO_ID}" \
   "${FAILURE_RUN_ID}"
+FAILURE_MANIFEST_STATE="$(manifest_field "${FAILURE_MANIFEST}" state)"
+FAILURE_MANIFEST_STATUS="$(manifest_field "${FAILURE_MANIFEST}" status)"
+if [ "${FAILURE_MANIFEST_STATE}" != "failed" ] || \
+  [ "${FAILURE_MANIFEST_STATUS}" != "failed" ]; then
+  echo "large-prompt smoke: missing workspace left manifest ${FAILURE_MANIFEST_STATE}/${FAILURE_MANIFEST_STATUS}" >&2
+  exit 1
+fi
 assert_host_isolation "${FAILURE_REPO_ID}" "${FAILURE_RUN_ID}" "after failure launch"
 assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "at smoke completion"
 assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "at smoke completion"
 assert_host_isolation "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "at smoke completion"
 
-echo "large-prompt smoke: info=no-maintenance session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS}"
+echo "large-prompt smoke: info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"

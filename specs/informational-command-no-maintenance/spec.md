@@ -24,22 +24,33 @@ follows a positional subcommand or command name.
 3. Malformed arguments encountered before an informational flag retain the
    normal parser outcome; the preflight must not create an alternative parser
    grammar.
-4. Informational requests print through the existing parser and return without
-   garbage collection, staged updates, manual-update handling, agent cleanup,
-   task resolution, or tmux launch.
+4. Informational requests print through the shared information renderer,
+   independent of ambient model/config values, and return without garbage
+   collection, staged updates, manual-update handling, agent cleanup, task
+   resolution, or tmux launch.
 5. Unit coverage must include nested positional aliases, all four information
    flags, option-value and `--` negatives, and zero calls to every startup
    maintenance dependency.
 6. The realistic launch smoke must isolate both `HOME` and every explicit
-   config/storage selector so automation cannot bind the user's real loop or
-   Claude registries. It must prove the run record exists only below the
+   config/storage selector, and seed its isolated update-check cache, so
+   automation cannot bind the user's real loop or Claude registries or depend
+   on network timing. It must prove the run record exists only below the
    disposable home.
 7. The current Harvto run-101 manifest, panes, processes, hooks, and bridge
    files remain read-only throughout implementation and verification.
+8. A paired workspace confirmed dead before handoff must exit nonzero and
+   terminalize only its exact active manifest as `failed`. Unknown tmux
+   liveness must not grant terminalization or kill authority, and transport
+   ownership inherited from an older launcher must remain recorded for exact
+   cleanup.
+9. The realistic smoke must prove that each generated launch charter contains
+   the complete source prompt bytes, with a source payload of at least 8 KiB,
+   rather than accepting a leading sentinel alone.
 
 ## Scope
 
 - CLI argument preflight and its tests.
+- Paired pre-handoff failure accounting and its focused regressions.
 - Realistic launch-smoke environment isolation and assertions.
 - No routing, pane layout, teardown, or live-run repair changes.
 
@@ -49,6 +60,10 @@ follows a positional subcommand or command name.
       before all startup maintenance.
 - [ ] `loop --prompt --help` and `loop collab -- --help` are not
       misclassified as information requests.
+- [ ] Confirmed missing workspaces fail nonzero with `failed/failed` manifests;
+      tmux timeout/unknown cases preserve active ownership.
+- [ ] The isolated smoke verifies complete source prompt bytes at realistic
+      size without live network or real-home state.
 - [ ] Focused tests and the full sequential verifier pass with zero failures.
 - [ ] A different agent issues an exact-SHA verdict before any deployment.
 - [ ] No live launcher smoke or binary activation occurs until run-101 has

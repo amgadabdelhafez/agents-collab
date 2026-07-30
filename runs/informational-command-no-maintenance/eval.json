@@ -7,19 +7,19 @@
   "dimensions": {
     "focused": {
       "status": "pass",
-      "method": "bun run test:file -- tests/loop/args.test.ts and tests/loop.test.ts",
-      "reason": "98 focused parser and CLI cases pass with zero failures, including the exact collab --help incident, public utility and hidden dispatch, all information aliases, and value/delimiter negatives"
+      "method": "supported single-file runners for tests/loop/args.test.ts, tests/loop.test.ts, and tests/loop/tmux.test.ts",
+      "reason": "99 parser/CLI cases and 71 paired tmux cases pass with zero failures, covering config-independent information dispatch plus strict tri-state pre-bind, layout, attach, and handoff semantics"
     },
     "full": {
       "status": "pass",
-      "method": "scripts/verify.sh through the pending eval gate",
-      "reason": "lint, source typecheck, compiled build, and every sequential test pass; verifier then fails closed only because this eval remains pending"
+      "method": "lint, defined source typecheck, compiled build, and bun run test:ci",
+      "reason": "all static checks and every sequential test file pass with zero baseline failures; release remains held only on exact-SHA review and post-teardown isolated smoke"
     },
     "independent_review": { "status": "pending" },
     "isolated_smoke": {
       "status": "held-run-101-live",
       "static_validation": "bash -n and git diff --check pass",
-      "reason": "runtime smoke is prohibited until run-101 completes governed teardown"
+      "reason": "runtime smoke is prohibited until run-101 completes governed teardown; static fixture seeds isolated update throttling, verifies complete source prompt bytes above 8 KiB, and requires failed/failed on missing workspace"
     }
   }
 }

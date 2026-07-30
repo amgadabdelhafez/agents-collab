@@ -5,6 +5,10 @@
 - [x] Dispatch nested help/version before all startup maintenance.
 - [x] Add positive and false-positive CLI/parser regressions.
 - [x] Isolate the realistic launch smoke from real user registries and storage.
-- [x] Run focused and full verification with an empty baseline-failure list.
+- [x] Terminalize confirmed-dead paired pre-handoff races on the exact active
+      manifest while preserving unknown/external ownership cases.
+- [x] Make the realistic smoke network-independent and verify the complete
+      source prompt at more than 8 KiB.
+- [x] Re-run focused and full verification with an empty baseline-failure list.
 - [ ] Record replayable evidence and obtain exact-SHA independent review.
 - [ ] After run-101 teardown only, run the live smoke and consider activation.

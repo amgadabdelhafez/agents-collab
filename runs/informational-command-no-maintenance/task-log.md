@@ -22,6 +22,29 @@
   typecheck, build, and every sequential test, then stopped exactly at the
   release gate because `eval.json` remains intentionally `pending` until
   exact-SHA review and post-teardown isolated smoke.
+- 2026-07-30T08:46:00Z — Independent review caught that the initial detector
+  used a clean environment but delegated rendering back to ambient `parseArgs`.
+  Separated a config-independent information renderer, added invalid ambient
+  Caveman regressions, and superseded the first review request before verdict.
+  Focused coverage now passes 99/0.
+- 2026-07-30T09:07:08Z — Smoke review found that a confirmed-dead workspace
+  could throw after startup while leaving its exact manifest active. Unified
+  paired pre-handoff failure accounting across the outer liveness probe,
+  attach race, optional remain-on-exit failure, and final handoff check.
+  Active manifests become `failed`; completed manifests remain completed;
+  unknown tmux liveness has no cleanup authority; external app-server
+  ownership remains recorded. Focused tmux coverage passes 71/0.
+- 2026-07-30T09:07:08Z — Removed two smoke false-greens: every disposable home
+  now starts with a fresh update throttle, and every generated charter must
+  contain the complete randomized source prompt buffer at greater than 8 KiB.
+  The missing-workspace case must persist `failed/failed`. Runtime execution
+  remains held until run-101 governed teardown.
+- 2026-07-30T09:20:00Z — Tightened all paired pre-bind, layout, attach, and
+  handoff probes to tri-state liveness. Only recognized no-server/no-session
+  evidence grants failure authority; timeout, exceptions, and unrecognized
+  nonzero exits preserve active state and transport ownership. A fresh live
+  probe overrides stale attach errors. Lint, source typecheck, compiled build,
+  and the complete sequential suite pass with an empty baseline-failure list.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance

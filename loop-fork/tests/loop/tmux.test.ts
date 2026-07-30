@@ -21,6 +21,7 @@ import {
   createRunManifest,
   type RunManifest,
   resolveRunStorage,
+  setRunManifestState,
   writeRunManifest,
 } from "../../src/loop/run-state";
 import {
@@ -253,7 +254,7 @@ test("runInTmux keeps explicit run id in single-agent mode", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -379,7 +380,7 @@ test("runInTmux starts paired tmux panes for Claude and Codex", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -642,7 +643,7 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -810,7 +811,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
           if (args[0] === "tmux" && args[1] === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
-              : { exitCode: 1, stderr: "" };
+              : { exitCode: 1, stderr: "session not found" };
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
@@ -1190,7 +1191,7 @@ test("governed layout preserves legacy numeric fallbacks without tmux stdout", a
           if (args[0] === "tmux" && args[1] === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
-              : { exitCode: 1, stderr: "" };
+              : { exitCode: 1, stderr: "session not found" };
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
@@ -1282,7 +1283,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -1435,7 +1436,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           manifestAtTmuxCreate = structuredClone(manifest);
@@ -1532,6 +1533,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
 
 test("runInTmux releases local codex app-server handles after paired handoff", async () => {
   const attaches: string[] = [];
+  let closed = 0;
   let released = 0;
   let sessionStarted = false;
   let manifest = createRunManifest({
@@ -1560,6 +1562,10 @@ test("runInTmux releases local codex app-server handles after paired handoff", a
       },
       capturePane: (pane: string) =>
         pane.endsWith(":0.1") ? "Ctrl+J newline" : "",
+      closePersistentCodexSession: () => {
+        closed += 1;
+        return Promise.resolve();
+      },
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -1588,10 +1594,13 @@ test("runInTmux releases local codex app-server handles after paired handoff", a
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
+        }
+        if (args[0] === "tmux" && args[1] === "set-window-option") {
+          throw new Error("tmux transport error");
         }
         return { exitCode: 0, stderr: "" };
       },
@@ -1605,10 +1614,11 @@ test("runInTmux releases local codex app-server handles after paired handoff", a
 
   expect(delegated).toBe(true);
   expect(attaches).toEqual(["repo-loop-1"]);
+  expect(closed).toBe(0);
   expect(released).toBe(1);
 });
 
-test("runInTmux closes the local codex app-server when the paired session is gone after attach", async () => {
+test("runInTmux closes local Codex ownership without rewriting a completed manifest after attach", async () => {
   const attaches: string[] = [];
   let closed = 0;
   let released = 0;
@@ -1637,6 +1647,7 @@ test("runInTmux closes the local codex app-server when the paired session is gon
     {
       attach: (session: string) => {
         attaches.push(session);
+        manifest = setRunManifestState(manifest, "completed");
         sessionAlive = false;
       },
       capturePane: (pane: string) =>
@@ -1673,7 +1684,7 @@ test("runInTmux closes the local codex app-server when the paired session is gon
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionAlive
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -1700,6 +1711,12 @@ test("runInTmux closes the local codex app-server when the paired session is gon
   expect(attaches).toEqual(["repo-loop-1"]);
   expect(closed).toBe(1);
   expect(released).toBe(0);
+  expect(manifest).toMatchObject({
+    codexAppServerPid: undefined,
+    codexRemoteUrl: undefined,
+    state: "completed",
+    status: "done",
+  });
 });
 
 test("runInTmux starts paired interactive tmux panes without a task", async () => {
@@ -1756,7 +1773,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -1883,7 +1900,7 @@ test("runInTmux keeps the no-prompt Claude startup wait bounded", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2237,7 +2254,7 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2343,7 +2360,7 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2423,7 +2440,7 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2505,7 +2522,7 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2585,7 +2602,7 @@ test("runInTmux still confirms Claude trust prompts in paired mode", async () =>
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2660,7 +2677,7 @@ test("runInTmux still catches a delayed Claude trust prompt", async () => {
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2734,7 +2751,7 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -2841,7 +2858,7 @@ test("runInTmux resolves paired run id through an existing manifest", async () =
           if (args[0] === "tmux" && args[1] === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
-              : { exitCode: 1, stderr: "" };
+              : { exitCode: 1, stderr: "session not found" };
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
@@ -2933,7 +2950,7 @@ test("runInTmux honors paired run resume from --session", async () => {
           if (args[0] === "tmux" && args[1] === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
-              : { exitCode: 1, stderr: "" };
+              : { exitCode: 1, stderr: "session not found" };
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
@@ -3008,7 +3025,7 @@ test("runInTmux resolves paired resume from a worktree using git common dir", as
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -3075,7 +3092,7 @@ test("runInTmux strips a worktree suffix when git metadata is unavailable", asyn
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "" };
+            : { exitCode: 1, stderr: "session not found" };
         }
         if (args[0] === "tmux" && args[1] === "new-session") {
           sessionStarted = true;
@@ -3137,7 +3154,7 @@ test("runInTmux resolves raw stored session ids from --session", async () => {
             if (args[0] === "tmux" && args[1] === "has-session") {
               return sessionStarted
                 ? { exitCode: 0, stderr: "" }
-                : { exitCode: 1, stderr: "" };
+                : { exitCode: 1, stderr: "session not found" };
             }
             if (args[0] === "tmux" && args[1] === "new-session") {
               sessionStarted = true;
@@ -3207,7 +3224,7 @@ test("runInTmux ignores an unresolved raw session id in paired mode", async () =
           if (args[0] === "tmux" && args[1] === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
-              : { exitCode: 1, stderr: "" };
+              : { exitCode: 1, stderr: "session not found" };
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
@@ -3284,7 +3301,7 @@ test("runInTmux keeps raw --session values in single-agent mode", async () => {
           if (args[0] === "tmux" && args[1] === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
-              : { exitCode: 1, stderr: "" };
+              : { exitCode: 1, stderr: "session not found" };
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
@@ -3404,6 +3421,268 @@ test("runInTmux refuses success when post-launch session liveness is unknown", a
   );
 });
 
+test("runInTmux refuses paired resource creation when initial session liveness is unknown", async () => {
+  const calls: string[][] = [];
+  let manifestUpdates = 0;
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          return { exitCode: 1, stderr: "permission denied" };
+        },
+        updateRunManifest: () => {
+          manifestUpdates += 1;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Ship feature",
+      }
+    )
+  ).rejects.toThrow(
+    'tmux session "repo-loop-1" liveness is unknown; refusing handoff or terminalization: permission denied'
+  );
+
+  expect(calls).toEqual([["tmux", "has-session", "-t", "repo-loop-1"]]);
+  expect(manifestUpdates).toBe(0);
+  expect(manifest).toMatchObject({
+    state: "submitted",
+    status: "running",
+  });
+  expect(manifest.tmuxSession).toBeUndefined();
+});
+
+test.each([
+  [
+    "timeout",
+    {
+      exitCode: 124,
+      stderr: "tmux control command timed out after 2000ms",
+      timedOut: true,
+    },
+    'tmux control command timed out after 2000ms while checking session "repo-loop-1"',
+  ],
+  [
+    "unrecognized nonzero",
+    { exitCode: 1, stderr: "permission denied" },
+    'tmux session "repo-loop-1" liveness is unknown; refusing handoff or terminalization: permission denied',
+  ],
+] as const)("runInTmux preserves current transport and active state on paired %s liveness", async (_label, unknownResult, expectedError) => {
+  let closed = 0;
+  let released = 0;
+  let sessionStarted = false;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux", "--proof", "verify with tests"],
+      {
+        capturePane: () => "",
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerPid: () => 45_000,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest, storage };
+        },
+        releasePersistentCodexSession: () => {
+          released += 1;
+        },
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionStarted
+              ? unknownResult
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionStarted = true;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      { opts: makePairedOptions(), task: "Ship feature" }
+    )
+  ).rejects.toThrow(expectedError);
+
+  expect(closed).toBe(0);
+  expect(released).toBe(1);
+  expect(manifest).toMatchObject({
+    codexAppServerPid: 45_000,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    state: "submitted",
+    status: "running",
+  });
+});
+
+test("runInTmux preserves current transport and active state when paired layout outcome is unknown", async () => {
+  const calls: string[][] = [];
+  let closed = 0;
+  let layoutTimedOut = false;
+  let released = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux", "--proof", "verify with tests"],
+      {
+        capturePane: () => "",
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerPid: () => 45_000,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest, storage };
+        },
+        releasePersistentCodexSession: () => {
+          released += 1;
+        },
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return layoutTimedOut
+              ? {
+                  exitCode: 124,
+                  stderr: "tmux control command timed out after 2000ms",
+                  timedOut: true,
+                }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            layoutTimedOut = true;
+            return {
+              exitCode: 124,
+              stderr: "tmux control command timed out after 2000ms",
+              timedOut: true,
+            };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      { opts: makePairedOptions(), task: "Ship feature" }
+    )
+  ).rejects.toThrow(
+    'tmux control command timed out after 2000ms while checking session "repo-loop-1"'
+  );
+
+  expect(closed).toBe(0);
+  expect(released).toBe(1);
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toBe(false);
+  expect(manifest).toMatchObject({
+    codexAppServerPid: 45_000,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    state: "submitted",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+});
+
 test("runInTmux never mutates home Claude MCP registration on startup failure", async () => {
   const calls: string[][] = [];
   let closed = 0;
@@ -3458,7 +3737,7 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
         spawn: (args: string[]) => {
           calls.push(args);
           if (args[0] === "tmux" && args[1] === "has-session") {
-            return { exitCode: 1, stderr: "" };
+            return { exitCode: 1, stderr: "session not found" };
           }
           if (args[0] === "tmux" && args[1] === "new-session") {
             return { exitCode: 1, stderr: "boom" };
@@ -3495,6 +3774,534 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
     tmuxPaneRightAgent: "codex",
     tmuxSession: "repo-loop-1",
   });
+});
+
+test("runInTmux terminalizes the paired manifest when the workspace disappears before attach", async () => {
+  const calls: string[][] = [];
+  const updatedPaths: string[] = [];
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux", "--proof", "verify with tests"],
+      {
+        capturePane: () => "",
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return { exitCode: 1, stderr: "session not found" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (path, update) => {
+          updatedPaths.push(path);
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Ship feature",
+      }
+    )
+  ).rejects.toThrow('tmux session "repo-loop-1" exited before attach.');
+
+  expect(updatedPaths.length).toBeGreaterThan(0);
+  expect(new Set(updatedPaths)).toEqual(new Set([storage.manifestPath]));
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toBe(false);
+  expect(manifest).toMatchObject({
+    state: "failed",
+    status: "failed",
+    tmuxSession: "repo-loop-1",
+  });
+});
+
+test("runInTmux preserves external transport ownership when a resumed workspace disappears", async () => {
+  let closed = 0;
+  let sessionProbes = 0;
+  let manifest = createRunManifest({
+    codexAppServerPid: 45_000,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    codexThreadId: "codex-thread-1",
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            sessionProbes += 1;
+            return sessionProbes === 1
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      { opts: makePairedOptions(), task: "Resume feature" }
+    )
+  ).rejects.toThrow('tmux session "repo-loop-1" exited before attach.');
+
+  expect(closed).toBe(0);
+  expect(manifest).toMatchObject({
+    codexAppServerPid: 45_000,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    state: "failed",
+    status: "failed",
+  });
+});
+
+test("runInTmux terminalizes a paired manifest when attach confirms the workspace is gone", async () => {
+  let sessionProbes = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  const delegated = await runInTmux(
+    ["--tmux"],
+    {
+      attach: () => {
+        throw new Error("no server running");
+      },
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => true,
+      log: (): void => undefined,
+      preparePairedRun: () => ({ manifest, storage }),
+      spawn: (args: string[]) => {
+        if (args[0] === "tmux" && args[1] === "has-session") {
+          sessionProbes += 1;
+          return sessionProbes <= 2
+            ? { exitCode: 0, stderr: "" }
+            : { exitCode: 1, stderr: "session not found" };
+        }
+        return { exitCode: 0, stderr: "" };
+      },
+      updateRunManifest: (_path, update) => {
+        manifest = update(manifest) ?? manifest;
+        return manifest;
+      },
+    },
+    {
+      opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+      task: "Resume feature",
+    }
+  );
+
+  expect(delegated).toBe(false);
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+});
+
+test("runInTmux preserves the active manifest when attach-path liveness is unknown", async () => {
+  let sessionProbes = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        attach: () => {
+          throw new Error("attach failed");
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => true,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            sessionProbes += 1;
+            return sessionProbes <= 2
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "permission denied" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Resume feature",
+      }
+    )
+  ).rejects.toThrow(
+    'tmux session "repo-loop-1" liveness is unknown; refusing handoff or terminalization: permission denied'
+  );
+
+  expect(manifest).toMatchObject({ state: "working", status: "running" });
+});
+
+test("runInTmux trusts a fresh live probe over a stale attach no-session error", async () => {
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        attach: () => {
+          throw new Error("no server running on stale socket");
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => true,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: () => ({ exitCode: 0, stderr: "" }),
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Resume feature",
+      }
+    )
+  ).rejects.toThrow("no server running on stale socket");
+
+  expect(manifest).toMatchObject({ state: "working", status: "running" });
+});
+
+test("runInTmux rejects a failed pre-handoff window setup and terminalizes the manifest", async () => {
+  let sessionProbes = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            sessionProbes += 1;
+            return sessionProbes <= 2
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "set-window-option") {
+            return { exitCode: 1, stderr: "no such session" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Resume feature",
+      }
+    )
+  ).rejects.toThrow('tmux session "repo-loop-1" exited before attach.');
+
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+});
+
+test("runInTmux treats optional remain-on-exit timeout as best-effort and preserves the live manifest", async () => {
+  let sessionProbes = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  const delegated = await runInTmux(
+    ["--tmux"],
+    {
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => false,
+      log: (): void => undefined,
+      preparePairedRun: () => ({ manifest, storage }),
+      spawn: (args: string[]) => {
+        if (args[0] === "tmux" && args[1] === "has-session") {
+          sessionProbes += 1;
+          return { exitCode: 0, stderr: "" };
+        }
+        if (args[0] === "tmux" && args[1] === "set-window-option") {
+          return {
+            exitCode: 124,
+            stderr: "tmux control command timed out after 2000ms",
+            timedOut: true,
+          };
+        }
+        return { exitCode: 0, stderr: "" };
+      },
+      updateRunManifest: (_path, update) => {
+        manifest = update(manifest) ?? manifest;
+        return manifest;
+      },
+    },
+    {
+      opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+      task: "Resume feature",
+    }
+  );
+
+  expect(delegated).toBe(true);
+  expect(sessionProbes).toBe(3);
+  expect(manifest).toMatchObject({ state: "working", status: "running" });
+});
+
+test("runInTmux rejects a noninteractive handoff race and terminalizes the active manifest", async () => {
+  let sessionProbes = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "working",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            sessionProbes += 1;
+            return sessionProbes <= 2
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Resume feature",
+      }
+    )
+  ).rejects.toThrow('tmux session "repo-loop-1" exited before handoff.');
+
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+});
+
+test("runInTmux does not report a successful handoff for an already-failed manifest", async () => {
+  let sessionProbes = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "failed",
+    status: "failed",
+    tmuxSession: "repo-loop-1",
+  });
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            sessionProbes += 1;
+            return sessionProbes <= 2
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Resume feature",
+      }
+    )
+  ).rejects.toThrow('tmux session "repo-loop-1" exited before handoff.');
+
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
 });
 
 test("runInTmux skips auto-attach for non-interactive sessions", async () => {

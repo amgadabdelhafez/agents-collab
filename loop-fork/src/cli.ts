@@ -219,12 +219,13 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
 };
 
 const runImmediateInfoCommand = (argv: string[]): boolean => {
-  if (!findImmediateInfoRequest(argv)) {
+  const request = findImmediateInfoRequest(argv);
+  if (!request) {
     return false;
   }
-  // parseArgs renders the requested text and exits in production; true keeps
-  // this bounded when tests replace process.exit or the parser dependency.
-  cliDeps.parseArgs(argv);
+  // Rendering is config-independent and exits in production; true keeps this
+  // bounded when tests replace process.exit or the renderer dependency.
+  cliDeps.renderImmediateInfo(request);
   return true;
 };
 

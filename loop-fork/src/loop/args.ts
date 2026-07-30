@@ -41,7 +41,7 @@ const INVALID_RUN_ID_ERROR = "Invalid --run-id value: cannot be empty";
 
 export type ImmediateInfoRequest = "help" | "version";
 
-type ImmediateInfoHandler = (request: ImmediateInfoRequest) => never;
+type ImmediateInfoHandler = (request: ImmediateInfoRequest) => void;
 
 class ImmediateInfoRequestSignal extends Error {
   readonly request: ImmediateInfoRequest;
@@ -534,10 +534,12 @@ const consumeArg = (
 
   if (arg === "-v" || arg === "--version") {
     handleImmediateInfo("version");
+    return { nextIndex: argv.length, stop: true, onlyAgent };
   }
 
   if (arg === "-h" || arg === "--help") {
     handleImmediateInfo("help");
+    return { nextIndex: argv.length, stop: true, onlyAgent };
   }
 
   if (arg === "--") {
@@ -699,7 +701,7 @@ const parseArgsWithInfoHandler = (
   return opts;
 };
 
-const renderImmediateInfo = (request: ImmediateInfoRequest): never => {
+export const renderImmediateInfo = (request: ImmediateInfoRequest): void => {
   console.log(request === "version" ? `loop v${LOOP_VERSION}` : HELP);
   process.exit(0);
 };
