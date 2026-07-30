@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { parseArgs } from "../../src/loop/args";
+import { findImmediateInfoRequest, parseArgs } from "../../src/loop/args";
 import {
   DEFAULT_CAVEMAN_MODE,
   DEFAULT_HELPER_CAVEMAN_MODE,
@@ -78,6 +78,29 @@ test("parseArgs prints version and exits when -v is passed", () => {
   }).toThrow("exit");
 
   expect(code).toBe(0);
+});
+
+test.each([
+  [["--help"], "help"],
+  [["collab", "-h"], "help"],
+  [["dashboard", "--help"], "help"],
+  [["update", "--version"], "version"],
+  [["governess", "doctor", "42", "-v"], "version"],
+  [["--review", "--help"], "help"],
+  [["--review-plan", "--version"], "version"],
+] as const)("findImmediateInfoRequest recognizes active information argv %j", (argv, expected) => {
+  expect(findImmediateInfoRequest([...argv])).toBe(expected);
+});
+
+test.each([
+  ["spaced prompt value", ["--prompt", "--help"]],
+  ["spaced proof value", ["--proof", "--version"]],
+  ["positional delimiter", ["collab", "--", "--help"]],
+  ["strict model value error", ["--codex-model", "--help"]],
+  ["strict run-id value error", ["--run-id", "--version"]],
+  ["unknown option first", ["--unknown", "--help"]],
+] as const)("findImmediateInfoRequest preserves %s semantics", (_label, argv) => {
+  expect(findImmediateInfoRequest([...argv])).toBeUndefined();
 });
 
 test("parseArgs returns expected defaults when proof is omitted", () => {

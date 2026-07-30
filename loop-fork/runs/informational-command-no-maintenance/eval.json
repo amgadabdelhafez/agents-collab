@@ -1,0 +1,26 @@
+{
+  "task_id": "informational-command-no-maintenance",
+  "status": "pending",
+  "release_status": "held-run-101-live",
+  "baseline_failures": [],
+  "required": ["focused", "full", "independent_review", "isolated_smoke"],
+  "dimensions": {
+    "focused": {
+      "status": "pass",
+      "method": "supported single-file parser and CLI test runners",
+      "reason": "98 focused cases pass with zero failures"
+    },
+    "full": {
+      "status": "pass",
+      "method": "scripts/verify.sh through the pending eval gate",
+      "reason": "lint, typecheck, build, and every sequential test pass"
+    },
+    "independent_review": {
+      "status": "pending"
+    },
+    "isolated_smoke": {
+      "status": "held-run-101-live",
+      "static_validation": "bash -n and git diff --check pass"
+    }
+  }
+}

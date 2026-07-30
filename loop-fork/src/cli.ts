@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { isAgent } from "./loop/agents";
+import { findImmediateInfoRequest } from "./loop/args";
 import { runBridgeMcpServer } from "./loop/bridge";
 import {
   BRIDGE_SUBCOMMAND,
@@ -57,7 +58,6 @@ const INTERACTIVE_TMUX_ERROR =
   "[loop] interactive paired tmux mode must be started outside tmux.";
 const PAIRED_TMUX_HANDOFF_ERROR =
   "[loop] paired tmux launch did not hand off; not continuing in the foreground.";
-const IMMEDIATE_INFO_FLAGS = new Set(["-h", "--help", "-v", "--version"]);
 
 const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
   Boolean(
@@ -146,13 +146,6 @@ const runReconPaneSubcommand = async (argv: string[]): Promise<boolean> => {
 
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
-  if (IMMEDIATE_INFO_FLAGS.has(argv[0] ?? "")) {
-    // Version/help must never wait on startup maintenance or external tools.
-    // parseArgs prints the requested text and exits in production; true keeps
-    // this branch bounded under tests that replace process.exit.
-    cliDeps.parseArgs(argv);
-    return true;
-  }
   if (argv[0] === GOVERNESS_PANE_DIED_SUBCOMMAND) {
     handleGovernessPaneDied(parseGovernessPaneDiedArgs(argv.slice(1)));
     return true;
@@ -225,11 +218,23 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
   return false;
 };
 
-export const runCli = async (argv: string[]): Promise<void> => {
-  if (runGovernessUtilityCommand(argv)) {
-    return;
+const runImmediateInfoCommand = (argv: string[]): boolean => {
+  if (!findImmediateInfoRequest(argv)) {
+    return false;
   }
-  if (await runHiddenSubcommand(argv)) {
+  // parseArgs renders the requested text and exits in production; true keeps
+  // this bounded when tests replace process.exit or the parser dependency.
+  cliDeps.parseArgs(argv);
+  return true;
+};
+
+const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
+  runImmediateInfoCommand(argv) ||
+  runGovernessUtilityCommand(argv) ||
+  (await runHiddenSubcommand(argv));
+
+export const runCli = async (argv: string[]): Promise<void> => {
+  if (await runPreMaintenanceCommand(argv)) {
     return;
   }
 

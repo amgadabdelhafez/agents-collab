@@ -5,38 +5,221 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOOP_ROOT="${REPO_ROOT}/loop-fork"
 FIXTURES="${REPO_ROOT}/runs/large-prompt-launch/artifacts/fake-bin"
 HASH_TUI="${REPO_ROOT}/evals/smoke/fixtures/hash-bound-tui.py"
+ORIGINAL_HOME="${HOME:?large-prompt smoke requires HOME for host-isolation checks}"
 SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/loop-large-prompt-smoke.XXXXXX")"
+SUCCESS_ROOT="${SMOKE_ROOT}/success"
+HASH_ROOT="${SMOKE_ROOT}/hash"
+FAILURE_ROOT="${SMOKE_ROOT}/failure"
+INFO_ROOT="${SMOKE_ROOT}/info"
+SUCCESS_HOME="${SUCCESS_ROOT}/home"
+HASH_HOME="${HASH_ROOT}/home"
+FAILURE_HOME="${FAILURE_ROOT}/home"
+SUCCESS_REPO="${SUCCESS_ROOT}/repo"
+HASH_REPO="${HASH_ROOT}/repo"
+FAILURE_REPO="${FAILURE_ROOT}/repo"
+INFO_REPO="${INFO_ROOT}/repo"
+SUCCESS_BIN="${SUCCESS_ROOT}/bin"
+HASH_BIN="${HASH_ROOT}/bin"
+FAILURE_BIN="${FAILURE_ROOT}/bin"
+INFO_BIN="${INFO_ROOT}/bin"
+SUCCESS_TMUX_TMPDIR="${SUCCESS_ROOT}/tmux"
+HASH_TMUX_TMPDIR="${HASH_ROOT}/tmux"
+FAILURE_TMUX_TMPDIR="${FAILURE_ROOT}/tmux"
+INFO_TMUX_TMPDIR="${INFO_ROOT}/tmux"
 SMOKE_SOCKET="loop-large-prompt-$RANDOM-$$"
 HASH_SMOKE_SOCKET="loop-hash-mismatch-$RANDOM-$$"
+FAILURE_SMOKE_SOCKET="loop-missing-workspace-$RANDOM-$$"
+INFO_SMOKE_SOCKET="loop-info-no-maintenance-$RANDOM-$$"
+SUCCESS_RUN_ID="large-prompt-success"
+HASH_RUN_ID="large-prompt-hash"
+FAILURE_RUN_ID="large-prompt-failure"
+INFO_RUN_ID="informational-no-maintenance"
+INFO_FIXTURE_RUN_ID="abandoned-fixture"
+CHARTER_SENTINEL="BEGIN-LARGE-CHARTER-$RANDOM-$$"
+SYSTEM_PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SMOKE_USER="$(id -un)"
+SMOKE_SHELL="/bin/sh"
+SMOKE_TERM="xterm-256color"
+SMOKE_LANG="C"
 
 cleanup() {
   local status=$?
-  local socket_dir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"
   trap - EXIT
-  /opt/homebrew/bin/tmux -L "${SMOKE_SOCKET}" kill-server >/dev/null 2>&1 || true
-  /opt/homebrew/bin/tmux -L "${HASH_SMOKE_SOCKET}" kill-server >/dev/null 2>&1 || true
-  if [ -S "${socket_dir}/${SMOKE_SOCKET}" ]; then
-    mv "${socket_dir}/${SMOKE_SOCKET}" "${SMOKE_ROOT}/${SMOKE_SOCKET}.socket"
-  fi
-  if [ -S "${socket_dir}/${HASH_SMOKE_SOCKET}" ]; then
-    mv "${socket_dir}/${HASH_SMOKE_SOCKET}" "${SMOKE_ROOT}/${HASH_SMOKE_SOCKET}.socket"
-  fi
+  smoke_tmux "${SUCCESS_TMUX_TMPDIR}" "${SMOKE_SOCKET}" kill-server \
+    >/dev/null 2>&1 || true
+  smoke_tmux "${HASH_TMUX_TMPDIR}" "${HASH_SMOKE_SOCKET}" kill-server \
+    >/dev/null 2>&1 || true
+  smoke_tmux "${FAILURE_TMUX_TMPDIR}" "${FAILURE_SMOKE_SOCKET}" kill-server \
+    >/dev/null 2>&1 || true
+  smoke_tmux "${INFO_TMUX_TMPDIR}" "${INFO_SMOKE_SOCKET}" kill-server \
+    >/dev/null 2>&1 || true
   rm -rf "${SMOKE_ROOT}"
   exit "${status}"
 }
 trap cleanup EXIT
 
+prepare_case() {
+  local root="$1"
+  mkdir -p \
+    "${root}/bin" \
+    "${root}/claude-config" \
+    "${root}/codex-home" \
+    "${root}/home" \
+    "${root}/repo" \
+    "${root}/tmp" \
+    "${root}/tmux" \
+    "${root}/xdg-cache" \
+    "${root}/xdg-config" \
+    "${root}/xdg-data"
+  chmod 700 \
+    "${root}/claude-config" \
+    "${root}/codex-home" \
+    "${root}/home" \
+    "${root}/tmp" \
+    "${root}/tmux" \
+    "${root}/xdg-cache" \
+    "${root}/xdg-config" \
+    "${root}/xdg-data"
+  git init -q "${root}/repo"
+}
+
 make_agent_bin() {
   local target="$1"
-  mkdir -p "${target}"
   cp "${HASH_TUI}" "${target}/gemini"
   cp "${HASH_TUI}" "${target}/cursor"
   cp "${FIXTURES}/tmux" "${target}/tmux"
   chmod +x "${target}/"*
 }
 
+run_isolated_loop() {
+  local root="$1"
+  local case_bin="$2"
+  local socket="$3"
+  local run_id="$4"
+  shift 4
+  env -i \
+    "HOME=${root}/home" \
+    "CLAUDE_CONFIG_DIR=${root}/claude-config" \
+    "CODEX_HOME=${root}/codex-home" \
+    "TMPDIR=${root}/tmp" \
+    "TMUX_TMPDIR=${root}/tmux" \
+    "XDG_CACHE_HOME=${root}/xdg-cache" \
+    "XDG_CONFIG_HOME=${root}/xdg-config" \
+    "XDG_DATA_HOME=${root}/xdg-data" \
+    "PATH=${case_bin}:${SYSTEM_PATH}" \
+    "USER=${SMOKE_USER}" \
+    "LOGNAME=${SMOKE_USER}" \
+    "SHELL=${SMOKE_SHELL}" \
+    "TERM=${SMOKE_TERM}" \
+    "LANG=${SMOKE_LANG}" \
+    "LOOP_RUN_ID=${run_id}" \
+    LOOP_AU_PAIR_ENABLED=0 \
+    LOOP_NANNY_ENABLED=0 \
+    LOOP_RECON_PANES=0 \
+    "LOOP_SMOKE_TMUX_SOCKET=${socket}" \
+    LOOP_UTILITY_PANE=0 \
+    "${LOOP_ROOT}/loop" "$@"
+}
+
+smoke_tmux() {
+  local tmux_tmpdir="$1"
+  local socket="$2"
+  local root
+  shift 2
+  root="$(dirname "${tmux_tmpdir}")"
+  env -i \
+    "HOME=${root}/home" \
+    "PATH=${SYSTEM_PATH}" \
+    "USER=${SMOKE_USER}" \
+    "LOGNAME=${SMOKE_USER}" \
+    "SHELL=${SMOKE_SHELL}" \
+    "TERM=${SMOKE_TERM}" \
+    "LANG=${SMOKE_LANG}" \
+    "TMUX_TMPDIR=${tmux_tmpdir}" \
+    /opt/homebrew/bin/tmux -L "${socket}" "$@"
+}
+
+expected_repo_id() {
+  local repo="$1"
+  local common_dir
+  local label
+  local sanitized
+  local digest
+  common_dir="$(git -C "${repo}" rev-parse --path-format=absolute --git-common-dir)"
+  common_dir="$(cd "${common_dir}" && pwd -P)"
+  label="$(basename "$(dirname "${common_dir}")")"
+  sanitized="$(
+    printf '%s' "${label}" |
+      tr '[:upper:]' '[:lower:]' |
+      sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//'
+  )"
+  if [ -z "${sanitized}" ]; then
+    sanitized="loop"
+  fi
+  digest="$(printf '%s' "${common_dir}" | shasum -a 256 | cut -c1-12)"
+  printf '%s-%s\n' "${sanitized}" "${digest}"
+}
+
+assert_host_isolation() {
+  local repo_id="$1"
+  local run_id="$2"
+  local stage="$3"
+  local host_repo_root="${ORIGINAL_HOME}/.loop/runs/${repo_id}"
+  local host_run_dir="${host_repo_root}/${run_id}"
+  local leaked_file=""
+  if [ -e "${host_run_dir}" ] || [ -L "${host_run_dir}" ]; then
+    echo "large-prompt smoke: ${stage}: isolated run bound host path ${host_run_dir}" >&2
+    exit 1
+  fi
+  if [ -d "${host_repo_root}" ]; then
+    leaked_file="$(
+      grep -R -F -l -- "${CHARTER_SENTINEL}" "${host_repo_root}" \
+        2>/dev/null | head -1 || true
+    )"
+  fi
+  if [ -n "${leaked_file}" ]; then
+    echo "large-prompt smoke: ${stage}: charter sentinel leaked into host storage at ${leaked_file}" >&2
+    exit 1
+  fi
+}
+
 manifest_field() {
   bun -e 'const m=await Bun.file(process.argv[1]).json(); console.log(m[process.argv[2]] ?? "")' "$1" "$2"
+}
+
+assert_manifest_binding() {
+  local manifest_path="$1"
+  local case_home="$2"
+  local case_repo="$3"
+  local repo_id="$4"
+  local run_id="$5"
+  local expected_path="${case_home}/.loop/runs/${repo_id}/${run_id}/manifest.json"
+  if [ "${manifest_path}" != "${expected_path}" ] || [ ! -f "${expected_path}" ]; then
+    echo "large-prompt smoke: manifest did not bind exact isolated path ${expected_path}" >&2
+    exit 1
+  fi
+  bun -e '
+    import { readFileSync, realpathSync } from "node:fs";
+    import { isAbsolute, join, relative, resolve, sep } from "node:path";
+    const [manifestPath, caseHome, caseRepo, repoId, runId, sentinel] = process.argv.slice(1);
+    const runDir = join(caseHome, ".loop", "runs", repoId, runId);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (resolve(manifestPath) !== resolve(join(runDir, "manifest.json"))) throw new Error("manifest path escaped isolated run");
+    if (realpathSync(manifest.cwd) !== realpathSync(caseRepo)) throw new Error(`manifest cwd mismatch: ${manifest.cwd}`);
+    if (manifest.repoId !== repoId) throw new Error(`manifest repoId mismatch: ${manifest.repoId}`);
+    if (manifest.runId !== runId) throw new Error(`manifest runId mismatch: ${manifest.runId}`);
+    const realRunDir = realpathSync(runDir);
+    for (const agent of ["gemini", "cursor"]) {
+      const binding = manifest.launchCharters?.[agent];
+      if (!binding?.path) throw new Error(`missing ${agent} launch charter`);
+      const charterPath = realpathSync(binding.path);
+      const runRelative = relative(realRunDir, charterPath);
+      if (!runRelative || isAbsolute(runRelative) || runRelative === ".." || runRelative.startsWith(`..${sep}`)) {
+        throw new Error(`${agent} launch charter escaped isolated run`);
+      }
+      if (!readFileSync(charterPath, "utf8").includes(sentinel)) throw new Error(`${agent} charter omitted randomized sentinel`);
+    }
+  ' "${manifest_path}" "${case_home}" "${case_repo}" "${repo_id}" "${run_id}" "${CHARTER_SENTINEL}"
 }
 
 pane_for_agent() {
@@ -50,12 +233,13 @@ pane_for_agent() {
 }
 
 wait_for_pane_text() {
-  local socket="$1"
-  local pane="$2"
-  local text="$3"
+  local tmux_tmpdir="$1"
+  local socket="$2"
+  local pane="$3"
+  local text="$4"
   local output=""
   for _attempt in $(seq 1 40); do
-    output="$(/opt/homebrew/bin/tmux -L "${socket}" capture-pane -p -J -S -200 -t "${pane}")"
+    output="$(smoke_tmux "${tmux_tmpdir}" "${socket}" capture-pane -p -J -S -200 -t "${pane}")"
     if grep -Fq "${text}" <<<"${output}"; then
       printf '%s' "${output}"
       return 0
@@ -72,50 +256,98 @@ bun run test:file -- -t \
   tests/loop/tmux.test.ts
 bun run build >/dev/null
 
-mkdir -p "${SMOKE_ROOT}/home" "${SMOKE_ROOT}/repo" \
-  "${SMOKE_ROOT}/hash-home" "${SMOKE_ROOT}/hash-repo" \
-  "${SMOKE_ROOT}/hash-bin" "${SMOKE_ROOT}/fail-bin"
-make_agent_bin "${SMOKE_ROOT}/bin"
-cp "${HASH_TUI}" "${SMOKE_ROOT}/hash-bin/gemini"
-cp "${FIXTURES}/cursor" "${SMOKE_ROOT}/hash-bin/cursor"
-cp "${FIXTURES}/tmux" "${SMOKE_ROOT}/hash-bin/tmux"
-cp "${HASH_TUI}" "${SMOKE_ROOT}/fail-bin/gemini"
-cp "${HASH_TUI}" "${SMOKE_ROOT}/fail-bin/cursor"
-cp "${FIXTURES}/tmux-no-session" "${SMOKE_ROOT}/fail-bin/tmux"
-chmod +x "${SMOKE_ROOT}/hash-bin/"* "${SMOKE_ROOT}/fail-bin/"*
-git init -q "${SMOKE_ROOT}/repo"
-git init -q "${SMOKE_ROOT}/hash-repo"
+prepare_case "${SUCCESS_ROOT}"
+prepare_case "${HASH_ROOT}"
+prepare_case "${FAILURE_ROOT}"
+prepare_case "${INFO_ROOT}"
+make_agent_bin "${SUCCESS_BIN}"
+make_agent_bin "${INFO_BIN}"
+cp "${HASH_TUI}" "${HASH_BIN}/gemini"
+cp "${FIXTURES}/cursor" "${HASH_BIN}/cursor"
+cp "${FIXTURES}/tmux" "${HASH_BIN}/tmux"
+cp "${HASH_TUI}" "${FAILURE_BIN}/gemini"
+cp "${HASH_TUI}" "${FAILURE_BIN}/cursor"
+cp "${FIXTURES}/tmux-no-session" "${FAILURE_BIN}/tmux"
+chmod +x "${HASH_BIN}/"* "${FAILURE_BIN}/"*
 PROMPT_PATH="${SMOKE_ROOT}/charter.md"
 {
-  printf 'BEGIN-LARGE-CHARTER\n'
+  printf '%s\n' "${CHARTER_SENTINEL}"
   awk 'BEGIN { for (i = 0; i < 10257; i++) printf "x" }'
 } >"${PROMPT_PATH}"
 
-COMMON_ENV=(
-  "LOOP_AU_PAIR_ENABLED=0"
-  "LOOP_NANNY_ENABLED=0"
-  "LOOP_RECON_PANES=0"
-  "LOOP_SMOKE_TMUX_SOCKET=${SMOKE_SOCKET}"
-  "LOOP_UTILITY_PANE=0"
-)
+SUCCESS_REPO_ID="$(expected_repo_id "${SUCCESS_REPO}")"
+HASH_REPO_ID="$(expected_repo_id "${HASH_REPO}")"
+FAILURE_REPO_ID="$(expected_repo_id "${FAILURE_REPO}")"
+INFO_REPO_ID="$(expected_repo_id "${INFO_REPO}")"
+SUCCESS_MANIFEST="${SUCCESS_HOME}/.loop/runs/${SUCCESS_REPO_ID}/${SUCCESS_RUN_ID}/manifest.json"
+HASH_MANIFEST="${HASH_HOME}/.loop/runs/${HASH_REPO_ID}/${HASH_RUN_ID}/manifest.json"
+FAILURE_MANIFEST="${FAILURE_HOME}/.loop/runs/${FAILURE_REPO_ID}/${FAILURE_RUN_ID}/manifest.json"
+INFO_FIXTURE_DIR="${INFO_ROOT}/home/.loop/runs/${INFO_REPO_ID}/${INFO_FIXTURE_RUN_ID}"
+INFO_FIXTURE_MANIFEST="${INFO_FIXTURE_DIR}/manifest.json"
 
-cd "${SMOKE_ROOT}/repo"
-env "${COMMON_ENV[@]}" "HOME=${SMOKE_ROOT}/home" \
-  "PATH=${SMOKE_ROOT}/bin:${PATH}" \
-  "${LOOP_ROOT}/loop" --tmux --agent gemini --pair-with cursor \
-  -p "${PROMPT_PATH}" >"${SMOKE_ROOT}/success.out" 2>"${SMOKE_ROOT}/success.err"
+assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "before success launch"
+assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "before hash launch"
+assert_host_isolation "${FAILURE_REPO_ID}" "${FAILURE_RUN_ID}" "before failure launch"
+assert_host_isolation "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "before information command"
 
-MANIFEST_PATH="$(find "${SMOKE_ROOT}/home/.loop/runs" -name manifest.json -type f -print -quit)"
-if [ -z "${MANIFEST_PATH}" ]; then
-  echo "large-prompt smoke: no run manifest" >&2
+mkdir -p "${INFO_FIXTURE_DIR}"
+bun -e '
+  const [path, repoId, runId, cwd] = process.argv.slice(1);
+  const now = "2026-07-30T00:00:00.000Z";
+  await Bun.write(path, `${JSON.stringify({
+    claudeSessionId: "",
+    codexThreadId: "",
+    createdAt: now,
+    cwd,
+    mode: "tmux",
+    pid: 999999,
+    repoId,
+    runId,
+    state: "submitted",
+    status: "running",
+    tmuxSession: "definitely-not-a-live-session",
+    updatedAt: now,
+  }, null, 2)}\n`);
+' "${INFO_FIXTURE_MANIFEST}" "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "${INFO_REPO}"
+INFO_MANIFEST_HASH_BEFORE="$(shasum -a 256 "${INFO_FIXTURE_MANIFEST}" | cut -d ' ' -f 1)"
+
+cd "${INFO_REPO}"
+run_isolated_loop \
+  "${INFO_ROOT}" \
+  "${INFO_BIN}" \
+  "${INFO_SMOKE_SOCKET}" \
+  "${INFO_RUN_ID}" \
+  collab --help >"${SMOKE_ROOT}/info.out" 2>"${SMOKE_ROOT}/info.err"
+grep -Fq 'Usage:' "${SMOKE_ROOT}/info.out"
+INFO_MANIFEST_HASH_AFTER="$(shasum -a 256 "${INFO_FIXTURE_MANIFEST}" | cut -d ' ' -f 1)"
+if [ "${INFO_MANIFEST_HASH_AFTER}" != "${INFO_MANIFEST_HASH_BEFORE}" ]; then
+  echo "large-prompt smoke: nested help mutated the hostile run fixture" >&2
   exit 1
 fi
+assert_host_isolation "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "after information command"
 
-TMUX_SESSION="$(manifest_field "${MANIFEST_PATH}" tmuxSession)"
-LEFT_PANE="$(manifest_field "${MANIFEST_PATH}" tmuxPaneLeft)"
-RIGHT_PANE="$(manifest_field "${MANIFEST_PATH}" tmuxPaneRight)"
-LEFT_AGENT="$(manifest_field "${MANIFEST_PATH}" tmuxPaneLeftAgent)"
-RIGHT_AGENT="$(manifest_field "${MANIFEST_PATH}" tmuxPaneRightAgent)"
+cd "${SUCCESS_REPO}"
+run_isolated_loop \
+  "${SUCCESS_ROOT}" \
+  "${SUCCESS_BIN}" \
+  "${SMOKE_SOCKET}" \
+  "${SUCCESS_RUN_ID}" \
+  --tmux --agent gemini --pair-with cursor \
+  -p "${PROMPT_PATH}" >"${SMOKE_ROOT}/success.out" 2>"${SMOKE_ROOT}/success.err"
+
+assert_manifest_binding \
+  "${SUCCESS_MANIFEST}" \
+  "${SUCCESS_HOME}" \
+  "${SUCCESS_REPO}" \
+  "${SUCCESS_REPO_ID}" \
+  "${SUCCESS_RUN_ID}"
+assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "after success launch"
+
+TMUX_SESSION="$(manifest_field "${SUCCESS_MANIFEST}" tmuxSession)"
+LEFT_PANE="$(manifest_field "${SUCCESS_MANIFEST}" tmuxPaneLeft)"
+RIGHT_PANE="$(manifest_field "${SUCCESS_MANIFEST}" tmuxPaneRight)"
+LEFT_AGENT="$(manifest_field "${SUCCESS_MANIFEST}" tmuxPaneLeftAgent)"
+RIGHT_AGENT="$(manifest_field "${SUCCESS_MANIFEST}" tmuxPaneRightAgent)"
 if [ -z "${TMUX_SESSION}" ]; then
   echo "large-prompt smoke: manifest tmuxSession is empty" >&2
   exit 1
@@ -124,12 +356,25 @@ if [ "${LEFT_AGENT}" != "gemini" ] || [ "${RIGHT_AGENT}" != "cursor" ]; then
   echo "large-prompt smoke: unexpected agent pane mapping" >&2
   exit 1
 fi
-/opt/homebrew/bin/tmux -L "${SMOKE_SOCKET}" has-session -t "${TMUX_SESSION}"
-LIVE_PANES="$(/opt/homebrew/bin/tmux -L "${SMOKE_SOCKET}" list-panes -t "${TMUX_SESSION}" -F '#{pane_id}')"
+smoke_tmux "${SUCCESS_TMUX_TMPDIR}" "${SMOKE_SOCKET}" has-session -t "${TMUX_SESSION}"
+LIVE_PANES="$(
+  smoke_tmux \
+    "${SUCCESS_TMUX_TMPDIR}" \
+    "${SMOKE_SOCKET}" \
+    list-panes -t "${TMUX_SESSION}" -F '#{pane_id}'
+)"
 grep -Fqx "${LEFT_PANE}" <<<"${LIVE_PANES}"
 grep -Fqx "${RIGHT_PANE}" <<<"${LIVE_PANES}"
-wait_for_pane_text "${SMOKE_SOCKET}" "${LEFT_PANE}" "BOOTSTRAP_VERIFIED gemini" >/dev/null
-wait_for_pane_text "${SMOKE_SOCKET}" "${RIGHT_PANE}" "BOOTSTRAP_VERIFIED cursor" >/dev/null
+wait_for_pane_text \
+  "${SUCCESS_TMUX_TMPDIR}" \
+  "${SMOKE_SOCKET}" \
+  "${LEFT_PANE}" \
+  "BOOTSTRAP_VERIFIED gemini" >/dev/null
+wait_for_pane_text \
+  "${SUCCESS_TMUX_TMPDIR}" \
+  "${SMOKE_SOCKET}" \
+  "${RIGHT_PANE}" \
+  "BOOTSTRAP_VERIFIED cursor" >/dev/null
 
 bun -e '
   import { createHash } from "node:crypto";
@@ -155,15 +400,17 @@ bun -e '
     if (statSync(bootstrapPath).mode % 0o1000 !== 0o600) throw new Error(`${agent} bootstrap mode mismatch`);
     if (statSync(dirname(bootstrapPath)).mode % 0o1000 !== 0o700) throw new Error("launch-charters directory mode mismatch");
   }
-' "${MANIFEST_PATH}" 'BEGIN-LARGE-CHARTER'
+' "${SUCCESS_MANIFEST}" "${CHARTER_SENTINEL}"
 
-cd "${SMOKE_ROOT}/hash-repo"
+cd "${HASH_REPO}"
 touch .git/loop-smoke-hash-gate
 set +e
-env "${COMMON_ENV[@]}" "LOOP_SMOKE_TMUX_SOCKET=${HASH_SMOKE_SOCKET}" \
-  "HOME=${SMOKE_ROOT}/hash-home" \
-  "PATH=${SMOKE_ROOT}/hash-bin:${PATH}" \
-  "${LOOP_ROOT}/loop" --tmux --agent gemini --pair-with cursor \
+run_isolated_loop \
+  "${HASH_ROOT}" \
+  "${HASH_BIN}" \
+  "${HASH_SMOKE_SOCKET}" \
+  "${HASH_RUN_ID}" \
+  --tmux --agent gemini --pair-with cursor \
   -p "${PROMPT_PATH}" >"${SMOKE_ROOT}/hash.out" 2>"${SMOKE_ROOT}/hash.err"
 HASH_LAUNCH_STATUS=$?
 set -e
@@ -172,7 +419,13 @@ if [ "${HASH_LAUNCH_STATUS}" -ne 0 ]; then
   sed -n '1,120p' "${SMOKE_ROOT}/hash.err" >&2
   exit "${HASH_LAUNCH_STATUS}"
 fi
-HASH_MANIFEST="$(find "${SMOKE_ROOT}/hash-home/.loop/runs" -name manifest.json -type f -print -quit)"
+assert_manifest_binding \
+  "${HASH_MANIFEST}" \
+  "${HASH_HOME}" \
+  "${HASH_REPO}" \
+  "${HASH_REPO_ID}" \
+  "${HASH_RUN_ID}"
+assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "after hash launch"
 HASH_GEMINI_PANE="$(pane_for_agent "${HASH_MANIFEST}" gemini)"
 for _attempt in $(seq 1 40); do
   if [ -f .git/loop-smoke-gemini.ready ]; then
@@ -187,16 +440,26 @@ fi
 HASH_GEMINI_CHARTER="$(bun -e 'const m=await Bun.file(process.argv[1]).json(); console.log(m.launchCharters.gemini.path)' "${HASH_MANIFEST}")"
 printf '\ncontrolled-smoke-tamper\n' >>"${HASH_GEMINI_CHARTER}"
 touch .git/loop-smoke-continue
-HASH_OUTPUT="$(wait_for_pane_text "${HASH_SMOKE_SOCKET}" "${HASH_GEMINI_PANE}" "BOOTSTRAP_HASH_MISMATCH gemini")"
+HASH_OUTPUT="$(
+  wait_for_pane_text \
+    "${HASH_TMUX_TMPDIR}" \
+    "${HASH_SMOKE_SOCKET}" \
+    "${HASH_GEMINI_PANE}" \
+    "BOOTSTRAP_HASH_MISMATCH gemini"
+)"
 if grep -Fq "WORK_STARTED gemini" <<<"${HASH_OUTPUT}"; then
   echo "large-prompt smoke: hash mismatch did not fail closed" >&2
   exit 1
 fi
 
+cd "${FAILURE_REPO}"
 set +e
-env "${COMMON_ENV[@]}" "HOME=${SMOKE_ROOT}/home" \
-  "PATH=${SMOKE_ROOT}/fail-bin:${PATH}" \
-  "${LOOP_ROOT}/loop" --tmux --agent gemini --pair-with cursor \
+run_isolated_loop \
+  "${FAILURE_ROOT}" \
+  "${FAILURE_BIN}" \
+  "${FAILURE_SMOKE_SOCKET}" \
+  "${FAILURE_RUN_ID}" \
+  --tmux --agent gemini --pair-with cursor \
   -p "${PROMPT_PATH}" >"${SMOKE_ROOT}/failure.out" 2>"${SMOKE_ROOT}/failure.err"
 FAILURE_STATUS=$?
 set -e
@@ -205,5 +468,15 @@ if [ "${FAILURE_STATUS}" -eq 0 ]; then
   exit 1
 fi
 grep -Fq 'exited before attach' "${SMOKE_ROOT}/failure.err"
+assert_manifest_binding \
+  "${FAILURE_MANIFEST}" \
+  "${FAILURE_HOME}" \
+  "${FAILURE_REPO}" \
+  "${FAILURE_REPO_ID}" \
+  "${FAILURE_RUN_ID}"
+assert_host_isolation "${FAILURE_REPO_ID}" "${FAILURE_RUN_ID}" "after failure launch"
+assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "at smoke completion"
+assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "at smoke completion"
+assert_host_isolation "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "at smoke completion"
 
-echo "large-prompt smoke: session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=ok bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS}"
+echo "large-prompt smoke: info=no-maintenance session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS}"

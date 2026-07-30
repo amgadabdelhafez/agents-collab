@@ -39,6 +39,20 @@ const EMPTY_DONE_SIGNAL_ERROR = "Invalid --done value: cannot be empty";
 const ONLY_MODE_CONFLICT_ERROR = "Cannot combine multiple --*-only flags.";
 const INVALID_RUN_ID_ERROR = "Invalid --run-id value: cannot be empty";
 
+export type ImmediateInfoRequest = "help" | "version";
+
+type ImmediateInfoHandler = (request: ImmediateInfoRequest) => never;
+
+class ImmediateInfoRequestSignal extends Error {
+  readonly request: ImmediateInfoRequest;
+
+  constructor(request: ImmediateInfoRequest) {
+    super(`Immediate CLI information requested: ${request}`);
+    this.name = "ImmediateInfoRequestSignal";
+    this.request = request;
+  }
+}
+
 const parseAgent = (value: string): Agent => {
   if (isAgent(value)) {
     return value;
@@ -513,18 +527,17 @@ const consumeArg = (
   index: number,
   opts: Options,
   positional: string[],
-  onlyAgent: Agent | undefined
+  onlyAgent: Agent | undefined,
+  handleImmediateInfo: ImmediateInfoHandler
 ): { nextIndex: number; stop: boolean; onlyAgent: Agent | undefined } => {
   const arg = argv[index];
 
   if (arg === "-v" || arg === "--version") {
-    console.log(`loop v${LOOP_VERSION}`);
-    process.exit(0);
+    handleImmediateInfo("version");
   }
 
   if (arg === "-h" || arg === "--help") {
-    console.log(HELP);
-    process.exit(0);
+    handleImmediateInfo("help");
   }
 
   if (arg === "--") {
@@ -602,9 +615,12 @@ const consumeArg = (
   return { nextIndex: index + 1, stop: false, onlyAgent };
 };
 
-export const parseArgs = (argv: string[]): Options => {
+const parseArgsWithInfoHandler = (
+  argv: string[],
+  runtimeEnv: NodeJS.ProcessEnv,
+  handleImmediateInfo: ImmediateInfoHandler
+): Options => {
   const normalizedArgv = normalizeLegacyGovernessArgs(argv);
-  const runtimeEnv = withLegacyGovernessEnv(env);
   const cavemanEnv = runtimeEnv.LOOP_CAVEMAN_MODE?.trim();
   const helperCavemanEnv = runtimeEnv.LOOP_HELPER_CAVEMAN_MODE?.trim();
   const opts: Options = {
@@ -647,7 +663,14 @@ export const parseArgs = (argv: string[]): Options => {
       nextIndex,
       stop,
       onlyAgent: nextOnlyAgent,
-    } = consumeArg(normalizedArgv, index, opts, positional, onlyAgent);
+    } = consumeArg(
+      normalizedArgv,
+      index,
+      opts,
+      positional,
+      onlyAgent,
+      handleImmediateInfo
+    );
     index = nextIndex;
     onlyAgent = nextOnlyAgent;
     if (stop) {
@@ -675,3 +698,36 @@ export const parseArgs = (argv: string[]): Options => {
 
   return opts;
 };
+
+const renderImmediateInfo = (request: ImmediateInfoRequest): never => {
+  console.log(request === "version" ? `loop v${LOOP_VERSION}` : HELP);
+  process.exit(0);
+};
+
+export const findImmediateInfoRequest = (
+  argv: string[]
+): ImmediateInfoRequest | undefined => {
+  try {
+    // Information dispatch must not depend on ambient model/config values.
+    // The real consumeArg traversal still supplies exact option-value and `--`
+    // semantics, while a clean environment keeps this probe side-effect-free.
+    parseArgsWithInfoHandler(argv, {}, (request) => {
+      throw new ImmediateInfoRequestSignal(request);
+    });
+  } catch (error) {
+    if (error instanceof ImmediateInfoRequestSignal) {
+      return error.request;
+    }
+    // A real argument error before the information token is not an immediate
+    // information request. The normal command path will reproduce that error.
+    return undefined;
+  }
+  return undefined;
+};
+
+export const parseArgs = (argv: string[]): Options =>
+  parseArgsWithInfoHandler(
+    argv,
+    withLegacyGovernessEnv(env),
+    renderImmediateInfo
+  );

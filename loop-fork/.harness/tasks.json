@@ -378,6 +378,14 @@
       "eval_status": "pass",
       "ended_at": "2026-07-30T01:11:39Z",
       "spec_path": "specs/governess-pane-liveness.md"
+    },
+    {
+      "id": "informational-command-no-maintenance",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-30T08:13:38Z",
+      "run_dir": "runs/informational-command-no-maintenance",
+      "eval_status": "pending"
     }
   ]
 }

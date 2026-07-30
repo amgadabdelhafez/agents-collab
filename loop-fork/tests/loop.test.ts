@@ -637,29 +637,89 @@ test("runCli returns early when handleManualUpdateCommand returns true", async (
 });
 
 test.each([
-  "--version",
-  "--help",
-])("runCli handles %s before startup maintenance", async (flag) => {
+  ["top-level long help", ["--help"]],
+  ["top-level short help", ["-h"]],
+  ["top-level long version", ["--version"]],
+  ["top-level short version", ["-v"]],
+  ["incident command", ["collab", "--help"]],
+  ["positional short help", ["collab", "-h"]],
+  ["positional long version", ["collab", "--version"]],
+  ["positional short version", ["collab", "-v"]],
+  ["dashboard help", ["dashboard", "--help"]],
+  ["manual update help", ["update", "--help"]],
+  ["manual upgrade version", ["upgrade", "--version"]],
+  ["governess help", ["governess", "--help"]],
+  ["governess doctor help", ["governess", "doctor", "42", "--help"]],
+  ["governess replay help", ["governess", "replay", "42", "--help"]],
+  [
+    "governess explain version",
+    ["governess", "explain", "42", "control-1", "--version"],
+  ],
+  ["hidden helper help", ["__governess-pane-died", "--help"]],
+  ["only-mode help", ["--codex-only", "--help"]],
+] as const)("runCli handles %s before every startup action", async (_label, argv) => {
   const {
     applyStagedMock,
+    awaitAutoUpdateCheckMock,
+    checkGitStateMock,
+    closeAppServerMock,
+    closeClaudeSdkMock,
+    gcAbandonedRunProcessesMock,
+    gcStaleBridgeProcessesMock,
+    gcStaleClaudeBridgeRegistrationsMock,
+    handleManualMock,
+    maybeEnterWorktreeMock,
+    parseArgsMock,
+    resolveTaskMock,
+    runCli,
+    runInTmuxMock,
+    runLoopMock,
+    runPanelMock,
+    startAutoCheckMock,
+  } = await loadRunCli({
+    parseArgs: () => makeOptions(),
+  });
+
+  await runCli([...argv]);
+
+  expect(parseArgsMock).toHaveBeenCalledWith([...argv]);
+  expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
+  expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
+  expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
+  expect(applyStagedMock).not.toHaveBeenCalled();
+  expect(handleManualMock).not.toHaveBeenCalled();
+  expect(awaitAutoUpdateCheckMock).not.toHaveBeenCalled();
+  expect(startAutoCheckMock).not.toHaveBeenCalled();
+  expect(checkGitStateMock).not.toHaveBeenCalled();
+  expect(maybeEnterWorktreeMock).not.toHaveBeenCalled();
+  expect(resolveTaskMock).not.toHaveBeenCalled();
+  expect(runInTmuxMock).not.toHaveBeenCalled();
+  expect(runLoopMock).not.toHaveBeenCalled();
+  expect(runPanelMock).not.toHaveBeenCalled();
+  expect(closeAppServerMock).not.toHaveBeenCalled();
+  expect(closeClaudeSdkMock).not.toHaveBeenCalled();
+});
+
+test.each([
+  ["help-looking prompt value", ["--prompt", "--help"]],
+  ["help after positional delimiter", ["collab", "--", "--help"]],
+] as const)("runCli does not preclassify %s", async (_label, argv) => {
+  const {
     gcAbandonedRunProcessesMock,
     gcStaleBridgeProcessesMock,
     gcStaleClaudeBridgeRegistrationsMock,
     parseArgsMock,
     runCli,
-    runLoopMock,
   } = await loadRunCli({
     parseArgs: () => makeOptions(),
   });
 
-  await runCli([flag]);
+  await runCli([...argv]);
 
-  expect(parseArgsMock).toHaveBeenCalledWith([flag]);
-  expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
-  expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
-  expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
-  expect(applyStagedMock).not.toHaveBeenCalled();
-  expect(runLoopMock).not.toHaveBeenCalled();
+  expect(gcAbandonedRunProcessesMock).toHaveBeenCalledTimes(1);
+  expect(gcStaleBridgeProcessesMock).toHaveBeenCalledTimes(1);
+  expect(gcStaleClaudeBridgeRegistrationsMock).toHaveBeenCalledTimes(1);
+  expect(parseArgsMock).toHaveBeenCalledWith([...argv]);
 });
 
 test("runCli rejects malformed pane-death helper args before startup maintenance", async () => {
