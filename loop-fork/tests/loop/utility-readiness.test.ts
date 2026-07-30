@@ -113,7 +113,7 @@ test("selected-tier failures open a short routing circuit", () => {
       },
       {
         at: "2026-07-30T04:39:30.000Z",
-        modelCalls: 1,
+        modelCalls: 0,
         status: "failed",
         tierId: UTILITY_AU_PAIR_TIER,
       },

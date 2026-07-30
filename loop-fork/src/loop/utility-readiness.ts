@@ -90,14 +90,15 @@ const inferenceEvidence = (
       if (!(Number.isFinite(at) && (!latest || at >= latest.at))) {
         continue;
       }
+      const failed = record.status === "failed";
       const modelCalls = Number(record.modelCalls ?? 0);
-      if (!(modelCalls > 0)) {
+      if (!(failed || modelCalls > 0)) {
         continue;
       }
       latest = {
         at,
         atIso: record.at,
-        failed: record.status === "failed",
+        failed,
       };
     } catch {
       // A partial or malformed diagnostic line is not readiness evidence.
