@@ -388,6 +388,14 @@
       "eval_status": "pass",
       "ended_at": "2026-07-30T19:57:42Z",
       "spec_path": "specs/informational-command-no-maintenance.md"
+    },
+    {
+      "id": "loop102-launch-hardening",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-30T19:58:05Z",
+      "run_dir": "runs/loop102-launch-hardening",
+      "eval_status": "pending"
     }
   ]
 }

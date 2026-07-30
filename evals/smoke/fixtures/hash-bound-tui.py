@@ -22,6 +22,8 @@ FOUNDER_SENTINEL = "BEGIN-LARGE-CHARTER"
 
 role = os.path.basename(sys.argv[0])
 prompt = "❯" if role == "claude" else "›"
+claude_startup = os.environ.get("LOOP_SMOKE_CLAUDE_STARTUP", "")
+trace_path = os.environ.get("LOOP_SMOKE_TRACE_PATH", "")
 fd = sys.stdin.fileno()
 original = termios.tcgetattr(fd)
 signal.alarm(30)
@@ -30,6 +32,12 @@ signal.alarm(30)
 def emit(value: str) -> None:
     sys.stdout.write(f"{value}\r\n")
     sys.stdout.flush()
+    if trace_path:
+        trace_fd = os.open(trace_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            os.write(trace_fd, f"{role}\t{value}\n".encode("utf-8"))
+        finally:
+            os.close(trace_fd)
 
 
 def read_until(suffix: bytes) -> None:
@@ -152,15 +160,44 @@ def receive_nudge() -> None:
     emit(f"NUDGE_SUBMITTED {role}")
 
 
+def prepare_input_prompt() -> None:
+    if role != "claude" or not claude_startup:
+        sys.stdout.write("\x1b[?2004h")
+        emit(f"READY {role}")
+        sys.stdout.write(f"{prompt} ")
+        sys.stdout.flush()
+        return
+
+    emit("CLAUDE_STARTUP_WARNING Permission deny rule is active")
+    if claude_startup == "never-ready":
+        while True:
+            time.sleep(1)
+    if claude_startup != "delayed-dev":
+        emit(f"UNKNOWN_CLAUDE_STARTUP_MODE {claude_startup}")
+        raise SystemExit(12)
+
+    # Stay on a stable nonempty warning long enough that the old negative-
+    # readiness launcher would have pasted early. Then require the real
+    # development-channel confirmation before exposing the empty composer.
+    time.sleep(1)
+    emit("WARNING: Loading development channels")
+    emit("--dangerously-load-development-channels is for local channel development only.")
+    emit("1. I am using this for local development")
+    emit("CLAUDE_DEV_CHANNEL_PROMPT")
+    read_until(b"\r")
+    emit("CLAUDE_DEV_CHANNEL_CONFIRMED")
+    sys.stdout.write("\x1b[?2004h")
+    emit(f"READY {role}")
+    sys.stdout.write(f'{prompt} \x1b[2mTry "inspect this repository"\x1b[22m')
+    sys.stdout.flush()
+
+
 try:
     # TCSANOW preserves bytes that tmux may have queued immediately after pane
     # creation. The default TCSAFLUSH would discard that bootstrap and make the
     # smoke test a race against Python process startup.
     tty.setraw(fd, termios.TCSANOW)
-    sys.stdout.write("\x1b[?2004h")
-    emit(f"READY {role}")
-    sys.stdout.write(f"{prompt} ")
-    sys.stdout.flush()
+    prepare_input_prompt()
     bootstrap = read_initial_submission()
     verify_bootstrap(bootstrap)
     signal.alarm(30)

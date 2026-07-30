@@ -340,7 +340,7 @@ const ANSI_ESCAPE_RE = /\u001B\[[0-9;?]*[@-~]/g;
 
 // Claude Code renders its idle type-ahead suggestion in SGR dim, so dim spans
 // in a styled capture are ghost text, not a human draft.
-const stripDimSpans = (line: string): string => {
+export const stripDimSpans = (line: string): string => {
   let dim = false;
   let plain = "";
   let cursor = 0;

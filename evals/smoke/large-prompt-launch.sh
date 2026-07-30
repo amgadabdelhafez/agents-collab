@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+exec 9>&2
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOOP_ROOT="${REPO_ROOT}/loop-fork"
@@ -45,29 +46,43 @@ SUCCESS_ROOT="${SMOKE_ROOT}/success"
 HASH_ROOT="${SMOKE_ROOT}/hash"
 FAILURE_ROOT="${SMOKE_ROOT}/failure"
 INFO_ROOT="${SMOKE_ROOT}/info"
+CLAUDE_READY_ROOT="${SMOKE_ROOT}/claude-ready"
+CLAUDE_TIMEOUT_ROOT="${SMOKE_ROOT}/claude-timeout"
 SUCCESS_HOME="${SUCCESS_ROOT}/home"
 HASH_HOME="${HASH_ROOT}/home"
 FAILURE_HOME="${FAILURE_ROOT}/home"
+CLAUDE_READY_HOME="${CLAUDE_READY_ROOT}/home"
+CLAUDE_TIMEOUT_HOME="${CLAUDE_TIMEOUT_ROOT}/home"
 SUCCESS_REPO="${SUCCESS_ROOT}/repo"
 HASH_REPO="${HASH_ROOT}/repo"
 FAILURE_REPO="${FAILURE_ROOT}/repo"
 INFO_REPO="${INFO_ROOT}/repo"
+CLAUDE_READY_REPO="${CLAUDE_READY_ROOT}/repo"
+CLAUDE_TIMEOUT_REPO="${CLAUDE_TIMEOUT_ROOT}/repo"
 SUCCESS_BIN="${SUCCESS_ROOT}/bin"
 HASH_BIN="${HASH_ROOT}/bin"
 FAILURE_BIN="${FAILURE_ROOT}/bin"
 INFO_BIN="${INFO_ROOT}/bin"
+CLAUDE_READY_BIN="${CLAUDE_READY_ROOT}/bin"
+CLAUDE_TIMEOUT_BIN="${CLAUDE_TIMEOUT_ROOT}/bin"
 SUCCESS_TMUX_TMPDIR="${SUCCESS_ROOT}/tmux"
 HASH_TMUX_TMPDIR="${HASH_ROOT}/tmux"
 FAILURE_TMUX_TMPDIR="${FAILURE_ROOT}/tmux"
 INFO_TMUX_TMPDIR="${INFO_ROOT}/tmux"
+CLAUDE_READY_TMUX_TMPDIR="${CLAUDE_READY_ROOT}/tmux"
+CLAUDE_TIMEOUT_TMUX_TMPDIR="${CLAUDE_TIMEOUT_ROOT}/tmux"
 SMOKE_SOCKET="loop-large-prompt-$RANDOM-$$"
 HASH_SMOKE_SOCKET="loop-hash-mismatch-$RANDOM-$$"
 FAILURE_SMOKE_SOCKET="loop-missing-workspace-$RANDOM-$$"
 INFO_SMOKE_SOCKET="loop-info-no-maintenance-$RANDOM-$$"
+CLAUDE_READY_SMOKE_SOCKET="loop-claude-ready-$RANDOM-$$"
+CLAUDE_TIMEOUT_SMOKE_SOCKET="loop-claude-timeout-$RANDOM-$$"
 SUCCESS_RUN_ID="large-prompt-success"
 HASH_RUN_ID="large-prompt-hash"
 FAILURE_RUN_ID="large-prompt-failure"
 INFO_RUN_ID="informational-no-maintenance"
+CLAUDE_READY_RUN_ID="claude-delayed-ready"
+CLAUDE_TIMEOUT_RUN_ID="claude-never-ready"
 INFO_FIXTURE_RUN_ID="abandoned-fixture"
 CHARTER_SENTINEL="BEGIN-LARGE-CHARTER-$RANDOM-$$"
 CHARTER_TRAILING_SENTINEL="END-LARGE-CHARTER-$RANDOM-$$"
@@ -90,6 +105,14 @@ cleanup() {
     >/dev/null 2>&1 || true
   smoke_tmux "${INFO_TMUX_TMPDIR}" "${INFO_SMOKE_SOCKET}" kill-server \
     >/dev/null 2>&1 || true
+  smoke_tmux \
+    "${CLAUDE_READY_TMUX_TMPDIR}" \
+    "${CLAUDE_READY_SMOKE_SOCKET}" \
+    kill-server >/dev/null 2>&1 || true
+  smoke_tmux \
+    "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
+    "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
+    kill-server >/dev/null 2>&1 || true
   if [ "${SMOKE_USES_PREBUILT}" -eq 1 ]; then
     observed="$(smoke_binary_sha256 2>/dev/null || true)"
     if [ "${observed}" != "${SMOKE_EXPECTED_SHA256}" ]; then
@@ -97,7 +120,19 @@ cleanup() {
       status=1
     fi
   fi
-  rm -rf "${SMOKE_ROOT}"
+  if [ "${status}" -ne 0 ]; then
+    for smoke_error in "${SMOKE_ROOT}"/*.err; do
+      if [ -s "${smoke_error}" ]; then
+        echo "large-prompt smoke: failure log ${smoke_error}" >&9
+        sed -n '1,160p' "${smoke_error}" >&9
+      fi
+    done
+  fi
+  if [ "${status}" -eq 0 ] || [ "${LOOP_SMOKE_KEEP_ON_FAILURE:-0}" != "1" ]; then
+    rm -rf "${SMOKE_ROOT}"
+  else
+    echo "large-prompt smoke: preserved failure artifacts at ${SMOKE_ROOT}" >&9
+  fi
   exit "${status}"
 }
 trap cleanup EXIT
@@ -166,6 +201,7 @@ make_agent_bin() {
   local target="$1"
   cp "${HASH_TUI}" "${target}/gemini"
   cp "${HASH_TUI}" "${target}/cursor"
+  cp "${HASH_TUI}" "${target}/claude"
   cp "${FIXTURES}/tmux" "${target}/tmux"
   chmod +x "${target}/"*
 }
@@ -175,7 +211,13 @@ run_isolated_loop() {
   local case_bin="$2"
   local socket="$3"
   local run_id="$4"
+  local recon_panes=0
+  local utility_pane=0
   shift 4
+  if [ "${LOOP_SMOKE_FULL_LAYOUT:-0}" = "1" ]; then
+    recon_panes=3
+    utility_pane=1
+  fi
   assert_prebuilt_binary_unchanged "before ${run_id}"
   env -i \
     "HOME=${root}/home" \
@@ -193,11 +235,13 @@ run_isolated_loop() {
     "TERM=${SMOKE_TERM}" \
     "LANG=${SMOKE_LANG}" \
     "LOOP_RUN_ID=${run_id}" \
+    "LOOP_SMOKE_CLAUDE_STARTUP=${LOOP_SMOKE_CLAUDE_STARTUP:-}" \
+    "LOOP_SMOKE_TRACE_PATH=${root}/trace.log" \
     LOOP_AU_PAIR_ENABLED=0 \
     LOOP_NANNY_ENABLED=0 \
-    LOOP_RECON_PANES=0 \
+    "LOOP_RECON_PANES=${recon_panes}" \
     "LOOP_SMOKE_TMUX_SOCKET=${socket}" \
-    LOOP_UTILITY_PANE=0 \
+    "LOOP_UTILITY_PANE=${utility_pane}" \
     "${SMOKE_LOOP_BINARY}" "$@"
 }
 
@@ -291,7 +335,12 @@ assert_manifest_binding() {
     if (manifest.repoId !== repoId) throw new Error(`manifest repoId mismatch: ${manifest.repoId}`);
     if (manifest.runId !== runId) throw new Error(`manifest runId mismatch: ${manifest.runId}`);
     const realRunDir = realpathSync(runDir);
-    for (const agent of ["gemini", "cursor"]) {
+    const mappedAgents = [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent];
+    const agents = mappedAgents.every((agent) => typeof agent === "string" && agent)
+      ? mappedAgents
+      : Object.keys(manifest.launchCharters ?? {});
+    if (agents.length !== 2) throw new Error("missing paired launch-charter binding");
+    for (const agent of agents) {
       const binding = manifest.launchCharters?.[agent];
       if (!binding?.path) throw new Error(`missing ${agent} launch charter`);
       const charterPath = realpathSync(binding.path);
@@ -334,10 +383,100 @@ wait_for_pane_text() {
   return 1
 }
 
+assert_trace_order() {
+  local trace_path="$1"
+  local previous=0
+  local line=0
+  shift
+  for marker in "$@"; do
+    line="$(grep -n -F -m 1 -- "${marker}" "${trace_path}" | cut -d: -f1 || true)"
+    if [ -z "${line}" ] || [ "${line}" -le "${previous}" ]; then
+      echo "large-prompt smoke: trace marker missing or out of order: ${marker}" >&2
+      sed -n '1,120p' "${trace_path}" >&2 || true
+      exit 1
+    fi
+    previous="${line}"
+  done
+}
+
+assert_full_layout_geometry() {
+  local manifest_path="$1"
+  local tmux_tmpdir="$2"
+  local socket="$3"
+  local session
+  local geometry
+  local clients
+  local panes_path="${SMOKE_ROOT}/claude-ready-panes.tsv"
+  session="$(manifest_field "${manifest_path}" tmuxSession)"
+  geometry="$(
+    smoke_tmux \
+      "${tmux_tmpdir}" \
+      "${socket}" \
+      display-message -p -t "${session}:0" '#{window_width}x#{window_height}'
+  )"
+  if [ "${geometry}" != "220x60" ]; then
+    echo "large-prompt smoke: detached paired geometry was ${geometry}, expected 220x60" >&2
+    exit 1
+  fi
+  clients="$(
+    smoke_tmux "${tmux_tmpdir}" "${socket}" list-clients -F '#{client_session}' \
+      2>/dev/null || true
+  )"
+  if grep -Fqx "${session}" <<<"${clients}"; then
+    echo "large-prompt smoke: detached geometry session unexpectedly had a client" >&2
+    exit 1
+  fi
+  smoke_tmux \
+    "${tmux_tmpdir}" \
+    "${socket}" \
+    list-panes -t "${session}" \
+    -F '#{pane_id}|#{pane_width}|#{pane_height}' >"${panes_path}"
+  if ! bun -e '
+    import { readFileSync } from "node:fs";
+    const [manifestPath, panesPath] = process.argv.slice(1);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const panes = new Map(
+      readFileSync(panesPath, "utf8").trim().split("\n").filter(Boolean).map((line) => {
+        const [id, width, height] = line.split("|");
+        return [id, { width: Number(width), height: Number(height) }];
+      })
+    );
+    if (panes.size !== 8) throw new Error(`expected 8 panes, found ${panes.size}`);
+    const assertFloor = (label, pane, width, height) => {
+      const actual = panes.get(pane);
+      if (!actual) throw new Error(`${label} pane ${pane || "missing"} is not live`);
+      if (actual.width < width || actual.height < height) {
+        throw new Error(`${label} pane ${pane} is ${actual.width}x${actual.height}, below ${width}x${height}`);
+      }
+    };
+    assertFloor("left agent", manifest.tmuxPaneLeft, 100, 24);
+    assertFloor("right agent", manifest.tmuxPaneRight, 100, 24);
+    assertFloor("Governess", manifest.tmuxPaneGoverness, 160, 18);
+    assertFloor("Nanny", manifest.tmuxPaneNanny, 40, 8);
+    assertFloor("Au Pair", manifest.tmuxPaneAuPair, 40, 8);
+    if (!Array.isArray(manifest.tmuxPaneRecon) || manifest.tmuxPaneRecon.length !== 3) {
+      throw new Error("manifest does not bind three recon panes");
+    }
+    const reconWidths = [100, 30, 64];
+    manifest.tmuxPaneRecon.forEach((pane, index) =>
+      assertFloor(`recon ${index + 1}`, pane, reconWidths[index], 8)
+    );
+  ' "${manifest_path}" "${panes_path}"; then
+    return 1
+  fi
+  printf '%s' "${geometry}"
+}
+
 assert_tmux_socket_path_budget "${SUCCESS_TMUX_TMPDIR}" "${SMOKE_SOCKET}"
 assert_tmux_socket_path_budget "${HASH_TMUX_TMPDIR}" "${HASH_SMOKE_SOCKET}"
 assert_tmux_socket_path_budget "${FAILURE_TMUX_TMPDIR}" "${FAILURE_SMOKE_SOCKET}"
 assert_tmux_socket_path_budget "${INFO_TMUX_TMPDIR}" "${INFO_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget \
+  "${CLAUDE_READY_TMUX_TMPDIR}" \
+  "${CLAUDE_READY_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget \
+  "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
+  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}"
 
 cd "${LOOP_ROOT}"
 assert_prebuilt_binary_unchanged "before launch"
@@ -353,8 +492,12 @@ prepare_case "${SUCCESS_ROOT}"
 prepare_case "${HASH_ROOT}"
 prepare_case "${FAILURE_ROOT}"
 prepare_case "${INFO_ROOT}"
+prepare_case "${CLAUDE_READY_ROOT}"
+prepare_case "${CLAUDE_TIMEOUT_ROOT}"
 make_agent_bin "${SUCCESS_BIN}"
 make_agent_bin "${INFO_BIN}"
+make_agent_bin "${CLAUDE_READY_BIN}"
+make_agent_bin "${CLAUDE_TIMEOUT_BIN}"
 cp "${HASH_TUI}" "${HASH_BIN}/gemini"
 cp "${FIXTURES}/cursor" "${HASH_BIN}/cursor"
 cp "${FIXTURES}/tmux" "${HASH_BIN}/tmux"
@@ -373,16 +516,28 @@ SUCCESS_REPO_ID="$(expected_repo_id "${SUCCESS_REPO}")"
 HASH_REPO_ID="$(expected_repo_id "${HASH_REPO}")"
 FAILURE_REPO_ID="$(expected_repo_id "${FAILURE_REPO}")"
 INFO_REPO_ID="$(expected_repo_id "${INFO_REPO}")"
+CLAUDE_READY_REPO_ID="$(expected_repo_id "${CLAUDE_READY_REPO}")"
+CLAUDE_TIMEOUT_REPO_ID="$(expected_repo_id "${CLAUDE_TIMEOUT_REPO}")"
 SUCCESS_MANIFEST="${SUCCESS_HOME}/.loop/runs/${SUCCESS_REPO_ID}/${SUCCESS_RUN_ID}/manifest.json"
 HASH_MANIFEST="${HASH_HOME}/.loop/runs/${HASH_REPO_ID}/${HASH_RUN_ID}/manifest.json"
 FAILURE_MANIFEST="${FAILURE_HOME}/.loop/runs/${FAILURE_REPO_ID}/${FAILURE_RUN_ID}/manifest.json"
 INFO_FIXTURE_DIR="${INFO_ROOT}/home/.loop/runs/${INFO_REPO_ID}/${INFO_FIXTURE_RUN_ID}"
 INFO_FIXTURE_MANIFEST="${INFO_FIXTURE_DIR}/manifest.json"
+CLAUDE_READY_MANIFEST="${CLAUDE_READY_HOME}/.loop/runs/${CLAUDE_READY_REPO_ID}/${CLAUDE_READY_RUN_ID}/manifest.json"
+CLAUDE_TIMEOUT_MANIFEST="${CLAUDE_TIMEOUT_HOME}/.loop/runs/${CLAUDE_TIMEOUT_REPO_ID}/${CLAUDE_TIMEOUT_RUN_ID}/manifest.json"
 
 assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "before success launch"
 assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "before hash launch"
 assert_host_isolation "${FAILURE_REPO_ID}" "${FAILURE_RUN_ID}" "before failure launch"
 assert_host_isolation "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "before information command"
+assert_host_isolation \
+  "${CLAUDE_READY_REPO_ID}" \
+  "${CLAUDE_READY_RUN_ID}" \
+  "before delayed-Claude launch"
+assert_host_isolation \
+  "${CLAUDE_TIMEOUT_REPO_ID}" \
+  "${CLAUDE_TIMEOUT_RUN_ID}" \
+  "before never-ready Claude launch"
 
 mkdir -p "${INFO_FIXTURE_DIR}"
 bun -e '
@@ -496,6 +651,107 @@ bun -e '
   }
 ' "${SUCCESS_MANIFEST}" "${CHARTER_SENTINEL}"
 
+cd "${CLAUDE_READY_REPO}"
+LOOP_SMOKE_CLAUDE_STARTUP=delayed-dev \
+LOOP_SMOKE_FULL_LAYOUT=1 \
+run_isolated_loop \
+  "${CLAUDE_READY_ROOT}" \
+  "${CLAUDE_READY_BIN}" \
+  "${CLAUDE_READY_SMOKE_SOCKET}" \
+  "${CLAUDE_READY_RUN_ID}" \
+  --tmux --agent gemini --pair-with claude \
+  --governess --governess-dry-run \
+  -p "${PROMPT_PATH}" \
+  >"${SMOKE_ROOT}/claude-ready.out" \
+  2>"${SMOKE_ROOT}/claude-ready.err"
+assert_manifest_binding \
+  "${CLAUDE_READY_MANIFEST}" \
+  "${CLAUDE_READY_HOME}" \
+  "${CLAUDE_READY_REPO}" \
+  "${CLAUDE_READY_REPO_ID}" \
+  "${CLAUDE_READY_RUN_ID}"
+assert_host_isolation \
+  "${CLAUDE_READY_REPO_ID}" \
+  "${CLAUDE_READY_RUN_ID}" \
+  "after delayed-Claude launch"
+CLAUDE_READY_PANE="$(pane_for_agent "${CLAUDE_READY_MANIFEST}" claude)"
+wait_for_pane_text \
+  "${CLAUDE_READY_TMUX_TMPDIR}" \
+  "${CLAUDE_READY_SMOKE_SOCKET}" \
+  "${CLAUDE_READY_PANE}" \
+  "BOOTSTRAP_VERIFIED claude" >/dev/null
+assert_trace_order \
+  "${CLAUDE_READY_ROOT}/trace.log" \
+  $'claude\tCLAUDE_STARTUP_WARNING' \
+  $'claude\tCLAUDE_DEV_CHANNEL_PROMPT' \
+  $'claude\tCLAUDE_DEV_CHANNEL_CONFIRMED' \
+  $'claude\tREADY claude' \
+  $'claude\tBOOTSTRAP_VERIFIED claude' \
+  $'claude\tWORK_STARTED claude'
+if [ "$(grep -F -c $'claude\tCLAUDE_DEV_CHANNEL_CONFIRMED' "${CLAUDE_READY_ROOT}/trace.log")" -ne 1 ]; then
+  echo "large-prompt smoke: Claude development-channel confirmation was not single-shot" >&2
+  exit 1
+fi
+CLAUDE_READY_GEOMETRY="$(
+  assert_full_layout_geometry \
+    "${CLAUDE_READY_MANIFEST}" \
+    "${CLAUDE_READY_TMUX_TMPDIR}" \
+    "${CLAUDE_READY_SMOKE_SOCKET}"
+)"
+
+cd "${CLAUDE_TIMEOUT_REPO}"
+set +e
+LOOP_SMOKE_CLAUDE_STARTUP=never-ready \
+run_isolated_loop \
+  "${CLAUDE_TIMEOUT_ROOT}" \
+  "${CLAUDE_TIMEOUT_BIN}" \
+  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
+  "${CLAUDE_TIMEOUT_RUN_ID}" \
+  --tmux --agent gemini --pair-with claude \
+  -p "${PROMPT_PATH}" \
+  >"${SMOKE_ROOT}/claude-timeout.out" \
+  2>"${SMOKE_ROOT}/claude-timeout.err"
+CLAUDE_TIMEOUT_STATUS=$?
+set -e
+if [ "${CLAUDE_TIMEOUT_STATUS}" -eq 0 ]; then
+  echo "large-prompt smoke: never-ready Claude launch exited successfully" >&2
+  exit 1
+fi
+grep -Fq \
+  'did not reach an input-ready prompt within 20000ms' \
+  "${SMOKE_ROOT}/claude-timeout.err"
+assert_manifest_binding \
+  "${CLAUDE_TIMEOUT_MANIFEST}" \
+  "${CLAUDE_TIMEOUT_HOME}" \
+  "${CLAUDE_TIMEOUT_REPO}" \
+  "${CLAUDE_TIMEOUT_REPO_ID}" \
+  "${CLAUDE_TIMEOUT_RUN_ID}"
+CLAUDE_TIMEOUT_STATE="$(manifest_field "${CLAUDE_TIMEOUT_MANIFEST}" state)"
+CLAUDE_TIMEOUT_MANIFEST_STATUS="$(manifest_field "${CLAUDE_TIMEOUT_MANIFEST}" status)"
+if [ "${CLAUDE_TIMEOUT_STATE}" != "failed" ] || \
+  [ "${CLAUDE_TIMEOUT_MANIFEST_STATUS}" != "failed" ]; then
+  echo "large-prompt smoke: never-ready Claude left manifest ${CLAUDE_TIMEOUT_STATE}/${CLAUDE_TIMEOUT_MANIFEST_STATUS}" >&2
+  exit 1
+fi
+grep -Fq $'claude\tCLAUDE_STARTUP_WARNING' "${CLAUDE_TIMEOUT_ROOT}/trace.log"
+if grep -E -q $'^claude\t(READY|BOOTSTRAP_VERIFIED|WORK_STARTED)' \
+  "${CLAUDE_TIMEOUT_ROOT}/trace.log"; then
+  echo "large-prompt smoke: never-ready Claude received work" >&2
+  exit 1
+fi
+if smoke_tmux \
+  "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
+  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
+  list-sessions >"${SMOKE_ROOT}/claude-timeout-sessions.out" 2>/dev/null && \
+  [ -s "${SMOKE_ROOT}/claude-timeout-sessions.out" ]; then
+  echo "large-prompt smoke: never-ready Claude left a tmux session behind" >&2
+  exit 1
+fi
+assert_host_isolation \
+  "${CLAUDE_TIMEOUT_REPO_ID}" \
+  "${CLAUDE_TIMEOUT_RUN_ID}" \
+  "after never-ready Claude launch"
+
 cd "${HASH_REPO}"
 touch .git/loop-smoke-hash-gate
 set +e
@@ -579,6 +835,14 @@ assert_host_isolation "${FAILURE_REPO_ID}" "${FAILURE_RUN_ID}" "after failure la
 assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "at smoke completion"
 assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "at smoke completion"
 assert_host_isolation "${INFO_REPO_ID}" "${INFO_FIXTURE_RUN_ID}" "at smoke completion"
+assert_host_isolation \
+  "${CLAUDE_READY_REPO_ID}" \
+  "${CLAUDE_READY_RUN_ID}" \
+  "at smoke completion"
+assert_host_isolation \
+  "${CLAUDE_TIMEOUT_REPO_ID}" \
+  "${CLAUDE_TIMEOUT_RUN_ID}" \
+  "at smoke completion"
 assert_prebuilt_binary_unchanged "after launch"
 
-echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
+echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=failed detached-layout=${CLAUDE_READY_GEOMETRY}/8panes hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"

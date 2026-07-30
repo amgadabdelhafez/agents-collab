@@ -6,23 +6,15 @@
   "prompt_path": "runs/informational-command-no-maintenance/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-30T19:57:42Z",
   "markers": {
-    "enabled": [
-      "yes"
-    ],
-    "id": [
-      "nested-info-runs-maintenance"
-    ],
+    "enabled": ["yes"],
+    "id": ["nested-info-runs-maintenance"],
     "symptom": [
       "Nested help/version can execute destructive startup maintenance."
     ],
-    "guard": [
-      "bun test tests/loop.test.ts tests/loop/args.test.ts"
-    ]
+    "guard": ["bun test tests/loop.test.ts tests/loop/args.test.ts"]
   },
   "symptom_lines": [
     "Nested help/version can execute destructive startup maintenance."
   ],
-  "test_lines": [
-    "bun test tests/loop.test.ts tests/loop/args.test.ts"
-  ]
+  "test_lines": ["bun test tests/loop.test.ts tests/loop/args.test.ts"]
 }

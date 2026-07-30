@@ -19,6 +19,7 @@ import {
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "./bridge-guidance";
+import { stripDimSpans } from "./bridge-runtime";
 import {
   cavemanAgentGuidance,
   DEFAULT_CAVEMAN_MODE,
@@ -116,9 +117,8 @@ const CLAUDE_BYPASS_ACCEPT = "Yes, I accept";
 const CLAUDE_EXIT_OPTION = "No, exit";
 const CLAUDE_DEV_CHANNELS_PROMPT = "WARNING: Loading development channels";
 const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
-const CLAUDE_PROMPT_MAX_POLLS = 8;
+const CLAUDE_PROMPT_MAX_POLLS = 80;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
-const CLAUDE_PROMPT_SETTLE_POLLS = 2;
 const MAX_LAUNCH_BOOTSTRAP_BYTES = 1024;
 const LAUNCH_CHARTER_DIR = "launch-charters";
 const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
@@ -139,6 +139,11 @@ interface TerminalSize {
   rows: number;
 }
 
+const DEFAULT_DETACHED_PAIRED_SIZE: TerminalSize = {
+  columns: 220,
+  rows: 60,
+};
+
 interface GitResult {
   exitCode: number;
   stderr: string;
@@ -147,7 +152,7 @@ interface GitResult {
 
 interface TmuxDeps {
   attach: (session: string) => void;
-  capturePane: (pane: string) => string;
+  capturePane: (pane: string, styled?: boolean) => string;
   closePersistentCodexSession: typeof closePersistentCodexSession;
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -983,12 +988,24 @@ const isSessionConflict = (stderr: string): boolean =>
 const isTerminalDimension = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value > 0;
 
-const buildSessionSizeArgs = (deps: TmuxDeps): string[] => {
-  const size = deps.getTerminalSize();
-  if (!size) {
-    return [];
-  }
-  if (!(isTerminalDimension(size.columns) && isTerminalDimension(size.rows))) {
+const buildSessionSizeArgs = (
+  deps: TmuxDeps,
+  fallback?: TerminalSize
+): string[] => {
+  const detected = deps.getTerminalSize();
+  const size =
+    detected &&
+    isTerminalDimension(detected.columns) &&
+    isTerminalDimension(detected.rows)
+      ? detected
+      : fallback;
+  if (
+    !(
+      size &&
+      isTerminalDimension(size.columns) &&
+      isTerminalDimension(size.rows)
+    )
+  ) {
     return [];
   }
   return ["-x", String(size.columns), "-y", String(size.rows)];
@@ -2026,7 +2043,18 @@ const stablePaneTarget = (result: SpawnResult, fallback: string): string =>
 const normalizePaneText = (text: string): string =>
   text.replace(/\s+/g, " ").trim();
 
-const detectClaudePrompt = (text: string): "bypass" | "confirm" | undefined => {
+const isClaudeInputReady = (text: string): boolean => {
+  const visibleLines = text
+    .split(LINE_SPLIT_RE)
+    .map(stripDimSpans)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return visibleLines.at(-1) === "❯";
+};
+
+type ClaudeStartupPrompt = "bypass" | "dev-channel" | "trust";
+
+const detectClaudePrompt = (text: string): ClaudeStartupPrompt | undefined => {
   const normalized = normalizePaneText(text);
   if (
     normalized.includes(CLAUDE_BYPASS_PROMPT) ||
@@ -2037,13 +2065,13 @@ const detectClaudePrompt = (text: string): "bypass" | "confirm" | undefined => {
     return "bypass";
   }
   if (normalized.includes(CLAUDE_TRUST_PROMPT)) {
-    return "confirm";
+    return "trust";
   }
   if (
     normalized.includes(CLAUDE_DEV_CHANNELS_PROMPT) &&
     normalized.includes(CLAUDE_DEV_CHANNELS_CONFIRM)
   ) {
-    return "confirm";
+    return "dev-channel";
   }
   return undefined;
 };
@@ -2052,49 +2080,38 @@ const unblockClaudePane = async (
   pane: string,
   deps: TmuxDeps
 ): Promise<void> => {
-  let handledPrompt = false;
-  let lastSnapshot = "";
-  let quietPolls = 0;
-  let sawOutput = false;
-
+  const handledPrompts = new Set<ClaudeStartupPrompt>();
   for (let attempt = 0; attempt < CLAUDE_PROMPT_MAX_POLLS; attempt += 1) {
-    const snapshot = normalizePaneText(deps.capturePane(pane));
+    const paneText = deps.capturePane(pane, true);
+    if (isClaudeInputReady(paneText)) {
+      return;
+    }
+    const snapshot = normalizePaneText(paneText);
     const prompt = detectClaudePrompt(snapshot);
-    if (prompt === "confirm") {
+    if (
+      (prompt === "dev-channel" || prompt === "trust") &&
+      !handledPrompts.has(prompt)
+    ) {
       deps.sendKeys(pane, ["Enter"]);
-      handledPrompt = true;
-      lastSnapshot = "";
-      quietPolls = 0;
+      handledPrompts.add(prompt);
       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
       continue;
     }
-    if (prompt === "bypass") {
+    if (prompt === "bypass" && !handledPrompts.has(prompt)) {
       deps.sendKeys(pane, ["Down"]);
       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
       deps.sendKeys(pane, ["Enter"]);
-      handledPrompt = true;
-      lastSnapshot = "";
-      quietPolls = 0;
+      handledPrompts.add(prompt);
       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
       continue;
     }
-
-    if (snapshot) {
-      sawOutput = true;
+    if (attempt + 1 < CLAUDE_PROMPT_MAX_POLLS) {
+      await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
     }
-    quietPolls = snapshot === lastSnapshot ? quietPolls + 1 : 0;
-    lastSnapshot = snapshot;
-    if (handledPrompt && quietPolls >= CLAUDE_PROMPT_SETTLE_POLLS) {
-      return;
-    }
-    if (sawOutput && quietPolls >= CLAUDE_PROMPT_SETTLE_POLLS) {
-      return;
-    }
-    if (attempt + 1 >= CLAUDE_PROMPT_MAX_POLLS) {
-      return;
-    }
-    await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
   }
+  throw new Error(
+    `Claude pane "${pane}" did not reach an input-ready prompt within ${CLAUDE_PROMPT_MAX_POLLS * CLAUDE_PROMPT_POLL_DELAY_MS}ms.`
+  );
 };
 
 const createPairedPaneLayout = async (input: {
@@ -2115,7 +2132,7 @@ const createPairedPaneLayout = async (input: {
     "-P",
     "-F",
     "#{pane_id}",
-    ...buildSessionSizeArgs(input.deps),
+    ...buildSessionSizeArgs(input.deps, DEFAULT_DETACHED_PAIRED_SIZE),
     "-s",
     input.session,
     "-c",
@@ -2717,9 +2734,9 @@ const defaultDeps = (): TmuxDeps => ({
       throw new Error(`Failed to attach to tmux session "${session}".`);
     }
   },
-  capturePane: (pane: string) => {
+  capturePane: (pane: string, styled = false) => {
     const result = spawnSync(
-      ["tmux", "capture-pane", "-p", "-t", pane],
+      ["tmux", "capture-pane", "-p", ...(styled ? ["-e"] : []), "-t", pane],
       boundedTmuxOptions({
         stderr: "ignore",
         stdout: "pipe",

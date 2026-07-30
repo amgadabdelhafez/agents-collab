@@ -332,7 +332,7 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
   const delegated = await runInTmux(
     ["--tmux", "--proof", "verify with tests"],
     {
-      capturePane: () => "",
+      capturePane: () => "❯ ",
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -638,7 +638,7 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
   const delegated = await runInTmux(
     ["--tmux", "--proof", "verify with tests"],
     {
-      capturePane: () => "",
+      capturePane: () => "❯ ",
       closePersistentCodexSession: () => Promise.resolve(),
       cwd: "/repo",
       env: {},
@@ -787,7 +787,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     const delegated = await runInTmux(
       ["--tmux", "--proof", "verify with tests", "--governess"],
       {
-        capturePane: () => "",
+        capturePane: () => "❯ ",
         cwd: repoDir,
         env: {
           CLAUDE_CONFIG_DIR: "/tmp/loop-claude",
@@ -1363,6 +1363,10 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
     "-P",
     "-F",
     "#{pane_id}",
+    "-x",
+    "220",
+    "-y",
+    "60",
     "-s",
     "repo-loop-1",
     "-c",
@@ -1449,6 +1453,7 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
       cwd: "/repo",
       env: {},
       findBinary: () => true,
+      getTerminalSize: () => ({ columns: 0, rows: -1 }),
       isInteractive: () => false,
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
@@ -1514,6 +1519,10 @@ test("runInTmux starts paired tmux panes for Gemini and Cursor without persisten
     "-P",
     "-F",
     "#{pane_id}",
+    "-x",
+    "220",
+    "-y",
+    "60",
     "-s",
     "repo-loop-1",
     "-c",
@@ -1592,7 +1601,7 @@ test("runInTmux releases local codex app-server handles after paired handoff", a
         attaches.push(session);
       },
       capturePane: (pane: string) =>
-        pane.endsWith(":0.1") ? "Ctrl+J newline" : "",
+        pane.endsWith(":0.1") ? "Ctrl+J newline" : "❯ ",
       closePersistentCodexSession: () => {
         closed += 1;
         return Promise.resolve();
@@ -1682,7 +1691,7 @@ test("runInTmux closes local Codex ownership without rewriting a completed manif
         sessionAlive = false;
       },
       capturePane: (pane: string) =>
-        pane.endsWith(":0.1") ? "Ctrl+J newline" : "",
+        pane.endsWith(":0.1") ? "Ctrl+J newline" : "❯ ",
       closePersistentCodexSession: () => {
         closed += 1;
         return Promise.resolve();
@@ -1775,7 +1784,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
   const delegated = await runInTmux(
     ["--tmux"],
     {
-      capturePane: () => "",
+      capturePane: () => "❯ ",
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -1846,6 +1855,10 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
     "-P",
     "-F",
     "#{pane_id}",
+    "-x",
+    "220",
+    "-y",
+    "60",
     "-s",
     "repo-loop-1",
     "-c",
@@ -1879,10 +1892,11 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
 });
 
-test("runInTmux keeps the no-prompt Claude startup wait bounded", async () => {
+test("runInTmux fails closed when Claude never reaches an input-ready prompt", async () => {
+  const calls: string[][] = [];
   const sleeps: number[] = [];
   let sessionStarted = false;
-  const manifest = createRunManifest({
+  let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
     pid: 1234,
@@ -1899,51 +1913,63 @@ test("runInTmux keeps the no-prompt Claude startup wait bounded", async () => {
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
   };
 
-  await runInTmux(
-    ["--tmux"],
-    {
-      capturePane: () => "",
-      cwd: "/repo",
-      env: {},
-      findBinary: () => true,
-      getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
-      getLastCodexThreadId: () => "codex-thread-1",
-      isInteractive: () => false,
-      launchArgv: ["bun", "/repo/src/cli.ts"],
-      log: (): void => undefined,
-      makeClaudeSessionId: () => "claude-session-1",
-      preparePairedRun: (nextOpts) => {
-        nextOpts.codexMcpConfigArgs = [
-          "-c",
-          'mcp_servers.loop-bridge.command="loop"',
-        ];
-        return { manifest, storage };
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        capturePane: () => "",
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest, storage };
+        },
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: (ms: number) => {
+          sleeps.push(ms);
+          return Promise.resolve();
+        },
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionStarted
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionStarted = true;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
       },
-      sendKeys: (): void => undefined,
-      sendText: (): void => undefined,
-      sleep: (ms: number) => {
-        sleeps.push(ms);
-        return Promise.resolve();
-      },
-      startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
-      startPersistentAgentSession: () => Promise.resolve(undefined),
-      spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
-          return sessionStarted
-            ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "session not found" };
-        }
-        if (args[0] === "tmux" && args[1] === "new-session") {
-          sessionStarted = true;
-        }
-        return { exitCode: 0, stderr: "" };
-      },
-      updateRunManifest: (_path, update) => update(manifest),
-    },
-    { opts: makePairedOptions({ proof: "" }) }
+      { opts: makePairedOptions({ proof: "" }) }
+    )
+  ).rejects.toThrow(
+    'Claude pane "repo-loop-1:0.0" did not reach an input-ready prompt within 20000ms.'
   );
 
-  expect(sleeps).toEqual([250, 250, 250, 250, 250, 250, 250]);
+  expect(sleeps).toHaveLength(79);
+  expect(sleeps.every((delay) => delay === 250)).toBe(true);
+  expect(calls.some((args) => args[1] === "load-buffer")).toBe(false);
+  expect(calls.some((args) => args[1] === "paste-buffer")).toBe(false);
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
 });
 
 test("tmux prompts keep the paired review workflow explicit", () => {
@@ -2253,7 +2279,7 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
         if (pollCount === 2) {
           return `${devChannelsPrompt}\n\n${bypassPrompt}`;
         }
-        return "";
+        return "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -2362,7 +2388,7 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
         if (pollCount === 1) {
           return devChannelsPrompt;
         }
-        return "";
+        return "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -2410,6 +2436,7 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
 });
 
 test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
+  const calls: string[][] = [];
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   let sessionStarted = false;
   let pollCount = 0;
@@ -2442,7 +2469,18 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
     {
       capturePane: () => {
         pollCount += 1;
-        return pollCount === 5 ? devChannelsPrompt : "";
+        if (calls.some((args) => args[1] === "load-buffer")) {
+          throw new Error(
+            "bootstrap transport started before Claude was ready"
+          );
+        }
+        if (pollCount < 5) {
+          return "Permission deny rule: stable startup warning";
+        }
+        if (pollCount === 5) {
+          return `❯\n\n${devChannelsPrompt}`;
+        }
+        return `${devChannelsPrompt}\n\n❯ \u001B[2mTry a suggested prompt\u001B[22m`;
       },
       cwd: "/repo",
       env: {},
@@ -2468,6 +2506,7 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
       startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
+        calls.push(args);
         if (args[0] === "tmux" && args[1] === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
@@ -2487,6 +2526,12 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
     keys: ["Enter"],
     pane: "repo-loop-1:0.0",
   });
+  expect(
+    keyCalls.filter(
+      (call) => call.pane === "repo-loop-1:0.0" && call.keys[0] === "Enter"
+    )
+  ).toHaveLength(1);
+  expect(calls.some((args) => args[1] === "load-buffer")).toBe(true);
 });
 
 test("runInTmux confirms the current Claude bypass prompt wording", async () => {
@@ -2524,7 +2569,7 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
         if (pollCount === 1) {
           return bypassPrompt;
         }
-        return "";
+        return "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -2604,7 +2649,7 @@ test("runInTmux still confirms Claude trust prompts in paired mode", async () =>
         if (pollCount === 1) {
           return "Is this a project you created or one you trust?";
         }
-        return "";
+        return "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -2677,9 +2722,13 @@ test("runInTmux still catches a delayed Claude trust prompt", async () => {
     {
       capturePane: () => {
         pollCount += 1;
-        return pollCount === 4
-          ? "Is this a project you created or one you trust?"
-          : "";
+        if (pollCount < 4) {
+          return "Permission deny rule: stable startup warning";
+        }
+        if (pollCount === 4) {
+          return "Is this a project you created or one you trust?";
+        }
+        return "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -2756,7 +2805,7 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
   const delegated = await runInTmux(
     ["--tmux", "--run-id", "alpha", "--proof", "verify with tests"],
     {
-      capturePane: () => "",
+      capturePane: () => "❯ ",
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -2830,6 +2879,10 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
     "-P",
     "-F",
     "#{pane_id}",
+    "-x",
+    "220",
+    "-y",
+    "60",
     "-s",
     "repo-loop-alpha",
     "-c",
