@@ -36,7 +36,8 @@ authority.
    smoke and activation until governed teardown of run-101.
 7. After teardown, bind release QA to an explicit prebuilt binary and expected
    SHA-256 so the smoke cannot rebuild or replace the installed artifact it is
-   meant to certify.
+   meant to certify; move the default developer build into the disposable smoke
+   root so no mode writes the canonical artifact path.
 
 ## Risks and mitigations
 
@@ -59,4 +60,5 @@ authority.
   only a prefix sentinel, in every smoke manifest binding.
 - Self-mutating release evidence: make prebuilt mode opt-in and hash-bound;
   skip `bun run build` entirely and recheck the same binary during cleanup so
-  both passing and failing smokes detect mutation.
+  both passing and failing smokes detect mutation. Compile default-mode bytes
+  directly into disposable storage rather than using the package build script.

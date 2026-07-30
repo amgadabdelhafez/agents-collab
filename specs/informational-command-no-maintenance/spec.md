@@ -55,7 +55,8 @@ follows a positional subcommand or command name.
 11. Release QA must be able to smoke an exact prebuilt binary without invoking
     the build or rewriting the installed path. Exact-binary mode requires an
     explicit expected SHA-256 and proves that hash before launch and again
-    during cleanup, including failed smoke paths.
+    during cleanup, including failed smoke paths. The default developer mode
+    must compile only to disposable smoke storage, never `loop-fork/loop`.
 
 ## Scope
 
@@ -78,6 +79,8 @@ follows a positional subcommand or command name.
       cleanup authority for permission or overlong-path failures.
 - [ ] Exact-binary smoke mode never rebuilds or mutates its target and fails
       closed on a missing or mismatched expected SHA-256.
+- [ ] Default smoke mode builds and executes only a disposable binary, leaving
+      the repository and installed artifact paths byte-identical.
 - [ ] Focused tests and the full sequential verifier pass with zero failures.
 - [ ] A different agent issues an exact-SHA verdict before any deployment.
 - [ ] No live launcher smoke or binary activation occurs until run-101 has

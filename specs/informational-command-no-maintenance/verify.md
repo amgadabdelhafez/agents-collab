@@ -19,7 +19,9 @@
 6. Prebuilt smoke mode requires an absolute executable plus a lowercase
    64-hex expected SHA-256, skips the build, and verifies the target hash before
    launch and again from the cleanup trap.
-7. `scripts/verify.sh` passes with zero baseline failures.
+7. Default smoke mode compiles to its disposable smoke root and leaves both
+   `loop-fork/loop` and the installed binary byte-identical before/after.
+8. `scripts/verify.sh` passes with zero baseline failures.
 
 ## Required cases
 
@@ -43,6 +45,7 @@
 | prebuilt binary without expected SHA-256 | exit 2 before tests or build |
 | prebuilt binary with wrong expected SHA-256 | fail before launch; binary unchanged |
 | exact prebuilt binary and matching SHA-256 | full smoke pass; target hash unchanged |
+| default developer smoke | full smoke pass from disposable binary; canonical artifact unchanged |
 
 ## Release gate
 

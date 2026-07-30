@@ -1,13 +1,7 @@
 {
   "task_id": "informational-command-no-maintenance",
   "status": "pending",
-  "required": [
-    "focused",
-    "full",
-    "independent-review",
-    "isolated-smoke",
-    "default-smoke"
-  ],
+  "required": ["focused", "full", "independent-review", "isolated-smoke"],
   "dimensions": {
     "focused": {
       "status": "pass",
@@ -34,18 +28,9 @@
       "reason": "command exited 0",
       "artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log",
       "method": "verify.sh",
-      "latest_attempt": "003",
-      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-003.log",
-      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-003.json"
-    },
-    "default-smoke": {
-      "status": "pass",
-      "reason": "command exited 0",
-      "artifact": "runs/informational-command-no-maintenance/artifacts/default-smoke/verify.log",
-      "method": "verify.sh",
-      "latest_attempt": "001",
-      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/default-smoke/attempt-001.log",
-      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/default-smoke/attempt-001.json"
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-002.log",
+      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-002.json"
     }
   }
 }

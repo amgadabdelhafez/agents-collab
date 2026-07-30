@@ -84,6 +84,17 @@
   complete sequential `test:ci` suite pass. A separate read-only audit found
   no remaining exact-binary-mode logic blocker and confirmed post-review QA
   must not invoke the build-bearing aggregate wrappers.
+- 2026-07-30T17:18:30Z — Moved default smoke compilation to disposable
+  `${SMOKE_ROOT}/build/loop`. The full default 10 KiB smoke passed from that
+  path with `prebuilt=0`; candidate, canonical, and global binaries remained
+  byte-identical at `ca7df916...`, and cleanup left no tmux server or temp root.
+- 2026-07-30T17:19:30Z — Harness `isolated-smoke` attempt 003 passed against
+  the physical installed binary with a wrapper forbidding both direct
+  `bun build` and package-script `bun run build`; output again binds
+  `prebuilt=1` and exact SHA-256 `ca7df916...`.
+- 2026-07-30T17:20:38Z — Harness `default-smoke` attempt 001 separately banked
+  the full disposable-build path and pass. All three persistent binary paths
+  remained byte-identical at `ca7df916...` after cleanup.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance

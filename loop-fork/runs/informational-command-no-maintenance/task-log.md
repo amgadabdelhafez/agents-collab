@@ -102,6 +102,15 @@ a separate read-only audit found no remaining logic blocker, while preserving
 the rule that `scripts/verify.sh` and the aggregate constant-size smoke are
 pre-review tools because they still rebuild in place.
 
+The superseding fix also removes the default-mode canonical write: it compiles
+directly to `${SMOKE_ROOT}/build/loop`, executes that disposable binary, and
+deletes it in cleanup. A default 10 KiB smoke passed with `prebuilt=0` and a
+disposable binary path while candidate, canonical, and global hashes all
+remained `ca7df916...`. Harness exact-binary attempt 003 then passed with a
+wrapper forbidding both `bun build` and `bun run build`.
+Harness `default-smoke` attempt 001 banks the disposable build path and full
+10 KiB pass separately from exact installed-artifact attempt 003.
+
 Regression: yes
 Regression id: nested-info-runs-maintenance
 Regression symptom: Nested help/version can execute destructive startup maintenance.

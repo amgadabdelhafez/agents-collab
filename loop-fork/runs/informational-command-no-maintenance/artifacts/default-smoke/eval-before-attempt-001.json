@@ -39,13 +39,8 @@
       "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/isolated-smoke/attempt-003.json"
     },
     "default-smoke": {
-      "status": "pass",
-      "reason": "command exited 0",
-      "artifact": "runs/informational-command-no-maintenance/artifacts/default-smoke/verify.log",
-      "method": "verify.sh",
-      "latest_attempt": "001",
-      "latest_attempt_artifact": "runs/informational-command-no-maintenance/artifacts/default-smoke/attempt-001.log",
-      "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/default-smoke/attempt-001.json"
+      "status": "pending",
+      "reason": "disposable-build smoke evidence not yet registered"
     }
   }
 }

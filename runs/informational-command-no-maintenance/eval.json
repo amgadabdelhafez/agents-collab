@@ -3,7 +3,13 @@
   "verdict": "pending",
   "release_status": "release-smoke-review-required",
   "baseline_failures": [],
-  "required": ["focused", "full", "independent-review", "isolated-smoke"],
+  "required": [
+    "focused",
+    "full",
+    "independent-review",
+    "isolated-smoke",
+    "default-smoke"
+  ],
   "dimensions": {
     "focused": {
       "status": "pass",
@@ -22,9 +28,15 @@
     },
     "isolated-smoke": {
       "status": "pass",
-      "method": "Harness verify.sh isolated-smoke attempt 002 with build-forbidden PATH",
+      "method": "Harness verify.sh isolated-smoke attempt 003 with build-forbidden PATH",
       "artifact": "loop-fork/runs/informational-command-no-maintenance/artifacts/isolated-smoke/verify.log",
-      "reason": "the exact physical installed binary ca7df916 passes the 10 KiB isolated smoke without invoking a build; its hash remains unchanged before each launch and in cleanup"
+      "reason": "the exact physical installed binary ca7df916 passes the 10 KiB isolated smoke without invoking either build form; its hash remains unchanged before each launch and in cleanup, while default mode separately builds only in disposable storage"
+    },
+    "default-smoke": {
+      "status": "pass",
+      "method": "Harness verify.sh default-smoke attempt 001",
+      "artifact": "loop-fork/runs/informational-command-no-maintenance/artifacts/default-smoke/verify.log",
+      "reason": "the default 10 KiB smoke compiled and executed only /private/tmp/loop-smoke.*/build/loop; candidate, canonical, and global artifact hashes remained ca7df916 before and after"
     }
   }
 }

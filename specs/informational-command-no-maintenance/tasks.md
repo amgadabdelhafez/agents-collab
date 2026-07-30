@@ -16,5 +16,7 @@
 - [x] After run-101 teardown only, run the live smoke and consider activation.
 - [x] Add a hash-bound prebuilt smoke mode that never rebuilds its target, then
       rerun the changed-binary QA against the exact installed bytes.
+- [x] Move the default smoke build into disposable storage and prove it leaves
+      both repository and installed binaries byte-identical.
 - [ ] Obtain exact-SHA review for the release-smoke descendant and fast-forward
       canonical source without changing the deployed binary.

@@ -3,8 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOOP_ROOT="${REPO_ROOT}/loop-fork"
-DEFAULT_LOOP_BINARY="${LOOP_ROOT}/loop"
-SMOKE_LOOP_BINARY="${LOOP_SMOKE_BINARY:-${DEFAULT_LOOP_BINARY}}"
+SMOKE_LOOP_BINARY="${LOOP_SMOKE_BINARY:-}"
 SMOKE_EXPECTED_SHA256="${LOOP_SMOKE_EXPECTED_SHA256:-}"
 SMOKE_USES_PREBUILT=0
 FIXTURES="${REPO_ROOT}/runs/large-prompt-launch/artifacts/fake-bin"
@@ -21,27 +20,27 @@ if [ -n "${LOOP_SMOKE_BINARY:-}" ]; then
     echo "large-prompt smoke: LOOP_SMOKE_EXPECTED_SHA256 must be 64 lowercase hex characters" >&2
     exit 2
   fi
+  case "${SMOKE_LOOP_BINARY}" in
+    /*) ;;
+    *)
+      echo "large-prompt smoke: loop binary path must be absolute: ${SMOKE_LOOP_BINARY}" >&2
+      exit 2
+      ;;
+  esac
+  if [ ! -f "${SMOKE_LOOP_BINARY}" ] || [ ! -x "${SMOKE_LOOP_BINARY}" ]; then
+    echo "large-prompt smoke: prebuilt loop binary is not an executable file: ${SMOKE_LOOP_BINARY}" >&2
+    exit 2
+  fi
 elif [ -n "${SMOKE_EXPECTED_SHA256}" ]; then
   echo "large-prompt smoke: LOOP_SMOKE_EXPECTED_SHA256 requires LOOP_SMOKE_BINARY" >&2
   exit 2
 fi
 
-case "${SMOKE_LOOP_BINARY}" in
-  /*) ;;
-  *)
-    echo "large-prompt smoke: loop binary path must be absolute: ${SMOKE_LOOP_BINARY}" >&2
-    exit 2
-    ;;
-esac
-
-if [ "${SMOKE_USES_PREBUILT}" -eq 1 ] && \
-  { [ ! -f "${SMOKE_LOOP_BINARY}" ] || [ ! -x "${SMOKE_LOOP_BINARY}" ]; }; then
-  echo "large-prompt smoke: prebuilt loop binary is not an executable file: ${SMOKE_LOOP_BINARY}" >&2
-  exit 2
-fi
-
 SMOKE_ROOT="$(mktemp -d "/tmp/loop-smoke.XXXXXX")"
 SMOKE_ROOT="$(cd "${SMOKE_ROOT}" && pwd -P)"
+if [ "${SMOKE_USES_PREBUILT}" -ne 1 ]; then
+  SMOKE_LOOP_BINARY="${SMOKE_ROOT}/build/loop"
+fi
 SUCCESS_ROOT="${SMOKE_ROOT}/success"
 HASH_ROOT="${SMOKE_ROOT}/hash"
 FAILURE_ROOT="${SMOKE_ROOT}/failure"
@@ -346,7 +345,8 @@ bun run test:file -- -t \
   'transports a realistic charter through hash-bound pointer bootstraps' \
   tests/loop/tmux.test.ts
 if [ "${SMOKE_USES_PREBUILT}" -ne 1 ]; then
-  bun run build >/dev/null
+  mkdir -p "$(dirname "${SMOKE_LOOP_BINARY}")"
+  bun build --compile --outfile "${SMOKE_LOOP_BINARY}" src/cli.ts >/dev/null
 fi
 
 prepare_case "${SUCCESS_ROOT}"
