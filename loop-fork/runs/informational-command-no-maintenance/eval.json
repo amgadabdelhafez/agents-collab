@@ -1,6 +1,6 @@
 {
   "task_id": "informational-command-no-maintenance",
-  "status": "pending",
+  "status": "pass",
   "required": [
     "focused",
     "full",
@@ -24,9 +24,10 @@
       "latest_attempt_meta": "runs/informational-command-no-maintenance/artifacts/full/attempt-002.json"
     },
     "independent-review": {
-      "status": "pending",
-      "reason": "The exact-binary smoke fix changes release evidence after dc79d52a; a fresh clean-SHA review is required before canonical source advances",
-      "method": "exact-SHA review of release-smoke descendant"
+      "status": "pass",
+      "reason": "Claude CONCUR fd3cff50-4c61-4a43-8d9d-67d4abf73bd7 is bound to 2ca7439384f05b02c19b40af71dd1cafbc878b96; reviewer independently passed default disposable-build and exact installed-binary smoke modes with ca7df916 unchanged",
+      "method": "exact-SHA review plus both smoke modes",
+      "signed_off_by": "claude"
     },
     "isolated-smoke": {
       "status": "pass",

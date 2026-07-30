@@ -1,7 +1,7 @@
 {
   "task_id": "informational-command-no-maintenance",
-  "verdict": "pending",
-  "release_status": "release-smoke-review-required",
+  "verdict": "pass",
+  "release_status": "approved-for-source-adoption-binary-unchanged",
   "baseline_failures": [],
   "required": [
     "focused",
@@ -22,9 +22,10 @@
       "reason": "the certified sequential suite passes with zero baseline failures outside the endpoint-binding sandbox"
     },
     "independent-review": {
-      "status": "pending",
-      "method": "exact-SHA review of release-smoke descendant",
-      "reason": "The exact-binary smoke fix changes release evidence after dc79d52a; a fresh clean-SHA review is required before canonical source advances"
+      "status": "pass",
+      "method": "exact-SHA review plus both smoke modes",
+      "signed_off_by": "claude",
+      "reason": "Claude CONCUR fd3cff50-4c61-4a43-8d9d-67d4abf73bd7 is bound to 2ca7439384f05b02c19b40af71dd1cafbc878b96; reviewer independently passed default disposable-build and exact installed-binary smoke modes with ca7df916 unchanged"
     },
     "isolated-smoke": {
       "status": "pass",

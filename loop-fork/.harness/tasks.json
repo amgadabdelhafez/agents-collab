@@ -187,7 +187,7 @@
       "status": "parked",
       "created_at": "2026-07-27T17:07:22Z",
       "run_dir": "runs/worker-routing-integrated-safe-plans",
-      "eval_status": "pending"
+      "eval_status": "pass"
     },
     {
       "id": "utility-context-capsules",

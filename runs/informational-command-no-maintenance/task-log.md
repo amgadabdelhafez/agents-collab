@@ -95,6 +95,10 @@
 - 2026-07-30T17:20:38Z — Harness `default-smoke` attempt 001 separately banked
   the full disposable-build path and pass. All three persistent binary paths
   remained byte-identical at `ca7df916...` after cleanup.
+- 2026-07-30T17:25:30Z — Claude issued CONCUR for exact clean SHA
+  `2ca7439384f05b02c19b40af71dd1cafbc878b96` in message
+  `fd3cff50-4c61-4a43-8d9d-67d4abf73bd7`, independently passing both default
+  disposable-build and exact installed-binary smoke modes with hashes unchanged.
 
 Regression: yes
 Regression id: nested-info-runs-maintenance

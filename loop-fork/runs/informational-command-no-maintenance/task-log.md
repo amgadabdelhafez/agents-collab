@@ -111,6 +111,11 @@ wrapper forbidding both `bun build` and `bun run build`.
 Harness `default-smoke` attempt 001 banks the disposable build path and full
 10 KiB pass separately from exact installed-artifact attempt 003.
 
+Claude independently reviewed exact clean commit
+`2ca7439384f05b02c19b40af71dd1cafbc878b96` and issued CONCUR in channel
+message `fd3cff50-4c61-4a43-8d9d-67d4abf73bd7`, independently passing both
+smoke modes and preserving installed/worktree hashes at `ca7df916...`.
+
 Regression: yes
 Regression id: nested-info-runs-maintenance
 Regression symptom: Nested help/version can execute destructive startup maintenance.
