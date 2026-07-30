@@ -8,15 +8,49 @@ REAL_TMUX="$(command -v tmux)"
 RUN_ID="tmux-redraw-smoke"
 SESSION="loop-tmux-redraw-smoke-$$"
 SOCKET="loop-tmux-redraw-smoke-$$"
-SMOKE_ROOT="$(mktemp -d)"
+if [[ -n "${LOOP_SMOKE_PARENT:-}" ]]; then
+  SMOKE_ROOT="$(mktemp -d "${LOOP_SMOKE_PARENT%/}/tmux-redraw.XXXXXX")"
+else
+  SMOKE_ROOT="$(mktemp -d)"
+fi
 SMOKE_HOME="${SMOKE_ROOT}/home"
 STALL_MARKER="${SMOKE_ROOT}/stall"
 WRAPPER_BIN="${SMOKE_ROOT}/bin"
 GOVERNESS_SHELL="${SHELL:-/bin/zsh}"
+RUN_DIR=""
+STATE_FILE=""
+JOURNAL_FILE=""
+SMOKE_PASSED=0
+
+dump_file_tail() {
+  local label="$1"
+  local path="$2"
+  echo "--- ${label}: ${path} (last 8192 bytes) ---" >&2
+  if [[ -f "${path}" ]]; then
+    tail -c 8192 "${path}" >&2 || true
+    echo >&2
+  else
+    echo "missing" >&2
+  fi
+}
 
 cleanup() {
+  if [[ "${SMOKE_PASSED}" != "1" ]]; then
+    echo "tmux redraw smoke failed; evidence preserved: ${SMOKE_ROOT}" >&2
+    if [[ -n "${STATE_FILE}" ]]; then
+      dump_file_tail "governess state" "${STATE_FILE}"
+    fi
+    if [[ -n "${JOURNAL_FILE}" ]]; then
+      dump_file_tail "governess journal" "${JOURNAL_FILE}"
+    fi
+    echo "--- governess pane (last 40 lines) ---" >&2
+    "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -S -40 \
+      -t "${GOVERNESS_PANE:-}" >&2 || true
+  fi
   "${REAL_TMUX}" -L "${SOCKET}" kill-server 2>/dev/null || true
-  rm -rf "${SMOKE_ROOT}"
+  if [[ "${SMOKE_PASSED}" == "1" ]]; then
+    rm -rf "${SMOKE_ROOT}"
+  fi
 }
 trap cleanup EXIT
 
@@ -91,7 +125,7 @@ GOVERNESS_COMMAND="env HOME='${SMOKE_HOME}' PATH='${WRAPPER_BIN}:${PATH}' LOOP_G
 "${REAL_TMUX}" -L "${SOCKET}" send-keys -t "${GOVERNESS_PANE}" Enter
 
 for _ in {1..50}; do
-  if [[ -f "${STATE_FILE}" && -f "${JOURNAL_FILE}" ]] && \
+  if [[ -f "${STATE_FILE}" ]] && \
     bun -e '
       const state = await Bun.file(process.argv[1]).json();
       process.exit(state.tick >= 1 ? 0 : 1);
@@ -100,6 +134,20 @@ for _ in {1..50}; do
   fi
   sleep 0.2
 done
+
+if [[ ! -f "${STATE_FILE}" ]] || ! \
+  bun -e '
+    const state = await Bun.file(process.argv[1]).json();
+    process.exit(state.tick >= 1 ? 0 : 1);
+  ' "${STATE_FILE}"; then
+  echo "governess did not reach the first healthy tick" >&2
+  exit 1
+fi
+
+if [[ "${LOOP_SMOKE_FORCE_FAILURE:-}" == "after-healthy" ]]; then
+  echo "forced redraw-smoke failure after healthy tick" >&2
+  exit 97
+fi
 
 HEALTHY_FRAME="$(
   "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -t "${GOVERNESS_PANE}"
@@ -160,3 +208,4 @@ bun -e '
   if (state.tick < 3 || state.tmuxControl) process.exit(1);
   console.log(JSON.stringify({ tick: state.tick, tmuxControl: "restored" }));
 ' "${STATE_FILE}"
+SMOKE_PASSED=1

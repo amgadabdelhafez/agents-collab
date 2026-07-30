@@ -1,0 +1,52 @@
+{
+  "task_id": "test-certification-hardening",
+  "feature": "test-certification-hardening",
+  "timestamp": "2026-07-30T05:44:00Z",
+  "evaluator": "codex-implementation-verification",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "bare_guard": {
+      "status": "pass",
+      "command": "bun test tests/loop/utils.test.ts",
+      "evidence": "exit 2 before any test passes, with guidance to test:file and test:ci"
+    },
+    "focused": {
+      "passed": 6,
+      "failed": 0,
+      "commands": [
+        "bun run test:file -- tests/test-certification.test.ts",
+        "bun run test:file -- tests/loop/utility-readiness.test.ts"
+      ]
+    },
+    "full_suite": {
+      "passed": 1264,
+      "failed": 0,
+      "command": "bun run test:ci"
+    },
+    "redraw_smoke": {
+      "passed": 6,
+      "failed": 0,
+      "forced_failure_exit": 97,
+      "preserved_evidence": "/private/tmp/loop-redraw-cert.EB1WKp/tmux-redraw.09ik03",
+      "success_cleanup": "pass"
+    },
+    "format_lint": "pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "diff_check": "pass"
+  },
+  "findings": {
+    "exit_133_reproduction": "not reproduced in three local direct-suite attempts; independently reproduced by the supervisor on candidate and base",
+    "root_cause_boundary": "Bun rewrites preload argv/main to the first discovered file, so the original bare-versus-focused selector set cannot be recovered inside the runner",
+    "resolution": "all direct bun test invocations fail before assertions; explicit test:file and sorted test:ci modes use one file per process"
+  },
+  "acceptance": {
+    "no_partial_bare_certification": true,
+    "failure_evidence_preserved": true,
+    "failure_diagnostics_bounded": true,
+    "success_temp_cleanup": true,
+    "bytes_read_honored": true,
+    "empty_baseline_allowlist": true
+  }
+}

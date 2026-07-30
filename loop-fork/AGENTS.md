@@ -4,7 +4,8 @@ Please keep the code dead-simple and keep the `src/loop/main.ts` file under 150 
 
 - Format code: `bun run fix`
 - Check lint/types/style: `bun run check`
-- Run tests: `bun test`
+- Run focused tests: `bun run test:file -- tests/loop/<module>.test.ts`
+- Run the complete suite: `bun run test:ci`
 - Build executable: `bun run build`
 - Install global binary/aliases: `bun run install:global`
 - Cut a patch release: `bun run release:patch`

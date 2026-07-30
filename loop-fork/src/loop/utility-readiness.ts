@@ -53,8 +53,8 @@ const readBoundedTail = (path: string): string => {
     const size = fstatSync(fd).size;
     const start = Math.max(0, size - MAX_LEDGER_TAIL_BYTES);
     const buffer = Buffer.alloc(size - start);
-    readSync(fd, buffer, 0, buffer.length, start);
-    const text = buffer.toString("utf8");
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, start);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
     if (start === 0) {
       return text;
     }

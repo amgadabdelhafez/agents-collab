@@ -4,14 +4,14 @@
 
 ```bash
 cd loop-fork
-bun test tests/loop/<module>.test.ts
+bun run test:file -- tests/loop/<module>.test.ts
 ```
 
 ## Integration test
 
 ```bash
 cd loop-fork
-bun test tests/loop/00-paired-loop.integration.test.ts
+bun run test:file -- tests/loop/00-paired-loop.integration.test.ts
 ```
 
 ## Repository checks
@@ -26,6 +26,11 @@ bun run test:ci
 
 `bun run test:ci` deliberately runs each test file in sorted order. This catches
 module-state leaks and lifecycle bugs that an isolated focused test can miss.
+Direct `bun test` is intentionally rejected before any assertion runs because
+the current Bun canary does not expose the original selector set to preloads and
+has intermittently terminated the shared-process suite with exit 133. Use
+`bun run test:file -- <file>` for one file or `bun run test:ci` for complete
+certification.
 
 ## Full task verification
 

@@ -11,7 +11,8 @@
   "scripts": {
     "build": "bun build --compile --outfile loop src/cli.ts",
     "install:global": "bun run build && bun run src/install.ts",
-    "test:ci": "for file in $(find tests -name '*.test.ts' | sort); do bun test \"$file\" || exit 1; done",
+    "test:file": "LOOP_TEST_CERTIFICATION_MODE=single-file bun test",
+    "test:ci": "for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file bun test \"$file\" || exit 1; done",
     "release:patch": "npm version patch && git push --follow-tags",
     "check": "ultracite check",
     "fix": "ultracite fix"

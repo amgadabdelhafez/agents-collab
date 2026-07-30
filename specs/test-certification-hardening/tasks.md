@@ -1,8 +1,8 @@
 # Tasks
 
-- [ ] Reproduce and isolate bare-suite exit 133.
-- [ ] Prevent partial bare-suite certification.
-- [ ] Preserve and summarize redraw-smoke evidence on failure.
-- [ ] Check the bounded read's actual `bytesRead` count.
-- [ ] Run focused and full verification.
-- [ ] Record eval evidence and request exact-SHA review.
+- [x] Attempt bounded reproduction and isolate the bare-suite certification ambiguity.
+- [x] Prevent partial bare-suite certification.
+- [x] Preserve and summarize redraw-smoke evidence on failure.
+- [x] Check the bounded read's actual `bytesRead` count.
+- [x] Run focused and full verification.
+- [x] Prepare eval evidence for exact-SHA review.
