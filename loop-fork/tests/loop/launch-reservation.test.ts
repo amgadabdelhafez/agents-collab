@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGit } from "../../src/loop/git";
@@ -13,6 +19,7 @@ import {
   readRunManifest,
   resolveRepoId,
   resolveRunStorage,
+  resolveStorageRoot,
   writeRunManifest,
 } from "../../src/loop/run-state";
 import type { LaunchWorkspaceBinding, Options } from "../../src/loop/types";
@@ -223,16 +230,85 @@ test("active legacy and unknown topology fail closed without mutation", async ()
   }
 });
 
+test("active alphanumeric run ids participate in workspace conflict checks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const storage = resolveRunStorage("alpha", root, home);
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        claudeSessionId: "",
+        codexThreadId: "",
+        cwd: root,
+        mode: "paired",
+        pid: 999,
+        repoId: storage.repoId,
+        runId: "alpha",
+        state: "submitted",
+        workspaceBinding: binding,
+      })
+    );
+
+    await expect(
+      reservePairedLaunch(makeOptions(), binding, reservationDeps(home))
+    ).rejects.toThrow("launch conflict: run alpha");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("concurrent cold resumes grant exactly one bootstrap attempt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const storage = writeFixtureManifest(home, binding, {
+      launchClaimId: "immutable-claim",
+      workspaceBinding: binding,
+    });
+    const deps = reservationDeps(home);
+    const results = await Promise.allSettled([
+      reservePairedLaunch(
+        makeOptions({ resumeRunId: storage.runId }),
+        binding,
+        deps
+      ),
+      reservePairedLaunch(
+        makeOptions({ resumeRunId: storage.runId }),
+        binding,
+        deps
+      ),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled")
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected")
+    ).toHaveLength(1);
+    expect(readRunManifest(storage.manifestPath)).toMatchObject({
+      launchClaimId: "immutable-claim",
+      launchAttemptPid: 4242,
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test("explicit resume reuses the matching claim and task binding is immutable", async () => {
   const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
   const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
   try {
     const binding = makeBinding(root);
-    const fresh = await reservePairedLaunch(
-      makeOptions(),
-      binding,
-      reservationDeps(home)
-    );
+    const deps = {
+      ...reservationDeps(home),
+      makeClaimId: claimIds(),
+    };
+    const fresh = await reservePairedLaunch(makeOptions(), binding, deps);
     const sha256 = bindLaunchTask(
       fresh,
       "exact charter",
@@ -246,19 +322,143 @@ test("explicit resume reuses the matching claim and task binding is immutable", 
       "different source charter"
     );
 
+    cancelPairedLaunch(fresh, "2026-07-31T00:01:00Z");
+    expect(readRunManifest(fresh.storage.manifestPath)).toMatchObject({
+      sourceTaskSha256: sha256,
+      state: "failed",
+    });
+
     const resumed = await reservePairedLaunch(
       makeOptions({ resumeRunId: fresh.storage.runId, workspace: root }),
       binding,
-      reservationDeps(home)
+      deps
     );
     expect(resumed).toMatchObject({
       reserved: false,
       storage: { runId: fresh.storage.runId },
       workspaceBinding: binding,
     });
+    expect(resumed.claimId).toBeDefined();
+    expect(bindLaunchTask(resumed, "exact charter")).toBe(sha256);
+    expect(() => bindLaunchTask(resumed, "different charter")).toThrow(
+      "different source charter"
+    );
 
-    cancelPairedLaunch(fresh, "2026-07-31T00:01:00Z");
+    cancelPairedLaunch(resumed, "2026-07-31T00:02:00Z");
     expect(readRunManifest(fresh.storage.manifestPath)?.state).toBe("failed");
+    expect(
+      readRunManifest(fresh.storage.manifestPath)?.launchAttemptId
+    ).toBeUndefined();
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("live reattach validates but never invents source-charter evidence", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const storage = writeFixtureManifest(home, binding, {
+      launchClaimId: "immutable-claim",
+      state: "working",
+      tmuxSession: "repo-loop-1",
+      workspaceBinding: binding,
+    });
+    const live = await reservePairedLaunch(
+      makeOptions({ resumeRunId: storage.runId }),
+      binding,
+      { ...reservationDeps(home), tmuxLiveness: () => "live" }
+    );
+
+    expect(live.claimId).toBeUndefined();
+    const sha256 = bindLaunchTask(live, "original charter");
+    expect(
+      readRunManifest(storage.manifestPath)?.sourceTaskSha256
+    ).toBeUndefined();
+    const manifest = readRunManifest(storage.manifestPath);
+    if (!manifest) {
+      throw new Error("expected live manifest");
+    }
+    writeRunManifest(storage.manifestPath, {
+      ...manifest,
+      sourceTaskSha256: sha256,
+    });
+    expect(() => bindLaunchTask(live, "changed charter")).toThrow(
+      "different source charter"
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("stale canonical lock reclamation stays single-owner", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const repoDir = join(resolveStorageRoot(home), binding.repoId);
+    mkdirSync(repoDir, { recursive: true });
+    const staleLock = join(repoDir, ".paired-launch.lock");
+    mkdirSync(staleLock);
+    utimesSync(staleLock, new Date(0), new Date(0));
+    const deps = reservationDeps(home);
+    const results = await Promise.allSettled([
+      reservePairedLaunch(makeOptions(), binding, deps),
+      reservePairedLaunch(makeOptions(), binding, deps),
+    ]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled")
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected")
+    ).toHaveLength(1);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("a delayed stale cancel cannot clear a replacement resume attempt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const storage = writeFixtureManifest(home, binding, {
+      state: "stopped",
+      workspaceBinding: binding,
+    });
+    const stale = await reservePairedLaunch(
+      makeOptions({ resumeRunId: storage.runId }),
+      binding,
+      {
+        ...reservationDeps(home, 4242),
+        makeClaimId: (() => {
+          let next = 0;
+          return () => `stale-${++next}`;
+        })(),
+      }
+    );
+    const replacement = await reservePairedLaunch(
+      makeOptions({ resumeRunId: storage.runId }),
+      binding,
+      {
+        ...reservationDeps(home, 5252),
+        isPidAlive: () => false,
+        makeClaimId: (() => {
+          let next = 0;
+          return () => `replacement-${++next}`;
+        })(),
+      }
+    );
+
+    cancelPairedLaunch(stale);
+    expect(readRunManifest(storage.manifestPath)?.launchAttemptId).toBe(
+      replacement.claimId
+    );
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(home, { force: true, recursive: true });

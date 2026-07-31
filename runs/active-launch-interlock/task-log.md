@@ -9,13 +9,19 @@
 - Added a short repository lock, exclusive numeric run-directory reservation,
   fail-closed active/live/unknown/legacy conflict checks, atomic manifest
   replacement, explicit resume reuse, and owned-only tmux cleanup.
+- Hardened the first candidate after independent dissent: all valid run ids are
+  scanned, stale-lock reclamation is guarded, cold resumes use replaceable
+  attempt claims, resumed charters remain SHA-bound, missing Markdown paths
+  stay invocation-cwd-bound, and a tmux race loser cannot terminalize a winner.
 - Added deterministic unit, process-contention, lifecycle, and tmux-race
   coverage plus an isolated compiled smoke with fake Gemini/Cursor TUIs, an
   isolated HOME, and a unique tmux socket.
-- Focused verification passed. Full Harness-recorded `bun run test:ci`, lint,
-  typecheck, and build passed. The root verifier then passed lint, typecheck,
-  compiled build, every sorted test file, and the empty named baseline
-  allowlist. Exact-SHA review remains the deployment gate.
+- Focused verification passed (247 tests). The regenerated root verifier passed
+  lint, typecheck, compiled build, 1,373 tests across 67 sorted files, and the
+  empty named baseline allowlist. The hash-bound compiled smoke passed fresh
+  contention, cold-resume contention, immutable claim/SHA preservation, and a
+  distinct worktree using a 10,296-byte charter. Exact-SHA review remains the
+  deployment gate.
 
 Regression: yes
 Regression id: paired-launch-singleflight

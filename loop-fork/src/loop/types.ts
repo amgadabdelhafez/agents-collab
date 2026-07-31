@@ -361,6 +361,7 @@ export interface Options {
   governessUrl: string;
   helperCavemanMode: CavemanMode;
   helperCavemanModeSource: CavemanModeSource;
+  launchAttemptId?: string;
   launchClaimId?: string;
   maxIterations: number;
   pairedMode?: boolean;

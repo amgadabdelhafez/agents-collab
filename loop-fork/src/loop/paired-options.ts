@@ -219,6 +219,14 @@ export const resolvePreparedRunState = (
   ensureRunStorage(storage);
   const existingManifest = readRunManifest(storage.manifestPath);
   if (
+    opts.launchAttemptId &&
+    existingManifest?.launchAttemptId !== opts.launchAttemptId
+  ) {
+    throw new Error(
+      `[loop] launch attempt ${opts.launchAttemptId} no longer owns run ${storage.runId}`
+    );
+  }
+  if (
     opts.launchClaimId &&
     existingManifest?.launchClaimId !== opts.launchClaimId
   ) {

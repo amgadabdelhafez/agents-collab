@@ -36,6 +36,7 @@ const MCP_RELOAD_ID_PREFIX = "proxy-mcp-reload-";
 const MCP_RELOAD_TIMEOUT_MS = 5000;
 
 export const CODEX_TMUX_PROXY_SUBCOMMAND = "__codex-tmux-proxy";
+const PROXY_SHUTDOWN_PATH = "/__loop_shutdown";
 
 interface ProxySocketData {
   connId: number;
@@ -227,6 +228,10 @@ class CodexTmuxProxy {
     this.proxyServer = serve<ProxySocketData>({
       fetch: (request, server) => {
         const path = new URL(request.url).pathname;
+        if (path === PROXY_SHUTDOWN_PATH && request.method === "POST") {
+          setTimeout(() => this.stop(), 0);
+          return new Response("stopping");
+        }
         if (path === "/healthz" || path === "/readyz") {
           const health = proxyHealth(Boolean(this.upstream), this.reconnecting);
           return new Response(
@@ -687,6 +692,19 @@ export const waitForCodexTmuxProxy = async (port: number): Promise<string> => {
     await wait(HEALTH_POLL_DELAY_MS);
   }
   throw new Error("[loop] Codex tmux proxy failed to start");
+};
+
+export const stopCodexTmuxProxy = async (proxyUrl: string): Promise<void> => {
+  const url = new URL(proxyUrl);
+  url.protocol = "http:";
+  url.pathname = PROXY_SHUTDOWN_PATH;
+  url.search = "";
+  const response = await fetch(url, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(
+      `[loop] Codex tmux proxy shutdown failed: HTTP ${response.status}`
+    );
+  }
 };
 
 export const runCodexTmuxProxy = async (

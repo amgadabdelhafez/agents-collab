@@ -77,6 +77,8 @@ export interface RunManifest {
   cwd: string;
   governess?: boolean;
   helperCavemanMode?: CavemanMode;
+  launchAttemptId?: string;
+  launchAttemptPid?: number;
   launchCharters?: Partial<Record<Agent, RunLaunchCharter>>;
   launchClaimId?: string;
   mode: string;
@@ -164,6 +166,8 @@ interface RunManifestInput {
   cwd: string;
   governess?: boolean;
   helperCavemanMode?: CavemanMode;
+  launchAttemptId?: string;
+  launchAttemptPid?: number;
   launchClaimId?: string;
   mode: string;
   pid: number;
@@ -340,12 +344,24 @@ const validateSourceTaskSha256 = (value: string): string => {
 const launchReservationManifestFields = (
   input: Pick<
     RunManifestInput,
-    "launchClaimId" | "sourceTaskSha256" | "workspaceBinding"
+    | "launchAttemptId"
+    | "launchAttemptPid"
+    | "launchClaimId"
+    | "sourceTaskSha256"
+    | "workspaceBinding"
   >
 ): Pick<
   RunManifest,
-  "launchClaimId" | "sourceTaskSha256" | "workspaceBinding"
+  | "launchAttemptId"
+  | "launchAttemptPid"
+  | "launchClaimId"
+  | "sourceTaskSha256"
+  | "workspaceBinding"
 > => ({
+  ...(input.launchAttemptId ? { launchAttemptId: input.launchAttemptId } : {}),
+  ...(input.launchAttemptPid
+    ? { launchAttemptPid: input.launchAttemptPid }
+    : {}),
   ...(input.launchClaimId ? { launchClaimId: input.launchClaimId } : {}),
   ...(input.sourceTaskSha256
     ? { sourceTaskSha256: validateSourceTaskSha256(input.sourceTaskSha256) }
@@ -359,8 +375,20 @@ const readLaunchReservationManifestFields = (
   parsed: Record<string, unknown>
 ): Pick<
   RunManifest,
-  "launchClaimId" | "sourceTaskSha256" | "workspaceBinding"
+  | "launchAttemptId"
+  | "launchAttemptPid"
+  | "launchClaimId"
+  | "sourceTaskSha256"
+  | "workspaceBinding"
 > => {
+  const launchAttemptId = firstString(parsed, [
+    "launchAttemptId",
+    "launch_attempt_id",
+  ]);
+  const launchAttemptPid = firstInteger(parsed, [
+    "launchAttemptPid",
+    "launch_attempt_pid",
+  ]);
   const launchClaimId = firstString(parsed, [
     "launchClaimId",
     "launch_claim_id",
@@ -377,6 +405,8 @@ const readLaunchReservationManifestFields = (
     parsed.workspaceBinding ?? parsed.workspace_binding
   );
   return {
+    ...(launchAttemptId ? { launchAttemptId } : {}),
+    ...(launchAttemptPid && launchAttemptPid > 0 ? { launchAttemptPid } : {}),
     ...(launchClaimId ? { launchClaimId } : {}),
     ...(sourceTaskSha256 ? { sourceTaskSha256 } : {}),
     ...(workspaceBinding ? { workspaceBinding } : {}),

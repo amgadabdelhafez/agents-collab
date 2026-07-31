@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { isAgent } from "./loop/agents";
 import { findImmediateInfoRequest } from "./loop/args";
@@ -82,10 +81,7 @@ const preserveRelativePromptPath = (
   if (!(input && MARKDOWN_PATH_RE.test(input) && !isAbsolute(input))) {
     return;
   }
-  const absolute = resolve(invocationCwd, input);
-  if (existsSync(absolute)) {
-    opts.promptInput = absolute;
-  }
+  opts.promptInput = resolve(invocationCwd, input);
 };
 
 const parseBridgeArgs = (

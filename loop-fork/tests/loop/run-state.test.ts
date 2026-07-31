@@ -263,6 +263,8 @@ test("manifest helpers write, read, and touch run metadata", () => {
       codexThreadId: "codex-1",
       cwd: "/repo",
       helperCavemanMode: "full",
+      launchAttemptId: "attempt-456",
+      launchAttemptPid: 5678,
       launchClaimId: "claim-123",
       mode: "paired",
       pid: 1234,
@@ -307,6 +309,8 @@ test("manifest helpers write, read, and touch run metadata", () => {
     cavemanMode: "lite",
     helperCavemanMode: "full",
     launchCharters: manifest.launchCharters,
+    launchAttemptId: "attempt-456",
+    launchAttemptPid: 5678,
     launchClaimId: "claim-123",
     sourceTaskSha256: "c".repeat(64),
     workspaceBinding: {

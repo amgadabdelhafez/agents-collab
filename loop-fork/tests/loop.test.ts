@@ -438,6 +438,32 @@ test("runCli preserves a nested relative Markdown prompt path", async () => {
   );
 });
 
+test("runCli anchors a missing relative Markdown prompt to the invocation directory", async () => {
+  const missingPrompt = "missing-from-caller/adversarial-task.md";
+  const opts = {
+    ...makeOptions(),
+    promptInput: missingPrompt,
+    tmux: true,
+    workspace: "/requested-worktree",
+  };
+  const { resolveTaskMock, runCli } = await loadRunCli({
+    parseArgs: () => opts,
+    runInTmux: () => true,
+    resolveTask: () => Promise.resolve("workspace task must not be selected"),
+  });
+
+  await runCli([
+    "--tmux",
+    "--workspace",
+    "/requested-worktree",
+    "-p",
+    missingPrompt,
+  ]);
+
+  expect(opts.promptInput).toBe(resolve(process.cwd(), missingPrompt));
+  expect(resolveTaskMock).toHaveBeenCalledWith(opts);
+});
+
 test("runCli starts paired interactive tmux without resolving a task", async () => {
   const opts = { ...makeOptions(), proof: "", tmux: true };
   const {

@@ -32,10 +32,12 @@ nonzero without creating or destroying any run resources.
    before entering an explicit workspace.
 3. A short repository-scoped atomic lock protects conflict scanning and run-dir
    allocation. The selected run directory is created exclusively, never by a
-   `max + 1` decision followed by recursive creation.
+   `max + 1` decision followed by recursive creation. Stale-lock recovery is
+   serialized so a delayed reclaimer cannot unlink a replacement owner.
 4. The reservation is a durable submitted manifest written before
    `resolveTask`. It persists immutable workspace root, branch ref when one
-   exists, launch claim id, and source charter SHA-256 once resolved.
+   exists, run-level launch claim id, and source charter SHA-256 once resolved.
+   A separate attempt id/pid identifies the one process allowed to bootstrap.
 5. A fresh launch conflicts when an existing non-dead workspace has the same
    canonical root or the same symbolic branch ref. An active legacy manifest
    without a structured binding blocks fresh launches fail-closed because
@@ -44,7 +46,10 @@ nonzero without creating or destroying any run resources.
    teardown. Unknown tmux liveness blocks without mutation. A terminal manifest
    with affirmatively dead topology does not block.
 7. An explicit resume of the same run reuses its durable identity and attaches;
-   it does not create a competing reservation.
+   it does not create a competing reservation. A cold resume receives a
+   replaceable bootstrap-attempt claim after the old owner is dead, and only
+   one live attempt can proceed. A live resume attaches without creating a new
+   attempt. Resumes must match the immutable source-charter SHA-256.
 8. Duplicate rejection happens before planning agents, bridge registration,
    hooks, persistent Claude/Codex transports, charter files, proxy processes,
    or tmux panes.
@@ -67,6 +72,10 @@ nonzero without creating or destroying any run resources.
 - Same root/different ref and different root/same symbolic ref both conflict.
 - Live, dead, unknown, terminal, legacy, and explicit-resume cases follow the
   required behavior above.
+- Two barrier-synchronized cold resumes preserve the run-level claim and source
+  hash while producing exactly one bootstrap-attempt winner.
+- Active manifests in every valid run-id directory, including alphanumeric
+  ids, participate in conflict scanning.
 - Run-manifest round-trip tests cover the new immutable fields and legacy
   compatibility.
 - A compiled isolated smoke launches once, rejects an identical second launch

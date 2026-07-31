@@ -50,6 +50,53 @@ const makeOptions = (overrides: Partial<Options> = {}): Options => ({
   ...overrides,
 });
 
+test("prepared runs reject a superseded bootstrap attempt", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  process.env.HOME = home;
+  Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+  try {
+    const storage = resolveRunStorage("alpha", process.cwd(), home);
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        cwd: process.cwd(),
+        launchAttemptId: "new-attempt",
+        launchAttemptPid: 4321,
+        launchClaimId: "immutable-claim",
+        mode: "paired",
+        pid: 4321,
+        repoId: storage.repoId,
+        runId: "alpha",
+        state: "submitted",
+      })
+    );
+    const opts = makeOptions({
+      launchAttemptId: "old-attempt",
+      launchClaimId: "immutable-claim",
+      pairedMode: true,
+      resumeRunId: "alpha",
+    });
+
+    expect(() => preparePairedOptions(opts, process.cwd(), false)).toThrow(
+      "launch attempt old-attempt no longer owns run alpha"
+    );
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("preparePairedOptions accepts a raw session id without creating a paired manifest", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;

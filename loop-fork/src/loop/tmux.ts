@@ -34,6 +34,7 @@ import { codexHomeEnv } from "./codex-home";
 import {
   CODEX_TMUX_PROXY_SUBCOMMAND,
   findCodexTmuxProxyPort,
+  stopCodexTmuxProxy,
   waitForCodexTmuxProxy,
 } from "./codex-tmux-proxy";
 import {
@@ -197,6 +198,7 @@ interface TmuxDeps {
     threadId: string
   ) => Promise<string>;
   startPersistentAgentSession: typeof startPersistentAgentSession;
+  stopCodexProxy: (proxyUrl: string) => Promise<void>;
   updateRunManifest: typeof updateRunManifest;
 }
 
@@ -2933,6 +2935,8 @@ const startPairedSession = async (
     : undefined;
   let codexAppServerPid: number | undefined;
   let codexRemoteUrl = "";
+  let codexProxyUrl = "";
+  let codexThreadId = "";
   let ownedPersistentTransport = false;
   let ownedTmuxSession = false;
   let persistentCleanupCompleted = false;
@@ -2944,28 +2948,55 @@ const startPairedSession = async (
     deps.releasePersistentCodexSession();
     ownedPersistentTransport = false;
   };
+  const cleanupOwnedPersistentTransport = async (): Promise<void> => {
+    if (!ownedPersistentTransport || persistentCleanupCompleted) {
+      return;
+    }
+    if (codexProxyUrl) {
+      try {
+        await deps.stopCodexProxy(codexProxyUrl);
+        codexProxyUrl = "";
+      } catch (proxyError) {
+        const detail =
+          proxyError instanceof Error ? proxyError.message : String(proxyError);
+        deps.log(`[loop] ${detail}; proxy lifecycle GC will retry cleanup.`);
+      }
+    }
+    try {
+      await withTimeout(
+        deps.closePersistentCodexSession(),
+        FAILED_START_CLOSE_TIMEOUT_MS,
+        "Codex app-server failed-start cleanup timed out"
+      );
+      persistentCleanupCompleted = true;
+    } catch (closeError) {
+      const detail =
+        closeError instanceof Error ? closeError.message : String(closeError);
+      deps.log(`[loop] ${detail}; startup GC will retry exact owned cleanup.`);
+    }
+  };
+  const clearOwnedTransportFields = (current: RunManifest): RunManifest => {
+    const ownsCurrentTransport = codexAppServerPid
+      ? current.codexAppServerPid === codexAppServerPid
+      : Boolean(codexRemoteUrl && current.codexRemoteUrl === codexRemoteUrl);
+    if (!(ownsCurrentTransport && persistentCleanupCompleted)) {
+      return current;
+    }
+    return {
+      ...current,
+      codexAppServerPid: undefined,
+      codexRemoteUrl: undefined,
+      codexThreadId:
+        current.codexThreadId === codexThreadId ? "" : current.codexThreadId,
+    };
+  };
   const terminalizeFailedStart = async (): Promise<
     RunLifecycleState | "undurable"
   > => {
     if (terminalizationResult) {
       return terminalizationResult;
     }
-    if (ownedPersistentTransport && !persistentCleanupCompleted) {
-      try {
-        await withTimeout(
-          deps.closePersistentCodexSession(),
-          FAILED_START_CLOSE_TIMEOUT_MS,
-          "Codex app-server failed-start cleanup timed out"
-        );
-        persistentCleanupCompleted = true;
-      } catch (closeError) {
-        const detail =
-          closeError instanceof Error ? closeError.message : String(closeError);
-        deps.log(
-          `[loop] ${detail}; startup GC will retry exact owned cleanup.`
-        );
-      }
-    }
+    await cleanupOwnedPersistentTransport();
     cleanupFailedPairedSessionStart(
       deps,
       session,
@@ -2980,20 +3011,11 @@ const startPairedSession = async (
           if (!current) {
             return undefined;
           }
-          const clearedOwnership =
-            ownedPersistentTransport && persistentCleanupCompleted
-              ? {
-                  codexAppServerPid: undefined,
-                  codexRemoteUrl: undefined,
-                }
-              : {};
+          const withoutOwnedTransport = clearOwnedTransportFields(current);
           if (!isActiveRunState(current.state)) {
-            return { ...current, ...clearedOwnership };
+            return withoutOwnedTransport;
           }
-          return setRunManifestState(
-            { ...current, ...clearedOwnership },
-            "failed"
-          );
+          return setRunManifestState(withoutOwnedTransport, "failed");
         }
       );
       if (!updated || isActiveRunState(updated.state)) {
@@ -3025,112 +3047,99 @@ const startPairedSession = async (
     );
     return { preserveUnknownStart, session, terminalizeFailedStart };
   }
-  // The session name is deterministic and already reserved by this launch
-  // path. Persist it before hooks, persistent transports, charter writes, or
-  // tmux creation so recovery and GC can associate every active manifest with
-  // the workspace being constructed.
-  manifest = bindPairedSessionIdentity(
-    deps,
-    storage,
-    manifest,
-    session,
-    paneAgents,
-    primaryAgent,
-    true
-  );
-  const nativeSubagentMode = launch.opts.governess
-    ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)
-    : "off";
-  // Codex app-server loads hooks at process startup, so persist the run-scoped
-  // hook config before booting its persistent transport.
-  const governessHooks = prepareGovernessHooks(
-    deps,
-    launch.opts,
-    storage.runDir,
-    paneAgents,
-    nativeSubagentMode
-  );
-  const hadAgentSession: Record<Agent, boolean> = {
-    claude: Boolean(
-      manifest.claudeSessionId || launch.opts.pairedSessionIds?.claude
-    ),
-    codex: Boolean(
-      manifest.codexThreadId || launch.opts.pairedSessionIds?.codex
-    ),
-    gemini: Boolean(launch.opts.pairedSessionIds?.gemini),
-    cursor: Boolean(launch.opts.pairedSessionIds?.cursor),
-    copilot: Boolean(launch.opts.pairedSessionIds?.copilot),
-  };
-  // Only boot persistent transports when claude or codex is in the pair
-  const needsPersistent = [primaryAgent, secondaryAgent].some(
-    (a) => a === "claude" || a === "codex"
-  );
-  let claudeSessionId = "";
-  let codexThreadId = "";
-  let codexProxyUrl = "";
-  if (needsPersistent) {
-    const persistent = await preparePersistentTmuxLaunch(
+  try {
+    // The session name is deterministic and already reserved by this launch
+    // path. Persist it before hooks, persistent transports, charter writes, or
+    // tmux creation so recovery and GC can associate every active manifest with
+    // the workspace being constructed.
+    manifest = bindPairedSessionIdentity(
+      deps,
+      storage,
+      manifest,
+      session,
+      paneAgents,
+      primaryAgent,
+      true
+    );
+    const nativeSubagentMode = launch.opts.governess
+      ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)
+      : "off";
+    // Codex app-server loads hooks at process startup, so persist the run-scoped
+    // hook config before booting its persistent transport.
+    const governessHooks = prepareGovernessHooks(
       deps,
       launch.opts,
-      manifest,
+      storage.runDir,
+      paneAgents,
       nativeSubagentMode
     );
-    claudeSessionId = persistent.claudeSessionId;
-    codexAppServerPid = persistent.codexAppServerPid;
-    codexRemoteUrl = persistent.codexRemoteUrl;
-    codexThreadId = persistent.codexThreadId;
-    deps.updateRunManifest(storage.manifestPath, (current) =>
-      touchRunManifest(
-        {
-          ...(current ?? manifest),
-          claudeSessionId,
-          codexAppServerPid: codexAppServerPid || undefined,
-          codexRemoteUrl: codexRemoteUrl || undefined,
-          codexThreadId,
-        },
-        new Date().toISOString()
-      )
+    const hadAgentSession: Record<Agent, boolean> = {
+      claude: Boolean(
+        manifest.claudeSessionId || launch.opts.pairedSessionIds?.claude
+      ),
+      codex: Boolean(
+        manifest.codexThreadId || launch.opts.pairedSessionIds?.codex
+      ),
+      gemini: Boolean(launch.opts.pairedSessionIds?.gemini),
+      cursor: Boolean(launch.opts.pairedSessionIds?.cursor),
+      copilot: Boolean(launch.opts.pairedSessionIds?.copilot),
+    };
+    // Only boot persistent transports when claude or codex is in the pair
+    const needsPersistent = [primaryAgent, secondaryAgent].some(
+      (a) => a === "claude" || a === "codex"
     );
-    if (codexThreadId && codexRemoteUrl) {
-      try {
-        codexProxyUrl = await deps.startCodexProxy(
-          storage.runDir,
-          codexRemoteUrl,
-          codexThreadId
-        );
-      } catch (error) {
-        await deps.closePersistentCodexSession();
-        const detail = error instanceof Error ? error.message : String(error);
-        deps.log(
-          `[loop] ${detail}; starting Codex with tmux bridge delivery instead.`
-        );
-        codexAppServerPid = undefined;
-        codexRemoteUrl = "";
-        codexThreadId = "";
-        deps.updateRunManifest(storage.manifestPath, (current) =>
-          current
-            ? touchRunManifest(
-                {
-                  ...current,
-                  codexAppServerPid: undefined,
-                  codexRemoteUrl: undefined,
-                  codexThreadId: "",
-                },
-                new Date().toISOString()
-              )
-            : undefined
-        );
+    let claudeSessionId = "";
+    if (needsPersistent) {
+      ownedPersistentTransport = true;
+      const persistent = await preparePersistentTmuxLaunch(
+        deps,
+        launch.opts,
+        manifest,
+        nativeSubagentMode
+      );
+      claudeSessionId = persistent.claudeSessionId;
+      codexAppServerPid = persistent.codexAppServerPid;
+      codexRemoteUrl = persistent.codexRemoteUrl;
+      codexThreadId = persistent.codexThreadId;
+      deps.updateRunManifest(storage.manifestPath, (current) =>
+        touchRunManifest(
+          {
+            ...(current ?? manifest),
+            claudeSessionId,
+            codexAppServerPid: codexAppServerPid || undefined,
+            codexRemoteUrl: codexRemoteUrl || undefined,
+            codexThreadId,
+          },
+          new Date().toISOString()
+        )
+      );
+      if (codexThreadId && codexRemoteUrl) {
+        try {
+          codexProxyUrl = await deps.startCodexProxy(
+            storage.runDir,
+            codexRemoteUrl,
+            codexThreadId
+          );
+        } catch (error) {
+          await cleanupOwnedPersistentTransport();
+          deps.updateRunManifest(storage.manifestPath, (current) =>
+            current ? clearOwnedTransportFields(current) : undefined
+          );
+          const detail = error instanceof Error ? error.message : String(error);
+          deps.log(
+            `[loop] ${detail}; starting Codex with tmux bridge delivery instead.`
+          );
+          codexAppServerPid = undefined;
+          codexRemoteUrl = "";
+          codexThreadId = "";
+          ownedPersistentTransport = false;
+        }
       }
     }
-    ownedPersistentTransport = Boolean(codexAppServerPid || codexRemoteUrl);
-  }
-  const claudeMcpConfigPath = claudeChannelServer
-    ? (launch.opts.claudeMcpConfigPath ??
-      join(storage.runDir, "claude-mcp.json"))
-    : undefined;
-  let leftPromptPath: string | undefined;
-  let rightPromptPath: string | undefined;
-  try {
+    const claudeMcpConfigPath = claudeChannelServer
+      ? (launch.opts.claudeMcpConfigPath ??
+        join(storage.runDir, "claude-mcp.json"))
+      : undefined;
     const env = buildPairedPaneEnv({
       cavemanMode: launch.opts.cavemanMode,
       codexHome: launch.opts.codexHome,
@@ -3167,8 +3176,8 @@ const startPairedSession = async (
       paneAgents.right,
       rightPrompt
     );
-    leftPromptPath = leftLaunch?.bootstrapPath;
-    rightPromptPath = rightLaunch?.bootstrapPath;
+    const leftPromptPath = leftLaunch?.bootstrapPath;
+    const rightPromptPath = rightLaunch?.bootstrapPath;
     if (leftLaunch || rightLaunch) {
       manifest =
         deps.updateRunManifest(storage.manifestPath, (current) =>
@@ -3334,6 +3343,18 @@ const startPairedSession = async (
     if (liveness.liveness === "unknown") {
       preserveUnknownStart();
       throw unknownHandoffLivenessError(session, liveness);
+    }
+    if (liveness.liveness === "live" && !ownedTmuxSession) {
+      await cleanupOwnedPersistentTransport();
+      try {
+        deps.updateRunManifest(storage.manifestPath, (current) =>
+          current ? clearOwnedTransportFields(current) : undefined
+        );
+      } catch {
+        // The live session is authoritative; never terminalize it because
+        // exact loser-owned transport metadata could not be cleared.
+      }
+      throw error;
     }
     await terminalizeFailedStart();
     throw error;
@@ -3560,6 +3581,7 @@ const defaultDeps = (): TmuxDeps => ({
     );
     return waitForCodexTmuxProxy(port);
   },
+  stopCodexProxy: stopCodexTmuxProxy,
   closePersistentCodexSession,
   releasePersistentCodexSession,
   startPersistentAgentSession,

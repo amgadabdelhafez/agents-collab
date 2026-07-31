@@ -23,8 +23,11 @@ SMOKE_TMUX_TMPDIR="${SMOKE_ROOT}/tmux"
 SMOKE_SOCKET="loop-interlock-$RANDOM-$$"
 PROMPT_PATH="${SMOKE_ROOT}/charter.md"
 START_GATE="${SMOKE_ROOT}/start-gate"
+RESUME_GATE="${SMOKE_ROOT}/resume-gate"
 FIRST_PID=""
 SECOND_PID=""
+RESUME_FIRST_PID=""
+RESUME_SECOND_PID=""
 DISTINCT_PID=""
 
 if [ -n "${SMOKE_LOOP_BINARY}" ]; then
@@ -85,7 +88,7 @@ cleanup() {
   local status=$?
   local pid
   trap - EXIT
-  for pid in "${FIRST_PID}" "${SECOND_PID}" "${DISTINCT_PID}"; do
+  for pid in "${FIRST_PID}" "${SECOND_PID}" "${RESUME_FIRST_PID}" "${RESUME_SECOND_PID}" "${DISTINCT_PID}"; do
     if [ -n "${pid}" ]; then
       kill "${pid}" >/dev/null 2>&1 || true
       wait "${pid}" >/dev/null 2>&1 || true
@@ -117,6 +120,7 @@ trap cleanup EXIT
 
 run_isolated_launch() {
   local workspace="$1"
+  shift
   env -i \
     "CLAUDE_CONFIG_DIR=${SMOKE_ROOT}/claude-config" \
     "CODEX_HOME=${SMOKE_ROOT}/codex-home" \
@@ -141,7 +145,7 @@ run_isolated_launch() {
     "XDG_DATA_HOME=${SMOKE_ROOT}/xdg-data" \
     "${SMOKE_LOOP_BINARY}" \
     --tmux --agent gemini --pair-with cursor \
-    --workspace "${workspace}" -p "${PROMPT_PATH}"
+    --workspace "${workspace}" "$@" -p "${PROMPT_PATH}"
 }
 
 assert_manifest_set() {
@@ -181,6 +185,10 @@ assert_manifest_set() {
       if (manifest.status !== "running") throw new Error(`${path} is not active: ${manifest.state}/${manifest.status}`);
       if (!manifest.tmuxSession) throw new Error(`${path} has no tmux session`);
       if (!manifest.launchClaimId) throw new Error(`${path} has no launch claim`);
+      if (!manifest.launchAttemptId) throw new Error(`${path} has no launch attempt`);
+      if (!(Number.isInteger(manifest.launchAttemptPid) && manifest.launchAttemptPid > 0)) {
+        throw new Error(`${path} has no positive launch attempt pid`);
+      }
       if (manifest.sourceTaskSha256 !== promptSha) throw new Error(`${path} source charter hash mismatch`);
       if (manifest.workspaceBinding?.repoId !== manifest.repoId) throw new Error(`${path} workspace repo id mismatch`);
       const agents = [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent].sort();
@@ -350,6 +358,80 @@ FIRST_SESSIONS="$(assert_manifest_set 1 \
 assert_tmux_sessions 1 "${FIRST_SESSIONS}"
 wait_for_bootstraps
 
+FIRST_BINDING="$(bun -e '
+  import { readFileSync, readdirSync } from "node:fs";
+  import { join } from "node:path";
+  const root = join(process.argv[1], ".loop", "runs");
+  for (const repo of readdirSync(root)) {
+    for (const run of readdirSync(join(root, repo))) {
+      try {
+        const manifest = JSON.parse(readFileSync(join(root, repo, run, "manifest.json"), "utf8"));
+        if (manifest.workspaceBinding?.branchRef === "refs/heads/smoke/workspace-one") {
+          process.stdout.write([manifest.runId, manifest.tmuxSession, manifest.launchClaimId, manifest.sourceTaskSha256].join("|"));
+        }
+      } catch {}
+    }
+  }
+' "${SMOKE_HOME}")"
+IFS='|' read -r FIRST_RUN_ID FIRST_SESSION FIRST_CLAIM FIRST_TASK_SHA <<<"${FIRST_BINDING}"
+if [ -z "${FIRST_RUN_ID}" ] || [ -z "${FIRST_SESSION}" ] || [ -z "${FIRST_CLAIM}" ] || [ -z "${FIRST_TASK_SHA}" ]; then
+  echo "active-launch smoke: incomplete first-run binding ${FIRST_BINDING}" >&2
+  exit 1
+fi
+smoke_tmux kill-session -t "${FIRST_SESSION}"
+
+(
+  while [ ! -e "${RESUME_GATE}" ]; do sleep 0.01; done
+  run_isolated_launch "${WORKSPACE_ONE}" --run-id "${FIRST_RUN_ID}"
+) >"${SMOKE_ROOT}/resume-a.out" 2>"${SMOKE_ROOT}/resume-a.err" &
+RESUME_FIRST_PID=$!
+(
+  while [ ! -e "${RESUME_GATE}" ]; do sleep 0.01; done
+  run_isolated_launch "${WORKSPACE_ONE}" --run-id "${FIRST_RUN_ID}"
+) >"${SMOKE_ROOT}/resume-b.out" 2>"${SMOKE_ROOT}/resume-b.err" &
+RESUME_SECOND_PID=$!
+: >"${RESUME_GATE}"
+
+set +e
+wait "${RESUME_FIRST_PID}"
+RESUME_FIRST_STATUS=$?
+RESUME_FIRST_PID=""
+wait "${RESUME_SECOND_PID}"
+RESUME_SECOND_STATUS=$?
+RESUME_SECOND_PID=""
+set -e
+if [ "${RESUME_FIRST_STATUS}" -eq 0 ] && [ "${RESUME_SECOND_STATUS}" -ne 0 ]; then
+  RESUME_LOSER_LOG="${SMOKE_ROOT}/resume-b.err"
+elif [ "${RESUME_SECOND_STATUS}" -eq 0 ] && [ "${RESUME_FIRST_STATUS}" -ne 0 ]; then
+  RESUME_LOSER_LOG="${SMOKE_ROOT}/resume-a.err"
+else
+  echo "active-launch smoke: expected one resume winner and one loser, got ${RESUME_FIRST_STATUS}/${RESUME_SECOND_STATUS}" >&2
+  exit 1
+fi
+grep -Fq '[loop] launch conflict:' "${RESUME_LOSER_LOG}"
+
+RESUMED_SESSIONS="$(assert_manifest_set 1 \
+  "${WORKSPACE_ONE}" refs/heads/smoke/workspace-one)"
+assert_tmux_sessions 1 "${RESUMED_SESSIONS}"
+wait_for_bootstraps
+RESUMED_BINDING="$(bun -e '
+  import { readFileSync, readdirSync } from "node:fs";
+  import { join } from "node:path";
+  const root = join(process.argv[1], ".loop", "runs");
+  for (const repo of readdirSync(root)) for (const run of readdirSync(join(root, repo))) {
+    try {
+      const manifest = JSON.parse(readFileSync(join(root, repo, run, "manifest.json"), "utf8"));
+      if (manifest.workspaceBinding?.branchRef === "refs/heads/smoke/workspace-one") {
+        process.stdout.write([manifest.runId, manifest.launchClaimId, manifest.sourceTaskSha256].join("|"));
+      }
+    } catch {}
+  }
+' "${SMOKE_HOME}")"
+if [ "${RESUMED_BINDING}" != "${FIRST_RUN_ID}|${FIRST_CLAIM}|${FIRST_TASK_SHA}" ]; then
+  echo "active-launch smoke: cold resume changed immutable binding ${RESUMED_BINDING}" >&2
+  exit 1
+fi
+
 set +e
 run_isolated_launch "${WORKSPACE_TWO}" \
   >"${SMOKE_ROOT}/distinct.out" 2>"${SMOKE_ROOT}/distinct.err" &
@@ -370,4 +452,4 @@ assert_tmux_sessions 2 "${ALL_SESSIONS}"
 wait_for_bootstraps
 assert_binary_unchanged "after launch"
 
-echo "active-launch smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} prompt-bytes=$(wc -c <"${PROMPT_PATH}" | tr -d ' ') same-workspace-status=${FIRST_STATUS}/${SECOND_STATUS} winner-sessions=1 winner-manifests=1 distinct-worktree=allowed final-sessions=2 final-manifests=2 host-home=isolated tmux-socket=isolated"
+echo "active-launch smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} prompt-bytes=$(wc -c <"${PROMPT_PATH}" | tr -d ' ') same-workspace-status=${FIRST_STATUS}/${SECOND_STATUS} cold-resume-status=${RESUME_FIRST_STATUS}/${RESUME_SECOND_STATUS} immutable-resume-binding=preserved winner-sessions=1 winner-manifests=1 distinct-worktree=allowed final-sessions=2 final-manifests=2 host-home=isolated tmux-socket=isolated"

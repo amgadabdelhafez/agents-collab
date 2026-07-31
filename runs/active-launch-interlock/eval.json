@@ -1,7 +1,7 @@
 {
   "task_id": "active-launch-interlock",
   "feature": "active-launch-interlock",
-  "timestamp": "2026-07-31T17:25:00Z",
+  "timestamp": "2026-07-31T19:02:00Z",
   "verdict": "pass",
   "baseline_failures": [],
   "required": ["focused", "full", "compiled_smoke", "independent_review"],
@@ -9,17 +9,17 @@
     "focused": {
       "status": "pass",
       "method": "changed-surface unit and integration tests",
-      "reason": "245 tests passed across CLI, workspace binding, launch reservation, run state, paired options, and tmux; the final nested-path CLI regression then passed in a 38-test file run"
+      "reason": "247 tests passed across args, CLI, workspace binding, launch reservation, run state, paired options, and tmux; proxy lifecycle coverage also passed in the full suite"
     },
     "full": {
       "status": "pass",
       "method": "scripts/verify.sh active-launch-interlock active-launch-interlock",
-      "reason": "lint, typecheck, compiled build, every sorted test file, and the empty named baseline allowlist passed"
+      "reason": "lint, typecheck, compiled build, 1,373 tests across 67 sorted test files, and the empty named baseline allowlist passed"
     },
     "compiled_smoke": {
       "status": "pass",
       "method": "evals/smoke/active-launch-interlock.sh",
-      "reason": "isolated compiled binary admitted one of two barrier-synchronized same-workspace launches, rejected the loser nonzero, preserved one live session and manifest, then admitted a distinct registered worktree branch; 10,296-byte charter transported intact"
+      "reason": "hash-bound compiled binary admitted one of two fresh launches, then one of two cold resumes of the same run, preserving immutable run claim and charter SHA; distinct branch also launched and the 10,296-byte charter transported intact"
     },
     "independent_review": {
       "status": "pending",
@@ -31,12 +31,16 @@
     "reservation_precedes_task_resolution": true,
     "same_workspace_single_flight": true,
     "same_branch_single_flight": true,
+    "cold_resume_single_flight": true,
+    "cold_resume_immutable_binding_preserved": true,
     "distinct_worktree_branches_allowed": true,
     "legacy_active_run_fails_closed": true,
     "unknown_tmux_fails_closed": true,
     "terminal_dead_run_permits_launch": true,
     "manifest_replacement_atomic": true,
+    "stale_lock_recovery": "proper-lockfile-4.1.2",
     "tmux_cleanup_requires_local_ownership": true,
+    "loser_proxy_cleanup_requires_local_ownership": true,
     "large_prompt_bytes": 10296,
     "live_run_106_mutated": false,
     "browser_invocations": 0

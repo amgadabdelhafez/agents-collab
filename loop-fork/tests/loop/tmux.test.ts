@@ -4934,8 +4934,72 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
   });
 });
 
+test("runInTmux terminalizes a hook-preparation failure before new-session", async () => {
+  const calls: string[][] = [];
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+  });
+  const parent = makeTempRunDir();
+  const blockedRunDir = join(parent, "not-a-directory");
+  writeFileSync(blockedRunDir, "fixture", "utf8");
+  const storage = {
+    manifestPath: join(blockedRunDir, "manifest.json"),
+    repoId: "repo-123",
+    runDir: blockedRunDir,
+    runId: "1",
+    storageRoot: parent,
+    transcriptPath: join(blockedRunDir, "transcript.jsonl"),
+  };
+
+  try {
+    await expect(
+      runInTmux(
+        ["--tmux", "--proof", "verify with tests"],
+        {
+          cwd: "/repo",
+          env: {},
+          findBinary: () => true,
+          isInteractive: () => false,
+          log: (): void => undefined,
+          preparePairedRun: () => ({ manifest, storage }),
+          spawn: (args: string[]) => {
+            calls.push(args);
+            return args[0] === "tmux" && args[1] === "has-session"
+              ? { exitCode: 1, stderr: "session not found" }
+              : { exitCode: 0, stderr: "" };
+          },
+          updateRunManifest: (_path, update) => {
+            manifest = update(manifest) ?? manifest;
+            return manifest;
+          },
+        },
+        {
+          opts: makePairedOptions({
+            agent: "gemini",
+            governess: true,
+            pairWith: "cursor",
+          }),
+          task: "Ship feature",
+        }
+      )
+    ).rejects.toThrow();
+    expect(
+      calls.some((args) => args[0] === "tmux" && args[1] === "new-session")
+    ).toBe(false);
+    expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+  } finally {
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
 test("runInTmux never kills a winner when paired new-session loses a duplicate-session race", async () => {
   const calls: string[][] = [];
+  let closed = 0;
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -4945,6 +5009,7 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
     state: "submitted",
     status: "running",
   });
+  let stoppedProxy = 0;
   let winnerSessionLive = false;
   const storage = {
     manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
@@ -4959,12 +5024,31 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
     runInTmux(
       ["--tmux", "--proof", "verify with tests"],
       {
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
         cwd: "/repo",
         env: {},
         findBinary: () => true,
+        getCodexAppServerPid: () => 45_000,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-loser",
         isInteractive: () => false,
         log: (): void => undefined,
-        preparePairedRun: () => ({ manifest, storage }),
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest, storage };
+        },
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        stopCodexProxy: () => {
+          stoppedProxy += 1;
+          return Promise.resolve();
+        },
         spawn: (args: string[]) => {
           calls.push(args);
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -4990,7 +5074,7 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
         },
       },
       {
-        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        opts: makePairedOptions(),
         task: "Ship feature",
       }
     )
@@ -5005,7 +5089,15 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
   expect(
     calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
   ).toBe(false);
-  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+  expect(closed).toBe(1);
+  expect(stoppedProxy).toBe(1);
+  expect(manifest).toMatchObject({
+    codexAppServerPid: undefined,
+    codexRemoteUrl: undefined,
+    codexThreadId: "",
+    state: "submitted",
+    status: "running",
+  });
 });
 
 test("runInTmux cleans an owned paired session when setup fails after new-session", async () => {

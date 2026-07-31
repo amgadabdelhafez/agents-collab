@@ -10,6 +10,7 @@ import {
 import {
   codexTmuxProxyInternals,
   runCodexTmuxProxy,
+  stopCodexTmuxProxy,
   waitForCodexTmuxProxy,
 } from "../../src/loop/codex-tmux-proxy";
 import { readDelegationEvents } from "../../src/loop/delegation-policy";
@@ -311,6 +312,7 @@ test("codex tmux proxy reloads MCP servers after a closed loop bridge call", asy
   const upstreamFrames: JsonFrame[] = [];
   let upstreamSocket: ServerWebSocket<{ initialized: boolean }> | undefined;
   let proxyTask: Promise<void> | undefined;
+  let proxyUrl = "";
   const upstreamStart = await startServerWithRetries((port) =>
     serve({
       fetch: (request, server) => {
@@ -367,7 +369,8 @@ test("codex tmux proxy reloads MCP servers after a closed loop bridge call", asy
       "thread-1"
     );
     proxyTask = proxyStart.proxyTask;
-    tui = new WebSocket(proxyStart.proxyUrl);
+    proxyUrl = proxyStart.proxyUrl;
+    tui = new WebSocket(proxyUrl);
     await new Promise<void>((resolve, reject) => {
       if (!tui) {
         reject(new Error("missing tui websocket"));
@@ -397,6 +400,9 @@ test("codex tmux proxy reloads MCP servers after a closed loop bridge call", asy
     );
   } finally {
     tui?.close();
+    if (proxyUrl) {
+      await stopCodexTmuxProxy(proxyUrl);
+    }
     updateRunManifest(manifestPath, (manifest) =>
       manifest
         ? { ...manifest, state: "completed", status: "completed" }
@@ -404,7 +410,9 @@ test("codex tmux proxy reloads MCP servers after a closed loop bridge call", asy
     );
     await Promise.race([
       proxyTask ?? Promise.resolve(),
-      new Promise((resolve) => setTimeout(resolve, 2000)),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("proxy shutdown timed out")), 2000)
+      ),
     ]);
     upstreamStart.server.stop(true);
     rmSync(root, { recursive: true, force: true });

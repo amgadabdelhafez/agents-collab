@@ -1,13 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import lockfile from "proper-lockfile";
 import {
   createRunManifest,
   isActiveRunState,
@@ -27,14 +21,7 @@ import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
 import type { LaunchWorkspaceBinding, Options } from "./types";
 
 const LOCK_FILE = ".paired-launch.lock";
-const LOCK_WAIT_MS = 5000;
-const LOCK_POLL_MS = 25;
-const RUN_ID_RE = /^\d+$/u;
-
-interface LaunchLockRecord {
-  claimId: string;
-  pid: number;
-}
+const LOCK_STALE_MS = 5000;
 
 interface LaunchReservationDeps {
   home: string;
@@ -42,7 +29,6 @@ interface LaunchReservationDeps {
   makeClaimId: () => string;
   now: () => string;
   pid: number;
-  sleep: (ms: number) => Promise<void>;
   tmuxLiveness: (session: string) => TmuxLiveness;
 }
 
@@ -71,77 +57,28 @@ const defaultDeps = (): LaunchReservationDeps => ({
   makeClaimId: randomUUID,
   now: () => new Date().toISOString(),
   pid: process.pid,
-  sleep: (ms: number) =>
-    new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    }),
   tmuxLiveness: tmuxSessionLiveness,
 });
 
-const isAlreadyExists = (error: unknown): boolean =>
-  (error as NodeJS.ErrnoException).code === "EEXIST";
-
-const readLock = (path: string): LaunchLockRecord | undefined => {
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!(typeof parsed === "object" && parsed !== null)) {
-      return undefined;
-    }
-    const record = parsed as Record<string, unknown>;
-    return typeof record.claimId === "string" &&
-      typeof record.pid === "number" &&
-      Number.isInteger(record.pid)
-      ? { claimId: record.claimId, pid: record.pid }
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const releaseLock = (path: string, claimId: string): void => {
-  if (readLock(path)?.claimId !== claimId) {
-    return;
-  }
-  try {
-    unlinkSync(path);
-  } catch {
-    // A lock owner may race only with stale-lock recovery. Never broaden cleanup.
-  }
-};
-
-const acquireLock = async (
-  repoDir: string,
-  deps: LaunchReservationDeps
-): Promise<{ claimId: string; path: string }> => {
+const acquireLock = async (repoDir: string): Promise<() => Promise<void>> => {
   mkdirSync(repoDir, { recursive: true });
-  const path = join(repoDir, LOCK_FILE);
-  const claimId = deps.makeClaimId();
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  while (true) {
-    try {
-      writeFileSync(path, `${JSON.stringify({ claimId, pid: deps.pid })}\n`, {
-        encoding: "utf8",
-        flag: "wx",
-        mode: 0o600,
-      });
-      return { claimId, path };
-    } catch (error) {
-      if (!isAlreadyExists(error)) {
-        throw error;
-      }
-      const owner = readLock(path);
-      if (owner && !deps.isPidAlive(owner.pid)) {
-        releaseLock(path, owner.claimId);
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        const detail = owner
-          ? ` owned by live pid ${owner.pid}`
-          : " unreadable";
-        throw new Error(`[loop] paired launch lock is busy:${detail}`);
-      }
-      await deps.sleep(LOCK_POLL_MS);
-    }
+  try {
+    return await lockfile.lock(repoDir, {
+      lockfilePath: join(repoDir, LOCK_FILE),
+      realpath: false,
+      retries: {
+        factor: 1,
+        maxTimeout: 25,
+        minTimeout: 25,
+        randomize: false,
+        retries: 200,
+      },
+      stale: LOCK_STALE_MS,
+      update: 1000,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`[loop] paired launch lock is busy: ${detail}`);
   }
 };
 
@@ -181,9 +118,9 @@ const storedManifests = (repoDir: string): RunManifest[] => {
   if (!existsSync(repoDir)) {
     return [];
   }
-  return readdirSync(repoDir)
-    .filter((entry) => RUN_ID_RE.test(entry))
-    .map((runId) => readRunManifest(join(repoDir, runId, "manifest.json")))
+  return readdirSync(repoDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readRunManifest(join(repoDir, entry.name, "manifest.json")))
     .filter((manifest): manifest is RunManifest => Boolean(manifest));
 };
 
@@ -237,6 +174,57 @@ const validateExplicitWorkspaceResume = (
   return stored;
 };
 
+const reserveRequestedLaunch = (
+  opts: Options,
+  requested: RunManifest,
+  binding: LaunchWorkspaceBinding,
+  storage: RunStorage,
+  deps: LaunchReservationDeps
+): PairedLaunchClaim => {
+  opts.reservedRunId = requested.runId;
+  opts.workspaceBinding = binding;
+  if (requested.launchClaimId) {
+    opts.launchClaimId = requested.launchClaimId;
+  }
+  const tmux = requested.tmuxSession
+    ? deps.tmuxLiveness(requested.tmuxSession)
+    : "dead";
+  if (tmux === "unknown") {
+    throw conflictError(requested);
+  }
+  if (tmux === "live") {
+    return { reserved: false, storage, workspaceBinding: binding };
+  }
+  const liveAttemptPid = [
+    requested.launchAttemptPid,
+    ...(isActiveRunState(requested.state) ? [requested.pid] : []),
+  ].find((pid): pid is number => Boolean(pid && deps.isPidAlive(pid)));
+  if (liveAttemptPid) {
+    throw new Error(
+      `[loop] launch conflict: run ${requested.runId} already has a bootstrap attempt owned by live pid ${liveAttemptPid}`
+    );
+  }
+  const attemptId = deps.makeClaimId();
+  writeRunManifest(
+    storage.manifestPath,
+    touchRunManifest(
+      {
+        ...requested,
+        launchAttemptId: attemptId,
+        launchAttemptPid: deps.pid,
+      },
+      deps.now()
+    )
+  );
+  opts.launchAttemptId = attemptId;
+  return {
+    claimId: attemptId,
+    reserved: false,
+    storage,
+    workspaceBinding: binding,
+  };
+};
+
 export const reservePairedLaunch = async (
   opts: Options,
   binding: LaunchWorkspaceBinding,
@@ -244,7 +232,7 @@ export const reservePairedLaunch = async (
 ): Promise<PairedLaunchClaim> => {
   const deps = { ...defaultDeps(), ...overrides };
   const repoDir = join(resolveStorageRoot(deps.home), binding.repoId);
-  const lock = await acquireLock(repoDir, deps);
+  const releaseLock = await acquireLock(repoDir);
   try {
     const manifests = storedManifests(repoDir);
     const requestedRunId = resolveRequestedRun(opts, binding, deps.home);
@@ -269,13 +257,13 @@ export const reservePairedLaunch = async (
         effectiveBinding.root,
         deps.home
       );
-      opts.reservedRunId = requestedRunId;
-      opts.workspaceBinding = effectiveBinding;
-      return {
-        reserved: false,
+      return reserveRequestedLaunch(
+        opts,
+        requested,
+        effectiveBinding,
         storage,
-        workspaceBinding: effectiveBinding,
-      };
+        deps
+      );
     }
 
     const storage = reserveRunStorage(binding.root, deps.home);
@@ -285,6 +273,8 @@ export const reservePairedLaunch = async (
         claudeSessionId: "",
         codexThreadId: "",
         cwd: binding.root,
+        launchAttemptId: claimId,
+        launchAttemptPid: deps.pid,
         launchClaimId: claimId,
         mode: "paired",
         pid: deps.pid,
@@ -296,12 +286,20 @@ export const reservePairedLaunch = async (
       deps.now()
     );
     writeRunManifest(storage.manifestPath, manifest);
+    opts.launchAttemptId = claimId;
     opts.launchClaimId = claimId;
     opts.reservedRunId = storage.runId;
     opts.workspaceBinding = binding;
     return { claimId, reserved: true, storage, workspaceBinding: binding };
   } finally {
-    releaseLock(lock.path, lock.claimId);
+    try {
+      await releaseLock();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `[loop] paired launch lock release failed; stale recovery will retry: ${detail}\n`
+      );
+    }
   }
 };
 
@@ -311,19 +309,22 @@ export const bindLaunchTask = (
   now = new Date().toISOString()
 ): string => {
   const sha256 = createHash("sha256").update(task).digest("hex");
-  if (!claim.claimId) {
-    return sha256;
-  }
   updateRunManifest(claim.storage.manifestPath, (manifest) => {
-    if (manifest?.launchClaimId !== claim.claimId) {
+    if (!manifest) {
+      throw new Error(`[loop] run ${claim.storage.runId} no longer exists`);
+    }
+    if (claim.claimId && manifest.launchAttemptId !== claim.claimId) {
       throw new Error(
-        `[loop] launch claim ${claim.claimId} no longer owns run ${claim.storage.runId}`
+        `[loop] launch attempt ${claim.claimId} no longer owns run ${claim.storage.runId}`
       );
     }
     if (manifest.sourceTaskSha256 && manifest.sourceTaskSha256 !== sha256) {
       throw new Error(
         `[loop] run ${manifest.runId} is already bound to a different source charter`
       );
+    }
+    if (!claim.claimId) {
+      return manifest;
     }
     return touchRunManifest({ ...manifest, sourceTaskSha256: sha256 }, now);
   });
@@ -338,14 +339,21 @@ export const cancelPairedLaunch = (
     return;
   }
   updateRunManifest(claim.storage.manifestPath, (manifest) => {
-    if (
-      manifest?.launchClaimId !== claim.claimId ||
-      manifest.tmuxSession ||
-      !isActiveRunState(manifest.state)
-    ) {
+    if (manifest?.launchAttemptId !== claim.claimId) {
       return manifest;
     }
-    return setRunManifestState(manifest, "failed", now);
+    const released = {
+      ...manifest,
+      launchAttemptId: undefined,
+      launchAttemptPid: undefined,
+    };
+    if (!claim.reserved) {
+      return touchRunManifest(released, now);
+    }
+    if (manifest.tmuxSession || !isActiveRunState(manifest.state)) {
+      return released;
+    }
+    return setRunManifestState(released, "failed", now);
   });
 };
 
@@ -354,6 +362,5 @@ export const launchReservationInternals = {
   assertNoConflict,
   defaultPidLiveness,
   manifestCanStillOwnWorkspace,
-  releaseLock,
   workspaceConflict,
 };
