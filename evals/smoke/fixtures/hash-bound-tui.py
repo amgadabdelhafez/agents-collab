@@ -176,8 +176,13 @@ def prepare_input_prompt() -> None:
         emit(f"UNKNOWN_CLAUDE_STARTUP_MODE {claude_startup}")
         raise SystemExit(12)
 
+    # Synthetic transport-timing fixture only; it does not certify Claude's
+    # producer shape. The producer-derived replay lives under
+    # evals/replay/claude-dev-channel-preconnect-warning/. This fake keeps the
+    # captured 2.1.220 seam that matters to the compiled-binary smoke: the
+    # suggestion is plain pane text while the real input cursor remains at x=2.
     # Stay on a stable nonempty warning long enough that the old negative-
-    # readiness launcher would have pasted early. Then require the real
+    # readiness launcher would have pasted early. Then require the expected
     # development-channel confirmation before exposing the empty composer.
     time.sleep(1)
     emit("WARNING: Loading development channels")
@@ -188,9 +193,20 @@ def prepare_input_prompt() -> None:
     emit("CLAUDE_DEV_CHANNEL_CONFIRMED")
     sys.stdout.write("\x1b[?2004h")
     emit(f"READY {role}")
-    sys.stdout.write(f'{prompt} \x1b[2mTry "inspect this repository"\x1b[22m\r\n')
-    emit("────────────────────────")
-    emit("? for shortcuts")
+
+    def render_plain_suggestion() -> None:
+        sys.stdout.write("\x1b[?2026h\x1b[2J\x1b[H")
+        sys.stdout.write(f'{prompt} Try "inspect this repository"')
+        sys.stdout.write("\r\x1b[2C\x1b[?2026l")
+        sys.stdout.flush()
+
+    render_plain_suggestion()
+    # Loop sends ordered End,C-l. End is a content-preserving no-op for the
+    # empty buffer; consuming C-l and redrawing gives tmux a positive
+    # window_activity acknowledgment before the bootstrap paste is allowed.
+    read_until(b"\x0c")
+    emit("CLAUDE_ACTIVITY_PROBE_ACK")
+    render_plain_suggestion()
     sys.stdout.flush()
 
 

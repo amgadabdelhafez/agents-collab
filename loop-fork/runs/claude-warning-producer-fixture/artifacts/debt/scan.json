@@ -1,0 +1,19 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "scanned_at": "2026-07-31T06:43:54Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-31T06:43:54Z",
+      "task_id": "claude-warning-producer-fixture",
+      "signal": "loc_growth",
+      "file": "src/loop/tmux.ts",
+      "before_loc": 3036,
+      "after_loc": 3508,
+      "delta_loc": 472,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

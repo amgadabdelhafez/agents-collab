@@ -1,0 +1,52 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "status": "pass",
+  "required": ["unit", "provenance", "focused", "build", "full"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/unit/attempt-004.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/unit/attempt-004.json"
+    },
+    "provenance": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/provenance/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/provenance/attempt-002.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/provenance/attempt-002.json"
+    },
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/focused/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/focused/attempt-003.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/focused/attempt-003.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/build/attempt-003.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/build/attempt-003.json"
+    },
+    "full": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/full/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/full/attempt-002.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/full/attempt-002.json"
+    }
+  }
+}

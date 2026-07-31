@@ -1,0 +1,8 @@
+{
+  "id": "claude-warning-producer-fixture",
+  "mode": "planned",
+  "created_at": "2026-07-31T04:33:26Z",
+  "status": "done",
+  "description": "Capture and replay the real Claude development-channel pre-connect warning with complete producer provenance",
+  "ended_at": "2026-07-31T06:43:54Z"
+}

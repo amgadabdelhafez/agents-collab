@@ -1,0 +1,53 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "feature": "claude-warning-producer-fixture",
+  "timestamp": "2026-07-31T06:18:15Z",
+  "checks": {
+    "functional": {
+      "passed": 12,
+      "failed": 0,
+      "details": [
+        "Claude Code 2.1.220 producer capture used an isolated config and private tmux socket",
+        "capture submitted no prompt and made no model request",
+        "raw selected frames are SHA-256 bound to a private durable reference",
+        "normalized fixture contains no captured display identity or account context",
+        "captured development-channel and pre-connect warning shapes replay in order",
+        "pane bytes, cursor, activity, client count, and pipe state are bound in one tmux command queue",
+        "suggested placeholder requires a quiet activity-second boundary and an acknowledged End,C-l redraw",
+        "matching human Try drafts move to End, are restored to Home with a distinct acknowledged redraw, and remain blocked",
+        "post-probe uncertainty and send timeouts preserve the live tmux workspace, persist input-required state and recovery pane targets, and never paste the bootstrap",
+        "missing redraw acknowledgment, attached clients, existing pipes, candidate drift, and malformed pre-probe state fail closed",
+        "the exact pre-fix source and final regression test reproduce the 20-second timeout with exit 1",
+        "retained private raw evidence is permissioned 0700 for directories and 0600 for files"
+      ]
+    },
+    "ui": {
+      "passed": 0,
+      "failed": 0,
+      "screenshots": []
+    },
+    "performance": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "the activity probe runs only for an ambiguous vendor suggestion after text-only readiness fails and no startup modal is active"
+      ]
+    },
+    "regression": {
+      "passed": 7,
+      "failed": 0,
+      "details": [
+        "the executable pre-fix replay artifact records exit 1 and the exact 20-second readiness timeout",
+        "post-fix tmux suite passes 87 tests with 0 failures",
+        "producer metadata replay passes hash, order, geometry, cursor, three activity advances, and safety checks",
+        "the same-shaped human draft, absent redraw, attached/piped pane, changed candidate, second boundary, failed restoration, post-End capture loss, and send timeout cases are covered",
+        "independent uncommitted-byte review CONCURred after every safety finding was corrected",
+        "Ultracite, source typecheck, compiled build, and the complete sequential test suite pass on the final source",
+        "the baseline allowlist is empty"
+      ]
+    }
+  },
+  "baseline_failures": [],
+  "verdict": "pass",
+  "notes": "Implementation and repository gates pass with an empty baseline. Exact-commit review, exact-binary smoke, and deployment are tracked separately by the liaison release gate."
+}

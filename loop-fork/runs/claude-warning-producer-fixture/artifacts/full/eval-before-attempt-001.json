@@ -1,0 +1,43 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "status": "fail",
+  "required": ["unit", "provenance", "focused", "build"],
+  "dimensions": {
+    "unit": {
+      "status": "fail",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/unit/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/unit/attempt-001.json"
+    },
+    "provenance": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/provenance/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/provenance/attempt-001.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/provenance/attempt-001.json"
+    },
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/focused/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/focused/attempt-001.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/focused/attempt-001.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/build/attempt-001.json"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "status": "pending",
+  "required": ["unit", "provenance"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "provenance": {
+      "status": "pass",
+      "artifact": "runs/claude-warning-producer-fixture/artifacts/provenance/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/claude-warning-producer-fixture/artifacts/provenance/attempt-001.log",
+      "latest_attempt_meta": "runs/claude-warning-producer-fixture/artifacts/provenance/attempt-001.json"
+    }
+  }
+}

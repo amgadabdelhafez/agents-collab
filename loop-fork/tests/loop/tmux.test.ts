@@ -34,6 +34,54 @@ import type { Options } from "../../src/loop/types";
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
 const makeTempRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-tmux-run-"));
+const claudeWarningFixtureDir = join(
+  import.meta.dir,
+  "..",
+  "fixtures",
+  "claude-code",
+  "2.1.220",
+  "dev-channel-preconnect-warning"
+);
+const readClaudeWarningFrame = (name: string): string =>
+  readFileSync(join(claudeWarningFixtureDir, name), "utf8");
+interface ClaudeWarningFixtureFrame {
+  activeClients: number;
+  cursor: { x: number; y: number };
+  normalizedFile: string;
+  panePipe: number;
+  state: string;
+  windowActivity: number;
+}
+interface ClaudeWarningFixtureIndex {
+  activityProbe: { unsentDraft: string };
+  frames: ClaudeWarningFixtureFrame[];
+}
+const claudeWarningFixtureIndex = JSON.parse(
+  readClaudeWarningFrame("fixture-index.json")
+) as ClaudeWarningFixtureIndex;
+const claudeWarningFixtureState = (
+  state: string
+): ClaudeWarningFixtureFrame => {
+  const frame = claudeWarningFixtureIndex.frames.find(
+    (candidate) => candidate.state === state
+  );
+  if (!frame) {
+    throw new Error(`missing Claude warning fixture state: ${state}`);
+  }
+  return frame;
+};
+const readClaudeWarningState = (state: string): string =>
+  readClaudeWarningFrame(claudeWarningFixtureState(state).normalizedFile);
+const readClaudeWarningComposer = (text: string): string => {
+  const line = text
+    .split(/\r?\n/)
+    .find((candidate) => candidate.trimStart().startsWith("❯"));
+  const composer = line?.trimStart().slice("❯".length).trim();
+  if (!composer) {
+    throw new Error("captured Claude fixture has no populated composer");
+  }
+  return composer;
+};
 
 const currentRunBase = (
   cwd: string = process.cwd(),
@@ -2235,13 +2283,548 @@ test("interactive tmux prompts tell both agents to wait for the human", () => {
   expect(peerPrompt).not.toContain("mcp__loop-bridge-repo-123-1__ prefix");
 });
 
+test("runInTmux replays the captured Claude pre-connect warning before bootstrap", async () => {
+  const calls: string[][] = [];
+  const keyCalls: Array<{ keys: string[]; pane: string }> = [];
+  const states = [
+    "bypass-default",
+    "bypass-accepted",
+    "development-channel",
+    "ready-before-end-clear",
+  ];
+  const readyBefore = claudeWarningFixtureState("ready-before-end-clear");
+  const readyAfter = claudeWarningFixtureState("ready-after-end-clear");
+  const fallbackState = states.at(-1) ?? "ready-before-end-clear";
+  let bootstrapStarted = false;
+  let readyProbed = false;
+  let screen = 0;
+  let sessionStarted = false;
+  const currentFrame = (): string => {
+    if (bootstrapStarted && screen < states.length - 1) {
+      throw new Error("bootstrap started before captured ready state");
+    }
+    return readClaudeWarningState(
+      readyProbed ? "ready-after-end-clear" : (states[screen] ?? fallbackState)
+    );
+  };
+  const currentFixtureState = (): ClaudeWarningFixtureFrame =>
+    readyProbed
+      ? readyAfter
+      : claudeWarningFixtureState(states[screen] ?? fallbackState);
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+
+  await runInTmux(
+    ["--tmux", "--proof", "verify with tests"],
+    {
+      // Keep the text-only override so this exact test can run against the
+      // pre-fix implementation as executable red-before evidence.
+      capturePane: currentFrame,
+      capturePaneSnapshot: () => {
+        const frame = currentFixtureState();
+        return {
+          activeClients: frame.activeClients,
+          cursor: frame.cursor,
+          pipeOpen: frame.panePipe !== 0,
+          text: currentFrame(),
+          windowActivity: frame.windowActivity,
+        };
+      },
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+      getLastCodexThreadId: () => "codex-thread-1",
+      isInteractive: () => false,
+      launchArgv: ["bun", "/repo/src/cli.ts"],
+      log: (): void => undefined,
+      makeClaudeSessionId: () => "claude-session-1",
+      nowMs: () => (readyBefore.windowActivity + 2) * 1000,
+      preparePairedRun: (nextOpts) => {
+        nextOpts.codexMcpConfigArgs = [
+          "-c",
+          'mcp_servers.loop-bridge.command="loop"',
+        ];
+        return { manifest, storage };
+      },
+      sendKeys: (pane: string, keys: string[]) => {
+        keyCalls.push({ keys, pane });
+        if (pane !== "repo-loop-1:0.0") {
+          return;
+        }
+        if (screen === 0 && keys[0] === "Down") {
+          screen = 1;
+        } else if (screen === 1 && keys[0] === "Enter") {
+          screen = 2;
+        } else if (screen === 2 && keys[0] === "Enter") {
+          screen = 3;
+        } else if (screen === 3 && keys.join(" ") === "End C-l") {
+          readyProbed = true;
+        }
+      },
+      sendText: (): void => undefined,
+      sleep: () => Promise.resolve(),
+      startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+      startPersistentAgentSession: () => Promise.resolve(undefined),
+      spawn: (args: string[]) => {
+        calls.push(args);
+        if (args[0] === "tmux" && args[1] === "has-session") {
+          return sessionStarted
+            ? { exitCode: 0, stderr: "" }
+            : { exitCode: 1, stderr: "session not found" };
+        }
+        if (args[0] === "tmux" && args[1] === "new-session") {
+          sessionStarted = true;
+        }
+        if (args[0] === "tmux" && args[1] === "load-buffer") {
+          bootstrapStarted = true;
+          expect(screen).toBe(3);
+        }
+        return { exitCode: 0, stderr: "" };
+      },
+      updateRunManifest: (_path, update) => update(manifest),
+    },
+    { opts: makePairedOptions(), task: "Ship feature" }
+  );
+
+  expect(keyCalls.slice(0, 3)).toEqual([
+    { keys: ["Down"], pane: "repo-loop-1:0.0" },
+    { keys: ["Enter"], pane: "repo-loop-1:0.0" },
+    { keys: ["Enter"], pane: "repo-loop-1:0.0" },
+  ]);
+  expect(keyCalls.at(-1)).toEqual({
+    keys: ["End", "C-l"],
+    pane: "repo-loop-1:0.0",
+  });
+  expect(bootstrapStarted).toBe(true);
+});
+
+test("captured Claude suggestions are not ready without an active probe", () => {
+  const readyFrame = readClaudeWarningState("ready-before-end-clear");
+  const suggestion = readClaudeWarningComposer(readyFrame);
+  expect(tmuxInternals.isClaudeInputReady(readyFrame)).toBe(false);
+  expect(
+    tmuxInternals.isClaudeInputReady(
+      readyFrame.replace(
+        suggestion,
+        claudeWarningFixtureIndex.activityProbe.unsentDraft
+      )
+    )
+  ).toBe(false);
+});
+
+test("Claude suggestion probe preserves and rejects a human Try draft", async () => {
+  const draftFrame = readClaudeWarningState("draft-home");
+  const draftHome = claudeWarningFixtureState("draft-home");
+  const draftAfter = claudeWarningFixtureState("draft-after-end-clear");
+  const draftRestored = claudeWarningFixtureState("draft-home-restored");
+  let cursor = draftHome.cursor;
+  let windowActivity = draftHome.windowActivity;
+  let endCalls = 0;
+  let homeCalls = 0;
+
+  await expect(
+    tmuxInternals.unblockClaudePane("%1", {
+      capturePane: () => draftFrame,
+      capturePaneSnapshot: () => ({
+        activeClients: 0,
+        cursor,
+        pipeOpen: false,
+        text: draftFrame,
+        windowActivity,
+      }),
+      nowMs: () => (draftAfter.windowActivity + 2) * 1000,
+      sendKeys: (_pane, keys) => {
+        if (keys.join(" ") === "End C-l") {
+          endCalls += 1;
+          cursor = draftAfter.cursor;
+          windowActivity = draftAfter.windowActivity;
+        } else if (keys.join(" ") === "Home C-l") {
+          homeCalls += 1;
+          cursor = draftRestored.cursor;
+          windowActivity = draftRestored.windowActivity;
+        }
+      },
+      sleep: () => Promise.resolve(),
+    })
+  ).rejects.toThrow("contains unsent composer text");
+
+  expect(endCalls).toBe(1);
+  expect(homeCalls).toBe(1);
+  expect(cursor).toEqual(draftRestored.cursor);
+  expect(draftFrame).toContain(
+    claudeWarningFixtureIndex.activityProbe.unsentDraft
+  );
+});
+
+test("runInTmux preserves the live workspace when a post-End draft capture fails", async () => {
+  const calls: string[][] = [];
+  const draftHome = claudeWarningFixtureState("draft-home");
+  const draftAfter = claudeWarningFixtureState("draft-after-end-clear");
+  let current = draftHome;
+  let captureFailed = false;
+  let released = 0;
+  let sessionStarted = false;
+  const initialManifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  let storedManifest = initialManifest;
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+  const paneText = () => readClaudeWarningFrame(current.normalizedFile);
+  const snapshot = () =>
+    captureFailed
+      ? undefined
+      : {
+          activeClients: current.activeClients,
+          cursor: current.cursor,
+          pipeOpen: current.panePipe !== 0,
+          text: paneText(),
+          windowActivity: current.windowActivity,
+        };
+
+  await expect(
+    runInTmux(
+      ["--tmux", "--proof", "verify with tests"],
+      {
+        capturePane: paneText,
+        capturePaneSnapshot: snapshot,
+        closePersistentCodexSession: () => Promise.resolve(),
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        nowMs: () => (draftAfter.windowActivity + 2) * 1000,
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest: storedManifest, storage };
+        },
+        releasePersistentCodexSession: () => {
+          released += 1;
+        },
+        sendKeys: (pane, keys) => {
+          if (pane !== "%0") {
+            return;
+          }
+          if (keys.join(" ") === "End C-l") {
+            current = draftAfter;
+            captureFailed = true;
+          }
+        },
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        spawn: (args) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionStarted
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionStarted = true;
+            return { exitCode: 0, stderr: "", stdout: "%0" };
+          }
+          if (args[0] === "tmux" && args[1] === "split-window") {
+            return { exitCode: 0, stderr: "", stdout: "%1" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          const updated = update(storedManifest);
+          if (updated) {
+            storedManifest = updated;
+          }
+          return updated;
+        },
+      },
+      { opts: makePairedOptions(), task: "Ship feature" }
+    )
+  ).rejects.toThrow(
+    'The live tmux session "repo-loop-1" was preserved; attach with: tmux attach -t repo-loop-1'
+  );
+
+  expect(sessionStarted).toBe(true);
+  expect(current.cursor).toEqual(draftAfter.cursor);
+  expect(storedManifest.state).toBe("input-required");
+  expect(storedManifest.tmuxPaneLeft).toBe("%0");
+  expect(storedManifest.tmuxPaneRight).toBe("%1");
+  expect(released).toBe(1);
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toBe(false);
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "load-buffer")
+  ).toBe(false);
+});
+
+test("tmux pane snapshots bind styled text and cursor in one payload", () => {
+  const parsed = tmuxInternals.parseTmuxPaneSnapshot(
+    "pane text\n__LOOP_PANE_CURSOR__ 2 16 1785474782 0 0\n"
+  );
+  expect(parsed).toEqual({
+    activeClients: 0,
+    cursor: { x: 2, y: 16 },
+    pipeOpen: false,
+    text: "pane text",
+    windowActivity: 1_785_474_782,
+  });
+  expect(
+    tmuxInternals.parseTmuxPaneSnapshot("pane text\nmissing cursor marker\n")
+  ).toBeUndefined();
+});
+
+test("Claude suggestion probe requires an acknowledged redraw", async () => {
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const snapshot = {
+    activeClients: ready.activeClients,
+    cursor: ready.cursor,
+    pipeOpen: ready.panePipe !== 0,
+    text,
+    windowActivity: ready.windowActivity,
+  };
+  const keyCalls: string[][] = [];
+
+  await expect(
+    tmuxInternals.probeClaudeSuggestedComposer(
+      "%1",
+      snapshot,
+      { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+      {
+        capturePaneSnapshot: () => snapshot,
+        nowMs: () => (ready.windowActivity + 1) * 1000,
+        sendKeys: (_pane, keys) => keyCalls.push(keys),
+        sleep: () => Promise.resolve(),
+      }
+    )
+  ).rejects.toThrow("state became unclassifiable after the cursor probe");
+
+  expect(keyCalls).toEqual([["End", "C-l"]]);
+});
+
+test("Claude suggestion probe treats a send timeout as recoverable draft risk", async () => {
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const snapshot = {
+    activeClients: ready.activeClients,
+    cursor: ready.cursor,
+    pipeOpen: ready.panePipe !== 0,
+    text,
+    windowActivity: ready.windowActivity,
+  };
+
+  await expect(
+    tmuxInternals.probeClaudeSuggestedComposer(
+      "%1",
+      snapshot,
+      { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+      {
+        capturePaneSnapshot: () => snapshot,
+        nowMs: () => (ready.windowActivity + 1) * 1000,
+        sendKeys: () => {
+          throw new Error("tmux send timed out after possible delivery");
+        },
+        sleep: () => Promise.resolve(),
+      }
+    )
+  ).rejects.toThrow("tmux send timed out after possible delivery");
+});
+
+test("Claude suggestion probe rejects attached or piped panes", async () => {
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const keyCalls: string[][] = [];
+  const base = {
+    cursor: ready.cursor,
+    text,
+    windowActivity: ready.windowActivity,
+  };
+  const deps = {
+    capturePaneSnapshot: () => undefined,
+    nowMs: () => (ready.windowActivity + 1) * 1000,
+    sendKeys: (_pane: string, keys: string[]) => keyCalls.push(keys),
+    sleep: () => Promise.resolve(),
+  };
+
+  expect(
+    await tmuxInternals.probeClaudeSuggestedComposer(
+      "%1",
+      { ...base, activeClients: 1, pipeOpen: false },
+      { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+      deps
+    )
+  ).toBe("indeterminate");
+  expect(
+    await tmuxInternals.probeClaudeSuggestedComposer(
+      "%1",
+      { ...base, activeClients: 0, pipeOpen: true },
+      { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+      deps
+    )
+  ).toBe("indeterminate");
+  expect(keyCalls).toEqual([]);
+});
+
+test("Claude suggestion probe waits across the activity second", async () => {
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const readyAfter = claudeWarningFixtureState("ready-after-end-clear");
+  let nowMs = ready.windowActivity * 1000;
+  let windowActivity = ready.windowActivity;
+  let sleeps = 0;
+  const snapshot = () => ({
+    activeClients: 0,
+    cursor: ready.cursor,
+    pipeOpen: false,
+    text,
+    windowActivity,
+  });
+
+  const result = await tmuxInternals.probeClaudeSuggestedComposer(
+    "%1",
+    snapshot(),
+    { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+    {
+      capturePaneSnapshot: snapshot,
+      nowMs: () => nowMs,
+      sendKeys: () => {
+        windowActivity = readyAfter.windowActivity;
+      },
+      sleep: (ms) => {
+        sleeps += 1;
+        nowMs += ms;
+        return Promise.resolve();
+      },
+    }
+  );
+
+  expect(result).toBe("empty");
+  expect(sleeps).toBeGreaterThanOrEqual(5);
+});
+
+test("Claude changed suggestions receive a fresh acknowledged probe", async () => {
+  const first = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const second = first.replace(
+    readClaudeWarningComposer(first),
+    'Try "explain this project"'
+  );
+  let text = first;
+  let windowActivity = ready.windowActivity;
+  let probes = 0;
+  const snapshot = () => ({
+    activeClients: 0,
+    cursor: ready.cursor,
+    pipeOpen: false,
+    text,
+    windowActivity,
+  });
+
+  await tmuxInternals.unblockClaudePane("%1", {
+    capturePane: () => text,
+    capturePaneSnapshot: snapshot,
+    nowMs: () => (ready.windowActivity + 3) * 1000,
+    sendKeys: (_pane, keys) => {
+      if (keys.join(" ") !== "End C-l") {
+        return;
+      }
+      probes += 1;
+      windowActivity += 1;
+      if (probes === 1) {
+        text = second;
+      }
+    },
+    sleep: () => Promise.resolve(),
+  });
+
+  expect(probes).toBe(2);
+});
+
+test("Claude draft probe restores Home and fails closed when activity acknowledgment is missing", async () => {
+  const text = readClaudeWarningState("draft-home");
+  const draftHome = claudeWarningFixtureState("draft-home");
+  const draftAfter = claudeWarningFixtureState("draft-after-end-clear");
+  let cursor = draftHome.cursor;
+  const windowActivity = draftHome.windowActivity;
+  let homeCalls = 0;
+  const snapshot = () => ({
+    activeClients: 0,
+    cursor,
+    pipeOpen: false,
+    text,
+    windowActivity,
+  });
+
+  const result = await tmuxInternals.probeClaudeSuggestedComposer(
+    "%1",
+    snapshot(),
+    { row: draftHome.cursor.y, text: readClaudeWarningComposer(text) },
+    {
+      capturePaneSnapshot: snapshot,
+      nowMs: () => (draftAfter.windowActivity + 3) * 1000,
+      sendKeys: (_pane, keys) => {
+        if (keys.join(" ") === "End C-l") {
+          cursor = draftAfter.cursor;
+          // Simulate the missing activity acknowledgment from the original
+          // safety finding even though End moved a real draft's cursor.
+        } else if (keys.join(" ") === "Home C-l") {
+          homeCalls += 1;
+          cursor = draftHome.cursor;
+        }
+      },
+      sleep: () => Promise.resolve(),
+    }
+  );
+
+  expect(result).toBe("draft-restore-unacknowledged");
+  expect(homeCalls).toBe(1);
+  expect(cursor).toEqual(draftHome.cursor);
+  expect(windowActivity).toBe(draftHome.windowActivity);
+});
+
 test("runInTmux auto-confirms Claude startup prompts in paired mode", async () => {
   const calls: string[][] = [];
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   const typed: Array<{ pane: string; text: string }> = [];
   let sessionStarted = false;
   let pollCount = 0;
-  const devChannelsPrompt = [
+  // Synthetic unit-only variant; producer-shape certification uses the captured fixture above.
+  const syntheticDevChannelsPrompt = [
     "WARNING: Loading development channels",
     "",
     "--dangerously-load-development-channels is for local channel development only.",
@@ -2274,10 +2857,10 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
       capturePane: () => {
         pollCount += 1;
         if (pollCount === 1) {
-          return devChannelsPrompt;
+          return syntheticDevChannelsPrompt;
         }
         if (pollCount === 2) {
-          return `${devChannelsPrompt}\n\n${bypassPrompt}`;
+          return `${syntheticDevChannelsPrompt}\n\n${bypassPrompt}`;
         }
         return "❯ ";
       },
@@ -2355,7 +2938,8 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   let sessionStarted = false;
   let pollCount = 0;
-  const devChannelsPrompt = [
+  // Synthetic unit-only wrapping variant; it does not certify Claude's producer shape.
+  const syntheticDevChannelsPrompt = [
     "WARNING: Loading development channels",
     "",
     "--dangerously-load-development-channels is for local channel development only.",
@@ -2386,7 +2970,7 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
       capturePane: () => {
         pollCount += 1;
         if (pollCount === 1) {
-          return devChannelsPrompt;
+          return syntheticDevChannelsPrompt;
         }
         return "❯ ";
       },
@@ -2440,7 +3024,8 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   let sessionStarted = false;
   let pollCount = 0;
-  const devChannelsPrompt = [
+  // Synthetic unit-only delay variant; it does not certify Claude's producer shape.
+  const syntheticDevChannelsPrompt = [
     "WARNING: Loading development channels",
     "",
     "--dangerously-load-development-channels is for local channel development only.",
@@ -2478,10 +3063,10 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
           return "Permission deny rule: stable startup warning";
         }
         if (pollCount === 5) {
-          return `❯\n\n${devChannelsPrompt}`;
+          return `❯\n\n${syntheticDevChannelsPrompt}`;
         }
         return [
-          devChannelsPrompt,
+          syntheticDevChannelsPrompt,
           "",
           "❯ \u001B[2mTry a suggested prompt\u001B[22m",
           "────────────────────────",

@@ -1,0 +1,15 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "dimension": "provenance",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-31T06:09:14Z",
+  "ended_at": "2026-07-31T06:09:14Z",
+  "artifact": "runs/claude-warning-producer-fixture/artifacts/provenance/attempt-002.log",
+  "command": [
+    "node",
+    "../evals/replay/claude-dev-channel-preconnect-warning/check.mjs"
+  ]
+}

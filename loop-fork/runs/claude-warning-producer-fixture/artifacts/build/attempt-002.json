@@ -1,0 +1,16 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "dimension": "build",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-31T06:09:23Z",
+  "ended_at": "2026-07-31T06:09:23Z",
+  "artifact": "runs/claude-warning-producer-fixture/artifacts/build/attempt-002.log",
+  "command": [
+    "bun",
+    "run",
+    "build"
+  ]
+}

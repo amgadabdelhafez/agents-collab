@@ -1,0 +1,22 @@
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+2125 |     }
+2126 |     if (attempt + 1 < CLAUDE_PROMPT_MAX_POLLS) {
+2127 |       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+2128 |     }
+2129 |   }
+2130 |   throw new Error(
+                   ^
+error: Claude pane "repo-loop-1:0.0" did not reach an input-ready prompt within 20000ms.
+      at <anonymous> (<PRE_FIX_WORKTREE>/loop-fork/src/loop/tmux.ts:2130:13)
+      at async <anonymous> (<PRE_FIX_WORKTREE>/loop-fork/src/loop/tmux.ts:2188:11)
+      at async <anonymous> (<PRE_FIX_WORKTREE>/loop-fork/src/loop/tmux.ts:2579:31)
+      at async <anonymous> (<PRE_FIX_WORKTREE>/loop-fork/src/loop/tmux.ts:2931:36)
+      at async <anonymous> (<PRE_FIX_WORKTREE>/loop-fork/tests/loop/tmux.test.ts:2331:9)
+(fail) runInTmux replays the captured Claude pre-connect warning before bootstrap
+
+ 0 pass
+ 86 filtered out
+ 1 fail
+Ran 1 test across 1 file.

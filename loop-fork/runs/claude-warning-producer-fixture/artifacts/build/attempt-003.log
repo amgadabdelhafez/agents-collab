@@ -1,0 +1,14 @@
+task_id: claude-warning-producer-fixture
+dimension: build
+attempt: 003
+started_at: 2026-07-31T06:19:28Z
+command: bun run build
+--- output ---
+$ bun build --compile --outfile loop src/cli.ts
+ [171ms]  bundle  3041 modules
+  [80ms] compile  loop
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-31T06:19:29Z

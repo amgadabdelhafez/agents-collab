@@ -1,0 +1,12 @@
+task_id: claude-warning-producer-fixture
+dimension: provenance
+attempt: 002
+started_at: 2026-07-31T06:09:14Z
+command: node ../evals/replay/claude-dev-channel-preconnect-warning/check.mjs
+--- output ---
+producer fixture replay metadata: PASS (9 states, detached, pane_pipe=0, activity advanced three times, draft preserved/restored/cleared)
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-31T06:09:14Z

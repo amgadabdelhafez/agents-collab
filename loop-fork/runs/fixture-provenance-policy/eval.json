@@ -1,10 +1,7 @@
 {
   "task_id": "fixture-provenance-policy",
   "status": "pass",
-  "required": [
-    "unit",
-    "full"
-  ],
+  "required": ["unit", "full"],
   "dimensions": {
     "unit": {
       "status": "pass",

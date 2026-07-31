@@ -1,0 +1,103 @@
+task_id: claude-warning-producer-fixture
+dimension: unit
+attempt: 001
+started_at: 2026-07-31T04:52:43Z
+command: bun run check
+--- output ---
+$ ultracite check
+runs/claude-warning-producer-fixture/artifacts/focused/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-31T04:52:34Z",
+    10 10 │     "artifact": "runs/claude-warning-producer-fixture/artifacts/focused/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:file",
+    15    │ - ····"--",
+    16    │ - ····"tests/loop/tmux.test.ts"
+    17    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:file",·"--",·"tests/loop/tmux.test.ts"]
+    18 12 │   }
+    19 13 │
+
+
+runs/claude-warning-producer-fixture/artifacts/focused/eval-before-attempt-001.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "claude-warning-producer-fixture",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"provenance"
+     7    │ - ··],
+        4 │ + ··"required":·["unit",·"provenance"],
+     8  5 │     "dimensions": {
+     9  6 │       "unit": {
+
+
+runs/claude-warning-producer-fixture/artifacts/focused/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-07-31T04:52:34Z",
+    10 10 │     "artifact": "runs/claude-warning-producer-fixture/artifacts/focused/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:file",
+    15    │ - ····"--",
+    16    │ - ····"tests/loop/tmux.test.ts"
+    17    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:file",·"--",·"tests/loop/tmux.test.ts"]
+    18 12 │   }
+    19 13 │
+
+
+runs/claude-warning-producer-fixture/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "claude-warning-producer-fixture",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"provenance",
+     7    │ - ····"focused"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"provenance",·"focused"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/claude-warning-producer-fixture/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "claude-warning-producer-fixture",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"provenance",
+     7    │ - ····"focused"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"provenance",·"focused"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+Checked 688 files in 177ms. No fixes applied.
+Found 5 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+
+
+error: script "check" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-07-31T04:52:43Z

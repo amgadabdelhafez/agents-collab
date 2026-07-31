@@ -1,0 +1,60 @@
+╭─── Claude Code v2.1.220 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                                                                               │
+│                 Welcome back <USER>!                │ Run /init to create a CLAUDE.md file with instructions for Claude                                                      │
+│                                                    │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                                                                             │
+│                      ▝▜█████▛▘                     │ Bug fixes and reliability improvements                                                                                 │
+│                        ▘▘ ▝▝                       │ Added Claude Opus 5 (`claude-opus-5`), now the default Opus model — 1M context, fast mode at $10/$50 per Mtok          │
+│                                                    │ Added `sandbox.network.strictAllowlist` setting to deny non-allowlisted hosts for sandboxed commands without prompting │
+│  Opus 5 with max effort · <ACCOUNT_CONTEXT>  │ /release-notes for more                                                                                                │
+│                    <CAPTURE_CWD>                    │                                                                                                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Channels (experimental) messages from server:loop-bridge-fixture-capture inject directly in this session · restart without --dangerously-load-development-channels to stop
+ ▎ server:loop-bridge-fixture-capture · no MCP server configured with that name
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "do not overwrite this human draft"
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)                                                                                                                                                 Not logged in · Run /login
+                                                                                                                                                                                                           ◈ max · /effort
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

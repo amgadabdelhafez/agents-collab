@@ -139,6 +139,19 @@ interface TerminalSize {
   rows: number;
 }
 
+interface PaneCursor {
+  x: number;
+  y: number;
+}
+
+interface PaneSnapshot {
+  activeClients: number;
+  cursor: PaneCursor;
+  pipeOpen: boolean;
+  text: string;
+  windowActivity: number;
+}
+
 const DEFAULT_DETACHED_PAIRED_SIZE: TerminalSize = {
   columns: 220,
   rows: 60,
@@ -153,6 +166,7 @@ interface GitResult {
 interface TmuxDeps {
   attach: (session: string) => void;
   capturePane: (pane: string, styled?: boolean) => string;
+  capturePaneSnapshot: (pane: string) => PaneSnapshot | undefined;
   closePersistentCodexSession: typeof closePersistentCodexSession;
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -165,6 +179,7 @@ interface TmuxDeps {
   launchArgv: string[];
   log: (line: string) => void;
   makeClaudeSessionId: () => string;
+  nowMs: () => number;
   preparePairedRun: typeof preparePairedRun;
   releasePersistentCodexSession: typeof releasePersistentCodexSession;
   runGit: (cwd: string, args: string[]) => GitResult;
@@ -1194,6 +1209,48 @@ interface PairedPaneTargets {
   utility?: string;
 }
 
+class ClaudeComposerRecoveryError extends Error {
+  readonly pane: string;
+  paneTargets?: Pick<PairedPaneTargets, "left" | "right">;
+
+  constructor(name: string, pane: string, message: string) {
+    super(message);
+    this.name = name;
+    this.pane = pane;
+  }
+}
+
+class ClaudeDraftDetectedError extends ClaudeComposerRecoveryError {
+  readonly restoration: ClaudeDraftRestoreResult;
+
+  constructor(pane: string, restoration: ClaudeDraftRestoreResult) {
+    const details: Record<ClaudeDraftRestoreResult, string> = {
+      acknowledged: "restored its cursor with an acknowledged redraw",
+      failed: "could not verify cursor restoration",
+      unacknowledged:
+        "restored its cursor but could not acknowledge the redraw",
+    };
+    super(
+      "ClaudeDraftDetectedError",
+      pane,
+      `Claude pane "${pane}" contains unsent composer text; ${details[restoration]} and refused to paste the launch bootstrap.`
+    );
+    this.restoration = restoration;
+  }
+}
+
+class ClaudePostProbeIndeterminateError extends ClaudeComposerRecoveryError {
+  constructor(pane: string, cause?: unknown) {
+    const detail =
+      cause instanceof Error && cause.message ? ` (${cause.message})` : "";
+    super(
+      "ClaudePostProbeIndeterminateError",
+      pane,
+      `Claude pane "${pane}" may contain unsent composer text; its state became unclassifiable after the cursor probe${detail}. Refused to paste the launch bootstrap.`
+    );
+  }
+}
+
 const bindPairedSessionIdentity = (
   deps: TmuxDeps,
   storage: RunStorage,
@@ -2031,6 +2088,26 @@ const runTmuxCommand = (
 };
 
 const TMUX_PANE_ID_RE = /^%\d+$/;
+const TMUX_PANE_SNAPSHOT_MARKER = "__LOOP_PANE_CURSOR__";
+const TMUX_PANE_SNAPSHOT_RE =
+  /(?:^|\n)__LOOP_PANE_CURSOR__ (\d+) (\d+) (\d+) (\d+) ([01])\n?$/;
+
+const parseTmuxPaneSnapshot = (output: string): PaneSnapshot | undefined => {
+  const match = TMUX_PANE_SNAPSHOT_RE.exec(output);
+  if (!match) {
+    return undefined;
+  }
+  return {
+    activeClients: Number.parseInt(match[4] ?? "", 10),
+    cursor: {
+      x: Number.parseInt(match[1] ?? "", 10),
+      y: Number.parseInt(match[2] ?? "", 10),
+    },
+    pipeOpen: match[5] === "1",
+    text: output.slice(0, match.index),
+    windowActivity: Number.parseInt(match[3] ?? "", 10),
+  };
+};
 
 const stablePaneId = (result: SpawnResult): string | undefined => {
   const paneId = result.stdout?.trim();
@@ -2069,43 +2146,351 @@ const detectClaudePrompt = (text: string): ClaudeStartupPrompt | undefined => {
 
 const CLAUDE_READY_TAIL_LINES = 8;
 const CLAUDE_INPUT_PREFIX = "❯";
+const CLAUDE_EMPTY_COMPOSER_CURSOR_X = 2;
+const CLAUDE_SUGGESTED_PROMPT_RE = /^Try\s+".+"$/;
 
-const isClaudeInputReady = (text: string): boolean => {
-  const visibleLines = text
-    .split(LINE_SPLIT_RE)
-    .slice(-CLAUDE_READY_TAIL_LINES)
-    .map(stripDimSpans);
+type ClaudeInputInspection =
+  | { kind: "blocked" }
+  | { kind: "ready-empty"; row: number }
+  | { kind: "suggested-placeholder"; row: number; text: string };
+
+interface ClaudeComposer {
+  row: number;
+  text: string;
+}
+
+const readClaudeComposer = (text: string): ClaudeComposer | undefined => {
+  const allVisibleLines = text.split(LINE_SPLIT_RE).map(stripDimSpans);
+  while (allVisibleLines.at(-1)?.trim() === "") {
+    allVisibleLines.pop();
+  }
+  const tailStart = Math.max(
+    0,
+    allVisibleLines.length - CLAUDE_READY_TAIL_LINES
+  );
+  const visibleLines = allVisibleLines.slice(tailStart);
   const promptIndex = visibleLines.findLastIndex((line) =>
     line.trimStart().startsWith(CLAUDE_INPUT_PREFIX)
   );
-  if (promptIndex < 0) {
+  if (
+    promptIndex < 0 ||
+    detectClaudePrompt(visibleLines.slice(promptIndex + 1).join("\n")) !==
+      undefined
+  ) {
+    return undefined;
+  }
+  return {
+    row: tailStart + promptIndex,
+    text:
+      visibleLines[promptIndex]
+        ?.trimStart()
+        .slice(CLAUDE_INPUT_PREFIX.length)
+        .trim() ?? "",
+  };
+};
+
+const inspectClaudeInput = (
+  text: string,
+  cursor?: PaneCursor
+): ClaudeInputInspection => {
+  const composer = readClaudeComposer(text);
+  if (!composer) {
+    return { kind: "blocked" };
+  }
+  if (!composer.text) {
+    return { kind: "ready-empty", row: composer.row };
+  }
+  if (
+    CLAUDE_SUGGESTED_PROMPT_RE.test(composer.text) &&
+    cursor?.x === CLAUDE_EMPTY_COMPOSER_CURSOR_X &&
+    cursor.y === composer.row
+  ) {
+    return {
+      kind: "suggested-placeholder",
+      row: composer.row,
+      text: composer.text,
+    };
+  }
+  return { kind: "blocked" };
+};
+
+const isClaudeInputReady = (text: string): boolean =>
+  inspectClaudeInput(text).kind === "ready-empty";
+
+const CLAUDE_SUGGESTION_PROBE_POLLS = 12;
+
+type ClaudeSuggestionProbeResult =
+  | "candidate-changed"
+  | "draft"
+  | "draft-restore-failed"
+  | "draft-restore-unacknowledged"
+  | "empty"
+  | "indeterminate";
+type ClaudeDraftRestoreResult = "acknowledged" | "failed" | "unacknowledged";
+
+const matchesClaudeSuggestionSnapshot = (
+  snapshot: PaneSnapshot,
+  expected: { row: number; text: string }
+): boolean => {
+  if (snapshot.activeClients !== 0 || snapshot.pipeOpen) {
     return false;
   }
-  const composer = visibleLines[promptIndex]
-    ?.trimStart()
-    .slice(CLAUDE_INPUT_PREFIX.length)
-    .trim();
-  if (composer) {
-    return false;
-  }
-  return (
-    detectClaudePrompt(visibleLines.slice(promptIndex + 1).join("\n")) ===
-    undefined
+  const composer = readClaudeComposer(snapshot.text);
+  return Boolean(
+    composer &&
+      composer.row === expected.row &&
+      composer.text === expected.text &&
+      snapshot.cursor.y === expected.row
   );
+};
+
+const waitForClaudeActivityBoundary = async (
+  pane: string,
+  initial: PaneSnapshot,
+  expected: { cursorX: number; row: number; text: string },
+  deps: Pick<TmuxDeps, "capturePaneSnapshot" | "nowMs" | "sleep">
+): Promise<PaneSnapshot | undefined> => {
+  let baseline = initial;
+  for (let poll = 0; poll < CLAUDE_SUGGESTION_PROBE_POLLS; poll += 1) {
+    if (Math.floor(deps.nowMs() / 1000) <= baseline.windowActivity) {
+      await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+      continue;
+    }
+    const current = deps.capturePaneSnapshot(pane);
+    if (!current) {
+      return undefined;
+    }
+    if (
+      !matchesClaudeSuggestionSnapshot(current, expected) ||
+      current.cursor.x !== expected.cursorX
+    ) {
+      return undefined;
+    }
+    if (current.windowActivity === baseline.windowActivity) {
+      return current;
+    }
+    baseline = current;
+  }
+  return undefined;
+};
+
+const waitForClaudeActivityAdvance = async (
+  pane: string,
+  baselineActivity: number,
+  expected: { row: number; text: string },
+  deps: Pick<TmuxDeps, "capturePaneSnapshot" | "sleep">
+): Promise<PaneSnapshot | undefined> => {
+  for (let poll = 0; poll < CLAUDE_SUGGESTION_PROBE_POLLS; poll += 1) {
+    await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+    const current = deps.capturePaneSnapshot(pane);
+    if (!current) {
+      return undefined;
+    }
+    if (!matchesClaudeSuggestionSnapshot(current, expected)) {
+      return undefined;
+    }
+    if (current.windowActivity > baselineActivity) {
+      return current;
+    }
+  }
+  return undefined;
+};
+
+const CLAUDE_DRAFT_RESTORE_ATTEMPTS = 3;
+
+const restoreClaudeDraftCursor = async (
+  pane: string,
+  observed: PaneSnapshot,
+  expected: { row: number; text: string },
+  deps: Pick<TmuxDeps, "capturePaneSnapshot" | "nowMs" | "sendKeys" | "sleep">
+): Promise<ClaudeDraftRestoreResult> => {
+  let current = observed;
+  for (let attempt = 0; attempt < CLAUDE_DRAFT_RESTORE_ATTEMPTS; attempt += 1) {
+    if (!matchesClaudeSuggestionSnapshot(current, expected)) {
+      return "failed";
+    }
+    if (current.cursor.x === CLAUDE_EMPTY_COMPOSER_CURSOR_X) {
+      return "unacknowledged";
+    }
+
+    // Prefer a distinct activity second so Home,C-l has an independently
+    // observable acknowledgment. If that boundary cannot be established,
+    // still make the bounded restoration attempt: preserving a proven human
+    // draft's cursor is more important than classifying the pane as ready.
+    const boundary = await waitForClaudeActivityBoundary(
+      pane,
+      current,
+      { ...expected, cursorX: current.cursor.x },
+      deps
+    );
+    const restoreFrom = boundary ?? deps.capturePaneSnapshot(pane);
+    if (!restoreFrom) {
+      return "failed";
+    }
+    if (!matchesClaudeSuggestionSnapshot(restoreFrom, expected)) {
+      return "failed";
+    }
+    if (restoreFrom.cursor.x === CLAUDE_EMPTY_COMPOSER_CURSOR_X) {
+      return "unacknowledged";
+    }
+
+    deps.sendKeys(pane, ["Home", "C-l"]);
+    const acknowledged = await waitForClaudeActivityAdvance(
+      pane,
+      restoreFrom.windowActivity,
+      expected,
+      deps
+    );
+    const restored = acknowledged ?? deps.capturePaneSnapshot(pane);
+    if (!restored) {
+      return "failed";
+    }
+    if (!matchesClaudeSuggestionSnapshot(restored, expected)) {
+      return "failed";
+    }
+    if (restored.cursor.x === CLAUDE_EMPTY_COMPOSER_CURSOR_X) {
+      return acknowledged ? "acknowledged" : "unacknowledged";
+    }
+    current = restored;
+  }
+  return "failed";
+};
+
+const probeClaudeSuggestedComposer = async (
+  pane: string,
+  initial: PaneSnapshot,
+  expected: { row: number; text: string },
+  deps: Pick<TmuxDeps, "capturePaneSnapshot" | "nowMs" | "sendKeys" | "sleep">
+): Promise<ClaudeSuggestionProbeResult> => {
+  if (
+    !matchesClaudeSuggestionSnapshot(initial, expected) ||
+    initial.cursor.x !== CLAUDE_EMPTY_COMPOSER_CURSOR_X
+  ) {
+    return "indeterminate";
+  }
+  const quiet = await waitForClaudeActivityBoundary(
+    pane,
+    initial,
+    { ...expected, cursorX: CLAUDE_EMPTY_COMPOSER_CURSOR_X },
+    deps
+  );
+  if (!quiet) {
+    return "indeterminate";
+  }
+  try {
+    // From this point onward a timeout or malformed capture cannot prove that
+    // the keys were not delivered to a same-shaped human draft. Every such
+    // outcome becomes a recoverable live-workspace stop, never normal cleanup.
+    deps.sendKeys(pane, ["End", "C-l"]);
+    const acknowledged = await waitForClaudeActivityAdvance(
+      pane,
+      quiet.windowActivity,
+      expected,
+      deps
+    );
+    const observed = acknowledged ?? deps.capturePaneSnapshot(pane);
+    if (!observed) {
+      throw new ClaudePostProbeIndeterminateError(pane);
+    }
+    if (!matchesClaudeSuggestionSnapshot(observed, expected)) {
+      const changed =
+        observed.activeClients === 0 && !observed.pipeOpen
+          ? inspectClaudeInput(observed.text, observed.cursor)
+          : { kind: "blocked" as const };
+      if (
+        changed.kind === "suggested-placeholder" &&
+        (changed.row !== expected.row || changed.text !== expected.text)
+      ) {
+        return "candidate-changed";
+      }
+      throw new ClaudePostProbeIndeterminateError(pane);
+    }
+    if (observed.cursor.x === CLAUDE_EMPTY_COMPOSER_CURSOR_X) {
+      if (acknowledged) {
+        return "empty";
+      }
+      throw new ClaudePostProbeIndeterminateError(pane);
+    }
+
+    // The End key proved this is real draft text. Restore the human's original
+    // Home position before failing closed, even when the activity acknowledgment
+    // itself went missing.
+    const restored = await restoreClaudeDraftCursor(
+      pane,
+      observed,
+      expected,
+      deps
+    );
+    if (restored === "acknowledged") {
+      return "draft";
+    }
+    return restored === "unacknowledged"
+      ? "draft-restore-unacknowledged"
+      : "draft-restore-failed";
+  } catch (error) {
+    if (error instanceof ClaudeComposerRecoveryError) {
+      throw error;
+    }
+    throw new ClaudePostProbeIndeterminateError(pane, error);
+  }
 };
 
 const unblockClaudePane = async (
   pane: string,
-  deps: TmuxDeps
+  deps: Pick<
+    TmuxDeps,
+    "capturePane" | "capturePaneSnapshot" | "nowMs" | "sendKeys" | "sleep"
+  >
 ): Promise<void> => {
   const handledPrompts = new Set<ClaudeStartupPrompt>();
   for (let attempt = 0; attempt < CLAUDE_PROMPT_MAX_POLLS; attempt += 1) {
-    const paneText = deps.capturePane(pane, true);
-    if (isClaudeInputReady(paneText)) {
+    const paneState = deps.capturePaneSnapshot(pane);
+    const paneText = paneState?.text ?? deps.capturePane(pane, true);
+    const input = inspectClaudeInput(paneText, paneState?.cursor);
+    if (input.kind === "ready-empty") {
       return;
     }
     const snapshot = normalizePaneText(paneText);
     const prompt = detectClaudePrompt(snapshot);
+    if (prompt === undefined && input.kind === "suggested-placeholder") {
+      const probe = paneState
+        ? await probeClaudeSuggestedComposer(
+            pane,
+            paneState,
+            { row: input.row, text: input.text },
+            deps
+          )
+        : "indeterminate";
+      if (probe === "empty") {
+        return;
+      }
+      if (probe === "candidate-changed") {
+        continue;
+      }
+      if (probe.startsWith("draft")) {
+        let restoration: ClaudeDraftRestoreResult = "failed";
+        if (probe === "draft") {
+          restoration = "acknowledged";
+        } else if (probe === "draft-restore-unacknowledged") {
+          restoration = "unacknowledged";
+        }
+        throw new ClaudeDraftDetectedError(pane, restoration);
+      }
+      const latest = deps.capturePaneSnapshot(pane);
+      const latestInput = inspectClaudeInput(
+        latest?.text ?? "",
+        latest?.cursor
+      );
+      if (
+        latestInput.kind === "suggested-placeholder" &&
+        latestInput.text !== input.text
+      ) {
+        continue;
+      }
+      throw new Error(
+        `Claude pane "${pane}" suggestion could not be verified as an empty composer; refused to paste the launch bootstrap.`
+      );
+    }
     if (
       (prompt === "dev-channel" || prompt === "trust") &&
       !handledPrompts.has(prompt)
@@ -2184,17 +2569,24 @@ const createPairedPaneLayout = async (input: {
     `${input.session}:0`,
     "even-horizontal",
   ]);
-  if (input.paneAgents.left === "claude") {
-    await unblockClaudePane(left, input.deps);
-  }
-  if (input.paneAgents.right === "claude") {
-    await unblockClaudePane(rightBeforeUtility, input.deps);
+  try {
+    if (input.paneAgents.left === "claude") {
+      await unblockClaudePane(left, input.deps);
+    }
+    if (input.paneAgents.right === "claude") {
+      await unblockClaudePane(rightBeforeUtility, input.deps);
+    }
+  } catch (error) {
+    if (error instanceof ClaudeComposerRecoveryError) {
+      error.paneTargets = { left, right: rightBeforeUtility };
+    }
+    throw error;
   }
   const pasteLaunchBootstrap = (
     pane: string,
     agent: Agent,
     promptPath: string | undefined
-  ): Promise<void> => {
+  ): void => {
     if (!promptPath) {
       return;
     }
@@ -2647,6 +3039,38 @@ const startPairedSession = async (
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
     return { preserveUnknownStart, session, terminalizeFailedStart };
   } catch (error: unknown) {
+    if (error instanceof ClaudeComposerRecoveryError) {
+      preserveUnknownStart();
+      try {
+        deps.updateRunManifest(storage.manifestPath, (current) => {
+          if (!current) {
+            return undefined;
+          }
+          const withRecoveryTargets = {
+            ...current,
+            ...(error.paneTargets
+              ? {
+                  tmuxPaneLeft: error.paneTargets.left,
+                  tmuxPaneRight: error.paneTargets.right,
+                }
+              : {}),
+          };
+          return isActiveRunState(withRecoveryTargets.state)
+            ? setRunManifestState(withRecoveryTargets, "input-required")
+            : withRecoveryTargets;
+        });
+      } catch {
+        // The live tmux workspace remains the recovery authority even if the
+        // manifest cannot be updated. Never trade the human draft for cleanup.
+      }
+      const recovery = `tmux attach -t ${session}`;
+      deps.log(
+        `[loop] preserved live tmux session "${session}" for unsent Claude composer recovery; attach with: ${recovery}`
+      );
+      throw new Error(
+        `${error.message} The live tmux session "${session}" was preserved; attach with: ${recovery}`
+      );
+    }
     const liveness = probeHandoffSession(session, deps.spawn);
     if (liveness.liveness === "unknown") {
       preserveUnknownStart();
@@ -2770,6 +3194,37 @@ const defaultDeps = (): TmuxDeps => ({
     }
     return decode(result.stdout);
   },
+  capturePaneSnapshot: (pane: string) => {
+    const result = spawnSync(
+      [
+        "tmux",
+        "capture-pane",
+        "-p",
+        "-e",
+        "-t",
+        pane,
+        ";",
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
+      ],
+      boundedTmuxOptions({
+        stderr: "ignore",
+        stdout: "pipe",
+      })
+    );
+    if (tmuxCommandTimedOut(result)) {
+      throw new Error(
+        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane state for "${pane}"`
+      );
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`Failed to capture tmux pane state for "${pane}".`);
+    }
+    return parseTmuxPaneSnapshot(decode(result.stdout));
+  },
   cwd: process.cwd(),
   env: process.env,
   findBinary: (cmd: string) => commandExists(cmd),
@@ -2790,6 +3245,7 @@ const defaultDeps = (): TmuxDeps => ({
     console.log(line);
   },
   makeClaudeSessionId: () => randomUUID(),
+  nowMs: () => Date.now(),
   preparePairedRun,
   runGit: (cwd: string, args: string[]) => runGit(cwd, args),
   sendKeys: (pane: string, keys: string[]) => {
@@ -2915,6 +3371,17 @@ export const runInTmux = async (
   }
 
   const deps = { ...defaultDeps(), ...overrides };
+  if (overrides.capturePane && !overrides.capturePaneSnapshot) {
+    // Unit tests and embedders that provide a pane capture do not get to mix
+    // that synthetic text with cursor data from the user's real tmux server.
+    deps.capturePaneSnapshot = (pane: string) => ({
+      activeClients: 0,
+      cursor: { x: -1, y: -1 },
+      pipeOpen: false,
+      text: deps.capturePane(pane, true),
+      windowActivity: 0,
+    });
+  }
   const insideTmux = Boolean(deps.env.TMUX);
 
   if (!deps.findBinary("tmux")) {
@@ -3024,9 +3491,14 @@ export const tmuxInternals = {
   spawnDetachedProcess,
   isSessionConflict,
   isConfirmedMissingTmuxSession,
+  isClaudeInputReady,
+  parseTmuxPaneSnapshot,
+  probeClaudeSuggestedComposer,
   quoteShellArg,
+  restoreClaudeDraftCursor,
   sanitizeBase,
   stripTmuxFlag,
+  unblockClaudePane,
   writeLaunchCharter,
   utilityPaneEnabled,
   utilityPaneWidth,

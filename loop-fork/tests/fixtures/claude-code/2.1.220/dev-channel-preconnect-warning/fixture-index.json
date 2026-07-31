@@ -1,0 +1,281 @@
+{
+  "actions": [
+    {
+      "action": "Down",
+      "phase": "startup-bypass",
+      "promptSubmission": false
+    },
+    {
+      "action": "Enter",
+      "phase": "startup-bypass",
+      "promptSubmission": false
+    },
+    {
+      "action": "Enter",
+      "phase": "startup-development-channel",
+      "promptSubmission": false
+    },
+    {
+      "action": "End",
+      "phase": "ready-activity-probe",
+      "promptSubmission": false
+    },
+    {
+      "action": "C-l",
+      "phase": "ready-activity-probe",
+      "promptSubmission": false
+    },
+    {
+      "action": "literal-sha256:af2964614246ec9c792a853c5e4b10a22203433e2fbc3588d9e2106e13344d1a",
+      "phase": "draft-input",
+      "promptSubmission": false
+    },
+    {
+      "action": "Home",
+      "phase": "draft-home",
+      "promptSubmission": false
+    },
+    {
+      "action": "End",
+      "phase": "draft-activity-probe",
+      "promptSubmission": false
+    },
+    {
+      "action": "C-l",
+      "phase": "draft-activity-probe",
+      "promptSubmission": false
+    },
+    {
+      "action": "Home",
+      "phase": "draft-restore",
+      "promptSubmission": false
+    },
+    {
+      "action": "C-l",
+      "phase": "draft-restore",
+      "promptSubmission": false
+    },
+    {
+      "action": "Home",
+      "phase": "draft-clear",
+      "promptSubmission": false
+    },
+    {
+      "action": "C-k",
+      "phase": "draft-clear",
+      "promptSubmission": false
+    },
+    {
+      "action": "C-l",
+      "phase": "draft-clear",
+      "promptSubmission": false
+    }
+  ],
+  "activityProbe": {
+    "draftSha256": "af2964614246ec9c792a853c5e4b10a22203433e2fbc3588d9e2106e13344d1a",
+    "draftStates": {
+      "afterEndClear": "draft-after-end-clear",
+      "cleared": "draft-cleared",
+      "home": "draft-home",
+      "restoredHome": "draft-home-restored"
+    },
+    "readyStates": {
+      "afterEndClear": "ready-after-end-clear",
+      "beforeEndClear": "ready-before-end-clear"
+    },
+    "unsentDraft": "Try \"do not overwrite this human draft\""
+  },
+  "captureRepresentation": "tmux capture-pane -p -e",
+  "captureSafety": {
+    "modelRequestMade": false,
+    "panePipeRequested": false,
+    "promptSubmitted": false
+  },
+  "frames": [
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:53Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 11
+      },
+      "normalizedFile": "01-bypass-default.txt",
+      "normalizedSha256": "f3d35361c1521cc89f21a30c2424d7ab4ad5a437398cc274f6fb02f338d195f1",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "f3d35361c1521cc89f21a30c2424d7ab4ad5a437398cc274f6fb02f338d195f1",
+      "sourceFrame": "0003",
+      "state": "bypass-default",
+      "windowActivity": 1785476753
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:53Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 12
+      },
+      "normalizedFile": "02-bypass-accepted.txt",
+      "normalizedSha256": "8054dbbee76b19219e171621177488985a8edd664bc5911a8b7c89b85a99a863",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "8054dbbee76b19219e171621177488985a8edd664bc5911a8b7c89b85a99a863",
+      "sourceFrame": "0004",
+      "state": "bypass-accepted",
+      "windowActivity": 1785476753
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:53Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 10
+      },
+      "normalizedFile": "03-development-channel.txt",
+      "normalizedSha256": "278465bf42a09c2dca406ff5143f512d33cfd3b33cd992b7b2914ae10fab14f8",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "278465bf42a09c2dca406ff5143f512d33cfd3b33cd992b7b2914ae10fab14f8",
+      "sourceFrame": "0005",
+      "state": "development-channel",
+      "windowActivity": 1785476753
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:54Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 16
+      },
+      "normalizedFile": "04-ready-with-preconnect-warning.txt",
+      "normalizedSha256": "a85350cca031f22e7fe71bf3f83c1298cccd94530377455d29114142a304f563",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "7ab1467a6947f70134e5ecd2b877927a7789db8d4ee4b1b3abb4e51543fd8d19",
+      "sourceFrame": "0006",
+      "state": "ready-before-end-clear",
+      "windowActivity": 1785476753
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:54Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 16
+      },
+      "normalizedFile": "05-ready-after-end-clear.txt",
+      "normalizedSha256": "a85350cca031f22e7fe71bf3f83c1298cccd94530377455d29114142a304f563",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "7ab1467a6947f70134e5ecd2b877927a7789db8d4ee4b1b3abb4e51543fd8d19",
+      "sourceFrame": "post-ready",
+      "state": "ready-after-end-clear",
+      "windowActivity": 1785476754
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:54Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 16
+      },
+      "normalizedFile": "06-draft-home.txt",
+      "normalizedSha256": "1da15be2786f25eb56ec6ebfe3b12aa6e3972804ffd9bb2de89a1765fba956cf",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "8de79d52444559b0847c2216b5855f8b5ec71b9197d94fbc1afd0c78873dfc8a",
+      "sourceFrame": "post-ready",
+      "state": "draft-home",
+      "windowActivity": 1785476754
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:55Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 41,
+        "y": 16
+      },
+      "normalizedFile": "07-draft-after-end-clear.txt",
+      "normalizedSha256": "1da15be2786f25eb56ec6ebfe3b12aa6e3972804ffd9bb2de89a1765fba956cf",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "8de79d52444559b0847c2216b5855f8b5ec71b9197d94fbc1afd0c78873dfc8a",
+      "sourceFrame": "post-ready",
+      "state": "draft-after-end-clear",
+      "windowActivity": 1785476755
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:56Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 16
+      },
+      "normalizedFile": "08-draft-home-restored.txt",
+      "normalizedSha256": "1da15be2786f25eb56ec6ebfe3b12aa6e3972804ffd9bb2de89a1765fba956cf",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "8de79d52444559b0847c2216b5855f8b5ec71b9197d94fbc1afd0c78873dfc8a",
+      "sourceFrame": "post-ready",
+      "state": "draft-home-restored",
+      "windowActivity": 1785476756
+    },
+    {
+      "activeClients": 0,
+      "capturedAtUtc": "2026-07-31T05:45:56Z",
+      "cursor": {
+        "paneHeight": 60,
+        "paneWidth": 220,
+        "x": 2,
+        "y": 16
+      },
+      "normalizedFile": "09-draft-cleared.txt",
+      "normalizedSha256": "a85350cca031f22e7fe71bf3f83c1298cccd94530377455d29114142a304f563",
+      "paneId": "%0",
+      "panePipe": 0,
+      "paneTarget": "claude-warning-capture:0.0",
+      "rawSha256": "7ab1467a6947f70134e5ecd2b877927a7789db8d4ee4b1b3abb4e51543fd8d19",
+      "sourceFrame": "post-ready",
+      "state": "draft-cleared",
+      "windowActivity": 1785476756
+    }
+  ],
+  "normalization": [
+    "replace welcome identity with <USER>",
+    "replace account plan and role with <ACCOUNT_CONTEXT>",
+    "replace macOS home prefixes with <HOME>",
+    "replace capture cwd with <CAPTURE_CWD>"
+  ],
+  "rawManifests": {
+    "actionsSha256": "9b9fce03fd72099078439ed9cf328cf21a4c32cdd9160a031990452ba5bb2eb0",
+    "environmentSha256": "d0865d161a00340faef0a57e17c084a3c364aa582a9a10762b016f449ca5a2ab",
+    "mcpConfigSha256": "08c86853f5894198613dee23c9b2bd71e9233605ca73727570d89f38266a7f97",
+    "selectedStatesSha256": "20738d6b3c53844027190b404e77a91ba051cfe5e4fd19f0e6c3f11e5c52050b"
+  },
+  "rawReference": "~/.loop/evidence/claude-warning-producer-fixture/20260731T054543Z",
+  "schemaVersion": 2
+}

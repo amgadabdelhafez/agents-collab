@@ -1,0 +1,20 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "status": "created",
+  "bug_id": "claude-dev-channel-preconnect-warning-fixture",
+  "regression_path": "evals/regression/claude-dev-channel-preconnect-warning-fixture.md",
+  "prompt_path": "runs/claude-warning-producer-fixture/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-31T06:43:54Z",
+  "markers": {
+    "enabled": ["yes"],
+    "id": ["claude-dev-channel-preconnect-warning-fixture"],
+    "symptom": [
+      "A valid development-channel MCP server is reported missing during Claude startup before the bridge becomes available."
+    ],
+    "guard": ["bun run test:file -- tests/loop/tmux.test.ts"]
+  },
+  "symptom_lines": [
+    "A valid development-channel MCP server is reported missing during Claude startup before the bridge becomes available."
+  ],
+  "test_lines": ["bun run test:file -- tests/loop/tmux.test.ts"]
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "baseCommit": "fb926edf79aef00c87775ee6d392227345d1ab91",
+  "baseSourceSha256": "29cfe33723fc3b8cda8c894f2a63cf8963dea403cb9fe61f97a983c1dd729e1a",
+  "testFileSha256": "37f81de01aa4a6daaeb32317646d75ca0c77948fe6923ae858468530e402948e",
+  "command": [
+    "env",
+    "LOOP_TEST_CERTIFICATION_MODE=single-file",
+    "bun",
+    "test",
+    "tests/loop/tmux.test.ts",
+    "-t",
+    "runInTmux replays the captured Claude pre-connect warning before bootstrap"
+  ],
+  "exitCode": 1,
+  "observedFailure": "Claude pane did not reach an input-ready prompt within 20000ms",
+  "rawEvidence": {
+    "reference": "~/.loop/evidence/claude-warning-producer-fixture/pre-fix-fb926edf/tmux-replay.log",
+    "sha256": "575ae06b550517ef30f63eefc4912df3ec7840ceb6879d7b56fc0a1677f2fa36",
+    "committed": false,
+    "permissions": "0600"
+  },
+  "normalizedEvidence": {
+    "path": "runs/claude-warning-producer-fixture/artifacts/regression/pre-fix-producer-replay.log",
+    "sha256": "0614ca1800d7758acf31ab302a1df3af740965176ebced7c274fac1aa7cd7a44"
+  }
+}

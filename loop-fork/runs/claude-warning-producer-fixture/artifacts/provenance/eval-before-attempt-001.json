@@ -1,0 +1,10 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

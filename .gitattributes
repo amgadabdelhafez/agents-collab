@@ -1,0 +1,3 @@
+# Producer terminal captures intentionally retain blank pane rows and are
+# hash-verified as opaque byte evidence rather than whitespace-normalized text.
+loop-fork/tests/fixtures/claude-code/**/dev-channel-preconnect-warning/*.txt binary

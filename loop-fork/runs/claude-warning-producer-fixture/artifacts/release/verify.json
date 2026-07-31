@@ -1,0 +1,19 @@
+{
+  "task_id": "claude-warning-producer-fixture",
+  "dimension": "release",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-31T06:20:09Z",
+  "ended_at": "2026-07-31T06:20:38Z",
+  "artifact": "runs/claude-warning-producer-fixture/artifacts/release/attempt-001.log",
+  "command": [
+    "env",
+    "LOOP_SMOKE_BINARY=<WORKTREE>/loop-fork/loop",
+    "LOOP_SMOKE_EXPECTED_SHA256=dc4d323461377000aae26bdf8676fbf9735f627b477b3aa0b6c9c0953a486409",
+    "LOOP_SMOKE_FULL_LAYOUT=1",
+    "bash",
+    "../evals/smoke/large-prompt-launch.sh"
+  ]
+}

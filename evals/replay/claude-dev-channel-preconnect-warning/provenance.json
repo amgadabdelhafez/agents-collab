@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 2,
+  "producer": {
+    "name": "Claude Code",
+    "version": "2.1.220",
+    "executable": "<CLAUDE_EXECUTABLE>",
+    "executableDiscovery": "CLAUDE_CAPTURE_BIN override or command -v claude; exact captured path remains in the private raw environment record",
+    "sha256": "8addc857f3fe64d5a0368af9ee50321b50afb4a6918ba3ef018ab84f5dbbe081"
+  },
+  "capture": {
+    "startedAt": "2026-07-31T05:45:51Z",
+    "endedAt": "2026-07-31T05:45:56Z",
+    "platform": "macOS 26.5.2 (25F84), arm64",
+    "tmuxVersion": "tmux 3.7b",
+    "geometry": {
+      "columns": 220,
+      "rows": 60
+    },
+    "term": "xterm-256color",
+    "representation": "tmux capture-pane -p -e",
+    "metricsFormat": "#{pane_id} #{cursor_x} #{cursor_y} #{window_activity} #{session_attached} #{pane_pipe} #{pane_width} #{pane_height}",
+    "pollIntervalMs": 50,
+    "sessionId": "7fbbf38b-6808-4f87-bec2-ace792135f45",
+    "promptSubmitted": false,
+    "modelRequestMade": false,
+    "panePipeRequested": false,
+    "configIsolation": "Dedicated ephemeral CLAUDE_CONFIG_DIR seeded from the user's existing startup state and removed on exit; no live config writes.",
+    "stateSelection": "selected-states.tsv records state names and source observations; normalization selects the exact ordered state names rather than frame numbers.",
+    "command": [
+      "env",
+      "CLAUDE_CONFIG_DIR=<EPHEMERAL_DEDICATED_CLAUDE_CONFIG_DIR>",
+      "TERM=xterm-256color",
+      "<CLAUDE_EXECUTABLE>",
+      "--session-id",
+      "7fbbf38b-6808-4f87-bec2-ace792135f45",
+      "--model",
+      "opus",
+      "--effort",
+      "max",
+      "--mcp-config",
+      "<RAW_REFERENCE>/claude-mcp.json",
+      "--strict-mcp-config",
+      "--dangerously-load-development-channels",
+      "server:loop-bridge-fixture-capture",
+      "--dangerously-skip-permissions"
+    ],
+    "activityProbe": {
+      "paneTarget": "claude-warning-capture:0.0",
+      "paneId": "%0",
+      "activeClientsOnEverySelectedState": 0,
+      "panePipeOnEverySelectedState": 0,
+      "ready": {
+        "beforeState": "ready-before-end-clear",
+        "afterState": "ready-after-end-clear",
+        "orderedKeys": [
+          "End",
+          "C-l"
+        ],
+        "windowActivityBefore": 1785476753,
+        "windowActivityAfter": 1785476754,
+        "cursorXBefore": 2,
+        "cursorXAfter": 2
+      },
+      "draft": {
+        "sha256": "af2964614246ec9c792a853c5e4b10a22203433e2fbc3588d9e2106e13344d1a",
+        "homeState": "draft-home",
+        "afterState": "draft-after-end-clear",
+        "restoredState": "draft-home-restored",
+        "clearedState": "draft-cleared",
+        "orderedProbeKeys": [
+          "End",
+          "C-l"
+        ],
+        "orderedRestoreKeys": [
+          "Home",
+          "C-l"
+        ],
+        "windowActivityBefore": 1785476754,
+        "windowActivityAfter": 1785476755,
+        "restoreActivityBefore": 1785476755,
+        "restoreActivityAfter": 1785476756,
+        "cursorXAtHome": 2,
+        "cursorXAfterEnd": 41,
+        "cursorXAfterRestore": 2,
+        "cursorXAfterClear": 2
+      }
+    }
+  },
+  "mcp": {
+    "schema": "Claude mcpServers stdio configuration; no explicit schema version",
+    "serverName": "loop-bridge-fixture-capture",
+    "configSha256": "08c86853f5894198613dee23c9b2bd71e9233605ca73727570d89f38266a7f97",
+    "loopVersion": "loop v1.0.32",
+    "loopBinarySha256": "1b71401da7507309cd4d3a70e59c07642e9c60d0a0935a93ebbb03d6f3dce14e"
+  },
+  "rawEvidence": {
+    "reference": "~/.loop/evidence/claude-warning-producer-fixture/20260731T054543Z",
+    "committed": false,
+    "reason": "The full producer frames contain the user's display name and account context; raw bytes remain in the user-private Loop evidence store.",
+    "manifestHashes": {
+      "actionsSha256": "9b9fce03fd72099078439ed9cf328cf21a4c32cdd9160a031990452ba5bb2eb0",
+      "environmentSha256": "d0865d161a00340faef0a57e17c084a3c364aa582a9a10762b016f449ca5a2ab",
+      "mcpConfigSha256": "08c86853f5894198613dee23c9b2bd71e9233605ca73727570d89f38266a7f97",
+      "selectedStatesSha256": "20738d6b3c53844027190b404e77a91ba051cfe5e4fd19f0e6c3f11e5c52050b"
+    },
+    "selectedFrameHashes": "loop-fork/tests/fixtures/claude-code/2.1.220/dev-channel-preconnect-warning/fixture-index.json",
+    "permissions": {
+      "directories": "0700",
+      "files": "0600"
+    }
+  },
+  "normalization": {
+    "script": "evals/replay/claude-dev-channel-preconnect-warning/normalize.mjs",
+    "scriptSha256": "2c0a87b14122d23b90e6c45cc800a41547bf1ca0f4acb12a63c07e6325abf3a4",
+    "map": "loop-fork/tests/fixtures/claude-code/2.1.220/dev-channel-preconnect-warning/fixture-index.json",
+    "safety": "Display identity, account context, macOS home prefix, and capture cwd are replaced; warning text, draft text, terminal geometry, bound numeric state, and raw hashes are preserved."
+  },
+  "captureScript": {
+    "path": "evals/replay/claude-dev-channel-preconnect-warning/capture.sh",
+    "sha256": "83a63536e9c048ed8e9824872d59f45c54fb6ec077f9614e20645ce69fd3bf54"
+  }
+}
