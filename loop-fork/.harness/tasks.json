@@ -418,6 +418,14 @@
       "eval_status": "pass",
       "ended_at": "2026-07-31T06:43:54Z",
       "spec_path": "specs/claude-warning-producer-fixture.md"
+    },
+    {
+      "id": "readiness-timeout-preservation",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-31T08:06:25Z",
+      "run_dir": "runs/readiness-timeout-preservation",
+      "eval_status": "pass"
     }
   ]
 }

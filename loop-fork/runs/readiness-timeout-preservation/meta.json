@@ -1,0 +1,7 @@
+{
+  "id": "readiness-timeout-preservation",
+  "mode": "planned",
+  "created_at": "2026-07-31T08:06:25Z",
+  "status": "active",
+  "description": "Preserve paired tmux workspace and durable input-required evidence when Claude startup readiness times out, without reporting launch success or leaking ownership"
+}

@@ -1213,14 +1213,38 @@ interface PairedPaneTargets {
   utility?: string;
 }
 
-class ClaudeComposerRecoveryError extends Error {
+class ClaudeStartupInputRequiredError extends Error {
   readonly pane: string;
   paneTargets?: Pick<PairedPaneTargets, "left" | "right">;
+  readonly preservationReason: string;
 
-  constructor(name: string, pane: string, message: string) {
+  constructor(
+    name: string,
+    pane: string,
+    message: string,
+    preservationReason: string
+  ) {
     super(message);
     this.name = name;
     this.pane = pane;
+    this.preservationReason = preservationReason;
+  }
+}
+
+class ClaudeComposerRecoveryError extends ClaudeStartupInputRequiredError {
+  constructor(name: string, pane: string, message: string) {
+    super(name, pane, message, "unsent Claude composer recovery");
+  }
+}
+
+class ClaudeStartupReadinessTimeoutError extends ClaudeStartupInputRequiredError {
+  constructor(pane: string, timeoutMs: number) {
+    super(
+      "ClaudeStartupReadinessTimeoutError",
+      pane,
+      `Claude pane "${pane}" did not reach an input-ready prompt within ${timeoutMs}ms.`,
+      "Claude startup readiness timeout recovery"
+    );
   }
 }
 
@@ -2735,8 +2759,9 @@ const unblockClaudePane = async (
       `Claude pane "${pane}" bypass-permissions confirmation did not reach a verified next state; refused to send another key or paste the launch bootstrap.`
     );
   }
-  throw new Error(
-    `Claude pane "${pane}" did not reach an input-ready prompt within ${pollLimit * CLAUDE_PROMPT_POLL_DELAY_MS}ms.`
+  throw new ClaudeStartupReadinessTimeoutError(
+    pane,
+    pollLimit * CLAUDE_PROMPT_POLL_DELAY_MS
   );
 };
 
@@ -2800,7 +2825,7 @@ const createPairedPaneLayout = async (input: {
       await unblockClaudePane(rightBeforeUtility, input.deps);
     }
   } catch (error) {
-    if (error instanceof ClaudeComposerRecoveryError) {
+    if (error instanceof ClaudeStartupInputRequiredError) {
       error.paneTargets = { left, right: rightBeforeUtility };
     }
     throw error;
@@ -3262,7 +3287,7 @@ const startPairedSession = async (
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
     return { preserveUnknownStart, session, terminalizeFailedStart };
   } catch (error: unknown) {
-    if (error instanceof ClaudeComposerRecoveryError) {
+    if (error instanceof ClaudeStartupInputRequiredError) {
       preserveUnknownStart();
       try {
         deps.updateRunManifest(storage.manifestPath, (current) => {
@@ -3288,7 +3313,7 @@ const startPairedSession = async (
       }
       const recovery = `tmux attach -t ${session}`;
       deps.log(
-        `[loop] preserved live tmux session "${session}" for unsent Claude composer recovery; attach with: ${recovery}`
+        `[loop] preserved live tmux session "${session}" for ${error.preservationReason}; attach with: ${recovery}`
       );
       throw new Error(
         `${error.message} The live tmux session "${session}" was preserved; attach with: ${recovery}`

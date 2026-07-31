@@ -1942,7 +1942,10 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
 
 test("runInTmux fails closed when Claude never reaches an input-ready prompt", async () => {
   const calls: string[][] = [];
+  const logs: string[] = [];
   const sleeps: number[] = [];
+  let closed = 0;
+  let released = 0;
   let sessionStarted = false;
   let manifest = createRunManifest({
     cwd: "/repo",
@@ -1966,14 +1969,21 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
       ["--tmux"],
       {
         capturePane: () => "",
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
         cwd: "/repo",
         env: {},
         findBinary: () => true,
+        getCodexAppServerPid: () => 4321,
         getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
         getLastCodexThreadId: () => "codex-thread-1",
         isInteractive: () => false,
         launchArgv: ["bun", "/repo/src/cli.ts"],
-        log: (): void => undefined,
+        log: (message): void => {
+          logs.push(message);
+        },
         makeClaudeSessionId: () => "claude-session-1",
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
@@ -1981,6 +1991,9 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
             'mcp_servers.loop-bridge.command="loop"',
           ];
           return { manifest, storage };
+        },
+        releasePersistentCodexSession: () => {
+          released += 1;
         },
         sendKeys: (): void => undefined,
         sendText: (): void => undefined,
@@ -2010,13 +2023,117 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
       { opts: makePairedOptions({ proof: "" }) }
     )
   ).rejects.toThrow(
-    'Claude pane "repo-loop-1:0.0" did not reach an input-ready prompt within 20000ms.'
+    'Claude pane "repo-loop-1:0.0" did not reach an input-ready prompt within 20000ms. The live tmux session "repo-loop-1" was preserved; attach with: tmux attach -t repo-loop-1'
   );
 
   expect(sleeps).toHaveLength(79);
   expect(sleeps.every((delay) => delay === 250)).toBe(true);
   expect(calls.some((args) => args[1] === "load-buffer")).toBe(false);
   expect(calls.some((args) => args[1] === "paste-buffer")).toBe(false);
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toBe(false);
+  expect(manifest).toMatchObject({
+    state: "input-required",
+    status: "running",
+    tmuxPaneLeft: "repo-loop-1:0.0",
+    tmuxPaneRight: "repo-loop-1:0.1",
+    tmuxSession: "repo-loop-1",
+  });
+  expect(released).toBe(1);
+  expect(closed).toBe(0);
+  expect(logs).toContain(
+    '[loop] preserved live tmux session "repo-loop-1" for Claude startup readiness timeout recovery; attach with: tmux attach -t repo-loop-1'
+  );
+});
+
+test("runInTmux still terminalizes an unexpected Claude readiness probe failure", async () => {
+  const calls: string[][] = [];
+  let closed = 0;
+  let released = 0;
+  let sessionStarted = false;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        capturePane: () => {
+          throw new Error("synthetic capture failure");
+        },
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerPid: () => 4321,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest, storage };
+        },
+        releasePersistentCodexSession: () => {
+          released += 1;
+        },
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionStarted
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionStarted = true;
+          }
+          if (args[0] === "tmux" && args[1] === "kill-session") {
+            sessionStarted = false;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      { opts: makePairedOptions({ proof: "" }) }
+    )
+  ).rejects.toThrow("synthetic capture failure");
+
+  expect(closed).toBe(1);
+  expect(released).toBe(0);
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toBe(true);
   expect(manifest).toMatchObject({ state: "failed", status: "failed" });
 });
 
@@ -4561,7 +4678,7 @@ test.each([
     runInTmux(
       ["--tmux", "--proof", "verify with tests"],
       {
-        capturePane: () => "",
+        capturePane: () => "❯ ",
         closePersistentCodexSession: () => {
           closed += 1;
           return Promise.resolve();

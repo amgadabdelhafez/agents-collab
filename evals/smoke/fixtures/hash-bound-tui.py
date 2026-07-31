@@ -26,7 +26,10 @@ claude_startup = os.environ.get("LOOP_SMOKE_CLAUDE_STARTUP", "")
 trace_path = os.environ.get("LOOP_SMOKE_TRACE_PATH", "")
 fd = sys.stdin.fileno()
 original = termios.tcgetattr(fd)
-signal.alarm(30)
+# The never-ready fixture intentionally survives the launcher's 20-second
+# readiness deadline long enough for the smoke to inspect the preserved pane
+# evidence before performing explicit cleanup.
+signal.alarm(60 if claude_startup == "never-ready" else 30)
 
 
 def emit(value: str) -> None:
@@ -65,7 +68,10 @@ def read_bracketed_paste() -> bytes:
 def read_initial_submission() -> bytes:
     """Accept startup bytes queued just before or after bracketed mode."""
     value = bytearray()
-    deadline = time.monotonic() + 10
+    # The readiness-timeout fixture withholds every bootstrap until Claude is
+    # ready. Keep the peer pane alive so the smoke can inspect both preserved
+    # recovery targets before it explicitly tears the fixture down.
+    deadline = time.monotonic() + (60 if claude_startup == "never-ready" else 10)
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.2)
         if not ready:

@@ -1,0 +1,28 @@
+{
+  "task_id": "readiness-timeout-preservation",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit", "smoke", "project"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "method": "loop-fork/harness verify unit -- bun run test:ci",
+      "artifact": "loop-fork/runs/readiness-timeout-preservation/artifacts/unit/verify.log",
+      "reason": "1,339 tests passed with zero failures"
+    },
+    "smoke": {
+      "status": "pass",
+      "method": "loop-fork/harness verify smoke -- ../evals/smoke/large-prompt-launch.sh",
+      "artifact": "loop-fork/runs/readiness-timeout-preservation/artifacts/smoke/verify.log",
+      "reason": "10KB-charter timeout preserved the live paired workspace as input-required/running and explicit fixture cleanup removed it"
+    },
+    "project": {
+      "status": "pass",
+      "method": "scripts/verify.sh readiness-timeout-preservation readiness-timeout-preservation",
+      "reason": "lint, typecheck, compiled build, 1,339 tests, and the empty baseline allowlist passed"
+    }
+  },
+  "known_limitations": [
+    "Stale bridge-socket garbage collection is a separate housekeeping task and is intentionally unchanged."
+  ]
+}

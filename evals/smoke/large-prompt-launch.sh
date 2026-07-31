@@ -702,12 +702,14 @@ CLAUDE_READY_GEOMETRY="$(
 cd "${CLAUDE_TIMEOUT_REPO}"
 set +e
 LOOP_SMOKE_CLAUDE_STARTUP=never-ready \
+LOOP_SMOKE_FULL_LAYOUT=1 \
 run_isolated_loop \
   "${CLAUDE_TIMEOUT_ROOT}" \
   "${CLAUDE_TIMEOUT_BIN}" \
   "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
   "${CLAUDE_TIMEOUT_RUN_ID}" \
   --tmux --agent gemini --pair-with claude \
+  --governess --governess-dry-run \
   -p "${PROMPT_PATH}" \
   >"${SMOKE_ROOT}/claude-timeout.out" \
   2>"${SMOKE_ROOT}/claude-timeout.err"
@@ -728,25 +730,97 @@ assert_manifest_binding \
   "${CLAUDE_TIMEOUT_RUN_ID}"
 CLAUDE_TIMEOUT_STATE="$(manifest_field "${CLAUDE_TIMEOUT_MANIFEST}" state)"
 CLAUDE_TIMEOUT_MANIFEST_STATUS="$(manifest_field "${CLAUDE_TIMEOUT_MANIFEST}" status)"
-if [ "${CLAUDE_TIMEOUT_STATE}" != "failed" ] || \
-  [ "${CLAUDE_TIMEOUT_MANIFEST_STATUS}" != "failed" ]; then
+CLAUDE_TIMEOUT_SESSION="$(manifest_field "${CLAUDE_TIMEOUT_MANIFEST}" tmuxSession)"
+if [ "${CLAUDE_TIMEOUT_STATE}" != "input-required" ] || \
+  [ "${CLAUDE_TIMEOUT_MANIFEST_STATUS}" != "running" ]; then
   echo "large-prompt smoke: never-ready Claude left manifest ${CLAUDE_TIMEOUT_STATE}/${CLAUDE_TIMEOUT_MANIFEST_STATUS}" >&2
   exit 1
 fi
+if [ -z "${CLAUDE_TIMEOUT_SESSION}" ]; then
+  echo "large-prompt smoke: never-ready Claude omitted the preserved tmux session" >&2
+  exit 1
+fi
+grep -Fq \
+  "The live tmux session \"${CLAUDE_TIMEOUT_SESSION}\" was preserved; attach with: tmux attach -t ${CLAUDE_TIMEOUT_SESSION}" \
+  "${SMOKE_ROOT}/claude-timeout.err"
+if grep -Fq '[loop] started tmux session' \
+  "${SMOKE_ROOT}/claude-timeout.out" \
+  "${SMOKE_ROOT}/claude-timeout.err"; then
+  echo "large-prompt smoke: never-ready Claude launch reported false success" >&2
+  exit 1
+fi
+if ! smoke_tmux \
+  "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
+  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
+  has-session -t "${CLAUDE_TIMEOUT_SESSION}"; then
+  echo "large-prompt smoke: never-ready Claude did not preserve its tmux session" >&2
+  exit 1
+fi
+CLAUDE_TIMEOUT_PANES="${SMOKE_ROOT}/claude-timeout-panes.tsv"
+smoke_tmux \
+  "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
+  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
+  list-panes -t "${CLAUDE_TIMEOUT_SESSION}" \
+  -F '#{pane_id}|#{pane_dead}|#{pane_current_command}' \
+  >"${CLAUDE_TIMEOUT_PANES}"
+bun -e '
+  import { readFileSync } from "node:fs";
+  const [manifestPath, panesPath] = process.argv.slice(1);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const panes = readFileSync(panesPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [id, dead] = line.split("|");
+      return { dead, id };
+    });
+  const paneIds = panes.map(({ id }) => id);
+  const left = manifest.tmuxPaneLeft;
+  const right = manifest.tmuxPaneRight;
+  if (!(left && right) || left === right) throw new Error("missing distinct paired recovery targets");
+  const mappedAgents = [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent].sort();
+  if (JSON.stringify(mappedAgents) !== JSON.stringify(["claude", "gemini"])) {
+    throw new Error(`unexpected timeout agent mapping ${mappedAgents.join("/")}`);
+  }
+  if (paneIds.length !== 2 || !paneIds.includes(left) || !paneIds.includes(right)) {
+    throw new Error(`preserved pane mismatch ${JSON.stringify(paneIds)} != ${left}/${right}`);
+  }
+  if (panes.some(({ dead }) => dead !== "0")) {
+    throw new Error(`preserved pane was dead ${JSON.stringify(panes)}`);
+  }
+  if (manifest.tmuxPaneGoverness || manifest.tmuxPaneAuPair || manifest.tmuxPaneNanny || manifest.tmuxPaneUtility) {
+    throw new Error("control pane started before Claude readiness");
+  }
+  if (Array.isArray(manifest.tmuxPaneRecon) && manifest.tmuxPaneRecon.length > 0) {
+    throw new Error("recon panes started before Claude readiness");
+  }
+' "${CLAUDE_TIMEOUT_MANIFEST}" "${CLAUDE_TIMEOUT_PANES}"
 grep -Fq $'claude\tCLAUDE_STARTUP_WARNING' "${CLAUDE_TIMEOUT_ROOT}/trace.log"
-if grep -E -q $'^claude\t(READY|BOOTSTRAP_VERIFIED|WORK_STARTED)' \
+if grep -Fq $'claude\tREADY claude' "${CLAUDE_TIMEOUT_ROOT}/trace.log"; then
+  echo "large-prompt smoke: never-ready Claude reported ready" >&2
+  exit 1
+fi
+if grep -E -q $'^(claude|gemini)\t(BOOTSTRAP_VERIFIED|WORK_STARTED)' \
   "${CLAUDE_TIMEOUT_ROOT}/trace.log"; then
   echo "large-prompt smoke: never-ready Claude received work" >&2
   exit 1
 fi
+smoke_tmux \
+  "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
+  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
+  kill-session -t "${CLAUDE_TIMEOUT_SESSION}"
 if smoke_tmux \
   "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
   "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
-  list-sessions >"${SMOKE_ROOT}/claude-timeout-sessions.out" 2>/dev/null && \
-  [ -s "${SMOKE_ROOT}/claude-timeout-sessions.out" ]; then
-  echo "large-prompt smoke: never-ready Claude left a tmux session behind" >&2
+  has-session -t "${CLAUDE_TIMEOUT_SESSION}" 2>/dev/null; then
+  echo "large-prompt smoke: preserved timeout session survived explicit test cleanup" >&2
   exit 1
 fi
+smoke_tmux \
+  "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
+  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}" \
+  kill-server >/dev/null 2>&1 || true
 assert_host_isolation \
   "${CLAUDE_TIMEOUT_REPO_ID}" \
   "${CLAUDE_TIMEOUT_RUN_ID}" \
@@ -845,4 +919,4 @@ assert_host_isolation \
   "at smoke completion"
 assert_prebuilt_binary_unchanged "after launch"
 
-echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=failed detached-layout=${CLAUDE_READY_GEOMETRY}/8panes hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
+echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=${CLAUDE_READY_GEOMETRY}/8panes hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
