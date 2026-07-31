@@ -119,7 +119,9 @@ const CLAUDE_DEV_CHANNELS_PROMPT = "WARNING: Loading development channels";
 const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
 const CLAUDE_DEV_CHANNEL_CONFIRM_MAX_ATTEMPTS = 3;
 const CLAUDE_MODAL_SETTLE_INTERVALS = 4;
+const CLAUDE_MODAL_PROGRESS_GRACE_POLLS = 80;
 const CLAUDE_PROMPT_MAX_POLLS = 80;
+const CLAUDE_PROMPT_HARD_MAX_POLLS = 240;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const MAX_LAUNCH_BOOTSTRAP_BYTES = 1024;
 const LAUNCH_CHARTER_DIR = "launch-charters";
@@ -2529,7 +2531,11 @@ const unblockClaudePane = async (
   let devChannelRetryStability: ClaudeModalStability | undefined;
   let devChannelRetrySuppressed = false;
   let devChannelSendActivity: number | undefined;
-  for (let attempt = 0; attempt < CLAUDE_PROMPT_MAX_POLLS; attempt += 1) {
+  let lastProgressingModal:
+    | { activity: number | undefined; prompt: ClaudeStartupPrompt }
+    | undefined;
+  let pollLimit = CLAUDE_PROMPT_MAX_POLLS;
+  for (let attempt = 0; attempt < pollLimit; attempt += 1) {
     const paneState = deps.capturePaneSnapshot(pane);
     const paneText = paneState?.text ?? deps.capturePane(pane, true);
     const windowActivity = paneState?.windowActivity;
@@ -2539,6 +2545,20 @@ const unblockClaudePane = async (
     }
     const snapshot = normalizePaneText(paneText);
     const prompt = detectClaudePrompt(snapshot);
+    if (
+      prompt !== undefined &&
+      (!lastProgressingModal ||
+        lastProgressingModal.prompt !== prompt ||
+        (lastProgressingModal.activity !== undefined &&
+          windowActivity !== undefined &&
+          lastProgressingModal.activity !== windowActivity))
+    ) {
+      pollLimit = Math.min(
+        CLAUDE_PROMPT_HARD_MAX_POLLS,
+        Math.max(pollLimit, attempt + 1 + CLAUDE_MODAL_PROGRESS_GRACE_POLLS)
+      );
+      lastProgressingModal = { activity: windowActivity, prompt };
+    }
     if (prompt === undefined && input.kind === "suggested-placeholder") {
       const probe = paneState
         ? await probeClaudeSuggestedComposer(
@@ -2698,7 +2718,7 @@ const unblockClaudePane = async (
     if (devChannelConfirmAttempts > 0 && prompt === undefined) {
       devChannelRetrySuppressed = true;
     }
-    if (attempt + 1 < CLAUDE_PROMPT_MAX_POLLS) {
+    if (attempt + 1 < pollLimit) {
       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
     }
   }
@@ -2716,7 +2736,7 @@ const unblockClaudePane = async (
     );
   }
   throw new Error(
-    `Claude pane "${pane}" did not reach an input-ready prompt within ${CLAUDE_PROMPT_MAX_POLLS * CLAUDE_PROMPT_POLL_DELAY_MS}ms.`
+    `Claude pane "${pane}" did not reach an input-ready prompt within ${pollLimit * CLAUDE_PROMPT_POLL_DELAY_MS}ms.`
   );
 };
 

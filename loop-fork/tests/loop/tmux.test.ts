@@ -3122,6 +3122,44 @@ test("Claude dev-channel confirmation never retries after activity advances on a
   expect(postSendCaptures).toBe(2);
 });
 
+test("Claude dev-channel progress extends the readiness deadline past twenty seconds", async () => {
+  const modal = [
+    "WARNING: Loading development channels",
+    "--dangerously-load-development-channels is for local channel development only.",
+    "❯ 1. I am using this for local development",
+    "  2. Exit",
+  ].join("\n");
+  let confirmed = false;
+  let elapsedMs = 0;
+  const sentAt: number[] = [];
+  const currentText = (): string => (confirmed ? "❯ " : modal);
+  const currentActivity = (): number =>
+    100 + Math.min(20, Math.floor(elapsedMs / 1000));
+
+  await tmuxInternals.unblockClaudePane("%0", {
+    capturePane: currentText,
+    capturePaneSnapshot: () => ({
+      activeClients: 0,
+      cursor: { x: -1, y: -1 },
+      pipeOpen: false,
+      text: currentText(),
+      windowActivity: currentActivity(),
+    }),
+    nowMs: () => elapsedMs,
+    sendKeys: (_pane, keys) => {
+      expect(keys).toEqual(["Enter"]);
+      sentAt.push(elapsedMs);
+      confirmed = true;
+    },
+    sleep: (ms) => {
+      elapsedMs += ms;
+      return Promise.resolve();
+    },
+  });
+
+  expect(sentAt).toEqual([21_000]);
+});
+
 test("Claude dev-channel confirmation fails closed after bounded swallowed keys", async () => {
   const modal = [
     "WARNING: Loading development channels",
