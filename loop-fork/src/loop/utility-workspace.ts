@@ -1,10 +1,12 @@
-import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { runGit } from "./git";
-import type {
-  UtilityResolvedWorkspace,
-  UtilityRouteRequest,
+import {
+  type UtilityResolvedWorkspace,
+  type UtilityRouteRequest,
+  utilityRequestTouchesProtectedPath,
 } from "./task-router";
+import { isUtilityProtectedPath } from "./utility-path-policy";
 
 export interface UtilityWorkspaceResolution {
   request: UtilityRouteRequest;
@@ -13,6 +15,7 @@ export interface UtilityWorkspaceResolution {
 
 export interface UtilityWorkspaceFailure {
   detail: string;
+  reason: "protected-scope" | "workspace-unverified";
 }
 
 const isContained = (root: string, target: string): boolean => {
@@ -22,14 +25,25 @@ const isContained = (root: string, target: string): boolean => {
 
 const nearestExistingPath = (value: string): string | undefined => {
   let candidate = resolve(value);
-  while (!existsSync(candidate)) {
+  while (true) {
+    try {
+      lstatSync(candidate);
+      return candidate;
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? error.code
+          : undefined;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        return undefined;
+      }
+    }
     const parent = dirname(candidate);
     if (parent === candidate) {
       return undefined;
     }
     candidate = parent;
   }
-  return candidate;
 };
 
 const canonicalTarget = (value: string): string | undefined => {
@@ -50,6 +64,27 @@ interface GitWorkspaceIdentity {
   root: string;
 }
 
+const WINDOWS_ABSOLUTE_PATH_RE = /^[A-Za-z]:\//;
+const EXPLICIT_ROOT_DETAIL =
+  "workspace_root must name the exact canonical run root or an exact registered worktree of the run repository";
+const EXPLICIT_PATH_DETAIL =
+  "workspace_root requires every packet path to be repo-relative, symlink-free, and contained beneath the selected root";
+const EXACT_EDIT_SCOPE_DETAIL =
+  "edit scopes must name exact regular files under the selected workspace; relative scopes bind to the run root unless workspace_root selects a registered linked worktree";
+
+const exactCanonicalDirectory = (path: string): string | undefined => {
+  if (!isAbsolute(path) || resolve(path) !== path) {
+    return undefined;
+  }
+  try {
+    return lstatSync(path).isDirectory() && realpathSync(path) === path
+      ? path
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const registeredWorktreeRoots = (runRoot: string): Set<string> | undefined => {
   const result = runGit(runRoot, ["worktree", "list", "--porcelain"], "ignore");
   if (result.exitCode !== 0) {
@@ -60,10 +95,11 @@ const registeredWorktreeRoots = (runRoot: string): Set<string> | undefined => {
     if (!line.startsWith("worktree ")) {
       continue;
     }
-    try {
-      roots.add(realpathSync(line.slice("worktree ".length).trim()));
-    } catch {
-      // Stale worktree registrations are not valid execution roots.
+    const registeredRoot = exactCanonicalDirectory(
+      line.slice("worktree ".length).trim()
+    );
+    if (registeredRoot) {
+      roots.add(registeredRoot);
     }
   }
   return roots;
@@ -104,7 +140,144 @@ const gitWorkspaceIdentity = (
   }
 };
 
-const mismatch = (detail: string): UtilityWorkspaceFailure => ({ detail });
+const mismatch = (
+  detail: string,
+  reason: UtilityWorkspaceFailure["reason"] = "workspace-unverified"
+): UtilityWorkspaceFailure => ({ detail, reason });
+
+const focusedCheckPathStart = (argv: readonly string[]): number | undefined => {
+  if (argv[0] === "bun" && argv[1] === "test") {
+    return 2;
+  }
+  if (argv[0] === "npx" && argv[1] === "vitest" && argv[2] === "run") {
+    return 3;
+  }
+  if (argv[0] === "node" && argv[1] === "--check") {
+    return 2;
+  }
+  return undefined;
+};
+
+const resolveExplicitUtilityWorkspaceRoot = (
+  runRoot: string,
+  requestedRoot: string
+): string | undefined => {
+  if (requestedRoot.includes("\0") || !exactCanonicalDirectory(requestedRoot)) {
+    return undefined;
+  }
+  if (requestedRoot === runRoot) {
+    return runRoot;
+  }
+  const runIdentity = gitWorkspaceIdentity(runRoot);
+  const requestedIdentity = gitWorkspaceIdentity(requestedRoot);
+  const registeredRoots = registeredWorktreeRoots(runRoot);
+  if (
+    !(runIdentity && requestedIdentity) ||
+    runIdentity.commonDir !== requestedIdentity.commonDir ||
+    requestedIdentity.root !== requestedRoot ||
+    !registeredRoots?.has(requestedRoot)
+  ) {
+    return undefined;
+  }
+  return requestedRoot;
+};
+
+const normalizeExplicitPacketPath = (
+  root: string,
+  value: string
+): string | undefined => {
+  if (
+    !value ||
+    isAbsolute(value) ||
+    WINDOWS_ABSOLUTE_PATH_RE.test(value) ||
+    value.includes("\0")
+  ) {
+    return undefined;
+  }
+  const target = resolve(root, value);
+  if (!isContained(root, target)) {
+    return undefined;
+  }
+  const canonical = canonicalTarget(target);
+  if (!canonical || canonical !== target) {
+    return undefined;
+  }
+  const scoped = relative(root, target).replaceAll("\\", "/");
+  return scoped || ".";
+};
+
+const normalizeExplicitPacketPaths = (
+  root: string,
+  values: readonly string[]
+): string[] | undefined => {
+  const normalized: string[] = [];
+  for (const value of values) {
+    const path = normalizeExplicitPacketPath(root, value);
+    if (path === undefined) {
+      return undefined;
+    }
+    normalized.push(path);
+  }
+  return normalized;
+};
+
+const normalizeExplicitFocusedCheckArgv = (
+  root: string,
+  argv: readonly string[] | undefined
+): string[] | undefined => {
+  if (!argv) {
+    return undefined;
+  }
+  const pathStart = focusedCheckPathStart(argv);
+  if (pathStart === undefined) {
+    return undefined;
+  }
+  const paths = normalizeExplicitPacketPaths(root, argv.slice(pathStart));
+  return paths ? [...argv.slice(0, pathStart), ...paths] : undefined;
+};
+
+const explicitPathFailureReason = (
+  request: UtilityRouteRequest,
+  root: string
+): UtilityWorkspaceFailure["reason"] => {
+  const paths = [
+    ...request.readScope,
+    ...request.writeScope,
+    ...(request.executionCwd ? [request.executionCwd] : []),
+    ...(request.executionRead ? [request.executionRead.path] : []),
+    ...(request.executionPlan
+      ? request.executionPlan.flatMap((step) => [
+          ...step.readScope,
+          ...(step.executionCwd ? [step.executionCwd] : []),
+          ...(step.executionRead ? [step.executionRead.path] : []),
+        ])
+      : []),
+  ];
+  const protectedPath = paths.some((path) => {
+    if (
+      !path ||
+      isAbsolute(path) ||
+      WINDOWS_ABSOLUTE_PATH_RE.test(path) ||
+      path.includes("\0")
+    ) {
+      return false;
+    }
+    const target = resolve(root, path);
+    if (!isContained(root, target)) {
+      return false;
+    }
+    if (isUtilityProtectedPath(path)) {
+      return true;
+    }
+    const canonical = canonicalTarget(target);
+    if (!(canonical && isContained(root, canonical))) {
+      return false;
+    }
+    const canonicalScope = relative(root, canonical).replaceAll("\\", "/");
+    return isUtilityProtectedPath(canonicalScope || ".");
+  });
+  return protectedPath ? "protected-scope" : "workspace-unverified";
+};
 
 export const resolveVerifiedUtilityWorkspaceRoot = (
   runRoot: string,
@@ -167,10 +340,14 @@ const exactEditFileScope = (
   if (!isContained(root, target)) {
     return false;
   }
-  if (existsSync(target)) {
-    try {
-      return realpathSync(target) === target && lstatSync(target).isFile();
-    } catch {
+  try {
+    return lstatSync(target).isFile() && realpathSync(target) === target;
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? error.code
+        : undefined;
+    if (code !== "ENOENT" && code !== "ENOTDIR") {
       return false;
     }
   }
@@ -206,7 +383,105 @@ const validateExactEditScopes = (
   );
   return validWriteScopes && validReadScopes
     ? resolution
-    : mismatch("edit scopes must name exact regular files");
+    : mismatch(
+        EXACT_EDIT_SCOPE_DETAIL,
+        utilityRequestTouchesProtectedPath(resolution.request)
+          ? "protected-scope"
+          : "workspace-unverified"
+      );
+};
+
+const explicitWorkspaceResolution = (
+  request: UtilityRouteRequest,
+  root: string
+): UtilityWorkspaceResolution | UtilityWorkspaceFailure => {
+  const readScope = normalizeExplicitPacketPaths(root, request.readScope);
+  const writeScope = normalizeExplicitPacketPaths(root, request.writeScope);
+  const executionCwd = request.executionCwd
+    ? normalizeExplicitPacketPath(root, request.executionCwd)
+    : undefined;
+  const executionArgv =
+    request.executionProfile === "focused-check"
+      ? normalizeExplicitFocusedCheckArgv(root, request.executionArgv)
+      : request.executionArgv;
+  const executionReadPath = request.executionRead
+    ? normalizeExplicitPacketPath(root, request.executionRead.path)
+    : undefined;
+  let executionPlan = request.executionPlan;
+  let executionPlanIsValid = true;
+  if (request.executionPlan) {
+    executionPlan = [];
+    for (const step of request.executionPlan) {
+      const stepReadScope = normalizeExplicitPacketPaths(root, step.readScope);
+      const stepExecutionCwd = step.executionCwd
+        ? normalizeExplicitPacketPath(root, step.executionCwd)
+        : undefined;
+      const stepExecutionArgv =
+        step.executionProfile === "focused-check"
+          ? normalizeExplicitFocusedCheckArgv(root, step.executionArgv)
+          : step.executionArgv;
+      const stepExecutionReadPath = step.executionRead
+        ? normalizeExplicitPacketPath(root, step.executionRead.path)
+        : undefined;
+      if (
+        !stepReadScope ||
+        (step.executionArgv !== undefined && !stepExecutionArgv) ||
+        (step.executionCwd !== undefined && !stepExecutionCwd) ||
+        (step.executionRead !== undefined && !stepExecutionReadPath)
+      ) {
+        executionPlanIsValid = false;
+        break;
+      }
+      executionPlan.push({
+        ...step,
+        ...(stepExecutionArgv ? { executionArgv: stepExecutionArgv } : {}),
+        ...(stepExecutionCwd ? { executionCwd: stepExecutionCwd } : {}),
+        ...(step.executionRead && stepExecutionReadPath
+          ? {
+              executionRead: {
+                ...step.executionRead,
+                path: stepExecutionReadPath,
+              },
+            }
+          : {}),
+        readScope: stepReadScope,
+      });
+    }
+  }
+  if (
+    !(
+      readScope &&
+      writeScope &&
+      executionPlanIsValid &&
+      (request.executionArgv === undefined || executionArgv) &&
+      (request.executionCwd === undefined || executionCwd) &&
+      (request.executionRead === undefined || executionReadPath)
+    )
+  ) {
+    return mismatch(
+      EXPLICIT_PATH_DETAIL,
+      explicitPathFailureReason(request, root)
+    );
+  }
+  const normalizedRequest: UtilityRouteRequest = {
+    ...request,
+    ...(executionArgv ? { executionArgv } : {}),
+    ...(executionCwd ? { executionCwd } : {}),
+    ...(request.executionRead && executionReadPath
+      ? {
+          executionRead: {
+            ...request.executionRead,
+            path: executionReadPath,
+          },
+        }
+      : {}),
+    ...(executionPlan ? { executionPlan } : {}),
+    readScope,
+    writeScope,
+  };
+  return validateExactEditScopes(
+    relativeWorkspaceResolution(normalizedRequest, root)
+  );
 };
 
 export const resolveUtilityRequestWorkspace = (
@@ -232,6 +507,15 @@ export const resolveUtilityRequestWorkspace = (
         ])
       : []),
   ];
+  if (request.workspaceRoot !== undefined) {
+    const explicitRoot = resolveExplicitUtilityWorkspaceRoot(
+      canonicalRunRoot,
+      request.workspaceRoot
+    );
+    return explicitRoot
+      ? explicitWorkspaceResolution(request, explicitRoot)
+      : mismatch(EXPLICIT_ROOT_DETAIL);
+  }
   if (scopes.every((scope) => !isAbsolute(scope))) {
     return validateExactEditScopes(
       relativeWorkspaceResolution(request, canonicalRunRoot)
@@ -277,21 +561,6 @@ export const resolveUtilityRequestWorkspace = (
       normalized.push(scoped || ".");
     }
     return normalized;
-  };
-
-  const focusedCheckPathStart = (
-    argv: readonly string[]
-  ): number | undefined => {
-    if (argv[0] === "bun" && argv[1] === "test") {
-      return 2;
-    }
-    if (argv[0] === "npx" && argv[1] === "vitest" && argv[2] === "run") {
-      return 3;
-    }
-    if (argv[0] === "node" && argv[1] === "--check") {
-      return 2;
-    }
-    return undefined;
   };
 
   const normalizeFocusedCheckArgv = (
@@ -421,26 +690,27 @@ export const verifyAdoptedUtilityWorkspace = (
   workspace: UtilityResolvedWorkspace
 ): UtilityResolvedWorkspace | undefined => {
   let canonicalRunRoot: string;
-  let canonicalWorkspaceRoot: string;
   try {
     canonicalRunRoot = realpathSync(runRoot);
-    canonicalWorkspaceRoot = realpathSync(workspace.root);
   } catch {
     return undefined;
   }
-  if (canonicalRunRoot === canonicalWorkspaceRoot) {
-    return { ...workspace, root: canonicalWorkspaceRoot };
+  if (!exactCanonicalDirectory(workspace.root)) {
+    return undefined;
+  }
+  if (canonicalRunRoot === workspace.root) {
+    return { ...workspace, root: workspace.root };
   }
   const runIdentity = gitWorkspaceIdentity(canonicalRunRoot);
-  const workspaceIdentity = gitWorkspaceIdentity(canonicalWorkspaceRoot);
+  const workspaceIdentity = gitWorkspaceIdentity(workspace.root);
   const registeredRoots = registeredWorktreeRoots(canonicalRunRoot);
   if (
     !(runIdentity && workspaceIdentity) ||
     runIdentity.commonDir !== workspaceIdentity.commonDir ||
-    !registeredRoots?.has(canonicalWorkspaceRoot) ||
-    workspaceIdentity.root !== canonicalWorkspaceRoot
+    !registeredRoots?.has(workspace.root) ||
+    workspaceIdentity.root !== workspace.root
   ) {
     return undefined;
   }
-  return { ...workspace, root: canonicalWorkspaceRoot };
+  return { ...workspace, root: workspace.root };
 };

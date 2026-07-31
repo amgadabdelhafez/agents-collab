@@ -1,0 +1,45 @@
+task_id: utility-workspace-root-binding
+dimension: focused
+attempt: 001
+started_at: 2026-07-31T04:10:56Z
+command: bun run test:file -- tests/loop/utility-workspace.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/utility-workspace.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-workspace.test.ts:
+(pass) linked worktree scopes resolve to one root-relative verified workspace [136.84ms]
+(pass) explicit workspace root binds relative scopes to the exact linked worktree [153.56ms]
+(pass) explicit workspace root rejects aliases and roots outside the registered set [175.87ms]
+(pass) explicit workspace root rejects absolute and symlinked packet paths [229.31ms]
+(pass) edit workspace resolution accepts files and rejects directory-wide scope [114.87ms]
+(pass) linked focused-check cwd and argv resolve and execute in the verified workspace [313.23ms]
+(pass) linked exact read range resolves with the same verified workspace [144.49ms]
+(pass) linked structured read plan preserves every stage boundary [163.02ms]
+(pass) active paths resolve only to the run root or a registered linked worktree [151.29ms]
+(pass) unrelated, mixed-worktree, and symlink escape scopes fail closed [203.57ms]
+(pass) a copied linked-worktree gitdir pointer cannot spoof registration [134.80ms]
+(pass) a registered worktree path replaced by a symlink cannot register its target [217.83ms]
+(pass) dangling final and parent symlinks are not treated as missing edit targets [116.10ms]
+(pass) runtime returns an unverified explicit root without spawning utility [142.02ms]
+(pass) run-102 replay needs an explicit root before linked relative edit scopes route [156.25ms]
+(pass) protected paths keep their protected-scope reason under a valid explicit root [200.36ms]
+(pass) an invalid alias to an in-root protected target keeps protected-scope [117.81ms]
+(pass) invalid explicit roots and path forms never spawn a worker [265.53ms]
+(pass) same linked-worktree writes conflict after scope normalization [194.16ms]
+(pass) identical relative paths in base and linked worktrees do not conflict [167.41ms]
+(pass) routing persists the adopted root and the worker reads the linked checkout [204.45ms]
+(pass) worker start rejects a persisted workspace root replaced by a symlink [158.14ms]
+(pass) guarded apply reuses the verified linked-worktree boundary [203.00ms]
+(pass) guarded apply rejects a persisted workspace root replaced by a symlink [159.95ms]
+(pass) explicit linked root guards a missing exact write target and pre-creation race [257.88ms]
+
+ 25 pass
+ 0 fail
+ 97 expect() calls
+Ran 25 tests across 1 file. [4.51s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-31T04:11:00Z

@@ -398,6 +398,14 @@
       "eval_status": "pass",
       "ended_at": "2026-07-30T21:41:29Z",
       "spec_path": "specs/loop102-launch-hardening.md"
+    },
+    {
+      "id": "utility-workspace-root-binding",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-07-31T03:11:23Z",
+      "run_dir": "runs/utility-workspace-root-binding",
+      "eval_status": "pass"
     }
   ]
 }

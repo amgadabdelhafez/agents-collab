@@ -155,6 +155,7 @@ export interface UtilityRouteRequest {
   requester: Agent;
   requiredCapabilities: UtilityCapability[];
   risk: UtilityRisk;
+  workspaceRoot?: string;
   writeScope: string[];
 }
 
@@ -219,6 +220,7 @@ export type UtilityRouteReason =
   | "risk-not-low"
   | "forbidden-authority"
   | "protected-scope"
+  | "workspace-unverified"
   | "write-conflict"
   | "capability-unavailable"
   | "utility-unavailable"
@@ -310,6 +312,10 @@ export const createUtilityRouteRequest = (
     throw new Error("utility route request objective cannot be empty");
   }
   const contextRefs = normalizedContextRefs(input.contextRefs);
+  const workspaceRoot = input.workspaceRoot?.trim();
+  if (input.workspaceRoot !== undefined && !workspaceRoot) {
+    throw new Error("utility route request workspace root cannot be empty");
+  }
 
   const requestCore = {
     acceptanceCriteria,
@@ -372,6 +378,7 @@ export const createUtilityRouteRequest = (
       input.requiredCapabilities
     ) as UtilityCapability[],
     risk: input.risk,
+    ...(workspaceRoot ? { workspaceRoot } : {}),
     writeScope: uniqueTrimmed(input.writeScope).map(normalizePath),
   };
   const idempotencyKey =
@@ -390,7 +397,7 @@ const isAuthorityRequest = (request: UtilityRouteRequest): boolean =>
 const hasForbiddenAuthority = (authority: UtilityAuthorityFlags): boolean =>
   Object.values(authority).some((value) => value === true);
 
-const touchesProtectedPath = (
+export const utilityRequestTouchesProtectedPath = (
   request: UtilityRouteRequest,
   configured: readonly string[] = []
 ): boolean =>
@@ -1021,7 +1028,10 @@ export const routeUtilityRequest = (
   if (!UTILITY_KINDS.has(request.kind)) {
     return driverDecision("unsupported-kind");
   }
-  const protectedScope = touchesProtectedPath(request, context.protectedPaths);
+  const protectedScope = utilityRequestTouchesProtectedPath(
+    request,
+    context.protectedPaths
+  );
   if (!utilityRequestIsBounded(request)) {
     return driverDecision(
       protectedScope ? "protected-scope" : "request-not-bounded"

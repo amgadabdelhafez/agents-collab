@@ -1,0 +1,12 @@
+{
+  "task_id": "utility-workspace-root-binding",
+  "dimension": "static",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-07-31T04:11:04Z",
+  "ended_at": "2026-07-31T04:11:05Z",
+  "artifact": "runs/utility-workspace-root-binding/artifacts/static/attempt-001.log",
+  "command": ["bun", "run", "check"]
+}

@@ -148,7 +148,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit an independent bounded work packet before doing it natively. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Before authoring a meaningful self-contained code block, use kind=edit with one or two exact write files, one through four exact read files, scoped-edit capability, decided behavior, and concrete acceptance; do not recast code writing as inspect. For patch proposals, low means low operational side-effect/authority risk, not easy reasoning; unresolved design or ambiguous scope is not low. Reserve active write_scope files, review returned artifacts, and use guarded apply only as a full agent. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped patch proposals, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
+      "Submit an independent bounded work packet before doing it natively. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Before authoring a meaningful self-contained code block, use kind=edit with one or two exact write files, one through four exact read files, scoped-edit capability, decided behavior, and concrete acceptance; do not recast code writing as inspect. For patch proposals, low means low operational side-effect/authority risk, not easy reasoning; unresolved design or ambiguous scope is not low. Reserve active write_scope files, review returned artifacts, and use guarded apply only as a full agent. Nanny handles small inspection/extraction/synthesis; Au Pair handles bounded multi-step work, small scoped patch proposals, and focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a tier: Governess chooses. To bind a packet to a registered linked worktree, set workspace_root to its exact canonical root and keep every packet path repo-relative; absolute or mixed path forms are rejected. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -238,6 +238,12 @@ export const UTILITY_BRIDGE_TOOLS = [
             "Exact files a patch may target. Small Au Pair edits use one or two; directory-broad scopes are not valid edit targets.",
           items: { type: "string" },
           type: "array",
+        },
+        workspace_root: {
+          description:
+            "Optional exact canonical root of the run checkout or a registered linked worktree from the same repository. When set, read_scope, write_scope, execution_cwd, execution_read.path, execution_plan paths, and path operands in execution_argv must all be repo-relative to this root; absolute and mixed forms are rejected.",
+          minLength: 1,
+          type: "string",
         },
       },
       required: ["objective", "kind", "acceptance_criteria"],
@@ -936,12 +942,12 @@ const assertRouteTaskIsBounded = (request: UtilityRouteRequest): void => {
   }
   if (kind === "edit") {
     throw new UtilityBridgeInputError(
-      "route_task edit packet is not deterministically bounded; use one to four exact read files, one or two exact write files repeated in read_scope, scoped-edit capability, and no execution_profile, execution_plan, command, Git, output, or exact-read metadata"
+      "route_task edit packet is not deterministically bounded; use one to four exact read files, one or two exact write files repeated in read_scope, scoped-edit capability, and no execution_profile, execution_plan, command, Git, output, or exact-read metadata. For a registered linked worktree, set workspace_root to its exact canonical root and keep every scope repo-relative"
     );
   }
   if (kind === "command") {
     throw new UtilityBridgeInputError(
-      "route_task command packet is not deterministically executable; provide execution_profile and its exact fields. For a focused check use execution_profile=focused-check with exact execution_cwd and execution_argv path operands repeated in read_scope. To select a registered linked worktree, use absolute paths from that one worktree in read_scope, execution_cwd, and execution_argv; the harness verifies and normalizes them before execution"
+      "route_task command packet is not deterministically executable; provide execution_profile and its exact fields. For a focused check use execution_profile=focused-check with exact execution_cwd and execution_argv path operands repeated in read_scope. To select a registered linked worktree, set workspace_root to its exact canonical root and keep read_scope, execution_cwd, and execution_argv path operands repo-relative; absolute or mixed path forms are rejected"
     );
   }
   throw new UtilityBridgeInputError(
@@ -990,6 +996,7 @@ const routeTask = (
       "main agents cannot override the route_task requester"
     );
   }
+  const workspaceRoot = optionalString(args, "workspace_root");
   const request = createUtilityRouteRequest({
     acceptanceCriteria: stringArray(args, "acceptance_criteria"),
     authority: authorityFlags(args.authority),
@@ -1005,6 +1012,7 @@ const routeTask = (
     requester,
     requiredCapabilities: capabilities(args, kind),
     risk: requestRisk(args.risk),
+    ...(workspaceRoot ? { workspaceRoot } : {}),
     writeScope: stringArray(args, "write_scope"),
   });
   assertRouteTaskIsBounded(request);

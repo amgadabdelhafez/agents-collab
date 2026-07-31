@@ -1,0 +1,12 @@
+task_id: utility-workspace-root-binding
+dimension: static
+attempt: 002
+started_at: 2026-07-31T04:12:18Z
+command: bunx ultracite check src tests
+--- output ---
+Checked 157 files in 161ms. No fixes applied.
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-31T04:12:19Z

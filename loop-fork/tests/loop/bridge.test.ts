@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readDelegationEvents } from "../../src/loop/delegation-policy";
 import { readRunManifest } from "../../src/loop/run-state";
+import { readUtilityJob } from "../../src/loop/utility-store";
 
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
 
@@ -711,6 +712,7 @@ test.each([
           kind: "inspect",
           objective: "Locate the bridge server definition",
           read_scope: ["src/loop"],
+          workspace_root: "/private/tmp/registered-worktree",
         },
         name: "route_task",
       },
@@ -742,6 +744,12 @@ test.each([
   ).not.toContain("super-secret-idempotency-value");
   expect(readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")).toContain(
     '"contextRefs":["docs/guide.md","README.md"]'
+  );
+  expect(readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")).toContain(
+    '"workspaceRoot":"/private/tmp/registered-worktree"'
+  );
+  expect(readUtilityJob(runDir, routed.taskId)?.request.workspaceRoot).toBe(
+    "/private/tmp/registered-worktree"
   );
   const status = await runBridgeProcess(
     runDir,
@@ -945,7 +953,9 @@ test("route_task rejects an unprofiled command with exact recovery guidance", as
   expect(result.stdout).toContain("execution_profile=focused-check");
   expect(result.stdout).toContain("execution_cwd and execution_argv");
   expect(result.stdout).toContain("registered linked worktree");
-  expect(result.stdout).toContain("use absolute paths");
+  expect(result.stdout).toContain("set workspace_root");
+  expect(result.stdout).toContain("repo-relative");
+  expect(result.stdout).toContain("absolute or mixed path forms are rejected");
   expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
@@ -2440,6 +2450,13 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   };
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_plan");
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_read");
+  expect(routeTask.inputSchema?.properties).toHaveProperty("workspace_root");
+  expect(
+    routeTask.inputSchema?.properties?.workspace_root?.description
+  ).toContain("exact canonical root");
+  expect(
+    routeTask.inputSchema?.properties?.workspace_root?.description
+  ).toContain("must all be repo-relative");
   expect(
     routeTask.inputSchema?.properties?.context_refs?.description
   ).toContain("Never put prose, SHAs, source files, or absolute paths here");

@@ -365,6 +365,31 @@ test("normalizes requests and creates a stable idempotency key", () => {
   expect(first.idempotencyKey).toBe(second.idempotencyKey);
 });
 
+test("workspace root is optional, trimmed, and participates in request identity", () => {
+  const explicit = createUtilityRouteRequest(
+    requestInput({ workspaceRoot: " /private/tmp/linked-worktree " }),
+    { now: () => "one", randomId: () => "first" }
+  );
+  const same = createUtilityRouteRequest(
+    requestInput({ workspaceRoot: "/private/tmp/linked-worktree" }),
+    { now: () => "two", randomId: () => "second" }
+  );
+  const different = createUtilityRouteRequest(
+    requestInput({ workspaceRoot: "/private/tmp/other-worktree" }),
+    { now: () => "three", randomId: () => "third" }
+  );
+  const omitted = createUtilityRouteRequest(requestInput(), {
+    now: () => "four",
+    randomId: () => "fourth",
+  });
+
+  expect(explicit.workspaceRoot).toBe("/private/tmp/linked-worktree");
+  expect(explicit.idempotencyKey).toBe(same.idempotencyKey);
+  expect(explicit.idempotencyKey).not.toBe(different.idempotencyKey);
+  expect(explicit.idempotencyKey).not.toBe(omitted.idempotencyKey);
+  expect(omitted).not.toHaveProperty("workspaceRoot");
+});
+
 test("normalizes context refs and includes them in idempotency", () => {
   const first = createUtilityRouteRequest(
     requestInput({

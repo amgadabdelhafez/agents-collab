@@ -907,7 +907,7 @@ const processPendingUtilityJob = async (input: {
     "detail" in workspaceResolution
       ? {
           detail: workspaceResolution.detail,
-          reason: "protected-scope" as const,
+          reason: workspaceResolution.reason,
           target: "driver" as const,
         }
       : routeUtilityRequest(workspaceResolution.request, {

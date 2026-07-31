@@ -75,6 +75,9 @@ test("route_task describes the deterministic small-edit contract", () => {
   expect(contract).toContain("Use edit when asking the helper to author");
   expect(contract).toContain("repeats every write target here");
   expect(contract).toContain("directory-broad scopes are not valid");
+  expect(contract).toContain("workspace_root");
+  expect(contract).toContain("exact canonical root");
+  expect(contract).toContain("absolute or mixed path forms are rejected");
 });
 
 test("Claude channel guidance preserves evidence-dense peer traffic", () => {

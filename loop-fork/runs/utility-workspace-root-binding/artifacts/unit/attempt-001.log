@@ -1,0 +1,89 @@
+task_id: utility-workspace-root-binding
+dimension: unit
+attempt: 001
+started_at: 2026-07-31T04:12:03Z
+command: bun run test:file -- tests/loop/task-router.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/task-router.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/task-router.test.ts:
+(pass) routes a bounded low-risk edit to a capable utility tier [0.08ms]
+(pass) keeps a small edit with missing read context out of utility [0.68ms]
+(pass) keeps a small edit with more than four read files out of utility
+(pass) keeps a small edit with more than two write files out of utility
+(pass) keeps a small edit with missing scoped-edit capability out of utility [0.21ms]
+(pass) keeps a small edit with write target absent from read context out of utility [0.01ms]
+(pass) keeps a small edit with incompatible execution profile out of utility
+(pass) routing is provider generic
+(pass) applies generic tier patterns and an eligible default fallback [0.40ms]
+(pass) cost-quality policy changes which eligible tier wins
+(pass) fails closed on invalid generic routing policy metadata
+(pass) routes review to the peer and authority to escalation [0.20ms]
+(pass) fail-closed gates > keeps missing epoch with the driver
+(pass) fail-closed gates > keeps missing acceptance with the driver [0.08ms]
+(pass) fail-closed gates > keeps unknown risk with the driver [0.02ms]
+(pass) fail-closed gates > keeps protected path with the driver [0.02ms]
+(pass) fail-closed gates > keeps credential directory with the driver [0.02ms]
+(pass) fail-closed gates > keeps agent settings with the driver
+(pass) fail-closed gates > keeps nested credential directory with the driver
+(pass) fail-closed gates > keeps nested governing spec with the driver
+(pass) fail-closed gates > keeps nested architecture with the driver
+(pass) fail-closed gates > keeps copilot instructions with the driver
+(pass) fail-closed gates > keeps case-varied nested agent settings with the driver
+(pass) fail-closed gates > keeps write conflict with the driver
+(pass) fail-closed gates > keeps missing capability with the driver
+(pass) fail-closed gates > keeps unhealthy tier with the driver
+(pass) fail-closed gates > escalates forbidden credentialAccess authority
+(pass) fail-closed gates > escalates forbidden dependencyChange authority [0.29ms]
+(pass) fail-closed gates > escalates forbidden destructive authority
+(pass) fail-closed gates > escalates forbidden migration authority [0.03ms]
+(pass) fail-closed gates > escalates forbidden productDecision authority [0.06ms]
+(pass) fail-closed gates > escalates forbidden remoteMutation authority
+(pass) fail-closed gates > escalates forbidden release authority [0.05ms]
+(pass) fail-closed gates > cost estimates do not gate routing
+(pass) normalizes requests and creates a stable idempotency key [0.13ms]
+(pass) workspace root is optional, trimmed, and participates in request identity [0.03ms]
+(pass) normalizes context refs and includes them in idempotency [0.24ms]
+(pass) fails closed on invalid or excessive context refs [0.43ms]
+(pass) treats a protected execution cwd as protected scope
+(pass) routes a fully structured focused check [0.04ms]
+(pass) routes only an exactly bounded file-read profile
+(pass) routes a bounded read-plan profile without command or write authority [0.42ms]
+(pass) routes a mixed structured plan with one exact focused-check stage [0.11ms]
+(pass) rejects malformed or unsafe focused-check plan stage
+(pass) rejects malformed or unsafe focused-check plan stage
+(pass) rejects malformed or unsafe focused-check plan stage [0.18ms]
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver [0.19ms]
+(pass) keeps malformed structured read plans with the driver [0.03ms]
+(pass) routes a structurally exact Git inspection [0.02ms]
+(pass) normalizes and routes a structured output boundary
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.12ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.01ms]
+(pass) keeps malformed persisted execution metadata with the driver [0.01ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.01ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+
+ 69 pass
+ 0 fail
+ 91 expect() calls
+Ran 69 tests across 1 file. [24.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-31T04:12:03Z
