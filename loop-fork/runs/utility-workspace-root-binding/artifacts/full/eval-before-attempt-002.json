@@ -47,9 +47,9 @@
       "artifact": "runs/utility-workspace-root-binding/artifacts/full/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/utility-workspace-root-binding/artifacts/full/attempt-002.log",
-      "latest_attempt_meta": "runs/utility-workspace-root-binding/artifacts/full/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/utility-workspace-root-binding/artifacts/full/attempt-001.log",
+      "latest_attempt_meta": "runs/utility-workspace-root-binding/artifacts/full/attempt-001.json"
     }
   },
   "supplemental_evidence": {
@@ -63,11 +63,6 @@
       "artifact": "runs/utility-workspace-root-binding/artifacts/isolated-smoke/result.md",
       "binary_sha256": "e98d1edd2c9394b8cdb5bd3d6f4a09a8911d0a51d9d5a322838b6927764503a8",
       "reason": "Exact-prebuilt realistic charter smoke verified session, panes, manifest binding, delayed Claude readiness, 220x60 detached layout, and nonzero timeout/missing-workspace failures without changing the binary hash."
-    },
-    "project_verify": {
-      "status": "pass",
-      "artifact": "runs/utility-workspace-root-binding/artifacts/full/verify.log",
-      "reason": "scripts/verify.sh passed lint, typecheck, build, every sequential test file, and the empty baseline gate."
     }
   }
 }

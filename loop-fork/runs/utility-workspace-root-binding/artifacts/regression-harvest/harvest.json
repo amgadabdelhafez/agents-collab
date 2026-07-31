@@ -1,0 +1,24 @@
+{
+  "task_id": "utility-workspace-root-binding",
+  "status": "created",
+  "bug_id": "utility-workspace-root-binding",
+  "regression_path": "evals/regression/utility-workspace-root-binding.md",
+  "prompt_path": "runs/utility-workspace-root-binding/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-31T04:18:27Z",
+  "markers": {
+    "enabled": ["yes"],
+    "id": ["utility-workspace-root-binding"],
+    "symptom": [
+      "Helper edit packets reject or read missing files when the driver works in a linked worktree and submits repo-relative scopes."
+    ],
+    "guard": [
+      "tests/loop/utility-workspace.test.ts plus bridge and utility-tools focused tests"
+    ]
+  },
+  "symptom_lines": [
+    "Helper edit packets reject or read missing files when the driver works in a linked worktree and submits repo-relative scopes."
+  ],
+  "test_lines": [
+    "tests/loop/utility-workspace.test.ts plus bridge and utility-tools focused tests"
+  ]
+}

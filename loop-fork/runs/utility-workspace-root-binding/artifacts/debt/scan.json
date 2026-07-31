@@ -1,0 +1,19 @@
+{
+  "task_id": "utility-workspace-root-binding",
+  "scanned_at": "2026-07-31T04:18:27Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-07-31T04:18:27Z",
+      "task_id": "utility-workspace-root-binding",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-workspace.ts",
+      "before_loc": 446,
+      "after_loc": 716,
+      "delta_loc": 270,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

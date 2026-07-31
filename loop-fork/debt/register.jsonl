@@ -46,3 +46,4 @@
 {"ts": "2026-07-30T01:11:46Z", "task_id": "fresh-session-manifest-binding", "signal": "loc_growth", "file": "src/loop/governess-pane-liveness.ts", "before_loc": 0, "after_loc": 341, "delta_loc": 341, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-30T01:11:46Z", "task_id": "fresh-session-manifest-binding", "signal": "loc_growth", "file": "src/loop/tmux.ts", "before_loc": 2709, "after_loc": 2840, "delta_loc": 131, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-30T19:57:41Z", "task_id": "informational-command-no-maintenance", "signal": "loc_growth", "file": "src/loop/tmux.ts", "before_loc": 2840, "after_loc": 3001, "delta_loc": 161, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-07-31T04:18:27Z", "task_id": "utility-workspace-root-binding", "signal": "loc_growth", "file": "src/loop/utility-workspace.ts", "before_loc": 446, "after_loc": 716, "delta_loc": 270, "threshold": 100, "severity": "indicator"}

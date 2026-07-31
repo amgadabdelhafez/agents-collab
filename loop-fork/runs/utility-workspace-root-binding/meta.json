@@ -2,6 +2,7 @@
   "id": "utility-workspace-root-binding",
   "mode": "planned",
   "created_at": "2026-07-31T03:11:23Z",
-  "status": "active",
-  "description": "Bind helper packets explicitly to a verified registered worktree without broadening file authority"
+  "status": "done",
+  "description": "Bind helper packets explicitly to a verified registered worktree without broadening file authority",
+  "ended_at": "2026-07-31T04:18:27Z"
 }

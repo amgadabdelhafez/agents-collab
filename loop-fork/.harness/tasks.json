@@ -402,10 +402,12 @@
     {
       "id": "utility-workspace-root-binding",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-07-31T03:11:23Z",
       "run_dir": "runs/utility-workspace-root-binding",
-      "eval_status": "pass"
+      "eval_status": "pass",
+      "ended_at": "2026-07-31T04:18:27Z",
+      "spec_path": "specs/utility-workspace-root-binding.md"
     }
   ]
 }

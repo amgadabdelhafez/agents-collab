@@ -1,0 +1,42 @@
+{
+  "task_id": "utility-workspace-root-binding",
+  "feature": "utility-workspace-root-binding",
+  "timestamp": "2026-07-31T04:16:11Z",
+  "verdict": "pass",
+  "reviewed_sha": "3a7f804d502cb11a3513c3eda817079716722505",
+  "baseline_failures": [],
+  "checks": {
+    "focused": {
+      "status": "pass",
+      "evidence": "Task router 69/69, workspace 25/25, bridge guidance 7/7, bridge 91/91, utility runtime 50/50, and utility tools 41/41 passed."
+    },
+    "full_suite": {
+      "status": "pass",
+      "evidence": "Harness-recorded bun run test:ci exited zero with no baseline failures."
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "Repository-wide bun run check and git diff --check passed."
+    },
+    "build": {
+      "status": "pass",
+      "evidence": "Harness-recorded bun run build exited zero."
+    },
+    "live_launch_smoke": {
+      "status": "pass",
+      "evidence": "Exact-prebuilt realistic charter smoke verified session, panes, manifest binding, delayed readiness, detached geometry, and nonzero failure paths without mutating host state."
+    },
+    "independent_review": {
+      "status": "pass",
+      "evidence": "The original dissenting reviewer bound CONCUR to 3a7f804d502cb11a3513c3eda817079716722505 after matching blobs and rerunning the five blocker regressions 5/5."
+    },
+    "project_verify": {
+      "status": "pass",
+      "evidence": "Harness-recorded scripts/verify.sh utility-workspace-root-binding utility-workspace-root-binding passed lint, typecheck, compiled build, every sequential test file, and the empty baseline allowlist."
+    }
+  },
+  "deployment": {
+    "status": "not-deployed",
+    "reason": "The current loop-67 gate explicitly excludes this feature from its launch binary."
+  }
+}

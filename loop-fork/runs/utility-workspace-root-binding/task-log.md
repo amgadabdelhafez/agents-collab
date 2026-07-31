@@ -36,10 +36,14 @@ Regression guard: tests/loop/utility-workspace.test.ts plus bridge and utility-t
 - Final exact-diff verdict: CONCUR. The original reviewer reran the hidden
   `.git` alias end-to-end repro; the decision was `protected-scope` and worker
   spawn count was zero. All five original blockers are closed.
+- Exact-commit verdict: CONCUR on
+  `3a7f804d502cb11a3513c3eda817079716722505`. The reviewer verified clean
+  state, matching pre-commit blob hashes, clean commit/diff checks, and reran
+  the five blocker regressions 5/5.
 
-## Verification in progress
+## Verification
 
-- Focused suites: task router 69/69, workspace 24/24, bridge guidance 7/7,
+- Focused suites: task router 69/69, workspace 25/25, bridge guidance 7/7,
   bridge 91/91, utility runtime 50/50, utility tools 41/41.
 - Repository `bun run test:ci`: pass.
 - `bun run check`, `bun run build`, and `git diff --check`: pass.

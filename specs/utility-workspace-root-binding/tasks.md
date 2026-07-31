@@ -7,7 +7,7 @@
       root and classify failures accurately.
 - [x] **T-03 Regression proof** — Cover routing, rejection, request identity, and a
       guarded new-file patch in tests.
-- [ ] **T-04 Release evidence** — Record focused/full verification, independent
+- [x] **T-04 Release evidence** — Record focused/full verification, independent
       review, build, smoke, and preflight evidence.
 
 ## Task detail

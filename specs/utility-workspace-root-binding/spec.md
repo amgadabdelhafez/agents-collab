@@ -45,20 +45,20 @@ it does not broaden file authority.
 
 ## Acceptance criteria
 
-- [ ] `route_task` documents and accepts optional `workspace_root`.
-- [ ] The selected root is exactly the canonical run root or an exact registered
+- [x] `route_task` documents and accepts optional `workspace_root`.
+- [x] The selected root is exactly the canonical run root or an exact registered
       linked worktree with the same Git common directory.
-- [ ] Relative scopes under an explicit root normalize under that root, including
+- [x] Relative scopes under an explicit root normalize under that root, including
       a missing exact write target; the decision persists the verified root.
-- [ ] Explicit roots reject absolute/mixed scope forms, symlink aliases, unrelated
+- [x] Explicit roots reject absolute/mixed scope forms, symlink aliases, unrelated
       repositories, unregistered directories, directory writes, and symlink-parent
       writes without spawning a helper.
-- [ ] Omission preserves current canonical-root and absolute-scope behavior.
-- [ ] Workspace selection failures use `workspace-unverified`; genuine protected
+- [x] Omission preserves current canonical-root and absolute-scope behavior.
+- [x] Workspace selection failures use `workspace-unverified`; genuine protected
       paths continue to use `protected-scope`.
-- [ ] A guarded new-file proposal records a null preimage, creates only the linked
+- [x] A guarded new-file proposal records a null preimage, creates only the linked
       target, and fails on a pre-creation race.
-- [ ] Focused tests, full tests, checks, build, smoke, and preflight pass with an
+- [x] Focused tests, full tests, checks, build, smoke, and preflight pass with an
       empty baseline-failure allowlist.
 
 ## Out-of-scope risks
