@@ -30,14 +30,15 @@ scripts/verify.sh active-launch-interlock active-launch-interlock
 | F-05 | Lifecycle | Terminal+dead permits; live or unknown topology blocks; legacy active blocks; only one cold resume proceeds and its charter hash must match. |
 | F-06 | Manifest durability | New fields round-trip, legacy manifests read, and atomic replacement never exposes partial JSON. |
 | F-07 | Compiled smoke | Exact candidate launches once; identical second launch exits nonzero; one session/active manifest remains. |
+| F-08 | Lock lease | A scan delayed beyond the stale threshold retains ownership and the contender rejects after observing the winner manifest. |
 
 ## Regression guards
 
 - Existing promptless, Markdown, positional-plan, `--worktree`, single-agent,
   and `--run-id`/`--session` behavior remains green.
 - Missing relative Markdown paths stay bound to invocation cwd; alphanumeric
-  active runs cannot bypass scanning; stale reclaimers and resume losers cannot
-  replace or terminalize a winner.
+  active runs cannot bypass scanning; long scans keep the lock heartbeat alive;
+  stale reclaimers and resume losers cannot replace or terminalize a winner.
 - Large-prompt hash-bound charter transport and readiness-timeout preservation
   remain green.
 - No test reads, attaches to, kills, or mutates `harvto-loop-106`.

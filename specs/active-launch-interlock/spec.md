@@ -33,7 +33,9 @@ nonzero without creating or destroying any run resources.
 3. A short repository-scoped atomic lock protects conflict scanning and run-dir
    allocation. The selected run directory is created exclusively, never by a
    `max + 1` decision followed by recursive creation. Stale-lock recovery is
-   serialized so a delayed reclaimer cannot unlink a replacement owner.
+   serialized so a delayed reclaimer cannot unlink a replacement owner. Run
+   history and tmux-liveness scans yield to the event loop so the lock heartbeat
+   remains renewable even when the critical section exceeds its stale window.
 4. The reservation is a durable submitted manifest written before
    `resolveTask`. It persists immutable workspace root, branch ref when one
    exists, run-level launch claim id, and source charter SHA-256 once resolved.
@@ -76,6 +78,8 @@ nonzero without creating or destroying any run resources.
   hash while producing exactly one bootstrap-attempt winner.
 - Active manifests in every valid run-id directory, including alphanumeric
   ids, participate in conflict scanning.
+- A deliberately delayed reservation scan that exceeds the stale window still
+  produces one owner; no contender may reclaim a healthy lock heartbeat.
 - Run-manifest round-trip tests cover the new immutable fields and legacy
   compatibility.
 - A compiled isolated smoke launches once, rejects an identical second launch

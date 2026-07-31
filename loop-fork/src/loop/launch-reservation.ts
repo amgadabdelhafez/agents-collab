@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import lockfile from "proper-lockfile";
 import {
   createRunManifest,
@@ -17,7 +18,7 @@ import {
   updateRunManifest,
   writeRunManifest,
 } from "./run-state";
-import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
+import { type TmuxLiveness, tmuxSessionLivenessAsync } from "./tmux-control";
 import type { LaunchWorkspaceBinding, Options } from "./types";
 
 const LOCK_FILE = ".paired-launch.lock";
@@ -29,7 +30,7 @@ interface LaunchReservationDeps {
   makeClaimId: () => string;
   now: () => string;
   pid: number;
-  tmuxLiveness: (session: string) => TmuxLiveness;
+  tmuxLiveness: (session: string) => Promise<TmuxLiveness> | TmuxLiveness;
 }
 
 export interface PairedLaunchClaim {
@@ -57,7 +58,7 @@ const defaultDeps = (): LaunchReservationDeps => ({
   makeClaimId: randomUUID,
   now: () => new Date().toISOString(),
   pid: process.pid,
-  tmuxLiveness: tmuxSessionLiveness,
+  tmuxLiveness: tmuxSessionLivenessAsync,
 });
 
 const acquireLock = async (repoDir: string): Promise<() => Promise<void>> => {
@@ -91,12 +92,12 @@ const workspaceConflict = (
     left.branchRef && right.branchRef && left.branchRef === right.branchRef
   );
 
-const manifestCanStillOwnWorkspace = (
+const manifestCanStillOwnWorkspace = async (
   manifest: RunManifest,
   deps: LaunchReservationDeps
-): boolean => {
+): Promise<boolean> => {
   const tmux = manifest.tmuxSession
-    ? deps.tmuxLiveness(manifest.tmuxSession)
+    ? await deps.tmuxLiveness(manifest.tmuxSession)
     : "dead";
   if (tmux !== "dead") {
     return true;
@@ -114,26 +115,38 @@ const conflictError = (manifest: RunManifest): Error => {
   );
 };
 
-const storedManifests = (repoDir: string): RunManifest[] => {
+const storedManifests = async (repoDir: string): Promise<RunManifest[]> => {
   if (!existsSync(repoDir)) {
     return [];
   }
-  return readdirSync(repoDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => readRunManifest(join(repoDir, entry.name, "manifest.json")))
-    .filter((manifest): manifest is RunManifest => Boolean(manifest));
+  const manifests: RunManifest[] = [];
+  for (const entry of readdirSync(repoDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const manifest = readRunManifest(
+      join(repoDir, entry.name, "manifest.json")
+    );
+    if (manifest) {
+      manifests.push(manifest);
+    }
+    // proper-lockfile renews on the event loop. Never monopolize it while
+    // walking an unbounded run history under the canonical launch lock.
+    await yieldToEventLoop();
+  }
+  return manifests;
 };
 
-const assertNoConflict = (
+const assertNoConflict = async (
   manifests: RunManifest[],
   binding: LaunchWorkspaceBinding,
   excludedRunId: string | undefined,
   deps: LaunchReservationDeps
-): void => {
+): Promise<void> => {
   for (const manifest of manifests) {
     if (
       manifest.runId === excludedRunId ||
-      !manifestCanStillOwnWorkspace(manifest, deps)
+      !(await manifestCanStillOwnWorkspace(manifest, deps))
     ) {
       continue;
     }
@@ -174,20 +187,20 @@ const validateExplicitWorkspaceResume = (
   return stored;
 };
 
-const reserveRequestedLaunch = (
+const reserveRequestedLaunch = async (
   opts: Options,
   requested: RunManifest,
   binding: LaunchWorkspaceBinding,
   storage: RunStorage,
   deps: LaunchReservationDeps
-): PairedLaunchClaim => {
+): Promise<PairedLaunchClaim> => {
   opts.reservedRunId = requested.runId;
   opts.workspaceBinding = binding;
   if (requested.launchClaimId) {
     opts.launchClaimId = requested.launchClaimId;
   }
   const tmux = requested.tmuxSession
-    ? deps.tmuxLiveness(requested.tmuxSession)
+    ? await deps.tmuxLiveness(requested.tmuxSession)
     : "dead";
   if (tmux === "unknown") {
     throw conflictError(requested);
@@ -234,7 +247,7 @@ export const reservePairedLaunch = async (
   const repoDir = join(resolveStorageRoot(deps.home), binding.repoId);
   const releaseLock = await acquireLock(repoDir);
   try {
-    const manifests = storedManifests(repoDir);
+    const manifests = await storedManifests(repoDir);
     const requestedRunId = resolveRequestedRun(opts, binding, deps.home);
     const requested = requestedRunId
       ? readRunManifest(
@@ -250,14 +263,14 @@ export const reservePairedLaunch = async (
     const effectiveBinding = requested
       ? validateExplicitWorkspaceResume(opts, requested, binding)
       : binding;
-    assertNoConflict(manifests, effectiveBinding, requestedRunId, deps);
+    await assertNoConflict(manifests, effectiveBinding, requestedRunId, deps);
     if (requestedRunId && requested) {
       const storage = resolveRunStorage(
         requestedRunId,
         effectiveBinding.root,
         deps.home
       );
-      return reserveRequestedLaunch(
+      return await reserveRequestedLaunch(
         opts,
         requested,
         effectiveBinding,

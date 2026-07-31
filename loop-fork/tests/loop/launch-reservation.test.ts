@@ -2,12 +2,14 @@ import { expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { runGit } from "../../src/loop/git";
 import {
   bindLaunchTask,
@@ -134,6 +136,58 @@ test("concurrent fresh claims for one workspace produce one winner", async () =>
     rmSync(home, { force: true, recursive: true });
   }
 });
+
+test("lock heartbeat survives a reservation scan longer than the stale window", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const otherBinding = {
+      ...binding,
+      branchRef: "refs/heads/unrelated",
+      root: `${root}-unrelated`,
+    };
+    writeFixtureManifest(home, binding, {
+      state: "stopped",
+      tmuxSession: "slow-dead-probe",
+      workspaceBinding: otherBinding,
+    });
+    let delayed = false;
+    const slowDeps = {
+      ...reservationDeps(home, 4242),
+      tmuxLiveness: async () => {
+        if (!delayed) {
+          delayed = true;
+          await sleep(6200);
+        }
+        return "dead" as const;
+      },
+    };
+    const first = reservePairedLaunch(makeOptions(), binding, slowDeps);
+    await sleep(100);
+    const second = reservePairedLaunch(
+      makeOptions(),
+      binding,
+      reservationDeps(home, 5252)
+    );
+    const results = await Promise.allSettled([first, second]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled")
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected")
+    ).toHaveLength(1);
+    expect(
+      readdirSync(join(resolveStorageRoot(home), binding.repoId), {
+        withFileTypes: true,
+      }).filter((entry) => entry.isDirectory())
+    ).toHaveLength(2);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+}, 10_000);
 
 test("same branch or same root conflicts while terminal dead ownership permits", async () => {
   const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));

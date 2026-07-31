@@ -1,3 +1,4 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { spawnSync } from "bun";
 
 export const TMUX_CONTROL_TIMEOUT_MS = 2000;
@@ -58,4 +59,46 @@ export const tmuxSessionLiveness = (
   } catch {
     return "unknown";
   }
+};
+
+export const tmuxSessionLivenessAsync = (
+  session: string,
+  run: typeof spawn = spawn
+): Promise<TmuxLiveness> => {
+  if (!session) {
+    return Promise.resolve("dead");
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timedOut = false;
+    let child: ChildProcess | undefined;
+    const finish = (liveness: TmuxLiveness) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(liveness);
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child?.kill(TMUX_CONTROL_KILL_SIGNAL);
+      finish("unknown");
+    }, TMUX_CONTROL_TIMEOUT_MS);
+    try {
+      child = run("tmux", ["has-session", "-t", session], {
+        stdio: "ignore",
+      });
+      child.once("error", () => finish("unknown"));
+      child.once("exit", (code, signal) => {
+        if (timedOut || signal) {
+          finish("unknown");
+          return;
+        }
+        finish(code === 0 ? "live" : "dead");
+      });
+    } catch {
+      finish("unknown");
+    }
+  });
 };

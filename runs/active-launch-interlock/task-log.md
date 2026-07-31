@@ -13,11 +13,15 @@
   scanned, stale-lock reclamation is guarded, cold resumes use replaceable
   attempt claims, resumed charters remain SHA-bound, missing Markdown paths
   stay invocation-cwd-bound, and a tmux race loser cannot terminalize a winner.
+- Hardened the exact-SHA candidate after a second independent dissent reproduced
+  stale lock takeover during a seven-second synchronous tmux scan: launch
+  topology probes are now async and unbounded history scans yield so the
+  `proper-lockfile` heartbeat remains live throughout the critical section.
 - Added deterministic unit, process-contention, lifecycle, and tmux-race
   coverage plus an isolated compiled smoke with fake Gemini/Cursor TUIs, an
   isolated HOME, and a unique tmux socket.
-- Focused verification passed (247 tests). The regenerated root verifier passed
-  lint, typecheck, compiled build, 1,373 tests across 67 sorted files, and the
+- Focused verification passed (248 tests). The regenerated root verifier passed
+  lint, typecheck, compiled build, 1,374 tests across 67 sorted files, and the
   empty named baseline allowlist. The hash-bound compiled smoke passed fresh
   contention, cold-resume contention, immutable claim/SHA preservation, and a
   distinct worktree using a 10,296-byte charter. Exact-SHA review remains the
