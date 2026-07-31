@@ -21,6 +21,11 @@ export interface PairedSessionIds {
   cursor?: string;
   gemini?: string;
 }
+export interface LaunchWorkspaceBinding {
+  branchRef?: string;
+  repoId: string;
+  root: string;
+}
 export type ValueFlag =
   | "agent"
   | "prompt"
@@ -40,6 +45,7 @@ export type ValueFlag =
   | "format"
   | "runId"
   | "session"
+  | "workspace"
   | "governessIdle"
   | "governessCooldown"
   | "governessMaxRecoveries"
@@ -355,17 +361,21 @@ export interface Options {
   governessUrl: string;
   helperCavemanMode: CavemanMode;
   helperCavemanModeSource: CavemanModeSource;
+  launchClaimId?: string;
   maxIterations: number;
   pairedMode?: boolean;
   pairedSessionIds?: PairedSessionIds;
   pairWith?: Agent;
   promptInput?: string;
   proof: string;
+  reservedRunId?: string;
   resumeRunId?: string;
   review?: ReviewMode;
   reviewPlan?: PlanReviewMode;
   sessionId?: string;
   tmux?: boolean;
+  workspace?: string;
+  workspaceBinding?: LaunchWorkspaceBinding;
   worktree?: boolean;
 }
 

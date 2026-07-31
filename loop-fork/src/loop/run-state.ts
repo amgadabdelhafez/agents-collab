@@ -1,10 +1,12 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
@@ -19,6 +21,7 @@ import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import type {
   Agent,
   CavemanMode,
+  LaunchWorkspaceBinding,
   ReviewStatus,
   RunLifecycleState,
   RunStatus,
@@ -75,11 +78,13 @@ export interface RunManifest {
   governess?: boolean;
   helperCavemanMode?: CavemanMode;
   launchCharters?: Partial<Record<Agent, RunLaunchCharter>>;
+  launchClaimId?: string;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
   repoId: string;
   runId: string;
+  sourceTaskSha256?: string;
   state: RunLifecycleState;
   status: RunStatus;
   tmuxPaneAuPair?: string;
@@ -93,6 +98,7 @@ export interface RunManifest {
   tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt: string;
+  workspaceBinding?: LaunchWorkspaceBinding;
 }
 
 export interface RunMessageTranscriptEntry {
@@ -158,11 +164,13 @@ interface RunManifestInput {
   cwd: string;
   governess?: boolean;
   helperCavemanMode?: CavemanMode;
+  launchClaimId?: string;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
   repoId: string;
   runId: string;
+  sourceTaskSha256?: string;
   state?: RunLifecycleState;
   status?: string;
   tmuxPaneAuPair?: string;
@@ -176,6 +184,7 @@ interface RunManifestInput {
   tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt?: string;
+  workspaceBinding?: LaunchWorkspaceBinding;
 }
 
 const cavemanManifestFields = (
@@ -300,6 +309,78 @@ const launchCharterManifestFields = (
     parsed.launchCharters ?? parsed.launch_charters
   );
   return launchCharters ? { launchCharters } : {};
+};
+
+const readWorkspaceBinding = (
+  value: unknown
+): LaunchWorkspaceBinding | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const root = firstString(value, ["root"]);
+  const repoId = firstString(value, ["repoId", "repo_id"]);
+  if (!(root && repoId)) {
+    return undefined;
+  }
+  const branchRef = firstString(value, ["branchRef", "branch_ref"]);
+  return {
+    ...(branchRef ? { branchRef } : {}),
+    repoId,
+    root,
+  };
+};
+
+const validateSourceTaskSha256 = (value: string): string => {
+  if (!SHA256_RE.test(value)) {
+    throw new Error("Invalid source task SHA-256");
+  }
+  return value;
+};
+
+const launchReservationManifestFields = (
+  input: Pick<
+    RunManifestInput,
+    "launchClaimId" | "sourceTaskSha256" | "workspaceBinding"
+  >
+): Pick<
+  RunManifest,
+  "launchClaimId" | "sourceTaskSha256" | "workspaceBinding"
+> => ({
+  ...(input.launchClaimId ? { launchClaimId: input.launchClaimId } : {}),
+  ...(input.sourceTaskSha256
+    ? { sourceTaskSha256: validateSourceTaskSha256(input.sourceTaskSha256) }
+    : {}),
+  ...(input.workspaceBinding
+    ? { workspaceBinding: { ...input.workspaceBinding } }
+    : {}),
+});
+
+const readLaunchReservationManifestFields = (
+  parsed: Record<string, unknown>
+): Pick<
+  RunManifest,
+  "launchClaimId" | "sourceTaskSha256" | "workspaceBinding"
+> => {
+  const launchClaimId = firstString(parsed, [
+    "launchClaimId",
+    "launch_claim_id",
+  ]);
+  const sourceTaskSha256Candidate = firstString(parsed, [
+    "sourceTaskSha256",
+    "source_task_sha256",
+  ]);
+  const sourceTaskSha256 =
+    sourceTaskSha256Candidate && SHA256_RE.test(sourceTaskSha256Candidate)
+      ? sourceTaskSha256Candidate
+      : undefined;
+  const workspaceBinding = readWorkspaceBinding(
+    parsed.workspaceBinding ?? parsed.workspace_binding
+  );
+  return {
+    ...(launchClaimId ? { launchClaimId } : {}),
+    ...(sourceTaskSha256 ? { sourceTaskSha256 } : {}),
+    ...(workspaceBinding ? { workspaceBinding } : {}),
+  };
 };
 
 const optionalRunId = (runId: string | undefined): string | undefined => {
@@ -502,6 +583,54 @@ export const resolveRunStorage = (
   };
 };
 
+export const reserveRunStorage = (
+  cwd = process.cwd(),
+  home = process.env.HOME ?? "",
+  deps?: Partial<RepoIdDeps>
+): RunStorage => {
+  const repoId = resolveRepoId(cwd, deps);
+  const storageRoot = resolveStorageRoot(home);
+  const repoDir = join(storageRoot, repoId);
+  mkdirSync(repoDir, { recursive: true });
+
+  const indices = readRunIndices(repoDir);
+  let nextIndex = (indices.at(-1) ?? 0) + 1;
+  while (nextIndex <= Number.MAX_SAFE_INTEGER) {
+    const runId = String(nextIndex);
+    const runDir = buildRunDir(storageRoot, repoId, runId);
+    try {
+      mkdirSync(runDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        nextIndex += 1;
+        continue;
+      }
+      throw error;
+    }
+
+    const storage: RunStorage = {
+      manifestPath: buildManifestPath(runDir),
+      repoId,
+      runDir,
+      runId,
+      storageRoot,
+      transcriptPath: buildTranscriptPath(runDir),
+    };
+    try {
+      writeFileSync(storage.transcriptPath, "", {
+        encoding: "utf8",
+        flag: "wx",
+      });
+      return storage;
+    } catch (error) {
+      rmSync(runDir, { force: true, recursive: true });
+      throw error;
+    }
+  }
+
+  throw new Error(`Unable to reserve a run id for ${repoId}`);
+};
+
 export const resolveExistingRunId = (
   runId: string | undefined,
   cwd = process.cwd(),
@@ -568,6 +697,7 @@ export const createRunManifest = (
     "submitted";
   return {
     ...cavemanManifestFields(input),
+    ...launchReservationManifestFields(input),
     ...(input.claudeChannelServer
       ? { claudeChannelServer: input.claudeChannelServer }
       : {}),
@@ -625,7 +755,20 @@ export const writeRunManifest = (
   manifest: RunManifest
 ): void => {
   ensureParentDir(manifestPath);
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const tempPath = join(
+    dirname(manifestPath),
+    `.${basename(manifestPath)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    renameSync(tempPath, manifestPath);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
 };
 
 const readOptionalRunManifestFields = (
@@ -700,6 +843,7 @@ const readOptionalRunManifestFields = (
     ...(primaryAgent ? { primaryAgent } : {}),
     ...(helperCavemanMode ? { helperCavemanMode } : {}),
     ...launchCharterManifestFields(parsed),
+    ...readLaunchReservationManifestFields(parsed),
     ...(tmuxPaneGoverness ? { tmuxPaneGoverness } : {}),
     ...(tmuxPaneAuPair ? { tmuxPaneAuPair } : {}),
     ...(tmuxPaneLeft ? { tmuxPaneLeft } : {}),

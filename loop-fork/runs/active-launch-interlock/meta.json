@@ -1,0 +1,7 @@
+{
+  "id": "active-launch-interlock",
+  "mode": "planned",
+  "created_at": "2026-07-31T16:45:17Z",
+  "status": "active",
+  "description": "Reject concurrent paired launches bound to the same active worktree and branch"
+}

@@ -76,6 +76,7 @@ Options:
   --run-id <id>                            Reuse a specific run id; resumes paired runs in paired mode when supported
   --session <id>                           Resume from a paired run id or raw session/thread ID
   --tmux                                   Run in tmux (paired mode opens the selected two agents side-by-side; no prompt/proof starts interactive sessions)
+  --workspace <path>                       Run in and bind to an existing registered Git worktree
   --worktree                               Create and run in a fresh git worktree (name: repo-loop-X)
   --governess                                Compatibility flag; governess is always enabled for paired tmux runs
   --governess-dry-run                        Governess logs intended recovery actions but executes none

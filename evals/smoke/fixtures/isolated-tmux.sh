@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+: "${LOOP_SMOKE_REAL_TMUX:?LOOP_SMOKE_REAL_TMUX is required}"
+: "${LOOP_SMOKE_TMUX_SOCKET:?LOOP_SMOKE_TMUX_SOCKET is required}"
+
+exec "${LOOP_SMOKE_REAL_TMUX}" -L "${LOOP_SMOKE_TMUX_SOCKET}" "$@"

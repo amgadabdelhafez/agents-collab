@@ -4934,6 +4934,149 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
   });
 });
 
+test("runInTmux never kills a winner when paired new-session loses a duplicate-session race", async () => {
+  const calls: string[][] = [];
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+  });
+  let winnerSessionLive = false;
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux", "--proof", "verify with tests"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return winnerSessionLive
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            winnerSessionLive = true;
+            return {
+              exitCode: 1,
+              stderr: "duplicate session: repo-loop-1",
+            };
+          }
+          if (args[0] === "tmux" && args[1] === "kill-session") {
+            winnerSessionLive = false;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Ship feature",
+      }
+    )
+  ).rejects.toThrow(
+    "Failed to start tmux session: duplicate session: repo-loop-1"
+  );
+
+  expect(winnerSessionLive).toBe(true);
+  expect(
+    calls.filter((args) => args[0] === "tmux" && args[1] === "has-session")
+  ).toHaveLength(2);
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toBe(false);
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+});
+
+test("runInTmux cleans an owned paired session when setup fails after new-session", async () => {
+  const calls: string[][] = [];
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+  });
+  let sessionLive = false;
+  const storage = {
+    manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/isolated/home/.loop/runs/repo-123",
+    transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux", "--proof", "verify with tests"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionLive
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionLive = true;
+            return { exitCode: 0, stderr: "", stdout: "%91" };
+          }
+          if (args[0] === "tmux" && args[1] === "split-window") {
+            return { exitCode: 1, stderr: "split boom" };
+          }
+          if (args[0] === "tmux" && args[1] === "kill-session") {
+            sessionLive = false;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      {
+        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+        task: "Ship feature",
+      }
+    )
+  ).rejects.toThrow("Failed to split tmux window: split boom");
+
+  expect(sessionLive).toBe(false);
+  expect(
+    calls.filter((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toEqual([["tmux", "kill-session", "-t", "repo-loop-1"]]);
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+});
+
 test("runInTmux terminalizes the paired manifest when the workspace disappears before attach", async () => {
   const calls: string[][] = [];
   const updatedPaths: string[] = [];

@@ -38,6 +38,7 @@ import type {
 const EMPTY_DONE_SIGNAL_ERROR = "Invalid --done value: cannot be empty";
 const ONLY_MODE_CONFLICT_ERROR = "Cannot combine multiple --*-only flags.";
 const INVALID_RUN_ID_ERROR = "Invalid --run-id value: cannot be empty";
+const INVALID_WORKSPACE_ERROR = "Invalid --workspace value: cannot be empty";
 
 export type ImmediateInfoRequest = "help" | "version";
 
@@ -206,6 +207,12 @@ const applyValueFlag = (
       opts.sessionId = requireTrimmedValue(
         value,
         "Invalid --session value: cannot be empty"
+      );
+      return;
+    case "workspace":
+      opts.workspace = requireTrimmedValue(
+        value,
+        "Invalid --workspace value: cannot be empty"
       );
       return;
     case "runId":
@@ -404,6 +411,29 @@ const parseRunIdArg = (
   }
 };
 
+const parseWorkspaceArg = (
+  argv: string[],
+  index: number,
+  opts: Options,
+  arg: string
+): number | undefined => {
+  if (arg.startsWith("--workspace=")) {
+    applyValueFlag(
+      "workspace",
+      requireTrimmedValue(
+        arg.slice("--workspace=".length),
+        INVALID_WORKSPACE_ERROR
+      ),
+      opts
+    );
+    return index + 1;
+  }
+  if (arg === "--workspace") {
+    applyValueFlag("workspace", requireFlagValue(arg, argv[index + 1]), opts);
+    return index + 2;
+  }
+};
+
 const parseModelArg = (
   argv: string[],
   index: number,
@@ -583,6 +613,11 @@ const consumeArg = (
     return { nextIndex: runIdNextIndex, stop: false, onlyAgent };
   }
 
+  const workspaceNextIndex = parseWorkspaceArg(argv, index, opts, arg);
+  if (workspaceNextIndex !== undefined) {
+    return { nextIndex: workspaceNextIndex, stop: false, onlyAgent };
+  }
+
   if (arg === "--tmux") {
     opts.tmux = true;
     return { nextIndex: index + 1, stop: false, onlyAgent };
@@ -680,6 +715,12 @@ const parseArgsWithInfoHandler = (
     }
   }
 
+  finalizeParsedOptions(opts, positional);
+
+  return opts;
+};
+
+const finalizeParsedOptions = (opts: Options, positional: string[]): void => {
   if (positional.length > 0) {
     if (opts.promptInput) {
       throw new Error(
@@ -694,11 +735,12 @@ const parseArgsWithInfoHandler = (
       `Invalid --pair-with value: ${opts.pairWith} matches --agent ${opts.agent}`
     );
   }
+  if (opts.workspace && opts.worktree) {
+    throw new Error("Cannot combine --workspace with --worktree.");
+  }
   if (opts.pairedMode && !opts.pairWith) {
     opts.pairWith = defaultPeerAgent(opts.agent);
   }
-
-  return opts;
 };
 
 export const renderImmediateInfo = (request: ImmediateInfoRequest): void => {

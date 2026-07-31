@@ -1898,9 +1898,13 @@ const startReconPanes = (
 const cleanupFailedPairedSessionStart = (
   deps: TmuxDeps,
   session: string,
+  ownsTmuxSession: boolean,
   _serverName: string | undefined,
   _runId: string
 ): void => {
+  if (!ownsTmuxSession) {
+    return;
+  }
   try {
     if (sessionExists(session, deps.spawn)) {
       deps.spawn(["tmux", "kill-session", "-t", session]);
@@ -2770,6 +2774,7 @@ const createPairedPaneLayout = async (input: {
   governess: boolean;
   leftCommand: string;
   leftPromptPath?: string;
+  onSessionCreated: () => void;
   paneAgents: { left: Agent; right: Agent };
   rightCommand: string;
   rightPromptPath?: string;
@@ -2790,6 +2795,7 @@ const createPairedPaneLayout = async (input: {
     input.deps.cwd,
     input.leftCommand,
   ]);
+  input.onSessionCreated();
   const left = stablePaneTarget(leftResult, `${input.session}:0.0`);
   const rightResult = runTmuxCommand(
     input.deps,
@@ -2928,6 +2934,7 @@ const startPairedSession = async (
   let codexAppServerPid: number | undefined;
   let codexRemoteUrl = "";
   let ownedPersistentTransport = false;
+  let ownedTmuxSession = false;
   let persistentCleanupCompleted = false;
   let terminalizationResult: RunLifecycleState | undefined;
   const preserveUnknownStart = (): void => {
@@ -2962,6 +2969,7 @@ const startPairedSession = async (
     cleanupFailedPairedSessionStart(
       deps,
       session,
+      ownedTmuxSession,
       claudeChannelServer,
       storage.runId
     );
@@ -3221,6 +3229,9 @@ const startPairedSession = async (
       governess: Boolean(launch.opts.governess),
       leftCommand,
       leftPromptPath,
+      onSessionCreated: () => {
+        ownedTmuxSession = true;
+      },
       paneAgents,
       rightCommand,
       rightPromptPath,

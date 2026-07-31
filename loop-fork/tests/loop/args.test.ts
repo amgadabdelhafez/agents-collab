@@ -462,6 +462,25 @@ test("parseArgs enables worktree mode with --worktree", () => {
   expect(opts.worktree).toBe(true);
 });
 
+test.each([
+  [["--workspace", "/tmp/repo-worktree"], "/tmp/repo-worktree"],
+  [["--workspace=/tmp/repo-worktree"], "/tmp/repo-worktree"],
+] as const)("parseArgs accepts workspace binding %j", (argv, expected) => {
+  expect(parseArgs([...argv]).workspace).toBe(expected);
+});
+
+test("parseArgs rejects missing, empty, or conflicting workspace bindings", () => {
+  expect(() => parseArgs(["--workspace"])).toThrow(
+    "Missing value for --workspace"
+  );
+  expect(() => parseArgs(["--workspace="])).toThrow(
+    "Invalid --workspace value: cannot be empty"
+  );
+  expect(() =>
+    parseArgs(["--workspace", "/tmp/repo-worktree", "--worktree"])
+  ).toThrow("Cannot combine --workspace with --worktree.");
+});
+
 test("parseArgs joins positional prompt words", () => {
   const opts = parseArgs(["--proof", "verify", "fix", "the", "bug"]);
 

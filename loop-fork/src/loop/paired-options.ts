@@ -110,6 +110,18 @@ const resolveRequestedRunState = (
   opts: Options,
   cwd: string
 ): RequestedRunState => {
+  if (opts.reservedRunId) {
+    const runId = resolveExistingRunId(opts.reservedRunId, cwd);
+    if (!runId) {
+      throw new Error(
+        `[loop] reserved paired run "${opts.reservedRunId}" does not exist`
+      );
+    }
+    return {
+      allowRawSessionFallback: Boolean(opts.sessionId && !opts.resumeRunId),
+      runId,
+    };
+  }
   if (opts.resumeRunId) {
     const runId = resolveExistingRunId(opts.resumeRunId, cwd);
     if (!runId) {
@@ -206,6 +218,14 @@ export const resolvePreparedRunState = (
   const storage = resolveRunStorage(runId, cwd);
   ensureRunStorage(storage);
   const existingManifest = readRunManifest(storage.manifestPath);
+  if (
+    opts.launchClaimId &&
+    existingManifest?.launchClaimId !== opts.launchClaimId
+  ) {
+    throw new Error(
+      `[loop] launch claim ${opts.launchClaimId} no longer owns run ${storage.runId}`
+    );
+  }
   if (existingManifest) {
     return {
       allowRawSessionFallback: requested.allowRawSessionFallback,

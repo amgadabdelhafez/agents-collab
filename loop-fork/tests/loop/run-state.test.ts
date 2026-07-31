@@ -2,12 +2,16 @@ import { expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { sleep, spawn } from "bun";
 import {
   appendRunTranscriptEntry,
   buildManifestPath,
@@ -21,6 +25,7 @@ import {
   loadRunState,
   readRunManifest,
   readRunTranscriptEntries,
+  reserveRunStorage,
   resolveExistingRunId,
   resolveRepoId,
   resolveRunId,
@@ -143,6 +148,109 @@ test("resolveRunId increments from the latest stored run", () => {
   }
 });
 
+test("reserveRunStorage exclusively creates the next numeric run directory", () => {
+  const home = makeTempDir();
+  const cwd = join(home, "repo");
+  mkdirSync(cwd);
+  const runGit = () => ({ exitCode: 1, stderr: "", stdout: "" });
+  const repoId = resolveRepoId(cwd, { runGit });
+  const repoDir = join(resolveStorageRoot(home), repoId);
+  mkdirSync(join(repoDir, "1"), { recursive: true });
+  mkdirSync(join(repoDir, "3"));
+
+  const reserved = reserveRunStorage(cwd, home, { runGit });
+
+  expect(reserved.runId).toBe("4");
+  expect(readFileSync(reserved.transcriptPath, "utf8")).toBe("");
+  expect(readdirSync(repoDir).sort()).toEqual(["1", "3", "4"]);
+  rmSync(home, { recursive: true, force: true });
+});
+
+test("competing processes reserve distinct numeric run directories", async () => {
+  const home = makeTempDir();
+  const cwd = join(home, "repo");
+  const readyDir = join(home, "ready");
+  const gatePath = join(home, "gate");
+  mkdirSync(cwd);
+  mkdirSync(readyDir);
+  const moduleUrl = pathToFileURL(
+    join(import.meta.dir, "../../src/loop/run-state.ts")
+  ).href;
+  const workerScript = [
+    'import { existsSync, writeFileSync } from "node:fs";',
+    "const moduleUrl = process.env.RUN_STATE_TEST_MODULE;",
+    "const cwd = process.env.RUN_STATE_TEST_CWD;",
+    "const home = process.env.RUN_STATE_TEST_HOME;",
+    "const gate = process.env.RUN_STATE_TEST_GATE;",
+    "const ready = process.env.RUN_STATE_TEST_READY;",
+    'if (!(moduleUrl && cwd && home && gate && ready)) throw new Error("missing test inputs");',
+    'writeFileSync(ready, "ready\\n");',
+    "while (!existsSync(gate)) Bun.sleepSync(1);",
+    "const { reserveRunStorage } = await import(moduleUrl);",
+    "const storage = reserveRunStorage(cwd, home);",
+    'process.stdout.write(storage.runId + "\\n");',
+  ].join(" ");
+  const children = Array.from({ length: 6 }, (_, index) =>
+    spawn({
+      cmd: [process.execPath, "-e", workerScript],
+      env: {
+        ...process.env,
+        RUN_STATE_TEST_CWD: cwd,
+        RUN_STATE_TEST_GATE: gatePath,
+        RUN_STATE_TEST_HOME: home,
+        RUN_STATE_TEST_MODULE: moduleUrl,
+        RUN_STATE_TEST_READY: join(readyDir, String(index)),
+      },
+      stderr: "pipe",
+      stdout: "pipe",
+    })
+  );
+
+  try {
+    const readyDeadline = Date.now() + 5000;
+    while (readdirSync(readyDir).length < children.length) {
+      if (Date.now() >= readyDeadline) {
+        throw new Error("reservation workers did not reach the barrier");
+      }
+      await sleep(5);
+    }
+    writeFileSync(gatePath, "go\n", "utf8");
+
+    const [outputs, errors, exitCodes] = await Promise.all([
+      Promise.all(
+        children.map(async (child) =>
+          (await new Response(child.stdout).text()).trim()
+        )
+      ),
+      Promise.all(
+        children.map(async (child) =>
+          (await new Response(child.stderr).text()).trim()
+        )
+      ),
+      Promise.all(children.map(async (child) => child.exited)),
+    ]);
+
+    expect(errors).toEqual(Array.from({ length: children.length }, () => ""));
+    expect(exitCodes).toEqual(Array.from({ length: children.length }, () => 0));
+    expect(outputs.map(Number).sort((a, b) => a - b)).toEqual([
+      1, 2, 3, 4, 5, 6,
+    ]);
+
+    const [repoDir] = readdirSync(resolveStorageRoot(home));
+    expect(
+      readdirSync(join(resolveStorageRoot(home), repoDir as string)).sort(
+        (a, b) => Number(a) - Number(b)
+      )
+    ).toEqual(["1", "2", "3", "4", "5", "6"]);
+  } finally {
+    for (const child of children) {
+      child.kill();
+      await child.exited;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("manifest helpers write, read, and touch run metadata", () => {
   const dir = makeTempDir();
   const manifestPath = join(dir, "manifest.json");
@@ -155,10 +263,12 @@ test("manifest helpers write, read, and touch run metadata", () => {
       codexThreadId: "codex-1",
       cwd: "/repo",
       helperCavemanMode: "full",
+      launchClaimId: "claim-123",
       mode: "paired",
       pid: 1234,
       repoId: "repo-abc123",
       runId: "9",
+      sourceTaskSha256: "c".repeat(64),
       state: "working",
       tmuxPaneGoverness: "repo-loop-9:0.3",
       tmuxPaneLeft: "repo-loop-9:0.0",
@@ -167,6 +277,11 @@ test("manifest helpers write, read, and touch run metadata", () => {
       tmuxPaneRightAgent: "codex",
       tmuxPaneUtility: "repo-loop-9:0.1",
       tmuxSession: "repo-loop-9",
+      workspaceBinding: {
+        branchRef: "refs/heads/feature/run-state",
+        repoId: "repo-abc123",
+        root: "/repo",
+      },
     },
     "2026-03-22T10:00:00.000Z"
   );
@@ -192,9 +307,109 @@ test("manifest helpers write, read, and touch run metadata", () => {
     cavemanMode: "lite",
     helperCavemanMode: "full",
     launchCharters: manifest.launchCharters,
+    launchClaimId: "claim-123",
+    sourceTaskSha256: "c".repeat(64),
+    workspaceBinding: {
+      branchRef: "refs/heads/feature/run-state",
+      repoId: "repo-abc123",
+      root: "/repo",
+    },
   });
   expect(touched.updatedAt).toBe("2026-03-22T11:00:00.000Z");
   expect(touched.createdAt).toBe(manifest.createdAt);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("createRunManifest rejects an invalid source task SHA-256", () => {
+  expect(() =>
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-abc123",
+      runId: "9",
+      sourceTaskSha256: "not-a-sha",
+    })
+  ).toThrow("Invalid source task SHA-256");
+});
+
+test("manifest reader preserves legacy manifests without launch bindings", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      created_at: "2026-03-22T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repo_id: "repo-abc123",
+      run_id: "9",
+      source_task_sha256: "invalid",
+      status: "active",
+      updated_at: "2026-03-22T11:00:00.000Z",
+    }),
+    "utf8"
+  );
+
+  expect(readRunManifest(manifestPath)).toEqual({
+    claudeSessionId: "",
+    codexThreadId: "",
+    createdAt: "2026-03-22T10:00:00.000Z",
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-abc123",
+    runId: "9",
+    state: "working",
+    status: "running",
+    updatedAt: "2026-03-22T11:00:00.000Z",
+  });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("writeRunManifest atomically replaces a complete manifest", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  const manifest = createRunManifest(
+    {
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-abc123",
+      runId: "9",
+    },
+    "2026-03-22T10:00:00.000Z"
+  );
+  writeRunManifest(manifestPath, manifest);
+  const originalInode = statSync(manifestPath).ino;
+  const next = touchRunManifest(manifest, "2026-03-22T11:00:00.000Z");
+
+  writeRunManifest(manifestPath, next);
+
+  expect(statSync(manifestPath).ino).not.toBe(originalInode);
+  expect(readRunManifest(manifestPath)).toEqual(next);
+  expect(readdirSync(dir)).toEqual(["manifest.json"]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("writeRunManifest removes its temporary file when rename fails", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  mkdirSync(manifestPath);
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-abc123",
+    runId: "9",
+  });
+
+  expect(() => writeRunManifest(manifestPath, manifest)).toThrow();
+  expect(
+    readdirSync(dir).filter((name) => name.startsWith(".manifest.json."))
+  ).toEqual([]);
+  expect(statSync(manifestPath).isDirectory()).toBe(true);
   rmSync(dir, { recursive: true, force: true });
 });
 

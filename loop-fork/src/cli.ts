@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { existsSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { isAgent } from "./loop/agents";
 import { findImmediateInfoRequest } from "./loop/args";
 import { runBridgeMcpServer } from "./loop/bridge";
@@ -26,6 +28,7 @@ import {
 } from "./loop/governess-pane-liveness";
 import { runGovernessUtilityCommand } from "./loop/governess-replay";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
+import type { PairedLaunchClaim } from "./loop/launch-reservation";
 import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
@@ -58,6 +61,7 @@ const INTERACTIVE_TMUX_ERROR =
   "[loop] interactive paired tmux mode must be started outside tmux.";
 const PAIRED_TMUX_HANDOFF_ERROR =
   "[loop] paired tmux launch did not hand off; not continuing in the foreground.";
+const MARKDOWN_PATH_RE = /\.md$/iu;
 
 const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
   Boolean(
@@ -69,6 +73,20 @@ const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
 
 const shouldAwaitAutoUpdate = (opts: Options): boolean =>
   !process.env.TMUX && isPromptlessPairedTmuxLaunch(opts);
+
+const preserveRelativePromptPath = (
+  opts: Options,
+  invocationCwd: string
+): void => {
+  const input = opts.promptInput?.trim();
+  if (!(input && MARKDOWN_PATH_RE.test(input) && !isAbsolute(input))) {
+    return;
+  }
+  const absolute = resolve(invocationCwd, input);
+  if (existsSync(absolute)) {
+    opts.promptInput = absolute;
+  }
+};
 
 const parseBridgeArgs = (
   argv: string[]
@@ -234,13 +252,113 @@ const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
   runGovernessUtilityCommand(argv) ||
   (await runHiddenSubcommand(argv));
 
+interface PreparedCliLaunch {
+  awaitAutoUpdate: boolean;
+  launchClaim?: PairedLaunchClaim;
+  opts: Options;
+  outerTmuxHandedOff: boolean;
+}
+
+const enterExplicitWorkspace = (opts: Options, invocationCwd: string): void => {
+  if (!opts.workspace) {
+    return;
+  }
+  const binding = cliDeps.resolveWorkspaceBinding(
+    opts.workspace,
+    invocationCwd
+  );
+  cliDeps.chdir(binding.root);
+  opts.workspaceBinding = binding;
+};
+
+const prepareCliLaunch = async (
+  normalizedArgv: string[],
+  invocationCwd: string
+): Promise<PreparedCliLaunch> => {
+  const opts = cliDeps.parseArgs(normalizedArgv);
+  preserveRelativePromptPath(opts, invocationCwd);
+  enterExplicitWorkspace(opts, invocationCwd);
+  const awaitAutoUpdate = shouldAwaitAutoUpdate(opts);
+  if (!awaitAutoUpdate) {
+    updateDeps.startAutoUpdateCheck();
+  }
+  if (
+    opts.tmux &&
+    !opts.pairedMode &&
+    (await cliDeps.runInTmux(normalizedArgv))
+  ) {
+    return { awaitAutoUpdate, opts, outerTmuxHandedOff: true };
+  }
+  const gitWarning = cliDeps.checkGitState();
+  if (gitWarning) {
+    console.log(gitWarning);
+  }
+  await cliDeps.maybeEnterWorktree(opts);
+
+  let launchClaim: PairedLaunchClaim | undefined;
+  try {
+    if (opts.tmux && opts.pairedMode) {
+      const binding =
+        opts.workspaceBinding ??
+        cliDeps.resolveWorkspaceBinding(undefined, process.cwd());
+      opts.workspaceBinding = binding;
+      launchClaim = await cliDeps.reservePairedLaunch(opts, binding);
+      if (process.cwd() !== launchClaim.workspaceBinding.root) {
+        cliDeps.chdir(launchClaim.workspaceBinding.root);
+      }
+    }
+    return {
+      awaitAutoUpdate,
+      ...(launchClaim ? { launchClaim } : {}),
+      opts,
+      outerTmuxHandedOff: false,
+    };
+  } catch (error) {
+    if (launchClaim) {
+      cliDeps.cancelPairedLaunch(launchClaim);
+    }
+    throw error;
+  }
+};
+
+const executePreparedLaunch = async (
+  normalizedArgv: string[],
+  prepared: PreparedCliLaunch
+): Promise<boolean> => {
+  const { awaitAutoUpdate, launchClaim, opts } = prepared;
+  if (awaitAutoUpdate) {
+    await updateDeps.awaitAutoUpdateCheck();
+  }
+  if (isPromptlessPairedTmuxLaunch(opts)) {
+    if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts })) {
+      return true;
+    }
+    throw new Error(INTERACTIVE_TMUX_ERROR);
+  }
+  const task = await cliDeps.resolveTask(opts);
+  if (launchClaim) {
+    cliDeps.bindLaunchTask(launchClaim, task);
+  }
+  if (opts.tmux && opts.pairedMode) {
+    if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts, task })) {
+      return true;
+    }
+    throw new Error(PAIRED_TMUX_HANDOFF_ERROR);
+  }
+  await cliDeps.runLoop(task, opts);
+  return false;
+};
+
 export const runCli = async (argv: string[]): Promise<void> => {
   if (await runPreMaintenanceCommand(argv)) {
     return;
   }
 
   let shouldCloseAgents = true;
+  let launchClaim: PairedLaunchClaim | undefined;
+  let launchHandedOff = false;
   try {
+    const invocationCwd = process.cwd();
     const normalizedArgv = argv.length === 0 ? DEFAULT_TMUX_ARGV : argv;
     cliDeps.gcStaleClaudeBridgeRegistrations();
     cliDeps.gcStaleBridgeProcesses();
@@ -258,44 +376,18 @@ export const runCli = async (argv: string[]): Promise<void> => {
       await cliDeps.runPanel();
       return;
     }
-    const opts = cliDeps.parseArgs(normalizedArgv);
-    const awaitAutoUpdate = shouldAwaitAutoUpdate(opts);
-    if (!awaitAutoUpdate) {
-      updateDeps.startAutoUpdateCheck();
-    }
-    if (
-      opts.tmux &&
-      !opts.pairedMode &&
-      (await cliDeps.runInTmux(normalizedArgv))
-    ) {
+    const prepared = await prepareCliLaunch(normalizedArgv, invocationCwd);
+    launchClaim = prepared.launchClaim;
+    if (prepared.outerTmuxHandedOff) {
       shouldCloseAgents = false;
       return;
     }
-    const gitWarning = cliDeps.checkGitState();
-    if (gitWarning) {
-      console.log(gitWarning);
-    }
-    await cliDeps.maybeEnterWorktree(opts);
-    if (awaitAutoUpdate) {
-      await updateDeps.awaitAutoUpdateCheck();
-    }
-    if (isPromptlessPairedTmuxLaunch(opts)) {
-      if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts })) {
-        shouldCloseAgents = false;
-        return;
-      }
-      throw new Error(INTERACTIVE_TMUX_ERROR);
-    }
-    const task = await cliDeps.resolveTask(opts);
-    if (opts.tmux && opts.pairedMode) {
-      if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts, task })) {
-        shouldCloseAgents = false;
-        return;
-      }
-      throw new Error(PAIRED_TMUX_HANDOFF_ERROR);
-    }
-    await cliDeps.runLoop(task, opts);
+    launchHandedOff = await executePreparedLaunch(normalizedArgv, prepared);
+    shouldCloseAgents = !launchHandedOff;
   } finally {
+    if (launchClaim && !launchHandedOff) {
+      cliDeps.cancelPairedLaunch(launchClaim);
+    }
     if (shouldCloseAgents) {
       await Promise.all([closeAppServer(), closeClaudeSdk()]);
     }

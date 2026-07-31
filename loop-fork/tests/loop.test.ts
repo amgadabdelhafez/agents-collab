@@ -1,6 +1,8 @@
 import { afterEach, expect, mock, test } from "bun:test";
+import { resolve } from "node:path";
 import type { ImmediateInfoRequest } from "../src/loop/args";
-import type { Options } from "../src/loop/types";
+import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
+import type { LaunchWorkspaceBinding, Options } from "../src/loop/types";
 
 const makeOptions = (): Options => ({
   agent: "codex",
@@ -32,6 +34,9 @@ afterEach(() => {
 });
 
 interface CliModuleDeps {
+  bindLaunchTask?: (claim: PairedLaunchClaim, task: string) => string;
+  cancelPairedLaunch?: (claim: PairedLaunchClaim) => void;
+  chdir?: (path: string) => void;
   checkGitState?: () => string | undefined;
   gcAbandonedRunProcesses?: () => unknown;
   gcStaleBridgeProcesses?: () => unknown;
@@ -39,7 +44,15 @@ interface CliModuleDeps {
   maybeEnterWorktree?: (opts: Options) => void | Promise<void>;
   parseArgs?: (argv: string[]) => Options;
   renderImmediateInfo?: (request: ImmediateInfoRequest) => void;
+  reservePairedLaunch?: (
+    opts: Options,
+    binding: LaunchWorkspaceBinding
+  ) => Promise<PairedLaunchClaim>;
   resolveTask?: (opts: Options) => Promise<string>;
+  resolveWorkspaceBinding?: (
+    path: string | undefined,
+    cwd: string
+  ) => LaunchWorkspaceBinding;
   runInTmux?: (
     argv: string[],
     overrides?: unknown,
@@ -60,7 +73,32 @@ const loadRunCli = async (
   deps: CliModuleDeps = {},
   updateOverrides: UpdateModuleDeps = {}
 ) => {
+  const workspaceBinding: LaunchWorkspaceBinding = {
+    branchRef: "refs/heads/test",
+    repoId: "repo-test",
+    root: process.cwd(),
+  };
+  const launchClaim: PairedLaunchClaim = {
+    claimId: "claim-test",
+    reserved: true,
+    storage: {
+      manifestPath: "/tmp/loop-test/manifest.json",
+      repoId: workspaceBinding.repoId,
+      runDir: "/tmp/loop-test",
+      runId: "1",
+      storageRoot: "/tmp",
+      transcriptPath: "/tmp/loop-test/transcript.jsonl",
+    },
+    workspaceBinding,
+  };
+  const bindLaunchTaskMock = mock(
+    deps.bindLaunchTask ?? (() => "a".repeat(64))
+  );
+  const cancelPairedLaunchMock = mock(
+    deps.cancelPairedLaunch ?? (() => undefined)
+  );
   const checkGitStateMock = mock(deps.checkGitState ?? (() => undefined));
+  const chdirMock = mock(deps.chdir ?? (() => undefined));
   const gcAbandonedRunProcessesMock = mock(
     deps.gcAbandonedRunProcesses ?? (() => undefined)
   );
@@ -78,6 +116,12 @@ const loadRunCli = async (
     deps.renderImmediateInfo ?? (() => undefined)
   );
   const resolveTaskMock = mock(deps.resolveTask ?? (async () => "task"));
+  const resolveWorkspaceBindingMock = mock(
+    deps.resolveWorkspaceBinding ?? (() => workspaceBinding)
+  );
+  const reservePairedLaunchMock = mock(
+    deps.reservePairedLaunch ?? (async () => launchClaim)
+  );
   const runInTmuxMock = mock(deps.runInTmux ?? (() => false));
   const runLoopMock = mock(deps.runLoop ?? (async () => undefined));
   const runPanelMock = mock(deps.runPanel ?? (async () => undefined));
@@ -104,7 +148,10 @@ const loadRunCli = async (
   );
   mock.module("../src/loop/deps", () => ({
     cliDeps: {
+      bindLaunchTask: bindLaunchTaskMock,
+      cancelPairedLaunch: cancelPairedLaunchMock,
       checkGitState: checkGitStateMock,
+      chdir: chdirMock,
       gcAbandonedRunProcesses: gcAbandonedRunProcessesMock,
       gcStaleBridgeProcesses: gcStaleBridgeProcessesMock,
       gcStaleClaudeBridgeRegistrations: gcStaleClaudeBridgeRegistrationsMock,
@@ -112,6 +159,8 @@ const loadRunCli = async (
       parseArgs: parseArgsMock,
       renderImmediateInfo: renderImmediateInfoMock,
       resolveTask: resolveTaskMock,
+      resolveWorkspaceBinding: resolveWorkspaceBindingMock,
+      reservePairedLaunch: reservePairedLaunchMock,
       runInTmux: runInTmuxMock,
       runLoop: runLoopMock,
       runPanel: runPanelMock,
@@ -140,7 +189,10 @@ const loadRunCli = async (
   const { runCli } = await import(`../src/cli?test=${Date.now()}`);
   return {
     applyStagedMock,
+    bindLaunchTaskMock,
+    cancelPairedLaunchMock,
     checkGitStateMock,
+    chdirMock,
     closeAppServerMock,
     closeClaudeSdkMock,
     gcAbandonedRunProcessesMock,
@@ -151,6 +203,8 @@ const loadRunCli = async (
     parseArgsMock,
     renderImmediateInfoMock,
     resolveTaskMock,
+    resolveWorkspaceBindingMock,
+    reservePairedLaunchMock,
     awaitAutoUpdateCheckMock,
     runCli,
     runInTmuxMock,
@@ -257,6 +311,8 @@ test("runCli runs task flow when argv has options", async () => {
 test("runCli delegates paired tmux after resolving the task", async () => {
   const opts = { ...makeOptions(), tmux: true };
   const {
+    bindLaunchTaskMock,
+    cancelPairedLaunchMock,
     closeAppServerMock,
     closeClaudeSdkMock,
     maybeEnterWorktreeMock,
@@ -265,6 +321,7 @@ test("runCli delegates paired tmux after resolving the task", async () => {
     resolveTaskMock,
     runLoopMock,
     runPanelMock,
+    reservePairedLaunchMock,
   } = await loadRunCli({
     parseArgs: () => opts,
     runInTmux: () => true,
@@ -275,6 +332,11 @@ test("runCli delegates paired tmux after resolving the task", async () => {
 
   expect(maybeEnterWorktreeMock).toHaveBeenCalledWith(opts);
   expect(resolveTaskMock).toHaveBeenCalledWith(opts);
+  expect(reservePairedLaunchMock).toHaveBeenCalledTimes(1);
+  expect(bindLaunchTaskMock).toHaveBeenCalledWith(
+    expect.objectContaining({ claimId: "claim-test" }),
+    "ship feature"
+  );
   expect(runInTmuxMock).toHaveBeenCalledWith(
     ["--tmux", "--proof", "verify with tests"],
     undefined,
@@ -284,6 +346,96 @@ test("runCli delegates paired tmux after resolving the task", async () => {
   expect(runPanelMock).not.toHaveBeenCalled();
   expect(closeAppServerMock).not.toHaveBeenCalled();
   expect(closeClaudeSdkMock).not.toHaveBeenCalled();
+  expect(cancelPairedLaunchMock).not.toHaveBeenCalled();
+});
+
+test("runCli rejects a duplicate workspace before task or agent side effects", async () => {
+  const calls: string[] = [];
+  const opts = { ...makeOptions(), tmux: true };
+  const {
+    bindLaunchTaskMock,
+    cancelPairedLaunchMock,
+    resolveTaskMock,
+    runCli,
+    runInTmuxMock,
+  } = await loadRunCli({
+    parseArgs: () => opts,
+    reservePairedLaunch: () => {
+      calls.push("reserve");
+      return Promise.reject(new Error("[loop] launch conflict: run 106"));
+    },
+    resolveTask: () => {
+      calls.push("resolve-task");
+      return Promise.resolve("must not run");
+    },
+  });
+
+  await expect(runCli(["--tmux", "small code change"])).rejects.toThrow(
+    "launch conflict: run 106"
+  );
+
+  expect(calls).toEqual(["reserve"]);
+  expect(resolveTaskMock).not.toHaveBeenCalled();
+  expect(bindLaunchTaskMock).not.toHaveBeenCalled();
+  expect(runInTmuxMock).not.toHaveBeenCalled();
+  expect(cancelPairedLaunchMock).not.toHaveBeenCalled();
+});
+
+test("runCli enters explicit workspace while preserving a relative Markdown prompt", async () => {
+  const opts = {
+    ...makeOptions(),
+    promptInput: "README.md",
+    tmux: true,
+    workspace: "/requested-worktree",
+  };
+  const { chdirMock, resolveTaskMock, resolveWorkspaceBindingMock, runCli } =
+    await loadRunCli({
+      parseArgs: () => opts,
+      runInTmux: () => true,
+      resolveTask: async () => "task",
+    });
+
+  await runCli([
+    "--tmux",
+    "--workspace",
+    "/requested-worktree",
+    "-p",
+    "README.md",
+  ]);
+
+  expect(resolveWorkspaceBindingMock).toHaveBeenCalledWith(
+    "/requested-worktree",
+    process.cwd()
+  );
+  expect(chdirMock).toHaveBeenCalled();
+  expect(opts.promptInput).toBe(resolve(process.cwd(), "README.md"));
+  expect(resolveTaskMock).toHaveBeenCalledWith(opts);
+});
+
+test("runCli preserves a nested relative Markdown prompt path", async () => {
+  const opts = {
+    ...makeOptions(),
+    promptInput: "runs/lower-agent-pane-default/task-log.md",
+    tmux: true,
+    workspace: "/requested-worktree",
+  };
+  const { runCli } = await loadRunCli({
+    parseArgs: () => opts,
+    runInTmux: () => true,
+    resolveTask: () => Promise.resolve("task"),
+  });
+
+  await runCli([
+    "--tmux",
+    "--workspace",
+    "/requested-worktree",
+    "-p",
+    "runs/lower-agent-pane-default/task-log.md",
+  ]);
+
+  expect(opts.promptInput).toBe(
+    resolve(process.cwd(), "runs/lower-agent-pane-default/task-log.md")
+  );
 });
 
 test("runCli starts paired interactive tmux without resolving a task", async () => {
@@ -320,6 +472,7 @@ test("runCli starts paired interactive tmux without resolving a task", async () 
 test("runCli does not fall through to foreground work when paired tmux handoff returns false", async () => {
   const opts = { ...makeOptions(), tmux: true };
   const {
+    cancelPairedLaunchMock,
     maybeEnterWorktreeMock,
     resolveTaskMock,
     runCli,
@@ -343,6 +496,7 @@ test("runCli does not fall through to foreground work when paired tmux handoff r
   expect(resolveTaskMock).toHaveBeenCalledWith(opts);
   expect(runLoopMock).not.toHaveBeenCalled();
   expect(runPanelMock).not.toHaveBeenCalled();
+  expect(cancelPairedLaunchMock).toHaveBeenCalledTimes(1);
 });
 
 test("runCli prints tmux detach hint first when inside tmux", async () => {

@@ -1,0 +1,10 @@
+{
+  "task_id": "active-launch-interlock",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}
