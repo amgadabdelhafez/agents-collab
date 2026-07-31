@@ -1,28 +1,23 @@
-# Task readiness-timeout-preservation
+# Regression Eval: claude-startup-readiness-timeout-evidence-loss
 
-Created: 2026-07-31T08:06:25Z
-Mode: planned
-Description: Preserve paired tmux workspace and durable input-required evidence when Claude startup readiness times out, without reporting launch success or leaking ownership
+Generated: 2026-07-31T08:32:53Z
+Source task: `readiness-timeout-preservation`
+Status: draft
 
-## What I changed
+## Failure Symptom
 
-- Traced the evidence loss to an untyped readiness-timeout error falling into
-  generic failed-start teardown.
-- Added a spec-first acceptance contract under
-  `../specs/readiness-timeout-preservation/`.
-- Added a narrow startup input-required error base shared by composer recovery
-  and readiness poll exhaustion. Unexpected capture and tmux failures remain on
-  the terminal failed-start path.
-- Made the realistic-prompt smoke inspect `input-required/running`, both stable
-  agent pane targets, absent control panes, absent work delivery, and the exact
-  attach command before explicitly cleaning its isolated session.
+- Claude readiness timeout exits nonzero but kills the paired tmux workspace and terminalizes the manifest as failed.
 
-## Why
+## Guard Evidence
 
-The launcher must fail honestly without deleting the only live evidence and
-manual recovery surface available to the operator.
+- tests/loop/tmux.test.ts and ../evals/smoke/large-prompt-launch.sh
 
-## Notes
+## Verification Artifacts
+
+- `smoke`: `runs/readiness-timeout-preservation/artifacts/smoke/verify.log` (pass)
+- `unit`: `runs/readiness-timeout-preservation/artifacts/unit/verify.log` (pass)
+
+## Source Task Notes
 
 Regression: yes
 Regression id: claude-startup-readiness-timeout-evidence-loss
@@ -49,3 +44,8 @@ commit `6e197b461c53423309590b36fad746118ddeba34`. The exact compiled file
 then passed the prebuilt realistic-prompt smoke and was atomically installed at
 `/Users/amgad/.local/bin/loop`. Live Harvto run 105 retained all eight panes;
 no restart or new launch occurred.
+
+## Next Step
+
+Turn this draft into an executable regression check and wire it into the
+appropriate verification dimension.

@@ -1,0 +1,7 @@
+{
+  "task_id": "readiness-timeout-preservation",
+  "scanned_at": "2026-07-31T08:32:52Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

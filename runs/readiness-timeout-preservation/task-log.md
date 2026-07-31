@@ -38,3 +38,15 @@
 
 Durable command evidence lives under
 `loop-fork/runs/readiness-timeout-preservation/artifacts/`.
+
+## Review and deployment
+
+- Independent exact-SHA review: CONCUR, no findings, bound to
+  `6e197b461c53423309590b36fad746118ddeba34`.
+- Exact prebuilt binary smoke: pass at SHA-256
+  `4e1b49970f17a4d6b5dd570b1d598a63a0e3c59b3334f4e782bad76917241b67`.
+- Installed by verified same-directory staging and atomic rename to
+  `/Users/amgad/.local/bin/loop`; installed hash and version 1.0.32 verified.
+- Harvto run 105 remained `submitted/running` with eight live panes. No agent
+  restart, new loop launch, prompt injection, or reserved-browser spend
+  occurred. Future changed-binary launches still require fresh joint QA.

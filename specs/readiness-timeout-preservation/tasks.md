@@ -6,5 +6,5 @@
 - [x] Extend unit regressions for preservation and fatal-error isolation.
 - [x] Extend realistic-prompt smoke coverage with explicit fixture cleanup.
 - [x] Run focused and full verification.
-- [ ] Obtain independent exact-commit review and pass the external deployment
+- [x] Obtain independent exact-commit review and pass the external deployment
       gate without creating an unreviewed source descendant.

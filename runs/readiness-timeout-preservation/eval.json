@@ -24,5 +24,18 @@
   },
   "known_limitations": [
     "Stale bridge-socket garbage collection is a separate housekeeping task and is intentionally unchanged."
-  ]
+  ],
+  "review": {
+    "status": "concur",
+    "commit": "6e197b461c53423309590b36fad746118ddeba34",
+    "reviewer": "independent-codex-reviewer",
+    "findings": []
+  },
+  "deployment": {
+    "path": "/Users/amgad/.local/bin/loop",
+    "version": "1.0.32",
+    "sha256": "4e1b49970f17a4d6b5dd570b1d598a63a0e3c59b3334f4e782bad76917241b67",
+    "method": "verified same-directory stage plus atomic rename",
+    "live_run_105_unchanged": true
+  }
 }

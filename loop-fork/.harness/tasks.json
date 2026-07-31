@@ -422,10 +422,12 @@
     {
       "id": "readiness-timeout-preservation",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-07-31T08:06:25Z",
       "run_dir": "runs/readiness-timeout-preservation",
-      "eval_status": "pass"
+      "eval_status": "pass",
+      "ended_at": "2026-07-31T08:32:53Z",
+      "spec_path": "specs/readiness-timeout-preservation.md"
     }
   ]
 }
