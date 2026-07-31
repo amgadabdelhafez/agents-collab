@@ -103,3 +103,16 @@
       board's Σ est, so decide: render $0.00 plan-covered, or add
       founder-approved est-equivalent rates so Σ est reflects codex work.
       Needs a founder rate decision, not just code. Supervisor-filed 2026-07-31.
+
+      **T-11 RESOLVED by inspection (supervisor, 2026-07-31 ~21:20 UTC): the
+      usage-tracker path already implements the founder's rule.** The bundled
+      catalog carries `codex_credit_usd_estimate: 0.04` and a
+      `credits_per_mtok` rate for `gpt-5.6-sol` (cache_read 12.5 / input 125 /
+      output 750 credits per Mtok); the live tracker payload can override the
+      credit value; `applyUsageTrackerPricing` (governess.ts:3356) converts
+      estimatedCredits × codexCreditUsd on the tick path. Codex COST rendered
+      `—` only because the stale-thread bug starved the pipeline of
+      model+tokens — fixed by the T-10 display leg (09eefb4). Remaining scope
+      for T-11: after deploy, verify the codex row shows credit-based est cost
+      on a live run and that Σ est includes it (the $100/$90 founder cap then
+      measures total work; earlier loops' Σ est undercounted codex effort).
