@@ -8,11 +8,5 @@
   "started_at": "2026-07-30T21:28:05Z",
   "ended_at": "2026-07-30T21:28:05Z",
   "artifact": "runs/loop102-launch-hardening/artifacts/focused/attempt-002.log",
-  "command": [
-    "bun",
-    "run",
-    "test:file",
-    "--",
-    "tests/loop/tmux.test.ts"
-  ]
+  "command": ["bun", "run", "test:file", "--", "tests/loop/tmux.test.ts"]
 }

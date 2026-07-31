@@ -40,6 +40,19 @@ These must NOT regress:
 - [ ] [Existing flow 1] still passes its golden test
 - [ ] [Existing flow 2] still passes
 
+## Fixture provenance (required when fixtures model another component/process)
+
+- [ ] Each integration fixture derives from captured producer output and records
+      producer name plus exact version/build.
+- [ ] Capture command, UTC time, and relevant environment/protocol details are
+      recorded next to the fixture.
+- [ ] Raw bytes are retained, or a durable raw reference and SHA-256 are recorded
+      when the raw capture cannot be committed safely.
+- [ ] Any sanitization/normalization is deterministic, checked in, and records the
+      normalized fixture SHA-256; no secrets or personal data enter Git.
+- [ ] Hand-authored fixtures are labeled `synthetic` and are not used alone to
+      certify a cross-component or cross-process seam.
+
 ## Rollback conditions
 
 If any of the following are true after merge, revert immediately:

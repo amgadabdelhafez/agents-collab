@@ -1,0 +1,17 @@
+{
+  "task_id": "fixture-provenance-policy",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-07-31T03:21:53Z",
+  "ended_at": "2026-07-31T03:21:53Z",
+  "artifact": "runs/fixture-provenance-policy/artifacts/unit/attempt-001.log",
+  "command": [
+    "node",
+    "--input-type=module",
+    "-e",
+    "import { readFileSync } from \"node:fs\"; const evals=readFileSync(\"../evals/README.md\",\"utf8\"); const verify=readFileSync(\"../specs/_template/verify.md\",\"utf8\"); const required=[\"producer name and exact version\",\"capture command, UTC capture time\",\"durable raw-artifact reference plus SHA-256\",\"checked-in deterministic normalization\",\"Sanitize secrets\",\"Label them `synthetic`\",\"cannot by themselves certify\"]; for (const phrase of required) { if (!evals.includes(phrase)) throw new Error(`eval policy missing: ${phrase}`); } const checks=[\"producer name plus exact version/build\",\"Capture command, UTC time\",\"durable raw reference and SHA-256\",\"sanitization/normalization is deterministic\",\"labeled `synthetic`\",\"certify a cross-component or cross-process seam\"]; for (const phrase of checks) { if (!verify.includes(phrase)) throw new Error(`verify template missing: ${phrase}`); }"
+  ]
+}

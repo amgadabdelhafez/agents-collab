@@ -1,0 +1,7 @@
+{
+  "task_id": "fixture-provenance-policy",
+  "scanned_at": "2026-07-31T03:34:29Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

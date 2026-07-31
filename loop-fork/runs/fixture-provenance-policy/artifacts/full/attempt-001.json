@@ -1,0 +1,16 @@
+{
+  "task_id": "fixture-provenance-policy",
+  "dimension": "full",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-31T03:27:25Z",
+  "ended_at": "2026-07-31T03:27:51Z",
+  "artifact": "runs/fixture-provenance-policy/artifacts/full/attempt-001.log",
+  "command": [
+    "../scripts/verify.sh",
+    "fixture-provenance-policy",
+    "fixture-provenance-policy"
+  ]
+}

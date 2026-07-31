@@ -8,9 +8,5 @@
   "started_at": "2026-07-30T21:28:13Z",
   "ended_at": "2026-07-30T21:28:37Z",
   "artifact": "runs/loop102-launch-hardening/artifacts/full/attempt-002.log",
-  "command": [
-    "bun",
-    "run",
-    "test:ci"
-  ]
+  "command": ["bun", "run", "test:ci"]
 }

@@ -1,0 +1,39 @@
+{
+  "task_id": "fixture-provenance-policy",
+  "feature": "fixture-provenance-policy",
+  "timestamp": "2026-07-31T03:22:00Z",
+  "checks": {
+    "functional": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "captured fixtures require producer name and exact version/build",
+        "capture command, UTC time, environment, and raw evidence are required",
+        "normalization is deterministic and hash-bound",
+        "synthetic fixtures cannot certify integration seams",
+        "sensitive raw output is forbidden from Git"
+      ]
+    },
+    "ui": {
+      "passed": 0,
+      "failed": 0,
+      "screenshots": []
+    },
+    "performance": {
+      "passed": 0,
+      "failed": 0,
+      "details": []
+    },
+    "regression": {
+      "passed": 2,
+      "failed": 0,
+      "details": [
+        "existing eval commands and directory structure are unchanged",
+        "no raw incident capture was fabricated or committed"
+      ]
+    }
+  },
+  "baseline_failures": [],
+  "verdict": "pass",
+  "notes": "Independent reviewer CONCUR with no blocking findings; Harness policy assertions passed on attempt 002."
+}

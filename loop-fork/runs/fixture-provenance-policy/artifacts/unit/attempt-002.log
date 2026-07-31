@@ -1,0 +1,11 @@
+task_id: fixture-provenance-policy
+dimension: unit
+attempt: 002
+started_at: 2026-07-31T03:22:19Z
+command: node --input-type=module -e import\ \{\ readFileSync\ \}\ from\ \"node:fs\"\;\ const\ evals=readFileSync\(\"../evals/README.md\"\,\"utf8\"\)\;\ const\ verify=readFileSync\(\"../specs/_template/verify.md\"\,\"utf8\"\)\;\ const\ required=\[/producer\ name\ and\ exact\ version/\,/capture\ command\,\ UTC\ capture\ time/\,/durable\ raw-artifact\ reference\ plus\ SHA-256/\,/checked-in\ deterministic\ normalization/\,/Sanitize\ secrets/\,/Label\ them\\s+\`synthetic\`/\,/cannot\ by\\s+themselves\ certify/\]\;\ for\ \(const\ pattern\ of\ required\)\ \{\ if\ \(\!pattern.test\(evals\)\)\ throw\ new\ Error\(\`eval\ policy\ missing:\ \$\{pattern\}\`\)\;\ \}\ const\ checks=\[/producer\ name\ plus\ exact\ version\\/build/\,/Capture\ command\,\ UTC\ time/\,/durable\ raw\ reference\ and\ SHA-256/\,/sanitization\\/normalization\ is\ deterministic/\,/labeled\ \`synthetic\`/\,/certify\ a\ cross-component\ or\ cross-process\ seam/\]\;\ for\ \(const\ pattern\ of\ checks\)\ \{\ if\ \(\!pattern.test\(verify\)\)\ throw\ new\ Error\(\`verify\ template\ missing:\ \$\{pattern\}\`\)\;\ \}
+--- output ---
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-31T03:22:19Z

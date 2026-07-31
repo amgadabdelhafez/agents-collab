@@ -35,6 +35,30 @@ A replay eval in `evals/replay/` contains:
 - `check.sh` — Script that exits 0 if the incident would be caught/prevented
 - `golden/` — Expected outputs or screenshots
 
+## Fixture provenance
+
+A fixture that stands in for another component's or process's output may certify
+that integration seam only when it derives from a real producer capture. Keep a
+small adjacent provenance record containing:
+
+- producer name and exact version or build identifier;
+- capture command, UTC capture time, and relevant environment such as terminal
+  geometry or protocol version;
+- the checked-in raw bytes, or a durable raw-artifact reference plus SHA-256 when
+  raw output cannot be committed safely;
+- the checked-in deterministic normalization command or transform and the
+  normalized fixture's SHA-256.
+
+Sanitize secrets, credentials, tokens, personal data, and machine-specific paths
+before committing any capture. If sanitization changes bytes, retain the hash and
+location of the access-controlled raw source plus a reviewable normalization map;
+never place sensitive raw output in Git merely to satisfy this rule.
+
+Hand-authored inputs remain useful for isolated unit behavior. Label them
+`synthetic` in the fixture or adjacent metadata. Synthetic fixtures cannot by
+themselves certify a cross-component/process seam, a real producer's wire shape,
+or a release smoke that claims such coverage.
+
 ## Running evals
 
 ```bash

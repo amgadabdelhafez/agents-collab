@@ -1,0 +1,23 @@
+task_id: fixture-provenance-policy
+dimension: unit
+attempt: 001
+started_at: 2026-07-31T03:21:53Z
+command: node --input-type=module -e import\ \{\ readFileSync\ \}\ from\ \"node:fs\"\;\ const\ evals=readFileSync\(\"../evals/README.md\"\,\"utf8\"\)\;\ const\ verify=readFileSync\(\"../specs/_template/verify.md\"\,\"utf8\"\)\;\ const\ required=\[\"producer\ name\ and\ exact\ version\"\,\"capture\ command\,\ UTC\ capture\ time\"\,\"durable\ raw-artifact\ reference\ plus\ SHA-256\"\,\"checked-in\ deterministic\ normalization\"\,\"Sanitize\ secrets\"\,\"Label\ them\ \`synthetic\`\"\,\"cannot\ by\ themselves\ certify\"\]\;\ for\ \(const\ phrase\ of\ required\)\ \{\ if\ \(\!evals.includes\(phrase\)\)\ throw\ new\ Error\(\`eval\ policy\ missing:\ \$\{phrase\}\`\)\;\ \}\ const\ checks=\[\"producer\ name\ plus\ exact\ version/build\"\,\"Capture\ command\,\ UTC\ time\"\,\"durable\ raw\ reference\ and\ SHA-256\"\,\"sanitization/normalization\ is\ deterministic\"\,\"labeled\ \`synthetic\`\"\,\"certify\ a\ cross-component\ or\ cross-process\ seam\"\]\;\ for\ \(const\ phrase\ of\ checks\)\ \{\ if\ \(\!verify.includes\(phrase\)\)\ throw\ new\ Error\(\`verify\ template\ missing:\ \$\{phrase\}\`\)\;\ \}
+--- output ---
+file:///private/tmp/agents-collab-fixture-provenance-policy/loop-fork/[eval1]:1
+import { readFileSync } from "node:fs"; const evals=readFileSync("../evals/README.md","utf8"); const verify=readFileSync("../specs/_template/verify.md","utf8"); const required=["producer name and exact version","capture command, UTC capture time","durable raw-artifact reference plus SHA-256","checked-in deterministic normalization","Sanitize secrets","Label them `synthetic`","cannot by themselves certify"]; for (const phrase of required) { if (!evals.includes(phrase)) throw new Error(`eval policy missing: ${phrase}`); } const checks=["producer name plus exact version/build","Capture command, UTC time","durable raw reference and SHA-256","sanitization/normalization is deterministic","labeled `synthetic`","certify a cross-component or cross-process seam"]; for (const phrase of checks) { if (!verify.includes(phrase)) throw new Error(`verify template missing: ${phrase}`); }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ^
+
+Error: eval policy missing: Label them `synthetic`
+    at file:///private/tmp/agents-collab-fixture-provenance-policy/loop-fork/[eval1]:1:480
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at async node:internal/modules/esm/loader:226:26
+    at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:223:20)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v26.5.0
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-07-31T03:21:53Z

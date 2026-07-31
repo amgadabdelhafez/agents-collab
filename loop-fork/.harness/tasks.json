@@ -398,6 +398,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-30T21:41:29Z",
       "spec_path": "specs/loop102-launch-hardening.md"
+    },
+    {
+      "id": "fixture-provenance-policy",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-31T03:14:13Z",
+      "run_dir": "runs/fixture-provenance-policy",
+      "eval_status": "pass",
+      "ended_at": "2026-07-31T03:34:29Z",
+      "spec_path": "specs/fixture-provenance-policy.md"
     }
   ]
 }

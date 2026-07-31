@@ -6,10 +6,7 @@
   "prompt_path": "runs/loop102-launch-hardening/artifacts/regression-harvest/prompt.md",
   "created_at": "2026-07-30T21:41:29Z",
   "markers": {
-    "enabled": [
-      "yes",
-      "yes"
-    ],
+    "enabled": ["yes", "yes"],
     "id": [
       "loop102-claude-bootstrap-readiness",
       "loop102-detached-tmux-geometry"
