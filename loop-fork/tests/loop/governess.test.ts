@@ -1929,7 +1929,11 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
     appendUtilityRouteRequest(runDir, latestFailed);
     transitionUtilityJob(runDir, latestFailed.id, "routed-utility", {
       at: "2099-01-01T00:00:00.100Z",
-      decision: { reason: "utility-eligible", target: "utility" },
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-au-pair",
+      },
       routeEpoch: 1,
     });
     transitionUtilityJob(runDir, latestFailed.id, "failed", {
@@ -2100,7 +2104,11 @@ test("Au Pair row hides the internal routed-utility state name", async () => {
     appendUtilityRouteRequest(runDir, request);
     activateUtilityEpoch(runDir, 1);
     transitionUtilityJob(runDir, request.id, "routed-utility", {
-      decision: { reason: "utility-eligible", target: "utility" },
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-au-pair",
+      },
       routeEpoch: 1,
     });
     const result = await governessTick(

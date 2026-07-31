@@ -167,6 +167,7 @@ import type {
 } from "./types";
 import {
   UTILITY_AU_PAIR_TIER,
+  UTILITY_DIRECT_TIER,
   UTILITY_NANNY_TIER,
 } from "./utility-execution-tier";
 import {
@@ -1409,6 +1410,7 @@ interface LocalLlmRuntimeInput {
 interface BoardMeta {
   auPair?: UtilityObservabilitySnapshot;
   bridge: BridgeCounts;
+  direct?: UtilityObservabilitySnapshot;
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
   cavemanMode?: CavemanMode;
@@ -2022,8 +2024,12 @@ const utilityAge = (
 
 const utilityModelCell = (
   snapshot: UtilityObservabilitySnapshot,
-  role: "au pair" | "nanny"
+  role: "au pair" | "direct" | "nanny"
 ): string => {
+  if (role === "direct") {
+    // Direct-tier jobs run deterministic tool calls without a model.
+    return "tools";
+  }
   if (snapshot.model) {
     return role === "nanny"
       ? judgeIdFromModel(snapshot.model)
@@ -2035,7 +2041,7 @@ const utilityModelCell = (
 const renderUtilityAgentRow = (
   snapshot: UtilityObservabilitySnapshot,
   meta: BoardMeta,
-  role: "au pair" | "nanny"
+  role: "au pair" | "direct" | "nanny"
 ): string => {
   const state = utilityState(snapshot);
   const usage = snapshot.usage;
@@ -2114,7 +2120,20 @@ const renderWorkerDetailRows = (
   const contexts = snapshot.contexts;
   const failures = snapshot.failures;
   const measured = performance.measuredJobs > 0;
-  const performanceLine = ` helpers · ${performance.successfulJobs}/${performance.finishedJobs} success ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · ${measured ? fmtDuration(performance.averageDurationMs) : "—"} avg · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"} · bridge ${snapshot.messages.inbound}→${snapshot.messages.outbound} pending ${snapshot.messages.pending}`;
+  // Terminal jobs the untiered snapshot counts but no rendered helper row
+  // claims. Nonzero means the board is hiding executed work (spec T-07);
+  // surface it instead of letting the rows and the summary disagree.
+  const tierTerminal = (tier?: UtilityObservabilitySnapshot): number =>
+    tier ? tier.completed + tier.failed : 0;
+  const unattributedTerminal = Math.max(
+    0,
+    snapshot.completed +
+      snapshot.failed -
+      tierTerminal(meta.direct) -
+      tierTerminal(meta.nanny) -
+      tierTerminal(meta.auPair)
+  );
+  const performanceLine = ` helpers · ${performance.successfulJobs}/${performance.finishedJobs} success ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · ${measured ? fmtDuration(performance.averageDurationMs) : "—"} avg · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"} · bridge ${snapshot.messages.inbound}→${snapshot.messages.outbound} pending ${snapshot.messages.pending}${unattributedTerminal > 0 ? ` · unattrib ${unattributedTerminal}` : ""}`;
   const latestContext = contexts.latestHash
     ? `v${contexts.latestVersion ?? "?"} ${contexts.latestHash}`
     : "none";
@@ -3021,6 +3040,9 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...(meta.nanny ? [renderUtilityAgentRow(meta.nanny, meta, "nanny")] : []),
     ...(meta.auPair
       ? [renderUtilityAgentRow(meta.auPair, meta, "au pair")]
+      : []),
+    ...(meta.direct
+      ? [renderUtilityAgentRow(meta.direct, meta, "direct")]
       : []),
   ];
   const entityRows = [...primaryAgentRows, ...helperRows];
@@ -5649,6 +5671,7 @@ export const governessTick = async (
     ...(config.runDir
       ? {
           auPair: readUtilityObservability(config.runDir, UTILITY_AU_PAIR_TIER),
+          direct: readUtilityObservability(config.runDir, UTILITY_DIRECT_TIER),
           nanny: readUtilityObservability(config.runDir, UTILITY_NANNY_TIER),
           nativeFallback: readNativeFallbackBoard(
             config.runDir,

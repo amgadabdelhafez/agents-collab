@@ -7,6 +7,8 @@ import {
 } from "./delegation-policy";
 import {
   UTILITY_AU_PAIR_TIER,
+  UTILITY_DIRECT_TIER,
+  UTILITY_NANNY_TIER,
   type UtilityExecutionTierId,
   utilityRoleName,
 } from "./utility-execution-tier";
@@ -592,20 +594,38 @@ const transcriptUsage = (
   };
 };
 
-const jobTier = (job: UtilityJobSnapshot): UtilityExecutionTierId =>
-  (job.decision?.tierId as UtilityExecutionTierId | undefined) ??
-  UTILITY_AU_PAIR_TIER;
+const KNOWN_UTILITY_TIERS: readonly UtilityExecutionTierId[] = [
+  UTILITY_DIRECT_TIER,
+  UTILITY_NANNY_TIER,
+  UTILITY_AU_PAIR_TIER,
+];
+
+// Attribution is fail-closed: a job whose decision does not carry a known
+// tier id belongs to no helper row and is labelled "Unattributed" instead of
+// silently defaulting into a tier. Defaulting hid executed work from the
+// per-helper board rows (loop 108; spec lower-agent-observability T-07).
+const jobTier = (
+  job: UtilityJobSnapshot
+): UtilityExecutionTierId | undefined => {
+  const tierId = job.decision?.tierId as UtilityExecutionTierId | undefined;
+  return tierId !== undefined && KNOWN_UTILITY_TIERS.includes(tierId)
+    ? tierId
+    : undefined;
+};
+
+const attributionName = (tier: UtilityExecutionTierId | undefined): string =>
+  tier === undefined ? "Unattributed" : utilityRoleName(tier);
 
 const jobRequestEntry = (job: UtilityJobSnapshot): UtilityTranscriptEntry => ({
   at: job.request.createdAt,
   jobId: job.jobId,
   kind: "request",
-  label: `${job.request.requester.toUpperCase()}→${utilityRoleName(jobTier(job)).toUpperCase()}`,
+  label: `${job.request.requester.toUpperCase()}→${attributionName(jobTier(job)).toUpperCase()}`,
   text: sanitizeUtilityPaneText(job.request.objective),
 });
 
 const jobResultLabel = (job: UtilityJobSnapshot): string => {
-  const role = utilityRoleName(jobTier(job)).toUpperCase();
+  const role = attributionName(jobTier(job)).toUpperCase();
   if (job.result?.reasonCode === "context-insufficient") {
     return `${role} CONTEXT`;
   }
@@ -659,7 +679,7 @@ const toolEntries = (
   jobs: UtilityJobSnapshot[]
 ): UtilityTranscriptEntry[] => {
   const roleByJobId = new Map(
-    jobs.map((job) => [job.jobId, utilityRoleName(jobTier(job))] as const)
+    jobs.map((job) => [job.jobId, attributionName(jobTier(job))] as const)
   );
   return events.flatMap((event) => {
     const at = stringAt(event, "at");
@@ -680,7 +700,7 @@ const toolEntries = (
         at,
         jobId,
         kind: "tool" as const,
-        label: `${(roleByJobId.get(jobId) ?? "Au Pair").toUpperCase()} TOOL`,
+        label: `${(roleByJobId.get(jobId) ?? "Unattributed").toUpperCase()} TOOL`,
         text: `${sanitizeUtilityPaneText(tool)} ${outcome}`,
       },
     ];

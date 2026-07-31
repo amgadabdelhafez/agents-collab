@@ -194,6 +194,106 @@ test("routing observability counts candidates rejected before job creation", () 
   }
 });
 
+test("helper tiers partition terminal jobs and expose the unattributed remainder", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-observability-tiers-"));
+  try {
+    activateUtilityEpoch(runDir, 3);
+    const jobSpecs = [
+      { id: "direct-ok", state: "completed", tierId: "utility-direct" },
+      { id: "direct-bad", state: "failed", tierId: "utility-direct" },
+      { id: "nanny-ok", state: "completed", tierId: "utility-nanny" },
+      { id: "aupair-ok", state: "completed", tierId: "utility-au-pair" },
+      { id: "mystery-ok", state: "completed", tierId: "openrouter-glm" },
+    ] as const;
+    for (const spec of jobSpecs) {
+      appendUtilityRouteRequest(
+        runDir,
+        createUtilityRouteRequest({
+          acceptanceCriteria: ["report evidence"],
+          authority: {},
+          id: spec.id,
+          kind: "inspect",
+          objective: `Inspect one bounded source file for ${spec.id}`,
+          readScope: ["src"],
+          requester: "claude",
+          requiredCapabilities: ["inspect"],
+          risk: "low",
+          writeScope: [],
+        })
+      );
+      transitionUtilityJob(runDir, spec.id, "routed-utility", {
+        decision: {
+          reason: "utility-eligible",
+          target: "utility",
+          tierId: spec.tierId,
+        },
+        routeEpoch: 3,
+      });
+      claimUtilityJob(runDir, 3, {
+        jobId: spec.id,
+        workerId: "tier-test",
+        workerPid: process.pid,
+      });
+      transitionUtilityJob(runDir, spec.id, "running");
+      transitionUtilityJob(runDir, spec.id, spec.state, {
+        result: {
+          artifactRefs: [],
+          checks: [],
+          filesChanged: [],
+          status: spec.state,
+          summary: `${spec.id} finished`,
+          ...(spec.state === "failed" ? { blocker: "bounded failure" } : {}),
+        },
+      });
+    }
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["review independently"],
+        authority: {},
+        id: "review-kept",
+        kind: "inspect",
+        objective: "Review the derivation independently",
+        readScope: ["src"],
+        requester: "codex",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+    transitionUtilityJob(runDir, "review-kept", "routed-requester", {
+      decision: { reason: "review-stays-with-requester", target: "requester" },
+      routeEpoch: 3,
+    });
+
+    const direct = readUtilityObservability(runDir, "utility-direct");
+    const nanny = readUtilityObservability(runDir, "utility-nanny");
+    const auPair = readUtilityObservability(runDir, "utility-au-pair");
+    const untiered = readUtilityObservability(runDir);
+    expect(direct).toMatchObject({ completed: 1, failed: 1, jobsTotal: 2 });
+    expect(nanny).toMatchObject({ completed: 1, failed: 0, jobsTotal: 1 });
+    expect(auPair).toMatchObject({ completed: 1, failed: 0, jobsTotal: 1 });
+    // Requester-returned review is nobody's executed work; the unknown-tier
+    // job is counted untiered but claimed by no tier: the board must surface
+    // it as unattributed rather than defaulting it into a helper row.
+    expect(untiered).toMatchObject({ completed: 4, failed: 1, jobsTotal: 5 });
+    const tierTerminal =
+      direct.completed +
+      direct.failed +
+      nanny.completed +
+      nanny.failed +
+      auPair.completed +
+      auPair.failed;
+    expect(untiered.completed + untiered.failed - tierTerminal).toBe(1);
+    const mysteryLabels = untiered.transcript
+      .filter((entry) => entry.jobId === "mystery-ok")
+      .map((entry) => entry.label);
+    expect(mysteryLabels).toEqual(["CLAUDE→UNATTRIBUTED", "UNATTRIBUTED OK"]);
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("utility observability totals worker usage and builds a safe transcript", () => {
   const runDir = mkdtempSync(join(tmpdir(), "utility-observability-"));
   try {
@@ -219,7 +319,7 @@ test("utility observability totals worker usage and builds a safe transcript", (
       decision: {
         reason: "utility-eligible",
         target: "utility",
-        tierId: "openrouter-glm",
+        tierId: "utility-au-pair",
       },
       routeEpoch: 7,
     });
@@ -268,7 +368,11 @@ test("utility observability totals worker usage and builds a safe transcript", (
     appendUtilityRouteRequest(runDir, failed);
     transitionUtilityJob(runDir, failed.id, "routed-utility", {
       at: "2026-07-26T01:01:00.100Z",
-      decision: { reason: "utility-eligible", target: "utility" },
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-au-pair",
+      },
       routeEpoch: 7,
     });
     transitionUtilityJob(runDir, failed.id, "failed", {
