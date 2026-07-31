@@ -2822,17 +2822,25 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   const typed: Array<{ pane: string; text: string }> = [];
   let sessionStarted = false;
-  let pollCount = 0;
+  let startupStage: "bypass-accept" | "bypass-exit" | "dev" | "ready" = "dev";
   // Synthetic unit-only variant; producer-shape certification uses the captured fixture above.
   const syntheticDevChannelsPrompt = [
     "WARNING: Loading development channels",
     "",
     "--dangerously-load-development-channels is for local channel development only.",
     "",
-    "1. I am using this for local development",
+    "❯ 1. I am using this for local development",
   ].join("\n");
-  const bypassPrompt =
-    "WARNING: Claude Code running in Bypass Permissions mode";
+  const bypassExitPrompt = [
+    "WARNING: Claude Code running in Bypass Permissions mode",
+    "❯ 1. No, exit",
+    "  2. Yes, I accept",
+  ].join("\n");
+  const bypassAcceptPrompt = [
+    "WARNING: Claude Code running in Bypass Permissions mode",
+    "  1. No, exit",
+    "❯ 2. Yes, I accept",
+  ].join("\n");
   const opts = makePairedOptions();
   const manifest = createRunManifest({
     cwd: "/repo",
@@ -2855,14 +2863,13 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
     ["--tmux", "--proof", "verify with tests"],
     {
       capturePane: () => {
-        pollCount += 1;
-        if (pollCount === 1) {
+        if (startupStage === "dev") {
           return syntheticDevChannelsPrompt;
         }
-        if (pollCount === 2) {
-          return `${syntheticDevChannelsPrompt}\n\n${bypassPrompt}`;
+        if (startupStage === "bypass-exit") {
+          return bypassExitPrompt;
         }
-        return "❯ ";
+        return startupStage === "bypass-accept" ? bypassAcceptPrompt : "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -2882,6 +2889,13 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
       },
       sendKeys: (pane: string, keys: string[]) => {
         keyCalls.push({ keys, pane });
+        if (startupStage === "dev" && keys[0] === "Enter") {
+          startupStage = "bypass-exit";
+        } else if (startupStage === "bypass-exit" && keys[0] === "Down") {
+          startupStage = "bypass-accept";
+        } else if (startupStage === "bypass-accept" && keys[0] === "Enter") {
+          startupStage = "ready";
+        }
       },
       sendText: (pane: string, text: string) => {
         typed.push({ pane, text });
@@ -2937,14 +2951,14 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
 test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   let sessionStarted = false;
-  let pollCount = 0;
+  let devChannelConfirmed = false;
   // Synthetic unit-only wrapping variant; it does not certify Claude's producer shape.
   const syntheticDevChannelsPrompt = [
     "WARNING: Loading development channels",
     "",
     "--dangerously-load-development-channels is for local channel development only.",
     "",
-    "1. I am using this for local",
+    "❯ 1. I am using this for local",
     "development",
   ].join("\n");
   const manifest = createRunManifest({
@@ -2968,11 +2982,7 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
     ["--tmux", "--proof", "verify with tests"],
     {
       capturePane: () => {
-        pollCount += 1;
-        if (pollCount === 1) {
-          return syntheticDevChannelsPrompt;
-        }
-        return "❯ ";
+        return devChannelConfirmed ? "❯ " : syntheticDevChannelsPrompt;
       },
       cwd: "/repo",
       env: {},
@@ -2992,6 +3002,9 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
       },
       sendKeys: (pane: string, keys: string[]) => {
         keyCalls.push({ keys, pane });
+        if (keys[0] === "Enter") {
+          devChannelConfirmed = true;
+        }
       },
       sendText: (): void => undefined,
       sleep: () => Promise.resolve(),
@@ -3019,18 +3032,326 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
   });
 });
 
+test("Claude dev-channel confirmation settles before retrying a swallowed key", async () => {
+  const modal = [
+    "Permission deny rule: stable startup warning",
+    "WARNING: Loading development channels",
+    "--dangerously-load-development-channels is for local channel development only.",
+    "❯ 1. I am using this for local development",
+    "  2. Exit",
+  ].join("\n");
+  let elapsedMs = 0;
+  let enterCalls = 0;
+  let paneText = modal;
+  let windowActivity = 100;
+  const sentAt: number[] = [];
+
+  await tmuxInternals.unblockClaudePane("%0", {
+    capturePane: () => paneText,
+    capturePaneSnapshot: () => ({
+      activeClients: 0,
+      cursor: { x: -1, y: -1 },
+      pipeOpen: false,
+      text: paneText,
+      windowActivity,
+    }),
+    nowMs: () => elapsedMs,
+    sendKeys: (_pane, keys) => {
+      expect(keys).toEqual(["Enter"]);
+      enterCalls += 1;
+      sentAt.push(elapsedMs);
+      if (enterCalls === 2) {
+        paneText = "❯ ";
+        windowActivity += 1;
+      }
+    },
+    sleep: (ms) => {
+      elapsedMs += ms;
+      return Promise.resolve();
+    },
+  });
+
+  expect(enterCalls).toBe(2);
+  expect(sentAt).toEqual([1000, 2000]);
+});
+
+test("Claude dev-channel confirmation never retries after activity advances on a stale frame", async () => {
+  const modal = [
+    "WARNING: Loading development channels",
+    "--dangerously-load-development-channels is for local channel development only.",
+    "❯ 1. I am using this for local development",
+    "  2. Exit",
+  ].join("\n");
+  let elapsedMs = 0;
+  let enterCalls = 0;
+  let postSendCaptures = 0;
+
+  await tmuxInternals.unblockClaudePane("%0", {
+    capturePane: () => modal,
+    capturePaneSnapshot: () => {
+      if (enterCalls === 0) {
+        return {
+          activeClients: 0,
+          cursor: { x: -1, y: -1 },
+          pipeOpen: false,
+          text: modal,
+          windowActivity: 100,
+        };
+      }
+      postSendCaptures += 1;
+      return {
+        activeClients: 0,
+        cursor: { x: -1, y: -1 },
+        pipeOpen: false,
+        text: postSendCaptures === 1 ? modal : "❯ ",
+        windowActivity: 101,
+      };
+    },
+    nowMs: () => elapsedMs,
+    sendKeys: (_pane, keys) => {
+      expect(keys).toEqual(["Enter"]);
+      enterCalls += 1;
+    },
+    sleep: (ms) => {
+      elapsedMs += ms;
+      return Promise.resolve();
+    },
+  });
+
+  expect(enterCalls).toBe(1);
+  expect(postSendCaptures).toBe(2);
+});
+
+test("Claude dev-channel confirmation fails closed after bounded swallowed keys", async () => {
+  const modal = [
+    "WARNING: Loading development channels",
+    "--dangerously-load-development-channels is for local channel development only.",
+    "❯ 1. I am using this for local development",
+    "  2. Exit",
+  ].join("\n");
+  let elapsedMs = 0;
+  let enterCalls = 0;
+
+  await expect(
+    tmuxInternals.unblockClaudePane("%0", {
+      capturePane: () => modal,
+      capturePaneSnapshot: () => ({
+        activeClients: 0,
+        cursor: { x: -1, y: -1 },
+        pipeOpen: false,
+        text: modal,
+        windowActivity: 100,
+      }),
+      nowMs: () => elapsedMs,
+      sendKeys: (_pane, keys) => {
+        expect(keys).toEqual(["Enter"]);
+        enterCalls += 1;
+      },
+      sleep: (ms) => {
+        elapsedMs += ms;
+        return Promise.resolve();
+      },
+    })
+  ).rejects.toThrow(
+    "development-channel confirmation remained active after 3 positively detected attempts"
+  );
+
+  expect(enterCalls).toBe(3);
+  expect(elapsedMs).toBe(4000);
+});
+
+test("Claude dev-channel confirmation waits through an incomplete modal redraw", async () => {
+  const incompleteModal = [
+    "WARNING: Loading development channels",
+    "--dangerously-load-development-channels is for local channel development only.",
+    "  1. I am using this for local development",
+    "  2. Exit",
+  ].join("\n");
+  const selectedModal = incompleteModal.replace(
+    "  1. I am using",
+    "❯ 1. I am using"
+  );
+  let captures = 0;
+  let confirmed = false;
+  let keyCalls = 0;
+
+  await tmuxInternals.unblockClaudePane("%0", {
+    capturePane: () => selectedModal,
+    capturePaneSnapshot: () => {
+      captures += 1;
+      let text = selectedModal;
+      if (confirmed) {
+        text = "❯ ";
+      } else if (captures <= 2) {
+        text = incompleteModal;
+      }
+      return {
+        activeClients: 0,
+        cursor: { x: -1, y: -1 },
+        pipeOpen: false,
+        text,
+        windowActivity: captures <= 2 ? 100 : 101,
+      };
+    },
+    nowMs: () => 0,
+    sendKeys: (_pane, keys) => {
+      expect(keys).toEqual(["Enter"]);
+      keyCalls += 1;
+      confirmed = true;
+    },
+    sleep: () => Promise.resolve(),
+  });
+
+  expect(keyCalls).toBe(1);
+});
+
+test("Claude dev-channel confirmation never enters when exit is selected", async () => {
+  const modal = [
+    "WARNING: Loading development channels",
+    "--dangerously-load-development-channels is for local channel development only.",
+    "  1. I am using this for local development",
+    "❯ 2. Exit",
+  ].join("\n");
+  let keyCalls = 0;
+
+  await expect(
+    tmuxInternals.unblockClaudePane("%0", {
+      capturePane: () => modal,
+      capturePaneSnapshot: () => ({
+        activeClients: 0,
+        cursor: { x: -1, y: -1 },
+        pipeOpen: false,
+        text: modal,
+        windowActivity: 100,
+      }),
+      nowMs: () => Date.now(),
+      sendKeys: () => {
+        keyCalls += 1;
+      },
+      sleep: () => Promise.resolve(),
+    })
+  ).rejects.toThrow(
+    "development-channel exit option was selected; refused to send Enter"
+  );
+
+  expect(keyCalls).toBe(0);
+});
+
+test("Claude dev-channel confirmation ignores a stale modal above the current composer", async () => {
+  const paneText = [
+    "WARNING: Loading development channels",
+    "❯ 1. I am using this for local development",
+    "  2. Exit",
+    "",
+    "❯ ",
+  ].join("\n");
+  let keyCalls = 0;
+
+  await tmuxInternals.unblockClaudePane("%0", {
+    capturePane: () => paneText,
+    capturePaneSnapshot: () => ({
+      activeClients: 0,
+      cursor: { x: 2, y: 4 },
+      pipeOpen: false,
+      text: paneText,
+      windowActivity: 101,
+    }),
+    nowMs: () => Date.now(),
+    sendKeys: () => {
+      keyCalls += 1;
+    },
+    sleep: () => Promise.resolve(),
+  });
+
+  expect(keyCalls).toBe(0);
+});
+
+test("Claude bypass confirmation never enters when navigation is swallowed", async () => {
+  const modal = [
+    "Bypass Permissions mode",
+    "❯ 1. No, exit",
+    "  2. Yes, I accept",
+  ].join("\n");
+  const keys: string[][] = [];
+
+  await expect(
+    tmuxInternals.unblockClaudePane("%0", {
+      capturePane: () => modal,
+      capturePaneSnapshot: () => ({
+        activeClients: 0,
+        cursor: { x: -1, y: -1 },
+        pipeOpen: false,
+        text: modal,
+        windowActivity: 100,
+      }),
+      nowMs: () => 0,
+      sendKeys: (_pane, sentKeys) => keys.push(sentKeys),
+      sleep: () => Promise.resolve(),
+    })
+  ).rejects.toThrow(
+    "bypass-permissions confirmation did not reach a verified next state"
+  );
+
+  expect(keys).toEqual([["Down"]]);
+});
+
+test("Claude bypass confirmation enters only after a fresh selected-accept capture", async () => {
+  const exitSelected = [
+    "Bypass Permissions mode",
+    "❯ 1. No, exit",
+    "  2. Yes, I accept",
+  ].join("\n");
+  const acceptSelected = [
+    "Bypass Permissions mode",
+    "  1. No, exit",
+    "❯ 2. Yes, I accept",
+  ].join("\n");
+  const keys: string[][] = [];
+  let stage: "accept" | "exit" | "ready" = "exit";
+  const currentText = (): string => {
+    if (stage === "exit") {
+      return exitSelected;
+    }
+    return stage === "accept" ? acceptSelected : "❯ ";
+  };
+
+  await tmuxInternals.unblockClaudePane("%0", {
+    capturePane: currentText,
+    capturePaneSnapshot: () => ({
+      activeClients: 0,
+      cursor: { x: -1, y: -1 },
+      pipeOpen: false,
+      text: currentText(),
+      windowActivity: stage === "exit" ? 100 : 101,
+    }),
+    nowMs: () => 0,
+    sendKeys: (_pane, sentKeys) => {
+      keys.push(sentKeys);
+      if (sentKeys[0] === "Down") {
+        stage = "accept";
+      } else if (sentKeys[0] === "Enter") {
+        stage = "ready";
+      }
+    },
+    sleep: () => Promise.resolve(),
+  });
+
+  expect(keys).toEqual([["Down"], ["Enter"]]);
+});
+
 test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
   const calls: string[][] = [];
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   let sessionStarted = false;
   let pollCount = 0;
+  let delayedDevChannelConfirmed = false;
   // Synthetic unit-only delay variant; it does not certify Claude's producer shape.
   const syntheticDevChannelsPrompt = [
     "WARNING: Loading development channels",
     "",
     "--dangerously-load-development-channels is for local channel development only.",
     "",
-    "1. I am using this for local development",
+    "❯ 1. I am using this for local development",
   ].join("\n");
   const manifest = createRunManifest({
     cwd: "/repo",
@@ -3062,16 +3383,10 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
         if (pollCount < 5) {
           return "Permission deny rule: stable startup warning";
         }
-        if (pollCount === 5) {
+        if (!delayedDevChannelConfirmed) {
           return `❯\n\n${syntheticDevChannelsPrompt}`;
         }
-        return [
-          syntheticDevChannelsPrompt,
-          "",
-          "❯ \u001B[2mTry a suggested prompt\u001B[22m",
-          "────────────────────────",
-          "? for shortcuts",
-        ].join("\n");
+        return "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -3091,6 +3406,9 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
       },
       sendKeys: (pane: string, keys: string[]) => {
         keyCalls.push({ keys, pane });
+        if (keys[0] === "Enter") {
+          delayedDevChannelConfirmed = true;
+        }
       },
       sendText: (): void => undefined,
       sleep: () => Promise.resolve(),
@@ -3128,12 +3446,18 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
 test("runInTmux confirms the current Claude bypass prompt wording", async () => {
   const keyCalls: Array<{ keys: string[]; pane: string }> = [];
   let sessionStarted = false;
-  let pollCount = 0;
-  const bypassPrompt = [
+  let stage: "accept" | "exit" | "ready" = "exit";
+  const bypassExitPrompt = [
     "Bypass Permissions mode",
     "",
-    "1. No, exit",
-    "2. Yes, I accept",
+    "❯ 1. No, exit",
+    "  2. Yes, I accept",
+  ].join("\n");
+  const bypassAcceptPrompt = [
+    "Bypass Permissions mode",
+    "",
+    "  1. No, exit",
+    "❯ 2. Yes, I accept",
   ].join("\n");
   const manifest = createRunManifest({
     cwd: "/repo",
@@ -3156,11 +3480,10 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
     ["--tmux", "--proof", "verify with tests"],
     {
       capturePane: () => {
-        pollCount += 1;
-        if (pollCount === 1) {
-          return bypassPrompt;
+        if (stage === "exit") {
+          return bypassExitPrompt;
         }
-        return "❯ ";
+        return stage === "accept" ? bypassAcceptPrompt : "❯ ";
       },
       cwd: "/repo",
       env: {},
@@ -3180,6 +3503,11 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
       },
       sendKeys: (pane: string, keys: string[]) => {
         keyCalls.push({ keys, pane });
+        if (keys[0] === "Down") {
+          stage = "accept";
+        } else if (keys[0] === "Enter") {
+          stage = "ready";
+        }
       },
       sendText: (): void => undefined,
       sleep: () => Promise.resolve(),

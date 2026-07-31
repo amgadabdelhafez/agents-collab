@@ -187,8 +187,11 @@ def prepare_input_prompt() -> None:
     time.sleep(1)
     emit("WARNING: Loading development channels")
     emit("--dangerously-load-development-channels is for local channel development only.")
-    emit("1. I am using this for local development")
+    emit("❯ 1. I am using this for local development")
     emit("CLAUDE_DEV_CHANNEL_PROMPT")
+    # Reproduce Claude's early-input race: the fully rendered modal can appear
+    # before its input handler is ready, so the first carriage return vanishes.
+    read_until(b"\r")
     read_until(b"\r")
     emit("CLAUDE_DEV_CHANNEL_CONFIRMED")
     sys.stdout.write("\x1b[?2004h")

@@ -117,6 +117,8 @@ const CLAUDE_BYPASS_ACCEPT = "Yes, I accept";
 const CLAUDE_EXIT_OPTION = "No, exit";
 const CLAUDE_DEV_CHANNELS_PROMPT = "WARNING: Loading development channels";
 const CLAUDE_DEV_CHANNELS_CONFIRM = "I am using this for local development";
+const CLAUDE_DEV_CHANNEL_CONFIRM_MAX_ATTEMPTS = 3;
+const CLAUDE_MODAL_SETTLE_INTERVALS = 4;
 const CLAUDE_PROMPT_MAX_POLLS = 80;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const MAX_LAUNCH_BOOTSTRAP_BYTES = 1024;
@@ -2118,7 +2120,12 @@ const stablePaneTarget = (result: SpawnResult, fallback: string): string =>
   stablePaneId(result) ?? fallback;
 
 const normalizePaneText = (text: string): string =>
-  text.replace(/\s+/g, " ").trim();
+  text
+    .split(LINE_SPLIT_RE)
+    .map(stripDimSpans)
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .trim();
 
 type ClaudeStartupPrompt = "bypass" | "dev-channel" | "trust";
 
@@ -2143,6 +2150,76 @@ const detectClaudePrompt = (text: string): ClaudeStartupPrompt | undefined => {
   }
   return undefined;
 };
+
+type ClaudeModalSelection = "confirm" | "exit" | "ambiguous";
+
+interface ClaudeModalStability {
+  activity: number | undefined;
+  observations: number;
+}
+
+const CLAUDE_SELECTED_ROW_RE = /^\s*❯(?:\s|$)/;
+const CLAUDE_SELECTED_DEV_CONFIRM_RE =
+  /❯\s*1\.\s*I am using this for local development(?:\s|$)/;
+const CLAUDE_SELECTED_DEV_EXIT_RE = /❯\s*2\.(?:\s|$)/;
+const CLAUDE_SELECTED_BYPASS_CONFIRM_RE = /❯\s*2\.\s*Yes, I accept(?:\s|$)/;
+const CLAUDE_SELECTED_BYPASS_EXIT_RE = /❯\s*1\.\s*No, exit(?:\s|$)/;
+
+const activeClaudeModalTail = (text: string, marker: string): string[] => {
+  const lines = text.split(LINE_SPLIT_RE).map(stripDimSpans);
+  let markerIndex = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index]?.includes(marker)) {
+      markerIndex = index;
+    }
+  }
+  return markerIndex === -1 ? [] : lines.slice(markerIndex);
+};
+
+const readClaudeModalSelection = (
+  text: string,
+  prompt: "bypass" | "dev-channel"
+): ClaudeModalSelection => {
+  const marker =
+    prompt === "dev-channel" ? CLAUDE_DEV_CHANNELS_PROMPT : CLAUDE_BYPASS_MODE;
+  const tail = activeClaudeModalTail(text, marker);
+  const selectedRows = tail.filter((line) => CLAUDE_SELECTED_ROW_RE.test(line));
+  if (selectedRows.length !== 1) {
+    return "ambiguous";
+  }
+  const normalized = tail.join("\n").replace(/\s+/g, " ").trim();
+  if (prompt === "dev-channel") {
+    if (CLAUDE_SELECTED_DEV_CONFIRM_RE.test(normalized)) {
+      return "confirm";
+    }
+    return CLAUDE_SELECTED_DEV_EXIT_RE.test(normalized) ? "exit" : "ambiguous";
+  }
+  if (CLAUDE_SELECTED_BYPASS_CONFIRM_RE.test(normalized)) {
+    return "confirm";
+  }
+  return CLAUDE_SELECTED_BYPASS_EXIT_RE.test(normalized) ? "exit" : "ambiguous";
+};
+
+const observeClaudeModal = (
+  previous: ClaudeModalStability | undefined,
+  activity: number | undefined
+): ClaudeModalStability => {
+  if (
+    !previous ||
+    (previous.activity !== undefined &&
+      activity !== undefined &&
+      activity !== previous.activity)
+  ) {
+    return { activity, observations: 1 };
+  }
+  return {
+    activity: activity ?? previous.activity,
+    observations: previous.observations + 1,
+  };
+};
+
+const isClaudeModalSettled = (state: ClaudeModalStability): boolean =>
+  state.observations > CLAUDE_MODAL_SETTLE_INTERVALS;
 
 const CLAUDE_READY_TAIL_LINES = 8;
 const CLAUDE_INPUT_PREFIX = "❯";
@@ -2443,9 +2520,19 @@ const unblockClaudePane = async (
   >
 ): Promise<void> => {
   const handledPrompts = new Set<ClaudeStartupPrompt>();
+  let bypassConfirmSent = false;
+  let bypassInitialSelection: ClaudeModalSelection | undefined;
+  let bypassInitialStability: ClaudeModalStability | undefined;
+  let bypassNavigationSent = false;
+  let devChannelConfirmAttempts = 0;
+  let devChannelPreConfirmStability: ClaudeModalStability | undefined;
+  let devChannelRetryStability: ClaudeModalStability | undefined;
+  let devChannelRetrySuppressed = false;
+  let devChannelSendActivity: number | undefined;
   for (let attempt = 0; attempt < CLAUDE_PROMPT_MAX_POLLS; attempt += 1) {
     const paneState = deps.capturePaneSnapshot(pane);
     const paneText = paneState?.text ?? deps.capturePane(pane, true);
+    const windowActivity = paneState?.windowActivity;
     const input = inspectClaudeInput(paneText, paneState?.cursor);
     if (input.kind === "ready-empty") {
       return;
@@ -2491,26 +2578,142 @@ const unblockClaudePane = async (
         `Claude pane "${pane}" suggestion could not be verified as an empty composer; refused to paste the launch bootstrap.`
       );
     }
-    if (
-      (prompt === "dev-channel" || prompt === "trust") &&
-      !handledPrompts.has(prompt)
-    ) {
+    if (prompt !== undefined && prompt !== "dev-channel") {
+      devChannelConfirmAttempts = 0;
+      devChannelPreConfirmStability = undefined;
+      devChannelRetryStability = undefined;
+      devChannelRetrySuppressed = false;
+      devChannelSendActivity = undefined;
+    }
+    if (prompt === "dev-channel") {
+      const selection = readClaudeModalSelection(paneText, prompt);
+      if (selection === "exit") {
+        throw new Error(
+          `Claude pane "${pane}" development-channel exit option was selected; refused to send Enter or paste the launch bootstrap.`
+        );
+      }
+      if (selection === "ambiguous") {
+        devChannelPreConfirmStability = undefined;
+        if (devChannelConfirmAttempts > 0) {
+          devChannelRetrySuppressed = true;
+        }
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (devChannelConfirmAttempts === 0) {
+        devChannelPreConfirmStability = observeClaudeModal(
+          devChannelPreConfirmStability,
+          windowActivity
+        );
+        if (!isClaudeModalSettled(devChannelPreConfirmStability)) {
+          await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+          continue;
+        }
+        deps.sendKeys(pane, ["Enter"]);
+        devChannelConfirmAttempts = 1;
+        devChannelPreConfirmStability = undefined;
+        devChannelRetryStability = undefined;
+        devChannelSendActivity = windowActivity;
+        continue;
+      }
+      if (
+        devChannelRetrySuppressed ||
+        devChannelSendActivity === undefined ||
+        windowActivity === undefined ||
+        windowActivity !== devChannelSendActivity
+      ) {
+        devChannelRetrySuppressed = true;
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      devChannelRetryStability = observeClaudeModal(
+        devChannelRetryStability,
+        windowActivity
+      );
+      if (!isClaudeModalSettled(devChannelRetryStability)) {
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (
+        devChannelConfirmAttempts >= CLAUDE_DEV_CHANNEL_CONFIRM_MAX_ATTEMPTS
+      ) {
+        throw new Error(
+          `Claude pane "${pane}" development-channel confirmation remained active after ${CLAUDE_DEV_CHANNEL_CONFIRM_MAX_ATTEMPTS} positively detected attempts; refused to paste the launch bootstrap.`
+        );
+      }
+      deps.sendKeys(pane, ["Enter"]);
+      devChannelConfirmAttempts += 1;
+      devChannelRetryStability = undefined;
+      devChannelSendActivity = windowActivity;
+      continue;
+    }
+    if (prompt === "bypass") {
+      const selection = readClaudeModalSelection(paneText, prompt);
+      if (bypassConfirmSent) {
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (bypassNavigationSent) {
+        if (selection === "confirm") {
+          deps.sendKeys(pane, ["Enter"]);
+          bypassConfirmSent = true;
+          continue;
+        }
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (selection === "ambiguous") {
+        bypassInitialSelection = undefined;
+        bypassInitialStability = undefined;
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (selection !== bypassInitialSelection) {
+        bypassInitialSelection = selection;
+        bypassInitialStability = undefined;
+      }
+      bypassInitialStability = observeClaudeModal(
+        bypassInitialStability,
+        windowActivity
+      );
+      if (!isClaudeModalSettled(bypassInitialStability)) {
+        await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
+        continue;
+      }
+      if (selection === "exit") {
+        deps.sendKeys(pane, ["Down"]);
+        bypassNavigationSent = true;
+        continue;
+      }
+      deps.sendKeys(pane, ["Enter"]);
+      bypassConfirmSent = true;
+      continue;
+    }
+    if (prompt === "trust" && !handledPrompts.has(prompt)) {
       deps.sendKeys(pane, ["Enter"]);
       handledPrompts.add(prompt);
       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
       continue;
     }
-    if (prompt === "bypass" && !handledPrompts.has(prompt)) {
-      deps.sendKeys(pane, ["Down"]);
-      await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
-      deps.sendKeys(pane, ["Enter"]);
-      handledPrompts.add(prompt);
-      await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
-      continue;
+    if (devChannelConfirmAttempts > 0 && prompt === undefined) {
+      devChannelRetrySuppressed = true;
     }
     if (attempt + 1 < CLAUDE_PROMPT_MAX_POLLS) {
       await deps.sleep(CLAUDE_PROMPT_POLL_DELAY_MS);
     }
+  }
+  if (devChannelConfirmAttempts > 0) {
+    const detail = devChannelRetrySuppressed
+      ? "pane activity or an ambiguous redraw followed confirmation"
+      : "the selected modal never transitioned";
+    throw new Error(
+      `Claude pane "${pane}" development-channel confirmation could not be acknowledged because ${detail}; refused to retry into an uncertain input surface or paste the launch bootstrap.`
+    );
+  }
+  if (bypassNavigationSent || bypassConfirmSent) {
+    throw new Error(
+      `Claude pane "${pane}" bypass-permissions confirmation did not reach a verified next state; refused to send another key or paste the launch bootstrap.`
+    );
   }
   throw new Error(
     `Claude pane "${pane}" did not reach an input-ready prompt within ${CLAUDE_PROMPT_MAX_POLLS * CLAUDE_PROMPT_POLL_DELAY_MS}ms.`
