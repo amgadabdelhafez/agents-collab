@@ -68,3 +68,20 @@
         remainder == 1, `UNATTRIBUTED` labels); three legacy fixtures updated to
         carry the `tierId` the real producer writes (run-108 evidence: every
         executed job carried one). Full suite 1,375 pass / 0 fail.
+
+- [ ] T-08: Bound the observability reader's per-tick cost. Every governess tick
+      now re-reads and re-parses the full utility events journal five times
+      (untiered + direct + nanny + au-pair snapshots, plus routing), and the
+      journal grows for the life of a run. Share one parsed snapshot across the
+      per-tier calls (or cache keyed on file size+mtime) so board refresh stays
+      O(journal) once per tick, not five times. Supervisor-filed 2026-07-31
+      while implementing T-07; display-only today but the cost grows linearly
+      with run length.
+
+- [ ] T-09: Extend fail-closed attribution to the recon pane. T-07 made the
+      governess board label unknown/missing tiers `Unattributed`, but
+      `recon-pane.ts` still calls `utilityRoleName` directly, so the same job
+      renders `Au Pair` there. One semantics everywhere: adopt the
+      observability layer's `attributionName` (or move it somewhere shared).
+      Supervisor-filed 2026-07-31; deliberately left out of the T-07 change to
+      keep its blast radius inside the observability layer.
