@@ -1,15 +1,10 @@
 import { spawnSync } from "node:child_process";
-import {
-  access,
-  chmod,
-  copyFile,
-  mkdir,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import type { BigIntStats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 const BIN_DIR = join(homedir(), ".local", "bin");
 const IS_WINDOWS = process.platform === "win32";
@@ -27,6 +22,196 @@ const TMUX_DEFAULT_MODE_NOTE =
 const TMUX_MACOS_HINT = "brew install tmux";
 const TMUX_LINUX_HINT = "your package manager (for example: apt install tmux)";
 const TMUX_VERSION_TIMEOUT_MS = 2000;
+const EXECUTABLE_MODE = 0o755;
+const COPY_BUFFER_BYTES = 1024 * 1024;
+
+type AtomicStage = (temporaryFile: FileHandle) => Promise<void>;
+
+interface OpenSource {
+  file: FileHandle;
+  snapshot: BigIntStats;
+}
+
+const temporaryInstallPath = (target: string): string =>
+  join(
+    dirname(target),
+    `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`
+  );
+
+const atomicInstallRegularFile = async (
+  target: string,
+  stage: AtomicStage,
+  platform: NodeJS.Platform = process.platform,
+  temporaryPath = temporaryInstallPath(target)
+): Promise<void> => {
+  await mkdir(dirname(target), { recursive: true });
+  if (dirname(temporaryPath) !== dirname(target)) {
+    throw new Error("Installer temporary file must share the target directory");
+  }
+  let temporaryFile: FileHandle | undefined;
+  let ownsTemporaryFile = false;
+
+  try {
+    temporaryFile = await open(temporaryPath, "wx", 0o600);
+    ownsTemporaryFile = true;
+    await stage(temporaryFile);
+    if (platform !== "win32") {
+      await temporaryFile.chmod(EXECUTABLE_MODE);
+    }
+    await temporaryFile.sync();
+    await temporaryFile.close();
+    temporaryFile = undefined;
+    await rename(temporaryPath, target);
+    ownsTemporaryFile = false;
+  } finally {
+    if (temporaryFile) {
+      await temporaryFile.close().catch(() => undefined);
+    }
+    if (ownsTemporaryFile) {
+      await rm(temporaryPath, { force: true });
+    }
+  }
+};
+
+const assertRegularSourceStats = (
+  source: string,
+  sourceStats: BigIntStats
+): void => {
+  if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
+    throw new Error(
+      `Built binary must be a regular non-symlink file: ${source}`
+    );
+  }
+};
+
+const sameFileIdentity = (left: BigIntStats, right: BigIntStats): boolean =>
+  left.dev === right.dev && left.ino === right.ino;
+
+const sameFileSnapshot = (left: BigIntStats, right: BigIntStats): boolean =>
+  sameFileIdentity(left, right) &&
+  left.size === right.size &&
+  left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs;
+
+const openRegularSource = async (source: string): Promise<OpenSource> => {
+  const initialPathStats = await lstat(source, { bigint: true });
+  assertRegularSourceStats(source, initialPathStats);
+  const sourceFile = await open(source, "r");
+
+  try {
+    const sourceStats = await sourceFile.stat({ bigint: true });
+    const currentPathStats = await lstat(source, { bigint: true });
+    assertRegularSourceStats(source, sourceStats);
+    assertRegularSourceStats(source, currentPathStats);
+    if (
+      !(
+        sameFileSnapshot(initialPathStats, sourceStats) &&
+        sameFileSnapshot(sourceStats, currentPathStats)
+      )
+    ) {
+      throw new Error(`Built binary changed while opening: ${source}`);
+    }
+    return { file: sourceFile, snapshot: sourceStats };
+  } catch (error) {
+    await sourceFile.close().catch(() => undefined);
+    throw error;
+  }
+};
+
+const copySourceSnapshot = async (
+  source: string,
+  openedSource: OpenSource,
+  targetFile: FileHandle
+): Promise<void> => {
+  if (openedSource.snapshot.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`Built binary is too large to install safely: ${source}`);
+  }
+  const expectedBytes = Number(openedSource.snapshot.size);
+  const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
+  let position = 0;
+
+  while (position < expectedBytes) {
+    const requestedBytes = Math.min(
+      buffer.byteLength,
+      expectedBytes - position
+    );
+    const { bytesRead } = await openedSource.file.read(
+      buffer,
+      0,
+      requestedBytes,
+      position
+    );
+    if (bytesRead === 0) {
+      throw new Error(`Built binary changed while copying: ${source}`);
+    }
+
+    let written = 0;
+    while (written < bytesRead) {
+      const result = await targetFile.write(
+        buffer,
+        written,
+        bytesRead - written,
+        position + written
+      );
+      if (result.bytesWritten === 0) {
+        throw new Error(`Could not stage built binary: ${source}`);
+      }
+      written += result.bytesWritten;
+    }
+    position += bytesRead;
+  }
+
+  const finalHandleStats = await openedSource.file.stat({ bigint: true });
+  const finalPathStats = await lstat(source, { bigint: true });
+  assertRegularSourceStats(source, finalPathStats);
+  if (
+    !(
+      sameFileSnapshot(openedSource.snapshot, finalHandleStats) &&
+      sameFileSnapshot(openedSource.snapshot, finalPathStats)
+    )
+  ) {
+    throw new Error(`Built binary changed while copying: ${source}`);
+  }
+};
+
+const installBuiltBinaryAt = async (
+  source: string,
+  target: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<void> => {
+  const openedSource = await openRegularSource(source);
+  let sourceFile: FileHandle | undefined = openedSource.file;
+
+  try {
+    await atomicInstallRegularFile(
+      target,
+      async (temporaryFile) => {
+        await copySourceSnapshot(source, openedSource, temporaryFile);
+        await sourceFile?.close();
+        sourceFile = undefined;
+      },
+      platform
+    );
+  } finally {
+    await sourceFile?.close().catch(() => undefined);
+  }
+};
+
+const installAliasAt = async (
+  target: string,
+  content: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<void> => {
+  await atomicInstallRegularFile(
+    target,
+    async (temporaryFile) => {
+      await temporaryFile.writeFile(content, {
+        encoding: "utf8",
+      });
+    },
+    platform
+  );
+};
 
 const tmuxInstallHint = (
   platform: NodeJS.Platform = process.platform
@@ -71,8 +256,10 @@ const findBuiltBinary = async (): Promise<string> => {
   for (const name of CANDIDATE_BINARIES) {
     const candidate = resolve(process.cwd(), name);
     try {
-      await access(candidate);
-      return candidate;
+      const candidateStats = await lstat(candidate);
+      if (!candidateStats.isSymbolicLink() && candidateStats.isFile()) {
+        return candidate;
+      }
     } catch {
       // try next candidate
     }
@@ -88,9 +275,7 @@ const installUnixAlias = async (
   const content =
     "#!/bin/sh\n" +
     `exec "$(dirname "$0")/${LOOP_BINARY_NAME}" ${onlyFlag} "$@"\n`;
-  await rm(target, { force: true });
-  await writeFile(target, content, "utf8");
-  await chmod(target, 0o755);
+  await installAliasAt(target, content);
   console.log(`Installed ${name} -> ${target}`);
 };
 
@@ -100,8 +285,7 @@ const installWindowsAlias = async (
 ): Promise<void> => {
   const target = join(BIN_DIR, name);
   const content = `@echo off\r\n"%~dp0${LOOP_BINARY_NAME}" ${onlyFlag} %*\r\n`;
-  await rm(target, { force: true });
-  await writeFile(target, content, "utf8");
+  await installAliasAt(target, content);
   console.log(`Installed ${name} -> ${target}`);
 };
 
@@ -124,17 +308,7 @@ const installBinary = async (): Promise<void> => {
   const target = join(BIN_DIR, LOOP_BINARY_NAME);
 
   await mkdir(BIN_DIR, { recursive: true });
-  await rm(target, { force: true });
-
-  if (IS_WINDOWS) {
-    await copyFile(source, target);
-  } else {
-    try {
-      await symlink(source, target);
-    } catch {
-      await copyFile(source, target);
-    }
-  }
+  await installBuiltBinaryAt(source, target);
 
   console.log(`Installed loop -> ${target}`);
   await installAliases();
@@ -142,7 +316,10 @@ const installBinary = async (): Promise<void> => {
 };
 
 export const installInternals = {
+  atomicInstallRegularFile,
   hasTmuxInstalled,
+  installAliasAt,
+  installBuiltBinaryAt,
   tmuxInstallHint,
   tmuxNudgeLines,
 };

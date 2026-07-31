@@ -1,0 +1,28 @@
+{
+  "task_id": "atomic-global-install",
+  "status": "created",
+  "bug_id": "mutable-global-install-symlink",
+  "regression_path": "evals/regression/mutable-global-install-symlink.md",
+  "prompt_path": "runs/atomic-global-install/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-07-31T04:24:34Z",
+  "markers": {
+    "enabled": [
+      "yes"
+    ],
+    "id": [
+      "mutable-global-install-symlink"
+    ],
+    "symptom": [
+      "Rebuilding the source worktree mutates the globally installed executable, and reinstalling first removes the live target."
+    ],
+    "guard": [
+      "`bun run test:file -- tests/install.test.ts`"
+    ]
+  },
+  "symptom_lines": [
+    "Rebuilding the source worktree mutates the globally installed executable, and reinstalling first removes the live target."
+  ],
+  "test_lines": [
+    "`bun run test:file -- tests/install.test.ts`"
+  ]
+}

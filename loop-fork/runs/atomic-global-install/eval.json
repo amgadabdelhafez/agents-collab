@@ -1,0 +1,34 @@
+{
+  "task_id": "atomic-global-install",
+  "status": "pass",
+  "required": ["unit", "full", "release"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/atomic-global-install/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/atomic-global-install/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/atomic-global-install/artifacts/unit/attempt-002.json"
+    },
+    "full": {
+      "status": "pass",
+      "artifact": "runs/atomic-global-install/artifacts/full/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/atomic-global-install/artifacts/full/attempt-002.log",
+      "latest_attempt_meta": "runs/atomic-global-install/artifacts/full/attempt-002.json"
+    },
+    "release": {
+      "status": "pass",
+      "artifact": "runs/atomic-global-install/artifacts/release/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/atomic-global-install/artifacts/release/attempt-001.log",
+      "latest_attempt_meta": "runs/atomic-global-install/artifacts/release/attempt-001.json"
+    }
+  }
+}

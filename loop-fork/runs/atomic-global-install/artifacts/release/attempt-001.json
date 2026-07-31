@@ -1,0 +1,16 @@
+{
+  "task_id": "atomic-global-install",
+  "dimension": "release",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-07-31T04:21:51Z",
+  "ended_at": "2026-07-31T04:22:17Z",
+  "artifact": "runs/atomic-global-install/artifacts/release/attempt-001.log",
+  "command": [
+    "../scripts/verify.sh",
+    "atomic-global-install",
+    "atomic-global-install"
+  ]
+}

@@ -398,6 +398,16 @@
       "eval_status": "pass",
       "ended_at": "2026-07-30T21:41:29Z",
       "spec_path": "specs/loop102-launch-hardening.md"
+    },
+    {
+      "id": "atomic-global-install",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-07-31T03:59:30Z",
+      "run_dir": "runs/atomic-global-install",
+      "eval_status": "pass",
+      "ended_at": "2026-07-31T04:24:34Z",
+      "spec_path": "specs/atomic-global-install.md"
     }
   ]
 }

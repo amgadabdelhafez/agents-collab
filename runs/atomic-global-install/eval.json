@@ -1,0 +1,26 @@
+{
+  "task": "atomic-global-install",
+  "verdict": "pass",
+  "evaluator": "atomic-install-review",
+  "checks": {
+    "focused": "15 passed, 0 failed",
+    "full_check": "passed",
+    "typecheck": "passed",
+    "build": "passed",
+    "full_test_suite": "passed",
+    "root_verify": "scripts/verify.sh passed with empty baseline allowlist",
+    "diff_check": "passed",
+    "independent_review": "CONCUR on exact corrected code and tests after initial DISSENT was addressed"
+  },
+  "baseline_failures": [],
+  "safety": {
+    "global_install_invoked": false,
+    "loop_launched": false,
+    "real_bin_dir_touched": false
+  },
+  "platform_evidence": {
+    "unix_macos_atomic_replace": "passed",
+    "windows_payload_and_fail_closed_branch": "passed",
+    "windows_filesystem_atomicity": "not certified from macOS; requires Windows CI or live proof"
+  }
+}

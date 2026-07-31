@@ -1,0 +1,31 @@
+task_id: atomic-global-install
+dimension: unit
+attempt: 001
+started_at: 2026-07-31T04:06:24Z
+command: bun run test:file -- tests/install.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/install.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/install.test.ts:
+(pass) tmux install hint uses brew on macOS
+(pass) tmux install hint stays generic on Linux
+(pass) tmux nudge explains why bare loop fails without tmux
+(pass) tmux install probe is kill-on-timeout bounded
+(pass) installs an immutable regular-file snapshot of the built binary [1.79ms]
+(pass) atomically replaces a prior symlink with a regular file [1.05ms]
+(pass) failed staging preserves the live target and leaves no temp file [0.55ms]
+(pass) failed publication cleans its fully staged temporary file [1.07ms]
+(pass) rejects symbolic-link built binaries without changing the target [1.11ms]
+(pass) concurrent readers observe only complete old or new snapshots [6.83ms]
+(pass) installs Unix and Windows aliases through regular-file replacement [1.22ms]
+
+ 11 pass
+ 0 fail
+ 50 expect() calls
+Ran 11 tests across 1 file. [34.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-07-31T04:06:24Z
