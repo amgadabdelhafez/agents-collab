@@ -1,7 +1,7 @@
 {
   "task_id": "active-launch-interlock",
   "feature": "active-launch-interlock",
-  "timestamp": "2026-07-31T19:02:00Z",
+  "timestamp": "2026-07-31T19:12:26Z",
   "verdict": "pass",
   "baseline_failures": [],
   "required": ["focused", "full", "compiled_smoke", "independent_review"],
@@ -22,9 +22,9 @@
       "reason": "hash-bound compiled binary admitted one of two fresh launches, then one of two cold resumes of the same run, preserving immutable run claim and charter SHA; distinct branch also launched and the 10,296-byte charter transported intact"
     },
     "independent_review": {
-      "status": "pending",
-      "method": "exact-SHA independent review",
-      "reason": "deployment held until the committed candidate is reviewed"
+      "status": "pass",
+      "method": "exact-SHA independent review of a93f7e4efcaa301b481db459baa63f8831902f5e",
+      "reason": "CONCUR after an independent two-process adversarial rerun produced one 7.0-second winner, one 5.2-second lock rejection, and only one workspace manifest"
     }
   },
   "acceptance": {
@@ -45,5 +45,12 @@
     "large_prompt_bytes": 10296,
     "live_run_106_mutated": false,
     "browser_invocations": 0
+  },
+  "deployment": {
+    "commit_sha": "a93f7e4efcaa301b481db459baa63f8831902f5e",
+    "binary_path": "/Users/amgad/.local/bin/loop",
+    "binary_sha256": "9aa496102c0d17d73381fa05543f4f34362bb2e144ba8197ff8eaf29c98e2f1b",
+    "version": "1.0.32",
+    "active_run_108_mutated": false
   }
 }

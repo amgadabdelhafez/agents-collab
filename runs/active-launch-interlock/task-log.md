@@ -24,8 +24,12 @@
   lint, typecheck, compiled build, 1,374 tests across 67 sorted files, and the
   empty named baseline allowlist. The hash-bound compiled smoke passed fresh
   contention, cold-resume contention, immutable claim/SHA preservation, and a
-  distinct worktree using a 10,296-byte charter. Exact-SHA review remains the
-  deployment gate.
+  distinct worktree using a 10,296-byte charter. Independent exact-SHA review
+  CONCURred on `a93f7e4efcaa301b481db459baa63f8831902f5e` after reproducing
+  one winner and one rejection across a seven-second critical section. That
+  exact binary was atomically deployed with SHA-256
+  `9aa496102c0d17d73381fa05543f4f34362bb2e144ba8197ff8eaf29c98e2f1b`;
+  active run 108 was not restarted or mutated.
 
 Regression: yes
 Regression id: paired-launch-singleflight
