@@ -85,3 +85,21 @@
       observability layer's `attributionName` (or move it somewhere shared).
       Supervisor-filed 2026-07-31; deliberately left out of the T-07 change to
       keep its blast radius inside the observability layer.
+
+- [ ] T-10: Refresh `manifest.codexThreadId` when codex re-threads mid-run. Run
+      108 spawned two codex threads within the same minute; the manifest kept
+      the first (`…8bda…`) while the surviving session wrote rollout
+      `…8d41…`, so `readAgentUsage` resolved nothing and the board rendered
+      `—` for every codex stat all run. The supervisor added a display-layer
+      fallback (newest run-scoped rollout) on `supervisor/t07-helper-counters`,
+      but the runtime should keep the manifest truthful: update codexThreadId
+      on re-thread/restart, and surface a `stale-thread` marker when the
+      recorded id matches no rollout. Supervisor-filed 2026-07-31.
+
+- [ ] T-11: Decide codex cost display for plan-covered models. With T-10/the
+      fallback, model+tokens render, but COST stays `—` because applyPricing
+      has no entry for gpt-5.6-sol (ChatGPT-plan, no marginal cost). Founder
+      now enforces a $100/loop est cap ($90 wind-down trigger) measured on the
+      board's Σ est, so decide: render $0.00 plan-covered, or add
+      founder-approved est-equivalent rates so Σ est reflects codex work.
+      Needs a founder rate decision, not just code. Supervisor-filed 2026-07-31.

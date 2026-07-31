@@ -706,6 +706,45 @@ const walkForThread = (
 
 // loop-fork gives each run its own CODEX_HOME, so the transcript lives under
 // <runDir>/codex-home/sessions before falling back to the user's global home.
+const newestRollout = (dir: string, depth: number): string | undefined => {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return undefined;
+  }
+  let newest: string | undefined;
+  let newestMtime = -1;
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    try {
+      const stat = statSync(full);
+      if (stat.isDirectory()) {
+        if (depth > 0) {
+          const found = newestRollout(full, depth - 1);
+          if (found) {
+            const foundMtime = statSync(found).mtimeMs;
+            if (foundMtime > newestMtime) {
+              newest = found;
+              newestMtime = foundMtime;
+            }
+          }
+        }
+      } else if (
+        entry.startsWith("rollout-") &&
+        entry.endsWith(".jsonl") &&
+        stat.mtimeMs > newestMtime
+      ) {
+        newest = full;
+        newestMtime = stat.mtimeMs;
+      }
+    } catch {
+      // Unreadable entry; skip it.
+    }
+  }
+  return newest;
+};
+
 const findCodexTranscript = (
   threadRef: string,
   codexHome?: string
@@ -720,6 +759,18 @@ const findCodexTranscript = (
       if (found) {
         return found;
       }
+    }
+  }
+  // The manifest's codexThreadId can go stale when codex re-threads mid-run
+  // (run 108: manifest kept the first spawn's thread; the surviving session
+  // wrote a different rollout, so the board showed "—" for every codex stat).
+  // A RUN-SCOPED codex home makes a fallback safe: every rollout under it
+  // belongs to this run, so the newest one is the live session. Never fall
+  // back on the global ~/.codex root, where rollouts span unrelated runs.
+  if (codexHome) {
+    const runScoped = join(codexHome, "sessions");
+    if (existsSync(runScoped)) {
+      return newestRollout(runScoped, 4);
     }
   }
   return undefined;

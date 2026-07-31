@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -438,6 +444,56 @@ test("summarizeCodex tracks reasoning effort from turn context", () => {
 
   const u = summarizeCodex(text);
   expect(u.reasoningEffort).toBe("medium");
+});
+
+test("readAgentUsage falls back to the newest run-scoped rollout when the manifest thread is stale", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-codex-home-stale-"));
+  const sessionDir = join(root, "sessions", "2026", "07", "31");
+  mkdirSync(sessionDir, { recursive: true });
+  const rollout = (thread: string, totalTokens: number): string =>
+    [
+      JSON.stringify({
+        payload: { effort: "high", model: "gpt-5.6-sol", type: "turn_context" },
+        type: "turn_context",
+      }),
+      JSON.stringify({
+        payload: {
+          info: {
+            total_token_usage: {
+              cached_input_tokens: 0,
+              input_tokens: totalTokens - 5,
+              output_tokens: 5,
+              total_tokens: totalTokens,
+            },
+            last_token_usage: { input_tokens: totalTokens - 5 },
+          },
+        },
+        type: "event_msg",
+      }),
+    ].join("\n");
+  const olderPath = join(
+    sessionDir,
+    "rollout-2026-07-31T00-00-00-019f-first-spawn.jsonl"
+  );
+  const newerPath = join(
+    sessionDir,
+    "rollout-2026-07-31T00-05-00-019f-survivor.jsonl"
+  );
+  writeFileSync(olderPath, rollout("019f-first-spawn", 100), "utf8");
+  writeFileSync(newerPath, rollout("019f-survivor", 4200), "utf8");
+  const past = new Date(Date.now() - 60_000);
+  utimesSync(olderPath, past, past);
+
+  // The manifest kept a thread id that matches no rollout on disk (run-108
+  // failure): a run-scoped home must fall back to its newest rollout instead
+  // of reporting "missing" and rendering dashes for every codex stat.
+  const stale = readAgentUsage("codex", "019f-thread-nobody-wrote", root);
+  expect(stale.totalTokens).toBe(4200);
+  expect(stale.model).toBe("gpt-5.6-sol");
+
+  // A matching thread still wins over recency.
+  const exact = readAgentUsage("codex", "019f-first-spawn", root);
+  expect(exact.totalTokens).toBe(100);
 });
 
 test("readAgentUsage applies Codex fast history credit multiplier", () => {
