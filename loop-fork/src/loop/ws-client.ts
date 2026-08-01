@@ -10,6 +10,7 @@ type CloseHandler = () => void;
 
 const WS_OPCODE_TEXT = 0x01;
 const WS_OPCODE_CONTINUATION = 0x00;
+const WS_OPCODE_BINARY = 0x02;
 const WS_OPCODE_CLOSE = 0x08;
 const WS_OPCODE_PING = 0x09;
 const WS_OPCODE_PONG = 0x0a;
@@ -92,8 +93,11 @@ export const connectWs = (url: string): Promise<WsClient> => {
 
   return new Promise((resolve, reject) => {
     let handshakeDone = false;
-    let httpBuffer = "";
+    let httpBuffer = new Uint8Array(0);
     let frameBuffer = new Uint8Array(0);
+    let fragmentedOpcode: number | undefined;
+    let fragmentedPayloads: Uint8Array[] = [];
+    let fragmentedPayloadLength = 0;
     let closed = false;
 
     const client: WsClient = {
@@ -116,6 +120,54 @@ export const connectWs = (url: string): Promise<WsClient> => {
       merged.set(existing, 0);
       merged.set(chunk, existing.length);
       return merged;
+    };
+
+    const headerEndIndex = (value: Uint8Array): number => {
+      for (let index = 0; index <= value.length - 4; index += 1) {
+        if (
+          value[index] === 13 &&
+          value[index + 1] === 10 &&
+          value[index + 2] === 13 &&
+          value[index + 3] === 10
+        ) {
+          return index;
+        }
+      }
+      return -1;
+    };
+
+    const closeForProtocolError = (detail: string): void => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      process.stderr.write(`[loop] ws-client: ${detail}\n`);
+      socket?.end(encodeCloseFrame());
+    };
+
+    const emitText = (payload: Uint8Array): void => {
+      client.onmessage?.(new TextDecoder().decode(payload));
+    };
+
+    const appendFragment = (payload: Uint8Array): void => {
+      fragmentedPayloads.push(payload);
+      fragmentedPayloadLength += payload.length;
+    };
+
+    const completeFragmentedMessage = (): void => {
+      const payload = new Uint8Array(fragmentedPayloadLength);
+      let offset = 0;
+      for (const fragment of fragmentedPayloads) {
+        payload.set(fragment, offset);
+        offset += fragment.length;
+      }
+      const opcode = fragmentedOpcode;
+      fragmentedOpcode = undefined;
+      fragmentedPayloads = [];
+      fragmentedPayloadLength = 0;
+      if (opcode === WS_OPCODE_TEXT) {
+        emitText(payload);
+      }
     };
 
     const processFrames = (): void => {
@@ -158,24 +210,52 @@ export const connectWs = (url: string): Promise<WsClient> => {
 
         frameBuffer = frameBuffer.slice(offset + payloadLen);
 
-        if (!fin || opcode === WS_OPCODE_CONTINUATION) {
-          if (!closed) {
-            closed = true;
-            process.stderr.write(
-              "[loop] ws-client: fragmented frames are unsupported\n"
-            );
-            socket?.end(encodeCloseFrame());
+        if (opcode >= WS_OPCODE_CLOSE) {
+          if (!(fin && payloadLen <= 125)) {
+            closeForProtocolError("invalid fragmented control frame");
+            return;
           }
-          return;
+          if (opcode === WS_OPCODE_CLOSE) {
+            closed = true;
+            socket?.end(encodeCloseFrame());
+          } else if (opcode === WS_OPCODE_PING) {
+            socket?.write(encodePongFrame(payload));
+          }
+          continue;
         }
 
-        if (opcode === WS_OPCODE_TEXT) {
-          client.onmessage?.(new TextDecoder().decode(payload));
-        } else if (opcode === WS_OPCODE_CLOSE) {
-          socket?.end(encodeCloseFrame());
-        } else if (opcode === WS_OPCODE_PING) {
-          socket?.write(encodePongFrame(payload));
+        if (opcode === WS_OPCODE_CONTINUATION) {
+          if (fragmentedOpcode === undefined) {
+            closeForProtocolError("unexpected continuation frame");
+            return;
+          }
+          appendFragment(payload);
+          if (fin) {
+            completeFragmentedMessage();
+          }
+          continue;
         }
+
+        if (opcode === WS_OPCODE_TEXT || opcode === WS_OPCODE_BINARY) {
+          if (fragmentedOpcode !== undefined) {
+            closeForProtocolError(
+              "new data frame before fragmented message ended"
+            );
+            return;
+          }
+          if (fin) {
+            if (opcode === WS_OPCODE_TEXT) {
+              emitText(payload);
+            }
+            continue;
+          }
+          fragmentedOpcode = opcode;
+          appendFragment(payload);
+          continue;
+        }
+
+        closeForProtocolError(`unsupported opcode ${opcode}`);
+        return;
       }
     };
 
@@ -196,13 +276,16 @@ export const connectWs = (url: string): Promise<WsClient> => {
             data instanceof Uint8Array ? data : new Uint8Array(data);
 
           if (!handshakeDone) {
-            httpBuffer += new TextDecoder().decode(chunk);
-            const endIdx = httpBuffer.indexOf("\r\n\r\n");
+            httpBuffer = append(httpBuffer, chunk);
+            const endIdx = headerEndIndex(httpBuffer);
             if (endIdx === -1) {
               return;
             }
-            if (!httpBuffer.startsWith("HTTP/1.1 101")) {
-              reject(new Error(`WebSocket upgrade failed: ${httpBuffer}`));
+            const headerText = new TextDecoder().decode(
+              httpBuffer.slice(0, endIdx + 4)
+            );
+            if (!headerText.startsWith("HTTP/1.1 101")) {
+              reject(new Error(`WebSocket upgrade failed: ${headerText}`));
               return;
             }
             handshakeDone = true;
@@ -221,14 +304,14 @@ export const connectWs = (url: string): Promise<WsClient> => {
             };
 
             const remaining = httpBuffer.slice(endIdx + 4);
+            httpBuffer = new Uint8Array(0);
             if (remaining.length > 0) {
-              frameBuffer = append(
-                frameBuffer,
-                new TextEncoder().encode(remaining)
-              );
-              processFrames();
+              frameBuffer = append(frameBuffer, remaining);
             }
             resolve(client);
+            if (remaining.length > 0) {
+              queueMicrotask(processFrames);
+            }
             return;
           }
 
