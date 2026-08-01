@@ -7,5 +7,7 @@
    output while preserving the ordinary inbox shape.
 5. Add queue-health accounting and regressions based on a captured xchan
    producer fixture plus bounded multi-batch coverage.
-6. Record focused, full, check, build, and eval evidence without installing or
+6. Serialize concurrent dead-letter reporting with a crash-recoverable,
+   per-message filesystem claim.
+7. Record focused, full, check, build, and eval evidence without installing or
    deploying a binary.

@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,6 +55,17 @@ const loadBridge = (
 };
 
 const makeTempDir = (): string => mkdtempSync(join(tmpdir(), "loop-bridge-"));
+const capturedBridgeOverflowFixture = (): string =>
+  readFileSync(
+    join(
+      process.cwd(),
+      "tests",
+      "fixtures",
+      "bridge-overflow",
+      "xchan-dead-letter.redacted.jsonl"
+    ),
+    "utf8"
+  );
 const encodeFrame = (payload: unknown): string => {
   const body = JSON.stringify(payload);
   return `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
@@ -2039,16 +2051,7 @@ test("bridge MCP receive_messages reports a captured dead letter exactly once", 
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
-  const fixture = readFileSync(
-    join(
-      process.cwd(),
-      "tests",
-      "fixtures",
-      "bridge-overflow",
-      "xchan-dead-letter.redacted.jsonl"
-    ),
-    "utf8"
-  );
+  const fixture = capturedBridgeOverflowFixture();
   writeFileSync(bridge.bridgeInternals.bridgePath(runDir), fixture, "utf8");
 
   const receive = encodeLine({
@@ -2080,6 +2083,80 @@ test("bridge MCP receive_messages reports a captured dead letter exactly once", 
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "reported")
   ).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("concurrent receive_messages reports a dead letter to only one puller", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    bridge.bridgeInternals.bridgePath(runDir),
+    capturedBridgeOverflowFixture(),
+    "utf8"
+  );
+  const receive = encodeLine({
+    id: 1,
+    jsonrpc: "2.0",
+    method: "tools/call",
+    params: { arguments: {}, name: "receive_messages" },
+  });
+
+  const results = await Promise.all([
+    runBridgeProcess(runDir, "claude", receive),
+    runBridgeProcess(runDir, "claude", receive),
+  ]);
+  const texts = results.map((result) => toolText(result.stdout, 1));
+  expect(
+    results.every((result) => result.code === 0 && result.stderr === "")
+  ).toBe(true);
+  expect(texts.filter((text) => text === "[]")).toHaveLength(1);
+  expect(
+    texts.filter((text) =>
+      text.includes("<redacted:internal-supervisor-message>")
+    )
+  ).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "reported")
+  ).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("receive_messages recovers a stale dead-letter report claim", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    bridge.bridgeInternals.bridgePath(runDir),
+    capturedBridgeOverflowFixture(),
+    "utf8"
+  );
+  const claimPath = bridge.bridgeStoreInternals.deadLetterReportClaimPath(
+    runDir,
+    "badac162-5e60-4b87-a182-d564e9b683df"
+  );
+  mkdirSync(claimPath, { recursive: true });
+  const staleAt = new Date(Date.now() - 31_000);
+  utimesSync(claimPath, staleAt, staleAt);
+
+  const result = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeLine({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: "receive_messages" },
+    })
+  );
+  expect(toolText(result.stdout, 1)).toContain(
+    "<redacted:internal-supervisor-message>"
+  );
+  expect(existsSync(claimPath)).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
 

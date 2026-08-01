@@ -4,7 +4,7 @@ import {
   type BridgeMessage,
   type BridgeSource,
   enqueueBridgeMessage,
-  markBridgeDeadLetterReported,
+  markBridgeDeadLetterReportedOnce,
   markBridgeMessage,
   readBridgeInbox,
   readBridgeStatus,
@@ -64,10 +64,9 @@ export const consumeBridgeDeadLetters = (
   limit: number
 ): BridgeDeadLetter[] => {
   const deadLetters = readUnreportedBridgeDeadLetters(runDir, target, limit);
-  for (const deadLetter of deadLetters) {
-    markBridgeDeadLetterReported(runDir, deadLetter, reason);
-  }
-  return deadLetters;
+  return deadLetters.filter((deadLetter) =>
+    markBridgeDeadLetterReportedOnce(runDir, deadLetter, reason)
+  );
 };
 
 export const readNextPendingBridgeMessage = (

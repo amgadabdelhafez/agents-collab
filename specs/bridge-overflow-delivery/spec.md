@@ -16,7 +16,8 @@ normal receive path.
 1. The pending inbox remains bounded by its configured maximum.
 2. Automatic delivery continues to ignore dead-lettered messages.
 3. `receive_messages` returns each dead-lettered message addressed to the
-   caller exactly once, including an explicit dead-letter status and reason.
+   caller exactly once across concurrent receivers, including an explicit
+   dead-letter status and reason.
 4. A durable receipt records that the receiver observed the dead letter.
 5. If one receive call reaches its output bound, later calls continue through
    the remaining unreported dead letters.
@@ -31,6 +32,8 @@ normal receive path.
 - Reading status must not acknowledge a dead letter.
 - A malformed or receipt-only event must not manufacture a message.
 - Delivery visibility is scoped to the addressed target.
+- Concurrent receivers must serialize the durable report decision without
+  holding a permanent lock after a process crash; stale claims self-heal.
 - The durable bridge ledger remains the record of truth.
 
 ## Non-goals

@@ -14,6 +14,9 @@
   messages after another message is dead-lettered.
 - The addressed receiver sees the dead-lettered message and queue-limit reason.
 - A second receive does not repeat the same dead letter.
+- Two concurrent receive processes produce exactly one dead-letter result and
+  exactly one durable `reported` event.
+- A stale report claim is recovered, removed, and does not hide the message.
 - Another target cannot observe it.
 - More than one receive batch is drained without exceeding the per-call bound.
 - Bridge status reports unreported dead letters before receive and zero after.

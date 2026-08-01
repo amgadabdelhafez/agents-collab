@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { AGENTS } from "./agents";
 import { resolveClaudeChannelServerName } from "./bridge-config";
@@ -15,6 +22,8 @@ import type { Agent } from "./types";
 export type BridgeSource = Agent | "supervisor" | "utility";
 
 const BRIDGE_FILE = "bridge.jsonl";
+const DEAD_LETTER_REPORT_CLAIM_DIR = "bridge-dead-letter-report-claims";
+const DEAD_LETTER_REPORT_CLAIM_STALE_MS = 30_000;
 const LINE_SPLIT_RE = /\r?\n/;
 export const BRIDGE_RECEIVE_LIMIT = 100;
 export const DEFAULT_BRIDGE_MAX_OUTSTANDING = 32;
@@ -455,6 +464,76 @@ export const markBridgeDeadLetterReported = (
   );
 };
 
+const deadLetterReportClaimPath = (runDir: string, messageId: string): string =>
+  join(
+    runDir,
+    DEAD_LETTER_REPORT_CLAIM_DIR,
+    createHash("sha256").update(messageId).digest("hex")
+  );
+
+const acquireDeadLetterReportClaim = (
+  runDir: string,
+  messageId: string,
+  nowMs: number
+): string | undefined => {
+  const claimRoot = join(runDir, DEAD_LETTER_REPORT_CLAIM_DIR);
+  const path = deadLetterReportClaimPath(runDir, messageId);
+  mkdirSync(claimRoot, { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(path);
+      return path;
+    } catch (error) {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "EEXIST")
+      ) {
+        return undefined;
+      }
+      try {
+        if (
+          nowMs - statSync(path).mtimeMs <=
+          DEAD_LETTER_REPORT_CLAIM_STALE_MS
+        ) {
+          return undefined;
+        }
+        rmSync(path, { recursive: true });
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return undefined;
+};
+
+export const markBridgeDeadLetterReportedOnce = (
+  runDir: string,
+  deadLetter: BridgeDeadLetter,
+  reason = "read via receive_messages",
+  nowMs = Date.now()
+): boolean => {
+  const claim = acquireDeadLetterReportClaim(
+    runDir,
+    deadLetter.entry.id,
+    nowMs
+  );
+  if (!claim) {
+    return false;
+  }
+  try {
+    const stillUnreported = unreportedDeadLettersFromEvents(
+      readBridgeEvents(runDir),
+      deadLetter.entry.target
+    ).some((candidate) => candidate.entry.id === deadLetter.entry.id);
+    if (!stillUnreported) {
+      return false;
+    }
+    markBridgeDeadLetterReported(runDir, deadLetter, reason);
+    return true;
+  } finally {
+    rmSync(claim, { force: true, recursive: true });
+  }
+};
+
 export const blocksBridgeBounce = (
   runDir: string,
   source: BridgeSource,
@@ -729,4 +808,8 @@ export const appendBlockedBridgeMessage = (
     source,
     target,
   });
+};
+
+export const bridgeStoreInternals = {
+  deadLetterReportClaimPath,
 };
