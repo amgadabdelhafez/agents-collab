@@ -1,11 +1,42 @@
 #!/usr/bin/env bash
 # scripts/verify.sh
 # Full verify suite. Run by hooks on task completion and in CI.
-# Usage: scripts/verify.sh [--feature <name>] [--task-id <id>]
+# Usage: scripts/verify.sh --task-id <id> [--feature <name>]
 set -euo pipefail
 
-FEATURE="${1:-}"
-TASK_ID="${2:-unknown}"
+usage() {
+  echo "usage: scripts/verify.sh --task-id <id> [--feature <name>]" >&2
+}
+
+FEATURE=""
+TASK_ID=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --task-id)
+      TASK_ID="${2:-}"
+      shift 2 || { usage; exit 2; }
+      ;;
+    --feature)
+      FEATURE="${2:-}"
+      shift 2 || { usage; exit 2; }
+      ;;
+    *)
+      echo "verify.sh: unknown argument: $1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+# Fail closed: the release gate reads runs/<task-id>/eval.json. The old
+# positional interface silently defaulted TASK_ID=unknown, pointed
+# ARTIFACTS_DIR at runs/unknown, and skipped the baseline gate entirely.
+if [ -z "${TASK_ID}" ]; then
+  echo "verify.sh: --task-id is required (the baseline gate runs against runs/<task-id>/eval.json; there is no default)." >&2
+  usage
+  exit 2
+fi
+
 ARTIFACTS_DIR="runs/${TASK_ID}"
 
 echo "=== verify.sh: task=${TASK_ID} feature=${FEATURE} ==="
@@ -42,11 +73,10 @@ if [ -n "${APP_URL:-}" ]; then
     echo "WARNING: UI capture failed (non-fatal)"
 fi
 
-# 6. Write eval stub if task-id is set
-if [ "${TASK_ID}" != "unknown" ]; then
-  mkdir -p "${ARTIFACTS_DIR}"
-  if [ ! -f "${ARTIFACTS_DIR}/eval.json" ]; then
-    cat > "${ARTIFACTS_DIR}/eval.json" <<EOF
+# 6. Write eval stub if absent
+mkdir -p "${ARTIFACTS_DIR}"
+if [ ! -f "${ARTIFACTS_DIR}/eval.json" ]; then
+  cat > "${ARTIFACTS_DIR}/eval.json" <<EOF
 {
   "task_id": "${TASK_ID}",
   "feature": "${FEATURE}",
@@ -62,16 +92,18 @@ if [ "${TASK_ID}" != "unknown" ]; then
   "notes": "Stub written by verify.sh. Evaluator agent must update verdict."
 }
 EOF
-    echo "eval.json stub written to ${ARTIFACTS_DIR}/eval.json"
-  fi
+  echo "eval.json stub written to ${ARTIFACTS_DIR}/eval.json"
 fi
 
 # 7. Baseline-failure gate
 # Baseline failures are a NAMED allowlist, never a count. The allowlist must be
-# empty to release: any named test left on it fails verify.
-if [ -f "${ARTIFACTS_DIR}/eval.json" ]; then
-  echo "--- baseline allowlist ---"
-  python3 scripts/check-baseline-allowlist.py "${ARTIFACTS_DIR}/eval.json"
+# empty to release: any named test left on it fails verify. Fail closed: a
+# missing eval.json fails the gate instead of skipping it.
+echo "--- baseline allowlist ---"
+if [ ! -f "${ARTIFACTS_DIR}/eval.json" ]; then
+  echo "verify.sh: ${ARTIFACTS_DIR}/eval.json is missing — the baseline gate cannot run, failing closed." >&2
+  exit 1
 fi
+python3 scripts/check-baseline-allowlist.py "${ARTIFACTS_DIR}/eval.json"
 
 echo "=== verify.sh complete ==="

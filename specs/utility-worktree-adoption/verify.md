@@ -10,7 +10,7 @@ bun test
 bun run build
 git diff --check
 cd ..
-scripts/verify.sh
+scripts/verify.sh --task-id <task-id>
 ```
 
 Live proof records current pane IDs/PIDs, routes one bounded inspection whose

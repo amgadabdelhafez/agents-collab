@@ -6,7 +6,7 @@
 
 ```bash
 # Run all checks for this feature
-scripts/verify.sh --feature [feature-name]
+scripts/verify.sh --task-id [task-id] --feature [feature-name]
 ```
 
 ## Functional checks
@@ -74,10 +74,19 @@ The evaluator writes `runs/<task-id>/eval.json`:
 `baseline_failures` is an allowlist of **exact test names** that are known to fail
 and are not caused by this task. It is never a count and never a flag:
 `"baseline_failures": 4` and `"baseline_failures": true` are invalid records, as
-is the retired `"result": "pass_with_baseline_failures"`.
+is the retired `"result": "pass_with_baseline_failures"`. Tolerated-baseline
+vocabulary in any `status`/`result`/`verdict` value (for example
+`baseline_failures_only` or `pass_with_known_limitations`) is rejected the same
+way: known failures are recorded as names on the allowlist or not at all.
 
 **The allowlist must be empty to release.** `scripts/verify.sh` runs
 `scripts/check-baseline-allowlist.py` against the run's `eval.json` and fails
 while any name remains. A named entry is a blocker to fix or waive explicitly —
 it is not a tolerance budget, so a task cannot inherit someone else's failures by
 matching a number.
+
+**The gate fails closed.** `verify.sh` requires `--task-id` (there is no default
+artifacts dir), a missing or unreadable `eval.json` fails the run instead of
+skipping the gate, and the regression evals
+`evals/regression/baseline-allowlist-fail-closed.sh` and
+`evals/regression/verify-requires-task-id.sh` pin both behaviors.

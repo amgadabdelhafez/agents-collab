@@ -60,5 +60,7 @@ Set verdict to BLOCK if any of the following are true:
 - Touched subsystem is grade F with no remediation spec.
 - Missing eval.json in `runs/<task-id>/`.
 - `eval.json` has a non-empty `baseline_failures` allowlist, records it as a count
-  or a flag instead of exact test names, or uses the retired
-  `pass_with_baseline_failures` result.
+  or a flag instead of exact test names, uses the retired
+  `pass_with_baseline_failures` result, or records known failures in
+  tolerated-baseline vocabulary (`baseline_failures_only`,
+  `pass_with_known_limitations`, or kin) in any status/result/verdict.

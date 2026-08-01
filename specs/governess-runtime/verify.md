@@ -18,7 +18,7 @@ legacy term.
 
 ```bash
 bun test
-cd .. && scripts/verify.sh
+cd .. && scripts/verify.sh --task-id <task-id>
 ```
 
 ## Live, non-destructive

@@ -21,7 +21,7 @@
 
 ```bash
 # Run the full verify suite for the current task
-scripts/verify.sh
+scripts/verify.sh --task-id <task-id>
 
 # Capture UI screenshots + DOM for the running app
 scripts/capture-ui.sh

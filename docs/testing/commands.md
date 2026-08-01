@@ -34,7 +34,7 @@
 ## Full verify suite (used by hooks and CI)
 
 ```bash
-scripts/verify.sh
+scripts/verify.sh --task-id <task-id>
 # Runs: lint → typecheck → unit → integration → e2e (if app running)
 ```
 
