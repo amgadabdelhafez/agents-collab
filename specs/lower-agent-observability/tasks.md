@@ -69,6 +69,23 @@
         carry the `tierId` the real producer writes (run-108 evidence: every
         executed job carried one). Full suite 1,375 pass / 0 fail.
 
+      **Engineer fixes (engineer-claude, 2026-08-01, commit 6d92b30) — the two
+      release blockers from the codex CORRECTED REVIEW at 6f735f4:**
+      - `bun run check` red: `BoardMeta.direct` sorted into position; the dead
+        `thread` parameter in the `governess-usage.test.ts` rollout() helper
+        (T-10 display leg leftover) removed with both call sites. Check is
+        clean (737 files, 0 errors).
+      - viewportRows=5 dropped the Direct row: `renderBoard` tail-sliced
+        `entityRows` to maxRows-1, so the last-rendered helper (direct) fell
+        off small viewports even when it held the run's only executed work.
+        Helper rows are now selected by activity when rows must drop (busy
+        tiers outrank idle; display order breaks ties and is preserved), in
+        both truncation branches. New focused test seeds one completed
+        direct-tier job through the real utility-store producer and asserts
+        the " direct" row renders at viewportRows=5; verified RED on the
+        unfixed renderBoard, GREEN with the fix. Full suite at 6d92b30:
+        1,377 pass / 0 fail across 67 files (`npm run test:ci`).
+
 - [ ] T-08: Bound the observability reader's per-tick cost. Every governess tick
       now re-reads and re-parses the full utility events journal five times
       (untiered + direct + nanny + au-pair snapshots, plus routing), and the
