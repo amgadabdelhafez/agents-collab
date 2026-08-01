@@ -450,7 +450,7 @@ test("readAgentUsage falls back to the newest run-scoped rollout when the manife
   const root = mkdtempSync(join(tmpdir(), "loop-codex-home-stale-"));
   const sessionDir = join(root, "sessions", "2026", "07", "31");
   mkdirSync(sessionDir, { recursive: true });
-  const rollout = (thread: string, totalTokens: number): string =>
+  const rollout = (totalTokens: number): string =>
     [
       JSON.stringify({
         payload: { effort: "high", model: "gpt-5.6-sol", type: "turn_context" },
@@ -479,8 +479,8 @@ test("readAgentUsage falls back to the newest run-scoped rollout when the manife
     sessionDir,
     "rollout-2026-07-31T00-05-00-019f-survivor.jsonl"
   );
-  writeFileSync(olderPath, rollout("019f-first-spawn", 100), "utf8");
-  writeFileSync(newerPath, rollout("019f-survivor", 4200), "utf8");
+  writeFileSync(olderPath, rollout(100), "utf8");
+  writeFileSync(newerPath, rollout(4200), "utf8");
   const past = new Date(Date.now() - 60_000);
   utimesSync(olderPath, past, past);
 

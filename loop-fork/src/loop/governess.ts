@@ -1410,10 +1410,10 @@ interface LocalLlmRuntimeInput {
 interface BoardMeta {
   auPair?: UtilityObservabilitySnapshot;
   bridge: BridgeCounts;
-  direct?: UtilityObservabilitySnapshot;
   bridgeLatest: BridgeLatest;
   budgetUsd: number;
   cavemanMode?: CavemanMode;
+  direct?: UtilityObservabilitySnapshot;
   governessMessages: Record<string, number>;
   helperCavemanMode?: CavemanMode;
   identity: string;
@@ -1502,6 +1502,9 @@ const helperHeaderRow = paint(
   ANSI.dim,
   ` ${HELPER_COLUMNS.map(([label, width]) => cell(label, width)).join(" ")}`
 );
+
+const headedHelperRows = (rows: string[]): string[] =>
+  rows.length > 0 ? [helperHeaderRow, ...rows] : [];
 
 const rowState = (row: AgentRow): string =>
   row.paneFresh
@@ -3027,6 +3030,38 @@ const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
   );
 };
 
+interface HelperRowEntry {
+  row: string;
+  snapshot: UtilityObservabilitySnapshot;
+}
+
+const utilityTierBusy = (snapshot: UtilityObservabilitySnapshot): boolean =>
+  snapshot.completed + snapshot.failed + snapshot.active + snapshot.queued > 0;
+
+// When helper rows must drop to fit the viewport, keep tiers with recorded
+// work over idle ones (display order breaks ties, kept rows stay in display
+// order). Tail-slicing alone always dropped the last-rendered tier (direct),
+// hiding its real work at small viewports (T-07 review blocker).
+const selectHelperRows = (
+  entries: HelperRowEntry[],
+  budget: number
+): string[] => {
+  const capped = Math.max(0, Math.min(entries.length, budget));
+  if (capped === entries.length) {
+    return entries.map((entry) => entry.row);
+  }
+  const ranked = entries
+    .map((entry, index) => ({ busy: utilityTierBusy(entry.snapshot), index }))
+    .sort(
+      (left, right) =>
+        Number(right.busy) - Number(left.busy) || left.index - right.index
+    );
+  const kept = new Set(ranked.slice(0, capped).map((entry) => entry.index));
+  return entries.flatMap((entry, index) =>
+    kept.has(index) ? [entry.row] : []
+  );
+};
+
 const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const weeklyLimitIndent = Math.max(
     0,
@@ -3036,20 +3071,38 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const primaryAgentRows = rows.map((row) =>
     renderAgentRow(row, meta, weeklyLimitIndent)
   );
-  const helperRows = [
-    ...(meta.nanny ? [renderUtilityAgentRow(meta.nanny, meta, "nanny")] : []),
+  const helperEntries: HelperRowEntry[] = [
+    ...(meta.nanny
+      ? [
+          {
+            row: renderUtilityAgentRow(meta.nanny, meta, "nanny"),
+            snapshot: meta.nanny,
+          },
+        ]
+      : []),
     ...(meta.auPair
-      ? [renderUtilityAgentRow(meta.auPair, meta, "au pair")]
+      ? [
+          {
+            row: renderUtilityAgentRow(meta.auPair, meta, "au pair"),
+            snapshot: meta.auPair,
+          },
+        ]
       : []),
     ...(meta.direct
-      ? [renderUtilityAgentRow(meta.direct, meta, "direct")]
+      ? [
+          {
+            row: renderUtilityAgentRow(meta.direct, meta, "direct"),
+            snapshot: meta.direct,
+          },
+        ]
       : []),
   ];
+  const helperRows = helperEntries.map((entry) => entry.row);
   const entityRows = [...primaryAgentRows, ...helperRows];
   const identityRows = [
     agentHeaderRow,
     ...primaryAgentRows,
-    ...(helperRows.length > 0 ? [helperHeaderRow, ...helperRows] : []),
+    ...headedHelperRows(helperRows),
   ];
   const bridgeLines = renderBridgeLatestLine(rows, meta);
   const workerRoutingLines = meta.utility
@@ -3072,12 +3125,27 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const maxRows = meta.maxRows;
   let top = fullTop;
   if (maxRows !== undefined && fullTop.length > maxRows) {
+    const rowBudget = Math.max(0, maxRows - 1);
     const compactIdentityRows =
-      maxRows <= entityRows.length + 1 ? entityRows : identityRows;
-    const visibleIdentityRows = compactIdentityRows.slice(
-      0,
-      Math.max(0, maxRows - 1)
-    );
+      maxRows <= entityRows.length + 1
+        ? [
+            ...primaryAgentRows,
+            ...selectHelperRows(
+              helperEntries,
+              rowBudget - primaryAgentRows.length
+            ),
+          ]
+        : [
+            agentHeaderRow,
+            ...primaryAgentRows,
+            ...headedHelperRows(
+              selectHelperRows(
+                helperEntries,
+                rowBudget - primaryAgentRows.length - 2
+              )
+            ),
+          ];
+    const visibleIdentityRows = compactIdentityRows.slice(0, rowBudget);
     let spare = Math.max(0, maxRows - 1 - visibleIdentityRows.length);
     const visibleBridgeLines = bridgeLines.slice(0, Math.max(0, spare));
     spare -= visibleBridgeLines.length;

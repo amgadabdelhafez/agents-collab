@@ -2084,6 +2084,87 @@ test("small governess viewports retain both agents, Nanny, and Au Pair", async (
   }
 });
 
+test("viewportRows=5 keeps the Direct row when the direct tier holds the run's work", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "governess-direct-viewport-"));
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  try {
+    // Run-108 shape: the direct lane executed the work while nanny stayed
+    // idle. The board must not hide the busy tier just because it renders
+    // last (T-07 release blocker: entityRows tail-slice at maxRows-1).
+    activateUtilityEpoch(runDir, 3);
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["report evidence"],
+        authority: {},
+        id: "direct-work",
+        kind: "inspect",
+        objective: "Inspect one bounded source file directly",
+        readScope: ["src"],
+        requester: "claude",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+    transitionUtilityJob(runDir, "direct-work", "routed-utility", {
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-direct",
+      },
+      routeEpoch: 3,
+    });
+    claimUtilityJob(runDir, 3, {
+      jobId: "direct-work",
+      workerId: "direct-viewport-test",
+      workerPid: process.pid,
+    });
+    transitionUtilityJob(runDir, "direct-work", "running");
+    transitionUtilityJob(runDir, "direct-work", "completed", {
+      result: {
+        artifactRefs: [],
+        checks: [],
+        filesChanged: [],
+        status: "completed",
+        summary: "direct-work finished",
+      },
+    });
+
+    const result = await governessTick(
+      new Map<Agent, AgentLivenessState>(),
+      baseConfig({
+        agents: [
+          { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+          { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+        ],
+        runDir,
+        viewportRows: 5,
+      }),
+      makeDeps(
+        {
+          ok: true,
+          verdict: { confidence: 0.9, state: "working", summary: "" },
+        },
+        clock,
+        spies
+      )
+    );
+    const lines = stripAnsi(result.board).split("\n");
+
+    expect(lines).toHaveLength(5);
+    expect(lines.some((line) => line.startsWith(" claude"))).toBe(true);
+    expect(lines.some((line) => line.startsWith(" codex"))).toBe(true);
+    const directRow = lines.find((line) => line.startsWith(" direct"));
+    expect(directRow).toBeDefined();
+    // The rendered row carries the executed job count, not a blank tier.
+    expect(directRow).toContain("1/0");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("Au Pair row hides the internal routed-utility state name", async () => {
   const runDir = mkdtempSync(join(tmpdir(), "governess-worker-routed-"));
   const clock = { ms: START_MS };
