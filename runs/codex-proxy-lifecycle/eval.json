@@ -1,0 +1,48 @@
+{
+  "task_id": "codex-proxy-lifecycle",
+  "feature": "codex-proxy-lifecycle",
+  "timestamp": "2026-08-01T20:28:00Z",
+  "evaluator": "pending-supervisor-exact-sha-review",
+  "verdict": "pending",
+  "checks": {
+    "focused": {
+      "passed": 18,
+      "failed": 0,
+      "details": [
+        "Proxy and raw-WebSocket focused suite passed 16/16.",
+        "Bounded tmux-control liveness suite passed 2/2."
+      ]
+    },
+    "compatibility": {
+      "passed": 157,
+      "failed": 0,
+      "details": [
+        "Existing app-server, tmux, and bridge compatibility tests passed."
+      ]
+    },
+    "full_suite": {
+      "passed": 893,
+      "failed": 4,
+      "details": [
+        "The exact four failures were reproduced in a clean detached origin/main checkout.",
+        "Release remains fail-closed until the corrected baseline gate and integration line are present."
+      ]
+    },
+    "static": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "Scoped Ultracite check passed for all six changed source/test files.",
+        "bun run build passed.",
+        "git diff --check passed."
+      ]
+    }
+  },
+  "baseline_failures": [
+    "preparePairedOptions creates a loop-scoped Codex home without global MCP config",
+    "runAgent launches Codex app-server with loop-scoped Codex home",
+    "buildCommand carries Codex bridge approval config for legacy exec",
+    "startPersistentAgentSession enables persistent Codex threads"
+  ],
+  "notes": "Pending exact-SHA independent review. This is evidence capture, not a release verdict."
+}
