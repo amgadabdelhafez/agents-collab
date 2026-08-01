@@ -16,7 +16,7 @@ export type BridgeSource = Agent | "supervisor" | "utility";
 
 const BRIDGE_FILE = "bridge.jsonl";
 const LINE_SPLIT_RE = /\r?\n/;
-const MAX_STATUS_MESSAGES = 100;
+export const BRIDGE_RECEIVE_LIMIT = 100;
 export const DEFAULT_BRIDGE_MAX_OUTSTANDING = 32;
 
 export type BridgeMessageType =
@@ -32,6 +32,7 @@ export type BridgeResolution =
   | "blocked"
   | "delivered"
   | "expired"
+  | "reported"
   | "superseded"
   | "dead-letter";
 
@@ -55,6 +56,7 @@ const RESOLUTIONS = new Set<BridgeResolution>([
   "blocked",
   "delivered",
   "expired",
+  "reported",
   "superseded",
   "dead-letter",
 ]);
@@ -111,12 +113,18 @@ export interface BridgeEnqueueResult {
   status: "queued" | "duplicate" | "dead-letter" | "expired";
 }
 
+export interface BridgeDeadLetter {
+  entry: BridgeMessage;
+  reason?: string;
+}
+
 export interface BridgeQueueHealth {
   deadLetters: number;
   expired: number;
   oldestPendingAt?: string;
   pending: number;
   superseded: number;
+  unreportedDeadLetters: number;
 }
 
 export interface BridgeStatus {
@@ -317,6 +325,14 @@ const pendingFromEvents = (events: BridgeEvent[]): BridgeMessage[] => {
 const bridgeMessagePriority = (message: BridgeMessage): number =>
   PRIORITY_ORDER[message.priority ?? "normal"];
 
+const sortBridgeMessages = (
+  left: BridgeMessage,
+  right: BridgeMessage
+): number =>
+  bridgeMessagePriority(right) - bridgeMessagePriority(left) ||
+  left.at.localeCompare(right.at) ||
+  left.id.localeCompare(right.id);
+
 const appendBridgeResolution = (
   runDir: string,
   message: BridgeMessage,
@@ -358,12 +374,56 @@ export const readPendingBridgeMessages = (
     }
     active.push(message);
   }
-  return active.sort(
-    (left, right) =>
-      bridgeMessagePriority(right) - bridgeMessagePriority(left) ||
-      left.at.localeCompare(right.at) ||
-      left.id.localeCompare(right.id)
-  );
+  return active.sort(sortBridgeMessages);
+};
+
+const unreportedDeadLettersFromEvents = (
+  events: BridgeEvent[],
+  target?: Agent
+): BridgeDeadLetter[] => {
+  const deadLetters = new Map<string, BridgeAck>();
+  const messages = new Map<string, BridgeMessage>();
+  const reported = new Set<string>();
+
+  for (const event of events) {
+    if (event.kind === "message") {
+      messages.set(event.id, event);
+      continue;
+    }
+    if (event.kind === "dead-letter") {
+      deadLetters.set(event.id, event);
+      reported.delete(event.id);
+      continue;
+    }
+    if (event.kind === "reported" && deadLetters.has(event.id)) {
+      reported.add(event.id);
+    }
+  }
+
+  return [...deadLetters.entries()]
+    .filter(([id]) => !reported.has(id))
+    .flatMap(([id, resolution]) => {
+      const entry = messages.get(id);
+      if (!(entry && (!target || entry.target === target))) {
+        return [];
+      }
+      return [{ entry, reason: resolution.reason }];
+    })
+    .sort((left, right) => sortBridgeMessages(left.entry, right.entry));
+};
+
+export const readUnreportedBridgeDeadLetters = (
+  runDir: string,
+  target: Agent,
+  limit = BRIDGE_RECEIVE_LIMIT
+): BridgeDeadLetter[] => {
+  if (limit <= 0) {
+    return [];
+  }
+  return unreportedDeadLettersFromEvents(
+    readBridgeEvents(runDir),
+    target
+  ).slice(0, limit);
 };
 
 export const markBridgeMessage = (
@@ -376,6 +436,20 @@ export const markBridgeMessage = (
     runDir,
     message,
     kind,
+    reason,
+    new Date().toISOString()
+  );
+};
+
+export const markBridgeDeadLetterReported = (
+  runDir: string,
+  deadLetter: BridgeDeadLetter,
+  reason = "read via receive_messages"
+): void => {
+  appendBridgeResolution(
+    runDir,
+    deadLetter.entry,
+    "reported",
     reason,
     new Date().toISOString()
   );
@@ -416,7 +490,7 @@ const countPendingMessages = (runDir: string): BridgeStatus["pending"] => {
   } satisfies Record<Agent, number>;
   for (const message of readPendingBridgeMessages(runDir).slice(
     0,
-    MAX_STATUS_MESSAGES
+    BRIDGE_RECEIVE_LIMIT
   )) {
     pending[message.target] += 1;
   }
@@ -460,14 +534,26 @@ export const readBridgeInbox = (
 ): BridgeMessage[] =>
   readPendingBridgeMessages(runDir)
     .filter((message) => message.target === target)
-    .slice(0, MAX_STATUS_MESSAGES);
+    .slice(0, BRIDGE_RECEIVE_LIMIT);
 
-export const formatBridgeInbox = (messages: BridgeMessage[]): string =>
+export const formatBridgeInbox = (
+  messages: BridgeMessage[],
+  deadLetters: BridgeDeadLetter[] = []
+): string =>
   JSON.stringify(
-    messages.map((message) => ({
+    [
+      ...messages.map((message) => ({ message })),
+      ...deadLetters.map(({ entry, reason }) => ({
+        deliveryStatus: "dead-letter" as const,
+        failureReason: reason,
+        message: entry,
+      })),
+    ].map(({ deliveryStatus, failureReason, message }) => ({
       artifactRefs: message.artifactRefs,
       at: message.at,
+      deliveryStatus,
       expiresAt: message.expiresAt,
+      failureReason,
       from: message.source,
       id: message.id,
       message: message.message,
@@ -623,6 +709,7 @@ export const readBridgeQueueHealth = (
       .sort((left, right) => left.localeCompare(right))[0],
     pending: pending.length,
     superseded: events.filter((event) => event.kind === "superseded").length,
+    unreportedDeadLetters: unreportedDeadLettersFromEvents(events).length,
   };
 };
 

@@ -1,0 +1,2 @@
+{"at":"2026-07-30T06:55:50.329Z","id":"badac162-5e60-4b87-a182-d564e9b683df","kind":"message","message":"<redacted:internal-supervisor-message>","priority":"high","source":"codex","subject":"<redacted:internal-supervisor-subject>","target":"claude","type":"message"}
+{"at":"2026-07-30T06:55:50.329Z","id":"badac162-5e60-4b87-a182-d564e9b683df","kind":"dead-letter","reason":"target queue limit 32 reached","source":"codex","target":"claude"}

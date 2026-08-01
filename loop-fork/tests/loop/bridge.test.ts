@@ -2034,6 +2034,55 @@ test("bridge MCP receive_messages returns and clears queued inbox items", async 
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge MCP receive_messages reports a captured dead letter exactly once", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const fixture = readFileSync(
+    join(
+      process.cwd(),
+      "tests",
+      "fixtures",
+      "bridge-overflow",
+      "xchan-dead-letter.redacted.jsonl"
+    ),
+    "utf8"
+  );
+  writeFileSync(bridge.bridgeInternals.bridgePath(runDir), fixture, "utf8");
+
+  const receive = encodeLine({
+    id: 1,
+    jsonrpc: "2.0",
+    method: "tools/call",
+    params: { arguments: {}, name: "receive_messages" },
+  });
+  const wrongTarget = await runBridgeProcess(runDir, "codex", receive);
+  expect(toolText(wrongTarget.stdout, 1)).toBe("[]");
+  expect(bridge.readBridgeQueueHealth(runDir).unreportedDeadLetters).toBe(1);
+
+  const first = await runBridgeProcess(runDir, "claude", receive);
+  const firstText = toolText(first.stdout, 1);
+  expect(first.code).toBe(0);
+  expect(first.stderr).toBe("");
+  expect(firstText).toContain("<redacted:internal-supervisor-message>");
+  expect(firstText).toContain('"deliveryStatus": "dead-letter"');
+  expect(firstText).toContain(
+    '"failureReason": "target queue limit 32 reached"'
+  );
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readBridgeQueueHealth(runDir).unreportedDeadLetters).toBe(0);
+
+  const second = await runBridgeProcess(runDir, "claude", receive);
+  expect(toolText(second.stdout, 1)).toBe("[]");
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "reported")
+  ).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("bridge MCP receive_messages leaves an automatically claimed item alone", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();

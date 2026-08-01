@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { claudeChannelServerName } from "./bridge-config";
 import { BRIDGE_SERVER as BRIDGE_SERVER_VALUE } from "./bridge-constants";
 import {
+  consumeBridgeDeadLetters,
   consumeBridgeInbox,
   dispatchBridgeMessage,
   formatDispatchResult,
@@ -24,6 +25,7 @@ import {
 import {
   appendBlockedBridgeMessage,
   appendBridgeEvent,
+  BRIDGE_RECEIVE_LIMIT,
   type BridgeEnqueueOptions,
   type BridgeMessageType,
   type BridgePriority,
@@ -229,11 +231,19 @@ const handleReceiveMessagesTool = (
     "read via receive_messages",
     (message) => !isBridgeDeliveryClaimed(runDir, message.id)
   );
+  const deadLetters = consumeBridgeDeadLetters(
+    runDir,
+    source,
+    "reported via receive_messages",
+    BRIDGE_RECEIVE_LIMIT - messages.length
+  );
   writeJsonRpc({
     id,
     jsonrpc: "2.0",
     result: toolContent(
-      messages.length === 0 ? "[]" : formatBridgeInbox(messages)
+      messages.length + deadLetters.length === 0
+        ? "[]"
+        : formatBridgeInbox(messages, deadLetters)
     ),
   });
 };
@@ -388,12 +398,7 @@ const handleToolCall = async (
 
   if (isUtilityBridgeToolName(name)) {
     try {
-      const result = await callUtilityBridgeTool(
-        name,
-        runDir,
-        source,
-        args
-      );
+      const result = await callUtilityBridgeTool(name, runDir, source, args);
       writeJsonRpc({
         id,
         jsonrpc: "2.0",

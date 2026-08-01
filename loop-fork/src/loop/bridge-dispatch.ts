@@ -1,12 +1,15 @@
 import {
+  type BridgeDeadLetter,
   type BridgeEnqueueOptions,
   type BridgeMessage,
   type BridgeSource,
   enqueueBridgeMessage,
+  markBridgeDeadLetterReported,
   markBridgeMessage,
   readBridgeInbox,
   readBridgeStatus,
   readPendingBridgeMessages,
+  readUnreportedBridgeDeadLetters,
 } from "./bridge-store";
 import type { Agent } from "./types";
 
@@ -52,6 +55,19 @@ export const consumeBridgeInbox = (
     acknowledgeBridgeDelivery(runDir, message, reason);
   }
   return messages;
+};
+
+export const consumeBridgeDeadLetters = (
+  runDir: string,
+  target: Agent,
+  reason: string,
+  limit: number
+): BridgeDeadLetter[] => {
+  const deadLetters = readUnreportedBridgeDeadLetters(runDir, target, limit);
+  for (const deadLetter of deadLetters) {
+    markBridgeDeadLetterReported(runDir, deadLetter, reason);
+  }
+  return deadLetters;
 };
 
 export const readNextPendingBridgeMessage = (

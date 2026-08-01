@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
@@ -11,11 +12,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dispatchBridgeMessage } from "../../src/loop/bridge-dispatch";
 import {
+  appendBridgeEvent,
   enqueueBridgeMessage,
   formatBridgeInbox,
+  markBridgeDeadLetterReported,
   readBridgeEvents,
   readBridgeQueueHealth,
   readPendingBridgeMessages,
+  readUnreportedBridgeDeadLetters,
 } from "../../src/loop/bridge-store";
 import {
   compactGovernessJournal,
@@ -268,6 +272,110 @@ test("bridge QoS deduplicates, supersedes, bounds, and dead-letters work", () =>
     pending: 1,
     superseded: 1,
   });
+  rmSync(root, { force: true, recursive: true });
+});
+
+test("captured xchan dead letter is visible once only to its target", () => {
+  const root = tempDir();
+  const fixturePath = join(
+    process.cwd(),
+    "tests",
+    "fixtures",
+    "bridge-overflow",
+    "xchan-dead-letter.redacted.jsonl"
+  );
+  const provenancePath = join(
+    process.cwd(),
+    "tests",
+    "fixtures",
+    "bridge-overflow",
+    "provenance.json"
+  );
+  const fixture = readFileSync(fixturePath, "utf8");
+  const provenance = JSON.parse(readFileSync(provenancePath, "utf8")) as {
+    fixtureSha256: string;
+  };
+  expect(createHash("sha256").update(fixture).digest("hex")).toBe(
+    provenance.fixtureSha256
+  );
+  writeFileSync(join(root, "bridge.jsonl"), fixture, "utf8");
+
+  expect(readPendingBridgeMessages(root)).toEqual([]);
+  expect(readUnreportedBridgeDeadLetters(root, "codex")).toEqual([]);
+  const [deadLetter] = readUnreportedBridgeDeadLetters(root, "claude");
+  expect(deadLetter).toMatchObject({
+    entry: {
+      id: "badac162-5e60-4b87-a182-d564e9b683df",
+      message: "<redacted:internal-supervisor-message>",
+      priority: "high",
+      target: "claude",
+    },
+    reason: "target queue limit 32 reached",
+  });
+  expect(readBridgeQueueHealth(root).unreportedDeadLetters).toBe(1);
+
+  markBridgeDeadLetterReported(root, deadLetter);
+  expect(readUnreportedBridgeDeadLetters(root, "claude")).toEqual([]);
+  expect(readBridgeQueueHealth(root).unreportedDeadLetters).toBe(0);
+  expect(
+    readBridgeEvents(root).filter((event) => event.kind === "reported")
+  ).toHaveLength(1);
+  rmSync(root, { force: true, recursive: true });
+});
+
+test("dead-letter reporting stays bounded and continues in later batches", () => {
+  const root = tempDir();
+  for (let index = 0; index < 101; index += 1) {
+    expect(
+      enqueueBridgeMessage(root, "codex", "claude", `overflow ${index}`, {
+        maxOutstanding: 0,
+        now: new Date(Date.UTC(2026, 6, 25, 10, 0, index)).toISOString(),
+      }).status
+    ).toBe("dead-letter");
+  }
+
+  expect(readPendingBridgeMessages(root)).toEqual([]);
+  expect(readBridgeQueueHealth(root).unreportedDeadLetters).toBe(101);
+  const firstBatch = readUnreportedBridgeDeadLetters(root, "claude");
+  expect(firstBatch).toHaveLength(100);
+  for (const deadLetter of firstBatch) {
+    markBridgeDeadLetterReported(root, deadLetter);
+  }
+  const secondBatch = readUnreportedBridgeDeadLetters(root, "claude");
+  expect(secondBatch).toHaveLength(1);
+  markBridgeDeadLetterReported(root, secondBatch[0]);
+  expect(readUnreportedBridgeDeadLetters(root, "claude")).toEqual([]);
+  expect(readBridgeQueueHealth(root).unreportedDeadLetters).toBe(0);
+  rmSync(root, { force: true, recursive: true });
+});
+
+test("a receipt before a dead letter cannot suppress later overflow", () => {
+  const root = tempDir();
+  appendBridgeEvent(root, {
+    at: "2026-07-25T10:00:00.000Z",
+    id: "out-of-order",
+    kind: "message",
+    message: "must remain visible",
+    source: "codex",
+    target: "claude",
+  });
+  appendBridgeEvent(root, {
+    at: "2026-07-25T10:00:01.000Z",
+    id: "out-of-order",
+    kind: "reported",
+    source: "codex",
+    target: "claude",
+  });
+  appendBridgeEvent(root, {
+    at: "2026-07-25T10:00:02.000Z",
+    id: "out-of-order",
+    kind: "dead-letter",
+    reason: "target queue limit 32 reached",
+    source: "codex",
+    target: "claude",
+  });
+
+  expect(readUnreportedBridgeDeadLetters(root, "claude")).toHaveLength(1);
   rmSync(root, { force: true, recursive: true });
 });
 

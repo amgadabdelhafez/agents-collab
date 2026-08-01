@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-08-01T05:22:00.000Z",
+  "fixture": "xchan-dead-letter.redacted.jsonl",
+  "fixtureSha256": "d19f3fe854c527c194168def4f34c187487770cc3b43ef6ab8374fe52e33991e",
+  "producerBinary": "/Users/amgad/.local/bin/loop",
+  "producerBinarySha256": "9aa496102c0d17d73381fa05543f4f34362bb2e144ba8197ff8eaf29c98e2f1b",
+  "producerCommit": "a93f7e4efcaa301b481db459baa63f8831902f5e",
+  "producerVersion": "loop v1.0.32",
+  "sourceLedger": "/Users/amgad/.loop/runs/agent-channel/1/bridge.jsonl",
+  "sourceLedgerLines": "279-280",
+  "sourceLedgerSha256AtCapture": "1952dc9b4be2477d0d68a9dc5dd0c90c9533ef6de8c71e99ad0e214f25956cb5",
+  "sourceSliceSha256": "3a1ba16320b596a9cf29190a29da99161a74f87717dd58d508f001daba3ad79e",
+  "sourceToCommitBinding": "source ledger lines 550 and 555 bind and independently confirm the installed binary SHA-256 to producerCommit",
+  "transform": "Parse source lines 279-280; replace message and subject values with the fixed redaction tokens in the fixture; remove signature; serialize each object as compact JSON with source key order and a trailing newline."
+}
