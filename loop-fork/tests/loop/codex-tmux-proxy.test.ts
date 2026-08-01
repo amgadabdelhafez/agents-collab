@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerWebSocket, serve } from "bun";
@@ -8,7 +8,9 @@ import {
   readPendingBridgeMessages,
 } from "../../src/loop/bridge-store";
 import {
+  CODEX_TMUX_PROXY_LIFECYCLE_FILE,
   codexTmuxProxyInternals,
+  type ProxyRuntimeOptions,
   runCodexTmuxProxy,
   stopCodexTmuxProxy,
   waitForCodexTmuxProxy,
@@ -99,12 +101,19 @@ const startServerWithRetries = async (
 const startProxyWithRetries = async (
   runDir: string,
   remoteUrl: string,
-  threadId: string
+  threadId: string,
+  options: ProxyRuntimeOptions = {}
 ): Promise<{ proxyTask: Promise<void>; proxyUrl: string }> => {
   let lastError: unknown;
   for (let attempt = 0; attempt < TEST_PORT_RETRY_LIMIT; attempt += 1) {
     const port = await findTestPort();
-    const proxyTask = runCodexTmuxProxy(runDir, remoteUrl, threadId, port);
+    const proxyTask = runCodexTmuxProxy(
+      runDir,
+      remoteUrl,
+      threadId,
+      port,
+      options
+    );
     try {
       const proxyUrl = await Promise.race([
         waitForCodexTmuxProxy(port),
@@ -140,64 +149,92 @@ const waitFor = async (
   throw new Error("timed out waiting for condition");
 };
 
+const readLifecycleEvents = (root: string): Record<string, unknown>[] => {
+  try {
+    return readFileSync(join(root, CODEX_TMUX_PROXY_LIFECYCLE_FILE), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  } catch {
+    return [];
+  }
+};
+
 test("codex tmux proxy waits briefly for the tmux session to appear", () => {
   const now = Date.now();
-
-  expect(
-    codexTmuxProxyInternals.shouldStopForTmuxSession(
-      "dead",
-      false,
-      now + 1000,
-      now
-    )
-  ).toBe(false);
+  const result = codexTmuxProxyInternals.observeTmuxLiveness(
+    "dead",
+    { consecutiveDead: 0, sawSession: false },
+    now + 1000,
+    now
+  );
+  expect(result.shouldStop).toBe(false);
+  expect(result.evidence).toEqual({ consecutiveDead: 0, sawSession: false });
 });
 
-test("codex tmux proxy stops once the startup grace window is over", () => {
+test("codex tmux proxy requires confirmed dead duration after startup grace", () => {
   const now = Date.now();
-
-  expect(
-    codexTmuxProxyInternals.shouldStopForTmuxSession(
-      "dead",
-      false,
-      now - 1,
-      now
-    )
-  ).toBe(true);
+  let evidence = { consecutiveDead: 0, sawSession: false };
+  const first = codexTmuxProxyInternals.observeTmuxLiveness(
+    "dead",
+    evidence,
+    now - 1,
+    now
+  );
+  expect(first.shouldStop).toBe(false);
+  evidence = first.evidence;
+  const second = codexTmuxProxyInternals.observeTmuxLiveness(
+    "dead",
+    evidence,
+    now - 1,
+    now + 2500
+  );
+  expect(second.shouldStop).toBe(false);
+  const third = codexTmuxProxyInternals.observeTmuxLiveness(
+    "dead",
+    second.evidence,
+    now - 1,
+    now + 5000
+  );
+  expect(third.shouldStop).toBe(true);
 });
 
-test("codex tmux proxy stops immediately after a seen tmux session disappears", () => {
+test("codex tmux proxy does not let unknown liveness complete dead evidence", () => {
   const now = Date.now();
-
-  expect(
-    codexTmuxProxyInternals.shouldStopForTmuxSession(
-      "dead",
-      true,
-      now + 1000,
-      now
-    )
-  ).toBe(true);
-  expect(
-    codexTmuxProxyInternals.shouldStopForTmuxSession(
-      "live",
-      true,
-      now + 1000,
-      now
-    )
-  ).toBe(false);
+  const live = codexTmuxProxyInternals.observeTmuxLiveness(
+    "live",
+    { consecutiveDead: 0, sawSession: false },
+    now + 1000,
+    now
+  );
+  const dead = codexTmuxProxyInternals.observeTmuxLiveness(
+    "dead",
+    live.evidence,
+    now + 1000,
+    now + 1000
+  );
+  const unknown = codexTmuxProxyInternals.observeTmuxLiveness(
+    "unknown",
+    dead.evidence,
+    now + 1000,
+    now + 6000
+  );
+  expect(dead.shouldStop).toBe(false);
+  expect(unknown.shouldStop).toBe(false);
+  expect(unknown.evidence).toEqual({ consecutiveDead: 0, sawSession: true });
 });
 
 test("codex tmux proxy preserves a session when liveness is unknown", () => {
   const now = Date.now();
 
-  expect(
-    codexTmuxProxyInternals.shouldStopForTmuxSession(
-      "unknown",
-      true,
-      now - 1000,
-      now
-    )
-  ).toBe(false);
+  const result = codexTmuxProxyInternals.observeTmuxLiveness(
+    "unknown",
+    { consecutiveDead: 2, deadSinceMs: now - 6000, sawSession: true },
+    now - 1000,
+    now
+  );
+  expect(result.shouldStop).toBe(false);
+  expect(result.evidence).toEqual({ consecutiveDead: 0, sawSession: true });
 });
 
 test("codex tmux proxy exposes no bridge-body delivery path", () => {
@@ -655,6 +692,143 @@ test("codex tmux proxy reconnects to a live upstream without dropping the tui so
       new Promise((resolve) => setTimeout(resolve, 2000)),
     ]);
     upstreamServer?.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("codex tmux proxy recovers after more than the former reconnect limit", async () => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  let upstreamConnections = 0;
+  let proxyTask: Promise<void> | undefined;
+  let upstreamServer: ReturnType<typeof serve> | undefined;
+  let replacementServer: ReturnType<typeof serve> | undefined;
+
+  const makeUpstream = (port: number): ReturnType<typeof serve> =>
+    serve({
+      fetch: (request, server) => {
+        if (server.upgrade(request)) {
+          return undefined;
+        }
+        return new Response("upstream");
+      },
+      hostname: "127.0.0.1",
+      port,
+      websocket: {
+        message: (ws, message) => {
+          for (const raw of String(message).split("\n")) {
+            if (!raw.trim()) {
+              continue;
+            }
+            const frame = JSON.parse(raw) as JsonFrame;
+            if (frame.method === "initialize") {
+              ws.send(JSON.stringify({ id: frame.id, result: {} }));
+            }
+          }
+        },
+        open: () => {
+          upstreamConnections += 1;
+        },
+      },
+    });
+
+  const upstreamStart = await startServerWithRetries((port) =>
+    makeUpstream(port)
+  );
+  upstreamServer = upstreamStart.server;
+  const upstreamUrl = `ws://127.0.0.1:${upstreamStart.port}/`;
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      claudeSessionId: "claude-1",
+      codexRemoteUrl: upstreamUrl,
+      codexThreadId: "thread-1",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "reconnect-limit",
+      state: "working",
+      status: "running",
+      tmuxSession: "test-session",
+    })
+  );
+
+  let tui: WebSocket | undefined;
+  let tuiClosed = false;
+  try {
+    const proxyStart = await startProxyWithRetries(
+      root,
+      upstreamUrl,
+      "thread-1",
+      {
+        reconnectDelay: () => 1,
+        tmuxLiveness: () => "live",
+      }
+    );
+    proxyTask = proxyStart.proxyTask;
+    tui = new WebSocket(proxyStart.proxyUrl);
+    tui.onclose = () => {
+      tuiClosed = true;
+    };
+    await new Promise<void>((resolve, reject) => {
+      if (!tui) {
+        reject(new Error("missing tui websocket"));
+        return;
+      }
+      tui.onopen = () => resolve();
+      tui.onerror = () => reject(new Error("failed to open tui websocket"));
+    });
+    tui.send(JSON.stringify({ id: 1, method: "initialize", params: {} }));
+
+    upstreamServer.stop(true);
+    upstreamServer = undefined;
+    await waitFor(
+      () =>
+        readLifecycleEvents(root).filter(
+          (event) => event.event === "reconnect-failed"
+        ).length > 40,
+      5000
+    );
+    expect(tuiClosed).toBe(false);
+
+    replacementServer = makeUpstream(upstreamStart.port);
+    await waitFor(() => upstreamConnections >= 2, 5000);
+    await waitFor(
+      () =>
+        readLifecycleEvents(root).some(
+          (event) => event.event === "upstream-reconnected"
+        ),
+      5000
+    );
+    expect(tuiClosed).toBe(false);
+  } finally {
+    tui?.close();
+    updateRunManifest(manifestPath, (manifest) =>
+      manifest
+        ? { ...manifest, state: "completed", status: "completed" }
+        : manifest
+    );
+    await Promise.race([
+      proxyTask ?? Promise.resolve(),
+      new Promise((resolve) => setTimeout(resolve, 2500)),
+    ]);
+    upstreamServer?.stop(true);
+    replacementServer?.stop(true);
+    const events = readLifecycleEvents(root);
+    expect(
+      statSync(join(root, CODEX_TMUX_PROXY_LIFECYCLE_FILE)).mode % 0o1000
+    ).toBe(0o600);
+    expect(events.some((event) => event.event === "started")).toBe(true);
+    expect(
+      events.some(
+        (event) => event.event === "stopped" && event.reason === "inactive-run"
+      )
+    ).toBe(true);
+    expect(
+      JSON.stringify(events).includes("hello") ||
+        JSON.stringify(events).includes("thread-1")
+    ).toBe(false);
     rmSync(root, { recursive: true, force: true });
   }
 });

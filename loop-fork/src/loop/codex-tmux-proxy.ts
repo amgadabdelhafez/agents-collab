@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { serve } from "bun";
@@ -16,13 +17,15 @@ import { connectWs, type WsClient } from "./ws-client";
 
 const CODEX_PROXY_BASE_PORT = 4600;
 const CODEX_PROXY_PORT_RANGE = 100;
-const LIFETIME_POLL_DELAY_MS = 250;
+const LIFETIME_POLL_DELAY_MS = 1000;
 const HEALTH_POLL_DELAY_MS = 150;
 const HEALTH_POLL_RETRIES = 40;
 const PROXY_STARTUP_GRACE_MS = 10_000;
+const PROXY_TMUX_DEAD_CONFIRMATIONS = 3;
+const PROXY_TMUX_DEAD_CONFIRMATION_MS = 5000;
 const PROXY_UPSTREAM_INIT_TIMEOUT_MS = 5000;
 const PROXY_UPSTREAM_RECONNECT_BASE_DELAY_MS = 250;
-const PROXY_UPSTREAM_RECONNECT_MAX_ATTEMPTS = 40;
+const PROXY_UPSTREAM_RECONNECT_BACKOFF_PLATEAU = 40;
 const PROXY_UPSTREAM_RECONNECT_MAX_DELAY_MS = 2000;
 const INITIALIZE_METHOD = "initialize";
 const INITIALIZED_METHOD = "initialized";
@@ -37,6 +40,8 @@ const MCP_RELOAD_TIMEOUT_MS = 5000;
 
 export const CODEX_TMUX_PROXY_SUBCOMMAND = "__codex-tmux-proxy";
 const PROXY_SHUTDOWN_PATH = "/__loop_shutdown";
+export const CODEX_TMUX_PROXY_LIFECYCLE_FILE =
+  "codex-tmux-proxy-lifecycle.jsonl";
 
 interface ProxySocketData {
   connId: number;
@@ -58,6 +63,30 @@ interface ProxyRoute {
 }
 
 type StopReason = "dead-tmux" | "inactive-run";
+type ProxyStopReason = StopReason | "requested" | "signal";
+
+interface TmuxDeathEvidence {
+  consecutiveDead: number;
+  deadSinceMs?: number;
+  sawSession: boolean;
+}
+
+export interface ProxyRuntimeOptions {
+  now?: () => number;
+  reconnectDelay?: (attempt: number) => number;
+  tmuxLiveness?: (session: string) => TmuxLiveness;
+}
+
+interface ProxyLifecycleEvent {
+  at: string;
+  attempt?: number;
+  delayMs?: number;
+  event: string;
+  failure?: string;
+  port?: number;
+  reason?: ProxyStopReason;
+  signal?: "SIGINT" | "SIGTERM";
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -105,6 +134,44 @@ const wait = async (ms: number): Promise<void> => {
   });
 };
 
+const failureKind = (error: unknown): string => {
+  if (isRecord(error) && typeof error.code === "string") {
+    return error.code;
+  }
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("initialize timed out")) {
+    return "initialize-timeout";
+  }
+  if (message.includes("closed during initialize")) {
+    return "initialize-closed";
+  }
+  if (message.includes("initialize failed")) {
+    return "initialize-rejected";
+  }
+  if (message.includes("before handshake")) {
+    return "handshake-closed";
+  }
+  if (message.includes("upgrade failed")) {
+    return "upgrade-rejected";
+  }
+  return error instanceof Error ? error.name : "unknown";
+};
+
+const appendProxyLifecycle = (
+  runDir: string,
+  event: Omit<ProxyLifecycleEvent, "at">
+): void => {
+  try {
+    appendFileSync(
+      join(runDir, CODEX_TMUX_PROXY_LIFECYCLE_FILE),
+      `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`,
+      { encoding: "utf8", mode: 0o600 }
+    );
+  } catch {
+    // Lifecycle evidence must not become a new proxy failure mode.
+  }
+};
+
 const extractThreadId = (value: unknown): string | undefined => {
   if (!isRecord(value)) {
     return undefined;
@@ -131,19 +198,43 @@ const persistCodexThreadId = (runDir: string, threadId: string): void => {
   });
 };
 
-const shouldStopForTmuxSession = (
+const observeTmuxLiveness = (
   liveness: TmuxLiveness,
-  sawTmuxSession: boolean,
+  evidence: TmuxDeathEvidence,
   startupDeadlineMs: number,
   nowMs: number
-): boolean => {
-  if (liveness === "live" || liveness === "unknown") {
-    return false;
+): { evidence: TmuxDeathEvidence; shouldStop: boolean } => {
+  if (liveness === "live") {
+    return {
+      evidence: { consecutiveDead: 0, sawSession: true },
+      shouldStop: false,
+    };
   }
-  if (!sawTmuxSession && nowMs < startupDeadlineMs) {
-    return false;
+  if (liveness === "unknown") {
+    return {
+      evidence: {
+        consecutiveDead: 0,
+        sawSession: evidence.sawSession,
+      },
+      shouldStop: false,
+    };
   }
-  return true;
+  if (!evidence.sawSession && nowMs < startupDeadlineMs) {
+    return { evidence, shouldStop: false };
+  }
+  const nextEvidence: TmuxDeathEvidence = {
+    consecutiveDead: evidence.consecutiveDead + 1,
+    deadSinceMs: evidence.deadSinceMs ?? nowMs,
+    sawSession: evidence.sawSession,
+  };
+  return {
+    evidence: nextEvidence,
+    shouldStop: Boolean(
+      nextEvidence.consecutiveDead >= PROXY_TMUX_DEAD_CONFIRMATIONS &&
+        nowMs - (nextEvidence.deadSinceMs ?? nowMs) >=
+          PROXY_TMUX_DEAD_CONFIRMATION_MS
+    ),
+  };
 };
 
 const proxyInitializeResponse = (
@@ -191,7 +282,6 @@ class CodexTmuxProxy {
   private readonly routes = new Map<number, ProxyRoute>();
   private readonly runDir: string;
   private currentConnId = 0;
-  private drainTimer: ReturnType<typeof setInterval> | undefined;
   private nextProxyId = 100_000;
   private proxyServer: ReturnType<typeof serve> | undefined;
   private reconnectAttemptCount = 0;
@@ -200,31 +290,52 @@ class CodexTmuxProxy {
   private mcpReloadInFlight = false;
   private mcpReloadTimer: ReturnType<typeof setTimeout> | undefined;
   private resolveStopped = () => undefined;
-  private sawTmuxSession = false;
+  private lifetimeTimer: ReturnType<typeof setInterval> | undefined;
+  private tmuxDeathEvidence: TmuxDeathEvidence = {
+    consecutiveDead: 0,
+    sawSession: false,
+  };
   private stopped = false;
-  private readonly startupDeadlineMs = Date.now() + PROXY_STARTUP_GRACE_MS;
+  private readonly startupDeadlineMs: number;
   private threadId: string;
   private tuiSocket: ServerWebSocket<ProxySocketData> | undefined;
   private upstream: WsClient | undefined;
   private readonly stoppedPromise: Promise<void>;
+  private readonly now: () => number;
+  private readonly reconnectDelay: (attempt: number) => number;
+  private readonly readTmuxLiveness: (session: string) => TmuxLiveness;
 
   constructor(
     runDir: string,
     remoteUrl: string,
     threadId: string,
-    port: number
+    port: number,
+    options: ProxyRuntimeOptions = {}
   ) {
     this.port = port;
     this.remoteUrl = remoteUrl;
     this.runDir = runDir;
     this.threadId = threadId;
+    this.now = options.now ?? Date.now;
+    this.reconnectDelay = options.reconnectDelay ?? reconnectDelayMs;
+    this.readTmuxLiveness = options.tmuxLiveness ?? tmuxSessionLiveness;
+    this.startupDeadlineMs = this.now() + PROXY_STARTUP_GRACE_MS;
     this.stoppedPromise = new Promise((resolve) => {
       this.resolveStopped = resolve;
     });
   }
 
   async start(): Promise<void> {
+    appendProxyLifecycle(this.runDir, {
+      event: "starting",
+      port: this.port,
+    });
     await this.connectUpstream();
+    if (this.stopped) {
+      this.upstream?.close();
+      this.upstream = undefined;
+      return;
+    }
     this.proxyServer = serve<ProxySocketData>({
       fetch: (request, server) => {
         const path = new URL(request.url).pathname;
@@ -271,7 +382,7 @@ class CodexTmuxProxy {
         },
       },
     });
-    this.drainTimer = setInterval(() => {
+    this.lifetimeTimer = setInterval(() => {
       const stopReason = this.stopReason();
       if (!stopReason) {
         return;
@@ -279,16 +390,20 @@ class CodexTmuxProxy {
       if (stopReason === "dead-tmux") {
         clearStaleTmuxBridgeState(this.runDir);
       }
-      this.stop();
+      this.stop(stopReason);
     }, LIFETIME_POLL_DELAY_MS);
-    this.drainTimer.unref?.();
+    this.lifetimeTimer.unref?.();
+    appendProxyLifecycle(this.runDir, {
+      event: "started",
+      port: this.port,
+    });
   }
 
   async wait(): Promise<void> {
     await this.stoppedPromise;
   }
 
-  stop(): void {
+  stop(reason: ProxyStopReason = "requested"): void {
     if (this.stopped) {
       return;
     }
@@ -297,9 +412,9 @@ class CodexTmuxProxy {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
-    if (this.drainTimer) {
-      clearInterval(this.drainTimer);
-      this.drainTimer = undefined;
+    if (this.lifetimeTimer) {
+      clearInterval(this.lifetimeTimer);
+      this.lifetimeTimer = undefined;
     }
     this.clearMcpReloadState();
     this.proxyServer?.stop(true);
@@ -307,6 +422,7 @@ class CodexTmuxProxy {
     this.tuiSocket = undefined;
     this.upstream?.close();
     this.upstream = undefined;
+    appendProxyLifecycle(this.runDir, { event: "stopped", reason });
     this.resolveStopped();
   }
 
@@ -324,9 +440,16 @@ class CodexTmuxProxy {
   }
 
   private attachUpstream(ws: WsClient): void {
+    const recoveredAfterAttempts = this.reconnectAttemptCount;
     this.upstream = ws;
     this.reconnecting = false;
     this.reconnectAttemptCount = 0;
+    if (recoveredAfterAttempts > 0) {
+      appendProxyLifecycle(this.runDir, {
+        attempt: recoveredAfterAttempts,
+        event: "upstream-reconnected",
+      });
+    }
     ws.onmessage = (data) => {
       for (const raw of data.split("\n")) {
         if (raw.trim()) {
@@ -433,26 +556,24 @@ class CodexTmuxProxy {
   }
 
   private scheduleReconnect(): void {
-    if (
-      this.stopped ||
-      this.upstream ||
-      this.reconnectTimer ||
-      this.reconnectAttemptCount >= PROXY_UPSTREAM_RECONNECT_MAX_ATTEMPTS
-    ) {
-      if (
-        !(this.stopped || this.upstream) &&
-        this.reconnectAttemptCount >= PROXY_UPSTREAM_RECONNECT_MAX_ATTEMPTS
-      ) {
-        this.stop();
-      }
+    if (this.stopped || this.upstream || this.reconnectTimer) {
       return;
     }
     this.reconnecting = true;
-    this.reconnectAttemptCount += 1;
+    this.reconnectAttemptCount = Math.min(
+      this.reconnectAttemptCount + 1,
+      PROXY_UPSTREAM_RECONNECT_BACKOFF_PLATEAU
+    );
+    const delayMs = this.reconnectDelay(this.reconnectAttemptCount);
+    appendProxyLifecycle(this.runDir, {
+      attempt: this.reconnectAttemptCount,
+      delayMs,
+      event: "reconnect-scheduled",
+    });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       this.tryReconnect().catch(() => undefined);
-    }, reconnectDelayMs(this.reconnectAttemptCount));
+    }, delayMs);
     this.reconnectTimer.unref?.();
   }
 
@@ -465,12 +586,17 @@ class CodexTmuxProxy {
       if (stopReason === "dead-tmux") {
         clearStaleTmuxBridgeState(this.runDir);
       }
-      this.stop();
+      this.stop(stopReason);
       return;
     }
     try {
       await this.connectUpstream();
-    } catch {
+    } catch (error) {
+      appendProxyLifecycle(this.runDir, {
+        attempt: this.reconnectAttemptCount,
+        event: "reconnect-failed",
+        failure: failureKind(error),
+      });
       this.scheduleReconnect();
     }
   }
@@ -480,6 +606,7 @@ class CodexTmuxProxy {
       return;
     }
     this.upstream = undefined;
+    appendProxyLifecycle(this.runDir, { event: "upstream-disconnected" });
     this.clearMcpReloadState();
     this.clearUpstreamState();
     const stopReason = this.stopReason();
@@ -487,7 +614,7 @@ class CodexTmuxProxy {
       if (stopReason === "dead-tmux") {
         clearStaleTmuxBridgeState(this.runDir);
       }
-      this.stop();
+      this.stop(stopReason);
       return;
     }
     this.scheduleReconnect();
@@ -658,20 +785,16 @@ class CodexTmuxProxy {
       return "inactive-run";
     }
     const liveness = manifest.tmuxSession
-      ? tmuxSessionLiveness(manifest.tmuxSession)
+      ? this.readTmuxLiveness(manifest.tmuxSession)
       : "dead";
-    if (liveness === "live") {
-      this.sawTmuxSession = true;
-      return undefined;
-    }
-    return shouldStopForTmuxSession(
+    const observation = observeTmuxLiveness(
       liveness,
-      this.sawTmuxSession,
+      this.tmuxDeathEvidence,
       this.startupDeadlineMs,
-      Date.now()
-    )
-      ? "dead-tmux"
-      : undefined;
+      this.now()
+    );
+    this.tmuxDeathEvidence = observation.evidence;
+    return observation.shouldStop ? "dead-tmux" : undefined;
   }
 }
 
@@ -711,16 +834,31 @@ export const runCodexTmuxProxy = async (
   runDir: string,
   remoteUrl: string,
   threadId: string,
-  port: number
+  port: number,
+  options: ProxyRuntimeOptions = {}
 ): Promise<void> => {
-  const proxy = new CodexTmuxProxy(runDir, remoteUrl, threadId, port);
-  const shutdown = (): void => {
-    proxy.stop();
+  const proxy = new CodexTmuxProxy(runDir, remoteUrl, threadId, port, options);
+  const shutdown = (signal: "SIGINT" | "SIGTERM"): void => {
+    appendProxyLifecycle(runDir, { event: "signal", signal });
+    proxy.stop("signal");
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  await proxy.start();
-  await proxy.wait();
+  const onSigint = (): void => shutdown("SIGINT");
+  const onSigterm = (): void => shutdown("SIGTERM");
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+  try {
+    await proxy.start();
+    await proxy.wait();
+  } catch (error) {
+    appendProxyLifecycle(runDir, {
+      event: "fatal-start",
+      failure: failureKind(error),
+    });
+    throw error;
+  } finally {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+  }
 };
 
 export const codexTmuxProxyInternals = {
@@ -729,7 +867,7 @@ export const codexTmuxProxyInternals = {
   proxyHealth,
   buildProxyUrl,
   proxyInitializeResponse,
+  observeTmuxLiveness,
   persistCodexThreadId,
   recordCodexAppServerDelegationCandidate,
-  shouldStopForTmuxSession,
 };
