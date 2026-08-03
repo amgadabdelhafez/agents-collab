@@ -15,6 +15,7 @@ export const PI_VERSION = "0.82.1";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const LOCAL_DUMMY_KEY = "loop-local-no-key";
+const NANNY_MAX_TOKENS = 3200;
 const TRAILING_SLASH_RE = /\/+$/;
 const CHAT_COMPLETIONS_SUFFIX_RE = /\/chat\/completions$/i;
 
@@ -155,9 +156,15 @@ export const createPiSessionRuntime = async (
         cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 },
         id: spec.model,
         input: ["text"],
-        maxTokens: spec.maxTokens ?? 32_768,
+        maxTokens:
+          spec.maxTokens ??
+          (spec.provider === "nanny" ? NANNY_MAX_TOKENS : 32_768),
         name: spec.model,
-        reasoning: false,
+        // Pi only emits qwen-chat-template controls for reasoning-capable
+        // models. Nanny sessions select `off` below, which makes the actual
+        // request carry chat_template_kwargs.enable_thinking=false instead of
+        // leaving Qwen to its server-default thinking mode.
+        reasoning: spec.provider === "nanny",
       },
     ],
     name: spec.provider === "nanny" ? "Loop Nanny" : "Loop Au Pair",
@@ -281,7 +288,7 @@ export const createEphemeralPiAgent = async (input: {
       },
       { projectTrusted: false }
     ),
-    thinkingLevel: "minimal",
+    thinkingLevel: input.provider.provider === "nanny" ? "off" : "minimal",
     tools: toolNames,
   });
   return {

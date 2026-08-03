@@ -1,0 +1,45 @@
+{
+  "task_id": "nanny-generation-readiness",
+  "feature": "nanny-generation-readiness",
+  "timestamp": "2026-08-03T17:25:14Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "focused_pi_runtime": {
+      "status": "pass",
+      "evidence": "5 pass, 0 fail, 19 assertions; captured Nanny no-tools and both tool-turn request bodies carry chat_template_kwargs.enable_thinking=false and preserve_thinking=true; Au Pair omits the field"
+    },
+    "focused_utility_harness": {
+      "status": "pass",
+      "evidence": "utility-pi-harness 9 pass, 0 fail; governess-llm 19 pass, 0 fail"
+    },
+    "live_generation": {
+      "status": "pass",
+      "evidence": "patched Pi runtime completed real local Qwen marker NANNY_READY in 856ms with reasoningTokens=0"
+    },
+    "full_suite": {
+      "status": "pass",
+      "evidence": "scripts/verify.sh nanny-generation-readiness nanny-generation-readiness exited 0 after lint, typecheck, compiled build, every sorted test file, and an empty baseline allowlist; npm run test:ci also independently exited 0"
+    },
+    "static_and_build": {
+      "status": "pass",
+      "evidence": "ultracite checked 738 files with no fixes; compiled build passed; git diff --check passed"
+    },
+    "live_process_safety": {
+      "status": "pass",
+      "evidence": "only com.homelab.mlx-lm was restarted under founder authority; Claude, Codex, Governess, tmux sessions, and panes were not restarted"
+    },
+    "independent_review": {
+      "status": "pending",
+      "evidence": "exact-SHA supervisor review required before deployment"
+    }
+  },
+  "acceptance": {
+    "nanny_thinking_explicitly_disabled": true,
+    "nanny_max_tokens": 3200,
+    "au_pair_unchanged": true,
+    "real_generation_verified": true,
+    "deployment_held": true
+  },
+  "blocking_findings": []
+}

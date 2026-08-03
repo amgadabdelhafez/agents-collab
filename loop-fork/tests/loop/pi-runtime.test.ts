@@ -56,6 +56,21 @@ const fakeProvider = (
 };
 
 describe("shared Pi runtime", () => {
+  test("registers Nanny with bounded output and explicit thinking controls", async () => {
+    const runtime = await createPiSessionRuntime({
+      endpoint: "http://127.0.0.1:8082/v1/chat/completions",
+      model: "fake-nanny",
+      provider: "nanny",
+    });
+    expect(runtime.model).toMatchObject({
+      maxTokens: 3200,
+      reasoning: true,
+    });
+    expect(runtime.model.compat).toMatchObject({
+      thinkingFormat: "qwen-chat-template",
+    });
+  });
+
   test("resolves the Au Pair through Pi's OpenRouter catalog without network refresh", async () => {
     const runtime = await createPiSessionRuntime({
       apiKey: "test-only-key",
@@ -108,6 +123,11 @@ describe("shared Pi runtime", () => {
     });
     expect(provider.requests).toHaveLength(1);
     expect(provider.requests[0]).toMatchObject({
+      chat_template_kwargs: {
+        enable_thinking: false,
+        preserve_thinking: true,
+      },
+      max_tokens: 100,
       model: "fake-model",
       stream: true,
     });
@@ -145,6 +165,7 @@ describe("shared Pi runtime", () => {
       usage: { totalTokens: 10 },
     });
     expect(provider.requests).toHaveLength(1);
+    expect(provider.requests[0]).not.toHaveProperty("chat_template_kwargs");
   });
 
   test("exposes only the explicit custom tool and completes a tool turn", async () => {
@@ -227,6 +248,14 @@ describe("shared Pi runtime", () => {
     expect(toolCalls).toBe(1);
     expect(finalText).toBe("done");
     expect(provider.requests).toHaveLength(2);
+    for (const request of provider.requests) {
+      expect(request).toMatchObject({
+        chat_template_kwargs: {
+          enable_thinking: false,
+          preserve_thinking: true,
+        },
+      });
+    }
     expect(JSON.stringify(provider.requests[1])).toContain("PI_TOOL_OK");
   });
 });
