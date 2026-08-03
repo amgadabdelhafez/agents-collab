@@ -1,0 +1,38 @@
+{
+  "task_id": "aggressive-au-pair-routing",
+  "feature": "aggressive-au-pair-routing",
+  "timestamp": "2026-08-03T22:00:00Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "live_diagnosis": {
+      "status": "pass",
+      "evidence": "run 118 had 9 requests: Direct 4, Nanny 2, requester-retained reviews 3, Au Pair 0; panes were live and run 115 proved recent GLM completion"
+    },
+    "router_discrimination": {
+      "status": "pass",
+      "evidence": "77 pass, 0 fail, 97 assertions; explicit utility audit eligible while writes, non-low risk, release authority, protected scope, missing capability, missing epoch, unhealthy tier, and non-review review mode fail closed"
+    },
+    "tier_discrimination": {
+      "status": "pass",
+      "evidence": "11 pass, 0 fail, 26 assertions; utility audits, three-scope reasoning, three-stage plans, and non-direct commands select Au Pair while small inspection stays Nanny and exact work stays Direct"
+    },
+    "runtime_and_bridge": {
+      "status": "pass",
+      "evidence": "utility runtime 51 pass, bridge 92 pass, guidance 7 pass; persisted utility audit reaches Au Pair without a peer message and default peer reviews remain unchanged"
+    },
+    "static_build_full_suite": {
+      "status": "pass",
+      "evidence": "ultracite checked 738 files with no fixes; build compiled 3043 modules; npm run test:ci exited 0 across every sorted test file"
+    },
+    "canonical_verify": {
+      "status": "pass",
+      "evidence": "scripts/verify.sh aggressive-au-pair-routing aggressive-au-pair-routing exited 0; lint, build, full test suite, and empty named baseline allowlist passed"
+    },
+    "independent_review": {
+      "status": "pending",
+      "evidence": "exact-SHA supervisor review required before deployment"
+    }
+  },
+  "blocking_findings": []
+}

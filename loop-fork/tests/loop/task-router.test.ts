@@ -214,8 +214,132 @@ test("routes review to the peer and authority to escalation", () => {
     target: "requester",
   });
   expect(
+    routeUtilityRequest(
+      makeRequest({
+        kind: "review",
+        readScope: ["src/parser.ts"],
+        requester: "claude",
+        reviewMode: "peer-verdict",
+        requiredCapabilities: ["inspect"],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({
+    reason: "review-stays-with-requester",
+    target: "requester",
+  });
+  expect(
     routeUtilityRequest(makeRequest({ kind: "design" }), context())
   ).toEqual({ reason: "authority-needs-human", target: "escalate" });
+});
+
+test("routes an explicit bounded utility audit to a capable utility tier", () => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        kind: "review",
+        objective:
+          "Audit the bounded parser behavior without granting approval",
+        readScope: ["src/parser.ts", "tests/parser.test.ts"],
+        reviewMode: "utility-audit",
+        requiredCapabilities: ["inspect", "focused-verify"],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({
+    reason: "utility-eligible",
+    target: "utility",
+    tierId: "cheap-oss",
+  });
+});
+
+test.each([
+  [
+    "writes",
+    { writeScope: ["src/parser.ts"] },
+    "request-not-bounded",
+    "driver",
+  ],
+  ["non-low risk", { risk: "medium" }, "risk-not-low", "driver"],
+  [
+    "release authority",
+    { authority: { release: true } },
+    "forbidden-authority",
+    "escalate",
+  ],
+  [
+    "too many scopes",
+    {
+      readScope: [
+        "src/a.ts",
+        "src/b.ts",
+        "src/c.ts",
+        "src/d.ts",
+        "src/e.ts",
+        "src/f.ts",
+        "src/g.ts",
+      ],
+    },
+    "request-not-bounded",
+    "driver",
+  ],
+  [
+    "missing inspect capability",
+    { requiredCapabilities: ["focused-verify"] },
+    "request-not-bounded",
+    "driver",
+  ],
+  ["protected scope", { readScope: [".env"] }, "protected-scope", "driver"],
+] as const)("keeps a utility audit with %s away from Au Pair", (_label, overrides, reason, target) => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        kind: "review",
+        readScope: ["src/parser.ts"],
+        reviewMode: "utility-audit",
+        requiredCapabilities: ["inspect"],
+        writeScope: [],
+        ...(overrides as Partial<UtilityRouteRequestInput>),
+      }),
+      context()
+    )
+  ).toEqual({ reason, target });
+});
+
+test("rejects review mode on a non-review request", () => {
+  expect(
+    routeUtilityRequest(
+      makeRequest({
+        kind: "inspect",
+        readScope: ["src/parser.ts"],
+        reviewMode: "utility-audit",
+        requiredCapabilities: ["inspect"],
+        writeScope: [],
+      }),
+      context()
+    )
+  ).toEqual({ reason: "request-not-bounded", target: "driver" });
+});
+
+test("utility audit still requires a live Governess epoch and healthy GLM tier", () => {
+  const audit = makeRequest({
+    kind: "review",
+    readScope: ["src/parser.ts"],
+    reviewMode: "utility-audit",
+    requiredCapabilities: ["inspect"],
+    writeScope: [],
+  });
+  expect(
+    routeUtilityRequest(audit, context({ currentEpoch: undefined }))
+  ).toEqual({ reason: "missing-governess-epoch", target: "driver" });
+  expect(
+    routeUtilityRequest(
+      audit,
+      context({ tiers: [{ ...context().tiers[0], healthy: false }] })
+    )
+  ).toEqual({ reason: "utility-unavailable", target: "driver" });
 });
 
 describe("fail-closed gates", () => {

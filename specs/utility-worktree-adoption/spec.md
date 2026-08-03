@@ -55,7 +55,9 @@ configured root.
 
 ## Non-goals
 
-- Delegating peer review or product/architecture decisions to GLM.
+- Delegating peer verdicts or product/architecture decisions to GLM. Bounded,
+  non-authoritative evidence audits may use GLM, but Claude or Codex owns the
+  verdict.
 - Allowing arbitrary temporary directories.
 - Increasing worker concurrency or token limits.
 - Changing the tmux layout.

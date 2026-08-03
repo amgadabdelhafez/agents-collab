@@ -20,6 +20,8 @@ export type UtilityRequestKind =
   | "design"
   | "authority";
 
+export type UtilityReviewMode = "utility-audit" | "peer-verdict";
+
 export type UtilityCapability =
   | "inspect"
   | "bounded-command"
@@ -154,6 +156,7 @@ export interface UtilityRouteRequest {
   readScope: string[];
   requester: Agent;
   requiredCapabilities: UtilityCapability[];
+  reviewMode?: UtilityReviewMode;
   risk: UtilityRisk;
   writeScope: string[];
 }
@@ -254,6 +257,7 @@ const UTILITY_KINDS = new Set<UtilityRequestKind>([
   "inspect",
   "edit",
   "command",
+  "review",
 ]);
 const UTILITY_EXECUTION_PROFILES = new Set<UtilityExecutionProfile>([
   "file-list",
@@ -368,6 +372,7 @@ export const createUtilityRouteRequest = (
     objective,
     readScope: uniqueTrimmed(input.readScope).map(normalizePath),
     requester: input.requester,
+    ...(input.reviewMode ? { reviewMode: input.reviewMode } : {}),
     requiredCapabilities: uniqueTrimmed(
       input.requiredCapabilities
     ) as UtilityCapability[],
@@ -386,6 +391,9 @@ export const createUtilityRouteRequest = (
 
 const isAuthorityRequest = (request: UtilityRouteRequest): boolean =>
   request.kind === "authority" || request.kind === "design";
+
+const isUtilityAudit = (request: UtilityRouteRequest): boolean =>
+  request.kind === "review" && request.reviewMode === "utility-audit";
 
 const hasForbiddenAuthority = (authority: UtilityAuthorityFlags): boolean =>
   Object.values(authority).some((value) => value === true);
@@ -525,7 +533,7 @@ const focusedCheckFieldsAreBounded = (
 };
 
 const focusedCheckIsBounded = (request: UtilityRouteRequest): boolean => {
-  if (request.kind !== "command") {
+  if (request.kind !== "command" && !isUtilityAudit(request)) {
     return false;
   }
   return focusedCheckFieldsAreBounded(
@@ -752,7 +760,9 @@ const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
   }
   if (
     request.executionProfile !== "read-plan" ||
-    (request.kind !== "inspect" && request.kind !== "command") ||
+    (request.kind !== "inspect" &&
+      request.kind !== "command" &&
+      !isUtilityAudit(request)) ||
     request.executionArgv !== undefined ||
     request.executionCwd !== undefined ||
     request.executionGit !== undefined ||
@@ -775,6 +785,7 @@ const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
   }
   return (
     (request.kind === "command" ||
+      isUtilityAudit(request) ||
       !(input as UtilityReadPlanStep[]).some(
         (step) => step.executionProfile === "focused-check"
       )) &&
@@ -825,71 +836,75 @@ const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
   );
 };
 
+const utilityAuditIsBounded = (request: UtilityRouteRequest): boolean =>
+  request.reviewMode === "utility-audit" &&
+  request.readScope.length > 0 &&
+  request.readScope.length <= MAX_UTILITY_CONTEXT_REFS &&
+  request.writeScope.length === 0 &&
+  request.requiredCapabilities.includes("inspect");
+
+const utilityExecutionContractIsBounded = (
+  request: UtilityRouteRequest
+): boolean =>
+  Boolean(request.objective.trim() && request.acceptanceCriteria.length > 0) &&
+  executionMetadataIsBounded(request) &&
+  (request.kind === "review" || request.reviewMode === undefined) &&
+  (request.executionProfile !== "file-read" ||
+    request.executionRead !== undefined) &&
+  (request.executionProfile === "file-read" ||
+    request.executionRead === undefined) &&
+  (request.executionProfile !== "focused-check" ||
+    focusedCheckIsBounded(request)) &&
+  (request.executionProfile === "focused-check" ||
+    (request.executionArgv === undefined &&
+      request.executionCwd === undefined));
+
+const utilityEditIsBounded = (request: UtilityRouteRequest): boolean =>
+  request.readScope.length > 0 &&
+  request.readScope.length <= MAX_UTILITY_EDIT_READ_SCOPES &&
+  request.writeScope.length > 0 &&
+  request.writeScope.length <= MAX_UTILITY_EDIT_WRITE_SCOPES &&
+  request.requiredCapabilities.includes("scoped-edit") &&
+  request.writeScope.every((scope) => request.readScope.includes(scope)) &&
+  request.executionProfile === undefined &&
+  request.executionArgv === undefined &&
+  request.executionCwd === undefined &&
+  request.executionGit === undefined &&
+  request.executionOutput === undefined &&
+  request.executionPlan === undefined &&
+  request.executionRead === undefined;
+
+const utilityCommandIsBounded = (request: UtilityRouteRequest): boolean => {
+  const hasDeterministicCommand =
+    request.executionProfile === "focused-check" ||
+    (request.executionProfile === "read-plan" &&
+      request.executionPlan?.some(
+        (step) => step.executionProfile === "focused-check"
+      ) === true);
+  return (
+    hasDeterministicCommand &&
+    request.readScope.length > 0 &&
+    request.writeScope.length === 0
+  );
+};
+
 export const utilityRequestIsBounded = (
   request: UtilityRouteRequest
 ): boolean => {
-  if (!(request.objective.trim() && request.acceptanceCriteria.length > 0)) {
-    return false;
-  }
-  if (!executionMetadataIsBounded(request)) {
-    return false;
-  }
-  if (
-    request.executionProfile === "file-read" &&
-    request.executionRead === undefined
-  ) {
-    return false;
-  }
-  if (
-    request.executionProfile !== "file-read" &&
-    request.executionRead !== undefined
-  ) {
-    return false;
-  }
-  if (
-    request.executionProfile === "focused-check" &&
-    !focusedCheckIsBounded(request)
-  ) {
-    return false;
-  }
-  if (
-    request.executionProfile !== "focused-check" &&
-    (request.executionArgv !== undefined || request.executionCwd !== undefined)
-  ) {
+  if (!utilityExecutionContractIsBounded(request)) {
     return false;
   }
   if (request.kind === "inspect") {
     return request.readScope.length > 0 && request.writeScope.length === 0;
   }
   if (request.kind === "edit") {
-    return (
-      request.readScope.length > 0 &&
-      request.readScope.length <= MAX_UTILITY_EDIT_READ_SCOPES &&
-      request.writeScope.length > 0 &&
-      request.writeScope.length <= MAX_UTILITY_EDIT_WRITE_SCOPES &&
-      request.requiredCapabilities.includes("scoped-edit") &&
-      request.writeScope.every((scope) => request.readScope.includes(scope)) &&
-      request.executionProfile === undefined &&
-      request.executionArgv === undefined &&
-      request.executionCwd === undefined &&
-      request.executionGit === undefined &&
-      request.executionOutput === undefined &&
-      request.executionPlan === undefined &&
-      request.executionRead === undefined
-    );
+    return utilityEditIsBounded(request);
   }
   if (request.kind === "command") {
-    const hasDeterministicCommand =
-      request.executionProfile === "focused-check" ||
-      (request.executionProfile === "read-plan" &&
-        request.executionPlan?.some(
-          (step) => step.executionProfile === "focused-check"
-        ) === true);
-    return (
-      hasDeterministicCommand &&
-      request.readScope.length > 0 &&
-      request.writeScope.length === 0
-    );
+    return utilityCommandIsBounded(request);
+  }
+  if (request.kind === "review") {
+    return utilityAuditIsBounded(request);
   }
   return false;
 };
@@ -1005,7 +1020,7 @@ export const routeUtilityRequest = (
   request: UtilityRouteRequest,
   context: UtilityRouteContext
 ): UtilityRouteDecision => {
-  if (request.kind === "review") {
+  if (request.kind === "review" && !isUtilityAudit(request)) {
     return request.requester === context.currentDriver
       ? { reason: "review-needs-peer", target: "peer" }
       : { reason: "review-stays-with-requester", target: "requester" };

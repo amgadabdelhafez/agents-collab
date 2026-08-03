@@ -36,8 +36,15 @@ test("delegation guidance states the exact context and decomposition contract", 
   expect(guidance).toContain("structured execution fields");
   expect(guidance).toContain("truthful risk");
   expect(guidance).toContain(
-    "Before authoring a meaningful self-contained code block"
+    "Before authoring any meaningful self-contained code block"
   );
+  expect(guidance).toContain("review_mode=utility-audit");
+  expect(guidance).toContain("review_mode=peer-verdict");
+  expect(guidance).toContain("execution_profile=git-diff");
+  expect(guidance).toContain("without raw execution_argv or execution_cwd");
+  expect(guidance).toContain("one- or two-scope local-Qwen inspection");
+  expect(guidance).toContain("not after a native Edit or Write call");
+  expect(guidance).toContain("does not prevent you from sending separate");
   expect(guidance).toContain("risk=low describes operational side effects");
   expect(guidance).toContain("name each target in both read_scope");
   expect(guidance).toContain("Reserve an active edit packet's write_scope");
@@ -75,6 +82,9 @@ test("route_task describes the deterministic small-edit contract", () => {
   expect(contract).toContain("Use edit when asking the helper to author");
   expect(contract).toContain("repeats every write target here");
   expect(contract).toContain("directory-broad scopes are not valid");
+  expect(contract).toContain("review_mode");
+  expect(contract).toContain("utility-audit");
+  expect(contract).toContain("non-authoritative");
 });
 
 test("Claude channel guidance preserves evidence-dense peer traffic", () => {

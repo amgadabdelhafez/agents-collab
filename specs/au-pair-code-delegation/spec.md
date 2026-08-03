@@ -61,8 +61,9 @@ intent, architecture, review, patch application, and final verification.
 
 ## Non-goals
 
-- Delegating architecture, review, product decisions, broad refactors, or the
-  original human task.
+- Delegating architecture, peer-review verdicts, product decisions, broad
+  refactors, or the original human task. Au Pair may perform bounded,
+  non-authoritative evidence audits for a main-agent review.
 - Automatically applying generated patches.
 - Giving Au Pair a shell, native agent tools, or persistent chat context.
 - Weakening risk or protected-path gates to increase utilization.

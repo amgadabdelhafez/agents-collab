@@ -926,6 +926,67 @@ test("a three-document audit without narrative context refs reaches Au Pair", as
   }
 });
 
+test("an explicit utility audit reaches Au Pair instead of the peer", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-au-pair-utility-audit-"));
+  const runDir = join(repoRoot, ".loop", "runs", "au-pair-utility-audit");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const value = 1;\n"
+  );
+  appendUtilityRouteRequest(
+    runDir,
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["return a non-authoritative evidence finding"],
+      authority: {},
+      id: "utility-audit",
+      kind: "review",
+      objective: "Audit the bounded source without granting approval",
+      readScope: ["src/sample.ts"],
+      requester: "codex",
+      reviewMode: "utility-audit",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    })
+  );
+  const spawned: string[] = [];
+  try {
+    await processPendingUtilityRoutes(
+      {
+        currentDriver: "codex",
+        epoch: 26,
+        peer: "claude",
+        repoRoot,
+        runDir,
+      },
+      {
+        LOOP_AU_PAIR_ENABLED: "1",
+        LOOP_AU_PAIR_URL: "http://127.0.0.1:9998/v1/chat/completions",
+      },
+      {
+        spawnWorker: ({ jobId }) => {
+          spawned.push(jobId);
+          return true;
+        },
+      }
+    );
+    expect(spawned).toEqual(["utility-audit"]);
+    expect(readUtilityJob(runDir, "utility-audit")).toMatchObject({
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-au-pair",
+      },
+      state: "routed-utility",
+    });
+    expect(readBridgeEvents(runDir)).toEqual([]);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("a full Nanny slot does not block eligible Au Pair work in the same tick", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-independent-tier-slots-"));
   const runDir = join(repoRoot, ".loop", "runs", "independent-tier-slots");

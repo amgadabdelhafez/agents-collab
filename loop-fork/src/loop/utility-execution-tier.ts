@@ -137,18 +137,20 @@ const unprofiledBoundedInspection = (request: UtilityRouteRequest): boolean => {
 export const classifyUtilityExecution = (
   request: UtilityRouteRequest
 ): UtilityExecutionTierId => {
+  if (request.kind === "review" && request.reviewMode === "utility-audit") {
+    return UTILITY_AU_PAIR_TIER;
+  }
   if (directUtilityCalls(request)) {
     return UTILITY_DIRECT_TIER;
   }
   const smallReadPlan =
     request.executionProfile !== "read-plan" ||
-    (request.executionPlan?.length ?? Number.POSITIVE_INFINITY) <= 4;
+    (request.executionPlan?.length ?? Number.POSITIVE_INFINITY) <= 2;
   const profiledNannyEligible =
     nannyCommonBoundary(request) &&
-    request.kind !== "edit" &&
-    (request.kind === "inspect" || request.kind === "command") &&
+    request.kind === "inspect" &&
     request.executionProfile !== undefined &&
-    request.readScope.length <= 4 &&
+    request.readScope.length <= 2 &&
     smallReadPlan;
   return profiledNannyEligible || unprofiledBoundedInspection(request)
     ? UTILITY_NANNY_TIER

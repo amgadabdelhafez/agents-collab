@@ -153,6 +153,68 @@ describe("utility execution tier classification", () => {
     ).toBe(UTILITY_NANNY_TIER);
   });
 
+  test("utility audits always keep synthesis with Au Pair", () => {
+    const audit = createUtilityRouteRequest({
+      acceptanceCriteria: ["return a non-authoritative evidence finding"],
+      authority: {},
+      executionProfile: "file-read",
+      executionRead: { endLine: 20, path: "src/example.ts", startLine: 1 },
+      kind: "review",
+      objective: "Audit the bounded implementation",
+      readScope: ["src/example.ts"],
+      requester: "codex",
+      reviewMode: "utility-audit",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    });
+    expect(classifyUtilityExecution(audit)).toBe(UTILITY_AU_PAIR_TIER);
+  });
+
+  test("broader profiled inspection and reasoning-backed commands go to Au Pair", () => {
+    expect(
+      classifyUtilityExecution(
+        inspectRequest({
+          executionProfile: "search",
+          readScope: ["src/a.ts", "src/b.ts", "src/c.ts"],
+        })
+      )
+    ).toBe(UTILITY_AU_PAIR_TIER);
+    expect(
+      classifyUtilityExecution(
+        createUtilityRouteRequest({
+          acceptanceCriteria: ["return reasoned search evidence"],
+          authority: {},
+          executionProfile: "search",
+          kind: "command",
+          objective: "Interpret the bounded search results",
+          readScope: ["src"],
+          requester: "claude",
+          requiredCapabilities: ["inspect", "bounded-command"],
+          risk: "low",
+          writeScope: [],
+        })
+      )
+    ).toBe(UTILITY_AU_PAIR_TIER);
+  });
+
+  test("a three-stage reasoning plan goes to Au Pair", () => {
+    const plan = ["src/a.ts", "src/b.ts", "src/c.ts"].map((scope) => ({
+      executionProfile: "search" as const,
+      objective: `Inspect ${scope}`,
+      readScope: [scope],
+    }));
+    expect(
+      classifyUtilityExecution(
+        inspectRequest({
+          executionPlan: plan,
+          executionProfile: "read-plan",
+          readScope: plan.flatMap((step) => step.readScope),
+        })
+      )
+    ).toBe(UTILITY_AU_PAIR_TIER);
+  });
+
   test("small code-writing proposals and broader plans go to Au Pair", () => {
     const edit = createUtilityRouteRequest({
       acceptanceCriteria: ["return a validated patch"],

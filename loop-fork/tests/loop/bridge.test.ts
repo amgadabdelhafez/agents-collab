@@ -763,6 +763,39 @@ test.each([
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge MCP persists an explicit non-authoritative utility audit", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["return evidence without approval authority"],
+          authority: { release: false },
+          kind: "review",
+          objective: "Audit the bounded source file",
+          read_scope: ["src/example.ts"],
+          review_mode: "utility-audit",
+        },
+        name: "route_task",
+      },
+    })
+  );
+  expect(result.code).toBe(0);
+  const routed = JSON.parse(toolText(result.stdout, 1)) as { taskId: string };
+  const journal = readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8");
+  expect(journal).toContain(`"jobId":"${routed.taskId}"`);
+  expect(journal).toContain('"reviewMode":"utility-audit"');
+  expect(journal).toContain('"requiredCapabilities":["inspect"]');
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("bridge native fallback request is pending until Governess grants it", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -2440,6 +2473,7 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   };
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_plan");
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_read");
+  expect(routeTask.inputSchema?.properties).toHaveProperty("review_mode");
   expect(
     routeTask.inputSchema?.properties?.context_refs?.description
   ).toContain("Never put prose, SHAs, source files, or absolute paths here");

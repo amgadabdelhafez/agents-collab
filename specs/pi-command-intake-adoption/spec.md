@@ -118,6 +118,6 @@ proven bounded.
 - Giving Pi built-in Bash, Read, Write, or Edit tools.
 - Letting an LLM parse shell syntax to grant itself permissions.
 - Automatically applying Au Pair patches.
-- Routing product, architecture, release, authority, or peer-review decisions
-  to a lower tier.
+- Routing product, architecture, release, authority, or peer-review verdicts
+  to a lower tier. Bounded, non-authoritative evidence audits are permitted.
 - Adding LiteLLM, a stock interactive Pi CLI, or persistent lower-model chat.
