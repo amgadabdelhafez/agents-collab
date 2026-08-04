@@ -1,0 +1,30 @@
+{
+  "task_id": "context-pressure-handoff",
+  "scanned_at": "2026-08-04T19:47:18Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-04T19:47:18Z",
+      "task_id": "context-pressure-handoff",
+      "signal": "loc_growth",
+      "file": "src/loop/governess.ts",
+      "before_loc": 7244,
+      "after_loc": 7419,
+      "delta_loc": 175,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-04T19:47:18Z",
+      "task_id": "context-pressure-handoff",
+      "signal": "loc_growth",
+      "file": "src/loop/session-pressure.ts",
+      "before_loc": 0,
+      "after_loc": 384,
+      "delta_loc": 384,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

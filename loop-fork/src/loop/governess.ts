@@ -138,6 +138,16 @@ import {
   updateRunManifest,
 } from "./run-state";
 import {
+  evaluateSessionPressure,
+  highestSessionPressure,
+  pressureAtOrAboveHandoff,
+  readSessionPressureByAgent,
+  type SessionPressureByAgent,
+  type SessionPressureDecision,
+  type SessionPressureMode,
+  sessionPressureModeFromEnv,
+} from "./session-pressure";
+import {
   boundedTmuxOptions,
   isTmuxControlUnavailableError,
   TmuxControlUnavailableError,
@@ -265,6 +275,9 @@ export interface GovernessConfig {
   runDir?: string;
   runId: string;
   session: string;
+  // Context-first loop freshness policy. Programmatic/test configs that omit
+  // it remain off; resolved live configs explicitly default to enforce.
+  sessionPressureMode?: SessionPressureMode;
   // Persisted run-state file, so stats survive governess restarts.
   stateFile?: string;
   tickMs: number;
@@ -470,6 +483,8 @@ export interface GovernessRunState {
   paneTitles: Record<string, string>;
   recoveries: number;
   roles: RoleState;
+  sessionPressure: SessionPressureByAgent;
+  sessionPressurePrepared: Partial<Record<Agent, boolean>>;
   stats: SessionStats;
   summary: string;
   summaryTick: number;
@@ -620,6 +635,21 @@ const AGENT_VALUES: readonly Agent[] = [
   "gemini",
 ];
 
+const readAgentBooleanMap = (
+  value: unknown
+): Partial<Record<Agent, boolean>> => {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+  const result: Partial<Record<Agent, boolean>> = {};
+  for (const agent of AGENT_VALUES) {
+    if ((value as Record<string, unknown>)[agent] === true) {
+      result[agent] = true;
+    }
+  }
+  return result;
+};
+
 const readAgentValue = (value: unknown): Agent | undefined =>
   typeof value === "string" && AGENT_VALUES.includes(value as Agent)
     ? (value as Agent)
@@ -704,6 +734,8 @@ export const freshRunState = (): GovernessRunState => ({
   paneTitles: {},
   recoveries: 0,
   roles: {},
+  sessionPressure: {},
+  sessionPressurePrepared: {},
   stats: { activeMs: {}, humanIdleMs: 0, idleMs: {} },
   summary: "",
   summaryTick: -1,
@@ -720,6 +752,7 @@ export interface GovernessTickResult {
   llmOffline: boolean;
   paneCommands: Partial<Record<Agent, string>>;
   runState: GovernessRunState;
+  sessionPressure: SessionPressureByAgent;
   states: Map<Agent, AgentLivenessState>;
   // Per-agent contexts a background summary refresh consumes (see runGoverness).
   summaryCtxs: SummaryAgentContext[];
@@ -4260,6 +4293,99 @@ const sendRoleMessage = async (
   return delivery;
 };
 
+const sessionPressurePreparationMessage = (
+  pressure: SessionPressureDecision
+): string =>
+  [
+    "governess: prepare a fresh-loop handover now; do not start another broad slice.",
+    `${capitalize(pressure.agent)} reached ${pressure.phase} on profile ${pressure.profile}: ${pressure.reason}.`,
+    "Update PLAN.md and status.md with the current objective, exact changed scope, checks and results, blockers, risks, and the next bounded action.",
+    "Finish only the current atomic step. Preserve uncommitted work and existing authority boundaries. Do not compact either session; Governess will start the governed handover only if a handoff threshold is reached.",
+  ].join(" ");
+
+const reconcileSessionPressure = async (
+  rows: AgentRow[],
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  runState: GovernessRunState,
+  nowIso: string
+): Promise<SessionPressureByAgent> => {
+  const mode = config.sessionPressureMode ?? "off";
+  if (mode === "off") {
+    runState.sessionPressure = {};
+    return {};
+  }
+  const previous = runState.sessionPressure;
+  const current: SessionPressureByAgent = {};
+  config.agents.forEach((info, index) => {
+    const row = rows[index];
+    if (!row) {
+      return;
+    }
+    const next = evaluateSessionPressure(info.agent, row.usage);
+    current[info.agent] = next;
+    const before = previous[info.agent];
+    if (before?.phase === next.phase || (!before && next.phase === "healthy")) {
+      return;
+    }
+    deps.appendLog(config.logFile, {
+      ...next,
+      at: nowIso,
+      event: "session-pressure-transition",
+      from: before?.phase ?? "unknown",
+      mode,
+      to: next.phase,
+    });
+  });
+  runState.sessionPressure = current;
+
+  const highest = highestSessionPressure(current);
+  if (
+    mode !== "enforce" ||
+    config.dryRun ||
+    runState.exitControl.mode !== "idle" ||
+    highest?.phase !== "prepare"
+  ) {
+    return current;
+  }
+  const message = sessionPressurePreparationMessage(highest);
+  for (const info of config.agents) {
+    if (runState.sessionPressurePrepared[info.agent]) {
+      continue;
+    }
+    const source = bridgeSourceFor(info.agent, undefined, config);
+    try {
+      const transport = await sendRoleMessage(
+        config,
+        deps,
+        info,
+        info.agent,
+        source,
+        message
+      );
+      runState.sessionPressurePrepared[info.agent] = true;
+      incrementCount(runState.governessMessages, info.agent);
+      deps.appendLog(config.logFile, {
+        agent: info.agent,
+        at: nowIso,
+        event: "session-pressure-preparation-sent",
+        reason: highest.reasonCode,
+        source: highest.agent,
+        transport,
+      });
+    } catch (error) {
+      deps.appendLog(config.logFile, {
+        agent: info.agent,
+        at: nowIso,
+        error: error instanceof Error ? error.message : String(error),
+        event: "session-pressure-preparation-failed",
+        source: highest.agent,
+      });
+    }
+  }
+  return current;
+};
+
 export const createGovernessRuntimeAdapter = (
   config: GovernessConfig,
   deps: GovernessDeps,
@@ -4655,6 +4781,36 @@ const beginHandover = (runState: GovernessRunState, now: number): void => {
     notified: {},
     requestedAt: new Date(now).toISOString(),
   };
+};
+
+export const maybeBeginSessionPressureHandover = (
+  config: Pick<GovernessConfig, "dryRun" | "logFile" | "sessionPressureMode">,
+  deps: Pick<GovernessDeps, "appendLog" | "now">,
+  runState: GovernessRunState,
+  decisions: SessionPressureByAgent,
+  tmuxControlAvailable: boolean
+): SessionPressureDecision | undefined => {
+  if (
+    config.sessionPressureMode !== "enforce" ||
+    config.dryRun ||
+    !tmuxControlAvailable ||
+    runState.exitControl.mode !== "idle"
+  ) {
+    return undefined;
+  }
+  const highest = highestSessionPressure(decisions);
+  if (!(highest && pressureAtOrAboveHandoff(highest))) {
+    return undefined;
+  }
+  const now = deps.now();
+  beginHandover(runState, now);
+  deps.appendLog(config.logFile, {
+    ...highest,
+    at: new Date(now).toISOString(),
+    event: "session-pressure-handover-started",
+    mode: config.sessionPressureMode,
+  });
+  return highest;
 };
 
 const resolveHandoverEpoch = (
@@ -5641,6 +5797,8 @@ export const governessTick = async (
     paneLabels: { ...runStateIn.paneLabels },
     paneTitles: { ...runStateIn.paneTitles },
     roles: { ...runStateIn.roles },
+    sessionPressure: { ...runStateIn.sessionPressure },
+    sessionPressurePrepared: { ...runStateIn.sessionPressurePrepared },
     stats: cloneStats(runStateIn.stats),
     tick: runStateIn.tick + 1,
   };
@@ -5772,6 +5930,10 @@ export const governessTick = async (
     }
   }
 
+  const sessionPressure = tmuxControlAvailable
+    ? await reconcileSessionPressure(rows, config, deps, runState, nowIso)
+    : runState.sessionPressure;
+
   const roleTransitions =
     tmuxControlAvailable && runState.exitControl.mode === "idle"
       ? await handleRoleTransitions(rows, config, deps, runState, nowIso)
@@ -5884,6 +6046,7 @@ export const governessTick = async (
     llmOffline,
     paneCommands,
     runState,
+    sessionPressure,
     states,
     summaryCtxs,
     tmuxControlAvailable,
@@ -6073,6 +6236,10 @@ export const loadGovernessState = (
       paneTitles: readStringMap(parsed.paneTitles),
       recoveries: typeof parsed.recoveries === "number" ? parsed.recoveries : 0,
       roles: readRoleState(parsed.roles),
+      sessionPressure: readSessionPressureByAgent(parsed.sessionPressure),
+      sessionPressurePrepared: readAgentBooleanMap(
+        parsed.sessionPressurePrepared
+      ),
       stats: {
         activeMs: stats.activeMs ?? {},
         humanIdleMs: stats.humanIdleMs ?? 0,
@@ -6738,6 +6905,7 @@ export const resolveGovernessConfig = (
     ),
     ntfyUrl: env.LOOP_GOVERNESS_NTFY || undefined,
     roleBalanceEnabled: envEnabled(env.LOOP_GOVERNESS_ROLE_BALANCE),
+    sessionPressureMode: sessionPressureModeFromEnv(env),
     runId,
     runDir: storage.runDir,
     manifestPath: storage.manifestPath,
@@ -6957,6 +7125,13 @@ export const runGoverness = async (
       }
       runState = result.runState;
       currentTmuxControlAvailable = result.tmuxControlAvailable;
+      maybeBeginSessionPressureHandover(
+        config,
+        deps,
+        runState,
+        result.sessionPressure,
+        result.tmuxControlAvailable
+      );
       const lifecycleAt = new Date(deps.now()).toISOString();
       const holder =
         runState.roles.currentDriver ??
