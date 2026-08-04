@@ -209,6 +209,9 @@ test("helper Caveman mode is validated and applied once to the system prompt", (
   expect(utilitySystemPrompt("Au Pair", "full")).toContain(
     "Do not add adjacent cleanup or broaden scope"
   );
+  expect(utilitySystemPrompt("Au Pair", "full")).toContain(
+    "new-file diff using --- /dev/null"
+  );
   expect(() =>
     resolveUtilityRuntimeConfig({ LOOP_HELPER_CAVEMAN_MODE: "invalid" })
   ).toThrow("Invalid LOOP_HELPER_CAVEMAN_MODE value");
@@ -2364,7 +2367,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
       result: {
         context: {
           sha256: expect.stringMatching(SHA256_HEX_RE),
-          version: 1,
+          version: 2,
         },
         status: "completed",
         summary: "Sample file confirmed.",
@@ -2471,7 +2474,7 @@ test("context-insufficient response escalates once without evidence retries", as
         blocker: "DO-NOT-PANE-CONTEXT-9987",
         context: {
           sha256: expect.stringMatching(SHA256_HEX_RE),
-          version: 1,
+          version: 2,
         },
         reasonCode: "context-insufficient",
         status: "escalated",
@@ -2481,7 +2484,7 @@ test("context-insufficient response escalates once without evidence retries", as
     expect(jsonlRecords(join(runDir, "utility", "usage.jsonl"))).toEqual([
       expect.objectContaining({
         contextSha256: expect.stringMatching(SHA256_HEX_RE),
-        contextVersion: 1,
+        contextVersion: 2,
         modelCalls: 1,
         status: "context-insufficient",
         toolCalls: 0,

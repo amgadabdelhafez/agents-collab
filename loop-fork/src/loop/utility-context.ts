@@ -21,7 +21,7 @@ import {
   normalizeUtilityPolicyPath,
 } from "./utility-path-policy";
 
-export const UTILITY_CONTEXT_SCHEMA_VERSION = 1;
+export const UTILITY_CONTEXT_SCHEMA_VERSION = 2;
 export const UTILITY_INSTRUCTIONS_FILE = "UTILITY.instructions.md";
 export const MAX_UTILITY_INSTRUCTION_CHARS = 8000;
 export const MAX_UTILITY_CONTEXT_REF_CHARS = 3000;
@@ -54,6 +54,12 @@ export interface UtilityContextCapsule {
     name: string;
     rootSha256: string;
   };
+  writeTargets: UtilityWriteTarget[];
+}
+
+export interface UtilityWriteTarget {
+  path: string;
+  state: "existing" | "new" | "unavailable";
 }
 
 type CapsulePayload = Omit<UtilityContextCapsule, "sha256">;
@@ -186,6 +192,26 @@ const loadReferences = (
   });
 };
 
+const inspectWriteTargets = (
+  repoRoot: string,
+  writeScopes: readonly string[]
+): UtilityWriteTarget[] =>
+  writeScopes.map((rawPath) => {
+    const path = normalizeUtilityPolicyPath(rawPath);
+    try {
+      lstatSync(join(repoRoot, path));
+      return { path, state: "existing" };
+    } catch (error) {
+      return {
+        path,
+        state:
+          (error as NodeJS.ErrnoException).code === "ENOENT"
+            ? "new"
+            : "unavailable",
+      };
+    }
+  });
+
 export const buildUtilityContextCapsule = (input: {
   repoRoot: string;
   request: UtilityRouteRequest;
@@ -199,6 +225,7 @@ export const buildUtilityContextCapsule = (input: {
     ),
     request: input.request,
     schemaVersion: UTILITY_CONTEXT_SCHEMA_VERSION,
+    writeTargets: inspectWriteTargets(repoRoot, input.request.writeScope),
     workspace: {
       name: basename(repoRoot),
       rootSha256: sha256(repoRoot),

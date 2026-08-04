@@ -1442,6 +1442,56 @@ test("stores a validated patch proposal without modifying the source", async () 
   });
 });
 
+test("treats an exact declared new write file as an empty search domain", async () => {
+  await withRepo(async (root) => {
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".new-file-artifacts",
+        exactWriteScopes: true,
+        readScopes: ["src"],
+        repoRoot: root,
+        writeScopes: ["src/new.ts"],
+      },
+      { id: () => "new-file-patch", now: () => 1_700_000_000_000 }
+    );
+    const search = await broker.execute({
+      arguments: { paths: ["src/new.ts"], query: "export" },
+      name: "search_repo",
+    });
+    expect(search).toMatchObject({ data: [], ok: true });
+
+    const misspelled = await broker.execute({
+      arguments: { paths: ["src/missing.ts"], query: "export" },
+      name: "search_repo",
+    });
+    expect(misspelled.error?.code).toBe("not_found");
+
+    const patch = [
+      "diff --git a/src/new.ts b/src/new.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/src/new.ts",
+      "@@ -0,0 +1 @@",
+      "+export const created = true;",
+      "",
+    ].join("\n");
+    const proposal = await broker.execute({
+      arguments: { patch, summary: "new exact file" },
+      name: "propose_patch",
+    });
+    expect(proposal).toMatchObject({
+      data: {
+        preimages: [{ path: "src/new.ts", sha256: null }],
+        targets: ["src/new.ts"],
+      },
+      ok: true,
+    });
+    await expect(lstat(join(root, "src", "new.ts"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
+
 test("exact edit scopes cannot act as directory-wide patch authority", async () => {
   await withRepo(async (root) => {
     const patch = [

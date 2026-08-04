@@ -1,0 +1,43 @@
+{
+  "task_id": "au-pair-new-file",
+  "feature": "au-pair-new-file",
+  "timestamp": "2026-08-04T01:58:00Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "new_file_contract": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "The immutable context capsule labels exact declared write targets as existing or new and binds that state into its SHA-256.",
+        "The helper system prompt directs new targets to a /dev/null unified diff instead of reading a nonexistent destination.",
+        "A search of an absent exact declared write target returns an empty successful result without consuming a broker-rejection round.",
+        "An absent sibling read path still fails with not_found, preserving the original scope boundary."
+      ]
+    },
+    "guarded_artifact": {
+      "passed": 2,
+      "failed": 0,
+      "details": [
+        "The broker stores a new-file patch with a null preimage.",
+        "The proposal path does not create or modify the target workspace file."
+      ]
+    },
+    "verification": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "Focused utility-context, utility-tools, and utility-runtime suites passed 98/98.",
+        "The Pi SDK producer test completed the actual search, empty-result recovery, guarded new-file proposal, and final synthesis in 3 model calls.",
+        "The full repository verification gate completed successfully with an empty named baseline-failure list.",
+        "bun run check passed.",
+        "bun run build passed."
+      ]
+    }
+  },
+  "known_limitations": [
+    "This change repairs the exact-new-file broker contract; it does not broaden Au Pair routing eligibility or write authority."
+  ],
+  "notes": "PASS. The regression directly produces the broker result that previously failed run 120 and independently proves undeclared missing paths remain denied."
+}

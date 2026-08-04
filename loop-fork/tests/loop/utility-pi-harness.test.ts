@@ -163,6 +163,152 @@ test("Nanny executes a brokered Pi tool turn with durable evidence", async () =>
   }
 });
 
+test("Au Pair recovers from searching an exact declared new file and proposes it", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-au-pair-new-file-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-au-pair-new-file");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "reference.ts"),
+    "export const ref = 1;\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["propose one exact new-file patch"],
+    authority: {},
+    id: "pi-au-pair-new-file-job",
+    kind: "edit",
+    objective: "Create the exact declared file",
+    readScope: ["src/reference.ts", "src/new.ts"],
+    requester: "codex",
+    requiredCapabilities: ["inspect", "scoped-edit"],
+    risk: "low",
+    writeScope: ["src/new.ts"],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 101);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-au-pair",
+    },
+    routeEpoch: 101,
+  });
+
+  const bodies: Record<string, unknown>[] = [];
+  const patch = [
+    "diff --git a/src/new.ts b/src/new.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/new.ts",
+    "@@ -0,0 +1 @@",
+    "+export const created = true;",
+    "",
+  ].join("\n");
+  const server = serve({
+    fetch: async (incoming) => {
+      bodies.push((await incoming.json()) as Record<string, unknown>);
+      if (bodies.length === 1) {
+        return response([
+          event({ role: "assistant" }),
+          event({
+            tool_calls: [
+              {
+                function: {
+                  arguments: '{"query":"export","paths":["src/new.ts"]}',
+                  name: "search_repo",
+                },
+                id: "search-new-file",
+                index: 0,
+                type: "function",
+              },
+            ],
+          }),
+          event({}, "tool_calls"),
+        ]);
+      }
+      if (bodies.length === 2) {
+        return response([
+          event({ role: "assistant" }),
+          event({
+            tool_calls: [
+              {
+                function: {
+                  arguments: JSON.stringify({
+                    patch,
+                    summary: "create exact declared file",
+                  }),
+                  name: "propose_patch",
+                },
+                id: "propose-new-file",
+                index: 0,
+                type: "function",
+              },
+            ],
+          }),
+          event({}, "tool_calls"),
+        ]);
+      }
+      return response([
+        event({ role: "assistant" }),
+        event({ content: "Proposed src/new.ts after confirming it is new." }),
+        event({}, "stop"),
+      ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+
+  try {
+    await runUtilityWorker(runDir, 101, request.id, {
+      LOOP_AU_PAIR_ENABLED: "1",
+      LOOP_AU_PAIR_MODEL: "fake-au-pair",
+      LOOP_AU_PAIR_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    const job = readUtilityJob(runDir, request.id);
+    const artifactPath = job?.result?.artifactRefs[0]?.path;
+    expect(job).toMatchObject({
+      result: {
+        artifactRefs: [
+          {
+            kind: "diff",
+            path: expect.stringContaining(".patch"),
+          },
+        ],
+        status: "completed",
+      },
+      state: "completed",
+    });
+    expect(bodies).toHaveLength(3);
+    const firstMessages = bodies[0]?.messages as Array<{
+      content: Array<{ text: string }> | string;
+    }>;
+    const capsuleText = (
+      firstMessages[1]?.content as Array<{ text: string }>
+    )[0]?.text;
+    expect(JSON.parse(capsuleText ?? "{}")).toMatchObject({
+      writeTargets: [{ path: "src/new.ts", state: "new" }],
+    });
+    expect(JSON.stringify(bodies[0])).toContain(
+      "new-file diff using --- /dev/null"
+    );
+    expect(JSON.stringify(bodies[1])).toContain('\\"data\\":[]');
+    expect(() => readFileSync(join(repoRoot, "src", "new.ts"))).toThrow();
+    expect(typeof artifactPath).toBe("string");
+    if (typeof artifactPath !== "string") {
+      throw new Error("missing new-file patch artifact path");
+    }
+    expect(readFileSync(artifactPath, "utf8")).toBe(patch);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("Pi forces synthesis before the hard tool ceiling", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-synthesis-reserve-"));
   const runDir = join(repoRoot, ".loop", "runs", "pi-synthesis-reserve");

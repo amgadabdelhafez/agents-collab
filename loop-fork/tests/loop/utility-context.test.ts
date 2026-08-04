@@ -84,6 +84,7 @@ test("builds a deterministic bounded capsule and persists the exact prompt", () 
       }),
     ]);
     expect(first.request).toEqual(routeRequest);
+    expect(first.writeTargets).toEqual([]);
     expect(first.workspace.name).toBe(repoRoot.split("/").at(-1));
     expect(first.workspace.rootSha256).toMatch(SHA256_HEX_RE);
 
@@ -91,6 +92,47 @@ test("builds a deterministic bounded capsule and persists the exact prompt", () 
     expect(path).toBe(utilityContextPath(runDir, routeRequest.id));
     expect(readFileSync(path, "utf8").trim()).toBe(utilityContextPrompt(first));
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(first);
+  } finally {
+    rmSync(repoRoot, { force: true, recursive: true });
+  }
+});
+
+test("binds existing and new write-target state into the capsule hash", () => {
+  const repoRoot = mkdtempSync(
+    join(tmpdir(), "utility-context-write-targets-")
+  );
+  try {
+    mkdirSync(join(repoRoot, "src"), { recursive: true });
+    writeFileSync(join(repoRoot, "src", "existing.ts"), "existing\n");
+    const routeRequest = createUtilityRouteRequest({
+      acceptanceCriteria: ["propose the exact files"],
+      authority: {},
+      kind: "edit",
+      objective: "Add one file and update one file",
+      readScope: ["src"],
+      requester: "codex",
+      requiredCapabilities: ["inspect", "scoped-edit"],
+      risk: "low",
+      writeScope: ["src/existing.ts", "src/new.ts"],
+    });
+    const before = buildUtilityContextCapsule({
+      repoRoot,
+      request: routeRequest,
+    });
+    expect(before.writeTargets).toEqual([
+      { path: "src/existing.ts", state: "existing" },
+      { path: "src/new.ts", state: "new" },
+    ]);
+    writeFileSync(join(repoRoot, "src", "new.ts"), "created\n");
+    const after = buildUtilityContextCapsule({
+      repoRoot,
+      request: routeRequest,
+    });
+    expect(after.writeTargets[1]).toEqual({
+      path: "src/new.ts",
+      state: "existing",
+    });
+    expect(after.sha256).not.toBe(before.sha256);
   } finally {
     rmSync(repoRoot, { force: true, recursive: true });
   }

@@ -1939,6 +1939,9 @@ export class UtilityToolBroker {
       ) {
         return;
       }
+      if (await this.isExactNewWriteTarget(requestedPath)) {
+        return;
+      }
       const target = await this.resolvePath(requestedPath, "read", true);
       const stat = await lstat(target.absolute);
       if (stat.isSymbolicLink()) {
@@ -2004,6 +2007,30 @@ export class UtilityToolBroker {
       );
     }
     return matches;
+  }
+
+  private async isExactNewWriteTarget(requested: string): Promise<boolean> {
+    if (!this.exactWriteScopes) {
+      return false;
+    }
+    const lexical = normalizeRequestedPath(requested);
+    if (!this.writeScopes.includes(lexical)) {
+      return false;
+    }
+    this.assertScope(lexical, "read");
+    const absolute = resolve(this.repoRoot, lexical);
+    const canonical = await this.assertRealContainment(absolute);
+    const canonicalRelative = relativePath(this.repoRoot, canonical);
+    if (canonicalRelative !== lexical) {
+      return false;
+    }
+    const stat = await lstat(absolute).catch((error: unknown) => {
+      if (isRecord(error) && error.code === "ENOENT") {
+        return undefined;
+      }
+      throw error;
+    });
+    return stat === undefined;
   }
 
   private async readFileTool(args: Record<string, unknown>): Promise<{
