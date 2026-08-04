@@ -256,7 +256,7 @@ test("runAgent launches Codex app-server with loop-scoped Codex home", async () 
   expect(startAppServer).toHaveBeenCalledTimes(1);
   expect(startAppServer.mock.calls[0]?.[0]).toMatchObject({
     configValues: expect.arrayContaining([
-      'model_reasoning_effort="xhigh"',
+      'model_reasoning_effort="medium"',
       'service_tier="standard"',
     ]),
     env: expect.objectContaining({ CODEX_HOME: codexHome }),
@@ -292,7 +292,7 @@ test("buildCommand carries Codex bridge approval config for legacy exec", () => 
   expect(command.args).toEqual(
     expect.arrayContaining([
       "-c",
-      'model_reasoning_effort="xhigh"',
+      'model_reasoning_effort="medium"',
       "-c",
       'service_tier="standard"',
     ])
@@ -420,7 +420,7 @@ test("startPersistentAgentSession enables persistent Codex threads", async () =>
   expect(startAppServer).toHaveBeenCalledWith(
     expect.objectContaining({
       configValues: expect.arrayContaining([
-        'model_reasoning_effort="xhigh"',
+        'model_reasoning_effort="medium"',
         'service_tier="standard"',
         'mcp_servers.bridge.command="/bin/echo"',
       ]),

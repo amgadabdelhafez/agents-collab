@@ -34,10 +34,18 @@ interface SpawnConfig {
   cmd: string;
 }
 
-const codexConfigValues = (values: string[] = []): string[] => [
-  ...DEFAULT_CODEX_CONFIG_VALUES,
-  ...values,
-];
+const codexConfigValues = (values: string[] = []): string[] => {
+  const overridesEffort = values.some((value) =>
+    value.startsWith("model_reasoning_effort=")
+  );
+  return [
+    ...DEFAULT_CODEX_CONFIG_VALUES.filter(
+      (value) =>
+        !(overridesEffort && value.startsWith("model_reasoning_effort="))
+    ),
+    ...values,
+  ];
+};
 
 const codexConfigArgs = (values: string[] = []): string[] =>
   codexConfigValues(values).flatMap((value) => ["-c", value]);

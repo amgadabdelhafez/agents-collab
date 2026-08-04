@@ -946,7 +946,7 @@ test("runCodexTurn parses successful deltas and completion", async () => {
     .map((line) => JSON.parse(line))
     .find((frame) => frame.method === "turn/start");
   expect(turnStart?.params).toMatchObject({
-    effort: "xhigh",
+    effort: "medium",
     model: "test-model",
   });
   expect(result.parsed).toContain("hello");

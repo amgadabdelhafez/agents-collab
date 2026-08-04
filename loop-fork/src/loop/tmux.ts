@@ -90,7 +90,7 @@ import {
   type TmuxLiveness,
   tmuxCommandTimedOut,
 } from "./tmux-control";
-import type { Agent, Options, RunLifecycleState } from "./types";
+import type { Agent, EffortLevel, Options, RunLifecycleState } from "./types";
 import {
   AU_PAIR_PANE_SUBCOMMAND,
   NANNY_PANE_SUBCOMMAND,
@@ -680,7 +680,8 @@ const buildClaudeCommand = (
   prompt?: string,
   settingsPath?: string,
   mcpConfigPath?: string,
-  nativeSubagentMode: NativeSubagentMode = "off"
+  nativeSubagentMode: NativeSubagentMode = "off",
+  effort: EffortLevel = DEFAULT_CLAUDE_DRIVER_EFFORT
 ): string[] => {
   const args = [
     "claude",
@@ -689,7 +690,7 @@ const buildClaudeCommand = (
     "--model",
     model,
     "--effort",
-    DEFAULT_CLAUDE_DRIVER_EFFORT,
+    effort,
     ...(mcpConfigPath
       ? ["--mcp-config", mcpConfigPath, "--strict-mcp-config"]
       : []),
@@ -707,18 +708,39 @@ const buildClaudeCommand = (
   return args;
 };
 
+const withoutCodexEffortConfig = (configValues: string[]): string[] => {
+  const filtered: string[] = [];
+  for (let index = 0; index < configValues.length; index += 1) {
+    const value = configValues[index];
+    const next = configValues[index + 1];
+    if (
+      value === "-c" &&
+      typeof next === "string" &&
+      next.startsWith("model_reasoning_effort=")
+    ) {
+      index += 1;
+      continue;
+    }
+    if (value?.startsWith("model_reasoning_effort=")) {
+      continue;
+    }
+    filtered.push(value);
+  }
+  return filtered;
+};
+
 const buildCodexCommand = (
   remoteUrl: string,
   model: string,
   configValues: string[],
   prompt?: string,
   bypassHookTrust?: boolean,
-  nativeSubagentMode: NativeSubagentMode = "off"
+  nativeSubagentMode: NativeSubagentMode = "off",
+  effort: EffortLevel = DEFAULT_CLAUDE_DRIVER_EFFORT
 ): string[] => {
-  const defaultConfigArgs = DEFAULT_CODEX_CONFIG_VALUES.flatMap((value) => [
-    "-c",
-    value,
-  ]);
+  const defaultConfigArgs = DEFAULT_CODEX_CONFIG_VALUES.filter(
+    (value) => !value.startsWith("model_reasoning_effort=")
+  ).flatMap((value) => ["-c", value]);
   const nativeConfigArgs = (() => {
     if (
       nativeSubagentMode === "strict" ||
@@ -736,8 +758,10 @@ const buildCodexCommand = (
     "-m",
     model,
     ...defaultConfigArgs,
+    "-c",
+    `model_reasoning_effort=${JSON.stringify(effort)}`,
     ...nativeConfigArgs,
-    ...configValues,
+    ...withoutCodexEffortConfig(configValues),
     "--enable",
     "tui_app_server",
     "--remote",
@@ -1950,6 +1974,10 @@ const preparePersistentTmuxLaunch = async (
     // runtime defaults a missing value to utility-first, so always carry the
     // resolved mode into the persistent app-server process.
     codexBaseEnv.LOOP_NATIVE_SUBAGENT_MODE = nativeSubagentMode;
+    const codexEffort =
+      opts.agent === "codex"
+        ? (opts.driverEffort ?? DEFAULT_CLAUDE_DRIVER_EFFORT)
+        : (opts.reviewerEffort ?? DEFAULT_CLAUDE_DRIVER_EFFORT);
     try {
       await withTimeout(
         deps.startPersistentAgentSession(
@@ -1958,6 +1986,10 @@ const preparePersistentTmuxLaunch = async (
           manifest.codexThreadId || opts.pairedSessionIds?.codex || undefined,
           {
             codexLaunch: {
+              configValues: [
+                ...withoutCodexEffortConfig(opts.codexMcpConfigArgs ?? []),
+                `model_reasoning_effort=${JSON.stringify(codexEffort)}`,
+              ],
               env: codexHomeEnv(opts.codexHome, codexBaseEnv),
               orphanOnExit: true,
             },
@@ -2054,6 +2086,10 @@ const buildPairedAgentCommand = ({
   prompt?: string;
 }): string[] => {
   const model = resolveTmuxModel(agent, opts);
+  const effort =
+    agent === opts.agent
+      ? (opts.driverEffort ?? DEFAULT_CLAUDE_DRIVER_EFFORT)
+      : (opts.reviewerEffort ?? DEFAULT_CLAUDE_DRIVER_EFFORT);
   if (agent === "claude") {
     if (!claudeChannelServer) {
       throw new Error("[loop] missing Claude bridge config for tmux launch");
@@ -2066,7 +2102,8 @@ const buildPairedAgentCommand = ({
       prompt,
       claudeSettingsPath,
       claudeMcpConfigPath,
-      nativeSubagentMode
+      nativeSubagentMode,
+      effort
     );
   }
   if (agent === "codex") {
@@ -2082,7 +2119,8 @@ const buildPairedAgentCommand = ({
       opts.codexMcpConfigArgs,
       prompt,
       codexBypassHookTrust,
-      nativeSubagentMode
+      nativeSubagentMode,
+      effort
     );
   }
   if (agent === "gemini") {
@@ -3770,6 +3808,7 @@ export const tmuxInternals = {
   buildLaunchArgv,
   buildLaunchBootstrap,
   buildLaunchPrompt,
+  buildPairedAgentCommand,
   buildPeerPrompt,
   buildPrimaryPrompt,
   buildRunName,

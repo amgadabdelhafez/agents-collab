@@ -50,6 +50,95 @@ const makeOptions = (overrides: Partial<Options> = {}): Options => ({
   ...overrides,
 });
 
+test("preparePairedRun persists resolved asymmetric launch effort", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  process.env.HOME = home;
+  process.env.LOOP_RUN_ID = "effort-proof";
+  try {
+    const opts = makeOptions({
+      driverEffort: "medium",
+      driverEffortSource: "cli-role",
+      pairedMode: true,
+      pairWith: "claude",
+      reviewerEffort: "high",
+      reviewerEffortSource: "cli-role",
+    });
+    const prepared = preparePairedRun(opts, process.cwd());
+
+    expect(prepared.manifest).toMatchObject({
+      driverEffort: "medium",
+      reviewerEffort: "high",
+    });
+    expect(readRunManifest(prepared.storage.manifestPath)).toMatchObject({
+      driverEffort: "medium",
+      reviewerEffort: "high",
+    });
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("live tmux reattach rejects an effort change it cannot apply", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const storage = resolveRunStorage("effort-live", process.cwd(), home);
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        cwd: process.cwd(),
+        driverEffort: "medium",
+        mode: "paired",
+        pid: 1234,
+        repoId: storage.repoId,
+        reviewerEffort: "high",
+        runId: storage.runId,
+        state: "working",
+        tmuxPaneLeftAgent: "claude",
+        tmuxPaneRightAgent: "codex",
+        tmuxSession: "repo-loop-effort-live",
+      })
+    );
+    const opts = makeOptions({
+      driverEffort: "high",
+      driverEffortSource: "cli-role",
+      pairedMode: true,
+      resumeRunId: storage.runId,
+      reviewerEffort: "high",
+      reviewerEffortSource: "default",
+      tmux: true,
+    });
+
+    expect(() => preparePairedRun(opts, process.cwd(), () => true)).toThrow(
+      "Cannot change --effort-driver from medium to high"
+    );
+    expect(readRunManifest(storage.manifestPath)).toMatchObject({
+      driverEffort: "medium",
+      reviewerEffort: "high",
+    });
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test("prepared runs reject a superseded bootstrap attempt", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;
@@ -530,7 +619,7 @@ test("preparePairedOptions keeps non-tmux native policy off without global MCP c
     expect(config).toContain('approval_policy = "never"');
     expect(config).toContain('sandbox_mode = "danger-full-access"');
     expect(config).toContain('model = "gpt-5.6-sol"');
-    expect(config).toContain('model_reasoning_effort = "xhigh"');
+    expect(config).toContain('model_reasoning_effort = "medium"');
     expect(config).toContain('service_tier = "standard"');
     expect(config).toContain(`[projects.${JSON.stringify(process.cwd())}]`);
     expect(config).not.toContain("[agents]");

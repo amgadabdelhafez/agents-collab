@@ -10,10 +10,14 @@ import {
   DEFAULT_MAX_ITERATIONS,
   LOOP_VERSION,
 } from "../../src/loop/constants";
+import { DEFAULT_LAUNCH_EFFORT } from "../../src/loop/effort";
 
 const ORIGINAL_LOOP_CODEX_MODEL = process.env.LOOP_CODEX_MODEL;
 const ORIGINAL_LOOP_CAVEMAN_MODE = process.env.LOOP_CAVEMAN_MODE;
 const ORIGINAL_LOOP_HELPER_CAVEMAN_MODE = process.env.LOOP_HELPER_CAVEMAN_MODE;
+const ORIGINAL_LOOP_EFFORT = process.env.LOOP_EFFORT;
+const ORIGINAL_LOOP_DRIVER_EFFORT = process.env.LOOP_DRIVER_EFFORT;
+const ORIGINAL_LOOP_REVIEWER_EFFORT = process.env.LOOP_REVIEWER_EFFORT;
 const originalExit = process.exit;
 const originalLog = console.log;
 const CONFLICT_ONLY_MODE_ERROR = "Cannot combine multiple --*-only flags.";
@@ -42,6 +46,9 @@ afterEach(() => {
   restoreModelEnv();
   restoreEnv("LOOP_CAVEMAN_MODE", ORIGINAL_LOOP_CAVEMAN_MODE);
   restoreEnv("LOOP_HELPER_CAVEMAN_MODE", ORIGINAL_LOOP_HELPER_CAVEMAN_MODE);
+  restoreEnv("LOOP_EFFORT", ORIGINAL_LOOP_EFFORT);
+  restoreEnv("LOOP_DRIVER_EFFORT", ORIGINAL_LOOP_DRIVER_EFFORT);
+  restoreEnv("LOOP_REVIEWER_EFFORT", ORIGINAL_LOOP_REVIEWER_EFFORT);
   process.exit = originalExit;
   console.log = originalLog;
 });
@@ -115,6 +122,9 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   clearModelEnv();
   Reflect.deleteProperty(process.env, "LOOP_CAVEMAN_MODE");
   Reflect.deleteProperty(process.env, "LOOP_HELPER_CAVEMAN_MODE");
+  Reflect.deleteProperty(process.env, "LOOP_EFFORT");
+  Reflect.deleteProperty(process.env, "LOOP_DRIVER_EFFORT");
+  Reflect.deleteProperty(process.env, "LOOP_REVIEWER_EFFORT");
   const opts = parseArgs([]);
 
   expect(opts.agent).toBe("claude");
@@ -127,12 +137,74 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   expect(opts.governess).toBe(true);
   expect(opts.cavemanMode).toBe(DEFAULT_CAVEMAN_MODE);
   expect(opts.helperCavemanMode).toBe(DEFAULT_HELPER_CAVEMAN_MODE);
+  expect(opts.driverEffort).toBe(DEFAULT_LAUNCH_EFFORT);
+  expect(opts.driverEffortSource).toBe("default");
+  expect(opts.reviewerEffort).toBe(DEFAULT_LAUNCH_EFFORT);
+  expect(opts.reviewerEffortSource).toBe("default");
   expect(opts.promptInput).toBeUndefined();
   expect(opts.review).toBe("claudex");
   expect(opts.reviewPlan).toBeUndefined();
   expect(opts.resumeRunId).toBeUndefined();
   expect(opts.tmux).toBe(false);
   expect(opts.worktree).toBe(false);
+});
+
+test("parseArgs resolves global and per-role effort with order-independent CLI precedence", () => {
+  process.env.LOOP_EFFORT = "low";
+  process.env.LOOP_DRIVER_EFFORT = "high";
+  process.env.LOOP_REVIEWER_EFFORT = "xhigh";
+
+  const roleThenGlobal = parseArgs([
+    "--effort-driver",
+    "medium",
+    "--effort=max",
+  ]);
+  expect(roleThenGlobal).toMatchObject({
+    driverEffort: "medium",
+    driverEffortSource: "cli-role",
+    reviewerEffort: "max",
+    reviewerEffortSource: "cli-global",
+  });
+
+  const globalThenRole = parseArgs([
+    "--effort",
+    "low",
+    "--effort-reviewer=high",
+  ]);
+  expect(globalThenRole).toMatchObject({
+    driverEffort: "low",
+    driverEffortSource: "cli-global",
+    reviewerEffort: "high",
+    reviewerEffortSource: "cli-role",
+  });
+});
+
+test("parseArgs resolves role environment effort above the global fallback", () => {
+  process.env.LOOP_EFFORT = "low";
+  process.env.LOOP_DRIVER_EFFORT = "medium";
+  process.env.LOOP_REVIEWER_EFFORT = "high";
+
+  expect(parseArgs([])).toMatchObject({
+    driverEffort: "medium",
+    driverEffortSource: "env-role",
+    reviewerEffort: "high",
+    reviewerEffortSource: "env-role",
+  });
+});
+
+test("parseArgs rejects malformed CLI and environment effort", () => {
+  expect(() => parseArgs(["--effort-driver", "ultra"])).toThrow(
+    "Invalid --effort-driver value: ultra"
+  );
+  expect(() => parseArgs(["--effort-reviewer="])).toThrow(
+    "Invalid --effort-reviewer value"
+  );
+  expect(() => parseArgs(["--effort"])).toThrow("Missing value for --effort");
+
+  process.env.LOOP_REVIEWER_EFFORT = "banana";
+  expect(() => parseArgs([])).toThrow(
+    "Invalid LOOP_REVIEWER_EFFORT value: banana"
+  );
 });
 
 test("parseArgs accepts Caveman CLI and environment modes", () => {

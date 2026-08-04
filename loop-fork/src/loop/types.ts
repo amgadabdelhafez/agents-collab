@@ -1,6 +1,14 @@
 export type Agent = "claude" | "codex" | "gemini" | "cursor" | "copilot";
 export type CavemanMode = "off" | "lite" | "full" | "ultra";
 export type CavemanModeSource = "cli" | "default" | "env" | "manifest";
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type EffortSource =
+  | "cli-global"
+  | "cli-role"
+  | "default"
+  | "env-global"
+  | "env-role"
+  | "manifest";
 export type Format = "pretty" | "raw";
 export type ReviewMode = Agent | "claudex";
 export type PlanReviewMode = Agent | "other" | "none";
@@ -33,6 +41,9 @@ export type ValueFlag =
   | "done"
   | "proof"
   | "pairWith"
+  | "effort"
+  | "driverEffort"
+  | "reviewerEffort"
   | "codexModel"
   | "codexReviewerModel"
   | "copilotModel"
@@ -346,6 +357,8 @@ export interface Options {
   cursorModel: string;
   cursorReviewerModel?: string;
   doneSignal: string;
+  driverEffort?: EffortLevel;
+  driverEffortSource?: EffortSource;
   format: Format;
   geminiMcpConfigPath?: string;
   geminiModel: string;
@@ -372,6 +385,8 @@ export interface Options {
   reservedRunId?: string;
   resumeRunId?: string;
   review?: ReviewMode;
+  reviewerEffort?: EffortLevel;
+  reviewerEffortSource?: EffortSource;
   reviewPlan?: PlanReviewMode;
   sessionId?: string;
   tmux?: boolean;

@@ -1,0 +1,48 @@
+{
+  "task_id": "per-agent-launch-effort",
+  "feature": "per-agent-launch-effort",
+  "timestamp": "2026-08-04T06:10:00Z",
+  "verdict": "pass",
+  "base_sha": "3cf26d9eccf423d224b966e4cf492cc1a9b0321d",
+  "baseline_failures": [],
+  "checks": {
+    "focused": {
+      "status": "pass",
+      "evidence": "260 pass, 0 fail, 953 expectations across args, paired-options, run-state, tmux, runner, and codex-app-server producer suites"
+    },
+    "full_suite": {
+      "status": "pass",
+      "evidence": "scripts/verify.sh per-agent-launch-effort per-agent-launch-effort completed: lint, scoped typecheck, compiled build, 1407 sequential tests with 0 failures, and empty baseline allowlist"
+    },
+    "format": {
+      "status": "pass",
+      "evidence": "bun run check checked 739 files with no fixes; git diff --check clean"
+    },
+    "build": {
+      "status": "pass",
+      "evidence": "bun run build compiled the loop binary successfully"
+    },
+    "safety_symbols": {
+      "status": "pass",
+      "evidence": "source tree retains requestedShutdownDecision=2, isExactNewWriteTarget=2, and PROXY_SHUTDOWN_CALLER_HEADER=3"
+    },
+    "live_process_safety": {
+      "status": "pass",
+      "evidence": "no live process, pane, manifest, binary, or port was mutated; harvto-loop-122 remained live with all eight recorded panes and ports 4500 and 4600 listening"
+    }
+  },
+  "acceptance": {
+    "default_driver_effort_medium": true,
+    "default_reviewer_effort_medium": true,
+    "global_cli_override": true,
+    "per_role_cli_override": true,
+    "global_and_per_role_environment": true,
+    "invalid_levels_fail_closed": true,
+    "asymmetric_provider_mapping_both_directions": true,
+    "resolved_effort_persisted_in_manifest": true,
+    "live_reattach_cannot_claim_unapplied_effort": true,
+    "codex_effort_override_is_unique": true
+  },
+  "known_limitations": [],
+  "blocking_findings": []
+}
