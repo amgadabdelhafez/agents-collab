@@ -1,0 +1,47 @@
+{
+  "task_id": "utility-multifile-edit-artifact",
+  "status": "pass",
+  "required": [
+    "producer-regression",
+    "focused",
+    "full",
+    "lint",
+    "build",
+    "diff-check"
+  ],
+  "dimensions": {
+    "producer-regression": {
+      "status": "pass",
+      "evidence": "worker emits two propose_patch calls; completed job exposes one aggregate diff; one guarded apply creates both files"
+    },
+    "focused": {
+      "status": "pass",
+      "commands": [
+        "bun run test:file -- tests/loop/utility-runtime.test.ts",
+        "bun run test:file -- tests/loop/utility-tools.test.ts",
+        "bun run test:file -- tests/loop/bridge.test.ts",
+        "bun run test:file -- tests/loop/utility-pi-harness.test.ts"
+      ],
+      "result": "197 pass, 0 fail"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "diff-check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "full": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "result": "exit 0"
+    },
+    "lint": {
+      "status": "pass",
+      "command": "bun run check",
+      "result": "Checked 738 files; no fixes applied"
+    }
+  },
+  "verdict": "pass"
+}
