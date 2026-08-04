@@ -198,7 +198,10 @@ interface TmuxDeps {
     threadId: string
   ) => Promise<string>;
   startPersistentAgentSession: typeof startPersistentAgentSession;
-  stopCodexProxy: (proxyUrl: string) => Promise<void>;
+  stopCodexProxy: (
+    proxyUrl: string,
+    request: { caller: string; requesterPid?: number }
+  ) => Promise<void>;
   updateRunManifest: typeof updateRunManifest;
 }
 
@@ -2954,7 +2957,10 @@ const startPairedSession = async (
     }
     if (codexProxyUrl) {
       try {
-        await deps.stopCodexProxy(codexProxyUrl);
+        await deps.stopCodexProxy(codexProxyUrl, {
+          caller: "paired-start-cleanup",
+          requesterPid: process.pid,
+        });
         codexProxyUrl = "";
       } catch (proxyError) {
         const detail =

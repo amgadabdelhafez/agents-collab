@@ -1,0 +1,25 @@
+{
+  "task_id": "proxy-shutdown-forensics",
+  "result": "pass",
+  "acceptance": {
+    "real_http_shutdown_producer_labeled": true,
+    "request_recorded_before_stop": true,
+    "declared_identity_distinguished_from_peer": true,
+    "live_run_mutated": false
+  },
+  "verification": {
+    "focused": {
+      "command": "bun run test:file -- tests/loop/codex-tmux-proxy.test.ts tests/loop/tmux.test.ts",
+      "passed": 114,
+      "failed": 0
+    },
+    "full": {
+      "command": "bun run test:ci",
+      "status": "pass",
+      "baseline_failures": []
+    },
+    "lint": "pass",
+    "build": "pass",
+    "diff_check": "pass"
+  }
+}

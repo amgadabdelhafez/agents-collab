@@ -5010,6 +5010,9 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
     status: "running",
   });
   let stoppedProxy = 0;
+  let stoppedProxyRequest:
+    | { caller: string; requesterPid?: number }
+    | undefined;
   let winnerSessionLive = false;
   const storage = {
     manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
@@ -5045,8 +5048,9 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
         },
         startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
         startPersistentAgentSession: () => Promise.resolve(undefined),
-        stopCodexProxy: () => {
+        stopCodexProxy: (_proxyUrl, request) => {
           stoppedProxy += 1;
+          stoppedProxyRequest = request;
           return Promise.resolve();
         },
         spawn: (args: string[]) => {
@@ -5083,6 +5087,10 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
   );
 
   expect(winnerSessionLive).toBe(true);
+  expect(stoppedProxyRequest).toEqual({
+    caller: "paired-start-cleanup",
+    requesterPid: process.pid,
+  });
   expect(
     calls.filter((args) => args[0] === "tmux" && args[1] === "has-session")
   ).toHaveLength(2);

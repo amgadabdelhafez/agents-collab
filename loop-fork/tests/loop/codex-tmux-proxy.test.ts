@@ -1264,3 +1264,78 @@ test("codex tmux proxy has no headless fallback when visible delivery is unavail
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("codex tmux proxy records shutdown producer and observed peer before stopping", async () => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  const upstreamStart = await startServerWithRetries((port) =>
+    serve({
+      fetch: (request, server) => {
+        if (server.upgrade(request, { data: { initialized: false } })) {
+          return undefined;
+        }
+        return new Response("upstream");
+      },
+      hostname: "127.0.0.1",
+      port,
+      websocket: {
+        message: (ws, message) => {
+          const frame = JSON.parse(String(message)) as JsonFrame;
+          if (frame.method === "initialize") {
+            ws.send(JSON.stringify({ id: frame.id, result: {} }));
+          }
+        },
+      },
+    })
+  );
+  const upstreamUrl = `ws://127.0.0.1:${upstreamStart.port}/`;
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      codexRemoteUrl: upstreamUrl,
+      codexThreadId: "thread-1",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "10",
+      state: "working",
+      status: "running",
+    })
+  );
+  let proxyTask: Promise<void> | undefined;
+  try {
+    const proxyStart = await startProxyWithRetries(
+      root,
+      upstreamUrl,
+      "thread-1",
+      { tmuxLiveness: () => "live" }
+    );
+    proxyTask = proxyStart.proxyTask;
+    await stopCodexTmuxProxy(proxyStart.proxyUrl, {
+      caller: "paired-start-cleanup",
+      requesterPid: process.pid,
+    });
+    await proxyTask;
+    const events = readLifecycleEvents(root);
+    const requestedIndex = events.findIndex(
+      (event) => event.event === "shutdown-requested"
+    );
+    const stoppedIndex = events.findIndex(
+      (event) => event.event === "stopped" && event.reason === "requested"
+    );
+    expect(requestedIndex).toBeGreaterThanOrEqual(0);
+    expect(stoppedIndex).toBeGreaterThan(requestedIndex);
+    expect(events[requestedIndex]).toMatchObject({
+      declaredCaller: "paired-start-cleanup",
+      declaredRequesterPid: process.pid,
+      peerAddress: "127.0.0.1",
+      peerFamily: "IPv4",
+    });
+    expect(events[requestedIndex]?.peerPort).toBeGreaterThan(0);
+  } finally {
+    upstreamStart.server.stop(true);
+    await proxyTask?.catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  }
+});

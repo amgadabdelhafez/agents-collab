@@ -40,6 +40,9 @@ const MCP_RELOAD_TIMEOUT_MS = 5000;
 
 export const CODEX_TMUX_PROXY_SUBCOMMAND = "__codex-tmux-proxy";
 const PROXY_SHUTDOWN_PATH = "/__loop_shutdown";
+const PROXY_SHUTDOWN_CALLER_HEADER = "x-loop-shutdown-caller";
+const PROXY_SHUTDOWN_PID_HEADER = "x-loop-requester-pid";
+const PROXY_SHUTDOWN_CALLER_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const CODEX_TMUX_PROXY_LIFECYCLE_FILE =
   "codex-tmux-proxy-lifecycle.jsonl";
 
@@ -80,12 +83,22 @@ export interface ProxyRuntimeOptions {
 interface ProxyLifecycleEvent {
   at: string;
   attempt?: number;
+  declaredCaller?: string;
+  declaredRequesterPid?: number;
   delayMs?: number;
   event: string;
   failure?: string;
+  peerAddress?: string;
+  peerFamily?: string;
+  peerPort?: number;
   port?: number;
   reason?: ProxyStopReason;
   signal?: "SIGINT" | "SIGTERM";
+}
+
+export interface ProxyShutdownRequest {
+  caller: string;
+  requesterPid?: number;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -170,6 +183,33 @@ const appendProxyLifecycle = (
   } catch {
     // Lifecycle evidence must not become a new proxy failure mode.
   }
+};
+
+const shutdownRequestLifecycleEvent = (
+  request: Request,
+  peer: { address: string; family: string; port: number } | null | undefined
+): Omit<ProxyLifecycleEvent, "at"> => {
+  const declaredCaller = request.headers.get(PROXY_SHUTDOWN_CALLER_HEADER);
+  const declaredRequesterPid = Number.parseInt(
+    request.headers.get(PROXY_SHUTDOWN_PID_HEADER) ?? "",
+    10
+  );
+  return {
+    ...(declaredCaller && PROXY_SHUTDOWN_CALLER_PATTERN.test(declaredCaller)
+      ? { declaredCaller }
+      : {}),
+    ...(Number.isSafeInteger(declaredRequesterPid) && declaredRequesterPid > 0
+      ? { declaredRequesterPid }
+      : {}),
+    event: "shutdown-requested",
+    ...(peer
+      ? {
+          peerAddress: peer.address,
+          peerFamily: peer.family,
+          peerPort: peer.port,
+        }
+      : {}),
+  };
 };
 
 const extractThreadId = (value: unknown): string | undefined => {
@@ -340,6 +380,10 @@ class CodexTmuxProxy {
       fetch: (request, server) => {
         const path = new URL(request.url).pathname;
         if (path === PROXY_SHUTDOWN_PATH && request.method === "POST") {
+          appendProxyLifecycle(
+            this.runDir,
+            shutdownRequestLifecycleEvent(request, server.requestIP(request))
+          );
           setTimeout(() => this.stop(), 0);
           return new Response("stopping");
         }
@@ -817,12 +861,30 @@ export const waitForCodexTmuxProxy = async (port: number): Promise<string> => {
   throw new Error("[loop] Codex tmux proxy failed to start");
 };
 
-export const stopCodexTmuxProxy = async (proxyUrl: string): Promise<void> => {
+export const stopCodexTmuxProxy = async (
+  proxyUrl: string,
+  request: ProxyShutdownRequest = { caller: "unspecified" }
+): Promise<void> => {
   const url = new URL(proxyUrl);
   url.protocol = "http:";
   url.pathname = PROXY_SHUTDOWN_PATH;
   url.search = "";
-  const response = await fetch(url, { method: "POST" });
+  const caller = PROXY_SHUTDOWN_CALLER_PATTERN.test(request.caller)
+    ? request.caller
+    : "invalid-caller";
+  const requesterPid =
+    request.requesterPid &&
+    Number.isSafeInteger(request.requesterPid) &&
+    request.requesterPid > 0
+      ? request.requesterPid
+      : process.pid;
+  const response = await fetch(url, {
+    headers: {
+      [PROXY_SHUTDOWN_CALLER_HEADER]: caller,
+      [PROXY_SHUTDOWN_PID_HEADER]: String(requesterPid),
+    },
+    method: "POST",
+  });
   if (!response.ok) {
     throw new Error(
       `[loop] Codex tmux proxy shutdown failed: HTTP ${response.status}`
