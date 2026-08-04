@@ -1,0 +1,12 @@
+{
+  "id": "project-world-model",
+  "mode": "planned",
+  "created_at": "2026-08-04T19:07:36Z",
+  "status": "done",
+  "description": "Build a provenance-first temporal project context graph with deterministic materialization and read-only decision context tools",
+  "estimated_loc": 500,
+  "research_required": true,
+  "research_reason": "explicit, estimate-loc>=500",
+  "research_path": "runs/project-world-model/research.md",
+  "ended_at": "2026-08-04T19:23:30Z"
+}

@@ -39,6 +39,7 @@ loop - v${LOOP_VERSION} - meta agent loop runner
 Usage:
   loop                                     Start paired interactive tmux mode
   loop dashboard                           Open live panel for running loop instances
+  loop world help                          Build or query the local Project World Model
   loop [options] [prompt]
   loop update                              Check for updates and apply if available
   loop upgrade                             Alias for update

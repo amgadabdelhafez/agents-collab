@@ -57,6 +57,7 @@ import {
   UTILITY_PANE_SUBCOMMAND,
   UTILITY_WORKER_SUBCOMMAND,
 } from "./loop/utility-runtime";
+import { runWorldCommand } from "./loop/world-model-cli";
 
 const TMUX_DETACH_HINT = "[loop] detach with Ctrl-b d";
 const DASHBOARD_COMMAND = "dashboard";
@@ -284,6 +285,7 @@ const runImmediateInfoCommand = (argv: string[]): boolean => {
 };
 
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
+  runWorldCommand(argv) ||
   runImmediateInfoCommand(argv) ||
   runGovernessUtilityCommand(argv) ||
   (await runHiddenSubcommand(argv));

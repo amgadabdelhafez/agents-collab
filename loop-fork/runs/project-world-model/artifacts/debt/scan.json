@@ -1,0 +1,30 @@
+{
+  "task_id": "project-world-model",
+  "scanned_at": "2026-08-04T19:23:30Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-04T19:23:30Z",
+      "task_id": "project-world-model",
+      "signal": "loc_growth",
+      "file": "src/loop/world-model-cli.ts",
+      "before_loc": 0,
+      "after_loc": 160,
+      "delta_loc": 160,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-04T19:23:30Z",
+      "task_id": "project-world-model",
+      "signal": "loc_growth",
+      "file": "src/loop/world-model.ts",
+      "before_loc": 0,
+      "after_loc": 985,
+      "delta_loc": 985,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}
