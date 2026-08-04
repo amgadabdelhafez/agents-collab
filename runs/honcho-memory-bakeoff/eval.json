@@ -1,0 +1,38 @@
+{
+  "task_id": "honcho-memory-bakeoff",
+  "feature": "harness-memory-heartbeat",
+  "timestamp": "2026-08-04T09:09:11Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "fixture_frozen_before_measurement": "pass",
+    "same_corpus_queries_and_labels": "pass",
+    "runtime_egress_denied": "pass",
+    "local_model_relays_only": "pass",
+    "honcho_provenance_accuracy": 1,
+    "markdown_recall_at_5": 0.8333333333333334,
+    "pickbrain_recall_at_5": 1,
+    "honcho_recall_at_5": 0.4166666666666667,
+    "honcho_warm_p95_ms": 27.94308500006082,
+    "honcho_service_memory_mib": 619.955,
+    "honcho_idle_cpu_percent": 1.95,
+    "honcho_recovery_seconds": 10.477861417,
+    "honcho_operator_steps": 9,
+    "mandatory_repository_gate": "pass: lint, typecheck, compiled build, sequential full suite, empty baseline allowlist",
+    "candidate_decision": "reject-honcho",
+    "retained_design": "curated-markdown-plus-pickbrain-witchcraft"
+  },
+  "known_limitations": [
+    "The frozen corpus is synthetic and tests the harness's curated operational-memory use case, not general personal memory.",
+    "Honcho used normalized mean-pooled XTR vectors because its pgvector path accepts one vector per message; Pickbrain used Witchcraft's native XTR retrieval.",
+    "The existing local model server processes were excluded from Honcho service memory, while Honcho's API, deriver, Postgres, Redis, and two relays were included."
+  ],
+  "evidence": [
+    "evals/memory-bakeoff/fixture.json",
+    "evals/memory-bakeoff/thresholds.json",
+    "runs/honcho-memory-bakeoff/result.json",
+    "runs/honcho-memory-bakeoff/report.md"
+  ],
+  "exact_sha_review": "pending"
+}

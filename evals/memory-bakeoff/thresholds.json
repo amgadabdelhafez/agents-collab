@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "decisionRule": "reject-honcho-unless-every-gate-passes",
+  "gates": {
+    "egressDenied": true,
+    "provenanceAccuracy": 1,
+    "minimumHonchoRecallAt5": 0.9,
+    "maximumRecallDeficitVsPickbrain": 0.05,
+    "minimumRecallGainVsMarkdown": 0.2,
+    "maximumWarmP95Ms": 2000,
+    "maximumServiceMemoryMiB": 2048,
+    "maximumIdleCpuPercent": 5,
+    "maximumRecoverySeconds": 60,
+    "maximumOperatorSteps": 6
+  },
+  "notes": [
+    "All gates are conjunctive; missing or ambiguous evidence rejects Honcho.",
+    "A tie keeps Markdown plus Pickbrain/Witchcraft.",
+    "The existing local MLX and XTR model processes are excluded from Honcho service memory because both semantic candidates use the same local model estate."
+  ]
+}

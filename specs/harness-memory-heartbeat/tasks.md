@@ -5,5 +5,6 @@
 - [x] Implement event-driven bridge wakeups and persisted five-minute reconciliation.
 - [x] Implement deterministic pre-compaction checkpoints.
 - [x] Implement curated memory promotion.
-- [ ] Run the local-only Honcho versus Markdown plus Witchcraft bakeoff.
+- [x] Run the local-only Honcho versus Markdown plus Witchcraft bakeoff.
+- [x] Reject Honcho under the preregistered gate and retain curated Markdown plus Pickbrain/Witchcraft.
 - [ ] Record exact-SHA review and deployment decisions for each slice.

@@ -1,0 +1,887 @@
+{
+  "fixtureVersion": 1,
+  "thresholds": {
+    "version": 1,
+    "decisionRule": "reject-honcho-unless-every-gate-passes",
+    "gates": {
+      "egressDenied": true,
+      "provenanceAccuracy": 1,
+      "minimumHonchoRecallAt5": 0.9,
+      "maximumRecallDeficitVsPickbrain": 0.05,
+      "minimumRecallGainVsMarkdown": 0.2,
+      "maximumWarmP95Ms": 2000,
+      "maximumServiceMemoryMiB": 2048,
+      "maximumIdleCpuPercent": 5,
+      "maximumRecoverySeconds": 60,
+      "maximumOperatorSteps": 6
+    },
+    "notes": [
+      "All gates are conjunctive; missing or ambiguous evidence rejects Honcho.",
+      "A tie keeps Markdown plus Pickbrain/Witchcraft.",
+      "The existing local MLX and XTR model processes are excluded from Honcho service memory because both semantic candidates use the same local model estate."
+    ]
+  },
+  "systems": {
+    "markdown": {
+      "rows": [
+        {
+          "query": "Q-01",
+          "expected": "MEM-01",
+          "latencyMs": 5.325082999999999,
+          "results": [
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01",
+              "score": 1
+            },
+            {
+              "docId": "MEM-11",
+              "source": "docs/runbooks/live-pane-preservation.md",
+              "sourceSha256": "fixture-mem-11",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-02",
+          "expected": "MEM-02",
+          "latencyMs": 0.10279199999999733,
+          "results": [
+            {
+              "docId": "MEM-07",
+              "source": "docs/runbooks/tmux-prompt-transport.md",
+              "sourceSha256": "fixture-mem-07",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-03",
+          "expected": "MEM-03",
+          "latencyMs": 0.04691700000000054,
+          "results": [
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03",
+              "score": 1
+            },
+            {
+              "docId": "MEM-08",
+              "source": "docs/runbooks/helper-accounting.md",
+              "sourceSha256": "fixture-mem-08",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-04",
+          "expected": "MEM-04",
+          "latencyMs": 0.037207999999999686,
+          "results": [
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03",
+              "score": 1
+            },
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04",
+              "score": 1
+            },
+            {
+              "docId": "MEM-09",
+              "source": "docs/runbooks/worktree-scope.md",
+              "sourceSha256": "fixture-mem-09",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-05",
+          "expected": "MEM-05",
+          "latencyMs": 0.03479199999999949,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04",
+              "score": 1
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05",
+              "score": 1
+            },
+            {
+              "docId": "MEM-08",
+              "source": "docs/runbooks/helper-accounting.md",
+              "sourceSha256": "fixture-mem-08",
+              "score": 1
+            },
+            {
+              "docId": "MEM-10",
+              "source": "docs/runbooks/cost-display.md",
+              "sourceSha256": "fixture-mem-10",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-06",
+          "expected": "MEM-06",
+          "latencyMs": 0.26583300000000065,
+          "results": [
+            {
+              "docId": "MEM-06",
+              "source": "docs/runbooks/memory-promotion.md",
+              "sourceSha256": "fixture-mem-06",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-07",
+          "expected": "MEM-07",
+          "latencyMs": 0.06350000000000122,
+          "results": [
+            {
+              "docId": "MEM-07",
+              "source": "docs/runbooks/tmux-prompt-transport.md",
+              "sourceSha256": "fixture-mem-07",
+              "score": 3
+            },
+            {
+              "docId": "MEM-06",
+              "source": "docs/runbooks/memory-promotion.md",
+              "sourceSha256": "fixture-mem-06",
+              "score": 1
+            },
+            {
+              "docId": "MEM-09",
+              "source": "docs/runbooks/worktree-scope.md",
+              "sourceSha256": "fixture-mem-09",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-08",
+          "expected": "MEM-08",
+          "latencyMs": 0.038041999999997245,
+          "results": [
+            {
+              "docId": "MEM-08",
+              "source": "docs/runbooks/helper-accounting.md",
+              "sourceSha256": "fixture-mem-08",
+              "score": 3
+            },
+            {
+              "docId": "MEM-02",
+              "source": "docs/runbooks/bridge-reconciliation.md",
+              "sourceSha256": "fixture-mem-02",
+              "score": 1
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-09",
+          "expected": "MEM-09",
+          "latencyMs": 0.061417000000002275,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04",
+              "score": 2
+            },
+            {
+              "docId": "MEM-02",
+              "source": "docs/runbooks/bridge-reconciliation.md",
+              "sourceSha256": "fixture-mem-02",
+              "score": 1
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03",
+              "score": 1
+            },
+            {
+              "docId": "MEM-09",
+              "source": "docs/runbooks/worktree-scope.md",
+              "sourceSha256": "fixture-mem-09",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-10",
+          "expected": "MEM-10",
+          "latencyMs": 0.03929199999999966,
+          "results": []
+        },
+        {
+          "query": "Q-11",
+          "expected": "MEM-11",
+          "latencyMs": 0.03587500000000077,
+          "results": [
+            {
+              "docId": "MEM-11",
+              "source": "docs/runbooks/live-pane-preservation.md",
+              "sourceSha256": "fixture-mem-11",
+              "score": 2
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05",
+              "score": 1
+            },
+            {
+              "docId": "MEM-07",
+              "source": "docs/runbooks/tmux-prompt-transport.md",
+              "sourceSha256": "fixture-mem-07",
+              "score": 1
+            },
+            {
+              "docId": "MEM-08",
+              "source": "docs/runbooks/helper-accounting.md",
+              "sourceSha256": "fixture-mem-08",
+              "score": 1
+            }
+          ]
+        },
+        {
+          "query": "Q-12",
+          "expected": "MEM-12",
+          "latencyMs": 0.03312500000000185,
+          "results": [
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12",
+              "score": 4
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03",
+              "score": 1
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05",
+              "score": 1
+            }
+          ]
+        }
+      ]
+    },
+    "pickbrain": {
+      "binary": "/Users/amgad/.local/bin/pickbrain",
+      "rows": [
+        {
+          "query": "Q-01",
+          "expected": "MEM-01",
+          "latencyMs": 108.227958,
+          "results": [
+            "MEM-01",
+            "MEM-05",
+            "MEM-06",
+            "MEM-04",
+            "MEM-11"
+          ]
+        },
+        {
+          "query": "Q-02",
+          "expected": "MEM-02",
+          "latencyMs": 107.96441699999997,
+          "results": [
+            "MEM-11",
+            "MEM-01",
+            "MEM-02",
+            "MEM-08",
+            "MEM-07"
+          ]
+        },
+        {
+          "query": "Q-03",
+          "expected": "MEM-03",
+          "latencyMs": 109.35279200000002,
+          "results": [
+            "MEM-03",
+            "MEM-11",
+            "MEM-12",
+            "MEM-08",
+            "MEM-06"
+          ]
+        },
+        {
+          "query": "Q-04",
+          "expected": "MEM-04",
+          "latencyMs": 114.51795800000002,
+          "results": [
+            "MEM-04",
+            "MEM-09",
+            "MEM-06",
+            "MEM-01",
+            "MEM-10"
+          ]
+        },
+        {
+          "query": "Q-05",
+          "expected": "MEM-05",
+          "latencyMs": 109.16845899999998,
+          "results": [
+            "MEM-11",
+            "MEM-05",
+            "MEM-02",
+            "MEM-08",
+            "MEM-07"
+          ]
+        },
+        {
+          "query": "Q-06",
+          "expected": "MEM-06",
+          "latencyMs": 108.99295800000004,
+          "results": [
+            "MEM-06",
+            "MEM-05",
+            "MEM-02",
+            "MEM-08",
+            "MEM-11"
+          ]
+        },
+        {
+          "query": "Q-07",
+          "expected": "MEM-07",
+          "latencyMs": 114.91420800000014,
+          "results": [
+            "MEM-07",
+            "MEM-12",
+            "MEM-06",
+            "MEM-11",
+            "MEM-10"
+          ]
+        },
+        {
+          "query": "Q-08",
+          "expected": "MEM-08",
+          "latencyMs": 109.24279200000001,
+          "results": [
+            "MEM-08",
+            "MEM-02",
+            "MEM-05"
+          ]
+        },
+        {
+          "query": "Q-09",
+          "expected": "MEM-09",
+          "latencyMs": 114.01408300000003,
+          "results": [
+            "MEM-09",
+            "MEM-08",
+            "MEM-04",
+            "MEM-10",
+            "MEM-06"
+          ]
+        },
+        {
+          "query": "Q-10",
+          "expected": "MEM-10",
+          "latencyMs": 121.7783750000001,
+          "results": [
+            "MEM-08",
+            "MEM-10",
+            "MEM-09",
+            "MEM-01",
+            "MEM-06"
+          ]
+        },
+        {
+          "query": "Q-11",
+          "expected": "MEM-11",
+          "latencyMs": 112.72291599999994,
+          "results": [
+            "MEM-11",
+            "MEM-07",
+            "MEM-05",
+            "MEM-08",
+            "MEM-06"
+          ]
+        },
+        {
+          "query": "Q-12",
+          "expected": "MEM-12",
+          "latencyMs": 112.12662499999988,
+          "results": [
+            "MEM-12",
+            "MEM-05",
+            "MEM-03",
+            "MEM-08",
+            "MEM-11"
+          ]
+        }
+      ]
+    },
+    "honcho": {
+      "upstreamCommit": "148f646796067bf7da9c7b7121a21cd47f86039e",
+      "rows": [
+        {
+          "query": "Q-01",
+          "expected": "MEM-01",
+          "latencyMs": 27.94308500006082,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-02",
+          "expected": "MEM-02",
+          "latencyMs": 25.176064000106635,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-03",
+          "expected": "MEM-03",
+          "latencyMs": 25.022353999929692,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-04",
+          "expected": "MEM-04",
+          "latencyMs": 25.285982000013973,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-05",
+          "expected": "MEM-05",
+          "latencyMs": 21.388327999829926,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-06",
+          "expected": "MEM-06",
+          "latencyMs": 23.19542400005048,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-07",
+          "expected": "MEM-07",
+          "latencyMs": 22.88800600013019,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-08",
+          "expected": "MEM-08",
+          "latencyMs": 25.130189000037717,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-09",
+          "expected": "MEM-09",
+          "latencyMs": 24.317432999851007,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-10",
+          "expected": "MEM-10",
+          "latencyMs": 27.125786999931734,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-11",
+          "expected": "MEM-11",
+          "latencyMs": 24.564059000113048,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        },
+        {
+          "query": "Q-12",
+          "expected": "MEM-12",
+          "latencyMs": 26.501407999830917,
+          "results": [
+            {
+              "docId": "MEM-04",
+              "source": "docs/runbooks/exact-sha-review.md",
+              "sourceSha256": "fixture-mem-04"
+            },
+            {
+              "docId": "MEM-12",
+              "source": "docs/runbooks/bridge-gc.md",
+              "sourceSha256": "fixture-mem-12"
+            },
+            {
+              "docId": "MEM-03",
+              "source": "docs/architecture/utility-roles.md",
+              "sourceSha256": "fixture-mem-03"
+            },
+            {
+              "docId": "MEM-01",
+              "source": "docs/runbooks/bridge-delivery.md",
+              "sourceSha256": "fixture-mem-01"
+            },
+            {
+              "docId": "MEM-05",
+              "source": "docs/runbooks/memory-checkpoint.md",
+              "sourceSha256": "fixture-mem-05"
+            }
+          ]
+        }
+      ],
+      "egress": {
+        "denied": true,
+        "exitCode": 1,
+        "evidence": " urllib.request; urllib.request.urlopen('https://example.com', timeout=3).read()\n                           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/urllib/request.py\", line 189, in urlopen\n    return opener.open(url, data, timeout)\n           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/urllib/request.py\", line 489, in open\n    response = self._open(req, data)\n  File \"/usr/local/lib/python3.13/urllib/request.py\", line 506, in _open\n    result = self._call_chain(self.handle_open, protocol, protocol +\n                              '_open', req)\n  File \"/usr/local/lib/python3.13/urllib/request.py\", line 466, in _call_chain\n    result = func(*args)\n  File \"/usr/local/lib/python3.13/urllib/request.py\", line 1367, in https_open\n    return self.do_open(http.client.HTTPSConnection, req,\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        context=self._context)\n                        ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/urllib/request.py\", line 1322, in do_open\n    raise URLError(err)\nurllib.error.URLError: <urlopen error [Errno -3] Temporary failure in name resolution>"
+      },
+      "service": {
+        "cpuPercent": 1.95,
+        "memoryMiB": 619.9549999999999,
+        "raw": [
+          "honcho-local-bakeoff-api-1|0.20%|300.3MiB / 3.814GiB",
+          "honcho-local-bakeoff-deriver-1|0.03%|251.7MiB / 3.814GiB",
+          "honcho-local-bakeoff-database-1|0.03%|37.13MiB / 3.814GiB",
+          "honcho-local-bakeoff-redis-1|1.64%|4.855MiB / 3.814GiB",
+          "honcho-local-bakeoff-embedding-proxy-1|0.02%|13.18MiB / 3.814GiB",
+          "honcho-local-bakeoff-llm-proxy-1|0.03%|12.79MiB / 3.814GiB"
+        ]
+      },
+      "recovery": {
+        "healthy": true,
+        "seconds": 10.477861417,
+        "probes": 9,
+        "operatorSteps": 1
+      },
+      "embeddingAdapter": "google/xtr-base-en normalized mean-pooled 768-dimensional vectors because Honcho accepts one vector per message; Pickbrain uses Witchcraft's native XTR retrieval",
+      "operatorSteps": 9,
+      "operatorStepInventory": [
+        "start a Docker VM",
+        "install/locate Compose and Buildx",
+        "build the Honcho image",
+        "configure local-only environment variables",
+        "preload and verify two tokenizer blobs",
+        "resize the fresh pgvector schema",
+        "create an internal API/database/Redis network",
+        "run two fixed-destination local-model relays",
+        "start and health-check six services"
+      ]
+    }
+  },
+  "scores": {
+    "markdownRecallAt5": 0.8333333333333334,
+    "pickbrainRecallAt5": 1,
+    "honchoRecallAt5": 0.4166666666666667,
+    "honchoProvenanceAccuracy": 1,
+    "honchoP50Ms": 25.022353999929692,
+    "honchoP95Ms": 27.94308500006082
+  },
+  "checks": {
+    "egressDenied": true,
+    "provenanceAccuracy": true,
+    "absoluteRecall": false,
+    "versusPickbrain": false,
+    "versusMarkdown": false,
+    "latency": true,
+    "memory": true,
+    "idleCpu": true,
+    "recovery": true,
+    "operatorSteps": false
+  },
+  "decision": "reject-honcho",
+  "decisionReason": "All preregistered gates are conjunctive; a failed or unmeasured gate rejects additional service complexity."
+}

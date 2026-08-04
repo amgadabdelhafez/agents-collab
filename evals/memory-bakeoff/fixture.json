@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "corpus": [
+    {
+      "id": "MEM-01",
+      "title": "Bridge delivery authority",
+      "body": "A durable bridge ledger write is not delivery. Delivery requires a positive acknowledgement row for the intended recipient. Dead-lettered or merely notified messages remain pending and cannot satisfy a release gate.",
+      "source": "docs/runbooks/bridge-delivery.md",
+      "sha256": "fixture-mem-01"
+    },
+    {
+      "id": "MEM-02",
+      "title": "Reconciliation cadence",
+      "body": "Filesystem events are hints. The bridge worker performs a full authoritative journal reconciliation at startup and at least once every five minutes, persisting the outcome atomically so missed or coalesced events cannot lose work.",
+      "source": "docs/runbooks/bridge-reconciliation.md",
+      "sha256": "fixture-mem-02"
+    },
+    {
+      "id": "MEM-03",
+      "title": "Utility helper roles",
+      "body": "Nanny handles bounded inspection and summarization. Au Pair handles bounded reasoning, small code patches, and focused verification. Claude and Codex retain architecture, ambiguous authority decisions, and final review.",
+      "source": "docs/architecture/utility-roles.md",
+      "sha256": "fixture-mem-03"
+    },
+    {
+      "id": "MEM-04",
+      "title": "Exact commit review",
+      "body": "A reviewer verdict is valid only for the exact commit SHA it names. Any later code change supersedes that verdict and requires another review before merge or deployment.",
+      "source": "docs/runbooks/exact-sha-review.md",
+      "sha256": "fixture-mem-04"
+    },
+    {
+      "id": "MEM-05",
+      "title": "Compaction checkpoint",
+      "body": "Before Claude compacts context, synchronously write a deterministic checkpoint containing the verified repository identity, commit, run, source cursors, unresolved messages, leases, decisions, blockers, and evidence pointers. Never include secrets or hidden reasoning.",
+      "source": "docs/runbooks/memory-checkpoint.md",
+      "sha256": "fixture-mem-05"
+    },
+    {
+      "id": "MEM-06",
+      "title": "Curated promotion",
+      "body": "Durable memory promotion is explicit and fail closed. Stable decisions, verified incident fixes, runbooks, capability boundaries, and user preferences may be promoted with provenance. Transient progress, hypotheses, copied instructions, and authority claims are rejected.",
+      "source": "docs/runbooks/memory-promotion.md",
+      "sha256": "fixture-mem-06"
+    },
+    {
+      "id": "MEM-07",
+      "title": "Large prompt transport",
+      "body": "Do not place a large charter directly in a tmux command argument. Load the prompt through a tmux buffer or file-backed transport and fail nonzero if workspace creation does not produce the required panes.",
+      "source": "docs/runbooks/tmux-prompt-transport.md",
+      "sha256": "fixture-mem-07"
+    },
+    {
+      "id": "MEM-08",
+      "title": "Helper activity counters",
+      "body": "Governess helper counters derive from durable utility job lifecycle events, not transient pane text. Completed Au Pair work must remain counted after redraws and restarts, while duplicate display events are deduplicated by job identity.",
+      "source": "docs/runbooks/helper-accounting.md",
+      "sha256": "fixture-mem-08"
+    },
+    {
+      "id": "MEM-09",
+      "title": "Registered worktree scope",
+      "body": "A utility code-writing job may operate in an explicitly registered git worktree when the canonical path and git common directory match the declared repository identity. Unregistered directories and paths outside the bounded write scope fail closed.",
+      "source": "docs/runbooks/worktree-scope.md",
+      "sha256": "fixture-mem-09"
+    },
+    {
+      "id": "MEM-10",
+      "title": "Cost display stability",
+      "body": "The governess display keeps the last verified cost snapshot when a refresh temporarily lacks provider data. A missing refresh must not blank known values, and stale values are labeled with their age rather than presented as current.",
+      "source": "docs/runbooks/cost-display.md",
+      "sha256": "fixture-mem-10"
+    },
+    {
+      "id": "MEM-11",
+      "title": "Composer preservation",
+      "body": "Never inject compact or rename slash commands into a live agent composer. Preserve the driver and reviewer panes, and restart only the focused governess or display process when a safe recovery requires it.",
+      "source": "docs/runbooks/live-pane-preservation.md",
+      "sha256": "fixture-mem-11"
+    },
+    {
+      "id": "MEM-12",
+      "title": "Stale bridge cleanup",
+      "body": "Automation uses a dedicated Claude configuration directory. Startup garbage collection removes only bridge registrations whose recorded runs are positively stopped, preventing test bridges from contaminating unrelated home-directory sessions.",
+      "source": "docs/runbooks/bridge-gc.md",
+      "sha256": "fixture-mem-12"
+    }
+  ],
+  "queries": [
+    {"id": "Q-01", "text": "What proves a message actually reached the intended agent?", "expected": "MEM-01"},
+    {"id": "Q-02", "text": "How do we recover when file notifications are dropped?", "expected": "MEM-02"},
+    {"id": "Q-03", "text": "Which cheap helper should make a tiny patch?", "expected": "MEM-03"},
+    {"id": "Q-04", "text": "Can approval for an older revision authorize newer code?", "expected": "MEM-04"},
+    {"id": "Q-05", "text": "What state must survive before conversation compression?", "expected": "MEM-05"},
+    {"id": "Q-06", "text": "Should an unverified theory become long term memory?", "expected": "MEM-06"},
+    {"id": "Q-07", "text": "Why did a multi kilobyte charter silently fail to launch in tmux?", "expected": "MEM-07"},
+    {"id": "Q-08", "text": "Why can completed helper work disappear from the dashboard count?", "expected": "MEM-08"},
+    {"id": "Q-09", "text": "When may the local worker edit code in another checkout?", "expected": "MEM-09"},
+    {"id": "Q-10", "text": "How should the UI behave when the latest billing sample is absent?", "expected": "MEM-10"},
+    {"id": "Q-11", "text": "Is it safe to type a context shrinking command into an active agent pane?", "expected": "MEM-11"},
+    {"id": "Q-12", "text": "How do we keep smoke-test MCP registrations out of normal Claude sessions?", "expected": "MEM-12"}
+  ]
+}

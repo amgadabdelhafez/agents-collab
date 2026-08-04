@@ -44,3 +44,9 @@
   recovery time, and operator steps.
 - The decision names the preregistered threshold and defaults to rejection on
   missing or ambiguous evidence.
+
+The frozen 2026-08-04 run rejected Honcho: Markdown recall@5 was 83.3%,
+Pickbrain/Witchcraft was 100%, and Honcho was 41.7%. Honcho passed provenance,
+egress, latency, memory, idle CPU, and recovery checks but failed absolute and
+relative recall plus operator-step limits. Exact measurements and the adapter
+limitation are in `runs/honcho-memory-bakeoff/`.

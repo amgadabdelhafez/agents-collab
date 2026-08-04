@@ -1,5 +1,14 @@
 # Evals
 
+## Smoke-instrument regression rule
+
+Launcher smoke tests must derive the expected reserved run id from the isolated
+fixture state and exercise realistic prompt size and shipped pane topology. A
+small prompt, a stale named `LOOP_RUN_ID`, or old pane geometry can make the
+instrument green while the changed binary is broken. Delivery assertions must
+observe an actual doorbell plus a durable notified row and reject false
+delivered rows.
+
 This directory contains the evaluation harnesses for this repo.
 
 ## Structure
