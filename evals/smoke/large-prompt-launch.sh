@@ -77,12 +77,17 @@ FAILURE_SMOKE_SOCKET="loop-missing-workspace-$RANDOM-$$"
 INFO_SMOKE_SOCKET="loop-info-no-maintenance-$RANDOM-$$"
 CLAUDE_READY_SMOKE_SOCKET="loop-claude-ready-$RANDOM-$$"
 CLAUDE_TIMEOUT_SMOKE_SOCKET="loop-claude-timeout-$RANDOM-$$"
-SUCCESS_RUN_ID="large-prompt-success"
-HASH_RUN_ID="large-prompt-hash"
-FAILURE_RUN_ID="large-prompt-failure"
+# The active-launch reservation layer allocates new runs before the later
+# prepared-run path reads LOOP_RUN_ID. Every case below has a fresh isolated
+# home/repository, so its first authoritative reserved run is deterministically
+# `1`. LOOP_RUN_ID remains in the child environment only as a transport fixture;
+# it is not a new-run selector.
+SUCCESS_RUN_ID="1"
+HASH_RUN_ID="1"
+FAILURE_RUN_ID="1"
 INFO_RUN_ID="informational-no-maintenance"
-CLAUDE_READY_RUN_ID="claude-delayed-ready"
-CLAUDE_TIMEOUT_RUN_ID="claude-never-ready"
+CLAUDE_READY_RUN_ID="1"
+CLAUDE_TIMEOUT_RUN_ID="1"
 INFO_FIXTURE_RUN_ID="abandoned-fixture"
 CHARTER_SENTINEL="BEGIN-LARGE-CHARTER-$RANDOM-$$"
 CHARTER_TRAILING_SENTINEL="END-LARGE-CHARTER-$RANDOM-$$"
@@ -441,7 +446,7 @@ assert_full_layout_geometry() {
         return [id, { width: Number(width), height: Number(height) }];
       })
     );
-    if (panes.size !== 8) throw new Error(`expected 8 panes, found ${panes.size}`);
+    if (panes.size !== 6) throw new Error(`expected 6 panes, found ${panes.size}`);
     const assertFloor = (label, pane, width, height) => {
       const actual = panes.get(pane);
       if (!actual) throw new Error(`${label} pane ${pane || "missing"} is not live`);
@@ -454,13 +459,10 @@ assert_full_layout_geometry() {
     assertFloor("Governess", manifest.tmuxPaneGoverness, 160, 18);
     assertFloor("Nanny", manifest.tmuxPaneNanny, 40, 8);
     assertFloor("Au Pair", manifest.tmuxPaneAuPair, 40, 8);
-    if (!Array.isArray(manifest.tmuxPaneRecon) || manifest.tmuxPaneRecon.length !== 3) {
-      throw new Error("manifest does not bind three recon panes");
+    if (!Array.isArray(manifest.tmuxPaneRecon) || manifest.tmuxPaneRecon.length !== 1) {
+      throw new Error("manifest does not bind the consolidated Activity pane");
     }
-    const reconWidths = [100, 30, 64];
-    manifest.tmuxPaneRecon.forEach((pane, index) =>
-      assertFloor(`recon ${index + 1}`, pane, reconWidths[index], 8)
-    );
+    assertFloor("Activity", manifest.tmuxPaneRecon[0], 200, 8);
   ' "${manifest_path}" "${panes_path}"; then
     return 1
   fi
@@ -919,4 +921,4 @@ assert_host_isolation \
   "at smoke completion"
 assert_prebuilt_binary_unchanged "after launch"
 
-echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=${CLAUDE_READY_GEOMETRY}/8panes hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
+echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=${CLAUDE_READY_GEOMETRY}/6panes activity=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
