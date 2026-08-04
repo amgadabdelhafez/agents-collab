@@ -45,6 +45,8 @@ or claim authority.
 | Au Pair | Larger bounded reasoning and patch proposals on GLM through Pi | Main-agent judgment, automatic patch application, or fallback to Nanny |
 | Tool broker | Scope, path, command, environment, time/output policy | Choosing tasks or applying proposed patches |
 | Pi runtime | Ephemeral provider/model sessions, tool lifecycle, usage/cost, redacted lifecycle trace | Routing, repository permission, persistent chat, or provider fallback |
+| Memory checkpoint | Bounded pre-boundary continuity with exact run/session/source provenance | Raw transcripts, hidden reasoning, secrets, or operational authority |
+| Curated memory | Explicit allowlisted Markdown promotion with a JSON provenance sidecar | Automatic learning, unresolved hypotheses, or release/route authority |
 | Native fallback | One leased read-only provider child for bounded exploration or independent review after settled utility evidence | Worker pool, edits, shell mutation, MCP/web access, descendants, authority, or final review |
 
 ## Architecture invariants
@@ -84,6 +86,13 @@ or claim authority.
   and the detached worker performs full reconciliation on startup and at least
   every five idle minutes. Notification and heartbeat state never count as
   message delivery.
+- Claude checkpoints synchronously on `PreCompact`; Codex checkpoints before
+  each user turn because its current hook surface has no stable pre-compaction
+  event. Checkpoints contain metadata and bounded objectives, never bridge
+  bodies, unrestricted transcripts, tool output, or credentials.
+- Memory promotion is an explicit curated command. Pickbrain, Witchcraft, and
+  any future local retrieval service consume its Markdown as a rebuildable
+  projection and cannot mutate runtime truth.
 
 ## Key data flows
 
@@ -114,9 +123,13 @@ or claim authority.
    that coalesce events. The worker atomically records every full reconciliation
    and reruns it after at most five idle minutes. Only authoritative journal
    rows decide pending and delivered state.
-6. **Recovery:** a new Governess epoch fences orphaned claims; time-limited jobs
+6. **Continuity:** provider hooks atomically write an idempotent checkpoint to
+   `<runDir>/memory/` before the relevant context boundary. A curator may later
+   promote one verified stable fact with `loop __memory-promote`, producing
+   readable Markdown plus a provenance sidecar.
+7. **Recovery:** a new Governess epoch fences orphaned claims; time-limited jobs
    fail closed and return an escalation rather than being silently replayed.
-7. **Native fallback:** after a settled helper result or route, **Claude** may
+8. **Native fallback:** after a settled helper result or route, **Claude** may
    request bounded read-only exploration/review. Codex may not: Codex 0.145
    reapplies the full-access parent sandbox after loading a custom role, so a
    role marked read-only is not a read-only child; Codex native agents are

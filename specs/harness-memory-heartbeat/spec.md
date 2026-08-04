@@ -81,10 +81,18 @@ claims/leases, decisions, blockers, exact evidence pointers, and the last
 authoritative cursors. It excludes secrets, raw credentials, hidden reasoning,
 and unrestricted transcript dumps.
 
+Claude checkpoints run synchronously on its native `PreCompact` hook. Current
+Codex hooks expose no stable pre-compaction event, so Codex writes the same
+bounded checkpoint on `UserPromptSubmit`, before each new turn can consume or
+compact prior context. A later transcript `compacted` record is observation,
+not mislabeled as a pre-compaction trigger.
+
 Promotion accepts only stable decisions, verified incident causes and fixes,
 reusable runbooks, settled capability boundaries, and explicit user
 preferences. It rejects transient progress, unreviewed model inference,
 unresolved hypotheses, copied external instructions, and authority claims.
+Promotion is an explicit file command that writes human-readable Markdown plus
+a JSON provenance sidecar; retrieval indexes remain disposable derivatives.
 
 ## Honcho acceptance gate
 

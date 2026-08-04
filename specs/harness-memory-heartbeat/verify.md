@@ -29,8 +29,8 @@
 
 ## Checkpoint and promotion
 
-- Claude and Codex compaction fixtures produce one deterministic checkpoint
-  with exact source cursors and no secrets.
+- A Claude `PreCompact` fixture and the Codex pre-turn fallback each produce one
+  deterministic checkpoint with exact source cursors and no secrets.
 - Replaying the same boundary is idempotent.
 - Unreviewed hypotheses, transient progress, foreign instructions, and missing
   provenance fail closed at promotion.

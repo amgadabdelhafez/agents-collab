@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { isAgent } from "./loop/agents";
 import { findImmediateInfoRequest } from "./loop/args";
@@ -32,6 +33,10 @@ import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
 } from "./loop/legacy-governess-compat";
+import {
+  MEMORY_PROMOTE_SUBCOMMAND,
+  promoteMemoryCheckpoint,
+} from "./loop/memory-checkpoint";
 import {
   RECON_PANE_SUBCOMMAND,
   type ReconPaneIndex,
@@ -158,8 +163,43 @@ const runReconPaneSubcommand = async (argv: string[]): Promise<boolean> => {
   return true;
 };
 
+const runMemoryPromoteSubcommand = (argv: string[]): boolean => {
+  if (argv[0] !== MEMORY_PROMOTE_SUBCOMMAND) {
+    return false;
+  }
+  const [checkpointPath, promotionClass, outputDir, title, curator, bodyFile] =
+    argv.slice(1);
+  if (
+    !(
+      checkpointPath &&
+      promotionClass &&
+      outputDir &&
+      title &&
+      curator &&
+      bodyFile
+    )
+  ) {
+    throw new Error(
+      "Usage: loop __memory-promote <checkpoint> <class> <output-dir> <title> <curator> <body-file>"
+    );
+  }
+  const promotion = promoteMemoryCheckpoint({
+    body: readFileSync(bodyFile, "utf8"),
+    checkpointPath,
+    class: promotionClass,
+    curator,
+    outputDir,
+    title,
+  });
+  process.stdout.write(`${JSON.stringify(promotion)}\n`);
+  return true;
+};
+
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
+  if (runMemoryPromoteSubcommand(argv)) {
+    return true;
+  }
   if (argv[0] === GOVERNESS_PANE_DIED_SUBCOMMAND) {
     handleGovernessPaneDied(parseGovernessPaneDiedArgs(argv.slice(1)));
     return true;

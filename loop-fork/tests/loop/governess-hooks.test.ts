@@ -90,6 +90,23 @@ describe("normalizeHookPayload", () => {
 });
 
 describe("runHookEmit", () => {
+  test("checkpoints before appending a Claude pre-compaction event", async () => {
+    const order: string[] = [];
+    await runHookEmit("claude", "/run/hooks/claude.jsonl", {
+      append: () => order.push("append"),
+      now: () => NOW,
+      stdin: stdinPayload({
+        hook_event_name: "PreCompact",
+        session_id: "session-1",
+      }),
+      writeCheckpoint: () => {
+        order.push("checkpoint");
+        return undefined;
+      },
+    });
+    expect(order).toEqual(["checkpoint", "append"]);
+  });
+
   test("appends one normalized JSONL line and never throws", async () => {
     const lines: string[] = [];
     async function* stdin() {

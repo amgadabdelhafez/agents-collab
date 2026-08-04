@@ -24,6 +24,7 @@ import {
   makeDelegationEvent,
   resolveUtilityDelegationMode,
 } from "../delegation-policy";
+import { writeMemoryCheckpoint } from "../memory-checkpoint";
 import {
   bindNativeFallbackStart,
   completeNativeFallback,
@@ -68,6 +69,7 @@ export const HOOK_EMIT_SUBCOMMAND = "__hook-emit";
 // both providers so the same Governess adapters can observe them.
 export const CLAUDE_HOOK_EVENTS = [
   "SessionStart",
+  "PreCompact",
   "UserPromptSubmit",
   "PreToolUse",
   "PostToolUse",
@@ -246,6 +248,7 @@ interface HookEmitDeps {
   ) => UtilityDispatchReadiness;
   resolveWorkspaceRoot?: (runRoot: string, path: string) => string | undefined;
   stdin?: AsyncIterable<Uint8Array>;
+  writeCheckpoint?: typeof writeMemoryCheckpoint;
   writeStdout?: (text: string) => void;
 }
 
@@ -1145,6 +1148,17 @@ export const runHookEmit = async (
       payload = { hook_event_name: "raw", detail: text.trim().slice(0, 200) };
     }
     const at = now();
+    try {
+      (deps.writeCheckpoint ?? writeMemoryCheckpoint)({
+        agent,
+        at,
+        hookFile,
+        payload,
+      });
+    } catch {
+      // A checkpoint cannot become a control-plane dependency. The hook and
+      // agent continue, while missing provenance later fails promotion closed.
+    }
     let nativeDecision: NativeSubagentHookResult | undefined;
     try {
       nativeDecision = handleNativeSubagentHook(agent, hookFile, payload, deps);

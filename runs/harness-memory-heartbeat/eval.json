@@ -34,6 +34,19 @@
         "A metadata-only version probe covers coalesced filesystem events without repeatedly parsing the journal."
       ]
     },
+    "checkpoint_and_promotion": {
+      "status": "focused_pass",
+      "passed": 38,
+      "failed": 0,
+      "expectations": 109,
+      "details": [
+        "Claude PreCompact checkpoints synchronously before the hook journal append.",
+        "Codex uses a documented pre-turn fallback because its current hook surface has no stable pre-compaction event.",
+        "Repeated boundaries are idempotent, exact hook cursors and repository identity are persisted, and secrets are redacted.",
+        "Curated promotion accepts only allowlisted stable classes with checkpoint provenance and writes Markdown plus a JSON sidecar.",
+        "Missing provenance and transient or unverified claims fail closed."
+      ]
+    },
     "format_lint": "pass",
     "diff_check": "pass",
     "mandatory_gate": {
@@ -47,7 +60,8 @@
   },
   "known_limitations": [
     "This slice does not deploy or mutate a live loop.",
-    "Pre-compaction checkpoints, curated promotion, and the Honcho bakeoff are subsequent isolated slices."
+    "The local-only Honcho bakeoff remains a subsequent isolated slice.",
+    "Codex has no stable pre-compaction hook in the current provider surface, so its checkpoint is taken before each user turn."
   ],
-  "notes": "The event-driven bridge implementation passes the mandatory repository verification contract. An extra repository-wide noEmit invocation remains noisy on the exact parent and candidate with the same normalized bridge-file error set; the repository's targeted typecheck in scripts/verify.sh is the release contract. Exact-SHA supervisor review remains required before deployment."
+  "notes": "The event-driven bridge and checkpoint/promotion implementation pass the mandatory repository verification contract. The checkpoint-focused tests passed 5 tests and 15 expectations; the hook suite passed 33 tests and 94 expectations. The full mandatory verifier passed outside the restricted sandbox, including lint, targeted typecheck, compiled build, and every sequential test file. Exact-SHA supervisor review remains required before deployment."
 }
