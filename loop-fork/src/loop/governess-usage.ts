@@ -310,6 +310,13 @@ export const summarizeClaude = (text: string): AgentUsage => {
     trackTs(rec, bounds);
     if (rec.type === "system" && rec.subtype === "compact_boundary") {
       usage.compactions += 1;
+      const trigger = str(asRecord(rec.compactMetadata).trigger).toLowerCase();
+      if (trigger) {
+        usage.automaticCompactions ??= 0;
+        if (trigger === "auto") {
+          usage.automaticCompactions += 1;
+        }
+      }
       usage.compactedContextTokens += compactPreTokens(rec);
       usage.lastCompactionTs =
         typeof rec.timestamp === "string"

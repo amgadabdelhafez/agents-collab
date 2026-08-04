@@ -293,9 +293,23 @@ test("summarizeClaude counts compact boundaries and pre-compact context", () => 
 
   const u = summarizeClaude(text);
   expect(u.compactions).toBe(1);
+  expect(u.automaticCompactions).toBe(1);
   expect(u.compactedContextTokens).toBe(999_624);
   expect(u.lastCompactionTs).toBe("2026-07-04T01:00:00Z");
   expect(u.contextTokens).toBe(20);
+});
+
+test("summarizeClaude distinguishes manual from automatic compaction", () => {
+  const u = summarizeClaude(
+    JSON.stringify({
+      type: "system",
+      subtype: "compact_boundary",
+      compactMetadata: { trigger: "manual", preTokens: 100_000 },
+      timestamp: "2026-07-04T01:00:00Z",
+    })
+  );
+  expect(u.compactions).toBe(1);
+  expect(u.automaticCompactions).toBe(0);
 });
 
 test("summarizeCodex counts messages by role", () => {

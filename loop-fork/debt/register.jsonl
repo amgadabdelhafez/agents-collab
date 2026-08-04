@@ -47,3 +47,5 @@
 {"ts": "2026-07-30T01:11:46Z", "task_id": "fresh-session-manifest-binding", "signal": "loc_growth", "file": "src/loop/tmux.ts", "before_loc": 2709, "after_loc": 2840, "delta_loc": 131, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-30T19:57:41Z", "task_id": "informational-command-no-maintenance", "signal": "loc_growth", "file": "src/loop/tmux.ts", "before_loc": 2840, "after_loc": 3001, "delta_loc": 161, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-07-31T06:43:54Z", "task_id": "claude-warning-producer-fixture", "signal": "loc_growth", "file": "src/loop/tmux.ts", "before_loc": 3036, "after_loc": 3508, "delta_loc": 472, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-04T19:47:18Z", "task_id": "context-pressure-handoff", "signal": "loc_growth", "file": "src/loop/governess.ts", "before_loc": 7244, "after_loc": 7419, "delta_loc": 175, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-04T19:47:18Z", "task_id": "context-pressure-handoff", "signal": "loc_growth", "file": "src/loop/session-pressure.ts", "before_loc": 0, "after_loc": 384, "delta_loc": 384, "threshold": 100, "severity": "indicator"}
