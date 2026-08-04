@@ -65,6 +65,7 @@ const BRIDGE_NOTIFICATION_CLAIM_DIR = "bridge-notification-claims";
 const BRIDGE_DELIVERY_CLAIM_STALE_MS = 60_000;
 const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = 15_000;
 const BRIDGE_WORKER_IDLE_DELAY_MS = 250;
+const BRIDGE_WORKER_MAX_IDLE_DELAY_MS = 5000;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
 const TMUX_LEFT_PANE = "0.0";
@@ -192,6 +193,7 @@ export const bridgeRuntimeCommandDeps = {
   readClaudeTranscriptVersion,
   spawn,
   spawnSync,
+  waitForWorkerWake: (_runDir: string, delayMs: number) => wait(delayMs),
 };
 
 const bridgeWorkerPath = (runDir: string): string =>
@@ -248,6 +250,20 @@ const wait = async (ms: number): Promise<void> => {
   await new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+};
+
+export const bridgeWorkerDelayMs = (
+  delivered: boolean,
+  consecutiveIdleCycles: number
+): number => {
+  if (delivered) {
+    return BRIDGE_WORKER_SUCCESS_DELAY_MS;
+  }
+  const exponent = Math.min(Math.max(0, consecutiveIdleCycles), 8);
+  return Math.min(
+    BRIDGE_WORKER_IDLE_DELAY_MS * 2 ** exponent,
+    BRIDGE_WORKER_MAX_IDLE_DELAY_MS
+  );
 };
 
 const deliveryClaimPath = (runDir: string, messageId: string): string => {
@@ -1117,6 +1133,7 @@ export const drainTmuxBridgeMessages = (runDir: string): Promise<boolean> => {
 };
 
 export const runBridgeWorker = async (runDir: string): Promise<void> => {
+  let consecutiveIdleCycles = 0;
   try {
     while (true) {
       const claimedPid = readBridgeWorkerPid(runDir);
@@ -1130,14 +1147,23 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       }
       const deliveredToCodex =
         status.hasCodexRemote && (await drainCodexAppServerMessages(runDir));
+      // A configured app-server is the primary Codex path, but its existence
+      // must not suppress the visible tmux doorbell when it refuses a busy
+      // turn. Notification preserves the pending message until Codex drains it.
+      const notifiedCodex =
+        !deliveredToCodex &&
+        status.hasCodexRemote &&
+        (await drainCodexTmuxMessages(runDir));
       const delivered =
-        deliveredToCodex || (await drainTmuxBridgeMessages(runDir));
+        deliveredToCodex ||
+        notifiedCodex ||
+        (await drainTmuxBridgeMessages(runDir));
       if (!(status.hasCodexRemote || status.hasTmuxSession)) {
         return;
       }
-      await wait(
-        delivered ? BRIDGE_WORKER_SUCCESS_DELAY_MS : BRIDGE_WORKER_IDLE_DELAY_MS
-      );
+      const delayMs = bridgeWorkerDelayMs(delivered, consecutiveIdleCycles);
+      consecutiveIdleCycles = delivered ? 0 : consecutiveIdleCycles + 1;
+      await bridgeRuntimeCommandDeps.waitForWorkerWake(runDir, delayMs);
     }
   } finally {
     clearBridgeWorkerPid(runDir, process.pid);

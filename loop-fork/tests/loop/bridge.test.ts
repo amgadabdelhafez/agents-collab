@@ -3931,6 +3931,150 @@ test("runBridgeWorker retries queued codex app-server messages", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async () => {
+  let runDir = "";
+  const injectCodexMessage = mock(() => false);
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          "\u203a Use /skills to list available skills\n\n  gpt-5.6-sol xhigh \u00b7 ~/repo\n",
+          "utf8"
+        ),
+      };
+    }
+    if (
+      args[0] === "tmux" &&
+      args[1] === "send-keys" &&
+      args.at(-1) === "Enter"
+    ) {
+      const manifestPath = join(runDir, "manifest.json");
+      const manifest = readRunManifest(manifestPath);
+      writeFileSync(
+        manifestPath,
+        `${JSON.stringify({
+          ...manifest,
+          state: "completed",
+          status: "completed",
+        })}\n`,
+        "utf8"
+      );
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge({ injectCodexMessage });
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(() =>
+    Promise.resolve()
+  );
+  const root = makeTempDir();
+  runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-1",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%1",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-idle-codex-doorbell",
+    kind: "message",
+    message: "Wake Codex after the active turn.",
+    source: "claude",
+    target: "codex",
+  });
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(injectCodexMessage).toHaveBeenCalledTimes(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+      .map((event) => event.id)
+  ).toEqual(["msg-idle-codex-doorbell"]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toEqual([]);
+  expect(
+    bridge.readPendingBridgeMessages(runDir).map((message) => message.id)
+  ).toEqual(["msg-idle-codex-doorbell"]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("runBridgeWorker exponentially backs off bounded idle polling", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  const manifestPath = join(runDir, "manifest.json");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-1",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const delays: number[] = [];
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
+    (_runDir: string, delayMs: number) => {
+      delays.push(delayMs);
+      if (delays.length === 7) {
+        const manifest = readRunManifest(manifestPath);
+        writeFileSync(
+          manifestPath,
+          `${JSON.stringify({
+            ...manifest,
+            state: "completed",
+            status: "completed",
+          })}\n`,
+          "utf8"
+        );
+      }
+      return Promise.resolve();
+    }
+  );
+
+  await bridge.runBridgeWorker(runDir);
+
+  expect(delays).toEqual([250, 500, 1000, 2000, 4000, 5000, 5000]);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("runBridgeWorker injects Codex directly and only nudges Claude", async () => {
   let runDir = "";
   const injectCodexMessage = mock(() => true);

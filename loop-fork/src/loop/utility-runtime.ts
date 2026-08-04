@@ -1141,7 +1141,7 @@ export const parseUtilityContextInsufficient = (
 
 const consolidateEditArtifacts = async (input: {
   artifacts: readonly UtilityArtifactReference[];
-  broker: Awaited<ReturnType<typeof createUtilityToolBroker>>;
+  broker: UtilityConversationBroker;
   jobId: string;
   toolEventFile: string;
 }): Promise<UtilityArtifactReference[]> => {

@@ -1,0 +1,48 @@
+{
+  "task_id": "idle-codex-doorbell",
+  "feature": "idle-codex-doorbell",
+  "timestamp": "2026-08-04T07:38:45Z",
+  "evaluator": "codex-producer-backed-eval",
+  "base_sha": "ce0317d",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "red_green": {
+      "status": "pass",
+      "evidence": "Both new worker tests timed out before implementation; after the fix they pass in 14 ms total."
+    },
+    "focused": {
+      "status": "pass",
+      "evidence": "bridge.test.ts: 94 pass, 0 fail, 390 expectations"
+    },
+    "full_suite": {
+      "status": "pass",
+      "evidence": "scripts/verify.sh idle-codex-doorbell idle-codex-doorbell completed lint, typecheck, compiled build, every sequential test file, and the empty baseline allowlist. The loopback proxy integration case was independently re-run outside the restricted sandbox after the sandbox could not bind an ephemeral port; it passed 1 test, 0 failures, 6 expectations."
+    },
+    "format": {
+      "status": "pass",
+      "evidence": "Biome checked both changed TypeScript files; git diff --check is clean."
+    },
+    "integrated_lineage_typecheck": {
+      "status": "pass",
+      "evidence": "The mandatory gate exposed an inherited concrete-broker annotation that rejected the actual conversation-broker union. The annotation now names the minimal execute-capable interface used by consolidation; runtime behavior is unchanged."
+    },
+    "live_process_safety": {
+      "status": "pass",
+      "evidence": "No live process, pane, manifest, binary, or port was mutated; loop 122 remained untouched."
+    }
+  },
+  "acceptance": {
+    "app_server_remains_primary": true,
+    "same_cycle_tmux_fallback": true,
+    "notification_is_not_delivery": true,
+    "pending_message_survives_notification": true,
+    "idle_delays_are_bounded": true,
+    "idle_delay_ceiling_ms": 5000,
+    "success_delay_ms": 100
+  },
+  "known_limitations": [
+    "The worker uses adaptive bounded backoff rather than a filesystem event watcher; a message arriving at the idle ceiling can wait at most five seconds before inspection."
+  ],
+  "blocking_findings": []
+}
