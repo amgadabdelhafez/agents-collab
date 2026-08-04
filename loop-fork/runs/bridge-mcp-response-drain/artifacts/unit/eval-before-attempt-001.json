@@ -1,0 +1,10 @@
+{
+  "task_id": "bridge-mcp-response-drain",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

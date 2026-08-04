@@ -1,0 +1,7 @@
+{
+  "task_id": "bridge-mcp-response-drain",
+  "scanned_at": "2026-08-04T20:19:43Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

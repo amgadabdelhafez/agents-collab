@@ -178,6 +178,19 @@ const writeJsonRpc = (payload: unknown): void => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 };
 
+const flushBridgeOutput = (
+  output: Pick<NodeJS.WriteStream, "write"> = process.stdout
+): Promise<void> =>
+  new Promise((resolve, reject) => {
+    output.write("", (error?: Error | null) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+
 const writeError = (
   id: JsonRpcRequest["id"],
   code: number,
@@ -694,6 +707,11 @@ const bridgeParentIsGone = (
   }
 };
 
+const shouldExitForBridgeParentLoss = (
+  inputEnded: boolean,
+  parentIsGone: boolean
+): boolean => parentIsGone && !inputEnded;
+
 const isBridgeWatchEvent = (
   runDir: string,
   filename: string | Buffer | null
@@ -795,7 +813,12 @@ export const runBridgeMcpServer = async (
 
   const initialParentPid = process.ppid;
   parentSweep = setInterval(() => {
-    if (bridgeParentIsGone(initialParentPid)) {
+    if (
+      shouldExitForBridgeParentLoss(
+        closed,
+        bridgeParentIsGone(initialParentPid)
+      )
+    ) {
       exitAfterParentOrSignal();
     }
   }, 250);
@@ -820,14 +843,14 @@ export const runBridgeMcpServer = async (
         closed = true;
       }
     );
+    await requestQueue;
+    await queueClaudeFlush();
+    await flushBridgeOutput();
   } finally {
     cleanup();
     process.removeListener("SIGINT", exitAfterParentOrSignal);
     process.removeListener("SIGTERM", exitAfterParentOrSignal);
   }
-
-  await requestQueue;
-  await queueClaudeFlush();
 };
 
 export const bridgeInternals = {
@@ -843,4 +866,6 @@ export const bridgeInternals = {
   hasBridgeDeliveryRoute,
   readBridgeEvents,
   bridgeParentIsGone,
+  flushBridgeOutput,
+  shouldExitForBridgeParentLoss,
 };

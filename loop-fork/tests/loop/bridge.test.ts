@@ -198,6 +198,41 @@ test("bridge MCP detects reparented and missing parents", async () => {
   );
 });
 
+test("bridge MCP drains parsed requests after stdin ends despite parent loss", async () => {
+  const bridge = await loadBridge();
+
+  expect(
+    bridge.bridgeInternals.shouldExitForBridgeParentLoss(false, true)
+  ).toBe(true);
+  expect(bridge.bridgeInternals.shouldExitForBridgeParentLoss(true, true)).toBe(
+    false
+  );
+  expect(
+    bridge.bridgeInternals.shouldExitForBridgeParentLoss(false, false)
+  ).toBe(false);
+});
+
+test("bridge MCP output flush waits for the writable callback", async () => {
+  const bridge = await loadBridge();
+  let release: ((error?: Error | null) => void) | undefined;
+  const output = {
+    write: mock((_chunk: string, callback: (error?: Error | null) => void) => {
+      release = callback;
+      return false;
+    }),
+  };
+  let settled = false;
+  const flush = bridge.bridgeInternals.flushBridgeOutput(output).then(() => {
+    settled = true;
+  });
+
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release?.();
+  await flush;
+  expect(settled).toBe(true);
+});
+
 test("bridge message parsing ignores malformed lines and acked entries", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
@@ -645,6 +680,54 @@ test("bridge MCP send_message queues a direct message through the CLI path", asy
       source: "claude",
       target: "codex",
     }),
+  ]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "message")
+  ).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("short-lived bridge MCP emits initialize and tool responses before exit", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    [
+      encodeLine({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          capabilities: {},
+          clientInfo: { name: "short-lived-client", version: "1" },
+          protocolVersion: "2024-11-05",
+        },
+      }),
+      encodeLine({
+        id: 2,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          arguments: {
+            message: "response drain proof",
+            target: "claude",
+          },
+          name: "send_message",
+        },
+      }),
+    ].join("")
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(parseJsonLines(result.stdout).map((entry) => entry.id)).toEqual([
+    1, 2,
   ]);
   expect(
     bridge.bridgeInternals
