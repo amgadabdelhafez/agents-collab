@@ -27,9 +27,12 @@ import {
   governessInitialFrame,
   governessPaneIdentityTmuxCommands,
   governessTick,
+  loadGovernessState,
+  maybeBeginSessionPressureHandover,
   refreshGovernessAgentBindings,
   resolveGovernessConfig,
   runGoverness,
+  saveGovernessState,
   sendRenameCommands,
 } from "../../src/loop/governess";
 
@@ -44,6 +47,7 @@ import {
   resolveRunStorage,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import { evaluateSessionPressure } from "../../src/loop/session-pressure";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
 import type {
@@ -125,6 +129,23 @@ test("governess observes agents through persisted post-split pane targets", () =
     expect(config.driverEffort).toBe("low");
     expect(config.helperCavemanMode).toBe("ultra");
     expect(config.reviewerEffort).toBe("high");
+    expect(config.sessionPressureMode).toBe("enforce");
+    expect(
+      resolveGovernessConfig(
+        "91",
+        { LOOP_GOVERNESS_CONTEXT_HANDOFF: "observe" },
+        cwd,
+        home
+      ).sessionPressureMode
+    ).toBe("observe");
+    expect(
+      resolveGovernessConfig(
+        "91",
+        { LOOP_GOVERNESS_CONTEXT_HANDOFF: "off" },
+        cwd,
+        home
+      ).sessionPressureMode
+    ).toBe("off");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -498,6 +519,151 @@ const stuck: JudgeOutcome = {
   ok: true,
   verdict: { confidence: 0.9, state: "stuck", summary: "stuck on build" },
 };
+
+test("context preparation is action-oriented, durable, and sent once per agent", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const deps: GovernessDeps = {
+    ...makeDeps(stuck, clock, spies),
+    readUsage: (agent) =>
+      agent === "codex"
+        ? usage({
+            contextTokens: 138_750,
+            messages: 1,
+            model: "gpt-5.6-sol",
+          })
+        : usage({ contextTokens: 10_000, messages: 1, model: "Claude Opus 5" }),
+  };
+  const config = baseConfig({
+    agents: [
+      { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+      { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+    ],
+    runDir: "/run",
+    sessionPressureMode: "enforce",
+  });
+  const states = new Map<Agent, AgentLivenessState>();
+  const first = await governessTick(states, config, deps);
+
+  expect(first.sessionPressure.codex).toMatchObject({
+    phase: "prepare",
+    reasonCode: "context-prepare",
+  });
+  expect(spies.bridgeMessages).toHaveLength(2);
+  expect(
+    spies.bridgeMessages.every((entry) =>
+      entry.message.startsWith("governess: prepare a fresh-loop handover now")
+    )
+  ).toBe(true);
+  expect(
+    spies.bridgeMessages.every((entry) => !entry.message.includes("/compact"))
+  ).toBe(true);
+  expect(first.runState.sessionPressurePrepared).toEqual({
+    claude: true,
+    codex: true,
+  });
+  expect(
+    spies.logs.filter(
+      (entry) =>
+        (entry as { event?: string }).event === "session-pressure-transition"
+    )
+  ).toHaveLength(1);
+
+  await governessTick(states, config, deps, first.runState);
+  expect(spies.bridgeMessages).toHaveLength(2);
+});
+
+test("session pressure state survives Governess persistence", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-session-pressure-state-"));
+  const stateFile = join(root, "governess-state.json");
+  const state = freshRunState();
+  state.sessionPressure.codex = evaluateSessionPressure(
+    "codex",
+    usage({ contextTokens: 138_750, model: "gpt-5.6-sol" })
+  );
+  state.sessionPressurePrepared.codex = true;
+  saveGovernessState(stateFile, state);
+  try {
+    const loaded = loadGovernessState(stateFile);
+    expect(loaded?.sessionPressure.codex).toEqual(state.sessionPressure.codex);
+    expect(loaded?.sessionPressurePrepared).toEqual({ codex: true });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("enforce starts exactly one governed handover while safety modes do not", () => {
+  const due = evaluateSessionPressure(
+    "codex",
+    usage({ contextTokens: 185_000, model: "gpt-5.6-sol" })
+  );
+  const logs: unknown[] = [];
+  const deps = {
+    appendLog: (_file: string, record: unknown) => logs.push(record),
+    now: () => START_MS,
+  };
+  const enforced = freshRunState();
+  expect(
+    maybeBeginSessionPressureHandover(
+      {
+        dryRun: false,
+        logFile: "governess.jsonl",
+        sessionPressureMode: "enforce",
+      },
+      deps,
+      enforced,
+      { codex: due },
+      true
+    )
+  ).toEqual(due);
+  expect(enforced.exitControl).toMatchObject({
+    mode: "handover",
+    requestedAt: new Date(START_MS).toISOString(),
+  });
+  expect(
+    maybeBeginSessionPressureHandover(
+      {
+        dryRun: false,
+        logFile: "governess.jsonl",
+        sessionPressureMode: "enforce",
+      },
+      deps,
+      enforced,
+      { codex: due },
+      true
+    )
+  ).toBeUndefined();
+  expect(logs).toHaveLength(1);
+
+  for (const sessionPressureMode of ["observe", "off"] as const) {
+    const state = freshRunState();
+    expect(
+      maybeBeginSessionPressureHandover(
+        { dryRun: false, logFile: "x", sessionPressureMode },
+        deps,
+        state,
+        { codex: due },
+        true
+      )
+    ).toBeUndefined();
+    expect(state.exitControl.mode).toBe("idle");
+  }
+  const dryRun = freshRunState();
+  expect(
+    maybeBeginSessionPressureHandover(
+      {
+        dryRun: true,
+        logFile: "x",
+        sessionPressureMode: "enforce",
+      },
+      deps,
+      dryRun,
+      { codex: due },
+      true
+    )
+  ).toBeUndefined();
+  expect(dryRun.exitControl.mode).toBe("idle");
+});
 
 // Drive two ticks: the first seeds detector state, the second (after the pane
 // has been stable past the idle window with no events) makes the agent suspect.

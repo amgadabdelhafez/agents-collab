@@ -1,0 +1,12 @@
+{
+  "task_id": "context-pressure-handoff",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-04T19:46:06Z",
+  "ended_at": "2026-08-04T19:46:43Z",
+  "artifact": "runs/context-pressure-handoff/artifacts/unit/attempt-001.log",
+  "command": ["bun", "run", "test:ci"]
+}

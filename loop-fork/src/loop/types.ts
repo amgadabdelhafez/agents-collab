@@ -169,6 +169,9 @@ export interface UsageLimitWindow {
 }
 
 export interface AgentUsage {
+  // Provider-labeled automatic compactions when the transcript distinguishes
+  // them. Undefined means the provider did not expose a trigger kind.
+  automaticCompactions?: number;
   // Claude cache-write total; cacheCreate1hTokens is the 1-hour subset.
   cacheCreate1hTokens?: number;
   cacheCreateTokens: number;
