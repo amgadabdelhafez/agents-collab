@@ -81,6 +81,10 @@ const toolText = (stdout: string, id: number): string => {
   )?.content;
   return content?.[0]?.text ?? "";
 };
+const rpcErrorMessage = (stdout: string, id: number): string => {
+  const response = parseJsonLines(stdout).find((entry) => entry.id === id);
+  return (response?.error as { message?: string } | undefined)?.message ?? "";
+};
 
 const runBridgeProcess = async (
   runDir: string,
@@ -621,6 +625,7 @@ test.each([
           kind: "inspect",
           objective: "Locate the bridge server definition",
           read_scope: ["src/loop"],
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -650,6 +655,9 @@ test.each([
   expect(
     readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")
   ).not.toContain("super-secret-idempotency-value");
+  expect(readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")).toContain(
+    '"workShape":"separable"'
+  );
   const status = await runBridgeProcess(
     runDir,
     source,
@@ -667,6 +675,38 @@ test.each([
     state: "pending-route",
     taskId: routed.taskId,
   });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test.each([
+  undefined,
+  "parallel",
+])("bridge MCP route_task rejects invalid work shape %s", async (workShape) => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["locate it"],
+          kind: "inspect",
+          objective: "Locate a bounded definition",
+          read_scope: ["src/loop"],
+          ...(workShape === undefined ? {} : { work_shape: workShape }),
+        },
+        name: "route_task",
+      },
+    })
+  );
+  expect(result.code).toBe(0);
+  expect(rpcErrorMessage(result.stdout, 1)).toBe("work_shape is invalid");
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -688,6 +728,7 @@ test("external supervisor can submit a task with an explicit result target", asy
           objective: "Locate a bounded definition",
           read_scope: ["src/loop"],
           requester: "codex",
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -1623,7 +1664,9 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
     "Never answer the human when the inbound message came from Codex"
   );
   expect(result.stdout).toContain("Delegation is mandatory");
-  expect(result.stdout).toContain('call \\"route_task\\" before using');
+  expect(result.stdout).toContain(
+    'call \\"route_task\\" with work_shape \\"separable\\" before using'
+  );
   expect(result.stdout).toContain('"id":2');
   expect(result.stdout).toContain('"result":{}');
   expect(result.stdout).toContain('"id":3');

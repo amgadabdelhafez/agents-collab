@@ -62,6 +62,8 @@ without changing paired-agent semantics.
 Utility is eligible only when all of the following are true:
 
 - The request kind is `inspect`, `edit`, or `command`.
+- The request explicitly records a `separable` work shape; sequential, unknown,
+  and missing legacy classifications remain with the current driver.
 - Objective and acceptance criteria are explicit.
 - Read/write scope is bounded and does not touch protected or secret paths.
 - No destructive, remote, release, product, credential, migration, or broad

@@ -19,6 +19,7 @@ const requestInput = (
   requiredCapabilities: ["scoped-edit", "focused-verify"],
   risk: "low",
   writeScope: ["src/parser.ts", "tests/parser.test.ts"],
+  workShape: "separable",
   ...overrides,
 });
 
@@ -58,6 +59,25 @@ test("routes a bounded low-risk edit to a capable utility tier", () => {
     reason: "utility-eligible",
     target: "utility",
     tierId: "cheap-oss",
+  });
+});
+
+test.each([
+  "sequential",
+  "unknown",
+] as const)("keeps %s work with the current driver", (workShape) => {
+  expect(routeUtilityRequest(makeRequest({ workShape }), context())).toEqual({
+    reason: "work-not-separable",
+    target: "driver",
+  });
+});
+
+test("legacy missing work shape fails closed", () => {
+  const request = makeRequest();
+  Reflect.deleteProperty(request, "workShape");
+  expect(routeUtilityRequest(request, context())).toEqual({
+    reason: "work-not-separable",
+    target: "driver",
   });
 });
 
@@ -170,7 +190,10 @@ test("fails closed on invalid generic routing policy metadata", () => {
 
 test("routes review to the peer and authority to escalation", () => {
   expect(
-    routeUtilityRequest(makeRequest({ kind: "review" }), context())
+    routeUtilityRequest(
+      makeRequest({ kind: "review", workShape: "unknown" }),
+      context()
+    )
   ).toEqual({ reason: "review-needs-peer", target: "peer" });
   expect(
     routeUtilityRequest(
@@ -182,7 +205,10 @@ test("routes review to the peer and authority to escalation", () => {
     target: "requester",
   });
   expect(
-    routeUtilityRequest(makeRequest({ kind: "design" }), context())
+    routeUtilityRequest(
+      makeRequest({ kind: "design", workShape: "unknown" }),
+      context()
+    )
   ).toEqual({ reason: "authority-needs-human", target: "escalate" });
 });
 

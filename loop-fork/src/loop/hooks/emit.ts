@@ -190,10 +190,7 @@ interface HookEmitDeps {
   env?: NodeJS.ProcessEnv;
   now?: () => string;
   readManifest?: (path: string) => { cwd: string } | undefined;
-  resolveWorkspaceRoot?: (
-    runRoot: string,
-    path: string
-  ) => string | undefined;
+  resolveWorkspaceRoot?: (runRoot: string, path: string) => string | undefined;
   stdin?: AsyncIterable<Uint8Array>;
   writeStdout?: (text: string) => void;
 }
@@ -207,6 +204,19 @@ const preToolDelegationOutput = (taskId: string): string =>
     },
   });
 
+const isClaudePreToolPayload = (agent: Agent, payload: unknown): boolean =>
+  agent === "claude" &&
+  firstString(asRecord(payload), [
+    "hook_event_name",
+    "hookEventName",
+    "event",
+    "type",
+  ]) === "PreToolUse";
+
+const utilityConfigIsReady = (
+  config: ReturnType<typeof resolveUtilityRuntimeConfig>
+): boolean => config.enabled && config.availability.code.startsWith("ready-");
+
 const handlePreToolDelegation = (
   agent: Agent,
   hookFile: string,
@@ -214,16 +224,10 @@ const handlePreToolDelegation = (
   at: string,
   deps: HookEmitDeps
 ): string | undefined => {
-  if (agent !== "claude") {
+  if (!isClaudePreToolPayload(agent, payload)) {
     return undefined;
   }
   const raw = asRecord(payload);
-  if (
-    firstString(raw, ["hook_event_name", "hookEventName", "event", "type"]) !==
-    "PreToolUse"
-  ) {
-    return undefined;
-  }
   const mode = resolveUtilityDelegationMode(
     (deps.env ?? process.env).LOOP_UTILITY_DELEGATION_MODE
   );
@@ -300,8 +304,7 @@ const handlePreToolDelegation = (
   const config = resolveUtilityRuntimeConfig(
     buildUtilityWorkerEnvironment(deps.env ?? process.env)
   );
-  const utilityReady =
-    config.enabled && config.availability.code.startsWith("ready-");
+  const utilityReady = utilityConfigIsReady(config);
   if (mode === "observe" || !utilityReady) {
     appendTelemetry(
       runDir,
@@ -335,6 +338,7 @@ const handlePreToolDelegation = (
       createdAt: at,
       readScope: rootScopes(classification.request.readScope),
       writeScope: rootScopes(classification.request.writeScope),
+      workShape: "separable",
     });
     const job = (deps.appendRoute ?? appendUtilityRouteRequest)(
       runDir,

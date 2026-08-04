@@ -33,7 +33,7 @@ export const sendProactiveCodexGuidance = (): string =>
   `Use "send_message" with ${bridgeTargetLiteral("codex")} for Codex-facing messages, including replies to inbound Codex channel messages; do not send Codex-facing responses as a human-facing message.`;
 
 export const mandatoryUtilityDelegationGuidance = (routeTool: string): string =>
-  `Delegation is mandatory for clearly bounded mechanical inspection, repository search/status/diff, small scoped edits, and focused verification that do not require current-session judgment: call ${routeTool} before using a native repository tool. Native tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous or cross-cutting work, and reviewing returned worker evidence.`;
+  `Delegation is mandatory for clearly bounded, separable mechanical inspection, repository search/status/diff, small scoped edits, and focused verification that do not require current-session judgment: call ${routeTool} with work_shape "separable" before using a native repository tool. Never label ambiguous or sequence-dependent work separable. Native tools remain appropriate for governing instructions, architecture, product/release decisions, ambiguous, sequential, or cross-cutting work, and reviewing returned worker evidence.`;
 
 export const claudeChannelInstructions = (): string =>
   [

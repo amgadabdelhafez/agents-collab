@@ -137,6 +137,7 @@ describe("runHookEmit", () => {
         idempotencyKey: "auto:claude:tool-1",
         kind: "inspect",
         requester: "claude",
+        workShape: "separable",
       }),
     ]);
     expect(delegationEvents).toEqual([
@@ -274,6 +275,7 @@ describe("runHookEmit", () => {
     const routeRequests: Array<{ readScope?: string[] }> = [];
     const stdout: string[] = [];
     async function* stdin() {
+      await Promise.resolve();
       yield new TextEncoder().encode(
         JSON.stringify({
           cwd: "/linked/packages/api",
@@ -323,6 +325,7 @@ describe("runHookEmit", () => {
       workspaceRoot: string | undefined
     ) => {
       async function* stdin() {
+        await Promise.resolve();
         yield new TextEncoder().encode(
           JSON.stringify({
             cwd: "/linked",

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   bridgeToolName,
+  mandatoryUtilityDelegationGuidance,
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "../../src/loop/bridge-guidance";
@@ -29,4 +30,11 @@ test("quotedBridgeTool wraps the resolved bridge tool name", () => {
   expect(quotedBridgeTool("claude", "receive_messages")).toBe(
     '"receive_messages"'
   );
+});
+
+test("utility guidance requires explicit separability", () => {
+  const guidance = mandatoryUtilityDelegationGuidance('"route_task"');
+  expect(guidance).toContain('work_shape "separable"');
+  expect(guidance).toContain("sequence-dependent");
+  expect(guidance).toContain("sequential");
 });

@@ -45,6 +45,9 @@ supervisor can submit/observe messages, but is not a route or claim authority.
   worker process.
 - Agents or the narrow Claude pre-tool policy submit structured requests. They
   cannot select a model, weaken route policy, or grant new authority.
+- Bounded scope is not proof of decomposability. Only requests with explicit
+  `separable` work shape can enter a utility tier; sequential, unknown, and
+  legacy-missing shapes stay with the current driver.
 - Missing evidence, stale epochs, malformed journals, protected paths, and
   unknown risk fail closed.
 - Utility edits are patch proposals in P0. They are not applied automatically.

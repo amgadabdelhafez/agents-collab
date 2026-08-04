@@ -22,6 +22,8 @@ export type UtilityCapability =
 
 export type UtilityRisk = "low" | "medium" | "high" | "unknown";
 
+export type UtilityWorkShape = "separable" | "sequential" | "unknown";
+
 export type UtilityRouteTarget =
   | "utility"
   | "driver"
@@ -76,16 +78,18 @@ export interface UtilityRouteRequest {
   requester: Agent;
   requiredCapabilities: UtilityCapability[];
   risk: UtilityRisk;
+  workShape: UtilityWorkShape;
   writeScope: string[];
 }
 
 export type UtilityRouteRequestInput = Omit<
   UtilityRouteRequest,
-  "createdAt" | "id" | "idempotencyKey"
+  "createdAt" | "id" | "idempotencyKey" | "workShape"
 > & {
   createdAt?: string;
   id?: string;
   idempotencyKey?: string;
+  workShape?: UtilityWorkShape;
 };
 
 export interface UtilityTier {
@@ -137,6 +141,7 @@ export type UtilityRouteReason =
   | "missing-governess-epoch"
   | "unsupported-kind"
   | "request-not-bounded"
+  | "work-not-separable"
   | "risk-not-low"
   | "forbidden-authority"
   | "protected-scope"
@@ -205,6 +210,7 @@ export const createUtilityRouteRequest = (
     ) as UtilityCapability[],
     risk: input.risk,
     writeScope: uniqueTrimmed(input.writeScope).map(normalizePath),
+    workShape: input.workShape ?? "unknown",
   };
   const idempotencyKey =
     input.idempotencyKey?.trim() || stableRequestKey(requestCore);
@@ -407,6 +413,9 @@ export const routeUtilityRequest = (
   }
   if (!routingPolicyIsValid(context.routingPolicy)) {
     return driverDecision("routing-policy-invalid");
+  }
+  if (request.workShape !== "separable") {
+    return driverDecision("work-not-separable");
   }
 
   const available = context.tiers.filter(

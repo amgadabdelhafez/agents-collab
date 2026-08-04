@@ -9,6 +9,7 @@ import {
   type UtilityCapability,
   type UtilityRequestKind,
   type UtilityRisk,
+  type UtilityWorkShape,
 } from "./task-router";
 import type { Agent } from "./types";
 import { applyUtilityJobPatch } from "./utility-runtime";
@@ -42,7 +43,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit a small bounded task for governess routing to the worker, peer, driver, or human escalation.",
+      "Submit a small bounded task with explicit work shape for governess routing to the worker, peer, driver, or human escalation.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -86,16 +87,19 @@ export const UTILITY_BRIDGE_TOOLS = [
         },
         risk: { enum: ["low", "medium", "high", "unknown"], type: "string" },
         write_scope: { items: { type: "string" }, type: "array" },
+        work_shape: {
+          enum: ["separable", "sequential", "unknown"],
+          type: "string",
+        },
       },
-      required: ["objective", "kind", "acceptance_criteria"],
+      required: ["objective", "kind", "acceptance_criteria", "work_shape"],
       type: "object",
     },
     name: "route_task",
   },
   {
     annotations: READ_ONLY_ANNOTATIONS,
-    description:
-      "Read the governess route and current state for a worker job.",
+    description: "Read the governess route and current state for a worker job.",
     inputSchema: {
       additionalProperties: false,
       properties: { task_id: { minLength: 1, type: "string" } },
@@ -187,6 +191,13 @@ const requestRisk = (value: unknown): UtilityRisk => {
     return value;
   }
   throw new UtilityBridgeInputError("risk is invalid");
+};
+
+const requestWorkShape = (value: unknown): UtilityWorkShape => {
+  if (value === "separable" || value === "sequential" || value === "unknown") {
+    return value;
+  }
+  throw new UtilityBridgeInputError("work_shape is invalid");
 };
 
 const defaultCapabilities = (kind: UtilityRequestKind): UtilityCapability[] => {
@@ -309,6 +320,7 @@ const routeTask = (
     requiredCapabilities: capabilities(args, kind),
     risk: requestRisk(args.risk),
     writeScope: stringArray(args, "write_scope"),
+    workShape: requestWorkShape(args.work_shape),
   });
   const job = appendUtilityRouteRequest(runDir, request);
   appendDelegationEvent(
