@@ -218,6 +218,33 @@ const renderResults = (runDir: string, width: number): string[] => {
   ];
 };
 
+const renderCombined = (
+  runDir: string,
+  width: number,
+  rows: number
+): string[] => {
+  const sections = [
+    renderRoutes(runDir, width),
+    renderTools(runDir, width),
+    renderResults(runDir, width),
+  ];
+  if (rows <= sections.length) {
+    return sections.map((section) => section[0] ?? "—").slice(0, rows);
+  }
+  const remaining = rows - sections.length;
+  const routeBudget = Math.ceil(remaining * 0.4);
+  const toolBudget = Math.min(
+    remaining - routeBudget,
+    Math.ceil(remaining * 0.25)
+  );
+  const resultBudget = Math.max(0, remaining - routeBudget - toolBudget);
+  const budgets = [routeBudget, toolBudget, resultBudget];
+  return sections.flatMap((section, index) => [
+    section[0] ?? "—",
+    ...section.slice(1, 1 + (budgets[index] ?? 0)),
+  ]);
+};
+
 export const renderReconPane = (
   runDir: string,
   index: ReconPaneIndex,
@@ -225,11 +252,11 @@ export const renderReconPane = (
 ): string => {
   const width = Math.max(24, viewport.columns ?? 80);
   const rows = Math.max(2, viewport.rows ?? 12);
-  let lines = renderResults(runDir, width);
-  if (index === 1) {
-    lines = renderRoutes(runDir, width);
-  } else if (index === 2) {
+  let lines = renderCombined(runDir, width, rows);
+  if (index === 2) {
     lines = renderTools(runDir, width);
+  } else if (index === 3) {
+    lines = renderResults(runDir, width);
   }
   return lines.slice(0, rows).join("\n");
 };

@@ -112,6 +112,14 @@ test("Recon panes project route, exact tool failure, and pending result truth", 
     expect(routes).toContain("✗ au pair · Inspect the bounded router state");
     expect(routes).not.toContain(request.id.slice(0, 8));
     expect(routes).not.toContain("utility-au-pair/utility-eligible");
+    expect(routes).toContain("✗ list_files ×2 · scope_denied:");
+    expect(routes).toContain("1 awaiting delivery");
+    expect(routes).toContain("✓ Material shift found");
+    const compact = renderReconPane(runDir, 1, { columns: 140, rows: 4 });
+    expect(compact).toContain("ROUTES");
+    expect(compact).toContain("TOOLS");
+    expect(compact).toContain("RESULTS");
+    expect(compact.split("\n")).toHaveLength(4);
     const tools = renderReconPane(runDir, 2, { columns: 140, rows: 12 });
     expect(tools).toContain("✗ list_files ×2 · scope_denied:");
     expect(tools).toContain("exact declared scope");

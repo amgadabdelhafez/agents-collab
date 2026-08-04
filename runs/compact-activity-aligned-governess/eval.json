@@ -1,0 +1,59 @@
+{
+  "task_id": "compact-activity-aligned-governess",
+  "feature": "compact-activity-aligned-governess",
+  "timestamp": "2026-08-04T05:18:01Z",
+  "evaluator": "codex-producer-backed-eval",
+  "base_sha": "3cf26d9eccf423d224b966e4cf492cc1a9b0321d",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "layout_contract": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "The default governed layout creates one bottom Activity pane instead of three recon panes.",
+        "Every nonzero LOOP_RECON_PANES value normalizes to one pane; zero remains an explicit opt-out.",
+        "The Activity pane includes Routes, Tools, and Results headers even in a four-row viewport.",
+        "Legacy direct recon indices two and three still render Tools and Results for compatibility.",
+        "The Activity pane receives 25 percent height and spans the full main-agent width."
+      ]
+    },
+    "governess_alignment": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "Main-agent and helper TOTAL, INPUT, CACHE, and OUTPUT token fields share exact character boundaries.",
+        "Main-agent TEXT, THINK, and TOOL and helper CALLS and TOOLS use fixed numeric subcolumns.",
+        "Effort, mode, multiplier, context percentage, compaction, limits, reset, cost, and rate are fixed-width subcolumns.",
+        "Session-first then weekly quota semantics and weekly-only Codex indentation remain unchanged."
+      ]
+    },
+    "verification": {
+      "passed": 7,
+      "failed": 0,
+      "details": [
+        "Recon pane focused suite passed 1/1 with 20 assertions.",
+        "Tmux focused suite passed 100/100 with 512 assertions.",
+        "Governess focused suite passed 71/71 with 404 assertions.",
+        "Full bun run test:ci passed outside the restricted network sandbox.",
+        "bun run check passed across 738 files.",
+        "bun run build passed.",
+        "git diff --check passed."
+      ]
+    },
+    "deployed_lineage": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "requestedShutdownDecision has two source occurrences.",
+        "isExactNewWriteTarget has two source occurrences.",
+        "PROXY_SHUTDOWN_CALLER_HEADER has three source occurrences."
+      ]
+    }
+  },
+  "known_limitations": [
+    "This candidate is based on the exact deployed lineage and does not yet include pending GLM integration candidates.",
+    "The live loop remains unchanged; the new geometry takes effect only after reviewed integration, deployment, and a newly launched loop."
+  ],
+  "notes": "PASS. Release remains gated on exact-SHA supervisor review and separate deployment authority."
+}
