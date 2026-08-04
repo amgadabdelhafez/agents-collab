@@ -1,0 +1,45 @@
+{
+  "task_id": "utility-search-empty-boundary",
+  "feature": "utility-search-empty-boundary",
+  "timestamp": "2026-08-04T03:12:26Z",
+  "base_sha": "aa74ee73ced6b03d153d31656bdd611be74c5be0",
+  "checks": {
+    "functional": {
+      "passed": 18,
+      "failed": 0,
+      "details": [
+        "bun test tests/loop/utility-tools.test.ts",
+        "Absent in-scope search boundary returns zero matches",
+        "Mixed absent and existing boundaries continue to existing matches",
+        "Out-of-scope, protected, symlink-escape, and missing read_file controls remain denied"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci",
+        "bun run build",
+        "Changed-file Biome check",
+        "git diff --check"
+      ]
+    },
+    "repository_verify": {
+      "passed": 0,
+      "failed": 1,
+      "details": [
+        "scripts/verify.sh exits 0 but is a configure-only stub and does not certify this change",
+        "bun run check remains red on the origin/main baseline with 188 errors and 1 warning"
+      ]
+    }
+  },
+  "baseline_failures": [
+    "Biome formatter diagnostics in archived runs/**/*.json",
+    "Unused suppression in src/loop/delegation-policy.ts",
+    "Complexity diagnostics in src/loop/utility-workspace.ts",
+    "Unrelated formatting, import, and regex diagnostics in existing tests"
+  ],
+  "verdict": "blocked",
+  "release_gate": "Exact-SHA supervisor review and a certified empty failure set are required before release.",
+  "notes": "The product behavior, focused regression, full test suite, build, changed-file lint, and diff checks pass. No baseline failure is treated as acceptable release evidence."
+}

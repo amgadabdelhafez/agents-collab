@@ -146,6 +146,69 @@ test("reads and searches only declared non-secret scope", async () => {
   });
 });
 
+test("treats safely bounded absent search paths as empty without weakening path gates", async () => {
+  await withRepo(async (root) => {
+    const broker = await brokerFor(root);
+
+    // Producer shape from harvto loop 121: the model names a plausible child
+    // directory inside its declared project scope, but that directory is absent.
+    const absent = await broker.execute({
+      arguments: { paths: ["src/packages"], query: "hello" },
+      name: "search_repo",
+    });
+    expect(absent).toMatchObject({ data: [], ok: true });
+
+    const mixed = await broker.execute({
+      arguments: {
+        paths: ["src/packages", "src"],
+        query: "hello",
+      },
+      name: "search_repo",
+    });
+    expect(mixed).toMatchObject({
+      data: [
+        {
+          line: 1,
+          path: "src/hello.ts",
+          text: "export const hello = 'world';",
+        },
+      ],
+      ok: true,
+    });
+
+    const outsideScope = await broker.execute({
+      arguments: { paths: ["other/missing"], query: "hello" },
+      name: "search_repo",
+    });
+    expect(outsideScope.error?.code).toBe("scope_denied");
+
+    const protectedPath = await broker.execute({
+      arguments: { paths: ["src/.aws/missing"], query: "hello" },
+      name: "search_repo",
+    });
+    expect(protectedPath.error?.code).toBe("path_denied");
+
+    const outside = await mkdtemp(join(tmpdir(), "utility-search-outside-"));
+    try {
+      await writeFile(join(outside, "secret.txt"), "hello from outside\n");
+      await symlink(outside, join(root, "src", "outside-search"));
+      const escaped = await broker.execute({
+        arguments: { paths: ["src/outside-search"], query: "hello" },
+        name: "search_repo",
+      });
+      expect(escaped.error?.code).toBe("path_denied");
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+
+    const missingRead = await broker.execute({
+      arguments: { path: "src/packages" },
+      name: "read_file",
+    });
+    expect(missingRead.error?.code).toBe("not_found");
+  });
+});
+
 test("central protected-path policy denies credential and agent settings", async () => {
   await withRepo(async (root) => {
     const broker = await createUtilityToolBroker({
@@ -363,9 +426,13 @@ test("loads a repository policy for local offline npx vitest checks", async () =
         writeScopes: ["src"],
       },
       {
-        runCommand: async (request) => {
+        runCommand: (request) => {
           captured = request;
-          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+          return Promise.resolve({
+            exitCode: 0,
+            stderr: "",
+            stdout: "vitest pass",
+          });
         },
       }
     );
@@ -410,9 +477,13 @@ test("supports a local offline vitest check without repository mutation", async 
         writeScopes: [],
       },
       {
-        runCommand: async (request) => {
+        runCommand: (request) => {
           captured = request;
-          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+          return Promise.resolve({
+            exitCode: 0,
+            stderr: "",
+            stdout: "vitest pass",
+          });
         },
       }
     );
@@ -452,9 +523,13 @@ test("resolves a monorepo package-local vitest from the declared cwd", async () 
         writeScopes: [],
       },
       {
-        runCommand: async (request) => {
+        runCommand: (request) => {
           captured = request;
-          return { exitCode: 0, stderr: "", stdout: "vitest pass" };
+          return Promise.resolve({
+            exitCode: 0,
+            stderr: "",
+            stdout: "vitest pass",
+          });
         },
       }
     );

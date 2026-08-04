@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import {
   access,
   lstat,
@@ -8,7 +9,6 @@ import {
   realpath,
   writeFile,
 } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
 import {
   basename,
   dirname,
@@ -18,16 +18,16 @@ import {
   sep,
 } from "node:path";
 import { spawn } from "bun";
-import type {
-  UtilityFileImage,
-  UtilityPatchApplication,
-} from "./utility-store";
 import type { Agent } from "./types";
 import {
   DEFAULT_UTILITY_PROTECTED_PATHS,
   isUtilityProtectedPath,
   UTILITY_PROTECTED_GIT_GLOBS,
 } from "./utility-path-policy";
+import type {
+  UtilityFileImage,
+  UtilityPatchApplication,
+} from "./utility-store";
 
 export type UtilityToolName =
   | "search_repo"
@@ -197,6 +197,9 @@ const SAFE_ENV_NAMES = new Set([
 ]);
 const SECRET_ENV_NAME =
   /(?:api[_-]?key|auth|cookie|credential|password|secret|session|token)/i;
+const SAFE_LOCAL_BINARY_NAME = /^[A-Za-z0-9_.-]+$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/i;
+const COMMIT_HASH = /^[0-9a-f]{7,64}$/i;
 const SHELL_META = /[;&|`$<>\n\r\0]/;
 const LINE_BREAK = /\r?\n/;
 const FORBIDDEN_PATCH_OPERATION =
@@ -520,7 +523,7 @@ const parseCommandPolicy = (
   if (
     requireLocalBinary !== undefined &&
     (typeof requireLocalBinary !== "string" ||
-      !/^[A-Za-z0-9_.-]+$/.test(requireLocalBinary))
+      !SAFE_LOCAL_BINARY_NAME.test(requireLocalBinary))
   ) {
     throw new ToolPolicyError(
       "invalid_policy",
@@ -822,22 +825,19 @@ export class UtilityToolBroker {
   async applyPatchProposal(
     input: GuardedPatchApplyInput
   ): Promise<GuardedPatchApplyResult> {
-    if (!/^[0-9a-f]{64}$/i.test(input.expectedPatchSha256)) {
+    if (!SHA256_HEX.test(input.expectedPatchSha256)) {
       throw new ToolPolicyError(
         "patch_denied",
         "Expected patch SHA-256 is invalid"
       );
     }
-    if (!/^[0-9a-f]{64}$/i.test(input.expectedManifestSha256)) {
+    if (!SHA256_HEX.test(input.expectedManifestSha256)) {
       throw new ToolPolicyError(
         "patch_denied",
         "Expected manifest SHA-256 is invalid"
       );
     }
-    const patchArtifact = await this.resolveArtifact(
-      input.patchPath,
-      ".patch"
-    );
+    const patchArtifact = await this.resolveArtifact(input.patchPath, ".patch");
     const manifestArtifact = await this.resolveArtifact(
       input.manifestPath,
       ".json"
@@ -859,7 +859,10 @@ export class UtilityToolBroker {
       );
     }
     const manifest = this.parsePatchManifest(manifestText);
-    const manifestPatch = await this.resolveArtifact(manifest.patchPath, ".patch");
+    const manifestPatch = await this.resolveArtifact(
+      manifest.patchPath,
+      ".patch"
+    );
     if (manifestPatch.absolute !== patchArtifact.absolute) {
       throw new ToolPolicyError(
         "patch_denied",
@@ -926,7 +929,7 @@ export class UtilityToolBroker {
     requested: string,
     extension: string
   ): Promise<{ absolute: string; relative: string }> {
-    if (!isAbsolute(requested) || !requested.endsWith(extension)) {
+    if (!(isAbsolute(requested) && requested.endsWith(extension))) {
       throw new ToolPolicyError(
         "patch_denied",
         "Patch artifact path is invalid"
@@ -941,15 +944,20 @@ export class UtilityToolBroker {
     }
     const canonical = await realpath(requested);
     if (
-      !isContained(this.repoRoot, canonical) ||
-      !isContained(this.artifactDir, canonical)
+      !(
+        isContained(this.repoRoot, canonical) &&
+        isContained(this.artifactDir, canonical)
+      )
     ) {
       throw new ToolPolicyError(
         "patch_denied",
         "Patch artifact escapes its job artifact directory"
       );
     }
-    return { absolute: canonical, relative: relativePath(this.repoRoot, canonical) };
+    return {
+      absolute: canonical,
+      relative: relativePath(this.repoRoot, canonical),
+    };
   }
 
   private parsePatchManifest(raw: string): PatchProposalManifest {
@@ -962,7 +970,7 @@ export class UtilityToolBroker {
         "Patch proposal manifest is invalid"
       );
     }
-    if (!isRecord(parsed) || !Array.isArray(parsed.preimages)) {
+    if (!(isRecord(parsed) && Array.isArray(parsed.preimages))) {
       throw new ToolPolicyError(
         "patch_denied",
         "Patch proposal manifest has an invalid shape"
@@ -1006,8 +1014,7 @@ export class UtilityToolBroker {
         typeof value.path !== "string" ||
         !(
           value.sha256 === null ||
-          (typeof value.sha256 === "string" &&
-            /^[0-9a-f]{64}$/i.test(value.sha256))
+          (typeof value.sha256 === "string" && SHA256_HEX.test(value.sha256))
         )
       ) {
         throw new ToolPolicyError(
@@ -1020,12 +1027,12 @@ export class UtilityToolBroker {
       images.push({
         path: target.relative,
         sha256:
-          typeof value.sha256 === "string"
-            ? value.sha256.toLowerCase()
-            : null,
+          typeof value.sha256 === "string" ? value.sha256.toLowerCase() : null,
       });
     }
-    const sorted = images.sort((left, right) => left.path.localeCompare(right.path));
+    const sorted = images.sort((left, right) =>
+      left.path.localeCompare(right.path)
+    );
     if (new Set(sorted.map((image) => image.path)).size !== sorted.length) {
       throw new ToolPolicyError(
         "patch_denied",
@@ -1281,7 +1288,36 @@ export class UtilityToolBroker {
       ) {
         return;
       }
-      const target = await this.resolvePath(requestedPath, "read", true);
+      let target: { absolute: string; relative: string };
+      try {
+        target = await this.resolvePath(requestedPath, "read", true);
+      } catch (error) {
+        if (!(error instanceof ToolPolicyError) || error.code !== "not_found") {
+          throw error;
+        }
+
+        // A safely contained absent search boundary has zero matches. Resolve it
+        // again without the existence requirement so scope, protected-path,
+        // symlink, and real-containment checks still run before absence is
+        // accepted. If the path appeared during that check, search it normally.
+        const absentTarget = await this.resolvePath(
+          requestedPath,
+          "read",
+          false
+        );
+        try {
+          await lstat(absentTarget.absolute);
+        } catch (statError) {
+          if (isRecord(statError) && statError.code === "ENOENT") {
+            return;
+          }
+          throw new ToolPolicyError(
+            "path_denied",
+            `Cannot inspect repository path: ${requestedPath}`
+          );
+        }
+        target = await this.resolvePath(requestedPath, "read", true);
+      }
       const stat = await lstat(target.absolute);
       if (stat.isSymbolicLink()) {
         return;
@@ -1488,7 +1524,7 @@ export class UtilityToolBroker {
       ["baseRef", baseRef],
       ["headRef", headRef],
     ] as const) {
-      if (ref && !/^[0-9a-f]{7,64}$/i.test(ref)) {
+      if (ref && !COMMIT_HASH.test(ref)) {
         throw new ToolPolicyError(
           "invalid_arguments",
           `${label} must be a literal commit hash`

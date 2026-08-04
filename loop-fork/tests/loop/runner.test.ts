@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import { resolve } from "node:path";
 import { buildCodexBridgeConfigArgs } from "../../src/loop/bridge-config";
+import { DEFAULT_CODEX_CONFIG_VALUES } from "../../src/loop/constants";
 import type { Options, RunResult } from "../../src/loop/types";
 
 interface AppServerModule {
@@ -254,13 +255,11 @@ test("runAgent launches Codex app-server with loop-scoped Codex home", async () 
 
   expect(result.exitCode).toBe(0);
   expect(startAppServer).toHaveBeenCalledTimes(1);
-  expect(startAppServer.mock.calls[0]?.[0]).toMatchObject({
-    configValues: expect.arrayContaining([
-      'model_reasoning_effort="xhigh"',
-      'service_tier="fast"',
-    ]),
-    env: expect.objectContaining({ CODEX_HOME: codexHome }),
-  });
+  const launch = startAppServer.mock.calls[0]?.[0];
+  expect(launch?.configValues).toEqual(
+    expect.arrayContaining([...DEFAULT_CODEX_CONFIG_VALUES])
+  );
+  expect(launch?.env?.CODEX_HOME).toBe(codexHome);
 });
 
 test("buildCommand uses the provided Claude model", () => {
@@ -289,14 +288,9 @@ test("buildCommand carries Codex bridge approval config for legacy exec", () => 
   const yoloIndex = command.args.indexOf("--yolo");
 
   expect(command.cmd).toBe("codex");
-  expect(command.args).toEqual(
-    expect.arrayContaining([
-      "-c",
-      'model_reasoning_effort="xhigh"',
-      "-c",
-      'service_tier="fast"',
-    ])
-  );
+  for (const value of DEFAULT_CODEX_CONFIG_VALUES) {
+    expect(command.args).toContain(value);
+  }
   expect(yoloIndex).toBeGreaterThan(-1);
   expect(command.args.slice(0, yoloIndex)).toEqual(
     expect.arrayContaining(codexMcpConfigArgs)
@@ -417,17 +411,15 @@ test("startPersistentAgentSession enables persistent Codex threads", async () =>
     codexLaunch: { configValues: ['mcp_servers.bridge.command="/bin/echo"'] },
   });
 
-  expect(startAppServer).toHaveBeenCalledWith(
-    expect.objectContaining({
-      configValues: expect.arrayContaining([
-        'model_reasoning_effort="xhigh"',
-        'service_tier="fast"',
-        'mcp_servers.bridge.command="/bin/echo"',
-      ]),
-      persistentThread: true,
-      threadModel: "test-model",
-    })
+  const launch = startAppServer.mock.calls[0]?.[0];
+  expect(launch?.configValues).toEqual(
+    expect.arrayContaining([
+      ...DEFAULT_CODEX_CONFIG_VALUES,
+      'mcp_servers.bridge.command="/bin/echo"',
+    ])
   );
+  expect(launch?.persistentThread).toBe(true);
+  expect(launch?.threadModel).toBe("test-model");
 });
 
 test("startPersistentAgentSession resumes persistent Codex threads", async () => {

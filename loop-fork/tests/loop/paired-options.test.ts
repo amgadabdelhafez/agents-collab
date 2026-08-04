@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeChannelServerName } from "../../src/loop/bridge-config";
 import {
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_SERVICE_TIER,
+} from "../../src/loop/constants";
+import {
   preparePairedOptions,
   preparePairedRun,
 } from "../../src/loop/paired-options";
@@ -123,9 +127,11 @@ test("preparePairedOptions creates a loop-scoped Codex home without global MCP c
     );
     expect(config).toContain('approval_policy = "never"');
     expect(config).toContain('sandbox_mode = "danger-full-access"');
-    expect(config).toContain('model = "gpt-5.5"');
+    expect(config).toContain(`model = ${JSON.stringify(DEFAULT_CODEX_MODEL)}`);
     expect(config).toContain('model_reasoning_effort = "xhigh"');
-    expect(config).toContain('service_tier = "fast"');
+    expect(config).toContain(
+      `service_tier = ${JSON.stringify(DEFAULT_CODEX_SERVICE_TIER)}`
+    );
     expect(config).toContain(`[projects.${JSON.stringify(process.cwd())}]`);
     expect(config).not.toContain("[mcp_servers.");
     expect(config).not.toContain("[plugins.");
