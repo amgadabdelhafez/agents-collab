@@ -4025,6 +4025,19 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridgeWorkerDelayMs pins success, doubling, cap, and exponent bounds", async () => {
+  const bridge = await loadBridge();
+
+  expect(bridge.bridgeWorkerDelayMs(true, 999)).toBe(100);
+  expect(
+    [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, Number.MAX_SAFE_INTEGER].map(
+      (idleCycles) => bridge.bridgeWorkerDelayMs(false, idleCycles)
+    )
+  ).toEqual([
+    250, 250, 500, 1000, 2000, 4000, 5000, 5000, 5000, 5000, 5000, 5000,
+  ]);
+});
+
 test("runBridgeWorker exponentially backs off bounded idle polling", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
