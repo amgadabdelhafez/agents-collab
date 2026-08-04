@@ -34,5 +34,5 @@
     "runs/honcho-memory-bakeoff/result.json",
     "runs/honcho-memory-bakeoff/report.md"
   ],
-  "exact_sha_review": "pending"
+  "exact_sha_review": "CONCUR at exact SHA 2e9476e2cda5d9124e0ff46b62c22b11333a2191"
 }

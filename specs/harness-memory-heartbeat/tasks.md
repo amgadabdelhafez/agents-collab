@@ -7,4 +7,5 @@
 - [x] Implement curated memory promotion.
 - [x] Run the local-only Honcho versus Markdown plus Witchcraft bakeoff.
 - [x] Reject Honcho under the preregistered gate and retain curated Markdown plus Pickbrain/Witchcraft.
-- [ ] Record exact-SHA review and deployment decisions for each slice.
+- [x] Record exact-SHA review decisions for each implementation slice.
+- [ ] Obtain clearance for the single integrated candidate; deployment remains separate.

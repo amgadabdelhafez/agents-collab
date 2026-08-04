@@ -1,3 +1,9 @@
+/**
+ * Security boundary: callers must never put secret values into checkpoint or
+ * promotion inputs. Pattern-based redaction is defense in depth for known
+ * shapes and remains fail-open for novel secret formats; it is not permission
+ * to persist credentials or other secrets.
+ */
 import { createHash } from "node:crypto";
 import {
   existsSync,

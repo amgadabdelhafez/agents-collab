@@ -1,7 +1,7 @@
 {
   "task_id": "harness-memory-heartbeat",
   "feature": "harness-memory-heartbeat",
-  "timestamp": "2026-08-04T09:54:35Z",
+  "timestamp": "2026-08-04T10:15:17Z",
   "evaluator": "codex-producer-backed-eval",
   "verdict": "pass",
   "baseline_failures": [],
@@ -43,7 +43,7 @@
       "details": [
         "Claude PreCompact checkpoints synchronously before the hook journal append.",
         "Codex uses a documented pre-turn fallback because its current hook surface has no stable pre-compaction event.",
-        "Repeated boundaries are idempotent, exact hook cursors and repository identity are persisted, and secrets are redacted.",
+        "Repeated boundaries are idempotent, exact hook cursors and repository identity are persisted, secret values are forbidden at the input boundary, and pattern redaction remains defense in depth.",
         "Curated promotion accepts only allowlisted stable classes with checkpoint provenance and writes Markdown plus a JSON sidecar.",
         "Missing provenance and transient or unverified claims fail closed."
       ]
