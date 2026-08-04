@@ -56,6 +56,7 @@ import {
   tmuxCommandTimedOut,
   tmuxSessionLiveness,
 } from "./tmux-control";
+import type { Agent } from "./types";
 
 const CLAUDE_CHANNEL_METHOD = "notifications/claude/channel";
 const CLAUDE_CHANNEL_SOURCE_TYPE = "codex";
@@ -1041,6 +1042,20 @@ export const hasBridgeDeliveryRoute = (
     return true;
   }
   return Boolean(status.hasTmuxSession && paneIdForTarget(runDir, target));
+};
+
+export const isBridgeTargetDeclared = (
+  runDir: string,
+  target: BridgeMessage["target"]
+): boolean => {
+  const manifest = readRunManifestForBridge(runDir);
+  const declaredAgents = [
+    manifest?.tmuxPaneLeftAgent,
+    manifest?.tmuxPaneRightAgent,
+  ].filter((agent): agent is Agent => agent !== undefined);
+  // Standalone durable-ledger bridges predate pane topology and intentionally
+  // accept any valid agent inbox. Once a run declares its pair, fail closed.
+  return declaredAgents.length === 0 || declaredAgents.includes(target);
 };
 
 export const clearStaleTmuxBridgeState = (runDir: string): boolean => {
