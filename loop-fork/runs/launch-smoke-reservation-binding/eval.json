@@ -1,0 +1,52 @@
+{
+  "task_id": "launch-smoke-reservation-binding",
+  "status": "pass",
+  "required": ["unit", "focused", "check", "build", "full"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/launch-smoke-reservation-binding/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/launch-smoke-reservation-binding/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/launch-smoke-reservation-binding/artifacts/unit/attempt-001.json"
+    },
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/launch-smoke-reservation-binding/artifacts/focused/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/launch-smoke-reservation-binding/artifacts/focused/attempt-001.log",
+      "latest_attempt_meta": "runs/launch-smoke-reservation-binding/artifacts/focused/attempt-001.json"
+    },
+    "check": {
+      "status": "pass",
+      "artifact": "runs/launch-smoke-reservation-binding/artifacts/check/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/launch-smoke-reservation-binding/artifacts/check/attempt-002.log",
+      "latest_attempt_meta": "runs/launch-smoke-reservation-binding/artifacts/check/attempt-002.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/launch-smoke-reservation-binding/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/launch-smoke-reservation-binding/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/launch-smoke-reservation-binding/artifacts/build/attempt-001.json"
+    },
+    "full": {
+      "status": "pass",
+      "artifact": "runs/launch-smoke-reservation-binding/artifacts/full/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/launch-smoke-reservation-binding/artifacts/full/attempt-001.log",
+      "latest_attempt_meta": "runs/launch-smoke-reservation-binding/artifacts/full/attempt-001.json"
+    }
+  }
+}

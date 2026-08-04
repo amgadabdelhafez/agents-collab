@@ -1,0 +1,21 @@
+task_id: launch-smoke-reservation-binding
+dimension: unit
+attempt: 001
+started_at: 2026-08-04T18:51:55Z
+command: bun run test:file -- tests/loop/launch-smoke-manifest.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/launch-smoke-manifest.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/launch-smoke-manifest.test.ts:
+(pass) release smoke manifest discovery fails closed unless one producer manifest exists [16.37ms]
+
+ 1 pass
+ 0 fail
+ 9 expect() calls
+Ran 1 test across 1 file. [80.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-04T18:51:56Z

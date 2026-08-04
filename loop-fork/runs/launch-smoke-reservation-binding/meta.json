@@ -1,0 +1,8 @@
+{
+  "id": "launch-smoke-reservation-binding",
+  "mode": "planned",
+  "created_at": "2026-08-04T18:47:20Z",
+  "status": "done",
+  "description": "Update the realistic launch smoke to derive the numerically reserved run manifest and fail closed on zero or multiple manifests",
+  "ended_at": "2026-08-04T18:54:37Z"
+}

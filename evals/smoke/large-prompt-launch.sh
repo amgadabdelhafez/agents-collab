@@ -9,6 +9,7 @@ SMOKE_EXPECTED_SHA256="${LOOP_SMOKE_EXPECTED_SHA256:-}"
 SMOKE_USES_PREBUILT=0
 FIXTURES="${REPO_ROOT}/runs/large-prompt-launch/artifacts/fake-bin"
 HASH_TUI="${REPO_ROOT}/evals/smoke/fixtures/hash-bound-tui.py"
+MANIFEST_RESOLVER="${REPO_ROOT}/evals/smoke/resolve-single-manifest.sh"
 ORIGINAL_HOME="${HOME:?large-prompt smoke requires HOME for host-isolation checks}"
 
 if [ -n "${LOOP_SMOKE_BINARY:-}" ]; then
@@ -311,6 +312,12 @@ manifest_field() {
   bun -e 'const m=await Bun.file(process.argv[1]).json(); console.log(m[process.argv[2]] ?? "")' "$1" "$2"
 }
 
+resolve_case_manifest() {
+  local case_home="$1"
+  local repo_id="$2"
+  "${MANIFEST_RESOLVER}" "${case_home}" "${repo_id}"
+}
+
 assert_manifest_binding() {
   local manifest_path="$1"
   local case_home="$2"
@@ -441,7 +448,7 @@ assert_full_layout_geometry() {
         return [id, { width: Number(width), height: Number(height) }];
       })
     );
-    if (panes.size !== 8) throw new Error(`expected 8 panes, found ${panes.size}`);
+    if (panes.size !== 6) throw new Error(`expected 6 panes, found ${panes.size}`);
     const assertFloor = (label, pane, width, height) => {
       const actual = panes.get(pane);
       if (!actual) throw new Error(`${label} pane ${pane || "missing"} is not live`);
@@ -454,13 +461,10 @@ assert_full_layout_geometry() {
     assertFloor("Governess", manifest.tmuxPaneGoverness, 160, 18);
     assertFloor("Nanny", manifest.tmuxPaneNanny, 40, 8);
     assertFloor("Au Pair", manifest.tmuxPaneAuPair, 40, 8);
-    if (!Array.isArray(manifest.tmuxPaneRecon) || manifest.tmuxPaneRecon.length !== 3) {
-      throw new Error("manifest does not bind three recon panes");
+    if (!Array.isArray(manifest.tmuxPaneRecon) || manifest.tmuxPaneRecon.length !== 1) {
+      throw new Error("manifest does not bind the consolidated activity pane");
     }
-    const reconWidths = [100, 30, 64];
-    manifest.tmuxPaneRecon.forEach((pane, index) =>
-      assertFloor(`recon ${index + 1}`, pane, reconWidths[index], 8)
-    );
+    assertFloor("activity", manifest.tmuxPaneRecon[0], 160, 8);
   ' "${manifest_path}" "${panes_path}"; then
     return 1
   fi
@@ -518,13 +522,13 @@ FAILURE_REPO_ID="$(expected_repo_id "${FAILURE_REPO}")"
 INFO_REPO_ID="$(expected_repo_id "${INFO_REPO}")"
 CLAUDE_READY_REPO_ID="$(expected_repo_id "${CLAUDE_READY_REPO}")"
 CLAUDE_TIMEOUT_REPO_ID="$(expected_repo_id "${CLAUDE_TIMEOUT_REPO}")"
-SUCCESS_MANIFEST="${SUCCESS_HOME}/.loop/runs/${SUCCESS_REPO_ID}/${SUCCESS_RUN_ID}/manifest.json"
-HASH_MANIFEST="${HASH_HOME}/.loop/runs/${HASH_REPO_ID}/${HASH_RUN_ID}/manifest.json"
-FAILURE_MANIFEST="${FAILURE_HOME}/.loop/runs/${FAILURE_REPO_ID}/${FAILURE_RUN_ID}/manifest.json"
+SUCCESS_MANIFEST=""
+HASH_MANIFEST=""
+FAILURE_MANIFEST=""
 INFO_FIXTURE_DIR="${INFO_ROOT}/home/.loop/runs/${INFO_REPO_ID}/${INFO_FIXTURE_RUN_ID}"
 INFO_FIXTURE_MANIFEST="${INFO_FIXTURE_DIR}/manifest.json"
-CLAUDE_READY_MANIFEST="${CLAUDE_READY_HOME}/.loop/runs/${CLAUDE_READY_REPO_ID}/${CLAUDE_READY_RUN_ID}/manifest.json"
-CLAUDE_TIMEOUT_MANIFEST="${CLAUDE_TIMEOUT_HOME}/.loop/runs/${CLAUDE_TIMEOUT_REPO_ID}/${CLAUDE_TIMEOUT_RUN_ID}/manifest.json"
+CLAUDE_READY_MANIFEST=""
+CLAUDE_TIMEOUT_MANIFEST=""
 
 assert_host_isolation "${SUCCESS_REPO_ID}" "${SUCCESS_RUN_ID}" "before success launch"
 assert_host_isolation "${HASH_REPO_ID}" "${HASH_RUN_ID}" "before hash launch"
@@ -583,6 +587,9 @@ run_isolated_loop \
   "${SUCCESS_RUN_ID}" \
   --tmux --agent gemini --pair-with cursor \
   -p "${PROMPT_PATH}" >"${SMOKE_ROOT}/success.out" 2>"${SMOKE_ROOT}/success.err"
+
+SUCCESS_MANIFEST="$(resolve_case_manifest "${SUCCESS_HOME}" "${SUCCESS_REPO_ID}")"
+SUCCESS_RUN_ID="$(manifest_field "${SUCCESS_MANIFEST}" runId)"
 
 assert_manifest_binding \
   "${SUCCESS_MANIFEST}" \
@@ -664,6 +671,8 @@ run_isolated_loop \
   -p "${PROMPT_PATH}" \
   >"${SMOKE_ROOT}/claude-ready.out" \
   2>"${SMOKE_ROOT}/claude-ready.err"
+CLAUDE_READY_MANIFEST="$(resolve_case_manifest "${CLAUDE_READY_HOME}" "${CLAUDE_READY_REPO_ID}")"
+CLAUDE_READY_RUN_ID="$(manifest_field "${CLAUDE_READY_MANIFEST}" runId)"
 assert_manifest_binding \
   "${CLAUDE_READY_MANIFEST}" \
   "${CLAUDE_READY_HOME}" \
@@ -722,6 +731,8 @@ fi
 grep -Fq \
   'did not reach an input-ready prompt within 20000ms' \
   "${SMOKE_ROOT}/claude-timeout.err"
+CLAUDE_TIMEOUT_MANIFEST="$(resolve_case_manifest "${CLAUDE_TIMEOUT_HOME}" "${CLAUDE_TIMEOUT_REPO_ID}")"
+CLAUDE_TIMEOUT_RUN_ID="$(manifest_field "${CLAUDE_TIMEOUT_MANIFEST}" runId)"
 assert_manifest_binding \
   "${CLAUDE_TIMEOUT_MANIFEST}" \
   "${CLAUDE_TIMEOUT_HOME}" \
@@ -843,6 +854,8 @@ if [ "${HASH_LAUNCH_STATUS}" -ne 0 ]; then
   sed -n '1,120p' "${SMOKE_ROOT}/hash.err" >&2
   exit "${HASH_LAUNCH_STATUS}"
 fi
+HASH_MANIFEST="$(resolve_case_manifest "${HASH_HOME}" "${HASH_REPO_ID}")"
+HASH_RUN_ID="$(manifest_field "${HASH_MANIFEST}" runId)"
 assert_manifest_binding \
   "${HASH_MANIFEST}" \
   "${HASH_HOME}" \
@@ -892,6 +905,8 @@ if [ "${FAILURE_STATUS}" -eq 0 ]; then
   exit 1
 fi
 grep -Fq 'exited before attach' "${SMOKE_ROOT}/failure.err"
+FAILURE_MANIFEST="$(resolve_case_manifest "${FAILURE_HOME}" "${FAILURE_REPO_ID}")"
+FAILURE_RUN_ID="$(manifest_field "${FAILURE_MANIFEST}" runId)"
 assert_manifest_binding \
   "${FAILURE_MANIFEST}" \
   "${FAILURE_HOME}" \
@@ -919,4 +934,4 @@ assert_host_isolation \
   "at smoke completion"
 assert_prebuilt_binary_unchanged "after launch"
 
-echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=${CLAUDE_READY_GEOMETRY}/8panes hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
+echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=${CLAUDE_READY_GEOMETRY}/6panes hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"

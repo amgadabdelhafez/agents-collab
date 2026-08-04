@@ -1,0 +1,23 @@
+task_id: launch-smoke-reservation-binding
+dimension: focused
+attempt: 001
+started_at: 2026-08-04T18:51:56Z
+command: env LOOP_SMOKE_BINARY=/Users/amgad/dev_projects/agents-collab/.worktrees/research-wave-cleared-lineage/loop-fork/loop LOOP_SMOKE_EXPECTED_SHA256=d24bc967a2ae4cb810529cf300be3048a799fdb6fdd46231cb24460d0f0d987e LOOP_SMOKE_FULL_LAYOUT=1 bash ../evals/smoke/large-prompt-launch.sh
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test -t "transports a realistic charter through hash-bound pointer bootstraps" tests/loop/tmux.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [9.40ms]
+
+ 1 pass
+ 101 filtered out
+ 0 fail
+ 36 expect() calls
+Ran 1 test across 1 file. [72.00ms]
+large-prompt smoke: binary=/Users/amgad/dev_projects/agents-collab/.worktrees/research-wave-cleared-lineage/loop-fork/loop binary-sha256=d24bc967a2ae4cb810529cf300be3048a799fdb6fdd46231cb24460d0f0d987e prebuilt=1 info-fixture=unchanged session=repo-loop-1 panes=gemini:%0,cursor:%1 manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=1 claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=220x60/6panes hash-mismatch=fail-closed missing-workspace-exit=1 missing-workspace-manifest=failed
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-04T18:52:28Z

@@ -1,0 +1,13 @@
+task_id: launch-smoke-reservation-binding
+dimension: check
+attempt: 002
+started_at: 2026-08-04T18:52:54Z
+command: bun run check
+--- output ---
+$ ultracite check
+Checked 777 files in 224ms. No fixes applied.
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-04T18:52:55Z

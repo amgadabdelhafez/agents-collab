@@ -1,0 +1,10 @@
+{
+  "task_id": "launch-smoke-reservation-binding",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

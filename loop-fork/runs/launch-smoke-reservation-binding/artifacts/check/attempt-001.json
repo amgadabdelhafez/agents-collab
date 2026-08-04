@@ -1,0 +1,12 @@
+{
+  "task_id": "launch-smoke-reservation-binding",
+  "dimension": "check",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-08-04T18:52:35Z",
+  "ended_at": "2026-08-04T18:52:36Z",
+  "artifact": "runs/launch-smoke-reservation-binding/artifacts/check/attempt-001.log",
+  "command": ["bun", "run", "check"]
+}

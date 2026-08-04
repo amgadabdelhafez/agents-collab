@@ -1,0 +1,24 @@
+{
+  "task_id": "launch-smoke-reservation-binding",
+  "status": "created",
+  "bug_id": "launch-smoke-reservation-binding",
+  "regression_path": "evals/regression/launch-smoke-reservation-binding.md",
+  "prompt_path": "runs/launch-smoke-reservation-binding/artifacts/regression-harvest/prompt.md",
+  "created_at": "2026-08-04T18:54:37Z",
+  "markers": {
+    "enabled": ["yes"],
+    "id": ["launch-smoke-reservation-binding"],
+    "symptom": [
+      "The realistic release smoke failed after a healthy reserved numeric run because it predicted a retired named manifest path and eight-pane layout."
+    ],
+    "guard": [
+      "tests/loop/launch-smoke-manifest.test.ts plus evals/smoke/large-prompt-launch.sh"
+    ]
+  },
+  "symptom_lines": [
+    "The realistic release smoke failed after a healthy reserved numeric run because it predicted a retired named manifest path and eight-pane layout."
+  ],
+  "test_lines": [
+    "tests/loop/launch-smoke-manifest.test.ts plus evals/smoke/large-prompt-launch.sh"
+  ]
+}
