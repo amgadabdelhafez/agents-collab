@@ -1,7 +1,10 @@
 {
   "claim": "Review request text is emitted only for a candidate descended from the supplied cleared tip and containing every named deployed protection.",
+  "baseline_failures": [],
   "evidence": {
     "focused": "bun run test:file -- tests/loop/review-request-gate.test.ts: 3 pass, 0 fail",
+    "combinedFocused": "bridge 97 pass, Governess 73 pass, build pass on cleared-lineage integration",
+    "fullSuite": "scripts/verify.sh review-request-lineage-gate review-request-lineage-gate: lint, typecheck, build, every sorted test file, and empty named baseline allowlist passed",
     "shellSyntax": "bash -n evals/release/review-request-gate.sh: pass",
     "negativeLineage": "sibling commit exits 1 with empty stdout",
     "negativeSymbol": "descendant missing isExactNewWriteTarget exits 1 with empty stdout"

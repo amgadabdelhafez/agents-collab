@@ -2,10 +2,10 @@
   "claim": "A paired run rejects a known agent outside its declared topology before writing bridge.jsonl.",
   "evidence": {
     "build": "bun run build: pass",
-    "focused": "bun test tests/loop/bridge.test.ts: 76 pass, 0 fail",
+    "focused": "bun run test:file -- tests/loop/bridge.test.ts on cleared-lineage integration: 97 pass, 0 fail",
     "producerRegression": "Claude/Codex manifest targeting Gemini returns MCP invalid params and leaves bridge.jsonl absent",
-    "staticCheck": "Changed files are clean; repository bridge.ts has one independently reproduced origin/main formatter baseline at callUtilityBridgeTool",
-    "typescript": "No new diagnostic references the changed target-validation lines; repository-wide tsc retains pre-existing baseline errors"
+    "staticCheck": "Changed files and integration diff pass git diff --check",
+    "integration": "Candidate descends from cleared 8fb000ff and retains all three deployed protection symbols"
   },
   "result": "pass"
 }
