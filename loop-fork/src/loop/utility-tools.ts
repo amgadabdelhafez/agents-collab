@@ -1942,7 +1942,36 @@ export class UtilityToolBroker {
       if (await this.isExactNewWriteTarget(requestedPath)) {
         return;
       }
-      const target = await this.resolvePath(requestedPath, "read", true);
+      let target: { absolute: string; relative: string };
+      try {
+        target = await this.resolvePath(requestedPath, "read", true);
+      } catch (error) {
+        if (!(error instanceof ToolPolicyError) || error.code !== "not_found") {
+          throw error;
+        }
+
+        // A safely contained absent search boundary has zero matches. Resolve it
+        // again without the existence requirement so scope, protected-path,
+        // symlink, and real-containment checks still run before absence is
+        // accepted. If the path appeared during that check, search it normally.
+        const absentTarget = await this.resolvePath(
+          requestedPath,
+          "read",
+          false
+        );
+        try {
+          await lstat(absentTarget.absolute);
+        } catch (statError) {
+          if (isRecord(statError) && statError.code === "ENOENT") {
+            return;
+          }
+          throw new ToolPolicyError(
+            "path_denied",
+            `Cannot inspect repository path: ${requestedPath}`
+          );
+        }
+        target = await this.resolvePath(requestedPath, "read", true);
+      }
       const stat = await lstat(target.absolute);
       if (stat.isSymbolicLink()) {
         return;

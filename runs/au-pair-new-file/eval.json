@@ -13,7 +13,7 @@
         "The immutable context capsule labels exact declared write targets as existing or new and binds that state into its SHA-256.",
         "The helper system prompt directs new targets to a /dev/null unified diff instead of reading a nonexistent destination.",
         "A search of an absent exact declared write target returns an empty successful result without consuming a broker-rejection round.",
-        "An absent sibling read path still fails with not_found, preserving the original scope boundary."
+        "At exact SHA 36623abc, an absent sibling read path failed with not_found; the later utility-search-empty-boundary task supersedes this search-only behavior while preserving scope denial."
       ]
     },
     "guarded_artifact": {
@@ -39,5 +39,5 @@
   "known_limitations": [
     "This change repairs the exact-new-file broker contract; it does not broaden Au Pair routing eligibility or write authority."
   ],
-  "notes": "PASS. The regression directly produces the broker result that previously failed run 120 and independently proves undeclared missing paths remain denied."
+  "notes": "PASS at exact SHA 36623abc. The regression directly produces the broker result that previously failed run 120. Later utility-search-empty-boundary work supersedes the in-scope search-absence behavior; out-of-scope missing paths remain denied."
 }

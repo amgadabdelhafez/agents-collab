@@ -1,0 +1,47 @@
+{
+  "task_id": "utility-search-empty-boundary",
+  "feature": "utility-search-empty-boundary",
+  "timestamp": "2026-08-04T03:25:45Z",
+  "evaluator": "codex-producer-backed-eval",
+  "base_sha": "36623abc7f3259affecb5b461d73cb5d6533f727",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "search_contract": {
+      "passed": 6,
+      "failed": 0,
+      "details": [
+        "Absent in-scope search boundary returns zero matches.",
+        "A later existing boundary is still searched.",
+        "Out-of-scope absence remains scope_denied.",
+        "Protected absence and symlink escape remain path_denied.",
+        "Missing read_file remains not_found.",
+        "Exact declared new write targets remain empty search domains."
+      ]
+    },
+    "deployed_lineage": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "requestedShutdownDecision is present.",
+        "isExactNewWriteTarget is present.",
+        "PROXY_SHUTDOWN_CALLER_HEADER is present."
+      ]
+    },
+    "verification": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "Focused utility broker suite passed 43/43.",
+        "Full bun run test:ci passed outside the restricted network sandbox.",
+        "bun run check passed across 738 files.",
+        "bun run build passed.",
+        "git diff --check passed."
+      ]
+    }
+  },
+  "known_limitations": [
+    "This repairs search absence semantics; it does not change routing eligibility or worker retry budgets."
+  ],
+  "notes": "PASS. The candidate is rooted at the exact deployed lineage and preserves all three named deployed protections. Release remains separately gated on exact-SHA supervisor review and founder deployment authority."
+}
