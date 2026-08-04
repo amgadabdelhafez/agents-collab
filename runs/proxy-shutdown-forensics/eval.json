@@ -4,6 +4,7 @@
   "acceptance": {
     "real_http_shutdown_producer_labeled": true,
     "request_recorded_before_stop": true,
+    "live_active_tmux_shutdown_rejected": true,
     "declared_identity_distinguished_from_peer": true,
     "live_run_mutated": false
   },

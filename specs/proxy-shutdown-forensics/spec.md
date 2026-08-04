@@ -12,8 +12,9 @@ cannot distinguish an expected owner cleanup from an erroneous late cleanup.
 
 Bind every HTTP-requested proxy shutdown to a bounded declared callsite and
 requester PID while independently recording the loopback peer socket observed
-by the proxy. Preserve the existing shutdown behavior and keep all evidence
-secret-free.
+by the proxy. Reject the request while the run still owns an active, positively
+live tmux workspace, because tearing down that proxy severs Codex idle delivery
+and forces a direct attach. Keep all evidence secret-free.
 
 ## Acceptance criteria
 
@@ -21,6 +22,8 @@ secret-free.
 - [ ] The proxy writes `shutdown-requested` before `stopped/requested`.
 - [ ] The ledger distinguishes declared caller data from independently observed
       peer address, port, and family.
+- [ ] A live active tmux workspace rejects requested shutdown without stopping
+      the proxy; a terminal run still accepts exact owned cleanup.
 - [ ] Paired-start cleanup supplies an exact callsite label.
 - [ ] A real proxy integration test proves the request creates the evidence.
 - [ ] Focused tests, full verification, build, and diff checks pass.
@@ -28,6 +31,6 @@ secret-free.
 ## Non-goals
 
 - Mutating or restarting run 119.
-- Guessing which process made the already-recorded unattributed request.
+- Guessing which process made an already-recorded unattributed request.
 - Treating a caller-declared PID as independently verified process identity.
 - Deploying without exact-SHA supervisor review and fresh founder authority.

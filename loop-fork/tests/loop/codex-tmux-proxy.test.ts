@@ -1265,7 +1265,7 @@ test("codex tmux proxy has no headless fallback when visible delivery is unavail
   }
 });
 
-test("codex tmux proxy records shutdown producer and observed peer before stopping", async () => {
+test("codex tmux proxy records the producer and rejects shutdown while tmux is live", async () => {
   const root = makeTempDir();
   const manifestPath = join(root, "manifest.json");
   const upstreamStart = await startServerWithRetries((port) =>
@@ -1301,6 +1301,7 @@ test("codex tmux proxy records shutdown producer and observed peer before stoppi
       runId: "10",
       state: "working",
       status: "running",
+      tmuxSession: "repo-loop-10",
     })
   );
   let proxyTask: Promise<void> | undefined;
@@ -1312,14 +1313,41 @@ test("codex tmux proxy records shutdown producer and observed peer before stoppi
       { tmuxLiveness: () => "live" }
     );
     proxyTask = proxyStart.proxyTask;
+    await expect(
+      stopCodexTmuxProxy(proxyStart.proxyUrl, {
+        caller: "paired-start-cleanup",
+        requesterPid: process.pid,
+      })
+    ).rejects.toThrow("HTTP 409");
+    const readyUrl = new URL(proxyStart.proxyUrl);
+    readyUrl.protocol = "http:";
+    readyUrl.pathname = "/readyz";
+    expect((await fetch(readyUrl)).ok).toBe(true);
+    let events = readLifecycleEvents(root);
+    expect(events.at(-1)).toMatchObject({
+      decision: "rejected-active-tmux",
+      declaredCaller: "paired-start-cleanup",
+      declaredRequesterPid: process.pid,
+      event: "shutdown-requested",
+      peerAddress: "127.0.0.1",
+      peerFamily: "IPv4",
+    });
+    expect(events.some((event) => event.event === "stopped")).toBe(false);
+
+    updateRunManifest(manifestPath, (manifest) =>
+      manifest
+        ? { ...manifest, state: "completed", status: "completed" }
+        : manifest
+    );
     await stopCodexTmuxProxy(proxyStart.proxyUrl, {
       caller: "paired-start-cleanup",
       requesterPid: process.pid,
     });
     await proxyTask;
-    const events = readLifecycleEvents(root);
-    const requestedIndex = events.findIndex(
-      (event) => event.event === "shutdown-requested"
+    events = readLifecycleEvents(root);
+    const requestedIndex = events.findLastIndex(
+      (event) =>
+        event.event === "shutdown-requested" && event.decision === "accepted"
     );
     const stoppedIndex = events.findIndex(
       (event) => event.event === "stopped" && event.reason === "requested"
@@ -1329,6 +1357,7 @@ test("codex tmux proxy records shutdown producer and observed peer before stoppi
     expect(events[requestedIndex]).toMatchObject({
       declaredCaller: "paired-start-cleanup",
       declaredRequesterPid: process.pid,
+      decision: "accepted",
       peerAddress: "127.0.0.1",
       peerFamily: "IPv4",
     });

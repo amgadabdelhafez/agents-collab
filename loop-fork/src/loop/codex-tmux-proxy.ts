@@ -83,6 +83,7 @@ export interface ProxyRuntimeOptions {
 interface ProxyLifecycleEvent {
   at: string;
   attempt?: number;
+  decision?: "accepted" | "rejected-active-tmux" | "rejected-unknown-tmux";
   declaredCaller?: string;
   declaredRequesterPid?: number;
   delayMs?: number;
@@ -380,10 +381,19 @@ class CodexTmuxProxy {
       fetch: (request, server) => {
         const path = new URL(request.url).pathname;
         if (path === PROXY_SHUTDOWN_PATH && request.method === "POST") {
-          appendProxyLifecycle(
-            this.runDir,
-            shutdownRequestLifecycleEvent(request, server.requestIP(request))
-          );
+          const decision = this.requestedShutdownDecision();
+          appendProxyLifecycle(this.runDir, {
+            ...shutdownRequestLifecycleEvent(
+              request,
+              server.requestIP(request)
+            ),
+            decision,
+          });
+          if (decision !== "accepted") {
+            return new Response("active tmux workspace owns proxy", {
+              status: 409,
+            });
+          }
           setTimeout(() => this.stop(), 0);
           return new Response("stopping");
         }
@@ -468,6 +478,25 @@ class CodexTmuxProxy {
     this.upstream = undefined;
     appendProxyLifecycle(this.runDir, { event: "stopped", reason });
     this.resolveStopped();
+  }
+
+  private requestedShutdownDecision():
+    | "accepted"
+    | "rejected-active-tmux"
+    | "rejected-unknown-tmux" {
+    const manifest = readRunManifest(join(this.runDir, "manifest.json"));
+    if (
+      !(manifest && isActiveRunState(manifest.state) && manifest.tmuxSession)
+    ) {
+      return "accepted";
+    }
+    const liveness = this.readTmuxLiveness(manifest.tmuxSession);
+    if (liveness === "dead") {
+      return "accepted";
+    }
+    return liveness === "live"
+      ? "rejected-active-tmux"
+      : "rejected-unknown-tmux";
   }
 
   private forwardToTui(raw: string): void {

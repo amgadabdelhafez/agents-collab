@@ -11,6 +11,11 @@
   the server writes `shutdown-requested` with those declared fields and its own
   observed peer socket before accepting shutdown. Paired-start cleanup uses
   the exact label `paired-start-cleanup`.
+- Run 120 reproduced the defect on the deployed binary: the proxy stopped by
+  request while the manifest still named a live eight-pane tmux workspace and
+  the app-server remained healthy. The proxy now rejects that request with 409
+  while active tmux liveness is `live` or `unknown`; terminal/dead ownership
+  still permits cleanup, and ordinary dead-tmux GC remains available.
 - Focused proxy/tmux suites: 114 passed, 0 failed. Repository `bun run check`,
   full certified `bun run test:ci`, compiled build, and `git diff --check` all
   passed with an empty named baseline-failure list.
