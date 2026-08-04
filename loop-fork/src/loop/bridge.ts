@@ -19,6 +19,7 @@ import {
   flushClaudeChannelMessages,
   hasBridgeDeliveryRoute,
   isBridgeDeliveryClaimed,
+  isBridgeTargetDeclared,
   readBridgeRuntimeStatus,
 } from "./bridge-runtime";
 import {
@@ -278,6 +279,14 @@ const handleSendMessageTool = async (
       id,
       MCP_INVALID_PARAMS,
       "send_message cannot target the current agent"
+    );
+    return;
+  }
+  if (!isBridgeTargetDeclared(runDir, target)) {
+    writeError(
+      id,
+      MCP_INVALID_PARAMS,
+      `Target "${target}" is not part of this run's declared agent topology`
     );
     return;
   }

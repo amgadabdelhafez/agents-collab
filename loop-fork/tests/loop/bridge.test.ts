@@ -1526,6 +1526,64 @@ test("bridge MCP send_message rejects targeting the current agent", async () => 
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge MCP send_message rejects a valid agent absent from declared topology", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({
+      claudeSessionId: "claude-session",
+      codexThreadId: "codex-thread",
+      createdAt: "2026-08-04T10:00:00.000Z",
+      cwd: root,
+      mode: "paired",
+      pid: process.pid,
+      repoId: "repo",
+      runId: "124",
+      state: "active",
+      status: "running",
+      tmuxPaneLeft: "%1",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRight: "%2",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "harvto-loop-124",
+      updatedAt: "2026-08-04T10:00:00.000Z",
+    })
+  );
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    `${encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          message: "KIND=BASELINE_READY",
+          target: "gemini",
+          type: "escalation",
+        },
+        name: "send_message",
+      },
+    })}\n`
+  );
+
+  expect(result.code).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    error: {
+      code: -32_602,
+      message:
+        'Target "gemini" is not part of this run\'s declared agent topology',
+    },
+    id: 1,
+    jsonrpc: "2.0",
+  });
+  expect(existsSync(join(runDir, "bridge.jsonl"))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("bridge MCP rejects the old send_to_agent name with rename guidance", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
