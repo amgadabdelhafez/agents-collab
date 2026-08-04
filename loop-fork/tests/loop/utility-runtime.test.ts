@@ -1447,6 +1447,131 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
   }
 });
 
+test("worker consolidates multiple file proposals into one guarded patch", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-multifile-"));
+  const runDir = join(repoRoot, ".loop", "runs", "multifile-edit");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["create both files in one guarded edit"],
+    authority: {},
+    id: "multifile-edit-job",
+    kind: "edit",
+    objective: "Create two bounded source files",
+    readScope: ["src/one.ts", "src/two.ts"],
+    requester: "claude",
+    requiredCapabilities: ["scoped-edit"],
+    risk: "low",
+    writeScope: ["src/one.ts", "src/two.ts"],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 31);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    routeEpoch: 31,
+  });
+  const firstPatch = [
+    "diff --git a/src/one.ts b/src/one.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/one.ts",
+    "@@ -0,0 +1 @@",
+    "+export const one = 1;",
+    "",
+  ].join("\n");
+  const secondPatch = [
+    "diff --git a/src/two.ts b/src/two.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/two.ts",
+    "@@ -0,0 +1 @@",
+    "+export const two = 2;",
+    "",
+  ].join("\n");
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: providerCalls === 1 ? "tool_calls" : "stop",
+            message:
+              providerCalls === 1
+                ? {
+                    content: null,
+                    role: "assistant",
+                    tool_calls: [
+                      {
+                        function: {
+                          arguments: JSON.stringify({ patch: firstPatch }),
+                          name: "propose_patch",
+                        },
+                        id: "patch-one",
+                        type: "function",
+                      },
+                      {
+                        function: {
+                          arguments: JSON.stringify({ patch: secondPatch }),
+                          name: "propose_patch",
+                        },
+                        id: "patch-two",
+                        type: "function",
+                      },
+                    ],
+                  }
+                : { content: "Both files proposed.", role: "assistant" },
+          },
+        ],
+        model: "local-test",
+        usage: { completion_tokens: 4, prompt_tokens: 8, total_tokens: 12 },
+      });
+    },
+    port: 0,
+  });
+  try {
+    await runUtilityWorker(runDir, 31, request.id, {
+      LOOP_UTILITY_ENABLED: "1",
+      LOOP_UTILITY_MODEL: "local-test",
+      LOOP_UTILITY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    });
+    const completed = readUtilityJob(runDir, request.id);
+    expect(completed).toMatchObject({
+      result: { status: "completed" },
+      state: "completed",
+    });
+    const artifacts = completed?.result?.artifactRefs ?? [];
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.kind).toBe("diff");
+    const aggregate = readFileSync(artifacts[0]?.path ?? "", "utf8");
+    expect(aggregate).toContain("+++ b/src/one.ts");
+    expect(aggregate).toContain("+++ b/src/two.ts");
+    expect(
+      readFileSync(join(runDir, "utility", "tool-events.jsonl"), "utf8")
+    ).toContain('"synthesized":"multi-file-edit-aggregate"');
+
+    const applied = await applyUtilityJobPatch(
+      runDir,
+      request.id,
+      artifacts[0]?.sha256 ?? "",
+      "claude"
+    );
+    expect(applied.status).toBe("applied");
+    expect(readFileSync(join(repoRoot, "src", "one.ts"), "utf8")).toBe(
+      "export const one = 1;\n"
+    );
+    expect(readFileSync(join(repoRoot, "src", "two.ts"), "utf8")).toBe(
+      "export const two = 2;\n"
+    );
+  } finally {
+    server.stop(true);
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("utility worker rejects prose-only completion without repository evidence", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-no-evidence-"));
   const runDir = join(repoRoot, ".loop", "runs", "no-evidence");

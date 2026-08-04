@@ -1,0 +1,39 @@
+{
+  "task_id": "utility-multifile-edit-artifact",
+  "status": "pass-with-baseline",
+  "required": ["producer-regression", "focused", "build", "diff-check"],
+  "dimensions": {
+    "producer-regression": {
+      "status": "pass",
+      "evidence": "worker emits two propose_patch calls; completed job exposes one aggregate diff; one guarded apply creates both files"
+    },
+    "focused": {
+      "status": "pass",
+      "commands": [
+        "bun test tests/loop/utility-runtime.test.ts",
+        "bun test tests/loop/utility-tools.test.ts tests/loop/bridge.test.ts"
+      ],
+      "result": "119 pass, 0 fail"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "diff-check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "full": {
+      "status": "baseline-fail",
+      "command": "bun run test:ci",
+      "failure": "preparePairedOptions creates a loop-scoped Codex home without global MCP config expects gpt-5.5 but current default is gpt-5.6-sol",
+      "scope": "pre-existing on origin/main and unrelated to utility artifact consolidation"
+    },
+    "lint": {
+      "status": "baseline-fail",
+      "command": "bun run check",
+      "failure": "origin/main contains 201 pre-existing formatting/lint diagnostics; changed code introduced no separately reported diagnostic"
+    }
+  },
+  "verdict": "pass-with-named-pre-existing-baselines"
+}

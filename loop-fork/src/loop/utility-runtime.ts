@@ -837,9 +837,53 @@ const utilitySystemPrompt = (): string =>
     "You are the bounded worker beneath two main coding agents.",
     "Do only the declared objective and acceptance criteria. Use tools for evidence.",
     "Never expand scope, access secrets, change dependencies, make product decisions, or perform remote/destructive actions.",
-    "For edits, produce a minimal unified diff with propose_patch; it is reviewed/applied by a main agent.",
+    "For edits, produce one minimal unified diff with propose_patch; include every changed file for the job in that single call. It is reviewed/applied by a main agent.",
     "Finish with a terse result: outcome, evidence/checks, artifact paths, and blocker if any.",
   ].join(" ");
+
+const consolidateEditArtifacts = async (input: {
+  artifacts: readonly UtilityArtifactReference[];
+  broker: Awaited<ReturnType<typeof createUtilityToolBroker>>;
+  jobId: string;
+  toolEventFile: string;
+}): Promise<UtilityArtifactReference[]> => {
+  const patchArtifacts = input.artifacts.filter((artifact) =>
+    artifact.path.endsWith(".patch")
+  );
+  if (patchArtifacts.length <= 1) {
+    return [...input.artifacts];
+  }
+  const combinedPatch = `${patchArtifacts
+    .map((artifact) => readFileSync(artifact.path, "utf8").trimEnd())
+    .join("\n")}\n`;
+  const result = await input.broker.execute({
+    arguments: {
+      patch: combinedPatch,
+      summary: `Atomic aggregate of ${patchArtifacts.length} worker patch proposals`,
+    },
+    name: "propose_patch",
+  });
+  appendJsonl(input.toolEventFile, {
+    artifact: result.artifact,
+    at: new Date().toISOString(),
+    durationMs: result.durationMs,
+    error: result.error,
+    jobId: input.jobId,
+    ok: result.ok,
+    synthesized: "multi-file-edit-aggregate",
+    tool: "propose_patch",
+  });
+  if (!(result.ok && result.artifact)) {
+    throw new Error(
+      result.error?.message ??
+        "worker multi-file edit could not produce one guarded patch artifact"
+    );
+  }
+  return [
+    ...input.artifacts.filter((artifact) => !artifact.path.endsWith(".patch")),
+    result.artifact,
+  ];
+};
 
 const parseToolArguments = (raw: string): unknown => {
   try {
@@ -1098,8 +1142,17 @@ export const runUtilityWorker = async (
       toolEventFile: join(runDir, "utility", "tool-events.jsonl"),
       traceFile,
     });
+    const resultArtifacts =
+      executionRequest.kind === "edit"
+        ? await consolidateEditArtifacts({
+            artifacts: conversation.artifacts,
+            broker,
+            jobId,
+            toolEventFile: join(runDir, "utility", "tool-events.jsonl"),
+          })
+        : conversation.artifacts;
     const result: UtilityCompactResult = {
-      artifactRefs: conversation.artifacts.map((artifact) => ({
+      artifactRefs: resultArtifacts.map((artifact) => ({
         kind: artifact.path.endsWith(".patch") ? "diff" : "report",
         manifestPath: artifact.manifestPath,
         manifestSha256: artifact.manifestSha256,
