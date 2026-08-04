@@ -37,7 +37,9 @@ const response = (events: string[]): Response =>
 
 const repoRoot = mkdtempSync(join(tmpdir(), "loop-compiled-pi-"));
 const runDir = join(repoRoot, ".loop", "runs", "compiled-pi");
-const binary = join(import.meta.dir, "../../loop-fork/loop");
+const binary =
+	process.env.LOOP_CANARY_BINARY ??
+	join(import.meta.dir, "../../loop-fork/loop");
 mkdirSync(join(repoRoot, "src"), { recursive: true });
 mkdirSync(runDir, { recursive: true });
 writeFileSync(join(repoRoot, "src", "sample.ts"), "export const needle = 1;\n");

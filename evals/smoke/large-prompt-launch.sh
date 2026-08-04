@@ -250,6 +250,25 @@ run_isolated_loop() {
     "${SMOKE_LOOP_BINARY}" "$@"
 }
 
+run_isolated_bridge() {
+  local root="$1"
+  local case_bin="$2"
+  local run_dir="$3"
+  local identity="$4"
+  env -i \
+    "HOME=${root}/home" \
+    "CLAUDE_CONFIG_DIR=${root}/claude-config" \
+    "PATH=${case_bin}:${SYSTEM_PATH}" \
+    "USER=${SMOKE_USER}" \
+    "LOGNAME=${SMOKE_USER}" \
+    "SHELL=${SMOKE_SHELL}" \
+    "TERM=${SMOKE_TERM}" \
+    "LANG=${SMOKE_LANG}" \
+    "TMUX_TMPDIR=${root}/tmux" \
+    "LOOP_SMOKE_TMUX_SOCKET=${SMOKE_SOCKET}" \
+    "${SMOKE_LOOP_BINARY}" __bridge-mcp "${run_dir}" "${identity}"
+}
+
 smoke_tmux() {
   local tmux_tmpdir="$1"
   local socket="$2"
@@ -653,6 +672,40 @@ bun -e '
   }
 ' "${SUCCESS_MANIFEST}" "${CHARTER_SENTINEL}"
 
+SUCCESS_RUN_DIR="$(dirname "${SUCCESS_MANIFEST}")"
+printf '%s\n%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"release-smoke","version":"1"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send_message","arguments":{"target":"cursor","subject":"release doorbell","message":"compiled doorbell smoke","priority":"normal"}}}' \
+  | run_isolated_bridge \
+    "${SUCCESS_ROOT}" \
+    "${SUCCESS_BIN}" \
+    "${SUCCESS_RUN_DIR}" \
+    gemini >"${SMOKE_ROOT}/doorbell.out"
+wait_for_pane_text \
+  "${SUCCESS_TMUX_TMPDIR}" \
+  "${SMOKE_SOCKET}" \
+  "${RIGHT_PANE}" \
+  "NUDGE_RECEIVED cursor" >/dev/null
+bun -e '
+  import { readFileSync } from "node:fs";
+  const bridge = readFileSync(process.argv[1], "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const message = bridge.find((row) =>
+    row.kind === "message" && row.source === "gemini" &&
+    row.target === "cursor" && row.message === "compiled doorbell smoke"
+  );
+  if (!message) throw new Error("compiled doorbell message row missing");
+  if (!bridge.some((row) => row.kind === "notified" && row.id === message.id)) {
+    throw new Error("compiled doorbell notified row missing");
+  }
+  if (bridge.some((row) => row.kind === "delivered" && row.id === message.id)) {
+    throw new Error("doorbell notification was falsely recorded as delivery");
+  }
+' "${SUCCESS_RUN_DIR}/bridge.jsonl"
+
 cd "${CLAUDE_READY_REPO}"
 LOOP_SMOKE_CLAUDE_STARTUP=delayed-dev \
 LOOP_SMOKE_FULL_LAYOUT=1 \
@@ -921,4 +974,4 @@ assert_host_isolation \
   "at smoke completion"
 assert_prebuilt_binary_unchanged "after launch"
 
-echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=${CLAUDE_READY_GEOMETRY}/6panes activity=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
+echo "large-prompt smoke: binary=${SMOKE_LOOP_BINARY} binary-sha256=$(smoke_binary_sha256) prebuilt=${SMOKE_USES_PREBUILT} info-fixture=unchanged session=${TMUX_SESSION} panes=${LEFT_AGENT}:${LEFT_PANE},${RIGHT_AGENT}:${RIGHT_PANE} manifest=isolated bootstrap=verified doorbell=notified-not-delivered claude-delayed-ready=verified claude-timeout-exit=${CLAUDE_TIMEOUT_STATUS} claude-timeout-manifest=input-required/running claude-timeout-session=preserved-then-cleaned detached-layout=${CLAUDE_READY_GEOMETRY}/6panes activity=verified hash-mismatch=fail-closed missing-workspace-exit=${FAILURE_STATUS} missing-workspace-manifest=failed"
