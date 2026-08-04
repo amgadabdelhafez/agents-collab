@@ -1,0 +1,53 @@
+{
+  "task_id": "harness-memory-heartbeat",
+  "feature": "harness-memory-heartbeat",
+  "timestamp": "2026-08-04T08:20:00Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "pickbrain_upstream": {
+      "status": "pass",
+      "details": [
+        "Upstream bbae7e0 built with the release, Metal, quantized-T5, progress, and embedded-asset feature set.",
+        "The upstream Rust suite passed 35 tests with zero failures, including Pi transcript parsing.",
+        "The binary, Pi skill, and Pi extension were installed locally; no hosted memory API was used."
+      ]
+    },
+    "pi_utility_runtime": {
+      "status": "pass",
+      "details": [
+        "The exact parent already runs both Nanny and Au Pair through ephemeral Pi SDK agents.",
+        "Global Pi skills and extensions remain disabled inside governed helper sessions; helpers receive only brokered tools and scoped context."
+      ]
+    },
+    "event_wake_and_reconciliation": {
+      "status": "focused_pass",
+      "passed": 95,
+      "failed": 0,
+      "expectations": 396,
+      "details": [
+        "A failing-first producer test covered the inspect-to-watch race and durable bridge appends.",
+        "A failing-first producer test covered persisted five-minute reconciliation evidence.",
+        "A second worker lifetime preserves the original reconciliation startedAt while advancing durable heartbeat state.",
+        "Filesystem events are hints only; bridge JSONL and claims remain authoritative.",
+        "A metadata-only version probe covers coalesced filesystem events without repeatedly parsing the journal."
+      ]
+    },
+    "format_lint": "pass",
+    "diff_check": "pass",
+    "mandatory_gate": {
+      "status": "pass",
+      "details": [
+        "Lint, targeted typecheck, compiled build, and every sequential test file passed outside the restricted sandbox.",
+        "The restricted-sandbox run failed only because the proxy integration could not bind loopback; the exact test then passed outside the sandbox with 1 test, 0 failures, and 6 expectations."
+      ]
+    },
+    "exact_sha_review": "pending"
+  },
+  "known_limitations": [
+    "This slice does not deploy or mutate a live loop.",
+    "Pre-compaction checkpoints, curated promotion, and the Honcho bakeoff are subsequent isolated slices."
+  ],
+  "notes": "The event-driven bridge implementation passes the mandatory repository verification contract. An extra repository-wide noEmit invocation remains noisy on the exact parent and candidate with the same normalized bridge-file error set; the repository's targeted typecheck in scripts/verify.sh is the release contract. Exact-SHA supervisor review remains required before deployment."
+}

@@ -1,5 +1,8 @@
 # Verification
 
+> Historical verification for commit `19bad72`; the descendant event-driven
+> contract is verified in `specs/harness-memory-heartbeat/verify.md`.
+
 - The worker-level fallback test fails before the implementation and passes
   after it.
 - The fallback produces a `notified` journal row, no `delivered` row, and leaves

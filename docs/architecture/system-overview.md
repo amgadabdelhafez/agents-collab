@@ -36,6 +36,7 @@ or claim authority.
 | Main agent pair | Product judgment, architecture, broad implementation, review | Utility scheduling or lower-tier host policy |
 | Delegation policy | Exact mechanical intent classification, Claude pre-tool auto-submit, Codex miss telemetry | Route eligibility, arbitrary shell parsing, judgment classification |
 | Bridge | Typed participant transport, delivery, acknowledgements | Task eligibility, model choice, host tool execution |
+| Bridge wake/reconciliation | Filesystem doorbells, race-safe journal-version checks, persisted five-minute reconciliation evidence | Delivery acknowledgement, agent health, or lifecycle authority |
 | Governess | Liveness, driver lease, current epoch, task routing and dispatch | Provider inference or unrestricted code changes |
 | Task router | Pure capability/risk/scope/budget/tier decision | Provider calls, persistence, side effects |
 | Utility job store | Idempotent append-only requests, decisions, claims, results | Routing policy or model inference |
@@ -79,6 +80,10 @@ or claim authority.
 - Credentials stay in the provider process environment and are removed from
   tool child environments and traces.
 - Pane and external-supervisor availability never determine job availability.
+- Filesystem wake events are hints. The bridge journal remains authoritative,
+  and the detached worker performs full reconciliation on startup and at least
+  every five idle minutes. Notification and heartbeat state never count as
+  message delivery.
 
 ## Key data flows
 
@@ -103,9 +108,15 @@ or claim authority.
    checks, artifact references,
    and a compact result, then sends that result to the requester through the
    bridge.
-5. **Recovery:** a new Governess epoch fences orphaned claims; time-limited jobs
+5. **Wake and reconciliation:** a durable bridge append wakes the detached
+   worker through a filesystem event. A post-registration version check closes
+   the inspect-to-watch race, while a metadata-only probe covers filesystems
+   that coalesce events. The worker atomically records every full reconciliation
+   and reruns it after at most five idle minutes. Only authoritative journal
+   rows decide pending and delivered state.
+6. **Recovery:** a new Governess epoch fences orphaned claims; time-limited jobs
    fail closed and return an escalation rather than being silently replayed.
-6. **Native fallback:** after a settled helper result or route, **Claude** may
+7. **Native fallback:** after a settled helper result or route, **Claude** may
    request bounded read-only exploration/review. Codex may not: Codex 0.145
    reapplies the full-access parent sandbox after loading a custom role, so a
    role marked read-only is not a read-only child; Codex native agents are

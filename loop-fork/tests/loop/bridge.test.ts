@@ -2,6 +2,7 @@ import { afterEach, expect, mock, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -3794,7 +3795,6 @@ test("runBridgeWorker delivers Codex without probing stale tmux state", async ()
     source: "claude",
     target: "codex",
   });
-
   await bridge.runBridgeWorker(runDir);
 
   expect(injectCodexMessage).toHaveBeenCalledWith(
@@ -3905,6 +3905,10 @@ test("runBridgeWorker retries queued codex app-server messages", async () => {
     source: "claude",
     target: "codex",
   });
+  bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
+    (_runDir: string, version: string) =>
+      Promise.resolve({ reason: "retry", version })
+  );
 
   await bridge.runBridgeWorker(runDir);
 
@@ -3970,7 +3974,7 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
   const bridge = await loadBridge({ injectCodexMessage });
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
   bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(() =>
-    Promise.resolve()
+    Promise.resolve({ reason: "settle", version: "test" })
   );
   const root = makeTempDir();
   runDir = join(root, "run");
@@ -4025,7 +4029,41 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
   rmSync(root, { recursive: true, force: true });
 });
 
-test("runBridgeWorker exponentially backs off bounded idle polling", async () => {
+test("bridge worker wake closes the inspect-to-watch race and observes appends", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const missingVersion = bridge.bridgeJournalVersion(runDir);
+  const raceWake = bridge.waitForBridgeWorkerWake(runDir, missingVersion, 1000);
+  appendFileSync(
+    bridge.bridgeInternals.bridgePath(runDir),
+    `${JSON.stringify({ kind: "message" })}\n`,
+    "utf8"
+  );
+  expect((await raceWake).reason).toBe("changed");
+
+  const observedVersion = bridge.bridgeJournalVersion(runDir);
+  const eventWake = bridge.waitForBridgeWorkerWake(
+    runDir,
+    observedVersion,
+    1000
+  );
+  setTimeout(() => {
+    appendFileSync(
+      bridge.bridgeInternals.bridgePath(runDir),
+      `${JSON.stringify({ kind: "delivered" })}\n`,
+      "utf8"
+    );
+  }, 20);
+  expect(["event", "changed"]).toContain((await eventWake).reason);
+  expect(bridge.bridgeJournalVersion(runDir)).not.toBe(observedVersion);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("runBridgeWorker persists five-minute reconciliation heartbeats", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -4048,11 +4086,11 @@ test("runBridgeWorker exponentially backs off bounded idle polling", async () =>
     })}\n`,
     "utf8"
   );
-  const delays: number[] = [];
+  const waits: Array<{ timeoutMs: number; version: string }> = [];
   bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
-    (_runDir: string, delayMs: number) => {
-      delays.push(delayMs);
-      if (delays.length === 7) {
+    (_runDir: string, version: string, timeoutMs: number) => {
+      waits.push({ timeoutMs, version });
+      if (waits.length === 2) {
         const manifest = readRunManifest(manifestPath);
         writeFileSync(
           manifestPath,
@@ -4064,13 +4102,35 @@ test("runBridgeWorker exponentially backs off bounded idle polling", async () =>
           "utf8"
         );
       }
-      return Promise.resolve();
+      return Promise.resolve({ reason: "heartbeat", version });
     }
   );
 
   await bridge.runBridgeWorker(runDir);
 
-  expect(delays).toEqual([250, 500, 1000, 2000, 4000, 5000, 5000]);
+  expect(waits.map((wait) => wait.timeoutMs)).toEqual([300_000, 300_000]);
+  expect(waits.every((wait) => typeof wait.version === "string")).toBe(true);
+  const firstReconciliation = bridge.readBridgeReconciliationState(runDir);
+  expect(firstReconciliation).toMatchObject({
+    lastReason: "heartbeat",
+    pid: process.pid,
+    schemaVersion: 1,
+  });
+
+  waits.length = 0;
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      ...readRunManifest(manifestPath),
+      state: "running",
+      status: "running",
+    })}\n`,
+    "utf8"
+  );
+  await bridge.runBridgeWorker(runDir);
+  expect(bridge.readBridgeReconciliationState(runDir)?.startedAt).toBe(
+    firstReconciliation?.startedAt
+  );
 
   rmSync(root, { recursive: true, force: true });
 });

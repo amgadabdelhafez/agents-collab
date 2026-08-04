@@ -1,5 +1,10 @@
 # Idle Codex doorbell and bridge-worker backoff
 
+> Historical phase-1 contract for commit `19bad72`. The five-second idle
+> polling ceiling is superseded on descendant branches by
+> `specs/harness-memory-heartbeat/`, which uses event-driven wakeups and a
+> persisted five-minute full-reconciliation ceiling.
+
 ## Problem
 
 In a paired loop with a configured Codex app-server, a bridge message can remain

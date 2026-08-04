@@ -8,13 +8,15 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   unlinkSync,
+  watch,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { spawn, spawnSync } from "bun";
 import { removeClaudeChannelServer } from "./bridge-claude-registration";
 import { generatedClaudeChannelServerNames } from "./bridge-config";
@@ -31,6 +33,7 @@ import { formatBridgeDeliveryMessage } from "./bridge-message-format";
 import {
   type BridgeMessage,
   type BridgeStatus,
+  bridgePath,
   lastBridgeNotificationAt,
   markBridgeMessageNotified,
   readBridgeInbox,
@@ -58,15 +61,16 @@ const CLAUDE_CHANNEL_METHOD = "notifications/claude/channel";
 const CLAUDE_CHANNEL_SOURCE_TYPE = "codex";
 const CLAUDE_CHANNEL_USER_ID = "codex";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
+const BRIDGE_RECONCILIATION_FILE = "bridge-reconciliation.json";
 const BRIDGE_DELIVERY_CLAIM_DIR = "bridge-delivery-claims";
 const BRIDGE_NOTIFICATION_CLAIM_DIR = "bridge-notification-claims";
 // App-server acceptance can outlive a normal bridge-worker tick. Keep a claim
 // long enough that another worker cannot duplicate the same Codex turn.
 const BRIDGE_DELIVERY_CLAIM_STALE_MS = 60_000;
 const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = 15_000;
-const BRIDGE_WORKER_IDLE_DELAY_MS = 250;
-const BRIDGE_WORKER_MAX_IDLE_DELAY_MS = 5000;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
+const BRIDGE_WORKER_PENDING_RETRY_MS = 5000;
+export const BRIDGE_RECONCILIATION_INTERVAL_MS = 5 * 60 * 1000;
 const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
 const TMUX_LEFT_PANE = "0.0";
 const TMUX_RIGHT_PANE = "0.1";
@@ -193,7 +197,13 @@ export const bridgeRuntimeCommandDeps = {
   readClaudeTranscriptVersion,
   spawn,
   spawnSync,
-  waitForWorkerWake: (_runDir: string, delayMs: number) => wait(delayMs),
+  waitForWorkerWake: (
+    runDir: string,
+    observedVersion: string,
+    timeoutMs: number,
+    timeoutReason: BridgeWorkerWakeReason
+  ) =>
+    waitForBridgeWorkerWake(runDir, observedVersion, timeoutMs, timeoutReason),
 };
 
 const bridgeWorkerPath = (runDir: string): string =>
@@ -252,18 +262,163 @@ const wait = async (ms: number): Promise<void> => {
   });
 };
 
-export const bridgeWorkerDelayMs = (
-  delivered: boolean,
-  consecutiveIdleCycles: number
-): number => {
-  if (delivered) {
-    return BRIDGE_WORKER_SUCCESS_DELAY_MS;
+export type BridgeWorkerWakeReason =
+  | "changed"
+  | "event"
+  | "heartbeat"
+  | "retry"
+  | "settle";
+
+export interface BridgeWorkerWake {
+  reason: BridgeWorkerWakeReason;
+  version: string;
+}
+
+export interface BridgeReconciliationState {
+  lastReason: "startup" | BridgeWorkerWakeReason;
+  lastReconciledAt: string;
+  observedBridgeVersion: string;
+  pid: number;
+  schemaVersion: 1;
+  startedAt: string;
+}
+
+const BRIDGE_WAKE_REASONS = new Set<BridgeReconciliationState["lastReason"]>([
+  "changed",
+  "event",
+  "heartbeat",
+  "retry",
+  "settle",
+  "startup",
+]);
+
+const bridgeReconciliationPath = (runDir: string): string =>
+  join(runDir, BRIDGE_RECONCILIATION_FILE);
+
+export const bridgeJournalVersion = (runDir: string): string =>
+  fileVersion(bridgePath(runDir)) ?? "missing";
+
+export const readBridgeReconciliationState = (
+  runDir: string
+): BridgeReconciliationState | undefined => {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(bridgeReconciliationPath(runDir), "utf8")
+    ) as Partial<BridgeReconciliationState>;
+    if (
+      parsed.schemaVersion !== 1 ||
+      typeof parsed.pid !== "number" ||
+      !Number.isInteger(parsed.pid) ||
+      parsed.pid <= 0 ||
+      typeof parsed.startedAt !== "string" ||
+      !Number.isFinite(Date.parse(parsed.startedAt)) ||
+      typeof parsed.lastReconciledAt !== "string" ||
+      !Number.isFinite(Date.parse(parsed.lastReconciledAt)) ||
+      typeof parsed.lastReason !== "string" ||
+      !BRIDGE_WAKE_REASONS.has(
+        parsed.lastReason as BridgeReconciliationState["lastReason"]
+      ) ||
+      typeof parsed.observedBridgeVersion !== "string"
+    ) {
+      return undefined;
+    }
+    return parsed as BridgeReconciliationState;
+  } catch {
+    return undefined;
   }
-  const exponent = Math.min(Math.max(0, consecutiveIdleCycles), 8);
-  return Math.min(
-    BRIDGE_WORKER_IDLE_DELAY_MS * 2 ** exponent,
-    BRIDGE_WORKER_MAX_IDLE_DELAY_MS
-  );
+};
+
+const recordBridgeReconciliation = (
+  runDir: string,
+  reason: BridgeReconciliationState["lastReason"],
+  observedBridgeVersion: string,
+  now = new Date()
+): BridgeReconciliationState => {
+  const path = bridgeReconciliationPath(runDir);
+  const previous = readBridgeReconciliationState(runDir);
+  const state: BridgeReconciliationState = {
+    lastReason: reason,
+    lastReconciledAt: now.toISOString(),
+    observedBridgeVersion,
+    pid: process.pid,
+    schemaVersion: 1,
+    startedAt: previous?.startedAt ?? now.toISOString(),
+  };
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(state)}\n`, "utf8");
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+  return state;
+};
+
+export const waitForBridgeWorkerWake = (
+  runDir: string,
+  observedVersion: string,
+  timeoutMs: number,
+  timeoutReason: BridgeWorkerWakeReason = "heartbeat"
+): Promise<BridgeWorkerWake> => {
+  const currentVersion = (): string => bridgeJournalVersion(runDir);
+  const journalFilename = basename(bridgePath(runDir));
+  return new Promise((resolve) => {
+    let settled = false;
+    let versionProbe: ReturnType<typeof setInterval> | undefined;
+    let watcher: ReturnType<typeof watch> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (reason: BridgeWorkerWakeReason): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (versionProbe) {
+        clearInterval(versionProbe);
+      }
+      watcher?.close();
+      resolve({ reason, version: currentVersion() });
+    };
+    timer = setTimeout(() => finish(timeoutReason), timeoutMs);
+    try {
+      watcher = watch(runDir, (_eventType, filename) => {
+        if (
+          (!filename || filename.toString() === journalFilename) &&
+          currentVersion() !== observedVersion
+        ) {
+          finish("event");
+        }
+      });
+      watcher.on("error", () => {
+        watcher?.close();
+        watcher = undefined;
+      });
+    } catch {
+      // A watcher is an optimization only. The bounded reconciliation timeout
+      // remains the authoritative recovery path when the host cannot watch.
+    }
+    // Register the watcher before this comparison. An enqueue in the
+    // inspect-to-watch gap is then observed either by its version or its event.
+    if (currentVersion() !== observedVersion) {
+      finish("changed");
+    }
+    queueMicrotask(() => {
+      if (currentVersion() !== observedVersion) {
+        finish("changed");
+      }
+    });
+    // Some filesystems coalesce or omit watch notifications. A metadata-only
+    // version probe closes that host gap without rereading or parsing the
+    // bridge journal; the five-minute timeout remains the full reconciliation.
+    versionProbe = setInterval(() => {
+      if (currentVersion() !== observedVersion) {
+        finish("changed");
+      }
+    }, 250);
+  });
 };
 
 const deliveryClaimPath = (runDir: string, messageId: string): string => {
@@ -1132,8 +1287,47 @@ export const drainTmuxBridgeMessages = (runDir: string): Promise<boolean> => {
   return notifyTmuxBridgeInbox(runDir, message.target);
 };
 
+const drainBridgeWorkerCycle = async (
+  runDir: string,
+  status: BridgeStatus
+): Promise<boolean> => {
+  const deliveredToCodex =
+    status.hasCodexRemote && (await drainCodexAppServerMessages(runDir));
+  // A configured app-server is the primary Codex path, but its existence must
+  // not suppress the visible tmux doorbell when it refuses a busy turn.
+  const notifiedCodex =
+    !deliveredToCodex &&
+    status.hasCodexRemote &&
+    (await drainCodexTmuxMessages(runDir));
+  return (
+    deliveredToCodex || notifiedCodex || (await drainTmuxBridgeMessages(runDir))
+  );
+};
+
+const bridgeWorkerWaitPolicy = (
+  delivered: boolean,
+  hasPendingMessages: boolean
+): { timeoutMs: number; timeoutReason: BridgeWorkerWakeReason } => {
+  if (delivered) {
+    return {
+      timeoutMs: BRIDGE_WORKER_SUCCESS_DELAY_MS,
+      timeoutReason: "settle",
+    };
+  }
+  if (hasPendingMessages) {
+    return {
+      timeoutMs: BRIDGE_WORKER_PENDING_RETRY_MS,
+      timeoutReason: "retry",
+    };
+  }
+  return {
+    timeoutMs: BRIDGE_RECONCILIATION_INTERVAL_MS,
+    timeoutReason: "heartbeat",
+  };
+};
+
 export const runBridgeWorker = async (runDir: string): Promise<void> => {
-  let consecutiveIdleCycles = 0;
+  let reconciliationReason: BridgeReconciliationState["lastReason"] = "startup";
   try {
     while (true) {
       const claimedPid = readBridgeWorkerPid(runDir);
@@ -1145,25 +1339,28 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       if (!(state && isActiveRunState(state))) {
         return;
       }
-      const deliveredToCodex =
-        status.hasCodexRemote && (await drainCodexAppServerMessages(runDir));
-      // A configured app-server is the primary Codex path, but its existence
-      // must not suppress the visible tmux doorbell when it refuses a busy
-      // turn. Notification preserves the pending message until Codex drains it.
-      const notifiedCodex =
-        !deliveredToCodex &&
-        status.hasCodexRemote &&
-        (await drainCodexTmuxMessages(runDir));
-      const delivered =
-        deliveredToCodex ||
-        notifiedCodex ||
-        (await drainTmuxBridgeMessages(runDir));
+      const inspectedVersion = bridgeJournalVersion(runDir);
+      const delivered = await drainBridgeWorkerCycle(runDir, status);
       if (!(status.hasCodexRemote || status.hasTmuxSession)) {
         return;
       }
-      const delayMs = bridgeWorkerDelayMs(delivered, consecutiveIdleCycles);
-      consecutiveIdleCycles = delivered ? 0 : consecutiveIdleCycles + 1;
-      await bridgeRuntimeCommandDeps.waitForWorkerWake(runDir, delayMs);
+      const observedVersion = bridgeJournalVersion(runDir);
+      recordBridgeReconciliation(runDir, reconciliationReason, observedVersion);
+      if (!delivered && observedVersion !== inspectedVersion) {
+        reconciliationReason = "changed";
+        continue;
+      }
+      const { timeoutMs, timeoutReason } = bridgeWorkerWaitPolicy(
+        delivered,
+        readPendingBridgeMessages(runDir).length > 0
+      );
+      const wake = await bridgeRuntimeCommandDeps.waitForWorkerWake(
+        runDir,
+        observedVersion,
+        timeoutMs,
+        timeoutReason
+      );
+      reconciliationReason = wake.reason;
     }
   } finally {
     clearBridgeWorkerPid(runDir, process.pid);
