@@ -1144,6 +1144,60 @@ test("board converts the agent's live remaining context % to used context", asyn
   expect(result.board).toContain("high");
 });
 
+test("board ignores narrative effort words and uses the final valid status-line effort", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const working: JudgeOutcome = {
+    ok: true,
+    verdict: { confidence: 0.9, state: "working", summary: "" },
+  };
+  const deps: GovernessDeps = {
+    ...makeDeps(working, clock, spies),
+    capturePane: () =>
+      "Audit the effort args first, then check the effort limb.\nOpus 5 | ctx: 80% | effort: medium",
+    readUsage: () => ({
+      ...makeDeps(working, clock, spies).readUsage("claude", "session"),
+      reasoningEffort: "max",
+    }),
+  };
+  const result = await governessTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig(),
+    deps
+  );
+  const board = stripAnsi(result.board);
+  expect(board).toContain("med");
+  expect(board).not.toContain("args");
+  expect(board).not.toContain("limb");
+});
+
+test("board preserves provider effort when pane has no recognized effort marker", async () => {
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  const working: JudgeOutcome = {
+    ok: true,
+    verdict: { confidence: 0.9, state: "working", summary: "" },
+  };
+  const baseDeps = makeDeps(working, clock, spies);
+  const deps: GovernessDeps = {
+    ...baseDeps,
+    capturePane: () => "Discussion only: effort limb and effort args.",
+    readUsage: (agent, sessionRef, codexHome) => ({
+      ...baseDeps.readUsage(agent, sessionRef, codexHome),
+      reasoningEffort: "max",
+    }),
+  };
+  const result = await governessTick(
+    new Map<Agent, AgentLivenessState>(),
+    baseConfig(),
+    deps
+  );
+  const board = stripAnsi(result.board);
+  expect(board).toContain("max");
+  expect(board).not.toContain("limb");
+  expect(board).not.toContain("args");
+});
+
 test("board shows latest bridge messages in both directions", async () => {
   const clock = { ms: START_MS };
   const spies = freshSpies();
