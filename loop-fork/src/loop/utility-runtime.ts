@@ -509,7 +509,7 @@ export const resolveUtilityRuntimeConfig = (
     maxJobRuntimeMs: positiveNumber(env.LOOP_UTILITY_MAX_RUNTIME_MS, 900_000),
     maxSiblingToolCalls: boundedInteger(
       env.LOOP_UTILITY_MAX_SIBLING_TOOL_CALLS,
-      12,
+      16,
       64
     ),
     maxToolCalls: boundedInteger(env.LOOP_UTILITY_MAX_TOOL_CALLS, 32, 256),

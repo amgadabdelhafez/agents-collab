@@ -1,0 +1,41 @@
+{
+  "task_id": "au-pair-sibling-batch-cap",
+  "status": "pass",
+  "required": [
+    "producer-regression",
+    "focused",
+    "full",
+    "lint",
+    "build",
+    "diff-check"
+  ],
+  "dimensions": {
+    "producer-regression": {
+      "status": "pass",
+      "evidence": "a default-configured Au Pair completes one 15-call sibling batch and journals all 15 broker events"
+    },
+    "focused": {
+      "status": "pass",
+      "command": "bun run test:file -- tests/loop/utility-pi-harness.test.ts",
+      "result": "11 pass, 0 fail"
+    },
+    "full": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "result": "exit 0"
+    },
+    "lint": {
+      "status": "pass",
+      "command": "bun run check"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "diff-check": {
+      "status": "pass",
+      "command": "git diff --check"
+    }
+  },
+  "verdict": "pass"
+}

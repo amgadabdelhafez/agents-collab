@@ -919,6 +919,97 @@ test("Direct exact reads produce evidence without contacting a model", async () 
   }
 });
 
+test("Pi accepts a fifteen-call sibling audit with the default limit", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-default-batch-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-default-batch");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const value = 1;\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return bounded evidence"],
+    authority: {},
+    executionProfile: "search",
+    id: "pi-default-batch-job",
+    kind: "inspect",
+    objective: "Audit fifteen bounded search terms",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 92);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-au-pair",
+    },
+    routeEpoch: 92,
+  });
+  let providerCalls = 0;
+  const server = serve({
+    fetch: () => {
+      providerCalls += 1;
+      if (providerCalls > 1) {
+        return response([
+          event({ role: "assistant" }),
+          event({ content: "Completed all fifteen bounded searches." }),
+          event({}, "stop"),
+        ]);
+      }
+      return response([
+        event({ role: "assistant" }),
+        event({
+          tool_calls: Array.from({ length: 15 }, (_, index) => ({
+            function: {
+              arguments: JSON.stringify({ query: `value-${index}` }),
+              name: "search_repo",
+            },
+            id: `search-${index}`,
+            index,
+            type: "function",
+          })),
+        }),
+        event({}, "tool_calls"),
+      ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+  try {
+    await runUtilityWorker(runDir, 92, request.id, {
+      LOOP_AU_PAIR_ENABLED: "1",
+      LOOP_AU_PAIR_MODEL: "fake-au-pair",
+      LOOP_AU_PAIR_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    expect(providerCalls).toBe(2);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        status: "completed",
+        summary: "Completed all fifteen bounded searches.",
+      },
+      state: "completed",
+    });
+    const events = readFileSync(
+      join(runDir, "utility", "tool-events.jsonl"),
+      "utf8"
+    );
+    expect(events.split("\n").filter(Boolean)).toHaveLength(15);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("Pi stops an oversized sibling tool batch before broker execution", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-batch-"));
   const runDir = join(repoRoot, ".loop", "runs", "pi-batch");
