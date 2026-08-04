@@ -70,6 +70,7 @@ const BRIDGE_DELIVERY_CLAIM_STALE_MS = 60_000;
 const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = 15_000;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const BRIDGE_WORKER_PENDING_RETRY_MS = 5000;
+export const BRIDGE_VERSION_PROBE_INTERVAL_MS = 250;
 export const BRIDGE_RECONCILIATION_INTERVAL_MS = 5 * 60 * 1000;
 const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
 const TMUX_LEFT_PANE = "0.0";
@@ -274,6 +275,33 @@ export interface BridgeWorkerWake {
   version: string;
 }
 
+type BridgeRunDirectoryWatchListener = (
+  eventType: "change" | "rename",
+  filename: Buffer | string | null
+) => void;
+
+interface BridgeRunDirectoryWatcher {
+  close: () => void;
+  on: (
+    event: "error",
+    listener: (error: Error) => void
+  ) => BridgeRunDirectoryWatcher;
+}
+
+export const bridgeWorkerWakeDeps = {
+  startVersionProbe: (
+    callback: () => void,
+    intervalMs: number
+  ): ReturnType<typeof setInterval> => setInterval(callback, intervalMs),
+  stopVersionProbe: (probe: ReturnType<typeof setInterval>): void => {
+    clearInterval(probe);
+  },
+  watchRunDirectory: (
+    runDir: string,
+    listener: BridgeRunDirectoryWatchListener
+  ): BridgeRunDirectoryWatcher => watch(runDir, listener),
+};
+
 export interface BridgeReconciliationState {
   lastReason: "startup" | BridgeWorkerWakeReason;
   lastReconciledAt: string;
@@ -366,7 +394,7 @@ export const waitForBridgeWorkerWake = (
   return new Promise((resolve) => {
     let settled = false;
     let versionProbe: ReturnType<typeof setInterval> | undefined;
-    let watcher: ReturnType<typeof watch> | undefined;
+    let watcher: BridgeRunDirectoryWatcher | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (reason: BridgeWorkerWakeReason): void => {
       if (settled) {
@@ -377,21 +405,24 @@ export const waitForBridgeWorkerWake = (
         clearTimeout(timer);
       }
       if (versionProbe) {
-        clearInterval(versionProbe);
+        bridgeWorkerWakeDeps.stopVersionProbe(versionProbe);
       }
       watcher?.close();
       resolve({ reason, version: currentVersion() });
     };
     timer = setTimeout(() => finish(timeoutReason), timeoutMs);
     try {
-      watcher = watch(runDir, (_eventType, filename) => {
-        if (
-          (!filename || filename.toString() === journalFilename) &&
-          currentVersion() !== observedVersion
-        ) {
-          finish("event");
+      watcher = bridgeWorkerWakeDeps.watchRunDirectory(
+        runDir,
+        (_eventType, filename) => {
+          if (
+            (!filename || filename.toString() === journalFilename) &&
+            currentVersion() !== observedVersion
+          ) {
+            finish("event");
+          }
         }
-      });
+      );
       watcher.on("error", () => {
         watcher?.close();
         watcher = undefined;
@@ -413,11 +444,11 @@ export const waitForBridgeWorkerWake = (
     // Some filesystems coalesce or omit watch notifications. A metadata-only
     // version probe closes that host gap without rereading or parsing the
     // bridge journal; the five-minute timeout remains the full reconciliation.
-    versionProbe = setInterval(() => {
+    versionProbe = bridgeWorkerWakeDeps.startVersionProbe(() => {
       if (currentVersion() !== observedVersion) {
         finish("changed");
       }
-    }, 250);
+    }, BRIDGE_VERSION_PROBE_INTERVAL_MS);
   });
 };
 
