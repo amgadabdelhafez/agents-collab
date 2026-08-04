@@ -85,6 +85,8 @@ Options:
   governess doctor <run-id>                  Check governess state, journal, epoch, and tmux readiness
   governess replay <run-id>                  Replay the durable governess control journal and report invariant violations
   governess explain <run-id> [control-id]    Explain policy, transport, evidence, and phase history for a control
+  release-gate verify <registration> <stamp> <observations>
+                                              Verify a preregistered exact-harness replay comparison
   -v, --version                            Show loop version
   -h, --help                               Show this help
 

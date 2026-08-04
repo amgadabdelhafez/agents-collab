@@ -24,6 +24,7 @@ import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
 } from "./loop/legacy-governess-compat";
+import { runReplayReleaseGateCommand } from "./loop/replay-release-gate";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 import {
@@ -100,6 +101,9 @@ const parseCodexTmuxProxyArgs = (
 
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
+  if (runReplayReleaseGateCommand(argv)) {
+    return true;
+  }
   if (argv[0] === BRIDGE_SUBCOMMAND) {
     const { runDir, source } = parseBridgeArgs(argv.slice(1));
     await runBridgeMcpServer(runDir, source);
