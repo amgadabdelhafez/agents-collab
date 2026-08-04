@@ -1,0 +1,45 @@
+{
+  "task_id": "utility-exact-plan-args",
+  "status": "pass",
+  "required": [
+    "producer-regression",
+    "focused",
+    "full",
+    "lint",
+    "build",
+    "diff-check"
+  ],
+  "dimensions": {
+    "producer-regression": {
+      "status": "pass",
+      "evidence": "fake GLM emits an out-of-scope path and wrong range for every step; Pi executes four persisted exact calls and completes"
+    },
+    "focused": {
+      "status": "pass",
+      "commands": [
+        "bun run test:file -- tests/loop/utility-pi-harness.test.ts",
+        "bun run test:file -- tests/loop/utility-runtime.test.ts",
+        "bun run test:file -- tests/loop/utility-execution-tier.test.ts"
+      ],
+      "result": "72 pass, 0 fail"
+    },
+    "full": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "result": "exit 0"
+    },
+    "lint": {
+      "status": "pass",
+      "command": "bun run check"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "diff-check": {
+      "status": "pass",
+      "command": "git diff --check"
+    }
+  },
+  "verdict": "pass"
+}

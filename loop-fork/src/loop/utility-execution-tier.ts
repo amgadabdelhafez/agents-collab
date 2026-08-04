@@ -14,7 +14,7 @@ const NANNY_MAX_UNPROFILED_ACCEPTANCE_CRITERIA = 4;
 const NANNY_MAX_UNPROFILED_READ_SCOPES = 2;
 const NANNY_MAX_UNPROFILED_REQUEST_CHARS = 6000;
 
-const directReadPlanCall = (
+export const directUtilityPlanCall = (
   step: UtilityReadPlanStep
 ): UtilityToolCall | undefined => {
   if (
@@ -91,7 +91,7 @@ export const directUtilityCalls = (
   if (plan.length === 0) {
     return undefined;
   }
-  const calls = plan.map(directReadPlanCall);
+  const calls = plan.map(directUtilityPlanCall);
   return calls.every((call): call is UtilityToolCall => call !== undefined)
     ? calls
     : undefined;

@@ -414,7 +414,7 @@ test("Pi forces synthesis before the hard tool ceiling", async () => {
   }
 });
 
-test("Pi preserves every required structured-plan call at the configured ceiling", async () => {
+test("Pi executes every structured-plan call with persisted exact arguments", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-plan-ceiling-"));
   const runDir = join(repoRoot, ".loop", "runs", "pi-plan-ceiling");
   mkdirSync(join(repoRoot, "src"), { recursive: true });
@@ -472,7 +472,6 @@ test("Pi preserves every required structured-plan call at the configured ceiling
           event({}, "stop"),
         ]);
       }
-      const path = paths[requestedReads];
       requestedReads += 1;
       return response([
         event({ role: "assistant" }),
@@ -481,9 +480,9 @@ test("Pi preserves every required structured-plan call at the configured ceiling
             {
               function: {
                 arguments: JSON.stringify({
-                  endLine: 1,
-                  path,
-                  startLine: 1,
+                  endLine: 99,
+                  path: "src/model-drift.ts",
+                  startLine: 99,
                 }),
                 name: "read_file",
               },
@@ -517,6 +516,14 @@ test("Pi preserves every required structured-plan call at the configured ceiling
       },
       state: "completed",
     });
+    const toolEvents = readFileSync(
+      join(runDir, "utility", "tool-events.jsonl"),
+      "utf8"
+    );
+    expect(toolEvents.split("\n").filter(Boolean)).toHaveLength(4);
+    expect(
+      readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8")
+    ).toContain('"toolCalls":4');
     const usage = readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8");
     expect(usage).toContain('"toolCalls":4');
   } finally {

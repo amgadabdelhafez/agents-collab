@@ -52,6 +52,7 @@ import {
 import {
   classifyUtilityExecution,
   directUtilityCalls,
+  directUtilityPlanCall,
   UTILITY_AU_PAIR_TIER,
   UTILITY_DIRECT_TIER,
   UTILITY_NANNY_TIER,
@@ -1171,6 +1172,7 @@ interface UtilityConversationBroker {
   assertComplete?: () => void;
   readonly definitions: readonly UtilityToolDefinition[];
   execute(call: UtilityToolCall): Promise<UtilityToolResult>;
+  normalizeCall?: (call: UtilityToolCall) => UtilityToolCall;
   readonly registeredDefinitions?: readonly UtilityToolDefinition[];
 }
 
@@ -1683,14 +1685,22 @@ const piToolDefinitions = (input: PiToolDefinitionInput): ToolDefinition[] =>
       description: definition.function.description,
       executionMode: "sequential",
       execute: async (_toolCallId, args, signal) => {
-        assertPiToolCallAllowed(input, definition.function.name, args, signal);
+        const requestedCall: UtilityToolCall = {
+          arguments: args,
+          name: definition.function.name,
+        };
+        const normalizedCall =
+          input.broker.normalizeCall?.(requestedCall) ?? requestedCall;
+        assertPiToolCallAllowed(
+          input,
+          normalizedCall.name,
+          normalizedCall.arguments,
+          signal
+        );
         const { name, result } = await executeUtilityBrokerCall({
           assertActive: input.assertActive,
           broker: input.broker,
-          call: {
-            arguments: args,
-            name: definition.function.name,
-          },
+          call: normalizedCall,
           jobId: input.jobId,
           toolEventFile: input.toolEventFile,
         });
@@ -1991,14 +2001,17 @@ class UtilityReadPlanToolBroker implements UtilityConversationBroker {
   private readonly brokers: readonly Awaited<
     ReturnType<typeof createUtilityToolBroker>
   >[];
+  private readonly calls: readonly (UtilityToolCall | undefined)[];
   private currentStep = 0;
   private readonly role: "Direct" | "Nanny" | "Au Pair" | "utility helper";
 
   constructor(
     brokers: readonly Awaited<ReturnType<typeof createUtilityToolBroker>>[],
+    calls: readonly (UtilityToolCall | undefined)[],
     role: "Direct" | "Nanny" | "Au Pair" | "utility helper"
   ) {
     this.brokers = brokers;
+    this.calls = calls;
     this.role = role;
   }
 
@@ -2036,6 +2049,13 @@ class UtilityReadPlanToolBroker implements UtilityConversationBroker {
     return result;
   }
 
+  normalizeCall(call: UtilityToolCall): UtilityToolCall {
+    const exactCall = this.calls[this.currentStep];
+    // Pi models select the required tool, while the harness owns immutable plan
+    // arguments so model drift cannot widen scope or waste broker retries.
+    return exactCall?.name === call.name ? exactCall : call;
+  }
+
   assertComplete(): void {
     if (this.currentStep !== this.brokers.length) {
       throw new Error(
@@ -2055,6 +2075,7 @@ export const createUtilityReadPlanBroker = async (input: {
   if (input.executionPlan.length < 1) {
     throw new Error("structured read plan cannot be empty");
   }
+  const calls = input.executionPlan.map(directUtilityPlanCall);
   const brokers = await Promise.all(
     input.executionPlan.map((step) => {
       const allowedTools = utilityToolsForExecutionProfile(
@@ -2105,7 +2126,11 @@ export const createUtilityReadPlanBroker = async (input: {
       });
     })
   );
-  return new UtilityReadPlanToolBroker(brokers, input.role ?? "utility helper");
+  return new UtilityReadPlanToolBroker(
+    brokers,
+    calls,
+    input.role ?? "utility helper"
+  );
 };
 
 const executionRequestForWorkspace = (
