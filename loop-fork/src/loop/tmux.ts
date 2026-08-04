@@ -129,7 +129,7 @@ const LAUNCH_CHARTER_DIR = "launch-charters";
 const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
 const FAILED_START_CLOSE_TIMEOUT_MS = 5000;
 const DEFAULT_UTILITY_PANE_WIDTH = "20%";
-const DEFAULT_RECON_PANE_HEIGHT = "15%";
+const DEFAULT_RECON_PANE_HEIGHT = "25%";
 const UTILITY_PANE_WIDTH_RE = /^\d+%?$/;
 
 interface SpawnResult {
@@ -1707,7 +1707,7 @@ export const composeAuPairPaneTitle = (session: string): string =>
 export const composeNannyPaneTitle = (session: string): string =>
   `nanny.${session}`;
 
-const RECON_PANE_NAMES = ["routes", "tools", "results"] as const;
+const RECON_PANE_NAMES = ["activity", "tools", "results"] as const;
 
 export const composeReconPaneTitle = (session: string, index: number): string =>
   `${RECON_PANE_NAMES[index - 1] ?? `recon${index}`}.${session}`;
@@ -1791,10 +1791,10 @@ const startNannyPane = (
 const reconPaneCount = (env: NodeJS.ProcessEnv): number => {
   const raw = env.LOOP_RECON_PANES?.trim();
   if (raw === undefined || raw === "") {
-    return 3;
+    return 1;
   }
   const count = Number.parseInt(raw, 10);
-  return Number.isInteger(count) && count >= 0 && count <= 3 ? count : 3;
+  return count === 0 ? 0 : 1;
 };
 
 const reconPaneHeight = (env: NodeJS.ProcessEnv): string => {
@@ -1854,50 +1854,6 @@ const startReconPanes = (
   );
   const panes = [first];
   labelReconPane(deps, session, first, 1);
-  if (count >= 2) {
-    const second = stablePaneTarget(
-      runTmuxCommand(deps, [
-        "tmux",
-        "split-window",
-        "-h",
-        "-P",
-        "-F",
-        "#{pane_id}",
-        "-p",
-        count === 3 ? "49" : "50",
-        "-t",
-        first,
-        "-c",
-        deps.cwd,
-        command(2),
-      ]),
-      `${session}:0.6`
-    );
-    panes.push(second);
-    labelReconPane(deps, session, second, 2);
-    if (count === 3) {
-      const third = stablePaneTarget(
-        runTmuxCommand(deps, [
-          "tmux",
-          "split-window",
-          "-h",
-          "-P",
-          "-F",
-          "#{pane_id}",
-          "-p",
-          "68",
-          "-t",
-          second,
-          "-c",
-          deps.cwd,
-          command(3),
-        ]),
-        `${session}:0.7`
-      );
-      panes.push(third);
-      labelReconPane(deps, session, third, 3);
-    }
-  }
   return panes;
 };
 const cleanupFailedPairedSessionStart = (

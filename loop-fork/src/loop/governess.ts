@@ -1054,6 +1054,20 @@ const capitalize = (value: string): string =>
   value ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
 const fitCell = (text: string, width: number): string =>
   cell(truncate(text, width), width);
+const subcells = (
+  values: readonly string[],
+  widths: readonly number[],
+  alignment: "left" | "right" = "right"
+): string =>
+  values
+    .map((value, index) => {
+      const width = widths[index] ?? 0;
+      const fitted = truncate(value, width);
+      return alignment === "left"
+        ? fitted.padEnd(width)
+        : fitted.padStart(width);
+    })
+    .join(" ");
 const colorCell = (code: string, text: string, width: number): string =>
   paint(code, fitCell(text, width));
 const pad2 = (n: number): string => String(n).padStart(2, "0");
@@ -1108,11 +1122,6 @@ const contextPct = (u: AgentUsage): number =>
   u.contextTokens > 0
     ? Math.round((u.contextTokens / u.contextWindow) * 100)
     : 0;
-
-const contextCell = (u: AgentUsage): string =>
-  u.contextTokens > 0
-    ? `${fmtTokens(u.contextTokens)}/${fmtTokens(u.contextWindow)} ${contextPct(u)}%`
-    : "—";
 
 const tokenCell = (tokens: number): string =>
   tokens > 0 ? fmtTokens(tokens) : "—";
@@ -1295,10 +1304,10 @@ const effortCell = (u: AgentUsage): string => {
 const multiplierLabel = (value: number): string =>
   Number.isInteger(value) ? `${value}x` : `${value.toFixed(1)}x`;
 
-const modeCell = (u: AgentUsage): string => {
+const modeParts = (u: AgentUsage): [string, string] => {
   const raw = (u.speed ?? u.serviceTier)?.toLowerCase();
   if (!raw) {
-    return "—";
+    return ["—", "—"];
   }
   let mode = raw;
   if (raw === "standard") {
@@ -1306,9 +1315,10 @@ const modeCell = (u: AgentUsage): string => {
   } else if (raw === "priority") {
     mode = "fast";
   }
-  return u.creditCostMultiplier
-    ? `${mode}/${multiplierLabel(u.creditCostMultiplier)}`
-    : mode;
+  return [
+    mode,
+    u.creditCostMultiplier ? multiplierLabel(u.creditCostMultiplier) : "—",
+  ];
 };
 
 const eventLabel = (event: HookEvent): string => {
@@ -1444,12 +1454,12 @@ const AGENT_COL = {
   state: 12,
   age: 5,
   model: 12,
-  run: 13,
+  run: 14,
   context: 18,
   limits: 25,
   spend: 12,
   tokens: 24,
-  activity: 15,
+  activity: 16,
   bridge: 18,
 } as const;
 
@@ -1458,12 +1468,15 @@ const AGENT_COLUMNS: [string, number][] = [
   ["STATE", AGENT_COL.state],
   ["AGE", AGENT_COL.age],
   ["MODEL", AGENT_COL.model],
-  ["EFFORT/MODE/X", AGENT_COL.run],
-  ["CONTEXT / CMP", AGENT_COL.context],
-  ["LIMITS/RESET", AGENT_COL.limits],
-  ["COST/RATE", AGENT_COL.spend],
-  ["TOKENS T/I/C/O", AGENT_COL.tokens],
-  ["TEXT/THINK/TOOL", AGENT_COL.activity],
+  [subcells(["EFF", "MODE", "X"], [4, 4, 4]), AGENT_COL.run],
+  [subcells(["USED/MAX", "PCT", "CMP"], [9, 4, 3]), AGENT_COL.context],
+  [subcells(["LIMITS", "RESET"], [9, 15], "left"), AGENT_COL.limits],
+  [subcells(["COST", "RATE"], [7, 4]), AGENT_COL.spend],
+  [
+    subcells(["TOTAL", "INPUT", "CACHE", "OUTPUT"], [5, 5, 5, 6]),
+    AGENT_COL.tokens,
+  ],
+  [subcells(["TEXT", "THINK", "TOOL"], [5, 5, 4]), AGENT_COL.activity],
   ["HUMAN/BRIDGE", AGENT_COL.bridge],
 ];
 
@@ -1490,12 +1503,15 @@ const HELPER_COLUMNS: [string, number][] = [
   ["STATE", HELPER_COL.state],
   ["AGE", HELPER_COL.age],
   ["MODEL", HELPER_COL.model],
-  ["OK/FAIL", HELPER_COL.run],
-  ["ACTIVE/QUEUE", HELPER_COL.context],
+  [subcells(["OK", "FAIL"], [6, 7]), HELPER_COL.run],
+  [subcells(["ACTIVE", "QUEUE"], [8, 9]), HELPER_COL.context],
   ["CTX MISS", HELPER_COL.limits],
-  ["COST", HELPER_COL.spend],
-  ["TOKENS T/I/C/O", HELPER_COL.tokens],
-  ["CALLS/TOOLS", HELPER_COL.activity],
+  [subcells(["COST", ""], [7, 4]), HELPER_COL.spend],
+  [
+    subcells(["TOTAL", "INPUT", "CACHE", "OUTPUT"], [5, 5, 5, 6]),
+    HELPER_COL.tokens,
+  ],
+  [subcells(["CALLS", "TOOLS"], [5, 10]), HELPER_COL.activity],
 ];
 
 const helperHeaderRow = paint(
@@ -1916,14 +1932,21 @@ const renderAgentRow = (
       ? row.liveness.lastEventAgeMs
       : row.liveness.paneIdleMs;
   }
-  const run =
-    [effortCell(row.usage), modeCell(row.usage)]
-      .filter((part) => part !== "—")
-      .join("/") || "—";
-  const ctxText = `${contextCell(row.usage)} c${row.usage.compactions}`;
+  const [mode, multiplier] = modeParts(row.usage);
+  const run = subcells([effortCell(row.usage), mode, multiplier], [4, 4, 4]);
+  const ctxText = subcells(
+    [
+      row.usage.contextTokens > 0
+        ? `${fmtTokens(row.usage.contextTokens)}/${fmtTokens(row.usage.contextWindow)}`
+        : "—",
+      row.usage.contextTokens > 0 ? `${contextPct(row.usage)}%` : "—",
+      `c${row.usage.compactions}`,
+    ],
+    [9, 4, 3]
+  );
   const ctxWarn = contextPct(row.usage) > CONTEXT_ALERT_PCT;
   const ctx = ctxWarn
-    ? colorCell(ANSI.red, `${ctxText} ⚠`, AGENT_COL.context)
+    ? colorCell(ANSI.red, ctxText, AGENT_COL.context)
     : fitCell(ctxText, AGENT_COL.context);
   const tok = tokenCell(row.usage.totalTokens);
   const inputTok = tokenCell(row.usage.inputTokens);
@@ -1938,7 +1961,6 @@ const renderAgentRow = (
     cost = `$${row.usage.costUsd.toFixed(2)}`;
   }
   const burn = costBurnCell(row.usage, meta.stats.activeMs[agent] ?? 0);
-  const spend = `${cost}/${burn}`;
   const windows = usageLimitWindows(row.usage);
   const limits = rateLimitCell(row.usage);
   const alignedLimits =
@@ -1948,7 +1970,10 @@ const renderAgentRow = (
   const resets = windows
     .map((window) => resetEtaCell(window.reset, meta.nowMs, window.resetAtMs))
     .join("/");
-  const rateLimit = windows.length > 0 ? `${alignedLimits} · ${resets}` : "—";
+  const rateLimit =
+    windows.length > 0
+      ? subcells([alignedLimits, resets], [9, 15], "left")
+      : subcells(["—", "—"], [9, 15], "left");
   const rateLimitRendered = rateLimitColor(row.usage)
     ? colorCell(
         rateLimitColor(row.usage) as string,
@@ -1956,10 +1981,18 @@ const renderAgentRow = (
         AGENT_COL.limits
       )
     : fitCell(rateLimit, AGENT_COL.limits);
-  const tokenSummary = `${tok} i${inputTok} c${cachedTok} o${outputTok}`;
-  const activity = `${countCell(row.usage.textMessages)}/${countCell(
-    row.usage.thinkingMessages
-  )}/${countCell(row.usage.toolCalls)}`;
+  const tokenSummary = subcells(
+    [tok, inputTok, cachedTok, outputTok],
+    [5, 5, 5, 6]
+  );
+  const activity = subcells(
+    [
+      countCell(row.usage.textMessages),
+      countCell(row.usage.thinkingMessages),
+      countCell(row.usage.toolCalls),
+    ],
+    [5, 5, 4]
+  );
   const groups = groupedToolCounts(row.usage);
   const bridgeActivity = bridgeActivityText(row, groups, meta);
   return ` ${[
@@ -1970,7 +2003,7 @@ const renderAgentRow = (
     fitCell(run, AGENT_COL.run),
     ctx,
     rateLimitRendered,
-    fitCell(spend, AGENT_COL.spend),
+    fitCell(subcells([cost, burn], [7, 4]), AGENT_COL.spend),
     fitCell(tokenSummary, AGENT_COL.tokens),
     activityTotal(row.usage) > 0
       ? colorCell(ANSI.yellow, activity, AGENT_COL.activity)
@@ -2052,18 +2085,39 @@ const renderUtilityAgentRow = (
     role === "nanny"
       ? sumLocalLlmUsageByJudge(meta.llmUsageByJudge)
       : emptyLocalLlmUsage();
-  const run = `${snapshot.completed}/${snapshot.failed}`;
-  const tokens = `${tokenCell(usage.totalTokens + nannyUsage.totalTokens)} i${tokenCell(usage.inputTokens + nannyUsage.inputTokens)} c${tokenCell(usage.cachedInputTokens + nannyUsage.cachedInputTokens)} o${tokenCell(usage.outputTokens + nannyUsage.outputTokens)}`;
-  const activity = `${usage.modelCalls + nannyUsage.calls}/${usage.toolCalls}`;
+  const run = subcells(
+    [String(snapshot.completed), String(snapshot.failed)],
+    [6, 7]
+  );
+  const tokens = subcells(
+    [
+      tokenCell(usage.totalTokens + nannyUsage.totalTokens),
+      tokenCell(usage.inputTokens + nannyUsage.inputTokens),
+      tokenCell(usage.cachedInputTokens + nannyUsage.cachedInputTokens),
+      tokenCell(usage.outputTokens + nannyUsage.outputTokens),
+    ],
+    [5, 5, 5, 6]
+  );
+  const activity = subcells(
+    [String(usage.modelCalls + nannyUsage.calls), String(usage.toolCalls)],
+    [5, 10]
+  );
   return ` ${[
     colorCell(ANSI.green, role, HELPER_COL.agent),
     colorCell(utilityStateColor(state), `● ${state}`, HELPER_COL.state),
     fitCell(utilityAge(snapshot, meta.nowMs), HELPER_COL.age),
     colorCell(ANSI.green, utilityModelCell(snapshot, role), HELPER_COL.model),
     fitCell(run, HELPER_COL.run),
-    fitCell(`${snapshot.active}/${snapshot.queued}`, HELPER_COL.context),
+    fitCell(
+      subcells([String(snapshot.active), String(snapshot.queued)], [8, 9]),
+      HELPER_COL.context
+    ),
     fitCell(String(snapshot.contextInsufficient), HELPER_COL.limits),
-    colorCell(ANSI.yellow, utilityCostCell(usage.costUsd), HELPER_COL.spend),
+    colorCell(
+      ANSI.yellow,
+      subcells([utilityCostCell(usage.costUsd), ""], [7, 4]),
+      HELPER_COL.spend
+    ),
     colorCell(ANSI.yellow, tokens, HELPER_COL.tokens),
     colorCell(ANSI.yellow, activity, HELPER_COL.activity),
   ].join(" ")}`;

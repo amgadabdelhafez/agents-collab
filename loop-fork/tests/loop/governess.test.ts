@@ -1368,7 +1368,7 @@ test("board converts the agent's live remaining context % to used context", asyn
   };
   const states = new Map<Agent, AgentLivenessState>();
   const result = await governessTick(states, baseConfig(), deps);
-  expect(result.board).toContain("78k/200k 39%");
+  expect(result.board).toMatch(/78k\/200k\s+39%\s+c0/);
   expect(result.board).not.toContain("122k/200k 61%");
   expect(result.board).toContain("high");
 });
@@ -1532,16 +1532,18 @@ test("board keeps warning-colored agent columns aligned", async () => {
   expect(header).toBeDefined();
   expect(claude).toBeDefined();
   expect(codex).toBeDefined();
-  const contextStart = (header as string).indexOf("CONTEXT");
+  const contextLabel = "USED/MAX";
+  const contextStart =
+    (header as string).indexOf(contextLabel) - (9 - contextLabel.length);
   const limitsStart = (header as string).indexOf("LIMITS");
   expect((claude as string).slice(contextStart, limitsStart).trim()).toContain(
-    "180k/200k 90% c0"
+    "180k/200k  90%  c0"
   );
   expect((codex as string).slice(contextStart, limitsStart).trim()).toContain(
-    "10k/200k 5% c0"
+    "10k/200k   5%  c0"
   );
-  expect(visibleBoard).toContain("180k/200k 90% c0 ⚠");
-  expect(result.board).toContain("\x1b[31m180k/200k 90% c0 ⚠");
+  expect(visibleBoard).toContain("180k/200k  90%  c0");
+  expect(result.board).toContain("\x1b[31m180k/200k  90%  c0");
 });
 
 test("board renders only aggregate dynamic usage tracker windows", async () => {
@@ -1612,9 +1614,9 @@ test("board renders only aggregate dynamic usage tracker windows", async () => {
   );
   const visibleBoard = stripAnsi(result.board);
 
-  expect(visibleBoard).toContain("LIMITS/RESET");
-  expect(visibleBoard).toContain("S43/W17 · 2h19m/29h59m");
-  expect(visibleBoard).toContain("W31 · 30h46m");
+  expect(visibleBoard).toMatch(/LIMITS\s+RESET/);
+  expect(visibleBoard).toMatch(/S43\/W17\s+2h19m\/29h59m/);
+  expect(visibleBoard).toMatch(/W31\s+30h46m/);
   const quotaRows = visibleBoard.split("\n");
   const claudeQuotaRow = quotaRows.find((line) => line.startsWith(" claude"));
   const codexQuotaRow = quotaRows.find((line) => line.startsWith(" codex"));
@@ -1729,26 +1731,26 @@ test("board shows input, cached, and output token details", async () => {
   const visibleBoard = stripAnsi(result.board);
 
   expect(visibleBoard).toMatch(
-    /AGENT\s+STATE\s+AGE\s+MODEL\s+EFFORT\/MODE\/X\s+CONTEXT \/ CMP\s+LIMITS\/RESET\s+COST\/RATE\s+TOKENS T\/I\/C\/O\s+TEXT\/THINK\/TOOL\s+HUMAN\/BRIDGE/
+    /AGENT\s+STATE\s+AGE\s+MODEL\s+EFF\s+MODE\s+X\s+USED\/MAX\s+PCT\s+CMP\s+LIMITS\s+RESET\s+COST\s+RATE\s+TOTAL\s+INPUT\s+CACHE\s+OUTPUT\s+TEXT\s+THINK\s+TOOL\s+HUMAN\/BRIDGE/
   );
   expect(visibleBoard.match(/^ AGENT/gm) ?? []).toHaveLength(1);
   expect(visibleBoard.match(/^ claude/gm) ?? []).toHaveLength(1);
   expect(visibleBoard.match(/^ codex/gm) ?? []).toHaveLength(1);
   expect(visibleBoard).not.toContain("LAST");
   expect(visibleBoard).not.toContain("OTHER");
-  expect(visibleBoard).toContain("TEXT/THINK/TOOL");
+  expect(visibleBoard).toMatch(/TEXT\s+THINK\s+TOOL/);
   expect(visibleBoard).toContain("med");
-  expect(visibleBoard).toContain("fast/2.5x");
-  expect(visibleBoard).toContain("TOKENS T/I/C/O");
-  expect(visibleBoard).toContain("CONTEXT / CMP");
+  expect(visibleBoard).toMatch(/fast\s+2\.5x/);
+  expect(visibleBoard).toMatch(/TOTAL\s+INPUT\s+CACHE\s+OUTPUT/);
+  expect(visibleBoard).toMatch(/USED\/MAX\s+PCT\s+CMP/);
   expect(visibleBoard).toContain("CMP");
   expect(visibleBoard).not.toContain("C/M");
   expect(visibleBoard).not.toContain("T85");
   expect(visibleBoard).not.toContain("IDLE");
   expect(visibleBoard).not.toContain("WORK");
-  expect(visibleBoard).toContain("COST/RATE");
-  expect(visibleBoard).toContain("LIMITS/RESET");
-  expect(visibleBoard).toMatch(/^ claude.*12\/3\/4/m);
+  expect(visibleBoard).toMatch(/COST\s+RATE/);
+  expect(visibleBoard).toMatch(/LIMITS\s+RESET/);
+  expect(visibleBoard).toMatch(/^ claude.*\s12\s+3\s+4\s/m);
   const boardLines = visibleBoard.split("\n");
   const agentHeader = boardLines.find((line) => line.startsWith(" AGENT"));
   const agentRows = boardLines.filter(
@@ -1756,6 +1758,20 @@ test("board shows input, cached, and output token details", async () => {
   );
   expect(agentHeader?.length).toBeLessThanOrEqual(176);
   expect(agentRows).toHaveLength(2);
+  const claudeRow = agentRows.find((line) => line.startsWith(" claude"));
+  for (const [label, value, width] of [
+    ["TOTAL", "13k", 5],
+    ["INPUT", "1k", 5],
+    ["CACHE", "4k", 5],
+    ["OUTPUT", "8k", 6],
+    ["TEXT", "12", 5],
+    ["THINK", "3", 5],
+    ["TOOL", "4", 4],
+  ] as const) {
+    const start = agentHeader?.indexOf(label) ?? -1;
+    expect(start).toBeGreaterThan(0);
+    expect(claudeRow?.slice(start, start + width).trim()).toBe(value);
+  }
   for (const row of agentRows) {
     expect(row.length).toBeLessThanOrEqual(176);
     expect(row).not.toContain("…");
@@ -1787,9 +1803,9 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("$42");
   expect(visibleBoard).toContain("S70/W24");
   expect(visibleBoard).toMatch(/claude\s+● thinking\s+(—|0s)\s+gpt-5\.5/);
-  expect(visibleBoard).toMatch(/S70\/W24 ·/);
+  expect(visibleBoard).toMatch(/S70\/W24\s+—\/—/);
   expect(visibleBoard).toContain("Σ est $24.00");
-  expect(visibleBoard).toMatch(/\$12\.00\/\$42\s+13k i1k c4k o8k/);
+  expect(visibleBoard).toMatch(/\$12\.00\s+\$42\s+13k\s+1k\s+4k\s+8k/);
   expect(result.board).toContain("\x1b[36mm");
   expect(result.board).toContain("\x1b[33m2k");
   expect(result.board).toContain("\x1b[35mbf16");
@@ -2011,20 +2027,27 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
     expect(board.match(/^ HELPER/gm) ?? []).toHaveLength(1);
     expect(board).not.toContain("LOWER");
     expect(board).toMatch(
-      /au pair\s+● idle\s+—\s+glm-5\.2\s+1\/1\s+0\/0\s+0\s+\$0\.0123\s+7k i5k c2k o2k\s+4\/3/
+      /au pair\s+● idle\s+—\s+glm-5\.2\s+1\s+1\s+0\s+0\s+0\s+\$0\.0123\s+7k\s+5k\s+2k\s+2k\s+4\s+3/
     );
     const boardLines = board.split("\n");
     const agentHeader = boardLines.find((line) => line.startsWith(" AGENT"));
     const helperHeader = boardLines.find((line) => line.startsWith(" HELPER"));
-    expect(agentHeader?.indexOf("TOKENS T/I/C/O")).toBe(
-      helperHeader?.indexOf("TOKENS T/I/C/O")
-    );
-    expect(agentHeader?.indexOf("TEXT/THINK/TOOL")).toBe(
-      helperHeader?.indexOf("CALLS/TOOLS")
+    expect(agentHeader?.indexOf("TOTAL")).toBe(helperHeader?.indexOf("TOTAL"));
+    expect((agentHeader?.indexOf("TEXT") ?? -1) + "TEXT".length).toBe(
+      (helperHeader?.indexOf("CALLS") ?? -1) + "CALLS".length
     );
     const auPairRow = board
       .split("\n")
       .find((line) => line.startsWith(" au pair"));
+    const totalStart = helperHeader?.indexOf("TOTAL") ?? -1;
+    const inputStart = helperHeader?.indexOf("INPUT") ?? -1;
+    const cacheStart = helperHeader?.indexOf("CACHE") ?? -1;
+    const outputStart = helperHeader?.indexOf("OUTPUT") ?? -1;
+    expect(totalStart).toBeGreaterThan(0);
+    expect(auPairRow?.slice(totalStart, totalStart + 5).trim()).toBe("7k");
+    expect(auPairRow?.slice(inputStart, inputStart + 5).trim()).toBe("5k");
+    expect(auPairRow?.slice(cacheStart, cacheStart + 5).trim()).toBe("2k");
+    expect(auPairRow?.slice(outputStart, outputStart + 6).trim()).toBe("2k");
     expect(auPairRow?.length).toBeLessThanOrEqual(176);
     expect(board.split("\n").every((line) => line.length <= 176)).toBe(true);
     expect(board).toContain(
@@ -2159,7 +2182,7 @@ test("viewportRows=5 keeps the Direct row when the direct tier holds the run's w
     const directRow = lines.find((line) => line.startsWith(" direct"));
     expect(directRow).toBeDefined();
     // The rendered row carries the executed job count, not a blank tier.
-    expect(directRow).toContain("1/0");
+    expect(directRow).toMatch(/\s1\s+0\s/);
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
@@ -2205,7 +2228,7 @@ test("Au Pair row hides the internal routed-utility state name", async () => {
       )
     );
     const board = stripAnsi(result.board);
-    expect(board).toMatch(/au pair\s+● queued.*0\/0/);
+    expect(board).toMatch(/au pair\s+● queued.*\s0\s+0\s/);
     expect(board).toContain("bridge 1→0 pending 0");
     expect(board).not.toContain("routed-j");
     expect(board).not.toContain("routed-utility");
