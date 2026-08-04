@@ -729,7 +729,7 @@ const lastEventTs = (events: HookEvent[]): string | undefined =>
 // Agents render their own live context remaining in the pane statusline
 // (e.g. "ctx: 91%"). Convert it to used context for this board's CTX cell.
 const PANE_CTX_RE = /ctx:?\s*(\d+)\s*%/i;
-const PANE_EFFORT_RE = /effort:?\s*([a-z0-9_-]+)/i;
+const PANE_EFFORT_RE = /effort:?\s*(low|medium|high|max|xhigh|ultra)\b/giu;
 const SESSION_LIMIT_RE =
   /\b(hit|reached)\s+(your\s+)?(session|usage|rate)\s+limit\b|\b(rate|usage|session)\s+limit\b/i;
 const CONTEXT_COMPACT_RE =
@@ -754,8 +754,10 @@ const parsePaneCtxRemainingPct = (paneText: string): number | undefined => {
   return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : undefined;
 };
 
-const parsePaneEffort = (paneText: string): string | undefined =>
-  paneText.match(PANE_EFFORT_RE)?.[1]?.toLowerCase();
+const parsePaneEffort = (paneText: string): string | undefined => {
+  const matches = [...paneText.matchAll(PANE_EFFORT_RE)];
+  return matches.at(-1)?.[1]?.toLowerCase();
+};
 
 // Only the TAIL of the pane counts as "current state": an idle agent produces
 // no new output, so a pre-reset limit banner higher up would otherwise match

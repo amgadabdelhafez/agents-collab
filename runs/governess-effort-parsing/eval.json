@@ -1,0 +1,28 @@
+{
+  "task_id": "governess-effort-parsing",
+  "status": "pending-review",
+  "required": ["focused", "build", "full-suite", "independent-review"],
+  "dimensions": {
+    "focused": {
+      "status": "pass",
+      "command": "bun test tests/loop/governess.test.ts",
+      "passed": 60,
+      "failed": 0
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun run build"
+    },
+    "full-suite": {
+      "status": "baseline-failure",
+      "command": "bun run test:ci",
+      "failures": [
+        "preparePairedOptions creates a loop-scoped Codex home without global MCP config"
+      ],
+      "evidence": "The failure expects gpt-5.5 while origin/main writes gpt-5.6-sol; neither constants.ts nor paired-options.test.ts differs from origin/main."
+    },
+    "independent-review": {
+      "status": "pending"
+    }
+  }
+}
