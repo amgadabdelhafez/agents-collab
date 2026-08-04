@@ -165,6 +165,83 @@ const withTempHomeRunManifest = async (
   }
 };
 
+test("paired command builders default both providers to medium effort", () => {
+  const claude = tmuxInternals.buildClaudeCommand(
+    "claude-session",
+    "opus",
+    "loop-bridge-repo-1",
+    false
+  );
+  const claudeEffortIndex = claude.indexOf("--effort");
+  expect(claude.slice(claudeEffortIndex, claudeEffortIndex + 2)).toEqual([
+    "--effort",
+    "medium",
+  ]);
+
+  const codex = tmuxInternals.buildCodexCommand(
+    "ws://127.0.0.1:4600/",
+    "gpt-test",
+    []
+  );
+  const effortValues = codex.filter((value) =>
+    value.startsWith("model_reasoning_effort=")
+  );
+  expect(effortValues).toEqual(['model_reasoning_effort="medium"']);
+});
+
+test("paired command builder maps asymmetric role effort to either provider", () => {
+  const common = {
+    claudeChannelServer: "loop-bridge-repo-1",
+    claudeSessionId: "claude-session",
+    codexProxyUrl: "ws://127.0.0.1:4600/",
+    hadSession: false,
+    nativeSubagentMode: "off" as const,
+  };
+  const roles = [
+    { agent: "claude" as const, pairWith: "codex" as const },
+    { agent: "codex" as const, pairWith: "claude" as const },
+  ];
+
+  for (const role of roles) {
+    const opts = makePairedOptions({
+      agent: role.agent,
+      codexMcpConfigArgs: [
+        "-c",
+        'mcp_servers.loop-bridge.command="loop"',
+        "-c",
+        'model_reasoning_effort="max"',
+      ],
+      driverEffort: "medium",
+      pairWith: role.pairWith,
+      reviewerEffort: "high",
+    });
+    const claude = tmuxInternals.buildPairedAgentCommand({
+      ...common,
+      agent: "claude",
+      opts,
+    });
+    const codex = tmuxInternals.buildPairedAgentCommand({
+      ...common,
+      agent: "codex",
+      opts,
+    });
+    const claudeEffortIndex = claude.indexOf("--effort");
+    const codexEffort = codex.filter((value) =>
+      value.startsWith("model_reasoning_effort=")
+    );
+    const claudeExpected = role.agent === "claude" ? "medium" : "high";
+    const codexExpected = role.agent === "codex" ? "medium" : "high";
+
+    expect(claude.slice(claudeEffortIndex, claudeEffortIndex + 2)).toEqual([
+      "--effort",
+      claudeExpected,
+    ]);
+    expect(codexEffort).toEqual([
+      `model_reasoning_effort=${JSON.stringify(codexExpected)}`,
+    ]);
+  }
+});
+
 test("runInTmux returns false when --tmux is not present", async () => {
   const delegated = await runInTmux(["--proof", "verify"], {
     findBinary: () => true,
@@ -347,6 +424,7 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
   const startCalls: Array<{
     agent: string;
     codexHome?: string;
+    configValues?: string[];
     kind?: string;
     sessionId?: string;
   }> = [];
@@ -363,7 +441,14 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
     tmuxPaneLeft: "%old-left",
     tmuxPaneRight: "%old-right",
   });
-  const opts = makePairedOptions();
+  const opts = makePairedOptions({
+    agent: "claude",
+    driverEffort: "medium",
+    driverEffortSource: "cli-role",
+    pairWith: "codex",
+    reviewerEffort: "high",
+    reviewerEffortSource: "cli-role",
+  });
   const codexMcpConfigArgs = ["-c", 'mcp_servers.loop-bridge.command="loop"'];
   const codexHome = "/repo/.loop/runs/1/codex-home";
   const codexRemoteUrl = "ws://127.0.0.1:4500";
@@ -396,6 +481,11 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = codexMcpConfigArgs;
         nextOpts.codexHome = codexHome;
+        manifest = {
+          ...manifest,
+          driverEffort: nextOpts.driverEffort,
+          reviewerEffort: nextOpts.reviewerEffort,
+        };
         return { manifest, storage };
       },
       sendKeys: (): void => undefined,
@@ -416,6 +506,7 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
         startCalls.push({
           agent,
           codexHome: launch?.codexLaunch?.env?.CODEX_HOME,
+          configValues: launch?.codexLaunch?.configValues,
           kind,
           nativeSubagentMode:
             launch?.codexLaunch?.env?.LOOP_NATIVE_SUBAGENT_MODE,
@@ -466,7 +557,9 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
       false,
       undefined,
       undefined,
-      join(storage.runDir, "claude-mcp.json")
+      join(storage.runDir, "claude-mcp.json"),
+      "off",
+      "medium"
     ),
   ]);
   const codexCommand = tmuxInternals.buildShellCommand([
@@ -475,7 +568,11 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
     ...tmuxInternals.buildCodexCommand(
       codexProxyUrl,
       "test-model",
-      codexMcpConfigArgs
+      codexMcpConfigArgs,
+      undefined,
+      undefined,
+      "off",
+      "high"
     ),
   ]);
 
@@ -491,7 +588,8 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
     {
       agent: "codex",
       codexHome,
-      kind: "work",
+      configValues: [...codexMcpConfigArgs, 'model_reasoning_effort="high"'],
+      kind: "review",
       nativeSubagentMode: "off",
       sessionId: undefined,
     },
@@ -501,7 +599,9 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
     cwd: "/repo",
     mode: "paired",
     pid: process.pid,
-    primaryAgent: "codex",
+    primaryAgent: "claude",
+    driverEffort: "medium",
+    reviewerEffort: "high",
     tmuxPaneLeftAgent: "claude",
     tmuxPaneRightAgent: "codex",
     tmuxSession: "repo-loop-1",

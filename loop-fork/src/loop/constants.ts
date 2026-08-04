@@ -1,10 +1,11 @@
 import pkg from "../../package.json";
 import { DEFAULT_CAVEMAN_MODE, DEFAULT_HELPER_CAVEMAN_MODE } from "./caveman";
+import { DEFAULT_LAUNCH_EFFORT } from "./effort";
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
 export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
-export const DEFAULT_CODEX_REASONING_EFFORT = "xhigh";
+export const DEFAULT_CODEX_REASONING_EFFORT = DEFAULT_LAUNCH_EFFORT;
 export const DEFAULT_CODEX_SERVICE_TIER = "standard";
 export const DEFAULT_CODEX_CONFIG_VALUES = [
   `model_reasoning_effort="${DEFAULT_CODEX_REASONING_EFFORT}"`,
@@ -12,7 +13,7 @@ export const DEFAULT_CODEX_CONFIG_VALUES = [
 ] as const;
 export const DEFAULT_CLAUDE_MODEL = "opus";
 // Tmux DRIVER only — the headless SDK/judge legs stay at their own defaults.
-export const DEFAULT_CLAUDE_DRIVER_EFFORT = "max";
+export const DEFAULT_CLAUDE_DRIVER_EFFORT = DEFAULT_LAUNCH_EFFORT;
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
 export const DEFAULT_COPILOT_MODEL = "auto";
 export const DEFAULT_CURSOR_MODEL = "auto";
@@ -55,6 +56,9 @@ Options:
   --cursor-only                            Use Cursor for work, review, and plan review
   --copilot-only                           Use Copilot for work, review, and plan review
   --pair-with, --reviewer <agent>          Pair the worker with a specific peer in paired mode
+  --effort <low|medium|high|xhigh|max>      Set driver and reviewer effort (default: ${DEFAULT_LAUNCH_EFFORT})
+  --effort-driver <level>                  Set only the primary driver effort
+  --effort-reviewer <level>                Set only the paired reviewer effort
   -p, --prompt <text|.md file>             Prompt text or path to a .md prompt file
   -m, --max-iterations <number>            Max loops (default: ${DEFAULT_MAX_ITERATIONS})
   -d, --done <signal>                      Done signal (default: <promise>DONE</promise>)
@@ -111,6 +115,10 @@ Environment:
   LOOP_NANNY_MAX_CONCURRENCY=<1..2>          Concurrent Nanny slots (default: 1)
   LOOP_CAVEMAN_MODE=<mode>                    Main-agent Caveman mode: off, lite, full, or ultra
   LOOP_HELPER_CAVEMAN_MODE=<mode>             Nanny/Au Pair Caveman mode: off, lite, full, or ultra
+  LOOP_EFFORT=<level>                          Driver and reviewer effort fallback
+  LOOP_DRIVER_EFFORT=<level>                   Driver effort fallback; overrides LOOP_EFFORT
+  LOOP_REVIEWER_EFFORT=<level>                 Reviewer effort fallback; overrides LOOP_EFFORT
+                                               Precedence per role: role CLI, global CLI, role env, global env, default
   LOOP_UTILITY_HARNESS=pi-sdk|legacy         Helper harness (default: pi-sdk)
   LOOP_UTILITY_PANE=0                        Hide the default Nanny and Au Pair pane column
   LOOP_UTILITY_PANE_WIDTH=<columns|percent>  Nanny and Au Pair column width (default: 20%)
@@ -143,6 +151,9 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "--proof": "proof",
   "--pair-with": "pairWith",
   "--reviewer": "pairWith",
+  "--effort": "effort",
+  "--effort-driver": "driverEffort",
+  "--effort-reviewer": "reviewerEffort",
   "--codex-model": "codexModel",
   "--codex-reviewer-model": "codexReviewerModel",
   "--copilot-model": "copilotModel",

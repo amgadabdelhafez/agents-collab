@@ -22,6 +22,7 @@ import {
   LOOP_VERSION,
   VALUE_FLAGS,
 } from "./constants";
+import { DEFAULT_LAUNCH_EFFORT, parseEffortLevel } from "./effort";
 import {
   normalizeLegacyGovernessArgs,
   withLegacyGovernessEnv,
@@ -107,6 +108,51 @@ const parsePositiveInt = (value: string, flag: string): number => {
   return num;
 };
 
+const effortEnvironment = (
+  runtimeEnv: NodeJS.ProcessEnv
+): Pick<
+  Options,
+  | "driverEffort"
+  | "driverEffortSource"
+  | "reviewerEffort"
+  | "reviewerEffortSource"
+> => {
+  const globalRaw = runtimeEnv.LOOP_EFFORT?.trim();
+  const driverRaw = runtimeEnv.LOOP_DRIVER_EFFORT?.trim();
+  const reviewerRaw = runtimeEnv.LOOP_REVIEWER_EFFORT?.trim();
+  const globalEffort = globalRaw
+    ? parseEffortLevel(globalRaw, "LOOP_EFFORT")
+    : undefined;
+  const driverEffort = driverRaw
+    ? parseEffortLevel(driverRaw, "LOOP_DRIVER_EFFORT")
+    : (globalEffort ?? DEFAULT_LAUNCH_EFFORT);
+  const reviewerEffort = reviewerRaw
+    ? parseEffortLevel(reviewerRaw, "LOOP_REVIEWER_EFFORT")
+    : (globalEffort ?? DEFAULT_LAUNCH_EFFORT);
+  let driverEffortSource: NonNullable<Options["driverEffortSource"]> =
+    "default";
+  if (globalRaw) {
+    driverEffortSource = "env-global";
+  }
+  if (driverRaw) {
+    driverEffortSource = "env-role";
+  }
+  let reviewerEffortSource: NonNullable<Options["reviewerEffortSource"]> =
+    "default";
+  if (globalRaw) {
+    reviewerEffortSource = "env-global";
+  }
+  if (reviewerRaw) {
+    reviewerEffortSource = "env-role";
+  }
+  return {
+    driverEffort,
+    driverEffortSource,
+    reviewerEffort,
+    reviewerEffortSource,
+  };
+};
+
 const requireFlagValue = (arg: string, value: string | undefined): string => {
   if (!value || value === "--" || value.startsWith("-")) {
     throw new Error(`Missing value for ${arg}`);
@@ -148,6 +194,26 @@ const applyValueFlag = (
       return;
     case "pairWith":
       opts.pairWith = parseAgent(value);
+      return;
+    case "effort": {
+      const effort = parseEffortLevel(value, "--effort");
+      if (opts.driverEffortSource !== "cli-role") {
+        opts.driverEffort = effort;
+        opts.driverEffortSource = "cli-global";
+      }
+      if (opts.reviewerEffortSource !== "cli-role") {
+        opts.reviewerEffort = effort;
+        opts.reviewerEffortSource = "cli-global";
+      }
+      return;
+    }
+    case "driverEffort":
+      opts.driverEffort = parseEffortLevel(value, "--effort-driver");
+      opts.driverEffortSource = "cli-role";
+      return;
+    case "reviewerEffort":
+      opts.reviewerEffort = parseEffortLevel(value, "--effort-reviewer");
+      opts.reviewerEffortSource = "cli-role";
       return;
     case "codexModel":
       opts.codexModel = requireTrimmedValue(
@@ -542,8 +608,20 @@ const parseValueArg = (
   const equalsFlag = [
     ["--caveman=", "cavemanMode"],
     ["--helper-caveman=", "helperCavemanMode"],
+    ["--effort=", "effort"],
+    ["--effort-driver=", "driverEffort"],
+    ["--effort-reviewer=", "reviewerEffort"],
   ].find(([prefix]) => arg.startsWith(prefix)) as
-    | [string, "cavemanMode" | "helperCavemanMode"]
+    | [
+        string,
+        (
+          | "cavemanMode"
+          | "driverEffort"
+          | "effort"
+          | "helperCavemanMode"
+          | "reviewerEffort"
+        ),
+      ]
     | undefined;
   if (!equalsFlag) {
     return undefined;
@@ -660,6 +738,7 @@ const parseArgsWithInfoHandler = (
   const normalizedArgv = normalizeLegacyGovernessArgs(argv);
   const cavemanEnv = runtimeEnv.LOOP_CAVEMAN_MODE?.trim();
   const helperCavemanEnv = runtimeEnv.LOOP_HELPER_CAVEMAN_MODE?.trim();
+  const efforts = effortEnvironment(runtimeEnv);
   const opts: Options = {
     agent: "claude",
     cavemanMode: cavemanEnv
@@ -667,6 +746,8 @@ const parseArgsWithInfoHandler = (
       : DEFAULT_CAVEMAN_MODE,
     cavemanModeSource: cavemanEnv ? "env" : "default",
     doneSignal: DEFAULT_DONE_SIGNAL,
+    driverEffort: efforts.driverEffort,
+    driverEffortSource: efforts.driverEffortSource,
     proof: "",
     format: "pretty",
     maxIterations: DEFAULT_MAX_ITERATIONS,
@@ -688,6 +769,8 @@ const parseArgsWithInfoHandler = (
     governess: true,
     pairedMode: true,
     review: "claudex",
+    reviewerEffort: efforts.reviewerEffort,
+    reviewerEffortSource: efforts.reviewerEffortSource,
     resumeRunId: undefined,
     tmux: false,
     worktree: false,

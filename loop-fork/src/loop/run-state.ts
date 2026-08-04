@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { isAgent } from "./agents";
+import { isEffortLevel } from "./effort";
 import {
   type GitResult,
   runGit as runGitCommand,
@@ -21,6 +22,7 @@ import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
 import type {
   Agent,
   CavemanMode,
+  EffortLevel,
   LaunchWorkspaceBinding,
   ReviewStatus,
   RunLifecycleState,
@@ -75,6 +77,7 @@ export interface RunManifest {
   codexThreadId: string;
   createdAt: string;
   cwd: string;
+  driverEffort?: EffortLevel;
   governess?: boolean;
   helperCavemanMode?: CavemanMode;
   launchAttemptId?: string;
@@ -85,6 +88,7 @@ export interface RunManifest {
   pid: number;
   primaryAgent?: Agent;
   repoId: string;
+  reviewerEffort?: EffortLevel;
   runId: string;
   sourceTaskSha256?: string;
   state: RunLifecycleState;
@@ -164,6 +168,7 @@ interface RunManifestInput {
   codexThreadId?: string;
   createdAt?: string;
   cwd: string;
+  driverEffort?: EffortLevel;
   governess?: boolean;
   helperCavemanMode?: CavemanMode;
   launchAttemptId?: string;
@@ -173,6 +178,7 @@ interface RunManifestInput {
   pid: number;
   primaryAgent?: Agent;
   repoId: string;
+  reviewerEffort?: EffortLevel;
   runId: string;
   sourceTaskSha256?: string;
   state?: RunLifecycleState;
@@ -200,6 +206,13 @@ const cavemanManifestFields = (
     : {}),
 });
 
+const effortManifestFields = (
+  input: Pick<RunManifestInput, "driverEffort" | "reviewerEffort">
+): Pick<RunManifest, "driverEffort" | "reviewerEffort"> => ({
+  ...(input.driverEffort ? { driverEffort: input.driverEffort } : {}),
+  ...(input.reviewerEffort ? { reviewerEffort: input.reviewerEffort } : {}),
+});
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -220,6 +233,14 @@ const firstString = (
     }
   }
   return undefined;
+};
+
+const firstEffortLevel = (
+  obj: Record<string, unknown>,
+  keys: string[]
+): EffortLevel | undefined => {
+  const value = firstString(obj, keys);
+  return value && isEffortLevel(value) ? value : undefined;
 };
 
 const firstStringArray = (
@@ -727,6 +748,7 @@ export const createRunManifest = (
     "submitted";
   return {
     ...cavemanManifestFields(input),
+    ...effortManifestFields(input),
     ...launchReservationManifestFields(input),
     ...(input.claudeChannelServer
       ? { claudeChannelServer: input.claudeChannelServer }
@@ -821,6 +843,14 @@ const readOptionalRunManifestFields = (
       ? parsedCodexAppServerPid
       : undefined;
   const primaryAgent = firstAgent(parsed, ["primaryAgent", "primary_agent"]);
+  const driverEffort = firstEffortLevel(parsed, [
+    "driverEffort",
+    "driver_effort",
+  ]);
+  const reviewerEffort = firstEffortLevel(parsed, [
+    "reviewerEffort",
+    "reviewer_effort",
+  ]);
   const cavemanMode = firstCavemanMode(parsed, ["cavemanMode", "caveman_mode"]);
   const helperCavemanMode = firstCavemanMode(parsed, [
     "helperCavemanMode",
@@ -866,6 +896,7 @@ const readOptionalRunManifestFields = (
     parsed.governess === true || parsed[LEGACY_MANIFEST_KEYS.enabled] === true;
   return {
     ...(cavemanMode ? { cavemanMode } : {}),
+    ...effortManifestFields({ driverEffort, reviewerEffort }),
     ...(claudeChannelServer ? { claudeChannelServer } : {}),
     ...(codexAppServerPid ? { codexAppServerPid } : {}),
     ...(codexRemoteUrl ? { codexRemoteUrl } : {}),

@@ -262,6 +262,7 @@ test("manifest helpers write, read, and touch run metadata", () => {
       codexRemoteUrl: "ws://127.0.0.1:4500",
       codexThreadId: "codex-1",
       cwd: "/repo",
+      driverEffort: "medium",
       helperCavemanMode: "full",
       launchAttemptId: "attempt-456",
       launchAttemptPid: 5678,
@@ -270,6 +271,7 @@ test("manifest helpers write, read, and touch run metadata", () => {
       pid: 1234,
       repoId: "repo-abc123",
       runId: "9",
+      reviewerEffort: "high",
       sourceTaskSha256: "c".repeat(64),
       state: "working",
       tmuxPaneGoverness: "repo-loop-9:0.3",
@@ -307,11 +309,13 @@ test("manifest helpers write, read, and touch run metadata", () => {
   expect(loaded).toEqual(manifest);
   expect(loaded).toMatchObject({
     cavemanMode: "lite",
+    driverEffort: "medium",
     helperCavemanMode: "full",
     launchCharters: manifest.launchCharters,
     launchAttemptId: "attempt-456",
     launchAttemptPid: 5678,
     launchClaimId: "claim-123",
+    reviewerEffort: "high",
     sourceTaskSha256: "c".repeat(64),
     workspaceBinding: {
       branchRef: "refs/heads/feature/run-state",

@@ -171,6 +171,38 @@ const applyLiveTmuxModeContract = (
   if (!livePersistedTmux) {
     return;
   }
+  const effortRoles = [
+    {
+      label: "driver",
+      manifestValue: manifest?.driverEffort,
+      optionKey: "driverEffort",
+      sourceKey: "driverEffortSource",
+    },
+    {
+      label: "reviewer",
+      manifestValue: manifest?.reviewerEffort,
+      optionKey: "reviewerEffort",
+      sourceKey: "reviewerEffortSource",
+    },
+  ] as const;
+  for (const role of effortRoles) {
+    const requested = opts[role.optionKey];
+    const source = opts[role.sourceKey];
+    const explicitCli = source === "cli-global" || source === "cli-role";
+    if (role.manifestValue) {
+      if (explicitCli && requested !== role.manifestValue) {
+        throw new Error(
+          `Cannot change --effort-${role.label} from ${role.manifestValue} to ${requested} while reusing live tmux agents; start a new loop so the actual provider invocation receives the selected effort`
+        );
+      }
+      opts[role.optionKey] = role.manifestValue;
+      opts[role.sourceKey] = "manifest";
+    } else if (explicitCli) {
+      throw new Error(
+        `Cannot apply --effort-${role.label} to legacy live tmux agents without persisted effort evidence; start a new loop`
+      );
+    }
+  }
   if (
     manifest?.cavemanMode &&
     opts.cavemanModeSource === "cli" &&
@@ -255,10 +287,12 @@ export const resolvePreparedRunState = (
     claudeSessionId: "",
     codexThreadId: "",
     cwd,
+    driverEffort: opts.driverEffort,
     mode: "paired",
     helperCavemanMode: opts.helperCavemanMode ?? DEFAULT_HELPER_CAVEMAN_MODE,
     pid: process.pid,
     repoId: storage.repoId,
+    reviewerEffort: opts.reviewerEffort,
     runId: storage.runId,
     state: "submitted",
   });
@@ -381,6 +415,19 @@ export const preparePairedOptions = (
   );
 };
 
+const preparedEffortManifestFields = (
+  opts: Options,
+  existing: RunManifest,
+  livePersistedTmux: boolean
+): Pick<RunManifest, "driverEffort" | "reviewerEffort"> => ({
+  ...(livePersistedTmux && !existing.driverEffort
+    ? {}
+    : { driverEffort: opts.driverEffort }),
+  ...(livePersistedTmux && !existing.reviewerEffort
+    ? {}
+    : { reviewerEffort: opts.reviewerEffort }),
+});
+
 export const preparePairedRun = (
   opts: Options,
   cwd = process.cwd(),
@@ -427,6 +474,7 @@ export const preparePairedRun = (
               ? resumable?.codexThreadId || opts.pairedSessionIds?.codex || ""
               : "",
           cwd,
+          ...preparedEffortManifestFields(opts, existing, livePersistedTmux),
           mode: "paired",
           helperCavemanMode: opts.helperCavemanMode,
           pid: process.pid,
@@ -445,10 +493,12 @@ export const preparePairedRun = (
         claudeSessionId: opts.pairedSessionIds?.claude ?? "",
         codexThreadId: opts.pairedSessionIds?.codex ?? "",
         cwd,
+        driverEffort: opts.driverEffort,
         mode: "paired",
         helperCavemanMode: opts.helperCavemanMode,
         pid: process.pid,
         repoId: storage.repoId,
+        reviewerEffort: opts.reviewerEffort,
         runId: storage.runId,
         state: "submitted",
       });
