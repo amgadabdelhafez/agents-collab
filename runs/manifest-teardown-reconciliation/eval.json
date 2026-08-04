@@ -1,0 +1,27 @@
+{
+  "task_id": "manifest-teardown-reconciliation",
+  "feature": "manifest-teardown-reconciliation",
+  "timestamp": "2026-08-04T12:41:00Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "live_evidence": {
+    "run": "harvto-loop-125",
+    "proxy_stopped_at": "2026-08-04T12:28:50.247Z",
+    "manifest_after_stop": "state=submitted,status=running",
+    "orphan_processes": 0
+  },
+  "checks": {
+    "focused": "20 passed, 0 failed on the cleared integrated lineage",
+    "build": "pass",
+    "format_lint": "pass",
+    "diff_check": "pass",
+    "mandatory_suite": "bun run test:ci passed every sequential test file with no failures",
+    "source_lineage_comparison": "The source branch's four failures reproduced by exact name on its untouched parent f4eb698; the cleared integrated lineage has no baseline failures."
+  },
+  "known_limitations": [
+    "This candidate does not rewrite historical stale manifests.",
+    "A stopped manifest records harness lifecycle only and does not claim that the task itself passed.",
+    "No live loop or installed binary was mutated during verification."
+  ]
+}

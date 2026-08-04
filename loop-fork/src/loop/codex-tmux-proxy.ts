@@ -9,6 +9,7 @@ import { findFreePort } from "./ports";
 import {
   isActiveRunState,
   readRunManifest,
+  setRunManifestState,
   touchRunManifest,
   updateRunManifest,
 } from "./run-state";
@@ -211,6 +212,50 @@ const shutdownRequestLifecycleEvent = (
         }
       : {}),
   };
+};
+
+const reconcileDeadTmuxManifest = (
+  runDir: string,
+  readTmuxLiveness: (session: string) => TmuxLiveness = tmuxSessionLiveness
+): boolean => {
+  const manifestPath = join(runDir, "manifest.json");
+  const observed = readRunManifest(manifestPath);
+  if (!(observed && isActiveRunState(observed.state) && observed.tmuxSession)) {
+    return false;
+  }
+  const observedSession = observed.tmuxSession;
+  try {
+    if (readTmuxLiveness(observedSession) !== "dead") {
+      return false;
+    }
+    let reconciled = false;
+    updateRunManifest(manifestPath, (current) => {
+      if (
+        !(
+          current &&
+          isActiveRunState(current.state) &&
+          current.tmuxSession === observedSession
+        )
+      ) {
+        return current;
+      }
+      reconciled = true;
+      return setRunManifestState(current, "stopped");
+    });
+    if (reconciled) {
+      appendProxyLifecycle(runDir, {
+        event: "manifest-reconciled",
+        reason: "dead-tmux",
+      });
+    }
+    return reconciled;
+  } catch (error) {
+    appendProxyLifecycle(runDir, {
+      event: "manifest-reconcile-failed",
+      failure: failureKind(error),
+    });
+    return false;
+  }
 };
 
 const extractThreadId = (value: unknown): string | undefined => {
@@ -442,6 +487,7 @@ class CodexTmuxProxy {
         return;
       }
       if (stopReason === "dead-tmux") {
+        reconcileDeadTmuxManifest(this.runDir, this.readTmuxLiveness);
         clearStaleTmuxBridgeState(this.runDir);
       }
       this.stop(stopReason);
@@ -931,6 +977,10 @@ export const runCodexTmuxProxy = async (
   const proxy = new CodexTmuxProxy(runDir, remoteUrl, threadId, port, options);
   const shutdown = (signal: "SIGINT" | "SIGTERM"): void => {
     appendProxyLifecycle(runDir, { event: "signal", signal });
+    reconcileDeadTmuxManifest(
+      runDir,
+      options.tmuxLiveness ?? tmuxSessionLiveness
+    );
     proxy.stop("signal");
   };
   const onSigint = (): void => shutdown("SIGINT");
@@ -958,6 +1008,7 @@ export const codexTmuxProxyInternals = {
   proxyHealth,
   buildProxyUrl,
   proxyInitializeResponse,
+  reconcileDeadTmuxManifest,
   observeTmuxLiveness,
   persistCodexThreadId,
   recordCodexAppServerDelegationCandidate,
