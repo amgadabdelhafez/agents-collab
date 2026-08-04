@@ -1,0 +1,19 @@
+{
+  "task": "manifest-teardown-reconciliation",
+  "verdict": "source-fix-verified-integration-pending",
+  "liveEvidence": {
+    "run": "harvto-loop-125",
+    "proxyStoppedAt": "2026-08-04T12:28:50.247Z",
+    "manifestAfterStop": "state=submitted,status=running",
+    "orphanProcesses": 0
+  },
+  "verification": {
+    "focused": "19 passed, 0 failed",
+    "build": "passed",
+    "formatAndLint": "passed for changed TypeScript files",
+    "diffCheck": "passed",
+    "repositoryVerify": "passed; root script contains configuration placeholders",
+    "fullSuite": "900 passed, 4 failed",
+    "fullSuiteDisposition": "The same four named failures reproduce on untouched parent f4eb698: preparePairedOptions creates a loop-scoped Codex home without global MCP config; runAgent launches Codex app-server with loop-scoped Codex home; buildCommand carries Codex bridge approval config for legacy exec; startPersistentAgentSession enables persistent Codex threads. No release verdict is claimed on this source branch; restack onto the cleared integrated lineage before review."
+  }
+}

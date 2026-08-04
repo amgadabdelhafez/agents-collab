@@ -224,6 +224,204 @@ test("codex tmux proxy does not let unknown liveness complete dead evidence", ()
   expect(unknown.evidence).toEqual({ consecutiveDead: 0, sawSession: true });
 });
 
+test("dead tmux reconciliation stops the still-bound active manifest", () => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  try {
+    writeRunManifest(
+      manifestPath,
+      createRunManifest({
+        claudeSessionId: "claude-1",
+        codexThreadId: "thread-1",
+        cwd: "/repo",
+        mode: "paired",
+        pid: 1234,
+        repoId: "repo-123",
+        runId: "10",
+        state: "working",
+        status: "running",
+        tmuxSession: "repo-loop-10",
+      })
+    );
+
+    expect(
+      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, () => "dead")
+    ).toBe(true);
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      state: "stopped",
+      status: "stopped",
+      tmuxSession: "repo-loop-10",
+    });
+    expect(readLifecycleEvents(root)).toContainEqual(
+      expect.objectContaining({
+        event: "manifest-reconciled",
+        reason: "dead-tmux",
+      })
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  "live",
+  "unknown",
+] as const)("%s tmux reconciliation preserves the active manifest", (liveness) => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  try {
+    writeRunManifest(
+      manifestPath,
+      createRunManifest({
+        claudeSessionId: "claude-1",
+        codexThreadId: "thread-1",
+        cwd: "/repo",
+        mode: "paired",
+        pid: 1234,
+        repoId: "repo-123",
+        runId: "10",
+        state: "working",
+        status: "running",
+        tmuxSession: "repo-loop-10",
+      })
+    );
+
+    expect(
+      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, () => liveness)
+    ).toBe(false);
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      state: "working",
+      status: "running",
+      tmuxSession: "repo-loop-10",
+    });
+    expect(
+      readLifecycleEvents(root).some(
+        (event) => event.event === "manifest-reconciled"
+      )
+    ).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("dead tmux reconciliation preserves a concurrently rebound manifest", () => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  try {
+    writeRunManifest(
+      manifestPath,
+      createRunManifest({
+        claudeSessionId: "claude-1",
+        codexThreadId: "thread-1",
+        cwd: "/repo",
+        mode: "paired",
+        pid: 1234,
+        repoId: "repo-123",
+        runId: "10",
+        state: "working",
+        status: "running",
+        tmuxSession: "repo-loop-old",
+      })
+    );
+
+    expect(
+      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, () => {
+        updateRunManifest(manifestPath, (manifest) =>
+          manifest
+            ? { ...manifest, tmuxSession: "repo-loop-replacement" }
+            : manifest
+        );
+        return "dead";
+      })
+    ).toBe(false);
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      state: "working",
+      status: "running",
+      tmuxSession: "repo-loop-replacement",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("dead tmux reconciliation preserves an already terminal manifest", () => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  let livenessReads = 0;
+  try {
+    writeRunManifest(
+      manifestPath,
+      createRunManifest({
+        claudeSessionId: "claude-1",
+        codexThreadId: "thread-1",
+        cwd: "/repo",
+        mode: "paired",
+        pid: 1234,
+        repoId: "repo-123",
+        runId: "10",
+        state: "completed",
+        status: "done",
+        tmuxSession: "repo-loop-10",
+      })
+    );
+
+    expect(
+      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, () => {
+        livenessReads += 1;
+        return "dead";
+      })
+    ).toBe(false);
+    expect(livenessReads).toBe(0);
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      state: "completed",
+      status: "done",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tmux reconciliation failure preserves the manifest and proxy shutdown path", () => {
+  const root = makeTempDir();
+  const manifestPath = join(root, "manifest.json");
+  try {
+    writeRunManifest(
+      manifestPath,
+      createRunManifest({
+        claudeSessionId: "claude-1",
+        codexThreadId: "thread-1",
+        cwd: "/repo",
+        mode: "paired",
+        pid: 1234,
+        repoId: "repo-123",
+        runId: "10",
+        state: "working",
+        status: "running",
+        tmuxSession: "repo-loop-10",
+      })
+    );
+
+    expect(
+      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, () => {
+        throw new Error("probe failed");
+      })
+    ).toBe(false);
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      state: "working",
+      status: "running",
+      tmuxSession: "repo-loop-10",
+    });
+    expect(readLifecycleEvents(root)).toContainEqual(
+      expect.objectContaining({
+        event: "manifest-reconcile-failed",
+        failure: "Error",
+      })
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("bridge delivery acknowledges only after visible pane submission", async () => {
   const root = makeTempDir();
   const message = appendBridgeMessage(
