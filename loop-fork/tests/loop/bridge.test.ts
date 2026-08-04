@@ -4063,6 +4063,70 @@ test("bridge worker wake closes the inspect-to-watch race and observes appends",
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge worker metadata probe recovers an append when the watcher swallows events", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  appendFileSync(
+    bridge.bridgeInternals.bridgePath(runDir),
+    `${JSON.stringify({ kind: "seed" })}\n`,
+    "utf8"
+  );
+
+  const closeWatcher = mock(() => undefined);
+  const watcher = {
+    close: closeWatcher,
+    on: mock(() => watcher),
+  };
+  const watchRunDirectory = mock(() => watcher);
+  let runVersionProbe: (() => void) | undefined;
+  let versionProbeIntervalMs: number | undefined;
+  const stopVersionProbe = mock(() => undefined);
+  bridge.bridgeWorkerWakeDeps.watchRunDirectory = watchRunDirectory;
+  bridge.bridgeWorkerWakeDeps.startVersionProbe = mock(
+    (callback: () => void, intervalMs: number) => {
+      runVersionProbe = callback;
+      versionProbeIntervalMs = intervalMs;
+      return {} as ReturnType<typeof setInterval>;
+    }
+  );
+  bridge.bridgeWorkerWakeDeps.stopVersionProbe = stopVersionProbe;
+
+  const observedVersion = bridge.bridgeJournalVersion(runDir);
+  let settled = false;
+  const wake = bridge
+    .waitForBridgeWorkerWake(runDir, observedVersion, 1000)
+    .then((result: { reason: string; version: string }) => {
+      settled = true;
+      return result;
+    });
+  await Promise.resolve();
+  appendFileSync(
+    bridge.bridgeInternals.bridgePath(runDir),
+    `${JSON.stringify({ kind: "message" })}\n`,
+    "utf8"
+  );
+  await Promise.resolve();
+
+  expect(watchRunDirectory).toHaveBeenCalledTimes(1);
+  expect(watcher.on).toHaveBeenCalledWith("error", expect.any(Function));
+  expect(settled).toBe(false);
+  expect(versionProbeIntervalMs).toBe(bridge.BRIDGE_VERSION_PROBE_INTERVAL_MS);
+  expect(bridge.BRIDGE_VERSION_PROBE_INTERVAL_MS).toBe(250);
+
+  expect(runVersionProbe).toBeDefined();
+  runVersionProbe?.();
+  expect(await wake).toEqual({
+    reason: "changed",
+    version: bridge.bridgeJournalVersion(runDir),
+  });
+  expect(closeWatcher).toHaveBeenCalledTimes(1);
+  expect(stopVersionProbe).toHaveBeenCalledTimes(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("runBridgeWorker persists five-minute reconciliation heartbeats", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();

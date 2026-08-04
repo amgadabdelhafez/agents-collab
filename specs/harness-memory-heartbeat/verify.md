@@ -21,8 +21,10 @@
   without waiting for the five-minute heartbeat.
 - A message appended in the inspect-to-watch race is detected by the version
   check and is not delayed.
-- Coalesced or absent filesystem events are recovered by a persisted
-  reconciliation no later than five minutes.
+- A fake watcher that swallows filesystem events proves the metadata-only
+  version probe detects an append within its pinned 250 ms interval.
+- Full reconciliation is persisted no later than five minutes even when the
+  journal does not change.
 - Restart preserves the last reconciliation record and performs startup
   reconciliation before waiting.
 - Idle CPU sampling materially improves over the deployed hot-poll worker.
