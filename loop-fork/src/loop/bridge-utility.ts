@@ -27,6 +27,7 @@ import {
   type UtilityReviewMode,
   type UtilityRisk,
   type UtilityRouteRequest,
+  type UtilityWorkShape,
   utilityRequestIsBounded,
 } from "./task-router";
 import type { Agent } from "./types";
@@ -149,7 +150,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit an independent bounded work packet before doing it natively. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Before authoring any meaningful self-contained code block, use kind=edit with one or two exact write files, one through four exact read files, scoped-edit capability, decided behavior, and concrete acceptance; do not recast code writing as inspect and do not wait until after native Edit or Write. For a bounded evidence audit with no approval authority, use kind=review and review_mode=utility-audit; peer-verdict or omitted review_mode stays with Claude/Codex. For commit-bound utility audits, use execution_profile=git-diff without raw execution_argv/execution_cwd and put literal SHAs in the objective; Au Pair calls the SHA-validating broker. Patch and audit results are non-authoritative until a full agent reviews them. For patch proposals, low means low operational side-effect/authority risk, not easy reasoning; unresolved design or ambiguous scope is not low. Reserve active write_scope files, review returned artifacts, and use guarded apply only as a full agent. Nanny handles only small one- or two-scope inspection/extraction/synthesis; Au Pair handles bounded multi-step work, utility audits, small scoped patch proposals, and reasoning-backed focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a provider: Governess chooses. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved or differently nested path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
+      "Submit an independent bounded, separable work packet before doing it natively. Set work_shape=separable only when it can finish without intermediate output from another lane; sequential, ambiguous, and cross-cutting work stays with the main agent. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Before authoring any meaningful self-contained code block, use kind=edit with one or two exact write files, one through four exact read files, scoped-edit capability, decided behavior, and concrete acceptance; do not recast code writing as inspect and do not wait until after native Edit or Write. For a bounded evidence audit with no approval authority, use kind=review and review_mode=utility-audit; peer-verdict or omitted review_mode stays with Claude/Codex. For commit-bound utility audits, use execution_profile=git-diff without raw execution_argv/execution_cwd and put literal SHAs in the objective; Au Pair calls the SHA-validating broker. Patch and audit results are non-authoritative until a full agent reviews them. For patch proposals, low means low operational side-effect/authority risk, not easy reasoning; unresolved design or ambiguous scope is not low. Reserve active write_scope files, review returned artifacts, and use guarded apply only as a full agent. Nanny handles only small one- or two-scope inspection/extraction/synthesis; Au Pair handles bounded multi-step work, utility audits, small scoped patch proposals, and reasoning-backed focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a provider: Governess chooses. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved or differently nested path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -246,8 +247,14 @@ export const UTILITY_BRIDGE_TOOLS = [
           items: { type: "string" },
           type: "array",
         },
+        work_shape: {
+          description:
+            "separable means the packet can finish without intermediate output from another lane; sequential or unknown work remains with the current driver.",
+          enum: ["separable", "sequential", "unknown"],
+          type: "string",
+        },
       },
-      required: ["objective", "kind", "acceptance_criteria"],
+      required: ["objective", "kind", "acceptance_criteria", "work_shape"],
       type: "object",
     },
     name: "route_task",
@@ -746,6 +753,13 @@ const requestRisk = (value: unknown): UtilityRisk => {
   throw new UtilityBridgeInputError("risk is invalid");
 };
 
+const requestWorkShape = (value: unknown): UtilityWorkShape => {
+  if (value === "separable" || value === "sequential" || value === "unknown") {
+    return value;
+  }
+  throw new UtilityBridgeInputError("work_shape is invalid");
+};
+
 const requestReviewMode = (value: unknown): UtilityReviewMode | undefined => {
   if (value === undefined) {
     return undefined;
@@ -1034,6 +1048,7 @@ const routeTask = (
     reviewMode: requestReviewMode(args.review_mode),
     requiredCapabilities: capabilities(args, kind),
     risk: requestRisk(args.risk),
+    workShape: requestWorkShape(args.work_shape),
     writeScope: stringArray(args, "write_scope"),
   });
   assertRouteTaskIsBounded(request);

@@ -65,6 +65,9 @@ or claim authority.
   summaries are advisory no-tools Pi completions.
 - Agents or the narrow Claude pre-tool policy submit structured requests. They
   cannot select a model, weaken route policy, or grant new authority.
+- Bounded scope is not proof of decomposability. Only requests with explicit
+  `separable` work shape can enter a utility tier; sequential, unknown, and
+  legacy-missing shapes stay with the current driver.
 - A root `UTILITY.instructions.md` and explicitly selected bounded Markdown
   references supply provider-neutral project context. They never widen route or
   broker authority and their exact versioned capsule is persisted for replay.

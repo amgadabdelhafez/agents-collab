@@ -1032,6 +1032,7 @@ const handlePreToolDelegation = (
         adoptedWorkspace
       ),
       createdAt: at,
+      workShape: "separable",
     });
   } catch {
     appendTelemetry(

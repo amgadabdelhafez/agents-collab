@@ -97,6 +97,7 @@ const requestFor = (
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
 
@@ -112,6 +113,7 @@ const editRequestFor = (id: string, path: string) =>
     requester: "claude",
     requiredCapabilities: ["inspect", "scoped-edit"],
     risk: "low",
+    workShape: "separable",
     writeScope: [path],
   });
 
@@ -202,6 +204,7 @@ test("linked focused-check cwd and argv resolve and execute in the verified work
       requester: "claude",
       requiredCapabilities: ["bounded-command", "focused-verify"],
       risk: "low",
+      workShape: "separable",
       writeScope: [],
     });
     const resolution = resolveUtilityRequestWorkspace(request, fixture.base);
@@ -351,6 +354,7 @@ test("linked structured read plan preserves every stage boundary", () => {
       requester: "claude",
       requiredCapabilities: ["inspect"],
       risk: "low",
+      workShape: "separable",
       writeScope: [],
     });
     const resolution = resolveUtilityRequestWorkspace(request, fixture.base);
@@ -686,6 +690,7 @@ test("guarded apply reuses the verified linked-worktree boundary", async () => {
     requester: "codex",
     requiredCapabilities: ["inspect", "scoped-edit"],
     risk: "low",
+    workShape: "separable",
     writeScope: [join(fixture.linkedA, "src", "sample.ts")],
   });
   appendUtilityRouteRequest(runDir, request);

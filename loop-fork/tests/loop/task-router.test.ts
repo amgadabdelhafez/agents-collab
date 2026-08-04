@@ -19,6 +19,7 @@ const requestInput = (
   requester: "codex",
   requiredCapabilities: ["scoped-edit", "focused-verify"],
   risk: "low",
+  workShape: "separable",
   writeScope: ["src/parser.ts", "tests/parser.test.ts"],
   ...overrides,
 });
@@ -59,6 +60,25 @@ test("routes a bounded low-risk edit to a capable utility tier", () => {
     reason: "utility-eligible",
     target: "utility",
     tierId: "cheap-oss",
+  });
+});
+
+test.each([
+  "sequential",
+  "unknown",
+] as const)("keeps %s work with the current driver", (workShape) => {
+  expect(routeUtilityRequest(makeRequest({ workShape }), context())).toEqual({
+    reason: "work-not-separable",
+    target: "driver",
+  });
+});
+
+test("legacy missing work shape fails closed", () => {
+  const request = makeRequest();
+  Reflect.deleteProperty(request, "workShape");
+  expect(routeUtilityRequest(request, context())).toEqual({
+    reason: "work-not-separable",
+    target: "driver",
   });
 });
 
@@ -200,13 +220,20 @@ test("fails closed on invalid generic routing policy metadata", () => {
   ).toEqual({ reason: "routing-policy-invalid", target: "driver" });
 });
 
-test("routes review to the peer and authority to escalation", () => {
+test("review and authority precedence is retained for unknown work shape", () => {
   expect(
-    routeUtilityRequest(makeRequest({ kind: "review" }), context())
+    routeUtilityRequest(
+      makeRequest({ kind: "review", workShape: "unknown" }),
+      context()
+    )
   ).toEqual({ reason: "review-needs-peer", target: "peer" });
   expect(
     routeUtilityRequest(
-      makeRequest({ kind: "review", requester: "claude" }),
+      makeRequest({
+        kind: "review",
+        requester: "claude",
+        workShape: "unknown",
+      }),
       context()
     )
   ).toEqual({
@@ -221,6 +248,7 @@ test("routes review to the peer and authority to escalation", () => {
         requester: "claude",
         reviewMode: "peer-verdict",
         requiredCapabilities: ["inspect"],
+        workShape: "unknown",
         writeScope: [],
       }),
       context()
@@ -230,7 +258,10 @@ test("routes review to the peer and authority to escalation", () => {
     target: "requester",
   });
   expect(
-    routeUtilityRequest(makeRequest({ kind: "design" }), context())
+    routeUtilityRequest(
+      makeRequest({ kind: "design", workShape: "unknown" }),
+      context()
+    )
   ).toEqual({ reason: "authority-needs-human", target: "escalate" });
 });
 

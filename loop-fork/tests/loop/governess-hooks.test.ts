@@ -190,6 +190,7 @@ describe("runHookEmit", () => {
         idempotencyKey: "auto:claude:tool-1",
         kind: "inspect",
         requester: "claude",
+        workShape: "separable",
       }),
     ]);
     expect(delegationEvents).toEqual([
@@ -242,6 +243,7 @@ describe("runHookEmit", () => {
         idempotencyKey: "auto:codex:codex-tool-1",
         kind: "inspect",
         requester: "codex",
+        workShape: "separable",
       }),
     ]);
     expect(delegationEvents).toEqual([

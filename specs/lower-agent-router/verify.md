@@ -2,7 +2,8 @@
 
 ## Routing and authority
 
-- [x] Table fixtures route bounded inspect/edit/command work to utility.
+- [x] Table fixtures route bounded, explicitly separable inspect/edit/command
+      work to utility.
 - [x] Review work routes to the main peer.
 - [x] Ambiguous, protected, destructive, remote, dependency, migration, and
       product-decision requests never route to utility.

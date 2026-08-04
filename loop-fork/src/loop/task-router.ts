@@ -40,6 +40,8 @@ export type UtilityExecutionProfile =
 
 export type UtilityRisk = "low" | "medium" | "high" | "unknown";
 
+export type UtilityWorkShape = "separable" | "sequential" | "unknown";
+
 export type UtilityRouteTarget =
   | "utility"
   | "driver"
@@ -158,16 +160,18 @@ export interface UtilityRouteRequest {
   requiredCapabilities: UtilityCapability[];
   reviewMode?: UtilityReviewMode;
   risk: UtilityRisk;
+  workShape: UtilityWorkShape;
   writeScope: string[];
 }
 
 export type UtilityRouteRequestInput = Omit<
   UtilityRouteRequest,
-  "createdAt" | "id" | "idempotencyKey"
+  "createdAt" | "id" | "idempotencyKey" | "workShape"
 > & {
   createdAt?: string;
   id?: string;
   idempotencyKey?: string;
+  workShape?: UtilityWorkShape;
 };
 
 export interface UtilityTier {
@@ -219,6 +223,7 @@ export type UtilityRouteReason =
   | "missing-governess-epoch"
   | "unsupported-kind"
   | "request-not-bounded"
+  | "work-not-separable"
   | "risk-not-low"
   | "forbidden-authority"
   | "protected-scope"
@@ -377,6 +382,7 @@ export const createUtilityRouteRequest = (
       input.requiredCapabilities
     ) as UtilityCapability[],
     risk: input.risk,
+    workShape: input.workShape ?? "unknown",
     writeScope: uniqueTrimmed(input.writeScope).map(normalizePath),
   };
   const idempotencyKey =
@@ -1016,14 +1022,25 @@ const driverDecision = (reason: UtilityRouteReason): UtilityRouteDecision => ({
   target: "driver",
 });
 
+const reviewDecision = (
+  request: UtilityRouteRequest,
+  context: UtilityRouteContext
+): UtilityRouteDecision | undefined => {
+  if (request.kind !== "review" || isUtilityAudit(request)) {
+    return undefined;
+  }
+  return request.requester === context.currentDriver
+    ? { reason: "review-needs-peer", target: "peer" }
+    : { reason: "review-stays-with-requester", target: "requester" };
+};
+
 export const routeUtilityRequest = (
   request: UtilityRouteRequest,
   context: UtilityRouteContext
 ): UtilityRouteDecision => {
-  if (request.kind === "review" && !isUtilityAudit(request)) {
-    return request.requester === context.currentDriver
-      ? { reason: "review-needs-peer", target: "peer" }
-      : { reason: "review-stays-with-requester", target: "requester" };
+  const retainedReviewDecision = reviewDecision(request, context);
+  if (retainedReviewDecision) {
+    return retainedReviewDecision;
   }
   if (isAuthorityRequest(request)) {
     return { reason: "authority-needs-human", target: "escalate" };
@@ -1056,6 +1073,9 @@ export const routeUtilityRequest = (
   }
   if (!routingPolicyIsValid(context.routingPolicy)) {
     return driverDecision("routing-policy-invalid");
+  }
+  if (request.workShape !== "separable") {
+    return driverDecision("work-not-separable");
   }
 
   const available = context.tiers.filter(

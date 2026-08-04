@@ -83,6 +83,10 @@ const toolText = (stdout: string, id: number): string => {
   )?.content;
   return content?.[0]?.text ?? "";
 };
+const rpcErrorMessage = (stdout: string, id: number): string => {
+  const response = parseJsonLines(stdout).find((entry) => entry.id === id);
+  return (response?.error as { message?: string } | undefined)?.message ?? "";
+};
 
 const runBridgeProcess = async (
   runDir: string,
@@ -712,6 +716,7 @@ test.each([
           kind: "inspect",
           objective: "Locate the bridge server definition",
           read_scope: ["src/loop"],
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -743,6 +748,9 @@ test.each([
   ).not.toContain("super-secret-idempotency-value");
   expect(readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")).toContain(
     '"contextRefs":["docs/guide.md","README.md"]'
+  );
+  expect(readFileSync(join(runDir, "utility", "jobs.jsonl"), "utf8")).toContain(
+    '"workShape":"separable"'
   );
   const status = await runBridgeProcess(
     runDir,
@@ -783,6 +791,7 @@ test("bridge MCP persists an explicit non-authoritative utility audit", async ()
           objective: "Audit the bounded source file",
           read_scope: ["src/example.ts"],
           review_mode: "utility-audit",
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -794,6 +803,43 @@ test("bridge MCP persists an explicit non-authoritative utility audit", async ()
   expect(journal).toContain(`"jobId":"${routed.taskId}"`);
   expect(journal).toContain('"reviewMode":"utility-audit"');
   expect(journal).toContain('"requiredCapabilities":["inspect"]');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test.each([
+  undefined,
+  "sequential-ish",
+])("route_task refuses missing or invalid work shape %s without creating a job", async (workShape) => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const argumentsValue: Record<string, unknown> = {
+    acceptance_criteria: ["return bounded evidence"],
+    kind: "inspect",
+    objective: "Inspect one exact file",
+    read_scope: ["README.md"],
+  };
+  if (workShape !== undefined) {
+    argumentsValue.work_shape = workShape;
+  }
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: argumentsValue,
+        name: "route_task",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  expect(rpcErrorMessage(result.stdout, 1)).toContain("work_shape is invalid");
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -934,6 +980,7 @@ test("route_task gives edit-specific recovery guidance", async () => {
           kind: "edit",
           objective: "Add one parser branch",
           read_scope: ["src/parser.ts"],
+          work_shape: "separable",
           write_scope: ["src/parser.ts"],
         },
         name: "route_task",
@@ -969,6 +1016,7 @@ test("route_task rejects an unprofiled command with exact recovery guidance", as
           objective: "Run tests in /private/tmp/registered-worktree",
           read_scope: ["tests/parser.test.ts"],
           required_capabilities: ["bounded-command", "focused-verify"],
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -1006,6 +1054,7 @@ test("route_task rejects narrative context refs before creating a doomed job", a
           kind: "inspect",
           objective: "Audit three carrying documents",
           read_scope: ["STATUS.md", "docs/result.md", "docs/comment.md"],
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -1042,6 +1091,7 @@ test("route_task rejects traversal-form context refs before normalization", asyn
           kind: "inspect",
           objective: "Read one project context document",
           read_scope: ["docs/result.md"],
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -1099,6 +1149,7 @@ test("route_task persists a structured bounded read plan", async () => {
           kind: "inspect",
           objective: "Run one structured bounded inspection plan",
           read_scope: [".", "README.md", "docs"],
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -1192,6 +1243,7 @@ test("route_task drains only older unclaimed helper results for its caller", asy
           kind: "inspect",
           objective: "Locate another bounded definition",
           read_scope: ["src/loop"],
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -1269,6 +1321,7 @@ test("external supervisor can submit a task with an explicit result target", asy
           objective: "Locate a bounded definition",
           read_scope: ["src/loop"],
           requester: "codex",
+          work_shape: "separable",
         },
         name: "route_task",
       },
@@ -2461,7 +2514,9 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
     "Never answer the human when the inbound message came from Codex"
   );
   expect(result.stdout).toContain("Delegation is mandatory");
-  expect(result.stdout).toContain('call \\"route_task\\" before using');
+  expect(result.stdout).toContain(
+    'call \\"route_task\\" with work_shape=separable before using'
+  );
   expect(result.stdout).toContain("one to three independent bounded packets");
   expect(result.stdout).toContain("Use Nanny");
   expect(result.stdout).toContain("Use Au Pair");
@@ -2533,6 +2588,7 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_plan");
   expect(routeTask.inputSchema?.properties).toHaveProperty("execution_read");
   expect(routeTask.inputSchema?.properties).toHaveProperty("review_mode");
+  expect(routeTask.inputSchema?.properties).toHaveProperty("work_shape");
   expect(
     routeTask.inputSchema?.properties?.context_refs?.description
   ).toContain("Never put prose, SHAs, source files, or absolute paths here");

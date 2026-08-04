@@ -72,6 +72,7 @@ const completedEditProposal = async (
     requester: "claude",
     requiredCapabilities: ["inspect", "scoped-edit"],
     risk: "low",
+    workShape: "separable",
     writeScope: ["src/sample.ts"],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -159,6 +160,7 @@ const routedInspectFixture = (
     requester: "codex",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -501,6 +503,7 @@ test("file-read runtime carries an exact broker range and fails closed without o
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   expect(
@@ -591,6 +594,7 @@ test("governess passes only the minimal key-file worker environment", async () =
       requester: "claude",
       requiredCapabilities: ["inspect", "focused-verify"],
       risk: "low",
+      workShape: "separable",
       writeScope: [],
     })
   );
@@ -647,6 +651,7 @@ test("governess route processing dispatches eligible work without provider I/O",
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -700,6 +705,7 @@ test("worker routing ignores cost estimates", async () => {
         requester: "claude",
         requiredCapabilities: ["inspect", "focused-verify"],
         risk: "low",
+        workShape: "separable",
         writeScope: [],
       })
     );
@@ -754,6 +760,7 @@ test("the default worker pool runs four jobs and leaves a fifth pending", async 
         requester: "claude",
         requiredCapabilities: ["inspect", "focused-verify"],
         risk: "low",
+        workShape: "separable",
         writeScope: [],
       })
     );
@@ -818,6 +825,7 @@ test("unprofiled bounded inspections persist Nanny ownership without spilling to
         requester: "claude",
         requiredCapabilities: ["inspect"],
         risk: "low",
+        workShape: "separable",
         writeScope: [],
       })
     );
@@ -889,6 +897,7 @@ test("a three-document audit without narrative context refs reaches Au Pair", as
       requester: "codex",
       requiredCapabilities: ["inspect"],
       risk: "low",
+      workShape: "separable",
       writeScope: [],
     })
   );
@@ -951,6 +960,7 @@ test("an explicit utility audit reaches Au Pair instead of the peer", async () =
       reviewMode: "utility-audit",
       requiredCapabilities: ["inspect"],
       risk: "low",
+      workShape: "separable",
       writeScope: [],
     })
   );
@@ -1010,6 +1020,7 @@ test("a full Nanny slot does not block eligible Au Pair work in the same tick", 
       requester: "claude" as const,
       requiredCapabilities: ["inspect" as const],
       risk: "low" as const,
+      workShape: "separable" as const,
       writeScope: [],
     });
   appendUtilityRouteRequest(runDir, nannyRequest("nanny-active"));
@@ -1050,6 +1061,7 @@ test("a full Nanny slot does not block eligible Au Pair work in the same tick", 
         requester: "claude",
         requiredCapabilities: ["inspect", "scoped-edit"],
         risk: "low",
+        workShape: "separable",
         writeScope: ["src/sample.ts"],
       })
     );
@@ -1083,6 +1095,7 @@ test("unprofiled bounded inspections fail closed when Nanny is unavailable", asy
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1148,6 +1161,7 @@ test("a recent Nanny inference failure opens the routing circuit", async () => {
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1197,6 +1211,7 @@ test("peer-routed reviews preserve the requester and ask the peer to act", async
     requester: "codex",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1263,6 +1278,7 @@ test.each([
     requester: "codex",
     requiredCapabilities: [],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1309,6 +1325,7 @@ test("safe key diagnostics persist in routing observability, not the output-only
     requester: "codex",
     requiredCapabilities: ["inspect", "focused-verify"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1364,6 +1381,7 @@ test("spawn failure terminates the job instead of stranding routed utility work"
     requester: "codex",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1408,6 +1426,7 @@ test("an unclaimed routed job fails closed after its claim deadline", async () =
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1456,6 +1475,7 @@ test("a dead claimed worker fails immediately and releases its write scope", asy
         requester: "codex",
         requiredCapabilities: ["scoped-edit"],
         risk: "low",
+        workShape: "separable",
         writeScope: ["src/shared.ts"],
       })
     );
@@ -1522,6 +1542,7 @@ test("a live worker remains claimed before its external runtime deadline", async
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1572,6 +1593,7 @@ test("governess externally terminates a live worker past its runtime", async () 
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1633,6 +1655,7 @@ test("terminal completion racing the reaper is preserved", async () => {
     requester: "claude",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -1710,6 +1733,7 @@ test("overlapping utility writes are not dispatched concurrently", async () => {
         requester: "codex",
         requiredCapabilities: ["scoped-edit"],
         risk: "low",
+        workShape: "separable",
         writeScope: ["src/shared.ts"],
       })
     );
@@ -1759,6 +1783,7 @@ test("worker pane is a colored output-only request, tool, and response stream", 
         requester: "codex",
         requiredCapabilities: ["inspect"],
         risk: "low",
+        workShape: "separable",
         writeScope: [],
       })
     );
@@ -1934,6 +1959,7 @@ test("utility pane keeps a failed worker response visible within its viewport", 
       requester: "claude",
       requiredCapabilities: ["inspect"],
       risk: "low",
+      workShape: "separable",
       writeScope: [],
     });
     appendUtilityRouteRequest(runDir, request);
@@ -2001,6 +2027,7 @@ test("Nanny and Au Pair panes show only their own tier", () => {
         requester: "claude",
         requiredCapabilities: ["inspect"],
         risk: "low",
+        workShape: "separable",
         writeScope: [],
       });
       appendUtilityRouteRequest(runDir, request);
@@ -2101,6 +2128,7 @@ test("a new governess epoch fences an orphaned utility claim", async () => {
     requester: "codex",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -2155,6 +2183,7 @@ test("requester routing is relative to the requester, not the current driver", a
     requester: "claude",
     requiredCapabilities: [],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -2305,6 +2334,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     requester: "codex",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -2535,6 +2565,7 @@ test("worker tools cannot read their persisted context capsule", async () => {
     requester: "codex",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -2888,6 +2919,7 @@ test("worker consolidates multiple file proposals into one guarded patch", async
     requester: "claude",
     requiredCapabilities: ["scoped-edit"],
     risk: "low",
+    workShape: "separable",
     writeScope: ["src/one.ts", "src/two.ts"],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -3014,6 +3046,7 @@ test("utility worker rejects prose-only completion without repository evidence",
     requester: "codex",
     requiredCapabilities: ["inspect"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);
@@ -3083,6 +3116,7 @@ test("a failing focused check cannot satisfy command completion evidence", async
     requester: "claude",
     requiredCapabilities: ["focused-verify"],
     risk: "low",
+    workShape: "separable",
     writeScope: [],
   });
   appendUtilityRouteRequest(runDir, request);

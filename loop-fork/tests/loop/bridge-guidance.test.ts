@@ -32,6 +32,10 @@ test("delegation guidance states the exact context and decomposition contract", 
   );
   expect(guidance).toContain("put narrative facts, SHAs, source paths");
   expect(guidance).toContain("at most two read scopes");
+  expect(guidance).toContain("work_shape=separable");
+  expect(guidance).toContain(
+    "Never label ambiguous or sequence-dependent work"
+  );
   expect(guidance).toContain("keep cross-file judgment together for Au Pair");
   expect(guidance).toContain("structured execution fields");
   expect(guidance).toContain("truthful risk");
@@ -85,6 +89,8 @@ test("route_task describes the deterministic small-edit contract", () => {
   expect(contract).toContain("review_mode");
   expect(contract).toContain("utility-audit");
   expect(contract).toContain("non-authoritative");
+  expect(contract).toContain("work_shape");
+  expect(contract).toContain("without intermediate output from another lane");
 });
 
 test("Claude channel guidance preserves evidence-dense peer traffic", () => {
