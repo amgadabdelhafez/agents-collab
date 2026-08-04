@@ -114,6 +114,29 @@ test("loop world fails nonzero for corrupt or authority-escalating input", () =>
   expect(result.stderr).toContain("cannot create observed statements");
 });
 
+test.each([
+  ["empty", "", "world assertion file cannot be empty"],
+  ["array", "[]", "world assertion file must contain one JSON object"],
+  ["malformed", "{not-json", "JSON"],
+] as const)("loop world ingest fails nonzero for %s assertion files", (_name, content, error) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-world-cli-bad-file-"));
+  tempPaths.push(root);
+  const databasePath = join(root, "world.sqlite");
+  const assertionPath = join(root, "assertion.json");
+  writeFileSync(assertionPath, content);
+
+  const result = run([
+    "world",
+    "ingest",
+    "--db",
+    databasePath,
+    "--file",
+    assertionPath,
+  ]);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain(error);
+});
+
 test("world command dispatch does not change ordinary immediate CLI handling", () => {
   const version = run(["--version"]);
   expect(version.status).toBe(0);

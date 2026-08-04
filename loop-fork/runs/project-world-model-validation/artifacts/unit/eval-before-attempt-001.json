@@ -1,0 +1,10 @@
+{
+  "task_id": "project-world-model-validation",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

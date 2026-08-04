@@ -1,0 +1,12 @@
+{
+  "task_id": "project-world-model-validation",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-04T19:57:17Z",
+  "ended_at": "2026-08-04T19:57:55Z",
+  "artifact": "runs/project-world-model-validation/artifacts/unit/attempt-001.log",
+  "command": ["bun", "run", "test:ci"]
+}

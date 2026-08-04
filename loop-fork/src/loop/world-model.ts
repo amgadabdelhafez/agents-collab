@@ -14,6 +14,7 @@ import {
 } from "./world-model-ontology";
 
 const textDecoder = new TextDecoder();
+const textEncoder = new TextEncoder();
 const LOCAL_IMPORT_RE =
   /(?:import|export)\s+(?:[^"']*?\s+from\s+)?["'](\.{1,2}\/[^"']+)["']/gu;
 const REQUIRE_RE = /require\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/gu;
@@ -175,6 +176,13 @@ const stableId = (namespace: string, value: unknown): string =>
 
 const decode = (value: Uint8Array): string => textDecoder.decode(value);
 
+const commandOutputBytes = (
+  value: string | Uint8Array | null | undefined
+): Uint8Array =>
+  typeof value === "string"
+    ? textEncoder.encode(value)
+    : (value ?? new Uint8Array());
+
 const requireIsoDate = (value: string, name: string): string => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.valueOf())) {
@@ -210,24 +218,49 @@ const statementFromRow = (row: SqlStatementRow): WorldStatement => {
   if (!isWorldStatementStatus(row.status)) {
     throw new Error(`world model contains unknown status: ${row.status}`);
   }
+  const evidenceSha256 = requireSha256(
+    row.evidence_sha256,
+    "persisted evidenceSha256"
+  );
+  if (!(row.evidence_source.trim() && row.extraction_method.trim())) {
+    throw new Error(
+      "world model contains statement without evidence source and extraction method"
+    );
+  }
+  if (!(row.authority_class.trim() && row.source_kind.trim())) {
+    throw new Error(
+      "world model contains statement without authority class and source kind"
+    );
+  }
+  if (!(row.confidence >= 0 && row.confidence <= 1)) {
+    throw new Error("world model contains confidence outside 0..1");
+  }
+  const observedAt = requireIsoDate(row.observed_at, "persisted observedAt");
+  const validFrom = requireIsoDate(row.valid_from, "persisted validFrom");
+  const validTo = row.valid_to
+    ? requireIsoDate(row.valid_to, "persisted validTo")
+    : undefined;
+  if (validTo && validTo <= validFrom) {
+    throw new Error("world model contains validTo at or before validFrom");
+  }
   return {
     authorityClass: row.authority_class,
     ...(row.commit_sha ? { commitSha: row.commit_sha } : {}),
     confidence: row.confidence,
-    evidenceSha256: row.evidence_sha256,
+    evidenceSha256,
     evidenceSource: row.evidence_source,
     extractionMethod: row.extraction_method,
     id: row.id,
     objectId: row.object_id,
-    observedAt: row.observed_at,
+    observedAt,
     predicate: row.predicate,
     ...(row.repository_id ? { repositoryId: row.repository_id } : {}),
     sourceKind: row.source_kind,
     status: row.status,
     subjectId: row.subject_id,
     ...(row.supersedes_id ? { supersedesId: row.supersedes_id } : {}),
-    validFrom: row.valid_from,
-    ...(row.valid_to ? { validTo: row.valid_to } : {}),
+    validFrom,
+    ...(validTo ? { validTo } : {}),
   };
 };
 
@@ -272,12 +305,12 @@ const git = (repoPath: string, args: string[]): Uint8Array => {
     encoding: null,
   });
   if (result.status !== 0) {
-    const detail = decode(result.stderr ?? new Uint8Array()).trim();
+    const detail = decode(commandOutputBytes(result.stderr)).trim();
     throw new Error(
       `git ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`
     );
   }
-  return new Uint8Array(result.stdout ?? []);
+  return commandOutputBytes(result.stdout);
 };
 
 export class WorldModelStore {
@@ -440,6 +473,11 @@ export class WorldModelStore {
         "world-model statements require evidence source and extraction method"
       );
     }
+    if (!(input.authorityClass.trim() && input.sourceKind.trim())) {
+      throw new Error(
+        "world-model statements require authority class and source kind"
+      );
+    }
     requireSha256(input.evidenceSha256, "evidenceSha256");
     if (!(input.confidence >= 0 && input.confidence <= 1)) {
       throw new Error("world-model confidence must be between 0 and 1");
@@ -449,6 +487,9 @@ export class WorldModelStore {
     const validTo = input.validTo
       ? requireIsoDate(input.validTo, "validTo")
       : undefined;
+    if (validTo && validTo <= validFrom) {
+      throw new Error("world-model validTo must be after validFrom");
+    }
     const id =
       input.id ??
       stableId("statement", {
@@ -535,6 +576,12 @@ export class WorldModelStore {
     if (!isWorldPredicate(input.predicate)) {
       throw new Error(`unknown world-model predicate: ${input.predicate}`);
     }
+    const authorityClass = input.authorityClass?.trim() || "candidate";
+    if (authorityClass === "deterministic-producer") {
+      throw new Error(
+        "candidate ingestion cannot claim deterministic-producer authority"
+      );
+    }
     const evidenceSource = input.evidenceSource.trim();
     if (!evidenceSource) {
       throw new Error("candidate ingestion requires an evidence source");
@@ -554,7 +601,7 @@ export class WorldModelStore {
     const object = this.putEntity(input.object);
     const observedAt = input.observedAt ?? new Date().toISOString();
     return this.putStatement({
-      authorityClass: input.authorityClass?.trim() || "candidate",
+      authorityClass,
       confidence: input.confidence ?? 0.5,
       evidenceSha256,
       evidenceSource,

@@ -1,0 +1,16 @@
+{
+  "task_id": "project-world-model-validation",
+  "status": "pass",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/project-world-model-validation/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/project-world-model-validation/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/project-world-model-validation/artifacts/unit/attempt-001.json"
+    }
+  }
+}

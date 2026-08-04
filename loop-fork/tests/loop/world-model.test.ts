@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   materializeGitRepository,
   WorldModelStore,
+  worldSha256,
 } from "../../src/loop/world-model";
 
 const FIXED_DATE = "2026-08-04T10:00:00Z";
@@ -59,6 +60,27 @@ const fixtureStore = (): { databasePath: string; store: WorldModelStore } => {
   tempPaths.push(root);
   const databasePath = join(root, "world.sqlite");
   return { databasePath, store: new WorldModelStore(databasePath) };
+};
+
+type PutStatementInput = Parameters<WorldModelStore["putStatement"]>[0];
+
+const validStatementInput = (store: WorldModelStore): PutStatementInput => {
+  const subject = store.putEntity({ key: "subject", type: "Claim" });
+  const object = store.putEntity({ key: "object", type: "Evidence" });
+  return {
+    authorityClass: "candidate",
+    confidence: 0.5,
+    evidenceSha256: worldSha256("evidence"),
+    evidenceSource: "fixture:evidence",
+    extractionMethod: "fixture",
+    objectId: object.id,
+    observedAt: FIXED_DATE,
+    predicate: "supports",
+    sourceKind: "assertion",
+    status: "asserted",
+    subjectId: subject.id,
+    validFrom: FIXED_DATE,
+  };
 };
 
 afterEach(() => {
@@ -284,6 +306,334 @@ describe("Project World Model assertions and time", () => {
     expect(
       context.statements.map((item) => item.evidenceSource).sort()
     ).toEqual(["fixture:first", "fixture:second"]);
+    store.close();
+  });
+});
+
+describe("Project World Model fail-closed validation", () => {
+  test("rejects an empty database path before SQLite opens", () => {
+    expect(() => new WorldModelStore("  ")).toThrow(
+      "world model database path cannot be empty"
+    );
+  });
+
+  test("rejects a corrupt persisted entity type on read", () => {
+    const repo = fixtureRepository();
+    const { store } = fixtureStore();
+    materializeGitRepository(store, repo);
+    store.database.run("UPDATE world_entities SET type = 'UnknownEntity'");
+    expect(() => store.entities()).toThrow(
+      "world model contains unknown entity type: UnknownEntity"
+    );
+    store.close();
+  });
+
+  test("rejects a corrupt persisted predicate on read", () => {
+    const repo = fixtureRepository();
+    const { store } = fixtureStore();
+    materializeGitRepository(store, repo);
+    store.database.run(
+      "UPDATE world_statements SET predicate = 'unknown_predicate'"
+    );
+    expect(() => store.statements()).toThrow(
+      "world model contains unknown predicate: unknown_predicate"
+    );
+    store.close();
+  });
+
+  test("rejects a corrupt persisted status on read", () => {
+    const repo = fixtureRepository();
+    const { store } = fixtureStore();
+    materializeGitRepository(store, repo);
+    store.database.run("UPDATE world_statements SET status = 'unknown_status'");
+    expect(() => store.statements()).toThrow(
+      "world model contains unknown status: unknown_status"
+    );
+    store.close();
+  });
+
+  test("rejects a corrupt persisted evidence SHA-256 on read", () => {
+    const repo = fixtureRepository();
+    const { store } = fixtureStore();
+    materializeGitRepository(store, repo);
+    store.database.run("UPDATE world_statements SET evidence_sha256 = 'BAD'");
+    expect(() => store.statements()).toThrow(
+      "persisted evidenceSha256 must be a lowercase SHA-256"
+    );
+    store.close();
+  });
+
+  test.each([
+    ["evidence source", "evidence_source"],
+    ["extraction method", "extraction_method"],
+  ] as const)("rejects a persisted statement without %s", (_name, column) => {
+    const { store } = fixtureStore();
+    store.putStatement(validStatementInput(store));
+    store.database.run(`UPDATE world_statements SET ${column} = ''`);
+    expect(() => store.statements()).toThrow(
+      "world model contains statement without evidence source and extraction method"
+    );
+    store.close();
+  });
+
+  test.each([
+    ["authority class", "authority_class"],
+    ["source kind", "source_kind"],
+  ] as const)("rejects a persisted statement without %s", (_name, column) => {
+    const { store } = fixtureStore();
+    store.putStatement(validStatementInput(store));
+    store.database.run(`UPDATE world_statements SET ${column} = ''`);
+    expect(() => store.statements()).toThrow(
+      "world model contains statement without authority class and source kind"
+    );
+    store.close();
+  });
+
+  test("rejects persisted confidence outside 0..1", () => {
+    const { store } = fixtureStore();
+    store.putStatement(validStatementInput(store));
+    store.database.run("UPDATE world_statements SET confidence = 1.01");
+    expect(() => store.statements()).toThrow(
+      "world model contains confidence outside 0..1"
+    );
+    store.close();
+  });
+
+  test.each([
+    ["observedAt", "observed_at"],
+    ["validFrom", "valid_from"],
+    ["validTo", "valid_to"],
+  ] as const)("rejects corrupt persisted %s", (name, column) => {
+    const { store } = fixtureStore();
+    store.putStatement(validStatementInput(store));
+    store.database.run(`UPDATE world_statements SET ${column} = 'not-a-date'`);
+    expect(() => store.statements()).toThrow(
+      `persisted ${name} must be an ISO date`
+    );
+    store.close();
+  });
+
+  test("rejects malformed assertion evidence SHA-256 on ingest", () => {
+    const { store } = fixtureStore();
+    expect(() =>
+      store.ingestAssertion({
+        evidenceSha256: "BAD",
+        evidenceSource: "fixture:bad-hash",
+        object: { key: "object", type: "Evidence" },
+        predicate: "supports",
+        status: "asserted",
+        subject: { key: "subject", type: "Claim" },
+      })
+    ).toThrow("evidenceSha256 must be a lowercase SHA-256");
+    store.close();
+  });
+
+  test("rejects invalid observedAt independently", () => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() =>
+      store.putStatement({ ...input, observedAt: "not-a-date" })
+    ).toThrow("observedAt must be an ISO date");
+    store.close();
+  });
+
+  test("rejects invalid validFrom independently", () => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() =>
+      store.putStatement({ ...input, validFrom: "not-a-date" })
+    ).toThrow("validFrom must be an ISO date");
+    store.close();
+  });
+
+  test("rejects invalid validTo independently", () => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() =>
+      store.putStatement({ ...input, validTo: "not-a-date" })
+    ).toThrow("validTo must be an ISO date");
+    store.close();
+  });
+
+  test("rejects a temporal range ending at or before its start", () => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() => store.putStatement({ ...input, validTo: FIXED_DATE })).toThrow(
+      "world-model validTo must be after validFrom"
+    );
+    store.close();
+  });
+
+  test("rejects persisted temporal corruption on read", () => {
+    const { store } = fixtureStore();
+    store.putStatement(validStatementInput(store));
+    store.database.run(
+      "UPDATE world_statements SET valid_to = valid_from WHERE id = (SELECT id FROM world_statements LIMIT 1)"
+    );
+    expect(() => store.statements()).toThrow(
+      "world model contains validTo at or before validFrom"
+    );
+    store.close();
+  });
+
+  test("rejects candidate deterministic-producer authority", () => {
+    const { store } = fixtureStore();
+    expect(() =>
+      store.ingestAssertion({
+        authorityClass: "deterministic-producer",
+        evidenceContent: "candidate evidence",
+        evidenceSource: "fixture:candidate",
+        object: { key: "object", type: "Evidence" },
+        predicate: "supports",
+        status: "asserted",
+        subject: { key: "subject", type: "Claim" },
+      })
+    ).toThrow(
+      "candidate ingestion cannot claim deterministic-producer authority"
+    );
+    store.close();
+  });
+
+  test("rejects candidate ingestion without an evidence source", () => {
+    const { store } = fixtureStore();
+    expect(() =>
+      store.ingestAssertion({
+        evidenceContent: "candidate evidence",
+        evidenceSource: "  ",
+        object: { key: "object", type: "Evidence" },
+        predicate: "supports",
+        status: "asserted",
+        subject: { key: "subject", type: "Claim" },
+      })
+    ).toThrow("candidate ingestion requires an evidence source");
+    store.close();
+  });
+
+  test.each([
+    ["unknown entity type", { key: "subject", type: "UnknownEntity" }],
+    ["empty entity key", { key: "  ", type: "Claim" }],
+  ] as const)("rejects %s", (_name, entity) => {
+    const { store } = fixtureStore();
+    expect(() => store.putEntity(entity)).toThrow();
+    store.close();
+  });
+
+  test.each([
+    [
+      "predicate",
+      { predicate: "unknown_predicate" },
+      "unknown world-model predicate: unknown_predicate",
+    ],
+    [
+      "status",
+      { status: "unknown_status" },
+      "unknown world-model status: unknown_status",
+    ],
+    [
+      "observed authority",
+      { authorityClass: "candidate", status: "observed" },
+      "observed statements require deterministic-producer authority",
+    ],
+    [
+      "evidence source",
+      { evidenceSource: "" },
+      "world-model statements require evidence source and extraction method",
+    ],
+    [
+      "extraction method",
+      { extractionMethod: "" },
+      "world-model statements require evidence source and extraction method",
+    ],
+    [
+      "authority class",
+      { authorityClass: "" },
+      "world-model statements require authority class and source kind",
+    ],
+    [
+      "source kind",
+      { sourceKind: "" },
+      "world-model statements require authority class and source kind",
+    ],
+  ] as const)("rejects invalid direct statement %s", (_name, change, error) => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() =>
+      store.putStatement({ ...input, ...change } as PutStatementInput)
+    ).toThrow(error);
+    store.close();
+  });
+
+  test("rejects invalid confidence", () => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() => store.putStatement({ ...input, confidence: 1.01 })).toThrow(
+      "world-model confidence must be between 0 and 1"
+    );
+    store.close();
+  });
+
+  test("rejects missing statement evidence provenance", () => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() => store.putStatement({ ...input, evidenceSource: "" })).toThrow(
+      "world-model statements require evidence source and extraction method"
+    );
+    store.close();
+  });
+
+  test("rejects a missing superseded statement", () => {
+    const { store } = fixtureStore();
+    const input = validStatementInput(store);
+    expect(() =>
+      store.putStatement({ ...input, supersedesId: "statement:missing" })
+    ).toThrow("superseded statement not found: statement:missing");
+    store.close();
+  });
+
+  test("rejects unknown candidate predicate", () => {
+    const { store } = fixtureStore();
+    expect(() =>
+      store.ingestAssertion({
+        evidenceContent: "candidate evidence",
+        evidenceSource: "fixture:candidate",
+        object: { key: "object", type: "Evidence" },
+        predicate: "unknown_predicate",
+        status: "asserted",
+        subject: { key: "subject", type: "Claim" },
+      })
+    ).toThrow("unknown world-model predicate: unknown_predicate");
+    store.close();
+  });
+
+  test("rejects unknown candidate status", () => {
+    const { store } = fixtureStore();
+    expect(() =>
+      store.ingestAssertion({
+        evidenceContent: "candidate evidence",
+        evidenceSource: "fixture:candidate",
+        object: { key: "object", type: "Evidence" },
+        predicate: "supports",
+        status: "unknown_status",
+        subject: { key: "subject", type: "Claim" },
+      })
+    ).toThrow("invalid candidate statement status: unknown_status");
+    store.close();
+  });
+
+  test("rejects empty seeds and each context bound independently", () => {
+    const { store } = fixtureStore();
+    expect(() => store.context({ seeds: ["  "] })).toThrow(
+      "world context requires at least one non-empty seed"
+    );
+    expect(() => store.context({ maxDepth: 11, seeds: ["subject"] })).toThrow(
+      "world context maxDepth must be an integer from 0 to 10"
+    );
+    expect(() =>
+      store.context({ maxStatements: 0, seeds: ["subject"] })
+    ).toThrow("world context maxStatements must be an integer from 1 to 5000");
+    expect(() =>
+      store.context({ at: "not-a-date", seeds: ["subject"] })
+    ).toThrow("at must be an ISO date");
     store.close();
   });
 });
