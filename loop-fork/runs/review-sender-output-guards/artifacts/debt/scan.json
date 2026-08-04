@@ -1,0 +1,7 @@
+{
+  "task_id": "review-sender-output-guards",
+  "scanned_at": "2026-08-04T18:32:47Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

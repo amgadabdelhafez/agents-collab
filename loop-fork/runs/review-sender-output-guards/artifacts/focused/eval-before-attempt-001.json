@@ -1,0 +1,10 @@
+{
+  "task_id": "review-sender-output-guards",
+  "status": "pending",
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

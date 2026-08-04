@@ -1,0 +1,8 @@
+{
+  "id": "review-sender-output-guards",
+  "mode": "planned",
+  "created_at": "2026-08-04T18:28:36Z",
+  "status": "done",
+  "description": "Close Claude's survived mutation by proving the stamped review sender refuses exit-zero malformed gate output",
+  "ended_at": "2026-08-04T18:32:47Z"
+}

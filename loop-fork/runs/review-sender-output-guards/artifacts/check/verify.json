@@ -1,0 +1,17 @@
+{
+  "task_id": "review-sender-output-guards",
+  "dimension": "check",
+  "attempt": "003",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-04T18:32:38Z",
+  "ended_at": "2026-08-04T18:32:38Z",
+  "artifact": "runs/review-sender-output-guards/artifacts/check/attempt-003.log",
+  "command": [
+    "bunx",
+    "ultracite",
+    "check",
+    "tests/loop/review-request-gate.test.ts"
+  ]
+}

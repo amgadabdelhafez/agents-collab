@@ -1,0 +1,64 @@
+task_id: review-sender-output-guards
+dimension: check
+attempt: 001
+started_at: 2026-08-04T18:31:02Z
+command: bun run check
+--- output ---
+$ ultracite check
+runs/review-sender-output-guards/artifacts/check/eval-before-attempt-001.json format ━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "review-sender-output-guards",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"focused"
+     7    │ - ··],
+        4 │ + ··"required":·["unit",·"focused"],
+     8  5 │     "dimensions": {
+     9  6 │       "unit": {
+
+
+runs/review-sender-output-guards/artifacts/focused/eval-before-attempt-001.json format ━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "review-sender-output-guards",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/review-sender-output-guards/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "review-sender-output-guards",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"focused"
+     7    │ - ··],
+        4 │ + ··"required":·["unit",·"focused"],
+     8  5 │     "dimensions": {
+     9  6 │       "unit": {
+
+
+Checked 749 files in 231ms. No fixes applied.
+Found 3 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+
+
+error: script "check" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-04T18:31:02Z

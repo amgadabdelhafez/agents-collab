@@ -1,0 +1,52 @@
+{
+  "task_id": "review-sender-output-guards",
+  "status": "pass",
+  "required": ["unit", "focused", "check", "build", "full"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/review-sender-output-guards/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/review-sender-output-guards/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/review-sender-output-guards/artifacts/unit/attempt-001.json"
+    },
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/review-sender-output-guards/artifacts/focused/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/review-sender-output-guards/artifacts/focused/attempt-001.log",
+      "latest_attempt_meta": "runs/review-sender-output-guards/artifacts/focused/attempt-001.json"
+    },
+    "check": {
+      "status": "pass",
+      "artifact": "runs/review-sender-output-guards/artifacts/check/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/review-sender-output-guards/artifacts/check/attempt-003.log",
+      "latest_attempt_meta": "runs/review-sender-output-guards/artifacts/check/attempt-003.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/review-sender-output-guards/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/review-sender-output-guards/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/review-sender-output-guards/artifacts/build/attempt-001.json"
+    },
+    "full": {
+      "status": "pass",
+      "artifact": "runs/review-sender-output-guards/artifacts/full/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/review-sender-output-guards/artifacts/full/attempt-001.log",
+      "latest_attempt_meta": "runs/review-sender-output-guards/artifacts/full/attempt-001.json"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "task_id": "review-sender-output-guards",
+  "status": "pending",
+  "required": ["unit", "focused"],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/review-sender-output-guards/artifacts/focused/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/review-sender-output-guards/artifacts/focused/attempt-001.log",
+      "latest_attempt_meta": "runs/review-sender-output-guards/artifacts/focused/attempt-001.json"
+    }
+  }
+}

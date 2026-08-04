@@ -5,4 +5,8 @@
 - A descendant missing any protection exits nonzero with empty stdout.
 - The governed sender calls the durable channel exactly once with the stamped body after a pass.
 - A gate failure makes zero durable-channel calls.
+- An exit-zero gate output without `REVIEW_GATE_STAMP_V1` is refused and makes
+  zero durable-channel calls.
+- An exit-zero gate output without `status=PASS` is refused and makes zero
+  durable-channel calls.
 - The real candidate passes against cleared tip `d63ce10258a27e30946a4b92f7419870b8bb56bd`.

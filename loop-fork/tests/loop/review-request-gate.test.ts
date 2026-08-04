@@ -67,7 +67,12 @@ const runGate = (root: string, requiredTip: string, candidate = "HEAD") =>
     { cwd: root, stderr: "pipe", stdout: "pipe" }
   );
 
-const runSender = (root: string, requiredTip: string, candidate = "HEAD") => {
+const runSender = (
+  root: string,
+  requiredTip: string,
+  candidate = "HEAD",
+  senderPath = sender
+) => {
   const fakeChannel = join(root, "fake-xchan.sh");
   const channelLog = join(root, "channel.log");
   writeFileSync(
@@ -78,7 +83,7 @@ const runSender = (root: string, requiredTip: string, candidate = "HEAD") => {
   const result = spawnSync(
     [
       "bash",
-      sender,
+      senderPath,
       "--required-tip",
       requiredTip,
       "--candidate",
@@ -100,6 +105,22 @@ const runSender = (root: string, requiredTip: string, candidate = "HEAD") => {
     }
   );
   return { channelLog, result };
+};
+
+const senderWithGateOutput = (root: string, output: string): string => {
+  const fixtureDir = join(root, "sender-fixture");
+  mkdirSync(fixtureDir, { recursive: true });
+  const fixtureSender = join(fixtureDir, "send-stamped-review.sh");
+  const fixtureGate = join(fixtureDir, "review-request-gate.sh");
+  const gateOutput = output
+    .split("\n")
+    .map((line) => `printf '%s\\n' ${JSON.stringify(line)}`)
+    .join("\n");
+  writeFileSync(fixtureSender, readFileSync(sender, "utf8"));
+  writeFileSync(fixtureGate, `#!/bin/sh\n${gateOutput}\n`);
+  chmodSync(fixtureSender, 0o755);
+  chmodSync(fixtureGate, 0o755);
+  return fixtureSender;
 };
 
 test("review request gate emits a provenance stamp only for protected lineage", () => {
@@ -193,4 +214,41 @@ test("stamped sender makes zero channel calls when the gate refuses lineage", ()
   expect(result.stderr.toString()).toContain(
     "does not descend from required tip"
   );
+});
+
+test("stamped sender refuses exit-zero gate output without a provenance stamp", () => {
+  const { requiredTip, root } = fixture();
+  const fixtureSender = senderWithGateOutput(root, "status=PASS");
+
+  const { channelLog, result } = runSender(
+    root,
+    requiredTip,
+    "HEAD",
+    fixtureSender
+  );
+
+  expect(result.exitCode).toBe(1);
+  expect(existsSync(channelLog)).toBe(false);
+  expect(result.stderr.toString()).toContain(
+    "gate output has no provenance stamp"
+  );
+});
+
+test("stamped sender refuses exit-zero gate output without PASS status", () => {
+  const { requiredTip, root } = fixture();
+  const fixtureSender = senderWithGateOutput(
+    root,
+    "REVIEW_GATE_STAMP_V1\nstatus=FAIL"
+  );
+
+  const { channelLog, result } = runSender(
+    root,
+    requiredTip,
+    "HEAD",
+    fixtureSender
+  );
+
+  expect(result.exitCode).toBe(1);
+  expect(existsSync(channelLog)).toBe(false);
+  expect(result.stderr.toString()).toContain("gate output has no PASS status");
 });

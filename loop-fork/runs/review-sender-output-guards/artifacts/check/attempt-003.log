@@ -1,0 +1,12 @@
+task_id: review-sender-output-guards
+dimension: check
+attempt: 003
+started_at: 2026-08-04T18:32:38Z
+command: bunx ultracite check tests/loop/review-request-gate.test.ts
+--- output ---
+Checked 1 file in 6ms. No fixes applied.
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-04T18:32:38Z

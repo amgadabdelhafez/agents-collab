@@ -1,0 +1,18 @@
+{
+  "task_id": "review-sender-output-guards",
+  "dimension": "focused",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-04T18:30:52Z",
+  "ended_at": "2026-08-04T18:30:53Z",
+  "artifact": "runs/review-sender-output-guards/artifacts/focused/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "test:file",
+    "--",
+    "tests/loop/review-request-gate.test.ts"
+  ]
+}

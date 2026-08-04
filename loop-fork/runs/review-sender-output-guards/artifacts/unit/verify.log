@@ -1,0 +1,27 @@
+task_id: review-sender-output-guards
+dimension: unit
+attempt: 001
+started_at: 2026-08-04T18:32:18Z
+command: bun run test:file -- tests/loop/review-request-gate.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/review-request-gate.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/review-request-gate.test.ts:
+(pass) review request gate emits a provenance stamp only for protected lineage [108.50ms]
+(pass) review request gate emits nothing for a sibling lineage [99.62ms]
+(pass) review request gate emits nothing when a protection symbol is absent [106.02ms]
+(pass) stamped sender calls the channel once with gate-certified output [247.49ms]
+(pass) stamped sender makes zero channel calls when the gate refuses lineage [110.44ms]
+(pass) stamped sender refuses exit-zero gate output without a provenance stamp [202.40ms]
+(pass) stamped sender refuses exit-zero gate output without PASS status [186.24ms]
+
+ 7 pass
+ 0 fail
+ 91 expect() calls
+Ran 7 tests across 1 file. [1077.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-04T18:32:20Z
