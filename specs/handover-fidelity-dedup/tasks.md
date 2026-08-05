@@ -8,4 +8,5 @@
 - [x] Reconcile stale terminal content on the first Governess frame only.
 - [x] Add producer-backed regressions and tamper-negative coverage.
 - [x] Run focused and full verification.
-- [ ] Commit and request stamped exact-SHA supervisor review.
+- [x] Commit the review-ready candidate and prepare stamped exact-SHA review.
+- [ ] Receive the supervisor's exact-SHA disposition.
