@@ -20,3 +20,5 @@
 - [x] Replace duplicate runtime/activity rows with one unified agent row.
 - [x] Add unified-table layout, width and field-grouping regressions.
 - [x] Rebuild and narrowly refresh the live governess pane.
+- [x] Preserve the original handoff transaction epoch and exact manifest across
+      a Governess-only restart while advancing the control-plane fence.

@@ -24,7 +24,10 @@ import {
   readExitControl,
   replacementLoopArgs,
 } from "../../src/loop/governess-exit";
-import { acceptGovernessHandoff } from "../../src/loop/governess-handoff";
+import {
+  acceptGovernessHandoff,
+  readGovernessHandoffManifest,
+} from "../../src/loop/governess-handoff";
 import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
 
 test("x opens a reversible menu and only explicit e or h selects an exit", () => {
@@ -48,11 +51,13 @@ test("persisted exit state is validated", () => {
   expect(
     readExitControl({
       exitRequested: {},
+      handoverEpoch: 41,
       mode: "handover",
       notified: {},
       requestedAt: "2026-08-05T02:38:25.017Z",
     })
   ).toEqual({
+    handoverEpoch: 41,
     mode: "handover",
     notified: {},
     requestedAt: "2026-08-05T02:38:25.017Z",
@@ -76,6 +81,9 @@ test("persisted exit state is validated", () => {
     mode: "idle",
     notified: {},
   });
+  expect(
+    readExitControl({ handoverEpoch: -1, mode: "handover", notified: {} })
+  ).toEqual({ mode: "handover", notified: {} });
   expect(readExitControl({ mode: "launched", notified: {} })).toEqual({
     launchError: "replacement session was not persisted",
     mode: "launch-error",
@@ -816,6 +824,54 @@ test("handover launch failure never marks or kills the old loop", async () => {
   expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
   expect(destructive).toEqual([]);
   expect(state.exitControl.mode).toBe("launch-error");
+});
+
+test("handover restart keeps the persisted transaction epoch for replacement launch", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.governessEpoch = 41;
+  writeHandoverBundles(config, state);
+  const handoffDir = join(config.runDir as string, "handoff", "41");
+  state.handoverBundles = {
+    claude: join(handoffDir, "claude.json"),
+    codex: join(handoffDir, "codex.json"),
+  };
+  state.exitControl = {
+    exitRequested: { claude: true, codex: true },
+    mode: "handover",
+    notified: { claude: true, codex: true },
+  };
+
+  // A restarted Governess must acquire a fresh fencing epoch without
+  // rebinding the already-complete handoff transaction to that epoch.
+  state.governessEpoch = 99;
+  config.epoch = 99;
+  let launchedManifest: string | undefined;
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () => "",
+    fenceCurrent: () => true,
+    launchReplacementLoop: (_config: GovernessConfig, manifest: string) => {
+      launchedManifest = manifest;
+      return { ok: true, session: "replacement" };
+    },
+    now: () => 0,
+    paneCommand: () => "0:zsh",
+    replacementSessionAlive: () => true,
+    replacementSessionReady: () => true,
+    saveState: () => undefined,
+  };
+
+  expect(await advanceHandoverControl(config, deps, state, {})).toEqual({
+    status: "waiting",
+  });
+  expect(state.exitControl.mode).toBe("launched");
+  expect(state.exitControl.handoverEpoch).toBe(41);
+  expect(launchedManifest).toBe(join(handoffDir, "manifest.json"));
+  expect(readGovernessHandoffManifest(launchedManifest as string)?.epoch).toBe(
+    41
+  );
 });
 
 test("restart preserves the old loop when the recorded replacement is dead", async () => {

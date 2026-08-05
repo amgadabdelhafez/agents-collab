@@ -70,6 +70,8 @@ import {
   governessHandoffFile,
   readGovernessHandoffAcceptance,
   readGovernessHandoffBundle,
+  readGovernessHandoffBundleForAgent,
+  readGovernessHandoffManifest,
   writeGovernessHandoffManifest,
 } from "./governess-handoff";
 import {
@@ -342,7 +344,10 @@ export interface GovernessDeps {
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
   killSession?: (session: string) => void;
   labelPanes: (req: PaneLabelRequest) => Promise<PaneLabelResult>;
-  launchReplacementLoop?: (config: GovernessConfig) => ReplacementLaunchResult;
+  launchReplacementLoop?: (
+    config: GovernessConfig,
+    handoverManifest: string
+  ) => ReplacementLaunchResult;
   loadState: (stateFile?: string) => GovernessRunState | undefined;
   markRunStopped?: (config: GovernessConfig, reason: string) => void;
   notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
@@ -4476,12 +4481,13 @@ const notifyHandoverAgents = async (
   config: GovernessConfig,
   deps: GovernessDeps,
   runState: GovernessRunState,
-  agentStates: Partial<Record<Agent, string>>
+  agentStates: Partial<Record<Agent, string>>,
+  handoverEpoch: number
 ): Promise<void> => {
   if (!config.runDir) {
     return;
   }
-  ensureGovernessHandoffDir(config.runDir, runState.governessEpoch);
+  ensureGovernessHandoffDir(config.runDir, handoverEpoch);
   for (const info of config.agents) {
     if (
       runState.exitControl.notified[info.agent] ||
@@ -4491,10 +4497,10 @@ const notifyHandoverAgents = async (
     }
     const bundleFile = governessHandoffFile(
       config.runDir,
-      runState.governessEpoch,
+      handoverEpoch,
       info.agent
     );
-    const message = handoverRequest(bundleFile, runState.governessEpoch);
+    const message = handoverRequest(bundleFile, handoverEpoch);
     const policy = decideGovernessPolicy("handover-loop", {
       confirmed: true,
       fenceCurrent: governessFenceCurrent(config, deps),
@@ -4508,7 +4514,7 @@ const notifyHandoverAgents = async (
           agent: info.agent,
           at: new Date(deps.now()).toISOString(),
           epoch: config.epoch ?? runState.governessEpoch,
-          idempotencyKey: `${runState.governessEpoch}:handover:${info.agent}`,
+          idempotencyKey: `${handoverEpoch}:handover:${info.agent}`,
           payload: message,
           policyClass: policy.class,
           policyContext: {
@@ -4644,10 +4650,36 @@ const beginHandover = (runState: GovernessRunState, now: number): void => {
   runState.handoverBundles = {};
   runState.exitControl = {
     exitRequested: {},
+    handoverEpoch: runState.governessEpoch,
     mode: "handover",
     notified: {},
     requestedAt: new Date(now).toISOString(),
   };
+};
+
+const resolveHandoverEpoch = (
+  config: GovernessConfig,
+  runState: GovernessRunState
+): number | undefined => {
+  if (runState.exitControl.handoverEpoch !== undefined) {
+    return runState.exitControl.handoverEpoch;
+  }
+  const bundleEpochs = new Set<number>();
+  for (const info of config.agents) {
+    const path = runState.handoverBundles[info.agent];
+    if (!path) {
+      continue;
+    }
+    const bundle = readGovernessHandoffBundleForAgent(path, info.agent);
+    if (!bundle) {
+      return undefined;
+    }
+    bundleEpochs.add(bundle.epoch);
+  }
+  if (bundleEpochs.size > 1) {
+    return undefined;
+  }
+  return bundleEpochs.values().next().value ?? runState.governessEpoch;
 };
 
 const requestDrainedAgentExits = async (
@@ -4845,26 +4877,43 @@ export const advanceHandoverControl = async (
   if (runState.exitControl.mode !== "handover") {
     return { status: "inactive" };
   }
-  await notifyHandoverAgents(config, deps, runState, agentStates);
+  const handoverEpoch = resolveHandoverEpoch(config, runState);
+  if (handoverEpoch === undefined) {
+    const error = "could not resolve handover transaction epoch";
+    runState.exitControl = {
+      ...runState.exitControl,
+      launchError: error,
+      mode: "launch-error",
+    };
+    deps.saveState(config.stateFile, runState);
+    return { error, status: "launch-error" };
+  }
+  if (runState.exitControl.handoverEpoch === undefined) {
+    runState.exitControl.handoverEpoch = handoverEpoch;
+    if (handoverEpoch !== runState.governessEpoch) {
+      deps.saveState(config.stateFile, runState);
+    }
+  }
+  await notifyHandoverAgents(
+    config,
+    deps,
+    runState,
+    agentStates,
+    handoverEpoch
+  );
   if (config.runDir) {
     for (const info of config.agents) {
       const bundleFile = governessHandoffFile(
         config.runDir,
-        runState.governessEpoch,
+        handoverEpoch,
         info.agent
       );
-      if (
-        readGovernessHandoffBundle(
-          bundleFile,
-          info.agent,
-          runState.governessEpoch
-        )
-      ) {
+      if (readGovernessHandoffBundle(bundleFile, info.agent, handoverEpoch)) {
         runState.handoverBundles[info.agent] = bundleFile;
         if (config.journalFile) {
           const control = latestGovernessControlByKey(
             config.journalFile,
-            `${runState.governessEpoch}:handover:${info.agent}`
+            `${handoverEpoch}:handover:${info.agent}`
           );
           if (
             control &&
@@ -4891,7 +4940,7 @@ export const advanceHandoverControl = async (
   const handoverManifest = config.runDir
     ? writeGovernessHandoffManifest(
         config.runDir,
-        runState.governessEpoch,
+        handoverEpoch,
         config.agents.map((info) => info.agent),
         new Date(deps.now()).toISOString()
       )
@@ -4905,7 +4954,7 @@ export const advanceHandoverControl = async (
     };
     return { error, status: "launch-error" };
   }
-  const launched = deps.launchReplacementLoop?.(config) ?? {
+  const launched = deps.launchReplacementLoop?.(config, handoverManifest) ?? {
     error: "replacement launcher unavailable",
     ok: false,
   };
@@ -6190,7 +6239,7 @@ export const defaultGovernessDeps = (
   judge: (req) => judgeAgent(req),
   labelPanes: (req) => labelPanes(req),
   loadState: (stateFile) => loadGovernessState(stateFile),
-  launchReplacementLoop: (config) => {
+  launchReplacementLoop: (config, handoverManifest) => {
     const primary = config.initialDriver ?? config.agents[0]?.agent;
     const peer = config.agents.find((info) => info.agent !== primary)?.agent;
     if (primary === undefined || peer === undefined) {
@@ -6199,28 +6248,18 @@ export const defaultGovernessDeps = (
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => key !== "LOOP_RUN_ID")
     );
-    const handoffDir = config.runDir
-      ? ensureGovernessHandoffDir(config.runDir, config.epoch ?? 0)
-      : undefined;
+    const manifest = readGovernessHandoffManifest(handoverManifest);
+    if (!manifest) {
+      return { error: "handover manifest changed before launch", ok: false };
+    }
+    const handoffDir = dirname(handoverManifest);
     if (handoffDir) {
       writeFileSync(
         handoverContinuationFile(handoffDir),
         `${handoverContinuationText(handoffDir)}\n`,
         "utf8"
       );
-      const manifestFile = writeGovernessHandoffManifest(
-        config.runDir as string,
-        config.epoch ?? 0,
-        config.agents.map((info) => info.agent),
-        new Date().toISOString()
-      );
-      if (!manifestFile) {
-        return {
-          error: "handover bundles changed before manifest creation",
-          ok: false,
-        };
-      }
-      env.LOOP_GOVERNESS_HANDOFF_MANIFEST = manifestFile;
+      env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
     }
     let result: ReturnType<typeof spawnSync>;
     try {

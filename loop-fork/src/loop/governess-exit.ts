@@ -6,6 +6,7 @@ export type ExitControlMode = "idle" | "handover" | "launched" | "launch-error";
 
 export interface ExitControlState {
   exitRequested?: Partial<Record<Agent, boolean>>;
+  handoverEpoch?: number;
   handoverManifest?: string;
   launchError?: string;
   mode: ExitControlMode;
@@ -51,6 +52,11 @@ const readAgentFlags = (value: unknown): Partial<Record<Agent, boolean>> => {
   return flags;
 };
 
+const readHandoverEpoch = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+
 export const readExitControl = (value: unknown): ExitControlState => {
   if (!value || typeof value !== "object") {
     return freshExitControl();
@@ -67,6 +73,7 @@ export const readExitControl = (value: unknown): ExitControlState => {
     record.handoverManifest.trim().length > 0
       ? record.handoverManifest
       : undefined;
+  const handoverEpoch = readHandoverEpoch(record.handoverEpoch);
   let validMode: ExitControlMode = "idle";
   if (mode === "launched" && !replacementSession) {
     validMode = "launch-error";
@@ -88,6 +95,7 @@ export const readExitControl = (value: unknown): ExitControlState => {
   return {
     ...(Object.keys(exitRequested).length > 0 ? { exitRequested } : {}),
     ...(launchError ? { launchError } : {}),
+    ...(handoverEpoch === undefined ? {} : { handoverEpoch }),
     ...(handoverManifest ? { handoverManifest } : {}),
     mode: validMode,
     notified,

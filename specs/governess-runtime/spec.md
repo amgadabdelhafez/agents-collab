@@ -29,7 +29,9 @@ board, recovery, quota, exit-menu or paired-agent behavior.
    launch/readiness acknowledgement, then old-session teardown. After a valid
    bundle and turn-end evidence exist, governess closes that drained agent TUI
    exactly once so handoff does not depend on the agent inventing its own exit
-   mechanism.
+   mechanism. A Governess restart may advance its control-plane fencing epoch,
+   but must preserve the epoch and exact validated artifacts of an in-flight
+   handoff transaction.
 6. Observation, deterministic policy, optional LLM triage and transactional
    execution are separate layers. LLM output cannot directly authorize a
    destructive action.
@@ -55,6 +57,8 @@ board, recovery, quota, exit-menu or paired-agent behavior.
 - The old loop remains alive until the replacement is verified live and ready.
 - Governess never closes an agent TUI before its epoch-matching ready bundle is
   validated and its turn has ended.
+- A supervisor restart never rebinds persisted handoff bundles or their
+  manifest to the new control-plane epoch.
 - Every outbound control and external health probe is journaled with its
   decision, epoch and result.
 - Existing dirty work is preserved.

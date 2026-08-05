@@ -45,3 +45,7 @@ cd .. && scripts/verify.sh
    bundle exists and its latest hook is a completed `Stop` event.
 4. Confirm each drained TUI receives exactly one `/exit`, the replacement has
    three live panes, and only then the old tmux session exits.
+5. Restart only the Governess after both epoch-bound bundles are persisted;
+   confirm the replacement manifest retains the original transaction epoch,
+   the replacement launches, and the fresh Governess fencing epoch remains
+   current for subsequent controls.

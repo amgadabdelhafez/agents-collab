@@ -68,13 +68,23 @@ export const readGovernessHandoffBundle = (
   expectedAgent: Agent,
   epoch: number
 ): GovernessHandoffBundle | undefined => {
+  const value = readGovernessHandoffBundleForAgent(path, expectedAgent);
+  return value?.epoch === epoch ? value : undefined;
+};
+
+export const readGovernessHandoffBundleForAgent = (
+  path: string,
+  expectedAgent: Agent
+): GovernessHandoffBundle | undefined => {
   try {
     const value = JSON.parse(
       readFileSync(path, "utf8")
     ) as Partial<GovernessHandoffBundle>;
     if (
       value.agent !== expectedAgent ||
-      value.epoch !== epoch ||
+      typeof value.epoch !== "number" ||
+      !Number.isSafeInteger(value.epoch) ||
+      value.epoch < 0 ||
       value.status !== "ready" ||
       typeof value.gitHead !== "string" ||
       typeof value.next !== "string" ||

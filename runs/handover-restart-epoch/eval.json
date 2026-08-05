@@ -1,0 +1,56 @@
+{
+  "task_id": "handover-restart-epoch",
+  "feature": "governess-runtime",
+  "timestamp": "2026-08-05T04:50:43Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "producer_regression": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "Bundles created at epoch 41 remain the exact manifest inputs after a Governess restart advances the live fencing epoch to 99.",
+        "The replacement launcher receives the validated epoch-41 manifest path instead of reconstructing artifacts under epoch 99."
+      ]
+    },
+    "focused": {
+      "passed": 41,
+      "failed": 0,
+      "commands": [
+        "bun run test:file -- tests/loop/governess-exit.test.ts",
+        "bun run test:file -- tests/loop/governess-runtime.test.ts"
+      ]
+    },
+    "mutation": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "Forcing epoch resolution back to the fresh Governess epoch makes the producer regression fail with could not create validated handover manifest."
+      ]
+    },
+    "full_suite": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "details": [
+        "The first sandboxed run failed at the unrelated loopback-port proxy integration because local listen was denied and surfaced as EADDRINUSE.",
+        "The proxy integration passed independently with loopback binding allowed, then the complete repository suite passed with zero failures."
+      ]
+    },
+    "static_and_build": {
+      "format_lint": "pass",
+      "diff_check": "pass",
+      "compiled_build": "pass"
+    }
+  },
+  "live_incident": {
+    "run": "harvto-loop-131",
+    "preserved_bundle_epoch": 1785900759466614,
+    "fresh_governess_epoch": 1785904837987933,
+    "pre_fix_result": "launch-error: could not create validated handover manifest",
+    "safety_state": "No replacement launched; old run, Governess, helpers, and both exact handoff bundles remain preserved."
+  },
+  "known_limitations": [
+    "This source evaluation does not authorize installation, a live retry, old-run teardown, or deployment of the new candidate."
+  ]
+}
