@@ -1,0 +1,29 @@
+{
+  "task_id": "bridge-long-lived-idle-wake",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "acceptance": {
+    "dim_suggestion_still_delivers": true,
+    "semantic_suggestion_palette_delivers": true,
+    "unrelated_colored_draft_blocks": true,
+    "durable_message_remains_pending_until_receive": true,
+    "live_run_mutated": false
+  },
+  "verification": {
+    "focused": {
+      "command": "bun run test:file -- tests/loop/bridge.test.ts",
+      "passed": 104,
+      "failed": 0
+    },
+    "full": {
+      "command": "bun run test:ci",
+      "passed": true,
+      "failed": 0,
+      "baseline_failures": []
+    },
+    "lint": "pass: bun run check",
+    "typecheck": "pass",
+    "build": "pass",
+    "diff_check": "pass"
+  }
+}

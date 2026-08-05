@@ -1928,6 +1928,55 @@ test("Claude delivery injects over a dim type-ahead suggestion", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Claude delivery injects over a 2.1.221 suggestion-color ghost", async () => {
+  const ghostPane =
+    "\u001B[39m❯ \u001B[94mwait for codex's verdict\u001B[39m\n\nOpus 5 | ctx: 59%";
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(ghostPane, "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() => {
+    transcriptReads += 1;
+    return transcriptReads === 1 ? "before" : "after";
+  });
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  writeIdleClaudeRun(runDir);
+  const message = {
+    at: "2026-08-05T08:27:21.626Z",
+    id: "9688794f-b50f-4ebc-9960-40411af5d57c",
+    kind: "message" as const,
+    message: "The comparator ruling is waiting.",
+    source: "codex" as const,
+    target: "claude" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+
+  expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(1);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("Claude delivery holds no claim while the pane is not ready", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
@@ -3620,6 +3669,43 @@ test("Claude pane readiness treats a dim type-ahead suggestion as empty", async 
   expect(
     bridge.isClaudePaneReady(
       "\u001B[39m❯ typed\u001B[2m ghost tail\u001B[0m\n\nOpus 5 | ctx: 59%"
+    )
+  ).toBe(false);
+});
+
+test("Claude pane readiness recognizes the 2.1.221 suggestion palette only", async () => {
+  const bridge = await loadBridge();
+  const suggestionStyles = [
+    "34",
+    "94",
+    "38;5;4",
+    "38;5;12",
+    "38;2;87;105;247",
+    "38;2;51;102;255",
+    "38;2;177;185;249",
+    "38;2;153;204;255",
+  ];
+
+  for (const style of suggestionStyles) {
+    expect(
+      bridge.isClaudePaneReady(
+        `\u001B[39m❯ \u001B[${style}mwait for codex's verdict\u001B[39m\n\nOpus 5`
+      )
+    ).toBe(true);
+  }
+  expect(
+    bridge.isClaudePaneReady(
+      "\u001B[39m❯ \u001B[31mreal red draft\u001B[39m\n\nOpus 5"
+    )
+  ).toBe(false);
+  expect(
+    bridge.isClaudePaneReady(
+      "\u001B[39m❯ \u001B[38;2;255;0;0mreal RGB draft\u001B[39m\n\nOpus 5"
+    )
+  ).toBe(false);
+  expect(
+    bridge.isClaudePaneReady(
+      "\u001B[39m❯ typed \u001B[94mghost tail\u001B[39m\n\nOpus 5"
     )
   ).toBe(false);
 });

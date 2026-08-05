@@ -12,3 +12,7 @@
    extra in-claim readiness capture.
 5. Deploy by rebuilding the live checkout binary and restarting only the
    dedicated `__bridge-worker`; governess respawns it. No pane restarts.
+6. Recurrence: extend only Claude composer ghost classification to the shipped
+   2.1.221 semantic suggestion palette. Preserve dim stripping for the original
+   regression, preserve all residual colored text as a foreign draft, and do
+   not change delivery routing, retry timing, or claim scope.

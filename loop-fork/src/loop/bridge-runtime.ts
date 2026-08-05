@@ -566,6 +566,83 @@ export const stripDimSpans = (line: string): string => {
   return plain.replace(ANSI_ESCAPE_RE, "");
 };
 
+// Claude Code 2.1.221 no longer guarantees SGR 2 for generated prompt
+// suggestions. Its semantic `suggestion` color resolves to one of these shipped
+// ANSI/RGB values, depending on color depth and light/dark theme. Human input
+// is rendered in the normal text color, so only these exact spans are ghost
+// composer text. Unknown colors deliberately remain and block injection.
+const CLAUDE_SUGGESTION_RGB = new Set([
+  "51;102;255",
+  "87;105;247",
+  "153;204;255",
+  "177;185;249",
+]);
+const ANSI_FOREGROUND_COLOR_RE = /^(?:3[0-7]|9[0-7])$/;
+
+interface ClaudeComposerStyleUpdate {
+  dim?: boolean;
+  suggestion?: boolean;
+  width: number;
+}
+
+const claudeComposerStyleUpdate = (
+  codes: string[],
+  index: number
+): ClaudeComposerStyleUpdate => {
+  const code = codes[index];
+  if (code === "0") {
+    return { dim: false, suggestion: false, width: 1 };
+  }
+  if (code === "2" || code === "22") {
+    return { dim: code === "2", width: 1 };
+  }
+  if (code === "39") {
+    return { suggestion: false, width: 1 };
+  }
+  if (ANSI_FOREGROUND_COLOR_RE.test(code ?? "")) {
+    return { suggestion: code === "34" || code === "94", width: 1 };
+  }
+  if (code === "38" && codes[index + 1] === "5") {
+    return {
+      suggestion: codes[index + 2] === "4" || codes[index + 2] === "12",
+      width: 3,
+    };
+  }
+  if (code === "38" && codes[index + 1] === "2") {
+    return {
+      suggestion: CLAUDE_SUGGESTION_RGB.has(
+        codes.slice(index + 2, index + 5).join(";")
+      ),
+      width: 5,
+    };
+  }
+  return { width: 1 };
+};
+
+export const stripClaudeSuggestionSpans = (line: string): string => {
+  let dim = false;
+  let suggestion = false;
+  let plain = "";
+  let cursor = 0;
+  for (const match of line.matchAll(SGR_SEQUENCE_RE)) {
+    if (!(dim || suggestion)) {
+      plain += line.slice(cursor, match.index);
+    }
+    cursor = (match.index ?? 0) + match[0].length;
+    const codes = (match[1] === "" ? "0" : match[1]).split(";");
+    for (let index = 0; index < codes.length; index += 1) {
+      const update = claudeComposerStyleUpdate(codes, index);
+      dim = update.dim ?? dim;
+      suggestion = update.suggestion ?? suggestion;
+      index += update.width - 1;
+    }
+  }
+  if (!(dim || suggestion)) {
+    plain += line.slice(cursor);
+  }
+  return plain.replace(ANSI_ESCAPE_RE, "");
+};
+
 const tmuxPane = (session: string, paneId: string): string =>
   `${session}:${paneId}`;
 
@@ -695,7 +772,7 @@ const claudeComposerText = (output: string): string | undefined => {
   const prompt = output
     .split(LINE_SPLIT_RE)
     .slice(-CODEX_TMUX_READY_TAIL_LINES)
-    .map(stripDimSpans)
+    .map(stripClaudeSuggestionSpans)
     .findLast((line) => line.trimStart().startsWith(CLAUDE_TMUX_PROMPT_PREFIX));
   return prompt?.trimStart().slice(CLAUDE_TMUX_PROMPT_PREFIX.length).trim();
 };
