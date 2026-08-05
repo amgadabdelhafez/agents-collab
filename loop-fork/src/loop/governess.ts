@@ -20,6 +20,7 @@ import {
   ensureBridgeWorker,
   hasBridgeDeliveryRoute,
   readBridgeRuntimeStatus,
+  stripDimSpans,
 } from "./bridge-runtime";
 import {
   type BridgeEnqueueOptions,
@@ -331,7 +332,7 @@ export interface GovernessDeps {
   appendLog: (file: string, record: unknown) => void;
   assessRoleBalance: (req: RoleBalanceRequest) => Promise<RoleBalanceResult>;
   assessWaiting: (req: WaitingRequest) => Promise<WaitingResult>;
-  capturePane: (pane: string) => string;
+  capturePane: (pane: string, styled?: boolean) => string;
   cleanupRunProcesses?: (
     config: GovernessConfig
   ) => RunProcessCleanupResult | undefined;
@@ -4444,14 +4445,14 @@ const directInputIsSafe = (
   }
   let paneText: string;
   try {
-    paneText = deps.capturePane(info.pane);
+    paneText = deps.capturePane(info.pane, true);
   } catch (error) {
     if (isTmuxControlUnavailableError(error)) {
       return false;
     }
     throw error;
   }
-  const tail = paneText.split(LINE_SPLIT_RE).slice(-10);
+  const tail = paneText.split(LINE_SPLIT_RE).slice(-10).map(stripDimSpans);
   // Both Codex and Claude prefix a non-empty composer with one of these prompt
   // glyphs. A Stop hook alone proves turn completion, not that the human has
   // not started typing since then.
@@ -6144,7 +6145,8 @@ export const defaultGovernessDeps = (
     mkdirSync(dirname(file), { recursive: true });
     appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
   },
-  capturePane: (pane) => tmux(["capture-pane", "-p", "-t", pane]),
+  capturePane: (pane, styled = false) =>
+    tmux(["capture-pane", "-p", ...(styled ? ["-e"] : []), "-t", pane]),
   cleanupRunProcesses: (config) => {
     if (!config.runDir) {
       return undefined;

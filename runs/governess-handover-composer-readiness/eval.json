@@ -1,0 +1,27 @@
+{
+  "task_id": "governess-handover-composer-readiness",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "acceptance": {
+    "dim_idle_suggestion_allows_handover_delivery": true,
+    "non_dim_draft_blocks_handover_delivery": true,
+    "handover_authority_or_exit_order_changed": false,
+    "live_loop_mutated": false
+  },
+  "verification": {
+    "focused": {
+      "command": "bun run test:file -- tests/loop/governess-exit.test.ts",
+      "passed": 25,
+      "failed": 0
+    },
+    "full": {
+      "command": "bun run test:ci",
+      "status": "pass",
+      "baseline_failures": []
+    },
+    "build": "pass",
+    "format_and_lint": "pass",
+    "repository_verify": "pass",
+    "independent_review": "pending"
+  }
+}

@@ -355,6 +355,68 @@ test("handover never injects over a notification or permission prompt", async ()
   expect(direct).toEqual([]);
 });
 
+test("handover treats a dim idle suggestion as an empty composer", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = { mode: "handover", notified: {} };
+  const bridged: string[] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () =>
+      "\u001b[39m› \u001b[2mWrite tests for @filename\u001b[0m\nfooter",
+    fenceCurrent: () => true,
+    now: () => 0,
+    paneCommand: () => "0:codex-aarch64-a",
+    readHooks: () => [{ agent: "codex" as const, event: "Stop", ts: "now" }],
+    saveState: () => undefined,
+    sendBridge: (_runDir: string, _source: string, target: string) => {
+      bridged.push(target);
+      return Promise.resolve("accepted" as const);
+    },
+  };
+
+  expect(
+    await advanceHandoverControl(config, deps, state, {
+      claude: "working",
+      codex: "idle",
+    })
+  ).toEqual({ status: "waiting" });
+  expect(state.exitControl.notified).toEqual({ codex: true });
+  expect(bridged).toEqual(["codex"]);
+});
+
+test("handover still blocks a non-dim composer draft", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = { mode: "handover", notified: {} };
+  const bridged: string[] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () =>
+      "\u001b[39m› start T2 now: run C5 then C2\u001b[0m\nfooter",
+    fenceCurrent: () => true,
+    now: () => 0,
+    paneCommand: () => "0:codex-aarch64-a",
+    readHooks: () => [{ agent: "codex" as const, event: "Stop", ts: "now" }],
+    saveState: () => undefined,
+    sendBridge: (_runDir: string, _source: string, target: string) => {
+      bridged.push(target);
+      return Promise.resolve("accepted" as const);
+    },
+  };
+
+  expect(
+    await advanceHandoverControl(config, deps, state, {
+      claude: "working",
+      codex: "idle",
+    })
+  ).toEqual({ status: "waiting" });
+  expect(state.exitControl.notified).toEqual({});
+  expect(bridged).toEqual([]);
+});
+
 test("valid ready bundles close each drained TUI exactly once before launch", async () => {
   const config = handoverConfig();
   const state = freshRunState();
