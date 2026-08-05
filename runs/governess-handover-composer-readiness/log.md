@@ -26,6 +26,21 @@
   exited. Claude then exposed a second producer boundary: hook sequence `Stop`
   followed by `SubagentStop` remained blocked because readiness inspected only
   `events.at(-1)`.
-- The follow-up selects the latest non-`SubagentStop` hook. A trailing
-  `Notification` after `Stop` remains fail-closed. M2 restoring `events.at(-1)`
-  is killed at `25 pass, 1 fail`; restored focused suite is `26 pass, 0 fail`.
+- AS REVIEWED IN `ab495bc`: that follow-up selected the latest
+  non-`SubagentStop` hook and kept every trailing `Notification` fail-closed.
+  M2 restoring `events.at(-1)` was killed at `25 pass, 1 fail`; its restored
+  focused suite was `26 pass, 0 fail`.
+- Exact SHA `ab495bc` passed supervisor review but was correctly held because
+  Claude had already progressed through notification and bundle persistence.
+- The later governed-exit consumer then stalled on the producer tail `Stop`
+  sequence 1350, `SubagentStop` sequence 1351, exact generic idle
+  `Notification` sequence 1352 with detail `Claude is waiting for your input`.
+  Both ready bundles persisted; `exitRequested.codex=true`, while
+  `exitRequested.claude` remained absent.
+- The next follow-up makes only that exact generic idle notification transparent
+  after a parent `Stop`. Permission/input notifications remain blocking. M3
+  removing the exact notification exception is killed at `26 pass, 1 fail`;
+  restored focused suite is `27 pass, 0 fail`.
+- Complete `bun run test:ci`, `bun run check`, `bun run build`, required
+  `scripts/verify.sh governess-handover-composer-readiness
+  governess-handover-composer-readiness`, and `git diff --check` pass.

@@ -15,6 +15,12 @@ The first deployed correction exposed a second producer boundary: Claude emits
 raw hook as authoritative leaves the parent turn permanently unsafe even when
 the styled composer is empty.
 
+The next live drain exposed a third producer boundary: after that completed
+sequence Claude emits the exact generic idle notification `Claude is waiting
+for your input`. This producer-owned notification is not a permission request,
+but treating every notification as blocking prevents Governess from closing a
+drained TUI after its ready bundle is persisted.
+
 ## Requirements
 
 1. Handover readiness uses a styled tmux capture when available.
@@ -24,8 +30,10 @@ the styled composer is empty.
 4. Missing styled-capture support falls back to the prior fail-closed behavior.
 5. The fix changes no handover authority, exit ordering, or replacement-loop
    teardown rule.
-6. Trailing `SubagentStop` hooks do not erase the latest parent `Stop` boundary.
-   Other trailing hook kinds, including `Notification`, remain fail-closed.
+6. Trailing `SubagentStop` hooks and Claude's exact generic idle notification do
+   not erase the latest parent `Stop` boundary.
+7. Every other trailing hook kind, including permission or input notifications,
+   remains fail-closed.
 
 ## Acceptance
 
@@ -34,5 +42,8 @@ the styled composer is empty.
 - The same capture with non-dim text reaches zero deliveries.
 - A producer-shaped Claude `Stop`, `SubagentStop` tail plus dim suggestion
   reaches exactly one handover delivery.
+- A producer-shaped Claude `Stop`, `SubagentStop`, exact generic idle
+  `Notification` tail plus a ready bundle reaches exactly one governed `/exit`.
+- A permission notification after `Stop` reaches zero direct injections.
 - Focused Governess exit tests, the Governess suite, full tests, build, and
   repository verification are recorded before review.

@@ -443,6 +443,59 @@ test("handover accepts Claude Stop followed by trailing SubagentStop", async () 
   expect(bridged).toEqual(["claude"]);
 });
 
+test("handover exits Claude after its exact generic idle notification", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    exitRequested: { codex: true },
+    mode: "handover",
+    notified: { claude: true, codex: true },
+  };
+  writeHandoverBundles(config, state);
+  const exitKeys: [string, string[]][] = [];
+  const exitText: [string, string][] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () =>
+      "\u001b[39m❯ \u001b[2mstop here, waiting for the supervisor to launch loop-132\u001b[0m\nfooter",
+    fenceCurrent: () => true,
+    now: () => 0,
+    paneCommand: (pane: string) => (pane.endsWith(".0") ? "0:claude" : "0:zsh"),
+    readHooks: () => [
+      { agent: "claude" as const, event: "Stop", ts: "parent-stopped" },
+      {
+        agent: "claude" as const,
+        event: "SubagentStop",
+        ts: "subagent-stopped",
+      },
+      {
+        agent: "claude" as const,
+        detail: "Claude is waiting for your input",
+        event: "Notification",
+        ts: "idle-notification",
+      },
+    ],
+    saveState: () => undefined,
+    sendKeys: (pane: string, keys: string[]) => exitKeys.push([pane, keys]),
+    sendText: (pane: string, text: string) => exitText.push([pane, text]),
+    sleep: async () => undefined,
+  };
+
+  expect(
+    await advanceHandoverControl(config, deps, state, {
+      claude: "idle",
+      codex: "exited",
+    })
+  ).toEqual({ status: "waiting" });
+  expect(exitText).toEqual([["session:0.0", "/exit"]]);
+  expect(exitKeys).toEqual([["session:0.0", ["Enter"]]]);
+  expect(state.exitControl.exitRequested).toEqual({
+    claude: true,
+    codex: true,
+  });
+});
+
 test("handover still blocks a non-dim composer draft", async () => {
   const config = handoverConfig();
   const state = freshRunState();

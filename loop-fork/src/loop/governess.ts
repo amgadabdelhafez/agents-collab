@@ -4432,6 +4432,14 @@ export const renderExitControl = (
 const agentSafeForHandover = (state: string | undefined): boolean =>
   !RENAME_BUSY_STATES.has(state ?? "");
 
+const isTransparentHandoverHook = (event: {
+  detail?: string;
+  event: string;
+}): boolean =>
+  event.event === "SubagentStop" ||
+  (event.event === "Notification" &&
+    event.detail === "Claude is waiting for your input");
+
 const directInputIsSafe = (
   deps: GovernessDeps,
   info: GovernessAgentInfo
@@ -4439,10 +4447,11 @@ const directInputIsSafe = (
   const events = deps.readHooks(info.hookFile);
   // A Notification can mean "permission/input required", not an empty
   // composer. Only a real Stop hook proves a completed turn is safe for
-  // direct text injection. Claude emits SubagentStop after the parent Stop,
-  // so only that producer-owned trailing event is transparent here.
+  // direct text injection. Claude emits SubagentStop and then one exact,
+  // producer-owned idle notification after the parent Stop. Those two events
+  // are transparent; every other trailing hook remains fail-closed.
   const parentTurnBoundary = events.findLast(
-    (event) => event.event !== "SubagentStop"
+    (event) => !isTransparentHandoverHook(event)
   );
   if (parentTurnBoundary?.event !== "Stop") {
     return false;

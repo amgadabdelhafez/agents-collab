@@ -6,6 +6,9 @@
     "dim_idle_suggestion_allows_handover_delivery": true,
     "styled_capture_direction_mutation_killed": true,
     "trailing_subagent_stop_mutation_killed": true,
+    "generic_idle_notification_allows_governed_exit": true,
+    "generic_idle_notification_mutation_killed": true,
+    "permission_notification_blocks_direct_input": true,
     "non_dim_draft_blocks_handover_delivery": true,
     "persisted_handover_mode_survives_state_decode": true,
     "handover_authority_or_exit_order_changed": false,
@@ -14,7 +17,7 @@
   "verification": {
     "focused": {
       "command": "bun run test:file -- tests/loop/governess-exit.test.ts",
-      "passed": 26,
+      "passed": 27,
       "failed": 0
     },
     "full": {
@@ -36,6 +39,12 @@
       "status": "killed",
       "focused_result": "25 pass, 1 fail",
       "failure": "Claude notification missing after Stop, SubagentStop"
+    },
+    "mutation_m3": {
+      "name": "M3 leave Claude generic idle Notification blocking",
+      "status": "killed",
+      "focused_result": "26 pass, 1 fail",
+      "failure": "governed Claude /exit missing after persisted ready bundle"
     },
     "independent_review": "postdeploy defect fix pending exact-SHA review"
   }

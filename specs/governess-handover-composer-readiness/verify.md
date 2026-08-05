@@ -20,5 +20,10 @@ Second mutation requirement: replace the latest non-`SubagentStop` selection
 with `events.at(-1)`, run the focused exit suite, and require the producer-shaped
 Claude `Stop`, `SubagentStop` test to fail. Restore before broader verification.
 
+Third mutation requirement: stop treating Claude's exact generic idle
+`Notification` as transparent, run the focused exit suite, and require the
+post-bundle governed-exit producer test to fail. Restore before broader
+verification. The permission-notification negative test must remain green.
+
 The live loop is observation-only for this change. Do not alter either agent
 composer, restart a pane, or deploy a binary without fresh authority.
