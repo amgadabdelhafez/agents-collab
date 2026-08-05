@@ -40,6 +40,7 @@ import {
   DEFAULT_USAGE_TRACKER_TIMEOUT_MS,
   DEFAULT_USAGE_TRACKER_URL,
 } from "./constants";
+import { DEFAULT_LAUNCH_EFFORT } from "./effort";
 import { decode } from "./git";
 import { readPriorSummaries, readProjectContext } from "./governess-context";
 import {
@@ -150,6 +151,7 @@ import type {
   AgentLivenessState,
   AgentUsage,
   CavemanMode,
+  EffortLevel,
   GovernessVerdict,
   HookEvent,
   JudgeOutcome,
@@ -230,6 +232,7 @@ export interface GovernessConfig {
   createdAt?: string;
   // Working directory of the run, for reading project docs into the summary.
   cwd?: string;
+  driverEffort: EffortLevel;
   dryRun: boolean;
   // Fencing epoch acquired by the currently running governess process.
   epoch?: number;
@@ -260,6 +263,7 @@ export interface GovernessConfig {
   nativeSubagentMode?: NativeSubagentMode;
   // ntfy topic URL for remote escalation; escalation is off when unset.
   ntfyUrl?: string;
+  reviewerEffort: EffortLevel;
   roleBalanceEnabled: boolean;
   // Run directory, for reading prior-session summaries into the summary.
   runDir?: string;
@@ -4937,14 +4941,27 @@ export const advanceHandoverControl = async (
   if (!allHandoverAgentsExited(config, deps, runState)) {
     return { status: "waiting" };
   }
-  const handoverManifest = config.runDir
-    ? writeGovernessHandoffManifest(
-        config.runDir,
-        handoverEpoch,
-        config.agents.map((info) => info.agent),
-        new Date(deps.now()).toISOString()
-      )
-    : undefined;
+  let handoverManifest: string | undefined;
+  if (config.runDir) {
+    const handoffDir = ensureGovernessHandoffDir(config.runDir, handoverEpoch);
+    const continuationFile = handoverContinuationFile(handoffDir);
+    writeFileSync(
+      continuationFile,
+      `${handoverContinuationText(handoffDir)}\n`,
+      "utf8"
+    );
+    handoverManifest = writeGovernessHandoffManifest(
+      config.runDir,
+      handoverEpoch,
+      config.agents.map((info) => info.agent),
+      new Date(deps.now()).toISOString(),
+      continuationFile,
+      {
+        driverEffort: config.driverEffort,
+        reviewerEffort: config.reviewerEffort,
+      }
+    );
+  }
   if (!handoverManifest) {
     const error = "could not create validated handover manifest";
     runState.exitControl = {
@@ -6179,6 +6196,12 @@ export const governessFrameDelta = (previous: string, next: string): string => {
   return `${updates.join("")}\x1b[H`;
 };
 
+// A Governess process can be killed while tmux still owns its alternate-screen
+// contents. Erase both scrollback and viewport once before drawing the first
+// live snapshot so a restarted renderer cannot leave predecessor rows behind.
+export const governessInitialFrame = (text: string): string =>
+  `\x1b[3J\x1b[2J\x1b[H${text}`;
+
 const renderDefaultGovernessFrame = (text: string): void => {
   if (process.stdout.isTTY && !governessAlternateScreenStarted) {
     process.stdout.write("\x1b[?1049h\x1b[?25l");
@@ -6193,7 +6216,7 @@ const renderDefaultGovernessFrame = (text: string): void => {
   process.stdout.write(
     previousGovernessFrame
       ? governessFrameDelta(previousGovernessFrame, text)
-      : `\x1b[2J\x1b[H${text}`
+      : governessInitialFrame(text)
   );
   previousGovernessFrame = text;
 };
@@ -6253,20 +6276,16 @@ export const defaultGovernessDeps = (
       return { error: "handover manifest changed before launch", ok: false };
     }
     const handoffDir = dirname(handoverManifest);
-    if (handoffDir) {
-      writeFileSync(
-        handoverContinuationFile(handoffDir),
-        `${handoverContinuationText(handoffDir)}\n`,
-        "utf8"
-      );
-      env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
-    }
+    env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
     let result: ReturnType<typeof spawnSync>;
     try {
       result = spawnSync(
         [
           ...buildLaunchArgv(),
-          ...replacementLoopArgs(primary, peer, handoffDir),
+          ...replacementLoopArgs(primary, peer, handoffDir, {
+            driverEffort: manifest.driverEffort,
+            reviewerEffort: manifest.reviewerEffort,
+          }),
         ],
         {
           cwd: config.cwd,
@@ -6688,6 +6707,7 @@ export const resolveGovernessConfig = (
     createdAt: manifest?.createdAt,
     cwd: manifest?.cwd,
     dryRun: env.LOOP_GOVERNESS_DRY_RUN === "1",
+    driverEffort: manifest?.driverEffort ?? DEFAULT_LAUNCH_EFFORT,
     escalateIdleMs: envSeconds(
       env,
       "LOOP_GOVERNESS_ESCALATE_IDLE",
@@ -6738,6 +6758,7 @@ export const resolveGovernessConfig = (
     ),
     ntfyUrl: env.LOOP_GOVERNESS_NTFY || undefined,
     roleBalanceEnabled: envEnabled(env.LOOP_GOVERNESS_ROLE_BALANCE),
+    reviewerEffort: manifest?.reviewerEffort ?? DEFAULT_LAUNCH_EFFORT,
     runId,
     runDir: storage.runDir,
     manifestPath: storage.manifestPath,

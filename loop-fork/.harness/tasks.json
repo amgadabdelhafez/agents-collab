@@ -486,6 +486,14 @@
       "eval_status": "pass",
       "ended_at": "2026-08-04T20:19:43Z",
       "spec_path": "specs/bridge-mcp-response-drain.md"
+    },
+    {
+      "id": "handover-fidelity-dedup",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-08-05T06:14:27Z",
+      "run_dir": "runs/handover-fidelity-dedup",
+      "spec_path": "specs/handover-fidelity-dedup.md"
     }
   ]
 }

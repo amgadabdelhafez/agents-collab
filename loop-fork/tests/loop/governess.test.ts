@@ -24,6 +24,7 @@ import {
   type GovernessConfig,
   type GovernessDeps,
   governessFrameDelta,
+  governessInitialFrame,
   governessPaneIdentityTmuxCommands,
   governessTick,
   refreshGovernessAgentBindings,
@@ -98,10 +99,12 @@ test("governess observes agents through persisted post-split pane targets", () =
     createRunManifest({
       cavemanMode: "full",
       cwd,
+      driverEffort: "low",
       helperCavemanMode: "ultra",
       mode: "paired",
       pid: 1234,
       repoId: storage.repoId,
+      reviewerEffort: "high",
       runId: "91",
       status: "running",
       tmuxPaneLeft: "repo-loop-91:0.0",
@@ -119,7 +122,9 @@ test("governess observes agents through persisted post-split pane targets", () =
       { agent: "codex", pane: "repo-loop-91:0.2" },
     ]);
     expect(config.cavemanMode).toBe("full");
+    expect(config.driverEffort).toBe("low");
     expect(config.helperCavemanMode).toBe("ultra");
+    expect(config.reviewerEffort).toBe("high");
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -343,6 +348,7 @@ const baseConfig = (
   confidence: 0.7,
   cooldownMs: 300_000,
   dryRun: false,
+  driverEffort: "medium",
   epoch: 1,
   escalateIdleMs: 300_000,
   idleMs: IDLE_MS,
@@ -355,6 +361,7 @@ const baseConfig = (
   maxRecoveries: 3,
   model: "m",
   roleBalanceEnabled: false,
+  reviewerEffort: "medium",
   runId: "1",
   session: "s",
   tickMs: 15_000,
@@ -2801,6 +2808,31 @@ test("Governess frame deltas update only changed lines without clearing", () => 
   expect(delta).not.toContain("\x1b[2J");
   expect(delta).not.toContain("stable");
   expect(governessFrameDelta(next, next)).toBe("");
+});
+
+test("Governess restart clears stale history before drawing one live snapshot", () => {
+  let history = ["│ Codex old 75k 29% $27.19"];
+  let viewport = ["│ au pair old completed 4"];
+  const liveFrame = [
+    "│ Codex live 90k 35% $28.26",
+    "│ au pair live completed 4",
+  ].join("\n");
+  const output = governessInitialFrame(liveFrame);
+
+  expect(output).toStartWith("\x1b[3J\x1b[2J\x1b[H");
+  if (output.includes("\x1b[3J")) {
+    history = [];
+  }
+  if (output.includes("\x1b[2J")) {
+    viewport = [];
+  }
+  const home = output.lastIndexOf("\x1b[H");
+  viewport.push(output.slice(home + "\x1b[H".length));
+  const captured = [...history, ...viewport].join("\n");
+  expect(captured).not.toContain("Codex old");
+  expect(captured).not.toContain("au pair old");
+  expect(captured.match(/Codex /g)).toHaveLength(1);
+  expect(captured.match(/au pair /g)).toHaveLength(1);
 });
 
 test("runGoverness refreshes a late Codex binding before reading usage", async () => {

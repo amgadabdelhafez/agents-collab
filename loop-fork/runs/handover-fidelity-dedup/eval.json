@@ -1,0 +1,21 @@
+{
+  "task_id": "handover-fidelity-dedup",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit", "project"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "method": "focused Governess runtime, handover/exit, and board suites",
+      "reason": "116 tests passed with producer-backed effort, tamper, and restart reconciliation coverage"
+    },
+    "project": {
+      "status": "pass",
+      "method": "check, governed typecheck, compiled build, complete sorted suite, diff check",
+      "reason": "all mandatory source checks passed with an empty failure set"
+    }
+  },
+  "known_limitations": [
+    "No binary install or healthy-live-run mutation was authorized."
+  ]
+}

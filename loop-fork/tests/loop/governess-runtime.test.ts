@@ -20,6 +20,7 @@ import {
   governessHandoffFile,
   readGovernessHandoffAcceptance,
   readGovernessHandoffBundle,
+  readGovernessHandoffManifest,
   writeGovernessHandoffManifest,
 } from "../../src/loop/governess-handoff";
 import {
@@ -467,7 +468,7 @@ test("runtime adapter rejects a stale control envelope", async () => {
   ).rejects.toThrow("stale or invalid");
 });
 
-test("two-phase handoff accepts only a matching ready bundle", () => {
+test("digest-bound handoff accepts only a matching ready bundle", () => {
   const runDir = tempDir();
   const file = governessHandoffFile(runDir, 9, "claude");
   mkdirSync(join(runDir, "handoff", "9"), { recursive: true });
@@ -488,13 +489,22 @@ test("two-phase handoff accepts only a matching ready bundle", () => {
   expect(readGovernessHandoffBundle(file, "claude", 9)?.status).toBe("ready");
   expect(readGovernessHandoffBundle(file, "codex", 9)).toBeUndefined();
   expect(readGovernessHandoffBundle(file, "claude", 10)).toBeUndefined();
+  const continuation = join(runDir, "handoff", "9", "continuation.md");
+  writeFileSync(continuation, "continue from the verified bundles\n");
   const manifest = writeGovernessHandoffManifest(
     runDir,
     9,
     ["claude"],
-    "2026-07-25T00:00:00.000Z"
+    "2026-07-25T00:00:00.000Z",
+    continuation,
+    { driverEffort: "medium", reviewerEffort: "high" }
   );
   expect(manifest).toBeString();
+  expect(readGovernessHandoffManifest(manifest as string)).toMatchObject({
+    continuation: { digest: expect.any(String), path: continuation },
+    driverEffort: "medium",
+    reviewerEffort: "high",
+  });
   expect(
     acceptGovernessHandoff(
       manifest as string,
@@ -506,6 +516,15 @@ test("two-phase handoff accepts only a matching ready bundle", () => {
   expect(
     readGovernessHandoffAcceptance(manifest as string, "replacement")
   ).toMatchObject({ manifestDigest: expect.any(String) });
+  const frozenManifest = readFileSync(manifest as string, "utf8");
+  const changedEffort = JSON.parse(frozenManifest) as Record<string, unknown>;
+  changedEffort.reviewerEffort = "low";
+  writeFileSync(manifest as string, JSON.stringify(changedEffort));
+  expect(readGovernessHandoffManifest(manifest as string)).toBeUndefined();
+  writeFileSync(manifest as string, frozenManifest);
+  writeFileSync(continuation, "tampered continuation\n");
+  expect(readGovernessHandoffManifest(manifest as string)).toBeUndefined();
+  writeFileSync(continuation, "continue from the verified bundles\n");
   writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
   expect(
     readGovernessHandoffAcceptance(manifest as string, "replacement")

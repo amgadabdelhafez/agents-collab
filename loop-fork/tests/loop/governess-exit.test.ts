@@ -148,6 +148,28 @@ test("replacement handover uses a markdown continuation file to skip replanning"
   ]);
 });
 
+test("replacement handover carries exact frozen role efforts", () => {
+  expect(
+    replacementLoopArgs("claude", "codex", "/tmp/handoff/42", {
+      driverEffort: "medium",
+      reviewerEffort: "high",
+    })
+  ).toEqual([
+    "--tmux",
+    "--governess",
+    "--agent",
+    "claude",
+    "--pair-with",
+    "codex",
+    "--effort-driver",
+    "medium",
+    "--effort-reviewer",
+    "high",
+    "--prompt",
+    "/tmp/handoff/42/continuation.md",
+  ]);
+});
+
 test("exit controls replace the status row without growing the board", () => {
   const board = "status\nrow 2\nrow 3";
   const agents = [
@@ -183,10 +205,12 @@ const handoverConfig = (): GovernessConfig =>
       { agent: "claude", hookFile: "claude", pane: "session:0.0" },
       { agent: "codex", hookFile: "codex", pane: "session:0.1" },
     ],
+    driverEffort: "medium",
     initialDriver: "claude",
     epoch: 1,
     logFile: "/tmp/governess-test.jsonl",
     runDir: mkdtempSync(join(tmpdir(), "governess-exit-test-")),
+    reviewerEffort: "high",
     session: "session",
   }) as GovernessConfig;
 
@@ -872,6 +896,12 @@ test("handover restart keeps the persisted transaction epoch for replacement lau
   expect(readGovernessHandoffManifest(launchedManifest as string)?.epoch).toBe(
     41
   );
+  expect(
+    readGovernessHandoffManifest(launchedManifest as string)
+  ).toMatchObject({
+    driverEffort: "medium",
+    reviewerEffort: "high",
+  });
 });
 
 test("restart preserves the old loop when the recorded replacement is dead", async () => {

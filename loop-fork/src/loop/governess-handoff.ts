@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import type { Agent } from "./types";
+import { dirname, join } from "node:path";
+import { isEffortLevel } from "./effort";
+import type { Agent, EffortLevel } from "./types";
 
 export interface GovernessHandoffBundle {
   agent: Agent;
@@ -17,9 +18,17 @@ export interface GovernessHandoffBundle {
 
 export interface GovernessHandoffManifest {
   bundles: Partial<Record<Agent, { digest: string; path: string }>>;
+  continuation: { digest: string; path: string };
   createdAt: string;
   digest: string;
+  driverEffort: EffortLevel;
   epoch: number;
+  reviewerEffort: EffortLevel;
+}
+
+export interface GovernessHandoffEffort {
+  driverEffort: EffortLevel;
+  reviewerEffort: EffortLevel;
 }
 
 export interface GovernessHandoffAcceptance {
@@ -105,8 +114,17 @@ export const writeGovernessHandoffManifest = (
   runDir: string,
   epoch: number,
   agents: Agent[],
-  nowIso: string
+  nowIso: string,
+  continuationFile: string,
+  effort: GovernessHandoffEffort
 ): string | undefined => {
+  if (
+    !(
+      isEffortLevel(effort.driverEffort) && isEffortLevel(effort.reviewerEffort)
+    )
+  ) {
+    return undefined;
+  }
   const bundles: GovernessHandoffManifest["bundles"] = {};
   for (const agent of agents) {
     const path = governessHandoffFile(runDir, epoch, agent);
@@ -116,12 +134,30 @@ export const writeGovernessHandoffManifest = (
     }
     bundles[agent] = { digest: digest(readFileSync(path, "utf8")), path };
   }
-  const canonical = JSON.stringify({ bundles, epoch });
+  let continuation: GovernessHandoffManifest["continuation"];
+  try {
+    continuation = {
+      digest: digest(readFileSync(continuationFile, "utf8")),
+      path: continuationFile,
+    };
+  } catch {
+    return undefined;
+  }
+  const canonical = JSON.stringify({
+    bundles,
+    continuation,
+    driverEffort: effort.driverEffort,
+    epoch,
+    reviewerEffort: effort.reviewerEffort,
+  });
   const manifest: GovernessHandoffManifest = {
     bundles,
+    continuation,
     createdAt: nowIso,
     digest: digest(canonical),
+    driverEffort: effort.driverEffort,
     epoch,
+    reviewerEffort: effort.reviewerEffort,
   };
   const path = governessHandoffManifestFile(runDir, epoch);
   writeAtomicJson(path, manifest);
@@ -139,16 +175,31 @@ export const readGovernessHandoffManifest = (
       typeof value.epoch !== "number" ||
       typeof value.createdAt !== "string" ||
       typeof value.digest !== "string" ||
+      !isEffortLevel(value.driverEffort ?? "") ||
+      !isEffortLevel(value.reviewerEffort ?? "") ||
       !value.bundles ||
-      typeof value.bundles !== "object"
+      typeof value.bundles !== "object" ||
+      !value.continuation ||
+      typeof value.continuation.digest !== "string" ||
+      typeof value.continuation.path !== "string" ||
+      value.continuation.path !== join(dirname(manifestFile), "continuation.md")
     ) {
       return undefined;
     }
     const canonical = JSON.stringify({
       bundles: value.bundles,
+      continuation: value.continuation,
+      driverEffort: value.driverEffort,
       epoch: value.epoch,
+      reviewerEffort: value.reviewerEffort,
     });
     if (digest(canonical) !== value.digest) {
+      return undefined;
+    }
+    if (
+      digest(readFileSync(value.continuation.path, "utf8")) !==
+      value.continuation.digest
+    ) {
       return undefined;
     }
     for (const [agent, entry] of Object.entries(value.bundles)) {

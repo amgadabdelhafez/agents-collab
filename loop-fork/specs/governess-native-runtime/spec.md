@@ -21,8 +21,9 @@ derived by the supervisor instead of being grounded in agent/runtime events.
 4. Target evidence after dispatch acknowledges a control; terminal completion
    evidence completes it. Timeout produces a durable failure reason without
    duplicating text into the composer.
-5. Handover is two phase: the old loop publishes a digest-bound manifest, and
-   the replacement loop accepts that exact manifest before old-loop teardown.
+5. Handover is teardown-first: the old loop publishes bundles plus a manifest
+   and continuation whose recorded hashes validate before old-loop teardown;
+   the replacement then accepts that exact manifest.
 6. Supervision logic exposes an immutable observation snapshot, pure decisions,
    and a transactional effect executor so recorded snapshots can be replayed.
 7. Replay reports behavioral drift, and explain reports why a control existed,

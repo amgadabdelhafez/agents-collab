@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ReadStream } from "node:tty";
-import type { Agent } from "./types";
+import type { Agent, EffortLevel } from "./types";
 
 export type ExitControlMode = "idle" | "handover" | "launched" | "launch-error";
 
@@ -234,7 +234,8 @@ export const handoverContinuationText = (handoffDir: string): string =>
 export const replacementLoopArgs = (
   primary: Agent,
   peer: Agent,
-  handoffDir?: string
+  handoffDir?: string,
+  effort?: { driverEffort: EffortLevel; reviewerEffort: EffortLevel }
 ): string[] => [
   "--tmux",
   "--governess",
@@ -242,6 +243,14 @@ export const replacementLoopArgs = (
   primary,
   "--pair-with",
   peer,
+  ...(effort
+    ? [
+        "--effort-driver",
+        effort.driverEffort,
+        "--effort-reviewer",
+        effort.reviewerEffort,
+      ]
+    : []),
   "--prompt",
   handoffDir
     ? handoverContinuationFile(handoffDir)

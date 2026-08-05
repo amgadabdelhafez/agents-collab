@@ -25,8 +25,9 @@ board, recovery, quota, exit-menu or paired-agent behavior.
    numbers instead of treating pane hashes as authoritative state.
 4. Governess control actions use a durable journal with idempotency keys,
    fencing epochs and delivery phases.
-5. Graceful handoff is a two-phase protocol: prepare/ready bundles, replacement
-   launch/readiness acknowledgement, then old-session teardown. After a valid
+5. Graceful handoff is a durable teardown-first protocol: prepare/ready bundles,
+   a manifest and continuation whose hashes validate, old-session teardown,
+   then replacement launch/readiness acknowledgement. After a valid
    bundle and turn-end evidence exist, governess closes that drained agent TUI
    exactly once so handoff does not depend on the agent inventing its own exit
    mechanism. A Governess restart may advance its control-plane fencing epoch,
@@ -54,7 +55,8 @@ board, recovery, quota, exit-menu or paired-agent behavior.
   uncertain.
 - No automatic commit, push, merge, deploy, destructive cleanup or timeout
   teardown.
-- The old loop remains alive until the replacement is verified live and ready.
+- The old loop may be torn down only after every epoch-matching bundle, the
+  manifest, and the continuation exist and all recorded hashes validate.
 - Governess never closes an agent TUI before its epoch-matching ready bundle is
   validated and its turn has ended.
 - A supervisor restart never rebinds persisted handoff bundles or their

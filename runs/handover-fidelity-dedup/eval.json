@@ -1,0 +1,47 @@
+{
+  "task_id": "handover-fidelity-dedup",
+  "feature": "handover-fidelity-dedup",
+  "timestamp": "2026-08-05T06:25:42Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "handover_fidelity": {
+      "status": "pass",
+      "details": [
+        "The frozen manifest binds exact driver and reviewer effort values.",
+        "The frozen manifest binds both agent bundles and the continuation file by path and SHA-256.",
+        "Changed effort, continuation bytes, or bundle bytes invalidate the manifest and acceptance.",
+        "Replacement argv contains the exact validated driver and reviewer effort values."
+      ]
+    },
+    "restart_reconciliation": {
+      "status": "pass",
+      "details": [
+        "The producer-backed terminal model starts with stale predecessor agent/helper rows and ends with exactly one live row for each.",
+        "Startup clears scrollback and viewport once; steady-state frame deltas do not clear."
+      ]
+    },
+    "consumer_trace": {
+      "status": "pass",
+      "details": [
+        "Persisted Governess state contains no agent or helper row arrays.",
+        "Cost, statistics, role balance, pressure, quota display, and enforcement consume only the current tick row set before rendering.",
+        "The observed duplicates were display residue and did not double-count policy or accounting inputs."
+      ]
+    },
+    "verification": {
+      "status": "pass",
+      "details": [
+        "Focused affected suites passed 116 tests with zero failures.",
+        "The complete sorted bun run test:ci suite passed uninterrupted with no tolerated failures.",
+        "Ultracite check, governed typecheck, compiled build, and git diff --check passed."
+      ]
+    }
+  },
+  "known_limitations": [
+    "No binary install, live Governess restart, or mutation of healthy run 132 is authorized in this slice.",
+    "The context-pressure restack remains second in the supervisor-cleared queue."
+  ],
+  "notes": "PASS for source review. Release remains gated on stamped exact-SHA supervisor review and separate install authority."
+}
