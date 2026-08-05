@@ -4439,8 +4439,12 @@ const directInputIsSafe = (
   const events = deps.readHooks(info.hookFile);
   // A Notification can mean "permission/input required", not an empty
   // composer. Only a real Stop hook proves a completed turn is safe for
-  // direct text injection.
-  if (events.at(-1)?.event !== "Stop") {
+  // direct text injection. Claude emits SubagentStop after the parent Stop,
+  // so only that producer-owned trailing event is transparent here.
+  const parentTurnBoundary = events.findLast(
+    (event) => event.event !== "SubagentStop"
+  );
+  if (parentTurnBoundary?.event !== "Stop") {
     return false;
   }
   let paneText: string;

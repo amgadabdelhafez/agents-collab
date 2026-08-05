@@ -21,6 +21,12 @@ does not block a confirmed handover; non-dim draft text still blocks it. If a
 test or adapter does not honor the optional styled flag, the old fail-closed
 plain-text behavior remains.
 
+After the reviewed first correction was deployed, resumed handover completed
+the Codex side but left Claude unnotified. Live hook bytes show Claude's parent
+turn ended with `Stop` sequence 1336 followed by `SubagentStop` sequence 1337.
+The raw-last-event check therefore remained false even though styled tmux bytes
+showed only an empty composer plus dim suggestion.
+
 ## Changes
 
 - Extend the existing `capturePane` dependency with an optional styled flag.
@@ -30,14 +36,19 @@ plain-text behavior remains.
 - Add producer-shaped positive and negative regressions.
 - Make styled capture causal in the positive fake: styled returns captured dim
   SGR bytes, while unstyled returns ordinary non-dim composer text.
+- Treat only trailing `SubagentStop` as transparent when locating the latest
+  parent `Stop`; a trailing `Notification` still blocks.
 - Add spec, plan, verification, run log, and empty-baseline eval artifacts.
 
 ## Verification
 
-- Focused exit suite: `25 pass, 0 fail`.
+- Focused exit suite: `26 pass, 0 fail`.
 - Reviewer M1, removing the `true` styled-capture argument, is killed: focused
   suite becomes `24 pass, 1 fail`, with `styledCaptures` receiving `[false]`
   instead of `[true]`. The implementation was restored before broader checks.
+- M2, restoring the raw `events.at(-1)` check, is killed: focused suite becomes
+  `25 pass, 1 fail` because Claude remains unnotified after `Stop`,
+  `SubagentStop`. The restored suite is `26 pass, 0 fail`.
 - Complete sequential `bun run test:ci`: pass with no failures outside the
   sandbox; the first sandboxed local-port test failed to bind and passed when
   rerun with its required local loopback permission.
@@ -48,11 +59,10 @@ plain-text behavior remains.
 
 ## Live un-wedge after an authorized deployment
 
-Do **not** re-trigger `x`, `h`. The live state already persists
-`exitControl.mode=handover`, empty notification and bundle maps, and the
-founder's original `requestedAt`. `runGoverness` loads that state, acquires a
-new fenced epoch, and advances handover on every tick. Re-triggering would call
-`beginHandover` and unnecessarily clear the in-flight transaction.
+Do **not** re-trigger `x`, `h`. The live state still persists
+`exitControl.mode=handover`, the founder's original `requestedAt`, Codex's ready
+bundle, and Codex's completed exit. Re-triggering would call `beginHandover` and
+clear the intact in-flight transaction.
 
 After exact-SHA approval and fresh deployment authority, the bounded sequence
 is:
@@ -63,8 +73,9 @@ is:
    reuses its recorded `/Users/amgad/.local/bin/loop __governess 131` command;
    the agent, helper, proxy, and application panes remain untouched.
 3. Positively verify `%2` is alive on the new binary, the persisted Governess
-   epoch increased, both new-epoch handover controls moved beyond `prepared`,
-   bundle requests entered the run bridge ledger, and both bundle files exist.
+   epoch increased, the existing Codex bundle/exit survived, Claude's new-epoch
+   control moved beyond `prepared`, its request entered the run bridge ledger,
+   and both bundle files exist.
 4. Let the existing handover transaction proceed. Do not send `x` or `h` again
    and do not force teardown unless the normal replacement acceptance gate
    fails and separate authority is given.
@@ -75,5 +86,8 @@ is:
   non-dim draft regression independently proves real input still blocks.
 - No handover authority, exit ordering, replacement readiness, or teardown
   condition changed.
-- No live pane, process, composer, state file, binary, or run was mutated.
+- The first reviewed fix was deployed and only Governess was restarted under
+  authorization; Codex then completed its normal governed handover exit. This
+  follow-up has not touched Claude, re-triggered the handover, or mutated the
+  persisted transaction.
 - This request is exact-SHA review only. It does not request deployment.

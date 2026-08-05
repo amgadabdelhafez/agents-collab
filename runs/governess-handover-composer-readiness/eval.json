@@ -5,6 +5,7 @@
   "acceptance": {
     "dim_idle_suggestion_allows_handover_delivery": true,
     "styled_capture_direction_mutation_killed": true,
+    "trailing_subagent_stop_mutation_killed": true,
     "non_dim_draft_blocks_handover_delivery": true,
     "persisted_handover_mode_survives_state_decode": true,
     "handover_authority_or_exit_order_changed": false,
@@ -13,7 +14,7 @@
   "verification": {
     "focused": {
       "command": "bun run test:file -- tests/loop/governess-exit.test.ts",
-      "passed": 25,
+      "passed": 26,
       "failed": 0
     },
     "full": {
@@ -30,6 +31,12 @@
       "focused_result": "24 pass, 1 fail",
       "failure": "styledCaptures expected [true], received [false]"
     },
-    "independent_review": "dissent addressed; resubmission pending"
+    "mutation_m2": {
+      "name": "M2 use last raw hook instead of latest non-SubagentStop",
+      "status": "killed",
+      "focused_result": "25 pass, 1 fail",
+      "failure": "Claude notification missing after Stop, SubagentStop"
+    },
+    "independent_review": "postdeploy defect fix pending exact-SHA review"
   }
 }

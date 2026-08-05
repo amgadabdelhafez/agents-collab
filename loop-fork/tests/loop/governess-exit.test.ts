@@ -346,6 +346,7 @@ test("handover never injects over a notification or permission prompt", async ()
     paneCommand: (pane: string) =>
       pane.endsWith(".0") ? "0:claude" : "0:codex",
     readHooks: () => [
+      { agent: "claude" as const, event: "Stop", ts: "before-notification" },
       {
         agent: "claude" as const,
         detail: "Claude needs your permission",
@@ -402,6 +403,44 @@ test("handover treats a dim idle suggestion as an empty composer", async () => {
   expect(styledCaptures).toEqual([true]);
   expect(state.exitControl.notified).toEqual({ codex: true });
   expect(bridged).toEqual(["codex"]);
+});
+
+test("handover accepts Claude Stop followed by trailing SubagentStop", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    exitRequested: { codex: true },
+    mode: "handover",
+    notified: { codex: true },
+  };
+  const bridged: string[] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () =>
+      "\u001b[39m❯ \u001b[2mstart T2 now: run C5 then C2\u001b[0m\nfooter",
+    fenceCurrent: () => true,
+    now: () => 0,
+    paneCommand: () => "0:claude",
+    readHooks: () => [
+      { agent: "claude" as const, event: "Stop", ts: "now" },
+      { agent: "claude" as const, event: "SubagentStop", ts: "now" },
+    ],
+    saveState: () => undefined,
+    sendBridge: (_runDir: string, _source: string, target: string) => {
+      bridged.push(target);
+      return Promise.resolve("accepted" as const);
+    },
+  };
+
+  expect(
+    await advanceHandoverControl(config, deps, state, {
+      claude: "idle",
+      codex: "exited",
+    })
+  ).toEqual({ status: "waiting" });
+  expect(state.exitControl.notified).toEqual({ claude: true, codex: true });
+  expect(bridged).toEqual(["claude"]);
 });
 
 test("handover still blocks a non-dim composer draft", async () => {

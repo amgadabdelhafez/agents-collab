@@ -10,6 +10,11 @@ that suggestion as a foreign draft. The handover therefore could not begin.
 Claude simultaneously showed a dim ghost suggestion. Neither pane's ghost
 suggestion may block delivery. A real, non-dim draft must continue to block.
 
+The first deployed correction exposed a second producer boundary: Claude emits
+`Stop`, then `SubagentStop`, for a completed parent turn. Treating only the last
+raw hook as authoritative leaves the parent turn permanently unsafe even when
+the styled composer is empty.
+
 ## Requirements
 
 1. Handover readiness uses a styled tmux capture when available.
@@ -19,11 +24,15 @@ suggestion may block delivery. A real, non-dim draft must continue to block.
 4. Missing styled-capture support falls back to the prior fail-closed behavior.
 5. The fix changes no handover authority, exit ordering, or replacement-loop
    teardown rule.
+6. Trailing `SubagentStop` hooks do not erase the latest parent `Stop` boundary.
+   Other trailing hook kinds, including `Notification`, remain fail-closed.
 
 ## Acceptance
 
 - Producer-shaped Codex idle suggestion capture reaches exactly one handover
   delivery.
 - The same capture with non-dim text reaches zero deliveries.
+- A producer-shaped Claude `Stop`, `SubagentStop` tail plus dim suggestion
+  reaches exactly one handover delivery.
 - Focused Governess exit tests, the Governess suite, full tests, build, and
   repository verification are recorded before review.

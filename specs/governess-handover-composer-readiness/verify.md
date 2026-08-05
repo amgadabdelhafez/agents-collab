@@ -16,5 +16,9 @@ from `directInputIsSafe`, run the focused exit suite, and require the
 styled-only ghost producer test to fail. Restore the implementation before any
 commit or broader verification.
 
+Second mutation requirement: replace the latest non-`SubagentStop` selection
+with `events.at(-1)`, run the focused exit suite, and require the producer-shaped
+Claude `Stop`, `SubagentStop` test to fail. Restore before broader verification.
+
 The live loop is observation-only for this change. Do not alter either agent
 composer, restart a pane, or deploy a binary without fresh authority.
