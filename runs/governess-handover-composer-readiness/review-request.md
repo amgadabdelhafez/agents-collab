@@ -6,11 +6,12 @@ In live `harvto-loop-131`, the founder confirmed the Governess `x`, then `h`
 succession at 2026-08-05T02:38:25Z. Both controls remained `prepared` with
 `notified:false`; no handover bundles or replacement session appeared.
 
-Positive inspection found two distinct states that the current unstyled probe
-collapsed together:
+Positive styled inspection found that the current unstyled probe collapsed
+ghost styling into ordinary text in both panes:
 
 - Codex was stopped at its dim idle suggestion, `Write tests for @filename`.
-- Claude had the real non-dim draft, `start T2 now: run C5 then C2`.
+- Claude was stopped at its dim idle suggestion, `start T2 now: run C5 then
+  C2`.
 
 ## Claim
 
@@ -42,7 +43,8 @@ plain-text behavior remains.
 
 ## Boundaries
 
-- The real Claude draft remains untouched and continues to block succession.
+- The live Claude ghost suggestion remains untouched; a producer-shaped
+  non-dim draft regression independently proves real input still blocks.
 - No handover authority, exit ordering, replacement readiness, or teardown
   condition changed.
 - No live pane, process, composer, state file, binary, or run was mutated.

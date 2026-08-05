@@ -7,8 +7,8 @@ remained in `prepared` with `notified:false`. Codex was stopped at its normal
 dim idle suggestion, but Governess used an unstyled tmux capture and treated
 that suggestion as a foreign draft. The handover therefore could not begin.
 
-Claude simultaneously had a real, non-dim founder draft. That draft must
-continue to block delivery.
+Claude simultaneously showed a dim ghost suggestion. Neither pane's ghost
+suggestion may block delivery. A real, non-dim draft must continue to block.
 
 ## Requirements
 
