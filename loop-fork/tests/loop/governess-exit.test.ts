@@ -47,6 +47,18 @@ test("handover accepts only force teardown and launch retry keys", () => {
 test("persisted exit state is validated", () => {
   expect(
     readExitControl({
+      exitRequested: {},
+      mode: "handover",
+      notified: {},
+      requestedAt: "2026-08-05T02:38:25.017Z",
+    })
+  ).toEqual({
+    mode: "handover",
+    notified: {},
+    requestedAt: "2026-08-05T02:38:25.017Z",
+  });
+  expect(
+    readExitControl({
       exitRequested: { codex: true, unknown: true },
       launchError: "boom",
       mode: "launch-error",
@@ -360,11 +372,16 @@ test("handover treats a dim idle suggestion as an empty composer", async () => {
   const state = freshRunState();
   state.exitControl = { mode: "handover", notified: {} };
   const bridged: string[] = [];
+  const styledCaptures: boolean[] = [];
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
-    capturePane: () =>
-      "\u001b[39m› \u001b[2mWrite tests for @filename\u001b[0m\nfooter",
+    capturePane: (_pane: string, styled = false) => {
+      styledCaptures.push(styled);
+      return styled
+        ? "\u001b[39m› \u001b[2mWrite tests for @filename\u001b[0m\nfooter"
+        : "› Write tests for @filename\nfooter";
+    },
     fenceCurrent: () => true,
     now: () => 0,
     paneCommand: () => "0:codex-aarch64-a",
@@ -382,6 +399,7 @@ test("handover treats a dim idle suggestion as an empty composer", async () => {
       codex: "idle",
     })
   ).toEqual({ status: "waiting" });
+  expect(styledCaptures).toEqual([true]);
   expect(state.exitControl.notified).toEqual({ codex: true });
   expect(bridged).toEqual(["codex"]);
 });

@@ -28,11 +28,16 @@ plain-text behavior remains.
 - Normalize the final ten handover probe lines through `stripDimSpans` before
   applying the unchanged non-empty-composer regex.
 - Add producer-shaped positive and negative regressions.
+- Make styled capture causal in the positive fake: styled returns captured dim
+  SGR bytes, while unstyled returns ordinary non-dim composer text.
 - Add spec, plan, verification, run log, and empty-baseline eval artifacts.
 
 ## Verification
 
 - Focused exit suite: `25 pass, 0 fail`.
+- Reviewer M1, removing the `true` styled-capture argument, is killed: focused
+  suite becomes `24 pass, 1 fail`, with `styledCaptures` receiving `[false]`
+  instead of `[true]`. The implementation was restored before broader checks.
 - Complete sequential `bun run test:ci`: pass with no failures outside the
   sandbox; the first sandboxed local-port test failed to bind and passed when
   rerun with its required local loopback permission.
@@ -40,6 +45,29 @@ plain-text behavior remains.
   governess-handover-composer-readiness`: pass, including lint, typecheck,
   compiled build, every sorted test file, and empty named baseline allowlist.
 - `bun run check`, `bun run build`, and `git diff --check`: pass.
+
+## Live un-wedge after an authorized deployment
+
+Do **not** re-trigger `x`, `h`. The live state already persists
+`exitControl.mode=handover`, empty notification and bundle maps, and the
+founder's original `requestedAt`. `runGoverness` loads that state, acquires a
+new fenced epoch, and advances handover on every tick. Re-triggering would call
+`beginHandover` and unnecessarily clear the in-flight transaction.
+
+After exact-SHA approval and fresh deployment authority, the bounded sequence
+is:
+
+1. Install the approved immutable binary through the estate atomic-backup
+   protocol and independently verify its commit and SHA-256.
+2. Restart only the Governess pane with `tmux respawn-pane -k -t %2`. Tmux
+   reuses its recorded `/Users/amgad/.local/bin/loop __governess 131` command;
+   the agent, helper, proxy, and application panes remain untouched.
+3. Positively verify `%2` is alive on the new binary, the persisted Governess
+   epoch increased, both new-epoch handover controls moved beyond `prepared`,
+   bundle requests entered the run bridge ledger, and both bundle files exist.
+4. Let the existing handover transaction proceed. Do not send `x` or `h` again
+   and do not force teardown unless the normal replacement acceptance gate
+   fails and separate authority is given.
 
 ## Boundaries
 

@@ -4,7 +4,9 @@
   "baseline_failures": [],
   "acceptance": {
     "dim_idle_suggestion_allows_handover_delivery": true,
+    "styled_capture_direction_mutation_killed": true,
     "non_dim_draft_blocks_handover_delivery": true,
+    "persisted_handover_mode_survives_state_decode": true,
     "handover_authority_or_exit_order_changed": false,
     "live_loop_mutated": false
   },
@@ -22,6 +24,12 @@
     "build": "pass",
     "format_and_lint": "pass",
     "repository_verify": "pass",
-    "independent_review": "pending"
+    "mutation": {
+      "name": "M1 remove styled=true",
+      "status": "killed",
+      "focused_result": "24 pass, 1 fail",
+      "failure": "styledCaptures expected [true], received [false]"
+    },
+    "independent_review": "dissent addressed; resubmission pending"
   }
 }
