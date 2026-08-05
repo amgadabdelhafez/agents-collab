@@ -1,0 +1,54 @@
+{
+  "task_id": "cleared-lineage-remote-integration",
+  "feature": "cleared-lineage-remote-integration",
+  "timestamp": "2026-08-05T23:36:42Z",
+  "evaluator": "codex-producer-backed-release-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "lineage": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "Integration first parent is reviewed candidate d20a5418cb384bdf443fbbca231e808e1d3602e4.",
+        "Integration second parent is the shared GitHub and Forgejo main tip 4f8e132d353f2e123774335b6b82304fb7005332.",
+        "aa74ee73ced6b03d153d31656bdd611be74c5be0 is patch-equivalent to a cleared-lineage effort implementation.",
+        "The cleared-lineage constants.ts and tmux.ts are preserved byte-for-byte after conflict resolution.",
+        "README.md matches remote main byte-for-byte."
+      ]
+    },
+    "focused_verification": {
+      "passed": 133,
+      "failed": 0,
+      "details": [
+        "Bridge suite passed 105/0.",
+        "Paired-loop suite passed 21/0.",
+        "Paired integration passed 1/0.",
+        "Memory checkpoint suite passed 5/0.",
+        "Launch-smoke manifest discovery passed 1/0."
+      ]
+    },
+    "static_check": {
+      "passed": 823,
+      "failed": 0,
+      "command": "bun run check"
+    },
+    "governed_verification": {
+      "passed": "all mandatory stages",
+      "failed": 0,
+      "command": "scripts/verify.sh cleared-lineage-remote-integration cleared-lineage-remote-integration",
+      "stages": [
+        "lint",
+        "entrypoint typecheck",
+        "build",
+        "all sequential test files",
+        "empty named baseline-failure gate"
+      ]
+    }
+  },
+  "known_limitations": [
+    "The integration adds no harness behavior beyond the already-reviewed d20a541 candidate; its additional tree content is repository documentation and release evidence.",
+    "Remote main and the installed binary remain unchanged until exact integration-SHA review and pre-launch gates pass."
+  ],
+  "notes": "PASS candidate. Exact-commit governed verification and the changed-binary smoke are rerun after the merge commit is created; any failure invalidates this eval and blocks release."
+}
