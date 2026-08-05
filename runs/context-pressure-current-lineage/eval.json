@@ -1,0 +1,62 @@
+{
+  "task_id": "context-pressure-current-lineage",
+  "feature": "context-pressure-handoff",
+  "timestamp": "2026-08-05T06:05:31Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "producer_regression": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "A pressure-triggered handover at Governess epoch 41 persists transaction epoch 41 across reload.",
+        "After the restarted Governess advances its fencing epoch to 99, the active handover rejects a second start and retains transaction epoch 41."
+      ]
+    },
+    "focused": {
+      "passed": 134,
+      "failed": 0,
+      "commands": [
+        "bun run test:file -- tests/loop/session-pressure.test.ts",
+        "bun run test:file -- tests/loop/governess-usage.test.ts",
+        "bun run test:file -- tests/loop/governess.test.ts",
+        "bun run test:file -- tests/loop/governess-exit.test.ts"
+      ]
+    },
+    "mutation": {
+      "passed": 1,
+      "failed": 0,
+      "details": [
+        "Replacing the pressure-triggered handover epoch with undefined made the new producer regression fail on handoverEpoch 41; restoring the implementation returned 77/77 Governess tests green."
+      ]
+    },
+    "full_suite": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "details": [
+        "A sandboxed attempt failed when the proxy integration could not bind localhost and surfaced EADDRINUSE.",
+        "The proxy integration passed independently with loopback binding allowed, then the complete sequential suite passed uninterrupted with zero failures."
+      ]
+    },
+    "static_and_build": {
+      "format_lint": "pass",
+      "typecheck": "pass",
+      "diff_check": "pass",
+      "compiled_build": "pass"
+    },
+    "governed_verify": {
+      "status": "pass",
+      "command": "scripts/verify.sh context-pressure-handoff context-pressure-current-lineage",
+      "baseline_failures": []
+    },
+    "lineage": {
+      "installed_source_base": "67e622d0aee4ef331acec3cebc58e34f7f2ec292",
+      "reviewed_feature_source": "14687ce500e1fe28c4df0c94bb673d2857df2d73",
+      "restacked_feature_commit": "bfb2624106269448d6b153f5fb22f7eed542d104"
+    }
+  },
+  "known_limitations": [
+    "This source evaluation does not authorize installation, deployment, live-loop mutation, merge, rebase, or push."
+  ]
+}

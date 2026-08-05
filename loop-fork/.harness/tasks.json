@@ -496,6 +496,16 @@
       "eval_status": "pass",
       "ended_at": "2026-08-04T20:19:43Z",
       "spec_path": "specs/bridge-mcp-response-drain.md"
+    },
+    {
+      "id": "context-pressure-current-lineage",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-08-05T05:58:48Z",
+      "run_dir": "runs/context-pressure-current-lineage",
+      "eval_status": "pass",
+      "ended_at": "2026-08-05T06:05:31Z",
+      "spec_path": "specs/context-pressure-current-lineage.md"
     }
   ]
 }
