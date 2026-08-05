@@ -349,6 +349,33 @@ test("runCli delegates paired tmux after resolving the task", async () => {
   expect(cancelPairedLaunchMock).not.toHaveBeenCalled();
 });
 
+test("runCli carries the governess handoff manifest into launch reservation", async () => {
+  const opts = { ...makeOptions(), tmux: true };
+  const prior = process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST;
+  process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST =
+    "/tmp/source-run/handoff/42/manifest.json";
+  try {
+    const { runCli, reservePairedLaunchMock } = await loadRunCli({
+      parseArgs: () => opts,
+      runInTmux: () => true,
+      resolveTask: async () => "continue handoff",
+    });
+
+    await runCli(["--tmux", "continue handoff"]);
+
+    expect(reservePairedLaunchMock).toHaveBeenCalledTimes(1);
+    expect(reservePairedLaunchMock.mock.calls[0]?.[0]).toMatchObject({
+      handoverManifest: "/tmp/source-run/handoff/42/manifest.json",
+    });
+  } finally {
+    if (prior === undefined) {
+      process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST = undefined;
+    } else {
+      process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST = prior;
+    }
+  }
+});
+
 test("runCli rejects a duplicate workspace before task or agent side effects", async () => {
   const calls: string[] = [];
   const opts = { ...makeOptions(), tmux: true };

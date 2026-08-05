@@ -49,3 +49,7 @@ cd .. && scripts/verify.sh
    confirm the replacement manifest retains the original transaction epoch,
    the replacement launches, and the fresh Governess fencing epoch remains
    current for subsequent controls.
+6. Confirm reservation excludes only the exact live predecessor whose
+   cryptographically validated handoff manifest matches the persisted epoch,
+   bundle paths, workspace, and exited primary panes. A live primary pane,
+   malformed evidence, or any second workspace owner must still fail closed.

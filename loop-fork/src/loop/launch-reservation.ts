@@ -1,8 +1,21 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import lockfile from "proper-lockfile";
+import { agentHasExited, paneProbeFromTmuxResult } from "./governess-exit";
+import {
+  governessHandoffFile,
+  governessHandoffManifestFile,
+  readGovernessHandoffManifest,
+} from "./governess-handoff";
 import {
   createRunManifest,
   isActiveRunState,
@@ -29,6 +42,7 @@ interface LaunchReservationDeps {
   isPidAlive: (pid: number) => boolean;
   makeClaimId: () => string;
   now: () => string;
+  paneProbe: (pane: string) => string | undefined;
   pid: number;
   tmuxLiveness: (session: string) => Promise<TmuxLiveness> | TmuxLiveness;
 }
@@ -58,6 +72,27 @@ const defaultDeps = (): LaunchReservationDeps => ({
   makeClaimId: randomUUID,
   now: () => new Date().toISOString(),
   pid: process.pid,
+  paneProbe: (pane) => {
+    try {
+      const result = spawnSync(
+        "tmux",
+        [
+          "display-message",
+          "-p",
+          "-t",
+          pane,
+          "#{pane_dead}:#{pane_current_command}",
+        ],
+        { encoding: "utf8", timeout: 2000 }
+      );
+      if (result.error || result.signal) {
+        return undefined;
+      }
+      return paneProbeFromTmuxResult(result.status ?? 1, result.stdout ?? "");
+    } catch {
+      return undefined;
+    }
+  },
   tmuxLiveness: tmuxSessionLivenessAsync,
 });
 
@@ -135,6 +170,111 @@ const storedManifests = async (repoDir: string): Promise<RunManifest[]> => {
     await yieldToEventLoop();
   }
   return manifests;
+};
+
+interface PersistedHandoffSourceState {
+  exitControl?: {
+    handoverEpoch?: number;
+    mode?: string;
+  };
+  handoverBundles?: Record<string, string>;
+}
+
+const sameFile = (left: string, right: string): boolean => {
+  try {
+    return realpathSync(left) === realpathSync(right);
+  } catch {
+    return (
+      resolve(left) === resolve(right) && existsSync(left) && existsSync(right)
+    );
+  }
+};
+
+const readHandoffSourceState = (
+  runDir: string
+): PersistedHandoffSourceState | undefined => {
+  try {
+    return JSON.parse(
+      readFileSync(join(runDir, "governess-state.json"), "utf8")
+    ) as PersistedHandoffSourceState;
+  } catch {
+    return undefined;
+  }
+};
+
+const validatedHandoffSourceRunId = async (
+  opts: Options,
+  manifests: RunManifest[],
+  binding: LaunchWorkspaceBinding,
+  deps: LaunchReservationDeps
+): Promise<string | undefined> => {
+  const suppliedManifest = opts.handoverManifest;
+  if (!suppliedManifest) {
+    return undefined;
+  }
+  const handoff = readGovernessHandoffManifest(suppliedManifest);
+  if (!handoff) {
+    return undefined;
+  }
+  for (const source of manifests) {
+    if (
+      source.workspaceBinding?.root !== binding.root ||
+      source.workspaceBinding.branchRef !== binding.branchRef ||
+      !source.tmuxSession ||
+      (await deps.tmuxLiveness(source.tmuxSession)) !== "live"
+    ) {
+      continue;
+    }
+    const storage = resolveRunStorage(source.runId, binding.root, deps.home);
+    const expectedManifest = governessHandoffManifestFile(
+      storage.runDir,
+      handoff.epoch
+    );
+    if (!sameFile(suppliedManifest, expectedManifest)) {
+      continue;
+    }
+    const state = readHandoffSourceState(storage.runDir);
+    if (
+      !(
+        state &&
+        ["handover", "launch-error"].includes(state.exitControl?.mode ?? "")
+      ) ||
+      state.exitControl?.handoverEpoch !== handoff.epoch
+    ) {
+      continue;
+    }
+    const primaryAgents = [
+      [source.tmuxPaneLeftAgent, source.tmuxPaneLeft],
+      [source.tmuxPaneRightAgent, source.tmuxPaneRight],
+    ] as const;
+    if (
+      primaryAgents.some(
+        ([agent, pane]) =>
+          !(
+            agent &&
+            pane &&
+            handoff.bundles[agent] &&
+            state.handoverBundles?.[agent] &&
+            sameFile(
+              handoff.bundles[agent]?.path ?? "",
+              governessHandoffFile(storage.runDir, handoff.epoch, agent)
+            ) &&
+            sameFile(
+              state.handoverBundles[agent] ?? "",
+              handoff.bundles[agent]?.path ?? ""
+            ) &&
+            agentHasExited(agent, deps.paneProbe(pane))
+          )
+      )
+    ) {
+      continue;
+    }
+    if (Object.keys(handoff.bundles).length !== primaryAgents.length) {
+      continue;
+    }
+    return source.runId;
+  }
+  return undefined;
 };
 
 const assertNoConflict = async (
@@ -263,7 +403,20 @@ export const reservePairedLaunch = async (
     const effectiveBinding = requested
       ? validateExplicitWorkspaceResume(opts, requested, binding)
       : binding;
-    await assertNoConflict(manifests, effectiveBinding, requestedRunId, deps);
+    const handoffSourceRunId = requestedRunId
+      ? undefined
+      : await validatedHandoffSourceRunId(
+          opts,
+          manifests,
+          effectiveBinding,
+          deps
+        );
+    await assertNoConflict(
+      manifests,
+      effectiveBinding,
+      requestedRunId ?? handoffSourceRunId,
+      deps
+    );
     if (requestedRunId && requested) {
       const storage = resolveRunStorage(
         requestedRunId,

@@ -12,6 +12,11 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runGit } from "../../src/loop/git";
 import {
+  ensureGovernessHandoffDir,
+  governessHandoffFile,
+  writeGovernessHandoffManifest,
+} from "../../src/loop/governess-handoff";
+import {
   bindLaunchTask,
   cancelPairedLaunch,
   reservePairedLaunch,
@@ -97,6 +102,178 @@ const writeFixtureManifest = (
   );
   return storage;
 };
+
+const writeHandoffSourceFixture = (
+  home: string,
+  binding: LaunchWorkspaceBinding,
+  epoch = 424_242
+) => {
+  const storage = resolveRunStorage("1", binding.root, home);
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      claudeSessionId: "claude-source",
+      codexThreadId: "codex-source",
+      cwd: binding.root,
+      mode: "paired",
+      pid: 999,
+      repoId: storage.repoId,
+      runId: "1",
+      state: "working",
+      tmuxPaneLeft: "%0",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRight: "%1",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "source-loop",
+      workspaceBinding: binding,
+    })
+  );
+  ensureGovernessHandoffDir(storage.runDir, epoch);
+  for (const agent of ["claude", "codex"] as const) {
+    writeFileSync(
+      governessHandoffFile(storage.runDir, epoch, agent),
+      `${JSON.stringify({
+        agent,
+        blockers: [],
+        checks: ["ready"],
+        dirtyFiles: [],
+        epoch,
+        gitHead: "abc123",
+        next: "continue",
+        status: "ready",
+        summary: `${agent} handoff`,
+      })}\n`
+    );
+  }
+  const handoverManifest = writeGovernessHandoffManifest(
+    storage.runDir,
+    epoch,
+    ["claude", "codex"],
+    new Date(0).toISOString()
+  );
+  expect(handoverManifest).toBeDefined();
+  writeFileSync(
+    join(storage.runDir, "governess-state.json"),
+    `${JSON.stringify({
+      exitControl: { handoverEpoch: epoch, mode: "launch-error" },
+      handoverBundles: {
+        claude: governessHandoffFile(storage.runDir, epoch, "claude"),
+        codex: governessHandoffFile(storage.runDir, epoch, "codex"),
+      },
+    })}\n`
+  );
+  return { handoverManifest: handoverManifest as string, storage };
+};
+
+test("validated handoff predecessor is the only live workspace owner excluded", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const source = writeHandoffSourceFixture(home, binding);
+    const claim = await reservePairedLaunch(
+      makeOptions({ handoverManifest: source.handoverManifest }),
+      binding,
+      {
+        ...reservationDeps(home),
+        paneProbe: () => "1:zsh",
+        tmuxLiveness: (session) =>
+          session === "source-loop" ? "live" : "dead",
+      }
+    );
+    expect(claim.reserved).toBe(true);
+    expect(claim.storage.runId).not.toBe(source.storage.runId);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("handoff predecessor exclusion fails closed while a primary pane is live", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const source = writeHandoffSourceFixture(home, binding);
+    await expect(
+      reservePairedLaunch(
+        makeOptions({ handoverManifest: source.handoverManifest }),
+        binding,
+        {
+          ...reservationDeps(home),
+          paneProbe: (pane) => (pane === "%0" ? "0:claude" : "1:zsh"),
+          tmuxLiveness: () => "live",
+        }
+      )
+    ).rejects.toThrow("launch conflict: run 1");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("malformed handoff evidence cannot bypass workspace ownership", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const source = writeHandoffSourceFixture(home, binding);
+    writeFileSync(source.handoverManifest, "{}\n");
+    await expect(
+      reservePairedLaunch(
+        makeOptions({ handoverManifest: source.handoverManifest }),
+        binding,
+        {
+          ...reservationDeps(home),
+          paneProbe: () => "1:zsh",
+          tmuxLiveness: () => "live",
+        }
+      )
+    ).rejects.toThrow("launch conflict: run 1");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("validated predecessor does not exclude another live workspace owner", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const source = writeHandoffSourceFixture(home, binding);
+    const other = resolveRunStorage("2", binding.root, home);
+    writeRunManifest(
+      other.manifestPath,
+      createRunManifest({
+        claudeSessionId: "",
+        codexThreadId: "",
+        cwd: binding.root,
+        mode: "paired",
+        pid: 998,
+        repoId: other.repoId,
+        runId: "2",
+        state: "working",
+        tmuxSession: "other-loop",
+        workspaceBinding: binding,
+      })
+    );
+    await expect(
+      reservePairedLaunch(
+        makeOptions({ handoverManifest: source.handoverManifest }),
+        binding,
+        {
+          ...reservationDeps(home),
+          paneProbe: () => "1:zsh",
+          tmuxLiveness: () => "live",
+        }
+      )
+    ).rejects.toThrow("launch conflict: run 2");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
 
 test("concurrent fresh claims for one workspace produce one winner", async () => {
   const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));

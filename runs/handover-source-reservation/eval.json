@@ -1,0 +1,51 @@
+{
+  "task_id": "handover-source-reservation",
+  "feature": "governess-runtime",
+  "timestamp": "2026-08-05T05:18:52Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "producer_regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "A producer-written two-agent handoff manifest excludes its exact live predecessor and reserves a distinct replacement run.",
+        "A primary pane that still reports its agent TUI keeps the predecessor conflict fail-closed.",
+        "Malformed handoff evidence cannot bypass the ordinary workspace conflict.",
+        "A second live owner of the same workspace still blocks replacement even when the predecessor attestation is valid."
+      ]
+    },
+    "focused": {
+      "passed": 55,
+      "failed": 0,
+      "commands": [
+        "bun run test:file -- tests/loop.test.ts",
+        "bun run test:file -- tests/loop/launch-reservation.test.ts"
+      ]
+    },
+    "full_suite": {
+      "status": "pass",
+      "command": "bun run test:ci",
+      "details": [
+        "The first sandboxed run reached the loopback proxy integration and failed with EADDRINUSE because local listen was unavailable.",
+        "The complete repository suite then passed with zero failures when temporary loopback binding was allowed."
+      ]
+    },
+    "static_and_build": {
+      "format_lint": "pass",
+      "diff_check": "pass",
+      "compiled_build": "pass"
+    }
+  },
+  "live_incident": {
+    "run": "harvto-loop-131",
+    "handoff_epoch": 1785900759466614,
+    "fresh_governess_epoch": 1785906654821458,
+    "pre_fix_result": "launch-error: run 131 still owns workspace",
+    "safety_state": "No replacement launched and no teardown occurred; the old run, helpers, exact bundles, manifest, and continuation remain preserved."
+  },
+  "known_limitations": [
+    "This source evaluation does not authorize installation, a live retry, or old-run teardown of the new candidate."
+  ]
+}

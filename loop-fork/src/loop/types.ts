@@ -372,6 +372,7 @@ export interface Options {
   governessMaxRecoveries: number;
   governessModel: string;
   governessUrl: string;
+  handoverManifest?: string;
   helperCavemanMode: CavemanMode;
   helperCavemanModeSource: CavemanModeSource;
   launchAttemptId?: string;

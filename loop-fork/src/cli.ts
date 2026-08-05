@@ -314,6 +314,10 @@ const prepareCliLaunch = async (
   invocationCwd: string
 ): Promise<PreparedCliLaunch> => {
   const opts = cliDeps.parseArgs(normalizedArgv);
+  const handoverManifest = process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST?.trim();
+  if (handoverManifest) {
+    opts.handoverManifest = handoverManifest;
+  }
   preserveRelativePromptPath(opts, invocationCwd);
   enterExplicitWorkspace(opts, invocationCwd);
   const awaitAutoUpdate = shouldAwaitAutoUpdate(opts);

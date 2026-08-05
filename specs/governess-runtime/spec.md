@@ -55,6 +55,10 @@ board, recovery, quota, exit-menu or paired-agent behavior.
 - No automatic commit, push, merge, deploy, destructive cleanup or timeout
   teardown.
 - The old loop remains alive until the replacement is verified live and ready.
+- The duplicate-workspace launch guard may exclude only the exact live
+  predecessor named by a validated handoff manifest, after independently
+  confirming its epoch-matching bundles and exited primary panes. Every other
+  workspace owner still blocks the replacement launch.
 - Governess never closes an agent TUI before its epoch-matching ready bundle is
   validated and its turn has ended.
 - A supervisor restart never rebinds persisted handoff bundles or their

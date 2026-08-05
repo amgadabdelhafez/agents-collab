@@ -22,3 +22,5 @@
 - [x] Rebuild and narrowly refresh the live governess pane.
 - [x] Preserve the original handoff transaction epoch and exact manifest across
       a Governess-only restart while advancing the control-plane fence.
+- [x] Permit replacement reservation to exclude only its validated, drained
+      handoff predecessor while retaining every other workspace conflict.
