@@ -592,6 +592,68 @@ test("session pressure state survives Governess persistence", () => {
   }
 });
 
+test("pressure-triggered handover pins its epoch across Governess persistence", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-pressure-handover-epoch-"));
+  const stateFile = join(root, "governess-state.json");
+  const state = freshRunState();
+  state.governessEpoch = 41;
+  const due = evaluateSessionPressure(
+    "codex",
+    usage({ contextTokens: 185_000, model: "gpt-5.6-sol" })
+  );
+  const deps = {
+    appendLog: () => undefined,
+    now: () => START_MS,
+  };
+
+  expect(
+    maybeBeginSessionPressureHandover(
+      {
+        dryRun: false,
+        logFile: "governess.jsonl",
+        sessionPressureMode: "enforce",
+      },
+      deps,
+      state,
+      { codex: due },
+      true
+    )
+  ).toEqual(due);
+  expect(state.exitControl).toMatchObject({
+    handoverEpoch: 41,
+    mode: "handover",
+  });
+
+  saveGovernessState(stateFile, state);
+  try {
+    const restarted = loadGovernessState(stateFile);
+    expect(restarted?.exitControl).toMatchObject({
+      handoverEpoch: 41,
+      mode: "handover",
+    });
+    if (!restarted) {
+      throw new Error("expected persisted Governess state");
+    }
+    restarted.governessEpoch = 99;
+    expect(
+      maybeBeginSessionPressureHandover(
+        {
+          dryRun: false,
+          logFile: "governess.jsonl",
+          sessionPressureMode: "enforce",
+        },
+        deps,
+        restarted,
+        { codex: due },
+        true
+      )
+    ).toBeUndefined();
+    expect(restarted.exitControl.handoverEpoch).toBe(41);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("enforce starts exactly one governed handover while safety modes do not", () => {
   const due = evaluateSessionPressure(
     "codex",
