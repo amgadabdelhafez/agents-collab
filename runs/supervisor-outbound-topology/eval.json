@@ -1,0 +1,71 @@
+{
+  "task_id": "supervisor-outbound-topology",
+  "feature": "supervisor-outbound-topology",
+  "timestamp": "2026-08-05T23:09:28Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "producer_regression": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "A paired Claude/Codex manifest exposes supervisor as a send_message target.",
+        "Claude enqueues exactly one durable urgent escalation to supervisor.",
+        "Bridge status reports one pending supervisor message before the drain.",
+        "A supervisor MCP session receives the exact escalation and records one delivered resolution.",
+        "Bridge status reports zero pending supervisor messages after the drain."
+      ]
+    },
+    "delivery_isolation": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "The supervisor target has no tmux pane delivery route.",
+        "An older pending supervisor escalation does not head-of-line block a newer paired-agent message.",
+        "Absent pane agents such as Gemini remain rejected with MCP -32602 and produce no ledger message."
+      ]
+    },
+    "focused_verification": {
+      "passed": 132,
+      "failed": 0,
+      "command": "bun run test:file -- tests/loop/bridge.test.ts; bun run test:file -- tests/loop/memory-checkpoint.test.ts; bun run test:file -- tests/loop/paired-loop.test.ts; bun run test:file -- tests/loop/00-paired-loop.integration.test.ts"
+    },
+    "full_suite": {
+      "passed": "all discovered sequential test files",
+      "failed": 0,
+      "command": "bun run test:ci",
+      "instrument": "outside restricted sandbox, non-PTY"
+    },
+    "independent_failure_checks": {
+      "passed": 2,
+      "failed": 0,
+      "details": [
+        "The proxy integration that could not bind a local port in the restricted sandbox passed 1/1 outside the sandbox.",
+        "The viewport-sensitive Governess tests passed under the non-PTY instrument used by the governed verifier."
+      ]
+    },
+    "static_and_build": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "bun run check passed across 823 files.",
+        "bun run build passed across 3049 modules.",
+        "Targeted TypeScript output for every touched source file is empty; the governed entrypoint typecheck passed."
+      ]
+    },
+    "lineage": {
+      "passed": 1,
+      "failed": 0,
+      "base_sha": "8636017dcbd23ab75dc7a218d6bfc31fe1fad023",
+      "details": [
+        "The isolated worktree was created directly from the supervisor-cleared and installed harness lineage."
+      ]
+    }
+  },
+  "known_limitations": [
+    "This slice adds durable outbound routing to the supervisor; it does not add automatic pane injection or grant the supervisor pane-agent authority.",
+    "No live loop, installed binary, remote branch, or main branch was mutated during implementation or evaluation."
+  ],
+  "notes": "PASS candidate. The regression reproduces the loop-134 topology failure shape and proves durable enqueue, status visibility, supervisor polling, resolution, and paired-agent delivery isolation. Exact commit review remains required before integration or release."
+}

@@ -13,6 +13,7 @@ import {
 import type { Agent } from "./types";
 
 export type BridgeSource = Agent | "supervisor" | "utility";
+export type BridgeTarget = Agent | "supervisor";
 
 const BRIDGE_FILE = "bridge.jsonl";
 const LINE_SPLIT_RE = /\r?\n/;
@@ -65,7 +66,7 @@ interface BridgeBaseEvent {
   id: string;
   signature?: string;
   source: BridgeSource;
-  target: Agent;
+  target: BridgeTarget;
 }
 
 export interface BridgeMessage extends BridgeBaseEvent {
@@ -134,7 +135,7 @@ export interface BridgeStatus {
   codexThreadId: string;
   hasCodexRemote: boolean;
   hasTmuxSession: boolean;
-  pending: Record<Agent, number>;
+  pending: Record<BridgeTarget, number>;
   qos: BridgeQueueHealth;
   runId: string;
   state: string;
@@ -175,15 +176,22 @@ export const normalizeAgent = (value: unknown): Agent | undefined => {
   return undefined;
 };
 
+export const normalizeBridgeTarget = (
+  value: unknown
+): BridgeTarget | undefined =>
+  value === "supervisor" ? value : normalizeAgent(value);
+
 const normalizeBridgeSource = (value: unknown): BridgeSource | undefined =>
   value === "utility" || value === "supervisor" ? value : normalizeAgent(value);
 
-const orderedBridgePairKey = (source: BridgeSource, target: Agent): string =>
-  `${source}>${target}`;
+const orderedBridgePairKey = (
+  source: BridgeSource,
+  target: BridgeTarget
+): string => `${source}>${target}`;
 
 const bridgeSignature = (
   source: BridgeSource,
-  target: Agent,
+  target: BridgeTarget,
   message: string
 ): string => {
   return createHash("sha256")
@@ -249,7 +257,7 @@ const parseBridgeEvent = (
   const id = asString(value.id);
   const at = asString(value.at);
   const source = normalizeBridgeSource(value.source);
-  const target = normalizeAgent(value.target);
+  const target = normalizeBridgeTarget(value.target);
   if (!(kind && id && at && source && target)) {
     return undefined;
   }
@@ -435,7 +443,7 @@ export const lastBridgeNotificationAt = (
 export const blocksBridgeBounce = (
   runDir: string,
   source: BridgeSource,
-  target: Agent,
+  target: BridgeTarget,
   message: string
 ): boolean => {
   const normalized = normalizeBridgeMessage(message);
@@ -464,7 +472,8 @@ const countPendingMessages = (runDir: string): BridgeStatus["pending"] => {
     copilot: 0,
     cursor: 0,
     gemini: 0,
-  } satisfies Record<Agent, number>;
+    supervisor: 0,
+  } satisfies Record<BridgeTarget, number>;
   for (const message of readPendingBridgeMessages(runDir).slice(
     0,
     MAX_STATUS_MESSAGES
@@ -507,7 +516,7 @@ export const readBridgeStatus = (runDir: string): BridgeStatus => {
 
 export const readBridgeInbox = (
   runDir: string,
-  target: Agent
+  target: BridgeTarget
 ): BridgeMessage[] =>
   readPendingBridgeMessages(runDir)
     .filter((message) => message.target === target)
@@ -555,7 +564,7 @@ const bridgeExpiry = (
 
 const createBridgeMessage = (
   source: BridgeSource,
-  target: Agent,
+  target: BridgeTarget,
   message: string,
   options: BridgeEnqueueOptions
 ): BridgeMessage => {
@@ -590,7 +599,7 @@ const createBridgeMessage = (
 export const enqueueBridgeMessage = (
   runDir: string,
   source: BridgeSource,
-  target: Agent,
+  target: BridgeTarget,
   message: string,
   options: BridgeEnqueueOptions = {}
 ): BridgeEnqueueResult => {
@@ -654,7 +663,7 @@ export const enqueueBridgeMessage = (
 export const appendBridgeMessage = (
   runDir: string,
   source: BridgeSource,
-  target: Agent,
+  target: BridgeTarget,
   message: string,
   options: BridgeEnqueueOptions = {}
 ): BridgeMessage =>
@@ -680,7 +689,7 @@ export const readBridgeQueueHealth = (
 export const appendBlockedBridgeMessage = (
   runDir: string,
   source: BridgeSource,
-  target: Agent,
+  target: BridgeTarget,
   message: string,
   reason: string
 ): void => {

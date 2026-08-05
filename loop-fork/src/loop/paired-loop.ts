@@ -1,8 +1,9 @@
 import { createInterface } from "node:readline/promises";
 import { defaultPeerAgent, isPersistentAgent } from "./agents";
 import {
+  type AgentBridgeMessage,
   acknowledgeBridgeDelivery,
-  readNextPendingBridgeMessage,
+  readNextPendingAgentBridgeMessage,
 } from "./bridge-dispatch";
 import {
   mandatoryUtilityDelegationGuidance,
@@ -13,7 +14,6 @@ import {
   bridgeSourceLabel,
   formatBridgeDeliveryMessage,
 } from "./bridge-message-format";
-import type { BridgeMessage } from "./bridge-store";
 import { cavemanAgentGuidance, DEFAULT_CAVEMAN_MODE } from "./caveman";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
@@ -178,7 +178,7 @@ const reviewBridgePrompt = (
     .filter(Boolean)
     .join("\n\n");
 
-const forwardBridgePrompt = (entry: BridgeMessage): string => {
+const forwardBridgePrompt = (entry: AgentBridgeMessage): string => {
   const { message, source, target } = entry;
   const agent = entry.target;
   const replyGuidance = `Send a message to the other agent with ${quotedBridgeTool(agent, "send_message")} only when you have something useful for them to act on.`;
@@ -321,7 +321,7 @@ const drainBridge = async (
   let deliveredToPrimary = 0;
 
   for (let hop = 0; hop < MAX_BRIDGE_HOPS; hop += 1) {
-    const message = readNextPendingBridgeMessage(state.storage.runDir);
+    const message = readNextPendingAgentBridgeMessage(state.storage.runDir);
     if (!message) {
       return { deliveredToPrimary };
     }

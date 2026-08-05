@@ -2446,7 +2446,7 @@ test("bridge MCP send_message rejects an unknown normalized target", async () =>
     error: {
       code: -32_602,
       message:
-        'Unknown target "foo" - expected one of "claude", "codex", "gemini", "cursor", or "copilot"',
+        'Unknown target "foo" - expected one of "claude", "codex", "gemini", "cursor", "copilot", or "supervisor"',
     },
     id: 1,
     jsonrpc: "2.0",
@@ -2546,6 +2546,90 @@ test("bridge MCP send_message rejects a valid agent absent from declared topolog
     jsonrpc: "2.0",
   });
   expect(existsSync(join(runDir, "bridge.jsonl"))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("paired agents can escalate to the durable supervisor inbox", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({
+      claudeSessionId: "claude-session",
+      codexThreadId: "codex-thread",
+      createdAt: "2026-08-05T19:08:43.000Z",
+      cwd: root,
+      mode: "paired",
+      pid: process.pid,
+      repoId: "repo",
+      runId: "134",
+      state: "active",
+      status: "running",
+      tmuxPaneLeft: "%1",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRight: "%2",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "harvto-loop-134",
+      updatedAt: "2026-08-05T19:08:43.000Z",
+    })
+  );
+
+  const sent = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          message: "The run needs a governing ruling.",
+          priority: "urgent",
+          subject: "SUPERVISOR-ESCALATION",
+          target: "supervisor",
+          type: "escalation",
+        },
+        name: "send_message",
+      },
+    })
+  );
+
+  expect(sent.code).toBe(0);
+  expect(toolText(sent.stdout, 1)).toContain("queued");
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining({
+      message: "The run needs a governing ruling.",
+      source: "claude",
+      target: "supervisor",
+      type: "escalation",
+    }),
+  ]);
+  expect(bridge.readBridgeStatus(runDir).pending.supervisor).toBe(1);
+
+  const received = await runBridgeProcess(
+    runDir,
+    "supervisor",
+    encodeFrame({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: "receive_messages" },
+    })
+  );
+
+  expect(received.code).toBe(0);
+  expect(toolText(received.stdout, 2)).toContain(
+    "The run needs a governing ruling."
+  );
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readBridgeStatus(runDir).pending.supervisor).toBe(0);
+  expect(
+    bridge
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivered")
+  ).toHaveLength(1);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -2787,6 +2871,14 @@ test("bridge MCP advertises only the Codex-visible bridge tools", async () => {
     ])
   );
   expect(tools.some((tool) => tool.name === "reply")).toBe(false);
+  const sendMessage = tools.find((tool) => tool.name === "send_message") as {
+    inputSchema?: {
+      properties?: Record<string, { enum?: string[] }>;
+    };
+  };
+  expect(sendMessage.inputSchema?.properties?.target?.enum).toContain(
+    "supervisor"
+  );
   rmSync(root, { recursive: true, force: true });
 });
 

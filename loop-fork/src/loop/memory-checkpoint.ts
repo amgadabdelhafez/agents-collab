@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "bun";
-import { readPendingBridgeMessages } from "./bridge-store";
+import { type BridgeTarget, readPendingBridgeMessages } from "./bridge-store";
 import { readNativeFallbackRequests } from "./native-subagent";
 import { readRunManifest } from "./run-state";
 import type { Agent } from "./types";
@@ -61,7 +61,7 @@ export interface MemoryCheckpoint {
     priority: string;
     source: string;
     subject?: string;
-    target: Agent;
+    target: BridgeTarget;
     type: string;
   }>;
   repoId: string;

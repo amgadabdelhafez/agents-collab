@@ -10,7 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { bridgeInternals } from "../../src/loop/bridge";
-import { readPendingBridgeMessages } from "../../src/loop/bridge-store";
+import {
+  type BridgeSource,
+  type BridgeTarget,
+  readPendingBridgeMessages,
+} from "../../src/loop/bridge-store";
 import {
   createRunManifest,
   readRunManifest,
@@ -47,8 +51,8 @@ const writeBridgeMessages = (
     at: string;
     id: string;
     message: string;
-    source: Agent;
-    target: Agent;
+    source: BridgeSource;
+    target: BridgeTarget;
   }>
 ): void => {
   mkdirSync(runDir, { recursive: true });
@@ -65,8 +69,8 @@ const appendBridgeMessage = (
     at: string;
     id: string;
     message: string;
-    source: Agent;
-    target: Agent;
+    source: BridgeSource;
+    target: BridgeTarget;
   }
 ): void => {
   bridgeInternals.appendBridgeEvent(runDir, { ...message, kind: "message" });
@@ -662,6 +666,49 @@ test("runPairedLoop delivers forwarded bridge messages to the target agent", asy
     expect(readRunManifest(join(runDir, "manifest.json"))?.status).toBe(
       "stopped"
     );
+  });
+});
+
+test("a pending supervisor escalation does not block paired-agent delivery", async () => {
+  const module = await loadPairedLoop();
+  const calls: Array<{ agent: Agent; prompt: string }> = [];
+
+  runAgentImpl = (agent, prompt) => {
+    calls.push({ agent, prompt });
+    return Promise.resolve(makeResult("working"));
+  };
+
+  await withTempHome("4-supervisor", async (runDir) => {
+    writeBridgeMessages(runDir, [
+      {
+        at: "2026-03-22T09:59:00.000Z",
+        id: "supervisor-msg",
+        message: "The supervisor must poll this escalation.",
+        source: "claude",
+        target: "supervisor",
+      },
+      {
+        at: "2026-03-22T10:00:00.000Z",
+        id: "agent-msg",
+        message: "Please review the Codex output.",
+        source: "codex",
+        target: "claude",
+      },
+    ]);
+
+    await module.runPairedLoop("Ship feature", makeOptions({ agent: "codex" }));
+
+    expect(calls[0]?.agent).toBe("claude");
+    expect(calls[0]?.prompt).toContain("Please review the Codex output.");
+    expect(
+      calls.some((call) => call.prompt.includes("supervisor must poll"))
+    ).toBe(false);
+    expect(readPendingBridgeMessages(runDir)).toEqual([
+      expect.objectContaining({
+        id: "supervisor-msg",
+        target: "supervisor",
+      }),
+    ]);
   });
 });
 

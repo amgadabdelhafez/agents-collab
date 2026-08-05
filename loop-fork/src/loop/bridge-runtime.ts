@@ -1114,6 +1114,9 @@ export const hasBridgeDeliveryRoute = (
   runDir: string,
   target: BridgeMessage["target"]
 ): boolean => {
+  if (target === "supervisor") {
+    return false;
+  }
   const status = readBridgeStatus(runDir);
   if (target === "codex" && status.hasCodexRemote) {
     return true;
@@ -1125,6 +1128,9 @@ export const isBridgeTargetDeclared = (
   runDir: string,
   target: BridgeMessage["target"]
 ): boolean => {
+  if (target === "supervisor") {
+    return true;
+  }
   const manifest = readRunManifestForBridge(runDir);
   const declaredAgents = [
     manifest?.tmuxPaneLeftAgent,

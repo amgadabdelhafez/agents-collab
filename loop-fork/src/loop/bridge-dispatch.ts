@@ -1,7 +1,9 @@
+import { isAgent } from "./agents";
 import {
   type BridgeEnqueueOptions,
   type BridgeMessage,
   type BridgeSource,
+  type BridgeTarget,
   enqueueBridgeMessage,
   markBridgeMessage,
   readBridgeInbox,
@@ -9,6 +11,8 @@ import {
   readPendingBridgeMessages,
 } from "./bridge-store";
 import type { Agent } from "./types";
+
+export type AgentBridgeMessage = BridgeMessage & { target: Agent };
 
 export interface DeliveryResult {
   entry: BridgeMessage;
@@ -20,7 +24,7 @@ export interface DeliveryResult {
     | "duplicate"
     | "dead-letter"
     | "expired";
-  target: Agent;
+  target: BridgeTarget;
 }
 
 export type ImmediateBridgeDelivery = (
@@ -43,7 +47,7 @@ export const acknowledgeBridgeDelivery = (
 
 export const consumeBridgeInbox = (
   runDir: string,
-  target: Agent,
+  target: BridgeTarget,
   reason: string,
   canConsume: (message: BridgeMessage) => boolean = () => true
 ): BridgeMessage[] => {
@@ -58,16 +62,23 @@ export const readNextPendingBridgeMessage = (
   runDir: string
 ): BridgeMessage | undefined => readPendingBridgeMessages(runDir)[0];
 
+export const readNextPendingAgentBridgeMessage = (
+  runDir: string
+): AgentBridgeMessage | undefined =>
+  readPendingBridgeMessages(runDir).find((entry): entry is AgentBridgeMessage =>
+    isAgent(entry.target)
+  );
+
 export const readNextPendingBridgeMessageForTarget = (
   runDir: string,
-  target: Agent
+  target: BridgeTarget
 ): BridgeMessage | undefined =>
   readPendingBridgeMessages(runDir).find((entry) => entry.target === target);
 
 export const dispatchBridgeMessage = async (
   runDir: string,
   source: BridgeSource,
-  target: Agent,
+  target: BridgeTarget,
   message: string,
   deliver?: ImmediateBridgeDelivery,
   acceptsDelivery?: AcceptedBridgeDelivery,

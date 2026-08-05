@@ -28,10 +28,11 @@ import {
   type BridgeEnqueueOptions,
   type BridgeMessageType,
   type BridgePriority,
+  type BridgeTarget,
   blocksBridgeBounce,
   bridgePath,
   formatBridgeInbox,
-  normalizeAgent,
+  normalizeBridgeTarget,
   readBridgeEvents,
 } from "./bridge-store";
 import {
@@ -153,7 +154,7 @@ const bridgeEnqueueOptions = (
 
 export const immediateBridgeDelivery = (
   runDir: string,
-  target: Agent
+  target: BridgeTarget
 ): ImmediateBridgeDelivery | undefined => {
   if (target === "codex") {
     return async (entry) =>
@@ -233,7 +234,7 @@ const handleBridgeStatusTool = (
 const handleReceiveMessagesTool = (
   id: JsonRpcRequest["id"],
   runDir: string,
-  source: Agent
+  source: BridgeTarget
 ): void => {
   const messages = consumeBridgeInbox(
     runDir,
@@ -268,12 +269,12 @@ const handleSendMessageTool = async (
     );
     return;
   }
-  const target = normalizeAgent(normalizedTarget);
+  const target = normalizeBridgeTarget(normalizedTarget);
   if (!target) {
     writeError(
       id,
       MCP_INVALID_PARAMS,
-      `Unknown target "${normalizedTarget}" - expected one of "claude", "codex", "gemini", "cursor", or "copilot"`
+      `Unknown target "${normalizedTarget}" - expected one of "claude", "codex", "gemini", "cursor", "copilot", or "supervisor"`
     );
     return;
   }
@@ -385,14 +386,6 @@ const handleToolCall = async (
   }
 
   if (name === "receive_messages") {
-    if (source === "supervisor") {
-      writeError(
-        id,
-        MCP_INVALID_PARAMS,
-        "supervisor bridge sessions cannot receive agent inbox messages"
-      );
-      return;
-    }
     handleReceiveMessagesTool(id, runDir, source);
     return;
   }
@@ -495,7 +488,8 @@ const handleBridgeRequest = async (
             ...UTILITY_BRIDGE_TOOLS,
             {
               annotations: MUTATING_TOOL_ANNOTATIONS,
-              description: "Send a direct message to the paired agent.",
+              description:
+                "Send a durable message to a declared agent or the external supervisor.",
               inputSchema: {
                 additionalProperties: false,
                 properties: {
@@ -514,7 +508,14 @@ const handleBridgeRequest = async (
                   supersede: { type: "boolean" },
                   task_id: { type: "string" },
                   target: {
-                    enum: ["claude", "codex", "gemini", "cursor", "copilot"],
+                    enum: [
+                      "claude",
+                      "codex",
+                      "gemini",
+                      "cursor",
+                      "copilot",
+                      "supervisor",
+                    ],
                     type: "string",
                   },
                   thread_id: { type: "string" },
