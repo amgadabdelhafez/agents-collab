@@ -497,13 +497,13 @@ test("digest-bound handoff accepts only a matching ready bundle", () => {
     ["claude"],
     "2026-07-25T00:00:00.000Z",
     continuation,
-    { driverEffort: "medium", reviewerEffort: "high" }
+    { driverEffort: "high", reviewerEffort: "low" }
   );
   expect(manifest).toBeString();
   expect(readGovernessHandoffManifest(manifest as string)).toMatchObject({
     continuation: { digest: expect.any(String), path: continuation },
-    driverEffort: "medium",
-    reviewerEffort: "high",
+    driverEffort: "high",
+    reviewerEffort: "low",
   });
   expect(
     acceptGovernessHandoff(
@@ -518,7 +518,7 @@ test("digest-bound handoff accepts only a matching ready bundle", () => {
   ).toMatchObject({ manifestDigest: expect.any(String) });
   const frozenManifest = readFileSync(manifest as string, "utf8");
   const changedEffort = JSON.parse(frozenManifest) as Record<string, unknown>;
-  changedEffort.reviewerEffort = "low";
+  changedEffort.driverEffort = "medium";
   writeFileSync(manifest as string, JSON.stringify(changedEffort));
   expect(readGovernessHandoffManifest(manifest as string)).toBeUndefined();
   writeFileSync(manifest as string, frozenManifest);

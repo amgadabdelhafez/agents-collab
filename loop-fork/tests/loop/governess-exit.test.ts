@@ -151,8 +151,8 @@ test("replacement handover uses a markdown continuation file to skip replanning"
 test("replacement handover carries exact frozen role efforts", () => {
   expect(
     replacementLoopArgs("claude", "codex", "/tmp/handoff/42", {
-      driverEffort: "medium",
-      reviewerEffort: "high",
+      driverEffort: "high",
+      reviewerEffort: "low",
     })
   ).toEqual([
     "--tmux",
@@ -162,9 +162,9 @@ test("replacement handover carries exact frozen role efforts", () => {
     "--pair-with",
     "codex",
     "--effort-driver",
-    "medium",
-    "--effort-reviewer",
     "high",
+    "--effort-reviewer",
+    "low",
     "--prompt",
     "/tmp/handoff/42/continuation.md",
   ]);
@@ -852,6 +852,10 @@ test("handover launch failure never marks or kills the old loop", async () => {
 
 test("handover restart keeps the persisted transaction epoch for replacement launch", async () => {
   const config = handoverConfig();
+  // Keep this asymmetric and non-default: it must kill a launcher or manifest
+  // mutation that silently hardcodes the driver effort back to medium.
+  config.driverEffort = "high";
+  config.reviewerEffort = "low";
   const state = freshRunState();
   state.governessEpoch = 41;
   writeHandoverBundles(config, state);
@@ -899,8 +903,8 @@ test("handover restart keeps the persisted transaction epoch for replacement lau
   expect(
     readGovernessHandoffManifest(launchedManifest as string)
   ).toMatchObject({
-    driverEffort: "medium",
-    reviewerEffort: "high",
+    driverEffort: "high",
+    reviewerEffort: "low",
   });
 });
 
