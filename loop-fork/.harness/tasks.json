@@ -514,6 +514,14 @@
       "created_at": "2026-08-05T05:58:48Z",
       "run_dir": "runs/context-pressure-current-lineage",
       "spec_path": "specs/context-pressure-current-lineage.md"
+    },
+    {
+      "id": "worktree-reaper-hardening",
+      "mode": "maintenance",
+      "status": "active",
+      "created_at": "2026-08-06T01:11:42Z",
+      "run_dir": "runs/worktree-reaper-hardening",
+      "eval_status": "pass"
     }
   ]
 }
