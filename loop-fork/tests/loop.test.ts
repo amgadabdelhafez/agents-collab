@@ -43,6 +43,10 @@ interface CliModuleDeps {
   gcStaleClaudeBridgeRegistrations?: () => unknown;
   maybeEnterWorktree?: (opts: Options) => void | Promise<void>;
   parseArgs?: (argv: string[]) => Options;
+  prepareRunWorldModel?: (
+    claim: PairedLaunchClaim,
+    task?: string
+  ) => unknown | Promise<unknown>;
   renderImmediateInfo?: (request: ImmediateInfoRequest) => void;
   reservePairedLaunch?: (
     opts: Options,
@@ -112,6 +116,9 @@ const loadRunCli = async (
     deps.maybeEnterWorktree ?? (() => undefined)
   );
   const parseArgsMock = mock(deps.parseArgs ?? (() => makeOptions()));
+  const prepareRunWorldModelMock = mock(
+    deps.prepareRunWorldModel ?? (() => undefined)
+  );
   const renderImmediateInfoMock = mock(
     deps.renderImmediateInfo ?? (() => undefined)
   );
@@ -157,6 +164,7 @@ const loadRunCli = async (
       gcStaleClaudeBridgeRegistrations: gcStaleClaudeBridgeRegistrationsMock,
       maybeEnterWorktree: maybeEnterWorktreeMock,
       parseArgs: parseArgsMock,
+      prepareRunWorldModel: prepareRunWorldModelMock,
       renderImmediateInfo: renderImmediateInfoMock,
       resolveTask: resolveTaskMock,
       resolveWorkspaceBinding: resolveWorkspaceBindingMock,
@@ -201,6 +209,7 @@ const loadRunCli = async (
     handleManualMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
+    prepareRunWorldModelMock,
     renderImmediateInfoMock,
     resolveTaskMock,
     resolveWorkspaceBindingMock,
@@ -310,12 +319,14 @@ test("runCli runs task flow when argv has options", async () => {
 
 test("runCli delegates paired tmux after resolving the task", async () => {
   const opts = { ...makeOptions(), tmux: true };
+  const launchOrder: string[] = [];
   const {
     bindLaunchTaskMock,
     cancelPairedLaunchMock,
     closeAppServerMock,
     closeClaudeSdkMock,
     maybeEnterWorktreeMock,
+    prepareRunWorldModelMock,
     runCli,
     runInTmuxMock,
     resolveTaskMock,
@@ -323,8 +334,18 @@ test("runCli delegates paired tmux after resolving the task", async () => {
     runPanelMock,
     reservePairedLaunchMock,
   } = await loadRunCli({
+    bindLaunchTask: () => {
+      launchOrder.push("bind-task");
+      return "a".repeat(64);
+    },
     parseArgs: () => opts,
-    runInTmux: () => true,
+    prepareRunWorldModel: () => {
+      launchOrder.push("prepare-world-model");
+    },
+    runInTmux: () => {
+      launchOrder.push("tmux-handoff");
+      return true;
+    },
     resolveTask: async () => "ship feature",
   });
 
@@ -334,6 +355,10 @@ test("runCli delegates paired tmux after resolving the task", async () => {
   expect(resolveTaskMock).toHaveBeenCalledWith(opts);
   expect(reservePairedLaunchMock).toHaveBeenCalledTimes(1);
   expect(bindLaunchTaskMock).toHaveBeenCalledWith(
+    expect.objectContaining({ claimId: "claim-test" }),
+    "ship feature"
+  );
+  expect(prepareRunWorldModelMock).toHaveBeenCalledWith(
     expect.objectContaining({ claimId: "claim-test" }),
     "ship feature"
   );
@@ -347,6 +372,11 @@ test("runCli delegates paired tmux after resolving the task", async () => {
   expect(closeAppServerMock).not.toHaveBeenCalled();
   expect(closeClaudeSdkMock).not.toHaveBeenCalled();
   expect(cancelPairedLaunchMock).not.toHaveBeenCalled();
+  expect(launchOrder).toEqual([
+    "bind-task",
+    "prepare-world-model",
+    "tmux-handoff",
+  ]);
 });
 
 test("runCli rejects a duplicate workspace before task or agent side effects", async () => {
@@ -470,6 +500,7 @@ test("runCli starts paired interactive tmux without resolving a task", async () 
     closeAppServerMock,
     closeClaudeSdkMock,
     maybeEnterWorktreeMock,
+    prepareRunWorldModelMock,
     awaitAutoUpdateCheckMock,
     runCli,
     runInTmuxMock,
@@ -489,10 +520,61 @@ test("runCli starts paired interactive tmux without resolving a task", async () 
   expect(awaitAutoUpdateCheckMock).toHaveBeenCalledTimes(1);
   expect(startAutoCheckMock).not.toHaveBeenCalled();
   expect(resolveTaskMock).not.toHaveBeenCalled();
+  expect(prepareRunWorldModelMock).toHaveBeenCalledWith(
+    expect.objectContaining({ claimId: "claim-test" })
+  );
   expect(runInTmuxMock).toHaveBeenCalledWith(["--tmux"], undefined, { opts });
   expect(runLoopMock).not.toHaveBeenCalled();
   expect(closeAppServerMock).not.toHaveBeenCalled();
   expect(closeClaudeSdkMock).not.toHaveBeenCalled();
+});
+
+test("runCli cancels a promptless reservation when World Model preparation fails", async () => {
+  const opts = { ...makeOptions(), proof: "", tmux: true };
+  const { cancelPairedLaunchMock, resolveTaskMock, runCli, runInTmuxMock } =
+    await loadRunCli({
+      parseArgs: () => opts,
+      prepareRunWorldModel: () => {
+        throw new Error("world projection failed");
+      },
+      runInTmux: () => true,
+    });
+
+  await expect(runCli(["--tmux"])).rejects.toThrow("world projection failed");
+  expect(resolveTaskMock).not.toHaveBeenCalled();
+  expect(runInTmuxMock).not.toHaveBeenCalled();
+  expect(cancelPairedLaunchMock).toHaveBeenCalledTimes(1);
+});
+
+test("runCli does not mutate World Model artifacts when reattaching a live run", async () => {
+  const opts = { ...makeOptions(), proof: "", tmux: true };
+  const {
+    prepareRunWorldModelMock,
+    reservePairedLaunchMock,
+    runCli,
+    runInTmuxMock,
+  } = await loadRunCli({
+    parseArgs: () => opts,
+    reservePairedLaunch: async (_opts, binding) => ({
+      reserved: false,
+      storage: {
+        manifestPath: "/tmp/loop-live/manifest.json",
+        repoId: binding.repoId,
+        runDir: "/tmp/loop-live",
+        runId: "9",
+        storageRoot: "/tmp",
+        transcriptPath: "/tmp/loop-live/transcript.jsonl",
+      },
+      workspaceBinding: binding,
+    }),
+    runInTmux: () => true,
+  });
+
+  await runCli(["--tmux"]);
+
+  expect(reservePairedLaunchMock).toHaveBeenCalledTimes(1);
+  expect(prepareRunWorldModelMock).not.toHaveBeenCalled();
+  expect(runInTmuxMock).toHaveBeenCalledTimes(1);
 });
 
 test("runCli does not fall through to foreground work when paired tmux handoff returns false", async () => {

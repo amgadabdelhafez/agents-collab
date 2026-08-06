@@ -286,6 +286,18 @@ test("manifest helpers write, read, and touch run metadata", () => {
         repoId: "repo-abc123",
         root: "/repo",
       },
+      worldModel: {
+        capsuleSha256: "d".repeat(64),
+        commitSha: "e".repeat(40),
+        contextPath: join(dir, "world-model", "bootstrap.json"),
+        contextSha256: "f".repeat(64),
+        databasePath: join(dir, "world-model", "project.sqlite"),
+        entityCount: 12,
+        generatedAt: "2026-03-22T09:59:00.000Z",
+        ontologyVersion: "0.1.0",
+        seeds: ["src/entry.ts"],
+        statementCount: 24,
+      },
     },
     "2026-03-22T10:00:00.000Z"
   );
@@ -322,9 +334,44 @@ test("manifest helpers write, read, and touch run metadata", () => {
       repoId: "repo-abc123",
       root: "/repo",
     },
+    worldModel: manifest.worldModel,
   });
   expect(touched.updatedAt).toBe("2026-03-22T11:00:00.000Z");
   expect(touched.createdAt).toBe(manifest.createdAt);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("manifest reader rejects an invalid World Model binding as a whole", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-abc123",
+    runId: "9",
+  });
+  writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      ...manifest,
+      worldModel: {
+        capsuleSha256: "a".repeat(64),
+        commitSha: "b".repeat(40),
+        contextPath: "relative/context.json",
+        contextSha256: "c".repeat(64),
+        databasePath: "/tmp/project.sqlite",
+        entityCount: 10,
+        generatedAt: "2026-03-22T09:59:00.000Z",
+        ontologyVersion: "0.1.0",
+        seeds: ["src/entry.ts"],
+        statementCount: 20,
+      },
+    }),
+    "utf8"
+  );
+
+  expect(readRunManifest(manifestPath)?.worldModel).toBeUndefined();
   rmSync(dir, { recursive: true, force: true });
 });
 

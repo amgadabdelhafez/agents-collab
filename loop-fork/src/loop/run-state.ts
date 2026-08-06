@@ -9,7 +9,14 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve as resolvePath,
+} from "node:path";
 import { isAgent } from "./agents";
 import { isEffortLevel } from "./effort";
 import {
@@ -34,6 +41,7 @@ const MANIFEST_FILE = "manifest.json";
 const TRANSCRIPT_FILE = "transcript.jsonl";
 const LINE_SPLIT_RE = /\r?\n/;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
+const GIT_SHA_RE = /^[a-f0-9]{40,64}$/u;
 const ACTIVE_RUN_STATES = new Set<RunLifecycleState>([
   "submitted",
   "working",
@@ -66,6 +74,19 @@ export interface RunLaunchCharter {
   bytes: number;
   path: string;
   sha256: string;
+}
+
+export interface RunWorldModelBinding {
+  capsuleSha256: string;
+  commitSha: string;
+  contextPath: string;
+  contextSha256: string;
+  databasePath: string;
+  entityCount: number;
+  generatedAt: string;
+  ontologyVersion: string;
+  seeds: string[];
+  statementCount: number;
 }
 
 export interface RunManifest {
@@ -105,6 +126,7 @@ export interface RunManifest {
   tmuxSession?: string;
   updatedAt: string;
   workspaceBinding?: LaunchWorkspaceBinding;
+  worldModel?: RunWorldModelBinding;
 }
 
 export interface RunMessageTranscriptEntry {
@@ -195,6 +217,7 @@ interface RunManifestInput {
   tmuxSession?: string;
   updatedAt?: string;
   workspaceBinding?: LaunchWorkspaceBinding;
+  worldModel?: RunWorldModelBinding;
 }
 
 const cavemanManifestFields = (
@@ -334,6 +357,94 @@ const launchCharterManifestFields = (
     parsed.launchCharters ?? parsed.launch_charters
   );
   return launchCharters ? { launchCharters } : {};
+};
+
+const readWorldModelBinding = (
+  value: unknown
+): RunWorldModelBinding | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const capsuleSha256 = firstString(value, ["capsuleSha256"]);
+  const commitSha = firstString(value, ["commitSha"]);
+  const contextPath = firstString(value, ["contextPath"]);
+  const contextSha256 = firstString(value, ["contextSha256"]);
+  const databasePath = firstString(value, ["databasePath"]);
+  const entityCount = firstInteger(value, ["entityCount"]);
+  const generatedAt = firstString(value, ["generatedAt"]);
+  const ontologyVersion = firstString(value, ["ontologyVersion"]);
+  const seeds = firstStringArray(value, ["seeds"]);
+  const statementCount = firstInteger(value, ["statementCount"]);
+  if (
+    !(
+      capsuleSha256 &&
+      SHA256_RE.test(capsuleSha256) &&
+      commitSha &&
+      GIT_SHA_RE.test(commitSha) &&
+      contextPath &&
+      isAbsolute(contextPath) &&
+      contextSha256 &&
+      SHA256_RE.test(contextSha256) &&
+      databasePath &&
+      isAbsolute(databasePath) &&
+      entityCount !== undefined &&
+      entityCount > 0 &&
+      generatedAt &&
+      !Number.isNaN(new Date(generatedAt).valueOf()) &&
+      ontologyVersion &&
+      seeds &&
+      statementCount !== undefined &&
+      statementCount >= 0
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    capsuleSha256,
+    commitSha,
+    contextPath,
+    contextSha256,
+    databasePath,
+    entityCount,
+    generatedAt: new Date(generatedAt).toISOString(),
+    ontologyVersion,
+    seeds,
+    statementCount,
+  };
+};
+
+const worldModelManifestFields = (
+  value: RunWorldModelBinding | undefined
+): Pick<RunManifest, "worldModel"> => {
+  if (!value) {
+    return {};
+  }
+  const worldModel = readWorldModelBinding(value);
+  if (!worldModel) {
+    throw new Error("Invalid run World Model binding");
+  }
+  return { worldModel };
+};
+
+const readWorldModelManifestFields = (
+  parsed: Record<string, unknown>,
+  manifestPath: string
+): Pick<RunManifest, "worldModel"> => {
+  const worldModel = readWorldModelBinding(
+    parsed.worldModel ?? parsed.world_model
+  );
+  if (!worldModel) {
+    return {};
+  }
+  const worldModelDir = resolvePath(dirname(manifestPath), "world-model");
+  const pathsAreRunScoped = [
+    worldModel.contextPath,
+    worldModel.databasePath,
+  ].every((path) => {
+    const scoped = relative(worldModelDir, resolvePath(path));
+    return Boolean(scoped && !scoped.startsWith("..") && !isAbsolute(scoped));
+  });
+  return pathsAreRunScoped ? { worldModel } : {};
 };
 
 const readWorkspaceBinding = (
@@ -750,6 +861,7 @@ export const createRunManifest = (
     ...cavemanManifestFields(input),
     ...effortManifestFields(input),
     ...launchReservationManifestFields(input),
+    ...worldModelManifestFields(input.worldModel),
     ...(input.claudeChannelServer
       ? { claudeChannelServer: input.claudeChannelServer }
       : {}),
@@ -824,7 +936,8 @@ export const writeRunManifest = (
 };
 
 const readOptionalRunManifestFields = (
-  parsed: Record<string, unknown>
+  parsed: Record<string, unknown>,
+  manifestPath: string
 ): Partial<RunManifest> => {
   const claudeChannelServer = firstString(parsed, [
     "claudeChannelServer",
@@ -905,6 +1018,7 @@ const readOptionalRunManifestFields = (
     ...(helperCavemanMode ? { helperCavemanMode } : {}),
     ...launchCharterManifestFields(parsed),
     ...readLaunchReservationManifestFields(parsed),
+    ...readWorldModelManifestFields(parsed, manifestPath),
     ...(tmuxPaneGoverness ? { tmuxPaneGoverness } : {}),
     ...(tmuxPaneAuPair ? { tmuxPaneAuPair } : {}),
     ...(tmuxPaneLeft ? { tmuxPaneLeft } : {}),
@@ -965,7 +1079,7 @@ export const readRunManifest = (
     }
 
     return {
-      ...readOptionalRunManifestFields(parsed),
+      ...readOptionalRunManifestFields(parsed, manifestPath),
       claudeSessionId:
         firstString(parsed, ["claudeSessionId", "claude_session_id"]) ?? "",
       codexThreadId:

@@ -1,0 +1,41 @@
+{
+  "task_id": "project-world-model-activation",
+  "status": "pass",
+  "required": [
+    "focused",
+    "full_suite",
+    "static_check",
+    "build",
+    "binary_smoke"
+  ],
+  "dimensions": {
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/project-world-model-activation/task-log.md",
+      "method": "Producer-backed runtime plus manifest, CLI, tmux, and pane-environment focused suites"
+    },
+    "full_suite": {
+      "status": "pass",
+      "artifact": "runs/project-world-model-activation/task-log.md",
+      "method": "bun run test:ci with localhost bind access required by integration fixtures"
+    },
+    "static_check": {
+      "status": "pass",
+      "artifact": "runs/project-world-model-activation/task-log.md",
+      "method": "bun run check"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/project-world-model-activation/task-log.md",
+      "method": "bun run build"
+    },
+    "binary_smoke": {
+      "status": "pass",
+      "artifact": "runs/project-world-model-activation/task-log.md",
+      "method": "Compiled binary version and world ontology commands"
+    }
+  },
+  "baseline_failures": [],
+  "blocking_findings": [],
+  "deployment": "not-authorized-or-attempted"
+}

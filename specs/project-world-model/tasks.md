@@ -10,4 +10,4 @@
 - [x] Add `loop world` CLI commands.
 - [x] Add producer-backed focused tests.
 - [x] Pass check, full tests, build, Harness preflight, and stop-gate.
-- [ ] Commit and request exact-SHA supervisor review.
+- [x] Commit, pass exact-SHA review, and integrate into the installed lineage.
