@@ -14,6 +14,7 @@ import { resolveTask } from "./task";
 import { runInTmux } from "./tmux";
 import { resolveWorkspaceBinding } from "./workspace-binding";
 import { maybeEnterWorktree } from "./worktree";
+import { prepareRunWorldModel } from "./world-model-runtime";
 
 export const cliDeps = {
   bindLaunchTask,
@@ -25,6 +26,7 @@ export const cliDeps = {
   gcStaleClaudeBridgeRegistrations,
   maybeEnterWorktree,
   parseArgs,
+  prepareRunWorldModel,
   renderImmediateInfo,
   resolveTask,
   resolveWorkspaceBinding,

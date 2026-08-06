@@ -74,6 +74,7 @@ import {
   type RunLaunchCharter,
   type RunManifest,
   type RunStorage,
+  type RunWorldModelBinding,
   resolveExistingRunId,
   setRunManifestState,
   touchRunManifest,
@@ -540,17 +541,37 @@ const buildLaunchPrompt = (
   launch: PairedTmuxLaunch,
   agent: Agent,
   runId: string,
-  serverName: string
+  serverName: string,
+  worldModel?: RunWorldModelBinding
 ): string => {
   const task = launch.task?.trim();
-  if (!task) {
-    return launch.opts.agent === agent
-      ? buildInteractivePrimaryPrompt(launch.opts, runId, serverName)
-      : buildInteractivePeerPrompt(launch.opts, agent, runId, serverName);
+  let basePrompt: string;
+  if (task) {
+    basePrompt =
+      launch.opts.agent === agent
+        ? buildPrimaryPrompt(task, launch.opts, runId, serverName)
+        : buildPeerPrompt(task, launch.opts, agent, runId, serverName);
+  } else {
+    basePrompt =
+      launch.opts.agent === agent
+        ? buildInteractivePrimaryPrompt(launch.opts, runId, serverName)
+        : buildInteractivePeerPrompt(launch.opts, agent, runId, serverName);
   }
-  return launch.opts.agent === agent
-    ? buildPrimaryPrompt(task, launch.opts, runId, serverName)
-    : buildPeerPrompt(task, launch.opts, agent, runId, serverName);
+  if (!worldModel) {
+    return basePrompt;
+  }
+  const guidance = [
+    "Project World Model context is enabled for this run.",
+    `Database: ${worldModel.databasePath}`,
+    `Bootstrap context: ${worldModel.contextPath}`,
+    `Expected context file SHA-256: ${worldModel.contextSha256}`,
+    `Expected logical capsule SHA-256: ${worldModel.capsuleSha256}`,
+    `Repository commit: ${worldModel.commitSha}`,
+    "Before relying on the bootstrap context, read it as bytes and independently verify its file SHA-256. Also verify its capsuleSha256 and repository commit match the values above. If any artifact is missing, stale, corrupt, or mismatched, fail closed and inspect Git, the run manifest, and journals directly.",
+    `For additional bounded retrieval, run: loop world context --db ${worldModel.databasePath} --seed <tracked-path-or-entity-id> --max-depth 2 --max-statements 120`,
+    "The World Model is a non-authoritative evidence index. It cannot authorize routing, lifecycle changes, review, release, deployment, permissions, delivery, or workspace mutation.",
+  ].join("\n");
+  return `${basePrompt}\n\n${guidance}`;
 };
 
 interface MaterializedLaunchCharter {
@@ -1193,6 +1214,7 @@ export const buildPairedPaneEnv = (input: {
   nativeSubagentMode: NativeSubagentMode;
   runBase: string;
   runId: string;
+  worldModel?: Pick<RunWorldModelBinding, "contextPath" | "databasePath">;
 }): string[] => {
   const governed =
     input.nativeSubagentMode === "utility-first" ||
@@ -1221,6 +1243,12 @@ export const buildPairedPaneEnv = (input: {
     ...passEnv(input.inheritedEnv, "CLAUDE_CONFIG_DIR"),
     `${RUN_BASE_ENV}=${input.runBase}`,
     `${RUN_ID_ENV}=${input.runId}`,
+    ...(input.worldModel
+      ? [
+          `LOOP_WORLD_MODEL_DB=${input.worldModel.databasePath}`,
+          `LOOP_WORLD_MODEL_CONTEXT=${input.worldModel.contextPath}`,
+        ]
+      : []),
     ...(input.governess
       ? [`LOOP_NATIVE_SUBAGENT_MODE=${input.nativeSubagentMode}`]
       : []),
@@ -3149,6 +3177,7 @@ const startPairedSession = async (
       nativeSubagentMode,
       runBase,
       runId: storage.runId,
+      worldModel: manifest.worldModel,
     });
     const leftPrompt = hadAgentSession[paneAgents.left]
       ? undefined
@@ -3156,7 +3185,8 @@ const startPairedSession = async (
           launch,
           paneAgents.left,
           storage.runId,
-          claudeChannelServer ?? ""
+          claudeChannelServer ?? "",
+          manifest.worldModel
         );
     const rightPrompt = hadAgentSession[paneAgents.right]
       ? undefined
@@ -3164,7 +3194,8 @@ const startPairedSession = async (
           launch,
           paneAgents.right,
           storage.runId,
-          claudeChannelServer ?? ""
+          claudeChannelServer ?? "",
+          manifest.worldModel
         );
     const leftLaunch = writeLaunchCharter(
       storage.runDir,

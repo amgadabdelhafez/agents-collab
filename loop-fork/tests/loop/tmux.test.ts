@@ -2294,6 +2294,40 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   );
 });
 
+test("fresh paired charters bind and constrain the run World Model", () => {
+  const opts = makePairedOptions();
+  const worldModel = {
+    capsuleSha256: "a".repeat(64),
+    commitSha: "b".repeat(40),
+    contextPath: "/tmp/run/world-model/bootstrap.json",
+    contextSha256: "c".repeat(64),
+    databasePath: "/tmp/run/world-model/project.sqlite",
+    entityCount: 20,
+    generatedAt: "2026-08-05T20:00:00.000Z",
+    ontologyVersion: "0.1.0",
+    seeds: ["src/entry.ts"],
+    statementCount: 30,
+  };
+
+  for (const agent of ["codex", "claude"] as const) {
+    const prompt = tmuxInternals.buildLaunchPrompt(
+      { opts, task: "Ship feature" },
+      agent,
+      "1",
+      "loop-bridge",
+      worldModel
+    );
+    expect(prompt).toContain("Project World Model context is enabled");
+    expect(prompt).toContain(worldModel.databasePath);
+    expect(prompt).toContain(worldModel.contextPath);
+    expect(prompt).toContain(worldModel.contextSha256);
+    expect(prompt).toContain(worldModel.capsuleSha256);
+    expect(prompt).toContain(worldModel.commitSha);
+    expect(prompt).toContain("independently verify its file SHA-256");
+    expect(prompt).toContain("cannot authorize routing");
+  }
+});
+
 test("paired prompts apply Caveman guidance with an exact off switch", () => {
   const defaults = makePairedOptions();
   const primary = tmuxInternals.buildPrimaryPrompt(

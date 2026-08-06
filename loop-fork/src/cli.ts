@@ -368,6 +368,12 @@ const executePreparedLaunch = async (
     await updateDeps.awaitAutoUpdateCheck();
   }
   if (isPromptlessPairedTmuxLaunch(opts)) {
+    if (!launchClaim) {
+      throw new Error("[loop] paired tmux launch has no run reservation");
+    }
+    if (launchClaim.reserved) {
+      await cliDeps.prepareRunWorldModel(launchClaim);
+    }
     if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts })) {
       return true;
     }
@@ -376,6 +382,9 @@ const executePreparedLaunch = async (
   const task = await cliDeps.resolveTask(opts);
   if (launchClaim) {
     cliDeps.bindLaunchTask(launchClaim, task);
+    if (launchClaim.reserved) {
+      await cliDeps.prepareRunWorldModel(launchClaim, task);
+    }
   }
   if (opts.tmux && opts.pairedMode) {
     if (await cliDeps.runInTmux(normalizedArgv, undefined, { opts, task })) {

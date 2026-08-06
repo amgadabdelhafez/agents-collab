@@ -710,7 +710,18 @@ test("governed pane env unsets fleet surfaces and the composed command still run
     nativeSubagentMode: "utility-first",
     runBase: "/tmp/base",
     runId: "run-1",
+    worldModel: {
+      contextPath: "/tmp/run/world-model/bootstrap.json",
+      databasePath: "/tmp/run/world-model/project.sqlite",
+    },
   });
+
+  expect(govEnv).toContain(
+    "LOOP_WORLD_MODEL_DB=/tmp/run/world-model/project.sqlite"
+  );
+  expect(govEnv).toContain(
+    "LOOP_WORLD_MODEL_CONTEXT=/tmp/run/world-model/bootstrap.json"
+  );
 
   // Ordering invariant: every -u precedes every NAME=VALUE operand.
   const firstAssignment = govEnv.findIndex((entry) => entry.includes("="));
