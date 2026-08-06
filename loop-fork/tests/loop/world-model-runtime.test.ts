@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -157,6 +158,29 @@ test("prepareRunWorldModel fails closed without advertising partial context", ()
     expect(
       readRunManifest(claim.storage.manifestPath)?.worldModel
     ).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareRunWorldModel cleans producer artifacts when the manifest is absent at bind time", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-world-runtime-"));
+  try {
+    const repo = fixtureRepository(root);
+    const claim = claimFor(root, repo, "1");
+    rmSync(claim.storage.manifestPath);
+
+    expect(() =>
+      prepareRunWorldModel(
+        claim,
+        "Implement src/entry.ts according to specs/feature/spec.md"
+      )
+    ).toThrow(
+      `Cannot bind World Model: run manifest is missing at ${claim.storage.manifestPath}`
+    );
+
+    expect(readdirSync(join(claim.storage.runDir, "world-model"))).toEqual([]);
+    expect(readRunManifest(claim.storage.manifestPath)).toBeUndefined();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

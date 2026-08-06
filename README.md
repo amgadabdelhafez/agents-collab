@@ -22,12 +22,18 @@ bun run test:ci
 bun run build
 ```
 
+To install the latest verified GitHub Release on macOS or Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/amgadabdelhafez/agents-collab/main/loop-fork/install.sh | bash
+```
+
 ## Safe worktree hygiene
 
 Audit registered linked worktrees without changing them:
 
 ```bash
-python3 scripts/reap-worktrees.py
+python3 loop-fork/scripts/reap-worktrees.py
 ```
 
 The audit proves each candidate is merged into the exact `origin/main` commit,
@@ -35,7 +41,7 @@ clean including untracked files, and unused by any process cwd. To remove only
 the candidates that pass every check, rerun explicitly in apply mode:
 
 ```bash
-python3 scripts/reap-worktrees.py --apply
+python3 loop-fork/scripts/reap-worktrees.py --apply
 ```
 
 The command never forces removal or deletes branches. Any failed safety check

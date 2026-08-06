@@ -2,7 +2,8 @@
   "id": "project-world-model-activation",
   "mode": "planned",
   "created_at": "2026-08-06T01:02:21Z",
-  "status": "active",
+  "status": "done",
+  "ended_at": "2026-08-06T05:11:28Z",
   "description": "Enable provenance-first World Model context for paired Loop startup",
   "estimated_loc": 320
 }

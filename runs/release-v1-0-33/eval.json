@@ -1,0 +1,48 @@
+{
+  "task_id": "release-v1-0-33",
+  "verdict": "pass",
+  "status": "pass",
+  "required": [
+    "focused",
+    "static_check",
+    "typecheck",
+    "build",
+    "full_suite",
+    "binary_smoke"
+  ],
+  "dimensions": {
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/release-v1-0-33/task-log.md",
+      "method": "Producer-backed absent-manifest cleanup test and root release-layout regression"
+    },
+    "static_check": {
+      "status": "pass",
+      "artifact": "runs/release-v1-0-33/task-log.md",
+      "method": "bun run check"
+    },
+    "typecheck": {
+      "status": "pass",
+      "artifact": "runs/release-v1-0-33/task-log.md",
+      "method": "Repository TypeScript no-emit command"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/release-v1-0-33/task-log.md",
+      "method": "bun run build"
+    },
+    "full_suite": {
+      "status": "pass",
+      "artifact": "runs/release-v1-0-33/task-log.md",
+      "method": "bun run test:ci with localhost bind access required by integration fixtures"
+    },
+    "binary_smoke": {
+      "status": "pass",
+      "artifact": "runs/release-v1-0-33/task-log.md",
+      "method": "Compiled binary version and SHA-256 verification"
+    }
+  },
+  "baseline_failures": [],
+  "blocking_findings": [],
+  "deployment": "pending exact-SHA supervisor review and v1.0.33 tag publication"
+}

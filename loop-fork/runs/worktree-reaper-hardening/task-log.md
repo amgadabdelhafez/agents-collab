@@ -35,5 +35,14 @@ Verification on the current source tree:
 - repository TypeScript no-emit command: pass.
 - `bun run build`: pass.
 - `bun run test:ci`: complete sorted suite pass with an empty failure set.
-- No worktree cleanup was applied. No branch was deleted. No binary was
-  installed or deployed.
+- AS RAISED: no worktree cleanup was applied, no branch was deleted, and
+  deployment had not yet been authorized during task implementation.
+
+## Deployment closure
+
+- The reviewed integrated lineage was deployed as commit
+  `d13b6df2175218048ac41f64ebffced0f6c6113d` to both remote `main` branches.
+- `/Users/amgad/.local/bin/loop` was installed with SHA-256
+  `9e8cdf43110fc2917a87ff9ce92805190e2f15b246fc136c472f7ec021f3aeb5`.
+- The reaper remains display-only by default; no cleanup was applied as part of
+  deployment or task closure.

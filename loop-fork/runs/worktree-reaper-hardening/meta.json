@@ -2,7 +2,8 @@
   "id": "worktree-reaper-hardening",
   "mode": "maintenance",
   "created_at": "2026-08-06T01:11:42Z",
-  "status": "active",
+  "status": "done",
+  "ended_at": "2026-08-06T05:11:28Z",
   "description": "Fail-closed, producer-tested cleanup and reporting for registered Git worktrees",
   "estimated_loc": 350
 }

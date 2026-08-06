@@ -71,6 +71,8 @@ export const prepareRunWorldModel = (
   const nonce = `${process.pid}-${randomUUID()}`;
   const temporaryDatabasePath = join(directory, `.project-${nonce}.sqlite`);
   const temporaryContextPath = join(directory, `.bootstrap-${nonce}.json`);
+  let databasePath: string | undefined;
+  let contextPath: string | undefined;
   let store: WorldModelStore | undefined;
   try {
     store = new WorldModelStore(temporaryDatabasePath);
@@ -93,14 +95,8 @@ export const prepareRunWorldModel = (
     store.close();
     store = undefined;
 
-    const databasePath = join(
-      directory,
-      `project-${materialized.commitSha}.sqlite`
-    );
-    const contextPath = join(
-      directory,
-      `bootstrap-${context.capsuleSha256}.json`
-    );
+    databasePath = join(directory, `project-${materialized.commitSha}.sqlite`);
+    contextPath = join(directory, `bootstrap-${context.capsuleSha256}.json`);
     renameSync(temporaryDatabasePath, databasePath);
     renameSync(temporaryContextPath, contextPath);
     chmodSync(databasePath, 0o600);
@@ -136,6 +132,12 @@ export const prepareRunWorldModel = (
     store?.close();
     rmSync(temporaryDatabasePath, { force: true });
     rmSync(temporaryContextPath, { force: true });
+    if (databasePath) {
+      rmSync(databasePath, { force: true });
+    }
+    if (contextPath) {
+      rmSync(contextPath, { force: true });
+    }
     throw error;
   }
 };

@@ -43,5 +43,5 @@
   },
   "baseline_failures": [],
   "blocking_findings": [],
-  "deployment": "not-authorized-or-attempted"
+  "deployment": "deployed commit d13b6df2175218048ac41f64ebffced0f6c6113d to both remote main branches and /Users/amgad/.local/bin/loop at SHA-256 9e8cdf43110fc2917a87ff9ce92805190e2f15b246fc136c472f7ec021f3aeb5; no cleanup was applied"
 }

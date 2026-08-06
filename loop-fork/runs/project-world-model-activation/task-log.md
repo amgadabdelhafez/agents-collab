@@ -36,7 +36,17 @@ commands. Ordinary loops did not consume it.
   `loop-world-v1`.
 - Working-tree binary SHA-256 before commit:
   `30f6b531babbd28aef231cdade660894adfcc918a6260135c5613a6793ac63ff`.
-- No live loop was restarted or mutated and no binary was deployed.
+- AS RAISED: no live loop was restarted or mutated during task implementation,
+  and deployment had not yet been authorized.
+
+## Deployment closure
+
+- The reviewed integrated lineage was deployed as commit
+  `d13b6df2175218048ac41f64ebffced0f6c6113d` to both remote `main` branches.
+- `/Users/amgad/.local/bin/loop` was installed with SHA-256
+  `9e8cdf43110fc2917a87ff9ce92805190e2f15b246fc136c472f7ec021f3aeb5`.
+- Already-live run 137 retained its original process and session lineage; it
+  was not restarted or retrofitted.
 
 ## Release-smoke integration regression
 
