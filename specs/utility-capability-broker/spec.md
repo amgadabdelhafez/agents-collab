@@ -76,4 +76,3 @@ worker to use broker tools instead of probing denied executables.
       protected-path enforcement, and bounded-output behavior remain green.
 - [ ] Focused tests, full tests, static checks, build, diff checks, and the
       governed verification gate pass before exact-SHA supervisor review.
-

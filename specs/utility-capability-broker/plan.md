@@ -13,5 +13,4 @@
 6. Run focused suites, full tests, static checks, build, diff validation, and
    the repository verification script; record evidence in the task run.
 7. Commit the isolated branch, request exact-SHA supervisor review, and stop at
-   the review/release gate.
-
+  the review/release gate.
