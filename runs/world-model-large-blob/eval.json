@@ -1,0 +1,53 @@
+{
+  "task_id": "world-model-large-blob",
+  "feature": "world-model-large-blob",
+  "timestamp": "2026-08-06T07:40:00Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "live_incident": {
+      "status": "pass",
+      "details": [
+        "The first v1.0.33 production launch failed closed on a tracked 2,484,371-byte JSON blob before creating loop 138.",
+        "An independent shell read proved the exact commit and path were valid and emitted 2,484,371 bytes."
+      ]
+    },
+    "producer_regression": {
+      "status": "pass",
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "A real temporary Git repository commits an exact 2,484,371-byte blob and materializes it through prepareRunWorldModel.",
+        "The resulting manifest binds the World Model and the persisted entity SHA-256 matches the exact producer bytes."
+      ]
+    },
+    "core_world_model_suite": {
+      "status": "pass",
+      "passed": 43,
+      "failed": 0
+    },
+    "production_repository_smoke": {
+      "status": "pass",
+      "commit_sha": "ffb783c9c0b997337508fff56de426d807884e9c",
+      "entity_count": 1560,
+      "statement_count": 5721,
+      "blocking_blob_sha256": "f18f6fb5b6ffd4c5b87f65fd5adfca7c6b271f841f4c197220f8f77f904d96d5",
+      "database_integrity": "ok"
+    },
+    "mandatory_suite": {
+      "status": "pass",
+      "details": [
+        "Every sorted test file completed with zero failures under bun run test:ci."
+      ]
+    },
+    "format_lint": "pass",
+    "typecheck": "pass",
+    "compiled_build": "pass",
+    "diff_check": "pass"
+  },
+  "known_limitations": [
+    "The candidate is not integrated, installed, deployed, or used to launch loop 138.",
+    "World Model materialization remains synchronous during launch."
+  ]
+}

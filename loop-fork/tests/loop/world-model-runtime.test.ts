@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { PairedLaunchClaim } from "../../src/loop/launch-reservation";
 import {
   createRunManifest,
@@ -18,7 +18,12 @@ import {
   readRunManifest,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import { WorldModelStore, worldSha256 } from "../../src/loop/world-model";
 import { prepareRunWorldModel } from "../../src/loop/world-model-runtime";
+
+const LARGE_BLOB_BYTES = 2_484_371;
+const LARGE_BLOB_PATH =
+  "tests/fixtures/wrap-cloth-rig/anchors-wrap-d55-04e587e4.json";
 
 const git = (repo: string, args: string[]): string => {
   const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
@@ -28,7 +33,10 @@ const git = (repo: string, args: string[]): string => {
   return result.stdout.trim();
 };
 
-const fixtureRepository = (root: string): string => {
+const fixtureRepository = (
+  root: string,
+  options: { largeBlob?: boolean } = {}
+): string => {
   const repo = join(root, "repo");
   mkdirSync(join(repo, "src"), { recursive: true });
   mkdirSync(join(repo, "specs", "feature"), { recursive: true });
@@ -42,6 +50,11 @@ const fixtureRepository = (root: string): string => {
   writeFileSync(join(repo, "src", "worker.ts"), "export const worker = 1;\n");
   writeFileSync(join(repo, "specs", "feature", "spec.md"), "# Feature\n");
   writeFileSync(join(repo, "tests", "entry.test.ts"), "// producer fixture\n");
+  if (options.largeBlob) {
+    const path = join(repo, LARGE_BLOB_PATH);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, Buffer.alloc(LARGE_BLOB_BYTES, 0x61));
+  }
   git(repo, ["init"]);
   git(repo, ["config", "user.email", "loop@example.test"]);
   git(repo, ["config", "user.name", "Loop Test"]);
@@ -121,6 +134,34 @@ test("prepareRunWorldModel binds producer-backed task context to the run manifes
     expect(readRunManifest(claim.storage.manifestPath)?.worldModel).toEqual(
       binding
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("prepareRunWorldModel binds exact bytes from a committed blob larger than the default child-process buffer", () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-world-runtime-large-blob-"));
+  try {
+    const repo = fixtureRepository(root, { largeBlob: true });
+    const claim = claimFor(root, repo, "1");
+    const binding = prepareRunWorldModel(claim, `Inspect ${LARGE_BLOB_PATH}`);
+    const store = new WorldModelStore(binding.databasePath);
+    try {
+      const entity = store
+        .entities()
+        .find((item) => item.label === LARGE_BLOB_PATH);
+      expect(entity).toBeDefined();
+      expect(entity?.metadata).toMatchObject({
+        commitSha: binding.commitSha,
+        path: LARGE_BLOB_PATH,
+        sha256: worldSha256(Buffer.alloc(LARGE_BLOB_BYTES, 0x61)),
+      });
+      expect(readRunManifest(claim.storage.manifestPath)?.worldModel).toEqual(
+        binding
+      );
+    } finally {
+      store.close();
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

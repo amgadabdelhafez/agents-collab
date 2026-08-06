@@ -22,6 +22,7 @@ const MARKDOWN_LINK_RE =
   /\[[^\]]*\]\((?!https?:|mailto:|#)([^)#?]+)(?:[?#][^)]*)?\)/gu;
 const WIKI_LINK_RE = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/gu;
 const CODE_EXTENSIONS = ["", ".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"];
+const GIT_OBJECT_SIZE_RE = /^(?:0|[1-9]\d*)$/u;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const TEST_PATH_RE = /(?:^|\/)test\.[^/]+$/u;
 const SPEC_PATH_RE = /(?:^|\/)spec\.md$/u;
@@ -300,17 +301,49 @@ const resolveTrackedTarget = (
     .find((item) => tracked.has(item));
 };
 
-const git = (repoPath: string, args: string[]): Uint8Array => {
+const git = (
+  repoPath: string,
+  args: string[],
+  maxBuffer?: number
+): Uint8Array => {
   const result = spawnSync("git", ["-C", repoPath, ...args], {
     encoding: null,
+    ...(maxBuffer === undefined ? {} : { maxBuffer }),
   });
   if (result.status !== 0) {
-    const detail = decode(commandOutputBytes(result.stderr)).trim();
+    const detail =
+      decode(commandOutputBytes(result.stderr)).trim() || result.error?.message;
     throw new Error(
       `git ${args.join(" ")} failed${detail ? `: ${detail}` : ""}`
     );
   }
   return commandOutputBytes(result.stdout);
+};
+
+const committedBlob = (
+  repoPath: string,
+  commitSha: string,
+  path: string
+): Uint8Array => {
+  const object = `${commitSha}:${path}`;
+  const rawSize = decode(git(repoPath, ["cat-file", "-s", object])).trim();
+  if (!GIT_OBJECT_SIZE_RE.test(rawSize)) {
+    throw new Error(`git object size is invalid for ${object}: ${rawSize}`);
+  }
+  const size = Number(rawSize);
+  if (!Number.isSafeInteger(size)) {
+    throw new Error(`git object size is unsafe for ${object}: ${rawSize}`);
+  }
+  // Git's immutable object metadata is the bound. The extra byte lets a blob
+  // whose size equals the limit complete without choosing an arbitrary global
+  // repository-file ceiling.
+  const bytes = git(repoPath, ["show", object], size + 1);
+  if (bytes.byteLength !== size) {
+    throw new Error(
+      `git show ${object} returned ${bytes.byteLength} bytes; expected ${size}`
+    );
+  }
+  return bytes;
 };
 
 export class WorldModelStore {
@@ -874,7 +907,7 @@ export const materializeGitRepository = (
       const contents = new Map<string, string>();
       const hashes = new Map<string, string>();
       for (const path of files) {
-        const bytes = git(repoPath, ["show", `${commitSha}:${path}`]);
+        const bytes = committedBlob(repoPath, commitSha, path);
         const hash = worldSha256(bytes);
         const content = decode(bytes);
         const entity = store.putEntity({
