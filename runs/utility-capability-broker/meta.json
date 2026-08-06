@@ -1,0 +1,10 @@
+{
+  "task_id": "utility-capability-broker",
+  "feature": "utility-capability-broker",
+  "mode": "defect",
+  "status": "review_pending",
+  "base_commit": "0f69b9a99f9163bf9f83075530e26aed21258463",
+  "branch": "codex/utility-capability-broker",
+  "spec_path": "specs/utility-capability-broker/spec.md",
+  "live_source": "loop-140"
+}

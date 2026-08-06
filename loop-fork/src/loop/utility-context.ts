@@ -20,8 +20,9 @@ import {
   isUtilityContextRefPath,
   normalizeUtilityPolicyPath,
 } from "./utility-path-policy";
+import type { UtilityBrokerCapabilities } from "./utility-tools";
 
-export const UTILITY_CONTEXT_SCHEMA_VERSION = 2;
+export const UTILITY_CONTEXT_SCHEMA_VERSION = 3;
 export const UTILITY_INSTRUCTIONS_FILE = "UTILITY.instructions.md";
 export const MAX_UTILITY_INSTRUCTION_CHARS = 8000;
 export const MAX_UTILITY_CONTEXT_REF_CHARS = 3000;
@@ -45,6 +46,7 @@ export interface UtilityContextDocument {
 }
 
 export interface UtilityContextCapsule {
+  capabilities: UtilityBrokerCapabilities;
   projectInstructions: UtilityContextDocument;
   references: UtilityContextDocument[];
   request: UtilityRouteRequest;
@@ -213,11 +215,19 @@ const inspectWriteTargets = (
   });
 
 export const buildUtilityContextCapsule = (input: {
+  capabilities?: UtilityBrokerCapabilities;
   repoRoot: string;
   request: UtilityRouteRequest;
 }): UtilityContextCapsule => {
   const repoRoot = realpathSync(input.repoRoot);
   const payload: CapsulePayload = {
+    capabilities: input.capabilities ?? {
+      alternatives: {},
+      commandPrefixes: [],
+      readScopes: [],
+      tools: [],
+      writeScopes: [],
+    },
     projectInstructions: loadProjectInstructions(repoRoot),
     references: loadReferences(
       repoRoot,

@@ -70,7 +70,15 @@ or claim authority.
   legacy-missing shapes stay with the current driver.
 - A root `UTILITY.instructions.md` and explicitly selected bounded Markdown
   references supply provider-neutral project context. They never widen route or
-  broker authority and their exact versioned capsule is persisted for replay.
+  broker authority. The persisted versioned capsule also carries the exact
+  broker tool names, declared scopes, effective focused-check prefixes, and
+  dedicated safe alternatives exposed for that job, so helpers do not discover
+  policy by probing denied executables.
+- Common review inspection is broker-native rather than shell-shaped:
+  `inspect_files` returns bounded SHA-256/size/line/kind metadata and
+  `read_json` returns only declared bounded JSON Pointer values. Both reuse the
+  same canonical scope, protected-path, symlink, input-size, and output-size
+  enforcement as the existing read/search tools.
 - Missing evidence, stale epochs, malformed journals, protected paths, and
   unknown risk fail closed.
 - Utility edits are patch proposals in P0. They are not applied automatically.
@@ -115,7 +123,9 @@ or claim authority.
 3. **Execution:** the helper claims with the current epoch and persists one
    bounded context capsule for the verified worktree. Direct executes exact
    broker calls without inference; Nanny and Au Pair get ephemeral Pi sessions
-   with only current broker tools active and every Pi built-in disabled.
+   with only current broker tools active and every Pi built-in disabled. The
+   broker owns executable authority; helpers use dedicated inspection tools and
+   cannot widen the allowlist from prompts or repository context.
 4. **Completion:** the helper records tier, harness, Pi version, usage, trace,
    checks, artifact references,
    and a compact result, then sends that result to the requester through the

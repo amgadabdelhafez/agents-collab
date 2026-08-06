@@ -84,6 +84,13 @@ test("builds a deterministic bounded capsule and persists the exact prompt", () 
       }),
     ]);
     expect(first.request).toEqual(routeRequest);
+    expect(first.capabilities).toEqual({
+      alternatives: {},
+      commandPrefixes: [],
+      readScopes: [],
+      tools: [],
+      writeScopes: [],
+    });
     expect(first.writeTargets).toEqual([]);
     expect(first.workspace.name).toBe(repoRoot.split("/").at(-1));
     expect(first.workspace.rootSha256).toMatch(SHA256_HEX_RE);
@@ -92,6 +99,35 @@ test("builds a deterministic bounded capsule and persists the exact prompt", () 
     expect(path).toBe(utilityContextPath(runDir, routeRequest.id));
     expect(readFileSync(path, "utf8").trim()).toBe(utilityContextPrompt(first));
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(first);
+  } finally {
+    rmSync(repoRoot, { force: true, recursive: true });
+  }
+});
+
+test("binds the exact effective broker capability map into the capsule hash", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "utility-context-tools-"));
+  try {
+    const routeRequest = request();
+    const base = buildUtilityContextCapsule({
+      repoRoot,
+      request: routeRequest,
+    });
+    const capable = buildUtilityContextCapsule({
+      capabilities: {
+        alternatives: {
+          sha256: "Use inspect_files for SHA-256, bytes, lines, and kind.",
+        },
+        commandPrefixes: [["bun", "test"]],
+        readScopes: ["src"],
+        tools: ["inspect_files"],
+        writeScopes: [],
+      },
+      repoRoot,
+      request: routeRequest,
+    });
+    expect(capable.capabilities.tools).toEqual(["inspect_files"]);
+    expect(capable.capabilities.commandPrefixes).toEqual([["bun", "test"]]);
+    expect(capable.sha256).not.toBe(base.sha256);
   } finally {
     rmSync(repoRoot, { force: true, recursive: true });
   }

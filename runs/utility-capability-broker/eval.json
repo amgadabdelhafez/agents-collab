@@ -1,0 +1,62 @@
+{
+  "task_id": "utility-capability-broker",
+  "feature": "utility-capability-broker",
+  "timestamp": "2026-08-06T19:47:15Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "findings": [],
+  "checks": {
+    "live_incident": {
+      "status": "pass",
+      "details": [
+        "Seven loop-140 Au Pair review jobs failed after three broker-rejected rounds because exact SHA-256 evidence was required but no hashing tool was exposed.",
+        "Later Au Pair jobs succeeded, separating the capability-contract defect from provider or model health."
+      ]
+    },
+    "producer_regression": {
+      "status": "pass",
+      "details": [
+        "A loop-140-shaped two-file inspection returns independently derived SHA-256, byte, newline, and kind metadata with zero spawned commands and no content disclosure.",
+        "A manifest fixture returns only three declared RFC 6901 pointer outcomes and does not expose an undeclared sibling."
+      ]
+    },
+    "focused": {
+      "status": "pass",
+      "passed": 119,
+      "failed": 0,
+      "commands": [
+        "bun run test:file -- tests/loop/utility-tools.test.ts",
+        "bun run test:file -- tests/loop/utility-context.test.ts",
+        "bun run test:file -- tests/loop/utility-runtime.test.ts",
+        "bun run test:file -- tests/loop/utility-pi-harness.test.ts"
+      ]
+    },
+    "mandatory_suite": {
+      "status": "pass",
+      "details": [
+        "Every sorted test file completed with zero failures under bun run test:ci outside the restricted localhost-listen sandbox."
+      ]
+    },
+    "format_lint": "pass",
+    "typecheck": "pass",
+    "compiled_build": "pass",
+    "diff_check": "pass"
+  },
+  "acceptance": {
+    "broker_native_sha256": true,
+    "broker_native_json_pointer": true,
+    "no_command_execution": true,
+    "no_content_disclosure_from_inspection": true,
+    "scope_and_protected_path_gates_preserved": true,
+    "symlink_traversal_rejected": true,
+    "input_and_output_bounds_enforced": true,
+    "effective_capabilities_persisted_and_hash_bound": true,
+    "denial_guidance_names_safe_alternatives": true
+  },
+  "known_limitations": [
+    "The candidate is not integrated, installed, deployed, or active in a live loop.",
+    "Automatic shell-command classification is unchanged; these tools are available to admitted unprofiled inspection and utility-audit jobs, while exact execution profiles remain single-tool."
+  ]
+}
+

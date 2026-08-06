@@ -112,6 +112,8 @@ test("publishes provider-agnostic definitions for bounded tools", () => {
     "search_repo",
     "read_file",
     "count_lines",
+    "inspect_files",
+    "read_json",
     "list_files",
     "git_status",
     "git_diff",
@@ -119,6 +121,175 @@ test("publishes provider-agnostic definitions for bounded tools", () => {
     "run_check",
     "propose_patch",
   ]);
+});
+
+test("inspects loop-140 review files without spawning commands or disclosing content", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", "review-a.md"), "alpha\nbeta\n");
+    await writeFile(join(root, "src", "review-b.bin"), Buffer.from([0, 1, 2]));
+    const runCommand = mock(() =>
+      Promise.resolve({ exitCode: 0, stderr: "", stdout: "unexpected" })
+    );
+    const broker = await brokerFor(root, runCommand);
+    const result = await broker.execute({
+      arguments: { paths: ["src/review-a.md", "src/review-b.bin"] },
+      name: "inspect_files",
+    });
+
+    expect(result).toMatchObject({
+      data: {
+        files: [
+          {
+            bytes: 11,
+            kind: "text",
+            lines: 2,
+            path: "src/review-a.md",
+            sha256: createHash("sha256").update("alpha\nbeta\n").digest("hex"),
+          },
+          {
+            bytes: 3,
+            kind: "binary",
+            lines: 0,
+            path: "src/review-b.bin",
+            sha256: createHash("sha256")
+              .update(Buffer.from([0, 1, 2]))
+              .digest("hex"),
+          },
+        ],
+      },
+      ok: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("alpha");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+test("rejects unsafe file-inspection requests", async () => {
+  await withRepo(async (root) => {
+    await symlink("hello.ts", join(root, "src", "linked.ts"));
+    const broker = await brokerFor(root);
+    const calls = [
+      { paths: [] },
+      { paths: ["src/hello.ts", "src/hello.ts"] },
+      { paths: ["src"] },
+      { paths: ["package.json"] },
+      { paths: [".env"] },
+      { paths: ["src/linked.ts"] },
+      { paths: Array.from({ length: 9 }, (_, index) => `src/${index}.ts`) },
+    ];
+    for (const arguments_ of calls) {
+      expect(
+        (await broker.execute({ arguments: arguments_, name: "inspect_files" }))
+          .ok
+      ).toBe(false);
+    }
+  });
+});
+
+test("reads only declared bounded JSON Pointer values without spawning commands", async () => {
+  await withRepo(async (root) => {
+    await writeFile(
+      join(root, "src", "manifest.json"),
+      JSON.stringify({
+        world: { paths: ["models/a", "models/b"] },
+        "a/b": { "m~n": 7 },
+        secretSibling: "not requested",
+      })
+    );
+    const runCommand = mock(() =>
+      Promise.resolve({ exitCode: 0, stderr: "", stdout: "unexpected" })
+    );
+    const broker = await brokerFor(root, runCommand);
+    const result = await broker.execute({
+      arguments: {
+        path: "src/manifest.json",
+        pointers: ["/world/paths/1", "/a~1b/m~0n", "/missing"],
+      },
+      name: "read_json",
+    });
+
+    expect(result).toMatchObject({
+      data: {
+        path: "src/manifest.json",
+        values: [
+          { found: true, pointer: "/world/paths/1", value: "models/b" },
+          { found: true, pointer: "/a~1b/m~0n", value: 7 },
+          { found: false, pointer: "/missing" },
+        ],
+      },
+      ok: true,
+    });
+    expect(JSON.stringify(result)).not.toContain("secretSibling");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+});
+
+test("rejects malformed, prototype-like, duplicate, and out-of-scope JSON reads", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", "manifest.json"), '{"ok":1}');
+    await writeFile(join(root, "src", "malformed.json"), "{");
+    await symlink("manifest.json", join(root, "src", "linked.json"));
+    const broker = await brokerFor(root);
+    const calls = [
+      { path: "src/manifest.json", pointers: [] },
+      { path: "src/manifest.json", pointers: ["bad"] },
+      { path: "src/manifest.json", pointers: ["/~2"] },
+      { path: "src/manifest.json", pointers: ["/ok", "/ok"] },
+      { path: "src/manifest.json", pointers: ["/__proto__"] },
+      { path: "src/malformed.json", pointers: [""] },
+      { path: "src/linked.json", pointers: [""] },
+      { path: "package.json", pointers: [""] },
+    ];
+    for (const arguments_ of calls) {
+      expect(
+        (await broker.execute({ arguments: arguments_, name: "read_json" })).ok
+      ).toBe(false);
+    }
+  });
+});
+
+test("rejects selected JSON output above the shared broker limit", async () => {
+  await withRepo(async (root) => {
+    await writeFile(
+      join(root, "src", "large.json"),
+      JSON.stringify({ selected: "x".repeat(1000) })
+    );
+    const broker = await createUtilityToolBroker({
+      artifactDir: ".utility-artifacts",
+      limits: { maxOutputBytes: 128 },
+      readScopes: ["src/large.json"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    expect(
+      await broker.execute({
+        arguments: { path: "src/large.json", pointers: ["/selected"] },
+        name: "read_json",
+      })
+    ).toMatchObject({ error: { code: "output_limit" }, ok: false });
+  });
+});
+
+test("describes the effective broker capabilities and denial alternatives", async () => {
+  await withRepo(async (root) => {
+    const broker = await brokerFor(root);
+    expect(broker.describeCapabilities()).toMatchObject({
+      commandPrefixes: [
+        ["bun", "test"],
+        ["node", "--check"],
+        ["npx", "vitest", "run"],
+      ],
+      readScopes: ["src", "tests"],
+      tools: expect.arrayContaining(["inspect_files", "read_json"]),
+      writeScopes: ["src"],
+    });
+    const denied = await broker.execute({
+      arguments: { argv: ["sha256sum", "src/hello.ts"] },
+      name: "run_check",
+    });
+    expect(denied.error?.message).toContain("Use inspect_files for SHA-256");
+    expect(denied.error?.message).toContain("bun test");
+  });
 });
 
 test("counts lines across bounded files without spawning a command", async () => {
