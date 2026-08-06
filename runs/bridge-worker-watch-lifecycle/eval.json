@@ -1,0 +1,46 @@
+{
+  "task_id": "bridge-worker-watch-lifecycle",
+  "feature": "bridge-worker-watch-lifecycle",
+  "timestamp": "2026-08-06T03:52:00Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "checks": {
+    "live_incident": {
+      "status": "pass",
+      "details": [
+        "The orphan worker was reparented to PID 1, its source checkout was gone, and its synthetic manifest referenced a missing tmux session.",
+        "lsof showed more than 3,000 duplicate read-only descriptors for the run directory after roughly four hours of five-second retries.",
+        "The process-only recovery stopped PID 20177; a positive ps check confirmed it exited and no live loop was affected."
+      ]
+    },
+    "producer_regression": {
+      "status": "pass",
+      "details": [
+        "Three consecutive retry wake cycles create exactly one run-directory watcher.",
+        "The watcher remains open between cycles and watcher plus metadata probe each close exactly once when the session exits.",
+        "The actual bridge worker constructs one wake session for its full loop and closes it in the worker finally path."
+      ]
+    },
+    "focused_suite": {
+      "status": "pass",
+      "passed": 106,
+      "failed": 0,
+      "expectations": 460
+    },
+    "mandatory_suite": {
+      "status": "pass",
+      "details": [
+        "Every sequential test file passed outside the restricted sandbox.",
+        "The sandboxed proxy integration could not bind loopback and returned EADDRINUSE; the same exact test passed outside the sandbox with 1 test, 0 failures, and 6 expectations."
+      ]
+    },
+    "format_lint": "pass",
+    "compiled_build": "pass",
+    "diff_check": "pass"
+  },
+  "known_limitations": [
+    "This candidate is not integrated, installed, or deployed.",
+    "Filesystem watch remains an optimization; the metadata version probe and five-minute reconciliation remain authoritative fallbacks."
+  ]
+}

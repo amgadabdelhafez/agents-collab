@@ -196,6 +196,8 @@ const readClaudeTranscriptVersion = (runDir: string): string | undefined =>
   readClaudeSubmissionVersion(runDir);
 
 export const bridgeRuntimeCommandDeps = {
+  createWorkerWakeSession: (runDir: string) =>
+    createBridgeWorkerWakeSession(runDir),
   readClaudeTranscriptVersion,
   spawn,
   spawnSync,
@@ -203,9 +205,17 @@ export const bridgeRuntimeCommandDeps = {
     runDir: string,
     observedVersion: string,
     timeoutMs: number,
-    timeoutReason: BridgeWorkerWakeReason
+    timeoutReason: BridgeWorkerWakeReason,
+    session?: BridgeWorkerWakeSession
   ) =>
-    waitForBridgeWorkerWake(runDir, observedVersion, timeoutMs, timeoutReason),
+    session
+      ? session.wait(observedVersion, timeoutMs, timeoutReason)
+      : waitForBridgeWorkerWake(
+          runDir,
+          observedVersion,
+          timeoutMs,
+          timeoutReason
+        ),
 };
 
 const bridgeWorkerPath = (runDir: string): string =>
@@ -274,6 +284,15 @@ export type BridgeWorkerWakeReason =
 export interface BridgeWorkerWake {
   reason: BridgeWorkerWakeReason;
   version: string;
+}
+
+export interface BridgeWorkerWakeSession {
+  close: () => void;
+  wait: (
+    observedVersion: string,
+    timeoutMs: number,
+    timeoutReason?: BridgeWorkerWakeReason
+  ) => Promise<BridgeWorkerWake>;
 }
 
 type BridgeRunDirectoryWatchListener = (
@@ -384,73 +403,112 @@ const recordBridgeReconciliation = (
   return state;
 };
 
-export const waitForBridgeWorkerWake = (
+export const createBridgeWorkerWakeSession = (
+  runDir: string
+): BridgeWorkerWakeSession => {
+  const currentVersion = (): string => bridgeJournalVersion(runDir);
+  const journalFilename = basename(bridgePath(runDir));
+  let closed = false;
+  let pending:
+    | {
+        observedVersion: string;
+        resolve: (wake: BridgeWorkerWake) => void;
+        timeoutReason: BridgeWorkerWakeReason;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    | undefined;
+  let watcher: BridgeRunDirectoryWatcher | undefined;
+
+  const finish = (reason: BridgeWorkerWakeReason): void => {
+    if (!pending) {
+      return;
+    }
+    const current = pending;
+    pending = undefined;
+    clearTimeout(current.timer);
+    current.resolve({ reason, version: currentVersion() });
+  };
+  const observeChange = (reason: "changed" | "event"): void => {
+    if (pending && currentVersion() !== pending.observedVersion) {
+      finish(reason);
+    }
+  };
+
+  try {
+    watcher = bridgeWorkerWakeDeps.watchRunDirectory(
+      runDir,
+      (_eventType, filename) => {
+        if (!filename || filename.toString() === journalFilename) {
+          observeChange("event");
+        }
+      }
+    );
+    watcher.on("error", () => {
+      watcher?.close();
+      watcher = undefined;
+    });
+  } catch {
+    // A watcher is an optimization only. The bounded reconciliation timeout
+    // and metadata probe remain authoritative when the host cannot watch.
+  }
+  const versionProbe = bridgeWorkerWakeDeps.startVersionProbe(
+    () => observeChange("changed"),
+    BRIDGE_VERSION_PROBE_INTERVAL_MS
+  );
+
+  return {
+    close: (): void => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      watcher?.close();
+      watcher = undefined;
+      bridgeWorkerWakeDeps.stopVersionProbe(versionProbe);
+      if (pending) {
+        finish(pending.timeoutReason);
+      }
+    },
+    wait: (
+      observedVersion: string,
+      timeoutMs: number,
+      timeoutReason: BridgeWorkerWakeReason = "heartbeat"
+    ): Promise<BridgeWorkerWake> => {
+      if (closed) {
+        return Promise.resolve({
+          reason: timeoutReason,
+          version: currentVersion(),
+        });
+      }
+      if (pending) {
+        return Promise.reject(
+          new Error("bridge worker wake session already has a pending wait")
+        );
+      }
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => finish(timeoutReason), timeoutMs);
+        pending = { observedVersion, resolve, timeoutReason, timer };
+        // The watcher is registered before this comparison. An enqueue in the
+        // inspect-to-wait gap is observed either by its version or its event.
+        observeChange("changed");
+        queueMicrotask(() => observeChange("changed"));
+      });
+    },
+  };
+};
+
+export const waitForBridgeWorkerWake = async (
   runDir: string,
   observedVersion: string,
   timeoutMs: number,
   timeoutReason: BridgeWorkerWakeReason = "heartbeat"
 ): Promise<BridgeWorkerWake> => {
-  const currentVersion = (): string => bridgeJournalVersion(runDir);
-  const journalFilename = basename(bridgePath(runDir));
-  return new Promise((resolve) => {
-    let settled = false;
-    let versionProbe: ReturnType<typeof setInterval> | undefined;
-    let watcher: BridgeRunDirectoryWatcher | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (reason: BridgeWorkerWakeReason): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (timer) {
-        clearTimeout(timer);
-      }
-      if (versionProbe) {
-        bridgeWorkerWakeDeps.stopVersionProbe(versionProbe);
-      }
-      watcher?.close();
-      resolve({ reason, version: currentVersion() });
-    };
-    timer = setTimeout(() => finish(timeoutReason), timeoutMs);
-    try {
-      watcher = bridgeWorkerWakeDeps.watchRunDirectory(
-        runDir,
-        (_eventType, filename) => {
-          if (
-            (!filename || filename.toString() === journalFilename) &&
-            currentVersion() !== observedVersion
-          ) {
-            finish("event");
-          }
-        }
-      );
-      watcher.on("error", () => {
-        watcher?.close();
-        watcher = undefined;
-      });
-    } catch {
-      // A watcher is an optimization only. The bounded reconciliation timeout
-      // remains the authoritative recovery path when the host cannot watch.
-    }
-    // Register the watcher before this comparison. An enqueue in the
-    // inspect-to-watch gap is then observed either by its version or its event.
-    if (currentVersion() !== observedVersion) {
-      finish("changed");
-    }
-    queueMicrotask(() => {
-      if (currentVersion() !== observedVersion) {
-        finish("changed");
-      }
-    });
-    // Some filesystems coalesce or omit watch notifications. A metadata-only
-    // version probe closes that host gap without rereading or parsing the
-    // bridge journal; the five-minute timeout remains the full reconciliation.
-    versionProbe = bridgeWorkerWakeDeps.startVersionProbe(() => {
-      if (currentVersion() !== observedVersion) {
-        finish("changed");
-      }
-    }, BRIDGE_VERSION_PROBE_INTERVAL_MS);
-  });
+  const session = createBridgeWorkerWakeSession(runDir);
+  try {
+    return await session.wait(observedVersion, timeoutMs, timeoutReason);
+  } finally {
+    session.close();
+  }
 };
 
 const deliveryClaimPath = (runDir: string, messageId: string): string => {
@@ -1457,6 +1515,7 @@ const bridgeWorkerWaitPolicy = (
 
 export const runBridgeWorker = async (runDir: string): Promise<void> => {
   let reconciliationReason: BridgeReconciliationState["lastReason"] = "startup";
+  const wakeSession = bridgeRuntimeCommandDeps.createWorkerWakeSession(runDir);
   try {
     while (true) {
       const claimedPid = readBridgeWorkerPid(runDir);
@@ -1487,11 +1546,13 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
         runDir,
         observedVersion,
         timeoutMs,
-        timeoutReason
+        timeoutReason,
+        wakeSession
       );
       reconciliationReason = wake.reason;
     }
   } finally {
+    wakeSession.close();
     clearBridgeWorkerPid(runDir, process.pid);
   }
 };

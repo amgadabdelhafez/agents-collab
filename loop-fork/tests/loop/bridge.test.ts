@@ -4502,6 +4502,44 @@ test("bridge worker metadata probe recovers an append when the watcher swallows 
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge worker wake session reuses one watcher across retry cycles", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const closeWatcher = mock(() => undefined);
+  const watcher = {
+    close: closeWatcher,
+    on: mock(() => watcher),
+  };
+  const watchRunDirectory = mock(() => watcher);
+  const stopVersionProbe = mock(() => undefined);
+  bridge.bridgeWorkerWakeDeps.watchRunDirectory = watchRunDirectory;
+  bridge.bridgeWorkerWakeDeps.startVersionProbe = mock(
+    () => ({}) as ReturnType<typeof setInterval>
+  );
+  bridge.bridgeWorkerWakeDeps.stopVersionProbe = stopVersionProbe;
+
+  const session = bridge.createBridgeWorkerWakeSession(runDir);
+  const observedVersion = bridge.bridgeJournalVersion(runDir);
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    expect(await session.wait(observedVersion, 1, "retry")).toEqual({
+      reason: "retry",
+      version: observedVersion,
+    });
+  }
+
+  expect(watchRunDirectory).toHaveBeenCalledTimes(1);
+  expect(closeWatcher).not.toHaveBeenCalled();
+  session.close();
+  session.close();
+  expect(closeWatcher).toHaveBeenCalledTimes(1);
+  expect(stopVersionProbe).toHaveBeenCalledTimes(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("runBridgeWorker persists five-minute reconciliation heartbeats", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
@@ -4526,6 +4564,13 @@ test("runBridgeWorker persists five-minute reconciliation heartbeats", async () 
     "utf8"
   );
   const waits: Array<{ timeoutMs: number; version: string }> = [];
+  const closeWakeSession = mock(() => undefined);
+  const createWorkerWakeSession = mock(() => ({
+    close: closeWakeSession,
+    wait: mock(() => Promise.reject(new Error("unexpected direct wait"))),
+  }));
+  bridge.bridgeRuntimeCommandDeps.createWorkerWakeSession =
+    createWorkerWakeSession;
   bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(
     (_runDir: string, version: string, timeoutMs: number) => {
       waits.push({ timeoutMs, version });
@@ -4548,6 +4593,8 @@ test("runBridgeWorker persists five-minute reconciliation heartbeats", async () 
   await bridge.runBridgeWorker(runDir);
 
   expect(waits.map((wait) => wait.timeoutMs)).toEqual([300_000, 300_000]);
+  expect(createWorkerWakeSession).toHaveBeenCalledTimes(1);
+  expect(closeWakeSession).toHaveBeenCalledTimes(1);
   expect(waits.every((wait) => typeof wait.version === "string")).toBe(true);
   const firstReconciliation = bridge.readBridgeReconciliationState(runDir);
   expect(firstReconciliation).toMatchObject({
