@@ -19,6 +19,9 @@ the reconciliation pane continued to report them as awaiting delivery. A later
 4. An active bridge delivery claim must preserve the handover for the claimant.
 5. A supervisor result lookup must not consume the requester agent's handover.
 6. The returned task result payload must remain unchanged.
+7. A non-supervisor lookup must be bound to the durable job requester, and a
+   requester handover preserved through a supervisor lookup must remain
+   drainable by that requester.
 
 ## Non-goals
 

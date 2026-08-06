@@ -5,4 +5,6 @@
 - [x] Preserve claimed, unrelated, cross-agent, and supervisor paths.
 - [x] Run focused and mandatory verification.
 - [x] Record `runs/utility-result-consumption/eval.json`.
-- [ ] Request exact-SHA supervisor review and hold the release gate.
+- [x] Add the supervisor-read pending-and-drainable reviewer regression and
+      mutation-kill evidence.
+- [ ] Request exact-SHA supervisor re-review and hold the release gate.

@@ -1,7 +1,7 @@
 {
   "task_id": "utility-result-consumption",
   "feature": "utility-result-consumption",
-  "timestamp": "2026-08-06T15:11:40Z",
+  "timestamp": "2026-08-06T21:48:41Z",
   "evaluator": "codex-producer-backed-eval",
   "verdict": "pass",
   "baseline_failures": [],
@@ -16,6 +16,8 @@
   "checks": {
     "causal_regression_before_fix": "failed because four messages remained pending instead of three",
     "causal_and_safety_cases_after_fix": "3 passed, 0 failed",
+    "supervisor_observational_read": "completed result returned while the requester handover remained pending with no delivered event, then the requester drained the exact handover",
+    "supervisor_exemption_mutation": "changing source !== supervisor to true failed the named supervisor regression; 108 passed, 1 failed",
     "focused_bridge_file": "109 passed, 0 failed",
     "format_lint": "pass",
     "typecheck": "pass",

@@ -1131,9 +1131,14 @@ export const callUtilityBridgeTool = async (
     };
   }
   if (source !== "supervisor") {
+    if (job.request.requester !== source) {
+      throw new UtilityBridgeInputError(
+        "get_task_result is restricted to its requester"
+      );
+    }
     consumeBridgeInbox(
       runDir,
-      source,
+      job.request.requester,
       "read via get_task_result",
       (message) =>
         message.source === "utility" &&

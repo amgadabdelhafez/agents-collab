@@ -1075,6 +1075,33 @@ test("supervisor get_task_result preserves the requester agent handover", async 
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
     expect.objectContaining({ id: handover.id, target: "claude" }),
   ]);
+  expect(
+    bridge
+      .readBridgeEvents(runDir)
+      .some((event) => event.id === handover.id && event.kind === "delivered")
+  ).toBe(false);
+
+  const requesterReceive = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeFrame({
+      id: 3,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: "receive_messages" },
+    })
+  );
+
+  expect(requesterReceive.code).toBe(0);
+  expect(toolText(requesterReceive.stdout, 3)).toContain(
+    "requester-owned result"
+  );
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(
+    bridge
+      .readBridgeEvents(runDir)
+      .find((event) => event.id === handover.id && event.kind === "delivered")
+  ).toMatchObject({ reason: "read via receive_messages" });
   rmSync(root, { recursive: true, force: true });
 });
 

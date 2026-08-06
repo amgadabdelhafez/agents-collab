@@ -15,3 +15,11 @@
   pass with an empty named failure set. The loopback integration file was also
   rerun independently with port authority after sandbox binding produced a
   false `EADDRINUSE` result.
+- 2026-08-06: Supervisor review of `b9cd3bb8` identified that the observational
+  supervisor path had not been shown drainable by the requester and that the
+  named supervisor-exemption mutation survived the suite. The regression now
+  asserts the supervisor read creates no delivered event, the handover remains
+  pending, and the requester subsequently drains it. The non-supervisor path is
+  explicitly bound to the durable job requester. Mutating
+  `source !== "supervisor"` to `true` now fails the named regression (108 pass,
+  1 fail); restored source passes 109/109.
