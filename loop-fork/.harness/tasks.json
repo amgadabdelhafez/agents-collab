@@ -522,6 +522,14 @@
       "created_at": "2026-08-06T01:02:21Z",
       "run_dir": "runs/project-world-model-activation",
       "eval_status": "pass"
+    },
+    {
+      "id": "worktree-reaper-hardening",
+      "mode": "maintenance",
+      "status": "active",
+      "created_at": "2026-08-06T01:11:42Z",
+      "run_dir": "runs/worktree-reaper-hardening",
+      "eval_status": "pass"
     }
   ]
 }

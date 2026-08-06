@@ -7,6 +7,13 @@ cd loop-fork
 bun run test:file -- tests/loop/<module>.test.ts
 ```
 
+The producer-backed worktree cleanup regression is:
+
+```bash
+cd loop-fork
+bun run test:file -- tests/worktree-reaper.test.ts
+```
+
 ## Integration test
 
 ```bash

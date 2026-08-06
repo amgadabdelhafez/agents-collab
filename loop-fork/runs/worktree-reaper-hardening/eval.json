@@ -1,0 +1,47 @@
+{
+  "task_id": "worktree-reaper-hardening",
+  "status": "pass",
+  "required": [
+    "focused",
+    "real_repository_smoke",
+    "static_check",
+    "typecheck",
+    "build",
+    "full_suite"
+  ],
+  "dimensions": {
+    "focused": {
+      "status": "pass",
+      "artifact": "runs/worktree-reaper-hardening/task-log.md",
+      "method": "Eight producer-backed temporary Git repository scenarios"
+    },
+    "real_repository_smoke": {
+      "status": "pass",
+      "artifact": "runs/worktree-reaper-hardening/task-log.md",
+      "method": "Display-only audit of all current registered worktrees"
+    },
+    "static_check": {
+      "status": "pass",
+      "artifact": "runs/worktree-reaper-hardening/task-log.md",
+      "method": "bun run check"
+    },
+    "typecheck": {
+      "status": "pass",
+      "artifact": "runs/worktree-reaper-hardening/task-log.md",
+      "method": "Repository TypeScript no-emit command"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/worktree-reaper-hardening/task-log.md",
+      "method": "bun run build"
+    },
+    "full_suite": {
+      "status": "pass",
+      "artifact": "runs/worktree-reaper-hardening/task-log.md",
+      "method": "bun run test:ci with localhost bind access required by integration fixtures"
+    }
+  },
+  "baseline_failures": [],
+  "blocking_findings": [],
+  "deployment": "not-authorized-or-attempted"
+}
