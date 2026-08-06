@@ -196,6 +196,12 @@ prepare_case() {
     >"${update_cache}/last-check.json"
   chmod 600 "${update_cache}/last-check.json"
   git init -q "${root}/repo"
+  printf 'launch smoke provenance\n' >"${root}/repo/.loop-smoke"
+  git -C "${root}/repo" add .loop-smoke
+  git -C "${root}/repo" \
+    -c user.name="Loop Smoke" \
+    -c user.email="loop-smoke@localhost" \
+    commit -q -m "seed launch smoke provenance"
 }
 
 make_agent_bin() {

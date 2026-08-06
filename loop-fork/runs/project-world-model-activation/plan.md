@@ -22,6 +22,8 @@
 - Promptless and task-bound launch ordering plus fail-closed cancellation.
 - No mutation on already-live reattachment.
 - Charter and environment assertions.
+- Exact-binary launch smoke from disposable repositories with a real committed
+  `HEAD`, so the release gate exercises World Model provenance.
 - Static check, complete certified suite, build, binary smoke, preflight, and
   stop-gate.
 

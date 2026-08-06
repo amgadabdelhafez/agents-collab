@@ -37,3 +37,16 @@ commands. Ordinary loops did not consume it.
 - Working-tree binary SHA-256 before commit:
   `30f6b531babbd28aef231cdade660894adfcc918a6260135c5613a6793ac63ff`.
 - No live loop was restarted or mutated and no binary was deployed.
+
+## Release-smoke integration regression
+
+The first combined exact-binary launch smoke failed closed because its
+disposable repositories were initialized without a commit. World Model
+activation correctly requires `git rev-parse HEAD` for provenance. The smoke
+fixture now creates and commits a real tracked seed file in every isolated repository, so
+the producer-backed release smoke exercises the default-on World Model path.
+
+Regression: yes
+Regression id: world-model-launch-smoke-git-head
+Regression symptom: The realistic exact-binary release smoke failed before launch because its disposable repository had no committed HEAD.
+Regression guard: LOOP_SMOKE_BINARY=<exact-binary> LOOP_SMOKE_EXPECTED_SHA256=<sha256> LOOP_SMOKE_FULL_LAYOUT=1 bash evals/smoke/large-prompt-launch.sh
