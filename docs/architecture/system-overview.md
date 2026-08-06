@@ -121,11 +121,13 @@ or claim authority.
    and a compact result, then sends that result to the requester through the
    bridge.
 5. **Wake and reconciliation:** a durable bridge append wakes the detached
-   worker through a filesystem event. A post-registration version check closes
-   the inspect-to-watch race, while a metadata-only probe covers filesystems
-   that coalesce events. The worker atomically records every full reconciliation
-   and reruns it after at most five idle minutes. Only authoritative journal
-   rows decide pending and delivered state.
+   worker through a filesystem event. One worker-scoped watcher is reused for
+   every retry and reconciliation cycle, then closed with its metadata probe on
+   worker exit. A post-registration version check closes the inspect-to-watch
+   race, while the probe covers filesystems that coalesce events. The worker
+   atomically records every full reconciliation and reruns it after at most five
+   idle minutes. Only authoritative journal rows decide pending and delivered
+   state.
 6. **Continuity:** provider hooks atomically write an idempotent checkpoint to
    `<runDir>/memory/` before the relevant context boundary. A curator may later
    promote one verified stable fact with `loop __memory-promote`, producing
