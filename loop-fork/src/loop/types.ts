@@ -1,4 +1,9 @@
-export type Agent = "claude" | "codex" | "gemini" | "cursor" | "copilot";
+// Launchable full-agent seats.
+export type Agent = "claude" | "codex" | "oss";
+// Retired seats. Readable in historical manifests, never launchable.
+export type RetiredAgent = "gemini" | "cursor" | "copilot";
+// Any identity that may appear in a manifest written by this tool, past or present.
+export type HistoricalAgent = Agent | RetiredAgent;
 export type CavemanMode = "off" | "lite" | "full" | "ultra";
 export type CavemanModeSource = "cli" | "default" | "env" | "manifest";
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
@@ -25,9 +30,7 @@ export type RunStatus = "running" | "done" | "failed" | "stopped";
 export interface PairedSessionIds {
   claude?: string;
   codex?: string;
-  copilot?: string;
-  cursor?: string;
-  gemini?: string;
+  oss?: string;
 }
 export interface LaunchWorkspaceBinding {
   branchRef?: string;
@@ -46,13 +49,9 @@ export type ValueFlag =
   | "reviewerEffort"
   | "codexModel"
   | "codexReviewerModel"
-  | "copilotModel"
-  | "copilotReviewerModel"
-  | "cursorModel"
-  | "cursorReviewerModel"
   | "claudeReviewerModel"
-  | "geminiModel"
-  | "geminiReviewerModel"
+  | "ossModel"
+  | "ossReviewerModel"
   | "format"
   | "runId"
   | "session"
@@ -353,19 +352,10 @@ export interface Options {
   codexMcpConfigArgs?: string[];
   codexModel: string;
   codexReviewerModel?: string;
-  copilotMcpConfigPath?: string;
-  copilotModel: string;
-  copilotReviewerModel?: string;
-  cursorMcpConfigPath?: string;
-  cursorModel: string;
-  cursorReviewerModel?: string;
   doneSignal: string;
   driverEffort?: EffortLevel;
   driverEffortSource?: EffortSource;
   format: Format;
-  geminiMcpConfigPath?: string;
-  geminiModel: string;
-  geminiReviewerModel?: string;
   governess?: boolean;
   governessCooldownSeconds: number;
   governessDryRun?: boolean;
@@ -380,6 +370,10 @@ export interface Options {
   launchAttemptId?: string;
   launchClaimId?: string;
   maxIterations: number;
+  ossConfigDir?: string;
+  ossModel: string;
+  ossReviewerModel?: string;
+  ossSessionTitle?: string;
   pairedMode?: boolean;
   pairedSessionIds?: PairedSessionIds;
   pairWith?: Agent;
@@ -414,6 +408,8 @@ export interface ReviewOutcome extends ReviewFailure {
 }
 
 export interface ReviewResult {
+  // Reviewers that ran without release-gate authority under the run's policy.
+  advisoryReviewers: Agent[];
   approved: boolean;
   consensusFail: boolean;
   failureCount: number;

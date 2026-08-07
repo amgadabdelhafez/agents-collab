@@ -10,6 +10,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "bun";
+import { isAgent } from "./agents";
 import {
   dispatchBridgeMessage,
   type ImmediateBridgeDelivery,
@@ -163,6 +164,7 @@ import type {
   CavemanMode,
   EffortLevel,
   GovernessVerdict,
+  HistoricalAgent,
   HookEvent,
   JudgeOutcome,
   JudgeRequest,
@@ -631,13 +633,7 @@ const readLocalLlmUsageByJudge = (
   return out;
 };
 
-const AGENT_VALUES: readonly Agent[] = [
-  "claude",
-  "codex",
-  "copilot",
-  "cursor",
-  "gemini",
-];
+const AGENT_VALUES: readonly Agent[] = ["claude", "codex", "oss"];
 
 const readAgentBooleanMap = (
   value: unknown
@@ -6309,11 +6305,7 @@ const sendGovernessBridgeMessage = async (
     deliver = async (entry) =>
       (await deliverCodexBridgeMessage(runDir, entry)) ||
       (await deliverTmuxBridgeMessage(runDir, entry));
-  } else if (
-    target === "cursor" ||
-    target === "gemini" ||
-    target === "copilot"
-  ) {
+  } else if (target === "oss") {
     deliver = (entry) => deliverTmuxBridgeMessage(runDir, entry);
   }
   const result = await dispatchBridgeMessage(
@@ -6814,16 +6806,18 @@ export const resolveGovernessConfig = (
     if (agent === "codex") {
       return manifest?.codexThreadId || undefined;
     }
-    return undefined;
+    return manifest?.ossSessionId || undefined;
   };
   const codexHome = join(storage.runDir, "codex-home");
   const agents: GovernessAgentInfo[] = [];
+  // A retired seat can still be inspected and reaped through its manifest,
+  // but it can never be observed or driven as a live agent again.
   const addAgent = (
-    agent: Agent | undefined,
+    agent: HistoricalAgent | undefined,
     pane: string | undefined,
     fallbackPaneIndex: number
   ): void => {
-    if (agent) {
+    if (agent && isAgent(agent)) {
       agents.push({
         agent,
         codexHome: agent === "codex" ? codexHome : undefined,
@@ -6885,7 +6879,9 @@ export const resolveGovernessConfig = (
       "LOOP_GOVERNESS_IDLE",
       DEFAULT_GOVERNESS_IDLE_SECONDS
     ),
-    initialDriver: manifest?.primaryAgent,
+    initialDriver: isAgent(manifest?.primaryAgent)
+      ? manifest.primaryAgent
+      : undefined,
     helperCavemanMode: manifest?.helperCavemanMode,
     journalFile: join(storage.runDir, "governess-control.jsonl"),
     logFile: join(storage.runDir, "governess.jsonl"),

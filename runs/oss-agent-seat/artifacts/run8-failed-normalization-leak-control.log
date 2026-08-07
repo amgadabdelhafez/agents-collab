@@ -1,0 +1,3 @@
+oss-agent-seat smoke: harness /private/tmp/claude-501/-private-tmp-agents-collab-glm-full-agent/7598f1f9-fa3d-4ede-bf95-407b66b89ad5/scratchpad/m6-cdfail.sh sha256=e2d27d2dcd4358af745eddb30c6d44c9c17566aa8ed473cb7ddc805543935cf3
+oss-agent-seat smoke: binary /usr/bin/true sha256=a73efca930c2adb1f52eef0d1d3b17d375ee40290fc796653c91c33abf381938
+/private/tmp/claude-501/-private-tmp-agents-collab-glm-full-agent/7598f1f9-fa3d-4ede-bf95-407b66b89ad5/scratchpad/m6-cdfail.sh: line 130: cd: /var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T//oss-agent-seat-smoke-52389-01eecc52.bIQc6U/definitely-missing: No such file or directory

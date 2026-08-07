@@ -1,5 +1,6 @@
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
+import { getLastOssSessionId } from "./oss-adapter";
 import { runAgent } from "./runner";
 import type { Agent, Options, ReviewResult, RunResult } from "./types";
 
@@ -25,7 +26,7 @@ const lastSession = (agent: Agent): string => {
   if (agent === "claude") {
     return getLastClaudeSessionId();
   }
-  return agent === "codex" ? getLastCodexThreadId() : "";
+  return agent === "codex" ? getLastCodexThreadId() : getLastOssSessionId();
 };
 
 export const doneText = (s: string): string => `done signal "${s}"`;

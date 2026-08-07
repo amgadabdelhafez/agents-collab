@@ -1,0 +1,59 @@
+MUTATION PROOF — binding ruling 06fa755e-e432-4239-bb9a-fe924a2989dc
+file: loop-fork/src/loop/review.ts (sha256 before mutation cc4ada95b037ff9124234c7b6dc80ba9fc4ce4fe862e4a13cf2fc1692818572a)
+deleted check:   const gateOpen = failures.length === 0 && authoritativeReviewers.length > 0;
+replaced with:   const gateOpen = failures.length === 0;
+command: LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/oss-agent-seat.test.ts (TMUX unset)
+exit code: 1
+
+=== stdout ===
+bun test v1.3.13-canary.1 (903015a2)
+
+[loop] review with oss
+
+[loop] review with oss
+
+[loop] review with oss
+
+[loop] review with claude
+
+[loop] review with oss
+
+[loop] review with oss
+
+=== stderr ===
+
+tests/loop/oss-agent-seat.test.ts:
+598 |   expect(result.reviews).toEqual([
+599 |     { reason: "", reviewer: "oss", status: "pass" },
+600 |   ]);
+601 |   expect(result.failureCount).toBe(0);
+602 |   // The reviewer passed, and the gate stayed shut anyway.
+603 |   expect(result.approved).toBe(false);
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/private/tmp/agents-collab-glm-full-agent/loop-fork/tests/loop/oss-agent-seat.test.ts:603:27)
+(fail) an OSS reviewer APPROVE cannot open the release gate without a policy grant [11.22ms]
+655 |   const ossOnly = await runReview(
+656 |     ["oss"],
+657 |     "task",
+658 |     makeOptions({ agent: "oss" })
+659 |   );
+660 |   expect(ossOnly.approved).toBe(false);
+                                 ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/private/tmp/agents-collab-glm-full-agent/loop-fork/tests/loop/oss-agent-seat.test.ts:660:28)
+(fail) an advisory OSS APPROVE does not open the gate even beside a native pass [0.25ms]
+
+ 25 pass
+ 2 fail
+ 160 expect() calls
+Ran 27 tests across 1 file. [2.75s]
+

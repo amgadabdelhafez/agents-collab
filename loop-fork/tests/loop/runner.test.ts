@@ -303,40 +303,40 @@ test("buildCommand carries Codex bridge approval config for legacy exec", () => 
   );
 });
 
-test("buildCommand builds copilot agent command", () => {
-  const command = buildCommand("copilot", "fix the bug", "gpt-4.1");
+test("buildCommand builds an oss command that forwards the model verbatim", () => {
+  const command = buildCommand("oss", "fix the bug", "openrouter/z-ai/glm-5.2");
 
-  expect(command.cmd).toBe("copilot");
-  expect(command.args).toContain("agent");
-  expect(command.args).toContain("-p");
+  expect(command.cmd).toBe("opencode");
+  expect(command.args[0]).toBe("run");
+  expect(command.args).toContain("--format");
+  expect(command.args).toContain("json");
   expect(command.args).toContain("fix the bug");
-  expect(command.args).toContain("--yolo");
-  expect(command.args).toContain("--output-format");
-  expect(command.args).toContain("stream-json");
   const modelIdx = command.args.indexOf("--model");
   expect(modelIdx).toBeGreaterThan(-1);
-  expect(command.args[modelIdx + 1]).toBe("gpt-4.1");
+  expect(command.args[modelIdx + 1]).toBe("openrouter/z-ai/glm-5.2");
 });
 
-test("buildCommand builds gemini command", () => {
-  const command = buildCommand("gemini", "ship it", "gemini-2.5-pro");
+test("buildCommand passes an arbitrary provider/model id to OpenCode unrewritten", () => {
+  const exotic = "self-hosted.vllm/Org_Name/Model-v2.1:awq@2026-01";
+  const command = buildCommand("oss", "ship it", exotic);
 
-  expect(command.cmd).toBe("gemini");
-  expect(command.args).toContain("-p");
-  expect(command.args).toContain("ship it");
-  expect(command.args).toContain("--yolo");
-  const modelIdx = command.args.indexOf("-m");
-  expect(modelIdx).toBeGreaterThan(-1);
-  expect(command.args[modelIdx + 1]).toBe("gemini-2.5-pro");
+  const modelIdx = command.args.indexOf("--model");
+  expect(command.args[modelIdx + 1]).toBe(exotic);
+  expect(command.args.join(" ")).not.toContain("z-ai");
 });
 
-test("buildCommand builds cursor agent command with --approve-mcps", () => {
-  const command = buildCommand("cursor", "review code", "auto");
+test("buildCommand resumes an oss session through its stored session id", () => {
+  const command = buildCommand(
+    "oss",
+    "continue",
+    "openrouter/z-ai/glm-5.2",
+    "ses_stored_1"
+  );
 
-  expect(command.cmd).toBe("cursor");
-  expect(command.args).toContain("agent");
-  expect(command.args).toContain("--approve-mcps");
-  expect(command.args).toContain("--yolo");
+  const sessionIdx = command.args.indexOf("--session");
+  expect(sessionIdx).toBeGreaterThan(-1);
+  expect(command.args[sessionIdx + 1]).toBe("ses_stored_1");
+  expect(command.args).not.toContain("--title");
 });
 
 test("runAgent honors CODEX_TRANSPORT=exec and uses legacy codex exec", async () => {

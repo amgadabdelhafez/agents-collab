@@ -24,6 +24,14 @@ import {
 import { codexHomeEnv } from "./codex-home";
 import { createCodexRenderer } from "./codex-render";
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_CONFIG_VALUES } from "./constants";
+import {
+  buildOssRunArgs,
+  OSS_COMMAND,
+  ossConfigEnv,
+  parseOssSessionId,
+  resolveOssCredentialEnv,
+  setLastOssSessionId,
+} from "./oss-adapter";
 import { DETACH_CHILD_PROCESS, killChildProcess } from "./process";
 import type { Agent, Options, RunResult } from "./types";
 
@@ -180,44 +188,17 @@ export const buildCommand = (
     return { args, cmd: "codex" };
   }
 
-  if (agent === "gemini") {
-    const args = ["-p", prompt, "--yolo", "-o", "stream-json", "-m", model];
-    // Gemini CLI does not support --mcp-config; MCP servers are configured
-    // via `gemini mcp` or project-level .gemini/settings.json
-    return { args, cmd: "gemini" };
-  }
-
-  if (agent === "cursor") {
-    const args = [
-      "agent",
-      "-p",
-      prompt,
-      "--yolo",
-      "--output-format",
-      "stream-json",
-      "--model",
+  // oss — OpenCode-backed provider-neutral seat. The model identifier is
+  // passed through unchanged; OpenCode owns provider resolution.
+  return {
+    args: buildOssRunArgs({
       model,
-      "--approve-mcps",
-    ];
-    // Cursor Agent does not support --mcp-config; MCP servers are configured
-    // via cursor settings or project-level .cursor/mcp.json
-    return { args, cmd: "cursor" };
-  }
-
-  // copilot — GitHub Copilot coding agent CLI
-  const args = [
-    "agent",
-    "-p",
-    prompt,
-    "--yolo",
-    "--output-format",
-    "stream-json",
-    "--model",
-    model,
-  ];
-  // Copilot does not support --mcp-config; MCP servers are configured
-  // via project-level .github/copilot/mcp.json
-  return { args, cmd: "copilot" };
+      prompt,
+      sessionId,
+      title: opts?.ossSessionTitle,
+    }),
+    cmd: OSS_COMMAND,
+  };
 };
 
 const resolveModel = (
@@ -230,20 +211,10 @@ const resolveModel = (
       ? (opts.codexReviewerModel ?? opts.codexModel)
       : opts.codexModel;
   }
-  if (agent === "cursor") {
+  if (agent === "oss") {
     return kind === "review"
-      ? (opts.cursorReviewerModel ?? opts.cursorModel)
-      : opts.cursorModel;
-  }
-  if (agent === "gemini") {
-    return kind === "review"
-      ? (opts.geminiReviewerModel ?? opts.geminiModel)
-      : opts.geminiModel;
-  }
-  if (agent === "copilot") {
-    return kind === "review"
-      ? (opts.copilotReviewerModel ?? opts.copilotModel)
-      : opts.copilotModel;
+      ? (opts.ossReviewerModel ?? opts.ossModel)
+      : opts.ossModel;
   }
   if (agent === "claude") {
     return kind === "review"
@@ -515,6 +486,27 @@ const runCodexAgent = async (
   }
 };
 
+// The OSS seat gets its run-scoped config directory and, when a mode-0600 key
+// file is configured, its provider key through the child environment only.
+// Neither ever reaches argv, the manifest, or a trace.
+export const legacyAgentEnv = (
+  agent: Agent,
+  opts: Options,
+  env: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv => {
+  if (agent === "codex") {
+    return codexHomeEnv(opts.codexHome) ?? env;
+  }
+  if (agent === "oss") {
+    return {
+      ...env,
+      ...ossConfigEnv(opts.ossConfigDir),
+      ...resolveOssCredentialEnv(env).env,
+    };
+  }
+  return env;
+};
+
 const runLegacyAgent = async (
   agent: Agent,
   prompt: string,
@@ -531,10 +523,7 @@ const runLegacyAgent = async (
   );
   const proc = spawn([cmd, ...args], {
     detached: DETACH_CHILD_PROCESS,
-    env:
-      agent === "codex"
-        ? (codexHomeEnv(opts.codexHome) ?? process.env)
-        : process.env,
+    env: legacyAgentEnv(agent, opts),
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -548,6 +537,12 @@ const runLegacyAgent = async (
   let state = { parsed: "", prettyCount: 0, lastMessage: "" };
 
   const onLine = (line: string): void => {
+    if (agent === "oss") {
+      const ossSession = parseOssSessionId(line);
+      if (ossSession) {
+        setLastOssSessionId(ossSession);
+      }
+    }
     const message = eventMessage(line);
     if (message) {
       state = appendParsedLine(message, opts, state);
@@ -681,27 +676,12 @@ const runClaudeAgent = async (
   }
 };
 
-const runGeminiAgent = async (
+const runOssAgent = async (
   prompt: string,
   opts: Options,
   sessionId?: string,
   kind: AgentRunKind = "work"
-): Promise<RunResult> => runSpawnAgent("gemini", prompt, opts, sessionId, kind);
-
-const runCursorAgent = async (
-  prompt: string,
-  opts: Options,
-  sessionId?: string,
-  kind: AgentRunKind = "work"
-): Promise<RunResult> => runSpawnAgent("cursor", prompt, opts, sessionId, kind);
-
-const runCopilotAgent = async (
-  prompt: string,
-  opts: Options,
-  sessionId?: string,
-  kind: AgentRunKind = "work"
-): Promise<RunResult> =>
-  runSpawnAgent("copilot", prompt, opts, sessionId, kind);
+): Promise<RunResult> => runSpawnAgent("oss", prompt, opts, sessionId, kind);
 
 const runAgentWithKind = (
   agent: Agent,
@@ -716,13 +696,7 @@ const runAgentWithKind = (
   if (agent === "claude") {
     return runClaudeAgent(prompt, opts, sessionId, kind);
   }
-  if (agent === "gemini") {
-    return runGeminiAgent(prompt, opts, sessionId, kind);
-  }
-  if (agent === "cursor") {
-    return runCursorAgent(prompt, opts, sessionId, kind);
-  }
-  return runCopilotAgent(prompt, opts, sessionId, kind);
+  return runOssAgent(prompt, opts, sessionId, kind);
 };
 
 export const runAgent = (

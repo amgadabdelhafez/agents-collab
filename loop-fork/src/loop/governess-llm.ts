@@ -916,13 +916,7 @@ const buildRoleBalancePrompt = (req: RoleBalanceRequest): string =>
     .filter(Boolean)
     .join("\n");
 
-const ROLE_AGENT_VALUES: readonly Agent[] = [
-  "claude",
-  "codex",
-  "copilot",
-  "cursor",
-  "gemini",
-];
+const ROLE_AGENT_VALUES: readonly Agent[] = ["claude", "codex", "oss"];
 
 const allowedRoleAgent = (value: unknown): Agent | undefined =>
   typeof value === "string" && ROLE_AGENT_VALUES.includes(value as Agent)

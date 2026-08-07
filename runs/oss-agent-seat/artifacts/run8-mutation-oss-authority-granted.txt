@@ -1,0 +1,30 @@
+- [
+-   "oss",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/private/tmp/agents-collab-glm-full-agent/loop-fork/tests/loop/oss-agent-seat.test.ts:653:40)
+(fail) an advisory OSS APPROVE does not open the gate even beside a native pass [1.04ms]
+666 |     [RELEASE_AUTHORITY_ENV]: "1",
+667 |   });
+668 | 
+669 |   expect(denied.ossReleaseAuthority).toBe(false);
+670 |   expect(granted.ossReleaseAuthority).toBe(true);
+671 |   expect(reviewerHasReleaseAuthority("oss", denied)).toBe(false);
+                                                           ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/private/tmp/agents-collab-glm-full-agent/loop-fork/tests/loop/oss-agent-seat.test.ts:671:54)
+(fail) release authority is a property of policy, never of seat occupancy [0.01ms]
+
+ 24 pass
+ 3 fail
+ 148 expect() calls
+Ran 27 tests across 1 file. [130.00ms]
+error: script "test:file" exited with code 1

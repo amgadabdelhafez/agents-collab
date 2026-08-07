@@ -38,13 +38,7 @@ const readAgentFlags = (value: unknown): Partial<Record<Agent, boolean>> => {
   if (!value || typeof value !== "object") {
     return flags;
   }
-  for (const agent of [
-    "claude",
-    "codex",
-    "gemini",
-    "cursor",
-    "copilot",
-  ] as const) {
+  for (const agent of ["claude", "codex", "oss"] as const) {
     if ((value as Record<string, unknown>)[agent] === true) {
       flags[agent] = true;
     }
@@ -139,9 +133,7 @@ export const exitKeyAction = (
 const AGENT_COMMAND_HINTS: Record<Agent, string[]> = {
   claude: ["claude"],
   codex: ["codex"],
-  copilot: ["copilot"],
-  cursor: ["cursor"],
-  gemini: ["gemini"],
+  oss: ["opencode"],
 };
 
 export const agentCommandIsRunning = (

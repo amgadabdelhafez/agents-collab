@@ -2,7 +2,7 @@
 import { runCli } from "./cli";
 
 const main = async (): Promise<void> => {
-  await runCli(["--gemini-only", ...process.argv.slice(2)]);
+  await runCli(["--oss-only", ...process.argv.slice(2)]);
 };
 
 if (import.meta.main) {

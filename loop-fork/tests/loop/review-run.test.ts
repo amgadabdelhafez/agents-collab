@@ -41,6 +41,7 @@ test("runReview approves when all reviewers pass", async () => {
   );
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -62,6 +63,7 @@ test("runReview ignores transport noise in combined when parsed has final pass s
   const result = await runReview(["codex"], "ship task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -142,6 +144,7 @@ test("runReview accepts quoted final review signal", async () => {
   const result = await runReview(["codex"], "ship task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -209,6 +212,7 @@ test("runReview accepts pass signal from combined output with parsed body", asyn
   );
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,

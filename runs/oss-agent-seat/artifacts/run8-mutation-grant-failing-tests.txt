@@ -1,0 +1,3 @@
+(fail) an OSS reviewer APPROVE cannot open the release gate without a policy grant [0.80ms]
+(fail) an advisory OSS APPROVE does not open the gate even beside a native pass [0.17ms]
+(fail) release authority is a property of policy, never of seat occupancy [0.03ms]

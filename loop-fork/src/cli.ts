@@ -96,7 +96,7 @@ const parseBridgeArgs = (
   const [runDir, source] = argv;
   if (!(runDir && (isAgent(source) || source === "supervisor"))) {
     throw new Error(
-      "Usage: loop __bridge-mcp <run-dir> <claude|codex|gemini|cursor|copilot|supervisor>"
+      "Usage: loop __bridge-mcp <run-dir> <claude|codex|oss|supervisor>"
     );
   }
   return { runDir, source };
@@ -249,7 +249,7 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
       )
     ) {
       throw new Error(
-        "Usage: loop __hook-emit <claude|codex|gemini|cursor|copilot> <hook-file> [native-child]"
+        "Usage: loop __hook-emit <claude|codex|oss> <hook-file> [native-child]"
       );
     }
     await runHookEmit(source, hookFile, {

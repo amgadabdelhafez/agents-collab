@@ -24,6 +24,7 @@ import {
   iterationCooldown,
   logIterationHeader,
 } from "./iteration";
+import { getLastOssSessionId } from "./oss-adapter";
 import {
   preparePairedOptions as preparePairedOptionsImpl,
   preparePairedRun,
@@ -209,6 +210,7 @@ const updateIds = (state: PairedState): void => {
       getLastClaudeSessionId() || state.options.pairedSessionIds?.claude || "",
     codex:
       getLastCodexThreadId() || state.options.pairedSessionIds?.codex || "",
+    oss: getLastOssSessionId() || state.options.pairedSessionIds?.oss || "",
   };
   const next = touchRunManifest(
     {
@@ -217,6 +219,7 @@ const updateIds = (state: PairedState): void => {
         getLastClaudeSessionId() || state.manifest.claudeSessionId || "",
       codexThreadId:
         getLastCodexThreadId() || state.manifest.codexThreadId || "",
+      ossSessionId: getLastOssSessionId() || state.manifest.ossSessionId || "",
       pid: process.pid,
     },
     new Date().toISOString()
@@ -251,6 +254,7 @@ const transitionRunState = (
         getLastClaudeSessionId() || state.manifest.claudeSessionId || "",
       codexThreadId:
         getLastCodexThreadId() || state.manifest.codexThreadId || "",
+      ossSessionId: getLastOssSessionId() || state.manifest.ossSessionId || "",
       pid: process.pid,
     },
     nextState,
@@ -363,9 +367,7 @@ const prepareRunState = (opts: Options, cwd: string): PairedState => {
     usedResume: {
       claude: false,
       codex: false,
-      copilot: false,
-      cursor: false,
-      gemini: false,
+      oss: false,
     },
   };
 };
@@ -534,6 +536,8 @@ const finishRun = (
           getLastClaudeSessionId() || currentManifest.claudeSessionId || "",
         codexThreadId:
           getLastCodexThreadId() || currentManifest.codexThreadId || "",
+        ossSessionId:
+          getLastOssSessionId() || currentManifest.ossSessionId || "",
         pid: process.pid,
       },
       new Date().toISOString()

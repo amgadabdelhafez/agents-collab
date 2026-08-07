@@ -1,0 +1,45 @@
+oss-agent-seat smoke: harness evals/smoke/oss-agent-seat.sh sha256=de70cfc31a4e635375b6b5aea52e98c9780c663d9c5688947c5c8a4027c457a1
+oss-agent-seat smoke: binary /private/tmp/claude-501/-private-tmp-agents-collab-glm-full-agent/7598f1f9-fa3d-4ede-bf95-407b66b89ad5/scratchpad/hostile-loop sha256=d593d3cb0dd7406a99614aec41a2bba1459a044059c76e6473a47bfdf5c7269f
+--- isolation instrument check ---
+  ok: the launcher resolved run storage into the sandbox HOME
+  ok: real storage root /Users/amgad/.loop/runs gained nothing for this repo id
+--- the OSS seat launches OpenCode with the documented contract ---
+  FAIL: the OSS seat never invoked opencode
+--- an overridden OSS model reaches OpenCode unrewritten ---
+  FAIL: arbitrary model id did not reach opencode verbatim: 45845	claude	-p placeholder --mcp-config /private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/oss-agent-seat-smoke-45369-19f2b561.sRIFgL/home/.loop/runs/hostile-repo/1/claude-mcp.json
+45847	tmux	new-session -d -s hostile
+--- help advertises the OSS seat ---
+  FAIL: help is missing --oss-only
+  FAIL: help is missing --oss-model
+  FAIL: help is missing --oss-reviewer-model
+  FAIL: help is missing oss-loop
+  FAIL: help is missing openrouter/z-ai/glm-5.2
+  FAIL: help is missing LOOP_OSS_RELEASE_AUTHORITY
+--- help no longer advertises retired seats ---
+  ok: help omits retired --gemini-only
+  ok: help omits retired --cursor-only
+  ok: help omits retired --copilot-only
+  ok: help omits retired --gemini-model
+  ok: help omits retired --cursor-model
+  ok: help omits retired --copilot-model
+  ok: help omits retired gemini-loop
+  ok: help omits retired cursor-loop
+  ok: help omits retired copilot-loop
+--- retired flags fail closed naming oss ---
+  FAIL: --gemini-only failed without a migration message
+  FAIL: --cursor-only failed without a migration message
+  FAIL: --copilot-only failed without a migration message
+--- retired model flags fail closed ---
+  FAIL: --gemini-model failed without a migration message
+  FAIL: --cursor-model failed without a migration message
+  FAIL: --copilot-model failed without a migration message
+  FAIL: --gemini-reviewer-model failed without a migration message
+  FAIL: --cursor-reviewer-model failed without a migration message
+--- teardown: producer-backed survivor proof ---
+  ok: 0 of 12 probe process groups have surviving sandbox-owned members
+  ok: 0 of 24 recorded stub processes survived
+  ok: no process carries marker oss-agent-seat-smoke-45369-19f2b561 in its argv
+  ok: no run state under /Users/amgad/.loop/runs for this smoke's repo id
+  ok: auto-update throttle sentinel intact; no update check ran
+  ok: no staged update binary was downloaded
+  ok: sandbox removed (/private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/oss-agent-seat-smoke-45369-19f2b561.sRIFgL)

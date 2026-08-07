@@ -1,0 +1,425 @@
+oss-agent-seat smoke: binary /tmp/loop-base sha256=48742c35f6501c050292720cb88382e1a87d0b5096e4eeb9a4b0465c53bb5981
+--- help advertises the OSS seat ---
+  FAIL: help is missing --oss-only
+  FAIL: help is missing --oss-model
+  FAIL: help is missing --oss-reviewer-model
+  FAIL: help is missing oss-loop
+  FAIL: help is missing openrouter/z-ai/glm-5.2
+  FAIL: help is missing LOOP_OSS_RELEASE_AUTHORITY
+--- help no longer advertises retired seats ---
+  FAIL: help still advertises retired --gemini-only
+  FAIL: help still advertises retired --cursor-only
+  FAIL: help still advertises retired --copilot-only
+  FAIL: help still advertises retired --gemini-model
+  FAIL: help still advertises retired --cursor-model
+  FAIL: help still advertises retired --copilot-model
+  FAIL: help still advertises retired gemini-loop
+  FAIL: help still advertises retired cursor-loop
+  FAIL: help still advertises retired copilot-loop
+--- retired flags fail closed naming oss ---
+  FAIL: --gemini-only failed without a migration message: [loop] stale bridge sweep checked 7 candidates: 0 signaled, 7 preserved
+[loop] heads up: on branch "codex/glm-full-agent", not main
+
+[loop] PLAN.md:
+
+# PLAN — Provider-Neutral OSS Agent Seat
+
+Spec bundle: `specs/oss-agent-seat/{spec,plan,tasks,verify}.md`
+Branch: `codex/glm-full-agent`. Base commit: `0f69b9a99f9163bf9f83075530e26aed21258463`.
+Package under change: `loop-fork/`.
+
+## Decision recap
+
+Launchable full-agent topology becomes `claude | codex | oss`. `oss` is backed by
+the OpenCode CLI and takes any `provider/model` identifier; `openrouter/z-ai/glm-5.2`
+is only the default. `gemini`, `cursor`, `copilot` are retired: still parseable in
+historical manifests for diagnosis and reaping, never launchable or resumable.
+
+## Verified environment facts (measured 2026-08-06, not assumed)
+
+- `opencode` 1.4.3 at `/Users/amgad/.opencode/bin/opencode`.
+- `opencode run` supports `-m provider/model`, `-s/--session <id>`, `--format json`,
+  `--title`, `--variant`, `--dangerously-skip-permissions`, `--print-logs`.
+- `opencode run --session <unknown-id>` fails with `Session not found: <id>`.
+  Session IDs therefore **cannot** be pre-assigned; the first turn runs without
+  `--session`, the ID is captured from the JSON event stream and persisted, and
+  later turns resume with `--session <persisted-id>`.
+- Config isolation, measured with a positive control (a fake global config dir
+  holding an MCP server `user-noise`):
+  - `OPENCODE_CONFIG=<file>` does **not** isolate: global + project entries still merge.
+  - `OPENCODE_CONFIG_DIR=<run-scoped dir>` **does** drop the user global config
+    (`user-noise` absent), and a same-named entry in the run-scoped config wins
+    over a project-level `opencode.json`.
+  - A repository-level `opencode.json` in the working tree still contributes.
+    That is project configuration, not unrelated *user* configuration; recorded
+    as a known limit rather than claimed away.
+- Bus event names present in the binary: `session.created`, `session.updated`,
+  `session.idle`, `session.error`, `message.updated`, `message.part.updated`.
+- `permission` config accepts `{edit, bash, webfetch}` and round-trips through
+  `opencode debug config`.
+
+## Work breakdown
+
+1. **Identity split** — `agents.ts`, `types.ts`.
+   `Agent = "claude" | "codex" | "oss"`, `RetiredAgent = "gemini" | "cursor" | "copilot"`,
+   `HistoricalAgent = Agent | RetiredAgent`. `isAgent` narrows to launchable;
+   `isRetiredAgent` / `isHistoricalAgent` added; retired identities get one
+   migration message naming `oss`.
+2. **CLI surface** — `args.ts`, `constants.ts`.
+   Add `--oss-only`, `--oss-model`, `--oss-reviewer-model` (spaced and `=` forms),
+   `LOOP_OSS_MODEL`, `DEFAULT_OSS_MODEL = "openrouter/z-ai/glm-5.2"`. Retired
+   flags and retired values for `--agent`, `--pair-with/--reviewer`, `--review`,
+   `--review-plan` are still *recognised* so they fail closed with the migration
+   message instead of a generic "Unknown argument".
+3. **OSS adapter** — new `oss-adapter.ts`.
+   Run-scoped config dir under the run directory, containing exactly one MCP
+   server (the loop bridge, source `oss`) plus an explicit permission policy.
+   Argv builder for `opencode run --format json`. Session-ID extraction from the
+   JSON event stream. Credentials from provider-native lookup or a mode-0600 key
+   file, injected as child env only — never argv, config, manifest, or trace.
+4. **Seat wiring** — `runner.ts`, `tmux.ts`, `paired-options.ts`, `run-state.ts`,
+   `bridge.ts`, `bridge-utility.ts`, `governess*.ts`, `hooks`, `cli.ts`,
+   `session-pressure.ts`, `install.ts`, alias entrypoints.
+   Persist `ossSessionId`; route/observe/recover through the persisted pane.
+5. **Historical read path** — manifest parsing keeps retired agent values
+   (`HistoricalAgent`) so old runs stay inspectable and reapable; launch and
+   resume fail before any pane or process is created.
+6. **Reviewer authority** — new `review-authority.ts`.
+   Release authority is a property of policy, not of occupancy. `claude` and
+   `codex` hold it by default; `oss` is advisory unless
+   `LOOP_OSS_RELEASE_AUTHORITY=1` grants it. `runReviewWith` only reports
+   `approved: true` when an authoritative reviewer passed.
+
+## Acceptance criteria (from `specs/oss-agent-seat/verify.md`)
+
+1. Every ordered distinct pair from `{claude, codex, oss}` parses in either order.
+2. `gemini`, `cursor`, `copilot` rejected for agent, pair, review, plan review,
+   only-mode flags, model flags, and resume launch.
+3. An arbitrary `provider/model` identifier reaches OpenCode unrewritten;
+   GLM-5.2 is only the default.
+4. Generated OpenCode config is run-scoped, bridge-only, source `oss`, and holds
+   no credential value.
+5. Persisted OSS sessions resume through their stored session ID.
+6. Bridge and governess target the persisted OSS pane, not a numeric assumption.
+7. Binding ruling `06fa755e-e432-4239-bb9a-fe924a2989dc`: a named regression
+   proves an OSS reviewer APPROVE cannot open the release gate without an
+   explicit policy grant, and a mutation deleting the authority check makes that
+   regression fail. The mutation is executed and its failure output recorded.
+
+## Verification approach
+
+- Focused: `bun test` on the affected test files.
+- Full governed: `bun run check`, `bun run build`,
+  `scripts/verify.sh oss-agent-seat oss-agent-seat`, plus an eval.
+- Mutation proof for the authority check run explicitly and reverted, with the
+  failing test name and output captured under `runs/oss-agent-seat/artifacts/`.
+- Peer review by Codex over the bridge, then exact-SHA supervisor review.
+  No merge, push, install, or deploy.
+
+## Non-goals
+
+Claiming OSS-model capability parity; auto-granting an OSS reviewer release
+authority; reusing the Au Pair worker protocol as a full-agent session; deleting
+historical evidence for retired agents.
+
+
+[loop] iteration 1/20
+YOLO mode is enabled. All tool calls will be automatically approved.
+Approval mode overridden to "default" because the current folder is not trusted.
+Error authenticating: _GaxiosError: Resource has been exhausted (e.g. check quota).
+    at Gaxios._request (file:///opt/homebrew/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/bundle/chunk-RCJSF5RP.js:20961:19)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async _OAuth2Client.requestAsync (file:///opt/homebrew/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/bundle/chunk-RCJSF5RP.js:22924:17)
+    at async CodeAssistServer.requestPost (file:///opt/homebrew/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/bundle/chunk-RCJSF5RP.js:307123:17)
+    at async _doSetupUser (file:///opt/homebrew/Cellar/gemini-cli/0.46.0/libexec/lib/node_modules/@google/gemini-cli/bundle/chunk-RCJSF5RP.js:307445:16) {
+  config: {
+    url: 'https://cloudcode-pa.googleapis.com/v1internal:onboardUser',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'GeminiCLI-tui/0.46.0/gemini-2.5-pro (darwin; arm64; terminal) google-api-nodejs-client/9.15.1',
+      Authorization: '<<REDACTED> - See `errorRedactor` option in `gaxios` for configuration>.',
+      'x-goog-api-client': 'gl-node/26.7.0',
+      Accept: 'application/json'
+    },
+    responseType: 'json',
+    body: '{"tierId":"standard-tier","metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}',
+    retryConfig: {
+      retryDelay: 100,
+      retry:   FAIL: --cursor-only failed without a migration message: [loop] stale bridge sweep could not inspect processes; preserving all
+[loop] heads up: on branch "codex/glm-full-agent", not main
+
+[loop] PLAN.md:
+
+# PLAN — Provider-Neutral OSS Agent Seat
+
+Spec bundle: `specs/oss-agent-seat/{spec,plan,tasks,verify}.md`
+Branch: `codex/glm-full-agent`. Base commit: `0f69b9a99f9163bf9f83075530e26aed21258463`.
+Package under change: `loop-fork/`.
+
+## Decision recap
+
+Launchable full-agent topology becomes `claude | codex | oss`. `oss` is backed by
+the OpenCode CLI and takes any `provider/model` identifier; `openrouter/z-ai/glm-5.2`
+is only the default. `gemini`, `cursor`, `copilot` are retired: still parseable in
+historical manifests for diagnosis and reaping, never launchable or resumable.
+
+## Verified environment facts (measured 2026-08-06, not assumed)
+
+- `opencode` 1.4.3 at `/Users/amgad/.opencode/bin/opencode`.
+- `opencode run` supports `-m provider/model`, `-s/--session <id>`, `--format json`,
+  `--title`, `--variant`, `--dangerously-skip-permissions`, `--print-logs`.
+- `opencode run --session <unknown-id>` fails with `Session not found: <id>`.
+  Session IDs therefore **cannot** be pre-assigned; the first turn runs without
+  `--session`, the ID is captured from the JSON event stream and persisted, and
+  later turns resume with `--session <persisted-id>`.
+- Config isolation, measured with a positive control (a fake global config dir
+  holding an MCP server `user-noise`):
+  - `OPENCODE_CONFIG=<file>` does **not** isolate: global + project entries still merge.
+  - `OPENCODE_CONFIG_DIR=<run-scoped dir>` **does** drop the user global config
+    (`user-noise` absent), and a same-named entry in the run-scoped config wins
+    over a project-level `opencode.json`.
+  - A repository-level `opencode.json` in the working tree still contributes.
+    That is project configuration, not unrelated *user* configuration; recorded
+    as a known limit rather than claimed away.
+- Bus event names present in the binary: `session.created`, `session.updated`,
+  `session.idle`, `session.error`, `message.updated`, `message.part.updated`.
+- `permission` config accepts `{edit, bash, webfetch}` and round-trips through
+  `opencode debug config`.
+
+## Work breakdown
+
+1. **Identity split** — `agents.ts`, `types.ts`.
+   `Agent = "claude" | "codex" | "oss"`, `Re  FAIL: --cursor-only failed without a migration message: [loop] stale bridge sweep could not inspect processes; preserving all
+[loop] heads up: on branch "codex/glm-full-agent", not main
+
+[loop] PLAN.md:
+
+# PLAN — Provider-Neutral OSS Agent Seat
+
+Spec bundle: `specs/oss-agent-seat/{spec,plan,tasks,verify}.md`
+Branch: `codex/glm-full-agent`. Base commit: `0f69b9a99f9163bf9f83075530e26aed21258463`.
+Package under change: `loop-fork/`.
+
+## Decision recap
+
+Launchable full-agent topology becomes `claude | codex | oss`. `oss` is backed by
+the OpenCode CLI and takes any `provider/model` identifier; `openrouter/z-ai/glm-5.2`
+is only the default. `gemini`, `cursor`, `copilot` are retired: still parseable in
+historical manifests for diagnosis and reaping, never launchable or resumable.
+
+## Verified environment facts (measured 2026-08-06, not assumed)
+
+- `opencode` 1.4.3 at `/Users/amgad/.opencode/bin/opencode`.
+- `opencode run` supports `-m provider/model`, `-s/--session <id>`, `--format json`,
+  `--title`, `--variant`, `--dangerously-skip-permissions`, `--print-logs`.
+- `opencode run --session <unknown-id>` fails with `Session not found: <id>`.
+  Session IDs therefore **cannot** be pre-assigned; the first turn runs without
+  `--session`, the ID is captured from the JSON event stream and persisted, and
+  later turns resume with `--session <persisted-id>`.
+- Config isolation, measured with a positive control (a fake global config dir
+  holding an MCP server `user-noise`):
+  - `OPENCODE_CONFIG=<file>` does **not** isolate: global + project entries still merge.
+  - `OPENCODE_CONFIG_DIR=<run-scoped dir>` **does** drop the user global config
+    (`user-noise` absent), and a same-named entry in the run-scoped config wins
+    over a project-level `opencode.json`.
+  - A repository-level `opencode.json` in the working tree still contributes.
+    That is project configuration, not unrelated *user* configuration; recorded
+    as a known limit rather than claimed away.
+- Bus event names present in the binary: `session.created`, `session.updated`,
+  `session.idle`, `session.error`, `message.updated`, `message.part.updated`.
+- `permission` config accepts `{edit, bash, webfetch}` and round-trips through
+  `opencode debug config`.
+
+## Work breakdown
+
+1. **Identity split** — `agents.ts`, `types.ts`.
+   `Agent = "claude" | "codex" | "oss"`, `RetiredAgent = "gemini" | "cursor" | "copilot"`,
+   `HistoricalAgent = Agent | RetiredAgent`. `isAgent` narrows to launchable;
+   `isRetiredAgent` / `isHistoricalAgent` added; retired identities get one
+   migration message naming `oss`.
+2. **CLI surface** — `args.ts`, `constants.ts`.
+   Add `--oss-only`, `--oss-model`, `--oss-reviewer-model` (spaced and `=` forms),
+   `LOOP_OSS_MODEL`, `DEFAULT_OSS_MODEL = "openrouter/z-ai/glm-5.2"`. Retired
+   flags and retired values for `--agent`, `--pair-with/--reviewer`, `--review`,
+   `--review-plan` are still *recognised* so they fail closed with the migration
+   message instead of a generic "Unknown argument".
+3. **OSS adapter** — new `oss-adapter.ts`.
+   Run-scoped config dir under the run directory, containing exactly one MCP
+   server (the loop bridge, source `oss`) plus an explicit permission policy.
+   Argv builder for `opencode run --format json`. Session-ID extraction from the
+   JSON event stream. Credentials from provider-native lookup or a mode-0600 key
+   file, injected as child env only — never argv, config, manifest, or trace.
+4. **Seat wiring** — `runner.ts`, `tmux.ts`, `paired-options.ts`, `run-state.ts`,
+   `bridge.ts`, `bridge-uti  FAIL: --copilot-only failed without a migration message: [loop] stale bridge sweep could not inspect processes; preserving all
+[loop] heads up: on branch "codex/glm-full-agent", not main
+
+[loop] PLAN.md:
+
+# PLAN — Provider-Neutral OSS Agent Seat
+
+Spec bundle: `specs/oss-agent-seat/{spec,plan,tasks,verify}.md`
+Branch: `codex/glm-full-agent`. Base commit: `0f69b9a99f9163bf9f83075530e26aed21258463`.
+Package under change: `loop-fork/`.
+
+## Decision recap
+
+Launchable full-agent topology becomes `claude | codex | oss`. `oss` is backed by
+the OpenCode CLI and takes any `provider/model` identifier; `openrouter/z-ai/glm-5.2`
+is only the default. `gemini`, `cursor`, `copilot` are retired: still parseable in
+historical manifests for diagnosis and reaping, never launchable or resumable.
+
+## Verified environment facts (measured 2026-08-06, not assumed)
+
+- `opencode` 1.4.3 at `/Users/amgad/.opencode/bin/opencode`.
+- `opencode run` supports `-m provider/model`, `-s/--session <id>`, `--format json`,
+  `--title`, `--variant`, `--dangerously-skip-permissions`, `--print-logs`.
+- `opencode run --session <unknown-id>` fails with `Session not found: <id>`.
+  Session IDs therefore **cannot** be pre-assigned; the first turn runs without
+  `--session`, the ID is captured from the JSON event stream and persisted, and
+  later turns resume with `--session <persisted-id>`.
+- Config isolation, measured with a positive control (a fake global config dir
+  holding an MCP server `user-noise`):
+  - `OPENCODE_CONFIG=<file>` does **not** isolate: global + project entries still merge.
+  - `OPENCODE_CONFIG_DIR=<run-scoped dir>` **does** drop the user global config
+    (`user-noise` absent), and a same-named entry in the run-scoped config wins
+    over a project-level `opencode.json`.
+  - A repository-level `opencode.json` in the working tree still contributes.
+    That is project configuration, not unrelated *user* configuration; recorded
+    as a known limit rather than claimed away.
+- Bus event names present in the binary: `session.created`, `session.updated`,
+  `session.idle`, `session.error`, `message.updated`, `message.part.updated`.
+- `permission` config accepts `{edit, bash, webfetch}` and round-trips through
+  `opencode debug config`.
+
+## Work breakdown
+
+1. **Identity split** — `agents.ts`, `types.ts`.
+   `Agent = "claude" | "codex" | "oss"`, `R  FAIL: --copilot-only failed without a migration message: [loop] stale bridge sweep could not inspect processes; preserving all
+[loop] heads up: on branch "codex/glm-full-agent", not main
+
+[loop] PLAN.md:
+
+# PLAN — Provider-Neutral OSS Agent Seat
+
+Spec bundle: `specs/oss-agent-seat/{spec,plan,tasks,verify}.md`
+Branch: `codex/glm-full-agent`. Base commit: `0f69b9a99f9163bf9f83075530e26aed21258463`.
+Package under change: `loop-fork/`.
+
+## Decision recap
+
+Launchable full-agent topology becomes `claude | codex | oss`. `oss` is backed by
+the OpenCode CLI and takes any `provider/model` identifier; `openrouter/z-ai/glm-5.2`
+is only the default. `gemini`, `cursor`, `copilot` are retired: still parseable in
+historical manifests for diagnosis and reaping, never launchable or resumable.
+
+## Verified environment facts (measured 2026-08-06, not assumed)
+
+- `opencode` 1.4.3 at `/Users/amgad/.opencode/bin/opencode`.
+- `opencode run` supports `-m provider/model`, `-s/--session <id>`, `--format json`,
+  `--title`, `--variant`, `--dangerously-skip-permissions`, `--print-logs`.
+- `opencode run --session <unknown-id>` fails with `Session not found: <id>`.
+  Session IDs therefore **cannot** be pre-assigned; the first turn runs without
+  `--session`, the ID is captured from the JSON event stream and persisted, and
+  later turns resume with `--session <persisted-id>`.
+- Config isolation, measured with a positive control (a fake global config dir
+  holding an MCP server `user-noise`):
+  - `OPENCODE_CONFIG=<file>` does **not** isolate: global + project entries still merge.
+  - `OPENCODE_CONFIG_DIR=<run-scoped dir>` **does** drop the user global config
+    (`user-noise` absent), and a same-named entry in the run-scoped config wins
+    over a project-level `opencode.json`.
+  - A repository-level `opencode.json` in the working tree still contributes.
+    That is project configuration, not unrelated *user* configuration; recorded
+    as a known limit rather than claimed away.
+- Bus event names present in the binary: `session.created`, `session.updated`,
+  `session.idle`, `session.error`, `message.updated`, `message.part.updated`.
+- `permission` config accepts `{edit, bash, webfetch}` and round-trips through
+  `opencode debug config`.
+
+## Work breakdown
+
+1. **Identity split** — `agents.ts`, `types.ts`.
+   `Agent = "claude" | "codex" | "oss"`, `RetiredAgent = "gemini" | "cursor" | "copilot"`,
+   `HistoricalAgent = Agent | RetiredAgent`. `isAgent` narrows to launchable;
+   `isRetiredAgent` / `isHistoricalAgent` added; retired identities get one
+   migration message naming `oss`.
+2. **CLI surface** — `args.ts`, `constants.ts`.
+   Add `--oss-only`, `--oss-model`, `--oss-reviewer-model` (spaced and `=` forms),
+   `LOOP_OSS_MODEL`, `DEFAULT_OSS_MODEL = "openrouter/z-ai/glm-5.2"`. Retired
+   flags and retired values for `--agent`, `--pair-with/--reviewer`, `--review`,
+   `--review-plan` are still *recognised* so they fail closed with the migration
+   message instead of a generic "Unknown argument".
+3. **OSS adapter** — new `oss-adapter.ts`.
+   Run-scoped config dir under the run directory, containing exactly one MCP
+   server (the loop bridge, source `oss`) plus an explicit permission policy.
+   Argv builder for `opencode run --format json`. Session-ID extraction from the
+   JSON event stream. Credentials from provider-native lookup or a mode-0600 key
+   file, injected as child env only — never argv, config, manifest, or trace.
+4. **Seat wiring** — `runner.ts`, `tmux.ts`, `paired-options.ts`, `run-state.ts`,
+   `bridge.ts`, `bridge-utility.ts`, `governess*.ts`, `hooks`, `cli.ts`,
+   `session-pressure.ts`, `install.ts`, alias entrypoints.
+   Persist `ossSessionId`; route/observe/re  FAIL: --gemini-model failed without a migration message
+  FAIL: --cursor-model failed without a migration message
+  FAIL: --copilot-model failed without a migration message
+  FAIL: --gemini-reviewer-model failed without a migration message
+  FAIL: --cursor-reviewer-model failed without a migration message
+  FAIL: --copilot-reviewer-model failed without a migration message
+--- retired agent values fail closed ---
+  FAIL: --agent gemini failed without a migration message
+  FAIL: --agent cursor failed without a migration message
+  FAIL: --agent copilot failed without a migration message
+  FAIL: --pair-with gemini failed without a migration message
+  FAIL: --pair-with cursor failed without a migration message
+  FAIL: --pair-with copilot failed without a migration message
+t failed without a migration message
+  FAIL: --reviewer gemini failed without a migration message
+  FAIL: --reviewer cursor failed without a migration message
+  FAIL: --reviewer copilot failed without a migration message
+  FAIL: --review gemini failed without a migration message
+  FAIL: --review cursor failed without a migration message
+  FAIL: --review copilot failed without a migration message
+ a numeric assumption.
+7. Binding ruling `06fa755e-e432-4239-bb9a-fe924a2989dc`: a named regression
+   proves an OSS reviewer APPROVE cannot open the release gate without an
+   explicit policy grant, and a mutation deleting the authority check makes that
+   regression fail. The mutation is executed and its failure output recorded.
+
+## Verification approach
+
+- Focused: `bun test` on the affected test files.
+- Full governed: `bun run check`, `bun run build`,
+  `scripts/verify.sh oss-agent-seat oss-agent-seat`, plus an eval.
+- Mutation proof for the authority check run explicitly and reverted, with the
+  failing test name and output captured under `runs/oss-agent-seat/artifacts/`.
+- Peer review by Codex over the bridge, then exact-SHA supervisor review.
+  No merge, push, install, or deploy.
+
+## Non-goals
+
+Claiming OSS-model capability parity; auto-granting an OSS reviewer release
+authority; reusing the Au Pair worker protocol as a full-agent session; deleting
+historical evidence for retired agents.
+
+
+[loop] iteration 1/20
+--- retired model flags fail closed ---
+  FAIL: --gemini-model failed without a migration message
+  FAIL: --cursor-model failed without a migration message
+  FAIL: --copilot-model failed without a migration message
+  FAIL: --gemini-reviewer-model failed without a migration message
+  FAIL: --cursor-reviewer-model failed without a migration message
+  FAIL: --copilot-reviewer-model failed without a migration message
+--- retired agent values fail closed ---
+  FAIL: --agent gemini failed without a migration message
+  FAIL: --agent cursor failed without a migration message
+  FAIL: --agent copilot failed without a migration message
+  FAIL: --pair-with gemini failed without a migration message
+  FAIL: --pair-with cursor failed without a migration message
+  FAIL: --pair-with copilot failed without a migration message
+--agent cursor failed without a migration message
+  FAIL: --agent copilot failed without a migration message
+  FAIL: --pair-with gemini failed without a migration message
+  FAIL: --pair-with cursor failed without a migration message
+  FAIL: --pair-with copilot failed without a migration message
+  FAIL: --reviewer gemini failed without a migration message
+  FAIL: --reviewer cursor failed without a migration message

@@ -1,0 +1,52 @@
+MUTATION: deleted the release-authority check in loop-fork/src/loop/review.ts
+  -  const gateOpen = failures.length === 0 && authoritativeReviewers.length > 0;
+  +  const gateOpen = failures.length === 0;
+
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/oss-agent-seat.test.ts:
+
+[loop] review with oss
+598 |   expect(result.reviews).toEqual([
+599 |     { reason: "", reviewer: "oss", status: "pass" },
+600 |   ]);
+601 |   expect(result.failureCount).toBe(0);
+602 |   // The reviewer passed, and the gate stayed shut anyway.
+603 |   expect(result.approved).toBe(false);
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/private/tmp/agents-collab-glm-full-agent/loop-fork/tests/loop/oss-agent-seat.test.ts:603:27)
+(fail) an OSS reviewer APPROVE cannot open the release gate without a policy grant [102.64ms]
+
+[loop] review with oss
+
+[loop] review with oss
+
+[loop] review with claude
+
+[loop] review with oss
+
+[loop] review with oss
+655 |   const ossOnly = await runReview(
+656 |     ["oss"],
+657 |     "task",
+658 |     makeOptions({ agent: "oss" })
+659 |   );
+660 |   expect(ossOnly.approved).toBe(false);
+                                 ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/private/tmp/agents-collab-glm-full-agent/loop-fork/tests/loop/oss-agent-seat.test.ts:660:28)
+(fail) an advisory OSS APPROVE does not open the gate even beside a native pass [1.26ms]
+
+ 25 pass
+ 2 fail
+ 160 expect() calls
+Ran 27 tests across 1 file. [4.94s]
