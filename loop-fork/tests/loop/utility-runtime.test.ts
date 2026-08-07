@@ -219,6 +219,14 @@ test("helper Caveman mode is validated and applied once to the system prompt", (
   ).toThrow("Invalid LOOP_HELPER_CAVEMAN_MODE value");
 });
 
+test("system prompt uses dedicated broker tools instead of executable probing", () => {
+  const prompt = utilitySystemPrompt("Au Pair", "off");
+  expect(prompt).toContain("inspect_files for SHA-256");
+  expect(prompt).toContain("read_json for JSON Pointer");
+  expect(prompt).toContain("capability map");
+  expect(prompt).toContain("do not probe sibling executables");
+});
+
 test("Au Pair and Nanny role-specific switches override compatibility names", () => {
   const config = resolveUtilityRuntimeConfig({
     LOOP_AU_PAIR_ENABLED: "0",
@@ -2397,7 +2405,7 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
       result: {
         context: {
           sha256: expect.stringMatching(SHA256_HEX_RE),
-          version: 2,
+          version: 3,
         },
         status: "completed",
         summary: "Sample file confirmed.",
@@ -2411,6 +2419,13 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     expect(userCapsules).toHaveLength(2);
     expect(new Set(userCapsules).size).toBe(1);
     const promptedCapsule = JSON.parse(userCapsules[0] ?? "{}") as {
+      capabilities: {
+        alternatives: Record<string, string>;
+        commandPrefixes: string[][];
+        readScopes: string[];
+        tools: string[];
+        writeScopes: string[];
+      };
       projectInstructions: { text?: string };
       references: Array<{ text?: string }>;
       request: {
@@ -2422,6 +2437,16 @@ test("utility worker completes against an OpenAI-compatible local endpoint", asy
     expect(promptedCapsule.projectInstructions.text).toBe(
       "stable-project-context"
     );
+    expect(promptedCapsule.capabilities).toMatchObject({
+      commandPrefixes: [
+        ["bun", "test"],
+        ["node", "--check"],
+        ["npx", "vitest", "run"],
+      ],
+      readScopes: ["src"],
+      tools: expect.arrayContaining(["inspect_files", "read_json"]),
+      writeScopes: [],
+    });
     expect(promptedCapsule.references[0]?.text).toBe("selected-task-context");
     expect(promptedCapsule.request.authority).toEqual({});
     expect(promptedCapsule.request.readScope).toEqual(["src"]);
@@ -2504,7 +2529,7 @@ test("context-insufficient response escalates once without evidence retries", as
         blocker: "DO-NOT-PANE-CONTEXT-9987",
         context: {
           sha256: expect.stringMatching(SHA256_HEX_RE),
-          version: 2,
+          version: 3,
         },
         reasonCode: "context-insufficient",
         status: "escalated",
@@ -2514,7 +2539,7 @@ test("context-insufficient response escalates once without evidence retries", as
     expect(jsonlRecords(join(runDir, "utility", "usage.jsonl"))).toEqual([
       expect.objectContaining({
         contextSha256: expect.stringMatching(SHA256_HEX_RE),
-        contextVersion: 2,
+        contextVersion: 3,
         modelCalls: 1,
         status: "context-insufficient",
         toolCalls: 0,

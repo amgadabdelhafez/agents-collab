@@ -33,6 +33,8 @@ export type UtilityToolName =
   | "search_repo"
   | "read_file"
   | "count_lines"
+  | "inspect_files"
+  | "read_json"
   | "list_files"
   | "git_status"
   | "git_diff"
@@ -77,6 +79,14 @@ export interface UtilityToolResult<T = unknown> {
   stdout?: string;
   tool: UtilityToolName;
   truncated?: boolean;
+}
+
+export interface UtilityBrokerCapabilities {
+  alternatives: Record<string, string>;
+  commandPrefixes: string[][];
+  readScopes: string[];
+  tools: UtilityToolName[];
+  writeScopes: string[];
 }
 
 export interface UtilityCommandPolicy {
@@ -272,6 +282,15 @@ const DEPENDENCY_FILES = new Set([
 ]);
 const DEFAULT_PROTECTED_PATHS = [...DEFAULT_UTILITY_PROTECTED_PATHS] as const;
 const MAX_LINE_COUNT_FILES = 8;
+const MAX_INSPECT_FILES = 8;
+const MAX_JSON_POINTERS = 16;
+const FORBIDDEN_JSON_POINTER_TOKENS = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+const INVALID_JSON_POINTER_ESCAPE_RE = /~(?:[^01]|$)/;
+const JSON_ARRAY_INDEX_RE = /^(?:0|[1-9][0-9]*)$/;
 
 const objectSchema = (
   properties: Record<string, unknown>,
@@ -334,6 +353,45 @@ export const UTILITY_TOOL_DEFINITIONS: readonly UtilityToolDefinition[] = [
           },
         },
         ["paths"]
+      ),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "inspect_files",
+      description:
+        "Return SHA-256, byte count, newline count, and text/binary kind for one to eight declared regular files without returning contents or spawning a command.",
+      parameters: objectSchema(
+        {
+          paths: {
+            items: { minLength: 1, type: "string" },
+            maxItems: MAX_INSPECT_FILES,
+            minItems: 1,
+            type: "array",
+          },
+        },
+        ["paths"]
+      ),
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_json",
+      description:
+        "Read only one to sixteen declared RFC 6901 JSON Pointer values from a bounded repository JSON file without returning undeclared siblings or spawning a command.",
+      parameters: objectSchema(
+        {
+          path: { minLength: 1, type: "string" },
+          pointers: {
+            items: { type: "string" },
+            maxItems: MAX_JSON_POINTERS,
+            minItems: 1,
+            type: "array",
+          },
+        },
+        ["path", "pointers"]
       ),
     },
   },
@@ -1253,6 +1311,51 @@ export class UtilityToolBroker {
     return broker;
   }
 
+  describeCapabilities(): UtilityBrokerCapabilities {
+    const tools = this.definitions.map((tool) => tool.function.name);
+    let commandPrefixes: string[][] = [];
+    if (this.allowedTools.has("run_check")) {
+      commandPrefixes = this.exactCommand
+        ? [[...this.exactCommand]]
+        : this.commandAllowlist.flatMap((policy) =>
+            policy.prefixes.map((prefix) => [policy.executable, ...prefix])
+          );
+    }
+    const alternatives: Record<string, string> = {};
+    if (this.allowedTools.has("inspect_files")) {
+      alternatives.sha256 =
+        "Use inspect_files for SHA-256, bytes, newline counts, and text/binary kind.";
+    }
+    if (this.allowedTools.has("read_json")) {
+      alternatives.json =
+        "Use read_json for bounded RFC 6901 JSON Pointer values.";
+    }
+    if (this.allowedTools.has("count_lines")) {
+      alternatives.lines = "Use count_lines for exact newline counts.";
+    }
+    if (this.allowedTools.has("read_file")) {
+      alternatives.read = "Use read_file for bounded file content ranges.";
+    }
+    if (this.allowedTools.has("search_repo")) {
+      alternatives.search = "Use search_repo for bounded repository search.";
+    }
+    if (
+      this.allowedTools.has("git_status") ||
+      this.allowedTools.has("git_diff") ||
+      this.allowedTools.has("git_inspect")
+    ) {
+      alternatives.git =
+        "Use git_status, git_diff, or git_inspect for the exposed read-only Git operation.";
+    }
+    return {
+      alternatives,
+      commandPrefixes,
+      readScopes: [...this.readScopes],
+      tools,
+      writeScopes: [...this.writeScopes],
+    };
+  }
+
   async execute(call: UtilityToolCall): Promise<UtilityToolResult> {
     const startedAt = this.now();
     try {
@@ -1274,9 +1377,13 @@ export class UtilityToolBroker {
               "tool_failed",
               error instanceof Error ? error.message : "Unknown tool failure"
             );
+      const message =
+        policyError.code === "command_denied"
+          ? `${policyError.message}. ${this.commandDenialGuidance()}`
+          : policyError.message;
       return {
         durationMs: Math.max(0, this.now() - startedAt),
-        error: { code: policyError.code, message: policyError.message },
+        error: { code: policyError.code, message },
         ok: false,
         tool: call.name,
       };
@@ -1665,6 +1772,10 @@ export class UtilityToolBroker {
         return { data: await this.readFileTool(requireRecord(call.arguments)) };
       case "count_lines":
         return { data: await this.countLines(requireRecord(call.arguments)) };
+      case "inspect_files":
+        return { data: await this.inspectFiles(requireRecord(call.arguments)) };
+      case "read_json":
+        return { data: await this.readJson(requireRecord(call.arguments)) };
       case "list_files":
         return { data: await this.listFiles(requireRecord(call.arguments)) };
       case "git_status":
@@ -1690,6 +1801,15 @@ export class UtilityToolBroker {
       isUtilityProtectedPath(path) ||
       this.protectedPaths.some((protectedPath) => inScope(path, protectedPath))
     );
+  }
+
+  private commandDenialGuidance(): string {
+    const capabilities = this.describeCapabilities();
+    const alternatives = Object.values(capabilities.alternatives).join(" ");
+    const prefixes = capabilities.commandPrefixes
+      .map((prefix) => prefix.join(" "))
+      .join(", ");
+    return `${alternatives || "Use only an exposed dedicated broker tool."} Effective run_check prefixes: ${prefixes || "none"}. Do not probe sibling executables.`;
   }
 
   private assertScope(path: string, mode: "read" | "write"): void {
@@ -1752,6 +1872,23 @@ export class UtilityToolBroker {
         }
         missingSegments.unshift(basename(cursor));
         cursor = parent;
+      }
+    }
+  }
+
+  private async assertNoSymlinkComponents(path: string): Promise<void> {
+    let current = this.repoRoot;
+    for (const segment of normalizeRequestedPath(path).split("/")) {
+      if (!segment || segment === ".") {
+        continue;
+      }
+      current = resolve(current, segment);
+      const stat = await lstat(current).catch(() => undefined);
+      if (stat?.isSymbolicLink()) {
+        throw new ToolPolicyError(
+          "path_denied",
+          `Symbolic-link traversal denied: ${path}`
+        );
       }
     }
   }
@@ -2262,6 +2399,220 @@ export class UtilityToolBroker {
       files.push({ lines, path: target.relative });
     }
     return { files };
+  }
+
+  private async inspectFiles(args: Record<string, unknown>): Promise<{
+    files: {
+      bytes: number;
+      kind: "binary" | "text";
+      lines: number;
+      path: string;
+      sha256: string;
+    }[];
+  }> {
+    exactArgumentKeys(args, new Set(["paths"]), "inspect_files arguments");
+    const requestedPaths = optionalStringArray(args, "paths");
+    if (!(requestedPaths && requestedPaths.length > 0)) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "paths must contain at least one file"
+      );
+    }
+    if (requestedPaths.length > MAX_INSPECT_FILES) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        `paths exceeds the ${MAX_INSPECT_FILES}-file limit`
+      );
+    }
+    const lexicalPaths = requestedPaths.map(normalizeRequestedPath);
+    if (new Set(lexicalPaths).size !== lexicalPaths.length) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "paths contains duplicate files"
+      );
+    }
+    const files: {
+      bytes: number;
+      kind: "binary" | "text";
+      lines: number;
+      path: string;
+      sha256: string;
+    }[] = [];
+    const canonicalPaths = new Set<string>();
+    for (const requestedPath of lexicalPaths) {
+      await this.assertNoSymlinkComponents(requestedPath);
+      const target = await this.resolvePath(requestedPath, "read", true);
+      if (canonicalPaths.has(target.absolute)) {
+        throw new ToolPolicyError(
+          "invalid_arguments",
+          "paths resolves to duplicate files"
+        );
+      }
+      canonicalPaths.add(target.absolute);
+      const stat = await lstat(target.absolute);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new ToolPolicyError(
+          "path_denied",
+          "Only regular files can be inspected"
+        );
+      }
+      if (stat.size > this.limits.maxFileBytes) {
+        throw new ToolPolicyError(
+          "output_limit",
+          "File exceeds the configured inspection limit"
+        );
+      }
+      const content = await readFile(target.absolute);
+      const binary = content.includes(0);
+      files.push({
+        bytes: content.byteLength,
+        kind: binary ? "binary" : "text",
+        lines: content.reduce(
+          (total, byte) => total + (byte === 0x0a ? 1 : 0),
+          0
+        ),
+        path: target.relative,
+        sha256: hash(content),
+      });
+    }
+    const data = { files };
+    if (Buffer.byteLength(JSON.stringify(data)) > this.limits.maxOutputBytes) {
+      throw new ToolPolicyError(
+        "output_limit",
+        "File inspection metadata exceeds output limit"
+      );
+    }
+    return data;
+  }
+
+  private decodeJsonPointer(pointer: string): string[] {
+    if (pointer === "") {
+      return [];
+    }
+    if (!pointer.startsWith("/")) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "JSON Pointer must be empty or start with /"
+      );
+    }
+    return pointer
+      .slice(1)
+      .split("/")
+      .map((rawToken) => {
+        if (INVALID_JSON_POINTER_ESCAPE_RE.test(rawToken)) {
+          throw new ToolPolicyError(
+            "invalid_arguments",
+            "JSON Pointer contains an invalid escape"
+          );
+        }
+        const token = rawToken.replace(/~1/g, "/").replace(/~0/g, "~");
+        if (FORBIDDEN_JSON_POINTER_TOKENS.has(token)) {
+          throw new ToolPolicyError(
+            "path_denied",
+            "JSON Pointer contains a protected token"
+          );
+        }
+        return token;
+      });
+  }
+
+  private jsonPointerValue(
+    document: unknown,
+    pointer: string
+  ): { found: boolean; value?: unknown } {
+    let current = document;
+    for (const token of this.decodeJsonPointer(pointer)) {
+      if (Array.isArray(current)) {
+        if (!JSON_ARRAY_INDEX_RE.test(token)) {
+          return { found: false };
+        }
+        const index = Number(token);
+        if (!Number.isSafeInteger(index) || index >= current.length) {
+          return { found: false };
+        }
+        current = current[index];
+        continue;
+      }
+      if (!(isRecord(current) && Object.hasOwn(current, token))) {
+        return { found: false };
+      }
+      current = current[token];
+    }
+    return { found: true, value: current };
+  }
+
+  private async readJson(args: Record<string, unknown>): Promise<{
+    path: string;
+    values: { found: boolean; pointer: string; value?: unknown }[];
+  }> {
+    exactArgumentKeys(
+      args,
+      new Set(["path", "pointers"]),
+      "read_json arguments"
+    );
+    const requested = requireString(args, "path");
+    const pointers = optionalStringArray(args, "pointers");
+    if (!(pointers && pointers.length > 0)) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "pointers must contain at least one JSON Pointer"
+      );
+    }
+    if (pointers.length > MAX_JSON_POINTERS) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        `pointers exceeds the ${MAX_JSON_POINTERS}-pointer limit`
+      );
+    }
+    if (new Set(pointers).size !== pointers.length) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        "pointers contains duplicate values"
+      );
+    }
+    for (const pointer of pointers) {
+      this.decodeJsonPointer(pointer);
+    }
+    await this.assertNoSymlinkComponents(requested);
+    const target = await this.resolvePath(requested, "read", true);
+    const stat = await lstat(target.absolute);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new ToolPolicyError(
+        "path_denied",
+        "Only regular JSON files can be read"
+      );
+    }
+    if (stat.size > this.limits.maxFileBytes) {
+      throw new ToolPolicyError(
+        "output_limit",
+        "JSON file exceeds the configured read limit"
+      );
+    }
+    const content = await readFile(target.absolute, "utf8");
+    if (content.includes("\0")) {
+      throw new ToolPolicyError(
+        "path_denied",
+        "Binary files cannot be parsed as JSON"
+      );
+    }
+    let document: unknown;
+    try {
+      document = JSON.parse(content) as unknown;
+    } catch {
+      throw new ToolPolicyError("invalid_arguments", "File is not valid JSON");
+    }
+    const values = pointers.map((pointer) => ({
+      pointer,
+      ...this.jsonPointerValue(document, pointer),
+    }));
+    const data = { path: target.relative, values };
+    if (Buffer.byteLength(JSON.stringify(data)) > this.limits.maxOutputBytes) {
+      throw new ToolPolicyError(
+        "output_limit",
+        "Selected JSON values exceed output limit"
+      );
+    }
+    return data;
   }
 
   private gitExclusions(): string[] {
