@@ -204,8 +204,12 @@ All figures below are from the post-fix tree.
 - `bun run test:file -- tests/loop/launch-reservation.test.ts` → 11 pass, 0 fail.
 - `scripts/smoke-claude-kickoff-guard.sh` → exit 0: launch exits 1, stderr proves
   it failed for the kickoff guard specifically, 62 recorded stub processes,
-  zero survivors by exact recorded PID, tmux session torn down, isolated run
-  base. Non-vacuity guard demonstrated firing on a positive control.
+  zero survivors — enumerated by recorded PID AND a current command-line
+  ownership match against this smoke's unique WORK path, since a bare recorded
+  PID can be recycled — auto-update sentinel intact, tmux session torn down,
+  isolated run base. Both guards demonstrated firing on offline positive
+  controls. Codex independently reran this smoke and reproduced the same
+  result.
 - `bun run check` (ultracite, repo-wide) → 839 files, 0 errors.
 - `bun run build` → OK.
 - `normalize.mjs` reproduces all five checked-in fixture artifacts
@@ -238,12 +242,16 @@ at 5000.37 ms. The flake is pre-existing.
 
 Mechanism: those tests spawn full `bun src/cli.ts __bridge-mcp` cold starts
 against bun's fixed 5 s per-test deadline, and cold start on this machine
-measures 57-3430 ms. The failure rate rose sharply late in the session (three
-consecutive governed runs red, on five different tests in that file), which
-tracks machine load: `uptime` showed load average 4.07 with the live run-148
-agent pane working alongside this one. No stray processes from this session were
-found. That is background load I do not control, not a property of the change. Sampling ended at HEAD 14 runs / 3 failures and BASE 14 runs
-/ 1 failure. Cold-start medians, n=15 each on a quiet machine: BASE 708 ms
+measures 57-3430 ms. The failure rate rose sharply late in the session: three
+consecutive governed runs red, across five different tests in that file. That
+coincided with `uptime` reporting load average 4.07, with the live run-148 agent
+pane working alongside this one, and no stray processes from this session. The
+load correlation is an inference, not proof that background load caused every
+timeout; what is established is that the failure mode reproduces on the
+unmodified base. Sampling across the whole session, including those later
+governed runs: HEAD 19 executions of that file / 6 containing a failure, BASE 14
+executions / 1 containing a failure.
+Cold-start medians, n=15 each on a quiet machine: BASE 708 ms
 (p90 2037, max 3135) against HEAD 827 ms (p90 2920, max 3430). The distributions
 overlap heavily and the 119 ms median gap sits far below the minimum effect
 detectable at that variance, so no regression is claimed and none is measurable.
