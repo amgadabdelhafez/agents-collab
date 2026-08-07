@@ -1,0 +1,123 @@
+{
+  "defect": "harvto run 147: launcher-owned Claude kickoff left unsubmitted in the composer while the manifest reported a running loop",
+  "spec": "specs/claude-kickoff-submit-guard/spec.md",
+  "producer": {
+    "binary": "claude",
+    "version": "2.1.223 (Claude Code)",
+    "model": "sonnet",
+    "paneWidth": 220,
+    "paneHeight": 60,
+    "capturedAtUtc": "2026-08-07T02:40:00Z"
+  },
+  "capture": {
+    "tmuxSessionPrefix": "kickoff-",
+    "cwd": "throwaway directory under the session scratchpad; no live run directory, repo identity, or port owned by run 148 was touched",
+    "argv": [
+      "claude",
+      "--session-id",
+      "<uuid>",
+      "--model",
+      "sonnet",
+      "--mcp-config",
+      "<dir>/mcp.json",
+      "--strict-mcp-config",
+      "--dangerously-load-development-channels",
+      "server:loop-bridge-fixture-absent",
+      "--dangerously-skip-permissions"
+    ],
+    "mcpConfig": "{\"mcpServers\":{}}",
+    "paneCaptureCommand": ["tmux", "capture-pane", "-p", "-t", "<session>"],
+    "kickoffDelivery": [
+      ["tmux", "load-buffer", "-b", "<buffer>", "<kickoff-file>"],
+      ["tmux", "paste-buffer", "-d", "-p", "-b", "<buffer>", "-t", "<session>"]
+    ],
+    "kickoffFirstLine": "Fixture capture kickoff line one.",
+    "kickoffLineCount": 6
+  },
+  "actions": [
+    {
+      "action": "Enter",
+      "phase": "startup-development-channel",
+      "promptSubmission": false
+    },
+    {
+      "action": "paste-buffer",
+      "phase": "kickoff-paste",
+      "promptSubmission": false
+    },
+    {
+      "action": "literal-unrelated-draft",
+      "phase": "occupied-composer",
+      "promptSubmission": false
+    }
+  ],
+  "provenanceNotes": [
+    "The run-147 STRAND itself is a timing race and was not reproduced live: two attempts with the channel error present and launcher-identical paste plus Enter both submitted normally. The stranded-composer capture is therefore produced by withholding Enter after the same paste, which yields the same producer bytes Claude Code renders for an unsubmitted kickoff. The failure mode itself is evidenced by the preserved run-147 hook stream, not by a live strand.",
+    "Measured on this producer: a healthy submit emits UserPromptSubmit 0.651 s after Enter (SessionStart 2026-08-07T02:42:12.930Z, UserPromptSubmit 2026-08-07T02:42:13.673Z). Confirmation timeouts are derived from this, not guessed.",
+    "run-148's UserPromptSubmit is +97 s after SessionStart because it records a human pressing Enter, not machine latency."
+  ],
+  "normalization": {
+    "script": "normalize.mjs",
+    "steps": [
+      "CRLF to LF",
+      "trailing whitespace stripped per line (tmux right-pads rows to pane width)",
+      "trailing blank lines collapsed to exactly one final newline",
+      "ordered literal substitutions, width-preserving in pane mode"
+    ],
+    "paneSubstitutions": [
+      ["Welcome back Amgad!", "Welcome back Guest!"],
+      ["Claude Pro · CEO", "Claude Pro · dev"],
+      [
+        "/…/scratchpad/kickoff-fixture-odRVF4/repo",
+        "/…/fixtures/2.1.223/kickoff-channel-race/"
+      ]
+    ],
+    "jsonlSubstitutions": [["/private/tmp/harvto-loop142-base", "<REPO_ROOT>"]],
+    "reproduce": "node normalize.mjs <pane|jsonl> <raw-capture> <normalized-file>"
+  },
+  "artifacts": [
+    {
+      "file": "01-ready-with-channel-error.txt",
+      "mode": "pane",
+      "description": "ready-empty composer with the unresolvable development-channel banner",
+      "sha256": "0ab447629590ed73d1540ba25830f277b3b2032abf8b5a604465a4fe7c924689",
+      "rawSha256": "60296d57bf54e6f5c878ea7e489f65eaf7ae5606b903c97e95cb6ce038a3993d"
+    },
+    {
+      "file": "02-stranded-kickoff-composer.txt",
+      "mode": "pane",
+      "description": "composer holding the collapsed launcher kickoff attachment, unsubmitted",
+      "sha256": "e3ffbd149361a47fa9b17650dab662d33a8e71ab7181c5b6345aa55f90dbae4a",
+      "rawSha256": "f85c62bf6c0fb7808d367b186690232d7ecd667cf4b185a41565822a7d446ee9"
+    },
+    {
+      "file": "03-kickoff-plus-human-draft.txt",
+      "mode": "pane",
+      "description": "collapsed kickoff attachment followed by unrelated typed human text",
+      "sha256": "0dac4097dbd3cf6266f0d2161c278d1bc4d10e53cb1f5a6bff15adcc1ee95389",
+      "rawSha256": "34cc1c7eef09c14f22dbe6edccaca24ace8f73582c8389e960be04606613f0f4"
+    },
+    {
+      "file": "run-147-hooks-claude.jsonl",
+      "mode": "jsonl",
+      "description": "preserved failing-run hook stream: SessionStart only, no UserPromptSubmit",
+      "sha256": "f348f2225d54cf09b67c5daa8558cacabd373419c937ff1f2fe446487965b594",
+      "rawSha256": "7ef81b6624075689b0463e982e35ece9ec6c1f2b0c5e991672d879a5719ed6aa",
+      "sourceRun": "/Users/amgad/.loop/runs/harvto-b1e274e66299/147/hooks/claude.jsonl"
+    },
+    {
+      "file": "run-148-hooks-claude.jsonl",
+      "mode": "jsonl",
+      "description": "preserved manual-recovery hook stream, first two events",
+      "sha256": "fc0621ae42c55ea5c5dfd61162128d39ea3347e5b668d86f9e89135c14137593",
+      "rawSha256": "9f0dd5f0d6a75fe98b246ddd2e264006e58443b4e78006e70e0201236a37eb04",
+      "sourceRun": "/Users/amgad/.loop/runs/harvto-b1e274e66299/148/hooks/claude.jsonl"
+    },
+    {
+      "file": "normalize.mjs",
+      "mode": "script",
+      "description": "the normalizer that produced every artifact above",
+      "sha256": "ccf4eae3d8044b655635eff3d189e140ca91ff17273cedd5074fb7b2d4a0ee0f"
+    }
+  ]
+}

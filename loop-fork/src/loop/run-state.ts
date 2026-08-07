@@ -93,6 +93,9 @@ export interface RunWorldModelBinding {
 export interface RunManifest {
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
+  // Version banner of the `claude` binary observed at launch, recorded for
+  // forensics on kickoff-confirmation failures.
+  claudeCliVersion?: string;
   claudeSessionId: string;
   codexAppServerPid?: number;
   codexRemoteUrl?: string;
@@ -188,6 +191,7 @@ interface RepoIdDeps {
 interface RunManifestInput {
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
+  claudeCliVersion?: string;
   claudeSessionId?: string;
   codexAppServerPid?: number;
   codexRemoteUrl?: string;
@@ -881,6 +885,9 @@ export const createRunManifest = (
     ...(input.claudeChannelServer
       ? { claudeChannelServer: input.claudeChannelServer }
       : {}),
+    ...(input.claudeCliVersion
+      ? { claudeCliVersion: input.claudeCliVersion }
+      : {}),
     ...sessionManifestFields(input),
     ...(input.codexAppServerPid
       ? { codexAppServerPid: input.codexAppServerPid }
@@ -950,14 +957,32 @@ export const writeRunManifest = (
   }
 };
 
+// Reads one optional string field under its camelCase and snake_case spellings
+// and returns it as a spreadable fragment, so callers stay free of a per-field
+// conditional. Absent stays absent rather than becoming an empty string.
+const optionalManifestString = <Key extends string>(
+  parsed: Record<string, unknown>,
+  key: Key,
+  aliases: string[]
+): Partial<Record<Key, string>> => {
+  const value = firstString(parsed, aliases);
+  return value ? ({ [key]: value } as Record<Key, string>) : {};
+};
+
 const readOptionalRunManifestFields = (
   parsed: Record<string, unknown>,
   manifestPath: string
 ): Partial<RunManifest> => {
-  const claudeChannelServer = firstString(parsed, [
-    "claudeChannelServer",
-    "claude_channel_server",
-  ]);
+  const claudeIdentity = {
+    ...optionalManifestString(parsed, "claudeChannelServer", [
+      "claudeChannelServer",
+      "claude_channel_server",
+    ]),
+    ...optionalManifestString(parsed, "claudeCliVersion", [
+      "claudeCliVersion",
+      "claude_cli_version",
+    ]),
+  };
   const codexRemoteUrl = firstString(parsed, [
     "codexRemoteUrl",
     "codex_remote_url",
@@ -1025,7 +1050,7 @@ const readOptionalRunManifestFields = (
   return {
     ...(cavemanMode ? { cavemanMode } : {}),
     ...effortManifestFields({ driverEffort, reviewerEffort }),
-    ...(claudeChannelServer ? { claudeChannelServer } : {}),
+    ...claudeIdentity,
     ...(codexAppServerPid ? { codexAppServerPid } : {}),
     ...(codexRemoteUrl ? { codexRemoteUrl } : {}),
     ...(governess ? { governess: true } : {}),

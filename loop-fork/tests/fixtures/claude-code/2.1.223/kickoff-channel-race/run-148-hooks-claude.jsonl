@@ -1,0 +1,2 @@
+{"agent":"claude","cwd":"<REPO_ROOT>","event":"SessionStart","state":"starting","ts":"2026-08-07T02:12:37.390Z","eventId":"d4b4b163-b5c2-44e9-990e-c310d081d001","sequence":1,"source":"agent-hook"}
+{"agent":"claude","cwd":"<REPO_ROOT>","event":"UserPromptSubmit","state":"working","ts":"2026-08-07T02:14:14.585Z","eventId":"cf34bef3-5eda-4c1a-a01b-a3f8314ed084","sequence":2,"source":"agent-hook"}

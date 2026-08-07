@@ -34,6 +34,30 @@ import type { Options } from "../../src/loop/types";
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
 const makeTempRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-tmux-run-"));
+
+const KICKOFF_HOOKS_BEFORE =
+  '{"agent":"claude","event":"SessionStart","state":"starting","sequence":1}\n';
+const KICKOFF_HOOKS_AFTER = `${KICKOFF_HOOKS_BEFORE}{"agent":"claude","event":"UserPromptSubmit","state":"working","sequence":2}\n`;
+
+// Every paired-launch fake must declare whether its Claude actually started a
+// turn, because the launcher now refuses to report a run as started without
+// that evidence. This is the healthy case: the first read is the pre-paste
+// baseline, and every later read shows the UserPromptSubmit the kickoff caused.
+const healthyClaudeKickoffDeps = (): {
+  claudeCliVersion: () => string;
+  readClaudeTranscriptVersion: () => string;
+  readTextFile: () => string;
+} => {
+  let reads = 0;
+  return {
+    claudeCliVersion: () => "2.1.223 (Claude Code)",
+    readClaudeTranscriptVersion: () => "",
+    readTextFile: () => {
+      reads += 1;
+      return reads === 1 ? KICKOFF_HOOKS_BEFORE : KICKOFF_HOOKS_AFTER;
+    },
+  };
+};
 const claudeWarningFixtureDir = join(
   import.meta.dir,
   "..",
@@ -478,6 +502,7 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
         logs.push(line);
       },
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = codexMcpConfigArgs;
         nextOpts.codexHome = codexHome;
@@ -732,6 +757,7 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
       findBinary: () => true,
       isInteractive: () => false,
       log: (): void => undefined,
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: () => ({ manifest, storage }),
       spawn: (args: string[]) => {
         calls.push(args);
@@ -797,6 +823,7 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
       isInteractive: () => false,
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -948,6 +975,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -1321,6 +1349,7 @@ test("governed layout preserves legacy numeric fallbacks without tmux stdout", a
         isInteractive: () => false,
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         sendKeys: (): void => undefined,
         sendText: (): void => undefined,
@@ -1399,6 +1428,7 @@ test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () =
       isInteractive: () => false,
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = codexMcpConfigArgs;
         return { manifest, storage };
@@ -1569,6 +1599,7 @@ test("runInTmux releases local codex app-server handles after paired handoff", a
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -1659,6 +1690,7 @@ test("runInTmux closes local Codex ownership without rewriting a completed manif
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -1748,6 +1780,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -1891,6 +1924,7 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
           logs.push(message);
         },
         makeClaudeSessionId: () => "claude-session-1",
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -1996,6 +2030,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -2041,6 +2076,141 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
     calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
   ).toBe(true);
   expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+});
+
+test("runInTmux fails closed and cleans up when the Claude kickoff is never confirmed", async () => {
+  // The run-147 shape end to end: the pane reaches a ready-empty composer, the
+  // launcher pastes and sends Enter, and no turn ever starts. The launch must
+  // terminalize rather than report a running loop over a stranded kickoff.
+  const strandedPane = readFileSync(
+    join(
+      import.meta.dir,
+      "..",
+      "fixtures",
+      "claude-code",
+      "2.1.223",
+      "kickoff-channel-race",
+      "02-stranded-kickoff-composer.txt"
+    ),
+    "utf8"
+  );
+  const calls: string[][] = [];
+  let closed = 0;
+  let released = 0;
+  let sessionStarted = false;
+  let pasted = false;
+  const enterKeys: string[] = [];
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        // Ready-empty until our own paste lands, then the captured stranded
+        // composer from the real 2.1.223 producer.
+        capturePane: () => (pasted ? strandedPane : "❯ "),
+        claudeCliVersion: () => "2.1.223 (Claude Code)",
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerPid: () => 4321,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest, storage };
+        },
+        // The hook journal never advances past SessionStart, exactly as the
+        // preserved run-147 evidence records it.
+        readClaudeTranscriptVersion: () => "",
+        readTextFile: () =>
+          '{"agent":"claude","event":"SessionStart","state":"starting","sequence":1}\n',
+        releasePersistentCodexSession: () => {
+          released += 1;
+        },
+        sendKeys: (_pane: string, keys: string[]) => {
+          enterKeys.push(...keys);
+        },
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        spawn: (args: string[]) => {
+          calls.push(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            return sessionStarted
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionStarted = true;
+          }
+          if (args[0] === "tmux" && args[1] === "paste-buffer") {
+            pasted = true;
+          }
+          if (args[0] === "tmux" && args[1] === "kill-session") {
+            sessionStarted = false;
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          manifest = update(manifest) ?? manifest;
+          return manifest;
+        },
+      },
+      { opts: makePairedOptions({ proof: "" }) }
+    )
+  ).rejects.toThrow("never started a turn from the launcher kickoff");
+
+  // Zero survivors: the tmux session is killed and the owned Codex transport
+  // is closed, and the manifest records the failure rather than a running loop.
+  expect(
+    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+  ).toBe(true);
+  expect(closed).toBe(1);
+  expect(released).toBe(0);
+  expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+  expect(manifest.claudeCliVersion).toBe("2.1.223 (Claude Code)");
+  // Exactly one recovery Enter, and no pane is ever pasted into twice: the
+  // recovery re-sends a key, it never re-delivers the kickoff body.
+  expect(enterKeys.filter((key) => key === "Enter")).toEqual(["Enter"]);
+  const pastesPerPane = new Map<string, number>();
+  for (const args of calls) {
+    if (args[0] !== "tmux" || args[1] !== "paste-buffer") {
+      continue;
+    }
+    const target = args[args.indexOf("-t") + 1] ?? "";
+    pastesPerPane.set(target, (pastesPerPane.get(target) ?? 0) + 1);
+  }
+  // One paste for the Claude pane and one for its peer, neither repeated.
+  expect(pastesPerPane.size).toBe(2);
+  expect([...pastesPerPane.values()]).toEqual([1, 1]);
 });
 
 test("tmux prompts keep the paired review workflow explicit", () => {
@@ -2411,6 +2581,7 @@ test("runInTmux replays the captured Claude pre-connect warning before bootstrap
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
       nowMs: () => (readyBefore.windowActivity + 2) * 1000,
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -2582,6 +2753,7 @@ test("runInTmux preserves the live workspace when a post-End draft capture fails
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
         nowMs: () => (draftAfter.windowActivity + 2) * 1000,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -2937,6 +3109,7 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3050,6 +3223,7 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3492,6 +3666,7 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3589,6 +3764,7 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3674,6 +3850,7 @@ test("runInTmux still confirms Claude trust prompts in paired mode", async () =>
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3753,6 +3930,7 @@ test("runInTmux still catches a delayed Claude trust prompt", async () => {
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3829,6 +4007,7 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "unused",
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = codexMcpConfigArgs;
         return { manifest, storage };
@@ -4549,6 +4728,7 @@ test("runInTmux refuses paired resource creation when initial session liveness i
         findBinary: () => true,
         isInteractive: () => false,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           calls.push(args);
@@ -4633,6 +4813,7 @@ test.each([
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -4720,6 +4901,7 @@ test("runInTmux preserves current transport and active state when paired layout 
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -4820,6 +5002,7 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -4906,6 +5089,7 @@ test("runInTmux terminalizes a hook-preparation failure before new-session", asy
           findBinary: () => true,
           isInteractive: () => false,
           log: (): void => undefined,
+          ...healthyClaudeKickoffDeps(),
           preparePairedRun: () => ({ manifest, storage }),
           spawn: (args: string[]) => {
             calls.push(args);
@@ -4979,6 +5163,7 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
         getLastCodexThreadId: () => "codex-thread-loser",
         isInteractive: () => false,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -5078,6 +5263,7 @@ test("runInTmux cleans an owned paired session when setup fails after new-sessio
         findBinary: () => true,
         isInteractive: () => false,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           calls.push(args);
@@ -5149,6 +5335,7 @@ test("runInTmux terminalizes the paired manifest when the workspace disappears b
         isInteractive: () => false,
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         sendKeys: (): void => undefined,
         sendText: (): void => undefined,
@@ -5223,6 +5410,7 @@ test("runInTmux preserves external transport ownership when a resumed workspace 
         findBinary: () => true,
         isInteractive: () => false,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -5283,6 +5471,7 @@ test("runInTmux terminalizes a paired manifest when attach confirms the workspac
       findBinary: () => true,
       isInteractive: () => true,
       log: (): void => undefined,
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: () => ({ manifest, storage }),
       spawn: (args: string[]) => {
         if (args[0] === "tmux" && args[1] === "has-session") {
@@ -5341,6 +5530,7 @@ test("runInTmux preserves the active manifest when attach-path liveness is unkno
         findBinary: () => true,
         isInteractive: () => true,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -5400,6 +5590,7 @@ test("runInTmux trusts a fresh live probe over a stale attach no-session error",
         findBinary: () => true,
         isInteractive: () => true,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: () => ({ exitCode: 0, stderr: "" }),
         updateRunManifest: (_path, update) => {
@@ -5447,6 +5638,7 @@ test("runInTmux rejects a failed pre-handoff window setup and terminalizes the m
         findBinary: () => true,
         isInteractive: () => false,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -5504,6 +5696,7 @@ test("runInTmux treats optional remain-on-exit timeout as best-effort and preser
       findBinary: () => true,
       isInteractive: () => false,
       log: (): void => undefined,
+      ...healthyClaudeKickoffDeps(),
       preparePairedRun: () => ({ manifest, storage }),
       spawn: (args: string[]) => {
         if (args[0] === "tmux" && args[1] === "has-session") {
@@ -5565,6 +5758,7 @@ test("runInTmux rejects a noninteractive handoff race and terminalizes the activ
         findBinary: () => true,
         isInteractive: () => false,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -5620,6 +5814,7 @@ test("runInTmux does not report a successful handoff for an already-failed manif
         findBinary: () => true,
         isInteractive: () => false,
         log: (): void => undefined,
+        ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           if (args[0] === "tmux" && args[1] === "has-session") {
