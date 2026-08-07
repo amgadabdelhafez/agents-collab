@@ -134,9 +134,6 @@ export const parseClaudeCliVersion = (
   };
 };
 
-export const formatClaudeCliVersion = (version: ClaudeCliVersion): string =>
-  `${version.major}.${version.minor}.${version.patch}`;
-
 // Confirmation is required on every version because it is correct everywhere.
 // Only the mutating recovery keystroke is version-gated, and only by EXACT
 // membership in the set of versions that carry a checked-in healthy producer

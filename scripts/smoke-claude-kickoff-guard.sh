@@ -24,12 +24,38 @@ fi
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/loop-kickoff-smoke-XXXXXX")"
 SMOKE_ID="kickoff-smoke-$$"
 MARKER="${WORK}/marker"
+# Every stub appends its own PID here. Survivor enumeration walks these exact
+# identities. An earlier version of this script searched `pgrep -f "$SMOKE_ID"`,
+# but SMOKE_ID only ever appeared inside the stub FILE CONTENTS, never in any
+# spawned process's command line, so the check could return zero without having
+# examined a single process the smoke started. That is a fail-open, and the
+# recorded-PID form below is what replaced it.
+PIDFILE="${WORK}/spawned-pids"
+
+survivors() {
+  # Echoes the PIDs from PIDFILE that are still alive. Empty output means none.
+  [[ -f "${PIDFILE}" ]] || return 0
+  local pid
+  while read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    if kill -0 "${pid}" 2>/dev/null; then
+      echo "${pid}"
+    fi
+  done < "${PIDFILE}"
+}
 
 cleanup() {
   local code=$?
-  # Kill anything this smoke started, by its unique marker, never by a broad
-  # pattern that could reach a live run.
-  pkill -f "${SMOKE_ID}" 2>/dev/null || true
+  # Kill only the exact PIDs this smoke recorded, never a broad pattern that
+  # could reach a live run.
+  if [[ -f "${PIDFILE}" ]]; then
+    while read -r pid; do
+      # `|| true` matters: killing an already-exited stub returns nonzero, and
+      # `set -e` inside an EXIT trap would otherwise overwrite the real exit
+      # code and report a passing smoke as a failure.
+      [[ -n "${pid}" ]] && { kill "${pid}" 2>/dev/null || true; }
+    done < "${PIDFILE}"
+  fi
   rm -rf "${WORK}"
   exit "${code}"
 }
@@ -41,6 +67,7 @@ mkdir -p "${WORK}/bin" "${WORK}/repo" "${WORK}/runs"
 cat > "${WORK}/bin/codex" <<STUB
 #!/usr/bin/env bash
 # ${SMOKE_ID}
+echo "\$\$" >> "${PIDFILE}"
 echo "codex \$*" >> "${MARKER}"
 exit 0
 STUB
@@ -50,6 +77,7 @@ STUB
 cat > "${WORK}/bin/opencode" <<STUB
 #!/usr/bin/env bash
 # ${SMOKE_ID}
+echo "\$\$" >> "${PIDFILE}"
 echo "opencode \$*" >> "${MARKER}"
 exit 0
 STUB
@@ -59,6 +87,7 @@ STUB
 cat > "${WORK}/bin/claude" <<STUB
 #!/usr/bin/env bash
 # ${SMOKE_ID}
+echo "\$\$" >> "${PIDFILE}"
 echo "claude \$*" >> "${MARKER}"
 if [[ "\$1" == "--version" ]]; then
   echo "2.1.223 (Claude Code)"
@@ -72,6 +101,7 @@ STUB
 cat > "${WORK}/bin/tmux" <<STUB
 #!/usr/bin/env bash
 # ${SMOKE_ID}
+echo "\$\$" >> "${PIDFILE}"
 echo "tmux \$*" >> "${MARKER}"
 STATE="${WORK}/tmux-session"
 case "\$1" in
@@ -148,16 +178,36 @@ if ! tr '\n' ' ' < "${WORK}/stderr.log" | grep -q "never started a turn from the
 fi
 tr '\n' ' ' < "${WORK}/stderr.log" | grep -o "${REASON} [^ ]*" | head -1
 
-# Positive zero-survivor check: re-enumerate rather than trusting the kill.
-# `pgrep` exits 1 when nothing matches, which is the success case here, so the
-# pipeline must not be allowed to trip `pipefail`.
-pkill -f "${SMOKE_ID}" 2>/dev/null || true
+# The survivor check must not be vacuous. Absence of evidence has to fail, so
+# first prove the smoke actually observed processes: if no stub ever recorded a
+# PID, there is nothing to enumerate and the "zero survivors" claim would be
+# meaningless.
+SPAWNED="$( [[ -f "${PIDFILE}" ]] && wc -l < "${PIDFILE}" | tr -d ' ' || echo 0 )"
+echo "=== recorded stub processes: ${SPAWNED} ==="
+if [[ "${SPAWNED}" -eq 0 ]]; then
+  echo "smoke FAILED: no stub process was ever recorded, so the survivor check would be vacuous" >&2
+  exit 1
+fi
+
+# Positive zero-survivor check over those exact recorded identities.
 sleep 1
-SURVIVORS="$( (pgrep -f "${SMOKE_ID}" 2>/dev/null || true) | wc -l | tr -d ' ')"
-echo "=== survivors: ${SURVIVORS} ==="
-if [[ "${SURVIVORS}" -ne 0 ]]; then
-  echo "smoke FAILED: ${SURVIVORS} process(es) survived" >&2
-  pgrep -alf "${SMOKE_ID}" >&2 || true
+REMAINING="$(survivors | tr '\n' ' ' | sed 's/ *$//')"
+echo "=== survivors: ${REMAINING:-none} ==="
+if [[ -n "${REMAINING}" ]]; then
+  echo "smoke FAILED: recorded processes survived: ${REMAINING}" >&2
+  # shellcheck disable=SC2086
+  ps -o pid,command -p ${REMAINING} >&2 || true
+  exit 1
+fi
+
+# The launcher's failed-start cleanup must have torn down the tmux session, not
+# merely exited. The stateful stub removes this file on `kill-session`.
+if [[ -f "${WORK}/tmux-session" ]]; then
+  echo "smoke FAILED: tmux session state survived the failed launch" >&2
+  exit 1
+fi
+if ! grep -q "tmux kill-session" "${MARKER}"; then
+  echo "smoke FAILED: the launcher never issued kill-session" >&2
   exit 1
 fi
 
@@ -168,4 +218,4 @@ if [[ ! -d "${WORK}/runs" ]]; then
   exit 1
 fi
 
-echo "smoke OK: nonzero launch for the kickoff guard, zero survivors, isolated run base ${WORK}/runs"
+echo "smoke OK: nonzero launch for the kickoff guard, ${SPAWNED} recorded stub processes, zero survivors, tmux session torn down, isolated run base ${WORK}/runs"

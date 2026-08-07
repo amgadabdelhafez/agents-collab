@@ -117,10 +117,17 @@ never report a successfully submitted running loop while the kickoff is stranded
    evidence arrived, and the composer still holds the positively captured
    launcher-owned state. Version is a secondary, narrow gate: only versions
    with a checked-in **healthy producer fixture** are exempted from the
-   recovery step, and only by **exact match**. A `<=` range is not permitted —
-   one healthy 2.1.220 capture proves 2.1.220, not every lower version, and
-   semver ordering is not capability evidence. Unknown and unparseable versions
-   stay guarded. Confirmation is required on every version. The observed version
+   recovery step, and only by **exact match**. A `<=` range is not permitted:
+   one healthy capture proves that build, not every lower version, and semver
+   ordering is not capability evidence.
+
+   A fixture qualifies only if it shows a healthy **kickoff** — a
+   baseline-relative `UserPromptSubmit` or a confirmed transcript advance. A
+   startup-readiness capture does not qualify. The set therefore ships **empty**:
+   `tests/fixtures/claude-code/2.1.220/dev-channel-preconnect-warning` records
+   `captureSafety.promptSubmitted: false`, `modelRequestMade: false`, and
+   `promptSubmission: false` on every action, so it proves modal handling only.
+   Unknown and unparseable versions stay guarded. Confirmation is required on every version. The observed version
    is recorded in the run manifest for forensics, which requires a
    `RunManifest` field plus its round-trip coverage in `run-state.ts`.
 8. **Claude only.** Codex, OSS, and other panes are unaffected, and adding the

@@ -33,6 +33,9 @@ const makeHarness = (options: {
   cliVersion?: string;
   hooksByRead: string[];
   paneText?: string;
+  // Successive pane captures. Lets a test model the composer changing under the
+  // launcher between one read and the next; the last entry repeats.
+  paneTextByCapture?: string[];
   // Hook stream swapped in the moment a recovery Enter is sent, modelling the
   // stranded composer finally submitting.
   hooksAfterRecovery?: string;
@@ -43,8 +46,18 @@ const makeHarness = (options: {
   const slept: number[] = [];
   let read = 0;
   let recovered = false;
+  let captures = 0;
   const deps = {
-    capturePane: () => options.paneText ?? "",
+    capturePane: () => {
+      const scripted = options.paneTextByCapture;
+      if (scripted && scripted.length > 0) {
+        const value = scripted[Math.min(captures, scripted.length - 1)] ?? "";
+        captures += 1;
+        return value;
+      }
+      captures += 1;
+      return options.paneText ?? "";
+    },
     claudeCliVersion: () => options.cliVersion ?? "2.1.223 (Claude Code)",
     log: (line: string) => {
       logs.push(line);
@@ -186,11 +199,44 @@ describe("launcher kickoff confirmation", () => {
     );
   });
 
-  test("a proven-healthy version fails closed instead of sending a recovery key", async () => {
+  test("no version ships as proven-healthy, so 2.1.220 is guarded too", () => {
+    // The 2.1.220 fixture in this repo records captureSafety.promptSubmitted
+    // false and promptSubmission false on every action: it proves startup-modal
+    // handling, not a healthy kickoff. Exempting it would have disabled the
+    // recovery guard for a build on evidence that does not exist.
+    expect(tmuxInternals.CLAUDE_KICKOFF_PROVEN_HEALTHY_VERSIONS).toEqual([]);
+  });
+
+  test("2.1.220 still gets the guarded profile because nothing proves it healthy", async () => {
     const harness = makeHarness({
       cliVersion: "2.1.220 (Claude Code)",
+      hooksAfterRecovery: RUN_148_HOOKS,
       hooksByRead: [RUN_147_HOOKS],
       paneText: STRANDED_PANE,
+    });
+    await tmuxInternals.confirmClaudeKickoff(harness.deps, RUN_DIR, {
+      baseline: baselineFrom(RUN_147_HOOKS),
+      expectedComposerBody: CAPTURED_KICKOFF_BODY,
+      pane: PANE,
+    });
+    expect(harness.sentKeys).toEqual([{ keys: ["Enter"], pane: PANE }]);
+  });
+
+  test("refuses the recovery Enter when the composer turns foreign between reads", async () => {
+    // Regression for the stale-composer race Codex found on 155a8186: the
+    // composer classification and the evidence read must come from the SAME
+    // snapshot. Every capture up to the final one is the launcher-owned
+    // kickoff; the last one is a human draft. Hooks never advance, so a stale
+    // "kickoff-owned" plus a fresh "not started" would previously send Enter
+    // into somebody else's text.
+    // The confirm loop performs exactly CLAUDE_KICKOFF_CONFIRM_MAX_POLLS
+    // captures, so the next one is the single pre-mutation recovery read.
+    const owned = new Array(
+      tmuxInternals.CLAUDE_KICKOFF_CONFIRM_MAX_POLLS
+    ).fill(STRANDED_PANE);
+    const harness = makeHarness({
+      hooksByRead: [RUN_147_HOOKS],
+      paneTextByCapture: [...owned, HUMAN_DRAFT_PANE],
     });
     await expect(
       tmuxInternals.confirmClaudeKickoff(harness.deps, RUN_DIR, {
@@ -200,9 +246,29 @@ describe("launcher kickoff confirmation", () => {
       })
     ).rejects.toThrow(tmuxInternals.ClaudeKickoffUnconfirmedError);
     expect(harness.sentKeys).toEqual([]);
-    expect(harness.slept.length).toBe(
+  });
+
+  test("refuses the recovery Enter when the composer empties between reads", async () => {
+    // Same race, other direction: the composer clears with no turn evidence.
+    // Pressing Enter into an empty composer would submit nothing and could
+    // re-trigger whatever the pane shows next.
+    // The confirm loop performs exactly CLAUDE_KICKOFF_CONFIRM_MAX_POLLS
+    // captures, so the next one is the single pre-mutation recovery read.
+    const owned = new Array(
       tmuxInternals.CLAUDE_KICKOFF_CONFIRM_MAX_POLLS
-    );
+    ).fill(STRANDED_PANE);
+    const harness = makeHarness({
+      hooksByRead: [RUN_147_HOOKS],
+      paneTextByCapture: [...owned, "❯ "],
+    });
+    await expect(
+      tmuxInternals.confirmClaudeKickoff(harness.deps, RUN_DIR, {
+        baseline: baselineFrom(RUN_147_HOOKS),
+        expectedComposerBody: CAPTURED_KICKOFF_BODY,
+        pane: PANE,
+      })
+    ).rejects.toThrow(tmuxInternals.ClaudeKickoffUnconfirmedError);
+    expect(harness.sentKeys).toEqual([]);
   });
 
   test("a moved Claude transcript version does not confirm while the kickoff still sits in the composer", async () => {

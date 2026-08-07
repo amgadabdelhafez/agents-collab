@@ -49,10 +49,14 @@ Pure functions, no I/O, so every regression is deterministic:
 - `ClaudeKickoffEvidence = { hookSequence, sawUserPromptSubmit, transcriptVersion }`
   where `transcriptVersion` comes from
   `readClaudeTranscriptVersionFromProjects`, **not** `<runDir>/transcript.jsonl`.
-- `kickoffTurnStarted(before, after)` → boolean. True when `after` gained a
-  `UserPromptSubmit` the baseline did not have, or strictly advanced
-  `hookSequence`, or has a different non-empty `transcriptVersion`. Strict
-  comparisons only, so truncation or rotation can never read as growth.
+- `kickoffTurnStarted(before, after, composer)` → boolean. True when `after`
+  gained a `UserPromptSubmit` the baseline did not have, or strictly advanced
+  `hookSequence` on a turn-progress event, or has a different non-empty
+  `transcriptVersion` AND the composer is `empty`. Turn-progress events are
+  exactly those `hooks/emit.ts::lifecycleState` maps to `working`
+  (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`); `Notification` and `Stop`
+  map to `input-required` and are excluded. Strict comparisons only, so
+  truncation or rotation can never read as growth.
 - `parseClaudeCliVersion(raw)` → `{ major, minor, patch } | undefined`, parsing
   `2.1.223 (Claude Code)`.
 - `resolveKickoffCapability(version, provenHealthy)` →
@@ -62,8 +66,11 @@ Pure functions, no I/O, so every regression is deterministic:
   - `recoveryAllowed` is `false` only on an exact member of `provenHealthy`.
   - everything else, including unknown and unparseable, stays guarded.
 
-  No `<=` range: one healthy 2.1.220 capture proves 2.1.220, not every lower
-  version, and semver ordering is not capability evidence.
+  No `<=` range, and the set ships EMPTY. A fixture qualifies only if it shows a
+  healthy kickoff (a baseline-relative `UserPromptSubmit` or a confirmed
+  transcript advance); the 2.1.220 readiness fixture records
+  `captureSafety.promptSubmitted: false` and `promptSubmission: false` on every
+  action, so it proves modal handling and does not qualify.
 - `readComposerBody(paneText)` → the composer text after the `❯` marker, or
   `undefined` when no composer line is visible.
 - `classifyKickoffComposer({ paneText, expectedComposerBody })` →

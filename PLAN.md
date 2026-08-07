@@ -62,19 +62,31 @@ observes the kickoff.
 ## Decisions
 
 1. **Evidence** — baseline-relative `UserPromptSubmit` in
-   `<runDir>/hooks/claude.jsonl`, or strict `sequence` progression on a
-   turn-progress event (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
-   `Notification`, `Stop`); never a bare `state: "working"`. Secondary is
-   Claude's own project transcript version. All comparisons strict, so
-   truncation or rotation reads as no progress.
+   `<runDir>/hooks/claude.jsonl`, or strict `sequence` progression on
+   `PreToolUse` / `PostToolUse`; never a bare `state: "working"`.
+   `Notification` and `Stop` are **excluded**: `hooks/emit.ts::lifecycleState`
+   maps both to `input-required`, so either can fire without proving this
+   kickoff began. Secondary is Claude's own project transcript version, which
+   never confirms alone — only alongside a composer that no longer holds the
+   launcher-owned kickoff. All comparisons strict, so truncation or rotation
+   reads as no progress.
 2. **Provenance, not pattern** — a generic `[Pasted text #N +M lines]` marker
-   identifies nobody. The launcher captures the composer body between its own
-   `paste-buffer` and its own first `Enter`; recovery requires exact equality
-   against that capture. No capture means no recovery.
+   identifies nobody. The composer is verified empty before the paste, the
+   resulting body is captured between the launcher's own `paste-buffer` and its
+   own first `Enter`, and recovery requires exact equality against that capture.
+   No capture means no recovery. The composer classification and the evidence
+   read that authorize the recovery `Enter` must come from **one snapshot**: a
+   stale "owned" classification paired with a fresh "not started" evidence read
+   would authorize an `Enter` into text a human had since typed.
 3. **Version guard** — recovery is exempted only on an **exact** member of a
-   producer-proven-healthy set. No `<=` range: one healthy 2.1.220 capture
-   proves 2.1.220, not every lower build. Unknown and unparseable stay guarded.
-   Confirmation is unconditional.
+   producer-proven-healthy set, and that set ships **empty**. No `<=` range, and
+   no member: the repository's only other Claude fixture,
+   `tests/fixtures/claude-code/2.1.220/dev-channel-preconnect-warning`, records
+   `captureSafety.promptSubmitted: false` and `promptSubmission: false` on every
+   action, so it proves startup-modal handling and not a healthy kickoff.
+   Listing 2.1.220 would have disabled the guard for a build on evidence that
+   does not exist. Every version stays guarded until a real healthy-kickoff
+   capture exists. Confirmation is unconditional.
 4. **Ordering** — submission stays synchronous and unchanged for both panes;
    only the Claude confirmation is awaited afterwards, so a Claude confirmation
    never delays a Codex or OSS kickoff.
@@ -93,7 +105,10 @@ adoption.
 ## Verification approach
 
 Focused module and launcher regressions driven entirely from the checked-in
-producer fixture with `sleep` stubbed, the full per-file suite with failures
-allowlisted **by name** against a measured base, `tsc` error count compared
-against a measured base rather than trusted as green, `bun run build`, an
-isolated zero-survivor smoke, and `scripts/verify.sh`.
+producer fixture with `sleep` stubbed; the governed `scripts/verify.sh` with a
+**required-empty** named baseline allowlist (`scripts/check-baseline-allowlist.py`
+fails if any name remains, so nothing is tolerated); `tsc` error count compared
+against a measured base rather than trusted as green; `bun run build`; and an
+isolated smoke whose zero-survivor check enumerates the exact PIDs its stubs
+recorded and refuses to pass if none were recorded, with that non-vacuity guard
+demonstrated firing on a positive control.

@@ -40,9 +40,12 @@
    - `never submits the kickoff twice once evidence shows the turn started`
    - `fails nonzero when no transcript or hook evidence ever arrives`
    - `cleans up owned startup resources after an unconfirmed kickoff`
+   - `refuses the recovery Enter when the composer turns foreign between reads`
+   - `refuses the recovery Enter when the composer empties between reads`
    Plus unit regressions for `parseClaudeCliVersion` / `resolveKickoffCapability`
-   proving the proven-healthy version keeps the fast path and an unknown newer
-   version defaults to the guarded profile.
+   proving an exact set member keeps the no-recovery path while every non-member,
+   unknown, and unparseable version stays guarded, and a launcher regression
+   asserting the shipped proven-healthy set is empty.
 
 9. **Add `specs/claude-kickoff-submit-guard/verify.md` to the governed verify
    run** and confirm `scripts/verify.sh claude-kickoff-submit-guard` passes.

@@ -146,12 +146,20 @@ const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
 const CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS = 500;
 const CLAUDE_KICKOFF_CONFIRM_MAX_POLLS = 40;
 const CLAUDE_KICKOFF_RECOVERY_MAX_POLLS = 20;
-// Exact versions carrying a checked-in healthy producer fixture. Membership is
-// exact, never a range: one healthy capture proves that build, not every lower
-// one. Everything else, including unknown versions, keeps the recovery guard.
-const CLAUDE_KICKOFF_PROVEN_HEALTHY_VERSIONS: readonly ClaudeCliVersion[] = [
-  { major: 2, minor: 1, patch: 220 },
-];
+// Exact versions with a checked-in producer fixture proving a HEALTHY KICKOFF:
+// a baseline-relative UserPromptSubmit, or a confirmed transcript advance, from
+// that build. Membership is exact, never a range, because one healthy capture
+// proves that build and not every lower one.
+//
+// Deliberately EMPTY. The only other checked-in Claude fixture,
+// tests/fixtures/claude-code/2.1.220/dev-channel-preconnect-warning, records
+// `captureSafety.promptSubmitted: false`, `modelRequestMade: false`, and
+// `promptSubmission: false` on every action: it proves startup-modal handling,
+// not that a kickoff submits. Listing 2.1.220 here would have exempted a build
+// from the recovery guard on evidence that does not exist. Until a real
+// healthy-kickoff capture is produced, every version stays guarded, which is
+// the safe direction.
+const CLAUDE_KICKOFF_PROVEN_HEALTHY_VERSIONS: readonly ClaudeCliVersion[] = [];
 const MAX_LAUNCH_BOOTSTRAP_BYTES = 1024;
 const LAUNCH_CHARTER_DIR = "launch-charters";
 const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
@@ -2848,21 +2856,28 @@ const captureLauncherComposerBody = (
   }
 };
 
-// The composer is read on every poll because the transcript-version signal only
-// confirms alongside a composer that no longer holds the launcher's kickoff.
-const kickoffConfirmedNow = (
+// One atomic read of both signals. The composer is read on every poll because
+// the transcript-version signal only confirms alongside a composer that no
+// longer holds the launcher's kickoff — and because the recovery decision must
+// never mix a stale composer classification with a fresh evidence result.
+const readKickoffSnapshot = (
   deps: KickoffGuardDeps,
   runDir: string,
   pending: PendingKickoffConfirmation
-): boolean =>
-  kickoffTurnStarted(
-    pending.baseline,
-    readClaudeKickoffEvidence(deps, runDir),
-    classifyKickoffComposer({
-      expectedComposerBody: pending.expectedComposerBody,
-      paneText: safeCapturePane(deps, pending.pane),
-    })
-  );
+): { composer: ClaudeKickoffComposerState; started: boolean } => {
+  const composer = classifyKickoffComposer({
+    expectedComposerBody: pending.expectedComposerBody,
+    paneText: safeCapturePane(deps, pending.pane),
+  });
+  return {
+    composer,
+    started: kickoffTurnStarted(
+      pending.baseline,
+      readClaudeKickoffEvidence(deps, runDir),
+      composer
+    ),
+  };
+};
 
 const pollKickoffConfirmed = async (
   deps: KickoffGuardDeps,
@@ -2872,7 +2887,7 @@ const pollKickoffConfirmed = async (
 ): Promise<boolean> => {
   for (let attempt = 0; attempt < polls; attempt += 1) {
     await deps.sleep(CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS);
-    if (kickoffConfirmedNow(deps, runDir, pending)) {
+    if (readKickoffSnapshot(deps, runDir, pending).started) {
       return true;
     }
   }
@@ -2886,7 +2901,7 @@ const confirmClaudeKickoff = async (
   runDir: string,
   pending: PendingKickoffConfirmation
 ): Promise<void> => {
-  const { expectedComposerBody, pane } = pending;
+  const { pane } = pending;
   const rawVersion = deps.claudeCliVersion();
   const version = parseClaudeCliVersion(rawVersion);
   const observedVersion = rawVersion ?? "unknown";
@@ -2909,14 +2924,14 @@ const confirmClaudeKickoff = async (
   let composerState: ClaudeKickoffComposerState = "indeterminate";
   let recoveryAttempted = false;
   if (capability.recoveryAllowed) {
-    composerState = classifyKickoffComposer({
-      expectedComposerBody,
-      paneText: safeCapturePane(deps, pane),
-    });
-    // Re-read immediately before mutating: the turn may have started during
-    // classification, and submitting again would double-send the kickoff.
-    const stillUnstarted = !kickoffConfirmedNow(deps, runDir, pending);
-    if (composerState === "kickoff-owned" && stillUnstarted) {
+    // ONE snapshot decides. Reading the composer and the evidence separately
+    // would let a stale "kickoff-owned" classification authorize an Enter into
+    // a composer a human had since typed into: the fresh evidence read would
+    // still say "not started", and the stale composer read would still say
+    // "ours". Both facts must come from the same instant.
+    const snapshot = readKickoffSnapshot(deps, runDir, pending);
+    composerState = snapshot.composer;
+    if (composerState === "kickoff-owned" && !snapshot.started) {
       recoveryAttempted = true;
       deps.log(
         `[loop] Claude pane "${pane}" kickoff was not confirmed; re-sending Enter once for the launcher-owned composer.`
