@@ -1313,7 +1313,14 @@ const needsEvidenceRecovery = (input: {
 // here. No scope, tool, or authority is widened: this is the same broker, the
 // same capability set, one more turn.
 const evidenceRecoveryPrompt = (broker: UtilityConversationBroker): string => {
-  const tools = broker.describeCapabilities().tools.join(", ");
+  // MUST be `definitions`, not describeCapabilities().tools. For a multi-step
+  // read-plan broker those differ: `definitions` is the CURRENT step, while
+  // describeCapabilities() unions every future step. Naming a future-step tool
+  // would advertise something the helper cannot call on this turn - the same
+  // class of defect as offering an unsatisfiable run_check.
+  const tools = broker.definitions
+    .map((definition) => definition.function.name)
+    .join(", ");
   return [
     "Your previous answer contained no repository tool evidence, so it cannot be accepted.",
     `Call one of the tools available to you now (${tools}) and base your answer on what it returns.`,
@@ -2168,6 +2175,16 @@ class UtilityReadPlanToolBroker implements UtilityConversationBroker {
       tools: [
         ...new Set(capabilities.flatMap((capability) => capability.tools)),
       ],
+      ...(() => {
+        const withheld = [
+          ...new Set(
+            capabilities.flatMap(
+              (capability) => capability.withheldCapabilities ?? []
+            )
+          ),
+        ];
+        return withheld.length > 0 ? { withheldCapabilities: withheld } : {};
+      })(),
       writeScopes: [
         ...new Set(
           capabilities.flatMap((capability) => capability.writeScopes)

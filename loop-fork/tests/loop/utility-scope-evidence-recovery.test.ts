@@ -151,3 +151,86 @@ test("every exposure surface agrees about a withheld run_check", async () => {
     expect(definitionNames.sort()).toEqual([...capabilities.tools].sort());
   });
 });
+
+test("a cwd that becomes a file after broker creation fails closed without running", async () => {
+  // The directory assertion in resolveCommandCwd is a real execution change, not
+  // merely a means to the narrowing, so it is covered on its own terms. It also
+  // pins the drift rule: satisfiability is snapshotted at creation, and later
+  // filesystem drift may only ever fail closed.
+  await withRepo(async (root) => {
+    let ran = 0;
+    // A separate command directory, so only the cwd drifts and the scoped file
+    // argument stays valid. Otherwise the call is rejected earlier, for missing
+    // scoped file paths, and never reaches the cwd check under test.
+    await mkdir(join(root, "work"), { recursive: true });
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["read_file", "run_check"],
+        artifactDir: ".utility-artifacts",
+        commandCwds: ["work"],
+        readScopes: ["scripts"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: () => {
+          ran += 1;
+          return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
+        },
+      }
+    );
+    // Exposed at creation, because "work" was a real directory then.
+    expect(broker.describeCapabilities().tools).toContain("run_check");
+
+    // Drift: the command directory is replaced by a file.
+    await rm(join(root, "work"), { force: true, recursive: true });
+    await writeFile(join(root, "work"), "not a directory\n");
+
+    const denied = await broker.execute({
+      arguments: { argv: ["bun", "test", "scripts/harness.mjs"], cwd: "work" },
+      name: "run_check",
+    });
+    expect(denied.ok).toBe(false);
+    expect(denied.error?.message).toContain("Command cwd is not a directory");
+    // Fails closed BEFORE the command runs.
+    expect(ran).toBe(0);
+  });
+});
+
+test("a withheld run_check reports why, not a generic profile message", async () => {
+  // verify.md item 5: the helper must be told what was withheld and what
+  // remains, so a silently missing tool cannot be invented or retried blind.
+  await withRepo(async (root) => {
+    const broker = await createUtilityToolBroker(
+      {
+        allowedTools: ["read_file", "run_check"],
+        artifactDir: ".utility-artifacts",
+        readScopes: [FILE_SCOPE],
+        repoRoot: root,
+        writeScopes: [FILE_SCOPE],
+      },
+      {
+        runCommand: async () => ({ exitCode: 0, stderr: "", stdout: "" }),
+      }
+    );
+
+    const capabilities = broker.describeCapabilities();
+    expect(capabilities.tools).not.toContain("run_check");
+    // The reason travels in the helper-visible capsule.
+    const withheld = (capabilities.withheldCapabilities ?? []).join(" ");
+    expect(withheld).toContain("run_check");
+    expect(withheld).toContain("no cwd could satisfy it");
+    expect(withheld).toContain("read_file");
+
+    // And a helper that tries it anyway gets the concrete reason.
+    const denied = await broker.execute({
+      arguments: { argv: ["bun", "test"] },
+      name: "run_check",
+    });
+    expect(denied.ok).toBe(false);
+    expect(denied.error?.message).toContain("no cwd could satisfy it");
+    expect(denied.error?.message).not.toBe(
+      "Tool is outside this request's execution profile: run_check"
+    );
+  });
+});

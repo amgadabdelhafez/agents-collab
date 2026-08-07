@@ -86,6 +86,10 @@ export interface UtilityBrokerCapabilities {
   commandPrefixes: string[][];
   readScopes: string[];
   tools: UtilityToolName[];
+  // Helper-visible reasons for any capability withheld at broker creation, so
+  // the first-turn capsule can say what is gone and why rather than leaving a
+  // silent hole the model may try to fill.
+  withheldCapabilities?: string[];
   writeScopes: string[];
 }
 
@@ -1238,6 +1242,7 @@ export class UtilityToolBroker {
   // after create() returns.
   definitions: readonly UtilityToolDefinition[];
   private allowedTools: ReadonlySet<UtilityToolName>;
+  private withheldCapabilities: readonly string[] = [];
   private readonly artifactDir: string;
   private readonly commandAllowlist: readonly UtilityCommandPolicy[];
   private readonly commandCwds: readonly string[];
@@ -1325,6 +1330,8 @@ export class UtilityToolBroker {
 
   describeCapabilities(): UtilityBrokerCapabilities {
     const tools = this.definitions.map((tool) => tool.function.name);
+    const withheldCapabilities = [...this.withheldCapabilities];
+
     let commandPrefixes: string[][] = [];
     if (this.allowedTools.has("run_check")) {
       commandPrefixes = this.exactCommand
@@ -1364,6 +1371,7 @@ export class UtilityToolBroker {
       commandPrefixes,
       readScopes: [...this.readScopes],
       tools,
+      ...(withheldCapabilities.length > 0 ? { withheldCapabilities } : {}),
       writeScopes: [...this.writeScopes],
     };
   }
@@ -1726,6 +1734,17 @@ export class UtilityToolBroker {
     this.definitions = UTILITY_TOOL_DEFINITIONS.filter((tool) =>
       narrowed.has(tool.function.name)
     );
+    // Helper-visible, not just internal. A tool that silently vanishes invites
+    // the model to invent it; saying why it is gone, and what remains, is what
+    // stops the run-151 rejection loop from being rediscovered by trial.
+    this.withheldCapabilities = [
+      `run_check is unavailable for this request: none of its declared command directories (${this.commandCwds.join(", ") || "none"}) resolves to an existing directory, so no cwd could satisfy it. Use ${this.definitions.map((tool) => tool.function.name).join(", ") || "the remaining tools"} instead, and do not attempt run_check.`,
+    ];
+  }
+
+  // Empty unless a capability was withheld at broker creation.
+  withheldCapabilityGuidance(): readonly string[] {
+    return this.withheldCapabilities;
   }
 
   private async validateConfiguration(): Promise<void> {
@@ -1799,9 +1818,16 @@ export class UtilityToolBroker {
     call: UtilityToolCall
   ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
     if (!this.allowedTools.has(call.name)) {
+      // A capability withheld as unsatisfiable gets the concrete reason rather
+      // than the generic profile message, so a helper that tries it anyway
+      // learns why instead of retrying blind.
+      const withheld = this.withheldCapabilities.find((reason) =>
+        reason.startsWith(`${call.name} `)
+      );
       throw new ToolPolicyError(
         "tool_denied",
-        `Tool is outside this request's execution profile: ${call.name}`
+        withheld ??
+          `Tool is outside this request's execution profile: ${call.name}`
       );
     }
     switch (call.name) {

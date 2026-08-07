@@ -222,10 +222,37 @@ test("CONTEXT_INSUFFICIENT receives no recovery turn", async () => {
   );
 });
 
-test("the recovery prompt names exposed tools and never a withheld run_check", async () => {
-  // Codex's point: prove this in a test, not by construction. The prompt is
-  // built from describeCapabilities().tools, so a tool withheld as
-  // unsatisfiable cannot appear - but that must be observable.
+// Pull the recovery instruction out of the request body directly. The earlier
+// version of this test searched JSON.stringify(body), where every offered tool
+// name already appears inside the `tools` definitions - so it passed no matter
+// what the prompt said. Codex caught that; this reads the appended user message.
+// Pi sends message content as structured parts, not a bare string, so the
+// content is serialized before matching. Discovered only once this assertion
+// stopped being vacuous.
+const contentText = (content: unknown): string =>
+  typeof content === "string" ? content : JSON.stringify(content ?? "");
+
+const recoveryMessageOf = (
+  body: Record<string, unknown>
+): string | undefined => {
+  const messages = (body.messages ?? []) as {
+    content?: unknown;
+    role?: string;
+  }[];
+  const match = messages.find(
+    (message) =>
+      message.role === "user" &&
+      contentText(message.content).includes("no repository tool evidence")
+  );
+  return match ? contentText(match.content) : undefined;
+};
+
+const offeredToolNames = (body: Record<string, unknown>): string[] =>
+  ((body.tools ?? []) as { function?: { name?: string } }[])
+    .map((tool) => tool.function?.name)
+    .filter((name): name is string => typeof name === "string");
+
+test("the recovery prompt names the currently exposed tools", async () => {
   await withNannyJob(
     (bodies) => {
       if (bodies.length === 1) {
@@ -238,31 +265,25 @@ test("the recovery prompt names exposed tools and never a withheld run_check", a
     },
     ({ bodies }) => {
       expect(bodies).toHaveLength(3);
-      const recoveryBody = JSON.stringify(bodies[1]);
-      const offered = JSON.parse(JSON.stringify(bodies[0]?.tools ?? [])) as {
-        function?: { name?: string };
-      }[];
-      const offeredNames = offered
-        .map((tool) => tool.function?.name)
-        .filter((name): name is string => typeof name === "string");
-      expect(offeredNames.length).toBeGreaterThan(0);
-      // The recovery instruction must name at least one genuinely exposed tool.
-      expect(offeredNames.some((name) => recoveryBody.includes(name))).toBe(
-        true
-      );
-      // And must never advertise a tool the broker withheld for this job.
-      if (!offeredNames.includes("run_check")) {
-        const recoveryPromptText = recoveryBody.slice(
-          recoveryBody.indexOf("no repository tool evidence")
-        );
-        expect(recoveryPromptText).not.toContain("run_check");
+      const recovery = recoveryMessageOf(bodies[1] as Record<string, unknown>);
+      // The message must exist at all - absence of evidence must fail.
+      expect(recovery).toBeDefined();
+      const prompt = recovery ?? "";
+      const offered = offeredToolNames(bodies[0] as Record<string, unknown>);
+      expect(offered.length).toBeGreaterThan(0);
+      // Every currently offered tool is named in the instruction itself.
+      for (const name of offered) {
+        expect(prompt).toContain(name);
+      }
+      // And a tool the broker did not offer is never advertised.
+      if (!offered.includes("run_check")) {
+        expect(prompt).not.toContain("run_check");
       }
     }
   );
 });
 
-test("the recovery turn reuses the same context and authority state", async () => {
-  // No new broker, capsule, scope, or authority may appear on the second turn.
+test("the recovery turn reuses the same capsule, scopes, and authority", async () => {
   await withNannyJob(
     (bodies) => {
       if (bodies.length === 1) {
@@ -277,26 +298,32 @@ test("the recovery turn reuses the same context and authority state", async () =
       expect(bodies).toHaveLength(3);
       const original = bodies[0] as Record<string, unknown>;
       const recovery = bodies[1] as Record<string, unknown>;
-      // Identical tool definitions, byte for byte.
       expect(JSON.stringify(recovery.tools)).toBe(
         JSON.stringify(original.tools)
       );
-      // Identical system context: same capsule, same declared scopes, same
-      // authority framing. The recovery turn appends, it does not re-seed.
-      const systemOf = (body: Record<string, unknown>): string => {
-        const messages = (body.messages ?? []) as {
-          content?: unknown;
-          role?: string;
-        }[];
-        return JSON.stringify(
-          messages.filter((message) => message.role === "system")
-        );
-      };
-      expect(systemOf(recovery)).toBe(systemOf(original));
-      // The recovery turn is a continuation: it carries strictly more messages.
-      const countOf = (body: Record<string, unknown>): number =>
-        ((body.messages ?? []) as unknown[]).length;
-      expect(countOf(recovery)).toBeGreaterThan(countOf(original));
+      // The capsule, declared scopes, and authority live in the USER context
+      // message, not the system message, so comparing system roles alone proved
+      // nothing. Require the original message array to be an exact PREFIX of the
+      // recovery request: same capsule bytes, nothing rewritten.
+      const messagesOf = (
+        body: Record<string, unknown>
+      ): { content?: unknown; role?: string }[] =>
+        (body.messages ?? []) as { content?: unknown; role?: string }[];
+      const before = messagesOf(original);
+      const after = messagesOf(recovery);
+      expect(after.length).toBeGreaterThan(before.length);
+      expect(JSON.stringify(after.slice(0, before.length))).toBe(
+        JSON.stringify(before)
+      );
+      // The only additions are the first assistant completion and the recovery
+      // instruction: no new system framing, no re-seeded context.
+      const appended = after.slice(before.length);
+      expect(appended).toHaveLength(2);
+      expect(appended[0]?.role).toBe("assistant");
+      expect(appended[1]?.role).toBe("user");
+      expect(contentText(appended[1]?.content)).toContain(
+        "no repository tool evidence"
+      );
     }
   );
 });
