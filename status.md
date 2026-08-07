@@ -310,6 +310,14 @@ this change, 0 of them in the touched source files.
 Implementation, verification, and both review cycles are done. The branch is
 committed and held at the review gate.
 
+## Merged closeout note
+
+The approved utility scope/evidence recovery candidate `6dec6fe3b61cd3c1555b2c7036bfa90468f1a141`
+and its evidence tip `435cc4c32765b5a40eac00d02937adf1a2a085cb` were merged
+with the kickoff guard under the supervisor's double-CONCUR disposition. The
+utility source, tests, specs, and run artifacts are present in this merged
+tree; the pre-merge main reference is `backup/pre-merge-main-20260807`.
+
 1. **Supervisor:** rule on the prohibited `bun install` disclosed above. Codex
    has stated it cannot issue a release PASS without that disposition.
 2. **Codex:** exact-SHA re-review of the current head. The four technical
