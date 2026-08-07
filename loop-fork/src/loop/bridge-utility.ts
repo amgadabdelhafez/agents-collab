@@ -206,7 +206,7 @@ export const UTILITY_BRIDGE_TOOLS = [
         },
         objective: { minLength: 1, type: "string" },
         requester: {
-          enum: ["claude", "codex", "gemini", "cursor", "copilot"],
+          enum: ["claude", "codex", "oss"],
           type: "string",
         },
         review_mode: {
@@ -1013,9 +1013,7 @@ const routeTask = (
     source === "supervisor" &&
     (delegatedRequester === "claude" ||
       delegatedRequester === "codex" ||
-      delegatedRequester === "gemini" ||
-      delegatedRequester === "cursor" ||
-      delegatedRequester === "copilot")
+      delegatedRequester === "oss")
       ? delegatedRequester
       : source;
   if (requester === "supervisor") {

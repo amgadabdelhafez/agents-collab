@@ -1,0 +1,55 @@
+# Quarantine manifest — run 8 recovery (incident 6b0c37a8-2ead-485c-a6b4-46e10c51c560)
+# Generated bridge-config debris from retired seats; preserved as evidence, not committed.
+# quarantine location: /private/tmp/claude-501/-private-tmp-agents-collab-glm-full-agent/7598f1f9-fa3d-4ede-bf95-407b66b89ad5/scratchpad/quarantine-run8
+
+--- .cursor/mcp.json ---
+sha256: 7ef5f6efc89170fd31fc694b844afb714249bfd8da39b8ec029097dd13230bf3  bytes: 248
+{
+  "mcpServers": {
+    "loop-bridge": {
+      "args": [
+        "__bridge-mcp",
+        "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/7",
+        "cursor"
+      ],
+      "command": "/private/tmp/loop-base",
+      "type": "stdio"
+    }
+  }
+}
+
+--- .gemini/settings.json ---
+sha256: 287d951031c186204906e647e091cb7f382f7ccce904a8dacfce57c323ef4c26  bytes: 248
+{
+  "mcpServers": {
+    "loop-bridge": {
+      "args": [
+        "__bridge-mcp",
+        "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/7",
+        "gemini"
+      ],
+      "command": "/private/tmp/loop-base",
+      "type": "stdio"
+    }
+  }
+}
+
+--- .github/copilot/mcp.json ---
+sha256: 783c2ca7a4f4183d4422bd81b8d34ae8cd115e920004616634a1d785593fbb77  bytes: 249
+{
+  "mcpServers": {
+    "loop-bridge": {
+      "args": [
+        "__bridge-mcp",
+        "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/7",
+        "copilot"
+      ],
+      "command": "/private/tmp/loop-base",
+      "type": "stdio"
+    }
+  }
+}
+
+--- .loop/ (left in place: live run may write utility artifacts) ---
+dd46009c74eb2b4fe9794a84c6c38e45221ccb3b2e557fbb8952fd3773bf4961  .loop/utility-artifacts/7efb4726-2964-4f3c-8844-2364a9676bcf/f96f9c0c-6e45-47c1-b44f-1a87a5b129f9.json
+d6a44972bdae25b40f1afb19b423cc3029ef0453baca8223c05be83d1383b635  .loop/utility-artifacts/7efb4726-2964-4f3c-8844-2364a9676bcf/f96f9c0c-6e45-47c1-b44f-1a87a5b129f9.patch

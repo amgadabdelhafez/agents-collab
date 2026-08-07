@@ -125,11 +125,11 @@ const currentRunBase = (
 const makePairedOptions = (overrides: Partial<Options> = {}): Options => ({
   agent: "codex",
   codexModel: "test-model",
-  cursorModel: "cursor-test-model",
   doneSignal: "<done/>",
   format: "raw",
-  geminiModel: "gemini-test-model",
   maxIterations: 1,
+  ossConfigDir: "/tmp/loop-oss-config",
+  ossModel: "openrouter/z-ai/glm-5.2",
   pairedMode: true,
   proof: "verify with tests",
   review: "claudex",
@@ -1298,7 +1298,7 @@ test("governed layout preserves legacy numeric fallbacks without tmux stdout", a
     transcriptPath: join(runDir, "transcript.jsonl"),
   };
   const opts = makePairedOptions({
-    agent: "gemini",
+    agent: "oss",
     governess: true,
     governessCooldownSeconds: 300,
     governessHeight: "25%",
@@ -1306,14 +1306,14 @@ test("governed layout preserves legacy numeric fallbacks without tmux stdout", a
     governessMaxRecoveries: 3,
     governessModel: "qwen-test",
     governessUrl: "http://127.0.0.1:8082",
-    pairWith: "cursor",
+    pairWith: "claude",
   });
 
   try {
     const delegated = await runInTmux(
-      ["--tmux", "--governess", "--pair-with", "cursor"],
+      ["--tmux", "--governess", "--pair-with", "claude"],
       {
-        capturePane: () => "",
+        capturePane: () => "\u276f ",
         cwd: repoDir,
         env: {},
         findBinary: () => true,
@@ -1354,7 +1354,7 @@ test("governed layout preserves legacy numeric fallbacks without tmux stdout", a
   }
 });
 
-test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
+test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () => {
   const calls: string[][] = [];
   const proxyCalls: Array<{
     remoteUrl: string;
@@ -1375,7 +1375,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
     runId: "1",
     status: "running",
   });
-  const opts = makePairedOptions({ pairWith: "cursor" });
+  const opts = makePairedOptions({ pairWith: "oss" });
   const codexMcpConfigArgs = ["-c", 'mcp_servers.loop-bridge.command="loop"'];
   const codexRemoteUrl = "ws://127.0.0.1:4500";
   const codexProxyUrl = "ws://127.0.0.1:4600/";
@@ -1389,7 +1389,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
   };
 
   const delegated = await runInTmux(
-    ["--tmux", "--proof", "verify with tests", "--pair-with", "cursor"],
+    ["--tmux", "--proof", "verify with tests", "--pair-with", "oss"],
     {
       cwd: "/repo",
       env: {},
@@ -1437,14 +1437,17 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
   );
 
   const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=1"];
-  const cursorCommand = tmuxInternals.buildShellCommand([
+  // Both panes share one tmux env list; the OSS config dir is a path, inert for
+  // the Codex pane, and carries no credential.
+  const ossEnv = [...env, "OPENCODE_CONFIG_DIR=/tmp/loop-oss-config"];
+  const ossCommand = tmuxInternals.buildShellCommand([
     "env",
-    ...env,
-    ...tmuxInternals.buildCursorCommand("cursor-test-model"),
+    ...ossEnv,
+    ...tmuxInternals.buildOssCommand("openrouter/z-ai/glm-5.2"),
   ]);
   const codexCommand = tmuxInternals.buildShellCommand([
     "env",
-    ...env,
+    ...ossEnv,
     ...tmuxInternals.buildCodexCommand(
       codexProxyUrl,
       "test-model",
@@ -1478,7 +1481,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
     "repo-loop-1",
     "-c",
     "/repo",
-    cursorCommand,
+    ossCommand,
   ]);
   expect(calls).toContainEqual([
     "tmux",
@@ -1500,7 +1503,7 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
     "-d",
     "-p",
     "-b",
-    "repo-loop-1-cursor-launch",
+    "repo-loop-1-oss-launch",
     "-t",
     "repo-loop-1:0.0",
   ]);
@@ -1518,164 +1521,8 @@ test("runInTmux starts paired tmux panes for Cursor and Codex", async () => {
   expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
   expect(manifest.codexThreadId).toBe("codex-thread-1");
   expect(manifest.tmuxSession).toBe("repo-loop-1");
-  expect(manifest.tmuxPaneLeftAgent).toBe("cursor");
+  expect(manifest.tmuxPaneLeftAgent).toBe("oss");
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
-});
-
-test("runInTmux starts paired tmux panes for Gemini and Cursor without persistent transports", async () => {
-  const calls: string[][] = [];
-  const proxyCalls: string[] = [];
-  const startCalls: string[] = [];
-  let sessionStarted = false;
-  let manifestAtTmuxCreate: RunManifest | undefined;
-  let manifest = createRunManifest({
-    cwd: "/repo",
-    mode: "paired",
-    pid: 1234,
-    repoId: "repo-123",
-    runId: "1",
-    status: "running",
-  });
-  const opts = makePairedOptions({ agent: "gemini", pairWith: "cursor" });
-  const storage = {
-    manifestPath: "/repo/.loop/runs/1/manifest.json",
-    repoId: "repo-123",
-    runDir: makeTempRunDir(),
-    runId: "1",
-    storageRoot: "/repo/.loop/runs",
-    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
-  };
-
-  const delegated = await runInTmux(
-    [
-      "--tmux",
-      "--proof",
-      "verify with tests",
-      "--agent",
-      "gemini",
-      "--pair-with",
-      "cursor",
-    ],
-    {
-      cwd: "/repo",
-      env: {},
-      findBinary: () => true,
-      getTerminalSize: () => ({ columns: 0, rows: -1 }),
-      isInteractive: () => false,
-      launchArgv: ["bun", "/repo/src/cli.ts"],
-      log: (): void => undefined,
-      preparePairedRun: () => ({ manifest, storage }),
-      sleep: () => Promise.resolve(),
-      startCodexProxy: () => {
-        proxyCalls.push("codex");
-        return Promise.resolve("ws://127.0.0.1:4600/");
-      },
-      startPersistentAgentSession: (agent) => {
-        startCalls.push(agent);
-        return Promise.resolve(undefined);
-      },
-      spawn: (args: string[]) => {
-        calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
-          return sessionStarted
-            ? { exitCode: 0, stderr: "" }
-            : { exitCode: 1, stderr: "session not found" };
-        }
-        if (args[0] === "tmux" && args[1] === "new-session") {
-          manifestAtTmuxCreate = structuredClone(manifest);
-          sessionStarted = true;
-        }
-        return { exitCode: 0, stderr: "" };
-      },
-      updateRunManifest: (_path, update) => {
-        manifest = update(manifest) ?? manifest;
-        return manifest;
-      },
-    },
-    { opts, task: "Ship feature" }
-  );
-
-  const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=1"];
-  const geminiCommand = tmuxInternals.buildShellCommand([
-    "env",
-    ...env,
-    ...tmuxInternals.buildGeminiCommand("gemini-test-model"),
-  ]);
-  const cursorCommand = tmuxInternals.buildShellCommand([
-    "env",
-    ...env,
-    ...tmuxInternals.buildCursorCommand("cursor-test-model"),
-  ]);
-
-  expect(delegated).toBe(true);
-  expect(startCalls).toEqual([]);
-  expect(proxyCalls).toEqual([]);
-  expect(manifestAtTmuxCreate).toMatchObject({
-    cwd: "/repo",
-    mode: "paired",
-    pid: process.pid,
-    primaryAgent: "gemini",
-    tmuxPaneLeftAgent: "gemini",
-    tmuxPaneRightAgent: "cursor",
-    tmuxSession: "repo-loop-1",
-  });
-  expect(calls).toContainEqual([
-    "tmux",
-    "new-session",
-    "-d",
-    "-P",
-    "-F",
-    "#{pane_id}",
-    "-x",
-    "220",
-    "-y",
-    "60",
-    "-s",
-    "repo-loop-1",
-    "-c",
-    "/repo",
-    geminiCommand,
-  ]);
-  expect(calls).toContainEqual([
-    "tmux",
-    "split-window",
-    "-h",
-    "-P",
-    "-F",
-    "#{pane_id}",
-    "-t",
-    "repo-loop-1:0.0",
-    "-c",
-    "/repo",
-    cursorCommand,
-  ]);
-  expect(calls.filter((call) => call[1] === "load-buffer")).toHaveLength(2);
-  expect(calls).toContainEqual([
-    "tmux",
-    "paste-buffer",
-    "-d",
-    "-p",
-    "-b",
-    "repo-loop-1-gemini-launch",
-    "-t",
-    "repo-loop-1:0.0",
-  ]);
-  expect(calls).toContainEqual([
-    "tmux",
-    "paste-buffer",
-    "-d",
-    "-p",
-    "-b",
-    "repo-loop-1-cursor-launch",
-    "-t",
-    "repo-loop-1:0.1",
-  ]);
-  expect(manifest.claudeSessionId).toBe("");
-  expect(manifest.codexRemoteUrl).toBeUndefined();
-  expect(manifest.codexThreadId).toBe("");
-  expect(manifest.tmuxSession).toBe("repo-loop-1");
-  expect(manifest.tmuxPaneLeftAgent).toBe("gemini");
-  expect(manifest.tmuxPaneRightAgent).toBe("cursor");
 });
 
 test("runInTmux releases local codex app-server handles after paired handoff", async () => {

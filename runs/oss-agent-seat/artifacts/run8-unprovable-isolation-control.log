@@ -1,0 +1,13 @@
+oss-agent-seat smoke: harness evals/smoke/oss-agent-seat.sh sha256=de70cfc31a4e635375b6b5aea52e98c9780c663d9c5688947c5c8a4027c457a1
+oss-agent-seat smoke: binary /usr/bin/true sha256=a73efca930c2adb1f52eef0d1d3b17d375ee40290fc796653c91c33abf381938
+--- isolation instrument check ---
+oss-agent-seat smoke: ABORT - no stub was invoked with run state under the sandbox HOME (/private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/oss-agent-seat-smoke-52302-86a200ba.kNEkMv/home). Isolation is unproven, so launch-shaped probes are refused. Nothing further ran.
+recorded stub invocations:
+--- teardown: producer-backed survivor proof ---
+  ok: 0 of 1 probe process groups have surviving sandbox-owned members
+  ok: 0 of 0 recorded stub processes survived
+  ok: no process carries marker oss-agent-seat-smoke-52302-86a200ba in its argv
+  ok: no run state under /Users/amgad/.loop/runs for this smoke's repo id
+  ok: auto-update throttle sentinel intact; no update check ran
+  ok: no staged update binary was downloaded
+  ok: sandbox removed (/private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/oss-agent-seat-smoke-52302-86a200ba.kNEkMv)

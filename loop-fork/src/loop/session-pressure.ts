@@ -292,13 +292,7 @@ export const highestSessionPressure = (
     (left, right) => PHASE_RANK[right.phase] - PHASE_RANK[left.phase]
   )[0];
 
-const AGENTS = new Set<Agent>([
-  "claude",
-  "codex",
-  "copilot",
-  "cursor",
-  "gemini",
-]);
+const AGENTS = new Set<Agent>(["claude", "codex", "oss"]);
 const PHASES = new Set<SessionPressurePhase>([
   "handoff",
   "hard-ceiling",

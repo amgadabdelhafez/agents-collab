@@ -2446,7 +2446,7 @@ test("bridge MCP send_message rejects an unknown normalized target", async () =>
     error: {
       code: -32_602,
       message:
-        'Unknown target "foo" - expected one of "claude", "codex", "gemini", "cursor", "copilot", or "supervisor"',
+        'Unknown target "foo" - expected one of "claude", "codex", "oss", or "supervisor"',
     },
     id: 1,
     jsonrpc: "2.0",
@@ -2527,7 +2527,7 @@ test("bridge MCP send_message rejects a valid agent absent from declared topolog
       params: {
         arguments: {
           message: "KIND=BASELINE_READY",
-          target: "gemini",
+          target: "oss",
           type: "escalation",
         },
         name: "send_message",
@@ -2540,7 +2540,7 @@ test("bridge MCP send_message rejects a valid agent absent from declared topolog
     error: {
       code: -32_602,
       message:
-        'Target "gemini" is not part of this run\'s declared agent topology',
+        'Target "oss" is not part of this run\'s declared agent topology',
     },
     id: 1,
     jsonrpc: "2.0",
@@ -3579,7 +3579,7 @@ test("bridge does not fall back positionally when persisted pane roles are missi
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge drains pending cursor tmux messages through the stored pane routing", async () => {
+test("bridge drains pending oss tmux messages through the stored pane routing", async () => {
   let loadedText = "";
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
@@ -3615,7 +3615,7 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
       repoId: "repo-123",
       runId: "8",
       status: "running",
-      tmuxPaneLeftAgent: "cursor",
+      tmuxPaneLeftAgent: "oss",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
       updatedAt: "2026-03-23T10:00:00.000Z",
@@ -3624,12 +3624,12 @@ test("bridge drains pending cursor tmux messages through the stored pane routing
   );
   bridge.bridgeInternals.appendBridgeEvent(runDir, {
     at: "2026-03-23T10:01:00.000Z",
-    id: "msg-cursor-1",
+    id: "msg-oss-1",
     kind: "message",
     message:
       "Please review the current diff and send notes back through the bridge.",
     source: "codex",
-    target: "cursor",
+    target: "oss",
   });
 
   const delivered = await bridge.drainTmuxBridgeMessages(runDir);
@@ -3705,7 +3705,7 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
     id: "msg-claude-tmux-1",
     kind: "message",
     message: "Stop and review the supervisor ruling.",
-    source: "gemini",
+    source: "oss",
     target: "claude",
   });
 
@@ -4856,7 +4856,7 @@ test("Claude channel stays active when the live tmux pair has no Claude pane", a
       runId: "8",
       state: "working",
       status: "running",
-      tmuxPaneLeftAgent: "gemini",
+      tmuxPaneLeftAgent: "oss",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
       updatedAt: "2026-03-23T10:00:00.000Z",
@@ -5366,7 +5366,7 @@ test("dispatchBridgeMessage formats accepted status with the target name", async
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge MCP send_message normalizes copilot as a valid target", async () => {
+test("bridge MCP send_message normalizes oss as a valid target", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -5383,7 +5383,7 @@ test("bridge MCP send_message normalizes copilot as a valid target", async () =>
         params: {
           arguments: {
             message: "please review",
-            target: "  COPILOT  ",
+            target: "  OSS  ",
           },
           name: "send_message",
         },
@@ -5399,25 +5399,21 @@ test("bridge MCP send_message normalizes copilot as a valid target", async () =>
     expect.objectContaining({
       message: "please review",
       source: "claude",
-      target: "copilot",
+      target: "oss",
     }),
   ]);
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge queues cross-agent messages for all non-Claude/Codex pairs", async () => {
+test("bridge queues cross-agent messages for every Claude/Codex to OSS pair", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
 
   const pairs: Array<{ source: "claude" | "codex"; target: string }> = [
-    { source: "claude", target: "copilot" },
-    { source: "claude", target: "gemini" },
-    { source: "claude", target: "cursor" },
-    { source: "codex", target: "copilot" },
-    { source: "codex", target: "gemini" },
-    { source: "codex", target: "cursor" },
+    { source: "claude", target: "oss" },
+    { source: "codex", target: "oss" },
   ];
 
   for (const { source, target } of pairs) {
@@ -5460,27 +5456,7 @@ test("bridge queues cross-agent messages for all non-Claude/Codex pairs", async 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge config injection writes copilot config to .github/copilot/mcp.json", async () => {
-  const bridge = await loadBridge();
-  const root = makeTempDir();
-  const runDir = join(root, "run");
-  const projectDir = join(root, "project");
-  mkdirSync(runDir, { recursive: true });
-  mkdirSync(projectDir, { recursive: true });
-
-  bridge.injectProjectBridgeConfig(projectDir, runDir, "copilot");
-
-  const configPath = join(projectDir, ".github", "copilot", "mcp.json");
-  const config = JSON.parse(readFileSync(configPath, "utf8"));
-  expect(config.mcpServers).toBeDefined();
-  expect(config.mcpServers[bridge.BRIDGE_SERVER]).toBeDefined();
-  expect(config.mcpServers[bridge.BRIDGE_SERVER].type).toBe("stdio");
-  expect(config.mcpServers[bridge.BRIDGE_SERVER].args).toContain("copilot");
-
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("bridge pending count includes copilot messages", async () => {
+test("bridge pending count includes oss messages", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -5491,23 +5467,23 @@ test("bridge pending count includes copilot messages", async () => {
     bridgeFile,
     `${JSON.stringify({
       at: "2026-03-22T10:00:00.000Z",
-      id: "msg-copilot-1",
+      id: "msg-oss-1",
       kind: "message",
       message: "review this",
       source: "claude",
-      target: "copilot",
+      target: "oss",
     })}\n`,
     "utf8"
   );
 
   const status = bridge.readBridgeStatus(runDir);
-  expect(status.pending.copilot).toBe(1);
+  expect(status.pending.oss).toBe(1);
   expect(status.pending.claude).toBe(0);
 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("bridge drains pending copilot tmux messages through stored pane routing", async () => {
+test("bridge drains pending oss tmux messages through stored pane routing", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -5539,7 +5515,7 @@ test("bridge drains pending copilot tmux messages through stored pane routing", 
       repoId: "repo-123",
       runId: "8",
       status: "running",
-      tmuxPaneLeftAgent: "copilot",
+      tmuxPaneLeftAgent: "oss",
       tmuxPaneRightAgent: "claude",
       tmuxSession: "repo-loop-8",
       updatedAt: "2026-03-23T10:00:00.000Z",
@@ -5548,11 +5524,11 @@ test("bridge drains pending copilot tmux messages through stored pane routing", 
   );
   bridge.bridgeInternals.appendBridgeEvent(runDir, {
     at: "2026-03-23T10:01:00.000Z",
-    id: "msg-copilot-tmux-1",
+    id: "msg-oss-tmux-1",
     kind: "message",
     message: "Please review the latest changes.",
     source: "claude",
-    target: "copilot",
+    target: "oss",
   });
 
   const delivered = await bridge.drainTmuxBridgeMessages(runDir);

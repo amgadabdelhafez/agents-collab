@@ -1,0 +1,77 @@
+oss-agent-seat smoke: harness evals/smoke/oss-agent-seat.sh sha256=de70cfc31a4e635375b6b5aea52e98c9780c663d9c5688947c5c8a4027c457a1
+oss-agent-seat smoke: binary /private/tmp/agents-collab-glm-full-agent/loop-fork/loop sha256=bb2839af0cac35bb2db8ecb040a9214cd69577df1c16c3a19facb73b0ee7b9c7
+--- isolation instrument check ---
+  ok: the launcher resolved run storage into the sandbox HOME
+  ok: real storage root /Users/amgad/.loop/runs gained nothing for this repo id
+--- the OSS seat launches OpenCode with the documented contract ---
+  ok: opencode argv carries run
+  ok: opencode argv carries --format json
+  ok: opencode argv carries openrouter/z-ai/glm-5.2
+--- an overridden OSS model reaches OpenCode unrewritten ---
+  ok: arbitrary model id reaches opencode verbatim: self-hosted.vllm/Org_Name/Model-v2.1:awq@2026-01
+--- help advertises the OSS seat ---
+  ok: help mentions --oss-only
+  ok: help mentions --oss-model
+  ok: help mentions --oss-reviewer-model
+  ok: help mentions oss-loop
+  ok: help mentions openrouter/z-ai/glm-5.2
+  ok: help mentions LOOP_OSS_RELEASE_AUTHORITY
+--- help no longer advertises retired seats ---
+  ok: help omits retired --gemini-only
+  ok: help omits retired --cursor-only
+  ok: help omits retired --copilot-only
+  ok: help omits retired --gemini-model
+  ok: help omits retired --cursor-model
+  ok: help omits retired --copilot-model
+  ok: help omits retired gemini-loop
+  ok: help omits retired cursor-loop
+  ok: help omits retired copilot-loop
+--- retired flags fail closed naming oss ---
+  ok: --gemini-only fails closed naming oss (exit 1)
+  ok: --cursor-only fails closed naming oss (exit 1)
+  ok: --copilot-only fails closed naming oss (exit 1)
+--- retired model flags fail closed ---
+  ok: --gemini-model fails closed (exit 1)
+  ok: --cursor-model fails closed (exit 1)
+  ok: --copilot-model fails closed (exit 1)
+  ok: --gemini-reviewer-model fails closed (exit 1)
+  ok: --cursor-reviewer-model fails closed (exit 1)
+  ok: --copilot-reviewer-model fails closed (exit 1)
+--- retired agent values fail closed ---
+  ok: --agent gemini fails closed (exit 1)
+  ok: --agent cursor fails closed (exit 1)
+  ok: --agent copilot fails closed (exit 1)
+  ok: --pair-with gemini fails closed (exit 1)
+  ok: --pair-with cursor fails closed (exit 1)
+  ok: --pair-with copilot fails closed (exit 1)
+  ok: --reviewer gemini fails closed (exit 1)
+  ok: --reviewer cursor fails closed (exit 1)
+  ok: --reviewer copilot fails closed (exit 1)
+  ok: --review gemini fails closed (exit 1)
+  ok: --review cursor fails closed (exit 1)
+  ok: --review copilot fails closed (exit 1)
+  ok: --review-plan gemini fails closed (exit 1)
+  ok: --review-plan cursor fails closed (exit 1)
+  ok: --review-plan copilot fails closed (exit 1)
+--- bridge source topology names oss and omits retired seats ---
+  ok: bridge usage lists claude|codex|oss|supervisor
+  ok: bridge usage omits retired gemini
+  ok: bridge usage omits retired cursor
+  ok: bridge usage omits retired copilot
+  ok: hook usage lists claude|codex|oss
+--- an arbitrary provider/model id is accepted verbatim ---
+  ok: model identifier accepted verbatim: openrouter/z-ai/glm-5.2
+  ok: model identifier accepted verbatim: ollama/qwen3-coder:480b
+  ok: model identifier accepted verbatim: self-hosted.vllm/Org_Name/Model-v2.1:awq@2026-01
+  ok: an empty --oss-model fails closed (exit 1)
+
+oss-agent-seat smoke: 34 probe(s), cap 96
+oss-agent-seat smoke: all checks passed against bb2839af0cac35bb2db8ecb040a9214cd69577df1c16c3a19facb73b0ee7b9c7
+--- teardown: producer-backed survivor proof ---
+  ok: 0 of 34 probe process groups have surviving sandbox-owned members
+  ok: 0 of 62 recorded stub processes survived
+  ok: no process carries marker oss-agent-seat-smoke-42912-5f16b0b8 in its argv
+  ok: no run state under /Users/amgad/.loop/runs for this smoke's repo id
+  ok: auto-update throttle sentinel intact; no update check ran
+  ok: no staged update binary was downloaded
+  ok: sandbox removed (/private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/oss-agent-seat-smoke-42912-5f16b0b8.1MOiqi)

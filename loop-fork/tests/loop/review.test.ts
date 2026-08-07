@@ -59,6 +59,7 @@ test("runReview approves only when final line is a valid pass signal", async () 
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -77,6 +78,7 @@ test("runReview accepts quoted final signal and ignores non-final review lines",
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -95,6 +97,7 @@ test("runReview accepts final signal with surrounding whitespace", async () => {
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -116,6 +119,7 @@ test("runReview accepts final signal from combined output with trailing blank li
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -150,6 +154,7 @@ test("runReview accepts quoted final fail with whitespace-only body", async () =
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: false,
     consensusFail: false,
     failureCount: 1,
@@ -195,6 +200,7 @@ test("runReview accepts final signal when parsed is empty and combined contains 
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: true,
     consensusFail: false,
     failureCount: 0,
@@ -342,6 +348,7 @@ test("runReview handles non-zero exit code as deterministic reviewer failure", a
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: false,
     consensusFail: false,
     failureCount: 1,
@@ -367,6 +374,7 @@ test("runReview handles reviewer runtime failures", async () => {
   const result = await runReview(["codex"], "task", makeOptions());
 
   expect(result).toEqual({
+    advisoryReviewers: [],
     approved: false,
     consensusFail: false,
     failureCount: 1,

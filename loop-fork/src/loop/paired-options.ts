@@ -1,14 +1,25 @@
 import { spawnSync } from "bun";
-import { defaultPeerAgent } from "./agents";
+import {
+  defaultPeerAgent,
+  isAgent,
+  isRetiredAgent,
+  retiredAgentMigrationMessage,
+} from "./agents";
 import {
   buildCodexBridgeConfigArgs,
   claudeChannelServerName,
   ensureAgentBridgeConfig,
-  injectProjectBridgeConfig,
   resolveClaudeChannelServerName,
 } from "./bridge-config";
 import { DEFAULT_CAVEMAN_MODE, DEFAULT_HELPER_CAVEMAN_MODE } from "./caveman";
 import { ensureLoopCodexHome } from "./codex-home";
+import {
+  ensureOssConfig,
+  OSS_COMMAND,
+  type OssSessionLookup,
+  ossSessionTitle,
+  resolveOssSessionId,
+} from "./oss-adapter";
 import {
   createRunManifest,
   ensureRunStorage,
@@ -25,7 +36,7 @@ import {
   writeRunManifest,
 } from "./run-state";
 import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
-import type { Options, PairedSessionIds } from "./types";
+import type { Agent, Options, PairedSessionIds } from "./types";
 
 export interface PreparedRunState {
   allowRawSessionFallback: boolean;
@@ -42,6 +53,11 @@ type TmuxSessionProbe = (session: string) => boolean | TmuxLiveness;
 
 const isTmuxSessionLive: TmuxSessionProbe = (session) =>
   tmuxSessionLiveness(session, spawnSync);
+
+const defaultOssSessionLookup: OssSessionLookup = (argv, env) => {
+  const result = spawnSync([OSS_COMMAND, ...argv], { env, stderr: "ignore" });
+  return result.success ? result.stdout.toString() : undefined;
+};
 
 const persistedTmuxIsLive = (
   enabled: boolean,
@@ -97,11 +113,20 @@ const restorePersistedTmuxPair = (
   if (!(livePersistedTmux && left && right && left !== right)) {
     return;
   }
-  const storedPair = [left, right];
+  // A run persisted against a retired seat stays inspectable and reapable, but
+  // relaunching it must fail here — before any pane or process is created.
+  for (const stored of [left, right, manifest.primaryAgent]) {
+    if (isRetiredAgent(stored)) {
+      throw new Error(retiredAgentMigrationMessage(stored));
+    }
+  }
+  if (!(isAgent(left) && isAgent(right))) {
+    return;
+  }
+  const storedPair: Agent[] = [left, right];
+  const stored = manifest.primaryAgent;
   const primary =
-    manifest.primaryAgent && storedPair.includes(manifest.primaryAgent)
-      ? manifest.primaryAgent
-      : left;
+    isAgent(stored) && storedPair.includes(stored) ? stored : left;
   opts.agent = primary;
   opts.pairWith = primary === left ? right : left;
 };
@@ -154,13 +179,11 @@ const pairedSessionIds = (
   }
   const claude = stored?.claudeSessionId || fallback?.claude || undefined;
   const codex = stored?.codexThreadId || fallback?.codex || undefined;
-  const copilot = fallback?.copilot || undefined;
-  const cursor = fallback?.cursor || undefined;
-  const gemini = fallback?.gemini || undefined;
-  if (!(claude || codex || copilot || cursor || gemini)) {
+  const oss = stored?.ossSessionId || fallback?.oss || undefined;
+  if (!(claude || codex || oss)) {
     return undefined;
   }
-  return { claude, codex, copilot, cursor, gemini };
+  return { claude, codex, oss };
 };
 
 const applyLiveTmuxModeContract = (
@@ -286,6 +309,7 @@ export const resolvePreparedRunState = (
     claudeChannelServer: claudeChannelServerName(storage.runId, storage.repoId),
     claudeSessionId: "",
     codexThreadId: "",
+    ossSessionId: "",
     cwd,
     driverEffort: opts.driverEffort,
     mode: "paired",
@@ -310,7 +334,8 @@ export const applyPairedOptions = (
   manifest: RunManifest | undefined,
   allowRawSessionFallback = false,
   cwd = process.cwd(),
-  livePersistedTmux = false
+  livePersistedTmux = false,
+  ossLookup: OssSessionLookup = defaultOssSessionLookup
 ): void => {
   opts.cavemanMode ??= DEFAULT_CAVEMAN_MODE;
   opts.cavemanModeSource ??= "default";
@@ -359,11 +384,6 @@ export const applyPairedOptions = (
     resolveClaudeBridgeServer(storage, manifest)
   );
   opts.claudePersistentSession = true;
-  opts.copilotMcpConfigPath = ensureAgentBridgeConfig(
-    storage.runDir,
-    "copilot"
-  );
-  opts.cursorMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "cursor");
   opts.codexMcpConfigArgs = buildCodexBridgeConfigArgs(storage.runDir, "codex");
   opts.codexHome = ensureLoopCodexHome(storage.runDir, cwd, {
     ...process.env,
@@ -375,21 +395,42 @@ export const applyPairedOptions = (
         ? process.env.LOOP_NATIVE_SUBAGENT_MODE
         : "off",
   });
-  opts.geminiMcpConfigPath = ensureAgentBridgeConfig(storage.runDir, "gemini");
-  // Inject bridge MCP into project-level config only for agents in this pair
-  const projectDir = cwd;
-  const pair = [opts.agent, opts.pairWith].filter(Boolean);
-  if (pair.includes("copilot")) {
-    injectProjectBridgeConfig(projectDir, storage.runDir, "copilot");
-  }
-  if (pair.includes("cursor")) {
-    injectProjectBridgeConfig(projectDir, storage.runDir, "cursor");
-  }
-  if (pair.includes("gemini")) {
-    injectProjectBridgeConfig(projectDir, storage.runDir, "gemini");
-  }
+  // Run-scoped OpenCode configuration: exactly this run's bridge plus an
+  // explicit permission policy, so the seat never inherits the operator's
+  // global OpenCode MCP servers.
+  opts.ossConfigDir = ensureOssConfig(storage.runDir);
+  opts.ossSessionTitle = ossSessionTitle(storage.runId);
   opts.pairedMode = true;
-  opts.pairedSessionIds = resumedSessionIds;
+  opts.pairedSessionIds = resolveOssPairedSession(
+    opts,
+    resumedSessionIds,
+    ossLookup
+  );
+};
+
+// A tmux pane's OpenCode session is not visible to this process while it runs,
+// so a resume recovers it by the title the launch gave it. Only ever called
+// when the OSS seat is actually selected.
+const resolveOssPairedSession = (
+  opts: Options,
+  resumed: PairedSessionIds | undefined,
+  lookup: OssSessionLookup
+): PairedSessionIds | undefined => {
+  const selected = [opts.agent, opts.pairWith].includes("oss");
+  if (!(selected && opts.ossSessionTitle) || resumed?.oss) {
+    return resumed;
+  }
+  const oss = resolveOssSessionId(
+    resumed?.oss,
+    opts.ossSessionTitle,
+    lookup,
+    process.env,
+    opts.ossConfigDir
+  );
+  if (!oss) {
+    return resumed;
+  }
+  return { ...resumed, oss };
 };
 
 export const preparePairedOptions = (
@@ -473,6 +514,10 @@ export const preparePairedRun = (
             livePersistedTmux || selectedAgents.has("codex")
               ? resumable?.codexThreadId || opts.pairedSessionIds?.codex || ""
               : "",
+          ossSessionId:
+            livePersistedTmux || selectedAgents.has("oss")
+              ? resumable?.ossSessionId || opts.pairedSessionIds?.oss || ""
+              : "",
           cwd,
           ...preparedEffortManifestFields(opts, existing, livePersistedTmux),
           mode: "paired",
@@ -492,6 +537,7 @@ export const preparePairedRun = (
         ),
         claudeSessionId: opts.pairedSessionIds?.claude ?? "",
         codexThreadId: opts.pairedSessionIds?.codex ?? "",
+        ossSessionId: opts.pairedSessionIds?.oss ?? "",
         cwd,
         driverEffort: opts.driverEffort,
         mode: "paired",

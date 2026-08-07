@@ -1,0 +1,4 @@
+(fail) an OSS reviewer APPROVE opens the release gate only under an explicit grant [0.13ms]
+(fail) release authority is a property of policy, never of seat occupancy
+ 25 pass
+ 2 fail

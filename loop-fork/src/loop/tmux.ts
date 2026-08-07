@@ -8,6 +8,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
+import { defaultPeerAgent } from "./agents";
 import {
   buildClaudeChannelServerConfig,
   claudeChannelServerName,
@@ -65,6 +66,7 @@ import {
   type NativeSubagentMode,
   resolveNativeSubagentMode,
 } from "./native-subagent";
+import { buildOssRunArgs, OSS_COMMAND, ossConfigEnv } from "./oss-adapter";
 import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
@@ -106,9 +108,7 @@ const SESSION_FLAG = "--session";
 const ONLY_MODE_FLAGS = [
   "--claude-only",
   "--codex-only",
-  "--copilot-only",
-  "--cursor-only",
-  "--gemini-only",
+  "--oss-only",
 ] as const;
 const RUN_BASE_ENV = "LOOP_RUN_BASE";
 const RUN_ID_ENV = "LOOP_RUN_ID";
@@ -271,14 +271,7 @@ const peerAgent = (agent: Agent, pairWith?: Agent): Agent => {
   if (pairWith) {
     return pairWith;
   }
-  const peers: Record<Agent, Agent> = {
-    claude: "codex",
-    codex: "claude",
-    copilot: "claude",
-    cursor: "claude",
-    gemini: "claude",
-  };
-  return peers[agent];
+  return defaultPeerAgent(agent);
 };
 
 const pairedPeer = (opts: Options): Agent =>
@@ -638,19 +631,7 @@ const resolveTmuxModel = (agent: Agent, opts: Options): string => {
       ? DEFAULT_CLAUDE_MODEL
       : (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL);
   }
-  if (agent === "gemini") {
-    return isPrimary
-      ? opts.geminiModel
-      : (opts.geminiReviewerModel ?? opts.geminiModel);
-  }
-  if (agent === "copilot") {
-    return isPrimary
-      ? opts.copilotModel
-      : (opts.copilotReviewerModel ?? opts.copilotModel);
-  }
-  return isPrimary
-    ? opts.cursorModel
-    : (opts.cursorReviewerModel ?? opts.cursorModel);
+  return isPrimary ? opts.ossModel : (opts.ossReviewerModel ?? opts.ossModel);
 };
 
 export const claudeNativeFallbackDefinition = (): Record<
@@ -797,57 +778,18 @@ const buildCodexCommand = (
   return args;
 };
 
-const buildGeminiCommand = (
+// OpenCode-backed seat. The model identifier is forwarded verbatim; OpenCode
+// resolves the provider. A session id is only supplied when one was persisted,
+// because `opencode run --session <unknown>` fails with "Session not found".
+const buildOssCommand = (
   model: string,
   prompt?: string,
-  resumeId?: string
-): string[] => {
-  const args = ["gemini", "--model", model, "--yolo"];
-  if (resumeId) {
-    args.push("--resume", resumeId);
-  }
-  if (prompt) {
-    args.push("--prompt-interactive", prompt);
-  }
-  return args;
-};
-
-const buildCursorCommand = (
-  model: string,
-  prompt?: string,
-  resumeId?: string
-): string[] => {
-  const args = [
-    "cursor",
-    "agent",
-    "--model",
-    model,
-    "--yolo",
-    "--approve-mcps",
-  ];
-  if (resumeId) {
-    args.push("--resume", resumeId);
-  }
-  if (prompt) {
-    args.push(prompt);
-  }
-  return args;
-};
-
-const buildCopilotCommand = (
-  model: string,
-  prompt?: string,
-  resumeId?: string
-): string[] => {
-  const args = ["copilot", "agent", "--model", model, "--yolo"];
-  if (resumeId) {
-    args.push("--resume", resumeId);
-  }
-  if (prompt) {
-    args.push(prompt);
-  }
-  return args;
-};
+  resumeId?: string,
+  title?: string
+): string[] => [
+  OSS_COMMAND,
+  ...buildOssRunArgs({ model, prompt, sessionId: resumeId, title }),
+];
 
 const parseToken = (argv: string[], flag: string): string | undefined => {
   for (let index = 0; index < argv.length; index += 1) {
@@ -1212,6 +1154,7 @@ export const buildPairedPaneEnv = (input: {
   helperCavemanMode?: string;
   inheritedEnv: NodeJS.ProcessEnv;
   nativeSubagentMode: NativeSubagentMode;
+  ossConfigDir?: string;
   runBase: string;
   runId: string;
   worldModel?: Pick<RunWorldModelBinding, "contextPath" | "databasePath">;
@@ -1257,6 +1200,13 @@ export const buildPairedPaneEnv = (input: {
       ? [`LOOP_HELPER_CAVEMAN_MODE=${input.helperCavemanMode}`]
       : []),
     ...(input.codexHome ? [`CODEX_HOME=${input.codexHome}`] : []),
+    // Path only. A provider credential must never enter tmux argv; the OSS
+    // pane uses OpenCode's own credential lookup or the inherited environment.
+    ...(input.ossConfigDir
+      ? Object.entries(ossConfigEnv(input.ossConfigDir)).map(
+          ([name, value]) => `${name}=${value}`
+        )
+      : []),
   ];
 };
 
@@ -1380,6 +1330,7 @@ const updatePairedManifest = (
   codexAppServerPid: number | undefined,
   codexRemoteUrl: string,
   codexThreadId: string,
+  ossSessionId: string,
   session: string,
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
@@ -1395,6 +1346,7 @@ const updatePairedManifest = (
         codexThreadId,
         cwd: deps.cwd,
         mode: "paired",
+        ossSessionId,
         pid: process.pid,
         primaryAgent,
         tmuxSession: session,
@@ -2107,24 +2059,14 @@ const buildPairedAgentCommand = ({
       effort
     );
   }
-  if (agent === "gemini") {
-    return buildGeminiCommand(
-      model,
-      prompt,
-      hadSession ? opts.pairedSessionIds?.gemini : undefined
-    );
+  if (!opts.ossConfigDir) {
+    throw new Error("[loop] missing OSS bridge config for tmux launch");
   }
-  if (agent === "copilot") {
-    return buildCopilotCommand(
-      model,
-      prompt,
-      hadSession ? opts.pairedSessionIds?.copilot : undefined
-    );
-  }
-  return buildCursorCommand(
+  return buildOssCommand(
     model,
     prompt,
-    hadSession ? opts.pairedSessionIds?.cursor : undefined
+    hadSession ? opts.pairedSessionIds?.oss : undefined,
+    opts.ossSessionTitle
   );
 };
 
@@ -3108,9 +3050,7 @@ const startPairedSession = async (
       codex: Boolean(
         manifest.codexThreadId || launch.opts.pairedSessionIds?.codex
       ),
-      gemini: Boolean(launch.opts.pairedSessionIds?.gemini),
-      cursor: Boolean(launch.opts.pairedSessionIds?.cursor),
-      copilot: Boolean(launch.opts.pairedSessionIds?.copilot),
+      oss: Boolean(manifest.ossSessionId || launch.opts.pairedSessionIds?.oss),
     };
     // Only boot persistent transports when claude or codex is in the pair
     const needsPersistent = [primaryAgent, secondaryAgent].some(
@@ -3175,6 +3115,9 @@ const startPairedSession = async (
       helperCavemanMode: launch.opts.helperCavemanMode,
       inheritedEnv: deps.env,
       nativeSubagentMode,
+      ossConfigDir: [paneAgents.left, paneAgents.right].includes("oss")
+        ? launch.opts.ossConfigDir
+        : undefined,
       runBase,
       runId: storage.runId,
       worldModel: manifest.worldModel,
@@ -3264,6 +3207,8 @@ const startPairedSession = async (
       }),
     ]);
 
+    const ossSessionId =
+      launch.opts.pairedSessionIds?.oss || manifest.ossSessionId || "";
     const paneTargets = await createPairedPaneLayout({
       deps,
       governess: Boolean(launch.opts.governess),
@@ -3286,6 +3231,7 @@ const startPairedSession = async (
       codexAppServerPid,
       codexRemoteUrl,
       codexThreadId,
+      ossSessionId,
       session,
       paneAgents,
       primaryAgent,
@@ -3313,6 +3259,7 @@ const startPairedSession = async (
         codexAppServerPid,
         codexRemoteUrl,
         codexThreadId,
+        ossSessionId,
         session,
         paneAgents,
         primaryAgent,
@@ -3787,9 +3734,7 @@ export const tmuxInternals = {
   buildClaudeChannelServerConfig,
   buildClaudeChannelServerName: claudeChannelServerName,
   buildCodexCommand,
-  buildCopilotCommand,
-  buildCursorCommand,
-  buildGeminiCommand,
+  buildOssCommand,
   buildInteractivePeerPrompt,
   buildInteractivePrimaryPrompt,
   buildLaunchArgv,

@@ -14,9 +14,9 @@ export const DEFAULT_CODEX_CONFIG_VALUES = [
 export const DEFAULT_CLAUDE_MODEL = "opus";
 // Tmux DRIVER only — the headless SDK/judge legs stay at their own defaults.
 export const DEFAULT_CLAUDE_DRIVER_EFFORT = DEFAULT_LAUNCH_EFFORT;
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
-export const DEFAULT_COPILOT_MODEL = "auto";
-export const DEFAULT_CURSOR_MODEL = "auto";
+// Default profile for the provider-neutral OSS seat, not a hard dependency.
+// Any non-empty OpenCode provider/model identifier overrides it unchanged.
+export const DEFAULT_OSS_MODEL = "openrouter/z-ai/glm-5.2";
 export const DEFAULT_MAX_ITERATIONS = 20;
 export const LOOP_VERSION = pkg.version;
 
@@ -45,17 +45,13 @@ Usage:
   loop upgrade                             Alias for update
   claude-loop [options] [prompt]           Alias for: loop --claude-only
   codex-loop [options] [prompt]            Alias for: loop --codex-only
-  gemini-loop [options] [prompt]           Alias for: loop --gemini-only
-  cursor-loop [options] [prompt]           Alias for: loop --cursor-only
-  copilot-loop [options] [prompt]          Alias for: loop --copilot-only
+  oss-loop [options] [prompt]              Alias for: loop --oss-only
 
 Options:
-  -a, --agent <agent>                     Agent CLI to run (default: claude)
+  -a, --agent <agent>                     Agent CLI to run: claude, codex, or oss (default: claude)
   --claude-only                            Use Claude for work, review, and plan review
   --codex-only                             Use Codex for work, review, and plan review
-  --gemini-only                            Use Gemini for work, review, and plan review
-  --cursor-only                            Use Cursor for work, review, and plan review
-  --copilot-only                           Use Copilot for work, review, and plan review
+  --oss-only                               Use the OpenCode-backed OSS seat for work, review, and plan review
   --pair-with, --reviewer <agent>          Pair the worker with a specific peer in paired mode
   --effort <low|medium|high|xhigh|max>      Set driver and reviewer effort (default: ${DEFAULT_LAUNCH_EFFORT})
   --effort-driver <level>                  Set only the primary driver effort
@@ -66,12 +62,8 @@ Options:
   --proof <text>                           Proof requirements for task completion
   --codex-model <model>                    Override codex model (default: ${DEFAULT_CODEX_MODEL})
   --codex-reviewer-model <model>           Override codex review model
-  --gemini-model <model>                   Override gemini model (default: ${DEFAULT_GEMINI_MODEL})
-  --gemini-reviewer-model <model>          Override gemini review model
-  --copilot-model <model>                  Override copilot model (default: ${DEFAULT_COPILOT_MODEL})
-  --copilot-reviewer-model <model>         Override copilot review model
-  --cursor-model <model>                   Override cursor model (default: ${DEFAULT_CURSOR_MODEL})
-  --cursor-reviewer-model <model>          Override cursor review model
+  --oss-model <provider/model>             Override the OSS seat model (default: ${DEFAULT_OSS_MODEL})
+  --oss-reviewer-model <provider/model>    Override the OSS seat review model
   --claude-reviewer-model <model>          Override claude review model
   --caveman <off|lite|full|ultra>          Main-agent output compression (default: ${DEFAULT_CAVEMAN_MODE})
   --helper-caveman <off|lite|full|ultra>   Nanny/Au Pair output compression (default: ${DEFAULT_HELPER_CAVEMAN_MODE})
@@ -110,6 +102,9 @@ Environment:
   LOOP_AU_PAIR_MODEL=<model>                 Au Pair model (default: z-ai/glm-5.2)
   LOOP_AU_PAIR_MAX_CONCURRENCY=<1..8>        Concurrent Au Pair slots (default: 4)
   LOOP_AU_PAIR_PROVIDER_SORT=<strategy>      balanced, price, throughput, latency, or tool-call-quality
+  LOOP_OSS_MODEL=<provider/model>            OSS seat model fallback (default: ${DEFAULT_OSS_MODEL})
+  LOOP_OSS_API_KEY_FILE=<path>               OSS provider key file (default: ~/.config/loop/openrouter.key; requires mode 0600)
+  LOOP_OSS_RELEASE_AUTHORITY=1               Explicitly grant the OSS seat reviewer release-gate authority (default: advisory)
   LOOP_NANNY_ENABLED=0|1                     Disable or explicitly enable Nanny
   LOOP_NANNY_URL=<url>                       Nanny local Pi endpoint (default: 127.0.0.1:8082)
   LOOP_NANNY_MODEL=<model>                   Nanny local Qwen model
@@ -157,13 +152,9 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "--effort-reviewer": "reviewerEffort",
   "--codex-model": "codexModel",
   "--codex-reviewer-model": "codexReviewerModel",
-  "--copilot-model": "copilotModel",
-  "--copilot-reviewer-model": "copilotReviewerModel",
-  "--cursor-model": "cursorModel",
-  "--cursor-reviewer-model": "cursorReviewerModel",
   "--claude-reviewer-model": "claudeReviewerModel",
-  "--gemini-model": "geminiModel",
-  "--gemini-reviewer-model": "geminiReviewerModel",
+  "--oss-model": "ossModel",
+  "--oss-reviewer-model": "ossReviewerModel",
   "--format": "format",
   "--run-id": "runId",
   "--session": "session",

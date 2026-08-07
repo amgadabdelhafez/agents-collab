@@ -1,0 +1,11 @@
+=== eval instrument positive control (2026-08-06) ===
+HEAD binary sha256: 4f310f41235ca8a0acb1c1e8a3b8d0b71d89f33fe26b4a372dd775c1a0162e19
+BASE binary sha256 (built from 0f69b9a99f9163bf9f83075530e26aed21258463): 48742c35f6501c050292720cb88382e1a87d0b5096e4eeb9a4b0465c53bb5981
+
+-- BASE binary --help tokens (bounded 20s) --
+   2 --copilot-only
+   2 --cursor-only
+   2 --gemini-only
+
+Conclusion: the base binary advertises the retired only-mode flags and advertises no --oss-only/--oss-model.
+The smoke's 'help advertises the OSS seat' and 'help omits retired' assertions therefore fail against base and pass against HEAD: the instrument discriminates.

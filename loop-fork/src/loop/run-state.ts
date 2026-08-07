@@ -17,7 +17,7 @@ import {
   relative,
   resolve as resolvePath,
 } from "node:path";
-import { isAgent } from "./agents";
+import { isAgent, isHistoricalAgent } from "./agents";
 import { isEffortLevel } from "./effort";
 import {
   type GitResult,
@@ -30,6 +30,7 @@ import type {
   Agent,
   CavemanMode,
   EffortLevel,
+  HistoricalAgent,
   LaunchWorkspaceBinding,
   ReviewStatus,
   RunLifecycleState,
@@ -106,8 +107,11 @@ export interface RunManifest {
   launchCharters?: Partial<Record<Agent, RunLaunchCharter>>;
   launchClaimId?: string;
   mode: string;
+  ossSessionId: string;
   pid: number;
-  primaryAgent?: Agent;
+  // Historical manifests may name a retired seat. Keep it readable for
+  // diagnosis and reaping; launch and resume reject it separately.
+  primaryAgent?: HistoricalAgent;
   repoId: string;
   reviewerEffort?: EffortLevel;
   runId: string;
@@ -117,11 +121,11 @@ export interface RunManifest {
   tmuxPaneAuPair?: string;
   tmuxPaneGoverness?: string;
   tmuxPaneLeft?: string;
-  tmuxPaneLeftAgent?: Agent;
+  tmuxPaneLeftAgent?: HistoricalAgent;
   tmuxPaneNanny?: string;
   tmuxPaneRecon?: string[];
   tmuxPaneRight?: string;
-  tmuxPaneRightAgent?: Agent;
+  tmuxPaneRightAgent?: HistoricalAgent;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt: string;
@@ -197,8 +201,9 @@ interface RunManifestInput {
   launchAttemptPid?: number;
   launchClaimId?: string;
   mode: string;
+  ossSessionId?: string;
   pid: number;
-  primaryAgent?: Agent;
+  primaryAgent?: HistoricalAgent;
   repoId: string;
   reviewerEffort?: EffortLevel;
   runId: string;
@@ -208,11 +213,11 @@ interface RunManifestInput {
   tmuxPaneAuPair?: string;
   tmuxPaneGoverness?: string;
   tmuxPaneLeft?: string;
-  tmuxPaneLeftAgent?: Agent;
+  tmuxPaneLeftAgent?: HistoricalAgent;
   tmuxPaneNanny?: string;
   tmuxPaneRecon?: string[];
   tmuxPaneRight?: string;
-  tmuxPaneRightAgent?: Agent;
+  tmuxPaneRightAgent?: HistoricalAgent;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
   updatedAt?: string;
@@ -303,12 +308,14 @@ const firstInteger = (
   return undefined;
 };
 
+// Historical manifests may name a retired seat. Parsing keeps it so the run
+// stays inspectable and reapable; launch and resume reject it separately.
 const firstAgent = (
   obj: Record<string, unknown>,
   keys: string[]
-): Agent | undefined => {
+): HistoricalAgent | undefined => {
   const value = firstString(obj, keys);
-  return value && isAgent(value) ? value : undefined;
+  return value && isHistoricalAgent(value) ? value : undefined;
 };
 
 const firstCavemanMode = (
@@ -822,7 +829,8 @@ export const resolveExistingRunId = (
     }
     if (
       manifest.claudeSessionId === selector ||
-      manifest.codexThreadId === selector
+      manifest.codexThreadId === selector ||
+      manifest.ossSessionId === selector
     ) {
       return manifest.runId;
     }
@@ -849,6 +857,14 @@ export const updateRunManifest = (
   return next;
 };
 
+const sessionManifestFields = (
+  input: RunManifestInput
+): Pick<RunManifest, "claudeSessionId" | "codexThreadId" | "ossSessionId"> => ({
+  claudeSessionId: input.claudeSessionId ?? "",
+  codexThreadId: input.codexThreadId ?? "",
+  ossSessionId: input.ossSessionId ?? "",
+});
+
 export const createRunManifest = (
   input: RunManifestInput,
   now = new Date().toISOString()
@@ -865,12 +881,11 @@ export const createRunManifest = (
     ...(input.claudeChannelServer
       ? { claudeChannelServer: input.claudeChannelServer }
       : {}),
-    claudeSessionId: input.claudeSessionId ?? "",
+    ...sessionManifestFields(input),
     ...(input.codexAppServerPid
       ? { codexAppServerPid: input.codexAppServerPid }
       : {}),
     ...(input.codexRemoteUrl ? { codexRemoteUrl: input.codexRemoteUrl } : {}),
-    codexThreadId: input.codexThreadId ?? "",
     createdAt: input.createdAt ?? now,
     cwd: input.cwd,
     mode: input.mode,
@@ -1087,6 +1102,8 @@ export const readRunManifest = (
       createdAt,
       cwd,
       mode,
+      ossSessionId:
+        firstString(parsed, ["ossSessionId", "oss_session_id"]) ?? "",
       pid,
       repoId,
       runId,

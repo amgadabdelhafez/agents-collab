@@ -786,7 +786,7 @@ const findCodexTranscript = (
 const MAX_HUMAN_MESSAGES = 16;
 const MAX_HUMAN_MESSAGE_CHARS = 260;
 const WHITESPACE_RE = /\s+/g;
-const BRIDGE_DELIVERY_PREFIX_RE = /^(claude|codex|copilot|cursor|gemini)\s*:/i;
+const BRIDGE_DELIVERY_PREFIX_RE = /^(claude|codex|oss)\s*:/i;
 const INJECTED_TASK_SECTION_RE =
   /(?:^|\n)\s*Task:\s*(?:\n\s*)?(?:#{1,6}\s*)?([^\n]+)/i;
 // User turns that are actually harness/tooling injections, not real requests.

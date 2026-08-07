@@ -1,5 +1,6 @@
 import { mkdirSync, watch } from "node:fs";
 import { basename } from "node:path";
+import { retiredBridgeTargetMessage } from "./agents";
 import { claudeChannelServerName } from "./bridge-config";
 import { BRIDGE_SERVER as BRIDGE_SERVER_VALUE } from "./bridge-constants";
 import {
@@ -161,12 +162,7 @@ export const immediateBridgeDelivery = (
       (await deliverCodexBridgeMessage(runDir, entry)) ||
       (await deliverTmuxBridgeMessage(runDir, entry));
   }
-  if (
-    target === "claude" ||
-    target === "cursor" ||
-    target === "gemini" ||
-    target === "copilot"
-  ) {
+  if (target === "claude" || target === "oss") {
     return (entry) => deliverTmuxBridgeMessage(runDir, entry);
   }
   return undefined;
@@ -274,7 +270,7 @@ const handleSendMessageTool = async (
     writeError(
       id,
       MCP_INVALID_PARAMS,
-      `Unknown target "${normalizedTarget}" - expected one of "claude", "codex", "gemini", "cursor", "copilot", or "supervisor"`
+      retiredBridgeTargetMessage(normalizedTarget)
     );
     return;
   }
@@ -508,14 +504,7 @@ const handleBridgeRequest = async (
                   supersede: { type: "boolean" },
                   task_id: { type: "string" },
                   target: {
-                    enum: [
-                      "claude",
-                      "codex",
-                      "gemini",
-                      "cursor",
-                      "copilot",
-                      "supervisor",
-                    ],
+                    enum: ["claude", "codex", "oss", "supervisor"],
                     type: "string",
                   },
                   thread_id: { type: "string" },

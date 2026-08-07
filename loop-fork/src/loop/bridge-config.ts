@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { BRIDGE_SERVER, BRIDGE_SUBCOMMAND } from "./bridge-constants";
 import { sanitizeBase } from "./git";
@@ -164,61 +164,4 @@ export const ensureAgentBridgeConfig = (
     "utf8"
   );
   return path;
-};
-
-/**
- * Write bridge MCP config into the project directory for agents that
- * load MCP from project config rather than --mcp-config CLI flag.
- * - Cursor: .cursor/mcp.json
- * - Gemini: .gemini/settings.json
- */
-export const injectProjectBridgeConfig = (
-  cwd: string,
-  runDir: string,
-  source: Agent,
-  serverName = BRIDGE_SERVER
-): void => {
-  const config = buildBridgeServerConfig(runDir, source, buildLaunchArgv());
-
-  const readExistingConfig = (path: string): Record<string, unknown> => {
-    try {
-      const raw = readFileSync(path, "utf8");
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw new Error(`Failed to read ${path}: ${String(err)}`);
-      }
-      return {};
-    }
-  };
-
-  const mergeAndWrite = (configPath: string): void => {
-    const existing = readExistingConfig(configPath);
-    const merged = {
-      ...existing,
-      mcpServers: {
-        ...((existing.mcpServers as Record<string, unknown>) ?? {}),
-        [serverName]: config,
-      },
-    };
-    writeFileSync(configPath, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
-  };
-
-  if (source === "cursor") {
-    const cursorDir = join(cwd, ".cursor");
-    mkdirSync(cursorDir, { recursive: true });
-    mergeAndWrite(join(cursorDir, "mcp.json"));
-  }
-
-  if (source === "gemini") {
-    const geminiDir = join(cwd, ".gemini");
-    mkdirSync(geminiDir, { recursive: true });
-    mergeAndWrite(join(geminiDir, "settings.json"));
-  }
-
-  if (source === "copilot") {
-    const copilotDir = join(cwd, ".github", "copilot");
-    mkdirSync(copilotDir, { recursive: true });
-    mergeAndWrite(join(copilotDir, "mcp.json"));
-  }
 };

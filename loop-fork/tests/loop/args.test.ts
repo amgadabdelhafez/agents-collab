@@ -319,13 +319,13 @@ test("parseArgs uses --reviewer as paired peer without changing completion revie
     "--agent",
     "claude",
     "--reviewer",
-    "gemini",
+    "oss",
     "--proof",
     "verify",
   ]);
 
   expect(opts.agent).toBe("claude");
-  expect(opts.pairWith).toBe("gemini");
+  expect(opts.pairWith).toBe("oss");
   expect(opts.review).toBe("claudex");
 });
 
@@ -607,70 +607,74 @@ test("parseArgs throws when positional prompt is provided with --prompt", () => 
   ).toThrow("Unexpected positional prompt when --prompt is already set.");
 });
 
-test("parseArgs sets agent/review/reviewPlan to copilot with --copilot-only", () => {
-  const opts = parseArgs(["--copilot-only", "--proof", "verify"]);
+test("parseArgs sets agent/review/reviewPlan to oss with --oss-only", () => {
+  const opts = parseArgs(["--oss-only", "--proof", "verify"]);
 
-  expect(opts.agent).toBe("copilot");
-  expect(opts.review).toBe("copilot");
-  expect(opts.reviewPlan).toBe("copilot");
+  expect(opts.agent).toBe("oss");
+  expect(opts.review).toBe("oss");
+  expect(opts.reviewPlan).toBe("oss");
   expect(opts.pairedMode).toBe(false);
 });
 
-test("parseArgs throws on conflicting --copilot-only and --claude-only", () => {
-  expect(() => parseArgs(["--copilot-only", "--claude-only"])).toThrow(
+test("parseArgs throws on conflicting --oss-only and --claude-only", () => {
+  expect(() => parseArgs(["--oss-only", "--claude-only"])).toThrow(
     CONFLICT_ONLY_MODE_ERROR
   );
 });
 
-test("parseArgs accepts copilot as --agent value", () => {
-  const opts = parseArgs(["--agent", "copilot", "--proof", "verify"]);
+test("parseArgs accepts oss as --agent value", () => {
+  const opts = parseArgs(["--agent", "oss", "--proof", "verify"]);
 
-  expect(opts.agent).toBe("copilot");
+  expect(opts.agent).toBe("oss");
   expect(opts.pairWith).toBe("claude");
 });
 
-test("parseArgs handles --copilot-model and --copilot-reviewer-model", () => {
+test("parseArgs handles --oss-model and --oss-reviewer-model", () => {
   const opts = parseArgs([
-    "--copilot-model",
-    "gpt-4.1",
-    "--copilot-reviewer-model",
-    "gpt-4.1-mini",
+    "--oss-model",
+    "openrouter/qwen/qwen3-max",
+    "--oss-reviewer-model",
+    "openrouter/deepseek/deepseek-v3.2",
     "--proof",
     "verify",
   ]);
 
-  expect(opts.copilotModel).toBe("gpt-4.1");
-  expect(opts.copilotReviewerModel).toBe("gpt-4.1-mini");
+  expect(opts.ossModel).toBe("openrouter/qwen/qwen3-max");
+  expect(opts.ossReviewerModel).toBe("openrouter/deepseek/deepseek-v3.2");
 });
 
-test("parseArgs handles --copilot-model= equals form", () => {
-  const opts = parseArgs(["--copilot-model=o3", "--proof", "verify"]);
+test("parseArgs handles --oss-model= equals form", () => {
+  const opts = parseArgs([
+    "--oss-model=ollama/llama4:70b",
+    "--proof",
+    "verify",
+  ]);
 
-  expect(opts.copilotModel).toBe("o3");
+  expect(opts.ossModel).toBe("ollama/llama4:70b");
 });
 
-test("parseArgs accepts copilot as --pair-with value", () => {
+test("parseArgs accepts oss as --pair-with value", () => {
   const opts = parseArgs([
     "--agent",
     "claude",
     "--pair-with",
-    "copilot",
+    "oss",
     "--proof",
     "verify",
   ]);
 
   expect(opts.agent).toBe("claude");
-  expect(opts.pairWith).toBe("copilot");
+  expect(opts.pairWith).toBe("oss");
 });
 
-test("parseArgs accepts copilot as --review value", () => {
-  const opts = parseArgs(["--review", "copilot", "--proof", "verify"]);
+test("parseArgs accepts oss as --review value", () => {
+  const opts = parseArgs(["--review", "oss", "--proof", "verify"]);
 
-  expect(opts.review).toBe("copilot");
+  expect(opts.review).toBe("oss");
 });
 
-test("parseArgs accepts copilot as --review-plan value", () => {
-  const opts = parseArgs(["--review-plan", "copilot", "--proof", "verify"]);
+test("parseArgs accepts oss as --review-plan value", () => {
+  const opts = parseArgs(["--review-plan", "oss", "--proof", "verify"]);
 
-  expect(opts.reviewPlan).toBe("copilot");
+  expect(opts.reviewPlan).toBe("oss");
 });

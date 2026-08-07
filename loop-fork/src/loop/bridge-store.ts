@@ -469,9 +469,7 @@ const countPendingMessages = (runDir: string): BridgeStatus["pending"] => {
   const pending = {
     claude: 0,
     codex: 0,
-    copilot: 0,
-    cursor: 0,
-    gemini: 0,
+    oss: 0,
     supervisor: 0,
   } satisfies Record<BridgeTarget, number>;
   for (const message of readPendingBridgeMessages(runDir).slice(

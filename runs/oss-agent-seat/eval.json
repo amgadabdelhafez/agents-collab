@@ -1,0 +1,69 @@
+{
+  "task_id": "oss-agent-seat",
+  "feature": "oss-agent-seat",
+  "timestamp": "2026-08-06T23:45:00Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": [
+    "focused",
+    "full",
+    "compiled_smoke",
+    "mutation",
+    "instrument_control",
+    "independent_review"
+  ],
+  "dimensions": {
+    "focused": {
+      "status": "pass",
+      "method": "bun test over the changed surface: oss-agent-seat, args, runner, tmux, bridge, review, review-run, run-state, paired-loop",
+      "reason": "411 tests passed across 9 files, including 27 new OSS-seat regressions covering topology, retired fail-closed, model pass-through, run-scoped bridge-only config, session resume, persisted-pane governess observation, and release authority"
+    },
+    "full": {
+      "status": "pass",
+      "method": "scripts/verify.sh oss-agent-seat oss-agent-seat (run with TMUX unset)",
+      "reason": "lint, typecheck, compiled build, 1560 tests across 69 sorted test files, and the empty named baseline allowlist all passed; exit 0"
+    },
+    "compiled_smoke": {
+      "status": "pass",
+      "method": "evals/smoke/oss-agent-seat.sh against the compiled binary",
+      "reason": "47 checks passed against loop sha256 4f310f41235ca8a0acb1c1e8a3b8d0b71d89f33fe26b4a372dd775c1a0162e19: help advertises the OSS seat and omits every retired flag and alias; all 9 retired flags and all 15 retired agent-value selectors exit 1 with a migration message naming oss; bridge and hook usage list claude|codex|oss; three arbitrary provider/model identifiers pass through unrewritten and an empty --oss-model fails closed"
+    },
+    "mutation": {
+      "status": "pass",
+      "method": "delete the release-authority check in loop-fork/src/loop/review.ts, re-run tests/loop/oss-agent-seat.test.ts, restore",
+      "reason": "with `const gateOpen = failures.length === 0;` substituted for the authority-gated expression, 2 named regressions failed - 'an OSS reviewer APPROVE cannot open the release gate without a policy grant' and 'an advisory OSS APPROVE does not open the gate even beside a native pass' - both with Expected: false / Received: true; output recorded at runs/oss-agent-seat/artifacts/mutation-authority-check-deleted.txt; the file was restored byte-identically (sha256 cc4ada95b037ff9124234c7b6dc80ba9fc4ce4fe862e4a13cf2fc1692818572a) and the suite returned to 27 pass / 0 fail"
+    },
+    "instrument_control": {
+      "status": "pass",
+      "method": "run the smoke eval's help assertions against a binary built from base commit 0f69b9a99f9163bf9f83075530e26aed21258463",
+      "reason": "the base binary (sha256 48742c35f6501c050292720cb88382e1a87d0b5096e4eeb9a4b0465c53bb5981) advertises --gemini-only, --cursor-only, and --copilot-only and not --oss-only, so the eval discriminates rather than passing vacuously; the base binary also blocks instead of failing closed on a retired flag, which is why every probe is now time-bounded"
+    },
+    "independent_review": {
+      "status": "pending",
+      "method": "exact-SHA peer review by Codex and supervisor review over the loop bridge",
+      "reason": "held until the committed candidate is reviewed; no merge, push, install, or deploy"
+    }
+  },
+  "acceptance": {
+    "ordered_pairs_both_directions": true,
+    "retired_agents_rejected_everywhere": true,
+    "retired_flags_fail_closed_naming_oss": true,
+    "retired_manifest_readable_but_unlaunchable": true,
+    "arbitrary_model_id_unrewritten": true,
+    "glm_is_default_not_dependency": true,
+    "config_run_scoped_bridge_only_source_oss": true,
+    "config_holds_no_credential": true,
+    "oss_session_persisted_and_resumed": true,
+    "bridge_targets_persisted_oss_pane": true,
+    "governess_observes_persisted_oss_pane": true,
+    "governess_skips_retired_seat": true,
+    "oss_reviewer_advisory_without_policy_grant": true,
+    "oss_reviewer_authoritative_under_explicit_grant": true,
+    "authority_check_mutation_fails_regression": true
+  },
+  "known_limits": [
+    "A repository-level opencode.json in the working tree still contributes MCP entries; OPENCODE_CONFIG_DIR only drops the operator's global OpenCode config. That is project configuration, not unrelated user configuration.",
+    "The opencode session listing shape was observed only in its empty form on opencode 1.4.3, so parseOssSessionListing accepts either a bare array or a { sessions: [...] } envelope and returns undefined rather than guessing.",
+    "A tmux OSS pane relies on OpenCode's own credential lookup or the inherited environment; a provider key is never placed into tmux argv."
+  ]
+}

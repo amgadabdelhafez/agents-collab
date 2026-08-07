@@ -1,5 +1,11 @@
 import { env } from "bun";
-import { defaultPeerAgent, isAgent } from "./agents";
+import {
+  defaultPeerAgent,
+  isAgent,
+  isRetiredAgent,
+  retiredAgentMigrationMessage,
+  retiredFlagMigrationMessage,
+} from "./agents";
 import {
   DEFAULT_CAVEMAN_MODE,
   DEFAULT_HELPER_CAVEMAN_MODE,
@@ -7,10 +13,7 @@ import {
 } from "./caveman";
 import {
   DEFAULT_CODEX_MODEL,
-  DEFAULT_COPILOT_MODEL,
-  DEFAULT_CURSOR_MODEL,
   DEFAULT_DONE_SIGNAL,
-  DEFAULT_GEMINI_MODEL,
   DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
   DEFAULT_GOVERNESS_HEIGHT,
   DEFAULT_GOVERNESS_IDLE_SECONDS,
@@ -18,6 +21,7 @@ import {
   DEFAULT_GOVERNESS_MODEL,
   DEFAULT_GOVERNESS_URL,
   DEFAULT_MAX_ITERATIONS,
+  DEFAULT_OSS_MODEL,
   HELP,
   LOOP_VERSION,
   VALUE_FLAGS,
@@ -55,7 +59,14 @@ class ImmediateInfoRequestSignal extends Error {
   }
 }
 
+const rejectRetiredValue = (value: string): void => {
+  if (isRetiredAgent(value)) {
+    throw new Error(retiredAgentMigrationMessage(value));
+  }
+};
+
 const parseAgent = (value: string): Agent => {
+  rejectRetiredValue(value);
   if (isAgent(value)) {
     return value;
   }
@@ -70,6 +81,7 @@ const parseFormat = (value: string): Format => {
 };
 
 const parseReviewValue = (value: string): ReviewMode => {
+  rejectRetiredValue(value);
   if (isAgent(value) || value === "claudex") {
     return value;
   }
@@ -79,6 +91,9 @@ const parseReviewValue = (value: string): ReviewMode => {
 const maybeParsePlanReviewValue = (
   value: string | undefined
 ): PlanReviewMode | undefined => {
+  if (value !== undefined) {
+    rejectRetiredValue(value);
+  }
   if (value === "other" || isAgent(value) || value === "none") {
     return value;
   }
@@ -227,46 +242,23 @@ const applyValueFlag = (
         "Invalid --codex-reviewer-model value: cannot be empty"
       );
       return;
-    case "copilotModel":
-      opts.copilotModel = requireTrimmedValue(
-        value,
-        "Invalid --copilot-model value: cannot be empty"
-      );
-      return;
-    case "copilotReviewerModel":
-      opts.copilotReviewerModel = requireTrimmedValue(
-        value,
-        "Invalid --copilot-reviewer-model value: cannot be empty"
-      );
-      return;
-    case "cursorModel":
-      opts.cursorModel = requireTrimmedValue(
-        value,
-        "Invalid --cursor-model value: cannot be empty"
-      );
-      return;
-    case "cursorReviewerModel":
-      opts.cursorReviewerModel = requireTrimmedValue(
-        value,
-        "Invalid --cursor-reviewer-model value: cannot be empty"
-      );
-      return;
     case "claudeReviewerModel":
       opts.claudeReviewerModel = requireTrimmedValue(
         value,
         "Invalid --claude-reviewer-model value: cannot be empty"
       );
       return;
-    case "geminiModel":
-      opts.geminiModel = requireTrimmedValue(
+    // Any non-empty OpenCode provider/model identifier is accepted verbatim.
+    case "ossModel":
+      opts.ossModel = requireTrimmedValue(
         value,
-        "Invalid --gemini-model value: cannot be empty"
+        "Invalid --oss-model value: cannot be empty"
       );
       return;
-    case "geminiReviewerModel":
-      opts.geminiReviewerModel = requireTrimmedValue(
+    case "ossReviewerModel":
+      opts.ossReviewerModel = requireTrimmedValue(
         value,
-        "Invalid --gemini-reviewer-model value: cannot be empty"
+        "Invalid --oss-reviewer-model value: cannot be empty"
       );
       return;
     case "session":
@@ -344,6 +336,27 @@ const applyOnlyMode = (agent: Agent, opts: Options): void => {
   }
 };
 
+// Retired only-mode and model flags stay recognised so they fail closed with a
+// migration message instead of a generic "Unknown argument".
+const RETIRED_FLAGS = [
+  "--gemini-only",
+  "--cursor-only",
+  "--copilot-only",
+  "--gemini-model",
+  "--gemini-reviewer-model",
+  "--cursor-model",
+  "--cursor-reviewer-model",
+  "--copilot-model",
+  "--copilot-reviewer-model",
+] as const;
+
+const rejectRetiredFlag = (arg: string): void => {
+  const [name] = arg.split("=");
+  if (RETIRED_FLAGS.includes(name as (typeof RETIRED_FLAGS)[number])) {
+    throw new Error(retiredFlagMigrationMessage(name));
+  }
+};
+
 const parseOnlyModeFlag = (arg: string): Agent | undefined => {
   if (arg === "--claude-only") {
     return "claude";
@@ -351,14 +364,8 @@ const parseOnlyModeFlag = (arg: string): Agent | undefined => {
   if (arg === "--codex-only") {
     return "codex";
   }
-  if (arg === "--gemini-only") {
-    return "gemini";
-  }
-  if (arg === "--cursor-only") {
-    return "cursor";
-  }
-  if (arg === "--copilot-only") {
-    return "copilot";
+  if (arg === "--oss-only") {
+    return "oss";
   }
   return undefined;
 };
@@ -384,6 +391,9 @@ const parseReviewArg = (
     }
 
     const next = argv[index + 1];
+    if (next !== undefined) {
+      rejectRetiredValue(next);
+    }
     if (isAgent(next) || next === "claudex") {
       return index + 1;
     }
@@ -402,6 +412,11 @@ const parseReviewArg = (
   }
 
   const next = argv[index + 1];
+  // A retired value must not fall through to the bare-flag default; that would
+  // silently review with claudex after the operator asked for a retired seat.
+  if (next !== undefined) {
+    rejectRetiredValue(next);
+  }
   if (isAgent(next) || next === "claudex") {
     opts.review = parseReviewValue(next);
     return index + 1;
@@ -518,30 +533,6 @@ const parseModelArg = (
     );
     return index + 1;
   }
-  if (arg.startsWith("--copilot-model=")) {
-    applyValueFlag("copilotModel", arg.slice("--copilot-model=".length), opts);
-    return index + 1;
-  }
-  if (arg.startsWith("--copilot-reviewer-model=")) {
-    applyValueFlag(
-      "copilotReviewerModel",
-      arg.slice("--copilot-reviewer-model=".length),
-      opts
-    );
-    return index + 1;
-  }
-  if (arg.startsWith("--cursor-model=")) {
-    applyValueFlag("cursorModel", arg.slice("--cursor-model=".length), opts);
-    return index + 1;
-  }
-  if (arg.startsWith("--cursor-reviewer-model=")) {
-    applyValueFlag(
-      "cursorReviewerModel",
-      arg.slice("--cursor-reviewer-model=".length),
-      opts
-    );
-    return index + 1;
-  }
   if (arg.startsWith("--claude-reviewer-model=")) {
     applyValueFlag(
       "claudeReviewerModel",
@@ -550,14 +541,14 @@ const parseModelArg = (
     );
     return index + 1;
   }
-  if (arg.startsWith("--gemini-model=")) {
-    applyValueFlag("geminiModel", arg.slice("--gemini-model=".length), opts);
+  if (arg.startsWith("--oss-model=")) {
+    applyValueFlag("ossModel", arg.slice("--oss-model=".length), opts);
     return index + 1;
   }
-  if (arg.startsWith("--gemini-reviewer-model=")) {
+  if (arg.startsWith("--oss-reviewer-model=")) {
     applyValueFlag(
-      "geminiReviewerModel",
-      arg.slice("--gemini-reviewer-model=".length),
+      "ossReviewerModel",
+      arg.slice("--oss-reviewer-model=".length),
       opts
     );
     return index + 1;
@@ -565,13 +556,9 @@ const parseModelArg = (
   if (
     arg === "--codex-model" ||
     arg === "--codex-reviewer-model" ||
-    arg === "--copilot-model" ||
-    arg === "--copilot-reviewer-model" ||
-    arg === "--cursor-model" ||
-    arg === "--cursor-reviewer-model" ||
     arg === "--claude-reviewer-model" ||
-    arg === "--gemini-model" ||
-    arg === "--gemini-reviewer-model"
+    arg === "--oss-model" ||
+    arg === "--oss-reviewer-model"
   ) {
     applyValueFlag(
       VALUE_FLAGS[arg],
@@ -654,6 +641,8 @@ const consumeArg = (
     positional.push(...argv.slice(index + 1));
     return { nextIndex: argv.length, stop: true, onlyAgent };
   }
+
+  rejectRetiredFlag(arg);
 
   const modelNextIndex = parseModelArg(argv, index, opts, arg);
   if (modelNextIndex !== undefined) {
@@ -752,9 +741,7 @@ const parseArgsWithInfoHandler = (
     format: "pretty",
     maxIterations: DEFAULT_MAX_ITERATIONS,
     codexModel: runtimeEnv.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
-    copilotModel: runtimeEnv.LOOP_COPILOT_MODEL ?? DEFAULT_COPILOT_MODEL,
-    cursorModel: runtimeEnv.LOOP_CURSOR_MODEL ?? DEFAULT_CURSOR_MODEL,
-    geminiModel: runtimeEnv.LOOP_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+    ossModel: runtimeEnv.LOOP_OSS_MODEL?.trim() || DEFAULT_OSS_MODEL,
     helperCavemanMode: helperCavemanEnv
       ? parseCavemanMode(helperCavemanEnv, "LOOP_HELPER_CAVEMAN_MODE")
       : DEFAULT_HELPER_CAVEMAN_MODE,

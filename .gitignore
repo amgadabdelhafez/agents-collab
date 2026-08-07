@@ -4,6 +4,9 @@
 .claude/settings.local.json
 /.agents/
 
+# Loop runtime state written into the working tree by a live run.
+/.loop/
+
 # Dependency and build output.
 node_modules/
 target/

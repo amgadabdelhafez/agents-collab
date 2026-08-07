@@ -1,6 +1,12 @@
 import { defaultPeerAgent } from "./agents";
 import { NEWLINE_RE, REVIEW_FAIL, REVIEW_PASS } from "./constants";
 import { buildReviewPrompt } from "./prompts";
+import {
+  ADVISORY_REVIEWER_NOTE,
+  type ReleaseAuthorityPolicy,
+  resolveReleaseAuthorityPolicy,
+  reviewerHasReleaseAuthority,
+} from "./review-authority";
 import { runReviewerAgent } from "./runner";
 import type {
   Agent,
@@ -232,9 +238,19 @@ const runReviewWith = async (
   run: RunAgentFn,
   reviewers: Agent[],
   task: string,
-  opts: Options
+  opts: Options,
+  policy: ReleaseAuthorityPolicy = resolveReleaseAuthorityPolicy(process.env)
 ): Promise<ReviewResult> => {
   const orderedReviewers = [...new Set(reviewers)];
+  // Occupying the reviewer seat is not authority. A reviewer without an
+  // explicit policy grant is advisory: its approval alone cannot open the
+  // release gate, though its failure still blocks.
+  const advisoryReviewers = orderedReviewers.filter(
+    (reviewer) => !reviewerHasReleaseAuthority(reviewer, policy)
+  );
+  const authoritativeReviewers = orderedReviewers.filter((reviewer) =>
+    reviewerHasReleaseAuthority(reviewer, policy)
+  );
 
   const runOne = async (reviewer: Agent) => {
     console.log(`\n[loop] review with ${reviewer}`);
@@ -351,14 +367,22 @@ const runReviewWith = async (
     addFailure(reviewer, reason);
   }
 
+  const gateOpen = failures.length === 0 && authoritativeReviewers.length > 0;
+  const advisoryNotes =
+    failures.length === 0 && !gateOpen
+      ? `${ADVISORY_REVIEWER_NOTE} Advisory reviewers: ${advisoryReviewers.join(
+          ", "
+        )}.`
+      : "";
   return {
-    approved: failures.length === 0,
+    advisoryReviewers,
+    approved: gateOpen,
     consensusFail:
       orderedReviewers.length > 1 &&
       failures.length === orderedReviewers.length,
     failureCount: failures.length,
     failures,
-    notes: formatReviewNotes(failures),
+    notes: formatReviewNotes(failures) || advisoryNotes,
     reviews,
   };
 };
