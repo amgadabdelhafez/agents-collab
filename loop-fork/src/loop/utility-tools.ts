@@ -1067,6 +1067,14 @@ const normalizeRequestedPath = (value: string): string => {
   return normalized === "" ? "." : normalized;
 };
 
+const pathIsDirectory = async (absolute: string): Promise<boolean> => {
+  try {
+    return (await lstat(absolute)).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 const inScope = (candidate: string, scope: string): boolean =>
   scope === "." || candidate === scope || candidate.startsWith(`${scope}/`);
 
@@ -1224,8 +1232,12 @@ const resolveUtilityReadRange = (
 };
 
 export class UtilityToolBroker {
-  readonly definitions: readonly UtilityToolDefinition[];
-  private readonly allowedTools: ReadonlySet<UtilityToolName>;
+  // Not `readonly`: validateConfiguration narrows both once, at broker
+  // creation, when a tool turns out to be unsatisfiable for this job's scopes.
+  // Externally they are still read-only in practice - nothing mutates them
+  // after create() returns.
+  definitions: readonly UtilityToolDefinition[];
+  private allowedTools: ReadonlySet<UtilityToolName>;
   private readonly artifactDir: string;
   private readonly commandAllowlist: readonly UtilityCommandPolicy[];
   private readonly commandCwds: readonly string[];
@@ -1692,6 +1704,30 @@ export class UtilityToolBroker {
     }
   }
 
+  // Narrow the exposed capability set to what this job's declared scopes can
+  // actually satisfy. Deliberately scoped to run_check only: this is not a
+  // general per-tool satisfiability registry, and nothing here should be read
+  // as claiming every broker tool is filtered this way.
+  //
+  // run-151 job f155d583 was routed with read and write scope both exactly one
+  // FILE. run_check was offered anyway, no cwd could satisfy it, and the helper
+  // burned its three-rejection budget discovering that - discarding a patch it
+  // had already produced successfully.
+  private async narrowUnsatisfiableCapabilities(): Promise<void> {
+    if (!this.allowedTools.has("run_check")) {
+      return;
+    }
+    if (await this.hasSatisfiableCommandCwd()) {
+      return;
+    }
+    const narrowed = new Set(this.allowedTools);
+    narrowed.delete("run_check");
+    this.allowedTools = narrowed;
+    this.definitions = UTILITY_TOOL_DEFINITIONS.filter((tool) =>
+      narrowed.has(tool.function.name)
+    );
+  }
+
   private async validateConfiguration(): Promise<void> {
     if (!(this.readScopes.length > 0)) {
       throw new ToolPolicyError(
@@ -1730,6 +1766,9 @@ export class UtilityToolBroker {
         "Exact read path must be one of the declared read scopes"
       );
     }
+    // Last: the scopes above are now known valid, so satisfiability can be
+    // snapshotted against them.
+    await this.narrowUnsatisfiableCapabilities();
   }
 
   private assertExactRead(args: Record<string, unknown>): void {
@@ -2043,7 +2082,35 @@ export class UtilityToolBroker {
         `Command cwd resolves outside its exact declared scope: ${requested}`
       );
     }
+    // A cwd must be a directory. Without this the broker accepted a declared
+    // FILE path as a cwd and the failure surfaced later as an opaque spawn
+    // error. Asserting it here keeps execution and the satisfiability snapshot
+    // below deciding on identical rules, which is the point: a looser
+    // satisfiability predicate that disagreed with enforcement would recreate
+    // the run-151 defect in a new place.
+    if (!(await pathIsDirectory(canonical))) {
+      throw new ToolPolicyError(
+        "scope_denied",
+        `Command cwd is not a directory: ${requested}`
+      );
+    }
     return { absolute: canonical, relative: canonicalRelative };
+  }
+
+  // Broker-creation-time snapshot: can ANY declared cwd satisfy run_check?
+  // Runs the exact execution path, so the two cannot drift apart. Later
+  // filesystem drift may only make a call fail closed at execution time; it
+  // must never retroactively widen what was exposed.
+  private async hasSatisfiableCommandCwd(): Promise<boolean> {
+    for (const candidate of this.commandCwds) {
+      try {
+        await this.resolveCommandCwd(candidate);
+        return true;
+      } catch {
+        // Not this one. Try the next declared cwd.
+      }
+    }
+    return false;
   }
 
   private async searchRepo(

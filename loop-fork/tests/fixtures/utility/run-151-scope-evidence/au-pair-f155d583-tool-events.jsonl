@@ -1,0 +1,19 @@
+{"at": "2026-08-07T06:05:48.909Z", "durationMs": 1, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:06:06.768Z", "durationMs": 1, "error": {"code": "scope_denied", "message": "Path is outside declared read scope: 03-Development/ar-prototype/scripts/lib/wrap-cloth-solver-rig.mjs. Allowed read scope(s): 03-Development/ar-prototype/scripts/loop75-enrollment-harness.mjs. Retry only inside a listed scope or return CONTEXT_INSUFFICIENT."}, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": false, "tool": "search_repo"}
+{"at": "2026-08-07T06:06:06.769Z", "durationMs": 0, "error": {"code": "scope_denied", "message": "Path is outside declared read scope: 03-Development/ar-prototype/scripts/lib/wrap-cloth-solver-rig.mjs. Allowed read scope(s): 03-Development/ar-prototype/scripts/loop75-enrollment-harness.mjs. Retry only inside a listed scope or return CONTEXT_INSUFFICIENT."}, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": false, "tool": "search_repo"}
+{"at": "2026-08-07T06:09:13.968Z", "durationMs": 1, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:13.968Z", "durationMs": 0, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:16.451Z", "durationMs": 0, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:16.452Z", "durationMs": 1, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:18.242Z", "durationMs": 0, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:19.954Z", "durationMs": 1, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:19.955Z", "durationMs": 0, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:21.495Z", "durationMs": 0, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "search_repo"}
+{"at": "2026-08-07T06:09:21.498Z", "durationMs": 1, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "search_repo"}
+{"at": "2026-08-07T06:09:22.889Z", "durationMs": 0, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:09:22.890Z", "durationMs": 1, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"at": "2026-08-07T06:10:07.060Z", "durationMs": 1, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "read_file"}
+{"artifact": {"manifestPath": "<REPO_ROOT>/.loop/utility-artifacts/f155d583-0d10-4b41-a0e4-77cf47c67776/e4d7c9c2-e9b2-4d83-bf9e-c2e7d93d8046.json", "manifestSha256": "fb375069bdd13e6f9c836bd49b65715932ab91a0776526e3e80a7adf28e4367c", "path": "<REPO_ROOT>/.loop/utility-artifacts/f155d583-0d10-4b41-a0e4-77cf47c67776/e4d7c9c2-e9b2-4d83-bf9e-c2e7d93d8046.patch", "sha256": "761c6f6d4aba4c41d4a507851347fc4e4fea512c57cabffca4ad08875bbe6841"}, "at": "2026-08-07T06:12:07.812Z", "durationMs": 2, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": true, "tool": "propose_patch"}
+{"at": "2026-08-07T06:12:10.354Z", "durationMs": 0, "error": {"code": "scope_denied", "message": "Command cwd is outside its exact declared scope: ."}, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": false, "tool": "run_check"}
+{"at": "2026-08-07T06:12:11.577Z", "durationMs": 0, "error": {"code": "path_denied", "message": "Path must be repository-relative: <REPO_ROOT>"}, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": false, "tool": "run_check"}
+{"at": "2026-08-07T06:12:12.597Z", "durationMs": 0, "error": {"code": "scope_denied", "message": "Command cwd is outside its exact declared scope: ."}, "jobId": "f155d583-0d10-4b41-a0e4-77cf47c67776", "ok": false, "tool": "run_check"}

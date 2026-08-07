@@ -1,0 +1,58 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/utility-scope-evidence-recovery.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-scope-evidence-recovery.test.ts:
+48 |       }
+49 |     );
+50 | 
+51 |     const capabilities = broker.describeCapabilities();
+52 |     // A tool the job's own scopes can never satisfy must not be offered.
+53 |     expect(capabilities.tools).not.toContain("run_check");
+                                        ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "run_check"
+Received: [ "read_file", "run_check" ]
+
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:53:36)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:26:11)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:37:9)
+(fail) run_check is withheld when no declared cwd can satisfy it [7.81ms]
+114 |       {
+115 |         runCommand: async () => ({ exitCode: 0, stderr: "", stdout: "" }),
+116 |       }
+117 |     );
+118 | 
+119 |     expect(broker.describeCapabilities().tools).not.toContain("run_check");
+                                                          ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "run_check"
+Received: [ "read_file", "run_check" ]
+
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:119:53)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:26:11)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:104:9)
+(fail) run_check is withheld when every declared cwd is missing from disk [0.68ms]
+141 |     const capabilities = broker.describeCapabilities();
+142 |     const definitionNames = broker.definitions.map(
+143 |       (definition) => definition.function.name
+144 |     );
+145 | 
+146 |     expect(definitionNames).not.toContain("run_check");
+                                      ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "run_check"
+Received: [ "read_file", "run_check" ]
+
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:146:33)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:26:11)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-scope-evidence-recovery.test.ts:127:9)
+(fail) every exposure surface agrees about a withheld run_check [0.78ms]
+
+ 2 pass
+ 3 fail
+ 5 expect() calls
+Ran 5 tests across 1 file. [89.00ms]
+error: script "test:file" exited with code 1

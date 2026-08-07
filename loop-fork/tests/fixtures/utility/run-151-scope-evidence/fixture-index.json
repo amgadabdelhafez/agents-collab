@@ -1,0 +1,88 @@
+{
+  "defect": "run-151: a routed helper failed closed for harness reasons - an unsatisfiable tool was exposed, and a prose-only completion had no bounded chance to correct",
+  "spec": "specs/utility-scope-evidence-recovery/spec.md",
+  "sourceRun": "/Users/amgad/.loop/runs/harvto-b1e274e66299/151/utility",
+  "generatedAt": "2026-08-07T06:36:33Z",
+  "timestampProvenance": "Read from `date -u` at generation time, not authored by hand.",
+  "jobs": {
+    "b649045c-c0c0-4f7c-a4a0-b2220ae67af4": {
+      "tier": "utility-nanny",
+      "kind": "inspect",
+      "executionProfile": "search",
+      "readScope": ["03-Development"],
+      "model": "qwen3.6-35b-a3b-vl",
+      "outcome": "failed 2026-08-07T06:01:56.979Z, 3.4s after running",
+      "blocker": "Nanny task completed without repository tool evidence",
+      "toolEvents": 0,
+      "note": "search_repo was exposed AND satisfiable; the model answered in prose without calling it."
+    },
+    "f155d583-0d10-4b41-a0e4-77cf47c67776": {
+      "tier": "utility-au-pair",
+      "kind": "edit",
+      "readScope": [
+        "03-Development/ar-prototype/scripts/loop75-enrollment-harness.mjs"
+      ],
+      "writeScope": [
+        "03-Development/ar-prototype/scripts/loop75-enrollment-harness.mjs"
+      ],
+      "outcome": "failed 2026-08-07T06:12:12.602Z after three consecutive broker-rejected rounds",
+      "blocker": "helper stopped after 3 consecutive broker-rejected model rounds without progress (last error: scope_denied from run_check: Command cwd is outside its exact declared scope: .)",
+      "toolEvents": 19,
+      "workCompletedThenDiscarded": {
+        "proposePatchAt": "2026-08-07T06:12:07.812Z",
+        "patchSha256": "761c6f6d4aba4c41d4a507851347fc4e4fea512c57cabffca4ad08875bbe6841",
+        "note": "The helper satisfied the edit-evidence assertion before dying. It failed on the rejection budget, not on the evidence check, and its valid patch was discarded."
+      },
+      "runCheckRejections": [
+        "2026-08-07T06:12:10.354Z scope_denied Command cwd is outside its exact declared scope: .",
+        "2026-08-07T06:12:11.577Z path_denied Path must be repository-relative: <REPO_ROOT>",
+        "2026-08-07T06:12:12.597Z scope_denied Command cwd is outside its exact declared scope: ."
+      ]
+    }
+  },
+  "rootCause": {
+    "unsatisfiableTool": [
+      "utility-tools.ts:1271 commandCwds = (config.commandCwds ?? config.readScopes)",
+      "utility-tools.ts:1274 commandCwdsAreExact = config.commandCwds !== undefined",
+      "utility-tools.ts:1070 inScope = scope === '.' || candidate === scope || candidate.startsWith(scope + '/')",
+      "utility-tools.ts:2013-2022 resolveCommandCwd requires in-scope AND an existing directory",
+      "A file-only read scope admits only that exact file path, which is never a usable cwd, so the satisfiable set is empty while run_check stays exposed at utility-tools.ts:1317."
+    ],
+    "noEvidenceRecovery": [
+      "utility-runtime.ts:1247-1277 assertConversationEvidence",
+      "utility-runtime.ts:1275 throws immediately when successfulTools.size === 0",
+      "Called from three conversation loops (approximately lines 1384, 1542, 1957); correction turns are fixed at 0 and not configurable."
+    ]
+  },
+  "normalization": {
+    "substitutions": [["/private/tmp/harvto-loop145-base", "<REPO_ROOT>"]],
+    "steps": [
+      "filter jobs.jsonl and tool-events.jsonl by exact jobId",
+      "replace the absolute run repo root with <REPO_ROOT>",
+      "re-serialize each record with sorted keys, one per line"
+    ]
+  },
+  "artifacts": [
+    {
+      "file": "au-pair-f155d583-jobs.jsonl",
+      "sha256": "3e98f318bc3bd3e8da8233d8a0047a51d6272cdf0f8258b3d4f32f10c7a2e85c",
+      "lines": 5
+    },
+    {
+      "file": "au-pair-f155d583-tool-events.jsonl",
+      "sha256": "db2a12b0d3ab6173b6803eff1e50c7405c31729bfab7225f0f25d217ef4e1966",
+      "lines": 19
+    },
+    {
+      "file": "nanny-b649045c-jobs.jsonl",
+      "sha256": "d3573bfcff678464b65dc1d57f9e397e1b65e365d15b0224fa7900c08a89193e",
+      "lines": 5
+    },
+    {
+      "file": "nanny-b649045c-tool-events.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lines": 0,
+      "emptyIsTheEvidence": "Zero tool events is the defect, not a failed extraction. The source utility/tool-events.jsonl contained no entry for this jobId; the helper made no tool call at all. A regression must assert this emptiness positively."
+    }
+  ]
+}

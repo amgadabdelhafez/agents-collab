@@ -1276,6 +1276,52 @@ const assertConversationEvidence = (
   }
 };
 
+// run-151 Defect B. Job b649045c answered in prose and never called a tool, and
+// the assertion above ended the job 3.4s in with no chance to correct. A first
+// prose-only completion is a recoverable model slip; a second is not.
+//
+// Deliberately narrow. This covers only the GENERIC evidence-free conversational
+// completion. Direct, CONTEXT_INSUFFICIENT (an escalation, not a slip), fatal and
+// provider errors, and the `edit` and `command` assertions all stay terminal and
+// are never routed through here.
+const EVIDENCE_RECOVERY_BUDGET = 1;
+
+const needsEvidenceRecovery = (input: {
+  fatalError?: string;
+  recoveriesSpent: number;
+  request: UtilityRouteRequest;
+  successfulTools: ReadonlySet<UtilityToolName>;
+  summary: string;
+}): boolean => {
+  if (input.recoveriesSpent >= EVIDENCE_RECOVERY_BUDGET) {
+    return false;
+  }
+  if (input.fatalError) {
+    return false;
+  }
+  if (input.request.kind === "edit" || input.request.kind === "command") {
+    return false;
+  }
+  if (parseUtilityContextInsufficient(input.summary)) {
+    return false;
+  }
+  return input.successfulTools.size === 0;
+};
+
+// Names only what the broker is currently exposing, so a tool withheld as
+// unsatisfiable (see narrowUnsatisfiableCapabilities) can never be advertised
+// here. No scope, tool, or authority is widened: this is the same broker, the
+// same capability set, one more turn.
+const evidenceRecoveryPrompt = (broker: UtilityConversationBroker): string => {
+  const tools = broker.describeCapabilities().tools.join(", ");
+  return [
+    "Your previous answer contained no repository tool evidence, so it cannot be accepted.",
+    `Call one of the tools available to you now (${tools}) and base your answer on what it returns.`,
+    "Do not widen scope, do not guess, and do not describe what a tool would show without calling it.",
+    "If the declared scope genuinely cannot answer the objective, return CONTEXT_INSUFFICIENT instead.",
+  ].join(" ");
+};
+
 const executeUtilityBrokerCall = async (input: {
   assertActive: () => void;
   broker: UtilityConversationBroker;
@@ -1326,6 +1372,8 @@ const runLegacyUtilityConversation = async (input: {
   const artifacts: UtilityArtifactReference[] = [];
   const checks: UtilityCheckResult[] = [];
   const successfulTools = new Set<UtilityToolName>();
+  // Bounded at EVIDENCE_RECOVERY_BUDGET, per job, never reachable from helper input.
+  let evidenceRecoveries = 0;
   let modelCalls = 0;
   let toolCalls = 0;
   let toolRounds = 0;
@@ -1378,6 +1426,24 @@ const runLegacyUtilityConversation = async (input: {
     if (calls.length === 0) {
       const summary =
         response.message.content?.trim() || `${role} task completed.`;
+      // One bounded correction turn, inside the same conversation, the same
+      // broker, and the same capability set. Everything else about this loop -
+      // rejection counters, tool budgets, artifacts, usage - simply continues.
+      if (
+        needsEvidenceRecovery({
+          recoveriesSpent: evidenceRecoveries,
+          request: input.request,
+          successfulTools,
+          summary,
+        })
+      ) {
+        evidenceRecoveries += 1;
+        messages.push({
+          content: evidenceRecoveryPrompt(input.broker),
+          role: "user",
+        });
+        continue;
+      }
       const contextInsufficient = parseUtilityContextInsufficient(summary);
       if (!contextInsufficient) {
         input.broker.assertComplete?.();
@@ -1942,6 +2008,24 @@ const runPiUtilityConversation = async (input: {
       source: "rpc",
     });
     await session.waitForIdle();
+    // The recovery decision has to happen HERE, not next to the evidence
+    // assertion below: the `finally` disposes this session, and the assertion
+    // runs after it. Same session, same broker, one more prompt.
+    if (
+      needsEvidenceRecovery({
+        fatalError,
+        recoveriesSpent: 0,
+        request: input.request,
+        successfulTools: state.successfulTools,
+        summary,
+      })
+    ) {
+      await session.prompt(evidenceRecoveryPrompt(input.broker), {
+        expandPromptTemplates: false,
+        source: "rpc",
+      });
+      await session.waitForIdle();
+    }
   } finally {
     clearInterval(cancellationTimer);
     clearTimeout(timer);
