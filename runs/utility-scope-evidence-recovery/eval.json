@@ -1,0 +1,118 @@
+{
+  "task_id": "utility-scope-evidence-recovery",
+  "feature": "utility-scope-evidence-recovery",
+  "timestamp": "2026-08-07T19:14:41Z",
+  "timestamp_provenance": "Read from `date -u` at generation time, not authored by hand.",
+  "evaluator": "claude-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "base_commit": "defdf74949e34fe69b0f8e8601bba0afa152585f",
+  "checks": {
+    "live_incident": {
+      "status": "pass",
+      "details": [
+        "run-151 job b649045c (Nanny, qwen3.6-35b-a3b-vl, readScope [03-Development]) recorded ZERO tool events and failed 3.4s in with 'Nanny task completed without repository tool evidence'. search_repo was exposed and satisfiable; the model answered in prose.",
+        "run-151 job f155d583 (Au Pair, kind edit, read and write scope both one FILE) succeeded at propose_patch 06:12:07.812Z producing patch sha256 761c6f6d4aba4c41d4a507851347fc4e4fea512c57cabffca4ad08875bbe6841, then hit three run_check rejections and lost that patch to MAX_CONSECUTIVE_BROKER_REJECTIONS.",
+        "Root cause A: utility-tools.ts:1271 commandCwds falls back to readScopes; :1274 commandCwdsAreExact false; :1070 inScope; resolveCommandCwd requires in-scope AND existing path. A file-only scope set admits only that file, which is never a usable cwd, so the satisfiable set is empty while run_check stayed exposed.",
+        "Root cause B: utility-runtime.ts:1275 threw on successfulTools.size === 0 with zero correction turns, fixed at 0 and not configurable."
+      ]
+    },
+    "producer_fixture": {
+      "status": "pass",
+      "details": [
+        "tests/fixtures/utility/run-151-scope-evidence/ holds both job records and both tool-event streams, normalized, with fixture-index.json recording per-file sha256, root-cause line citations, and provenance.",
+        "nanny-b649045c-tool-events.jsonl is ZERO BYTES and the index records explicitly that the emptiness IS the evidence, not a failed extraction, so a regression must assert it positively."
+      ]
+    },
+    "red_before_green": {
+      "status": "pass",
+      "details": [
+        "Defect A RED on unmodified base: runs/utility-scope-evidence-recovery/artifacts/red-defect-a-unmodified-base.txt, 3 fail / 2 pass. The three failures are the new-behaviour assertions, each failing as 'Expected to not contain: run_check' / 'Received: [read_file, run_check]'. The two passes are deliberate preserved-behaviour guards, green on base by design.",
+        "Defect B RED on untouched base: runs/utility-scope-evidence-recovery/artifacts/red-defect-b-untouched-base.txt, 3 fail / 0 pass, captured with Defect A's source change STASHED so 'base' is literally defdf74 source. Decisive reason 'Expected length: 2, Received length: 1' - on base only one model round ever happens.",
+        "PROVENANCE NOTE on red-defect-a-unmodified-base.txt: three lines carried trailing whitespace from bun's blank source-context rows (rendered as 'NN | '), which failed `git diff --check`. Only that trailing whitespace was removed; no assertion text, count, or message changed. sha256 before 1c2b38b2b4c75f6f67696cc5835d78a0fe5ed8e20b424d279d266f6cb4644222, after fed0d24715ddc90526ca182cc5b85ec6c18e366e195240ec9a2f4bdba23a8b30. Line count 58 unchanged, 3 'Expected to not contain' lines unchanged, 3 (fail)/(pass) markers unchanged. The file is therefore captured output with trailing whitespace stripped, not a byte-verbatim capture, and is recorded as such rather than presented as untouched.",
+        "The read-plan regression was proved RED by temporarily reverting evidenceRecoveryPrompt to describeCapabilities().tools and rerunning: it failed with the prompt reading 'Call one of the tools available to you now (read_file, search_repo)', advertising a future-step tool the helper cannot call. Artifact runs/utility-scope-evidence-recovery/artifacts/red-readplan-recovery-prefix.txt, sha256 94da68c105e94b4bf7ee0a65783b9471eb3e10c05f2eca93daad4898437de1c7. The fix was restored byte-identically from a backup and the file re-verified (8 occurrences of broker.definitions), returning 7/0. A regression that has never been seen red is not proof, and Codex named this exact one in its prior hold."
+      ]
+    },
+    "defect_a": {
+      "status": "pass",
+      "details": [
+        "Narrow by design: run_check satisfiability only. No general per-tool registry, and no artifact claims one.",
+        "hasSatisfiableCommandCwd() calls resolveCommandCwd itself, so satisfiability and enforcement cannot drift. No second predicate.",
+        "resolveCommandCwd gained a directory assertion ('Command cwd is not a directory'). It previously accepted a declared FILE as a cwd, failing later as an opaque spawn error. This is a real behaviour change to execution, failing closed earlier, and is what makes reusing the same call a correct satisfiability test.",
+        "narrowUnsatisfiableCapabilities() runs last in validateConfiguration as a broker-creation-time snapshot; later filesystem drift can only fail closed, never widen exposure.",
+        "Every exposure surface agrees: definitions, describeCapabilities().tools, and commandPrefixes, asserted together in one regression.",
+        "Withheld-capability guidance implemented, not just the removal: narrowUnsatisfiableCapabilities records a helper-visible reason naming run_check, the declared command directories that failed, and the tools that remain. It rides the capsule via describeCapabilities().withheldCapabilities (the capsule is stableJson, so it reaches the first-turn prompt), the step broker propagates it, and dispatch returns that concrete reason instead of the generic 'outside this request's execution profile' message."
+      ]
+    },
+    "defect_b": {
+      "status": "pass",
+      "details": [
+        "EVIDENCE_RECOVERY_BUDGET = 1, per job, not reachable from helper input.",
+        "needsEvidenceRecovery refuses recovery for: budget spent, any fatalError, kind edit, kind command, and CONTEXT_INSUFFICIENT. Only the generic evidence-free conversational completion reaches it.",
+        "Pi: the recovery prompt is issued inside the try after await session.waitForIdle(), because the finally disposes the session and the assertion runs after it.",
+        "Legacy: pushes the recovery message and continues the same loop, carrying broker, rejection counters, tool budgets, artifacts and usage. Bounded independently by maxJobRuntimeMs and EMERGENCY_MAX_MODEL_CALLS = 64.",
+        "Direct (runDirectUtilityConversation) is untouched and receives no recovery.",
+        "evidenceRecoveryPrompt builds its list from broker.definitions, NOT describeCapabilities().tools. For a multi-step read-plan broker those differ: definitions is the current step while describeCapabilities unions every future step, so the earlier version could advertise a tool not active on this turn. Codex found that; it is fixed and the prompt now names only current exposure."
+      ]
+    },
+    "regressions": {
+      "status": "pass",
+      "passed": 16,
+      "failed": 0,
+      "details": [
+        "utility-scope-evidence-recovery.test.ts 7/0: withheld when unsatisfiable; stays exposed with explicit satisfiable commandCwds; stays exposed with a directory readScopes fallback; withheld when the declared cwd is missing from disk; every exposure surface agrees; a cwd that becomes a file after broker creation fails closed WITHOUT running the command; a withheld run_check reports why rather than a generic profile message.",
+        "utility-evidence-recovery.test.ts 7/0 (Pi): one recovery turn; second unsupported fails closed with bodies length EXACTLY 2; recovery widens no tool; recovery prompt names the currently exposed tools; recovery reuses the same capsule, scopes and authority; CONTEXT_INSUFFICIENT gets zero recovery and escalates; a read-plan recovery prompt names the current step tool and omits future steps.",
+        "utility-evidence-recovery-legacy.test.ts 2/0: legacy harness earns exactly one recovery turn; an edit without a patch artifact stays terminal with no recovery."
+      ]
+    },
+    "preserved_terminal_behaviour": {
+      "status": "pass",
+      "details": [
+        "Cited rather than duplicated: utility-runtime.test.ts:2662 'utility worker stops after three consecutive broker rejections'; :2744 'a successful broker call resets the consecutive rejection breaker'; :3054 'utility worker rejects prose-only completion without repository evidence'.",
+        "3054 is the direct predecessor of the changed behaviour. Under this change it now spends one recovery round and STILL fails with the identical blocker, so terminal behaviour is preserved rather than weakened. It does not count model calls, so it could not detect an unbounded recovery; the bodies-length-2 regression adds exactly that.",
+        "Fatal provider errors are excluded structurally: needsEvidenceRecovery returns false when fatalError is set, before any other check."
+      ]
+    },
+    "full_utility_surface": {
+      "status": "pass",
+      "details": [
+        "utility-runtime 53/0, utility-pi-harness 11/0, utility-tools 49/0, utility-workspace 13/0, utility-execution-tier 11/0, utility-observability 5/0, utility-context 6/0, utility-store 15/0, utility-readiness 5/0, plus the three new files 13/0. 181 pass, 0 fail.",
+        "utility-runtime and utility-pi-harness could not even load before the authorized bootstrap, so Defect B is genuinely verified rather than asserted."
+      ]
+    },
+    "dependency_bootstrap": {
+      "status": "pass",
+      "details": [
+        "Authority: supervisor c52c6314-519b-4ced-ac42-b2d4bfc0c0c7, relayed bba98371-6fd6-4d66-94ca-84d15da67561. Evidence chain: runs/utility-scope-evidence-recovery/artifacts/dependency-bootstrap-evidence.txt.",
+        "Exactly one invocation: bun install --frozen-lockfile, exit 0, 145 packages.",
+        "bun.lock sha256 31d0bdb8a54bae9fd4dc29d287013e2a1821041072839b9859c6c9362273c321 before AND after, identical, and never listed by git status.",
+        "node_modules state hash d19010b928c017280e85f7578fb1c3f33d428aae4a55bbae47545cbf84490434 over 146 packages. Before: ABSENT.",
+        "No global install, no binary mutation, confined to this disposable worktree. HEAD unchanged throughout."
+      ]
+    },
+    "review_corrections": {
+      "status": "pass",
+      "details": [
+        "Codex plan amendments 0a27f1ab applied before source work: narrowed the claim to run_check; reuse the execution cwd policy; broker-creation-time snapshot; all exposure surfaces agree; recovery scoped to the generic conversational completion with Direct/CONTEXT_INSUFFICIENT/fatal/edit/command terminal; both harnesses; recovery continues the same run.",
+        "Codex 72e6ad76 required the tool-naming and no-new-state properties be tested rather than argued from construction. Both are now regressions.",
+        "Codex 43b420ff diagnosed my legacy mock: parseCompletion (openai-compatible.ts:388-396) accepts only string or null content, and my tool-call message omitted it. Verified at those lines, fixed with content: null. It also corrected a wrong comment I had written claiming absence of an execution profile necessarily selects Direct; directUtilityCalls only returns calls for fully specified deterministic profiles."
+      ]
+    }
+  },
+  "known_limits": [
+    "The 2.1.223-style timing races and provider behaviour are out of scope here; this task covers the harness-side defects only.",
+    "Two of my own regressions were VACUOUS on first submission and Codex caught both. 'the recovery prompt names exposed tools' searched JSON.stringify(body), where offered tool names already appear inside the tools definitions, so it passed regardless of what the prompt said; it also sliced from an unguarded indexOf, which on absence is -1 and inspects one character. 'the recovery turn reuses the same context' compared only system-role messages while the capsule, scopes and authority live in the user context message. Both are rewritten to read the appended recovery message directly and to require the original message array to be an exact PREFIX of the recovery request. Rewriting them made them fail, which is how I know they now test something: the failure revealed Pi sends structured content parts rather than bare strings.",
+    "Four test-setup errors preceded working regressions across this task: a run that never called the model (bodies length 0), an escalation from the deterministic Direct tier, an invalid-choice response shape missing content:null, and a run_check call rejected earlier for missing scoped file paths before it could reach the cwd check. Each was caught only because the test asserted a concrete count or an exact message."
+  ],
+  "review": {
+    "codeCandidateSha": "6dec6fe3b61cd3c1555b2c7036bfa90468f1a141",
+    "codexVerdict": "TECHNICAL APPROVE / PASS within Codex authority",
+    "codexVerdictMessageId": "814d5944-6eb1-45e2-91ca-1306c6c705ca",
+    "reviewerModel": "luna",
+    "reviewerPane": "native Codex pane %8",
+    "reviewerAuthority": "supervisor ratification c7f6494e-57e7-48d2-9dd7-72f337e5ffab, relayed 500f1307-4227-4495-a635-1ad0085206ce",
+    "recordedSeparately": "This provenance is committed AFTER the verdict, in an evidence-only commit, so the approved SHA 6dec6fe3b61cd3c1555b2c7036bfa90468f1a141 is not moved. Codex directed this in 814d5944 after I flagged the conflict in d53d54f3.",
+    "remainingGate": "supervisor exact-SHA review. Codex explicitly withheld merge, deploy, and release PASS.",
+    "deliveryCaveat": "pending.supervisor was 5 with oldest 2026-08-07T03:43:52.763Z at the time of writing, so supervisor-facing sends from this session have been stranded and every supervisor ruling arrived via Codex relay. Filed by Codex as a separate governed loop; run 9 does not fix it."
+  }
+}

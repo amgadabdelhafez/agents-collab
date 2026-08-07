@@ -1,0 +1,195 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/utility-evidence-recovery.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-evidence-recovery.test.ts:
+152 |         return searchCall();
+153 |       }
+154 |       return proseOnly("Needle found in src/sample.ts.");
+155 |     },
+156 |     ({ bodies, job }) => {
+157 |       expect(job).toMatchObject({ state: "completed" });
+                        ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "state": "completed",
++   "application": undefined,
++   "claim": {
++     "epoch": 91,
++     "workerId": "utility-6561",
++     "workerPid": 6561,
++   },
++   "decision": {
++     "reason": "utility-eligible",
++     "target": "utility",
++     "tierId": "utility-nanny",
++   },
++   "events": [
++     {
++       "at": "2026-08-07T07:34:53.718Z",
++       "eventId": "route:199644b96874407e7e64c9088fbdf4adc7c968c80b403aae3c20306cc3e2ff06",
++       "jobId": "recovery-job",
++       "request": {
++         "acceptanceCriteria": [
++           "return source-backed evidence",
++         ],
++         "authority": {},
++         "createdAt": "2026-08-07T07:34:53.718Z",
++         "executionProfile": "search",
++         "id": "recovery-job",
++         "idempotencyKey": "199644b96874407e7e64c9088fbdf4adc7c968c80b403aae3c20306cc3e2ff06",
++         "kind": "inspect",
++         "objective": "Find the declared needle",
++         "readScope": [
++           "src",
++         ],
++         "requester": "codex",
++         "requiredCapabilities": [
++           "inspect",
++         ],
++         "risk": "low",
++         "workShape": "unknown",
++         "writeScope": [],
++       },
++       "state": "pending-route",
++       "type": "route-requested",
++     },
++     {
++       "at": "2026-08-07T07:34:53.719Z",
++       "decision": {
++         "reason": "utility-eligible",
++         "target": "utility",
++         "tierId": "utility-nanny",
++       },
++       "eventId": "eec34a9d-516f-48e6-b266-6225bddc00a0",
++       "jobId": "recovery-job",
++       "routeEpoch": 91,
++       "state": "routed-utility",
++       "type": "state-transition",
++     },
++     {
++       "at": "2026-08-07T07:34:53.721Z",
++       "claim": {
++         "epoch": 91,
++         "workerId": "utility-6561",
++         "workerPid": 6561,
++       },
++       "eventId": "claim:recovery-job:91:utility-6561",
++       "jobId": "recovery-job",
++       "state": "claimed",
++       "type": "claimed",
++     },
++     {
++       "at": "2026-08-07T07:34:53.721Z",
++       "eventId": "running:91:recovery-job",
++       "jobId": "recovery-job",
++       "state": "running",
++       "type": "state-transition",
++     },
++     {
++       "at": "2026-08-07T07:34:53.919Z",
++       "eventId": "15fed554-f329-4b6b-acc0-cade25291dc5",
++       "jobId": "recovery-job",
++       "result": {
++         "artifactRefs": [],
++         "blocker": "Nanny task completed without repository tool evidence",
++         "checks": [],
++         "context": {
++           "sha256": "53ebb6737f4d4146bbe27535884c5d6d53b3b8ac421fd37f0e15176a36d7b243",
++           "version": 3,
++         },
++         "filesChanged": [],
++         "paneSummary": "Nanny task completed without repository tool evidence",
++         "status": "failed",
++         "summary": "Nanny failed closed.",
++       },
++       "state": "failed",
++       "type": "result-recorded",
++     },
++   ],
++   "jobId": "recovery-job",
++   "request": {
++     "acceptanceCriteria": [
++       "return source-backed evidence",
++     ],
++     "authority": {},
++     "createdAt": "2026-08-07T07:34:53.718Z",
++     "executionProfile": "search",
++     "id": "recovery-job",
++     "idempotencyKey": "199644b96874407e7e64c9088fbdf4adc7c968c80b403aae3c20306cc3e2ff06",
++     "kind": "inspect",
++     "objective": "Find the declared needle",
++     "readScope": [
++       "src",
++     ],
++     "requester": "codex",
++     "requiredCapabilities": [
++       "inspect",
++     ],
++     "risk": "low",
++     "workShape": "unknown",
++     "writeScope": [],
++   },
++   "result": {
++     "artifactRefs": [],
++     "blocker": "Nanny task completed without repository tool evidence",
++     "checks": [],
++     "context": {
++       "sha256": "53ebb6737f4d4146bbe27535884c5d6d53b3b8ac421fd37f0e15176a36d7b243",
++       "version": 3,
++     },
++     "filesChanged": [],
++     "paneSummary": "Nanny task completed without repository tool evidence",
++     "status": "failed",
++     "summary": "Nanny failed closed.",
++   },
++   "routeEpoch": 91,
++   "state": "failed",
++   "updatedAt": "2026-08-07T07:34:53.919Z",
+  }
+
+- Expected  - 1
++ Received  + 133
+
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:157:19)
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:137:5)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:146:9)
+(fail) a prose-only Nanny completion earns exactly one evidence-recovery turn [204.52ms]
+172 |           blocker: "Nanny task completed without repository tool evidence",
+173 |           status: "failed",
+174 |         },
+175 |         state: "failed",
+176 |       });
+177 |       expect(bodies).toHaveLength(2);
+                           ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 2
+Received length: 1
+
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:177:22)
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:137:5)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:167:9)
+(fail) a second unsupported Nanny completion still fails closed [8.61ms]
+191 |         return searchCall();
+192 |       }
+193 |       return proseOnly("Needle found in src/sample.ts.");
+194 |     },
+195 |     ({ bodies }) => {
+196 |       expect(bodies).toHaveLength(3);
+                           ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 3
+Received length: 1
+
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:196:22)
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:137:5)
+      at async <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:185:9)
+(fail) the evidence-recovery turn widens no tool beyond what was already exposed [7.66ms]
+
+ 0 pass
+ 3 fail
+ 4 expect() calls
+Ran 3 tests across 1 file. [241.00ms]
+error: script "test:file" exited with code 1
