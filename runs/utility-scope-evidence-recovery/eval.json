@@ -1,7 +1,7 @@
 {
   "task_id": "utility-scope-evidence-recovery",
   "feature": "utility-scope-evidence-recovery",
-  "timestamp": "2026-08-07T07:57:49Z",
+  "timestamp": "2026-08-07T08:03:36Z",
   "timestamp_provenance": "Read from `date -u` at generation time, not authored by hand.",
   "evaluator": "claude-producer-backed-eval",
   "verdict": "pass",
@@ -28,7 +28,8 @@
       "status": "pass",
       "details": [
         "Defect A RED on unmodified base: runs/utility-scope-evidence-recovery/artifacts/red-defect-a-unmodified-base.txt, 3 fail / 2 pass. The three failures are the new-behaviour assertions, each failing as 'Expected to not contain: run_check' / 'Received: [read_file, run_check]'. The two passes are deliberate preserved-behaviour guards, green on base by design.",
-        "Defect B RED on untouched base: runs/utility-scope-evidence-recovery/artifacts/red-defect-b-untouched-base.txt, 3 fail / 0 pass, captured with Defect A's source change STASHED so 'base' is literally defdf74 source. Decisive reason 'Expected length: 2, Received length: 1' - on base only one model round ever happens."
+        "Defect B RED on untouched base: runs/utility-scope-evidence-recovery/artifacts/red-defect-b-untouched-base.txt, 3 fail / 0 pass, captured with Defect A's source change STASHED so 'base' is literally defdf74 source. Decisive reason 'Expected length: 2, Received length: 1' - on base only one model round ever happens.",
+        "PROVENANCE NOTE on red-defect-a-unmodified-base.txt: three lines carried trailing whitespace from bun's blank source-context rows (rendered as 'NN | '), which failed `git diff --check`. Only that trailing whitespace was removed; no assertion text, count, or message changed. sha256 before 1c2b38b2b4c75f6f67696cc5835d78a0fe5ed8e20b424d279d266f6cb4644222, after fed0d24715ddc90526ca182cc5b85ec6c18e366e195240ec9a2f4bdba23a8b30. Line count 58 unchanged, 3 'Expected to not contain' lines unchanged, 3 (fail)/(pass) markers unchanged. The file is therefore captured output with trailing whitespace stripped, not a byte-verbatim capture, and is recorded as such rather than presented as untouched."
       ]
     },
     "defect_a": {

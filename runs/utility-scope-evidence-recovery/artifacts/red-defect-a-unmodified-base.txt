@@ -4,7 +4,7 @@ bun test v1.3.13-canary.1 (903015a2)
 tests/loop/utility-scope-evidence-recovery.test.ts:
 48 |       }
 49 |     );
-50 | 
+50 |
 51 |     const capabilities = broker.describeCapabilities();
 52 |     // A tool the job's own scopes can never satisfy must not be offered.
 53 |     expect(capabilities.tools).not.toContain("run_check");
@@ -22,7 +22,7 @@ Received: [ "read_file", "run_check" ]
 115 |         runCommand: async () => ({ exitCode: 0, stderr: "", stdout: "" }),
 116 |       }
 117 |     );
-118 | 
+118 |
 119 |     expect(broker.describeCapabilities().tools).not.toContain("run_check");
                                                           ^
 error: expect(received).not.toContain(expected)
@@ -38,7 +38,7 @@ Received: [ "read_file", "run_check" ]
 142 |     const definitionNames = broker.definitions.map(
 143 |       (definition) => definition.function.name
 144 |     );
-145 | 
+145 |
 146 |     expect(definitionNames).not.toContain("run_check");
                                       ^
 error: expect(received).not.toContain(expected)
