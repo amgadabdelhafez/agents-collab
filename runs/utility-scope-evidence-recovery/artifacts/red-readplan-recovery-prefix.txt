@@ -1,0 +1,24 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/utility-evidence-recovery.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-evidence-recovery.test.ts:
+413 |     const recovery = recoveryMessageOf(bodies[1] as Record<string, unknown>);
+414 |     expect(recovery).toBeDefined();
+415 |     const prompt = recovery ?? "";
+416 |     expect(prompt).toContain("read_file");
+417 |     // The whole point: a future-step tool must never be advertised now.
+418 |     expect(prompt).not.toContain("search_repo");
+                             ^
+error: expect(received).not.toContain(expected)
+
+Expected to not contain: "search_repo"
+Received: "[{\"type\":\"text\",\"text\":\"Your previous answer contained no repository tool evidence, so it cannot be accepted. Call one of the tools available to you now (read_file, search_repo) and base your answer on what it returns. Do not widen scope, do not guess, and do not describe what a tool would show without calling it. If the declared scope genuinely cannot answer the objective, return CONTEXT_INSUFFICIENT instead.\"}]"
+
+      at <anonymous> (/private/tmp/agents-collab-utility-scope-evidence-recovery/loop-fork/tests/loop/utility-evidence-recovery.test.ts:418:24)
+(fail) a read-plan recovery prompt names the current step tool and omits future steps [13.55ms]
+
+ 6 pass
+ 1 fail
+ 30 expect() calls
+Ran 7 tests across 1 file. [379.00ms]
+error: script "test:file" exited with code 1

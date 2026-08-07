@@ -327,3 +327,96 @@ test("the recovery turn reuses the same capsule, scopes, and authority", async (
     }
   );
 });
+
+test("a read-plan recovery prompt names the current step tool and omits future steps", async () => {
+  // The bug Codex found in review: UtilityReadPlanToolBroker.definitions exposes
+  // only the CURRENT step, while describeCapabilities().tools unions every step.
+  // Building the recovery prompt from the union would advertise a tool the
+  // helper cannot call on this turn. Step one is file-read (read_file); step two
+  // is search (search_repo). Recovery before step one must name read_file only.
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-readplan-recovery-"));
+  const runDir = join(repoRoot, ".loop", "runs", "readplan");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const needle = 1;\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["complete both plan steps"],
+    authority: {},
+    executionPlan: [
+      {
+        executionProfile: "file-read" as const,
+        executionRead: { endLine: 1, path: "src/sample.ts", startLine: 1 },
+        objective: "Read the exact declaration line",
+        readScope: ["src/sample.ts"],
+      },
+      {
+        executionProfile: "search" as const,
+        objective: "Find other references",
+        readScope: ["src"],
+      },
+    ],
+    executionProfile: "read-plan",
+    id: "readplan-recovery-job",
+    kind: "inspect",
+    objective: "Execute the bounded read plan",
+    readScope: ["src", "src/sample.ts"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 92);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 92,
+  });
+
+  const bodies: Record<string, unknown>[] = [];
+  const server = serve({
+    fetch: async (incoming) => {
+      bodies.push((await incoming.json()) as Record<string, unknown>);
+      // Prose only, throughout: the job will fail closed after its single
+      // recovery, which is fine. What is under test is the recovery prompt.
+      return proseOnly("No tool call.");
+    },
+    port: 0,
+  });
+  servers.push(server);
+
+  try {
+    await runUtilityWorker(runDir, 92, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      LOOP_NANNY_MODEL: "fake-nanny",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+
+    // One original round plus exactly one recovery round.
+    expect(bodies).toHaveLength(2);
+    const offered = offeredToolNames(bodies[0] as Record<string, unknown>);
+    // Step one exposes read_file only; search_repo belongs to a future step.
+    expect(offered).toContain("read_file");
+    expect(offered).not.toContain("search_repo");
+
+    const recovery = recoveryMessageOf(bodies[1] as Record<string, unknown>);
+    expect(recovery).toBeDefined();
+    const prompt = recovery ?? "";
+    expect(prompt).toContain("read_file");
+    // The whole point: a future-step tool must never be advertised now.
+    expect(prompt).not.toContain("search_repo");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});

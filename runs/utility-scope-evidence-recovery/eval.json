@@ -1,7 +1,7 @@
 {
   "task_id": "utility-scope-evidence-recovery",
   "feature": "utility-scope-evidence-recovery",
-  "timestamp": "2026-08-07T08:03:36Z",
+  "timestamp": "2026-08-07T19:11:29Z",
   "timestamp_provenance": "Read from `date -u` at generation time, not authored by hand.",
   "evaluator": "claude-producer-backed-eval",
   "verdict": "pass",
@@ -29,7 +29,8 @@
       "details": [
         "Defect A RED on unmodified base: runs/utility-scope-evidence-recovery/artifacts/red-defect-a-unmodified-base.txt, 3 fail / 2 pass. The three failures are the new-behaviour assertions, each failing as 'Expected to not contain: run_check' / 'Received: [read_file, run_check]'. The two passes are deliberate preserved-behaviour guards, green on base by design.",
         "Defect B RED on untouched base: runs/utility-scope-evidence-recovery/artifacts/red-defect-b-untouched-base.txt, 3 fail / 0 pass, captured with Defect A's source change STASHED so 'base' is literally defdf74 source. Decisive reason 'Expected length: 2, Received length: 1' - on base only one model round ever happens.",
-        "PROVENANCE NOTE on red-defect-a-unmodified-base.txt: three lines carried trailing whitespace from bun's blank source-context rows (rendered as 'NN | '), which failed `git diff --check`. Only that trailing whitespace was removed; no assertion text, count, or message changed. sha256 before 1c2b38b2b4c75f6f67696cc5835d78a0fe5ed8e20b424d279d266f6cb4644222, after fed0d24715ddc90526ca182cc5b85ec6c18e366e195240ec9a2f4bdba23a8b30. Line count 58 unchanged, 3 'Expected to not contain' lines unchanged, 3 (fail)/(pass) markers unchanged. The file is therefore captured output with trailing whitespace stripped, not a byte-verbatim capture, and is recorded as such rather than presented as untouched."
+        "PROVENANCE NOTE on red-defect-a-unmodified-base.txt: three lines carried trailing whitespace from bun's blank source-context rows (rendered as 'NN | '), which failed `git diff --check`. Only that trailing whitespace was removed; no assertion text, count, or message changed. sha256 before 1c2b38b2b4c75f6f67696cc5835d78a0fe5ed8e20b424d279d266f6cb4644222, after fed0d24715ddc90526ca182cc5b85ec6c18e366e195240ec9a2f4bdba23a8b30. Line count 58 unchanged, 3 'Expected to not contain' lines unchanged, 3 (fail)/(pass) markers unchanged. The file is therefore captured output with trailing whitespace stripped, not a byte-verbatim capture, and is recorded as such rather than presented as untouched.",
+        "The read-plan regression was proved RED by temporarily reverting evidenceRecoveryPrompt to describeCapabilities().tools and rerunning: it failed with the prompt reading 'Call one of the tools available to you now (read_file, search_repo)', advertising a future-step tool the helper cannot call. Artifact runs/utility-scope-evidence-recovery/artifacts/red-readplan-recovery-prefix.txt, sha256 94da68c105e94b4bf7ee0a65783b9471eb3e10c05f2eca93daad4898437de1c7. The fix was restored byte-identically from a backup and the file re-verified (8 occurrences of broker.definitions), returning 7/0. A regression that has never been seen red is not proof, and Codex named this exact one in its prior hold."
       ]
     },
     "defect_a": {
@@ -56,11 +57,11 @@
     },
     "regressions": {
       "status": "pass",
-      "passed": 15,
+      "passed": 16,
       "failed": 0,
       "details": [
         "utility-scope-evidence-recovery.test.ts 7/0: withheld when unsatisfiable; stays exposed with explicit satisfiable commandCwds; stays exposed with a directory readScopes fallback; withheld when the declared cwd is missing from disk; every exposure surface agrees; a cwd that becomes a file after broker creation fails closed WITHOUT running the command; a withheld run_check reports why rather than a generic profile message.",
-        "utility-evidence-recovery.test.ts 6/0 (Pi): one recovery turn; second unsupported fails closed with bodies length EXACTLY 2; recovery widens no tool; recovery prompt names the currently exposed tools; recovery reuses the same capsule, scopes and authority; CONTEXT_INSUFFICIENT gets zero recovery and escalates.",
+        "utility-evidence-recovery.test.ts 7/0 (Pi): one recovery turn; second unsupported fails closed with bodies length EXACTLY 2; recovery widens no tool; recovery prompt names the currently exposed tools; recovery reuses the same capsule, scopes and authority; CONTEXT_INSUFFICIENT gets zero recovery and escalates; a read-plan recovery prompt names the current step tool and omits future steps.",
         "utility-evidence-recovery-legacy.test.ts 2/0: legacy harness earns exactly one recovery turn; an edit without a patch artifact stays terminal with no recovery."
       ]
     },
