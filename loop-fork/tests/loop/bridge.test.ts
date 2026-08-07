@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readDelegationEvents } from "../../src/loop/delegation-policy";
 import { readRunManifest } from "../../src/loop/run-state";
+import { transitionUtilityJob } from "../../src/loop/utility-store";
 
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
 
@@ -117,6 +118,57 @@ const runBridgeProcess = async (
     child.on("close", resolve);
   });
   return { code, stderr, stdout };
+};
+
+const routeCompletedUtilityTask = async (
+  runDir: string,
+  source: "claude" | "codex" | "supervisor",
+  summary: string,
+  requester?: "claude" | "codex"
+): Promise<{
+  result: {
+    artifactRefs: never[];
+    checks: never[];
+    filesChanged: never[];
+    status: "completed";
+    summary: string;
+  };
+  taskId: string;
+}> => {
+  const response = await runBridgeProcess(
+    runDir,
+    source,
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["return the bounded result"],
+          kind: "inspect",
+          objective: "Inspect one bounded definition",
+          read_scope: ["src/loop"],
+          ...(requester ? { requester } : {}),
+          work_shape: "separable",
+        },
+        name: "route_task",
+      },
+    })
+  );
+  expect(response.code).toBe(0);
+  const { taskId } = JSON.parse(toolText(response.stdout, 1)) as {
+    taskId: string;
+  };
+  const result = {
+    artifactRefs: [],
+    checks: [],
+    filesChanged: [],
+    status: "completed" as const,
+    summary,
+  };
+  transitionUtilityJob(runDir, taskId, "routed-requester");
+  transitionUtilityJob(runDir, taskId, "completed", { result });
+  return { result, taskId };
 };
 
 const startLiveBridgeProcess = (
@@ -852,6 +904,204 @@ test.each([
     state: "pending-route",
     taskId: routed.taskId,
   });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("get_task_result delivers only its exact queued utility handover", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const { result, taskId } = await routeCompletedUtilityTask(
+    runDir,
+    "claude",
+    "bounded producer result"
+  );
+
+  const bridge = await loadBridge();
+  const matching = (
+    await bridge.dispatchBridgeMessage(
+      runDir,
+      "utility",
+      "claude",
+      `Nanny result ${taskId}: ${result.summary}`,
+      undefined,
+      undefined,
+      { taskId, type: "handover" }
+    )
+  ).entry;
+  bridge.appendBridgeMessage(runDir, "codex", "claude", "peer message");
+  bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "claude",
+    "different utility result",
+    { taskId: "different-task", type: "handover" }
+  );
+  bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "codex",
+    "same task for another requester",
+    { taskId, type: "handover" }
+  );
+
+  const resultResponse = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeFrame({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: { task_id: taskId },
+        name: "get_task_result",
+      },
+    })
+  );
+
+  expect(JSON.parse(toolText(resultResponse.stdout, 2))).toMatchObject({
+    result,
+    state: "completed",
+    taskId,
+  });
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ message: "peer message" }),
+      expect.objectContaining({ message: "different utility result" }),
+      expect.objectContaining({ message: "same task for another requester" }),
+    ])
+  );
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(3);
+  expect(
+    bridge
+      .readBridgeEvents(runDir)
+      .find((event) => event.id === matching.id && event.kind === "delivered")
+  ).toMatchObject({ reason: "read via get_task_result" });
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("get_task_result preserves a matching handover with an active delivery claim", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const { taskId } = await routeCompletedUtilityTask(
+    runDir,
+    "codex",
+    "claimed producer result"
+  );
+
+  const bridge = await loadBridge();
+  const claimed = bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "codex",
+    "claimed producer result",
+    { taskId, type: "handover" }
+  );
+  const claimDir = join(runDir, "bridge-delivery-claims");
+  mkdirSync(claimDir, { recursive: true });
+  writeFileSync(
+    join(
+      claimDir,
+      `${createHash("sha256").update(claimed.id).digest("hex")}.lock`
+    ),
+    "claimed\n"
+  );
+
+  const resultResponse = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: { task_id: taskId },
+        name: "get_task_result",
+      },
+    })
+  );
+
+  expect(JSON.parse(toolText(resultResponse.stdout, 2))).toMatchObject({
+    state: "completed",
+    taskId,
+  });
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining({ id: claimed.id }),
+  ]);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("supervisor get_task_result preserves the requester agent handover", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+
+  const { taskId } = await routeCompletedUtilityTask(
+    runDir,
+    "supervisor",
+    "requester-owned result",
+    "claude"
+  );
+
+  const bridge = await loadBridge();
+  const handover = bridge.appendBridgeMessage(
+    runDir,
+    "utility",
+    "claude",
+    "requester-owned result",
+    { taskId, type: "handover" }
+  );
+  const resultResponse = await runBridgeProcess(
+    runDir,
+    "supervisor",
+    encodeFrame({
+      id: 2,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: { task_id: taskId },
+        name: "get_task_result",
+      },
+    })
+  );
+
+  expect(JSON.parse(toolText(resultResponse.stdout, 2))).toMatchObject({
+    state: "completed",
+    taskId,
+  });
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
+    expect.objectContaining({ id: handover.id, target: "claude" }),
+  ]);
+  expect(
+    bridge
+      .readBridgeEvents(runDir)
+      .some((event) => event.id === handover.id && event.kind === "delivered")
+  ).toBe(false);
+
+  const requesterReceive = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeFrame({
+      id: 3,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: "receive_messages" },
+    })
+  );
+
+  expect(requesterReceive.code).toBe(0);
+  expect(toolText(requesterReceive.stdout, 3)).toContain(
+    "requester-owned result"
+  );
+  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(
+    bridge
+      .readBridgeEvents(runDir)
+      .find((event) => event.id === handover.id && event.kind === "delivered")
+  ).toMatchObject({ reason: "read via receive_messages" });
   rmSync(root, { recursive: true, force: true });
 });
 

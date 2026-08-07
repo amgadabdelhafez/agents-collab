@@ -1130,6 +1130,23 @@ export const callUtilityBridgeTool = async (
       updatedAt: job.updatedAt,
     };
   }
+  if (source !== "supervisor") {
+    if (job.request.requester !== source) {
+      throw new UtilityBridgeInputError(
+        "get_task_result is restricted to its requester"
+      );
+    }
+    consumeBridgeInbox(
+      runDir,
+      job.request.requester,
+      "read via get_task_result",
+      (message) =>
+        message.source === "utility" &&
+        message.type === "handover" &&
+        message.taskId === job.jobId &&
+        !isBridgeDeliveryClaimed(runDir, message.id)
+    );
+  }
   return {
     application: job.application,
     result: job.result,

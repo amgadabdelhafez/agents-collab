@@ -1,0 +1,34 @@
+{
+  "task_id": "utility-result-consumption",
+  "feature": "utility-result-consumption",
+  "timestamp": "2026-08-06T21:48:41Z",
+  "evaluator": "codex-producer-backed-eval",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "live_evidence": {
+    "run": "harvto-loop-139",
+    "task_ids": [
+      "49015054-12f5-478c-855e-58559fa58f32",
+      "5c26c82c-6530-4cc9-ad02-c68cdb11ea08"
+    ],
+    "observed": "get_task_result returned both completed jobs while both matching utility handovers remained pending"
+  },
+  "checks": {
+    "causal_regression_before_fix": "failed because four messages remained pending instead of three",
+    "causal_and_safety_cases_after_fix": "3 passed, 0 failed",
+    "supervisor_observational_read": "completed result returned while the requester handover remained pending with no delivered event, then the requester drained the exact handover",
+    "supervisor_exemption_mutation": "changing source !== supervisor to true failed the named supervisor regression; 108 passed, 1 failed",
+    "focused_bridge_file": "109 passed, 0 failed",
+    "format_lint": "pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "mandatory_suite": "bun run test:ci passed every sequential test file with no failures",
+    "loopback_instrument": "codex tmux proxy integration passed independently with local port binding authority",
+    "diff_check": "pass"
+  },
+  "known_limitations": [
+    "Historical bridge journals are not rewritten.",
+    "The separate stale-manifest shutdown-order defect is not changed by this candidate.",
+    "No live loop, installed binary, remote branch, or release state was mutated."
+  ]
+}
