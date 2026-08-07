@@ -1,0 +1,60 @@
+
+╭─── Claude Code v2.1.223 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                  │ Tips for getting started                                                                                                                                              │
+│                Welcome back Guest!               │ Ask Claude to create a new app or clone a repository                                                                                                                  │
+│                                                  │ ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│                      ▐▛███▜▌                     │ What's new                                                                                                                                                            │
+│                     ▝▜█████▛▘                    │ Added owner wildcard entries (`"owner/*"`) to the `strictKnownMarketplaces` and `blockedMarketplaces` managed settings for allowing or blocking all marketplace repo… │
+│                       ▘▘ ▝▝                      │ Added a warning when workflow agents, forked skills, slash commands, or resumed background agents' requested subagent model is restricted and the parent model runs … │
+│                                                  │ Added a `/teleport` hint in cloud sessions showing how to continue locally with `claude --teleport <session id>`                                                      │
+│   Sonnet 5 with high effort · Claude Pro · dev   │ /release-notes for more                                                                                                                                               │
+│    /…/fixtures/2.1.223/kickoff-channel-race/     │                                                                                                                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Channels (experimental) messages from server:loop-bridge-fixture-absent inject directly in this session · restart without --dangerously-load-development-channels to stop
+ ▎ server:loop-bridge-fixture-absent · no MCP server configured with that name
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                                          tmux detected · scroll with PgUp/PgDn · or add 'set -g mouse on' to ~/.tmux.conf for wheel scroll
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ [Pasted text #1 +6 lines] and also please check my unrelated draft note
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Sonnet 5 | effort: high                                                                                                                                                                                               /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

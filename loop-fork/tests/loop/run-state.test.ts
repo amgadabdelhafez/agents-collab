@@ -251,6 +251,39 @@ test("competing processes reserve distinct numeric run directories", async () =>
   }
 });
 
+test("manifest round-trips the observed Claude CLI version", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  const manifest = createRunManifest({
+    claudeCliVersion: "2.1.223 (Claude Code)",
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-abc123",
+    runId: "9",
+  });
+
+  writeRunManifest(manifestPath, manifest);
+
+  expect(manifest.claudeCliVersion).toBe("2.1.223 (Claude Code)");
+  expect(readRunManifest(manifestPath)?.claudeCliVersion).toBe(
+    "2.1.223 (Claude Code)"
+  );
+  // Absent stays absent rather than becoming an empty string, so a run that
+  // could not observe the version is distinguishable from one that saw "".
+  const withoutVersion = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-abc123",
+    runId: "10",
+  });
+  const bareManifestPath = join(dir, "manifest-bare.json");
+  writeRunManifest(bareManifestPath, withoutVersion);
+  expect(withoutVersion.claudeCliVersion).toBeUndefined();
+  expect(readRunManifest(bareManifestPath)?.claudeCliVersion).toBeUndefined();
+});
+
 test("manifest helpers write, read, and touch run metadata", () => {
   const dir = makeTempDir();
   const manifestPath = join(dir, "manifest.json");

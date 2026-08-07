@@ -6,6 +6,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "bun";
 import { defaultPeerAgent } from "./agents";
@@ -20,12 +21,26 @@ import {
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "./bridge-guidance";
-import { stripDimSpans } from "./bridge-runtime";
+import {
+  readClaudeTranscriptVersionFromProjects,
+  stripDimSpans,
+} from "./bridge-runtime";
 import {
   cavemanAgentGuidance,
   DEFAULT_CAVEMAN_MODE,
   DEFAULT_HELPER_CAVEMAN_MODE,
 } from "./caveman";
+import {
+  type ClaudeCliVersion,
+  type ClaudeKickoffComposerState,
+  type ClaudeKickoffEvidence,
+  classifyKickoffComposer,
+  kickoffTurnStarted,
+  parseClaudeCliVersion,
+  parseClaudeHookEvidence,
+  readComposerBody,
+  resolveKickoffCapability,
+} from "./claude-kickoff";
 import {
   getCodexAppServerPid,
   getCodexAppServerUrl,
@@ -125,6 +140,26 @@ const CLAUDE_MODAL_PROGRESS_GRACE_POLLS = 80;
 const CLAUDE_PROMPT_MAX_POLLS = 80;
 const CLAUDE_PROMPT_HARD_MAX_POLLS = 240;
 const CLAUDE_PROMPT_POLL_DELAY_MS = 250;
+// Measured on Claude Code 2.1.223 with the run's own hook settings: a healthy
+// submit emits UserPromptSubmit 0.651s after Enter. These windows are ~30x and
+// ~15x that, derived rather than guessed. See specs/claude-kickoff-submit-guard.
+const CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS = 500;
+const CLAUDE_KICKOFF_CONFIRM_MAX_POLLS = 40;
+const CLAUDE_KICKOFF_RECOVERY_MAX_POLLS = 20;
+// Exact versions with a checked-in producer fixture proving a HEALTHY KICKOFF:
+// a baseline-relative UserPromptSubmit, or a confirmed transcript advance, from
+// that build. Membership is exact, never a range, because one healthy capture
+// proves that build and not every lower one.
+//
+// Deliberately EMPTY. The only other checked-in Claude fixture,
+// tests/fixtures/claude-code/2.1.220/dev-channel-preconnect-warning, records
+// `captureSafety.promptSubmitted: false`, `modelRequestMade: false`, and
+// `promptSubmission: false` on every action: it proves startup-modal handling,
+// not that a kickoff submits. Listing 2.1.220 here would have exempted a build
+// from the recovery guard on evidence that does not exist. Until a real
+// healthy-kickoff capture is produced, every version stays guarded, which is
+// the safe direction.
+const CLAUDE_KICKOFF_PROVEN_HEALTHY_VERSIONS: readonly ClaudeCliVersion[] = [];
 const MAX_LAUNCH_BOOTSTRAP_BYTES = 1024;
 const LAUNCH_CHARTER_DIR = "launch-charters";
 const PERSISTENT_TRANSPORT_STARTUP_TIMEOUT_MS = 20_000;
@@ -173,6 +208,10 @@ interface TmuxDeps {
   attach: (session: string) => void;
   capturePane: (pane: string, styled?: boolean) => string;
   capturePaneSnapshot: (pane: string) => PaneSnapshot | undefined;
+  // Version banner of the `claude` binary the pane will launch, e.g.
+  // "2.1.223 (Claude Code)". Undefined when it cannot be observed, which keeps
+  // the kickoff guard in its default-closed profile.
+  claudeCliVersion: () => string | undefined;
   closePersistentCodexSession: typeof closePersistentCodexSession;
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -187,6 +226,11 @@ interface TmuxDeps {
   makeClaudeSessionId: () => string;
   nowMs: () => number;
   preparePairedRun: typeof preparePairedRun;
+  // Claude's OWN project session transcript version, via
+  // readClaudeTranscriptVersionFromProjects. Never <runDir>/transcript.jsonl,
+  // which Codex, OSS, and bridge writes grow without Claude taking a turn.
+  readClaudeTranscriptVersion: (runDir: string) => string;
+  readTextFile: (path: string) => string | undefined;
   releasePersistentCodexSession: typeof releasePersistentCodexSession;
   runGit: (cwd: string, args: string[]) => GitResult;
   sendKeys: (pane: string, keys: string[]) => void;
@@ -1252,6 +1296,33 @@ class ClaudeStartupReadinessTimeoutError extends ClaudeStartupInputRequiredError
       `Claude pane "${pane}" did not reach an input-ready prompt within ${timeoutMs}ms.`,
       "Claude startup readiness timeout recovery"
     );
+  }
+}
+
+// Deliberately NOT a ClaudeStartupInputRequiredError. That family means "leave
+// the session up, a human must finish the input", which is exactly the run-147
+// outcome this guards against. Extending plain Error routes the failure into
+// startPairedSession's terminalizeFailedStart cleanup so the launch exits
+// nonzero with zero survivors instead of reporting a running loop.
+class ClaudeKickoffUnconfirmedError extends Error {
+  readonly pane: string;
+
+  constructor(input: {
+    composerState: ClaudeKickoffComposerState;
+    observedVersion: string;
+    pane: string;
+    recoveryAttempted: boolean;
+    timeoutMs: number;
+  }) {
+    super(
+      `Claude pane "${input.pane}" never started a turn from the launcher kickoff within ${input.timeoutMs}ms ` +
+        `(observed claude ${input.observedVersion}, composer ${input.composerState}, ` +
+        `direct-submit recovery ${input.recoveryAttempted ? "attempted" : "refused"}). ` +
+        "No UserPromptSubmit hook progression and no new Claude transcript version arrived; " +
+        "failing the launch rather than reporting a stranded kickoff as running."
+    );
+    this.name = "ClaudeKickoffUnconfirmedError";
+    this.pane = input.pane;
   }
 }
 
@@ -2738,6 +2809,173 @@ const unblockClaudePane = async (
   );
 };
 
+interface PendingKickoffConfirmation {
+  baseline: ClaudeKickoffEvidence;
+  expectedComposerBody: string | undefined;
+  pane: string;
+}
+
+type KickoffGuardDeps = Pick<
+  TmuxDeps,
+  | "capturePane"
+  | "claudeCliVersion"
+  | "log"
+  | "readClaudeTranscriptVersion"
+  | "readTextFile"
+  | "sendKeys"
+  | "sleep"
+>;
+
+const claudeHookLogPath = (runDir: string): string =>
+  join(runDir, "hooks", "claude.jsonl");
+
+const readClaudeKickoffEvidence = (
+  deps: Pick<TmuxDeps, "readClaudeTranscriptVersion" | "readTextFile">,
+  runDir: string
+): ClaudeKickoffEvidence => {
+  const hooks = parseClaudeHookEvidence(
+    deps.readTextFile(claudeHookLogPath(runDir))
+  );
+  return {
+    ...hooks,
+    transcriptVersion: deps.readClaudeTranscriptVersion(runDir),
+  };
+};
+
+const captureLauncherComposerBody = (
+  deps: Pick<TmuxDeps, "capturePane">,
+  pane: string
+): string | undefined => {
+  try {
+    const body = readComposerBody(deps.capturePane(pane, true));
+    // An empty composer here means the paste never landed, so there is nothing
+    // we could later claim as ours. Refuse rather than record a false owner.
+    return body === undefined || body === "" ? undefined : body;
+  } catch {
+    return undefined;
+  }
+};
+
+// One fresh decision snapshot: the composer capture and the evidence read are
+// sequential, not atomic, so this is not a consistent point-in-time view of the
+// pane and the filesystem. What it does guarantee is that both facts are read
+// once, together, immediately before they are used, so a recovery decision can
+// never pair a stale composer classification with a fresh evidence result. The
+// composer is read on every poll because the transcript-version signal only
+// confirms alongside a composer that no longer holds the launcher's kickoff.
+const readKickoffSnapshot = (
+  deps: KickoffGuardDeps,
+  runDir: string,
+  pending: PendingKickoffConfirmation
+): { composer: ClaudeKickoffComposerState; started: boolean } => {
+  const composer = classifyKickoffComposer({
+    expectedComposerBody: pending.expectedComposerBody,
+    paneText: safeCapturePane(deps, pending.pane),
+  });
+  return {
+    composer,
+    started: kickoffTurnStarted(
+      pending.baseline,
+      readClaudeKickoffEvidence(deps, runDir),
+      composer
+    ),
+  };
+};
+
+const pollKickoffConfirmed = async (
+  deps: KickoffGuardDeps,
+  runDir: string,
+  pending: PendingKickoffConfirmation,
+  polls: number
+): Promise<boolean> => {
+  for (let attempt = 0; attempt < polls; attempt += 1) {
+    await deps.sleep(CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS);
+    if (readKickoffSnapshot(deps, runDir, pending).started) {
+      return true;
+    }
+  }
+  return false;
+};
+
+// Confirms the launcher-owned kickoff actually started a Claude turn, performs
+// at most one safe direct-submit recovery, and otherwise fails the launch.
+const confirmClaudeKickoff = async (
+  deps: KickoffGuardDeps,
+  runDir: string,
+  pending: PendingKickoffConfirmation
+): Promise<void> => {
+  const { pane } = pending;
+  const rawVersion = deps.claudeCliVersion();
+  const version = parseClaudeCliVersion(rawVersion);
+  const observedVersion = rawVersion ?? "unknown";
+  const capability = resolveKickoffCapability(
+    version,
+    CLAUDE_KICKOFF_PROVEN_HEALTHY_VERSIONS
+  );
+
+  if (
+    await pollKickoffConfirmed(
+      deps,
+      runDir,
+      pending,
+      CLAUDE_KICKOFF_CONFIRM_MAX_POLLS
+    )
+  ) {
+    return;
+  }
+
+  let composerState: ClaudeKickoffComposerState = "indeterminate";
+  let recoveryAttempted = false;
+  if (capability.recoveryAllowed) {
+    // ONE snapshot decides. Reading the composer and the evidence separately
+    // would let a stale "kickoff-owned" classification authorize an Enter into
+    // a composer a human had since typed into: the fresh evidence read would
+    // still say "not started", and the stale composer read would still say
+    // "ours". Both facts must come from the same read.
+    const snapshot = readKickoffSnapshot(deps, runDir, pending);
+    composerState = snapshot.composer;
+    if (composerState === "kickoff-owned" && !snapshot.started) {
+      recoveryAttempted = true;
+      deps.log(
+        `[loop] Claude pane "${pane}" kickoff was not confirmed; re-sending Enter once for the launcher-owned composer.`
+      );
+      deps.sendKeys(pane, ["Enter"]);
+      if (
+        await pollKickoffConfirmed(
+          deps,
+          runDir,
+          pending,
+          CLAUDE_KICKOFF_RECOVERY_MAX_POLLS
+        )
+      ) {
+        return;
+      }
+    }
+  }
+
+  throw new ClaudeKickoffUnconfirmedError({
+    composerState,
+    observedVersion,
+    pane,
+    recoveryAttempted,
+    timeoutMs:
+      (CLAUDE_KICKOFF_CONFIRM_MAX_POLLS +
+        (recoveryAttempted ? CLAUDE_KICKOFF_RECOVERY_MAX_POLLS : 0)) *
+      CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS,
+  });
+};
+
+const safeCapturePane = (
+  deps: Pick<TmuxDeps, "capturePane">,
+  pane: string
+): string | undefined => {
+  try {
+    return deps.capturePane(pane, true);
+  } catch {
+    return undefined;
+  }
+};
+
 const createPairedPaneLayout = async (input: {
   deps: TmuxDeps;
   governess: boolean;
@@ -2805,14 +3043,34 @@ const createPairedPaneLayout = async (input: {
     }
     throw error;
   }
-  const pasteLaunchBootstrap = (
+  // Submission stays synchronous and keeps its original order and timing for
+  // both panes. Only the Claude turn-start confirmation is awaited afterwards,
+  // so a slow Claude confirmation can never delay the peer pane's kickoff.
+  const submitLaunchBootstrap = (
     pane: string,
     agent: Agent,
     promptPath: string | undefined
-  ): void => {
+  ): PendingKickoffConfirmation | undefined => {
     if (!promptPath) {
-      return;
+      return undefined;
     }
+    const guarded = agent === "claude";
+    // Baseline must be read before any mutation, or a hook line that was
+    // already on disk would read as confirmation of our own kickoff.
+    const baseline = guarded
+      ? readClaudeKickoffEvidence(input.deps, input.runDir)
+      : undefined;
+    // Ownership chain step 1: positively verify the composer is empty before we
+    // paste. unblockClaudePane only returns at ready-empty, but asserting it
+    // here makes the precondition enforced rather than implied. If it is not
+    // provably empty we still paste and submit as before, and simply decline to
+    // claim ownership, which costs the recovery keystroke and nothing else.
+    const emptyBeforePaste =
+      guarded &&
+      classifyKickoffComposer({
+        expectedComposerBody: undefined,
+        paneText: safeCapturePane(input.deps, pane),
+      }) === "empty";
     const buffer = `${sanitizeBase(input.session)}-${agent}-launch`;
     runTmuxCommand(
       input.deps,
@@ -2824,18 +3082,34 @@ const createPairedPaneLayout = async (input: {
       ["tmux", "paste-buffer", "-d", "-p", "-b", buffer, "-t", pane],
       `Failed to paste ${agent} launch prompt`
     );
+    // Ownership chain step 2: the composer was provably empty a moment ago, so
+    // whatever it holds now is the bytes we just pasted. Capturing it here,
+    // before our own Enter, is the only thing that later licenses a recovery
+    // keystroke. No empty precondition means no capture and no recovery.
+    const expectedComposerBody = emptyBeforePaste
+      ? captureLauncherComposerBody(input.deps, pane)
+      : undefined;
     runTmuxCommand(
       input.deps,
       ["tmux", "send-keys", "-t", pane, "Enter"],
       `Failed to submit ${agent} launch prompt`
     );
+    if (!(guarded && baseline)) {
+      return undefined;
+    }
+    return { baseline, expectedComposerBody, pane };
   };
-  pasteLaunchBootstrap(left, input.paneAgents.left, input.leftPromptPath);
-  pasteLaunchBootstrap(
-    rightBeforeUtility,
-    input.paneAgents.right,
-    input.rightPromptPath
-  );
+  const pending = [
+    submitLaunchBootstrap(left, input.paneAgents.left, input.leftPromptPath),
+    submitLaunchBootstrap(
+      rightBeforeUtility,
+      input.paneAgents.right,
+      input.rightPromptPath
+    ),
+  ].filter((entry): entry is PendingKickoffConfirmation => entry !== undefined);
+  for (const entry of pending) {
+    await confirmClaudeKickoff(input.deps, input.runDir, entry);
+  }
   return {
     governess: input.governess ? `${input.session}:0.2` : undefined,
     left,
@@ -2900,6 +3174,22 @@ const startPairedSession = async (
         manifest.claudeChannelServer
       )
     : undefined;
+  // Recorded before the panes launch so a kickoff-confirmation failure still
+  // leaves the observed producer version in the run manifest for forensics.
+  if (claudeChannelServer) {
+    const claudeCliVersion = deps.claudeCliVersion();
+    if (claudeCliVersion) {
+      manifest =
+        deps.updateRunManifest(storage.manifestPath, (current) =>
+          current
+            ? touchRunManifest(
+                { ...current, claudeCliVersion },
+                new Date().toISOString()
+              )
+            : current
+        ) ?? manifest;
+    }
+  }
   let codexAppServerPid: number | undefined;
   let codexRemoteUrl = "";
   let codexProxyUrl = "";
@@ -3483,6 +3773,17 @@ const defaultDeps = (): TmuxDeps => ({
     }
     return parseTmuxPaneSnapshot(decode(result.stdout));
   },
+  claudeCliVersion: () => {
+    const result = spawnSync(["claude", "--version"], {
+      stderr: "ignore",
+      stdout: "pipe",
+    });
+    if (result.exitCode !== 0) {
+      return undefined;
+    }
+    const banner = decode(result.stdout).trim();
+    return banner === "" ? undefined : banner;
+  },
   cwd: process.cwd(),
   env: process.env,
   findBinary: (cmd: string) => commandExists(cmd),
@@ -3505,6 +3806,21 @@ const defaultDeps = (): TmuxDeps => ({
   makeClaudeSessionId: () => randomUUID(),
   nowMs: () => Date.now(),
   preparePairedRun,
+  // Claude's own project transcript only. readClaudeSubmissionVersion also
+  // folds in the hook journal's size:mtime, which would flip on any hook write
+  // including a non-progress one, so it is not used as independent evidence.
+  readClaudeTranscriptVersion: (runDir: string) =>
+    readClaudeTranscriptVersionFromProjects(
+      runDir,
+      join(homedir(), ".claude", "projects")
+    ) ?? "",
+  readTextFile: (path: string) => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return undefined;
+    }
+  },
   runGit: (cwd: string, args: string[]) => runGit(cwd, args),
   sendKeys: (pane: string, keys: string[]) => {
     const result = spawnSync(
@@ -3731,6 +4047,14 @@ export const runInTmux = async (
 
 export const tmuxInternals = {
   buildClaudeCommand,
+  captureLauncherComposerBody,
+  ClaudeKickoffUnconfirmedError,
+  CLAUDE_KICKOFF_CONFIRM_MAX_POLLS,
+  CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS,
+  CLAUDE_KICKOFF_PROVEN_HEALTHY_VERSIONS,
+  CLAUDE_KICKOFF_RECOVERY_MAX_POLLS,
+  confirmClaudeKickoff,
+  readClaudeKickoffEvidence,
   buildClaudeChannelServerConfig,
   buildClaudeChannelServerName: claudeChannelServerName,
   buildCodexCommand,
