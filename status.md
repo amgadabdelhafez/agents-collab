@@ -215,10 +215,15 @@ All figures below are from the post-fix tree.
 - `normalize.mjs` reproduces all five checked-in fixture artifacts
   byte-identically from the raw captures, verified with `cmp`.
 - `@biomejs/biome check` on all seven touched files → clean, no fixes applied.
-- `tsc --noEmit`: 216 errors with the change, **216 on a clean base checkout**;
-  0 in `src/loop/{tmux,run-state,claude-kickoff}.ts`; the 28 in
-  `tests/loop/tmux.test.ts` measured at 28 on base too. Delta is zero, measured
-  rather than assumed.
+- Typecheck **gate**: the narrow `tsc` inside `scripts/verify.sh`, over
+  `src/cli.ts` plus `src/loop/caveman-skill.d.ts`, **exits 0**. That green exit
+  is the acceptance evidence.
+- Typecheck **diagnostic**, never a gate and never a substitute for one: broad
+  `tsc --noEmit -p tsconfig.json` reports 216 errors with the change and 216 on
+  a clean base checkout; 0 in `src/loop/{tmux,run-state,claude-kickoff}.ts`; the
+  28 in `tests/loop/tmux.test.ts` measured at 28 on base too. That parity shows
+  this change added nothing to a pre-existing pile. It says nothing about
+  acceptance.
 - Producer capture cleanup verified positively by re-enumerating `pgrep -f`
   after each kill: `ZERO SURVIVORS`, no fixture tmux sessions, no fixture
   buffers. Run 148's live session, run directory, and repo identity were never

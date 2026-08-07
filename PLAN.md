@@ -53,11 +53,14 @@ observes the kickoff.
   auto-update assertions fail for environmental reasons. `env -u TMUX -u
   TMUX_PANE bun run test:file -- tests/loop.test.ts` is 41 pass, 0 fail. There
   is no base test defect; the earlier reading of one was an instrument error.
-- Raw `tsc --noEmit -p tsconfig.json` reports 216 errors on a clean checkout of
+- The typecheck gate is the narrow `tsc` inside `scripts/verify.sh`, over
+  `src/cli.ts` plus `src/loop/caveman-skill.d.ts`. It **exits 0** with this
+  change, and that green exit is the acceptance evidence.
+- Diagnostic only, never a gate and never a substitute for one: raw
+  `tsc --noEmit -p tsconfig.json` reports 216 errors on a clean checkout of
   `defdf749` and 216 with this change, 0 of them in
-  `src/loop/{tmux,run-state,claude-kickoff}.ts`. It is not the repo's gate;
-  `scripts/verify.sh` runs a narrow `tsc` over `src/cli.ts` plus
-  `src/loop/caveman-skill.d.ts`, which exits 0 with this change.
+  `src/loop/{tmux,run-state,claude-kickoff}.ts`. That parity says this change
+  added nothing to a pre-existing pile; it says nothing about acceptance.
 
 ## Decisions
 
@@ -107,8 +110,15 @@ adoption.
 Focused module and launcher regressions driven entirely from the checked-in
 producer fixture with `sleep` stubbed; the governed `scripts/verify.sh` with a
 **required-empty** named baseline allowlist (`scripts/check-baseline-allowlist.py`
-fails if any name remains, so nothing is tolerated); `tsc` error count compared
-against a measured base rather than trusted as green; `bun run build`; and an
+fails if any name remains, so nothing is tolerated); the **governed narrow
+typecheck exiting 0**, which is the typecheck gate; `bun run build`; and an
 isolated smoke whose zero-survivor check enumerates the exact PIDs its stubs
 recorded and refuses to pass if none were recorded, with that non-vacuity guard
 demonstrated firing on a positive control.
+
+The typecheck gate is the green exit-0 narrow `tsc` run inside
+`scripts/verify.sh` over `src/cli.ts` and `src/loop/caveman-skill.d.ts`. Nothing
+else substitutes for it. The broad `tsc --noEmit -p tsconfig.json` error-count
+comparison recorded above is a **supplementary diagnostic only** — it exists to
+show this change introduced no new errors into a pre-existing pile, and an
+error-count parity may never stand in for a green governed gate.

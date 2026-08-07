@@ -68,7 +68,7 @@
 			"details": [
 				"bun run check (ultracite): checked 839 files, no fixes applied, 0 errors.",
 				"Governed narrow typecheck over src/cli.ts and src/loop/caveman-skill.d.ts exits 0.",
-				"Broad tsc --noEmit -p tsconfig.json is not the repo gate; it reports 216 errors on a clean checkout of defdf749 and 216 with this change, with 0 in src/loop/{tmux,run-state,claude-kickoff}.ts and 28 in tests/loop/tmux.test.ts both before and after. Delta measured, not assumed."
+				"DIAGNOSTIC ONLY, never a gate and never a substitute for one: broad tsc --noEmit -p tsconfig.json reports 216 errors on a clean checkout of defdf749 and 216 with this change, with 0 in src/loop/{tmux,run-state,claude-kickoff}.ts and 28 in tests/loop/tmux.test.ts both before and after. That parity shows this change added nothing to a pre-existing pile; it says nothing about acceptance. The typecheck GATE is the governed narrow tsc exiting 0, recorded above."
 			]
 		},
 		"build": {
