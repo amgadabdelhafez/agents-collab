@@ -62,90 +62,79 @@ untouched. Nothing from this task may be amended into it.
 Recorded from source rather than inferred from the line numbers, because the
 line numbers alone would have suggested three interchangeable call sites.
 
-## Defect A — implemented, RED-evidenced, green. Uncommitted by instruction.
+## Defect A — implemented, RED-evidenced, committed
 
 RED captured on the unmodified base at
-`runs/utility-scope-evidence-recovery/artifacts/red-defect-a-unmodified-base.txt`
-(sha256 `1c2b38b2b4c75f6f67696cc5835d78a0fe5ed8e20b424d279d266f6cb4644222`):
+`runs/utility-scope-evidence-recovery/artifacts/red-defect-a-unmodified-base.txt`:
 3 fail / 2 pass. The three failures are the new-behaviour assertions, each
 failing for the intended reason — `Expected to not contain: "run_check"`,
 `Received: [ "read_file", "run_check" ]`. The two passes are deliberate
-preserved-behaviour guards and are green on base by design.
+preserved-behaviour guards and are green on base by design. That artifact was
+later stripped of three trailing-whitespace lines to satisfy `git diff --check`;
+the edit is recorded in `eval.json` with before/after hashes, so it is captured
+output with whitespace stripped rather than a byte-verbatim capture.
 
 Implementation, `loop-fork/src/loop/utility-tools.ts`:
 
-- `hasSatisfiableCommandCwd()` iterates the declared `commandCwds` and calls
-  **`resolveCommandCwd` itself**, so satisfiability and enforcement cannot drift
-  apart. No second predicate.
+- `hasSatisfiableCommandCwd()` calls **`resolveCommandCwd` itself**, so
+  satisfiability and enforcement cannot drift apart. No second predicate.
 - **Behaviour change worth a reviewer's eye**: `resolveCommandCwd` did not assert
   the cwd is a directory. A declared FILE path passed scope, realpath, and
   containment, and failed later as an opaque spawn error. Added
-  `Command cwd is not a directory`. This is what makes reusing the same call a
-  correct satisfiability test rather than a looser one, and it makes execution
-  fail closed earlier with a clear message.
+  `Command cwd is not a directory`, covered by its own regression asserting the
+  command never runs.
 - `narrowUnsatisfiableCapabilities()` runs last in `validateConfiguration`, once,
-  as a broker-creation-time snapshot, narrowing both `allowedTools` and
-  `definitions`. Those two lost their `readonly` modifiers so the single
-  narrowing can happen; nothing mutates them after `create()` returns.
+  as a broker-creation-time snapshot.
+- Withheld-capability guidance is helper-visible: the reason names `run_check`,
+  the command directories that failed to resolve, and what remains. It rides the
+  capsule and the denial path.
 - Scoped to `run_check` only. No general per-tool satisfiability registry.
 
-Current results: the five new regressions are **5 pass / 0 fail**.
+## Defect B — implemented in both conversational harnesses, committed
 
-## Suites that can run here, and what they establish
+One bounded recovery turn, budget fixed at 1. `needsEvidenceRecovery` refuses
+recovery for a spent budget, any fatal error, `kind: edit`, `kind: command`, and
+`CONTEXT_INSUFFICIENT`. Pi issues the recovery prompt inside the `try` after
+`waitForIdle()`, because the `finally` disposes the session before the assertion.
+Legacy continues the same loop. Direct receives none.
 
-- `utility-tools.test.ts` **49 pass / 0 fail** — the suite most exposed to this
-  change, including its eleven `run_check` tests. They are unaffected because
-  they supply either an explicit `commandCwds: ["."]` or a directory
-  `readScopes` fallback (`["src","tests"]`), so they sit on the satisfiable
-  path. Established by running it, not assumed.
-- `utility-execution-tier.test.ts` 11/0.
-- `utility-observability.test.ts` 5/0.
+`evidenceRecoveryPrompt` builds from `broker.definitions`, **not**
+`describeCapabilities().tools`: for a multi-step read-plan broker the latter
+unions every future step. Codex found that; it is fixed and proved by a
+regression that was verified RED by temporarily reverting the fix.
 
-## The blocker
+## Verification
 
-`utility-runtime.test.ts`, `utility-workspace.test.ts`, and
-`utility-pi-harness.test.ts` do not load:
+- `env -u TMUX -u TMUX_PANE scripts/verify.sh utility-scope-evidence-recovery utility-scope-evidence-recovery`
+  → **exit 0, 1587 tests, 0 failures, empty baseline allowlist**.
+- Focused: `utility-scope-evidence-recovery` 7/0, `utility-evidence-recovery`
+  7/0, `utility-evidence-recovery-legacy` 2/0, `utility-runtime` 53/0,
+  `utility-pi-harness` 11/0, `utility-tools` 49/0, plus the rest of the utility
+  surface green.
+- `git diff --check` against base exits 0.
 
-```
-error: Cannot find module 'caveman-installer/skills/caveman/SKILL.md' from '.../src/loop/caveman.ts'
-0 pass, 1 fail, 1 error
-```
+## Dependency bootstrap — authorized, executed once, evidence recorded
 
-This worktree has no `node_modules`; `caveman-installer` is a declared
-dependency. **Control**: stashing all changes and rerunning on the unmodified
-base reproduces the identical failure, so it is environmental and not caused by
-this work.
-
-It blocks Defect B specifically. B lives in `utility-runtime.ts` and its
-regressions belong in the two unloadable files, so B's RED-on-base evidence
-cannot be produced and B cannot be verified.
-
-`bun install` has **not** been run. `bun.lock` sha256 is
-`31d0bdb8a54bae9fd4dc29d287013e2a1821041072839b9859c6c9362273c321`, unchanged,
-and `node_modules` does not exist. The founder's install grant is conditional on
-supervisor and Codex jointly approving an exact candidate, and there is no
-candidate for this task, so the grant does not yet apply. Codex agreed the
-condition is circular here and escalated a narrowly scoped exception.
+The earlier blocker (three suites unable to load without `node_modules`) was
+resolved under supervisor authority `c52c6314-519b-4ced-ac42-b2d4bfc0c0c7`: one
+`bun install --frozen-lockfile`, exit 0, lockfile sha256
+`31d0bdb8a54bae9fd4dc29d287013e2a1821041072839b9859c6c9362273c321` identical
+before and after, no global install, `node_modules` state hash
+`d19010b928c017280e85f7578fb1c3f33d428aae4a55bbae47545cbf84490434` over 146
+packages. Full chain at
+`runs/utility-scope-evidence-recovery/artifacts/dependency-bootstrap-evidence.txt`.
 
 ## What should happen next
 
-1. **Supervisor decision required**: authorize one narrowly scoped,
-   lockfile-enforcing `bun install` in this worktree only — no global install,
-   no accepted lock or dependency changes, with command and output plus pre/post
-   lock hash and `git status` captured as evidence. Codex requested this on my
-   behalf; I am paused until it answers.
-2. On authorization: run the install with that evidence captured, then produce
-   B's RED on the untouched base **before** any B source change, per the
-   approved order of work.
-3. Implement B in both conversational harnesses (Pi and legacy), leaving Direct,
-   `CONTEXT_INSUFFICIENT`, fatal and provider errors, the `edit` and `command`
-   assertions, and `MAX_CONSECUTIVE_BROKER_REJECTIONS` untouched.
-4. Full governed verification, then commit A and B together as one candidate and
-   request native Codex exact-SHA review. Stop at supervisor review. No merge,
-   rebase, push to main, or deploy.
+1. **Supervisor exact-SHA review of `6dec6fe3b61cd3c1555b2c7036bfa90468f1a141`.**
+   That is the only outstanding gate for this task. Codex withheld merge, deploy,
+   and release PASS.
+2. Nothing else is required from this session. Do not merge, rebase, push to
+   main, deploy, or install further.
 
-## Separate, still open
+## Separate, and also awaiting supervisor exact-SHA review
 
-Supervisor disposition of the earlier prohibited `bun install` on the kickoff
-task. That gates release of `951ea73eb1ab00a2677c3cf93eeeb080daf8f211`, which
-Codex has already technically approved.
+The Claude kickoff submit guard candidate
+`951ea73eb1ab00a2677c3cf93eeeb080daf8f211` is Codex-approved and its earlier
+prohibited-`bun install` process hold was **accepted and cleared** by the
+supervisor. It too waits only on exact-SHA supervisor review.
