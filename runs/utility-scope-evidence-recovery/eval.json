@@ -1,7 +1,7 @@
 {
   "task_id": "utility-scope-evidence-recovery",
   "feature": "utility-scope-evidence-recovery",
-  "timestamp": "2026-08-07T19:11:29Z",
+  "timestamp": "2026-08-07T19:14:41Z",
   "timestamp_provenance": "Read from `date -u` at generation time, not authored by hand.",
   "evaluator": "claude-producer-backed-eval",
   "verdict": "pass",
@@ -103,5 +103,16 @@
     "The 2.1.223-style timing races and provider behaviour are out of scope here; this task covers the harness-side defects only.",
     "Two of my own regressions were VACUOUS on first submission and Codex caught both. 'the recovery prompt names exposed tools' searched JSON.stringify(body), where offered tool names already appear inside the tools definitions, so it passed regardless of what the prompt said; it also sliced from an unguarded indexOf, which on absence is -1 and inspects one character. 'the recovery turn reuses the same context' compared only system-role messages while the capsule, scopes and authority live in the user context message. Both are rewritten to read the appended recovery message directly and to require the original message array to be an exact PREFIX of the recovery request. Rewriting them made them fail, which is how I know they now test something: the failure revealed Pi sends structured content parts rather than bare strings.",
     "Four test-setup errors preceded working regressions across this task: a run that never called the model (bodies length 0), an escalation from the deterministic Direct tier, an invalid-choice response shape missing content:null, and a run_check call rejected earlier for missing scoped file paths before it could reach the cwd check. Each was caught only because the test asserted a concrete count or an exact message."
-  ]
+  ],
+  "review": {
+    "codeCandidateSha": "6dec6fe3b61cd3c1555b2c7036bfa90468f1a141",
+    "codexVerdict": "TECHNICAL APPROVE / PASS within Codex authority",
+    "codexVerdictMessageId": "814d5944-6eb1-45e2-91ca-1306c6c705ca",
+    "reviewerModel": "luna",
+    "reviewerPane": "native Codex pane %8",
+    "reviewerAuthority": "supervisor ratification c7f6494e-57e7-48d2-9dd7-72f337e5ffab, relayed 500f1307-4227-4495-a635-1ad0085206ce",
+    "recordedSeparately": "This provenance is committed AFTER the verdict, in an evidence-only commit, so the approved SHA 6dec6fe3b61cd3c1555b2c7036bfa90468f1a141 is not moved. Codex directed this in 814d5944 after I flagged the conflict in d53d54f3.",
+    "remainingGate": "supervisor exact-SHA review. Codex explicitly withheld merge, deploy, and release PASS.",
+    "deliveryCaveat": "pending.supervisor was 5 with oldest 2026-08-07T03:43:52.763Z at the time of writing, so supervisor-facing sends from this session have been stranded and every supervisor ruling arrived via Codex relay. Filed by Codex as a separate governed loop; run 9 does not fix it."
+  }
 }

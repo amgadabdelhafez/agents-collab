@@ -11,13 +11,34 @@ Authorized by founder directive relayed as work request
 amendments in `0a27f1ab-9e4f-4522-a70a-aea69aeff0a3`, all applied to the bundle
 before any source work.
 
-## State: PAUSED on Defect B, awaiting supervisor bootstrap authority
+## State: both defects complete; Codex-approved; supervisor gate remains
 
-Per Codex decision `92851faf-9a64-4415-92ed-afd80d6c3c1e`: do not split A, do not
-implement unverified B, do not install. Both defects remain the approved scope.
-Defect A stays **uncommitted** in this worktree with its RED artifacts preserved.
+Code candidate: **`6dec6fe3b61cd3c1555b2c7036bfa90468f1a141`**, Codex
+`TECHNICAL APPROVE / PASS within Codex authority` (`814d5944-6eb1-45e2-91ca-1306c6c705ca`),
+reviewed under model **luna** on native Codex pane `%8` under supervisor
+ratification `c7f6494e-57e7-48d2-9dd7-72f337e5ffab`.
 
-HEAD is still `defdf74949e34fe69b0f8e8601bba0afa152585f`; nothing committed here.
+Codex explicitly withheld merge, deploy, and release PASS. **Supervisor
+exact-SHA review is the remaining gate.**
+
+This provenance is recorded in an evidence-only commit *on top of* the approved
+SHA, at Codex's direction, so `6dec6fe3…` itself is not moved.
+
+Review history: `c8115e7c` held on four findings; `a311db29` held on a committed
+trailing-whitespace blob; `264d9e14` held for the missing read-plan regression;
+`6dec6fe3` approved. Each hold was a real defect in what I claimed or proved, not
+in the shipped behaviour, with one exception — the read-plan union bug in
+`evidenceRecoveryPrompt` was a genuine code defect Codex found.
+
+### Delivery caveat carried forward
+
+`pending.supervisor` measured **5**, oldest `2026-08-07T03:43:52.763Z`, so
+supervisor-facing sends from this session have been stranded for ~15.5 hours and
+every supervisor ruling reached me through Codex relay. An authorized one-line
+pull nudge drained `pending.codex` 3 -> 0 (verified after a bounded 45s wait; an
+immediate check still read 3 and would have been a premature conclusion). The
+supervisor path was not covered by that nudge. Codex filed it as a separate
+governed loop; run 9 does not fix it.
 
 ## Isolation
 
