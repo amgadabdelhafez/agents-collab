@@ -7,7 +7,9 @@
 #
 # Safety contract (specs/claude-kickoff-submit-guard/tasks.md item 10):
 #   - unique temporary run base and repo identity per invocation
-#   - non-network process stubs on PATH; the real claude/codex/tmux are never run
+#   - non-network: PATH stubs for the binaries, PLUS a seeded auto-update
+#     throttle sentinel that is asserted byte-identical afterwards, because the
+#     launcher reaches GitHub through runtime fetch() that no PATH stub blocks
 #   - bounded concurrency: one launch, one bounded wait
 #   - trap cleanup, then a POSITIVE zero-survivor check that re-enumerates
 #   - never touches a live run directory, live repo identity, or a port owned by
@@ -32,13 +34,33 @@ MARKER="${WORK}/marker"
 # recorded-PID form below is what replaced it.
 PIDFILE="${WORK}/spawned-pids"
 
+# The launcher reaches the GitHub release API through runtime `fetch()`, which
+# no PATH stub can intercept: with TMUX unset, `shouldAwaitAutoUpdate`
+# (src/cli.ts:79) makes a promptless paired launch await `awaitAutoUpdateCheck`,
+# and `shouldThrottle` (src/loop/update.ts:84) returns false when the sentinel
+# is missing under a fresh HOME. Seeding a current sentinel stops the call at
+# its source; asserting the sentinel is byte-identical afterwards is what proves
+# it stayed stopped, because `saveCheckTime` would rewrite it if a check ran.
+UPDATE_CACHE="${WORK}/.cache/loop/update"
+UPDATE_CHECK_FILE="${UPDATE_CACHE}/last-check.json"
+UPDATE_SENTINEL_SHA=""
+
+# A recorded PID is not durable identity: these stubs exit immediately and the
+# kernel recycles PIDs, so signalling a bare recorded number could hit an
+# unrelated process. Ownership is re-validated before any signal by requiring
+# the live process's command line to reference this smoke's unique WORK path.
+owned_by_smoke() {
+  local pid="$1"
+  ps -o command= -p "${pid}" 2>/dev/null | grep -qF "${WORK}"
+}
+
 survivors() {
-  # Echoes the PIDs from PIDFILE that are still alive. Empty output means none.
+  # Echoes recorded PIDs that are still alive AND still owned by this smoke.
   [[ -f "${PIDFILE}" ]] || return 0
   local pid
   while read -r pid; do
     [[ -n "${pid}" ]] || continue
-    if kill -0 "${pid}" 2>/dev/null; then
+    if kill -0 "${pid}" 2>/dev/null && owned_by_smoke "${pid}"; then
       echo "${pid}"
     fi
   done < "${PIDFILE}"
@@ -46,14 +68,17 @@ survivors() {
 
 cleanup() {
   local code=$?
-  # Kill only the exact PIDs this smoke recorded, never a broad pattern that
-  # could reach a live run.
+  # Signal only PIDs this smoke recorded that are STILL this smoke's, never a
+  # bare recycled number and never a broad pattern that could reach a live run.
   if [[ -f "${PIDFILE}" ]]; then
     while read -r pid; do
-      # `|| true` matters: killing an already-exited stub returns nonzero, and
-      # `set -e` inside an EXIT trap would otherwise overwrite the real exit
-      # code and report a passing smoke as a failure.
-      [[ -n "${pid}" ]] && { kill "${pid}" 2>/dev/null || true; }
+      [[ -n "${pid}" ]] || continue
+      if owned_by_smoke "${pid}"; then
+        # `|| true` matters: killing an already-exited stub returns nonzero, and
+        # `set -e` inside an EXIT trap would otherwise overwrite the real exit
+        # code and report a passing smoke as a failure.
+        kill "${pid}" 2>/dev/null || true
+      fi
     done < "${PIDFILE}"
   fi
   rm -rf "${WORK}"
@@ -148,6 +173,12 @@ printf '# smoke plan\n\nExercise the Claude kickoff submit guard.\n' > PLAN.md
 git add PLAN.md
 git -c commit.gpgsign=false commit -q -m "smoke base"
 
+# Seed the auto-update throttle BEFORE the launch, and record its hash so the
+# teardown assertion below is comparing against a known value.
+mkdir -p "${UPDATE_CACHE}"
+printf '{"lastCheck":"%s"}' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > "${UPDATE_CHECK_FILE}"
+UPDATE_SENTINEL_SHA="$(shasum -a 256 "${UPDATE_CHECK_FILE}" | cut -d ' ' -f 1)"
+
 set +e
 env -u TMUX -u TMUX_PANE \
   PATH="${WORK}/bin:${PATH}" \
@@ -197,6 +228,21 @@ if [[ -n "${REMAINING}" ]]; then
   echo "smoke FAILED: recorded processes survived: ${REMAINING}" >&2
   # shellcheck disable=SC2086
   ps -o pid,command -p ${REMAINING} >&2 || true
+  exit 1
+fi
+
+# Network denial, asserted rather than claimed. `saveCheckTime` rewrites the
+# sentinel whenever an update check runs, so a byte-identical sentinel is
+# positive evidence that no check — and therefore no GitHub fetch — happened.
+# A staged binary would be direct evidence of a download.
+SENTINEL_NOW="$(shasum -a 256 "${UPDATE_CHECK_FILE}" 2>/dev/null | cut -d ' ' -f 1)"
+if [[ "${SENTINEL_NOW}" != "${UPDATE_SENTINEL_SHA}" ]]; then
+  echo "smoke FAILED: auto-update throttle sentinel was rewritten (${SENTINEL_NOW} != ${UPDATE_SENTINEL_SHA}); the run performed an update check and may have gone to the network" >&2
+  exit 1
+fi
+echo "=== auto-update sentinel intact: no update check ran ==="
+if [[ -e "${UPDATE_CACHE}/loop-staged" ]]; then
+  echo "smoke FAILED: a staged update binary was downloaded into the sandbox" >&2
   exit 1
 fi
 

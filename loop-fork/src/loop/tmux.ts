@@ -2856,10 +2856,13 @@ const captureLauncherComposerBody = (
   }
 };
 
-// One atomic read of both signals. The composer is read on every poll because
-// the transcript-version signal only confirms alongside a composer that no
-// longer holds the launcher's kickoff — and because the recovery decision must
-// never mix a stale composer classification with a fresh evidence result.
+// One fresh decision snapshot: the composer capture and the evidence read are
+// sequential, not atomic, so this is not a consistent point-in-time view of the
+// pane and the filesystem. What it does guarantee is that both facts are read
+// once, together, immediately before they are used, so a recovery decision can
+// never pair a stale composer classification with a fresh evidence result. The
+// composer is read on every poll because the transcript-version signal only
+// confirms alongside a composer that no longer holds the launcher's kickoff.
 const readKickoffSnapshot = (
   deps: KickoffGuardDeps,
   runDir: string,
@@ -2928,7 +2931,7 @@ const confirmClaudeKickoff = async (
     // would let a stale "kickoff-owned" classification authorize an Enter into
     // a composer a human had since typed into: the fresh evidence read would
     // still say "not started", and the stale composer read would still say
-    // "ours". Both facts must come from the same instant.
+    // "ours". Both facts must come from the same read.
     const snapshot = readKickoffSnapshot(deps, runDir, pending);
     composerState = snapshot.composer;
     if (composerState === "kickoff-owned" && !snapshot.started) {
