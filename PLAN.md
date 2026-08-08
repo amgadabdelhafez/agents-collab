@@ -1,4 +1,31 @@
-# PLAN — tmux socket normalization
+# PLAN — D-001 Governess handover launch order
+
+## Run 42 (2026-08-08) — bounded v1.0.35 fix
+
+Fix only the confirmed handover reservation-order defect. Runs 14-32 and 34-37
+each contain two validated bundles followed by the same self-conflict: the
+replacement launcher sees the live predecessor manifest as owner of the same
+workspace. Current `defaultGovernessDeps.launchReplacementLoop` spawns before
+`stopGovernessLoop` marks the predecessor terminal, and launch reservation
+correctly treats any manifest with a live `tmuxSession` as owning.
+
+Smallest change: after validating the handoff manifest and before spawning the
+replacement, atomically persist the predecessor as stopped and remove only its
+active `tmuxSession` target. A configured manifest that cannot be read or
+persisted fails closed before spawn. Preserve validated handoff files, dirty
+worktree bytes, socket files, all unrelated run metadata, lanes, and processes.
+
+Add exactly one regression in `governess-exit.test.ts` that observes the
+predecessor release before the spawn callback and checks the real
+`manifestCanStillOwnWorkspace` producer returns false. Verify the named test,
+the full focused Governess-exit suite, scoped type/build/check smoke, and one
+producer-backed handoff smoke. Then obtain Claude zero-write concrete-diff
+review, write `runs/d001-governess-handover/eval.json`, commit once, and stop
+for independent root review.
+
+---
+
+# Prior session history — tmux socket normalization
 
 ## Run 38 (2026-08-08) — V5-R1 DECLARATION PASS; NO IMPLEMENTATION
 

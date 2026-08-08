@@ -1,0 +1,69 @@
+{
+  "task_id": "d001-governess-handover",
+  "feature": "governess-handover-launch-order",
+  "timestamp": "2026-08-08T20:26:00Z",
+  "evaluator": "claude-zero-write-review",
+  "review_id": "9ba017e3-4cdb-4c9d-9c61-c7ec7e5c7f42",
+  "verdict": "pass",
+  "release_ready": true,
+  "baseline_failures": [],
+  "changed_files": {
+    "loop-fork/src/loop/governess.ts": "c4778fdace51b7f4c3e09a84657e9349253e1e566b73e70e6504d0cdc8c8edd4",
+    "loop-fork/tests/loop/governess-exit.test.ts": "e06928c3284c959aa7730c87a37b1b3d58f546620ed036ae9db698b598934064"
+  },
+  "checks": {
+    "producer_handoff_smoke": {
+      "status": "pass",
+      "passed": 1,
+      "failed": 0,
+      "assertions": 8,
+      "command": "bun run test:file -- --preload /private/tmp/d001-caveman-stub.ts tests/loop/governess-exit.test.ts --test-name-pattern 'releases the predecessor workspace reservation before replacement spawn'"
+    },
+    "focused_suite": {
+      "status": "pass",
+      "passed": 34,
+      "failed": 0,
+      "assertions": 190,
+      "command": "bun run test:file -- --preload /private/tmp/d001-caveman-stub.ts tests/loop/governess-exit.test.ts"
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "type_smoke": {
+      "status": "pass",
+      "command": "bunx --no-install tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts"
+    },
+    "scoped_biome": {
+      "status": "pass",
+      "command": "/private/tmp/agents-collab-main-readme/loop-fork/node_modules/.bin/biome check src/loop/governess.ts"
+    },
+    "build": {
+      "status": "pass",
+      "command": "bun build --compile --outfile /private/tmp/d001-loop-build src/cli.ts"
+    }
+  },
+  "test_environment": {
+    "repository_bytes_changed": false,
+    "temporary_preload": "External Bun mock supplied only absent caveman markdown and proper-lockfile during focused tests; it was deleted after use."
+  },
+  "authority": {
+    "canonical_defect_file": "docs/quality/defects/D-001-governess-handover-launch-order.md",
+    "status": "absent from current tree and every local ref",
+    "fallback": "Verified launch charter, current v1.0.35 source, native Git, and live Run 14-38 journals."
+  },
+  "live_evidence": {
+    "reproduced_runs": "14-32 and 34-37",
+    "sequence": "Both validated bundles existed; successor launch then conflicted with the predecessor run's own workspace reservation."
+  },
+  "residual_risks": [
+    "A launcher failure after predecessor reservation release does not restore ownership. Rollback would recreate the self-conflict race, so this bounded fix leaves explicit retry/teardown to Governess.",
+    "The one regression invokes the production manifestCanStillOwnWorkspace predicate directly; it does not walk storedManifests under the canonical proper-lockfile launch lock."
+  ],
+  "root_independent_review": {
+    "status": "pass",
+    "scope": "code, tests, build, type smoke, and scoped Biome",
+    "release_ready": true
+  },
+  "known_limitations": []
+}

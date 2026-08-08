@@ -6423,6 +6423,30 @@ const renderDefaultGovernessFrame = (text: string): void => {
   previousGovernessFrame = text;
 };
 
+const releasePredecessorWorkspaceReservation = (
+  manifestPath: string | undefined
+): string | undefined => {
+  if (!manifestPath) {
+    return undefined;
+  }
+  try {
+    const released = updateRunManifest(manifestPath, (manifest) =>
+      manifest
+        ? setRunManifestState(
+            { ...manifest, tmuxSession: undefined },
+            "stopped"
+          )
+        : undefined
+    );
+    return released
+      ? undefined
+      : "predecessor run manifest is missing or unreadable";
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `failed to release predecessor workspace reservation: ${detail}`;
+  }
+};
+
 interface GovernessReplacementDeps {
   readHandoffManifest: typeof readGovernessHandoffManifest;
   readManifestHandle: typeof readRunManifestHandle;
@@ -6494,6 +6518,12 @@ export const defaultGovernessDeps = (
     }
     const handoffDir = dirname(handoverManifest);
     env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
+    const predecessorReleaseError = releasePredecessorWorkspaceReservation(
+      config.manifestPath
+    );
+    if (predecessorReleaseError) {
+      return { error: predecessorReleaseError, ok: false };
+    }
     let result: ReturnType<typeof spawnSync>;
     try {
       result = replacementDeps.run(

@@ -28,8 +28,10 @@ import {
   acceptGovernessHandoff,
   readGovernessHandoffManifest,
 } from "../../src/loop/governess-handoff";
+import { launchReservationInternals } from "../../src/loop/launch-reservation";
 import {
   createRunManifest,
+  readRunManifest,
   readRunManifestHandle,
   writeRunManifest,
 } from "../../src/loop/run-state";
@@ -1083,7 +1085,8 @@ test("an unconfirmed replacement probe is persisted without duplicate launch", a
 
 const replacementLauncherHarness = (
   readsBeforeReady: number,
-  liveness: TmuxLiveness
+  liveness: TmuxLiveness,
+  beforeRun?: () => void
 ) => {
   const root = mkdtempSync(join(tmpdir(), "loop-replacement-manifest-"));
   const manifestPath = join(root, "manifest.json");
@@ -1122,13 +1125,16 @@ const replacementLauncherHarness = (
   let livenessCalls = 0;
   const delays: number[] = [];
   const argv: string[][] = [];
-  const run = mock(() => ({
-    exitCode: 0,
-    stderr: Buffer.alloc(0),
-    stdout: Buffer.from(
-      `[loop] started tmux session "replacement"\n[loop] run manifest ${JSON.stringify(manifestPath)}\n`
-    ),
-  }));
+  const run = mock(() => {
+    beforeRun?.();
+    return {
+      exitCode: 0,
+      stderr: Buffer.alloc(0),
+      stdout: Buffer.from(
+        `[loop] started tmux session "replacement"\n[loop] run manifest ${JSON.stringify(manifestPath)}\n`
+      ),
+    };
+  });
   const deps = defaultGovernessDeps(undefined, {
     readHandoffManifest: () =>
       ({ driverEffort: "high", reviewerEffort: "high" }) as never,
@@ -1253,6 +1259,66 @@ test("defaultGovernessDeps launchReplacementLoop rejects unknown replacement tar
     expect(harness.delays).toEqual([]);
   } finally {
     harness.cleanup();
+  }
+});
+
+test("defaultGovernessDeps launchReplacementLoop releases the predecessor workspace reservation before replacement spawn", async () => {
+  const predecessorRoot = mkdtempSync(
+    join(tmpdir(), "loop-predecessor-reservation-")
+  );
+  const predecessorPath = join(predecessorRoot, "manifest.json");
+  writeRunManifest(
+    predecessorPath,
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "predecessor",
+      state: "working",
+      tmuxSession: "predecessor",
+      tmuxSocket: "/tmp/predecessor.sock",
+      workspaceBinding: { repoId: "repo-123", root: "/repo" },
+    })
+  );
+  let captured: ReturnType<typeof readRunManifest>;
+  const harness = replacementLauncherHarness(0, "live", () => {
+    captured = readRunManifest(predecessorPath);
+  });
+  try {
+    const config = {
+      ...handoverConfig(),
+      manifestPath: predecessorPath,
+    };
+    await expect(
+      harness.deps.launchReplacementLoop?.(config, "/tmp/handoff.json")
+    ).resolves.toEqual({
+      manifestPath: harness.manifestPath,
+      ok: true,
+      session: "replacement",
+    });
+    expect(captured?.state).toBe("stopped");
+    expect(captured?.status).toBe("stopped");
+    expect(captured?.tmuxSession).toBeUndefined();
+    expect(captured?.tmuxSocket).toBe("/tmp/predecessor.sock");
+    expect(captured?.workspaceBinding).toEqual({
+      repoId: "repo-123",
+      root: "/repo",
+    });
+    const persisted = readRunManifest(predecessorPath);
+    if (!persisted) {
+      throw new Error("predecessor manifest was not persisted");
+    }
+    expect(
+      await launchReservationInternals.manifestCanStillOwnWorkspace(
+        persisted,
+        undefined,
+        { tmuxLiveness: async () => "live" } as never
+      )
+    ).toBe(false);
+  } finally {
+    harness.cleanup();
+    rmSync(predecessorRoot, { force: true, recursive: true });
   }
 });
 

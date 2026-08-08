@@ -1,4 +1,50 @@
-# status — tmux socket normalization
+# status — D-001 Governess handover launch order
+
+## Run 42 (2026-08-08) — implementation and peer review complete
+
+Current result: D-001 code and one reproducer are complete. Live Runs 14-32 and
+34-37 all show validated Claude/Codex bundles followed by `[loop] launch
+conflict` against the predecessor run's own workspace. Base HEAD is
+`78608327d590050f8cd1bbd1005ed185d090ab2c`.
+
+World Model context file and logical capsule hashes match, but the context JSON
+omits the required repository-commit field. Per launch charter, it was not used
+as authority. Current run manifest binds this exact worktree and commit; native
+Git confirms both. The charter-named canonical defect Markdown is absent from
+the current tree and every local ref, so the launch charter, repository specs,
+current source, and producer journals control this cycle.
+
+`loop-fork/src/loop/governess.ts` now atomically persists the predecessor as
+stopped without `tmuxSession` immediately before replacement spawn. Missing,
+unreadable, or unwritable configured manifests fail before spawn. Socket,
+workspace binding, handoff artifacts, and unrelated fields stay unchanged.
+Postimage SHA-256 is
+`1f0aa98644d1713d888ed5e6fbc297e9b0b8ac39170dcd7c963f7c29c54c6fad`.
+
+`loop-fork/tests/loop/governess-exit.test.ts` adds one direct producer-backed
+reproducer. It captures the persisted predecessor inside the actual launcher's
+spawn mock and checks the production ownership predicate. Postimage SHA-256 is
+`e06928c3284c959aa7730c87a37b1b3d58f546620ed036ae9db698b598934064`.
+
+Proofs: named reproducer 1/0 with 8 assertions; full Governess-exit suite 34/0
+with 190 assertions; `git diff --check` passes. Tests used a temporary external
+Bun preload for absent `caveman-installer/skills/caveman/SKILL.md` and
+`proper-lockfile`; no repository dependency or byte was installed or changed.
+Bounded no-install TypeScript smoke remains unmet because `bun-types` is absent:
+`error TS2688: Cannot find type definition file for 'bun-types'.` Scoped Biome
+is likewise unavailable under `bunx --no-install`.
+
+Claude zero-write review `9ba017e3-4cdb-4c9d-9c61-c7ec7e5c7f42` PASSed the
+exact code/test postimages. Residual risk: a failure after reservation release
+does not roll back predecessor ownership; rollback would recreate the launch
+race, so this bounded fix records rather than expands that behavior. Coverage
+calls the production ownership predicate directly but does not walk
+`storedManifests` under the canonical lock. Next: write eval, commit once, and
+stop for root independent review.
+
+---
+
+# Prior session history — tmux socket normalization
 
 ## Run 38 (2026-08-08) — V5-R1 DECLARATION PASS; SOURCE BYTES FROZEN
 
