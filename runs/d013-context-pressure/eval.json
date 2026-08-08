@@ -1,0 +1,62 @@
+{
+  "task_id": "d013-context-pressure",
+  "feature": "context-pressure-handoff",
+  "timestamp": "2026-08-08T20:55:14Z",
+  "base_commit": "32d60a730eae215b7b1096dfe1599b0ebdc4bfc6",
+  "evaluator": "claude-zero-write-review",
+  "verdict": "pass",
+  "implementation_files": {
+    "loop-fork/src/loop/session-pressure.ts": "7e9c4e71302e710d5ba3f5dd7c7fbbbbf184f6e982d49dcaecca427c72d74e9b",
+    "loop-fork/tests/loop/session-pressure.test.ts": "3db705e721598e40ff37afa329b96982609a6d0f532806822deff8b915435da3"
+  },
+  "checks": {
+    "focused_suite": {
+      "status": "pass",
+      "command": "LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/session-pressure.test.ts",
+      "evidence": "7 tests passed, 0 failed, 20 expectations. Claude independently reproduced the same result."
+    },
+    "regression": {
+      "status": "pass",
+      "evidence": "One test covers both confirmed failure arms: Codex at 18 turns and 60% context changes from preimage handoff to healthy; Claude Opus 5 at 68 turns and 17% context changes from preimage prepare to healthy."
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "scoped_build": {
+      "status": "pass",
+      "command": "bun build --target=bun --outfile /tmp/d013-session-pressure.js src/loop/session-pressure.ts",
+      "evidence": "7.52 KB artifact; SHA-256 545fa7b26ca4a41f527ce0a87dc1b3834bef50e2107829d5198bb0a06bbf7053."
+    },
+    "scoped_type_smoke": {
+      "status": "blocked",
+      "command": "bunx --no-install tsc --ignoreConfig --noEmit --pretty false --target ES2022 --module ESNext --moduleResolution bundler --strict src/loop/session-pressure.ts",
+      "evidence": "Existing NodeJS.ProcessEnv signature cannot resolve because Node ambient types are absent: error TS2503: Cannot find namespace 'NodeJS'."
+    },
+    "repository_type_and_build": {
+      "status": "blocked",
+      "evidence": "No-install checks cannot resolve existing bun-types, node types, proper-lockfile, caveman-installer asset, and Pi packages. Task forbids install."
+    },
+    "peer_review": {
+      "status": "pass",
+      "review_id": "53d0933f-abaa-4bd3-b6ea-60408948027d",
+      "evidence": "Claude verified exact postimages, genuine preimage failure for both regression arms, no surviving turn-trigger path, unchanged context/compaction precedence, preserved modes, and persisted-state compatibility."
+    }
+  },
+  "acceptance": {
+    "assistant_turns_never_trigger_pressure_alone": true,
+    "context_token_behavior_preserved": true,
+    "compaction_behavior_preserved": true,
+    "observe_off_enforce_preserved": true,
+    "assistant_turn_telemetry_preserved": true,
+    "focused_regression_count": 1,
+    "remote_mutation_performed": false,
+    "install_performed": false
+  },
+  "known_limitations": [
+    "Without context telemetry, escalation now depends on compaction evidence; this is required by D-013.",
+    "Per-profile turn thresholds remain telemetry and historical parser compatibility fields, not decision inputs.",
+    "Missing repository dependencies prevent a clean semantic typecheck and full production build in this no-install cycle."
+  ],
+  "blocking_findings": []
+}

@@ -70,25 +70,32 @@ describe("evaluateSessionPressure", () => {
     });
   });
 
-  test("uses model-specific turns as a secondary signal when context is absent", () => {
-    expect(
-      evaluateSessionPressure(
-        "codex",
-        usage({ contextTokens: 0, messages: 14, model: "gpt-5.6-sol" })
-      )
-    ).toMatchObject({ phase: "prepare", reasonCode: "turn-prepare" });
-    expect(
-      evaluateSessionPressure(
-        "codex",
-        usage({ contextTokens: 0, messages: 18, model: "gpt-5.6-sol" })
-      )
-    ).toMatchObject({ phase: "handoff", reasonCode: "turn-handoff" });
-    expect(
-      evaluateSessionPressure(
-        "codex",
-        usage({ contextTokens: 0, messages: 18, model: "gpt-5.5" })
-      )
-    ).toMatchObject({ phase: "healthy", profile: "gpt-5.5" });
+  test("does not prepare or hand off from high turns at low context", () => {
+    const codex = evaluateSessionPressure(
+      "codex",
+      usage({ contextTokens: 111_000, messages: 18, model: "gpt-5.6-sol" })
+    );
+    expect(codex).toMatchObject({
+      assistantTurns: 18,
+      contextUsedPct: 60,
+      phase: "healthy",
+      reasonCode: "below-thresholds",
+    });
+
+    const claude = evaluateSessionPressure(
+      "claude",
+      usage({
+        contextTokens: 39_100,
+        messages: 68,
+        model: "Claude Opus 5",
+      })
+    );
+    expect(claude).toMatchObject({
+      assistantTurns: 68,
+      contextUsedPct: 17,
+      phase: "healthy",
+      reasonCode: "below-thresholds",
+    });
   });
 
   test("compaction precedence outranks context and turn crossings", () => {

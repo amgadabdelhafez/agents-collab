@@ -184,7 +184,6 @@ export const evaluateSessionPressure = (
   const effectiveCompactions =
     usage.automaticCompactions ?? Math.max(0, Math.round(usage.compactions));
   const contextPrepareTokens = prepareThreshold(profile.contextHandoffTokens);
-  const turnPrepare = prepareThreshold(profile.turnHandoff);
 
   if (effectiveCompactions >= 2) {
     return decision(
@@ -221,16 +220,6 @@ export const evaluateSessionPressure = (
       `${contextTokens} context tokens reached ${profile.contextHandoffTokens}`
     );
   }
-  if (assistantTurns >= profile.turnHandoff) {
-    return decision(
-      agent,
-      usage,
-      profile,
-      "handoff",
-      "turn-handoff",
-      `${assistantTurns} assistant turns reached ${profile.turnHandoff}`
-    );
-  }
   if (contextTokens !== undefined && contextTokens >= contextPrepareTokens) {
     return decision(
       agent,
@@ -241,16 +230,6 @@ export const evaluateSessionPressure = (
       `${contextTokens} context tokens reached preparation threshold ${contextPrepareTokens}`
     );
   }
-  if (assistantTurns >= turnPrepare) {
-    return decision(
-      agent,
-      usage,
-      profile,
-      "prepare",
-      "turn-prepare",
-      `${assistantTurns} assistant turns reached preparation threshold ${turnPrepare}`
-    );
-  }
   return decision(
     agent,
     usage,
@@ -258,8 +237,8 @@ export const evaluateSessionPressure = (
     "healthy",
     "below-thresholds",
     contextTokens === undefined
-      ? `context unavailable; ${assistantTurns} assistant turns below ${profile.turnHandoff}`
-      : `${contextTokens} context tokens and ${assistantTurns} assistant turns below thresholds`
+      ? `context unavailable; ${assistantTurns} assistant turns observed`
+      : `${contextTokens} context tokens below preparation threshold ${contextPrepareTokens}; ${assistantTurns} assistant turns observed`
   );
 };
 
