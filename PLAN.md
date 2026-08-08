@@ -1,4 +1,73 @@
-# PLAN — D-001 Governess handover launch order
+# PLAN — D-007 mid-run delivery accountability
+
+## Run 46 (2026-08-08) — bounded shipping-first cycle
+
+Fix only the confirmed Codex bridge producer gap: a run can retain a stale
+`manifest.codexThreadId` after the live Codex seat re-threads, and a failed
+app-server delivery attempt leaves the message pending without a durable exact
+failure reason.
+
+Live UAT is primary evidence. Run 46's manifest records
+`019fe333-f4fb-74e2-ab79-2e065999c825`, while its run-scoped Codex history
+records this session's bootstrap prompt under
+`019fe333-f715-7520-a79c-cf62b26d9636`. The current producer reads only the
+manifest ID in `bridge-store.ts`, passes it to `injectCodexMessage` in
+`bridge-runtime.ts`, and catches every thrown delivery error as bare `false`.
+
+Smallest patch: preserve pending semantics and tmux fallback, but append one
+typed, non-terminal bridge attempt event linked to the message ID. Record exact
+thrown errors and fixed `codex app-server rejected injection` for non-throwing
+false refusal. Extend the existing retry test only. No runtime seat repair,
+manifest refresh, silent-misdelivery fix, transport matrix, dependency change,
+install, push, merge, or other backlog item.
+
+Acceptance: affected focused test, build/type smoke, one focused happy-path
+smoke, `git diff --check`, native zero-write Claude PASS, passing
+`runs/d007-mid-run-delivery/eval.json`, and one scoped commit. Stop after commit
+for root independent review.
+
+The charter-named defect Markdown is absent from the working tree and all local
+Git refs. Nanny task `7b20e433-c9c6-44d6-a7cb-3f6c670b1194` independently
+confirmed absence. Claude review `a5aa2651-f977-433d-a094-e63642c5db46`
+accepted an explicit waiver to proceed on the charter text without creating a
+defect document or specs bundle, and returned REVISE on the false-refusal path.
+That bounded finding is now patched.
+
+### Fresh-loop handover
+
+Preserve five modified files without staging or committing:
+
+- `loop-fork/src/loop/bridge-store.ts` adds typed, non-terminal,
+  duplicate-suppressed `delivery-failed` events while preserving pending state.
+  SHA-256: `2e8b865d76b9bde4cbfbe597d8ea109474dfddb733ee6e3659bfabf13d3eb290`.
+- `loop-fork/src/loop/bridge-runtime.ts` records exact thrown reasons and a
+  fixed reason for non-throwing refusal. SHA-256:
+  `1a5cd659b44fc5bc589a1c58e0b6d63fe991c287f6c33933ebe71d9613a136c5`.
+- `loop-fork/tests/loop/bridge.test.ts` extends the existing retry test across
+  throw, false refusal, and eventual success. SHA-256:
+  `12a531c4a283158d5f597574b0877e47be8451fcf92de3cb7ba5c259ace45791`.
+- `PLAN.md` and `status.md` contain required session continuity only.
+
+Checks complete: focused defect 1 pass/0 fail; focused happy path 1/0; affected
+two-module Bun build passed; scoped TypeScript passed using the existing
+read-only dependency tree at
+`/private/tmp/agents-collab-main-readme/loop-fork/node_modules`; `git diff
+--check` passed. Full product build and full bridge suite are baseline-blocked
+by this worktree's absent dependencies; the bridge suite reached 65 pass and
+43 child-process failures because child processes could not inherit the
+external preload.
+
+Post-correction checks: focused regression 1/0 with 5 expectations; focused
+happy path 1/0 with 4 expectations; affected two-module build passed; scoped
+TypeScript passed; `git diff --check` passed. Native zero-write review
+`cd81ba6b-4b67-40b8-b643-248802a137ef` returned PASS on all five reviewed
+paths and independently reproduced all checks plus two negative controls. Final
+bounded action: write `runs/d007-mid-run-delivery/eval.json`, commit the explicit
+scoped paths once, and stop for root independent review.
+
+---
+
+# Prior task history — D-001 Governess handover launch order
 
 ## Run 42 (2026-08-08) — bounded v1.0.35 fix
 

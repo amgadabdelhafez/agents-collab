@@ -35,7 +35,6 @@ export type BridgeResolution =
   | "expired"
   | "superseded"
   | "dead-letter";
-export type BridgeNotificationKind = "notified";
 
 const MESSAGE_TYPES = new Set<BridgeMessageType>([
   "message",
@@ -90,11 +89,20 @@ interface BridgeAck extends BridgeBaseEvent {
 }
 
 export interface BridgeNotification extends BridgeBaseEvent {
-  kind: BridgeNotificationKind;
+  kind: "notified";
   reason?: string;
 }
 
-export type BridgeEvent = BridgeAck | BridgeMessage | BridgeNotification;
+export interface BridgeDeliveryFailure extends BridgeBaseEvent {
+  kind: "delivery-failed";
+  reason: string;
+}
+
+export type BridgeEvent =
+  | BridgeAck
+  | BridgeDeliveryFailure
+  | BridgeMessage
+  | BridgeNotification;
 
 export interface BridgeEnqueueOptions {
   artifactRefs?: string[];
@@ -278,6 +286,18 @@ const parseBridgeEvent = (
       signature: asString(value.signature),
     };
   }
+  if (kind === "delivery-failed") {
+    const reason = asString(value.reason);
+    if (!reason) {
+      return undefined;
+    }
+    return {
+      ...base,
+      kind,
+      reason,
+      signature: asString(value.signature),
+    };
+  }
   if (!RESOLUTIONS.has(kind as BridgeResolution)) {
     return undefined;
   }
@@ -326,7 +346,7 @@ const pendingFromEvents = (events: BridgeEvent[]): BridgeMessage[] => {
       messages.set(event.id, event);
       continue;
     }
-    if (event.kind === "notified") {
+    if (event.kind === "notified" || event.kind === "delivery-failed") {
       continue;
     }
     const pending = messages.get(event.id);
@@ -416,6 +436,33 @@ export const markBridgeMessageNotified = (
     at,
     id: message.id,
     kind: "notified",
+    reason,
+    signature: eventSignature(message),
+    source: message.source,
+    target: message.target,
+  });
+};
+
+export const markBridgeMessageDeliveryFailed = (
+  runDir: string,
+  message: BridgeMessage,
+  reason: string
+): void => {
+  const events = readBridgeEvents(runDir);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.id !== message.id || event.kind !== "delivery-failed") {
+      continue;
+    }
+    if (event.reason === reason) {
+      return;
+    }
+    break;
+  }
+  appendBridgeEvent(runDir, {
+    at: new Date().toISOString(),
+    id: message.id,
+    kind: "delivery-failed",
     reason,
     signature: eventSignature(message),
     source: message.source,

@@ -35,6 +35,7 @@ import {
   type BridgeStatus,
   bridgePath,
   lastBridgeNotificationAt,
+  markBridgeMessageDeliveryFailed,
   markBridgeMessageNotified,
   readBridgeInbox,
   readBridgeStatus,
@@ -1304,9 +1305,20 @@ export const deliverCodexBridgeMessage = async (
         message,
         "accepted by codex app-server"
       );
+    } else {
+      markBridgeMessageDeliveryFailed(
+        runDir,
+        message,
+        "codex app-server rejected injection"
+      );
     }
     return delivered;
-  } catch {
+  } catch (error) {
+    markBridgeMessageDeliveryFailed(
+      runDir,
+      message,
+      error instanceof Error ? error.message : String(error)
+    );
     return false;
   } finally {
     releaseDeliveryClaim(claim);

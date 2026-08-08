@@ -1,4 +1,122 @@
-# status — D-001 Governess handover launch order
+# status — D-007 mid-run delivery accountability
+
+## Run 46 (2026-08-08) — patch corrected after peer REVISE
+
+Result so far: live UAT reproduces runtime-seat/manifest divergence. Run 46's
+manifest records Codex thread `019fe333-f4fb-74e2-ab79-2e065999c825`; current
+run-scoped `codex-home/history.jsonl` records the bootstrap prompt on
+`019fe333-f715-7520-a79c-cf62b26d9636`. During the observed pre-pull window, a
+utility message was pending in `bridge.jsonl` with no submitted-delivery event
+and no durable failure event. `receive_messages` later rescued and acknowledged
+it; the current journal has no pending Codex message. Live UAT proves the
+accountability gap during that window, not a permanently stuck message.
+
+Concrete producer path is `readBridgeStatus` in `bridge-store.ts` through
+`deliverCodexBridgeMessage` in `bridge-runtime.ts` to `injectCodexMessage` in
+`codex-app-server.ts`. Before this patch, `deliverCodexBridgeMessage` discarded
+both thrown reasons and non-throwing `false` refusals. The patch records thrown
+messages exactly and records `codex app-server rejected injection` for a bare
+false result. Both events are non-terminal: the message stays pending and the
+worker may still use the tmux doorbell fallback.
+
+Required defect document
+`docs/quality/defects/D-007-mid-run-delivery-accountability.md` does not exist
+at HEAD or in local Git history; Nanny confirmed the same. World Model file,
+capsule, and commit hashes were independently verified. The instructed
+`loop world context ... --max-depth` retrieval failed because this installed
+CLI reports `unknown world argument: --max-depth`; no indexed claim was used.
+
+Waiver accepted after Claude review `a5aa2651-f977-433d-a094-e63642c5db46`:
+the verified launch charter's defect statement and acceptance criteria govern
+this bounded cycle. Do not author the missing defect document or a new specs
+bundle; either would broaden the shipping-first task. Record this explicit
+waiver instead of claiming the repository's spec-first rule was satisfied.
+
+Two runtime-seat variants remain distinct. Variant A has no persisted rollout
+for the stale manifest thread, so read/resume throws; this patch records that
+failure and is the live Run 46 inference. Variant B can still accept a turn on
+a stale but resolvable thread and acknowledge delivery although the visible
+seat never sees it. That silent misdelivery is separate and intentionally out
+of scope.
+
+Non-blocking limits: `delivery-failed` must remain non-resolving; identical
+consecutive reasons dedupe, but alternating reasons can append each retry; each
+recording scans the current bridge journal; no operator-facing reader surfaces
+these events yet. Pre-claim exits for a missing route, an already-resolved
+message, or an unavailable claim remain intentionally unrecorded.
+
+Next: rerun focused regression, affected build/type smoke, happy path, and diff
+check; request zero-write Claude PASS on exact bytes; then write eval, commit
+once, and stop. No install, push, merge, session/process mutation, helper
+editing, or use of forbidden artifact
+`db8b36fc-be5e-4710-b20c-ecb3fa037fb0`.
+
+### Fresh-loop handover ordered by Governess
+
+Current source/test patch is corrected after Claude REVISE and remains
+uncommitted:
+
+- `bridge-store.ts` SHA-256
+  `2e8b865d76b9bde4cbfbe597d8ea109474dfddb733ee6e3659bfabf13d3eb290`:
+  typed `delivery-failed` event, parser support, pending-state preservation,
+  and identical-retry dedupe.
+- `bridge-runtime.ts`: producer records both the exact thrown app-server error
+  and a fixed reason for non-throwing false refusal before releasing the claim.
+  SHA-256:
+  `1a5cd659b44fc5bc589a1c58e0b6d63fe991c287f6c33933ebe71d9613a136c5`.
+- `bridge.test.ts`: the existing retry regression covers throw, false refusal,
+  eventual success, both durable reasons, and final delivery. SHA-256:
+  `12a531c4a283158d5f597574b0877e47be8451fcf92de3cb7ba5c259ace45791`.
+
+Verification:
+
+- Defect regression: 1 pass, 0 fail, 5 assertions.
+- Happy-path direct delivery: 1 pass, 0 fail, 4 assertions.
+- Both focused tests used external preload
+  `/private/tmp/d007-test-preload.ts` for unchanged absent Caveman Markdown and
+  `proper-lockfile`; no repository dependency or byte was installed.
+- Affected build: `bun build src/loop/bridge-store.ts
+  src/loop/bridge-runtime.ts --outdir /private/tmp/d007-affected-build --target
+  bun --external '*'`; 2 modules bundled.
+- Scoped TypeScript: passed using existing read-only dependencies from
+  `/private/tmp/agents-collab-main-readme/loop-fork/node_modules` and including
+  `src/loop/caveman-skill.d.ts`.
+- `git diff --check`: pass.
+- All five checks above were rerun after the false-refusal correction; focused
+  regression took 61.78ms, happy path 30.81ms, and affected build bundled two
+  modules in 20ms.
+- Full product build: baseline failure on absent `proper-lockfile`,
+  `caveman-installer`, and Pi packages; no install attempted.
+- Full bridge file: 65 pass, 43 fail, 1 error. All changed direct producer tests
+  pass; failures are spawned CLI children that cannot resolve the unchanged
+  absent dependencies because the external preload is not inherited.
+
+Review state: Claude review `a5aa2651-f977-433d-a094-e63642c5db46` returned
+REVISE on the unrecorded false-refusal path. That finding was patched. Native
+zero-write review `cd81ba6b-4b67-40b8-b643-248802a137ef` then returned PASS on
+all five reviewed paths, independently reproduced all five checks, and proved
+two negative controls fail when either producer half is removed.
+
+Lint remains unverified. Claude's `biome check` attempt failed before linting:
+`Failed to resolve the configuration from ultracite/biome/core` and `Could not
+resolve ultracite/biome/core: module not found`. No install was attempted. Full
+product build and full bridge-suite baseline blockers remain as recorded above.
+
+Additional evidence limits from PASS: the preload's no-op `proper-lockfile`
+does not exercise concurrent append behavior, although production delivery
+claims serialize this producer per message ID. Empty-message `Error` values
+write raw JSON that `readBridgeEvents` cannot materialize or dedupe. Operator
+visibility would naturally belong in `readBridgeQueueHealth`, which currently
+omits `delivery-failed`. Recording remains O(events) per retry. These are
+non-blocking and deferred; do not reopen this patch.
+
+Risk: the patch does not repair stale runtime seat identity or prevent variant
+B silent misdelivery. Next action: write eval, commit explicit scoped paths
+once, and stop for root independent review.
+
+---
+
+# Prior task history — D-001 Governess handover launch order
 
 ## Run 42 (2026-08-08) — implementation and peer review complete
 

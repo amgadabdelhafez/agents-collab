@@ -4557,6 +4557,9 @@ test("runBridgeWorker retries queued codex app-server messages", async () => {
     if (injectCodexMessage.mock.calls.length === 1) {
       throw new Error("turn still active");
     }
+    if (injectCodexMessage.mock.calls.length === 2) {
+      return false;
+    }
     const manifestPath = join(runDir, "manifest.json");
     const manifest = readRunManifest(manifestPath);
     writeFileSync(
@@ -4606,7 +4609,7 @@ test("runBridgeWorker retries queued codex app-server messages", async () => {
 
   await bridge.runBridgeWorker(runDir);
 
-  expect(injectCodexMessage).toHaveBeenCalledTimes(2);
+  expect(injectCodexMessage).toHaveBeenCalledTimes(3);
   expect(injectCodexMessage.mock.calls).toEqual([
     [
       "ws://127.0.0.1:4500",
@@ -4618,6 +4621,31 @@ test("runBridgeWorker retries queued codex app-server messages", async () => {
       "codex-thread-1",
       "Claude: Please review the final diff.",
     ],
+    [
+      "ws://127.0.0.1:4500",
+      "codex-thread-1",
+      "Claude: Please review the final diff.",
+    ],
+  ]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "delivery-failed")
+  ).toEqual([
+    expect.objectContaining({
+      id: "msg-4",
+      kind: "delivery-failed",
+      reason: "turn still active",
+      source: "claude",
+      target: "codex",
+    }),
+    expect.objectContaining({
+      id: "msg-4",
+      kind: "delivery-failed",
+      reason: "codex app-server rejected injection",
+      source: "claude",
+      target: "codex",
+    }),
   ]);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
   expect(
