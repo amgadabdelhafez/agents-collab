@@ -26,6 +26,7 @@ import {
   validateRunId,
 } from "./git";
 import { LEGACY_MANIFEST_KEYS } from "./legacy-governess-compat";
+import { createManifestHandle, type ManifestHandle } from "./tmux-socket";
 import type {
   Agent,
   CavemanMode,
@@ -131,6 +132,7 @@ export interface RunManifest {
   tmuxPaneRightAgent?: HistoricalAgent;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
+  tmuxSocket?: string;
   updatedAt: string;
   workspaceBinding?: LaunchWorkspaceBinding;
   worldModel?: RunWorldModelBinding;
@@ -224,6 +226,7 @@ interface RunManifestInput {
   tmuxPaneRightAgent?: HistoricalAgent;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
+  tmuxSocket?: string;
   updatedAt?: string;
   workspaceBinding?: LaunchWorkspaceBinding;
   worldModel?: RunWorldModelBinding;
@@ -265,6 +268,24 @@ const firstString = (
     }
   }
   return undefined;
+};
+
+/**
+ * Reads the socket field. Unlike every other manifest field, a camel/snake
+ * disagreement here is **not** resolved by preferring one key: a socket names
+ * the server every consumer will address, so picking one of two disagreeing
+ * values would silently target a server the manifest does not agree on.
+ * A conflict is reported as explicit unknown targeting instead.
+ */
+const readSocketField = (
+  obj: Record<string, unknown>
+): { conflict: boolean; socket: string | undefined } => {
+  const camel = asString(obj.tmuxSocket);
+  const snake = asString(obj.tmux_socket);
+  if (camel && snake && camel !== snake) {
+    return { conflict: true, socket: undefined };
+  }
+  return { conflict: false, socket: camel ?? snake };
 };
 
 const firstEffortLevel = (
@@ -903,6 +924,7 @@ export const createRunManifest = (
     state,
     status: runStatusFromState(state),
     ...(input.tmuxSession ? { tmuxSession: input.tmuxSession } : {}),
+    ...(input.tmuxSocket ? { tmuxSocket: input.tmuxSocket } : {}),
     ...(input.tmuxPaneLeftAgent
       ? { tmuxPaneLeftAgent: input.tmuxPaneLeftAgent }
       : {}),
@@ -1010,6 +1032,7 @@ const readOptionalRunManifestFields = (
     "helper_caveman_mode",
   ]);
   const tmuxSession = firstString(parsed, ["tmuxSession", "tmux_session"]);
+  const { socket: tmuxSocket } = readSocketField(parsed);
   const tmuxPaneLeftAgent = firstAgent(parsed, [
     "tmuxPaneLeftAgent",
     "tmux_pane_left_agent",
@@ -1069,6 +1092,7 @@ const readOptionalRunManifestFields = (
     ...(tmuxPaneRecon ? { tmuxPaneRecon } : {}),
     ...(tmuxPaneUtility ? { tmuxPaneUtility } : {}),
     ...(tmuxSession ? { tmuxSession } : {}),
+    ...(tmuxSocket ? { tmuxSocket } : {}),
   };
 };
 
@@ -1140,6 +1164,109 @@ export const readRunManifest = (
     return undefined;
   }
 };
+
+/**
+ * The seven persisted pane fields. Named once so the atomic clear below and
+ * any future consumer read the same list; a hand-maintained second copy is how
+ * a pane field gets left behind.
+ */
+export const TMUX_PANE_MANIFEST_FIELDS = [
+  "tmuxPaneAuPair",
+  "tmuxPaneGoverness",
+  "tmuxPaneLeft",
+  "tmuxPaneNanny",
+  "tmuxPaneRecon",
+  "tmuxPaneRight",
+  "tmuxPaneUtility",
+] as const;
+
+/**
+ * Clears only the seven pane targets, leaving `tmuxSocket` and `tmuxSession`
+ * intact. This is the **establish** case: rebinding a session replaces its
+ * panes while the run keeps its identity. Reusing the teardown clear below here
+ * would blank both identities and recreate the split-brain state.
+ *
+ * Derived from the same field list as the teardown clear, so a newly added pane
+ * field cannot escape either one.
+ */
+export const clearRunManifestPaneTargets = (): Record<string, undefined> => {
+  const cleared: Record<string, undefined> = {};
+  for (const field of TMUX_PANE_MANIFEST_FIELDS) {
+    cleared[field] = undefined;
+  }
+  return cleared;
+};
+
+/**
+ * Clears tmux topology **atomically**: the socket, the session, and all seven
+ * pane fields together. A partial clear that leaves a pane target bound to a
+ * cleared socket is a new instance of the defect this change exists to close —
+ * a pane id is exactly as socket-dependent as a session name.
+ */
+export const clearRunManifestTmuxTopology = <
+  T extends Partial<
+    Record<(typeof TMUX_PANE_MANIFEST_FIELDS)[number], unknown>
+  >,
+>(
+  manifest: T
+): T => {
+  const cleared: Record<string, unknown> = { ...manifest };
+  cleared.tmuxSession = undefined;
+  cleared.tmuxSocket = undefined;
+  for (const field of TMUX_PANE_MANIFEST_FIELDS) {
+    cleared[field] = undefined;
+  }
+  return cleared as T;
+};
+
+/**
+ * Sole producer of `ManifestHandle`. Reads the manifest bytes once and stamps
+ * the handle with the SHA-256 of exactly those bytes, so a handle cannot be
+ * minted from a manifest nobody read.
+ *
+ * `createManifestHandle` must be imported nowhere else; the derived migration
+ * check (T-11) asserts that.
+ */
+export const readRunManifestHandle = (
+  manifestPath: string
+): ManifestHandle | undefined => {
+  if (!existsSync(manifestPath)) {
+    return undefined;
+  }
+  try {
+    const raw = readFileSync(manifestPath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
+      return undefined;
+    }
+    const runId = firstString(parsed, ["runId", "run_id"]);
+    if (!runId) {
+      return undefined;
+    }
+    const { conflict, socket } = readSocketField(parsed);
+    const panes: Record<string, string | string[] | undefined> = {};
+    for (const field of TMUX_PANE_MANIFEST_FIELDS) {
+      panes[field] =
+        field === "tmuxPaneRecon"
+          ? firstStringArray(parsed, ["tmuxPaneRecon", "tmux_pane_recon"])
+          : firstString(parsed, [field, toSnakeManifestKey(field)]);
+    }
+    return createManifestHandle({
+      manifestPath,
+      manifestSha256: createHash("sha256").update(raw).digest("hex"),
+      panes,
+      runId,
+      session: firstString(parsed, ["tmuxSession", "tmux_session"]),
+      socket,
+      socketConflict: conflict,
+    });
+  } catch {
+    return undefined;
+  }
+};
+
+const toSnakeManifestKey = (key: string): string =>
+  key.replace(/([A-Z])/gu, (match) => `_${match.toLowerCase()}`);
 
 export const loadRunState = (
   runId: string,
