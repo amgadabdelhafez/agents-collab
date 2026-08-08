@@ -79,7 +79,6 @@ const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const BRIDGE_WORKER_PENDING_RETRY_MS = 5000;
 export const BRIDGE_VERSION_PROBE_INTERVAL_MS = 250;
 export const BRIDGE_RECONCILIATION_INTERVAL_MS = 5 * 60 * 1000;
-const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
 const TMUX_LEFT_PANE = "0.0";
 const TMUX_RIGHT_PANE = "0.1";
 const CODEX_TMUX_READY_DELAY_MS = 250;
@@ -1381,13 +1380,12 @@ export const notifyTmuxBridgeInbox = async (
   if (pending.length === 0) {
     return false;
   }
-  const due = pending.some((entry) => {
-    const notifiedAt = lastBridgeNotificationAt(runDir, entry.id);
-    return (
-      notifiedAt === undefined ||
-      nowMs - notifiedAt >= BRIDGE_NOTIFICATION_RETRY_MS
-    );
-  });
+  // The terminal text is a doorbell for the inbox, not a notification for
+  // each message. Once any pending message has raised the doorbell, coalesce
+  // later messages behind it until receive_messages drains the inbox.
+  const due = pending.every(
+    (entry) => lastBridgeNotificationAt(runDir, entry.id) === undefined
+  );
   if (!due) {
     return false;
   }

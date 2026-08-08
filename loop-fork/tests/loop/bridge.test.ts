@@ -1893,7 +1893,7 @@ test("Codex-to-Claude dispatch nudges the pane without resolving delivery", asyn
   rmSync(root, { recursive: true, force: true });
 });
 
-test("tmux inbox nudges throttle an unchanged inbox and allow a new message", async () => {
+test("tmux inbox emits one doorbell while messages remain pending", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args[1] === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -1939,7 +1939,7 @@ test("tmux inbox nudges throttle an unchanged inbox and allow a new message", as
     target: "claude",
   });
   expect(await bridge.notifyTmuxBridgeInbox(runDir, "claude", 100_002)).toBe(
-    true
+    false
   );
   expect(await bridge.notifyTmuxBridgeInbox(runDir, "claude", 100_003)).toBe(
     false
@@ -1949,14 +1949,14 @@ test("tmux inbox nudges throttle an unchanged inbox and allow a new message", as
     spawnSync.mock.calls.filter(
       ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
     )
-  ).toHaveLength(2);
+  ).toHaveLength(1);
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(2);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "notified")
       .map((event) => event.id)
-  ).toEqual(["msg-notice-1", "msg-notice-1", "msg-notice-2"]);
+  ).toEqual(["msg-notice-1"]);
   rmSync(root, { recursive: true, force: true });
 });
 
