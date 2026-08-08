@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ServerWebSocket, serve } from "bun";
@@ -23,7 +29,11 @@ import {
   updateRunManifest,
   writeRunManifest,
 } from "../../src/loop/run-state";
-import { type TmuxTarget, targetArgv } from "../../src/loop/tmux-socket";
+import {
+  createTmuxSkipSink,
+  type TmuxTarget,
+  targetArgv,
+} from "../../src/loop/tmux-socket";
 
 const bridgeMessage = {
   at: "2026-03-29T00:00:00.000Z",
@@ -362,6 +372,74 @@ test.each([
     ).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("proxyStopReason records unavailable targets only after identity revalidation", () => {
+  const fixtures = [
+    { fields: {}, socketState: "missing" },
+    {
+      fields: { tmuxSocket: "relative/tmux.sock" },
+      socketState: "invalid",
+    },
+    {
+      fields: {
+        tmuxSocket: "/tmp/proxy-a.sock",
+        tmux_socket: "/tmp/proxy-b.sock",
+      },
+      socketState: "conflicting",
+    },
+    {
+      fields: { tmuxSocket: "/tmp/proxy-a.sock" },
+      noSession: true,
+      socketState: "unknown",
+    },
+  ] as const;
+  for (const fixture of fixtures) {
+    const root = makeTempDir();
+    const now = Date.now();
+    try {
+      const manifestPath = writeActiveProxyManifest(root);
+      const raw = JSON.parse(readFileSync(manifestPath, "utf8"));
+      Object.assign(raw, fixture.fields);
+      if ("noSession" in fixture) {
+        Reflect.deleteProperty(raw, "tmuxSession");
+      }
+      writeFileSync(manifestPath, JSON.stringify(raw));
+      const before = readFileSync(manifestPath, "utf8");
+      const skipSink = createTmuxSkipSink();
+      let livenessReads = 0;
+      const result = codexTmuxProxyInternals.proxyStopReason(
+        root,
+        () => {
+          livenessReads += 1;
+          return "dead";
+        },
+        { consecutiveDead: 2, deadSinceMs: now - 5000, sawSession: true },
+        now - 1,
+        now,
+        skipSink
+      );
+      expect(livenessReads).toBe(0);
+      expect(result).toEqual({
+        evidence: { consecutiveDead: 0, sawSession: true },
+        reason: undefined,
+      });
+      expect(readFileSync(manifestPath, "utf8")).toBe(before);
+      expect(skipSink.records).toEqual([
+        {
+          consumer: "codex-tmux-proxy.proxyStopReason",
+          effectSkipped: "stop-codex-tmux-proxy",
+          pane: null,
+          reason: "manifest target is unavailable; proxy stop is suppressed",
+          runId: "10",
+          session: "noSession" in fixture ? null : "repo-loop-10",
+          socketState: fixture.socketState,
+        },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 

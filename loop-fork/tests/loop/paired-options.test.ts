@@ -21,6 +21,7 @@ import {
   resolveRunStorage,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import { createTmuxSkipSink, targetArgv } from "../../src/loop/tmux-socket";
 import type { Options } from "../../src/loop/types";
 
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-paired-"));
@@ -110,6 +111,7 @@ test("live tmux reattach rejects an effort change it cannot apply", () => {
         tmuxPaneLeftAgent: "claude",
         tmuxPaneRightAgent: "codex",
         tmuxSession: "repo-loop-effort-live",
+        tmuxSocket: "/tmp/paired-effort-live.sock",
       })
     );
     const opts = makeOptions({
@@ -122,7 +124,7 @@ test("live tmux reattach rejects an effort change it cannot apply", () => {
       tmux: true,
     });
 
-    expect(() => preparePairedRun(opts, process.cwd(), () => true)).toThrow(
+    expect(() => preparePairedRun(opts, process.cwd(), () => "live")).toThrow(
       "Cannot change --effort-driver from medium to high"
     );
     expect(readRunManifest(storage.manifestPath)).toMatchObject({
@@ -421,6 +423,7 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
         tmuxPaneLeftAgent: "claude",
         tmuxPaneRightAgent: "codex",
         tmuxSession: "repo-loop-75",
+        tmuxSocket: "/tmp/paired-75.sock",
       })
     );
     const reusedTmux = makeOptions({
@@ -434,7 +437,7 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
       resumeRunId: "75",
       tmux: true,
     });
-    preparePairedRun(reusedTmux, alternatePairCwd, () => true);
+    preparePairedRun(reusedTmux, alternatePairCwd, () => "live");
     expect(reusedTmux).toMatchObject({
       agent: "claude",
       cavemanMode: "off",
@@ -455,7 +458,7 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
       tmux: true,
     });
     expect(() =>
-      preparePairedRun(liveModeChange, alternatePairCwd, () => true)
+      preparePairedRun(liveModeChange, alternatePairCwd, () => "live")
     ).toThrow(
       "Cannot change --caveman from off to full while reusing live tmux agents"
     );
@@ -469,7 +472,7 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
       tmux: true,
     });
     expect(() =>
-      preparePairedRun(liveHelperModeChange, alternatePairCwd, () => true)
+      preparePairedRun(liveHelperModeChange, alternatePairCwd, () => "live")
     ).toThrow(
       "Cannot change --helper-caveman from off to full while reusing a live Governess"
     );
@@ -490,6 +493,7 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
         tmuxPaneLeftAgent: "claude",
         tmuxPaneRightAgent: "codex",
         tmuxSession: "repo-loop-76",
+        tmuxSocket: "/tmp/paired-76.sock",
       })
     );
     const staleTmux = makeOptions({
@@ -503,7 +507,7 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
       resumeRunId: "76",
       tmux: true,
     });
-    preparePairedRun(staleTmux, alternatePairCwd, () => false);
+    preparePairedRun(staleTmux, alternatePairCwd, () => "dead");
     expect(staleTmux).toMatchObject({
       agent: "codex",
       cavemanMode: "off",
@@ -531,6 +535,7 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
         tmuxPaneLeftAgent: "claude",
         tmuxPaneRightAgent: "codex",
         tmuxSession: "repo-loop-77",
+        tmuxSocket: "/tmp/paired-77.sock",
       })
     );
     const unknownTmux = makeOptions({
@@ -548,6 +553,216 @@ test("legacy resumes apply only Caveman modes their agents can receive", () => {
       codexThreadId: "unknown-codex",
       tmuxSession: "repo-loop-77",
     });
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("persistedTmuxIsLive records unavailable targets and refuses state mutation", () => {
+  const fixtures = [
+    {
+      fields: { tmuxSession: "repo-loop-unavailable" },
+      socketState: "missing",
+    },
+    {
+      fields: {
+        tmuxSession: "repo-loop-unavailable",
+        tmuxSocket: "relative/tmux.sock",
+      },
+      socketState: "invalid",
+    },
+    {
+      fields: {
+        tmuxSession: "repo-loop-unavailable",
+        tmuxSocket: "/tmp/paired-a.sock",
+        tmux_socket: "/tmp/paired-b.sock",
+      },
+      socketState: "conflicting",
+    },
+  ] as const;
+  for (const [index, fixture] of fixtures.entries()) {
+    const home = makeTempHome();
+    const cwd = join(home, "repo");
+    const originalHome = process.env.HOME;
+    process.env.HOME = home;
+    mkdirSync(cwd, { recursive: true });
+    try {
+      const storage = resolveRunStorage(`unavailable-${index}`, cwd, home);
+      mkdirSync(storage.runDir, { recursive: true });
+      writeFileSync(
+        storage.manifestPath,
+        JSON.stringify({
+          createdAt: "2026-03-27T10:00:00.000Z",
+          cwd,
+          mode: "paired",
+          pid: 1234,
+          repoId: storage.repoId,
+          runId: storage.runId,
+          state: "working",
+          updatedAt: "2026-03-27T10:00:00.000Z",
+          ...fixture.fields,
+        })
+      );
+      const before = readFileSync(storage.manifestPath, "utf8");
+      const opts = makeOptions({
+        pairedMode: true,
+        resumeRunId: storage.runId,
+        tmux: true,
+      });
+      const beforeOpts = { ...opts };
+      const skipSink = createTmuxSkipSink();
+      let tmuxContacts = 0;
+      expect(() =>
+        preparePairedRun(
+          opts,
+          cwd,
+          () => {
+            tmuxContacts += 1;
+            return "dead";
+          },
+          skipSink
+        )
+      ).toThrow(
+        'tmux session "repo-loop-unavailable" liveness is unknown; refusing to clear or duplicate it'
+      );
+      expect(tmuxContacts).toBe(0);
+      expect(opts).toEqual(beforeOpts);
+      expect(readFileSync(storage.manifestPath, "utf8")).toBe(before);
+      expect(skipSink.records).toEqual([
+        {
+          consumer: "paired-options.persistedTmuxIsLive",
+          effectSkipped: "clear-or-duplicate-persisted-tmux-state",
+          pane: null,
+          reason:
+            "persisted manifest target is unavailable; refusing to clear or duplicate tmux state",
+          runId: storage.runId,
+          session: "repo-loop-unavailable",
+          socketState: fixture.socketState,
+        },
+      ]);
+    } finally {
+      if (originalHome === undefined) {
+        Reflect.deleteProperty(process.env, "HOME");
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
+test("persistedTmuxIsLive preserves the no-session guard without a skip record", () => {
+  const home = makeTempHome();
+  const cwd = join(home, "repo");
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  mkdirSync(cwd, { recursive: true });
+  try {
+    const storage = resolveRunStorage("no-session", cwd, home);
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        cwd,
+        mode: "paired",
+        pid: 1234,
+        primaryAgent: "oss",
+        repoId: storage.repoId,
+        runId: storage.runId,
+        state: "working",
+        tmuxPaneLeftAgent: "claude",
+        tmuxPaneRightAgent: "oss",
+        tmuxSocket: "/tmp/paired-no-session.sock",
+      })
+    );
+    const beforeSocket = readRunManifest(storage.manifestPath)?.tmuxSocket;
+    const skipSink = createTmuxSkipSink();
+    let tmuxContacts = 0;
+    const opts = makeOptions({
+      agent: "codex",
+      pairedMode: true,
+      pairWith: "claude",
+      resumeRunId: storage.runId,
+      tmux: true,
+    });
+    preparePairedRun(
+      opts,
+      cwd,
+      () => {
+        tmuxContacts += 1;
+        return "dead";
+      },
+      skipSink
+    );
+    expect(tmuxContacts).toBe(0);
+    expect(skipSink.records).toEqual([]);
+    expect(opts).toMatchObject({ agent: "codex", pairWith: "claude" });
+    expect(readRunManifest(storage.manifestPath)?.tmuxSocket).toBe(
+      beforeSocket
+    );
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  "live",
+  "dead",
+] as const)("persistedTmuxIsLive uses a target-bound %s control without a skip record", (liveness) => {
+  const home = makeTempHome();
+  const cwd = join(home, "repo");
+  const originalHome = process.env.HOME;
+  process.env.HOME = home;
+  mkdirSync(cwd, { recursive: true });
+  try {
+    const storage = resolveRunStorage(`target-${liveness}`, cwd, home);
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        cwd,
+        mode: "paired",
+        pid: 1234,
+        repoId: storage.repoId,
+        runId: storage.runId,
+        state: "working",
+        tmuxSession: "repo-loop-target",
+        tmuxSocket: "/tmp/paired-target.sock",
+      })
+    );
+    const skipSink = createTmuxSkipSink();
+    let tmuxContacts = 0;
+    preparePairedRun(
+      makeOptions({
+        pairedMode: true,
+        resumeRunId: storage.runId,
+        tmux: true,
+      }),
+      cwd,
+      (target) => {
+        tmuxContacts += 1;
+        expect(targetArgv(target, "has-session")).toEqual([
+          "tmux",
+          "-S",
+          "/tmp/paired-target.sock",
+          "has-session",
+          "-t",
+          "repo-loop-target",
+        ]);
+        return liveness;
+      },
+      skipSink
+    );
+    expect(tmuxContacts).toBe(1);
+    expect(skipSink.records).toEqual([]);
   } finally {
     if (originalHome === undefined) {
       Reflect.deleteProperty(process.env, "HOME");
@@ -760,6 +975,7 @@ test("preparePairedRun clears stale tmux state and Codex governance outside tmux
           runId: "alpha",
           status: "running",
           tmuxSession: "repo-loop-alpha",
+          tmuxSocket: "/tmp/paired-alpha.sock",
         },
         "2026-03-22T10:00:00.000Z"
       )
@@ -831,6 +1047,7 @@ test("preparePairedRun preserves governed Codex gates and removes stale child pr
           runId: "alpha",
           status: "running",
           tmuxSession: "repo-loop-alpha",
+          tmuxSocket: "/tmp/paired-alpha.sock",
         },
         "2026-03-22T10:00:00.000Z"
       )
@@ -853,7 +1070,7 @@ test("preparePairedRun preserves governed Codex gates and removes stale child pr
     const prepared = preparePairedRun(
       makeOptions({ governess: true, resumeRunId: "alpha", tmux: true }),
       process.cwd(),
-      () => true
+      () => "live"
     );
 
     expect(prepared.manifest.tmuxSession).toBe("repo-loop-alpha");
@@ -873,7 +1090,7 @@ test("preparePairedRun preserves governed Codex gates and removes stale child pr
     preparePairedRun(
       makeOptions({ governess: true, resumeRunId: "alpha", tmux: true }),
       process.cwd(),
-      () => true
+      () => "live"
     );
     expect(readFileSync(hooksPath, "utf8")).toContain("strict");
     expect(existsSync(fallbackProfile)).toBe(false);

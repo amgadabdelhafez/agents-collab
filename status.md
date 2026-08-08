@@ -1,5 +1,25 @@
 # status — tmux socket normalization
 
+## Run 40 (2026-08-08) — V5-R1 FINAL PASS; READY FOR ROOT DELIVERY
+
+Implemented exact ten-file V5-R1 candidate. Changed files are the five named
+producers and five owning tests only; PLAN/status and run eval are bookkeeping.
+Eight focused suites pass with 393 tests and zero failures. Exact ten-path
+Biome, 845-file whole-tree check, scoped TypeScript, `git diff --check`, empty
+index, three-hit old API inventory, empty former-six literal search, all ten
+postimage hashes, and all preserved hashes pass. Frozen dependency install used
+the existing lockfile and changed no tracked dependency bytes. Full governed
+verification also passes, including build, the complete sequential test suite,
+and an empty baseline allowlist. Claude independently PASSed the exact
+postimage at `8758f3aa-2b25-450e-8466-0d8c534409ed` with no code defect. Per
+the review, eval metadata now accurately describes the scoped TypeScript
+command as an entry-point check rather than a strict project-config check.
+
+Delivery action: create one clean scoped commit and stop for root delivery.
+Verify 10 remains open. Intended consequence remains: inactive no-session
+legacy manifests can retain workspace ownership and block launch with no
+recovery path under founder-approved fail-closed behavior.
+
 ## Run 38 (2026-08-08) — V5-R1 DECLARATION PASS; SOURCE BYTES FROZEN
 
 Current result: planning/review gate complete, implementation not started.

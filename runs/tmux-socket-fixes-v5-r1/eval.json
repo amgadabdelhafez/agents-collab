@@ -1,0 +1,56 @@
+{
+  "task_id": "tmux-socket-fixes-v5-r1",
+  "feature": "tmux-socket-normalization",
+  "timestamp": "2026-08-08T19:22:50Z",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "scope": {
+    "claim": "V5-R1 six-site prerequisite migration only",
+    "verify_10_closed": false,
+    "source_files": 5,
+    "test_files": 5
+  },
+  "checks": {
+    "focused": {
+      "status": "pass",
+      "files": 8,
+      "passed": 393,
+      "failed": 0
+    },
+    "biome_ten_paths": {
+      "status": "pass",
+      "files": 10
+    },
+    "whole_tree_check": {
+      "status": "pass",
+      "files": 845
+    },
+    "typecheck": {
+      "status": "pass",
+      "command": "bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts",
+      "config": "ad-hoc flags; not tsconfig.json",
+      "strict": false,
+      "skip_lib_check": true,
+      "scope_note": "Entry-point scoped check with strict disabled; weaker than the repo tsconfig.json strict:true configuration."
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    },
+    "governed_verify": {
+      "status": "pass",
+      "command": "scripts/verify.sh tmux-socket-normalization tmux-socket-fixes-v5-r1"
+    },
+    "independent_review": {
+      "status": "pass",
+      "reviewer": "claude",
+      "verdict_id": "8758f3aa-2b25-450e-8466-0d8c534409ed"
+    }
+  },
+  "notes": [
+    "Verify 10 remains open because V5-R1 covers only six named producers.",
+    "No automated search claims semantic completeness; six replacements were inspected manually.",
+    "Paired-options valid-socket/no-session preserves the no-live-reuse guard, issues no probe or skip record, and retains socket identity across bookkeeping writes.",
+    "Independent reviewer additionally typechecked base 9c626c402082d76c686a9be9d1976dd883bb32c2 and the V5-R1 postimage under the repo tsconfig.json (strict:true): 217 errors on both sides, normalized error sets identical, zero added and zero removed."
+  ]
+}

@@ -16,7 +16,12 @@ import {
   updateRunManifest,
 } from "./run-state";
 import { type TmuxLiveness, tmuxTargetLiveness } from "./tmux-control";
-import { type TmuxTarget, targetFromManifest } from "./tmux-socket";
+import {
+  manifestSocketState,
+  type TmuxSkipSink,
+  type TmuxTarget,
+  targetFromManifest,
+} from "./tmux-socket";
 import { connectWs, type WsClient } from "./ws-client";
 
 const CODEX_PROXY_BASE_PORT = 4600;
@@ -41,6 +46,7 @@ const ITEM_COMPLETED_METHOD = "item/completed";
 const MCP_RELOAD_METHOD = "config/mcpServer/reload";
 const MCP_RELOAD_ID_PREFIX = "proxy-mcp-reload-";
 const MCP_RELOAD_TIMEOUT_MS = 5000;
+const defaultTmuxSkipSink: TmuxSkipSink = { record: () => undefined };
 
 export const CODEX_TMUX_PROXY_SUBCOMMAND = "__codex-tmux-proxy";
 const PROXY_SHUTDOWN_PATH = "/__loop_shutdown";
@@ -81,6 +87,7 @@ interface TmuxDeathEvidence {
 export interface ProxyRuntimeOptions {
   now?: () => number;
   reconnectDelay?: (attempt: number) => number;
+  skipSink?: TmuxSkipSink;
   tmuxLiveness?: (target: TmuxTarget | undefined) => TmuxLiveness;
 }
 
@@ -359,7 +366,8 @@ const proxyStopReason = (
   readTmuxLiveness: (target: TmuxTarget | undefined) => TmuxLiveness,
   evidence: TmuxDeathEvidence,
   startupDeadlineMs: number,
-  nowMs: number
+  nowMs: number,
+  skipSink: TmuxSkipSink = defaultTmuxSkipSink
 ): { evidence: TmuxDeathEvidence; reason: StopReason | undefined } => {
   const manifestPath = join(runDir, "manifest.json");
   // The record and provenance handle are independent reads. Probe only a
@@ -377,25 +385,28 @@ const proxyStopReason = (
   const targetLiveness: TmuxLiveness = target
     ? readTmuxLiveness(target)
     : "unknown";
-  const liveness = manifest.tmuxSession ? targetLiveness : "dead";
   const current = readRunManifest(manifestPath);
   if (!(current && isActiveRunState(current.state))) {
     return { evidence, reason: "inactive-run" };
   }
   const currentHandle = readRunManifestHandle(manifestPath);
   let guardedLiveness: TmuxLiveness = "unknown";
-  if (manifest.tmuxSession) {
-    if (
-      handle &&
-      activeManifestIdentityMatches(manifest, handle, current, currentHandle)
-    ) {
-      guardedLiveness = liveness;
-    }
-  } else if (
-    current.runId === manifest.runId &&
-    current.tmuxSession === undefined
+  if (
+    handle &&
+    activeManifestIdentityMatches(manifest, handle, current, currentHandle)
   ) {
-    guardedLiveness = liveness;
+    guardedLiveness = targetLiveness;
+    if (!target) {
+      skipSink.record({
+        consumer: "codex-tmux-proxy.proxyStopReason",
+        effectSkipped: "stop-codex-tmux-proxy",
+        pane: null,
+        reason: "manifest target is unavailable; proxy stop is suppressed",
+        runId: manifest.runId,
+        session: manifest.tmuxSession ?? null,
+        socketState: manifestSocketState(handle),
+      });
+    }
   }
   const observation = observeTmuxLiveness(
     guardedLiveness,
@@ -543,6 +554,7 @@ class CodexTmuxProxy {
   private readonly readTmuxLiveness: (
     target: TmuxTarget | undefined
   ) => TmuxLiveness;
+  private readonly skipSink: TmuxSkipSink;
 
   constructor(
     runDir: string,
@@ -558,6 +570,7 @@ class CodexTmuxProxy {
     this.now = options.now ?? Date.now;
     this.reconnectDelay = options.reconnectDelay ?? reconnectDelayMs;
     this.readTmuxLiveness = options.tmuxLiveness ?? tmuxTargetLiveness;
+    this.skipSink = options.skipSink ?? defaultTmuxSkipSink;
     this.startupDeadlineMs = this.now() + PROXY_STARTUP_GRACE_MS;
     this.stoppedPromise = new Promise((resolve) => {
       this.resolveStopped = resolve;
@@ -1048,7 +1061,8 @@ class CodexTmuxProxy {
       this.readTmuxLiveness,
       this.tmuxDeathEvidence,
       this.startupDeadlineMs,
-      this.now()
+      this.now(),
+      this.skipSink
     );
     this.tmuxDeathEvidence = observation.evidence;
     return observation.reason;

@@ -57,7 +57,11 @@ import {
   tmuxCommandTimedOut,
   tmuxTargetLiveness,
 } from "./tmux-control";
-import { targetFromManifest } from "./tmux-socket";
+import {
+  manifestSocketState,
+  type TmuxSkipSink,
+  targetFromManifest,
+} from "./tmux-socket";
 import type { Agent } from "./types";
 
 const CLAUDE_CHANNEL_METHOD = "notifications/claude/channel";
@@ -197,10 +201,13 @@ export const readClaudeSubmissionVersion = (
 const readClaudeTranscriptVersion = (runDir: string): string | undefined =>
   readClaudeSubmissionVersion(runDir);
 
+const defaultTmuxSkipSink: TmuxSkipSink = { record: () => undefined };
+
 export const bridgeRuntimeCommandDeps = {
   createWorkerWakeSession: (runDir: string) =>
     createBridgeWorkerWakeSession(runDir),
   readClaudeTranscriptVersion,
+  skipSink: defaultTmuxSkipSink,
   spawn,
   spawnSync,
   waitForWorkerWake: (
@@ -1101,9 +1108,20 @@ export const readBridgeRuntimeStatus = (
   const status = readBridgeStatus(runDir);
   const handle = readRunManifestHandle(join(runDir, "manifest.json"));
   const target = handle ? targetFromManifest(handle) : undefined;
-  const tmuxLiveness = status.tmuxSession
+  const tmuxLiveness = target
     ? tmuxTargetLiveness(target, bridgeRuntimeCommandDeps.spawnSync)
-    : "dead";
+    : "unknown";
+  if (!target) {
+    bridgeRuntimeCommandDeps.skipSink.record({
+      consumer: "bridge-runtime.readBridgeRuntimeStatus",
+      effectSkipped: "probe-tmux-session-liveness",
+      pane: null,
+      reason: "manifest target is unavailable; bridge tmux liveness is unknown",
+      runId: status.runId,
+      session: status.tmuxSession || null,
+      socketState: handle ? manifestSocketState(handle) : "unknown",
+    });
+  }
   const hasLiveTmuxSession = tmuxLiveness === "live";
   let codexDeliveryMode: BridgeRuntimeStatus["codexDeliveryMode"] = "none";
   if (status.hasCodexRemote) {

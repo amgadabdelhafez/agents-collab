@@ -26,7 +26,13 @@ import {
   tmuxCommandTimedOut,
   tmuxTargetLiveness,
 } from "./tmux-control";
-import { type TmuxTarget, targetArgv, targetFromManifest } from "./tmux-socket";
+import {
+  manifestSocketState,
+  type TmuxSkipSink,
+  type TmuxTarget,
+  targetArgv,
+  targetFromManifest,
+} from "./tmux-socket";
 import type { Agent } from "./types";
 
 export interface GovernessReplayIssue {
@@ -58,7 +64,36 @@ export const replayGovernessJournal = (
   };
 };
 
-export const governessReplayCommandDeps = { spawnSync };
+const defaultTmuxSkipSink: TmuxSkipSink = { record: () => undefined };
+
+export const governessReplayCommandDeps = {
+  skipSink: defaultTmuxSkipSink,
+  spawnSync,
+};
+
+type ManifestHandle = NonNullable<ReturnType<typeof readRunManifestHandle>>;
+
+const recordUnavailableDoctorTarget = (
+  handle: ManifestHandle | undefined,
+  target: TmuxTarget | undefined,
+  runId: string,
+  session: string | undefined
+): TmuxTarget | undefined => {
+  if (target) {
+    return target;
+  }
+  governessReplayCommandDeps.skipSink.record({
+    consumer: "governess-replay.governessDoctor",
+    effectSkipped: "probe-governess-session-readiness",
+    pane: null,
+    reason:
+      "manifest target is unavailable; Governess replay readiness is unknown",
+    runId,
+    session: session ?? null,
+    socketState: handle ? manifestSocketState(handle) : "unknown",
+  });
+  return undefined;
+};
 
 const tmuxSessionReady = (
   target: TmuxTarget | undefined
@@ -331,11 +366,16 @@ export const governessDoctor = (
   }
   const session = manifest?.tmuxSession;
   const handle = readRunManifestHandle(storage.manifestPath);
-  const target = handle ? targetFromManifest(handle) : undefined;
-  const sessionLiveness: TmuxLiveness = session
+  const target = recordUnavailableDoctorTarget(
+    handle,
+    handle ? targetFromManifest(handle) : undefined,
+    manifest?.runId ?? runId,
+    session
+  );
+  const sessionLiveness: TmuxLiveness = target
     ? tmuxTargetLiveness(target, governessReplayCommandDeps.spawnSync)
-    : "dead";
-  const sessionReady = session ? tmuxSessionReady(target) : false;
+    : "unknown";
+  const sessionReady = target ? tmuxSessionReady(target) : "unknown";
   const expectedAgents = [
     manifest?.tmuxPaneLeftAgent,
     manifest?.tmuxPaneRightAgent,

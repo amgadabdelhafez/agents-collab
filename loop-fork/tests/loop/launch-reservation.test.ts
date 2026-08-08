@@ -26,7 +26,10 @@ import {
   resolveStorageRoot,
   writeRunManifest,
 } from "../../src/loop/run-state";
-import { resolveTmuxSocket } from "../../src/loop/tmux-socket";
+import {
+  createTmuxSkipSink,
+  resolveTmuxSocket,
+} from "../../src/loop/tmux-socket";
 import type { LaunchWorkspaceBinding, Options } from "../../src/loop/types";
 import { resolveWorkspaceBinding } from "../../src/loop/workspace-binding";
 
@@ -238,6 +241,8 @@ test("same branch or same root conflicts while terminal dead ownership permits",
         repoId: storage.repoId,
         runId: "1",
         state: "stopped",
+        tmuxSession: "repo-loop-stopped",
+        tmuxSocket: "/tmp/launch-stopped.sock",
         workspaceBinding: binding,
       })
     );
@@ -329,6 +334,8 @@ test("concurrent cold resumes grant exactly one bootstrap attempt", async () => 
     const binding = makeBinding(root);
     const storage = writeFixtureManifest(home, binding, {
       launchClaimId: "immutable-claim",
+      tmuxSession: "repo-loop-cold",
+      tmuxSocket: "/tmp/launch-cold.sock",
       workspaceBinding: binding,
     });
     const deps = reservationDeps(home);
@@ -389,6 +396,15 @@ test("explicit resume reuses the matching claim and task binding is immutable", 
       sourceTaskSha256: sha256,
       state: "failed",
     });
+    const stopped = readRunManifest(fresh.storage.manifestPath);
+    if (!stopped) {
+      throw new Error("expected stopped manifest");
+    }
+    writeRunManifest(fresh.storage.manifestPath, {
+      ...stopped,
+      tmuxSession: "repo-loop-resume",
+      tmuxSocket: "/tmp/launch-resume.sock",
+    });
 
     const resumed = await reservePairedLaunch(
       makeOptions({ resumeRunId: fresh.storage.runId, workspace: root }),
@@ -426,6 +442,7 @@ test("live reattach validates but never invents source-charter evidence", async 
       launchClaimId: "immutable-claim",
       state: "working",
       tmuxSession: "repo-loop-1",
+      tmuxSocket: "/tmp/launch-live.sock",
       workspaceBinding: binding,
     });
     const live = await reservePairedLaunch(
@@ -491,6 +508,8 @@ test("a delayed stale cancel cannot clear a replacement resume attempt", async (
     const binding = makeBinding(root);
     const storage = writeFixtureManifest(home, binding, {
       state: "stopped",
+      tmuxSession: "repo-loop-replacement",
+      tmuxSocket: "/tmp/launch-replacement.sock",
       workspaceBinding: binding,
     });
     const stale = await reservePairedLaunch(
@@ -710,65 +729,130 @@ test("a named launch for a non-existent run still resolves before reserving", as
   }
 });
 
-test("manifestCanStillOwnWorkspace keeps a tmuxSession manifest with an unusable target as owning the workspace", async () => {
-  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
-  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
-  try {
-    const binding = makeBinding(root);
-    writeFixtureManifest(home, binding, {
-      state: "completed",
+const unavailableTargetFixtures = [
+  {
+    fields: { tmuxSession: "legacy-session" },
+    socketState: "missing",
+  },
+  {
+    fields: {
       tmuxSession: "legacy-session",
       tmuxSocket: "relative/unusable.sock",
-      workspaceBinding: binding,
-    });
-    let tmuxContacts = 0;
-    await expect(
-      reservePairedLaunch(makeOptions(), binding, {
-        ...reservationDeps(home),
-        tmuxLiveness: (target) => {
-          expect(target).toBeUndefined();
-          tmuxContacts += 1;
-          return "unknown";
+    },
+    socketState: "invalid",
+  },
+  {
+    fields: {
+      tmuxSession: "legacy-session",
+      tmuxSocket: "/tmp/launch-a.sock",
+      tmux_socket: "/tmp/launch-b.sock",
+    },
+    socketState: "conflicting",
+  },
+  {
+    fields: { tmuxSocket: "/tmp/launch-a.sock" },
+    socketState: "unknown",
+  },
+] as const;
+
+test("manifestCanStillOwnWorkspace records unavailable targets and preserves ownership", async () => {
+  for (const fixture of unavailableTargetFixtures) {
+    const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+    const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+    try {
+      const binding = makeBinding(root);
+      const storage = writeFixtureManifest(home, binding, {
+        state: "completed",
+        workspaceBinding: binding,
+        ...fixture.fields,
+      });
+      if ("tmux_socket" in fixture.fields) {
+        const raw = JSON.parse(readFileSync(storage.manifestPath, "utf8"));
+        raw.tmux_socket = fixture.fields.tmux_socket;
+        writeFileSync(storage.manifestPath, JSON.stringify(raw));
+      }
+      const skipSink = createTmuxSkipSink();
+      let tmuxContacts = 0;
+      await expect(
+        reservePairedLaunch(makeOptions(), binding, {
+          ...reservationDeps(home),
+          skipSink,
+          tmuxLiveness: () => {
+            tmuxContacts += 1;
+            return "dead";
+          },
+        })
+      ).rejects.toThrow("still owns workspace");
+      expect(tmuxContacts).toBe(0);
+      expect(skipSink.records).toEqual([
+        {
+          consumer: "launch-reservation.manifestCanStillOwnWorkspace",
+          effectSkipped: "release-workspace-ownership",
+          pane: null,
+          reason:
+            "manifest target is unavailable; preserving workspace ownership",
+          runId: "1",
+          session:
+            "tmuxSession" in fixture.fields ? fixture.fields.tmuxSession : null,
+          socketState: fixture.socketState,
         },
-      })
-    ).rejects.toThrow("still owns workspace");
-    expect(tmuxContacts).toBe(1);
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-    rmSync(home, { force: true, recursive: true });
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+      rmSync(home, { force: true, recursive: true });
+    }
   }
 });
 
-test("reserveRequestedLaunch conflicts without mutation when requested tmuxSession has an unusable target", async () => {
-  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
-  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
-  try {
-    const binding = makeBinding(root);
-    const storage = writeFixtureManifest(home, binding, {
-      tmuxSession: "legacy-session",
-      tmuxSocket: "relative/unusable.sock",
-      workspaceBinding: binding,
-    });
-    const before = readFileSync(storage.manifestPath, "utf8");
-    const opts = makeOptions({ resumeRunId: "1" });
-    let tmuxContacts = 0;
-    await expect(
-      reservePairedLaunch(opts, binding, {
-        ...reservationDeps(home),
-        tmuxLiveness: (target) => {
-          expect(target).toBeUndefined();
-          tmuxContacts += 1;
-          return "unknown";
+test("reserveRequestedLaunch records unavailable targets and refuses mutation", async () => {
+  for (const fixture of unavailableTargetFixtures) {
+    const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+    const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+    try {
+      const binding = makeBinding(root);
+      const storage = writeFixtureManifest(home, binding, {
+        workspaceBinding: binding,
+        ...fixture.fields,
+      });
+      if ("tmux_socket" in fixture.fields) {
+        const raw = JSON.parse(readFileSync(storage.manifestPath, "utf8"));
+        raw.tmux_socket = fixture.fields.tmux_socket;
+        writeFileSync(storage.manifestPath, JSON.stringify(raw));
+      }
+      const before = readFileSync(storage.manifestPath, "utf8");
+      const opts = makeOptions({ resumeRunId: "1" });
+      const beforeOpts = { ...opts };
+      const skipSink = createTmuxSkipSink();
+      let tmuxContacts = 0;
+      await expect(
+        reservePairedLaunch(opts, binding, {
+          ...reservationDeps(home),
+          skipSink,
+          tmuxLiveness: () => {
+            tmuxContacts += 1;
+            return "dead";
+          },
+        })
+      ).rejects.toThrow("still owns workspace");
+      expect(tmuxContacts).toBe(0);
+      expect(opts).toEqual(beforeOpts);
+      expect(readFileSync(storage.manifestPath, "utf8")).toBe(before);
+      expect(skipSink.records).toEqual([
+        {
+          consumer: "launch-reservation.reserveRequestedLaunch",
+          effectSkipped: "reserve-requested-launch",
+          pane: null,
+          reason:
+            "requested manifest target is unavailable; refusing launch reservation",
+          runId: "1",
+          session:
+            "tmuxSession" in fixture.fields ? fixture.fields.tmuxSession : null,
+          socketState: fixture.socketState,
         },
-      })
-    ).rejects.toThrow("still owns workspace");
-    expect(tmuxContacts).toBe(1);
-    expect(opts.reservedRunId).toBeUndefined();
-    expect(opts.workspaceBinding).toBeUndefined();
-    expect(opts.launchClaimId).toBeUndefined();
-    expect(readFileSync(storage.manifestPath, "utf8")).toBe(before);
-  } finally {
-    rmSync(root, { force: true, recursive: true });
-    rmSync(home, { force: true, recursive: true });
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+      rmSync(home, { force: true, recursive: true });
+    }
   }
 });

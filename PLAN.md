@@ -1,5 +1,23 @@
 # PLAN — tmux socket normalization
 
+## Run 40 (2026-08-08) — V5-R1 IMPLEMENTED; FINAL PASS
+
+Decision: keep V5-R1 limited to the PASS-bound five source/five test files.
+All ten preimages matched declaration `691bed7e-0337-4cf5-816e-c0d82bd95073`
+and Claude PASS `7125b3a9-090c-41f0-aeb9-fe0362ce58ee` before editing. Six
+named producers now keep unavailable targets unknown, emit field-complete skip
+records, and preserve site-specific no-authority behavior. Paired-options keeps
+its no-session guard and retains socket identity across ordinary bookkeeping.
+
+Proof complete through the review gate: eight declaration-bound focused suites
+pass 393/0, exact ten-path Biome and the 845-file whole-tree check pass, exact
+scoped typecheck and diff/inventory/hash checks pass, and full governed
+verification completes with an empty baseline allowlist. Claude independently
+PASSed the exact postimage at `8758f3aa-2b25-450e-8466-0d8c534409ed` with no
+code defect. The eval labels the scoped TypeScript command accurately as an
+entry-point check, not a strict project-config check. Verify 10 stays open; no
+task checkbox, release, install, or unrelated consumer changes.
+
 ## Run 38 (2026-08-08) — V5-R1 DECLARATION PASS; NO IMPLEMENTATION
 
 The first high-risk declaration received Claude zero-write REVISE
