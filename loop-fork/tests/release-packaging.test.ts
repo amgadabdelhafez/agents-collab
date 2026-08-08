@@ -13,7 +13,7 @@ test("root release workflow packages the full-repository Loop layout", () => {
     "utf8"
   );
 
-  expect(pkg.version).toBe("1.0.34");
+  expect(pkg.version).toBe("1.0.35");
   expect(workflow).toContain("tags:");
   expect(workflow).not.toContain("branches:");
   expect(workflow).toContain("require('./loop-fork/package.json').version");
