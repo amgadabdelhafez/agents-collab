@@ -23,6 +23,7 @@ import {
   updateRunManifest,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import { type TmuxTarget, targetArgv } from "../../src/loop/tmux-socket";
 
 const bridgeMessage = {
   at: "2026-03-29T00:00:00.000Z",
@@ -160,6 +161,47 @@ const readLifecycleEvents = (root: string): Record<string, unknown>[] => {
   }
 };
 
+const writeActiveProxyManifest = (
+  root: string,
+  tmuxSocket?: string
+): string => {
+  const manifestPath = join(root, "manifest.json");
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      claudeSessionId: "claude-1",
+      codexThreadId: "thread-1",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "10",
+      state: "working",
+      status: "running",
+      tmuxSession: "repo-loop-10",
+      ...(tmuxSocket === undefined ? {} : { tmuxSocket }),
+    })
+  );
+  return manifestPath;
+};
+
+const expectProbeTarget = (
+  target: TmuxTarget | undefined,
+  socket: string
+): void => {
+  if (!target) {
+    throw new Error("expected a manifest-derived tmux target");
+  }
+  expect(targetArgv(target, "has-session")).toEqual([
+    "tmux",
+    "-S",
+    socket,
+    "has-session",
+    "-t",
+    "repo-loop-10",
+  ]);
+};
+
 test("codex tmux proxy waits briefly for the tmux session to appear", () => {
   const now = Date.now();
   const result = codexTmuxProxyInternals.observeTmuxLiveness(
@@ -240,6 +282,7 @@ test("codex tmux proxy preserves a session when liveness is unknown", () => {
 test("dead tmux reconciliation stops the still-bound active manifest", () => {
   const root = makeTempDir();
   const manifestPath = join(root, "manifest.json");
+  const tmuxSocket = join(root, "tmux.sock");
   try {
     writeRunManifest(
       manifestPath,
@@ -254,11 +297,15 @@ test("dead tmux reconciliation stops the still-bound active manifest", () => {
         state: "working",
         status: "running",
         tmuxSession: "repo-loop-10",
+        tmuxSocket,
       })
     );
 
     expect(
-      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, () => "dead")
+      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, (target) => {
+        expectProbeTarget(target, tmuxSocket);
+        return "dead";
+      })
     ).toBe(true);
     expect(readRunManifest(manifestPath)).toMatchObject({
       state: "stopped",
@@ -296,6 +343,7 @@ test.each([
         state: "working",
         status: "running",
         tmuxSession: "repo-loop-10",
+        tmuxSocket: join(root, "tmux.sock"),
       })
     );
 
@@ -334,6 +382,7 @@ test("dead tmux reconciliation preserves a concurrently rebound manifest", () =>
         state: "working",
         status: "running",
         tmuxSession: "repo-loop-old",
+        tmuxSocket: join(root, "tmux.sock"),
       })
     );
 
@@ -411,6 +460,7 @@ test("tmux reconciliation failure preserves the manifest and proxy shutdown path
         state: "working",
         status: "running",
         tmuxSession: "repo-loop-10",
+        tmuxSocket: join(root, "tmux.sock"),
       })
     );
 
@@ -430,6 +480,168 @@ test("tmux reconciliation failure preserves the manifest and proxy shutdown path
         failure: "Error",
       })
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ["missing", undefined],
+  ["invalid", "relative/tmux.sock"],
+] as const)("%s socket cannot authorize dead tmux reconciliation", (_socketState, tmuxSocket) => {
+  const root = makeTempDir();
+  const manifestPath = writeActiveProxyManifest(root, tmuxSocket);
+  let livenessReads = 0;
+  try {
+    expect(
+      codexTmuxProxyInternals.reconcileDeadTmuxManifest(root, () => {
+        livenessReads += 1;
+        return "dead";
+      })
+    ).toBe(false);
+    expect(livenessReads).toBe(0);
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      runId: "10",
+      state: "working",
+      tmuxSession: "repo-loop-10",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("requested shutdown accepts dead evidence from the matching target", () => {
+  const root = makeTempDir();
+  const tmuxSocket = join(root, "tmux.sock");
+  try {
+    writeActiveProxyManifest(root, tmuxSocket);
+    expect(
+      codexTmuxProxyInternals.requestedShutdownDecision(root, (target) => {
+        expectProbeTarget(target, tmuxSocket);
+        return "dead";
+      })
+    ).toBe("accepted");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ["missing", undefined],
+  ["invalid", "relative/tmux.sock"],
+] as const)("requested shutdown rejects %s socket evidence as unknown", (_socketState, tmuxSocket) => {
+  const root = makeTempDir();
+  let livenessReads = 0;
+  try {
+    writeActiveProxyManifest(root, tmuxSocket);
+    expect(
+      codexTmuxProxyInternals.requestedShutdownDecision(root, () => {
+        livenessReads += 1;
+        return "dead";
+      })
+    ).toBe("rejected-unknown-tmux");
+    expect(livenessReads).toBe(0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("requested shutdown rejects stale dead evidence after identity changes", () => {
+  const root = makeTempDir();
+  const manifestPath = writeActiveProxyManifest(root, join(root, "tmux.sock"));
+  try {
+    expect(
+      codexTmuxProxyInternals.requestedShutdownDecision(root, () => {
+        updateRunManifest(manifestPath, (manifest) =>
+          manifest ? { ...manifest, runId: "11" } : manifest
+        );
+        return "dead";
+      })
+    ).toBe("rejected-unknown-tmux");
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      runId: "11",
+      state: "working",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("proxy stop reason accepts dead evidence from the matching target", () => {
+  const root = makeTempDir();
+  const tmuxSocket = join(root, "tmux.sock");
+  const now = Date.now();
+  try {
+    writeActiveProxyManifest(root, tmuxSocket);
+    const result = codexTmuxProxyInternals.proxyStopReason(
+      root,
+      (target) => {
+        expectProbeTarget(target, tmuxSocket);
+        return "dead";
+      },
+      { consecutiveDead: 2, deadSinceMs: now - 5000, sawSession: true },
+      now - 1,
+      now
+    );
+    expect(result.reason).toBe("dead-tmux");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ["missing", undefined],
+  ["invalid", "relative/tmux.sock"],
+] as const)("proxy stop reason treats %s socket evidence as unknown", (_socketState, tmuxSocket) => {
+  const root = makeTempDir();
+  const now = Date.now();
+  let livenessReads = 0;
+  try {
+    writeActiveProxyManifest(root, tmuxSocket);
+    const result = codexTmuxProxyInternals.proxyStopReason(
+      root,
+      () => {
+        livenessReads += 1;
+        return "dead";
+      },
+      { consecutiveDead: 2, deadSinceMs: now - 5000, sawSession: true },
+      now - 1,
+      now
+    );
+    expect(livenessReads).toBe(0);
+    expect(result).toEqual({
+      evidence: { consecutiveDead: 0, sawSession: true },
+      reason: undefined,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("proxy stop reason rejects stale dead evidence after state changes", () => {
+  const root = makeTempDir();
+  const manifestPath = writeActiveProxyManifest(root, join(root, "tmux.sock"));
+  const now = Date.now();
+  try {
+    const result = codexTmuxProxyInternals.proxyStopReason(
+      root,
+      () => {
+        updateRunManifest(manifestPath, (manifest) =>
+          manifest
+            ? { ...manifest, state: "completed", status: "completed" }
+            : manifest
+        );
+        return "dead";
+      },
+      { consecutiveDead: 2, deadSinceMs: now - 5000, sawSession: true },
+      now - 1,
+      now
+    );
+    expect(result.reason).toBe("inactive-run");
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      state: "completed",
+      status: "done",
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -635,14 +847,14 @@ test("codex tmux proxy reloads MCP servers after a closed loop bridge call", asy
     );
   } finally {
     tui?.close();
-    if (proxyUrl) {
-      await stopCodexTmuxProxy(proxyUrl);
-    }
     updateRunManifest(manifestPath, (manifest) =>
       manifest
         ? { ...manifest, state: "completed", status: "completed" }
         : manifest
     );
+    if (proxyUrl) {
+      await stopCodexTmuxProxy(proxyUrl);
+    }
     await Promise.race([
       proxyTask ?? Promise.resolve(),
       new Promise((_, reject) =>
@@ -949,6 +1161,7 @@ test("codex tmux proxy recovers after more than the former reconnect limit", asy
       state: "working",
       status: "running",
       tmuxSession: "test-session",
+      tmuxSocket: join(root, "tmux.sock"),
     })
   );
 
@@ -1500,6 +1713,7 @@ test("codex tmux proxy records the producer and rejects shutdown while tmux is l
       state: "working",
       status: "running",
       tmuxSession: "repo-loop-10",
+      tmuxSocket: join(root, "tmux.sock"),
     })
   );
   let proxyTask: Promise<void> | undefined;

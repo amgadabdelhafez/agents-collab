@@ -47,6 +47,7 @@ import {
   isActiveRunState,
   parseRunLifecycleState,
   readRunManifest,
+  readRunManifestHandle,
   touchRunManifest,
   updateRunManifest,
 } from "./run-state";
@@ -54,8 +55,9 @@ import {
   boundedTmuxOptions,
   type TmuxLiveness,
   tmuxCommandTimedOut,
-  tmuxSessionLiveness,
+  tmuxTargetLiveness,
 } from "./tmux-control";
+import { targetFromManifest } from "./tmux-socket";
 import type { Agent } from "./types";
 
 const CLAUDE_CHANNEL_METHOD = "notifications/claude/channel";
@@ -1097,11 +1099,10 @@ export const readBridgeRuntimeStatus = (
   runDir: string
 ): BridgeRuntimeStatus => {
   const status = readBridgeStatus(runDir);
+  const handle = readRunManifestHandle(join(runDir, "manifest.json"));
+  const target = handle ? targetFromManifest(handle) : undefined;
   const tmuxLiveness = status.tmuxSession
-    ? tmuxSessionLiveness(
-        status.tmuxSession,
-        bridgeRuntimeCommandDeps.spawnSync
-      )
+    ? tmuxTargetLiveness(target, bridgeRuntimeCommandDeps.spawnSync)
     : "dead";
   const hasLiveTmuxSession = tmuxLiveness === "live";
   let codexDeliveryMode: BridgeRuntimeStatus["codexDeliveryMode"] = "none";
@@ -1159,12 +1160,11 @@ export const ensureBridgeWorker = (runDir: string): boolean => {
 
 export const hasLiveCodexTmuxSession = (runDir: string): boolean => {
   const manifest = readRunManifest(join(runDir, "manifest.json"));
+  const handle = readRunManifestHandle(join(runDir, "manifest.json"));
+  const target = handle ? targetFromManifest(handle) : undefined;
   return Boolean(
     manifest?.tmuxSession &&
-      tmuxSessionLiveness(
-        manifest.tmuxSession,
-        bridgeRuntimeCommandDeps.spawnSync
-      ) === "live"
+      tmuxTargetLiveness(target, bridgeRuntimeCommandDeps.spawnSync) === "live"
   );
 };
 

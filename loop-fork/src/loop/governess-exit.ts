@@ -11,6 +11,7 @@ export interface ExitControlState {
   launchError?: string;
   mode: ExitControlMode;
   notified: Partial<Record<Agent, boolean>>;
+  replacementManifestPath?: string;
   replacementSession?: string;
   requestedAt?: string;
 }
@@ -24,6 +25,7 @@ export interface KeyInput {
 
 export interface ReplacementLaunchResult {
   error?: string;
+  manifestPath?: string;
   ok: boolean;
   session?: string;
 }
@@ -51,25 +53,23 @@ const readHandoverEpoch = (value: unknown): number | undefined =>
     ? value
     : undefined;
 
+const readNonEmptyString = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value : undefined;
+
 export const readExitControl = (value: unknown): ExitControlState => {
   if (!value || typeof value !== "object") {
     return freshExitControl();
   }
   const record = value as Record<string, unknown>;
   const mode = record.mode;
-  const replacementSession =
-    typeof record.replacementSession === "string" &&
-    record.replacementSession.trim().length > 0
-      ? record.replacementSession
-      : undefined;
-  const handoverManifest =
-    typeof record.handoverManifest === "string" &&
-    record.handoverManifest.trim().length > 0
-      ? record.handoverManifest
-      : undefined;
+  const replacementSession = readNonEmptyString(record.replacementSession);
+  const replacementManifestPath = readNonEmptyString(
+    record.replacementManifestPath
+  );
+  const handoverManifest = readNonEmptyString(record.handoverManifest);
   const handoverEpoch = readHandoverEpoch(record.handoverEpoch);
   let validMode: ExitControlMode = "idle";
-  if (mode === "launched" && !replacementSession) {
+  if (mode === "launched" && !(replacementSession && replacementManifestPath)) {
     validMode = "launch-error";
   } else if (
     mode === "handover" ||
@@ -85,6 +85,8 @@ export const readExitControl = (value: unknown): ExitControlState => {
     launchError = record.launchError;
   } else if (mode === "launched" && !replacementSession) {
     launchError = "replacement session was not persisted";
+  } else if (mode === "launched" && !replacementManifestPath) {
+    launchError = "replacement manifest path was not persisted";
   }
   return {
     ...(Object.keys(exitRequested).length > 0 ? { exitRequested } : {}),
@@ -93,6 +95,7 @@ export const readExitControl = (value: unknown): ExitControlState => {
     ...(handoverManifest ? { handoverManifest } : {}),
     mode: validMode,
     notified,
+    ...(replacementManifestPath ? { replacementManifestPath } : {}),
     ...(replacementSession ? { replacementSession } : {}),
     ...(typeof record.requestedAt === "string"
       ? { requestedAt: record.requestedAt }

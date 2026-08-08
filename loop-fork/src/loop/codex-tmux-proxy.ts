@@ -8,12 +8,15 @@ import { recordCodexAppServerDelegationCandidate } from "./delegation-policy";
 import { findFreePort } from "./ports";
 import {
   isActiveRunState,
+  type RunManifest,
   readRunManifest,
+  readRunManifestHandle,
   setRunManifestState,
   touchRunManifest,
   updateRunManifest,
 } from "./run-state";
-import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
+import { type TmuxLiveness, tmuxTargetLiveness } from "./tmux-control";
+import { type TmuxTarget, targetFromManifest } from "./tmux-socket";
 import { connectWs, type WsClient } from "./ws-client";
 
 const CODEX_PROXY_BASE_PORT = 4600;
@@ -78,7 +81,7 @@ interface TmuxDeathEvidence {
 export interface ProxyRuntimeOptions {
   now?: () => number;
   reconnectDelay?: (attempt: number) => number;
-  tmuxLiveness?: (session: string) => TmuxLiveness;
+  tmuxLiveness?: (target: TmuxTarget | undefined) => TmuxLiveness;
 }
 
 interface ProxyLifecycleEvent {
@@ -97,6 +100,24 @@ interface ProxyLifecycleEvent {
   reason?: ProxyStopReason;
   signal?: "SIGINT" | "SIGTERM";
 }
+
+type ManifestHandle = NonNullable<ReturnType<typeof readRunManifestHandle>>;
+
+const activeManifestIdentityMatches = (
+  observed: RunManifest,
+  observedHandle: ManifestHandle,
+  current: RunManifest | undefined,
+  currentHandle: ManifestHandle | undefined
+): boolean =>
+  Boolean(
+    current &&
+      isActiveRunState(current.state) &&
+      current.runId === observed.runId &&
+      current.tmuxSession === observed.tmuxSession &&
+      currentHandle &&
+      currentHandle.runId === observedHandle.runId &&
+      currentHandle.manifestSha256 === observedHandle.manifestSha256
+  );
 
 export interface ProxyShutdownRequest {
   caller: string;
@@ -216,16 +237,46 @@ const shutdownRequestLifecycleEvent = (
 
 const reconcileDeadTmuxManifest = (
   runDir: string,
-  readTmuxLiveness: (session: string) => TmuxLiveness = tmuxSessionLiveness
+  readTmuxLiveness: (
+    target: TmuxTarget | undefined
+  ) => TmuxLiveness = tmuxTargetLiveness
 ): boolean => {
   const manifestPath = join(runDir, "manifest.json");
+  // The record and provenance handle are independent reads. Require their
+  // run IDs to agree before probing, then re-read both after the probe so dead
+  // evidence cannot authorize reconciliation across the unavoidable window.
   const observed = readRunManifest(manifestPath);
-  if (!(observed && isActiveRunState(observed.state) && observed.tmuxSession)) {
+  const observedHandle = readRunManifestHandle(manifestPath);
+  if (
+    !(
+      observed &&
+      isActiveRunState(observed.state) &&
+      observed.tmuxSession &&
+      observedHandle &&
+      observedHandle.runId === observed.runId
+    )
+  ) {
+    return false;
+  }
+  const target = targetFromManifest(observedHandle);
+  if (!target) {
     return false;
   }
   const observedSession = observed.tmuxSession;
   try {
-    if (readTmuxLiveness(observedSession) !== "dead") {
+    if (readTmuxLiveness(target) !== "dead") {
+      return false;
+    }
+    const current = readRunManifest(manifestPath);
+    const currentHandle = readRunManifestHandle(manifestPath);
+    if (
+      !activeManifestIdentityMatches(
+        observed,
+        observedHandle,
+        current,
+        currentHandle
+      )
+    ) {
       return false;
     }
     let reconciled = false;
@@ -234,6 +285,7 @@ const reconcileDeadTmuxManifest = (
         !(
           current &&
           isActiveRunState(current.state) &&
+          current.runId === observed.runId &&
           current.tmuxSession === observedSession
         )
       ) {
@@ -256,6 +308,105 @@ const reconcileDeadTmuxManifest = (
     });
     return false;
   }
+};
+
+const requestedShutdownDecision = (
+  runDir: string,
+  readTmuxLiveness: (target: TmuxTarget | undefined) => TmuxLiveness
+): "accepted" | "rejected-active-tmux" | "rejected-unknown-tmux" => {
+  const manifestPath = join(runDir, "manifest.json");
+  // The record and provenance handle are independent reads. Probe only when
+  // their run IDs agree, then re-read both so stale dead evidence cannot grant
+  // requested-shutdown authority across the unavoidable window.
+  const observed = readRunManifest(manifestPath);
+  if (!(observed && isActiveRunState(observed.state))) {
+    return "accepted";
+  }
+  const observedHandle = readRunManifestHandle(manifestPath);
+  const target =
+    observed.tmuxSession &&
+    observedHandle &&
+    observedHandle.runId === observed.runId
+      ? targetFromManifest(observedHandle)
+      : undefined;
+  const liveness = target ? readTmuxLiveness(target) : "unknown";
+  const current = readRunManifest(manifestPath);
+  if (!(current && isActiveRunState(current.state))) {
+    return "accepted";
+  }
+  const currentHandle = readRunManifestHandle(manifestPath);
+  if (
+    !(
+      observedHandle &&
+      activeManifestIdentityMatches(
+        observed,
+        observedHandle,
+        current,
+        currentHandle
+      )
+    )
+  ) {
+    return "rejected-unknown-tmux";
+  }
+  if (liveness === "dead") {
+    return "accepted";
+  }
+  return liveness === "live" ? "rejected-active-tmux" : "rejected-unknown-tmux";
+};
+
+const proxyStopReason = (
+  runDir: string,
+  readTmuxLiveness: (target: TmuxTarget | undefined) => TmuxLiveness,
+  evidence: TmuxDeathEvidence,
+  startupDeadlineMs: number,
+  nowMs: number
+): { evidence: TmuxDeathEvidence; reason: StopReason | undefined } => {
+  const manifestPath = join(runDir, "manifest.json");
+  // The record and provenance handle are independent reads. Probe only a
+  // matching handle-derived target, then re-read both so stale dead evidence
+  // cannot stop the proxy across the unavoidable window.
+  const manifest = readRunManifest(manifestPath);
+  if (!(manifest && isActiveRunState(manifest.state))) {
+    return { evidence, reason: "inactive-run" };
+  }
+  const handle = readRunManifestHandle(manifestPath);
+  const target =
+    manifest.tmuxSession && handle && handle.runId === manifest.runId
+      ? targetFromManifest(handle)
+      : undefined;
+  const targetLiveness: TmuxLiveness = target
+    ? readTmuxLiveness(target)
+    : "unknown";
+  const liveness = manifest.tmuxSession ? targetLiveness : "dead";
+  const current = readRunManifest(manifestPath);
+  if (!(current && isActiveRunState(current.state))) {
+    return { evidence, reason: "inactive-run" };
+  }
+  const currentHandle = readRunManifestHandle(manifestPath);
+  let guardedLiveness: TmuxLiveness = "unknown";
+  if (manifest.tmuxSession) {
+    if (
+      handle &&
+      activeManifestIdentityMatches(manifest, handle, current, currentHandle)
+    ) {
+      guardedLiveness = liveness;
+    }
+  } else if (
+    current.runId === manifest.runId &&
+    current.tmuxSession === undefined
+  ) {
+    guardedLiveness = liveness;
+  }
+  const observation = observeTmuxLiveness(
+    guardedLiveness,
+    evidence,
+    startupDeadlineMs,
+    nowMs
+  );
+  return {
+    evidence: observation.evidence,
+    reason: observation.shouldStop ? "dead-tmux" : undefined,
+  };
 };
 
 const extractThreadId = (value: unknown): string | undefined => {
@@ -389,7 +540,9 @@ class CodexTmuxProxy {
   private readonly stoppedPromise: Promise<void>;
   private readonly now: () => number;
   private readonly reconnectDelay: (attempt: number) => number;
-  private readonly readTmuxLiveness: (session: string) => TmuxLiveness;
+  private readonly readTmuxLiveness: (
+    target: TmuxTarget | undefined
+  ) => TmuxLiveness;
 
   constructor(
     runDir: string,
@@ -404,7 +557,7 @@ class CodexTmuxProxy {
     this.threadId = threadId;
     this.now = options.now ?? Date.now;
     this.reconnectDelay = options.reconnectDelay ?? reconnectDelayMs;
-    this.readTmuxLiveness = options.tmuxLiveness ?? tmuxSessionLiveness;
+    this.readTmuxLiveness = options.tmuxLiveness ?? tmuxTargetLiveness;
     this.startupDeadlineMs = this.now() + PROXY_STARTUP_GRACE_MS;
     this.stoppedPromise = new Promise((resolve) => {
       this.resolveStopped = resolve;
@@ -487,7 +640,10 @@ class CodexTmuxProxy {
         return;
       }
       if (stopReason === "dead-tmux") {
-        reconcileDeadTmuxManifest(this.runDir, this.readTmuxLiveness);
+        if (!reconcileDeadTmuxManifest(this.runDir, this.readTmuxLiveness)) {
+          this.tmuxDeathEvidence = { consecutiveDead: 0, sawSession: true };
+          return;
+        }
         clearStaleTmuxBridgeState(this.runDir);
       }
       this.stop(stopReason);
@@ -530,19 +686,7 @@ class CodexTmuxProxy {
     | "accepted"
     | "rejected-active-tmux"
     | "rejected-unknown-tmux" {
-    const manifest = readRunManifest(join(this.runDir, "manifest.json"));
-    if (
-      !(manifest && isActiveRunState(manifest.state) && manifest.tmuxSession)
-    ) {
-      return "accepted";
-    }
-    const liveness = this.readTmuxLiveness(manifest.tmuxSession);
-    if (liveness === "dead") {
-      return "accepted";
-    }
-    return liveness === "live"
-      ? "rejected-active-tmux"
-      : "rejected-unknown-tmux";
+    return requestedShutdownDecision(this.runDir, this.readTmuxLiveness);
   }
 
   private forwardToTui(raw: string): void {
@@ -899,21 +1043,15 @@ class CodexTmuxProxy {
   }
 
   private stopReason(): StopReason | undefined {
-    const manifest = readRunManifest(join(this.runDir, "manifest.json"));
-    if (!(manifest && isActiveRunState(manifest.state))) {
-      return "inactive-run";
-    }
-    const liveness = manifest.tmuxSession
-      ? this.readTmuxLiveness(manifest.tmuxSession)
-      : "dead";
-    const observation = observeTmuxLiveness(
-      liveness,
+    const observation = proxyStopReason(
+      this.runDir,
+      this.readTmuxLiveness,
       this.tmuxDeathEvidence,
       this.startupDeadlineMs,
       this.now()
     );
     this.tmuxDeathEvidence = observation.evidence;
-    return observation.shouldStop ? "dead-tmux" : undefined;
+    return observation.reason;
   }
 }
 
@@ -979,7 +1117,7 @@ export const runCodexTmuxProxy = async (
     appendProxyLifecycle(runDir, { event: "signal", signal });
     reconcileDeadTmuxManifest(
       runDir,
-      options.tmuxLiveness ?? tmuxSessionLiveness
+      options.tmuxLiveness ?? tmuxTargetLiveness
     );
     proxy.stop("signal");
   };
@@ -1006,10 +1144,12 @@ export const codexTmuxProxyInternals = {
   isClosedLoopBridgeToolCall,
   reconnectDelayMs,
   proxyHealth,
+  proxyStopReason,
   buildProxyUrl,
   proxyInitializeResponse,
   reconcileDeadTmuxManifest,
   observeTmuxLiveness,
   persistCodexThreadId,
+  requestedShutdownDecision,
   recordCodexAppServerDelegationCandidate,
 };

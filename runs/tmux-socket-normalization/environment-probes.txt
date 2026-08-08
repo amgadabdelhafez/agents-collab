@@ -1,0 +1,49 @@
+== T-01 environment probes ==
+date_utc: 2026-08-08T01:34:34Z
+platform: Darwin 25.5.0 arm64
+tmux_version: tmux 3.7b
+uid: 501
+private_root: /tmp/ls.fG6u
+ambient_TMUX: /private/tmp/tmux-501/default,79187,0
+
+-- P1: -S beats -L when both are given --
+command: tmux -L lsn-probe-88852 -S /tmp/ls.fG6u/p1.sock start-server
+server_alive_after_start_server: no server running on /tmp/ls.fG6u/p1.sock
+RESULT socket_path_exists: yes (/tmp/ls.fG6u/p1.sock)
+RESULT label_path_exists: no (/tmp/ls.fG6u/tmpdir/tmux-501/lsn-probe-88852 never created)
+verdict_P1: -S wins over -L (verify 13, precedence half)
+
+-- P2: $TMUX field layout inside a session on a known socket --
+server_pid_after_session: 88868
+raw_TMUX: /tmp/ls.fG6u/p1.sock,88868,0
+field_count: 3
+RESULT layout: <socket>,<pid>,<session-index>
+recovered_socket_parse_from_right: /tmp/ls.fG6u/p1.sock
+RESULT parse_from_right_recovers_socket: yes
+
+-- P3: socket pathname containing a legal comma --
+socket_with_comma: /tmp/ls.fG6u/so,ck-c
+raw_TMUX: /tmp/ls.fG6u/so,ck-c,88899,0
+parse_from_right: /tmp/ls.fG6u/so,ck-c
+parse_first_field: /tmp/ls.fG6u/so
+RESULT right_parse_correct: yes
+RESULT first_field_parse_correct: no -- TRUNCATES to '/tmp/ls.fG6u/so'; parse-from-right is required, not stylistic
+
+-- P4: socket pathname byte budget at the boundary --
+102 bytes: rc=0 <no stderr>
+103 bytes: rc=0 <no stderr>
+104 bytes: rc=1 error connecting to /tmp/ls.fG6u/p4-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (File name too long)
+105 bytes: rc=1 error connecting to /tmp/ls.fG6u/p4-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (File name too long)
+RESULT darwin_budget: last success is the usable pathname byte limit
+note: length is measured in BYTES (${#path} over a single-byte pad);
+      a multibyte path under the character limit can still exceed it.
+
+-- P5: teardown and zero-survivor proof --
+recorded_pids: 88868 88899
+RESULT nonvacuity: pids were recorded, so the survivor check has something to check
+RESULT survivors: none
+RESULT socket_removed(/tmp/ls.fG6u/p1.sock): yes
+RESULT socket_removed(/tmp/ls.fG6u/so,ck-c): yes
+RESULT label_path_removed: yes (never created)
+
+== probes complete ==

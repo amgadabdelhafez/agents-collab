@@ -9,6 +9,7 @@ import {
   type RunManifest,
   type RunStorage,
   readRunManifest,
+  readRunManifestHandle,
   reserveRunStorage,
   resolveExistingRunId,
   resolveRunStorage,
@@ -18,19 +19,42 @@ import {
   updateRunManifest,
   writeRunManifest,
 } from "./run-state";
-import { type TmuxLiveness, tmuxSessionLivenessAsync } from "./tmux-control";
+import { type TmuxLiveness, tmuxTargetLivenessAsync } from "./tmux-control";
+import {
+  resolveTmuxSocket,
+  type TmuxTarget,
+  targetFromManifest,
+} from "./tmux-socket";
 import type { LaunchWorkspaceBinding, Options } from "./types";
 
 const LOCK_FILE = ".paired-launch.lock";
 const LOCK_STALE_MS = 5000;
 
 interface LaunchReservationDeps {
+  /**
+   * Environment consulted for socket resolution. Injected rather than read from
+   * `process.env` at the call site so a test can drive resolution without
+   * mutating the ambient environment of the whole suite.
+   */
+  env: Readonly<Record<string, string | undefined>>;
   home: string;
   isPidAlive: (pid: number) => boolean;
   makeClaimId: () => string;
   now: () => string;
   pid: number;
-  tmuxLiveness: (session: string) => Promise<TmuxLiveness> | TmuxLiveness;
+  /**
+   * Injected so a test can count invocations and prove the resume path never
+   * consults it. Post-launch paths must read the persisted manifest target, so
+   * a resolver call on resume is itself the defect, not just its result.
+   */
+  resolveSocket: (
+    env: Readonly<Record<string, string | undefined>>,
+    uid: number
+  ) => string;
+  tmuxLiveness: (
+    target: TmuxTarget | undefined
+  ) => Promise<TmuxLiveness> | TmuxLiveness;
+  uid: number;
 }
 
 export interface PairedLaunchClaim {
@@ -53,12 +77,15 @@ const defaultPidLiveness = (pid: number): boolean => {
 };
 
 const defaultDeps = (): LaunchReservationDeps => ({
+  env: process.env,
   home: process.env.HOME ?? "",
   isPidAlive: defaultPidLiveness,
   makeClaimId: randomUUID,
   now: () => new Date().toISOString(),
   pid: process.pid,
-  tmuxLiveness: tmuxSessionLivenessAsync,
+  resolveSocket: (env, uid) => resolveTmuxSocket(env, { uid }).socket,
+  tmuxLiveness: tmuxTargetLivenessAsync,
+  uid: process.getuid?.() ?? 0,
 });
 
 const acquireLock = async (repoDir: string): Promise<() => Promise<void>> => {
@@ -94,11 +121,10 @@ const workspaceConflict = (
 
 const manifestCanStillOwnWorkspace = async (
   manifest: RunManifest,
+  target: TmuxTarget | undefined,
   deps: LaunchReservationDeps
 ): Promise<boolean> => {
-  const tmux = manifest.tmuxSession
-    ? await deps.tmuxLiveness(manifest.tmuxSession)
-    : "dead";
+  const tmux = manifest.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
   if (tmux !== "dead") {
     return true;
   }
@@ -115,20 +141,28 @@ const conflictError = (manifest: RunManifest): Error => {
   );
 };
 
-const storedManifests = async (repoDir: string): Promise<RunManifest[]> => {
+interface StoredManifest {
+  manifest: RunManifest;
+  target: TmuxTarget | undefined;
+}
+
+const storedManifests = async (repoDir: string): Promise<StoredManifest[]> => {
   if (!existsSync(repoDir)) {
     return [];
   }
-  const manifests: RunManifest[] = [];
+  const manifests: StoredManifest[] = [];
   for (const entry of readdirSync(repoDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) {
       continue;
     }
-    const manifest = readRunManifest(
-      join(repoDir, entry.name, "manifest.json")
-    );
+    const manifestPath = join(repoDir, entry.name, "manifest.json");
+    const manifest = readRunManifest(manifestPath);
     if (manifest) {
-      manifests.push(manifest);
+      const handle = readRunManifestHandle(manifestPath);
+      manifests.push({
+        manifest,
+        target: handle ? targetFromManifest(handle) : undefined,
+      });
     }
     // proper-lockfile renews on the event loop. Never monopolize it while
     // walking an unbounded run history under the canonical launch lock.
@@ -138,15 +172,15 @@ const storedManifests = async (repoDir: string): Promise<RunManifest[]> => {
 };
 
 const assertNoConflict = async (
-  manifests: RunManifest[],
+  manifests: StoredManifest[],
   binding: LaunchWorkspaceBinding,
   excludedRunId: string | undefined,
   deps: LaunchReservationDeps
 ): Promise<void> => {
-  for (const manifest of manifests) {
+  for (const { manifest, target } of manifests) {
     if (
       manifest.runId === excludedRunId ||
-      !(await manifestCanStillOwnWorkspace(manifest, deps))
+      !(await manifestCanStillOwnWorkspace(manifest, target, deps))
     ) {
       continue;
     }
@@ -194,16 +228,16 @@ const reserveRequestedLaunch = async (
   storage: RunStorage,
   deps: LaunchReservationDeps
 ): Promise<PairedLaunchClaim> => {
+  const handle = readRunManifestHandle(storage.manifestPath);
+  const target = handle ? targetFromManifest(handle) : undefined;
+  const tmux = requested.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
+  if (tmux === "unknown") {
+    throw conflictError(requested);
+  }
   opts.reservedRunId = requested.runId;
   opts.workspaceBinding = binding;
   if (requested.launchClaimId) {
     opts.launchClaimId = requested.launchClaimId;
-  }
-  const tmux = requested.tmuxSession
-    ? await deps.tmuxLiveness(requested.tmuxSession)
-    : "dead";
-  if (tmux === "unknown") {
-    throw conflictError(requested);
   }
   if (tmux === "live") {
     return { reserved: false, storage, workspaceBinding: binding };
@@ -244,6 +278,23 @@ export const reservePairedLaunch = async (
   overrides: Partial<LaunchReservationDeps> = {}
 ): Promise<PairedLaunchClaim> => {
   const deps = { ...defaultDeps(), ...overrides };
+  // Socket resolution is a LAUNCH-ONLY act. A resume must target the socket its
+  // manifest already records, so the resolver has to stay unreachable from that
+  // path (R6, verify 5a) — otherwise hostile ambient state does not merely get
+  // ignored, it throws and takes a legitimate resume down with it.
+  let resolvedSocket: string | undefined;
+  const launchSocket = (): string => {
+    resolvedSocket ??= deps.resolveSocket(deps.env, deps.uid);
+    return resolvedSocket;
+  };
+  // An unambiguously fresh launch resolves before the lock, before storage
+  // reservation, and before any tmux contact (verify 2, 4): a throw here has
+  // nothing to unwind, since no lock is held and no manifest exists. A launch
+  // that names a run is a resume request and must not resolve at all; if it
+  // still turns out to be fresh, the call below resolves it before reservation.
+  if (!(opts.resumeRunId || opts.sessionId)) {
+    launchSocket();
+  }
   const repoDir = join(resolveStorageRoot(deps.home), binding.repoId);
   const releaseLock = await acquireLock(repoDir);
   try {
@@ -259,6 +310,15 @@ export const reservePairedLaunch = async (
       throw new Error(
         `[loop] paired run "${opts.resumeRunId ?? opts.sessionId}" does not exist`
       );
+    }
+    // Latest possible resolution point for EVERY fresh path. The pre-lock call
+    // covers only the unnamed case; a launch that named a run which does not
+    // exist also lands on the fresh branch below. This must precede
+    // `assertNoConflict`, which contacts tmux through `tmuxLiveness`, and
+    // `reserveRunStorage`, which creates a run directory — otherwise an
+    // unusable socket leaves a reserved run behind (verify 2, 4).
+    if (!requested) {
+      launchSocket();
     }
     const effectiveBinding = requested
       ? validateExplicitWorkspaceResume(opts, requested, binding)
@@ -294,6 +354,7 @@ export const reservePairedLaunch = async (
         repoId: storage.repoId,
         runId: storage.runId,
         state: "submitted",
+        tmuxSocket: launchSocket(),
         workspaceBinding: binding,
       },
       deps.now()

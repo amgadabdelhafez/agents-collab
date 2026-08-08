@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { spawnSync } from "bun";
 import { isAgent } from "./agents";
 import {
@@ -136,6 +137,7 @@ import {
   loadRunState,
   type RunManifest,
   readRunManifest,
+  readRunManifestHandle,
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
@@ -153,9 +155,11 @@ import {
   boundedTmuxOptions,
   isTmuxControlUnavailableError,
   TmuxControlUnavailableError,
+  type TmuxLiveness,
   tmuxCommandTimedOut,
-  tmuxSessionLiveness,
+  tmuxTargetLiveness,
 } from "./tmux-control";
+import { type TmuxTarget, targetArgv, targetFromManifest } from "./tmux-socket";
 import type {
   Agent,
   AgentLiveness,
@@ -366,7 +370,7 @@ export interface GovernessDeps {
   launchReplacementLoop?: (
     config: GovernessConfig,
     handoverManifest: string
-  ) => ReplacementLaunchResult;
+  ) => Promise<ReplacementLaunchResult> | ReplacementLaunchResult;
   loadState: (stateFile?: string) => GovernessRunState | undefined;
   markRunStopped?: (config: GovernessConfig, reason: string) => void;
   notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
@@ -394,7 +398,10 @@ export interface GovernessDeps {
     config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
   render: (text: string) => void;
-  replacementSessionAlive?: (session: string) => boolean | "unknown";
+  replacementSessionAlive?: (
+    session: string,
+    manifestPath: string
+  ) => boolean | "unknown";
   replacementSessionReady: (session: string) => boolean | "unknown";
   respawnPane: (pane: string) => void;
   saveState: (stateFile: string | undefined, state: GovernessRunState) => void;
@@ -784,6 +791,7 @@ const BRIDGE_SEND_TOOL_RE = /^mcp__loop-bridge-.+__send_message$/;
 const BRIDGE_RECEIVE_TOOL_RE = /^mcp__loop-bridge-.+__receive_messages$/;
 const NONEMPTY_COMPOSER_RE = /^\s*[›❯>]\s+\S/;
 const STARTED_TMUX_SESSION_RE = /started tmux session "([^"]+)"/;
+const RUN_MANIFEST_RE = /^\[loop\] run manifest ("(?:\\.|[^"\\])*")\r?$/m;
 const parsePaneCtxRemainingPct = (paneText: string): number | undefined => {
   const match = paneText.match(PANE_CTX_RE);
   if (!match) {
@@ -4960,9 +4968,25 @@ export const advanceHandoverControl = async (
 ): Promise<HandoverAdvanceResult> => {
   if (runState.exitControl.mode === "launched") {
     const replacementSession = runState.exitControl.replacementSession;
-    const replacementAliveProbe = replacementSession
-      ? (deps.replacementSessionAlive?.(replacementSession) ?? false)
-      : false;
+    const replacementManifestPath =
+      runState.exitControl.replacementManifestPath;
+    if (replacementSession && !replacementManifestPath) {
+      const error = "replacement manifest path was not persisted";
+      runState.exitControl = {
+        ...runState.exitControl,
+        launchError: error,
+        mode: "launch-error",
+      };
+      deps.saveState(config.stateFile, runState);
+      return { error, status: "launch-error" };
+    }
+    const replacementAliveProbe =
+      replacementSession && replacementManifestPath
+        ? (deps.replacementSessionAlive?.(
+            replacementSession,
+            replacementManifestPath
+          ) ?? false)
+        : false;
     const replacementReadyProbe = replacementSession
       ? deps.replacementSessionReady(replacementSession)
       : false;
@@ -5123,7 +5147,10 @@ export const advanceHandoverControl = async (
     };
     return { error, status: "launch-error" };
   }
-  const launched = deps.launchReplacementLoop?.(config, handoverManifest) ?? {
+  const launched = (await deps.launchReplacementLoop?.(
+    config,
+    handoverManifest
+  )) ?? {
     error: "replacement launcher unavailable",
     ok: false,
   };
@@ -5141,9 +5168,23 @@ export const advanceHandoverControl = async (
     });
     return { error, status: "launch-error" };
   }
-  const replacementAliveProbe = launched.session
-    ? (deps.replacementSessionAlive?.(launched.session) ?? false)
-    : false;
+  if (launched.session && !launched.manifestPath) {
+    const error = "replacement manifest path was not persisted";
+    runState.exitControl = {
+      ...runState.exitControl,
+      launchError: error,
+      mode: "launch-error",
+    };
+    deps.saveState(config.stateFile, runState);
+    return { error, status: "launch-error" };
+  }
+  const replacementAliveProbe =
+    launched.session && launched.manifestPath
+      ? (deps.replacementSessionAlive?.(
+          launched.session,
+          launched.manifestPath
+        ) ?? false)
+      : false;
   const replacementReadyProbe = launched.session
     ? deps.replacementSessionReady(launched.session)
     : false;
@@ -5169,6 +5210,7 @@ export const advanceHandoverControl = async (
       handoverManifest,
       launchError: undefined,
       mode: "launched",
+      replacementManifestPath: launched.manifestPath,
       replacementSession: launched.session,
     };
     deps.appendLog(config.logFile, {
@@ -5208,6 +5250,7 @@ export const advanceHandoverControl = async (
     handoverManifest,
     launchError: undefined,
     mode: "launched",
+    replacementManifestPath: launched.manifestPath,
     replacementSession: launched.session,
   };
   // Persist the transaction result before the caller tears down this session.
@@ -6380,8 +6423,23 @@ const renderDefaultGovernessFrame = (text: string): void => {
   previousGovernessFrame = text;
 };
 
+interface GovernessReplacementDeps {
+  readHandoffManifest: typeof readGovernessHandoffManifest;
+  readManifestHandle: typeof readRunManifestHandle;
+  run: typeof spawnSync;
+  sleep: (ms: number) => Promise<void>;
+  targetLiveness: (target: TmuxTarget | undefined) => TmuxLiveness;
+}
+
 export const defaultGovernessDeps = (
-  readUsageLimits = createStableUsageLimitReader()
+  readUsageLimits = createStableUsageLimitReader(),
+  replacementDeps: GovernessReplacementDeps = {
+    readHandoffManifest: readGovernessHandoffManifest,
+    readManifestHandle: readRunManifestHandle,
+    run: spawnSync,
+    sleep,
+    targetLiveness: (target) => tmuxTargetLiveness(target),
+  }
 ): GovernessDeps => ({
   assessRoleBalance: (req) => assessRoleBalance(req),
   assessWaiting: (req) => assessWaiting(req),
@@ -6421,7 +6479,7 @@ export const defaultGovernessDeps = (
   judge: (req) => judgeAgent(req),
   labelPanes: (req) => labelPanes(req),
   loadState: (stateFile) => loadGovernessState(stateFile),
-  launchReplacementLoop: (config, handoverManifest) => {
+  launchReplacementLoop: async (config, handoverManifest) => {
     const primary = config.initialDriver ?? config.agents[0]?.agent;
     const peer = config.agents.find((info) => info.agent !== primary)?.agent;
     if (primary === undefined || peer === undefined) {
@@ -6430,7 +6488,7 @@ export const defaultGovernessDeps = (
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => key !== "LOOP_RUN_ID")
     );
-    const manifest = readGovernessHandoffManifest(handoverManifest);
+    const manifest = replacementDeps.readHandoffManifest(handoverManifest);
     if (!manifest) {
       return { error: "handover manifest changed before launch", ok: false };
     }
@@ -6438,7 +6496,7 @@ export const defaultGovernessDeps = (
     env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
     let result: ReturnType<typeof spawnSync>;
     try {
-      result = spawnSync(
+      result = replacementDeps.run(
         [
           ...buildLaunchArgv(),
           ...replacementLoopArgs(primary, peer, handoffDir, {
@@ -6482,14 +6540,64 @@ export const defaultGovernessDeps = (
         ok: false,
       };
     }
-    const sessionLiveness = tmuxSessionLiveness(session);
+    const manifestToken = stdout.match(RUN_MANIFEST_RE)?.[1];
+    let manifestPath: string | undefined;
+    if (manifestToken) {
+      try {
+        const decoded = JSON.parse(manifestToken) as unknown;
+        manifestPath =
+          typeof decoded === "string" && decoded.trim().length > 0
+            ? decoded
+            : undefined;
+      } catch {
+        manifestPath = undefined;
+      }
+    }
+    if (!manifestPath) {
+      return {
+        error: "replacement command succeeded without reporting a run manifest",
+        ok: false,
+      };
+    }
+    let target: ReturnType<typeof targetFromManifest>;
+    for (let read = 0; read < 5; read += 1) {
+      const handle = replacementDeps.readManifestHandle(manifestPath);
+      target = handle ? targetFromManifest(handle) : undefined;
+      if (target) {
+        if (targetArgv(target, "has-session").at(-1) !== session) {
+          return {
+            error:
+              "replacement manifest target disagrees with reported session",
+            ok: false,
+          };
+        }
+        break;
+      }
+      if (read < 4) {
+        await replacementDeps.sleep(50);
+      }
+    }
+    if (!target) {
+      return {
+        error:
+          "replacement run manifest stayed unreadable or incomplete after bounded retry",
+        ok: false,
+      };
+    }
+    const sessionLiveness = replacementDeps.targetLiveness(target);
     if (sessionLiveness === "dead") {
       return {
         error: `replacement tmux session ${session} is not running`,
         ok: false,
       };
     }
-    return { ok: true, session };
+    if (sessionLiveness === "unknown") {
+      return {
+        error: `replacement tmux session ${session} liveness is unknown`,
+        ok: false,
+      };
+    }
+    return { manifestPath, ok: true, session };
   },
   markRunStopped: (config, reason) => {
     if (config.manifestPath) {
@@ -6567,8 +6675,13 @@ export const defaultGovernessDeps = (
       timeoutMs: config.usageTrackerTimeoutMs,
       url: config.usageTrackerUrl,
     }),
-  replacementSessionAlive: (session) => {
-    const liveness = tmuxSessionLiveness(session);
+  replacementSessionAlive: (session, manifestPath) => {
+    const handle = replacementDeps.readManifestHandle(manifestPath);
+    const target = handle ? targetFromManifest(handle) : undefined;
+    if (!(target && targetArgv(target, "has-session").at(-1) === session)) {
+      return "unknown";
+    }
+    const liveness = replacementDeps.targetLiveness(target);
     return liveness === "unknown" ? "unknown" : liveness === "live";
   },
   replacementSessionReady: (session) => {

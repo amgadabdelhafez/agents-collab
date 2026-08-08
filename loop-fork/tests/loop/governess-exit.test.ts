@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -28,7 +28,16 @@ import {
   acceptGovernessHandoff,
   readGovernessHandoffManifest,
 } from "../../src/loop/governess-handoff";
-import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
+import {
+  createRunManifest,
+  readRunManifestHandle,
+  writeRunManifest,
+} from "../../src/loop/run-state";
+import {
+  TmuxControlUnavailableError,
+  type TmuxLiveness,
+} from "../../src/loop/tmux-control";
+import { targetArgv } from "../../src/loop/tmux-socket";
 
 test("x opens a reversible menu and only explicit e or h selects an exit", () => {
   expect(exitKeyAction(false, "idle", "x")).toBe("menu");
@@ -88,6 +97,31 @@ test("persisted exit state is validated", () => {
     launchError: "replacement session was not persisted",
     mode: "launch-error",
     notified: {},
+  });
+  expect(
+    readExitControl({
+      mode: "launched",
+      notified: {},
+      replacementSession: "replacement",
+    })
+  ).toEqual({
+    launchError: "replacement manifest path was not persisted",
+    mode: "launch-error",
+    notified: {},
+    replacementSession: "replacement",
+  });
+  expect(
+    readExitControl({
+      mode: "launched",
+      notified: {},
+      replacementManifestPath: "/tmp/replacement.json",
+      replacementSession: "replacement",
+    })
+  ).toEqual({
+    mode: "launched",
+    notified: {},
+    replacementManifestPath: "/tmp/replacement.json",
+    replacementSession: "replacement",
   });
 });
 
@@ -283,7 +317,11 @@ test("handover waits for a busy agent, notifies each once, and launches after bo
     fenceCurrent: () => true,
     launchReplacementLoop: () => {
       launched += 1;
-      return { ok: true, session: "replacement" };
+      return {
+        manifestPath: "/tmp/replacement-manifest.json",
+        ok: true,
+        session: "replacement",
+      };
     },
     now: () => 0,
     paneCommand: (pane: string) =>
@@ -578,7 +616,11 @@ test("valid ready bundles close each drained TUI exactly once before launch", as
     fenceCurrent: () => true,
     launchReplacementLoop: () => {
       launched += 1;
-      return { ok: true, session: "replacement" };
+      return {
+        manifestPath: "/tmp/replacement-manifest.json",
+        ok: true,
+        session: "replacement",
+      };
     },
     now: () => 0,
     paneCommand: (pane: string) => {
@@ -662,7 +704,11 @@ test("headless handover skips the missing pane and reaches owned teardown after 
     launchReplacementLoop: () => {
       launches += 1;
       order.push("launch");
-      return { ok: true, session: "replacement" };
+      return {
+        manifestPath: "/tmp/replacement-manifest.json",
+        ok: true,
+        session: "replacement",
+      };
     },
     markRunStopped: () => order.push("mark"),
     now: () => 0,
@@ -735,7 +781,11 @@ test("unknown pane evidence keeps headless handover non-destructive", async () =
     fenceCurrent: () => true,
     launchReplacementLoop: () => {
       launches += 1;
-      return { ok: true, session: "replacement" };
+      return {
+        manifestPath: "/tmp/replacement-manifest.json",
+        ok: true,
+        session: "replacement",
+      };
     },
     now: () => 0,
     paneCommand: (pane: string) => (pane.endsWith(".1") ? undefined : "0:zsh"),
@@ -798,7 +848,11 @@ test("handover persists launch success before marking and killing the old loop",
     launchReplacementLoop: () => {
       launches += 1;
       order.push("launch");
-      return { ok: true, session: "replacement" };
+      return {
+        manifestPath: "/tmp/replacement-manifest.json",
+        ok: true,
+        session: "replacement",
+      };
     },
     markRunStopped: () => order.push("mark"),
     now: () => 0,
@@ -882,7 +936,11 @@ test("handover restart keeps the persisted transaction epoch for replacement lau
     fenceCurrent: () => true,
     launchReplacementLoop: (_config: GovernessConfig, manifest: string) => {
       launchedManifest = manifest;
-      return { ok: true, session: "replacement" };
+      return {
+        manifestPath: "/tmp/replacement-manifest.json",
+        ok: true,
+        session: "replacement",
+      };
     },
     now: () => 0,
     paneCommand: () => "0:zsh",
@@ -914,6 +972,7 @@ test("restart preserves the old loop when the recorded replacement is dead", asy
   state.exitControl = {
     mode: "launched",
     notified: { claude: true, codex: true },
+    replacementManifestPath: "/tmp/dead-replacement.json",
     replacementSession: "dead-replacement",
   };
   const destructive: string[] = [];
@@ -948,6 +1007,7 @@ test("restart preserves a recorded replacement while tmux liveness is unknown", 
     handoverManifest: "pending-acceptance.json",
     mode: "launched",
     notified: { claude: true, codex: true },
+    replacementManifestPath: "/tmp/possibly-live-replacement.json",
     replacementSession: "possibly-live-replacement",
   };
   const destructive: string[] = [];
@@ -989,7 +1049,11 @@ test("an unconfirmed replacement probe is persisted without duplicate launch", a
     fenceCurrent: () => true,
     launchReplacementLoop: () => {
       launches += 1;
-      return { ok: true, session: "possibly-live-replacement" };
+      return {
+        manifestPath: "/tmp/possibly-live-replacement.json",
+        ok: true,
+        session: "possibly-live-replacement",
+      };
     },
     now: () => 0,
     paneCommand: () => "0:zsh",
@@ -1015,6 +1079,181 @@ test("an unconfirmed replacement probe is persisted without duplicate launch", a
   expect(state.exitControl.mode).toBe("launched");
   expect(state.exitControl.launchError).toBeUndefined();
   expect(launches).toBe(1);
+});
+
+const replacementLauncherHarness = (
+  readsBeforeReady: number,
+  liveness: TmuxLiveness
+) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-replacement-manifest-"));
+  const manifestPath = join(root, "manifest.json");
+  const incompleteManifestPath = join(root, "incomplete-manifest.json");
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "replacement",
+      state: "working",
+      tmuxSession: "replacement",
+      tmuxSocket: "/tmp/replacement.sock",
+    })
+  );
+  const handle = readRunManifestHandle(manifestPath);
+  writeRunManifest(
+    incompleteManifestPath,
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "replacement",
+      state: "working",
+      tmuxSession: "replacement",
+    })
+  );
+  const incompleteHandle = readRunManifestHandle(incompleteManifestPath);
+  if (!(handle && incompleteHandle)) {
+    throw new Error("test replacement manifests did not produce handles");
+  }
+  let reads = 0;
+  let livenessCalls = 0;
+  const delays: number[] = [];
+  const argv: string[][] = [];
+  const run = mock(() => ({
+    exitCode: 0,
+    stderr: Buffer.alloc(0),
+    stdout: Buffer.from(
+      `[loop] started tmux session "replacement"\n[loop] run manifest ${JSON.stringify(manifestPath)}\n`
+    ),
+  }));
+  const deps = defaultGovernessDeps(undefined, {
+    readHandoffManifest: () =>
+      ({ driverEffort: "high", reviewerEffort: "high" }) as never,
+    readManifestHandle: (requestedPath) => {
+      expect(requestedPath).toBe(manifestPath);
+      reads += 1;
+      if (readsBeforeReady === 0 || reads > readsBeforeReady) {
+        return handle;
+      }
+      return reads === 1 ? undefined : incompleteHandle;
+    },
+    run: run as never,
+    sleep: (ms) => {
+      delays.push(ms);
+      return Promise.resolve();
+    },
+    targetLiveness: (target) => {
+      livenessCalls += 1;
+      if (target) {
+        argv.push(targetArgv(target, "has-session"));
+      }
+      return liveness;
+    },
+  });
+  return {
+    argv,
+    cleanup: () => rmSync(root, { force: true, recursive: true }),
+    delays,
+    deps,
+    get livenessCalls() {
+      return livenessCalls;
+    },
+    manifestPath,
+    get reads() {
+      return reads;
+    },
+  };
+};
+
+test("defaultGovernessDeps launchReplacementLoop retries an unreadable or incomplete replacement manifest before accepting a live target", async () => {
+  const harness = replacementLauncherHarness(2, "live");
+  try {
+    await expect(
+      harness.deps.launchReplacementLoop?.(
+        handoverConfig(),
+        "/tmp/handoff.json"
+      )
+    ).resolves.toEqual({
+      manifestPath: harness.manifestPath,
+      ok: true,
+      session: "replacement",
+    });
+    expect(harness.reads).toBe(3);
+    expect(harness.delays).toEqual([50, 50]);
+    expect(harness.argv).toEqual([
+      [
+        "tmux",
+        "-S",
+        "/tmp/replacement.sock",
+        "has-session",
+        "-t",
+        "replacement",
+      ],
+    ]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("defaultGovernessDeps launchReplacementLoop rejects a replacement manifest that stays unreadable or incomplete after the bounded retry", async () => {
+  const harness = replacementLauncherHarness(5, "live");
+  try {
+    await expect(
+      harness.deps.launchReplacementLoop?.(
+        handoverConfig(),
+        "/tmp/handoff.json"
+      )
+    ).resolves.toMatchObject({
+      error: expect.stringContaining("stayed unreadable or incomplete"),
+      ok: false,
+    });
+    expect(harness.reads).toBe(5);
+    expect(harness.delays).toEqual([50, 50, 50, 50]);
+    expect(harness.livenessCalls).toBe(0);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("defaultGovernessDeps launchReplacementLoop rejects confirmed-dead replacement target", async () => {
+  const harness = replacementLauncherHarness(0, "dead");
+  try {
+    await expect(
+      harness.deps.launchReplacementLoop?.(
+        handoverConfig(),
+        "/tmp/handoff.json"
+      )
+    ).resolves.toEqual({
+      error: "replacement tmux session replacement is not running",
+      ok: false,
+    });
+    expect(harness.reads).toBe(1);
+    expect(harness.delays).toEqual([]);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("defaultGovernessDeps launchReplacementLoop rejects unknown replacement target without handover acceptance", async () => {
+  const harness = replacementLauncherHarness(0, "unknown");
+  try {
+    await expect(
+      harness.deps.launchReplacementLoop?.(
+        handoverConfig(),
+        "/tmp/handoff.json"
+      )
+    ).resolves.toEqual({
+      error: "replacement tmux session replacement liveness is unknown",
+      ok: false,
+    });
+    expect(harness.reads).toBe(1);
+    expect(harness.delays).toEqual([]);
+  } finally {
+    harness.cleanup();
+  }
 });
 
 test("explicit stop marks the run before killing its tmux session", () => {

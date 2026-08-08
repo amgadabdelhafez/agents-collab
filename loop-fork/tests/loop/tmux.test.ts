@@ -289,6 +289,7 @@ test("runInTmux starts a detached session without auto-attach when already insid
     isInteractive: () => true,
     launchArgv: ["bun", "/repo/src/cli.ts"],
     log: (): void => undefined,
+    resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
     spawn: (args: string[]) => {
       calls.push(args);
       return { exitCode: 0, stderr: "" };
@@ -299,17 +300,21 @@ test("runInTmux starts a detached session without auto-attach when already insid
   expect(calls).toEqual([
     [
       "tmux",
+      "-S",
+      "/tmp/ls-a/a.sock",
       "new-session",
-      "-d",
       "-s",
       "repo-loop-1",
+      "-d",
       "-c",
       "/repo",
       "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'bun' '/repo/src/cli.ts' '--proof' 'verify'",
     ],
-    ["tmux", "has-session", "-t", "repo-loop-1"],
+    ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", "repo-loop-1"],
     [
       "tmux",
+      "-S",
+      "/tmp/ls-a/a.sock",
       "set-window-option",
       "-t",
       "repo-loop-1:0",
@@ -330,10 +335,37 @@ test("runInTmux throws install message when tmux is missing", async () => {
   ).rejects.toThrow(TMUX_MISSING_ERROR);
 });
 
-test("runInTmux starts detached session and strips --tmux", async () => {
+test("runInTmux exposes launch socket failure before tmux contact", async () => {
+  const calls: string[][] = [];
+  const logs: string[] = [];
+
+  await expect(
+    runInTmux(["--tmux", "--proof", "verify"], {
+      env: {},
+      findBinary: () => true,
+      log: (line: string) => {
+        logs.push(line);
+      },
+      resolveLaunchSocket: () => {
+        throw new Error("launch socket is unknown");
+      },
+      spawn: (args: string[]) => {
+        calls.push(args);
+        return { exitCode: 0, stderr: "" };
+      },
+    })
+  ).rejects.toThrow("launch socket is unknown");
+
+  expect(calls).toEqual([]);
+  expect(logs.some((line) => line.includes("attach with:"))).toBe(false);
+  expect(logs.some((line) => line.includes("recorded before"))).toBe(false);
+});
+
+test("runInTmux socket-qualifies non-paired handoff probe, remain-on-exit, gone re-probe, and interactive attach", async () => {
   const calls: string[][] = [];
   const attaches: string[] = [];
   const logs: string[] = [];
+  let resolverCalls = 0;
   const command =
     "'env' 'CLAUDE_CONFIG_DIR=/tmp/loop-claude' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=1' 'bun' '/repo/src/cli.ts' '--proof' 'verify' 'fix bug'";
 
@@ -344,13 +376,22 @@ test("runInTmux starts detached session and strips --tmux", async () => {
         attaches.push(session);
       },
       cwd: "/repo",
-      env: { CLAUDE_CONFIG_DIR: "/tmp/loop-claude" },
+      env: {
+        CLAUDE_CONFIG_DIR: "/tmp/loop-claude",
+        LOOP_TMUX_SOCKET: "/tmp/ls-b/decoy.sock",
+        TMUX: "/tmp/ls-b/decoy.sock,900,0",
+        TMUX_TMPDIR: "/tmp/ls-b",
+      },
       findBinary: () => true,
       getTerminalSize: () => undefined,
       isInteractive: () => true,
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (line: string) => {
         logs.push(line);
+      },
+      resolveLaunchSocket: () => {
+        resolverCalls += 1;
+        return "/tmp/ls-a/a.sock" as never;
       },
       spawn: (args: string[]) => {
         calls.push(args);
@@ -360,19 +401,31 @@ test("runInTmux starts detached session and strips --tmux", async () => {
   );
 
   expect(delegated).toBe(true);
+  expect(resolverCalls).toBe(1);
   expect(calls[0]).toEqual([
     "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
     "new-session",
-    "-d",
     "-s",
     "repo-loop-1",
+    "-d",
     "-c",
     "/repo",
     command,
   ]);
-  expect(calls[1]).toEqual(["tmux", "has-session", "-t", "repo-loop-1"]);
+  expect(calls[1]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
+    "has-session",
+    "-t",
+    "repo-loop-1",
+  ]);
   expect(calls[2]).toEqual([
     "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
     "set-window-option",
     "-t",
     "repo-loop-1:0",
@@ -381,8 +434,11 @@ test("runInTmux starts detached session and strips --tmux", async () => {
   ]);
   expect(logs[0]).toBe("[loop] starting tmux session...");
   expect(logs).toContain('[loop] started tmux session "repo-loop-1"');
-  expect(logs).toContain("[loop] attach with: tmux attach -t repo-loop-1");
-  expect(attaches).toEqual(["repo-loop-1"]);
+  expect(logs).toContain(
+    "[loop] attach with: tmux -S '/tmp/ls-a/a.sock' attach -t 'repo-loop-1'"
+  );
+  expect(JSON.stringify([calls[0], logs])).not.toContain("/tmp/ls-b");
+  expect(attaches).toEqual([]);
 });
 
 test("runInTmux keeps explicit run id in single-agent mode", async () => {
@@ -398,14 +454,15 @@ test("runInTmux keeps explicit run id in single-agent mode", async () => {
       isInteractive: () => false,
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
+      resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && args.includes("has-session")) {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && args.includes("new-session")) {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -414,20 +471,38 @@ test("runInTmux keeps explicit run id in single-agent mode", async () => {
   );
 
   expect(delegated).toBe(true);
-  expect(calls[0]).toEqual(["tmux", "has-session", "-t", "repo-loop-alpha"]);
+  expect(calls[0]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
+    "has-session",
+    "-t",
+    "repo-loop-alpha",
+  ]);
   expect(calls[1]).toEqual([
     "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
     "new-session",
-    "-d",
     "-s",
     "repo-loop-alpha",
+    "-d",
     "-c",
     "/repo",
     "'env' 'LOOP_RUN_BASE=repo' 'LOOP_RUN_ID=alpha' 'bun' '/repo/src/cli.ts' '--codex-only' '--run-id' 'alpha' '--proof' 'verify'",
   ]);
-  expect(calls[2]).toEqual(["tmux", "has-session", "-t", "repo-loop-alpha"]);
+  expect(calls[2]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
+    "has-session",
+    "-t",
+    "repo-loop-alpha",
+  ]);
   expect(calls[3]).toEqual([
     "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
     "set-window-option",
     "-t",
     "repo-loop-alpha:0",
@@ -436,7 +511,7 @@ test("runInTmux keeps explicit run id in single-agent mode", async () => {
   ]);
 });
 
-test("runInTmux starts paired panes from a cold macOS tmux socket", async () => {
+test("runInTmux paired launch emits the exact run manifest path contract line", async () => {
   const calls: string[][] = [];
   const logs: string[] = [];
   const proxyCalls: Array<{
@@ -464,6 +539,8 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
     tmuxPaneGoverness: "%old-governess",
     tmuxPaneLeft: "%old-left",
     tmuxPaneRight: "%old-right",
+    // Bound by the launch reservation before this launch began (T-04 phase 1).
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   const opts = makePairedOptions({
     agent: "claude",
@@ -602,6 +679,9 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
   ]);
 
   expect(delegated).toBe(true);
+  expect(logs).toContain(
+    '[loop] run manifest "/repo/.loop/runs/1/manifest.json"'
+  );
   expect(proxyCalls).toEqual([
     {
       remoteUrl: codexRemoteUrl,
@@ -629,7 +709,11 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
     reviewerEffort: "high",
     tmuxPaneLeftAgent: "claude",
     tmuxPaneRightAgent: "codex",
+    // verify 4: the manifest observed at the FIRST persistent-agent start must
+    // already carry BOTH identities. A session without its socket is the
+    // split-brain state this change exists to close.
     tmuxSession: "repo-loop-1",
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   expect(bootstrapManifests[0]?.tmuxPaneGoverness).toBeUndefined();
   expect(bootstrapManifests[0]?.tmuxPaneLeft).toBeUndefined();
@@ -4130,14 +4214,15 @@ test("runInTmux resolves paired run id through an existing manifest", async () =
         isInteractive: () => true,
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
+        resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && args.includes("has-session")) {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && args.includes("new-session")) {
             sessionStarted = true;
           }
           return { exitCode: 0, stderr: "" };
@@ -4147,20 +4232,24 @@ test("runInTmux resolves paired run id through an existing manifest", async () =
 
     expect(delegated).toBe(true);
     expect(calls).toEqual([
-      ["tmux", "has-session", "-t", session],
+      ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "new-session",
-        "-d",
         "-s",
         session,
+        "-d",
         "-c",
         process.cwd(),
         command,
       ],
-      ["tmux", "has-session", "-t", session],
+      ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "set-window-option",
         "-t",
         `${session}:0`,
@@ -4222,14 +4311,15 @@ test("runInTmux honors paired run resume from --session", async () => {
         isInteractive: () => false,
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
+        resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && args.includes("has-session")) {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && args.includes("new-session")) {
             sessionStarted = true;
           }
           return { exitCode: 0, stderr: "" };
@@ -4239,20 +4329,24 @@ test("runInTmux honors paired run resume from --session", async () => {
 
     expect(delegated).toBe(true);
     expect(calls).toEqual([
-      ["tmux", "has-session", "-t", session],
+      ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "new-session",
-        "-d",
         "-s",
         session,
+        "-d",
         "-c",
         process.cwd(),
         command,
       ],
-      ["tmux", "has-session", "-t", session],
+      ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "set-window-option",
         "-t",
         `${session}:0`,
@@ -4289,6 +4383,7 @@ test("runInTmux resolves paired resume from a worktree using git common dir", as
       isInteractive: () => false,
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
+      resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
       runGit: (_cwd: string, args: string[]) => {
         if (
           args.join(" ") === "rev-parse --path-format=absolute --git-common-dir"
@@ -4299,12 +4394,12 @@ test("runInTmux resolves paired resume from a worktree using git common dir", as
       },
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && args.includes("has-session")) {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && args.includes("new-session")) {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -4314,19 +4409,30 @@ test("runInTmux resolves paired resume from a worktree using git common dir", as
 
   expect(delegated).toBe(true);
   expect(calls).toEqual([
-    ["tmux", "has-session", "-t", session],
+    ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
     [
       "tmux",
+      "-S",
+      "/tmp/ls-a/a.sock",
       "new-session",
-      "-d",
       "-s",
       session,
+      "-d",
       "-c",
       "/repo-loop-alpha",
       command,
     ],
-    ["tmux", "has-session", "-t", session],
-    ["tmux", "set-window-option", "-t", `${session}:0`, "remain-on-exit", "on"],
+    ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
+    [
+      "tmux",
+      "-S",
+      "/tmp/ls-a/a.sock",
+      "set-window-option",
+      "-t",
+      `${session}:0`,
+      "remain-on-exit",
+      "on",
+    ],
   ]);
 });
 
@@ -4356,6 +4462,7 @@ test("runInTmux strips a worktree suffix when git metadata is unavailable", asyn
       isInteractive: () => false,
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
+      resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
       runGit: (
         _cwd: string,
         _args: string[]
@@ -4366,12 +4473,12 @@ test("runInTmux strips a worktree suffix when git metadata is unavailable", asyn
       }),
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && args.includes("has-session")) {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && args.includes("new-session")) {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -4381,19 +4488,30 @@ test("runInTmux strips a worktree suffix when git metadata is unavailable", asyn
 
   expect(delegated).toBe(true);
   expect(calls).toEqual([
-    ["tmux", "has-session", "-t", session],
+    ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
     [
       "tmux",
+      "-S",
+      "/tmp/ls-a/a.sock",
       "new-session",
-      "-d",
       "-s",
       session,
+      "-d",
       "-c",
       "/repo-loop-alpha",
       command,
     ],
-    ["tmux", "has-session", "-t", session],
-    ["tmux", "set-window-option", "-t", `${session}:0`, "remain-on-exit", "on"],
+    ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
+    [
+      "tmux",
+      "-S",
+      "/tmp/ls-a/a.sock",
+      "set-window-option",
+      "-t",
+      `${session}:0`,
+      "remain-on-exit",
+      "on",
+    ],
   ]);
 });
 
@@ -4426,14 +4544,15 @@ test("runInTmux resolves raw stored session ids from --session", async () => {
           isInteractive: () => false,
           launchArgv: ["bun", "/repo/src/cli.ts"],
           log: (): void => undefined,
+          resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
           spawn: (args: string[]) => {
             calls.push(args);
-            if (args[0] === "tmux" && args[1] === "has-session") {
+            if (args[0] === "tmux" && args.includes("has-session")) {
               return sessionStarted
                 ? { exitCode: 0, stderr: "" }
                 : { exitCode: 1, stderr: "session not found" };
             }
-            if (args[0] === "tmux" && args[1] === "new-session") {
+            if (args[0] === "tmux" && args.includes("new-session")) {
               sessionStarted = true;
             }
             return { exitCode: 0, stderr: "" };
@@ -4443,20 +4562,24 @@ test("runInTmux resolves raw stored session ids from --session", async () => {
 
       expect(delegated).toBe(true);
       expect(calls).toEqual([
-        ["tmux", "has-session", "-t", session],
+        ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
         [
           "tmux",
+          "-S",
+          "/tmp/ls-a/a.sock",
           "new-session",
-          "-d",
           "-s",
           session,
+          "-d",
           "-c",
           process.cwd(),
           command,
         ],
-        ["tmux", "has-session", "-t", session],
+        ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", session],
         [
           "tmux",
+          "-S",
+          "/tmp/ls-a/a.sock",
           "set-window-option",
           "-t",
           `${session}:0`,
@@ -4496,6 +4619,7 @@ test("runInTmux ignores an unresolved raw session id in paired mode", async () =
         isInteractive: () => false,
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
+        resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
         spawn: (args: string[]) => {
           calls.push(args);
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -4503,7 +4627,7 @@ test("runInTmux ignores an unresolved raw session id in paired mode", async () =
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && args.includes("new-session")) {
             sessionStarted = true;
           }
           return { exitCode: 0, stderr: "" };
@@ -4515,17 +4639,28 @@ test("runInTmux ignores an unresolved raw session id in paired mode", async () =
     expect(calls).toEqual([
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "new-session",
-        "-d",
         "-s",
         `${runBase}-loop-1`,
+        "-d",
         "-c",
         process.cwd(),
         command,
       ],
-      ["tmux", "has-session", "-t", `${runBase}-loop-1`],
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
+        "has-session",
+        "-t",
+        `${runBase}-loop-1`,
+      ],
+      [
+        "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "set-window-option",
         "-t",
         `${runBase}-loop-1:0`,
@@ -4573,6 +4708,7 @@ test("runInTmux keeps raw --session values in single-agent mode", async () => {
         isInteractive: () => false,
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
+        resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
         spawn: (args: string[]) => {
           calls.push(args);
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -4580,7 +4716,7 @@ test("runInTmux keeps raw --session values in single-agent mode", async () => {
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && args.includes("new-session")) {
             sessionStarted = true;
           }
           return { exitCode: 0, stderr: "" };
@@ -4592,17 +4728,21 @@ test("runInTmux keeps raw --session values in single-agent mode", async () => {
     expect(calls).toEqual([
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "new-session",
-        "-d",
         "-s",
         "repo-loop-1",
+        "-d",
         "-c",
         "/repo",
         command,
       ],
-      ["tmux", "has-session", "-t", "repo-loop-1"],
+      ["tmux", "-S", "/tmp/ls-a/a.sock", "has-session", "-t", "repo-loop-1"],
       [
         "tmux",
+        "-S",
+        "/tmp/ls-a/a.sock",
         "set-window-option",
         "-t",
         "repo-loop-1:0",
@@ -4621,9 +4761,10 @@ test("runInTmux increments session index on conflicts", async () => {
     env: {},
     findBinary: () => true,
     isInteractive: () => false,
+    resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
     spawn: (args: string[]) => {
       calls.push(args);
-      const name = args[4];
+      const name = args[5];
       if (name === "repo-loop-1") {
         return { exitCode: 1, stderr: "duplicate session: repo-loop-1" };
       }
@@ -4635,11 +4776,34 @@ test("runInTmux increments session index on conflicts", async () => {
   });
 
   expect(delegated).toBe(true);
-  expect(calls[0]?.[4]).toBe("repo-loop-1");
-  expect(calls[1]?.[4]).toBe("repo-loop-2");
-  expect(calls[2]).toEqual(["tmux", "has-session", "-t", "repo-loop-2"]);
+  expect(calls[0]?.slice(0, 6)).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
+    "new-session",
+    "-s",
+    "repo-loop-1",
+  ]);
+  expect(calls[1]?.slice(0, 6)).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
+    "new-session",
+    "-s",
+    "repo-loop-2",
+  ]);
+  expect(calls[2]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
+    "has-session",
+    "-t",
+    "repo-loop-2",
+  ]);
   expect(calls[3]).toEqual([
     "tmux",
+    "-S",
+    "/tmp/ls-a/a.sock",
     "set-window-option",
     "-t",
     "repo-loop-2:0",
@@ -4698,7 +4862,51 @@ test("runInTmux refuses success when post-launch session liveness is unknown", a
   );
 });
 
-test("runInTmux refuses paired resource creation when initial session liveness is unknown", async () => {
+test("runInTmux keeps named-socket-missing non-paired handoff liveness unknown", async () => {
+  let calls = 0;
+  await expect(
+    runInTmux(["--tmux", "--proof", "verify"], {
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => false,
+      resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
+      spawn: () => {
+        calls += 1;
+        return calls === 1
+          ? { exitCode: 0, stderr: "" }
+          : {
+              exitCode: 1,
+              stderr:
+                "error connecting to /tmp/ls-a/a.sock (No such file or directory)",
+            };
+      },
+    })
+  ).rejects.toThrow('tmux session "repo-loop-1" liveness is unknown');
+  expect(calls).toBe(2);
+});
+
+test("runInTmux keeps unrelated nonzero handoff stderr unknown", async () => {
+  let calls = 0;
+  await expect(
+    runInTmux(["--tmux", "--proof", "verify"], {
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => false,
+      resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
+      spawn: () => {
+        calls += 1;
+        return calls === 1
+          ? { exitCode: 0, stderr: "" }
+          : { exitCode: 1, stderr: "permission denied" };
+      },
+    })
+  ).rejects.toThrow('tmux session "repo-loop-1" liveness is unknown');
+  expect(calls).toBe(2);
+});
+
+test("runInTmux preserves paired probe argv byte-for-byte with a launch socket available", async () => {
   const calls: string[][] = [];
   let manifestUpdates = 0;
   const manifest = createRunManifest({
@@ -4730,6 +4938,7 @@ test("runInTmux refuses paired resource creation when initial session liveness i
         log: (): void => undefined,
         ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
+        resolveLaunchSocket: () => "/tmp/decoy-launch.sock" as never,
         spawn: (args: string[]) => {
           calls.push(args);
           return { exitCode: 1, stderr: "permission denied" };
@@ -5066,6 +5275,8 @@ test("runInTmux terminalizes a hook-preparation failure before new-session", asy
     repoId: "repo-123",
     runId: "1",
     state: "submitted",
+    // Bound by the launch reservation before this launch began (T-04 phase 1).
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   const parent = makeTempRunDir();
   const blockedRunDir = join(parent, "not-a-directory");
@@ -5116,6 +5327,10 @@ test("runInTmux terminalizes a hook-preparation failure before new-session", asy
       calls.some((args) => args[0] === "tmux" && args[1] === "new-session")
     ).toBe(false);
     expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+    // verify 4: a startup that fails after binding must retain BOTH identities,
+    // or bounded cleanup has nothing to target the run on its own server with.
+    expect(manifest.tmuxSocket).toBe("/tmp/ls-a/a.sock");
+    expect(manifest.tmuxSession).toBe("repo-loop-1");
   } finally {
     rmSync(parent, { force: true, recursive: true });
   }
@@ -5908,7 +6123,7 @@ test("runInTmux reports when tmux session exits before attach", async () => {
       env: {},
       findBinary: () => true,
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && args.includes("has-session")) {
           return { exitCode: 1, stderr: "session not found" };
         }
         return { exitCode: 0, stderr: "" };

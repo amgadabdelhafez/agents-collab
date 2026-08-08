@@ -452,10 +452,10 @@ test("readBridgeStatus derives bridge naming and transport fields", async () => 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async () => {
+test("readBridgeRuntimeStatus socket-qualifies manifest targets and distinguishes live and stale tmux delivery", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
-      const session = args[3];
+    if (args[0] === "tmux" && args.includes("has-session")) {
+      const session = args.at(-1);
       return {
         exitCode: session === "repo-loop-live" ? 0 : 1,
         stderr: Buffer.alloc(0),
@@ -487,6 +487,7 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
       state: "running",
       status: "running",
       tmuxSession: "repo-loop-live",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-27T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -505,6 +506,7 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
       state: "running",
       status: "running",
       tmuxSession: "repo-loop-stale",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-27T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -518,6 +520,14 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
     hasLiveTmuxSession: true,
     hasTmuxSession: true,
   });
+  expect(spawnSync.mock.calls[0]?.[0]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/loop-bridge-test.sock",
+    "has-session",
+    "-t",
+    "repo-loop-live",
+  ]);
   expect(bridge.readBridgeRuntimeStatus(staleRunDir)).toMatchObject({
     claudeBridgeMode: "mcp-config",
     claudeChannelServer: bridge.claudeChannelServerName("9", "repo-123"),
@@ -530,9 +540,9 @@ test("readBridgeRuntimeStatus distinguishes live and stale tmux delivery", async
   rmSync(root, { recursive: true, force: true });
 });
 
-test("tmux timeout preserves bridge routing as unknown without fallback delivery", async () => {
+test("tmux timeout preserves bridge routing as unknown without socket-blind fallback delivery", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (args[0] === "tmux" && args.includes("has-session")) {
       return {
         exitCode: 1,
         signalCode: "SIGKILL",
@@ -563,6 +573,7 @@ test("tmux timeout preserves bridge routing as unknown without fallback delivery
       status: "running",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-unknown",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-27T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -584,6 +595,14 @@ test("tmux timeout preserves bridge routing as unknown without fallback delivery
     tmuxLiveness: "unknown",
     tmuxSession: "repo-loop-unknown",
   });
+  expect(spawnSync.mock.calls[0]?.[0]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/loop-bridge-test.sock",
+    "has-session",
+    "-t",
+    "repo-loop-unknown",
+  ]);
   expect(spawnSync.mock.calls[0]?.[1]).toMatchObject({
     killSignal: "SIGKILL",
     timeout: 2000,
@@ -591,6 +610,20 @@ test("tmux timeout preserves bridge routing as unknown without fallback delivery
   expect(readFileSync(join(runDir, "manifest.json"), "utf8")).toContain(
     '"tmuxSession":"repo-loop-unknown"'
   );
+
+  const manifestPath = join(runDir, "manifest.json");
+  const unusable = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  unusable.tmuxSocket = undefined;
+  writeFileSync(manifestPath, `${JSON.stringify(unusable)}\n`, "utf8");
+  spawnSync.mockClear();
+  expect(bridge.readBridgeRuntimeStatus(runDir)).toMatchObject({
+    hasLiveTmuxSession: false,
+    tmuxLiveness: "unknown",
+  });
+  expect(spawnSync).not.toHaveBeenCalled();
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -1739,6 +1772,7 @@ test("Codex-to-Claude dispatch nudges the pane without resolving delivery", asyn
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -1905,6 +1939,7 @@ test("large Claude bridge bodies stay in the ledger while the pane gets a bounde
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -1989,6 +2024,7 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -2059,6 +2095,7 @@ test("Claude delivery does not inject into an active turn with an empty composer
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -2107,6 +2144,7 @@ const IDLE_CLAUDE_MANIFEST = {
   tmuxPaneLeftAgent: "claude",
   tmuxPaneRightAgent: "codex",
   tmuxSession: "repo-loop-8",
+  tmuxSocket: "/tmp/loop-bridge-test.sock",
   updatedAt: "2026-03-23T10:00:00.000Z",
 };
 
@@ -2382,6 +2420,7 @@ test("Claude delivery confirms when submission evidence advances into an active 
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -2454,6 +2493,7 @@ test("unconfirmed Claude delivery remains pending after one retry", async () => 
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -2523,6 +2563,7 @@ test("a post-injection human draft is never submitted by fallback", async () => 
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -2597,6 +2638,7 @@ test("immediate Claude notification and worker drain nudge once without delivery
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -2763,6 +2805,7 @@ test("bridge MCP send_message rejects a valid agent absent from declared topolog
       tmuxPaneRight: "%2",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "harvto-loop-124",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-08-04T10:00:00.000Z",
     })
   );
@@ -2822,6 +2865,7 @@ test("paired agents can escalate to the durable supervisor inbox", async () => {
       tmuxPaneRight: "%2",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "harvto-loop-134",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-08-05T19:08:43.000Z",
     })
   );
@@ -3245,7 +3289,7 @@ test("bridge runtime status reports app-server-backed config-file delivery", asy
 
 test("bridge runtime status reports live tmux delivery with a run-scoped Claude server", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (args[0] === "tmux" && args.includes("has-session")) {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     return { exitCode: 1, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -3267,6 +3311,7 @@ test("bridge runtime status reports live tmux delivery with a run-scoped Claude 
       state: "submitted",
       status: "running",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -3351,6 +3396,7 @@ test("bridge MCP bridge_status tolerates a missing tmux binary", async () => {
       state: "submitted",
       status: "running",
       tmuxSession: "repo-loop-7",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -3611,6 +3657,7 @@ test("bridge sends Codex through app-server even when tmux is live", async () =>
       runId: "7",
       status: "running",
       tmuxSession: "repo-loop-7",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -3673,6 +3720,7 @@ test("direct Codex delivery does not probe or rewrite stored tmux state", async 
       runId: "8",
       status: "running",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -3746,6 +3794,7 @@ test("bridge drains codex messages through the persisted stable pane target", as
       tmuxPaneRight: "%41",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -3810,6 +3859,7 @@ test("bridge does not fall back positionally when persisted pane roles are missi
       tmuxPaneLeft: "%0",
       tmuxPaneRight: "%1",
       tmuxSession: "harvto-loop-101",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -3868,6 +3918,7 @@ test("bridge drains pending oss tmux messages through the stored pane routing", 
       tmuxPaneLeftAgent: "oss",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -3946,6 +3997,7 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -4166,6 +4218,7 @@ test("terminal bridge cleanup logs non-zero Claude MCP remove exits", async () =
       state: "completed",
       status: "done",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -4212,6 +4265,7 @@ test("terminal bridge cleanup logs thrown Claude MCP remove errors", async () =>
       state: "completed",
       status: "done",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -4256,6 +4310,7 @@ test("terminal bridge cleanup removes a persisted Claude server name", async () 
       state: "completed",
       status: "done",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -4280,8 +4335,12 @@ test("terminal bridge cleanup removes a persisted Claude server name", async () 
 
 test("active bridge liveness miss preserves restored tmux ownership topology", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
-      return { exitCode: 1, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    if (args[0] === "tmux" && args.includes("has-session")) {
+      return {
+        exitCode: 1,
+        stderr: Buffer.from("can't find session"),
+        stdout: Buffer.alloc(0),
+      };
     }
     if (args[0] === "claude" && args[1] === "mcp" && args[2] === "remove") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -4317,6 +4376,7 @@ test("active bridge liveness miss preserves restored tmux ownership topology", a
       tmuxPaneRightAgent: "codex",
       tmuxPaneUtility: "%3",
       tmuxSession: "harvto-loop-101",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -4344,14 +4404,22 @@ test("active bridge liveness miss preserves restored tmux ownership topology", a
     tmuxPaneRightAgent: "codex",
     tmuxPaneUtility: "%3",
     tmuxSession: "harvto-loop-101",
+    tmuxSocket: "/tmp/loop-bridge-test.sock",
     updatedAt: "2026-03-23T10:00:00.000Z",
   });
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(spawnSync.mock.calls).toEqual(
     expect.arrayContaining([
       [
-        ["tmux", "has-session", "-t", "harvto-loop-101"],
-        expect.objectContaining({ stderr: "ignore", stdout: "ignore" }),
+        [
+          "tmux",
+          "-S",
+          "/tmp/loop-bridge-test.sock",
+          "has-session",
+          "-t",
+          "harvto-loop-101",
+        ],
+        expect.objectContaining({ stderr: "pipe", stdout: "ignore" }),
       ],
     ])
   );
@@ -4408,6 +4476,7 @@ test("runBridgeWorker delivers Codex without probing stale tmux state", async ()
       state: "working",
       status: "running",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -4620,6 +4689,7 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
       tmuxPaneRight: "%1",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -4931,6 +5001,7 @@ test("runBridgeWorker injects Codex directly and only nudges Claude", async () =
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -5054,6 +5125,7 @@ test("Claude channel flush leaves live tmux messages pending for visible deliver
       tmuxPaneLeftAgent: "claude",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -5109,6 +5181,7 @@ test("Claude channel stays active when the live tmux pair has no Claude pane", a
       tmuxPaneLeftAgent: "oss",
       tmuxPaneRightAgent: "codex",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -5565,6 +5638,7 @@ test("dispatchBridgeMessage stays queued when tmux metadata is stale", async () 
       runId: "8",
       status: "running",
       tmuxSession: "repo-loop-stale",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"
@@ -5768,6 +5842,7 @@ test("bridge drains pending oss tmux messages through stored pane routing", asyn
       tmuxPaneLeftAgent: "oss",
       tmuxPaneRightAgent: "claude",
       tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
       updatedAt: "2026-03-23T10:00:00.000Z",
     })}\n`,
     "utf8"

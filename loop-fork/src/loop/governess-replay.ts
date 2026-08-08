@@ -19,13 +19,14 @@ import {
 import { decideGovernessPolicy } from "./governess-policy";
 import { driverLeaseIsCurrent } from "./governess-runtime";
 import { migrateLegacyGovernessState } from "./legacy-governess-compat";
-import { loadRunState } from "./run-state";
+import { loadRunState, readRunManifestHandle } from "./run-state";
 import {
   boundedTmuxOptions,
   type TmuxLiveness,
   tmuxCommandTimedOut,
-  tmuxSessionLiveness,
+  tmuxTargetLiveness,
 } from "./tmux-control";
+import { type TmuxTarget, targetArgv, targetFromManifest } from "./tmux-socket";
 import type { Agent } from "./types";
 
 export interface GovernessReplayIssue {
@@ -57,11 +58,18 @@ export const replayGovernessJournal = (
   };
 };
 
-const tmuxSessionReady = (session: string): boolean | "unknown" => {
+export const governessReplayCommandDeps = { spawnSync };
+
+const tmuxSessionReady = (
+  target: TmuxTarget | undefined
+): boolean | "unknown" => {
+  if (!target) {
+    return "unknown";
+  }
   let result: ReturnType<typeof spawnSync>;
   try {
-    result = spawnSync(
-      ["tmux", "list-panes", "-t", session, "-F", "#{pane_dead}"],
+    result = governessReplayCommandDeps.spawnSync(
+      targetArgv(target, "list-panes", ["-F", "#{pane_dead}"]),
       boundedTmuxOptions({ stderr: "ignore", stdout: "pipe" })
     );
   } catch {
@@ -304,6 +312,7 @@ export const governessDoctor = (
         exitControl?: {
           handoverManifest?: string;
           mode?: string;
+          replacementManifestPath?: string;
           replacementSession?: string;
         };
         governessEpoch?: number;
@@ -321,10 +330,12 @@ export const governessDoctor = (
     // Reported below.
   }
   const session = manifest?.tmuxSession;
+  const handle = readRunManifestHandle(storage.manifestPath);
+  const target = handle ? targetFromManifest(handle) : undefined;
   const sessionLiveness: TmuxLiveness = session
-    ? tmuxSessionLiveness(session)
+    ? tmuxTargetLiveness(target, governessReplayCommandDeps.spawnSync)
     : "dead";
-  const sessionReady = session ? tmuxSessionReady(session) : false;
+  const sessionReady = session ? tmuxSessionReady(target) : false;
   const expectedAgents = [
     manifest?.tmuxPaneLeftAgent,
     manifest?.tmuxPaneRightAgent,
@@ -352,7 +363,7 @@ export const governessDoctor = (
       ? Boolean(
           state.exitControl.replacementSession &&
             state.exitControl.handoverManifest &&
-            tmuxSessionReady(state.exitControl.replacementSession) === true &&
+            tmuxSessionReady(target) === true &&
             readGovernessHandoffAcceptance(
               state.exitControl.handoverManifest,
               state.exitControl.replacementSession

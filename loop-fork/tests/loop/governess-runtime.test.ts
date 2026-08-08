@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +34,7 @@ import { decideGovernessPolicy } from "../../src/loop/governess-policy";
 import {
   explainGovernessControl,
   governessDoctor,
+  governessReplayCommandDeps,
   inspectGovernessJournal,
   replayGovernessJournal,
 } from "../../src/loop/governess-replay";
@@ -50,6 +51,11 @@ import {
   normalizeLegacyGovernessArgs,
   withLegacyGovernessEnv,
 } from "../../src/loop/legacy-governess-compat";
+import {
+  createRunManifest,
+  resolveRunStorage,
+  writeRunManifest,
+} from "../../src/loop/run-state";
 
 const tempDir = (): string => mkdtempSync(join(tmpdir(), "governess-runtime-"));
 
@@ -440,6 +446,99 @@ test("missing or malformed control journals fail closed", () => {
   expect(doctor.journal.ok).toBe(false);
   expect(doctor.bridgeQueue.pending).toBe(0);
   expect(doctor.journalStorage).toBeUndefined();
+});
+
+test("governess replay socket-qualifies the persisted run target and ignores replacement manifest paths", () => {
+  const root = tempDir();
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("1", cwd, home);
+  const manifestInput = {
+    cwd,
+    mode: "paired",
+    pid: 1234,
+    repoId: storage.repoId,
+    runId: "1",
+    status: "running",
+    tmuxSession: "repo-loop-1",
+  };
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      ...manifestInput,
+      tmuxSocket: "/tmp/governess-replay.sock",
+    })
+  );
+  writeFileSync(
+    join(storage.runDir, "governess-state.json"),
+    JSON.stringify({
+      exitControl: {
+        handoverManifest: join(root, "handoff-manifest.json"),
+        mode: "launched",
+        replacementManifestPath: join(root, "replacement-manifest.json"),
+        replacementSession: "replacement-session",
+      },
+      governessEpoch: 1,
+    })
+  );
+
+  const calls: string[][] = [];
+  const originalSpawnSync = governessReplayCommandDeps.spawnSync;
+  governessReplayCommandDeps.spawnSync = mock((args: string[]) => {
+    calls.push([...args]);
+    return {
+      exitCode: 0,
+      stderr: Buffer.alloc(0),
+      stdout: args.includes("list-panes")
+        ? Buffer.from("0\n0\n0\n")
+        : Buffer.alloc(0),
+    };
+  }) as never;
+  try {
+    const report = governessDoctor("1", cwd, home);
+    expect(report.sessionLiveness).toBe("live");
+    expect(report.sessionReady).toBe(true);
+    expect(calls).toEqual([
+      [
+        "tmux",
+        "-S",
+        "/tmp/governess-replay.sock",
+        "has-session",
+        "-t",
+        "repo-loop-1",
+      ],
+      [
+        "tmux",
+        "-S",
+        "/tmp/governess-replay.sock",
+        "list-panes",
+        "-t",
+        "repo-loop-1",
+        "-F",
+        "#{pane_dead}",
+      ],
+      [
+        "tmux",
+        "-S",
+        "/tmp/governess-replay.sock",
+        "list-panes",
+        "-t",
+        "repo-loop-1",
+        "-F",
+        "#{pane_dead}",
+      ],
+    ]);
+
+    calls.length = 0;
+    writeRunManifest(storage.manifestPath, createRunManifest(manifestInput));
+    const legacyReport = governessDoctor("1", cwd, home);
+    expect(legacyReport.sessionLiveness).toBe("unknown");
+    expect(legacyReport.sessionReady).toBe("unknown");
+    expect(calls).toEqual([]);
+  } finally {
+    governessReplayCommandDeps.spawnSync = originalSpawnSync;
+  }
 });
 
 test("runtime adapter rejects a stale control envelope", async () => {

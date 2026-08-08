@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -24,6 +26,7 @@ import {
   resolveStorageRoot,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import { resolveTmuxSocket } from "../../src/loop/tmux-socket";
 import type { LaunchWorkspaceBinding, Options } from "../../src/loop/types";
 import { resolveWorkspaceBinding } from "../../src/loop/workspace-binding";
 
@@ -67,12 +70,17 @@ const claimIds = () => {
 };
 
 const reservationDeps = (home: string, pid = 4242) => ({
+  env: { LOOP_TMUX_SOCKET: "/tmp/ls-res/a.sock" } as Record<
+    string,
+    string | undefined
+  >,
   home,
   isPidAlive: (candidate: number) => candidate === pid,
   makeClaimId: claimIds(),
   pid,
   sleep: async () => undefined,
   tmuxLiveness: () => "dead" as const,
+  uid: 501,
 });
 
 const writeFixtureManifest = (
@@ -550,6 +558,217 @@ test("distinct registered worktrees on distinct branches can both reserve", asyn
     expect([first.storage.runId, second.storage.runId]).toEqual(["1", "2"]);
   } finally {
     rmSync(parent, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+// --- T-04 early launch binding (verify 2, 4, 5) ------------------------------
+
+test("a fresh reservation binds the resolved socket into the manifest", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const claim = await reservePairedLaunch(
+      makeOptions(),
+      binding,
+      reservationDeps(home)
+    );
+    const manifest = readRunManifest(claim.storage.manifestPath);
+    expect(manifest?.tmuxSocket).toBe("/tmp/ls-res/a.sock");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("an unusable socket fails before any run is reserved on disk", async () => {
+  // verify 2: no durable active-looking run may exist with an unusable socket.
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    await expect(
+      reservePairedLaunch(makeOptions(), binding, {
+        ...reservationDeps(home),
+        env: { LOOP_TMUX_SOCKET: "relative/not-absolute.sock" },
+      })
+    ).rejects.toThrow(/never resolved against cwd/);
+
+    // Non-vacuity: the storage root must hold no reserved run at all, so the
+    // failure genuinely preceded reservation rather than being cleaned up after.
+    const repoDir = join(resolveStorageRoot(home), binding.repoId);
+    const reserved = existsSync(repoDir)
+      ? readdirSync(repoDir).filter((entry) => !entry.startsWith("."))
+      : [];
+    expect(reserved).toEqual([]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("resume never consults the ambient resolver, even when it would throw", async () => {
+  // verify 5a: resolveTmuxSocket must be unreachable from a post-launch path.
+  // The earlier version of this test used a VALID hostile socket, so resolution
+  // succeeded and the manifest read still preserved A — it could not distinguish
+  // "resolver ignored" from "resolver called and its result discarded". An
+  // INVALID ambient value discriminates: if the resume path resolves at all, it
+  // throws and takes a legitimate resume down with it.
+  let resolverCalls = 0;
+  for (const hostile of [
+    "",
+    "relative/not-absolute.sock",
+    `/tmp/${"a".repeat(200)}`,
+  ]) {
+    // A fresh workspace per value: reserving twice against one manifest trips
+    // the live-bootstrap-attempt interlock, which would mask what is under test.
+    const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+    const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+    try {
+      const binding = makeBinding(root);
+      const storage = writeFixtureManifest(home, binding, {
+        tmuxSession: "run-a",
+        tmuxSocket: "/tmp/ls-a/a.sock",
+      });
+      await reservePairedLaunch(makeOptions({ resumeRunId: "1" }), binding, {
+        ...reservationDeps(home),
+        env: { LOOP_TMUX_SOCKET: hostile },
+        resolveSocket: (env, uid) => {
+          resolverCalls += 1;
+          return resolveTmuxSocket(env, { uid }).socket;
+        },
+      });
+      const manifest = readRunManifest(storage.manifestPath);
+      expect(manifest?.tmuxSocket).toBe("/tmp/ls-a/a.sock");
+      expect(manifest?.tmuxSession).toBe("run-a");
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+      rmSync(home, { force: true, recursive: true });
+    }
+  }
+  // The counter is the real assertion: preserving A proves the result was not
+  // used, but only a zero call count proves the resolver was never reached.
+  expect(resolverCalls).toBe(0);
+});
+
+test("a fresh launch does consult the resolver, so the counter discriminates", async () => {
+  // Positive control: without this, a resolveSocket that was never wired up at
+  // all would satisfy the zero-call assertion above.
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    let resolverCalls = 0;
+    await reservePairedLaunch(makeOptions(), binding, {
+      ...reservationDeps(home),
+      resolveSocket: (env, uid) => {
+        resolverCalls += 1;
+        return resolveTmuxSocket(env, { uid }).socket;
+      },
+    });
+    expect(resolverCalls).toBe(1);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("a named launch for a non-existent run still resolves before reserving", async () => {
+  // The unnamed-fresh ordering test could not see this: naming a run skips the
+  // pre-lock resolution, and the branch below still reserves storage. An
+  // invalid socket must not leave a reserved run directory behind.
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    let resolverCalls = 0;
+    await expect(
+      reservePairedLaunch(
+        makeOptions({ sessionId: "no-such-run-selector" }),
+        binding,
+        {
+          ...reservationDeps(home),
+          env: { LOOP_TMUX_SOCKET: "relative/not-absolute.sock" },
+          resolveSocket: (env, uid) => {
+            resolverCalls += 1;
+            return resolveTmuxSocket(env, { uid }).socket;
+          },
+        }
+      )
+    ).rejects.toThrow(/never resolved against cwd/);
+
+    expect(resolverCalls).toBe(1);
+    const repoDir = join(resolveStorageRoot(home), binding.repoId);
+    const reserved = existsSync(repoDir)
+      ? readdirSync(repoDir).filter((entry) => !entry.startsWith("."))
+      : [];
+    expect(reserved).toEqual([]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("manifestCanStillOwnWorkspace keeps a tmuxSession manifest with an unusable target as owning the workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    writeFixtureManifest(home, binding, {
+      state: "completed",
+      tmuxSession: "legacy-session",
+      tmuxSocket: "relative/unusable.sock",
+      workspaceBinding: binding,
+    });
+    let tmuxContacts = 0;
+    await expect(
+      reservePairedLaunch(makeOptions(), binding, {
+        ...reservationDeps(home),
+        tmuxLiveness: (target) => {
+          expect(target).toBeUndefined();
+          tmuxContacts += 1;
+          return "unknown";
+        },
+      })
+    ).rejects.toThrow("still owns workspace");
+    expect(tmuxContacts).toBe(1);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("reserveRequestedLaunch conflicts without mutation when requested tmuxSession has an unusable target", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const storage = writeFixtureManifest(home, binding, {
+      tmuxSession: "legacy-session",
+      tmuxSocket: "relative/unusable.sock",
+      workspaceBinding: binding,
+    });
+    const before = readFileSync(storage.manifestPath, "utf8");
+    const opts = makeOptions({ resumeRunId: "1" });
+    let tmuxContacts = 0;
+    await expect(
+      reservePairedLaunch(opts, binding, {
+        ...reservationDeps(home),
+        tmuxLiveness: (target) => {
+          expect(target).toBeUndefined();
+          tmuxContacts += 1;
+          return "unknown";
+        },
+      })
+    ).rejects.toThrow("still owns workspace");
+    expect(tmuxContacts).toBe(1);
+    expect(opts.reservedRunId).toBeUndefined();
+    expect(opts.workspaceBinding).toBeUndefined();
+    expect(opts.launchClaimId).toBeUndefined();
+    expect(readFileSync(storage.manifestPath, "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
     rmSync(home, { force: true, recursive: true });
   }
 });

@@ -1,0 +1,50 @@
+{
+  "task_id": "tmux-socket-normalization",
+  "feature": "tmux-socket-normalization-scoped-release",
+  "timestamp": "2026-08-08T18:53:04Z",
+  "evaluator": "codex-independent-exact-sha-review",
+  "verdict": "pass",
+  "release_version": "1.0.34",
+  "baseline_failures": [],
+  "checks": {
+    "native_review": {
+      "status": "pass",
+      "evidence": "Claude exact-postimage PASS 8dae02e3-d70e-48f1-a237-d752f26d0e1c over the reviewed fourteen-file implementation candidate."
+    },
+    "independent_review": {
+      "status": "pass",
+      "evidence": "Harness-owner review rederived all fourteen candidate hashes, exact diff and porcelain boundaries, six frozen hashes, old-API inventory, protected producers, and an independent negative control without writing files."
+    },
+    "static_and_build": {
+      "status": "pass",
+      "evidence": "bun run check checked 845 files with zero diagnostics; scoped TypeScript exited 0; bun run build compiled 3054 modules."
+    },
+    "full_suite": {
+      "status": "pass",
+      "evidence": "bun run test:ci passed every discovered test file outside the restricted sandbox with zero failed files. The restricted sandbox's localhost bind denial was independently reproduced as EADDRINUSE and was not waived."
+    },
+    "focused_regressions": {
+      "status": "pass",
+      "evidence": "Seven socket-normalization suites passed 354 tests with zero failures; proxy integration passed 30/0/83 outside the restricted localhost sandbox."
+    },
+    "shutdown_safety": {
+      "status": "pass",
+      "evidence": "Run 38 was stopped at the last reviewed boundary before V5 source edits; exact session and owned processes were removed, ports 4500/4600 were clear, and no Run 38 survivors remained."
+    }
+  },
+  "shipped_scope": [
+    "durable manifest-bound tmux socket identity prerequisites",
+    "socket-qualified non-paired tmux launch, probe, attach, and keep-attached behavior",
+    "manifest-derived bridge, Governess, replay, reservation, and proxy liveness targeting",
+    "replacement manifest-path persistence and bounded first-read retry",
+    "unknown-target fail-closed behavior for the reviewed consumer slice",
+    "producer-backed regressions and release lint repairs"
+  ],
+  "known_limitations": [
+    "This is an intentionally scoped patch release, not completion of the full tmux-socket-normalization specification.",
+    "Verify 10 remains open for the remaining per-consumer skip-record migrations.",
+    "The two-server final certification and remaining T-01 through T-18 work continue in a fresh governed loop.",
+    "Criterion 11 remains Codex attestation-only until the successor loop adds its independent certification evidence."
+  ],
+  "blocking_findings": []
+}

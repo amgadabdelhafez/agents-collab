@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -17,6 +18,7 @@ import {
   buildManifestPath,
   buildRunDir,
   buildTranscriptPath,
+  clearRunManifestTmuxTopology,
   createRunManifest,
   createRunResultEntry,
   createRunReviewEntry,
@@ -24,6 +26,7 @@ import {
   createRunTranscriptEntry,
   loadRunState,
   readRunManifest,
+  readRunManifestHandle,
   readRunTranscriptEntries,
   reserveRunStorage,
   resolveExistingRunId,
@@ -31,9 +34,16 @@ import {
   resolveRunId,
   resolveRunStorage,
   resolveStorageRoot,
+  TMUX_PANE_MANIFEST_FIELDS,
   touchRunManifest,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import {
+  manifestSocketState,
+  paneArgv,
+  paneTargetFromManifest,
+  targetFromManifest,
+} from "../../src/loop/tmux-socket";
 
 const makeTempDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-run-state-"));
@@ -732,4 +742,178 @@ test("run ids are validated before storage paths are built", () => {
   expect(() => buildRunDir("/tmp", "repo", "foo..bar")).toThrow(
     "Invalid run id"
   );
+});
+
+// --- tmux socket normalization, T-03 (verify 3) ------------------------------
+
+const withManifestDir = (body: (dir: string) => void): void => {
+  const dir = mkdtempSync(join(tmpdir(), "ls-manifest-"));
+  try {
+    body(dir);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+};
+
+const writeManifestJson = (dir: string, extra: Record<string, unknown>) => {
+  const path = join(dir, "manifest.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      createdAt: "2026-08-08T00:00:00.000Z",
+      cwd: "/tmp/repo",
+      mode: "paired",
+      pid: 4242,
+      repoId: "repo-abc",
+      runId: "run-a",
+      state: "working",
+      updatedAt: "2026-08-08T00:00:00.000Z",
+      ...extra,
+    })
+  );
+  return path;
+};
+
+test("manifest round trip preserves the canonical tmuxSocket", () => {
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, {
+      tmuxSession: "run-a",
+      tmuxSocket: "/tmp/ls-a/a.sock",
+    });
+    expect(readRunManifest(path)?.tmuxSocket).toBe("/tmp/ls-a/a.sock");
+  });
+});
+
+test("snake-case tmux_socket is read when it is the only key present", () => {
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, { tmux_socket: "/tmp/ls-a/a.sock" });
+    expect(readRunManifest(path)?.tmuxSocket).toBe("/tmp/ls-a/a.sock");
+  });
+});
+
+test("a camel/snake socket conflict is unknown targeting, never a coerced pick", () => {
+  // Preferring one key would silently address a server the manifest itself
+  // does not agree on, which is the defect one level down.
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, {
+      tmuxSession: "run-a",
+      tmuxSocket: "/tmp/ls-a/a.sock",
+      tmux_socket: "/tmp/ls-b/b.sock",
+    });
+    expect(readRunManifest(path)?.tmuxSocket).toBeUndefined();
+    const handle = readRunManifestHandle(path);
+    expect(handle).toBeDefined();
+    expect(manifestSocketState(handle as never)).toBe("conflicting");
+    expect(targetFromManifest(handle as never)).toBeUndefined();
+  });
+});
+
+test("identical camel and snake socket values are not a conflict", () => {
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, {
+      tmuxSocket: "/tmp/ls-a/a.sock",
+      tmux_socket: "/tmp/ls-a/a.sock",
+    });
+    expect(readRunManifest(path)?.tmuxSocket).toBe("/tmp/ls-a/a.sock");
+  });
+});
+
+test("an invalid socket becomes unknown targeting and is never resolved against cwd", () => {
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, {
+      tmuxSession: "run-a",
+      tmuxSocket: "relative/a.sock",
+    });
+    const handle = readRunManifestHandle(path);
+    expect(manifestSocketState(handle as never)).toBe("invalid");
+    expect(targetFromManifest(handle as never)).toBeUndefined();
+  });
+});
+
+test("a legacy manifest with no socket yields a handle that targets nothing", () => {
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, { tmuxSession: "run-a" });
+    const handle = readRunManifestHandle(path);
+    expect(manifestSocketState(handle as never)).toBe("missing");
+    expect(targetFromManifest(handle as never)).toBeUndefined();
+  });
+});
+
+test("the handle carries runId, manifest path, and the SHA-256 of the bytes read", () => {
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, { tmuxSocket: "/tmp/ls-a/a.sock" });
+    const handle = readRunManifestHandle(path);
+    expect(handle?.runId).toBe("run-a");
+    expect(handle?.manifestPath).toBe(path);
+    // The SHA-256 must be of the exact bytes on disk, not of a re-serialization.
+    expect(handle?.manifestSha256).toBe(
+      createHash("sha256").update(readFileSync(path)).digest("hex")
+    );
+  });
+});
+
+test("pane targets come from the same handle as the target", () => {
+  withManifestDir((dir) => {
+    const path = writeManifestJson(dir, {
+      tmuxPaneLeft: "%1",
+      tmuxPaneRecon: ["%7", "%8"],
+      tmuxSession: "run-a",
+      tmuxSocket: "/tmp/ls-a/a.sock",
+    });
+    const handle = readRunManifestHandle(path) as never;
+    expect(
+      paneArgv(
+        paneTargetFromManifest(handle, "tmuxPaneLeft") as never,
+        "kill-pane"
+      )
+    ).toEqual(["tmux", "-S", "/tmp/ls-a/a.sock", "kill-pane", "-t", "%1"]);
+    // The array-valued recon field round trips through the manifest read path
+    // and is addressed by index, per the R10 ruling of 2026-08-08.
+    expect(
+      paneArgv(
+        paneTargetFromManifest(handle, "tmuxPaneRecon", 1) as never,
+        "kill-pane"
+      )
+    ).toEqual(["tmux", "-S", "/tmp/ls-a/a.sock", "kill-pane", "-t", "%8"]);
+    expect(paneTargetFromManifest(handle, "tmuxPaneRecon")).toBeUndefined();
+  });
+});
+
+test("clearing tmux topology clears socket, session, and all seven pane fields", () => {
+  // A partial clear leaving a pane bound to a cleared socket is a new instance
+  // of the same defect: a pane id is as socket-dependent as a session name.
+  const cleared = clearRunManifestTmuxTopology({
+    tmuxPaneAuPair: "%2",
+    tmuxPaneGoverness: "%3",
+    tmuxPaneLeft: "%1",
+    tmuxPaneNanny: "%4",
+    tmuxPaneRecon: ["%7"],
+    tmuxPaneRight: "%5",
+    tmuxPaneUtility: "%6",
+    tmuxSession: "run-a",
+    tmuxSocket: "/tmp/ls-a/a.sock",
+  } as never) as Record<string, unknown>;
+  for (const field of [
+    ...TMUX_PANE_MANIFEST_FIELDS,
+    "tmuxSession",
+    "tmuxSocket",
+  ]) {
+    expect(cleared[field]).toBeUndefined();
+  }
+});
+
+test("every persisted pane field is covered by the atomic clear", () => {
+  // Derived from the manifest type rather than hand-listed, so a new pane field
+  // cannot be added without either being cleared or failing this test.
+  const declared = readFileSync(
+    join(import.meta.dir, "../../src/loop/run-state.ts"),
+    "utf8"
+  )
+    .split("export interface RunManifest {")[1]
+    ?.split("}")[0]
+    ?.match(/tmuxPane[A-Za-z]+/gu);
+  const paneFields = [...new Set(declared)].filter(
+    (field) => !field.endsWith("Agent")
+  );
+  expect(paneFields.sort()).toEqual([...TMUX_PANE_MANIFEST_FIELDS].sort());
 });

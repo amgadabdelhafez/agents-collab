@@ -87,6 +87,7 @@ import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
 import {
+  clearRunManifestPaneTargets,
   isActiveRunState,
   type RunLaunchCharter,
   type RunManifest,
@@ -104,10 +105,18 @@ import {
 } from "./runner";
 import {
   boundedTmuxOptions,
+  isConfirmedMissingTmuxSession,
   TMUX_CONTROL_TIMEOUT_MS,
   type TmuxLiveness,
   tmuxCommandTimedOut,
 } from "./tmux-control";
+import {
+  launchAttachCommand,
+  launchServerArgv,
+  launchSessionArgv,
+  resolveTmuxSocket,
+  type TmuxSocket,
+} from "./tmux-socket";
 import type { Agent, EffortLevel, Options, RunLifecycleState } from "./types";
 import {
   AU_PAIR_PANE_SUBCOMMAND,
@@ -205,7 +214,7 @@ interface GitResult {
 }
 
 interface TmuxDeps {
-  attach: (session: string) => void;
+  attach: (session: string, launchSocket?: TmuxSocket) => void;
   capturePane: (pane: string, styled?: boolean) => string;
   capturePaneSnapshot: (pane: string) => PaneSnapshot | undefined;
   // Version banner of the `claude` binary the pane will launch, e.g.
@@ -232,6 +241,7 @@ interface TmuxDeps {
   readClaudeTranscriptVersion: (runDir: string) => string;
   readTextFile: (path: string) => string | undefined;
   releasePersistentCodexSession: typeof releasePersistentCodexSession;
+  resolveLaunchSocket: () => TmuxSocket;
   runGit: (cwd: string, args: string[]) => GitResult;
   sendKeys: (pane: string, keys: string[]) => void;
   sendText: (pane: string, text: string) => void;
@@ -256,6 +266,7 @@ interface PairedTmuxLaunch {
 }
 
 interface StartedPairedSession {
+  manifestPath: string;
   preserveUnknownStart: () => void;
   session: string;
   terminalizeFailedStart: () => Promise<RunLifecycleState | "undurable">;
@@ -926,10 +937,6 @@ const cwdMatchesRunId = (cwd: string, runId: string): boolean => {
 
 const MAX_SESSION_ATTEMPTS = 10_000;
 const SESSION_CONFLICT_RE = /duplicate session|already exists/i;
-const NO_SESSION_RE =
-  /no server running|no sessions|can't find session|couldn't find session|session.*not found/i;
-const MISSING_TMUX_SOCKET_RE =
-  /error connecting to .*\(No such file or directory\)/i;
 const LOOP_WORKTREE_SUFFIX_RE = /-loop-[a-z0-9][a-z0-9_-]*$/i;
 const ENV_COMMENT_RE = /\s+#.*$/;
 const LINE_SPLIT_RE = /\r?\n/;
@@ -1087,10 +1094,15 @@ interface HandoffSessionProbe {
 const probeHandoffSession = (
   session: string,
   spawnFn: TmuxDeps["spawn"],
-  allowMissingSocket = false
+  allowMissingSocket = false,
+  launchSocket?: TmuxSocket
 ): HandoffSessionProbe => {
   try {
-    const result = spawnFn(["tmux", "has-session", "-t", session]);
+    const result = spawnFn(
+      launchSocket
+        ? launchServerArgv(launchSocket, "has-session", session)
+        : ["tmux", "has-session", "-t", session]
+    );
     if (result.timedOut) {
       return { liveness: "unknown", result };
     }
@@ -1125,23 +1137,32 @@ const unknownHandoffLivenessError = (
 
 const keepSessionAttached = (
   session: string,
-  spawnFn: TmuxDeps["spawn"]
+  spawnFn: TmuxDeps["spawn"],
+  launchSocket?: TmuxSocket
 ): SpawnResult =>
-  spawnFn([
-    "tmux",
-    "set-window-option",
-    "-t",
-    `${session}:0`,
-    "remain-on-exit",
-    "on",
-  ]);
+  spawnFn(
+    launchSocket
+      ? launchServerArgv(launchSocket, "set-window-option", `${session}:0`, [
+          "remain-on-exit",
+          "on",
+        ])
+      : [
+          "tmux",
+          "set-window-option",
+          "-t",
+          `${session}:0`,
+          "remain-on-exit",
+          "on",
+        ]
+  );
 
 const isSessionGone = (
   session: string,
   error: unknown,
-  spawnFn: TmuxDeps["spawn"]
+  spawnFn: TmuxDeps["spawn"],
+  launchSocket?: TmuxSocket
 ): boolean => {
-  const probe = probeHandoffSession(session, spawnFn);
+  const probe = probeHandoffSession(session, spawnFn, false, launchSocket);
   if (probe.liveness === "dead") {
     return true;
   }
@@ -1156,13 +1177,6 @@ const isSessionGone = (
   }
   return false;
 };
-
-const isConfirmedMissingTmuxSession = (
-  detail: string,
-  allowMissingSocket = false
-): boolean =>
-  NO_SESSION_RE.test(detail) ||
-  (allowMissingSocket && MISSING_TMUX_SOCKET_RE.test(detail));
 
 const buildSessionCommand = (
   deps: TmuxDeps,
@@ -1377,17 +1391,10 @@ const bindPairedSessionIdentity = (
         tmuxSession: session,
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRightAgent: paneAgents.right,
-        ...(clearPaneTargets
-          ? {
-              tmuxPaneAuPair: undefined,
-              tmuxPaneGoverness: undefined,
-              tmuxPaneLeft: undefined,
-              tmuxPaneNanny: undefined,
-              tmuxPaneRecon: undefined,
-              tmuxPaneRight: undefined,
-              tmuxPaneUtility: undefined,
-            }
-          : {}),
+        // Pane-only: this call ESTABLISHES topology, so it must not touch
+        // tmuxSocket or tmuxSession. Derived from the shared field list so a
+        // new pane field cannot escape the clear.
+        ...(clearPaneTargets ? clearRunManifestPaneTargets() : {}),
       },
       new Date().toISOString()
     )
@@ -3305,7 +3312,12 @@ const startPairedSession = async (
       paneAgents,
       primaryAgent
     );
-    return { preserveUnknownStart, session, terminalizeFailedStart };
+    return {
+      manifestPath: storage.manifestPath,
+      preserveUnknownStart,
+      session,
+      terminalizeFailedStart,
+    };
   }
   try {
     // The session name is deterministic and already reserved by this launch
@@ -3573,7 +3585,12 @@ const startPairedSession = async (
         ? livePaneTargets.left
         : livePaneTargets.right;
     deps.spawn(["tmux", "select-pane", "-t", primaryPane]);
-    return { preserveUnknownStart, session, terminalizeFailedStart };
+    return {
+      manifestPath: storage.manifestPath,
+      preserveUnknownStart,
+      session,
+      terminalizeFailedStart,
+    };
   } catch (error: unknown) {
     if (error instanceof ClaudeStartupInputRequiredError) {
       preserveUnknownStart();
@@ -3633,10 +3650,19 @@ const startRequestedSession = (
   deps: TmuxDeps,
   runBase: string,
   requestedId: string,
-  forwardedArgv: string[]
+  forwardedArgv: string[],
+  launchSocket: TmuxSocket
 ): string => {
   const candidate = buildRunName(runBase, requestedId);
-  const existingSession = sessionExists(candidate, deps.spawn);
+  const probe = deps.spawn(
+    launchServerArgv(launchSocket, "has-session", candidate)
+  );
+  if (probe.timedOut) {
+    throw new Error(
+      `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while checking session "${candidate}"`
+    );
+  }
+  const existingSession = probe.exitCode === 0;
   if (existingSession) {
     return candidate;
   }
@@ -3650,17 +3676,16 @@ const startRequestedSession = (
     ],
     forwardedArgv
   );
-  const result = deps.spawn([
-    "tmux",
-    "new-session",
+  const sessionArgs = [
     "-d",
     ...buildSessionSizeArgs(deps),
-    "-s",
-    candidate,
     "-c",
     deps.cwd,
     command,
-  ]);
+  ];
+  const result = deps.spawn(
+    launchSessionArgv(launchSocket, candidate, sessionArgs)
+  );
   if (result.exitCode === 0) {
     return candidate;
   }
@@ -3673,7 +3698,8 @@ const startAutoSession = (
   deps: TmuxDeps,
   runBase: string,
   forwardedArgv: string[],
-  needsWorktree: boolean
+  needsWorktree: boolean,
+  launchSocket: TmuxSocket
 ): string => {
   for (let index = 1; index <= MAX_SESSION_ATTEMPTS; index += 1) {
     const candidate = buildRunName(runBase, index);
@@ -3690,17 +3716,16 @@ const startAutoSession = (
       ],
       forwardedArgv
     );
-    const result = deps.spawn([
-      "tmux",
-      "new-session",
+    const sessionArgs = [
       "-d",
       ...buildSessionSizeArgs(deps),
-      "-s",
-      candidate,
       "-c",
       deps.cwd,
       command,
-    ]);
+    ];
+    const result = deps.spawn(
+      launchSessionArgv(launchSocket, candidate, sessionArgs)
+    );
     if (result.exitCode === 0) {
       return candidate;
     }
@@ -3714,12 +3739,17 @@ const startAutoSession = (
 };
 
 const defaultDeps = (): TmuxDeps => ({
-  attach: (session: string) => {
-    const result = spawnSync(["tmux", "attach", "-t", session], {
-      stderr: "inherit",
-      stdin: "inherit",
-      stdout: "inherit",
-    });
+  attach: (session: string, launchSocket?: TmuxSocket) => {
+    const result = spawnSync(
+      launchSocket
+        ? launchServerArgv(launchSocket, "attach", session)
+        : ["tmux", "attach", "-t", session],
+      {
+        stderr: "inherit",
+        stdin: "inherit",
+        stdout: "inherit",
+      }
+    );
     if (result.exitCode !== 0) {
       throw new Error(`Failed to attach to tmux session "${session}".`);
     }
@@ -3821,6 +3851,8 @@ const defaultDeps = (): TmuxDeps => ({
       return undefined;
     }
   },
+  resolveLaunchSocket: () =>
+    resolveTmuxSocket(process.env, { uid: process.getuid?.() ?? 0 }).socket,
   runGit: (cwd: string, args: string[]) => runGit(cwd, args),
   sendKeys: (pane: string, keys: string[]) => {
     const result = spawnSync(
@@ -3899,32 +3931,49 @@ const defaultDeps = (): TmuxDeps => ({
   updateRunManifest,
 });
 
-const findSession = (argv: string[], deps: TmuxDeps): string => {
+const findSession = (
+  argv: string[],
+  deps: TmuxDeps,
+  launchSocket: TmuxSocket
+): string => {
   const forwardedArgv = stripTmuxFlag(argv);
   const requestedId = resolveRequestedRunId(argv, deps);
   const runBase = resolveRunBase(deps.cwd, deps, requestedId);
   const needsWorktree = argv.includes(WORKTREE_FLAG);
 
   if (requestedId !== undefined) {
-    return startRequestedSession(deps, runBase, requestedId, forwardedArgv);
+    return startRequestedSession(
+      deps,
+      runBase,
+      requestedId,
+      forwardedArgv,
+      launchSocket
+    );
   }
 
-  return startAutoSession(deps, runBase, forwardedArgv, needsWorktree);
+  return startAutoSession(
+    deps,
+    runBase,
+    forwardedArgv,
+    needsWorktree,
+    launchSocket
+  );
 };
 
 const attachSessionIfInteractive = (
   session: string,
-  deps: TmuxDeps
+  deps: TmuxDeps,
+  launchSocket?: TmuxSocket
 ): boolean => {
   if (!deps.isInteractive()) {
     return true;
   }
 
   try {
-    deps.attach(session);
+    deps.attach(session, launchSocket);
     return true;
   } catch (error: unknown) {
-    if (isSessionGone(session, error, deps.spawn)) {
+    if (isSessionGone(session, error, deps.spawn, launchSocket)) {
       deps.log(
         `[loop] tmux session "${session}" exited before attach, continuing here.`
       );
@@ -3971,10 +4020,25 @@ export const runInTmux = async (
 
   const startedPairedSession =
     pairedLaunch && launch ? await startPairedSession(deps, launch) : undefined;
-  const session = startedPairedSession?.session ?? findSession(argv, deps);
+  const launchContext = startedPairedSession
+    ? {
+        kind: "paired" as const,
+        manifestPath: startedPairedSession.manifestPath,
+        session: startedPairedSession.session,
+      }
+    : { kind: "non-paired" as const, socket: deps.resolveLaunchSocket() };
+  const session =
+    launchContext.kind === "paired"
+      ? launchContext.session
+      : findSession(argv, deps, launchContext.socket);
   const sessionExistsForHandoff = (): boolean => {
     try {
-      const probe = probeHandoffSession(session, deps.spawn);
+      const probe = probeHandoffSession(
+        session,
+        deps.spawn,
+        false,
+        launchContext.kind === "non-paired" ? launchContext.socket : undefined
+      );
       if (probe.liveness === "unknown") {
         throw unknownHandoffLivenessError(session, probe);
       }
@@ -3998,7 +4062,11 @@ export const runInTmux = async (
 
   let keepAttached: SpawnResult | undefined;
   try {
-    keepAttached = keepSessionAttached(session, deps.spawn);
+    keepAttached = keepSessionAttached(
+      session,
+      deps.spawn,
+      launchContext.kind === "non-paired" ? launchContext.socket : undefined
+    );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     deps.log(
@@ -4021,10 +4089,25 @@ export const runInTmux = async (
   }
 
   deps.log(`[loop] started tmux session "${session}"`);
-  deps.log(`[loop] attach with: tmux attach -t ${session}`);
+  if (launchContext.kind === "paired") {
+    deps.log(
+      `[loop] run manifest ${JSON.stringify(launchContext.manifestPath)}`
+    );
+  }
+  const attachCommand =
+    launchContext.kind === "paired"
+      ? `tmux attach -t ${session}`
+      : launchAttachCommand(launchContext.socket, session);
+  deps.log(`[loop] attach with: ${attachCommand}`);
   let handedOff: boolean;
   try {
-    handedOff = insideTmux ? true : attachSessionIfInteractive(session, deps);
+    handedOff = insideTmux
+      ? true
+      : attachSessionIfInteractive(
+          session,
+          deps,
+          launchContext.kind === "non-paired" ? launchContext.socket : undefined
+        );
   } catch (error) {
     startedPairedSession?.preserveUnknownStart();
     throw error;
