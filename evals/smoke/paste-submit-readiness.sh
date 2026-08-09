@@ -50,10 +50,15 @@ wait_for_pane_text() {
 
 mkdir -p "${SMOKE_ROOT}/bin" "${SMOKE_ROOT}/home" "${SMOKE_ROOT}/repo"
 cp "${HASH_TUI}" "${SMOKE_ROOT}/bin/claude"
-cp "${HASH_TUI}" "${SMOKE_ROOT}/bin/gemini"
+cp "${HASH_TUI}" "${SMOKE_ROOT}/bin/opencode"
 cp "${TMUX_WRAPPER}" "${SMOKE_ROOT}/bin/tmux"
 chmod +x "${SMOKE_ROOT}/bin/"*
 git init -q "${SMOKE_ROOT}/repo"
+git -C "${SMOKE_ROOT}/repo" config user.email "smoke@example.invalid"
+git -C "${SMOKE_ROOT}/repo" config user.name "Loop Smoke"
+printf '%s\n' '# paste-submit readiness fixture' >"${SMOKE_ROOT}/repo/README.md"
+git -C "${SMOKE_ROOT}/repo" add README.md
+git -C "${SMOKE_ROOT}/repo" commit -q -m fixture
 PROMPT_PATH="${SMOKE_ROOT}/charter.md"
 {
   printf 'BEGIN-LARGE-CHARTER\n'
@@ -74,7 +79,7 @@ env \
   "LOOP_TMUX_SOCKET=${SMOKE_SOCKET}" \
   LOOP_UTILITY_PANE=0 \
   "PATH=${SMOKE_ROOT}/bin:${PATH}" \
-  "${LOOP_ROOT}/loop" --tmux --agent gemini --pair-with claude \
+  "${LOOP_ROOT}/loop" --tmux --agent oss --pair-with claude \
   -p "${PROMPT_PATH}" >"${SMOKE_ROOT}/launch.out" 2>"${SMOKE_ROOT}/launch.err"
 LAUNCH_STATUS=$?
 set -e
@@ -91,18 +96,18 @@ if [ -z "${MANIFEST_PATH}" ]; then
 fi
 TMUX_SESSION="$(manifest_field "${MANIFEST_PATH}" tmuxSession)"
 RECORDED_SOCKET="$(manifest_field "${MANIFEST_PATH}" tmuxSocket)"
-GEMINI_PANE="$(pane_for_agent "${MANIFEST_PATH}" gemini)"
+OSS_PANE="$(pane_for_agent "${MANIFEST_PATH}" oss)"
 CLAUDE_PANE="$(pane_for_agent "${MANIFEST_PATH}" claude)"
 if [ "${RECORDED_SOCKET}" != "${SMOKE_SOCKET}" ]; then
   echo "bridge-nudge smoke: manifest socket ${RECORDED_SOCKET:-missing} != ${SMOKE_SOCKET}" >&2
   exit 1
 fi
-if [ -z "${TMUX_SESSION}" ] || [ -z "${GEMINI_PANE}" ] || [ -z "${CLAUDE_PANE}" ]; then
+if [ -z "${TMUX_SESSION}" ] || [ -z "${OSS_PANE}" ] || [ -z "${CLAUDE_PANE}" ]; then
   echo "bridge-nudge smoke: incomplete pane manifest" >&2
   exit 1
 fi
 /opt/homebrew/bin/tmux -S "${SMOKE_SOCKET}" has-session -t "${TMUX_SESSION}"
-wait_for_pane_text "${GEMINI_PANE}" "BOOTSTRAP_VERIFIED gemini" >/dev/null
+wait_for_pane_text "${OSS_PANE}" "BOOTSTRAP_VERIFIED oss" >/dev/null
 wait_for_pane_text "${CLAUDE_PANE}" "BOOTSTRAP_VERIFIED claude" >/dev/null
 
 RUN_DIR="$(dirname "${MANIFEST_PATH}")"
@@ -119,7 +124,7 @@ bun -e '
     jsonrpc: "2.0",
     method: "tools/call",
     params: {
-      arguments: { message, subject: "FULL-BODY-MUST-STAY-IN-LEDGER", target: "gemini" },
+      arguments: { message, subject: "FULL-BODY-MUST-STAY-IN-LEDGER", target: "oss" },
       name: "send_message",
     },
   }));
@@ -133,26 +138,26 @@ env \
   "${LOOP_ROOT}/loop" __bridge-mcp "${RUN_DIR}" claude \
   <"${BRIDGE_REQUEST_PATH}" >"${SMOKE_ROOT}/bridge.out" 2>"${SMOKE_ROOT}/bridge.err"
 
-GEMINI_OUTPUT="$(wait_for_pane_text "${GEMINI_PANE}" "NUDGE_SUBMITTED gemini")"
-if grep -Fq 'COMPILED-BRIDGE-SENTINEL' <<<"${GEMINI_OUTPUT}"; then
+OSS_OUTPUT="$(wait_for_pane_text "${OSS_PANE}" "NUDGE_SUBMITTED oss")"
+if grep -Fq 'COMPILED-BRIDGE-SENTINEL' <<<"${OSS_OUTPUT}"; then
   echo "bridge-nudge smoke: bridge body leaked into terminal" >&2
   exit 1
 fi
-if grep -Fq 'FULL-BODY-MUST-STAY-IN-LEDGER' <<<"${GEMINI_OUTPUT}"; then
+if grep -Fq 'FULL-BODY-MUST-STAY-IN-LEDGER' <<<"${OSS_OUTPUT}"; then
   echo "bridge-nudge smoke: bridge subject leaked into terminal" >&2
   exit 1
 fi
-grep -Fq 'NUDGE_RECEIVED gemini bytes=53 text="Bridge: 1 message waiting. Call receive_messages now."' <<<"${GEMINI_OUTPUT}"
-if [ "$(grep -Fc 'NUDGE_RECEIVED gemini' <<<"${GEMINI_OUTPUT}")" -ne 1 ]; then
+grep -Fq 'NUDGE_RECEIVED oss bytes=53 text="Bridge: 1 message waiting. Call receive_messages now."' <<<"${OSS_OUTPUT}"
+if [ "$(grep -Fc 'NUDGE_RECEIVED oss' <<<"${OSS_OUTPUT}")" -ne 1 ]; then
   echo "bridge-nudge smoke: duplicate terminal notifications" >&2
   exit 1
 fi
-grep -Eq 'accepted [^" ]+ for gemini delivery' "${SMOKE_ROOT}/bridge.out"
+grep -Eq 'accepted [^" ]+ for oss delivery' "${SMOKE_ROOT}/bridge.out"
 
 MESSAGE_ID="$(bun -e '
   import { readFileSync } from "node:fs";
   const events = readFileSync(process.argv[1], "utf8").trim().split(/\r?\n/).map(JSON.parse);
-  const message = events.find((event) => event.kind === "message" && event.target === "gemini" && event.message?.startsWith("COMPILED-BRIDGE-SENTINEL"));
+  const message = events.find((event) => event.kind === "message" && event.target === "oss" && event.message?.startsWith("COMPILED-BRIDGE-SENTINEL"));
   if (!message) throw new Error("full bridge body missing from ledger");
   const matching = events.filter((event) => event.id === message.id);
   if (!matching.some((event) => event.kind === "notified")) throw new Error("notification evidence missing");
@@ -166,7 +171,7 @@ env \
   "LOOP_SMOKE_REAL_TMUX=/opt/homebrew/bin/tmux" \
   "LOOP_TMUX_SOCKET=${SMOKE_SOCKET}" \
   "PATH=${SMOKE_ROOT}/bin:${PATH}" \
-  "${LOOP_ROOT}/loop" __bridge-mcp "${RUN_DIR}" gemini \
+  "${LOOP_ROOT}/loop" __bridge-mcp "${RUN_DIR}" oss \
   <"${SMOKE_ROOT}/receive-request.jsonl" >"${SMOKE_ROOT}/receive.out" 2>"${SMOKE_ROOT}/receive.err"
 
 bun -e '
@@ -182,4 +187,4 @@ bun -e '
   if (matching.filter((event) => event.kind === "delivered").length !== 1) throw new Error("expected one delivered resolution");
 ' "${SMOKE_ROOT}/receive.out" "${RUN_DIR}/bridge.jsonl" "${MESSAGE_ID}"
 
-echo "bridge-nudge smoke: session=${TMUX_SESSION} gemini=${GEMINI_PANE} claude=${CLAUDE_PANE} nudge-bytes=53 body=ledger-only receive=complete notification=unresolved-until-pull"
+echo "bridge-nudge smoke: session=${TMUX_SESSION} oss=${OSS_PANE} claude=${CLAUDE_PANE} nudge-bytes=53 body=ledger-only receive=complete notification=unresolved-until-pull"

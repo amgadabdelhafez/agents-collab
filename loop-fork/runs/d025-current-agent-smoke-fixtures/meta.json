@@ -1,0 +1,8 @@
+{
+  "id": "d025-current-agent-smoke-fixtures",
+  "mode": "planned",
+  "created_at": "2026-08-09T20:56:00Z",
+  "status": "done",
+  "description": "Migrate compiled launch smoke producers from retired seats to current agent protocols.",
+  "estimated_loc": 260
+}

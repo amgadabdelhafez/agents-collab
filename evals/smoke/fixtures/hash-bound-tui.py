@@ -20,7 +20,8 @@ MAX_BOOTSTRAP_BYTES = 1024
 MAX_NUDGE_BYTES = 128
 FOUNDER_SENTINEL = "BEGIN-LARGE-CHARTER"
 
-role = os.path.basename(sys.argv[0])
+executable_role = os.path.basename(sys.argv[0])
+role = "oss" if executable_role == "opencode" else executable_role
 prompt = "❯" if role == "claude" else "›"
 claude_startup = os.environ.get("LOOP_SMOKE_CLAUDE_STARTUP", "")
 trace_path = os.environ.get("LOOP_SMOKE_TRACE_PATH", "")
@@ -94,7 +95,7 @@ def read_initial_submission() -> bytes:
 
 def wait_for_gate() -> None:
     gate_dir = Path(".git")
-    if role != "gemini" or not (gate_dir / "loop-smoke-hash-gate").exists():
+    if role != "oss" or not (gate_dir / "loop-smoke-hash-gate").exists():
         return
     (gate_dir / f"loop-smoke-{role}.ready").touch()
     deadline = time.monotonic() + 10
@@ -103,6 +104,34 @@ def wait_for_gate() -> None:
             emit(f"BOOTSTRAP_GATE_TIMEOUT {role}")
             raise SystemExit(8)
         time.sleep(0.05)
+
+
+def record_claude_kickoff_hook() -> None:
+    if role != "claude":
+        return
+    run_id = os.environ.get("LOOP_RUN_ID", "")
+    if not run_id:
+        raise RuntimeError("Claude smoke fixture has no LOOP_RUN_ID")
+    candidates = list((Path.home() / ".loop" / "runs").glob(f"*/{run_id}"))
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Claude smoke fixture expected one run directory, found {len(candidates)}"
+        )
+    hooks = candidates[0] / "hooks"
+    hooks.mkdir(mode=0o700, exist_ok=True)
+    journal = hooks / "claude.jsonl"
+    event = {
+        "agent": "claude",
+        "cwd": os.getcwd(),
+        "event": "UserPromptSubmit",
+        "eventId": f"smoke-kickoff-{run_id}",
+        "sequence": 1,
+        "source": "agent-hook",
+        "state": "working",
+        "ts": "2026-08-09T00:00:00.000Z",
+    }
+    with journal.open("a", encoding="utf-8") as stream:
+        stream.write(f"{json.dumps(event, separators=(',', ':'))}\n")
 
 
 def verify_bootstrap(bootstrap_bytes: bytes) -> None:
@@ -145,6 +174,7 @@ def verify_bootstrap(bootstrap_bytes: bytes) -> None:
         )
     )
     emit(f"WORK_STARTED {role}")
+    record_claude_kickoff_hook()
 
 
 def receive_nudge() -> None:
@@ -226,7 +256,10 @@ try:
     tty.setraw(fd, termios.TCSANOW)
     prepare_input_prompt()
     bootstrap = read_initial_submission()
-    verify_bootstrap(bootstrap)
+    if bootstrap:
+        verify_bootstrap(bootstrap)
+    else:
+        emit(f"BOOTSTRAP_RESUME {role}")
     signal.alarm(30)
     receive_nudge()
     signal.alarm(0)

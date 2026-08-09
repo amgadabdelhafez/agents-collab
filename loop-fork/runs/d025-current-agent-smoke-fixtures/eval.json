@@ -1,0 +1,23 @@
+{
+  "task_id": "d025-current-agent-smoke-fixtures",
+  "status": "pass",
+  "required": ["unit", "smoke", "static", "review"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "active-launch manifest oracle proves OSS role mapping and exactly one deterministic run-scoped Claude kickoff hook per manifest"
+    },
+    "smoke": {
+      "status": "pass",
+      "evidence": "active-launch-interlock, paste-submit-readiness, and large-prompt-launch all pass on isolated exact sockets"
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "bash -n, Python py_compile, retired-seat scan, and git diff check pass"
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "independent zero-write review confirmed fixture-only scope, hook ordering and exactly-once behavior, current-agent mappings, exact-socket negative fixture, and compatibility"
+    }
+  }
+}

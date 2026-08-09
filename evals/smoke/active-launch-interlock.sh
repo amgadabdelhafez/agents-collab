@@ -143,7 +143,7 @@ run_isolated_launch() {
     "XDG_CONFIG_HOME=${SMOKE_ROOT}/xdg-config" \
     "XDG_DATA_HOME=${SMOKE_ROOT}/xdg-data" \
     "${SMOKE_LOOP_BINARY}" \
-    --tmux --agent gemini --pair-with cursor \
+    --tmux --agent oss --pair-with claude \
     --workspace "${workspace}" "$@" -p "${PROMPT_PATH}"
 }
 
@@ -153,7 +153,7 @@ assert_manifest_set() {
   SMOKE_EXPECTED_TMUX_SOCKET="${SMOKE_SOCKET}" bun -e '
     import { createHash } from "node:crypto";
     import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-    import { join } from "node:path";
+    import { dirname, join } from "node:path";
     const [home, promptPath, rawCount, ...bindingArgs] = process.argv.slice(1);
     const expectedCount = Number(rawCount);
     const runsRoot = join(home, ".loop", "runs");
@@ -194,7 +194,7 @@ assert_manifest_set() {
       if (manifest.sourceTaskSha256 !== promptSha) throw new Error(`${path} source charter hash mismatch`);
       if (manifest.workspaceBinding?.repoId !== manifest.repoId) throw new Error(`${path} workspace repo id mismatch`);
       const agents = [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent].sort();
-      if (JSON.stringify(agents) !== JSON.stringify(["cursor", "gemini"])) {
+      if (JSON.stringify(agents) !== JSON.stringify(["claude", "oss"])) {
         throw new Error(`${path} has unexpected agents ${agents.join("/")}`);
       }
       for (const agent of agents) {
@@ -202,6 +202,16 @@ assert_manifest_set() {
         if (!charterPath) throw new Error(`${path} has no ${agent} charter`);
         const charter = readFileSync(charterPath);
         if (charter.indexOf(prompt) === -1) throw new Error(`${agent} charter omitted or truncated the prompt`);
+      }
+      const hookPath = join(dirname(path), "hooks", "claude.jsonl");
+      if (!existsSync(hookPath)) throw new Error(`${path} has no Claude kickoff hook evidence`);
+      const kickoff = readFileSync(hookPath, "utf8").trim().split(/\r?\n/).filter(Boolean).map(JSON.parse)
+        .filter((event) => event.event === "UserPromptSubmit");
+      if (kickoff.length !== 1) throw new Error(`${path} has ${kickoff.length} Claude kickoff events`);
+      const [event] = kickoff;
+      if (event.agent !== "claude" || event.eventId !== `smoke-kickoff-${manifest.runId}` ||
+          event.source !== "agent-hook" || event.state !== "working" || event.sequence !== 1) {
+        throw new Error(`${path} has malformed Claude kickoff evidence`);
       }
     }
     if (repoIds.size !== 1) throw new Error(`expected one repository identity, got ${[...repoIds].join(",")}`);
@@ -266,12 +276,12 @@ wait_for_bootstraps() {
     output=""
     for _attempt in $(seq 1 40); do
       output="$(smoke_tmux capture-pane -p -J -S -120 -t "${pane}")"
-      if grep -Fq "BOOTSTRAP_VERIFIED ${agent}" <<<"${output}"; then
+      if grep -Eq "BOOTSTRAP_(VERIFIED|RESUME) ${agent}" <<<"${output}"; then
         break
       fi
       sleep 0.25
     done
-    if ! grep -Fq "BOOTSTRAP_VERIFIED ${agent}" <<<"${output}"; then
+    if ! grep -Eq "BOOTSTRAP_(VERIFIED|RESUME) ${agent}" <<<"${output}"; then
       echo "active-launch smoke: ${agent} pane ${pane} did not verify its charter" >&2
       printf '%s\n' "${output}" >&2
       exit 1
@@ -299,8 +309,8 @@ chmod 700 \
 printf '{"lastCheck":"%s"}\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
   >"${SMOKE_HOME}/.cache/loop/update/last-check.json"
 
-cp "${HASH_TUI}" "${SMOKE_BIN}/gemini"
-cp "${HASH_TUI}" "${SMOKE_BIN}/cursor"
+cp "${HASH_TUI}" "${SMOKE_BIN}/opencode"
+cp "${HASH_TUI}" "${SMOKE_BIN}/claude"
 cp "${TMUX_WRAPPER}" "${SMOKE_BIN}/tmux"
 chmod +x "${SMOKE_BIN}/"*
 
