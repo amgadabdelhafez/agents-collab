@@ -1,0 +1,11 @@
+{
+  "task_id": "d018-tmux-unavailable-targets",
+  "status": "pass",
+  "required": ["unit", "static", "build", "review"],
+  "dimensions": {
+    "unit": { "status": "pass", "summary": "Five owning suites passed 189 of 189" },
+    "static": { "status": "pass", "summary": "Exact ten-file Ultracite and diff check passed" },
+    "build": { "status": "pass", "summary": "Compiled loop binary successfully" },
+    "review": { "status": "pass", "summary": "Independent zero-write review passed" }
+  }
+}

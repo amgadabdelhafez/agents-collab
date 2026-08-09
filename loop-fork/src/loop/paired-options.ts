@@ -27,6 +27,7 @@ import {
   type RunManifest,
   type RunStorage,
   readRunManifest,
+  readRunManifestHandle,
   resolveExistingRunId,
   resolveRepoId,
   resolveRunId,
@@ -35,7 +36,13 @@ import {
   touchRunManifest,
   writeRunManifest,
 } from "./run-state";
-import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
+import { type TmuxLiveness, tmuxTargetLiveness } from "./tmux-control";
+import {
+  manifestSocketState,
+  type TmuxSkipSink,
+  type TmuxTarget,
+  targetFromManifest,
+} from "./tmux-socket";
 import type { Agent, Options, PairedSessionIds } from "./types";
 
 export interface PreparedRunState {
@@ -49,10 +56,11 @@ export interface PreparedPairedRun {
   storage: RunStorage;
 }
 
-type TmuxSessionProbe = (session: string) => boolean | TmuxLiveness;
+type TmuxTargetProbe = (target: TmuxTarget) => TmuxLiveness;
 
-const isTmuxSessionLive: TmuxSessionProbe = (session) =>
-  tmuxSessionLiveness(session, spawnSync);
+const defaultTmuxSkipSink: TmuxSkipSink = { record: () => undefined };
+const isTmuxTargetLive: TmuxTargetProbe = (target) =>
+  tmuxTargetLiveness(target, spawnSync);
 
 const defaultOssSessionLookup: OssSessionLookup = (argv, env) => {
   const result = spawnSync([OSS_COMMAND, ...argv], { env, stderr: "ignore" });
@@ -61,21 +69,30 @@ const defaultOssSessionLookup: OssSessionLookup = (argv, env) => {
 
 const persistedTmuxIsLive = (
   enabled: boolean,
-  session: string | undefined,
-  sessionProbe: TmuxSessionProbe
+  manifest: RunManifest | undefined,
+  storage: RunStorage,
+  targetProbe: TmuxTargetProbe,
+  skipSink: TmuxSkipSink
 ): boolean => {
+  const session = manifest?.tmuxSession;
   if (!(enabled && session)) {
     return false;
   }
-  const probed = sessionProbe(session);
-  let liveness: TmuxLiveness;
-  if (probed === true) {
-    liveness = "live";
-  } else if (probed === false) {
-    liveness = "dead";
-  } else {
-    liveness = probed;
+  const handle = readRunManifestHandle(storage.manifestPath);
+  const target = handle ? targetFromManifest(handle) : undefined;
+  if (!target) {
+    skipSink.record({
+      consumer: "paired-options.persistedTmuxIsLive",
+      effectSkipped: "clear-or-duplicate-persisted-tmux-state",
+      pane: null,
+      reason:
+        "persisted manifest target is unavailable; refusing to clear or duplicate tmux state",
+      runId: manifest.runId,
+      session,
+      socketState: handle ? manifestSocketState(handle) : "unknown",
+    });
   }
+  const liveness = target ? targetProbe(target) : "unknown";
   if (liveness === "unknown") {
     throw new Error(
       `tmux session "${session}" liveness is unknown; refusing to clear or duplicate it`
@@ -437,14 +454,17 @@ export const preparePairedOptions = (
   opts: Options,
   cwd = process.cwd(),
   createManifest = true,
-  sessionProbe: TmuxSessionProbe = isTmuxSessionLive
+  targetProbe: TmuxTargetProbe = isTmuxTargetLive,
+  skipSink: TmuxSkipSink = defaultTmuxSkipSink
 ): void => {
   const { allowRawSessionFallback, manifest, storage } =
     resolvePreparedRunState(opts, cwd, createManifest);
   const livePersistedTmux = persistedTmuxIsLive(
     opts.tmux === true,
-    manifest?.tmuxSession,
-    sessionProbe
+    manifest,
+    storage,
+    targetProbe,
+    skipSink
   );
   applyPairedOptions(
     opts,
@@ -472,7 +492,8 @@ const preparedEffortManifestFields = (
 export const preparePairedRun = (
   opts: Options,
   cwd = process.cwd(),
-  sessionProbe: TmuxSessionProbe = isTmuxSessionLive
+  targetProbe: TmuxTargetProbe = isTmuxTargetLive,
+  skipSink: TmuxSkipSink = defaultTmuxSkipSink
 ): PreparedPairedRun => {
   const {
     allowRawSessionFallback,
@@ -481,8 +502,10 @@ export const preparePairedRun = (
   } = resolvePreparedRunState(opts, cwd);
   const livePersistedTmux = persistedTmuxIsLive(
     opts.tmux === true,
-    existing?.tmuxSession,
-    sessionProbe
+    existing,
+    storage,
+    targetProbe,
+    skipSink
   );
   applyPairedOptions(
     opts,

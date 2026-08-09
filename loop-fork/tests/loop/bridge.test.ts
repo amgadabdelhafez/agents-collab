@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readDelegationEvents } from "../../src/loop/delegation-policy";
 import { readRunManifest } from "../../src/loop/run-state";
+import { createTmuxSkipSink } from "../../src/loop/tmux-socket";
 import { transitionUtilityJob } from "../../src/loop/utility-store";
 
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
@@ -458,14 +459,19 @@ test("readBridgeRuntimeStatus socket-qualifies manifest targets and distinguishe
       const session = args.at(-1);
       return {
         exitCode: session === "repo-loop-live" ? 0 : 1,
-        stderr: Buffer.alloc(0),
+        stderr:
+          session === "repo-loop-live"
+            ? Buffer.alloc(0)
+            : Buffer.from("can't find session"),
         stdout: Buffer.alloc(0),
       };
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
   const bridge = await loadBridge();
+  const skipSink = createTmuxSkipSink();
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.skipSink = skipSink;
   bridge.bridgeInternals.commandDeps.spawnSync = spawnSync;
   const root = makeTempDir();
   const liveRunDir = join(root, "live");
@@ -535,9 +541,90 @@ test("readBridgeRuntimeStatus socket-qualifies manifest targets and distinguishe
     hasCodexRemote: true,
     hasLiveTmuxSession: false,
     hasTmuxSession: true,
+    tmuxLiveness: "dead",
   });
+  expect(skipSink.records).toEqual([]);
 
   rmSync(root, { recursive: true, force: true });
+});
+
+test("readBridgeRuntimeStatus records unavailable manifest targets as unknown", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const fixtures = [
+    {
+      fields: { tmuxSession: "repo-loop-unknown" },
+      socketState: "missing",
+    },
+    {
+      fields: {
+        tmuxSession: "repo-loop-unknown",
+        tmuxSocket: "relative/tmux.sock",
+      },
+      socketState: "invalid",
+    },
+    {
+      fields: {
+        tmuxSession: "repo-loop-unknown",
+        tmuxSocket: "/tmp/bridge-a.sock",
+        tmux_socket: "/tmp/bridge-b.sock",
+      },
+      socketState: "conflicting",
+    },
+    {
+      fields: { tmuxSocket: "/tmp/bridge-a.sock" },
+      socketState: "unknown",
+    },
+  ] as const;
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      const runDir = join(root, String(index));
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(
+        join(runDir, "manifest.json"),
+        `${JSON.stringify({
+          createdAt: "2026-03-27T10:00:00.000Z",
+          cwd: "/repo",
+          mode: "paired",
+          pid: 1234,
+          repoId: "repo-123",
+          runId: `unknown-${index}`,
+          state: "running",
+          status: "running",
+          updatedAt: "2026-03-27T10:00:00.000Z",
+          ...fixture.fields,
+        })}\n`,
+        "utf8"
+      );
+      const spawnSync = mock(() => {
+        throw new Error("unavailable targets must not contact tmux");
+      });
+      const skipSink = createTmuxSkipSink();
+      bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+      bridge.bridgeRuntimeCommandDeps.skipSink = skipSink;
+
+      expect(bridge.readBridgeRuntimeStatus(runDir)).toMatchObject({
+        hasLiveTmuxSession: false,
+        tmuxLiveness: "unknown",
+      });
+      expect(spawnSync).not.toHaveBeenCalled();
+      expect(skipSink.records).toEqual([
+        {
+          consumer: "bridge-runtime.readBridgeRuntimeStatus",
+          effectSkipped: "probe-tmux-session-liveness",
+          pane: null,
+          reason:
+            "manifest target is unavailable; bridge tmux liveness is unknown",
+          runId: `unknown-${index}`,
+          session:
+            "tmuxSession" in fixture.fields ? fixture.fields.tmuxSession : null,
+          socketState: fixture.socketState,
+        },
+      ]);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("tmux timeout preserves bridge routing as unknown without socket-blind fallback delivery", async () => {

@@ -56,6 +56,7 @@ import {
   resolveRunStorage,
   writeRunManifest,
 } from "../../src/loop/run-state";
+import { createTmuxSkipSink } from "../../src/loop/tmux-socket";
 
 const tempDir = (): string => mkdtempSync(join(tmpdir(), "governess-runtime-"));
 
@@ -454,6 +455,7 @@ test("governess replay socket-qualifies the persisted run target and ignores rep
   const cwd = join(root, "repo");
   mkdirSync(cwd, { recursive: true });
   const storage = resolveRunStorage("1", cwd, home);
+  mkdirSync(storage.runDir, { recursive: true });
   const manifestInput = {
     cwd,
     mode: "paired",
@@ -538,6 +540,93 @@ test("governess replay socket-qualifies the persisted run target and ignores rep
     expect(calls).toEqual([]);
   } finally {
     governessReplayCommandDeps.spawnSync = originalSpawnSync;
+  }
+});
+
+test("governessDoctor records unavailable manifest targets as unknown", () => {
+  const root = tempDir();
+  const home = join(root, "home");
+  const cwd = join(root, "repo");
+  mkdirSync(cwd, { recursive: true });
+  const storage = resolveRunStorage("1", cwd, home);
+  mkdirSync(storage.runDir, { recursive: true });
+  const fixtures = [
+    {
+      fields: { tmuxSession: "repo-loop-1" },
+      socketState: "missing",
+    },
+    {
+      fields: {
+        tmuxSession: "repo-loop-1",
+        tmuxSocket: "relative/tmux.sock",
+      },
+      socketState: "invalid",
+    },
+    {
+      fields: {
+        tmuxSession: "repo-loop-1",
+        tmuxSocket: "/tmp/governess-a.sock",
+        tmux_socket: "/tmp/governess-b.sock",
+      },
+      socketState: "conflicting",
+    },
+    {
+      fields: { tmuxSocket: "/tmp/governess-a.sock" },
+      socketState: "unknown",
+    },
+  ] as const;
+  const originalSpawnSync = governessReplayCommandDeps.spawnSync;
+  const originalSkipSink = governessReplayCommandDeps.skipSink;
+  try {
+    for (const fixture of fixtures) {
+      writeFileSync(
+        storage.manifestPath,
+        JSON.stringify({
+          createdAt: "2026-03-27T10:00:00.000Z",
+          cwd,
+          mode: "paired",
+          pid: 1234,
+          repoId: storage.repoId,
+          runId: "1",
+          state: "running",
+          status: "running",
+          updatedAt: "2026-03-27T10:00:00.000Z",
+          ...fixture.fields,
+        })
+      );
+      const spawnSync = mock(() => {
+        throw new Error("unavailable targets must not contact tmux");
+      });
+      const skipSink = createTmuxSkipSink();
+      governessReplayCommandDeps.spawnSync = spawnSync as never;
+      governessReplayCommandDeps.skipSink = skipSink;
+
+      const report = governessDoctor("1", cwd, home) as {
+        checks: { session: boolean };
+        sessionLiveness: string;
+        sessionReady: boolean | string;
+      };
+      expect(report.sessionLiveness).toBe("unknown");
+      expect(report.sessionReady).toBe("unknown");
+      expect(report.checks.session).toBe(false);
+      expect(spawnSync).not.toHaveBeenCalled();
+      expect(skipSink.records).toEqual([
+        {
+          consumer: "governess-replay.governessDoctor",
+          effectSkipped: "probe-governess-session-readiness",
+          pane: null,
+          reason:
+            "manifest target is unavailable; Governess replay readiness is unknown",
+          runId: "1",
+          session:
+            "tmuxSession" in fixture.fields ? fixture.fields.tmuxSession : null,
+          socketState: fixture.socketState,
+        },
+      ]);
+    }
+  } finally {
+    governessReplayCommandDeps.spawnSync = originalSpawnSync;
+    governessReplayCommandDeps.skipSink = originalSkipSink;
   }
 });
 

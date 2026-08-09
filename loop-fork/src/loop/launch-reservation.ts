@@ -21,7 +21,9 @@ import {
 } from "./run-state";
 import { type TmuxLiveness, tmuxTargetLivenessAsync } from "./tmux-control";
 import {
+  manifestSocketState,
   resolveTmuxSocket,
+  type TmuxSkipSink,
   type TmuxTarget,
   targetFromManifest,
 } from "./tmux-socket";
@@ -29,6 +31,9 @@ import type { LaunchWorkspaceBinding, Options } from "./types";
 
 const LOCK_FILE = ".paired-launch.lock";
 const LOCK_STALE_MS = 5000;
+const defaultTmuxSkipSink: TmuxSkipSink = { record: () => undefined };
+
+type ManifestHandle = NonNullable<ReturnType<typeof readRunManifestHandle>>;
 
 interface LaunchReservationDeps {
   /**
@@ -51,6 +56,7 @@ interface LaunchReservationDeps {
     env: Readonly<Record<string, string | undefined>>,
     uid: number
   ) => string;
+  skipSink: TmuxSkipSink;
   tmuxLiveness: (
     target: TmuxTarget | undefined
   ) => Promise<TmuxLiveness> | TmuxLiveness;
@@ -84,6 +90,7 @@ const defaultDeps = (): LaunchReservationDeps => ({
   now: () => new Date().toISOString(),
   pid: process.pid,
   resolveSocket: (env, uid) => resolveTmuxSocket(env, { uid }).socket,
+  skipSink: defaultTmuxSkipSink,
   tmuxLiveness: tmuxTargetLivenessAsync,
   uid: process.getuid?.() ?? 0,
 });
@@ -121,10 +128,23 @@ const workspaceConflict = (
 
 const manifestCanStillOwnWorkspace = async (
   manifest: RunManifest,
+  handle: ManifestHandle | undefined,
   target: TmuxTarget | undefined,
   deps: LaunchReservationDeps
 ): Promise<boolean> => {
-  const tmux = manifest.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
+  if (!target) {
+    deps.skipSink.record({
+      consumer: "launch-reservation.manifestCanStillOwnWorkspace",
+      effectSkipped: "release-workspace-ownership",
+      pane: null,
+      reason: "manifest target is unavailable; preserving workspace ownership",
+      runId: manifest.runId,
+      session: manifest.tmuxSession ?? null,
+      socketState: handle ? manifestSocketState(handle) : "unknown",
+    });
+    return true;
+  }
+  const tmux = await deps.tmuxLiveness(target);
   if (tmux !== "dead") {
     return true;
   }
@@ -142,6 +162,7 @@ const conflictError = (manifest: RunManifest): Error => {
 };
 
 interface StoredManifest {
+  handle: ManifestHandle | undefined;
   manifest: RunManifest;
   target: TmuxTarget | undefined;
 }
@@ -160,6 +181,7 @@ const storedManifests = async (repoDir: string): Promise<StoredManifest[]> => {
     if (manifest) {
       const handle = readRunManifestHandle(manifestPath);
       manifests.push({
+        handle,
         manifest,
         target: handle ? targetFromManifest(handle) : undefined,
       });
@@ -177,10 +199,10 @@ const assertNoConflict = async (
   excludedRunId: string | undefined,
   deps: LaunchReservationDeps
 ): Promise<void> => {
-  for (const { manifest, target } of manifests) {
+  for (const { handle, manifest, target } of manifests) {
     if (
       manifest.runId === excludedRunId ||
-      !(await manifestCanStillOwnWorkspace(manifest, target, deps))
+      !(await manifestCanStillOwnWorkspace(manifest, handle, target, deps))
     ) {
       continue;
     }
@@ -230,7 +252,20 @@ const reserveRequestedLaunch = async (
 ): Promise<PairedLaunchClaim> => {
   const handle = readRunManifestHandle(storage.manifestPath);
   const target = handle ? targetFromManifest(handle) : undefined;
-  const tmux = requested.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
+  if (!target) {
+    deps.skipSink.record({
+      consumer: "launch-reservation.reserveRequestedLaunch",
+      effectSkipped: "reserve-requested-launch",
+      pane: null,
+      reason:
+        "requested manifest target is unavailable; refusing launch reservation",
+      runId: requested.runId,
+      session: requested.tmuxSession ?? null,
+      socketState: handle ? manifestSocketState(handle) : "unknown",
+    });
+    throw conflictError(requested);
+  }
+  const tmux = await deps.tmuxLiveness(target);
   if (tmux === "unknown") {
     throw conflictError(requested);
   }
