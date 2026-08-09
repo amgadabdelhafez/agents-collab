@@ -1,0 +1,21 @@
+task_id: d016-release-packaging-version-drift
+dimension: unit
+attempt: 001
+started_at: 2026-08-09T18:27:40Z
+command: bun run test:file -- tests/release-packaging.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/release-packaging.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/release-packaging.test.ts:
+(pass) root release workflow packages the full-repository Loop layout [1.36ms]
+
+ 1 pass
+ 0 fail
+ 10 expect() calls
+Ran 1 test across 1 file. [60.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-09T18:27:40Z

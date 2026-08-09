@@ -1,7 +1,7 @@
 ---
-kind: defect
+kind: parked-idea
 id: d016-release-packaging-version-drift
-status: active
+status: parked
 created_at: 2026-08-09T18:13:34Z
 source_task: d015-paired-attach-terminal
 ---
@@ -18,10 +18,10 @@ Installed Harness v1.0.38 full test sweep fails tests/release-packaging.test.ts 
 
 - Active task: d015-paired-attach-terminal
 
-## Acceptance
+## Promotion
 
-- The test validates a semantic package version without pinning a historical
-  release number.
-- The workflow must still derive its release tag from
-  `loop-fork/package.json` and preserve the full-repository packaging contract.
-- The exact test and the complete certified suite pass.
+Run:
+
+```bash
+./harness promote d016-release-packaging-version-drift
+```

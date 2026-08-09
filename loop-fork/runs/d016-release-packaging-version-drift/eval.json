@@ -1,0 +1,28 @@
+{
+  "task_id": "d016-release-packaging-version-drift",
+  "status": "pass",
+  "required": [
+    "unit",
+    "static"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/d016-release-packaging-version-drift/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/d016-release-packaging-version-drift/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/d016-release-packaging-version-drift/artifacts/unit/attempt-001.json"
+    },
+    "static": {
+      "status": "pass",
+      "artifact": "runs/d016-release-packaging-version-drift/artifacts/static/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/d016-release-packaging-version-drift/artifacts/static/attempt-001.log",
+      "latest_attempt_meta": "runs/d016-release-packaging-version-drift/artifacts/static/attempt-001.json"
+    }
+  }
+}
