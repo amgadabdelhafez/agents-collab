@@ -1,0 +1,38 @@
+{
+  "task_id": "d031-governess-tmux-skip-records",
+  "status": "pass",
+  "required": [
+    "correctness",
+    "fail_closed",
+    "authority",
+    "tests_static",
+    "scope",
+    "review"
+  ],
+  "dimensions": {
+    "correctness": {
+      "status": "pass",
+      "evidence": "All 11 default Governess tmux surfaces emit exact field-complete TmuxSkipRecord values for unavailable targets. Compound border initialization and Governess pane identity re-read manifest authority immediately before their second commands; manifest drift permits only the exact first A command and emits the exact surface-level skip."
+    },
+    "fail_closed": {
+      "status": "pass",
+      "evidence": "Missing, invalid, conflicting, unrecorded-pane, wrong-session, changed-authority, and one-sided handle-bracket paths issue no unauthorized tmux contact or respawn. Pane-death skips are recorded at initial resolution, pre-attempt revalidation, and post-durable-attempt revalidation while preserving restart-budget and journal ordering."
+    },
+    "authority": {
+      "status": "pass",
+      "evidence": "Every reviewed command remains composed from manifest-derived opaque TmuxTarget or OwnedPaneTarget authority. No socket, session, pane, hook, or dependency-injection surface was widened, and D-014 through D-030 targeting invariants remain intact."
+    },
+    "tests_static": {
+      "status": "pass",
+      "evidence": "Independent certified focused runs passed: Governess 89 tests, 0 failures, 510 assertions; Governess pane liveness 32 tests, 0 failures, 115 assertions. The tmux migration checker, exact documented TypeScript invocation, 205-file repository static check, and git diff check all passed."
+    },
+    "scope": {
+      "status": "pass",
+      "evidence": "D-031 is bounded to Governess default tmux adapters, pane-liveness handling, owning tests, task specification, run metadata, and Harness task/backlog bookkeeping. No product lane, modernization work, installed runtime, live tmux state, or historical run evidence was modified."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent zero-write review passed after three correction rounds, including explicit review of production ordering, record fields and reasons, degraded set coverage, authority coherence, and scope isolation."
+    }
+  }
+}

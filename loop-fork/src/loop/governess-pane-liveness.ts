@@ -5,7 +5,7 @@ import {
   readFileSync,
   statSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "bun";
 import {
   isActiveRunState,
@@ -20,6 +20,8 @@ import {
   type OwnedPaneTarget,
   paneArgv,
   paneTargetFromManifest,
+  type TmuxSkipSink,
+  type TmuxSocketState,
 } from "./tmux-socket";
 
 export const GOVERNESS_PANE_DIED_SUBCOMMAND = "__governess-pane-died";
@@ -83,6 +85,7 @@ export interface GovernessPaneLivenessDeps {
   readJournal: (path: string) => JournalRead;
   readManifest: (path: string) => RunManifest | undefined;
   respawnPane: (target: OwnedPaneTarget) => boolean;
+  skipSink?: TmuxSkipSink;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -221,6 +224,7 @@ export const defaultGovernessPaneLivenessDeps =
     readJournal: defaultReadJournal,
     readManifest: (path) => readRunManifest(path),
     respawnPane: defaultRespawnPane,
+    skipSink: { record: () => undefined },
   });
 
 const ownedGovernessPane = (
@@ -233,6 +237,8 @@ const unavailableTargetReason = (handle: ManifestHandle | undefined): string =>
 
 interface OwnedPaneSnapshot {
   reason?: string;
+  runId?: string;
+  socketState?: TmuxSocketState;
   target?: OwnedPaneTarget;
 }
 
@@ -244,17 +250,33 @@ const readOwnedPaneSnapshot = (
   const before = deps.readHandle(manifestPath);
   const manifest = deps.readManifest(manifestPath);
   const after = deps.readHandle(manifestPath);
+  const evidenceHandle = after ?? before;
+  const evidence = {
+    runId: evidenceHandle?.runId ?? basename(input.runDir),
+    socketState: evidenceHandle
+      ? manifestSocketState(evidenceHandle)
+      : ("missing" as const),
+  };
   if (!manifestOwnsPane(manifest, input)) {
-    return { reason: "run-inactive-or-ownership-mismatch" };
+    return { ...evidence, reason: "run-inactive-or-ownership-mismatch" };
+  }
+  if (Boolean(before) !== Boolean(after)) {
+    return {
+      ...evidence,
+      reason: "manifest-changed-during-target-read",
+      socketState: "unknown",
+    };
   }
   if (!(before && after)) {
-    return { reason: unavailableTargetReason(after ?? before) };
+    return { ...evidence, reason: unavailableTargetReason(evidenceHandle) };
   }
   if (before.manifestSha256 !== after.manifestSha256) {
-    return { reason: "manifest-changed-during-target-read" };
+    return { ...evidence, reason: "manifest-changed-during-target-read" };
   }
   const target = ownedGovernessPane(after);
-  return target ? { target } : { reason: unavailableTargetReason(after) };
+  return target
+    ? { ...evidence, target }
+    : { ...evidence, reason: unavailableTargetReason(after) };
 };
 
 const livenessEvent = (
@@ -300,6 +322,23 @@ export const parseGovernessPaneDiedArgs = (
   return { pane, runDir: resolve(rawRunDir), session };
 };
 
+const recordRespawnSkip = (
+  deps: GovernessPaneLivenessDeps,
+  input: GovernessPaneDiedInput,
+  snapshot: OwnedPaneSnapshot,
+  fallbackReason: string
+): void => {
+  deps.skipSink?.record({
+    consumer: "governess-pane-liveness",
+    effectSkipped: "respawn-pane",
+    pane: input.pane,
+    reason: snapshot.reason ?? fallbackReason,
+    runId: snapshot.runId ?? basename(input.runDir),
+    session: input.session,
+    socketState: snapshot.socketState ?? "unknown",
+  });
+};
+
 export const handleGovernessPaneDied = (
   input: GovernessPaneDiedInput,
   overrides: Partial<GovernessPaneLivenessDeps> = {}
@@ -310,6 +349,7 @@ export const handleGovernessPaneDied = (
   const initial = readOwnedPaneSnapshot(deps, manifestPath, input);
   const initialTarget = initial.target;
   if (!initialTarget) {
+    recordRespawnSkip(deps, input, initial, "tmux-target-missing");
     return result("spared", initial.reason ?? "tmux-target-missing");
   }
   if (!snapshotMatches(deps.inspectPane(initialTarget), input)) {
@@ -343,6 +383,7 @@ export const handleGovernessPaneDied = (
   const current = readOwnedPaneSnapshot(deps, manifestPath, input);
   const currentTarget = current.target;
   if (!currentTarget) {
+    recordRespawnSkip(deps, input, current, "ownership-changed-before-respawn");
     return result(
       "spared",
       "ownership-changed-before-respawn",
@@ -362,6 +403,7 @@ export const handleGovernessPaneDied = (
   const effect = readOwnedPaneSnapshot(deps, manifestPath, input);
   const effectTarget = effect.target;
   if (!effectTarget) {
+    recordRespawnSkip(deps, input, effect, "ownership-changed-after-attempt");
     return result(
       "spared",
       "ownership-changed-after-attempt",

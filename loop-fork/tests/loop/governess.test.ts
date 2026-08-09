@@ -53,7 +53,11 @@ import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
 import {
   createManifestHandle,
+  createTmuxSkipSink,
+  describeTmuxTarget,
+  manifestSocketState,
   paneTargetFromManifest,
+  targetFromManifest,
 } from "../../src/loop/tmux-socket";
 import type {
   Agent,
@@ -2996,6 +3000,7 @@ test.each([
   ],
 ] as const)("default Governess rejects a %s target before tmux contact", (_label, handle) => {
   const calls: string[][] = [];
+  const skips = createTmuxSkipSink();
   const deps = defaultGovernessDeps(
     undefined,
     undefined,
@@ -3006,10 +3011,245 @@ test.each([
         calls.push(argv);
         return { exitCode: 0 };
       }) as never,
+      skipSink: skips,
     }
   );
   expect(() => deps.capturePane("%1")).toThrow();
   expect(calls).toEqual([]);
+  const manifestTarget = handle ? targetFromManifest(handle) : undefined;
+  expect(skips.records).toEqual([
+    {
+      consumer: "governess-runtime",
+      effectSkipped: "capture-pane",
+      pane: "%1",
+      reason: manifestTarget
+        ? "pane is not owned by the manifest target"
+        : "manifest target is unavailable",
+      runId: handle?.runId ?? "run",
+      session: manifestTarget
+        ? describeTmuxTarget(manifestTarget).session
+        : null,
+      socketState: handle ? manifestSocketState(handle) : "missing",
+    },
+  ]);
+});
+
+test("every unavailable default Governess tmux surface records its skipped effect", () => {
+  const cases: [string, (deps: GovernessDeps) => unknown][] = [
+    ["capture-pane", (deps) => deps.capturePane("%1")],
+    ["initialize-pane-borders", (deps) => deps.initPaneBorders("run-loop")],
+    ["kill-session", (deps) => deps.killSession?.("run-loop")],
+    ["display-pane-command", (deps) => deps.paneCommand?.("%1")],
+    [
+      "read-pane-command",
+      (deps) => deps.readPaneCommands?.([{ agent: "claude", pane: "%1" }]),
+    ],
+    [
+      "check-replacement-readiness",
+      (deps) =>
+        deps.replacementSessionReady("run-loop", "/tmp/run/manifest.json"),
+    ],
+    ["respawn-pane", (deps) => deps.respawnPane("%1")],
+    ["set-pane-label", (deps) => deps.setPaneLabel("%1", "Claude")],
+    [
+      "set-governess-pane-identity",
+      (deps) => deps.setGovernessPaneIdentity("%1", "Governess"),
+    ],
+    ["send-keys", (deps) => deps.sendKeys("%1", ["Enter"])],
+    ["send-text", (deps) => deps.sendText("%1", "hello")],
+  ];
+
+  for (const [effectSkipped, invoke] of cases) {
+    const calls: string[][] = [];
+    const skips = createTmuxSkipSink();
+    const deps = defaultGovernessDeps(
+      undefined,
+      undefined,
+      "/tmp/run/manifest.json",
+      {
+        readManifestHandle: () => undefined,
+        run: ((argv: string[]) => {
+          calls.push(argv);
+          return { exitCode: 0 };
+        }) as never,
+        skipSink: skips,
+      }
+    );
+    try {
+      invoke(deps);
+    } catch (error) {
+      expect(error).toBeInstanceOf(TmuxControlUnavailableError);
+    }
+    expect(calls, effectSkipped).toEqual([]);
+    expect(skips.records, effectSkipped).toEqual([
+      {
+        consumer: "governess-runtime",
+        effectSkipped,
+        pane:
+          effectSkipped.includes("session") ||
+          effectSkipped === "initialize-pane-borders" ||
+          effectSkipped === "check-replacement-readiness"
+            ? null
+            : "%1",
+        reason: "manifest target is unavailable",
+        runId: "run",
+        session:
+          effectSkipped.includes("session") ||
+          effectSkipped === "initialize-pane-borders" ||
+          effectSkipped === "check-replacement-readiness"
+            ? "run-loop"
+            : null,
+        socketState: "missing",
+      },
+    ]);
+  }
+});
+
+test("default Governess records a valid target with the wrong requested session", () => {
+  const calls: string[][] = [];
+  const skips = createTmuxSkipSink();
+  const handle = createManifestHandle({
+    manifestPath: "/tmp/run/manifest.json",
+    manifestSha256: "a".repeat(64),
+    runId: "34",
+    session: "recorded-loop",
+    socket: "/tmp/governess.sock",
+  });
+  const deps = defaultGovernessDeps(
+    undefined,
+    undefined,
+    "/tmp/run/manifest.json",
+    {
+      readManifestHandle: () => handle,
+      run: ((argv: string[]) => {
+        calls.push(argv);
+        return { exitCode: 0 };
+      }) as never,
+      skipSink: skips,
+    }
+  );
+
+  expect(() => deps.killSession?.("requested-loop")).toThrow();
+  expect(calls).toEqual([]);
+  expect(skips.records).toEqual([
+    {
+      consumer: "governess-runtime",
+      effectSkipped: "kill-session",
+      pane: null,
+      reason: "manifest target session does not match requested session",
+      runId: "34",
+      session: "requested-loop",
+      socketState: "unknown",
+    },
+  ]);
+});
+
+test("compound border initialization revalidates authority before its second command", () => {
+  let reads = 0;
+  const calls: string[][] = [];
+  const skips = createTmuxSkipSink();
+  const deps = defaultGovernessDeps(
+    undefined,
+    undefined,
+    "/tmp/run/manifest.json",
+    {
+      readManifestHandle: () => {
+        reads += 1;
+        return createManifestHandle({
+          manifestPath: "/tmp/run/manifest.json",
+          manifestSha256: (reads === 1 ? "a" : "b").repeat(64),
+          runId: "34",
+          session: "run-loop",
+          socket: reads === 1 ? "/tmp/server-a.sock" : "/tmp/server-b.sock",
+        });
+      },
+      run: ((argv: string[]) => {
+        calls.push(argv);
+        return { exitCode: 0 };
+      }) as never,
+      skipSink: skips,
+    }
+  );
+
+  expect(() => deps.initPaneBorders("run-loop")).toThrow();
+  expect(calls).toEqual([
+    [
+      "tmux",
+      "-S",
+      "/tmp/server-a.sock",
+      "set-option",
+      "-t",
+      "run-loop",
+      "pane-border-status",
+      "top",
+    ],
+  ]);
+  expect(skips.records).toEqual([
+    {
+      consumer: "governess-runtime",
+      effectSkipped: "initialize-pane-borders",
+      pane: null,
+      reason: "manifest target changed during compound effect",
+      runId: "34",
+      session: "run-loop",
+      socketState: "unknown",
+    },
+  ]);
+});
+
+test("compound Governess pane identity revalidates authority before its second command", () => {
+  let reads = 0;
+  const calls: string[][] = [];
+  const skips = createTmuxSkipSink();
+  const deps = defaultGovernessDeps(
+    undefined,
+    undefined,
+    "/tmp/run/manifest.json",
+    {
+      readManifestHandle: () => {
+        reads += 1;
+        return createManifestHandle({
+          manifestPath: "/tmp/run/manifest.json",
+          manifestSha256: (reads === 1 ? "a" : "b").repeat(64),
+          panes: { tmuxPaneGoverness: "%1" },
+          runId: "34",
+          session: "run-loop",
+          socket: reads === 1 ? "/tmp/server-a.sock" : "/tmp/server-b.sock",
+        });
+      },
+      run: ((argv: string[]) => {
+        calls.push(argv);
+        return { exitCode: 0 };
+      }) as never,
+      skipSink: skips,
+    }
+  );
+
+  expect(() => deps.setGovernessPaneIdentity("%1", "Governess")).toThrow();
+  expect(calls).toEqual([
+    [
+      "tmux",
+      "-S",
+      "/tmp/server-a.sock",
+      "set-option",
+      "-t",
+      "%1",
+      "-p",
+      "@loop_label",
+      "Governess",
+    ],
+  ]);
+  expect(skips.records).toEqual([
+    {
+      consumer: "governess-runtime",
+      effectSkipped: "set-governess-pane-identity",
+      pane: "%1",
+      reason: "manifest target changed during compound effect",
+      runId: "34",
+      session: "run-loop",
+      socketState: "unknown",
+    },
+  ]);
 });
 
 test("replacement readiness uses the replacement manifest server", () => {

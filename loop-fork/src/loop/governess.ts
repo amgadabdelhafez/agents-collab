@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawnSync } from "bun";
 import { isAgent } from "./agents";
@@ -161,9 +161,11 @@ import {
 } from "./tmux-control";
 import {
   describeTmuxTarget,
+  manifestSocketState,
   type OwnedPaneTarget,
   paneArgv,
   paneTargetByValueFromManifest,
+  type TmuxSkipSink,
   type TmuxTarget,
   targetArgv,
   targetFromManifest,
@@ -6485,7 +6487,10 @@ interface GovernessReplacementDeps {
 interface GovernessTmuxDeps {
   readManifestHandle: typeof readRunManifestHandle;
   run: typeof spawnSync;
+  skipSink?: TmuxSkipSink;
 }
+
+const NOOP_TMUX_SKIP_SINK: TmuxSkipSink = { record: () => undefined };
 
 export const defaultGovernessDeps = (
   readUsageLimits = createStableUsageLimitReader(),
@@ -6502,26 +6507,91 @@ export const defaultGovernessDeps = (
     run: spawnSync,
   }
 ): GovernessDeps => {
-  const requireTarget = (session: string, path = manifestPath): TmuxTarget => {
+  const skipSink = tmuxDeps.skipSink ?? NOOP_TMUX_SKIP_SINK;
+  const runIdFor = (
+    handle: ReturnType<typeof readRunManifestHandle>,
+    path: string | undefined
+  ): string => handle?.runId ?? (path ? basename(dirname(path)) : "unbound");
+  const readRequiredTarget = (
+    session: string,
+    path = manifestPath,
+    effectSkipped = "session-effect",
+    expectedManifestSha256?: string
+  ): { manifestSha256: string; target: TmuxTarget } => {
     const handle = path ? tmuxDeps.readManifestHandle(path) : undefined;
     const target = handle ? targetFromManifest(handle) : undefined;
-    if (!(target && describeTmuxTarget(target).session === session)) {
+    const changed =
+      expectedManifestSha256 !== undefined &&
+      handle?.manifestSha256 !== expectedManifestSha256;
+    if (
+      changed ||
+      !(target && describeTmuxTarget(target).session === session)
+    ) {
+      let reason = "manifest target is unavailable";
+      if (changed) {
+        reason = "manifest target changed during compound effect";
+      } else if (target) {
+        reason = "manifest target session does not match requested session";
+      }
+      skipSink.record({
+        consumer: "governess-runtime",
+        effectSkipped,
+        pane: null,
+        reason,
+        runId: runIdFor(handle, path),
+        session,
+        socketState: handle ? manifestSocketState(handle) : "missing",
+      });
       throw new TmuxControlUnavailableError(["manifest-target", session]);
     }
-    return target;
+    return { manifestSha256: handle.manifestSha256, target };
   };
-  const requirePane = (pane: string): OwnedPaneTarget => {
+  const requireTarget = (
+    session: string,
+    path = manifestPath,
+    effectSkipped = "session-effect"
+  ): TmuxTarget => readRequiredTarget(session, path, effectSkipped).target;
+  const readRequiredPane = (
+    pane: string,
+    effectSkipped = "pane-effect",
+    expectedManifestSha256?: string
+  ): { manifestSha256: string; target: OwnedPaneTarget } => {
     const handle = manifestPath
       ? tmuxDeps.readManifestHandle(manifestPath)
       : undefined;
     const target = handle
       ? paneTargetByValueFromManifest(handle, pane)
       : undefined;
-    if (!target) {
+    const changed =
+      expectedManifestSha256 !== undefined &&
+      handle?.manifestSha256 !== expectedManifestSha256;
+    if (changed || !target) {
+      const manifestTarget = handle ? targetFromManifest(handle) : undefined;
+      let reason = "manifest target is unavailable";
+      if (changed) {
+        reason = "manifest target changed during compound effect";
+      } else if (manifestTarget) {
+        reason = "pane is not owned by the manifest target";
+      }
+      skipSink.record({
+        consumer: "governess-runtime",
+        effectSkipped,
+        pane,
+        reason,
+        runId: runIdFor(handle, manifestPath),
+        session: manifestTarget
+          ? describeTmuxTarget(manifestTarget).session
+          : null,
+        socketState: handle ? manifestSocketState(handle) : "missing",
+      });
       throw new TmuxControlUnavailableError(["manifest-pane", pane]);
     }
-    return target;
+    return { manifestSha256: handle.manifestSha256, target };
   };
+  const requirePane = (
+    pane: string,
+    effectSkipped = "pane-effect"
+  ): OwnedPaneTarget => readRequiredPane(pane, effectSkipped).target;
   return {
     assessRoleBalance: (req) => assessRoleBalance(req),
     assessWaiting: (req) => assessWaiting(req),
@@ -6531,7 +6601,7 @@ export const defaultGovernessDeps = (
     },
     capturePane: (pane, styled = false) =>
       tmux(
-        paneArgv(requirePane(pane), "capture-pane", [
+        paneArgv(requirePane(pane, "capture-pane"), "capture-pane", [
           "-p",
           ...(styled ? ["-e"] : []),
         ]),
@@ -6555,15 +6625,23 @@ export const defaultGovernessDeps = (
       );
     },
     initPaneBorders: (session) => {
-      bestEffortTmux(
-        targetArgv(requireTarget(session), "set-option", [
-          "pane-border-status",
-          "top",
-        ]),
-        tmuxDeps.run
+      const initial = readRequiredTarget(
+        session,
+        manifestPath,
+        "initialize-pane-borders"
       );
       bestEffortTmux(
-        targetArgv(requireTarget(session), "set-option", [
+        targetArgv(initial.target, "set-option", ["pane-border-status", "top"]),
+        tmuxDeps.run
+      );
+      const current = readRequiredTarget(
+        session,
+        manifestPath,
+        "initialize-pane-borders",
+        initial.manifestSha256
+      );
+      bestEffortTmux(
+        targetArgv(current.target, "set-option", [
           "pane-border-format",
           GOVERNESS_DEAD_PANE_BORDER_FORMAT,
         ]),
@@ -6721,7 +6799,10 @@ export const defaultGovernessDeps = (
     },
     killSession: (session) => {
       runBoundedTmux(
-        targetArgv(requireTarget(session), "kill-session"),
+        targetArgv(
+          requireTarget(session, manifestPath, "kill-session"),
+          "kill-session"
+        ),
         {},
         tmuxDeps.run
       );
@@ -6733,10 +6814,11 @@ export const defaultGovernessDeps = (
       let result: ReturnType<typeof spawnSync>;
       try {
         result = runBoundedTmux(
-          paneArgv(requirePane(pane), "display-message", [
-            "-p",
-            "#{pane_dead}:#{pane_current_command}",
-          ]),
+          paneArgv(
+            requirePane(pane, "display-pane-command"),
+            "display-message",
+            ["-p", "#{pane_dead}:#{pane_current_command}"]
+          ),
           { stdout: "pipe" },
           tmuxDeps.run
         );
@@ -6771,7 +6853,11 @@ export const defaultGovernessDeps = (
       readHumanMessages(agent, sessionRef, codexHome),
     readLocalLlmRuntime: (input) => readLocalLlmRuntime(input),
     readPaneCommands: (panes) =>
-      readPaneCommandsFromTmux(panes, requirePane, tmuxDeps.run),
+      readPaneCommandsFromTmux(
+        panes,
+        (pane) => requirePane(pane, "read-pane-command"),
+        tmuxDeps.run
+      ),
     readUsage: (agent, sessionRef, codexHome) =>
       readAgentUsage(agent, sessionRef, codexHome),
     readUsageLimits: (config) =>
@@ -6794,7 +6880,11 @@ export const defaultGovernessDeps = (
       try {
         result = runBoundedTmux(
           targetArgv(
-            requireTarget(session, replacementManifestPath),
+            requireTarget(
+              session,
+              replacementManifestPath,
+              "check-replacement-readiness"
+            ),
             "list-panes",
             ["-F", "#{pane_dead}:#{pane_current_command}"]
           ),
@@ -6820,7 +6910,7 @@ export const defaultGovernessDeps = (
     },
     respawnPane: (pane) => {
       runTmuxEffect(
-        paneArgv(requirePane(pane), "respawn-pane", ["-k"]),
+        paneArgv(requirePane(pane, "respawn-pane"), "respawn-pane", ["-k"]),
         tmuxDeps.run
       );
     },
@@ -6829,29 +6919,43 @@ export const defaultGovernessDeps = (
       sendGovernessBridgeMessage(runDir, source, target, message, options),
     setPaneLabel: (pane, label) => {
       bestEffortTmux(
-        paneArgv(requirePane(pane), "set-option", ["-p", "@loop_label", label]),
+        paneArgv(requirePane(pane, "set-pane-label"), "set-option", [
+          "-p",
+          "@loop_label",
+          label,
+        ]),
         tmuxDeps.run
       );
     },
     setGovernessPaneIdentity: (pane, label) => {
+      const initial = readRequiredPane(pane, "set-governess-pane-identity");
       bestEffortTmux(
-        paneArgv(requirePane(pane), "set-option", ["-p", "@loop_label", label]),
+        paneArgv(initial.target, "set-option", ["-p", "@loop_label", label]),
         tmuxDeps.run
       );
+      const current = readRequiredPane(
+        pane,
+        "set-governess-pane-identity",
+        initial.manifestSha256
+      );
       bestEffortTmux(
-        paneArgv(requirePane(pane), "select-pane", ["-T", label]),
+        paneArgv(current.target, "select-pane", ["-T", label]),
         tmuxDeps.run
       );
     },
     sendKeys: (pane, keys) => {
       runTmuxEffect(
-        paneArgv(requirePane(pane), "send-keys", keys),
+        paneArgv(requirePane(pane, "send-keys"), "send-keys", keys),
         tmuxDeps.run
       );
     },
     sendText: (pane, text) => {
       runTmuxEffect(
-        paneArgv(requirePane(pane), "send-keys", ["-l", "--", text]),
+        paneArgv(requirePane(pane, "send-text"), "send-keys", [
+          "-l",
+          "--",
+          text,
+        ]),
         tmuxDeps.run
       );
     },

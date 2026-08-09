@@ -17,7 +17,9 @@ import {
 } from "../../src/loop/run-state";
 import {
   createManifestHandle,
+  createTmuxSkipSink,
   type ManifestHandle,
+  manifestSocketState,
   paneTargetFromManifest,
 } from "../../src/loop/tmux-socket";
 
@@ -76,9 +78,11 @@ const setup = (
   deps: GovernessPaneLivenessDeps;
   events: GovernessPaneLivenessEvent[];
   respawns: string[][];
+  skips: ReturnType<typeof createTmuxSkipSink>;
 } => {
   const events: GovernessPaneLivenessEvent[] = [];
   const respawns: string[][] = [];
+  const skips = createTmuxSkipSink();
   const deps: GovernessPaneLivenessDeps = {
     appendEvent: (_path, event) => {
       events.push(event);
@@ -97,9 +101,10 @@ const setup = (
       respawns.push(governessRespawnPaneArgs(target));
       return true;
     },
+    skipSink: skips,
     ...overrides,
   };
-  return { deps, events, respawns };
+  return { deps, events, respawns, skips };
 };
 
 test("respawns an exact active dead Governess pane and journals both edges", () => {
@@ -170,6 +175,50 @@ test("spares manifest drift across the coherent ownership read", () => {
   expect(inspections).toBe(0);
   expect(fixture.respawns).toEqual([]);
   expect(fixture.events).toEqual([]);
+  expect(fixture.skips.records).toEqual([
+    {
+      consumer: "governess-pane-liveness",
+      effectSkipped: "respawn-pane",
+      pane: input.pane,
+      reason: "manifest-changed-during-target-read",
+      runId: "42",
+      session: input.session,
+      socketState: "unknown",
+    },
+  ]);
+});
+
+test.each([
+  ["disappears", [activeHandle(), undefined]],
+  ["appears", [undefined, activeHandle()]],
+] as const)("spares authority that %s across the coherent handle bracket", (_label, handles) => {
+  let reads = 0;
+  let inspections = 0;
+  const fixture = setup({
+    inspectPane: () => {
+      inspections += 1;
+      return { dead: true, id: input.pane, session: input.session };
+    },
+    readHandle: () => handles[reads++],
+  });
+
+  const outcome = handleGovernessPaneDied(input, fixture.deps);
+
+  expect(outcome.reason).toBe("manifest-changed-during-target-read");
+  expect(inspections).toBe(0);
+  expect(fixture.respawns).toEqual([]);
+  expect(fixture.events).toEqual([]);
+  expect(fixture.skips.records).toEqual([
+    {
+      consumer: "governess-pane-liveness",
+      effectSkipped: "respawn-pane",
+      pane: input.pane,
+      reason: "manifest-changed-during-target-read",
+      runId: "42",
+      session: input.session,
+      socketState: "unknown",
+    },
+  ]);
 });
 
 test.each([
@@ -191,6 +240,17 @@ test.each([
   expect(outcome.action).toBe("spared");
   expect(inspections).toBe(0);
   expect(fixture.respawns).toEqual([]);
+  expect(fixture.skips.records).toEqual([
+    {
+      consumer: "governess-pane-liveness",
+      effectSkipped: "respawn-pane",
+      pane: input.pane,
+      reason: "run-inactive-or-ownership-mismatch",
+      runId: "42",
+      session: input.session,
+      socketState: "unknown",
+    },
+  ]);
 });
 
 test.each([
@@ -226,6 +286,17 @@ test.each([
   expect(inspections).toBe(0);
   expect(fixture.respawns).toEqual([]);
   expect(fixture.events).toEqual([]);
+  expect(fixture.skips.records).toEqual([
+    {
+      consumer: "governess-pane-liveness",
+      effectSkipped: "respawn-pane",
+      pane: input.pane,
+      reason,
+      runId: handle?.runId ?? "loop-run-42",
+      session: input.session,
+      socketState: handle ? manifestSocketState(handle) : "missing",
+    },
+  ]);
 });
 
 test.each([
@@ -328,6 +399,17 @@ test("revalidates manifest ownership immediately before respawn", () => {
   expect(outcome.reason).toBe("ownership-changed-before-respawn");
   expect(fixture.respawns).toEqual([]);
   expect(fixture.events).toEqual([]);
+  expect(fixture.skips.records).toEqual([
+    {
+      consumer: "governess-pane-liveness",
+      effectSkipped: "respawn-pane",
+      pane: input.pane,
+      reason: "run-inactive-or-ownership-mismatch",
+      runId: "42",
+      session: input.session,
+      socketState: "unknown",
+    },
+  ]);
 });
 
 test("revalidates dead pane state immediately before respawn", () => {
@@ -369,6 +451,17 @@ test("revalidates the owned pane target immediately before respawn", () => {
   expect(outcome.reason).toBe("ownership-changed-before-respawn");
   expect(fixture.respawns).toEqual([]);
   expect(fixture.events).toEqual([]);
+  expect(fixture.skips.records).toEqual([
+    {
+      consumer: "governess-pane-liveness",
+      effectSkipped: "respawn-pane",
+      pane: input.pane,
+      reason: "manifest-changed-during-target-read",
+      runId: "42",
+      session: input.session,
+      socketState: "invalid",
+    },
+  ]);
 });
 
 test("does not respawn when the attempt cannot be made durable", () => {
@@ -410,6 +503,17 @@ test("revalidates ownership after the durable attempt and before respawn", () =>
   });
   expect(events.map((event) => event.event)).toEqual(["respawn-attempt"]);
   expect(fixture.respawns).toEqual([]);
+  expect(fixture.skips.records).toEqual([
+    {
+      consumer: "governess-pane-liveness",
+      effectSkipped: "respawn-pane",
+      pane: input.pane,
+      reason: "run-inactive-or-ownership-mismatch",
+      runId: "42",
+      session: input.session,
+      socketState: "unknown",
+    },
+  ]);
 });
 
 test("records a failed tmux respawn after consuming one attempt", () => {
