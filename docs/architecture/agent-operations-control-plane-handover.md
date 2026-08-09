@@ -135,19 +135,23 @@ Parallel operating boundary
 - Do not push remote unless explicitly requested. Do not activate a new service
   or runtime authority without an approved cutover slice.
 
+Founder decisions recorded after this handover was created
+
+- Approved the shadow-only, service-free Phase 0B management-state slice.
+- Set `America/Los_Angeles` as the configurable default portfolio timezone;
+  exact daylight-saving and shift-boundary rules belong to Phase 0B.
+
 Current founder decisions to resolve
 
 1. Confirm Temporal plus one Restate bakeoff, or select Temporal directly.
-2. Confirm portfolio timezone, recommended America/Los_Angeles configurable per
-   portfolio.
-3. Confirm first pilot, recommended agents-collab plus one product project.
-4. Confirm the initial role catalog.
-5. Confirm local-only versus hosted non-authoritative memory inference.
-6. Confirm SQLite baseline versus Postgres default for the World Model bakeoff.
-7. Confirm internal A2A-compatible schema now and protocol adapter later.
-8. Confirm CLI/Markdown management views first versus an early web dashboard.
-9. Define founder notification severity and shift-handoff policy.
-10. Define retention periods for workflow history, broker events, evidence,
+2. Confirm first pilot, recommended agents-collab plus one product project.
+3. Confirm the initial role catalog.
+4. Confirm local-only versus hosted non-authoritative memory inference.
+5. Confirm SQLite baseline versus Postgres default for the World Model bakeoff.
+6. Confirm internal A2A-compatible schema now and protocol adapter later.
+7. Confirm CLI/Markdown management views first versus an early web dashboard.
+8. Define founder notification severity and shift-handoff policy.
+9. Define retention periods for workflow history, broker events, evidence,
     episodes, and curated memory.
 
 How to continue
@@ -158,21 +162,19 @@ How to continue
    default, its tradeoff, and what concrete implementation slice it unlocks.
 3. Record every founder decision immediately in the living architecture and
    update the backlog items it settles. Do not leave decisions only in chat.
-4. Recommend one bounded Phase 0B slice after enough decisions are settled.
-   The current recommendation is engine-neutral management state machines:
-   legal transitions, dependencies, WIP, priority/severity, and exact shift
-   boundary/handoff semantics. It must remain shadow-only and service-free.
-5. Do not start a loop or implement Phase 0B until I explicitly approve that
-   bounded slice. Once approved, use one isolated worktree/socket/run, one edit
+4. Implement only the approved bounded Phase 0B slice: engine-neutral
+   management state machines covering legal transitions, dependencies, WIP,
+   priority/severity, and exact shift boundary/handoff semantics. It must remain
+   shadow-only and service-free.
+5. Use one isolated worktree/socket/run, one edit
    batch, one focused executable smoke, one zero-write review, eval.json, and a
    scoped commit, then stop for independent review.
 
 First response in the new task
 
-Give me a concise current-state recap, then ask for the first decision only:
-whether to approve the recommended Phase 0B management-state slice and use
-America/Los_Angeles as the configurable default portfolio timezone. Explain
-what that slice will and will not change.
+Give me a concise current-state recap, verify the recorded Phase 0B/timezone
+decision, and continue its bounded implementation without changing live
+authority. Then ask for the first unresolved founder decision only.
 ```
 
 ## Handover maintenance rule

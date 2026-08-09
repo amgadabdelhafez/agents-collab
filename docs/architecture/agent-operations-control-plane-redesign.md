@@ -194,8 +194,10 @@ management model.
 
 ### 5.3 Three eight-hour shifts
 
-There are three daily shifts beginning at `00:00`, `08:00`, and `16:00` in one
-configured portfolio timezone. The timezone is an open founder decision.
+There are three daily shifts beginning at `00:00`, `08:00`, and `16:00` in the
+portfolio's configured IANA timezone. `America/Los_Angeles` is the configurable
+default; each portfolio may override it explicitly. Phase 0B will define the
+exact daylight-saving and boundary semantics without changing a live lane.
 
 Each `ShiftWorkflow`:
 
@@ -859,6 +861,13 @@ It does not install Temporal, Restate, NATS, Postgres, or Graphiti, and it does
 not settle the remaining founder decisions. This creates executable boundaries
 without prematurely choosing runtime authority.
 
+The founder approved **Phase 0B** on 2026-08-08. It remains engine-neutral,
+service-free, shadow-only, and non-authoritative. Its scope is limited to legal
+management transitions, dependencies, WIP, priority and severity, deadlines
+and escalation, plus exact shift-boundary, retrospective, and acknowledged
+handoff semantics. It cannot install or activate a service, control an existing
+loop, change the installed harness, or mutate a product lane.
+
 ### Phase 0: settle contracts
 
 - finalize domain IDs and the command/event envelope;
@@ -940,6 +949,24 @@ was changed.
       confirmed high-risk lane-mismatch rejection.
 - [x] P0A-05 Produce `eval.json`, a clean scoped commit, and stop for independent
       root review. Do not merge, install, or activate runtime authority.
+
+### Admitted slice: Phase 0B management state
+
+Approved by the founder on 2026-08-08 with `America/Los_Angeles` as the
+configurable default portfolio timezone. Implementation remains bounded by the
+shadow-only and service-free rules in section 15.0.
+
+- [ ] P0B-01 Define legal transitions for work items, assignments, incidents,
+      reviews, and releases.
+- [ ] P0B-02 Define dependencies, WIP, priority, severity, deadline, and
+      escalation semantics with fail-closed validation.
+- [ ] P0B-03 Define exact `00:00`, `08:00`, and `16:00` portfolio-local shift
+      boundaries, including daylight-saving behavior.
+- [ ] P0B-04 Define end-of-shift retrospective and acknowledged handoff
+      contracts without coupling handoff to worker process lifetime.
+- [ ] P0B-05 Add one focused executable smoke for legal transitions and the
+      highest-risk rejection paths, produce `eval.json`, commit the scoped
+      slice, and stop for independent review.
 
 ### Standing operations-maintenance queue
 
@@ -1069,42 +1096,49 @@ was changed.
       and prompt-charter code.
 - [ ] J-06 Retire replaced components only after live cutover and rollback proof.
 
-## 17. Founder decisions still required
+## 17. Founder decisions
 
-Phase 0A is complete. These decisions now gate admission of the next bounded
-slice; none should be inferred from the engine-neutral contracts implementation.
+Phase 0A is complete. Founder decisions are recorded here before their effects
+are admitted to implementation.
+
+### 17.1 Decision log
+
+- **2026-08-08, accepted:** admit the shadow-only Phase 0B management-state
+  slice described in section 16. It is engine-neutral, service-free, and has no
+  live runtime authority.
+- **2026-08-08, accepted:** use `America/Los_Angeles` as the configurable
+  default portfolio timezone. Portfolio records may explicitly override it;
+  exact daylight-saving and boundary rules are part of Phase 0B.
+
+### 17.2 Decisions still required
 
 1. **Workflow lock-in:** keep Temporal as the baseline and approve the one-scenario
    Restate bakeoff, or choose Temporal without a bakeoff?
-2. **Shift timezone:** are `00/08/16` boundaries in America/Los_Angeles, UTC,
-   or a separately configured portfolio timezone?
-3. **First management scope:** model all projects immediately, or pilot with
+2. **First management scope:** model all projects immediately, or pilot with
    agents-collab plus one product project?
-4. **Initial role catalog:** which roles must exist in the first control-plane
+3. **Initial role catalog:** which roles must exist in the first control-plane
    slice, and which can remain generic adapters?
-5. **Memory locality:** must all memory and World Model inference remain local,
+4. **Memory locality:** must all memory and World Model inference remain local,
    or may an approved hosted model create non-authoritative candidates?
-6. **World Model bakeoff:** preserve SQLite as the likely default, or make
+5. **World Model bakeoff:** preserve SQLite as the likely default, or make
    Postgres the default projection before evaluating Graphiti?
-7. **A2A boundary:** generate compatible Agent Cards now, or adopt only the
+6. **A2A boundary:** generate compatible Agent Cards now, or adopt only the
    internal schema and defer protocol compatibility?
-8. **Management UI:** start with CLI/Markdown views or build a web dashboard in
+7. **Management UI:** start with CLI/Markdown views or build a web dashboard in
    the first pilot?
-9. **Founder notification policy:** which severities and decisions should wake
+8. **Founder notification policy:** which severities and decisions should wake
    the founder immediately versus wait for shift handoff?
-10. **Retention:** how long should workflow histories, broker events, raw
+9. **Retention:** how long should workflow histories, broker events, raw
     operational evidence, agent episodes, and curated memories remain online?
 
-### 17.1 Recommended decision sequence
+### 17.3 Recommended decision sequence
 
 Do not decide all ten items as one architecture referendum. Resolve them in
 the order that unlocks bounded, reversible evidence:
 
-1. Approve a Phase 0B management-state slice that completes IDs, transitions,
-   dependencies, WIP, and shift-boundary semantics without adding a service or
-   changing live authority.
-2. Set the portfolio timezone and first pilot scope because both shape every
-   shift and management record.
+1. Implement and independently review the approved Phase 0B management-state
+   slice without adding a service or changing live authority.
+2. Set the first pilot scope because it shapes every project-management record.
 3. Freeze one realistic workflow-engine bakeoff scenario and its measures,
    then run Temporal and Restate against exactly that scenario.
 4. Freeze the first role catalog and context-package contract before adopting
@@ -1112,9 +1146,8 @@ the order that unlocks bounded, reversible evidence:
 5. Decide storage and hosted-inference boundaries only after the retrieval and
    provenance competency questions are executable.
 
-The recommended default answers, pending founder confirmation, are:
+The remaining recommended default answers, pending founder confirmation, are:
 
-- portfolio timezone: `America/Los_Angeles`, configurable per portfolio;
 - first pilot: `agents-collab` plus one product project, not the full estate;
 - workflow selection: keep Temporal as baseline and retain the one-scenario
   Restate challenger;
@@ -1171,6 +1204,9 @@ The recommended default answers, pending founder confirmation, are:
 
 ## 20. Change log
 
+- 2026-08-08: Recorded founder approval of the shadow-only, service-free Phase
+  0B management-state slice and `America/Los_Angeles` as the configurable
+  default portfolio timezone.
 - 2026-08-08: Corrected the implementation status after Phase 0A, recorded the
   stale-subagent projection incident, and added a recommended founder-decision
   sequence with reversible defaults for the next clean-session discussion.
