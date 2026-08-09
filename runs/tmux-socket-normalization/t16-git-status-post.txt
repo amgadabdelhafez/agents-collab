@@ -1,0 +1,27 @@
+ M docs/dependency-map.md
+?? loop-fork/.harness/current-task
+?? runs/tmux-socket-normalization/capture-loop-runs-inventory.sh
+?? runs/tmux-socket-normalization/t16-build-final.log
+?? runs/tmux-socket-normalization/t16-build.log
+?? runs/tmux-socket-normalization/t16-candidate-sha256-final.txt
+?? runs/tmux-socket-normalization/t16-candidate-sha256.txt
+?? runs/tmux-socket-normalization/t16-check-attempt-002.log
+?? runs/tmux-socket-normalization/t16-check-attempt-003.log
+?? runs/tmux-socket-normalization/t16-check-final.log
+?? runs/tmux-socket-normalization/t16-check.log
+?? runs/tmux-socket-normalization/t16-git-status-post.txt
+?? runs/tmux-socket-normalization/t16-git-status-pre.txt
+?? runs/tmux-socket-normalization/t16-loop-runs-post.tsv
+?? runs/tmux-socket-normalization/t16-loop-runs-pre.tsv
+?? runs/tmux-socket-normalization/t16-smoke-active-launch-final.log
+?? runs/tmux-socket-normalization/t16-smoke-large-prompt-final.log
+?? runs/tmux-socket-normalization/t16-smoke-large-prompt.log
+?? runs/tmux-socket-normalization/t16-smoke-paste-readiness-final.log
+?? runs/tmux-socket-normalization/t16-smoke-tmux-normalization-attempt-002.log
+?? runs/tmux-socket-normalization/t16-smoke-tmux-normalization-final.log
+?? runs/tmux-socket-normalization/t16-smoke-tmux-normalization.log
+?? runs/tmux-socket-normalization/t16-test-ci-final.log
+?? runs/tmux-socket-normalization/t16-test-ci.log
+?? runs/tmux-socket-normalization/t16-tsc-attempt-002.log
+?? runs/tmux-socket-normalization/t16-tsc-final.log
+?? runs/tmux-socket-normalization/t16-tsc.log

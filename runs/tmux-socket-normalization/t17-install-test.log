@@ -1,0 +1,13 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/install.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/install.test.ts:
+(pass) tmux install hint uses brew on macOS [0.03ms]
+(pass) tmux install hint stays generic on Linux
+(pass) tmux nudge explains why bare loop fails without tmux
+(pass) tmux install probe is kill-on-timeout bounded [0.05ms]
+
+ 4 pass
+ 0 fail
+ 5 expect() calls
+Ran 4 tests across 1 file. [20.00ms]

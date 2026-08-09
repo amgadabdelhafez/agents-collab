@@ -512,26 +512,26 @@ least one requirement:
 
 Checklist form for the evaluator:
 
-- [ ] 1 — Resolution precedence and comma-preserving `$TMUX` parsing.
-- [ ] 2 — Invalid/over-budget values fail before reservation or tmux creation.
-- [ ] 3 — Manifest round trip; pane subordination enforced by `OwnedPaneTarget`.
-- [ ] 4 — Producer-backed launch writes the exact socket A path, bound early.
-- [ ] 5 — Resume uses the persisted socket; legacy blocks resume and duplicate;
+- [x] 1 — Resolution precedence and comma-preserving `$TMUX` parsing.
+- [x] 2 — Invalid/over-budget values fail before reservation or tmux creation.
+- [x] 3 — Manifest round trip; pane subordination enforced by `OwnedPaneTarget`.
+- [x] 4 — Producer-backed launch writes the exact socket A path, bound early.
+- [x] 5 — Resume uses the persisted socket; legacy blocks resume and duplicate;
       5a unconstructible wrong-run pairing, 5b cross-run non-contact,
       5c residual recorded.
-- [ ] 6 — Derived migration checks pass and are proven non-vacuous.
-- [ ] 7 — Two-server regression: consumers reach only A under hostile B state.
-- [ ] 8 — Per-consumer matrix assertions, not one shared-helper assertion.
-- [ ] 9 — Destructive direction: no A-side effect from B-derived evidence.
-- [ ] 10 — Legacy/invalid targeting is `unknown` everywhere, with skip records.
-- [ ] 11 — Enumeration keys by `(socket, session)`.
-- [ ] 12 — Attach hints qualified and shell-safe; legacy prints unknown.
-- [ ] 13 — `-S` over `-L` precedence verified; smoke call sites migrated.
-- [ ] 14 — Fixture provenance recorded; legacy fixtures derived, not authored.
-- [ ] 15 — Trap-safe cleanup records and kills everything it created.
-- [ ] 16 — Zero-survivor proof is non-vacuous with a positive control.
-- [ ] 17 — Bounded-control timeout semantics unchanged.
-- [ ] 18 — `install.ts` byte-identical outside the patch; no run mutation.
+- [x] 6 — Derived migration checks pass and are proven non-vacuous.
+- [x] 7 — Two-server regression: consumers reach only A under hostile B state.
+- [x] 8 — Per-consumer matrix assertions, not one shared-helper assertion.
+- [x] 9 — Destructive direction: no A-side effect from B-derived evidence.
+- [x] 10 — Legacy/invalid targeting is `unknown` everywhere, with skip records.
+- [x] 11 — Enumeration keys by `(socket, session)`.
+- [x] 12 — Attach hints qualified and shell-safe; legacy prints unknown.
+- [x] 13 — `-S` over `-L` precedence verified; smoke call sites migrated.
+- [x] 14 — Fixture provenance recorded; legacy fixtures derived, not authored.
+- [x] 15 — Trap-safe cleanup records and kills everything it created.
+- [x] 16 — Zero-survivor proof is non-vacuous with a positive control.
+- [x] 17 — Bounded-control timeout semantics unchanged.
+- [x] 18 — `install.ts` byte-identical outside the patch; no run mutation.
 
 Screenshot/DOM assertions are **not applicable**: panel rows and attach hints
 are terminal output with no DOM, and `scripts/capture-ui.sh` cannot capture
@@ -614,7 +614,7 @@ Recorded here rather than deleted, so the decision and its reasoning survive.
 
 ## Open questions
 
-- [ ] **Human approval of the recorded legacy-manifest support impact above.**
+- [x] **Human approval of the recorded legacy-manifest support impact above.**
       Peer review is satisfied; this needs the founder/supervisor sign-off that
       the in-flight-run behaviour change is acceptable.
 
@@ -628,13 +628,16 @@ Recorded here rather than deleted, so the decision and its reasoning survive.
 > returns `"unknown"` for an absent session, but consumers reproduce the defect
 > inline, so the central fix does **not** close verify 10.
 >
-> **No automated rule is added.** A literal `: "dead"` source pattern is a
+> **AS RAISED on 2026-08-08:** no automated semantic-liveness/value-flow rule
+> was added. A literal `: "dead"` source pattern is a
 > blacklist and is explicitly withdrawn: it misses `liveness = "dead"` and
 > `? "dead"`, which is exactly how this inventory was first mis-derived as five
 > sites instead of six. A value-flow rule must **not** be claimed either, because
-> the current checker surface is not an AST/type-flow analyzer and cannot prove
-> `TmuxLiveness` production or confirmed-missing evidence. Letting either form
-> certify six-site completeness would be coverage that does not exist.
+> syntax alone cannot prove `TmuxLiveness` production or confirmed-missing
+> evidence. D-023 later installed an AST-based syntax checker that catches the
+> reviewed direct, alias, spread, import, export, and API-shape forms, but it is
+> not an interprocedural semantic/type-flow proof. Letting it certify arbitrary
+> liveness-value completeness would be coverage that does not exist.
 >
 > **Recorded limitation.** The derived check does **not** provide full semantic
 > coverage for arbitrary `TmuxLiveness` value production. This limitation is
@@ -666,13 +669,22 @@ Recorded here rather than deleted, so the decision and its reasoning survive.
 > is evidence; an absent session *name* is not. `"dead"` grants cleanup
 > authority, so only confirmed evidence may produce it.
 >
-> **If** T-11 later introduces a real AST/type-flow analyzer, it must state its
-> method, catch assignment / ternary / alias forms, include independently
-> seeded indirect cases, and be reviewed separately before any completeness
-> claim rests on it.
+> **D-023 resolution, 2026-08-09:** T-11's checker uses the TypeScript AST,
+> states its method, and has 26 independently seeded tests for the bounded
+> syntax/API claims. It deliberately makes no interprocedural semantic or
+> `TmuxLiveness` value-flow completeness claim; the six named consumer tests
+> remain the acceptance instrument for verify 10.
 >
-> Verify 10 remains **open** pending the per-consumer fixes and their skip
-> records across T-06, T-08, and T-10.
+> **AS RAISED on 2026-08-08:** Verify 10 remained open pending the
+> per-consumer fixes and their skip records across T-06, T-08, and T-10.
+>
+> **Resolved on 2026-08-09:** D-018 closed the six named T-06/T-08/T-10
+> consumers; D-021 and D-022 closed Governess pane/runtime effect authority;
+> D-031 added the remaining field-complete runtime and pane-death skip records,
+> including authority changes between compound commands. Named per-site tests,
+> the D-027 two-server matrix, and the final candidate suite now close verify
+> 10. The derived checker still does not claim arbitrary semantic value-flow
+> completeness; that recorded limitation is unchanged.
 
 
 > **HARNESS-OWNER RULING, 2026-08-08 (run 14, bridge message

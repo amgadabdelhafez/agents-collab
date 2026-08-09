@@ -1,14 +1,14 @@
 # Dependency Map
 
-Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
+Last updated: <!-- 2026-08-09 by refresh-dependency-map.sh -->
 
 ## Modules
 
 ```text
 [CLI and tmux]
-  owns: src/cli.ts, src/loop/tmux.ts
-  exposes: paired panes and hidden bridge/Governess/Nanny/Au Pair subcommands
-  consumes: run state, bridge config, governess, utility runtime
+  owns: src/cli.ts, src/loop/tmux.ts, src/loop/tmux-socket.ts, src/loop/tmux-control.ts
+  exposes: manifest-bound tmux server/session/pane capabilities, paired panes, hidden bridge/Governess/Nanny/Au Pair subcommands
+  consumes: run-state manifest handles, bridge config, governess, utility runtime
 
 [Bridge]
   owns: src/loop/bridge*.ts
@@ -79,6 +79,13 @@ Codex spawn_agent ──config + PreToolUse──► denied (0.145 sandbox inher
 
 Nanny pane / Au Pair pane ──read only──► filtered utility store view
 optional bridge supervisor ──messages/route request──► bridge
+
+run manifest bytes ──single read──► ManifestHandle ──derive──► exact tmux server/session/pane capability
+                                                           ├─► launch/attach
+                                                           ├─► bridge delivery
+                                                           ├─► cleanup/GC/proxy
+                                                           └─► panel/Governess/replay
+ambient TMUX / TMUX_TMPDIR / same-name server ───────────────X  no authority
 ```
 
 ## Cross-cutting concerns
@@ -94,6 +101,7 @@ optional bridge supervisor ──messages/route request──► bridge
 | Native fallback | Governess lease store and provider hooks | `native-subagents/events.jsonl`, hook journals, Governess board |
 | Large outputs | Tool broker | patch/report artifacts referenced by result |
 | Visibility | Governess and optional utility pane | pane output; never a control dependency |
+| Tmux effect authority | Manifest handle and derived target capabilities | exact socket-qualified argv; unavailable identity emits structured skip |
 
 ## Blast-radius guide
 
@@ -105,5 +113,5 @@ optional bridge supervisor ──messages/route request──► bridge
 | Governess epoch/loop | Utility claims, stale recovery, liveness tests | It is the single route authority |
 | Tool broker | Worker prompt, scope tests, secret/command policy | This is the host security boundary |
 | Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
-| Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
+| Tmux target or layout | Manifest handle producer, target composers, every post-launch consumer, two-server smoke | Socket, session, and pane identity are one authority boundary; ambient state cannot authorize effects |
 | Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption; Claude gates the read-only fallback while Codex native spawn fails closed |

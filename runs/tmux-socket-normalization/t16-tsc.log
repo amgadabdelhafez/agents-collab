@@ -1,0 +1,1 @@
+src/loop/governess-pane-liveness.ts(12,8): error TS2459: Module '"./run-state"' declares 'ManifestHandle' locally, but it is not exported.

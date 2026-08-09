@@ -1,0 +1,14 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test -t "transports a realistic charter through hash-bound pointer bootstraps" tests/loop/tmux.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [7.02ms]
+
+ 1 pass
+ 111 filtered out
+ 0 fail
+ 36 expect() calls
+Ran 1 test across 1 file. [84.00ms]
+large-prompt smoke: failure log /private/tmp/loop-smoke.OP45sV/success.err
+[loop] stale bridge sweep could not inspect processes; preserving all
+[loop] error: tmux session "repo-loop-1" liveness is unknown; refusing handoff or terminalization: error connecting to /private/tmp/loop-smoke.OP45sV/success/tmux.sock (No such file or directory)

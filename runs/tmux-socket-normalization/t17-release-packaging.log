@@ -1,0 +1,10 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/release-packaging.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/release-packaging.test.ts:
+(pass) root release workflow packages the full-repository Loop layout [0.21ms]
+
+ 1 pass
+ 0 fail
+ 10 expect() calls
+Ran 1 test across 1 file. [16.00ms]

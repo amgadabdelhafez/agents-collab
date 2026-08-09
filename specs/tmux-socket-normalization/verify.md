@@ -163,13 +163,16 @@
 > returns `"unknown"` for an absent session, but consumers reproduce the defect
 > inline, so the central fix does **not** close verify 10.
 >
-> **No automated rule is added.** A literal `: "dead"` source pattern is a
+> **AS RAISED on 2026-08-08:** no automated semantic-liveness/value-flow rule
+> was added. A literal `: "dead"` source pattern is a
 > blacklist and is explicitly withdrawn: it misses `liveness = "dead"` and
 > `? "dead"`, which is exactly how this inventory was first mis-derived as five
 > sites instead of six. A value-flow rule must **not** be claimed either, because
-> the current checker surface is not an AST/type-flow analyzer and cannot prove
-> `TmuxLiveness` production or confirmed-missing evidence. Letting either form
-> certify six-site completeness would be coverage that does not exist.
+> syntax alone cannot prove `TmuxLiveness` production or confirmed-missing
+> evidence. D-023 later installed an AST-based syntax checker that catches the
+> reviewed direct, alias, spread, import, export, and API-shape forms, but it is
+> not an interprocedural semantic/type-flow proof. Letting it certify arbitrary
+> liveness-value completeness would be coverage that does not exist.
 >
 > **Recorded limitation.** The derived check does **not** provide full semantic
 > coverage for arbitrary `TmuxLiveness` value production. This limitation is
@@ -201,13 +204,20 @@
 > is evidence; an absent session *name* is not. `"dead"` grants cleanup
 > authority, so only confirmed evidence may produce it.
 >
-> **If** T-11 later introduces a real AST/type-flow analyzer, it must state its
-> method, catch assignment / ternary / alias forms, include independently
-> seeded indirect cases, and be reviewed separately before any completeness
-> claim rests on it.
+> **D-023 resolution, 2026-08-09:** T-11's checker uses the TypeScript AST,
+> states its method, and has 26 independently seeded tests for the bounded
+> syntax/API claims. It deliberately makes no interprocedural semantic or
+> `TmuxLiveness` value-flow completeness claim; the six named consumer tests
+> remain the acceptance instrument for verify 10.
 >
-> Verify 10 remains **open** pending the per-consumer fixes and their skip
-> records across T-06, T-08, and T-10.
+> **AS RAISED on 2026-08-08:** Verify 10 remained open pending the
+> per-consumer fixes and their skip records across T-06, T-08, and T-10.
+>
+> **Resolved on 2026-08-09:** D-018 closed the six named consumers, D-021 and
+> D-022 closed Governess effect authority, and D-031 supplied the remaining
+> field-complete runtime and pane-death skip records. Named per-site tests and
+> the D-027 two-server matrix close verify 10; the derived checker retains its
+> documented non-semantic limitation.
 
 
 7. Producer-backed two-server regression. Create real tmux servers A and B on
@@ -435,26 +445,26 @@ screenshot and DOM as not applicable with this reason.
 
 These must not regress:
 
-- [ ] `evals/smoke/large-prompt-launch.sh` still passes after shim migration.
-- [ ] `evals/smoke/active-launch-interlock.sh` still passes.
-- [ ] `evals/smoke/paste-submit-readiness.sh` still passes.
-- [ ] Existing `tests/loop/tmux-control.test.ts` timeout semantics (check 17).
-- [ ] `tests/install.test.ts` unchanged behavior (check 18).
-- [ ] `env -u TMUX -u TMUX_PANE bun run test:ci` fully green, empty allowlist.
+- [x] `evals/smoke/large-prompt-launch.sh` still passes after shim migration.
+- [x] `evals/smoke/active-launch-interlock.sh` still passes.
+- [x] `evals/smoke/paste-submit-readiness.sh` still passes.
+- [x] Existing `tests/loop/tmux-control.test.ts` timeout semantics (check 17).
+- [x] `tests/install.test.ts` unchanged behavior (check 18).
+- [x] `env -u TMUX -u TMUX_PANE bun run test:ci` fully green, empty allowlist.
 
 ## Fixture provenance
 
-- [ ] Each integration fixture derives from captured compiled-product output and
+- [x] Each integration fixture derives from captured compiled-product output and
       records producer binary SHA-256 and tmux version.
-- [ ] Capture command, UTC time, and relevant environment are recorded next to
+- [x] Capture command, UTC time, and relevant environment are recorded next to
       the fixture.
-- [ ] Raw bytes are retained, or a durable raw reference plus SHA-256 when the
+- [x] Raw bytes are retained, or a durable raw reference plus SHA-256 when the
       raw capture cannot be committed safely.
-- [ ] Normalization is deterministic, checked in, and records the normalized
+- [x] Normalization is deterministic, checked in, and records the normalized
       fixture SHA-256. No secrets or personal data enter Git.
-- [ ] Legacy fixtures are derived by removing only `tmuxSocket` and record both
+- [x] Legacy fixtures are derived by removing only `tmuxSocket` and record both
       source and derived SHA-256.
-- [ ] No hand-authored fixture certifies the cross-process seam alone.
+- [x] No hand-authored fixture certifies the cross-process seam alone.
 
 ## Rollback conditions
 

@@ -15,23 +15,23 @@
 
 - [x] **T-00** Approval gate — peer review of the bundle, then human approval.
       **CLEARED 2026-08-08**; evidence in `runs/tmux-socket-normalization/approval.md`.
-- [ ] **T-01** `-S` over `-L` precedence, verified empirically and recorded.
-- [ ] **T-02** `tmux-socket.ts` chokepoint: validation, resolver, argv, attach.
-- [ ] **T-03** Manifest schema: `tmuxSocket` on read, write, and update paths.
-- [ ] **T-04** Early launch binding before manifest reservation.
-- [ ] **T-05** Migrate launch/resume/attach and shared bounded control.
-- [ ] **T-06** Migrate bridge paths and `BridgeStatus`.
-- [ ] **T-07** Migrate `claude-config-gc` and `run-process-cleanup`.
-- [ ] **T-08** Migrate reservation, proxy, and paired options.
-- [ ] **T-09** Migrate panel enumeration and row rendering.
-- [ ] **T-10** Migrate Governess pane effects, handover, and replay.
+- [x] **T-01** `-S` over `-L` precedence, verified empirically and recorded.
+- [x] **T-02** `tmux-socket.ts` chokepoint: validation, resolver, argv, attach.
+- [x] **T-03** Manifest schema: `tmuxSocket` on read, write, and update paths.
+- [x] **T-04** Early launch binding before manifest reservation.
+- [x] **T-05** Migrate launch/resume/attach and shared bounded control.
+- [x] **T-06** Migrate bridge paths and `BridgeStatus`.
+- [x] **T-07** Migrate `claude-config-gc` and `run-process-cleanup`.
+- [x] **T-08** Migrate reservation, proxy, and paired options.
+- [x] **T-09** Migrate panel enumeration and row rendering.
+- [x] **T-10** Migrate Governess pane effects, handover, and replay.
 - [x] **T-11** Derived migration check plus seeded non-vacuity proof.
 - [x] **T-12** Smoke shim migration to absolute `LOOP_TMUX_SOCKET`.
 - [x] **T-13** Producer fixture capture and provenance index.
 - [x] **T-14** Two-server certification smoke with trap and survivor proof.
 - [x] **T-15** Installed-binary forward-compatibility check.
-- [ ] **T-16** Full verification, dependency map, no-mutation evidence.
-- [ ] **T-17** Independent evaluator writes `eval.json`; governed verify.
+- [x] **T-16** Full verification, dependency map, no-mutation evidence.
+- [x] **T-17** Independent evaluator writes `eval.json`; governed verify.
 - [ ] **T-18** Commit, request exact-SHA review, stop at the gate.
 
 ---
@@ -113,21 +113,21 @@ probes from the repository once the gate clears so the evidence lands in
 `runs/` under governance, and adds the Linux leg if a Linux host is available.
 
 **Done when:**
-- [ ] `tmux -L <label> -S <path> start-server` run against a temporary root;
+- [x] `tmux -L <label> -S <path> start-server` run against a temporary root;
       `<path>` exists afterwards and the label-derived path does not.
       *(Observed: confirmed — the label path was never created.)*
-- [ ] `$TMUX` read inside a session on a known socket shows the exact field
+- [x] `$TMUX` read inside a session on a known socket shows the exact field
       layout, and removing the final two comma-delimited fields recovers the
       socket. *(Observed: `<socket>,<pid>,<session-index>`.)*
-- [ ] With a socket pathname containing a legal comma, parse-from-right
+- [x] With a socket pathname containing a legal comma, parse-from-right
       recovers the path and the first-field parse is shown to truncate.
       *(Observed: `…/so,ck-c` truncates to `…/so` — parse-from-right is
       required, not stylistic.)*
-- [ ] The Darwin byte budget is measured at the boundary.
+- [x] The Darwin byte budget is measured at the boundary.
       *(Observed: 103 succeeds, 104 fails `File name too long`.)*
-- [ ] Every server is killed by explicit socket path, both paths removed, and a
+- [x] Every server is killed by explicit socket path, both paths removed, and a
       zero-survivor check runs. A bare `tmux kill-server` is never used.
-- [ ] Verify 13 (precedence half) and verify 2 (Darwin boundary) are
+- [x] Verify 13 (precedence half) and verify 2 (Darwin boundary) are
       satisfiable from this evidence.
 
 **This task runs first among implementation tasks.** If the precedence had been
@@ -151,7 +151,7 @@ module-private and unexported; `tmuxAttachCommand(target)`;
 `TmuxSocketUnknownError`; `TmuxTargetProvenanceError`; and the
 `TmuxSkipRecord` type plus its injected recorder/sink interface.
 **Done when:**
-- [ ] `TmuxTarget` cannot be constructed from an independently sourced socket
+- [x] `TmuxTarget` cannot be constructed from an independently sourced socket
       and session — assembling one is a compile-time error.
       `targetFromManifest` takes **exactly one parameter**, an opaque
       `ManifestHandle`, so no socket parameter exists anywhere in the public
@@ -159,28 +159,28 @@ module-private and unexported; `tmuxAttachCommand(target)`;
       runtime. The brand symbol and the socket-only `tmuxArgv` are absent from
       the module's public exports, asserted by enumerating them. Any test-only
       constructor is not exported from the production entrypoint (verify 5a).
-- [ ] `OwnedPaneTarget` has no public constructor;
+- [x] `OwnedPaneTarget` has no public constructor;
       `paneTargetFromManifest(handle, field)` reads the pane field from the same
       handle that yields the target and yields nothing when that handle's socket
       or session is unknown (verify 3).
-- [ ] `targetArgv`, `paneArgv`, and `serverArgv` supply every target-naming flag
+- [x] `targetArgv`, `paneArgv`, and `serverArgv` supply every target-naming flag
       themselves and reject an `args` array containing `-S`, `-t`, `-s`, or an
       `=`-joined form (verify 3, 5a).
-- [ ] `TmuxSkipRecord` carries `consumer`, run identity, `session`/`pane` or
+- [x] `TmuxSkipRecord` carries `consumer`, run identity, `session`/`pane` or
       explicit absence, `socketState` (`missing` | `invalid` | `conflicting` |
       `unknown`), `reason`, and `effectSkipped`, and is emitted to an injected
       sink rather than ambient logging (verify 8, 10).
-- [ ] Precedence, comma-in-path `$TMUX` parsing, and absoluteness are proven
+- [x] Precedence, comma-in-path `$TMUX` parsing, and absoluteness are proven
       (verify 1).
-- [ ] Empty, relative, malformed, NUL-containing, and over-budget values are
+- [x] Empty, relative, malformed, NUL-containing, and over-budget values are
       rejected with byte length and platform limit reported; boundary tests
       cover Darwin 103 and Linux 107 at limit and limit+1, plus a multibyte
       path over the byte limit but under the character limit (verify 2).
-- [ ] Each composition function returns `["tmux", "-S", socket, ...]` and splits
+- [x] Each composition function returns `["tmux", "-S", socket, ...]` and splits
       into Node `spawn` command/args without dropping `-S`.
-- [ ] `tmuxAttachCommand` shell-escapes socket and session; spaces and
+- [x] `tmuxAttachCommand` shell-escapes socket and session; spaces and
       metacharacters round trip as data (verify 12).
-- [ ] No consumer imports it yet.
+- [x] No consumer imports it yet.
 
 > **HARNESS-OWNER RULING, 2026-08-08 (run 14, bridge message
 > `cc04ed1b-3273-4315-89d7-12749b5ef972`).** The sole constructor takes an
@@ -206,18 +206,18 @@ module-private and unexported; `tmuxAttachCommand(target)`;
 creation and update paths, and on the read path; plus the `ManifestHandle` the
 read path stamps, which is the sole input `targetFromManifest` accepts (R3).
 **Done when:**
-- [ ] The manifest read path is the **only** producer of `ManifestHandle`. Each
+- [x] The manifest read path is the **only** producer of `ManifestHandle`. Each
       handle is frozen and carries `runId`, the manifest pathname, and the
       SHA-256 of the bytes actually read. The brand is a unique symbol that is
       not exported, so no other module can mint one (verify 5a). Without a sole
       producer here, R3's unconstructibility argument has no foundation.
-- [ ] Create, read, update, and unrelated-update round trips preserve canonical
+- [x] Create, read, update, and unrelated-update round trips preserve canonical
       `tmuxSocket` (verify 3).
-- [ ] `tmux_socket` is read only when unambiguous; a camel/snake conflict is
+- [x] `tmux_socket` is read only when unambiguous; a camel/snake conflict is
       explicit unknown targeting, not a coerced value.
-- [ ] Invalid values become unknown targeting and are never resolved against
+- [x] Invalid values become unknown targeting and are never resolved against
       cwd.
-- [ ] Clearing stale tmux topology clears `tmuxSocket` atomically with
+- [x] Clearing stale tmux topology clears `tmuxSocket` atomically with
       `tmuxSession` and all seven persisted pane fields (`tmuxPaneAuPair`,
       `tmuxPaneGoverness`, `tmuxPaneLeft`, `tmuxPaneNanny`, `tmuxPaneRecon`,
       `tmuxPaneRight`, `tmuxPaneUtility`) on both `RunManifest`
@@ -233,12 +233,12 @@ read path stamps, which is the sole input `targetFromManifest` accepts (R3).
 **Output:** Socket resolved and persisted with the deterministic session
 identity at the early manifest binding.
 **Done when:**
-- [ ] Resolution failure occurs before manifest reservation and before any tmux
+- [x] Resolution failure occurs before manifest reservation and before any tmux
       server is contacted or created (verify 2, 4).
-- [ ] Early manifest inspection shows socket bound with session before the
+- [x] Early manifest inspection shows socket bound with session before the
       first asynchronous startup boundary (verify 4).
-- [ ] A failed startup retains both identities for bounded cleanup (verify 4).
-- [ ] An existing socket-bearing manifest is never overwritten from ambient
+- [x] A failed startup retains both identities for bounded cleanup (verify 4).
+- [x] An existing socket-bearing manifest is never overwritten from ambient
       state (verify 5).
 
 ### T-05 — Launch, resume, attach, and shared bounded control
@@ -317,17 +317,17 @@ identity at the early manifest binding.
 `OwnedPaneTarget`, never a bare session and never a socket plus a
 caller-supplied `-t`.
 **Done when:**
-- [ ] Resume/reattach uses the persisted socket and ignores later
+- [x] Resume/reattach uses the persisted socket and ignores later
       `LOOP_TMUX_SOCKET`, `TMUX`, `TMUX_TMPDIR` (verify 5).
-- [ ] A legacy manifest yields `"unknown"`, never `"dead"`, and blocks resume
+- [x] A legacy manifest yields `"unknown"`, never `"dead"`, and blocks resume
       (verify 5, 10).
-- [ ] Attach hints at `tmux.ts:3602` and `tmux.ts:4024` are qualified;
+- [x] Attach hints at `tmux.ts:3602` and `tmux.ts:4024` are qualified;
       a legacy manifest prints the explicit unknown-socket line and no command
       (verify 12).
-- [ ] Timeout and error still map to `unknown`; interactive attach alone stays
+- [x] Timeout and error still map to `unknown`; interactive attach alone stays
       unbounded; every non-interactive command keeps a finite kill-on-timeout
       bound (verify 17).
-- [ ] **Provenance, in the two parts that are checkable** (verify 5a, 5b).
+- [x] **Provenance, in the two parts that are checkable** (verify 5a, 5b).
       5a: the wrong-run pairing is **unconstructible** — `targetFromManifest`
       has exactly one parameter and no consumer path has a socket parameter to
       supply, asserted by `@ts-expect-error` negative type tests plus a runtime
@@ -336,7 +336,7 @@ caller-supplied `-t`.
       and A's session on every invocation and contacts B zero times. The
       tampered-manifest residual (5c) is recorded, not asserted as a rejection.
       `resolveTmuxSocket` is unreachable from any post-launch consumer path.
-- [ ] The band's focused tests and the derived inventory both run.
+- [x] The band's focused tests and the derived inventory both run.
 
 ### T-06 — Bridge
 
@@ -347,10 +347,10 @@ caller-supplied `-t`.
 **Output:** Capture, send, and buffer paths use the manifest target;
 `BridgeStatus` carries `tmuxSocket`/known-target state alongside `tmuxSession`.
 **Done when:**
-- [ ] Delivery stays durably queued and issues no tmux command when the target
+- [x] Delivery stays durably queued and issues no tmux command when the target
       socket is unknown, with a skip record emitted (verify 10).
-- [ ] Stale-state cleanup does not clear topology on unknown (verify 9).
-- [ ] `BridgeStatus` schema change is covered, and per the dependency map's
+- [x] Stale-state cleanup does not clear topology on unknown (verify 9).
+- [x] `BridgeStatus` schema change is covered, and per the dependency map's
       blast-radius row, agent MCP config, bridge tests, and prompt guidance are
       checked for the contract change.
 
@@ -365,12 +365,12 @@ exit for a socket-bearing manifest; `defaultListTmuxSessions` no longer maps
 `no server running` to an empty set; enumeration is server-scoped and keyed by
 `(socket, session)`.
 **Done when:**
-- [ ] `undefined`/`unknown` is do-not-touch and skips, with a
+- [x] `undefined`/`unknown` is do-not-touch and skips, with a
       consumer-specific record asserted by test (verify 8, 10).
-- [ ] A command failure is unknown for the affected targets only (verify 11).
-- [ ] Every missing/invalid-socket manifest is preserved with an observable
+- [x] A command failure is unknown for the affected targets only (verify 11).
+- [x] Every missing/invalid-socket manifest is preserved with an observable
       reason (verify 10).
-- [ ] Same session name on two sockets is not a collision (verify 11).
+- [x] Same session name on two sockets is not a collision (verify 11).
 
 ### T-08 — Reservation, proxy, paired options
 
@@ -382,9 +382,9 @@ exit for a socket-bearing manifest; `defaultListTmuxSessions` no longer maps
 **Output:** Reservation refuses on `"unknown"`; the proxy receives the manifest
 target and is preserved on unknown.
 **Done when:**
-- [ ] A cross-socket miss produces `"unknown"` and reservation refuses the
+- [x] A cross-socket miss produces `"unknown"` and reservation refuses the
       launch rather than admitting a duplicate (verify 9, 10).
-- [ ] The proxy does not stop and emits no `reason: "dead-tmux"` on unknown
+- [x] The proxy does not stop and emits no `reason: "dead-tmux"` on unknown
       (verify 9).
 
 ### T-09 — Panel
@@ -396,12 +396,12 @@ not.
 **Output:** Enumeration over the deduplicated set of valid manifest sockets
 only; qualified rows and attach hints; legacy rows unknown and non-attachable.
 **Done when:**
-- [ ] No ambient default is added to the enumeration set (verify 11).
-- [ ] Same-named sessions on two sockets remain distinct rows (verify 11).
-- [ ] One failed socket query does not erase rows from other sockets and is
+- [x] No ambient default is added to the enumeration set (verify 11).
+- [x] Same-named sessions on two sockets remain distinct rows (verify 11).
+- [x] One failed socket query does not erase rows from other sockets and is
       surfaced as partial/unknown evidence (verify 11).
-- [ ] `panel.ts:1169` attach hint is qualified (verify 12).
-- [ ] The three row states are implemented as specified (verify 11): valid
+- [x] `panel.ts:1169` attach hint is qualified (verify 12).
+- [x] The three row states are implemented as specified (verify 11): valid
       socket + session present renders live and attachable; valid socket +
       session **absent** renders `dead` and the row is **retained, never
       omitted**; no usable socket renders `unknown`, non-attachable, and is
@@ -425,14 +425,14 @@ bare `replacementSession` name, at **all three** declaration sites:
 `governess-handoff.ts:38,224,244`, `governess-exit.ts:14,60-63,96`, and
 `governess-replay.ts:307`.
 **Done when:**
-- [ ] `governess-pane-liveness.ts:72,180` and every Governess pane effect accept
+- [x] `governess-pane-liveness.ts:72,180` and every Governess pane effect accept
       only `OwnedPaneTarget`; pairing a target with a pane from a different
       manifest does not compile (verify 3). Caller discipline is not accepted as
       the enforcement mechanism for this band.
-- [ ] No respawn, send, replay, teardown, or handover acceptance from
+- [x] No respawn, send, replay, teardown, or handover acceptance from
       session-only evidence, each with a skip record (verify 10).
-- [ ] Governess does not kill or respawn on B-derived evidence (verify 9).
-- [ ] `governess-exit.ts` no longer treats a persisted replacement *name* as
+- [x] Governess does not kill or respawn on B-derived evidence (verify 9).
+- [x] `governess-exit.ts` no longer treats a persisted replacement *name* as
       sufficient identity.
 
 ### T-11 — Derived migration check
@@ -444,13 +444,16 @@ bare `replacementSession` name, at **all three** declaration sites:
 > returns `"unknown"` for an absent session, but consumers reproduce the defect
 > inline, so the central fix does **not** close verify 10.
 >
-> **No automated rule is added.** A literal `: "dead"` source pattern is a
+> **AS RAISED on 2026-08-08:** no automated semantic-liveness/value-flow rule
+> was added. A literal `: "dead"` source pattern is a
 > blacklist and is explicitly withdrawn: it misses `liveness = "dead"` and
 > `? "dead"`, which is exactly how this inventory was first mis-derived as five
 > sites instead of six. A value-flow rule must **not** be claimed either, because
-> the current checker surface is not an AST/type-flow analyzer and cannot prove
-> `TmuxLiveness` production or confirmed-missing evidence. Letting either form
-> certify six-site completeness would be coverage that does not exist.
+> syntax alone cannot prove `TmuxLiveness` production or confirmed-missing
+> evidence. D-023 later installed an AST-based syntax checker that catches the
+> reviewed direct, alias, spread, import, export, and API-shape forms, but it is
+> not an interprocedural semantic/type-flow proof. Letting it certify arbitrary
+> liveness-value completeness would be coverage that does not exist.
 >
 > **Recorded limitation.** The derived check does **not** provide full semantic
 > coverage for arbitrary `TmuxLiveness` value production. This limitation is
@@ -482,13 +485,20 @@ bare `replacementSession` name, at **all three** declaration sites:
 > is evidence; an absent session *name* is not. `"dead"` grants cleanup
 > authority, so only confirmed evidence may produce it.
 >
-> **If** T-11 later introduces a real AST/type-flow analyzer, it must state its
-> method, catch assignment / ternary / alias forms, include independently
-> seeded indirect cases, and be reviewed separately before any completeness
-> claim rests on it.
+> **D-023 resolution, 2026-08-09:** T-11's checker uses the TypeScript AST,
+> states its method, and has 26 independently seeded tests for the bounded
+> syntax/API claims. It deliberately makes no interprocedural semantic or
+> `TmuxLiveness` value-flow completeness claim; the six named consumer tests
+> remain the acceptance instrument for verify 10.
 >
-> Verify 10 remains **open** pending the per-consumer fixes and their skip
-> records across T-06, T-08, and T-10.
+> **AS RAISED on 2026-08-08:** Verify 10 remained open pending the
+> per-consumer fixes and their skip records across T-06, T-08, and T-10.
+>
+> **Resolved on 2026-08-09:** D-018 closed the six named consumers, D-021 and
+> D-022 closed Governess effect authority, and D-031 supplied the remaining
+> field-complete runtime and pane-death skip records. Named per-site tests and
+> the D-027 two-server matrix close verify 10 without claiming semantic
+> value-flow completeness from the derived checker.
 
 
 **Goal:** The migration is enforced by reading the source, not by a list.
@@ -651,21 +661,33 @@ superseded runtime snapshot, not reused as present-tense evidence.
 **Inputs:** T-01 through T-15.
 **Output:** Command transcripts and comparisons.
 **Done when:**
-- [ ] From `loop-fork/`: `bun run check`, the documented `bunx tsc --noEmit`
+- [x] From `loop-fork/`: `bun run check`, the documented `bunx tsc --noEmit`
       invocation, `bun run build`, and
       `env -u TMUX -u TMUX_PANE bun run test:ci` all pass with no skipped or
       tolerated failure.
-- [ ] `bash evals/smoke/large-prompt-launch.sh`,
+- [x] `bash evals/smoke/large-prompt-launch.sh`,
       `bash evals/smoke/active-launch-interlock.sh`, and
       `bash evals/smoke/paste-submit-readiness.sh` pass, with exact commands and
       candidate SHA-256 recorded.
-- [ ] `scripts/refresh-dependency-map.sh` run, diff inspected and included.
-- [ ] Pre/post `git status --short` and hashes/mtimes of in-scope
+- [x] `scripts/refresh-dependency-map.sh` run, diff inspected and included.
+- [x] Pre/post `git status --short` and hashes/mtimes of in-scope
       `loop-fork/runs/` paths compared and equal (verify 18).
-- [ ] `tests/install.test.ts` proves install behavior unchanged (verify 18).
-- [ ] Harvto not inspected, addressed, signalled, or mutated (verify 18).
-- [ ] Touched files formatted with biome directly. `bun run fix` is **not** used
+- [x] `tests/install.test.ts` proves install behavior unchanged (verify 18).
+- [x] Harvto not inspected, addressed, signalled, or mutated (verify 18).
+- [x] Touched files formatted with biome directly. `bun run fix` is **not** used
       because it rewrites `runs/` evidence.
+
+Completed 2026-08-09 at candidate SHA-256 `cdc1d1ff…`: static, exact documented
+typecheck, build, 86-file sequential suite (1,822 pass / 0 fail), two-server
+certification, and all three compiled launch smokes passed. The initial static
+and type gates discovered D-029/D-030; both were isolated, independently
+evaluated, and committed. T-17 review then found and D-031 closed the remaining
+Governess verify-10 skip-record gap before the full candidate was rerun. The
+final 1,747-file product-run baseline is byte-identical at SHA-256
+`10c6905f…`, including path, byte size, mtime, and content hash. Historical
+D-015 remains immutable as an earlier failed eval and is superseded by D-016
+plus the final suite, not tolerated as a current baseline failure. The
+installed v1.0.38 binary remained unchanged at `88dcfe2d…`; no install occurred.
 
 ### T-17 — Independent evaluation and governed verify
 
@@ -674,9 +696,9 @@ superseded runtime snapshot, not reused as present-tense evidence.
 **Inputs:** T-16 evidence.
 **Output:** `eval.json` with `baseline_failures: []`.
 **Done when:**
-- [ ] A **different** agent from the implementer writes `eval.json`.
-- [ ] UI checks are recorded as not applicable with the terminal-output reason.
-- [ ] `scripts/verify.sh tmux-socket-normalization tmux-socket-normalization`
+- [x] A **different** agent from the implementer writes `eval.json`.
+- [x] UI checks are recorded as not applicable with the terminal-output reason.
+- [x] `scripts/verify.sh tmux-socket-normalization tmux-socket-normalization`
       passes with no tolerated-failure count and no pre-existing failure.
 
 ### T-18 — Commit and review gate
@@ -684,7 +706,7 @@ superseded runtime snapshot, not reused as present-tense evidence.
 **Goal:** Hand off a reviewable candidate without shipping it.
 **Files:** none beyond the scoped diff.
 **Inputs:** T-17 pass.
-**Output:** One scoped commit on `codex/tmux-socket-normalization-run11`.
+**Output:** A scoped commit series on `codex/tmux-launch-recovery`.
 **Done when:**
 - [ ] `git diff origin/main...HEAD --name-only` contains only in-scope paths.
 - [ ] `git diff --numstat` and `git diff --numstat --ignore-all-space` agree, so

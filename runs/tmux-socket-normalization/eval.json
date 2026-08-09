@@ -1,50 +1,53 @@
 {
   "task_id": "tmux-socket-normalization",
-  "feature": "tmux-socket-normalization-scoped-release",
-  "timestamp": "2026-08-08T18:53:04Z",
-  "evaluator": "codex-independent-exact-sha-review",
+  "feature": "tmux-socket-normalization",
+  "timestamp": "2026-08-09T23:13:54Z",
+  "evaluator": "codex-independent-t17-evaluator",
+  "candidate_commit": "fccabae463bb2d01fff0cfd547a303ad36f48b2d",
+  "candidate_sha256": "cdc1d1ff88c479d4c6793830b5b3c7c936a6892ecd90498b906a843445861f47",
   "verdict": "pass",
-  "release_version": "1.0.34",
   "baseline_failures": [],
   "checks": {
-    "native_review": {
+    "functional": {
       "status": "pass",
-      "evidence": "Claude exact-postimage PASS 8dae02e3-d70e-48f1-a237-d752f26d0e1c over the reviewed fourteen-file implementation candidate."
+      "evidence": "The final sequential repository run executed all 86 discovered test suites with 1,822 passing tests and 0 failures. Focused install behavior passed 4/4 and release packaging passed 1/1. Static analysis checked 205 source-owned files cleanly, the exact documented TypeScript command passed, the AST tmux migration guard passed, and the compiled Mach-O candidate matches SHA-256 cdc1d1ff88c479d4c6793830b5b3c7c936a6892ecd90498b906a843445861f47."
+    },
+    "regression": {
+      "status": "pass",
+      "evidence": "All four final producer smokes passed against the exact candidate: two-server normalization, large-prompt launch, active-launch interlock, and paste-submit readiness. The two-server certification exercised 27 named consumer seams with 74 per-seam exact-A contacts under hostile B ambient state, preserved the same-named B decoy byte-for-byte, passed assertion and SIGTERM trap controls with 6 live positive-control PIDs, and left 0 processes, sockets, sessions, or product paths."
+    },
+    "fail_closed_authority": {
+      "status": "pass",
+      "evidence": "D-018, D-021, D-022, and D-031 independently close verify 10 through named consumer tests, manifest-derived TmuxTarget and OwnedPaneTarget authority, exact field-complete skip records, and zero-effect degraded paths. Missing, invalid, conflicting, changed, and mismatched target evidence remains unknown and cannot authorize cleanup, delivery, respawn, handover, attach, or replay effects."
+    },
+    "provenance_and_cleanup": {
+      "status": "pass",
+      "evidence": "Producer fixtures record compiled-candidate provenance and deterministic legacy derivation. The final pre/post inventory contains 1,747 unique loop-fork/runs files with path, byte count, mtime, and SHA-256; the files compare byte-identical and both inventory artifacts hash to 10c6905f66105948abb30572602aa4e5424ba1578cebc9f37dc5bf4c305b2bb7."
+    },
+    "installed_runtime": {
+      "status": "pass",
+      "evidence": "The installed /Users/amgad/.local/bin/loop remains loop v1.0.38 at SHA-256 88dcfe2d6bacb6ff6083dde31fbee96fae608d54eff5861e0763310c98810bf5. T-15 observed forward compatibility only through an isolated copied fixture and denying tmux wrapper; no install, live product run, or installed binary mutation occurred."
+    },
+    "historical_failure_disposition": {
+      "status": "pass",
+      "evidence": "D-015 remains immutable with its original failed integration eval, whose sole failure was the stale release-version assertion. D-016 separately corrected that operational test defect, and the current release-packaging test plus the final 86-suite run pass. D-015 is superseded evidence, not a tolerated current failure."
+    },
+    "ui": {
+      "status": "not_applicable",
+      "evidence": "UI screenshot and DOM checks are not applicable because the affected panel rows, attach hints, and operational evidence are terminal output with no DOM. Exact render assertions and isolated tmux capture evidence provide the applicable verification surface."
+    },
+    "scope": {
+      "status": "pass",
+      "evidence": "The dependency-map correction records the manifest-handle and derived tmux capability boundary. Candidate-only changes are bounded to tmux operational migration, tests, fixtures, smoke isolation, governed evidence, and verification infrastructure; no product modernization lane, Harvto path, merge, push, deploy, install, or product-run cleanup was performed."
     },
     "independent_review": {
       "status": "pass",
-      "evidence": "Harness-owner review rederived all fourteen candidate hashes, exact diff and porcelain boundaries, six frozen hashes, old-API inventory, protected producers, and an independent negative control without writing files."
-    },
-    "static_and_build": {
-      "status": "pass",
-      "evidence": "bun run check checked 845 files with zero diagnostics; scoped TypeScript exited 0; bun run build compiled 3054 modules."
-    },
-    "full_suite": {
-      "status": "pass",
-      "evidence": "bun run test:ci passed every discovered test file outside the restricted sandbox with zero failed files. The restricted sandbox's localhost bind denial was independently reproduced as EADDRINUSE and was not waived."
-    },
-    "focused_regressions": {
-      "status": "pass",
-      "evidence": "Seven socket-normalization suites passed 354 tests with zero failures; proxy integration passed 30/0/83 outside the restricted localhost sandbox."
-    },
-    "shutdown_safety": {
-      "status": "pass",
-      "evidence": "Run 38 was stopped at the last reviewed boundary before V5 source edits; exact session and owned processes were removed, ports 4500/4600 were clear, and no Run 38 survivors remained."
+      "evidence": "Independent T-17 review rederived the suite totals, candidate and installed hashes, inventory equality, D-015 supersession, D-029/D-030/D-031 prerequisite evals, two-server claims, authoritative checklist correction radius, and scope. The review made zero repository or runtime writes before this authorized eval replacement."
     }
   },
-  "shipped_scope": [
-    "durable manifest-bound tmux socket identity prerequisites",
-    "socket-qualified non-paired tmux launch, probe, attach, and keep-attached behavior",
-    "manifest-derived bridge, Governess, replay, reservation, and proxy liveness targeting",
-    "replacement manifest-path persistence and bounded first-read retry",
-    "unknown-target fail-closed behavior for the reviewed consumer slice",
-    "producer-backed regressions and release lint repairs"
-  ],
   "known_limitations": [
-    "This is an intentionally scoped patch release, not completion of the full tmux-socket-normalization specification.",
-    "Verify 10 remains open for the remaining per-consumer skip-record migrations.",
-    "The two-server final certification and remaining T-01 through T-18 work continue in a fresh governed loop.",
-    "Criterion 11 remains Codex attestation-only until the successor loop adds its independent certification evidence."
+    "The D-023 checker is TypeScript-AST based and has 26 independently seeded tests for its bounded syntax and API-shape claims, but it is not an interprocedural semantic or arbitrary TmuxLiveness value-flow proof. Verify 10 instead rests on named consumer tests, structured skip records, and the two-server matrix.",
+    "A manifest whose recorded valid socket was deliberately edited to name a different live server remains outside in-product detection; the manifest is the source of truth. Hostile ambient state cannot rewrite it, and unusable recorded sockets fail closed as unknown."
   ],
   "blocking_findings": []
 }

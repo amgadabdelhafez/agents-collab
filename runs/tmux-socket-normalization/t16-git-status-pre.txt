@@ -1,0 +1,12 @@
+?? loop-fork/.harness/current-task
+?? runs/tmux-socket-normalization/capture-loop-runs-inventory.sh
+?? runs/tmux-socket-normalization/t16-build.log
+?? runs/tmux-socket-normalization/t16-candidate-sha256.txt
+?? runs/tmux-socket-normalization/t16-check-attempt-002.log
+?? runs/tmux-socket-normalization/t16-check-attempt-003.log
+?? runs/tmux-socket-normalization/t16-check.log
+?? runs/tmux-socket-normalization/t16-git-status-pre.txt
+?? runs/tmux-socket-normalization/t16-loop-runs-pre.tsv
+?? runs/tmux-socket-normalization/t16-test-ci.log
+?? runs/tmux-socket-normalization/t16-tsc-attempt-002.log
+?? runs/tmux-socket-normalization/t16-tsc.log

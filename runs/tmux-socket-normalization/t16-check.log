@@ -1,0 +1,336 @@
+$ ultracite check
+runs/d014-paired-launch-cleanup-order/artifacts/static/eval-before-attempt-001.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d014-paired-launch-cleanup-order",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/d014-paired-launch-cleanup-order/artifacts/static/eval-before-attempt-002.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d014-paired-launch-cleanup-order",
+     3  3 │     "status": "fail",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static"
+     7    │ - ··],
+        4 │ + ··"required":·["unit",·"static"],
+     8  5 │     "dimensions": {
+     9  6 │       "unit": {
+
+
+runs/d014-paired-launch-cleanup-order/artifacts/static/eval-before-attempt-003.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d014-paired-launch-cleanup-order",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/d014-paired-launch-cleanup-order/artifacts/unit/attempt-002.json format ━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:39:46Z",
+    10 10 │     "artifact": "runs/d014-paired-launch-cleanup-order/artifacts/unit/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:file",
+    15    │ - ····"--",
+    16    │ - ····"tests/loop/tmux.test.ts"
+    17    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:file",·"--",·"tests/loop/tmux.test.ts"]
+    18 12 │   }
+    19 13 │
+
+
+runs/d014-paired-launch-cleanup-order/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d014-paired-launch-cleanup-order",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/d014-paired-launch-cleanup-order/artifacts/unit/eval-before-attempt-002.json format ━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d014-paired-launch-cleanup-order",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/d014-paired-launch-cleanup-order/artifacts/unit/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:39:46Z",
+    10 10 │     "artifact": "runs/d014-paired-launch-cleanup-order/artifacts/unit/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:file",
+    15    │ - ····"--",
+    16    │ - ····"tests/loop/tmux.test.ts"
+    17    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:file",·"--",·"tests/loop/tmux.test.ts"]
+    18 12 │   }
+    19 13 │
+
+
+runs/d014-paired-launch-cleanup-order/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d014-paired-launch-cleanup-order",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/d015-paired-attach-terminal/artifacts/integration/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:13:14Z",
+    10 10 │     "artifact": "runs/d015-paired-attach-terminal/artifacts/integration/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │
+
+
+runs/d015-paired-attach-terminal/artifacts/integration/eval-before-attempt-001.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d015-paired-attach-terminal",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/d015-paired-attach-terminal/artifacts/integration/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:13:14Z",
+    10 10 │     "artifact": "runs/d015-paired-attach-terminal/artifacts/integration/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │
+
+
+runs/d015-paired-attach-terminal/artifacts/static/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:11:04Z",
+    10 10 │     "artifact": "runs/d015-paired-attach-terminal/artifacts/static/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"check"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"check"]
+    16 12 │   }
+    17 13 │
+
+
+runs/d015-paired-attach-terminal/artifacts/static/eval-before-attempt-001.json format ━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d015-paired-attach-terminal",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+
+
+runs/d015-paired-attach-terminal/artifacts/static/eval-before-attempt-002.json format ━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d015-paired-attach-terminal",
+     3  3 │     "status": "fail",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/d015-paired-attach-terminal/artifacts/static/eval-before-attempt-003.json format ━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d015-paired-attach-terminal",
+     3  3 │     "status": "fail",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build",
+     8    │ - ····"integration"
+     9    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build",·"integration"],
+    10  5 │     "dimensions": {
+    11  6 │       "unit": {
+
+
+runs/d015-paired-attach-terminal/artifacts/unit/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:11:03Z",
+    10 10 │     "artifact": "runs/d015-paired-attach-terminal/artifacts/unit/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:file",
+    15    │ - ····"--",
+    16    │ - ····"tests/loop/tmux.test.ts"
+    17    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:file",·"--",·"tests/loop/tmux.test.ts"]
+    18 12 │   }
+    19 13 │
+
+
+runs/d015-paired-attach-terminal/artifacts/unit/attempt-002.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:12:30Z",
+    10 10 │     "artifact": "runs/d015-paired-attach-terminal/artifacts/unit/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:file",
+    15    │ - ····"--",
+    16    │ - ····"tests/loop/tmux.test.ts"
+    17    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:file",·"--",·"tests/loop/tmux.test.ts"]
+    18 12 │   }
+    19 13 │
+
+
+runs/d015-paired-attach-terminal/artifacts/unit/attempt-003.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     9  9 │     "ended_at": "2026-08-09T18:17:16Z",
+    10 10 │     "artifact": "runs/d015-paired-attach-terminal/artifacts/unit/attempt-003.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:file",
+    15    │ - ····"--",
+    16    │ - ····"tests/loop/tmux.test.ts"
+    17    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:file",·"--",·"tests/loop/tmux.test.ts"]
+    18 12 │   }
+    19 13 │
+
+
+runs/d015-paired-attach-terminal/artifacts/unit/eval-before-attempt-002.json format ━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d015-paired-attach-terminal",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+
+
+runs/d015-paired-attach-terminal/artifacts/unit/eval-before-attempt-003.json format ━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+
+     2  2 │     "task_id": "d015-paired-attach-terminal",
+     3  3 │     "status": "fail",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"static",
+     7    │ - ····"build",
+     8    │ - ····"integration"
+     9    │ - ··],
+        4 │ + ··"required":·["unit",·"static",·"build",·"integration"],
+    10  5 │     "dimensions": {
+    11  6 │       "unit": {
+
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 13.
+Checked 925 files in 257ms. No fixes applied.
+Found 33 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+
+
+error: script "check" exited with code 1

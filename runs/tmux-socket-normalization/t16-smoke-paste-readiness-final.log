@@ -1,0 +1,2 @@
+$ bun build --compile --outfile loop src/cli.ts
+bridge-nudge smoke: session=repo-loop-1 oss=%1 claude=%0 nudge-bytes=53 body=ledger-only receive=complete notification=unresolved-until-pull

@@ -1,0 +1,1 @@
+two-server smoke: candidate-sha256=84dbcdc47c32efa415b1542cd1294316ea1eace84ccaa5bda1f663ff8d9027fc tmux=tmux_3.7b producer=A session=repo-loop-1 hostile=B consumers=27 exact-a-contacts=74 decoy-sha256=4262629fc8a0c172ff3d27908c2dc3f9f44e45c459bfa508cc7cc4fed0486457 trap-exit=pass trap-signal=pass positive-live-pids=6 post-cleanup-survivors=0 sockets=0 sessions=0 product-paths=0
