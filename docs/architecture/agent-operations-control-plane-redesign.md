@@ -4,8 +4,9 @@
 > Date: 2026-08-08  
 > Scope: portfolio, project, shift, workflow, messaging, agent profiles, context,
 > memory, World Model, observability, and execution adapters  
-> Implementation status: no redesign implementation is authorized by this
-> document
+> Implementation status: Phase 0A engine-neutral contracts are complete and
+> independently reviewed on an unmerged shadow branch. No redesign component
+> is installed, activated, or authoritative in live product lanes.
 
 ## 1. Executive decision
 
@@ -68,6 +69,15 @@ That coupling explains the observed churn. A small correction to delivery,
 handoff, socket identity, or context can affect launch, teardown, routing,
 review, messaging, and supervision simultaneously. The redesign must reduce
 the correction radius by making each of those contracts explicit.
+
+A Codex desktop incident supplied an additional projection lesson. Its
+Subagents view showed 56 historical jobs as active for more than eight days,
+while the live collaboration tree had zero child agents and the durable
+rollout contained terminal results for jobs still labeled `Working`. A query
+projection must therefore be rebuildable from authoritative lifecycle events,
+must reconcile terminal outcomes idempotently, and must expose freshness and
+source identity. A status counter is never control-plane authority merely
+because it is visible.
 
 ## 3. Design principles
 
@@ -1085,6 +1095,37 @@ slice; none should be inferred from the engine-neutral contracts implementation.
 10. **Retention:** how long should workflow histories, broker events, raw
     operational evidence, agent episodes, and curated memories remain online?
 
+### 17.1 Recommended decision sequence
+
+Do not decide all ten items as one architecture referendum. Resolve them in
+the order that unlocks bounded, reversible evidence:
+
+1. Approve a Phase 0B management-state slice that completes IDs, transitions,
+   dependencies, WIP, and shift-boundary semantics without adding a service or
+   changing live authority.
+2. Set the portfolio timezone and first pilot scope because both shape every
+   shift and management record.
+3. Freeze one realistic workflow-engine bakeoff scenario and its measures,
+   then run Temporal and Restate against exactly that scenario.
+4. Freeze the first role catalog and context-package contract before adopting
+   a memory or World Model implementation.
+5. Decide storage and hosted-inference boundaries only after the retrieval and
+   provenance competency questions are executable.
+
+The recommended default answers, pending founder confirmation, are:
+
+- portfolio timezone: `America/Los_Angeles`, configurable per portfolio;
+- first pilot: `agents-collab` plus one product project, not the full estate;
+- workflow selection: keep Temporal as baseline and retain the one-scenario
+  Restate challenger;
+- management view: CLI and Markdown first, web projection after workflow and
+  event truth is stable;
+- A2A: internal compatible schemas now, network protocol adapter later;
+- memory inference: local by default, with hosted models allowed only to
+  produce non-authoritative candidates under explicit data policy;
+- World Model: preserve SQLite for a bounded local baseline, compare Postgres
+  and Graphiti only against a frozen corpus and competency questions.
+
 ## 18. Research conclusions as of August 2026
 
 | Area | Current upstream direction | Design implication |
@@ -1130,6 +1171,9 @@ slice; none should be inferred from the engine-neutral contracts implementation.
 
 ## 20. Change log
 
+- 2026-08-08: Corrected the implementation status after Phase 0A, recorded the
+  stale-subagent projection incident, and added a recommended founder-decision
+  sequence with reversible defaults for the next clean-session discussion.
 - 2026-08-08: Recorded Phase 0A completion at `3c504ee`, with native and root
   review PASS, while preserving the unmerged shadow-only boundary.
 - 2026-08-08: First living draft. Consolidated the proposed workflow and
