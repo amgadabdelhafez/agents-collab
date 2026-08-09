@@ -1,0 +1,104 @@
+{
+  "task_id": "agent-operations-phase0-contracts",
+  "feature": "agent-operations-phase0-contracts",
+  "timestamp": "2026-08-09T03:41:22Z",
+  "evaluator": "codex-implementation-evidence",
+  "verdict": "pass",
+  "base_commit": "482bcfbcd34c056172e051b6071dffa0ee31bd72",
+  "baseline_failures": [],
+  "findings": [
+    {
+      "id": "B1",
+      "status": "resolved",
+      "severity": "blocking",
+      "summary": "Date.parse rolled calendar-invalid timestamps forward, so explicit Gregorian calendar validation and focused leap-day regression coverage were added."
+    }
+  ],
+  "checks": {
+    "focused_test": {
+      "status": "pass",
+      "command": "cd loop-fork && bun run test:file -- tests/control-plane/contracts.test.ts",
+      "passed": 4,
+      "failed": 0,
+      "assertions": 12
+    },
+    "scoped_typecheck": {
+      "status": "pass",
+      "command": "cd loop-fork && ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/control-plane/contracts.ts tests/control-plane/contracts.test.ts"
+    },
+    "scoped_static_check": {
+      "status": "pass",
+      "command": "cd loop-fork && bun run check -- src/control-plane/contracts.ts tests/control-plane/contracts.test.ts",
+      "errors": 0,
+      "warnings": 0,
+      "files_checked": 2
+    },
+    "build_smoke": {
+      "status": "pass",
+      "command": "cd loop-fork && bun run build",
+      "modules_bundled": 3054,
+      "note": "The additive module is intentionally not imported by the existing runtime; this proves the unchanged package still builds, while scoped typecheck validates the new graph."
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    }
+  },
+  "acceptance": {
+    "valid_envelope_json_round_trip": true,
+    "cross_lane_rejected_with_lane_mismatch": true,
+    "malformed_input_returns_without_throwing": true,
+    "unsupported_versions_rejected": true,
+    "engine_neutral": true,
+    "existing_runtime_import_graph_unchanged": true,
+    "one_focused_test_file": true,
+    "exported_surface_and_versioning_documented": true
+  },
+  "candidate_file_sha256": {
+    "PLAN.md": "2a3613bf3c89a47b4d069411d590566ea9d6ffd8198ab8b03d722f907a806452",
+    "status.md": "3ef0c2cb9775dd0049a2881839d4fb143ba324076981a6c51f8dde2b000b2de6",
+    "loop-fork/src/control-plane/contracts.ts": "564d7d8b908afe8e807ed6c47cf5cad4502c3a3481f2d73ff4894b7664e1a5e7",
+    "loop-fork/src/control-plane/README.md": "47044281b6018cacbb39007e9cff7166524af2a17837f7677e5de9cc3b3d3d96",
+    "loop-fork/tests/control-plane/contracts.test.ts": "7fbab441e96f01cd494fc3a25f654d710b33e1a14420b3a051fc3bacbc5aa8b6"
+  },
+  "review": {
+    "reviewer": "claude",
+    "mode": "native-zero-write",
+    "verdict": "PASS",
+    "rounds": [
+      {
+        "message_id": "632b917a-d960-4ec5-9947-7cd9cbdd9723",
+        "patch_sha256": "bbe4f7da445599668f709075354e981a3211f014bd87e812ef0510aeb08fe7a0",
+        "verdict": "REVISE",
+        "blocking_findings": ["B1"]
+      },
+      {
+        "message_id": "759c20d3-5663-4143-a0cc-5d91d5e61a6f",
+        "patch_sha256": "e80d44c9cc5834893f82ff43f7d055cebaf73e576c72b6d4e40de78947cf4ba2",
+        "verdict": "PASS",
+        "blocking_findings": []
+      }
+    ]
+  },
+  "deferred_non_blocking_review_notes": [
+    "Bound EVENT_TYPE_RE backtracking before any untrusted ingestion path is activated.",
+    "Remove the unreachable protocol-presence branch inside validateUri when this module next changes.",
+    "Document absolute-URI source validation as stricter than CloudEvents URI-reference input.",
+    "Future record-context validation should extend lane/project mismatch checks beyond envelopes.",
+    "Validated values preserve unknown extension keys and non-identity strings preserve surrounding whitespace."
+  ],
+  "tooling_notes": [
+    "HARNESS.md and ./harness are absent in this checkout; ./harness status --json could not run.",
+    "An initial bunx tsc command resolved the unrelated tsc CLI and failed; the passing scoped check uses the repository-local TypeScript binary.",
+    "An initial bunx ultracite command could not resolve project config before local dependencies were restored with bun install --frozen-lockfile; the lockfile was unchanged."
+  ],
+  "side_effects": {
+    "live_service_started": false,
+    "installed_binary_changed": false,
+    "runtime_path_changed": false,
+    "dependency_manifest_changed": false,
+    "global_install": false,
+    "remote_push": false,
+    "merge": false
+  }
+}

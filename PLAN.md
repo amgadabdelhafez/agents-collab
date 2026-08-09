@@ -2683,3 +2683,30 @@ Next bounded action: review round 3 on the revised bundle at the exact hashes
 recorded in `status.md`. Preserve current uncommitted spec/status changes. No
 source, test, smoke, script, run-eval, commit, or deployment work is authorized
 before human approval.
+
+## Agent Operations Phase 0A contracts — Codex run 2026-08-08
+
+Objective: implement exactly `specs/agent-operations-phase0-contracts/` as an
+additive, engine-neutral TypeScript contract module.
+
+Plan:
+
+1. Confirm current identifier, envelope, test, and package conventions.
+2. Add one pure contract module under `loop-fork/src/control-plane/` with
+   versioned record types, stable identifiers, CloudEvents-compatible
+   envelopes, and deterministic non-throwing validation.
+3. Add one focused test file for valid round-trip and cross-lane fail-closed
+   rejection.
+4. Run only the focused test, scoped type/static checks, build smoke, and
+   `git diff --check`.
+5. Write exact run evidence, obtain one Claude zero-write verdict, and commit
+   only the bounded slice on PASS.
+
+Acceptance: all checks in
+`specs/agent-operations-phase0-contracts/verify.md` pass; no live service,
+installed binary, existing runtime path, merge, push, or successor run changes.
+
+Constraint note: task charter explicitly disables utility delegation. Native
+implementation is authorized; Claude is reserved for required peer review.
+Harness V2 files referenced by `loop-fork/AGENTS.md` are absent in this
+checkout, so its status command cannot run.

@@ -3397,3 +3397,35 @@ deployment work performed by Codex. Next action: Claude revises R3/R6/R10,
 verify 3/5, T-02/T-05/T-10 and requests final review. Doorbell delivery defect
 was logged separately to supervisor; queue-to-seat non-delivery remains out of
 scope for this feature.
+
+## Agent Operations Phase 0A contracts — Codex run 2026-08-08
+
+Current state: charter, World Model integrity gate, `AGENTS.md`, constitution,
+architecture redesign, all four Phase 0A spec files, package conventions, and
+worktree identity verified. HEAD is
+`482bcfbcd34c056172e051b6071dffa0ee31bd72`; initial worktree was clean.
+
+Decisions:
+
+- Keep the module additive and free of live broker/workflow dependencies.
+- Use structurally branded string IDs and schema version `agentops/v1`.
+- Return discriminated validation results with stable rejection codes; never
+  throw for untrusted input.
+- Validate declared lane/project context against envelope identity and reject
+  mismatches fail closed.
+- Keep one focused regression file as required by the slice.
+
+Environment note: `HARNESS.md` and `./harness` are absent, so the Harness V2
+status command required by nested `loop-fork/AGENTS.md` returned not found.
+No workaround installation or scope expansion was attempted.
+
+Peer review round 1 returned REVISE on staged patch SHA-256
+`bbe4f7da445599668f709075354e981a3211f014bd87e812ef0510aeb08fe7a0`.
+Blocking risk B1: `Date.parse` rolled calendar-invalid dates such as
+`2026-02-30` into March, so `requireTimestamp` accepted a nonexistent instant.
+The fix adds explicit Gregorian calendar validation plus invalid-date and real
+leap-day regression assertions in the existing focused test file.
+
+Next: re-run focused verification, update `eval.json` hashes/evidence, request
+Claude zero-write review on the new exact staged SHA, and commit only after
+PASS.
