@@ -1,0 +1,16 @@
+{
+  "claudeSessionId": "00000000-0000-4000-8000-000000000001",
+  "codexThreadId": "",
+  "createdAt": "2026-08-09T00:00:00.000Z",
+  "cwd": "/tmp/loop-fixture/workspace",
+  "mode": "paired",
+  "ossSessionId": "",
+  "pid": 1,
+  "repoId": "repo-fixture",
+  "runId": "1",
+  "state": "failed",
+  "status": "failed",
+  "tmuxSession": "workspace-loop-1",
+  "tmuxSocket": "/tmp/loop-fixture/producer.sock",
+  "updatedAt": "2026-08-09T00:00:00.000Z"
+}

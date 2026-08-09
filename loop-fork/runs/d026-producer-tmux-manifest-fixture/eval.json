@@ -1,0 +1,23 @@
+{
+  "task_id": "d026-producer-tmux-manifest-fixture",
+  "status": "pass",
+  "required": ["unit", "fixture", "static", "review"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "3 focused compatibility tests passed with 24 assertions."
+    },
+    "fixture": {
+      "status": "pass",
+      "evidence": "Capture and --verify passed; clean and hostile-ambient recaptures produced identical new, legacy, and tmux trace hashes."
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "Exact five-file Ultracite check and git diff --check passed."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent zero-write review passed after exact argv/session tracing, deterministic normalization, and closed environment isolation."
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "producer": {
+    "binary": "compiled loop candidate",
+    "binarySha256": "ab91c835bb04d62bbbd8826bf7e1fb7542184e7b8b45a5d834e1636e229775ee",
+    "capturedAtUtc": "2026-08-09T20:50:19.588Z",
+    "sourceCommit": "f7f0d4bccbc04cc409079b8056fbcbd8c49b20a1",
+    "tmuxVersion": "tmux 3.7b (isolated fake-control producer)"
+  },
+  "capture": {
+    "argv": [
+      "<candidate>",
+      "--tmux",
+      "--agent",
+      "oss",
+      "--pair-with",
+      "claude",
+      "--workspace",
+      "<workspace>",
+      "-p",
+      "<prompt>"
+    ],
+    "environment": {
+      "HOME": "<scratch>/home",
+      "LOOP_TMUX_SOCKET": "<scratch>/producer.sock",
+      "PATH": "<scratch>/bin:<system>"
+    },
+    "exitCode": 1,
+    "rawManifestSha256": "c0051dce0d39316266f56edc13411d8cfc96da1dd3f7243bcc8347f4b24ca1a0",
+    "stderrSha256": "7dc8f02191adfac664f00cd3d7efdcafb41512937fad71457a3e4957ed98d28c",
+    "tmuxArgvSha256": "1157029366ac475ea61f65d3701b9be8c52f79828f5ed0b040877d0438019854",
+    "tmuxCommandKinds": [
+      "version-probe:-V",
+      "prelaunch:has-session",
+      "launch:new-session",
+      "cleanup-reprobe:has-session"
+    ]
+  },
+  "normalization": {
+    "method": "project producer fields into the stable compatibility seam",
+    "retainedProducerFields": [
+      "codexThreadId",
+      "mode",
+      "ossSessionId",
+      "runId",
+      "state",
+      "status"
+    ],
+    "normalizedFields": [
+      "createdAt",
+      "claudeSessionId",
+      "cwd",
+      "pid",
+      "repoId",
+      "tmuxSession",
+      "tmuxSocket",
+      "updatedAt"
+    ],
+    "legacyDerivation": "remove only tmuxSocket from manifest-new.json",
+    "reproduce": "bun scripts/capture-tmux-manifest-fixture.ts --verify",
+    "script": "scripts/capture-tmux-manifest-fixture.ts",
+    "scriptSha256": "917dfdd08046838cf38fea29eff004c30b7539f9a822efdd0e1baf05782fa044"
+  },
+  "artifacts": [
+    {
+      "file": "manifest-new.json",
+      "sha256": "4a629cf9245346cc6daa9e5db4334aedea3c9aead2faf7aa6769aadb0ae0bb64"
+    },
+    {
+      "file": "manifest-legacy.json",
+      "sha256": "946cc19673599c890a51487b6d302bac99b2229bcb9af129938471f85312fcf0"
+    },
+    {
+      "file": "tmux-argv.tsv",
+      "sha256": "07a179835a60f6cf76b4e48c3279fb251e5757e10df14cdb158558128bf490fb"
+    }
+  ]
+}
