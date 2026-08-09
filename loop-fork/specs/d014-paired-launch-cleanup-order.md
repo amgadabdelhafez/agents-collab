@@ -33,3 +33,7 @@ GC to recover later.
 
 - Broad remaining tmux consumer migration.
 - Product-lane changes, merge, push, or installed-binary deployment.
+
+## Completion
+
+Completed 2026-08-09 after focused tests and independent zero-write review.

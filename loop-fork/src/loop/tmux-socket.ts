@@ -637,6 +637,30 @@ export const launchServerArgv = (
 };
 
 /**
+ * Socket-binds an arbitrary tmux command during the bounded paired-start
+ * window, before every created pane has a persisted manifest-backed identity.
+ * The caller must supply command arguments without the leading `tmux` binary.
+ * Once startup publishes the complete pane topology, post-launch consumers
+ * must use manifest-derived target and pane composers instead.
+ */
+export const pairedLaunchArgv = (
+  socket: TmuxSocket,
+  args: readonly string[]
+): string[] => {
+  if (args.length === 0) {
+    throw new TmuxTargetProvenanceError(
+      "paired launch command must not be empty"
+    );
+  }
+  if (args.includes("-S") || args.some((arg) => arg.startsWith("-S="))) {
+    throw new TmuxTargetProvenanceError(
+      "paired launch command must not supply its own socket flag"
+    );
+  }
+  return tmuxArgv(socket, args);
+};
+
+/**
  * The attach hint for a non-paired run, built from the SAME resolved socket the
  * session was created on. Deriving it separately would let the two diverge
  * under changed ambient state, which is the defect this exists to prevent.

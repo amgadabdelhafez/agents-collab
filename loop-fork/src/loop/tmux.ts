@@ -114,6 +114,7 @@ import {
   launchAttachCommand,
   launchServerArgv,
   launchSessionArgv,
+  pairedLaunchArgv,
   requireTmuxSocket,
   resolveTmuxSocket,
   type TmuxSocket,
@@ -216,8 +217,15 @@ interface GitResult {
 
 interface TmuxDeps {
   attach: (session: string, launchSocket?: TmuxSocket) => void;
-  capturePane: (pane: string, styled?: boolean) => string;
-  capturePaneSnapshot: (pane: string) => PaneSnapshot | undefined;
+  capturePane: (
+    pane: string,
+    styled?: boolean,
+    launchSocket?: TmuxSocket
+  ) => string;
+  capturePaneSnapshot: (
+    pane: string,
+    launchSocket?: TmuxSocket
+  ) => PaneSnapshot | undefined;
   // Version banner of the `claude` binary the pane will launch, e.g.
   // "2.1.223 (Claude Code)". Undefined when it cannot be observed, which keeps
   // the kickoff guard in its default-closed profile.
@@ -244,8 +252,8 @@ interface TmuxDeps {
   releasePersistentCodexSession: typeof releasePersistentCodexSession;
   resolveLaunchSocket: () => TmuxSocket;
   runGit: (cwd: string, args: string[]) => GitResult;
-  sendKeys: (pane: string, keys: string[]) => void;
-  sendText: (pane: string, text: string) => void;
+  sendKeys: (pane: string, keys: string[], launchSocket?: TmuxSocket) => void;
+  sendText: (pane: string, text: string, launchSocket?: TmuxSocket) => void;
   sleep: (ms: number) => Promise<void>;
   spawn: (args: string[]) => SpawnResult;
   startCodexProxy: (
@@ -273,6 +281,25 @@ interface StartedPairedSession {
   socket?: TmuxSocket;
   terminalizeFailedStart: () => Promise<RunLifecycleState | "undurable">;
 }
+
+const bindPairedLaunchDeps = (
+  deps: TmuxDeps,
+  launchSocket: TmuxSocket
+): TmuxDeps => ({
+  ...deps,
+  attach: (session) => deps.attach(session, launchSocket),
+  capturePane: (pane, styled) => deps.capturePane(pane, styled, launchSocket),
+  capturePaneSnapshot: (pane) => deps.capturePaneSnapshot(pane, launchSocket),
+  resolveLaunchSocket: () => launchSocket,
+  sendKeys: (pane, keys) => deps.sendKeys(pane, keys, launchSocket),
+  sendText: (pane, value) => deps.sendText(pane, value, launchSocket),
+  spawn: (args) =>
+    deps.spawn(
+      args[0] === "tmux" && args[1] !== "-S"
+        ? pairedLaunchArgv(launchSocket, args.slice(1))
+        : args
+    ),
+});
 
 const quoteShellArg = (value: string): string =>
   `'${value.replaceAll("'", "'\\''")}'`;
@@ -3169,22 +3196,39 @@ const startPairedControlPanes = (
 };
 
 const startPairedSession = async (
-  deps: TmuxDeps,
+  baseDeps: TmuxDeps,
   launch: PairedTmuxLaunch
 ): Promise<StartedPairedSession> => {
-  const { manifest: preparedManifest, storage } = deps.preparePairedRun(
+  const { manifest: preparedManifest, storage } = baseDeps.preparePairedRun(
     launch.opts,
-    deps.cwd
+    baseDeps.cwd
   );
   let manifest = preparedManifest;
-  const runBase = resolveRunBase(deps.cwd, deps, storage.runId);
+  const runBase = resolveRunBase(baseDeps.cwd, baseDeps, storage.runId);
   const session = buildRunName(runBase, storage.runId);
   const primaryAgent = launch.opts.agent;
   const secondaryAgent = pairedPeer(launch.opts);
   const paneAgents = resolveTmuxPaneAgents(primaryAgent, secondaryAgent);
   const launchSocket = manifest.tmuxSocket
     ? requireTmuxSocket(manifest.tmuxSocket)
-    : undefined;
+    : baseDeps.resolveLaunchSocket();
+  if (!manifest.tmuxSocket) {
+    const socketBound = baseDeps.updateRunManifest(
+      storage.manifestPath,
+      (current) =>
+        touchRunManifest(
+          { ...(current ?? manifest), tmuxSocket: launchSocket },
+          new Date().toISOString()
+        )
+    );
+    if (!socketBound || socketBound.tmuxSocket !== launchSocket) {
+      throw new Error(
+        `Failed to persist tmux socket before paired launch for run ${storage.runId}.`
+      );
+    }
+    manifest = socketBound;
+  }
+  const deps = bindPairedLaunchDeps(baseDeps, launchSocket);
   const claudeChannelServer = [primaryAgent, secondaryAgent].includes("claude")
     ? resolveClaudeChannelServerName(
         storage.runId,
@@ -3333,19 +3377,25 @@ const startPairedSession = async (
   // `no server running`. It is safe to create the first session here because
   // this launch has not created panes or transports yet. Later probes keep the
   // same diagnostic unknown so it cannot grant cleanup authority.
-  const existingSession = probeHandoffSession(session, deps.spawn, true);
+  manifest = bindPairedSessionIdentity(
+    deps,
+    storage,
+    manifest,
+    session,
+    paneAgents,
+    primaryAgent,
+    false
+  );
+  const existingSession = probeHandoffSession(
+    session,
+    deps.spawn,
+    true,
+    launchSocket
+  );
   if (existingSession.liveness === "unknown") {
     throw unknownHandoffLivenessError(session, existingSession);
   }
   if (existingSession.liveness === "live") {
-    bindPairedSessionIdentity(
-      deps,
-      storage,
-      manifest,
-      session,
-      paneAgents,
-      primaryAgent
-    );
     return {
       manifestPath: storage.manifestPath,
       preserveUnknownStart,
@@ -3356,20 +3406,20 @@ const startPairedSession = async (
       terminalizeFailedStart,
     };
   }
+  manifest = bindPairedSessionIdentity(
+    deps,
+    storage,
+    manifest,
+    session,
+    paneAgents,
+    primaryAgent,
+    true
+  );
   try {
     // The session name is deterministic and already reserved by this launch
     // path. Persist it before hooks, persistent transports, charter writes, or
     // tmux creation so recovery and GC can associate every active manifest with
     // the workspace being constructed.
-    manifest = bindPairedSessionIdentity(
-      deps,
-      storage,
-      manifest,
-      session,
-      paneAgents,
-      primaryAgent,
-      true
-    );
     const nativeSubagentMode = launch.opts.governess
       ? resolveNativeSubagentMode(deps.env.LOOP_NATIVE_SUBAGENT_MODE)
       : "off";
@@ -3656,7 +3706,7 @@ const startPairedSession = async (
         // The live tmux workspace remains the recovery authority even if the
         // manifest cannot be updated. Never trade the human draft for cleanup.
       }
-      const recovery = `tmux attach -t ${session}`;
+      const recovery = launchAttachCommand(launchSocket, session);
       deps.log(
         `[loop] preserved live tmux session "${session}" for ${error.preservationReason}; attach with: ${recovery}`
       );
@@ -3664,7 +3714,12 @@ const startPairedSession = async (
         `${error.message} The live tmux session "${session}" was preserved; attach with: ${recovery}`
       );
     }
-    const liveness = probeHandoffSession(session, deps.spawn);
+    const liveness = probeHandoffSession(
+      session,
+      deps.spawn,
+      false,
+      launchSocket
+    );
     if (liveness.liveness === "unknown") {
       preserveUnknownStart();
       throw unknownHandoffLivenessError(session, liveness);
@@ -3794,9 +3849,17 @@ const defaultDeps = (): TmuxDeps => ({
       throw new Error(`Failed to attach to tmux session "${session}".`);
     }
   },
-  capturePane: (pane: string, styled = false) => {
+  capturePane: (pane: string, styled = false, launchSocket?: TmuxSocket) => {
     const result = spawnSync(
-      ["tmux", "capture-pane", "-p", ...(styled ? ["-e"] : []), "-t", pane],
+      launchSocket
+        ? pairedLaunchArgv(launchSocket, [
+            "capture-pane",
+            "-p",
+            ...(styled ? ["-e"] : []),
+            "-t",
+            pane,
+          ])
+        : ["tmux", "capture-pane", "-p", ...(styled ? ["-e"] : []), "-t", pane],
       boundedTmuxOptions({
         stderr: "ignore",
         stdout: "pipe",
@@ -3812,22 +3875,24 @@ const defaultDeps = (): TmuxDeps => ({
     }
     return decode(result.stdout);
   },
-  capturePaneSnapshot: (pane: string) => {
+  capturePaneSnapshot: (pane: string, launchSocket?: TmuxSocket) => {
+    const snapshotArgs = [
+      "capture-pane",
+      "-p",
+      "-e",
+      "-t",
+      pane,
+      ";",
+      "display-message",
+      "-p",
+      "-t",
+      pane,
+      `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
+    ];
     const result = spawnSync(
-      [
-        "tmux",
-        "capture-pane",
-        "-p",
-        "-e",
-        "-t",
-        pane,
-        ";",
-        "display-message",
-        "-p",
-        "-t",
-        pane,
-        `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
-      ],
+      launchSocket
+        ? pairedLaunchArgv(launchSocket, snapshotArgs)
+        : ["tmux", ...snapshotArgs],
       boundedTmuxOptions({
         stderr: "ignore",
         stdout: "pipe",
@@ -3894,9 +3959,11 @@ const defaultDeps = (): TmuxDeps => ({
   resolveLaunchSocket: () =>
     resolveTmuxSocket(process.env, { uid: process.getuid?.() ?? 0 }).socket,
   runGit: (cwd: string, args: string[]) => runGit(cwd, args),
-  sendKeys: (pane: string, keys: string[]) => {
+  sendKeys: (pane: string, keys: string[], launchSocket?: TmuxSocket) => {
     const result = spawnSync(
-      ["tmux", "send-keys", "-t", pane, ...keys],
+      launchSocket
+        ? pairedLaunchArgv(launchSocket, ["send-keys", "-t", pane, ...keys])
+        : ["tmux", "send-keys", "-t", pane, ...keys],
       boundedTmuxOptions({ stderr: "ignore" })
     );
     if (tmuxCommandTimedOut(result)) {
@@ -3908,9 +3975,18 @@ const defaultDeps = (): TmuxDeps => ({
       throw new Error(`Failed to send keys to tmux pane "${pane}".`);
     }
   },
-  sendText: (pane: string, text: string) => {
+  sendText: (pane: string, text: string, launchSocket?: TmuxSocket) => {
     const result = spawnSync(
-      ["tmux", "send-keys", "-t", pane, "-l", "--", text],
+      launchSocket
+        ? pairedLaunchArgv(launchSocket, [
+            "send-keys",
+            "-t",
+            pane,
+            "-l",
+            "--",
+            text,
+          ])
+        : ["tmux", "send-keys", "-t", pane, "-l", "--", text],
       boundedTmuxOptions({
         stderr: "ignore",
       })

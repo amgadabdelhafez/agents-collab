@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active d014-paired-launch-cleanup-order
+[pass] state/invariants/10-current-task.sh

@@ -17,6 +17,7 @@ import {
   type ManifestHandle,
   manifestHasTarget,
   manifestSocketState,
+  pairedLaunchArgv,
   paneArgv,
   paneTargetFromManifest,
   parseTmuxEnvSocket,
@@ -519,6 +520,23 @@ describe("launch-window composers", () => {
     ]);
   });
 
+  test("the bounded paired-start composer binds arbitrary setup commands to one socket", () => {
+    expect(pairedLaunchArgv(socket, ["split-window", "-t", "%1"])).toEqual([
+      "tmux",
+      "-S",
+      "/tmp/ls-a/a.sock",
+      "split-window",
+      "-t",
+      "%1",
+    ]);
+    expect(() => pairedLaunchArgv(socket, [])).toThrow(
+      TmuxTargetProvenanceError
+    );
+    expect(() =>
+      pairedLaunchArgv(socket, ["has-session", "-S", "/tmp/b.sock"])
+    ).toThrow(TmuxTargetProvenanceError);
+  });
+
   test("caller-supplied target flags are rejected, as in the target-bound trio", () => {
     for (const args of [
       ["-S", "/tmp/b.sock"],
@@ -567,6 +585,7 @@ describe("launch-window composers", () => {
     const srcRoot = join(import.meta.dir, "..", "..", "src");
     const composerNames = [
       "launchAttachCommand",
+      "pairedLaunchArgv",
       "launchServerArgv",
       "launchSessionArgv",
     ] as const;
@@ -612,8 +631,9 @@ describe("launch-window composers", () => {
       tmuxSource.slice(runStart, internalsStart).match(/launchAttachCommand\(/g)
     ).toHaveLength(1);
     expect(qualifiedServerCalls).toHaveLength(serverCalls.length);
-    expect(occurrences("launchServerArgv")).toBe(5);
+    expect(occurrences("launchServerArgv")).toBe(6);
+    expect(occurrences("pairedLaunchArgv")).toBe(6);
     expect(occurrences("launchSessionArgv")).toBe(3);
-    expect(occurrences("launchAttachCommand")).toBe(2);
+    expect(occurrences("launchAttachCommand")).toBe(3);
   });
 });

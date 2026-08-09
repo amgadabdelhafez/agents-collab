@@ -35,6 +35,12 @@ const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
 const makeTempRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-tmux-run-"));
 
+const tmuxCommand = (args: readonly string[]): string | undefined =>
+  args[0] === "tmux" && args[1] === "-S" ? args[3] : args[1];
+
+const withoutTmuxSocket = (args: readonly string[]): readonly string[] =>
+  args[0] === "tmux" && args[1] === "-S" ? [args[0], ...args.slice(3)] : args;
+
 const KICKOFF_HOOKS_BEFORE =
   '{"agent":"claude","event":"SessionStart","state":"starting","sequence":1}\n';
 const KICKOFF_HOOKS_AFTER = `${KICKOFF_HOOKS_BEFORE}{"agent":"claude","event":"UserPromptSubmit","state":"working","sequence":2}\n`;
@@ -361,6 +367,122 @@ test("runInTmux exposes launch socket failure before tmux contact", async () => 
   expect(logs.some((line) => line.includes("recorded before"))).toBe(false);
 });
 
+test("paired launch rejects a malformed recorded socket before tmux or persistent resources", async () => {
+  const tmuxCalls: string[][] = [];
+  let persistentStarts = 0;
+  let proxyStarts = 0;
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+    tmuxSocket: "relative.sock",
+  });
+  const storage = {
+    manifestPath: "/isolated/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/runs/repo-123",
+    transcriptPath: "/isolated/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        spawn: (args) => {
+          tmuxCalls.push(args);
+          return { exitCode: 0, stderr: "" };
+        },
+        startCodexProxy: () => {
+          proxyStarts += 1;
+          return Promise.resolve("ws://127.0.0.1:4600/");
+        },
+        startPersistentAgentSession: () => {
+          persistentStarts += 1;
+          return Promise.resolve(undefined);
+        },
+      },
+      { opts: makePairedOptions(), task: "Ship feature" }
+    )
+  ).rejects.toThrow("tmux socket unknown: socket is relative");
+
+  expect(tmuxCalls).toEqual([]);
+  expect(persistentStarts).toBe(0);
+  expect(proxyStarts).toBe(0);
+});
+
+test("paired launch rejects undurable socket persistence before tmux or persistent resources", async () => {
+  const tmuxCalls: string[][] = [];
+  let persistentStarts = 0;
+  let proxyStarts = 0;
+  let manifestUpdates = 0;
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    state: "submitted",
+    status: "running",
+  });
+  const storage = {
+    manifestPath: "/isolated/runs/repo-123/1/manifest.json",
+    repoId: "repo-123",
+    runDir: "/isolated/runs/repo-123/1",
+    runId: "1",
+    storageRoot: "/isolated/runs/repo-123",
+    transcriptPath: "/isolated/runs/repo-123/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        isInteractive: () => false,
+        log: (): void => undefined,
+        preparePairedRun: () => ({ manifest, storage }),
+        resolveLaunchSocket: () => "/tmp/paired.sock" as never,
+        spawn: (args) => {
+          tmuxCalls.push(args);
+          return { exitCode: 0, stderr: "" };
+        },
+        startCodexProxy: () => {
+          proxyStarts += 1;
+          return Promise.resolve("ws://127.0.0.1:4600/");
+        },
+        startPersistentAgentSession: () => {
+          persistentStarts += 1;
+          return Promise.resolve(undefined);
+        },
+        updateRunManifest: () => {
+          manifestUpdates += 1;
+          return manifest;
+        },
+      },
+      { opts: makePairedOptions(), task: "Ship feature" }
+    )
+  ).rejects.toThrow("Failed to persist tmux socket before paired launch");
+
+  expect(manifestUpdates).toBe(1);
+  expect(tmuxCalls).toEqual([]);
+  expect(persistentStarts).toBe(0);
+  expect(proxyStarts).toBe(0);
+});
+
 test("runInTmux socket-qualifies non-paired handoff probe, remain-on-exit, gone re-probe, and interactive attach", async () => {
   const calls: string[][] = [];
   const attaches: string[] = [];
@@ -528,6 +650,7 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
     sessionId?: string;
   }> = [];
   const bootstrapManifests: RunManifest[] = [];
+  const dependencySockets: Array<string | undefined> = [];
   let sessionStarted = false;
   let manifest = createRunManifest({
     cwd: "/repo",
@@ -566,7 +689,14 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
   const delegated = await runInTmux(
     ["--tmux", "--proof", "verify with tests"],
     {
-      capturePane: () => "❯ ",
+      capturePane: (_pane, _styled, socket) => {
+        dependencySockets.push(socket);
+        return "❯ ";
+      },
+      capturePaneSnapshot: (_pane, socket) => {
+        dependencySockets.push(socket);
+        return undefined;
+      },
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -590,8 +720,11 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
         };
         return { manifest, storage };
       },
-      sendKeys: (): void => undefined,
-      sendText: (pane: string, text: string) => {
+      sendKeys: (_pane, _keys, socket): void => {
+        dependencySockets.push(socket);
+      },
+      sendText: (pane: string, text: string, socket) => {
+        dependencySockets.push(socket);
         typed.push({ pane, text });
       },
       sleep: () => Promise.resolve(),
@@ -618,7 +751,7 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
       },
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : {
@@ -627,7 +760,7 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
                   "error connecting to /private/tmp/tmux-501/cold-smoke (No such file or directory)",
               };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -718,7 +851,18 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
   expect(bootstrapManifests[0]?.tmuxPaneGoverness).toBeUndefined();
   expect(bootstrapManifests[0]?.tmuxPaneLeft).toBeUndefined();
   expect(bootstrapManifests[0]?.tmuxPaneRight).toBeUndefined();
-  expect(calls).toContainEqual([
+  const pairedTmuxCalls = calls.filter((call) => call[0] === "tmux");
+  expect(pairedTmuxCalls.length).toBeGreaterThan(0);
+  expect(
+    pairedTmuxCalls.every(
+      (call) => call[1] === "-S" && call[2] === "/tmp/ls-a/a.sock"
+    )
+  ).toBe(true);
+  expect(dependencySockets.length).toBeGreaterThan(0);
+  expect(
+    dependencySockets.every((socket) => socket === "/tmp/ls-a/a.sock")
+  ).toBe(true);
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "new-session",
     "-d",
@@ -735,7 +879,7 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
     "/repo",
     claudeCommand,
   ]);
-  expect(calls).toContainEqual([
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "split-window",
     "-h",
@@ -748,8 +892,10 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
     "/repo",
     codexCommand,
   ]);
-  expect(calls.filter((call) => call[1] === "load-buffer")).toHaveLength(2);
-  expect(calls).toContainEqual([
+  expect(
+    calls.filter((call) => tmuxCommand(call) === "load-buffer")
+  ).toHaveLength(2);
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "paste-buffer",
     "-d",
@@ -759,7 +905,7 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
     "-t",
     "repo-loop-1:0.0",
   ]);
-  expect(calls).toContainEqual([
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "paste-buffer",
     "-d",
@@ -825,6 +971,7 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
     tmuxPaneRight: "%right",
     tmuxPaneRightAgent: "codex",
     tmuxSession: "repo-loop-1",
+    tmuxSocket: "/tmp/recorded.sock",
   });
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
@@ -845,6 +992,9 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
       log: (): void => undefined,
       ...healthyClaudeKickoffDeps(),
       preparePairedRun: () => ({ manifest, storage }),
+      resolveLaunchSocket: () => {
+        throw new Error("recorded socket must bypass ambient resolution");
+      },
       spawn: (args: string[]) => {
         calls.push(args);
         return { exitCode: 0, stderr: "" };
@@ -858,7 +1008,20 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
   );
 
   expect(delegated).toBe(true);
-  expect(calls.some((args) => args[1] === "new-session")).toBe(false);
+  expect(calls[0]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/recorded.sock",
+    "has-session",
+    "-t",
+    "repo-loop-1",
+  ]);
+  expect(
+    calls
+      .filter((args) => args[0] === "tmux")
+      .every((args) => args[1] === "-S" && args[2] === "/tmp/recorded.sock")
+  ).toBe(true);
+  expect(calls.some((args) => tmuxCommand(args) === "new-session")).toBe(false);
   expect(manifest).toMatchObject({
     tmuxPaneGoverness: "%governess",
     tmuxPaneLeft: "%left",
@@ -924,28 +1087,29 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "load-buffer") {
-          const path = args[4] ?? "";
+        if (args[0] === "tmux" && tmuxCommand(args) === "load-buffer") {
+          const tmuxArgs = withoutTmuxSocket(args);
+          const path = tmuxArgs[4] ?? "";
           loadedPrompts.push({
-            buffer: args[3] ?? "",
+            buffer: tmuxArgs[3] ?? "",
             content: readFileSync(path, "utf8"),
             path,
           });
         }
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
-        if (args[0] === "tmux" && args[1] === "paste-buffer") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "paste-buffer") {
           const pane = args.at(-1) ?? "";
           submissionEvents.push(`paste:${pane}`);
         }
-        if (args[0] === "tmux" && args[1] === "send-keys") {
-          submissionEvents.push(`enter:${args[3] ?? ""}`);
+        if (args[0] === "tmux" && tmuxCommand(args) === "send-keys") {
+          submissionEvents.push(`enter:${withoutTmuxSocket(args)[3] ?? ""}`);
         }
         return { exitCode: 0, stderr: "" };
       },
@@ -986,7 +1150,9 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
     );
   }
   const workspaceCommands = calls.filter(
-    (call) => call[1] === "new-session" || call[1] === "split-window"
+    (call) =>
+      tmuxCommand(call) === "new-session" ||
+      tmuxCommand(call) === "split-window"
   );
   expect(workspaceCommands).toHaveLength(2);
   for (const call of workspaceCommands) {
@@ -994,7 +1160,9 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
     expect(command).not.toContain("BEGIN-LARGE-CHARTER");
     expect(command.length).toBeLessThan(4096);
   }
-  expect(calls.filter((call) => call[1] === "send-keys")).toHaveLength(2);
+  expect(
+    calls.filter((call) => tmuxCommand(call) === "send-keys")
+  ).toHaveLength(2);
   for (const pane of ["repo-loop-1:0.0", "repo-loop-1:0.1"]) {
     expect(submissionEvents.indexOf(`paste:${pane}`)).toBeLessThan(
       submissionEvents.indexOf(`enter:${pane}`)
@@ -1101,16 +1269,16 @@ test("runInTmux writes paired session refs before starting governess", async () 
             );
             events.push(`governess-command:${args.at(-1) ?? ""}`);
           }
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionStarted = true;
             return { exitCode: 0, stderr: "", stdout: "%40\n" };
           }
-          if (args[0] === "tmux" && args[1] === "split-window") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "split-window") {
             if (
               args.some(
                 (arg) => arg.includes("__recon-pane") && arg.includes("'1'")
@@ -1182,7 +1350,8 @@ test("runInTmux writes paired session refs before starting governess", async () 
         .filter(
           (args) =>
             args[0] === "tmux" &&
-            (args[1] === "new-session" || args[1] === "split-window")
+            (tmuxCommand(args) === "new-session" ||
+              tmuxCommand(args) === "split-window")
         )
         .every((args) =>
           args.at(-1)?.includes("'CLAUDE_CONFIG_DIR=/tmp/loop-claude'")
@@ -1199,7 +1368,8 @@ test("runInTmux writes paired session refs before starting governess", async () 
       .filter(
         (call) =>
           call[0] === "tmux" &&
-          (call[1] === "new-session" || call[1] === "split-window")
+          (tmuxCommand(call) === "new-session" ||
+            tmuxCommand(call) === "split-window")
       )
       .map((call) => call.at(-1) ?? "")
       .filter((command) =>
@@ -1234,7 +1404,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     ).toBeLessThan(
       events.indexOf("spawn-governess:codex-thread-1:%41:repo-loop-1:0.2")
     );
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "split-window",
       "-h",
@@ -1249,7 +1419,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
       repoDir,
       expect.stringContaining("__au-pair-pane"),
     ]);
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "set-option",
       "-p",
@@ -1258,7 +1428,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "@loop_label",
       "au-pair.repo-loop-1",
     ]);
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "select-pane",
       "-t",
@@ -1273,7 +1443,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(manifest.tmuxPaneRight).toBe("%41");
     expect(manifest.tmuxPaneGoverness).toBe("%43");
     expect(manifest.tmuxPaneRecon).toEqual(["%45"]);
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "set-option",
       "-p",
@@ -1282,7 +1452,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "remain-on-exit",
       "on",
     ]);
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "set-option",
       "-p",
@@ -1291,7 +1461,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "remain-on-exit-format",
       GOVERNESS_REMAIN_ON_EXIT_FORMAT,
     ]);
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "set-option",
       "-t",
@@ -1299,9 +1469,9 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "pane-border-format",
       GOVERNESS_DEAD_PANE_BORDER_FORMAT,
     ]);
-    const paneDiedHook = calls.find(
-      (call) => call[1] === "set-hook" && call.includes("pane-died")
-    );
+    const paneDiedHook = calls
+      .map(withoutTmuxSocket)
+      .find((call) => call[1] === "set-hook" && call.includes("pane-died"));
     expect(paneDiedHook?.slice(0, 8)).toEqual([
       "tmux",
       "set-hook",
@@ -1314,7 +1484,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(paneDiedHook?.at(-1)).toContain(runDir);
     expect(paneDiedHook?.at(-1)).toContain("repo-loop-1");
     expect(paneDiedHook?.at(-1)).toContain("%43");
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "set-hook",
       "-R",
@@ -1323,7 +1493,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
       "%43",
       "pane-died",
     ]);
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "split-window",
       "-v",
@@ -1339,7 +1509,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
       repoDir,
       expect.stringContaining("__recon-pane"),
     ]);
-    expect(calls).toContainEqual([
+    expect(calls.map(withoutTmuxSocket)).toContainEqual([
       "tmux",
       "set-option",
       "-p",
@@ -1351,7 +1521,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(
       calls.filter(
         (call) =>
-          call[1] === "split-window" &&
+          tmuxCommand(call) === "split-window" &&
           call.some((arg) => arg.includes("__recon-pane"))
       )
     ).toHaveLength(1);
@@ -1441,12 +1611,12 @@ test("governed layout preserves legacy numeric fallbacks without tmux stdout", a
         sendText: (): void => undefined,
         sleep: () => Promise.resolve(),
         spawn: (args: string[]) => {
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionStarted = true;
           }
           return { exitCode: 0, stderr: "" };
@@ -1534,12 +1704,12 @@ test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () =
       },
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -1582,7 +1752,7 @@ test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () =
   expect(startCalls).toEqual([
     { agent: "codex", kind: "work", sessionId: undefined },
   ]);
-  expect(calls).toContainEqual([
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "new-session",
     "-d",
@@ -1599,7 +1769,7 @@ test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () =
     "/repo",
     ossCommand,
   ]);
-  expect(calls).toContainEqual([
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "split-window",
     "-h",
@@ -1612,8 +1782,10 @@ test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () =
     "/repo",
     codexCommand,
   ]);
-  expect(calls.filter((call) => call[1] === "load-buffer")).toHaveLength(2);
-  expect(calls).toContainEqual([
+  expect(
+    calls.filter((call) => tmuxCommand(call) === "load-buffer")
+  ).toHaveLength(2);
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "paste-buffer",
     "-d",
@@ -1623,7 +1795,7 @@ test("runInTmux starts paired tmux panes for the OSS seat and Codex", async () =
     "-t",
     "repo-loop-1:0.0",
   ]);
-  expect(calls).toContainEqual([
+  expect(calls.map(withoutTmuxSocket)).toContainEqual([
     "tmux",
     "paste-buffer",
     "-d",
@@ -1702,15 +1874,15 @@ test("runInTmux releases local codex app-server handles after paired handoff", a
       startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
-        if (args[0] === "tmux" && args[1] === "set-window-option") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "set-window-option") {
           throw new Error("tmux transport error");
         }
         return { exitCode: 0, stderr: "" };
@@ -1799,14 +1971,14 @@ test("runInTmux closes local Codex ownership without rewriting a completed manif
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
           sessionAlive = true;
         }
         if (
           !sessionStarted &&
           args[0] === "tmux" &&
-          args[1] === "split-window"
+          tmuxCommand(args) === "split-window"
         ) {
           throw new Error("split before new-session");
         }
@@ -1884,12 +2056,12 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -1903,7 +2075,14 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
   );
 
   expect(delegated).toBe(true);
-  expect(calls[0]).toEqual(["tmux", "has-session", "-t", "repo-loop-1"]);
+  expect(calls[0]).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/tmux-501/default",
+    "has-session",
+    "-t",
+    "repo-loop-1",
+  ]);
   const env = ["LOOP_RUN_BASE=repo", "LOOP_RUN_ID=1"];
   const claudeChannelServer = tmuxInternals.buildClaudeChannelServerName(
     "1",
@@ -1922,7 +2101,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
       join(storage.runDir, "claude-mcp.json")
     ),
   ]);
-  expect(calls[1]).toEqual([
+  expect(withoutTmuxSocket(calls[1] ?? [])).toEqual([
     "tmux",
     "new-session",
     "-d",
@@ -1947,7 +2126,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
       'mcp_servers.loop-bridge.command="loop"',
     ]),
   ]);
-  expect(calls[2]).toEqual([
+  expect(withoutTmuxSocket(calls[2] ?? [])).toEqual([
     "tmux",
     "split-window",
     "-h",
@@ -2032,12 +2211,12 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionStarted = true;
           }
           return { exitCode: 0, stderr: "" };
@@ -2050,15 +2229,19 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
       { opts: makePairedOptions({ proof: "" }) }
     )
   ).rejects.toThrow(
-    'Claude pane "repo-loop-1:0.0" did not reach an input-ready prompt within 20000ms. The live tmux session "repo-loop-1" was preserved; attach with: tmux attach -t repo-loop-1'
+    "Claude pane \"repo-loop-1:0.0\" did not reach an input-ready prompt within 20000ms. The live tmux session \"repo-loop-1\" was preserved; attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'"
   );
 
   expect(sleeps).toHaveLength(79);
   expect(sleeps.every((delay) => delay === 250)).toBe(true);
-  expect(calls.some((args) => args[1] === "load-buffer")).toBe(false);
-  expect(calls.some((args) => args[1] === "paste-buffer")).toBe(false);
+  expect(calls.some((args) => tmuxCommand(args) === "load-buffer")).toBe(false);
+  expect(calls.some((args) => tmuxCommand(args) === "paste-buffer")).toBe(
+    false
+  );
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "kill-session"
+    )
   ).toBe(false);
   expect(manifest).toMatchObject({
     state: "input-required",
@@ -2070,7 +2253,7 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
   expect(released).toBe(1);
   expect(closed).toBe(0);
   expect(logs).toContain(
-    '[loop] preserved live tmux session "repo-loop-1" for Claude startup readiness timeout recovery; attach with: tmux attach -t repo-loop-1'
+    "[loop] preserved live tmux session \"repo-loop-1\" for Claude startup readiness timeout recovery; attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'"
   );
 });
 
@@ -2155,7 +2338,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionStarted = true;
           }
           if (args[0] === "tmux" && args.includes("kill-session")) {
@@ -2265,7 +2448,7 @@ test.each([
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionLive = true;
             return { exitCode: 0, stderr: "", stdout: "%91" };
           }
@@ -2404,10 +2587,10 @@ test("runInTmux fails closed and cleans up when the Claude kickoff is never conf
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionStarted = true;
           }
-          if (args[0] === "tmux" && args[1] === "paste-buffer") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "paste-buffer") {
             pasted = true;
           }
           if (args[0] === "tmux" && args.includes("kill-session")) {
@@ -2438,7 +2621,7 @@ test("runInTmux fails closed and cleans up when the Claude kickoff is never conf
   expect(enterKeys.filter((key) => key === "Enter")).toEqual(["Enter"]);
   const pastesPerPane = new Map<string, number>();
   for (const args of calls) {
-    if (args[0] !== "tmux" || args[1] !== "paste-buffer") {
+    if (args[0] !== "tmux" || tmuxCommand(args) !== "paste-buffer") {
       continue;
     }
     const target = args[args.indexOf("-t") + 1] ?? "";
@@ -2846,15 +3029,15 @@ test("runInTmux replays the captured Claude pre-connect warning before bootstrap
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
-        if (args[0] === "tmux" && args[1] === "load-buffer") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "load-buffer") {
           bootstrapStarted = true;
           expect(screen).toBe(3);
         }
@@ -3015,16 +3198,16 @@ test("runInTmux preserves the live workspace when a post-End draft capture fails
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionStarted = true;
             return { exitCode: 0, stderr: "", stdout: "%0" };
           }
-          if (args[0] === "tmux" && args[1] === "split-window") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "split-window") {
             return { exitCode: 0, stderr: "", stdout: "%1" };
           }
           return { exitCode: 0, stderr: "" };
@@ -3040,7 +3223,7 @@ test("runInTmux preserves the live workspace when a post-End draft capture fails
       { opts: makePairedOptions(), task: "Ship feature" }
     )
   ).rejects.toThrow(
-    'The live tmux session "repo-loop-1" was preserved; attach with: tmux attach -t repo-loop-1'
+    "The live tmux session \"repo-loop-1\" was preserved; attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'"
   );
 
   expect(sessionStarted).toBe(true);
@@ -3050,10 +3233,14 @@ test("runInTmux preserves the live workspace when a post-End draft capture fails
   expect(storedManifest.tmuxPaneRight).toBe("%1");
   expect(released).toBe(1);
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "kill-session"
+    )
   ).toBe(false);
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "load-buffer")
+    calls.some(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "load-buffer"
+    )
   ).toBe(false);
 });
 
@@ -3371,12 +3558,12 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -3478,12 +3665,12 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
       startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -3880,7 +4067,7 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
     {
       capturePane: () => {
         pollCount += 1;
-        if (calls.some((args) => args[1] === "load-buffer")) {
+        if (calls.some((args) => tmuxCommand(args) === "load-buffer")) {
           throw new Error(
             "bootstrap transport started before Claude was ready"
           );
@@ -3922,12 +4109,12 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -3946,7 +4133,7 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
       (call) => call.pane === "repo-loop-1:0.0" && call.keys[0] === "Enter"
     )
   ).toHaveLength(1);
-  expect(calls.some((args) => args[1] === "load-buffer")).toBe(true);
+  expect(calls.some((args) => tmuxCommand(args) === "load-buffer")).toBe(true);
 });
 
 test("runInTmux confirms the current Claude bypass prompt wording", async () => {
@@ -4021,12 +4208,12 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
       startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -4102,12 +4289,12 @@ test("runInTmux still confirms Claude trust prompts in paired mode", async () =>
       startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -4182,12 +4369,12 @@ test("runInTmux still catches a delayed Claude trust prompt", async () => {
       startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -4257,12 +4444,12 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           return sessionStarted
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
         }
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionStarted = true;
         }
         return { exitCode: 0, stderr: "" };
@@ -4301,7 +4488,7 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
   ]);
 
   expect(delegated).toBe(true);
-  expect(calls[1]).toEqual([
+  expect(withoutTmuxSocket(calls[1] ?? [])).toEqual([
     "tmux",
     "new-session",
     "-d",
@@ -4318,7 +4505,7 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
     "/repo",
     claudeCommand,
   ]);
-  expect(calls[2]).toEqual([
+  expect(withoutTmuxSocket(calls[2] ?? [])).toEqual([
     "tmux",
     "split-window",
     "-h",
@@ -4774,7 +4961,7 @@ test("runInTmux ignores an unresolved raw session id in paired mode", async () =
         resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
@@ -4863,7 +5050,7 @@ test("runInTmux keeps raw --session values in single-agent mode", async () => {
         resolveLaunchSocket: () => "/tmp/ls-a/a.sock" as never,
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
@@ -4920,7 +5107,7 @@ test("runInTmux increments session index on conflicts", async () => {
       if (name === "repo-loop-1") {
         return { exitCode: 1, stderr: "duplicate session: repo-loop-1" };
       }
-      if (args[0] === "tmux" && args[1] === "has-session") {
+      if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
         return { exitCode: 0, stderr: "" };
       }
       return { exitCode: 0, stderr: "" };
@@ -5061,7 +5248,7 @@ test("runInTmux keeps unrelated nonzero handoff stderr unknown", async () => {
 test("runInTmux preserves paired probe argv byte-for-byte with a launch socket available", async () => {
   const calls: string[][] = [];
   let manifestUpdates = 0;
-  const manifest = createRunManifest({
+  let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
     pid: 1234,
@@ -5095,8 +5282,9 @@ test("runInTmux preserves paired probe argv byte-for-byte with a launch socket a
           calls.push(args);
           return { exitCode: 1, stderr: "permission denied" };
         },
-        updateRunManifest: () => {
+        updateRunManifest: (_path, update) => {
           manifestUpdates += 1;
+          manifest = update(manifest) ?? manifest;
           return manifest;
         },
       },
@@ -5109,13 +5297,23 @@ test("runInTmux preserves paired probe argv byte-for-byte with a launch socket a
     'tmux session "repo-loop-1" liveness is unknown; refusing handoff or terminalization: permission denied'
   );
 
-  expect(calls).toEqual([["tmux", "has-session", "-t", "repo-loop-1"]]);
-  expect(manifestUpdates).toBe(0);
+  expect(calls).toEqual([
+    [
+      "tmux",
+      "-S",
+      "/tmp/decoy-launch.sock",
+      "has-session",
+      "-t",
+      "repo-loop-1",
+    ],
+  ]);
+  expect(manifestUpdates).toBe(2);
   expect(manifest).toMatchObject({
     state: "submitted",
     status: "running",
+    tmuxSession: "repo-loop-1",
+    tmuxSocket: "/tmp/decoy-launch.sock",
   });
-  expect(manifest.tmuxSession).toBeUndefined();
 });
 
 test.each([
@@ -5191,12 +5389,12 @@ test.each([
         startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args: string[]) => {
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return sessionStarted
               ? unknownResult
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionStarted = true;
           }
           return { exitCode: 0, stderr: "" };
@@ -5280,7 +5478,7 @@ test("runInTmux preserves current transport and active state when paired layout 
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return layoutTimedOut
               ? {
                   exitCode: 124,
@@ -5289,7 +5487,7 @@ test("runInTmux preserves current transport and active state when paired layout 
                 }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             layoutTimedOut = true;
             return {
               exitCode: 124,
@@ -5313,7 +5511,9 @@ test("runInTmux preserves current transport and active state when paired layout 
   expect(closed).toBe(0);
   expect(released).toBe(1);
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "kill-session"
+    )
   ).toBe(false);
   expect(manifest).toMatchObject({
     codexAppServerPid: 45_000,
@@ -5378,10 +5578,10 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             return { exitCode: 1, stderr: "boom" };
           }
           return { exitCode: 0, stderr: "" };
@@ -5395,16 +5595,18 @@ test("runInTmux never mutates home Claude MCP registration on startup failure", 
     )
   ).rejects.toThrow("Failed to start tmux session: boom");
 
-  expect(calls.some((args) => args[0] === "claude" && args[1] === "mcp")).toBe(
-    false
-  );
+  expect(
+    calls.some((args) => args[0] === "claude" && tmuxCommand(args) === "mcp")
+  ).toBe(false);
   expect(
     calls
-      .find((args) => args[0] === "tmux" && args[1] === "new-session")
+      .find((args) => args[0] === "tmux" && tmuxCommand(args) === "new-session")
       ?.at(-1)
   ).toContain("--strict-mcp-config");
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "kill-session"
+    )
   ).toBe(false);
   expect(closed).toBe(1);
   expect(manifest).toMatchObject({
@@ -5456,7 +5658,7 @@ test("runInTmux terminalizes a hook-preparation failure before new-session", asy
           preparePairedRun: () => ({ manifest, storage }),
           spawn: (args: string[]) => {
             calls.push(args);
-            return args[0] === "tmux" && args[1] === "has-session"
+            return args[0] === "tmux" && tmuxCommand(args) === "has-session"
               ? { exitCode: 1, stderr: "session not found" }
               : { exitCode: 0, stderr: "" };
           },
@@ -5476,7 +5678,9 @@ test("runInTmux terminalizes a hook-preparation failure before new-session", asy
       )
     ).rejects.toThrow();
     expect(
-      calls.some((args) => args[0] === "tmux" && args[1] === "new-session")
+      calls.some(
+        (args) => args[0] === "tmux" && tmuxCommand(args) === "new-session"
+      )
     ).toBe(false);
     expect(manifest).toMatchObject({ state: "failed", status: "failed" });
     // verify 4: a startup that fails after binding must retain BOTH identities,
@@ -5547,19 +5751,19 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
         },
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             return winnerSessionLive
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             winnerSessionLive = true;
             return {
               exitCode: 1,
               stderr: "duplicate session: repo-loop-1",
             };
           }
-          if (args[0] === "tmux" && args[1] === "kill-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "kill-session") {
             winnerSessionLive = false;
           }
           return { exitCode: 0, stderr: "" };
@@ -5584,10 +5788,14 @@ test("runInTmux never kills a winner when paired new-session loses a duplicate-s
     requesterPid: process.pid,
   });
   expect(
-    calls.filter((args) => args[0] === "tmux" && args[1] === "has-session")
+    calls.filter(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "has-session"
+    )
   ).toHaveLength(2);
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "kill-session"
+    )
   ).toBe(false);
   expect(closed).toBe(1);
   expect(stoppedProxy).toBe(1);
@@ -5640,11 +5848,11 @@ test("runInTmux cleans an owned paired session when setup fails after new-sessio
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "new-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
             sessionLive = true;
             return { exitCode: 0, stderr: "", stdout: "%91" };
           }
-          if (args[0] === "tmux" && args[1] === "split-window") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "split-window") {
             return { exitCode: 1, stderr: "split boom" };
           }
           if (args[0] === "tmux" && args.includes("kill-session")) {
@@ -5734,7 +5942,9 @@ test("runInTmux terminalizes the paired manifest when the workspace disappears b
   expect(updatedPaths.length).toBeGreaterThan(0);
   expect(new Set(updatedPaths)).toEqual(new Set([storage.manifestPath]));
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some(
+      (args) => args[0] === "tmux" && tmuxCommand(args) === "kill-session"
+    )
   ).toBe(false);
   expect(manifest).toMatchObject({
     state: "failed",
@@ -5784,7 +5994,7 @@ test("runInTmux preserves external transport ownership when a resumed workspace 
         ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             sessionProbes += 1;
             return sessionProbes === 1
               ? { exitCode: 0, stderr: "" }
@@ -5845,7 +6055,7 @@ test("runInTmux terminalizes a paired manifest when attach confirms the workspac
       ...healthyClaudeKickoffDeps(),
       preparePairedRun: () => ({ manifest, storage }),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           sessionProbes += 1;
           return sessionProbes <= 2
             ? { exitCode: 0, stderr: "" }
@@ -5904,7 +6114,7 @@ test("runInTmux preserves the active manifest when attach-path liveness is unkno
         ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             sessionProbes += 1;
             return sessionProbes <= 2
               ? { exitCode: 0, stderr: "" }
@@ -5980,7 +6190,7 @@ test("runInTmux treats an attach capability error as non-fatal when the exact pa
       },
       spawn: (args: string[]) => {
         calls.push(args);
-        if (args[0] === "tmux" && args[1] === "new-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "new-session") {
           sessionCreated = true;
           return { exitCode: 0, stderr: "", stdout: "%91" };
         }
@@ -6065,13 +6275,13 @@ test("runInTmux rejects a failed pre-handoff window setup and terminalizes the m
         ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             sessionProbes += 1;
             return sessionProbes <= 2
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
           }
-          if (args[0] === "tmux" && args[1] === "set-window-option") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "set-window-option") {
             return { exitCode: 1, stderr: "no such session" };
           }
           return { exitCode: 0, stderr: "" };
@@ -6123,11 +6333,11 @@ test("runInTmux treats optional remain-on-exit timeout as best-effort and preser
       ...healthyClaudeKickoffDeps(),
       preparePairedRun: () => ({ manifest, storage }),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
           sessionProbes += 1;
           return { exitCode: 0, stderr: "" };
         }
-        if (args[0] === "tmux" && args[1] === "set-window-option") {
+        if (args[0] === "tmux" && tmuxCommand(args) === "set-window-option") {
           return {
             exitCode: 124,
             stderr: "tmux control command timed out after 2000ms",
@@ -6185,7 +6395,7 @@ test("runInTmux rejects a noninteractive handoff race and terminalizes the activ
         ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             sessionProbes += 1;
             return sessionProbes <= 2
               ? { exitCode: 0, stderr: "" }
@@ -6241,7 +6451,7 @@ test("runInTmux does not report a successful handoff for an already-failed manif
         ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && tmuxCommand(args) === "has-session") {
             sessionProbes += 1;
             return sessionProbes <= 2
               ? { exitCode: 0, stderr: "" }
