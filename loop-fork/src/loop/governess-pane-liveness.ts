@@ -9,10 +9,18 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "bun";
 import {
   isActiveRunState,
+  type ManifestHandle,
   type RunManifest,
   readRunManifest,
+  readRunManifestHandle,
 } from "./run-state";
 import { boundedTmuxOptions, tmuxCommandTimedOut } from "./tmux-control";
+import {
+  manifestSocketState,
+  type OwnedPaneTarget,
+  paneArgv,
+  paneTargetFromManifest,
+} from "./tmux-socket";
 
 export const GOVERNESS_PANE_DIED_SUBCOMMAND = "__governess-pane-died";
 export const GOVERNESS_LIVENESS_FILE = "governess-liveness.jsonl";
@@ -69,11 +77,12 @@ export interface GovernessPaneDiedResult {
 
 export interface GovernessPaneLivenessDeps {
   appendEvent: (path: string, event: GovernessPaneLivenessEvent) => boolean;
-  inspectPane: (session: string, pane: string) => PaneSnapshot | undefined;
+  inspectPane: (target: OwnedPaneTarget) => PaneSnapshot | undefined;
   now: () => Date;
+  readHandle: (path: string) => ManifestHandle | undefined;
   readJournal: (path: string) => JournalRead;
   readManifest: (path: string) => RunManifest | undefined;
-  respawnPane: (pane: string) => boolean;
+  respawnPane: (target: OwnedPaneTarget) => boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -170,27 +179,19 @@ const defaultAppendEvent = (
   }
 };
 
-const runTmux = (args: string[]): ReturnType<typeof spawnSync> =>
-  spawnSync(
-    ["tmux", ...args],
-    boundedTmuxOptions({ stderr: "ignore", stdout: "pipe" })
-  );
+const runTmux = (argv: string[]): ReturnType<typeof spawnSync> =>
+  spawnSync(argv, boundedTmuxOptions({ stderr: "ignore", stdout: "pipe" }));
 
-const defaultInspectPane = (
-  session: string,
-  pane: string
-): PaneSnapshot | undefined => {
-  const sessionResult = runTmux(["has-session", "-t", session]);
-  if (tmuxCommandTimedOut(sessionResult) || sessionResult.exitCode !== 0) {
-    return undefined;
-  }
-  const result = runTmux([
-    "display-message",
+export const governessInspectPaneArgs = (target: OwnedPaneTarget): string[] =>
+  paneArgv(target, "display-message", [
     "-p",
-    "-t",
-    pane,
     "#{session_name}\t#{pane_id}\t#{pane_dead}",
   ]);
+
+const defaultInspectPane = (
+  target: OwnedPaneTarget
+): PaneSnapshot | undefined => {
+  const result = runTmux(governessInspectPaneArgs(target));
   if (tmuxCommandTimedOut(result) || result.exitCode !== 0) {
     return undefined;
   }
@@ -203,15 +204,11 @@ const defaultInspectPane = (
   return { dead: dead === "1", id, session: actualSession };
 };
 
-export const governessRespawnPaneArgs = (pane: string): string[] => [
-  "respawn-pane",
-  "-k",
-  "-t",
-  pane,
-];
+export const governessRespawnPaneArgs = (target: OwnedPaneTarget): string[] =>
+  paneArgv(target, "respawn-pane", ["-k"]);
 
-const defaultRespawnPane = (pane: string): boolean => {
-  const result = runTmux(governessRespawnPaneArgs(pane));
+const defaultRespawnPane = (target: OwnedPaneTarget): boolean => {
+  const result = runTmux(governessRespawnPaneArgs(target));
   return !tmuxCommandTimedOut(result) && result.exitCode === 0;
 };
 
@@ -220,10 +217,45 @@ export const defaultGovernessPaneLivenessDeps =
     appendEvent: defaultAppendEvent,
     inspectPane: defaultInspectPane,
     now: () => new Date(),
+    readHandle: (path) => readRunManifestHandle(path),
     readJournal: defaultReadJournal,
     readManifest: (path) => readRunManifest(path),
     respawnPane: defaultRespawnPane,
   });
+
+const ownedGovernessPane = (
+  handle: ManifestHandle | undefined
+): OwnedPaneTarget | undefined =>
+  handle ? paneTargetFromManifest(handle, "tmuxPaneGoverness") : undefined;
+
+const unavailableTargetReason = (handle: ManifestHandle | undefined): string =>
+  `tmux-target-${handle ? manifestSocketState(handle) : "missing"}`;
+
+interface OwnedPaneSnapshot {
+  reason?: string;
+  target?: OwnedPaneTarget;
+}
+
+const readOwnedPaneSnapshot = (
+  deps: GovernessPaneLivenessDeps,
+  manifestPath: string,
+  input: GovernessPaneDiedInput
+): OwnedPaneSnapshot => {
+  const before = deps.readHandle(manifestPath);
+  const manifest = deps.readManifest(manifestPath);
+  const after = deps.readHandle(manifestPath);
+  if (!manifestOwnsPane(manifest, input)) {
+    return { reason: "run-inactive-or-ownership-mismatch" };
+  }
+  if (!(before && after)) {
+    return { reason: unavailableTargetReason(after ?? before) };
+  }
+  if (before.manifestSha256 !== after.manifestSha256) {
+    return { reason: "manifest-changed-during-target-read" };
+  }
+  const target = ownedGovernessPane(after);
+  return target ? { target } : { reason: unavailableTargetReason(after) };
+};
 
 const livenessEvent = (
   input: GovernessPaneDiedInput,
@@ -275,10 +307,12 @@ export const handleGovernessPaneDied = (
   const deps = { ...defaultGovernessPaneLivenessDeps(), ...overrides };
   const manifestPath = join(input.runDir, "manifest.json");
   const journalPath = join(input.runDir, GOVERNESS_LIVENESS_FILE);
-  if (!manifestOwnsPane(deps.readManifest(manifestPath), input)) {
-    return result("spared", "run-inactive-or-ownership-mismatch");
+  const initial = readOwnedPaneSnapshot(deps, manifestPath, input);
+  const initialTarget = initial.target;
+  if (!initialTarget) {
+    return result("spared", initial.reason ?? "tmux-target-missing");
   }
-  if (!snapshotMatches(deps.inspectPane(input.session, input.pane), input)) {
+  if (!snapshotMatches(deps.inspectPane(initialTarget), input)) {
     return result("spared", "session-pane-missing-or-live");
   }
 
@@ -306,14 +340,16 @@ export const handleGovernessPaneDied = (
   // The budget read is an asynchronous boundary from the perspective of the
   // pane hook. Re-read both authorities immediately before recording and
   // acting so teardown or a replacement workspace wins the race.
-  if (!manifestOwnsPane(deps.readManifest(manifestPath), input)) {
+  const current = readOwnedPaneSnapshot(deps, manifestPath, input);
+  const currentTarget = current.target;
+  if (!currentTarget) {
     return result(
       "spared",
       "ownership-changed-before-respawn",
       attemptsInWindow
     );
   }
-  if (!snapshotMatches(deps.inspectPane(input.session, input.pane), input)) {
+  if (!snapshotMatches(deps.inspectPane(currentTarget), input)) {
     return result("spared", "pane-changed-before-respawn", attemptsInWindow);
   }
 
@@ -323,7 +359,19 @@ export const handleGovernessPaneDied = (
   ) {
     return result("failed", "restart-attempt-not-durable", attemptsInWindow);
   }
-  if (!deps.respawnPane(input.pane)) {
+  const effect = readOwnedPaneSnapshot(deps, manifestPath, input);
+  const effectTarget = effect.target;
+  if (!effectTarget) {
+    return result(
+      "spared",
+      "ownership-changed-after-attempt",
+      attemptsInWindow + 1
+    );
+  }
+  if (!snapshotMatches(deps.inspectPane(effectTarget), input)) {
+    return result("spared", "pane-changed-after-attempt", attemptsInWindow + 1);
+  }
+  if (!deps.respawnPane(effectTarget)) {
     deps.appendEvent(
       journalPath,
       livenessEvent(input, "respawn-failed", at, "tmux-respawn-failed")

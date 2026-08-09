@@ -5,6 +5,7 @@ import {
   GOVERNESS_RESTART_WINDOW_MS,
   type GovernessPaneLivenessDeps,
   type GovernessPaneLivenessEvent,
+  governessInspectPaneArgs,
   governessRespawnPaneArgs,
   handleGovernessPaneDied,
   parseGovernessPaneDiedArgs,
@@ -14,6 +15,11 @@ import {
   type RunManifest,
   setRunManifestState,
 } from "../../src/loop/run-state";
+import {
+  createManifestHandle,
+  type ManifestHandle,
+  paneTargetFromManifest,
+} from "../../src/loop/tmux-socket";
 
 const NOW = new Date("2026-07-29T20:30:00.000Z");
 const input = {
@@ -32,11 +38,25 @@ const activeManifest = (): RunManifest => ({
       runId: "42",
       status: "running",
       tmuxSession: input.session,
+      tmuxSocket: "/tmp/governess-pane.sock",
     },
     "2026-07-29T20:00:00.000Z"
   ),
   tmuxPaneGoverness: input.pane,
 });
+
+const activeHandle = (
+  overrides: Partial<Parameters<typeof createManifestHandle>[0]> = {}
+): ManifestHandle =>
+  createManifestHandle({
+    manifestPath: `${input.runDir}/manifest.json`,
+    manifestSha256: "a".repeat(64),
+    panes: { tmuxPaneGoverness: input.pane },
+    runId: "42",
+    session: input.session,
+    socket: "/tmp/governess-pane.sock",
+    ...overrides,
+  });
 
 const eventLine = (
   at: string,
@@ -55,10 +75,10 @@ const setup = (
 ): {
   deps: GovernessPaneLivenessDeps;
   events: GovernessPaneLivenessEvent[];
-  respawns: string[];
+  respawns: string[][];
 } => {
   const events: GovernessPaneLivenessEvent[] = [];
-  const respawns: string[] = [];
+  const respawns: string[][] = [];
   const deps: GovernessPaneLivenessDeps = {
     appendEvent: (_path, event) => {
       events.push(event);
@@ -70,10 +90,11 @@ const setup = (
       session: input.session,
     }),
     now: () => NOW,
+    readHandle: () => activeHandle(),
     readJournal: () => ({ ok: true, text: "" }),
     readManifest: () => activeManifest(),
-    respawnPane: (pane) => {
-      respawns.push(pane);
+    respawnPane: (target) => {
+      respawns.push(governessRespawnPaneArgs(target));
       return true;
     },
     ...overrides,
@@ -91,7 +112,17 @@ test("respawns an exact active dead Governess pane and journals both edges", () 
     attemptsInWindow: 1,
     reason: "respawned",
   });
-  expect(fixture.respawns).toEqual([input.pane]);
+  expect(fixture.respawns).toEqual([
+    [
+      "tmux",
+      "-S",
+      "/tmp/governess-pane.sock",
+      "respawn-pane",
+      "-t",
+      input.pane,
+      "-k",
+    ],
+  ]);
   expect(fixture.events.map((event) => event.event)).toEqual([
     "respawn-attempt",
     "respawned",
@@ -119,6 +150,28 @@ test.each([
   expect(fixture.events).toEqual([]);
 });
 
+test("spares manifest drift across the coherent ownership read", () => {
+  let reads = 0;
+  let inspections = 0;
+  const fixture = setup({
+    inspectPane: () => {
+      inspections += 1;
+      return { dead: true, id: input.pane, session: input.session };
+    },
+    readHandle: () => {
+      reads += 1;
+      return activeHandle({ manifestSha256: String(reads).repeat(64) });
+    },
+  });
+
+  const outcome = handleGovernessPaneDied(input, fixture.deps);
+
+  expect(outcome.reason).toBe("manifest-changed-during-target-read");
+  expect(inspections).toBe(0);
+  expect(fixture.respawns).toEqual([]);
+  expect(fixture.events).toEqual([]);
+});
+
 test.each([
   ["missing manifest", undefined],
   ["session mismatch", { ...activeManifest(), tmuxSession: "other-loop-42" }],
@@ -138,6 +191,41 @@ test.each([
   expect(outcome.action).toBe("spared");
   expect(inspections).toBe(0);
   expect(fixture.respawns).toEqual([]);
+});
+
+test.each([
+  ["missing handle", undefined, "tmux-target-missing"],
+  [
+    "missing socket",
+    activeHandle({ socket: undefined }),
+    "tmux-target-missing",
+  ],
+  [
+    "invalid socket",
+    activeHandle({ socket: "relative.sock" }),
+    "tmux-target-invalid",
+  ],
+  [
+    "conflicting socket",
+    activeHandle({ socketConflict: true }),
+    "tmux-target-conflicting",
+  ],
+] as const)("spares a %s without inspecting or respawning", (_label, handle, reason) => {
+  let inspections = 0;
+  const fixture = setup({
+    inspectPane: () => {
+      inspections += 1;
+      return { dead: true, id: input.pane, session: input.session };
+    },
+    readHandle: () => handle,
+  });
+
+  const outcome = handleGovernessPaneDied(input, fixture.deps);
+
+  expect(outcome.reason).toBe(reason);
+  expect(inspections).toBe(0);
+  expect(fixture.respawns).toEqual([]);
+  expect(fixture.events).toEqual([]);
 });
 
 test.each([
@@ -211,7 +299,17 @@ test("permits a new attempt after prior attempts leave the rolling window", () =
 
   expect(outcome.action).toBe("respawned");
   expect(outcome.attemptsInWindow).toBe(1);
-  expect(fixture.respawns).toEqual([input.pane]);
+  expect(fixture.respawns).toEqual([
+    [
+      "tmux",
+      "-S",
+      "/tmp/governess-pane.sock",
+      "respawn-pane",
+      "-t",
+      input.pane,
+      "-k",
+    ],
+  ]);
 });
 
 test("revalidates manifest ownership immediately before respawn", () => {
@@ -252,6 +350,27 @@ test("revalidates dead pane state immediately before respawn", () => {
   expect(fixture.events).toEqual([]);
 });
 
+test("revalidates the owned pane target immediately before respawn", () => {
+  let reads = 0;
+  const fixture = setup({
+    readHandle: () => {
+      reads += 1;
+      return reads <= 3
+        ? activeHandle()
+        : activeHandle({
+            manifestSha256: "b".repeat(64),
+            socket: "relative.sock",
+          });
+    },
+  });
+
+  const outcome = handleGovernessPaneDied(input, fixture.deps);
+
+  expect(outcome.reason).toBe("ownership-changed-before-respawn");
+  expect(fixture.respawns).toEqual([]);
+  expect(fixture.events).toEqual([]);
+});
+
 test("does not respawn when the attempt cannot be made durable", () => {
   const fixture = setup({ appendEvent: () => false });
 
@@ -262,6 +381,34 @@ test("does not respawn when the attempt cannot be made durable", () => {
     attemptsInWindow: 0,
     reason: "restart-attempt-not-durable",
   });
+  expect(fixture.respawns).toEqual([]);
+});
+
+test("revalidates ownership after the durable attempt and before respawn", () => {
+  let ownershipChanged = false;
+  const events: GovernessPaneLivenessEvent[] = [];
+  const fixture = setup({
+    appendEvent: (_path, event) => {
+      events.push(event);
+      if (event.event === "respawn-attempt") {
+        ownershipChanged = true;
+      }
+      return true;
+    },
+    readManifest: () =>
+      ownershipChanged
+        ? setRunManifestState(activeManifest(), "stopped")
+        : activeManifest(),
+  });
+
+  const outcome = handleGovernessPaneDied(input, fixture.deps);
+
+  expect(outcome).toEqual({
+    action: "spared",
+    attemptsInWindow: 1,
+    reason: "ownership-changed-after-attempt",
+  });
+  expect(events.map((event) => event.event)).toEqual(["respawn-attempt"]);
   expect(fixture.respawns).toEqual([]);
 });
 
@@ -301,13 +448,30 @@ test("accepts canonical hook arguments and rejects ambiguous targets", () => {
 });
 
 test("respawn argv reuses tmux's recorded pane command", () => {
-  expect(governessRespawnPaneArgs(input.pane)).toEqual([
+  const target = paneTargetFromManifest(activeHandle(), "tmuxPaneGoverness");
+  if (!target) {
+    throw new Error("expected an owned Governess pane target");
+  }
+  expect(governessRespawnPaneArgs(target)).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/governess-pane.sock",
     "respawn-pane",
-    "-k",
     "-t",
     input.pane,
+    "-k",
   ]);
-  expect(governessRespawnPaneArgs(input.pane)).not.toContain("__governess");
+  expect(governessRespawnPaneArgs(target)).not.toContain("__governess");
+  expect(governessInspectPaneArgs(target)).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/governess-pane.sock",
+    "display-message",
+    "-t",
+    input.pane,
+    "-p",
+    "#{session_name}\t#{pane_id}\t#{pane_dead}",
+  ]);
 });
 
 test("journal path remains run-owned", () => {
