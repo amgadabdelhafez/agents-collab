@@ -114,6 +114,7 @@ import {
   launchAttachCommand,
   launchServerArgv,
   launchSessionArgv,
+  requireTmuxSocket,
   resolveTmuxSocket,
   type TmuxSocket,
 } from "./tmux-socket";
@@ -269,6 +270,7 @@ interface StartedPairedSession {
   manifestPath: string;
   preserveUnknownStart: () => void;
   session: string;
+  socket?: TmuxSocket;
   terminalizeFailedStart: () => Promise<RunLifecycleState | "undurable">;
 }
 
@@ -3316,6 +3318,9 @@ const startPairedSession = async (
       manifestPath: storage.manifestPath,
       preserveUnknownStart,
       session,
+      ...(manifest.tmuxSocket
+        ? { socket: requireTmuxSocket(manifest.tmuxSocket) }
+        : {}),
       terminalizeFailedStart,
     };
   }
@@ -3589,6 +3594,9 @@ const startPairedSession = async (
       manifestPath: storage.manifestPath,
       preserveUnknownStart,
       session,
+      ...(manifest.tmuxSocket
+        ? { socket: requireTmuxSocket(manifest.tmuxSocket) }
+        : {}),
       terminalizeFailedStart,
     };
   } catch (error: unknown) {
@@ -3963,6 +3971,7 @@ const findSession = (
 const attachSessionIfInteractive = (
   session: string,
   deps: TmuxDeps,
+  manualAttachCommand: string,
   launchSocket?: TmuxSocket
 ): boolean => {
   if (!deps.isInteractive()) {
@@ -3979,9 +3988,11 @@ const attachSessionIfInteractive = (
       );
       return false;
     }
-    throw error instanceof Error
-      ? error
-      : new Error(`Failed to attach to tmux session "${session}".`);
+    const detail = error instanceof Error ? error.message : String(error);
+    deps.log(
+      `[loop] warning: foreground tmux attach failed (${detail}); detached session "${session}" remains live. Attach manually with: ${manualAttachCommand}`
+    );
+    return true;
   }
 };
 
@@ -4025,6 +4036,7 @@ export const runInTmux = async (
         kind: "paired" as const,
         manifestPath: startedPairedSession.manifestPath,
         session: startedPairedSession.session,
+        socket: startedPairedSession.socket,
       }
     : { kind: "non-paired" as const, socket: deps.resolveLaunchSocket() };
   const session =
@@ -4037,7 +4049,7 @@ export const runInTmux = async (
         session,
         deps.spawn,
         false,
-        launchContext.kind === "non-paired" ? launchContext.socket : undefined
+        launchContext.socket
       );
       if (probe.liveness === "unknown") {
         throw unknownHandoffLivenessError(session, probe);
@@ -4065,7 +4077,7 @@ export const runInTmux = async (
     keepAttached = keepSessionAttached(
       session,
       deps.spawn,
-      launchContext.kind === "non-paired" ? launchContext.socket : undefined
+      launchContext.socket
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -4094,10 +4106,9 @@ export const runInTmux = async (
       `[loop] run manifest ${JSON.stringify(launchContext.manifestPath)}`
     );
   }
-  const attachCommand =
-    launchContext.kind === "paired"
-      ? `tmux attach -t ${session}`
-      : launchAttachCommand(launchContext.socket, session);
+  const attachCommand = launchContext.socket
+    ? launchAttachCommand(launchContext.socket, session)
+    : `tmux attach -t ${session}`;
   deps.log(`[loop] attach with: ${attachCommand}`);
   let handedOff: boolean;
   try {
@@ -4106,7 +4117,8 @@ export const runInTmux = async (
       : attachSessionIfInteractive(
           session,
           deps,
-          launchContext.kind === "non-paired" ? launchContext.socket : undefined
+          attachCommand,
+          launchContext.socket
         );
   } catch (error) {
     startedPairedSession?.preserveUnknownStart();

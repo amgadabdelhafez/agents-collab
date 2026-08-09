@@ -1,0 +1,2864 @@
+task_id: d015-paired-attach-terminal
+dimension: integration
+attempt: 001
+started_at: 2026-08-09T18:12:36Z
+command: bun run test:ci
+--- output ---
+$ for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file bun test "$file" || exit 1; done
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/baseline-gate.test.ts:
+(pass) project verifier fails closed without task identity [1.97ms]
+(pass) baseline gate accepts only a passing eval with an empty named list [15.93ms]
+(pass) baseline gate rejects legacy or unresolved allowance 0 [16.78ms]
+(pass) baseline gate rejects legacy or unresolved allowance 1 [16.52ms]
+(pass) baseline gate rejects legacy or unresolved allowance 2 [16.71ms]
+(pass) baseline gate rejects legacy or unresolved allowance 3 [17.46ms]
+(pass) baseline gate rejects legacy or unresolved allowance 4 [22.53ms]
+
+ 7 pass
+ 0 fail
+ 14 expect() calls
+Ran 7 tests across 1 file. [124.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/install.test.ts:
+(pass) tmux install hint uses brew on macOS [0.18ms]
+(pass) tmux install hint stays generic on Linux [0.04ms]
+(pass) tmux nudge explains why bare loop fails without tmux [0.08ms]
+(pass) tmux install probe is kill-on-timeout bounded [0.05ms]
+
+ 4 pass
+ 0 fail
+ 5 expect() calls
+Ran 4 tests across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop.test.ts:
+(pass) runCli defaults empty argv to paired interactive tmux mode [17.19ms]
+(pass) runCli starts panel for dashboard command [2.66ms]
+(pass) runCli runs task flow when argv has options [2.55ms]
+(pass) runCli delegates paired tmux after resolving the task [2.06ms]
+(pass) runCli rejects a duplicate workspace before task or agent side effects [2.21ms]
+(pass) runCli enters explicit workspace while preserving a relative Markdown prompt [1.91ms]
+(pass) runCli preserves a nested relative Markdown prompt path [1.74ms]
+(pass) runCli anchors a missing relative Markdown prompt to the invocation directory [2.03ms]
+(pass) runCli starts paired interactive tmux without resolving a task [1.96ms]
+(pass) runCli cancels a promptless reservation when World Model preparation fails [1.90ms]
+(pass) runCli does not mutate World Model artifacts when reattaching a live run [2.04ms]
+(pass) runCli does not fall through to foreground work when paired tmux handoff returns false [2.00ms]
+(pass) runCli prints tmux detach hint first when inside tmux [1.88ms]
+(pass) runCli does not print tmux detach hint outside tmux [1.69ms]
+(pass) runCli creates worktree before resolving task when --worktree is set [1.96ms]
+(pass) runCli keeps claude-only task flow intact [2.03ms]
+(pass) runCli keeps codex-only tmux flow intact [1.83ms]
+(pass) runCli calls update hooks in correct order before task flow [1.95ms]
+(pass) runCli awaits auto-update before handing off promptless paired tmux startup [3.12ms]
+[loop] detach with Ctrl-b d
+(pass) runCli keeps promptless paired tmux inside tmux on fire-and-forget auto-update [2.75ms]
+(pass) runCli returns early when handleManualUpdateCommand returns true [2.08ms]
+(pass) runCli handles top-level long help before every startup action [1.91ms]
+(pass) runCli handles top-level short help before every startup action [1.98ms]
+(pass) runCli handles top-level long version before every startup action [1.82ms]
+(pass) runCli handles top-level short version before every startup action [1.96ms]
+(pass) runCli handles incident command before every startup action [1.58ms]
+(pass) runCli handles positional short help before every startup action [1.91ms]
+(pass) runCli handles positional long version before every startup action [1.57ms]
+(pass) runCli handles positional short version before every startup action [2.14ms]
+(pass) runCli handles dashboard help before every startup action [1.84ms]
+(pass) runCli handles manual update help before every startup action [1.76ms]
+(pass) runCli handles manual upgrade version before every startup action [1.81ms]
+(pass) runCli handles governess help before every startup action [1.81ms]
+(pass) runCli handles governess doctor help before every startup action [1.87ms]
+(pass) runCli handles governess replay help before every startup action [1.64ms]
+(pass) runCli handles governess explain version before every startup action [1.85ms]
+(pass) runCli handles hidden helper help before every startup action [1.75ms]
+(pass) runCli handles only-mode help before every startup action [2.05ms]
+(pass) runCli does not preclassify help-looking prompt value [1.69ms]
+(pass) runCli does not preclassify help after positional delimiter [1.99ms]
+(pass) runCli rejects malformed pane-death helper args before startup maintenance [1.74ms]
+
+ 41 pass
+ 0 fail
+ 416 expect() calls
+Ran 41 tests across 1 file. [112.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/00-paired-loop.integration.test.ts:
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 41
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop forwards a real bridge message in default paired mode [27.34ms]
+
+ 1 pass
+ 0 fail
+ 12 expect() calls
+Ran 1 test across 1 file. [50.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/args.test.ts:
+(pass) parseArgs prints version and exits when --version is passed [0.32ms]
+(pass) parseArgs prints version and exits when -v is passed [0.04ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["--help"] [0.01ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["collab","-h"]
+(pass) findImmediateInfoRequest recognizes active information argv ["dashboard","--help"]
+(pass) findImmediateInfoRequest recognizes active information argv ["update","--version"]
+(pass) findImmediateInfoRequest recognizes active information argv ["governess","doctor","42","-v"] [0.18ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["--review","--help"] [0.04ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["--review-plan","--version"]
+(pass) findImmediateInfoRequest preserves spaced prompt value semantics [0.07ms]
+(pass) findImmediateInfoRequest preserves spaced proof value semantics
+(pass) findImmediateInfoRequest preserves positional delimiter semantics [0.09ms]
+(pass) findImmediateInfoRequest preserves strict model value error semantics
+(pass) findImmediateInfoRequest preserves strict run-id value error semantics
+(pass) findImmediateInfoRequest preserves unknown option first semantics
+(pass) findImmediateInfoRequest is independent of invalid ambient config [0.05ms]
+(pass) parseArgs returns expected defaults when proof is omitted [0.01ms]
+(pass) parseArgs resolves global and per-role effort with order-independent CLI precedence [0.11ms]
+(pass) parseArgs resolves role environment effort above the global fallback [0.02ms]
+(pass) parseArgs rejects malformed CLI and environment effort [0.06ms]
+(pass) parseArgs accepts Caveman CLI and environment modes
+(pass) parseArgs rejects invalid Caveman modes before launch [0.14ms]
+(pass) parseArgs uses LOOP_CODEX_MODEL when present [0.03ms]
+(pass) parseArgs uses --codex-model when provided [0.02ms]
+(pass) parseArgs with --codex-model= overrides LOOP_CODEX_MODEL
+(pass) parseArgs handles all value flags and explicit reviewer [0.10ms]
+(pass) parseArgs rejects invalid --review values in only-mode [0.04ms]
+(pass) parseArgs uses reviewer after --review when valid
+(pass) parseArgs uses --reviewer as paired peer without changing completion review
+(pass) parseArgs treats bare --review-plan as other when no reviewer follows
+(pass) parseArgs uses reviewer after --review-plan when valid
+(pass) parseArgs accepts none after --review-plan
+(pass) parseArgs supports equals form for --review-plan
+(pass) parseArgs supports equals form for --review-plan=none [0.20ms]
+(pass) parseArgs supports run id resume flags
+(pass) parseArgs keeps run id resume separate from agent session resume
+(pass) parseArgs sets agent/review/reviewPlan to claude with --claude-only
+(pass) parseArgs sets agent/review/reviewPlan to codex with --codex-only
+(pass) parseArgs throws on conflicting --claude-only and --codex-only [0.13ms]
+(pass) parseArgs keeps only-mode authoritative while honoring --review-plan none
+(pass) parseArgs preserves explicit --review-plan none when only-mode comes later
+(pass) parseArgs ignores later --agent after only-mode
+(pass) parseArgs accepts --codex-only with both --codex-model flag forms [0.11ms]
+(pass) parseArgs accepts both reviewer-model flag forms
+(pass) parseArgs rejects empty reviewer model values
+(pass) parseArgs rejects missing model values when another flag follows
+(pass) parseArgs rejects invalid --review-plan value
+(pass) parseArgs enables tmux mode with --tmux
+(pass) parseArgs enables worktree mode with --worktree
+(pass) parseArgs accepts workspace binding ["--workspace","/tmp/repo-worktree"] [0.18ms]
+(pass) parseArgs accepts workspace binding ["--workspace=/tmp/repo-worktree"] [0.03ms]
+(pass) parseArgs rejects missing, empty, or conflicting workspace bindings
+(pass) parseArgs joins positional prompt words
+(pass) parseArgs rejects empty proof values
+(pass) parseArgs rejects empty done signals
+(pass) parseArgs throws for unknown flags
+(pass) parseArgs rejects removed single-agent aliases
+(pass) parseArgs throws when a value flag is missing its value
+(pass) parseArgs throws for invalid max iteration value
+(pass) parseArgs throws for fractional max iteration value
+(pass) parseArgs trims done signal value
+(pass) parseArgs throws when positional prompt is provided with --prompt [0.24ms]
+(pass) parseArgs sets agent/review/reviewPlan to oss with --oss-only
+(pass) parseArgs throws on conflicting --oss-only and --claude-only [0.03ms]
+(pass) parseArgs accepts oss as --agent value
+(pass) parseArgs handles --oss-model and --oss-reviewer-model [0.01ms]
+(pass) parseArgs handles --oss-model= equals form [0.03ms]
+(pass) parseArgs accepts oss as --pair-with value [0.04ms]
+(pass) parseArgs accepts oss as --review value
+(pass) parseArgs accepts oss as --review-plan value
+
+ 70 pass
+ 0 fail
+ 149 expect() calls
+Ran 70 tests across 1 file. [21.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-config.test.ts:
+(pass) claudeChannelServerName drops the repo hash suffix from storage ids
+(pass) claudeChannelServerName preserves readable repo ids
+(pass) claudeChannelServerName falls back to the legacy run-scoped name
+
+ 3 pass
+ 0 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [16.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-guidance.test.ts:
+(pass) bridgeToolName namespaces Codex bridge tools only
+(pass) paired guidance requires one bridge transport
+(pass) delegation guidance states the exact context and decomposition contract
+(pass) native fallback tools describe the governed evidence and status contract [0.23ms]
+(pass) route_task describes the deterministic small-edit contract
+(pass) Claude channel guidance preserves evidence-dense peer traffic [0.07ms]
+(pass) quotedBridgeTool wraps the resolved bridge tool name
+
+ 7 pass
+ 0 fail
+ 53 expect() calls
+Ran 7 tests across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-message-format.test.ts:
+(pass) internal utility sources use a neutral helper envelope
+
+ 1 pass
+ 0 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [14.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge.test.ts:
+(pass) bridge MCP detects reparented and missing parents [12.89ms]
+(pass) bridge MCP drains parsed requests after stdin ends despite parent loss [2.47ms]
+(pass) bridge MCP output flush waits for the writable callback [2.55ms]
+(pass) bridge message parsing ignores malformed lines and acked entries [3.16ms]
+(pass) bridge preserves utility results without treating utility as a full agent [3.12ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [3.05ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [3.00ms]
+(pass) readBridgeRuntimeStatus socket-qualifies manifest targets and distinguishes live and stale tmux delivery [3.50ms]
+(pass) tmux timeout preserves bridge routing as unknown without socket-blind fallback delivery [6.79ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [3.96ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [2.66ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [47.24ms]
+(pass) short-lived bridge MCP emits initialize and tool responses before exit [44.83ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [51.60ms]
+(pass) bridge MCP route_task queues a bounded request from claude [85.80ms]
+(pass) bridge MCP route_task queues a bounded request from codex [82.08ms]
+(pass) get_task_result delivers only its exact queued utility handover [90.82ms]
+(pass) get_task_result preserves a matching handover with an active delivery claim [86.19ms]
+(pass) supervisor get_task_result preserves the requester agent handover [129.56ms]
+(pass) bridge MCP persists an explicit non-authoritative utility audit [42.78ms]
+(pass) route_task refuses missing or invalid work shape %s without creating a job [41.33ms]
+(pass) route_task refuses missing or invalid work shape sequential-ish without creating a job [42.10ms]
+(pass) bridge native fallback request is pending until Governess grants it [86.68ms]
+(pass) bridge rejects Codex native fallback because its child sandbox inherits the parent [40.43ms]
+(pass) only supervisor can assert a human-authorized native fallback [83.84ms]
+(pass) route_task gives edit-specific recovery guidance [41.20ms]
+(pass) route_task rejects an unprofiled command with exact recovery guidance [40.86ms]
+(pass) route_task rejects narrative context refs before creating a doomed job [41.63ms]
+(pass) route_task rejects traversal-form context refs before normalization [42.29ms]
+(pass) route_task persists a structured bounded read plan [43.12ms]
+(pass) route_task drains only older unclaimed helper results for its caller [46.33ms]
+(pass) a bridge delivery claim outlives the app-server acceptance bound [3.04ms]
+(pass) external supervisor can submit a task with an explicit result target [44.56ms]
+(pass) external supervisor cannot apply a utility patch [40.94ms]
+(pass) Codex-to-Claude dispatch nudges the pane without resolving delivery [4.69ms]
+(pass) tmux inbox emits one doorbell while messages remain pending [4.05ms]
+(pass) large Claude bridge bodies stay in the ledger while the pane gets a bounded nudge [3.89ms]
+(pass) Claude delivery retries a stranded composer with space then Enter [2116.19ms]
+(pass) Claude delivery does not inject into an active turn with an empty composer [7.29ms]
+(pass) Claude delivery injects over a dim type-ahead suggestion [4.25ms]
+(pass) Claude delivery injects over a 2.1.221 suggestion-color ghost [3.87ms]
+(pass) Claude delivery holds no claim while the pane is not ready [3017.90ms]
+(pass) Claude delivery aborts without typing when the message is consumed mid-wait [7.30ms]
+(pass) Claude submission evidence advances when the hook journal advances [3.21ms]
+(pass) Claude delivery confirms when submission evidence advances into an active pane [3.45ms]
+(pass) unconfirmed Claude delivery remains pending after one retry [256.06ms]
+(pass) a post-injection human draft is never submitted by fallback [8.75ms]
+(pass) immediate Claude notification and worker drain nudge once without delivery [4.72ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [41.92ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [41.56ms]
+(pass) bridge MCP send_message rejects targeting the current agent [42.73ms]
+(pass) bridge MCP send_message rejects a valid agent absent from declared topology [41.73ms]
+(pass) paired agents can escalate to the durable supervisor inbox [92.89ms]
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [41.87ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [41.38ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [40.99ms]
+(pass) bridge MCP accepts typed work metadata and TTL [48.70ms]
+(pass) bridge MCP writes line-delimited JSON responses [42.66ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [3.44ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [2.75ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [41.77ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [41.01ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [43.53ms]
+(pass) bridge MCP receive_messages leaves an automatically claimed item alone [89.27ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [3.93ms]
+(pass) concurrent Codex delivery attempts share one app-server claim [5.20ms]
+(pass) bridge sends Codex through app-server even when tmux is live [3.13ms]
+(pass) direct Codex delivery does not probe or rewrite stored tmux state [3.13ms]
+(pass) bridge drains codex messages through the persisted stable pane target [3.47ms]
+(pass) bridge does not fall back positionally when persisted pane roles are missing [2.78ms]
+(pass) bridge drains pending oss tmux messages through the stored pane routing [3.41ms]
+(pass) bridge drains pending Claude messages through the visible tmux pane [3.47ms]
+(pass) Claude pane delivery preserves a non-empty user draft [1.96ms]
+(pass) Claude pane readiness treats a dim type-ahead suggestion as empty [1.22ms]
+(pass) Claude pane readiness recognizes the 2.1.221 suggestion palette only [3.14ms]
+(pass) Claude transcript lookup rejects traversal and external symlink proof [2.93ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [2.68ms]
+(pass) terminal bridge cleanup logs non-zero Claude MCP remove exits [3.08ms]
+(pass) terminal bridge cleanup logs thrown Claude MCP remove errors [3.03ms]
+(pass) terminal bridge cleanup removes a persisted Claude server name [2.91ms]
+(pass) active bridge liveness miss preserves restored tmux ownership topology [3.40ms]
+(pass) runBridgeWorker delivers Codex without probing stale tmux state [107.26ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [3.52ms]
+(pass) runBridgeWorker retries queued codex app-server messages [5.52ms]
+(pass) runBridgeWorker nudges idle Codex when app-server delivery refuses [4.85ms]
+(pass) bridge worker wake closes the inspect-to-watch race and observes appends [59.51ms]
+(pass) bridge worker metadata probe recovers an append when the watcher swallows events [3.64ms]
+(pass) bridge worker wake session reuses one watcher across retry cycles [6.69ms]
+(pass) runBridgeWorker persists five-minute reconciliation heartbeats [4.61ms]
+(pass) runBridgeWorker injects Codex directly and only nudges Claude [213.97ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [50.01ms]
+(pass) Claude channel flush leaves live tmux messages pending for visible delivery [3.85ms]
+(pass) Claude channel stays active when the live tmux pair has no Claude pane [3.47ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [109.81ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [48.24ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [52.78ms]
+(pass) bridge MCP allows repeating the same message in the original direction [48.48ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [3.10ms]
+(pass) bridge config helper writes the Claude MCP config file [2.63ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [2.67ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [2.15ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [3.10ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [2.73ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [2.61ms]
+(pass) bridge MCP send_message normalizes oss as a valid target [46.34ms]
+(pass) bridge queues cross-agent messages for every Claude/Codex to OSS pair [90.98ms]
+(pass) bridge pending count includes oss messages [3.33ms]
+(pass) bridge drains pending oss tmux messages through stored pane routing [3.26ms]
+
+ 108 pass
+ 0 fail
+ 465 expect() calls
+Ran 108 tests across 1 file. [8.45s]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/caveman.test.ts:
+(pass) Caveman integration stays pinned and keeps upstream safety rules [0.35ms]
+(pass) Loop exactness overlay protects machine-readable artifacts [0.10ms]
+(pass) helper reinforcement is compact and off is an exact opt-out
+(pass) Caveman modes reject unknown values [0.17ms]
+
+ 4 pass
+ 0 fail
+ 22 expect() calls
+Ran 4 tests across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/claude-config-gc.test.ts:
+(pass) Claude registry path honors the isolated automation config directory
+(pass) startup GC removes only dead loop-owned bridge registrations [1.48ms]
+(pass) startup GC preserves registrations it cannot remove safely [0.35ms]
+(pass) startup GC preserves a registration when tmux liveness is unknown [0.45ms]
+(pass) startup GC preserves an active detached run with missing tmux ownership [0.45ms]
+
+ 5 pass
+ 0 fail
+ 9 expect() calls
+Ran 5 tests across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/claude-kickoff-launch.test.ts:
+(pass) launcher kickoff confirmation > confirms a normal kickoff from hook progression [0.57ms]
+(pass) launcher kickoff confirmation > recovers a v2.1.223 channel-race stranded kickoff with one direct Enter [0.35ms]
+(pass) launcher kickoff confirmation > refuses to mutate a composer holding an unrelated human draft
+(pass) launcher kickoff confirmation > refuses recovery when the launcher never captured its own paste [0.30ms]
+(pass) launcher kickoff confirmation > never submits the kickoff twice once evidence shows the turn started
+(pass) launcher kickoff confirmation > fails closed when no hook or transcript evidence ever arrives [0.10ms]
+(pass) launcher kickoff confirmation > no version ships as proven-healthy, so 2.1.220 is guarded too
+(pass) launcher kickoff confirmation > 2.1.220 still gets the guarded profile because nothing proves it healthy
+(pass) launcher kickoff confirmation > refuses the recovery Enter when the composer turns foreign between reads
+(pass) launcher kickoff confirmation > refuses the recovery Enter when the composer empties between reads
+(pass) launcher kickoff confirmation > a moved Claude transcript version does not confirm while the kickoff still sits in the composer
+(pass) launcher kickoff confirmation > a moved Claude transcript version confirms once the composer is cleared
+(pass) launcher kickoff confirmation > an unobservable claude version stays in the guarded profile [0.87ms]
+(pass) launcher composer ownership capture > captures the launcher's own paste as the expected composer body
+(pass) launcher composer ownership capture > records no owner when the paste never landed
+(pass) launcher composer ownership capture > records no owner when the pane cannot be captured
+(pass) kickoff evidence source > reads Claude's hook journal, never the run-local transcript.jsonl
+
+ 17 pass
+ 0 fail
+ 31 expect() calls
+Ran 17 tests across 1 file. [33.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/claude-kickoff.test.ts:
+(pass) parseClaudeHookEvidence > reads the run-147 producer stream as a session that never submitted
+(pass) parseClaudeHookEvidence > reads the run-148 producer stream as a session that did submit
+(pass) parseClaudeHookEvidence > ignores blank, trailing partial, and malformed lines without throwing
+(pass) parseClaudeHookEvidence > does not count a bare working state as turn progress
+(pass) parseClaudeHookEvidence > treats a missing hook file as no evidence rather than an error
+(pass) kickoffTurnStarted > run-147 evidence never counts as a started turn
+(pass) kickoffTurnStarted > run-148 evidence counts as a started turn on hooks alone
+(pass) kickoffTurnStarted > a newer transcript version alone is NOT confirmation
+(pass) kickoffTurnStarted > a newer transcript version confirms only with a cleared composer
+(pass) kickoffTurnStarted > a cleared composer alone, with no new transcript version, is not confirmation
+(pass) kickoffTurnStarted > an unreadable Claude transcript version never confirms
+(pass) kickoffTurnStarted > a pre-existing UserPromptSubmit in the baseline is not confirmation
+(pass) kickoffTurnStarted > a truncated or rotated hook file reads as no progress, not growth
+(pass) turn-progress event set > PreToolUse and PostToolUse imply a submitted turn
+(pass) turn-progress event set > Notification and Stop are not turn progress
+(pass) parseClaudeCliVersion > parses the observed 2.1.223 version banner [0.52ms]
+(pass) parseClaudeCliVersion > returns undefined for absent or unparseable output [0.01ms]
+(pass) resolveKickoffCapability > requires confirmation on every version, including unknown ones [0.04ms]
+(pass) resolveKickoffCapability > exempts recovery only on an exact producer-proven-healthy version
+(pass) resolveKickoffCapability > guards versions below the proven-healthy one instead of assuming a range
+(pass) resolveKickoffCapability > allows recovery for the affected 2.1.223 build
+(pass) resolveKickoffCapability > defaults unknown and future versions to the guarded profile
+(pass) resolveKickoffCapability > an empty proven-healthy set guards everything [0.06ms]
+(pass) readComposerBody > extracts the captured stranded kickoff body from real pane bytes
+(pass) readComposerBody > returns undefined when no composer prompt is visible
+(pass) classifyKickoffComposer > classifies the captured idle composer as empty despite its suggestion [0.07ms]
+(pass) classifyKickoffComposer > classifies the captured stranded kickoff as launcher-owned [0.04ms]
+(pass) classifyKickoffComposer > refuses a captured composer holding an unrelated human draft [0.03ms]
+(pass) classifyKickoffComposer > refuses somebody else's paste that renders the same generic marker [0.03ms]
+(pass) classifyKickoffComposer > refuses recovery when the launcher never captured its own paste [0.02ms]
+(pass) classifyKickoffComposer > returns indeterminate when no composer prompt is visible
+(pass) producer fixture provenance > every fixture file listed in fixture-index.json matches its recorded sha256 [0.24ms]
+
+ 32 pass
+ 0 fail
+ 54 expect() calls
+Ran 32 tests across 1 file. [16.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/claude-sdk-server.test.ts:
+(pass) spawns claude in stdio stream-json mode without --sdk-url [103.95ms]
+[loop] claude session: session-abc
+(pass) runTurn writes user message to stdin and resolves on result [108.33ms]
+(pass) runTurn rejects when claude exits before result [107.30ms]
+
+ 3 pass
+ 0 fail
+ 13 expect() calls
+Ran 3 tests across 1 file. [336.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/codex-app-server.test.ts:
+(pass) parseLine returns strict JSON frames only [2.39ms]
+(pass) parseText flattens nested text payloads [1.53ms]
+(pass) startAppServer fails fast when initialize returns an error [2.37ms]
+(pass) startAppServer forwards config overrides into the app-server command [2.05ms]
+(pass) startAppServer exposes the app-server websocket URL [1.12ms]
+(pass) startAppServer sends initialized after initialize [1.48ms]
+(pass) releaseAppServer drops local handles without killing the detached child [1.46ms]
+(pass) startAppServer normalizes codex bridge config args before spawning [1.84ms]
+(pass) injectCodexMessage sends the bridge handshake and notification opt-outs [1.61ms]
+(pass) injectCodexMessage steers an active turn instead of starting a new turn [1.27ms]
+(pass) injectCodexMessage resumes an evicted persisted thread before delivery [1.26ms]
+(pass) injectCodexMessage fails closed when an evicted thread cannot resume [1.10ms]
+(pass) injectCodexMessage returns once turn/start is accepted [2.21ms]
+(pass) injectCodexMessage retries a busy turn/start with turn/steer [1.18ms]
+(pass) injectCodexMessage rejects failed turn/start requests [1.11ms]
+(pass) runCodexTurn promotes thread/start unsupported errors to fallback errors [1.43ms]
+(pass) runCodexTurn promotes turn/start unsupported errors to fallback errors [1.24ms]
+(pass) persistent codex threads are reused across turns [3.65ms]
+(pass) startAppServer eagerly creates a persistent thread when given a model [1.21ms]
+(pass) bridge-configured planning keeps the paired Codex thread alive for startup [2.86ms]
+(pass) runCodexTurn recovers after unexpected exit [2.63ms]
+(pass) runCodexTurn parses successful deltas and completion [2.46ms]
+(pass) runCodexTurn ignores foreign subagent turn notifications [2.52ms]
+(pass) runCodexTurn maps failed turns to non-zero exit [2.48ms]
+(pass) runCodexTurn maps root-level failed status to non-zero exit [2.43ms]
+(pass) runCodexTurn accepts snake_case agent message item type [2.92ms]
+(pass) runCodexTurn responds to approval requests [2.46ms]
+(pass) runCodexTurn falls back to exec mode when thread/start is unsupported [1.21ms]
+(pass) runCodexTurn falls back to exec mode when turn/start is unsupported [1.22ms]
+(pass) interruptAppServer kills detached process group when pid is available [1.42ms]
+(pass) persistent codex thread survives an unexpected app-server restart [3.85ms]
+(pass) injectCodexMessage sends initialized and bridge notification opt-outs [1.06ms]
+
+ 32 pass
+ 0 fail
+ 90 expect() calls
+Ran 32 tests across 1 file. [79.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/codex-render.test.ts:
+(pass) completed message concatenates content parts without inserting newlines [0.15ms]
+(pass) delta extraction prioritizes delta over text
+(pass) completed extraction prioritizes text over delta
+(pass) completed whitespace-only content is ignored
+(pass) raw mode writes each incoming line with a trailing newline
+
+ 5 pass
+ 0 fail
+ 7 expect() calls
+Ran 5 tests across 1 file. [16.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/codex-tmux-proxy.integration.test.ts:
+(pass) runCli reconnects the codex tmux proxy subcommand without dropping the tui socket [2014.87ms]
+
+ 1 pass
+ 0 fail
+ 6 expect() calls
+Ran 1 test across 1 file. [2.05s]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/codex-tmux-proxy.test.ts:
+(pass) codex tmux proxy waits briefly for the tmux session to appear
+(pass) codex tmux proxy requires confirmed dead duration after startup grace
+(pass) codex tmux proxy does not let unknown liveness complete dead evidence
+(pass) codex tmux proxy preserves a session when liveness is unknown
+(pass) dead tmux reconciliation stops the still-bound active manifest [2.18ms]
+(pass) live tmux reconciliation preserves the active manifest [0.34ms]
+(pass) unknown tmux reconciliation preserves the active manifest [0.39ms]
+(pass) dead tmux reconciliation preserves a concurrently rebound manifest [0.56ms]
+(pass) dead tmux reconciliation preserves an already terminal manifest [0.21ms]
+(pass) tmux reconciliation failure preserves the manifest and proxy shutdown path [0.48ms]
+(pass) missing socket cannot authorize dead tmux reconciliation [0.30ms]
+(pass) invalid socket cannot authorize dead tmux reconciliation [0.37ms]
+(pass) requested shutdown accepts dead evidence from the matching target [0.36ms]
+(pass) requested shutdown rejects missing socket evidence as unknown [0.35ms]
+(pass) requested shutdown rejects invalid socket evidence as unknown [0.17ms]
+(pass) requested shutdown rejects stale dead evidence after identity changes [0.68ms]
+(pass) proxy stop reason accepts dead evidence from the matching target [0.33ms]
+(pass) proxy stop reason treats missing socket evidence as unknown [0.30ms]
+(pass) proxy stop reason treats invalid socket evidence as unknown [0.38ms]
+(pass) proxy stop reason rejects stale dead evidence after state changes [0.51ms]
+(pass) codex tmux proxy exposes no bridge-body delivery path
+(pass) codex tmux proxy persists newer live thread ids to the run manifest [0.39ms]
+(pass) codex tmux proxy records a mechanical command candidate without command text [1.20ms]
+(pass) closed loop bridge MCP calls are identified narrowly
+(pass) codex tmux proxy reloads MCP servers after a closed loop bridge call [189.32ms]
+(pass) codex tmux proxy reconnects to a live upstream without dropping the tui socket [2012.96ms]
+(pass) codex tmux proxy recovers after more than the former reconnect limit [1010.32ms]
+(pass) codex tmux proxy never injects a bridge request into app-server after reconnect [2015.52ms]
+(pass) codex tmux proxy has no headless fallback when visible delivery is unavailable [2006.24ms]
+(pass) codex tmux proxy records the producer and rejects shutdown while tmux is live [159.35ms]
+
+ 30 pass
+ 0 fail
+ 83 expect() calls
+Ran 30 tests across 1 file. [7.43s]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/communication-guidance.test.ts:
+(pass) communication adaptation pins its reviewed upstream source [0.04ms]
+(pass) human reporting is action-first without delegating agent-owned work [0.02ms]
+(pass) internal traffic stays evidence-dense under Caveman
+
+ 3 pass
+ 0 fail
+ 14 expect() calls
+Ran 3 tests across 1 file. [17.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/delegation-policy.test.ts:
+(pass) delegation classifier > routes large safe reads but keeps small and governing reads direct [1.37ms]
+(pass) delegation classifier > keeps protected or governing read direct: AGENTS.md [0.04ms]
+(pass) delegation classifier > keeps protected or governing read direct: .aws/config [0.03ms]
+(pass) delegation classifier > keeps protected or governing read direct: .claude/settings.json [0.02ms]
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/.aws/config [0.05ms]
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/.claude/settings.json [0.01ms]
+(pass) delegation classifier > keeps protected or governing read direct: fixtures/repo/.git/config
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/specs/auth/spec.md [0.05ms]
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/docs/architecture/invariants.md [0.02ms]
+(pass) delegation classifier > keeps protected or governing read direct: .github/copilot-instructions.md
+(pass) delegation classifier > keeps protected or governing read direct: .github/copilot/mcp.json [0.03ms]
+(pass) delegation classifier > keeps protected or governing read direct: .github/agents/reviewer.agent.md
+(pass) delegation classifier > keeps protected or governing read direct: .cursor/rules/project.mdc
+(pass) delegation classifier > keeps protected or governing read direct: .gemini/settings.json
+(pass) delegation classifier > keeps protected or governing read direct: .windsurfrules
+(pass) delegation classifier > keeps protected or governing read direct: .vscode/mcp.json
+(pass) delegation classifier > keeps protected or governing read direct: .mcp.json
+(pass) delegation classifier > keeps protected or governing read direct: .CLAUDE/settings.json
+(pass) delegation classifier > keeps protected or governing read direct: packages/api/.AWS/config [0.06ms]
+(pass) delegation classifier > keeps protected or governing read direct: fixtures/repo/.GIT/config [0.02ms]
+(pass) delegation classifier > keeps protected or governing read direct: docs/architecture/system-overview.md
+(pass) delegation classifier > keeps protected or governing read direct: .loop/utility-policy.json [0.01ms]
+(pass) delegation classifier > keeps protected or governing read direct: .env.local [0.02ms]
+(pass) delegation classifier > keeps protected or governing read direct: .ssh/id_ed25519
+(pass) delegation classifier > keeps protected or governing read direct: package.json
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Read
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Grep
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Glob
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.67ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.08ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.19ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.08ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash [0.02ms]
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash
+(pass) delegation classifier > rejects protected scope for every enforceable tool grammar: Bash
+(pass) delegation classifier > routes bounded searches but keeps Glob non-delegable [0.15ms]
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","output_mode":"count"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","output_mode":"files_with_matches"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","-c":true}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","-l":true}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","glob":"*.md"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","type":"ts"}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","head_limit":5}
+(pass) delegation classifier > keeps modal Grep queries direct: {"pattern":"import","path":"src","-A":3}
+(pass) delegation classifier > still routes a plain content Grep (content mode, -i/-n allowed)
+(pass) delegation classifier > routes exact mechanical command git status --short [0.08ms]
+(pass) delegation classifier > routes exact mechanical command git diff -- src/loop/tmux.ts [0.06ms]
+(pass) delegation classifier > routes exact mechanical command git diff --name-only -- src/loop
+(pass) delegation classifier > routes exact mechanical command git diff --cached -- src/loop
+(pass) delegation classifier > routes exact mechanical command rg -n 'route|worker' src/loop
+(pass) delegation classifier > routes exact mechanical command sed -n '20,80p' src/loop/tmux.ts [0.18ms]
+(pass) delegation classifier > recognizes the current Codex shell_command tool [0.03ms]
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git show --stat 53a8d5dd | head -60 [0.13ms]
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git show --stat --format='' 53a8d5dd | tail -30 [0.05ms]
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git log --oneline -3 origin/main [0.06ms]
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git log --oneline -3
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git rev-parse origin/main
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git branch -a --list '*loop51*' [0.04ms]
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git branch --show-current
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git worktree list [0.03ms]
+(pass) delegation classifier > routes broker-satisfiable Git metadata command git cat-file -t 53a8d5dd
+(pass) delegation classifier > routes a bounded chain of exact Git metadata inspections [0.22ms]
+(pass) delegation classifier > decomposes the Loop 57 mixed Git inspection plan into exact stages [0.05ms]
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git fetch origin main --quiet && git rev-parse origin/main [0.06ms]
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git checkout -b loop51/base origin/main && git log --oneline -1 [0.01ms]
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git show --patch 53a8d5dd
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git log --format=%x00 -3 origin/main
+(pass) delegation classifier > keeps unsupported or mutating Git inspection direct: git rev-parse origin/main && git commit -am done
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff --stat -- src/loop
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff --name-status -- src/loop
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff -U0 -- src/loop
+(pass) delegation classifier > drops broker-unsatisfiable shape git diff -U40 -- src/loop [0.10ms]
+(pass) delegation classifier > rejects a double-quoted backslash instead of dropping it
+(pass) delegation classifier > rejects unquoted parentheses rg foo (bar)
+(pass) delegation classifier > rejects unquoted parentheses git diff -- (x)
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: git diff [0.08ms]
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: git commit -am done
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: rg route src && npm test [0.04ms]
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: npx vitest run
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: sed -n '1,900p' src/loop/tmux.ts [0.03ms]
+(pass) delegation classifier > keeps unsafe or ambiguous command direct: echo API_KEY=abcdefghijklmnop
+(pass) delegation classifier > uses enforce by default and observe for invalid modes [0.03ms]
+(pass) delegation classifier > classifies retained, actionable, and unsafe routing outcomes
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop | head -50
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop | head -n 50
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop | tail -20
+(pass) delegation classifier > routes decomposed safe compound command git status --short | head -20 [0.13ms]
+(pass) delegation classifier > routes decomposed safe compound command rg -n route src/loop 2>/dev/null [0.03ms]
+(pass) delegation classifier > routes decomposed safe compound command sed -n '20,80p' src/loop/tmux.ts 2>/dev/null
+(pass) delegation classifier > routes decomposed safe compound command cd src/loop && rg -n route .
+(pass) delegation classifier > routes decomposed safe compound command cd src && rg -n route . 2>/dev/null | head -50
+(pass) delegation classifier > routes a bounded multi-stage literal read plan with the union of safe scopes [0.23ms]
+(pass) delegation classifier > routes semicolon and mixed-separator read plans while omitting literal labels
+(pass) delegation classifier > preserves compact stderr boundaries in a read plan: rg -n route src 2>/dev/null; git status --short
+(pass) delegation classifier > preserves compact stderr boundaries in a read plan: rg -n route src 2>&1&& git status --short [0.22ms]
+(pass) delegation classifier > rejects the whole semicolon plan when one stage is not broker-safe: rg -n route src; git add . [0.04ms]
+(pass) delegation classifier > rejects the whole semicolon plan when one stage is not broker-safe: rg -n route src;; git status --short
+(pass) delegation classifier > rejects the whole semicolon plan when one stage is not broker-safe: rg -n route src; echo -n hidden; git status --short [0.05ms]
+(pass) delegation classifier > rejects the whole semicolon plan when one stage is not broker-safe: rg -n route src; echo '$TOKEN'; git status --short [0.02ms]
+(pass) delegation classifier > rejects the whole semicolon plan when one stage is not broker-safe: rg -n route src; printf label; git status --short [0.01ms]
+(pass) delegation classifier > rejects the whole semicolon plan when one stage is not broker-safe: rg -n route src; git show HEAD:file | grep route | head -10 [0.06ms]
+(pass) delegation classifier > rejects the whole semicolon plan when one stage is not broker-safe: echo one; echo two; echo three; echo four; echo five; echo six; echo seven; git status --short
+(pass) delegation classifier > routes the read-plan step boundary rg -n route src && ls tests
+(pass) delegation classifier > routes the read-plan step boundary rg -n route src && rg -n route tests && rg -n route docs && rg -n route packages && rg -n route fixtures && rg -n route v2 [0.19ms]
+(pass) delegation classifier > keeps unsafe or oversized read-plan neighbor direct: rg -n route src && git commit -am nope
+(pass) delegation classifier > keeps unsafe or oversized read-plan neighbor direct: rg -n route src && node -e 'process.exit(0)' [0.07ms]
+(pass) delegation classifier > keeps unsafe or oversized read-plan neighbor direct: rg -n route src && curl https://example.com [0.03ms]
+(pass) delegation classifier > keeps unsafe or oversized read-plan neighbor direct: rg -n route src && ps aux
+(pass) delegation classifier > keeps unsafe or oversized read-plan neighbor direct: rg -n route src | wc -l && git status --short
+(pass) delegation classifier > keeps unsafe or oversized read-plan neighbor direct: git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short && git status --short [0.08ms]
+(pass) delegation classifier > routes bounded file/list mapping cat src/a.ts
+(pass) delegation classifier > routes bounded file/list mapping cat -n src/a.ts [0.11ms]
+(pass) delegation classifier > routes bounded file/list mapping cat src/a.ts tests/a.test.ts [0.10ms]
+(pass) delegation classifier > routes bounded file/list mapping grep -n '' src/a.ts [0.07ms]
+(pass) delegation classifier > routes bounded file/list mapping ls src tests [0.06ms]
+(pass) delegation classifier > routes bounded file/list mapping ls -la src tests docs [0.07ms]
+(pass) delegation classifier > keeps a nested filtered multi-file mapping direct [0.04ms]
+(pass) delegation classifier > keeps unbounded file/list mapping direct: cat src/1.ts src/2.ts src/3.ts src/4.ts src/5.ts
+(pass) delegation classifier > keeps unbounded file/list mapping direct: cat -A src/a.ts [0.04ms]
+(pass) delegation classifier > keeps unbounded file/list mapping direct: cat .env
+(pass) delegation classifier > keeps unbounded file/list mapping direct: grep -n '' src tests
+(pass) delegation classifier > keeps unbounded file/list mapping direct: ls src tests docs packages fixtures
+(pass) delegation classifier > keeps unbounded file/list mapping direct: ls src -R
+(pass) delegation classifier > keeps unbounded file/list mapping direct: ls src --
+(pass) delegation classifier > routes newly bounded local command npx vitest run tests/router.test.ts 2>&1 | tail -25 [0.07ms]
+(pass) delegation classifier > routes newly bounded local command cd packages/api && bun test tests/router.test.ts | head -20 [0.04ms]
+(pass) delegation classifier > routes newly bounded local command ls -la tests | head -5 [0.05ms]
+(pass) delegation classifier > routes newly bounded local command grep -Fin needle src tests [0.01ms]
+(pass) delegation classifier > routes newly bounded local command grep --fixed-strings --ignore-case needle src [0.05ms]
+(pass) delegation classifier > routes newly bounded local command grep -n constraints src [0.05ms]
+(pass) delegation classifier > routes newly bounded local command awk 'NR>=185 && NR<=215' src/core.js
+(pass) delegation classifier > routes newly bounded local command awk 'NR<=20' tests/example.test.ts [0.10ms]
+(pass) delegation classifier > routes newly bounded local command tail -n 40 src/core.js
+(pass) delegation classifier > routes newly bounded local command tail -40 src/core.js [0.04ms]
+(pass) delegation classifier > persists the exact broker read boundary for awk 'NR>=185 && NR<=215' src/core.js [0.01ms]
+(pass) delegation classifier > persists the exact broker read boundary for awk 'NR<=20' tests/example.test.ts [0.03ms]
+(pass) delegation classifier > persists the exact broker read boundary for tail -n 40 src/core.js [0.02ms]
+(pass) delegation classifier > persists the exact broker read boundary for tail -40 src/core.js
+(pass) delegation classifier > carries the output-filter bound into the delegated objective for rg -n route src/loop | head -50
+(pass) delegation classifier > carries the output-filter bound into the delegated objective for rg -n route src/loop | head -n 50 [0.05ms]
+(pass) delegation classifier > carries the output-filter bound into the delegated objective for rg -n route src/loop | tail -20
+(pass) delegation classifier > persists stderr merging for an exact focused check
+(pass) delegation classifier > preserves a folded cwd for a focused test
+(pass) delegation classifier > routes mixed bounded inspection and focused-check stages as one structured plan
+(pass) delegation classifier > routes bounded literal grep alternatives through reasoning-backed search
+(pass) delegation classifier > persists bounded focused-check presentation filters
+(pass) delegation classifier > routes exact node syntax checks but rejects semantic pipelines [0.43ms]
+(pass) delegation classifier > normalizes exact awk ranges and compact head counts
+(pass) delegation classifier > treats a terminal cat as a no-op only after an otherwise safe stage
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: ./node_modules/.bin/vitest run tests/router.test.ts
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run --coverage tests/router.test.ts
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts --update
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest watch tests/router.test.ts
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: bun test
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: bun test tests/a.test.ts tests/b.test.ts tests/c.test.ts tests/d.test.ts tests/e.test.ts
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: bun test package.json [0.15ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts 2>/tmp/errors
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts 2>&2
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: npx vitest run tests/router.test.ts && git commit -m nope [0.03ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: ls -R src
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: ls /etc [0.05ms]
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: grep 'route.*worker' src
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: grep --include '*.ts' route src
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: awk '{print $1}' src/core.js
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: awk 'NR<=501' src/core.js
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: tail -n 501 src/core.js
+(pass) delegation classifier > keeps unsafe or ambiguous widening candidate direct: tail -f src/core.js
+(pass) delegation classifier > stops at an unquoted comment like bash
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | xargs rm direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -20 | wc -l direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -n many direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | wc -l extra.txt direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg -n route src/loop | wc -l direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -0 direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src | head -n 0 direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src > findings.txt direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src 2>/tmp/errors direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src 2> /dev/null direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src || rg route tests direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection git add . && git commit -m done direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection cd src && cd tests && ls direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection cd - && rg -n route . direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection cd /tmp && rg route . direct with reason cd-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection cd ../elsewhere && ls direct with reason cd-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection cd .claude && ls direct with reason cd-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection cd ~ && wc -l .zsh_history direct with reason cd-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection cd src && rm -rf . direct with reason command-not-in-delegation-grammar [0.25ms]
+(pass) delegation classifier > keeps widened-grammar rejection echo hello | head -2 direct with reason command-not-in-delegation-grammar [0.01ms]
+(pass) delegation classifier > keeps widened-grammar rejection ls src/*.ts direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection wc -l direct with reason line-count-not-bounded [0.01ms]
+(pass) delegation classifier > keeps widened-grammar rejection wc -l src direct with reason line-count-target-not-file [0.05ms]
+(pass) delegation classifier > keeps widened-grammar rejection wc -c src/loop/tmux.ts direct with reason command-not-in-delegation-grammar
+(pass) delegation classifier > keeps widened-grammar rejection wc -l ../outside.txt direct with reason line-count-without-safe-files [0.01ms]
+(pass) delegation classifier > keeps widened-grammar rejection rg '' src direct with reason unbounded-or-sensitive-search
+(pass) delegation classifier > keeps widened-grammar rejection head -n 200 ~/.netrc direct with reason governed-or-unsafe-path
+(pass) delegation classifier > keeps widened-grammar rejection rg -n password ~ direct with reason search-without-safe-scope
+(pass) delegation classifier > keeps widened-grammar rejection rg -n route src/{loop,../../../etc} direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg {x,/etc/hosts} src direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg {x,.env} src direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg --pre tools/evil.sh needle src direct with reason unsupported-rg-option
+(pass) delegation classifier > keeps widened-grammar rejection grep needle -v src direct with reason unsupported-grep-option
+(pass) delegation classifier > keeps widened-grammar rejection grep needle -r src direct with reason unsupported-grep-option
+(pass) delegation classifier > keeps widened-grammar rejection grep needle --recursive src direct with reason unsupported-grep-option
+(pass) delegation classifier > keeps widened-grammar rejection grep needle --color=always src direct with reason unsupported-grep-option [0.06ms]
+(pass) delegation classifier > keeps widened-grammar rejection grep needle -- src direct with reason unsupported-grep-option
+(pass) delegation classifier > keeps widened-grammar rejection grep -F needle -n src direct with reason unsupported-grep-option
+(pass) delegation classifier > keeps widened-grammar rejection git diff -- :/src direct with reason git-diff-magic-pathspec
+(pass) delegation classifier > keeps widened-grammar rejection git diff -- :!src direct with reason git-diff-magic-pathspec
+(pass) delegation classifier > keeps widened-grammar rejection rg -n route src evil direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection wc -l src/a.ts
+rm -rf src direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection wc -l "src/a.ts\
+rm -rf src" direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection git status --shortrm -rf . direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection bun test tests/a.test.ts
+rm tests/b.test.ts direct with reason compound-or-unsafe-command
+(pass) delegation classifier > keeps widened-grammar rejection rg route src \2>/dev/null direct with reason compound-or-unsafe-command
+(pass) delegation classifier > routes bounded wc line counts to the native broker tool [0.53ms]
+(pass) delegation classifier > keeps repeated tool attempts distinct when hook ids differ
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Read
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Read [0.21ms]
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Grep
+(pass) safeScope shared hardening covers every classifier > keeps tilde and brace scopes direct for Grep
+(pass) safeScope shared hardening covers every classifier > keeps ls on an existing regular file direct [0.15ms]
+(pass) safeScope shared hardening covers every classifier > keeps a focused check with a regular-file cwd direct [0.33ms]
+(pass) safeScope shared hardening covers every classifier > resolves symlinks so an in-repo link pointing outside is rejected [0.61ms]
+(pass) safeScope shared hardening covers every classifier > rejects a dangling in-repo symlink whose target is outside the repo [0.29ms]
+(pass) safeScope shared hardening covers every classifier > rejects an in-repo symlink followed by .. that escapes the repo [0.51ms]
+(pass) safeScope shared hardening covers every classifier > rejects a directory target for a single-file read (Read and head) [0.26ms]
+(pass) safeScope shared hardening covers every classifier > never traverses an in-repo symlink, even via a .. hop or a backslash [0.46ms]
+(pass) safeScope shared hardening covers every classifier > rejects a non-regular-file target (FIFO) for a single-file read [3.18ms]
+(pass) delegation telemetry is compact, durable, and tolerant of missing files [0.46ms]
+(pass) Codex app-server observation records only exact missed candidates [0.13ms]
+
+ 231 pass
+ 0 fail
+ 287 expect() calls
+Ran 231 tests across 1 file. [31.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/git.test.ts:
+(pass) returns warning when on a non-main branch [0.18ms]
+(pass) returns warning when local main is behind remote [0.05ms]
+(pass) returns warning when local master is behind remote
+(pass) returns undefined when on main and up to date [0.02ms]
+(pass) returns undefined when not in a git repo [0.02ms]
+(pass) returns undefined when no upstream is configured [0.02ms]
+(pass) buildLoopName rejects unsafe run ids [0.06ms]
+(pass) buildLoopName keeps safe run ids unchanged
+
+ 8 pass
+ 0 fail
+ 8 expect() calls
+Ran 8 tests across 1 file. [17.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-detect.test.ts:
+(pass) initLivenessState seeds a stable-since-now state with no event
+(pass) initLivenessState defaults paneHash to an empty string
+(pass) active: pane hash changes each tick is never suspect
+(pass) idle events but a still-changing pane is not suspect
+(pass) stuck: stale events and an unchanged pane for the idle window is suspect
+(pass) recovered: a pane-hash change resets stability and clears suspect [0.36ms]
+(pass) no events ever with a stable pane yields infinite age and stale events
+(pass) an unparseable event timestamp is treated as infinitely old
+(pass) a future event timestamp clamps the age to zero
+(pass) a later input event timestamp overrides the carried-over one
+
+ 10 pass
+ 0 fail
+ 28 expect() calls
+Ran 10 tests across 1 file. [15.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-exit.test.ts:
+(pass) x opens a reversible menu and only explicit e or h selects an exit
+(pass) handover accepts only force teardown and launch retry keys
+(pass) persisted exit state is validated
+(pass) agent exit detection distinguishes the TUI from a dead pane or shell [0.07ms]
+(pass) tmux pane probes preserve confirmed missing targets but not empty successful output [0.02ms]
+(pass) replacement args preserve pairing and supply a continuation prompt
+(pass) replacement handover uses a markdown continuation file to skip replanning
+(pass) replacement handover carries exact frozen role efforts
+(pass) exit controls replace the status row without growing the board
+(pass) handover waits for a busy agent, notifies each once, and launches after both exit [3.18ms]
+(pass) handover never injects over a notification or permission prompt
+(pass) handover treats a dim idle suggestion as an empty composer [0.55ms]
+(pass) handover accepts Claude Stop followed by trailing SubagentStop [0.14ms]
+(pass) handover exits Claude after its exact generic idle notification [0.49ms]
+(pass) handover still blocks a non-dim composer draft [0.29ms]
+(pass) valid ready bundles close each drained TUI exactly once before launch [1.02ms]
+(pass) headless handover skips the missing pane and reaches owned teardown after acceptance [1.18ms]
+(pass) unknown pane evidence keeps headless handover non-destructive [0.53ms]
+(pass) replacement launch failure preserves the old loop for explicit retry or teardown [0.52ms]
+(pass) handover persists launch success before marking and killing the old loop [1.05ms]
+(pass) handover launch failure never marks or kills the old loop [0.50ms]
+(pass) handover restart keeps the persisted transaction epoch for replacement launch [0.78ms]
+(pass) restart preserves the old loop when the recorded replacement is dead [0.06ms]
+(pass) restart preserves a recorded replacement while tmux liveness is unknown
+(pass) an unconfirmed replacement probe is persisted without duplicate launch [0.94ms]
+(pass) defaultGovernessDeps launchReplacementLoop retries an unreadable or incomplete replacement manifest before accepting a live target [1.40ms]
+(pass) defaultGovernessDeps launchReplacementLoop rejects a replacement manifest that stays unreadable or incomplete after the bounded retry [0.65ms]
+(pass) defaultGovernessDeps launchReplacementLoop rejects confirmed-dead replacement target [0.55ms]
+(pass) defaultGovernessDeps launchReplacementLoop rejects unknown replacement target without handover acceptance [0.51ms]
+(pass) defaultGovernessDeps launchReplacementLoop releases the predecessor workspace reservation before replacement spawn [1.63ms]
+(pass) explicit stop marks the run before killing its tmux session [0.10ms]
+(pass) cleanup failure cannot prevent explicit tmux teardown [0.14ms]
+(pass) explicit teardown returns and records an unconfirmed tmux kill [0.12ms]
+(pass) raw key input emits individual keys and restores the terminal [0.14ms]
+
+ 34 pass
+ 0 fail
+ 190 expect() calls
+Ran 34 tests across 1 file. [51.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-hooks.test.ts:
+(pass) normalizeHookPayload > maps a Claude PostToolUse payload to a normalized event
+(pass) normalizeHookPayload > falls back to a raw event for unknown shapes
+(pass) normalizeHookPayload > captures a message detail for notification-style payloads
+(pass) runHookEmit > checkpoints before appending a Claude pre-compaction event
+(pass) runHookEmit > appends one normalized JSONL line and never throws [1.28ms]
+(pass) runHookEmit > swallows malformed stdin without throwing
+(pass) runHookEmit > enforce mode queues and denies an exact mechanical Claude tool [1.49ms]
+(pass) runHookEmit > enforce mode routes the current Codex shell_command tool [0.43ms]
+(pass) runHookEmit > observe or unavailable utility observes without blocking [0.30ms]
+(pass) runHookEmit > enforce or unavailable utility observes without blocking [0.06ms]
+(pass) runHookEmit > off mode leaves eligible native tools untouched and unmeasured [0.02ms]
+(pass) runHookEmit > automatic route failure is measured and fails open [0.22ms]
+(pass) runHookEmit > dispatcher-stale readiness preserves the original tool call [0.14ms]
+(pass) runHookEmit > inference-failed readiness preserves the original tool call [0.05ms]
+(pass) runHookEmit > routes an eligible command from a verified linked worktree [0.29ms]
+(pass) runHookEmit > adopts a verified linked worktree from the shell workdir [0.30ms]
+(pass) runHookEmit > fails open when an explicit shell workdir is not verified [0.17ms]
+(pass) runHookEmit > resolves a relative leading cd from the explicit shell workdir [0.49ms]
+(pass) runHookEmit > adopts a verified linked worktree named by a leading cd [0.36ms]
+(pass) runHookEmit > recovers a registered-worktree prefix before classifying the remainder [0.59ms]
+(pass) runHookEmit > does not recover substituted or unrelated worktree prefixes [0.20ms]
+(pass) runHookEmit > roots a focused-check cwd and paths in a verified linked worktree [0.22ms]
+(pass) runHookEmit > roots an exact source-slice boundary in a verified linked worktree [0.14ms]
+(pass) runHookEmit > journals unsupported and unverified automatic candidates [0.20ms]
+(pass) runHookEmit > consumes one lease, binds the read-only child, and blocks mutation [6.93ms]
+(pass) runHookEmit > Codex utility-first hooks deny native spawn and every child tool [9.72ms]
+(pass) runHookEmit > off mode leaves native root, lifecycle, and child hooks untouched [0.48ms]
+(pass) runHookEmit > strict mode blocks Codex native spawn without a lease [0.64ms]
+(pass) runHookEmit > native spawn still fails closed when hook telemetry cannot append [0.43ms]
+(pass) hook settings generators > builds a shell command that invokes the emitter
+(pass) hook settings generators > builds an explicit profile-specific native child command
+(pass) hook settings generators > Claude settings register every Claude hook event [0.23ms]
+(pass) hook settings generators > Codex hooks.json registers tool and subagent lifecycle events
+
+ 33 pass
+ 0 fail
+ 94 expect() calls
+Ran 33 tests across 1 file. [55.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-llm.test.ts:
+(pass) valid strict JSON content yields ok verdict with parsed fields [0.50ms]
+(pass) summary anchors the human objective and excludes composer placeholders [0.41ms]
+(pass) missing usage is estimated from request and response text [0.14ms]
+(pass) role balance response parses approved driver decision [0.23ms]
+(pass) role balance refuses switch when driver is invalid [0.05ms]
+(pass) valid response reports local LLM call and token split [0.05ms]
+(pass) trace file records request and response bodies [0.54ms]
+(pass) reasoning content with <think> block is parsed correctly [0.04ms]
+(pass) prose around the JSON object still extracts the verdict [0.05ms]
+(pass) confidence out of range is clamped to [0,1]
+(pass) non-2xx status returns malformed with fallback
+(pass) network error (ECONNREFUSED) returns unreachable [0.12ms]
+(pass) AbortError from timeout returns timeout [0.02ms]
+(pass) invalid state value returns malformed
+(pass) empty content returns malformed
+(pass) labelPanes parses a per-agent task label map [0.30ms]
+(pass) labelPanes trims whitespace and truncates long labels [0.05ms]
+(pass) labelPanes returns no labels on malformed content
+(pass) labelPanes returns no labels on a non-ok response
+
+ 19 pass
+ 0 fail
+ 52 expect() calls
+Ran 19 tests across 1 file. [21.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-p0-runtime.test.ts:
+(pass) journal v2 coalesces stable observations and writes one-record heartbeats [1.28ms]
+(pass) journal index rebuild preserves the idempotency fence after dispatch [1.38ms]
+(pass) journal compaction archives superseded observations without losing controls [1.98ms]
+(pass) malformed crash tails fail closed without automatic repair [0.58ms]
+(pass) duplicate hook evidence reconciles a dispatched control only once [0.91ms]
+(pass) typed bridge metadata round-trips and urgent work is delivered first [0.97ms]
+(pass) bridge QoS deduplicates, supersedes, bounds, and dead-letters work [0.68ms]
+(pass) bridge TTL survives a backward clock and expires deterministically [0.47ms]
+
+ 8 pass
+ 0 fail
+ 30 expect() calls
+Ran 8 tests across 1 file. [28.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-pane-liveness.test.ts:
+(pass) respawns an exact active dead Governess pane and journals both edges [0.35ms]
+(pass) spares a completed run during intentional or terminal teardown [0.03ms]
+(pass) spares a failed run during intentional or terminal teardown
+(pass) spares a stopped run during intentional or terminal teardown
+(pass) spares missing manifest before inspecting tmux
+(pass) spares session mismatch before inspecting tmux [0.06ms]
+(pass) spares pane mismatch before inspecting tmux
+(pass) spares a missing pane tmux target [0.02ms]
+(pass) spares a live pane tmux target
+(pass) spares a wrong pane id tmux target
+(pass) spares a wrong session tmux target
+(pass) fails closed for unreadable restart evidence
+(pass) fails closed for malformed restart evidence [0.10ms]
+(pass) fails closed for wrong schema restart evidence [0.01ms]
+(pass) suppresses the fourth attempt inside the rolling restart window [0.14ms]
+(pass) permits a new attempt after prior attempts leave the rolling window [0.04ms]
+(pass) revalidates manifest ownership immediately before respawn [0.04ms]
+(pass) revalidates dead pane state immediately before respawn [0.02ms]
+(pass) does not respawn when the attempt cannot be made durable [0.03ms]
+(pass) records a failed tmux respawn after consuming one attempt [0.03ms]
+(pass) accepts canonical hook arguments and rejects ambiguous targets [0.08ms]
+(pass) respawn argv reuses tmux's recorded pane command
+(pass) journal path remains run-owned
+
+ 23 pass
+ 0 fail
+ 67 expect() calls
+Ran 23 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-recover.test.ts:
+(pass) non-recoverable state 'working' yields level null
+(pass) non-recoverable state 'waiting-human' yields level null
+(pass) non-recoverable state 'waiting-peer' yields level null
+(pass) stuck with confidence below the gate yields level null
+(pass) max recoveries reached yields level null
+(pass) cooldown active (last action within window) yields level null
+(pass) escalation: empty history escalates to answer-prompt
+(pass) escalation: one prior answer-prompt escalates to nudge
+(pass) escalation: two priors escalate to restart
+(pass) escalation: three priors (== max 3) yields level null
+(pass) history for other agents does not affect this agent's escalation
+(pass) executeRecovery with level null returns null and calls nothing
+(pass) executeRecovery dryRun logs with dryRun true and calls no executor
+(pass) executeRecovery non-dryRun restart invokes restart once and logs
+(pass) executeRecovery non-dryRun answer-prompt invokes answerPrompt once
+
+ 15 pass
+ 0 fail
+ 44 expect() calls
+Ran 15 tests across 1 file. [15.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-runtime.test.ts:
+(pass) policy separates observations, safe controls, confirmations, and forbidden work
+(pass) runtime state and lifecycle sequence are explicit
+(pass) agent-authored hook evidence wins over terminal fallback state
+(pass) control journal is idempotent and replayable [1.90ms]
+(pass) journaled controls reconcile from post-dispatch agent evidence [1.44ms]
+(pass) behavioral cycle snapshots retain only transition evidence [0.76ms]
+(pass) journal rejects phase regression after transport acceptance [0.68ms]
+(pass) journal retries only failures that happened before dispatch [2.00ms]
+(pass) missing or malformed control journals fail closed [8.25ms]
+(pass) governess replay socket-qualifies the persisted run target and ignores replacement manifest paths [22.64ms]
+(pass) runtime adapter rejects a stale control envelope [0.50ms]
+(pass) digest-bound handoff accepts only a matching ready bundle [1.17ms]
+(pass) stale governess state cannot overwrite a newer epoch [0.49ms]
+(pass) legacy compatibility maps inputs without leaking them into canonical state [0.46ms]
+
+ 14 pass
+ 0 fail
+ 61 expect() calls
+Ran 14 tests across 1 file. [67.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-usage-limits.test.ts:
+(pass) readUsageTrackerLimits keeps legacy scalar quota compatibility [1.03ms]
+(pass) dynamic aggregate limits suppress model limits and fabricated sessions [0.14ms]
+(pass) a rejected explicit secret retries the working config secret [0.55ms]
+(pass) current Claude and Codex models use catalog replacement-value pricing [0.22ms]
+(pass) transient tracker failures retain local pricing without quotas [0.21ms]
+(pass) stable reader retains fresh per-provider quotas through transient gaps [0.19ms]
+(pass) stable reader clears retained quotas after authentication failure [0.09ms]
+(pass) readUsageTrackerLimits is disabled without any configured secret [0.09ms]
+(pass) readUsageTrackerLimits returns undefined after authentication failure [0.03ms]
+
+ 9 pass
+ 0 fail
+ 44 expect() calls
+Ran 9 tests across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-usage.test.ts:
+(pass) human message extraction keeps the launch task and drops bridge results [1.17ms]
+(pass) summarizeClaude sums usage across assistant turns and tracks context [0.11ms]
+(pass) summarizeClaude dedupes split assistant rows with the same request id [0.24ms]
+(pass) summarizeClaude tracks speed and service tier [0.01ms]
+(pass) summarizeClaude ignores malformed lines and lines without usage [0.08ms]
+(pass) summarizeClaude ignores synthetic zero-usage error entries for model and context [0.03ms]
+(pass) summarizeClaude counts agent messages and genuine human prompts [0.03ms]
+(pass) summarizeClaude counts compact boundaries and pre-compact context [0.09ms]
+(pass) summarizeClaude distinguishes manual from automatic compaction
+(pass) summarizeCodex counts messages by role
+(pass) summarizeCodex counts text, reasoning, and tool activity
+(pass) summarizeCodex uses total_token_usage (cumulative) + last_token_usage (context) [0.29ms]
+(pass) summarizeCodex tracks reasoning effort from turn context
+(pass) readAgentUsage falls back to the newest run-scoped rollout when the manifest thread is stale [7.38ms]
+(pass) readAgentUsage applies Codex fast history credit multiplier [0.66ms]
+(pass) readAgentUsage applies Codex service tier from per-run config [1.65ms]
+(pass) summarizeCodex counts compactions using the prior context snapshot [0.26ms]
+(pass) summarizeCodex takes the last token-count event as cumulative usage [0.09ms]
+(pass) applyPricing computes cost and context window for a known model [0.01ms]
+(pass) applyPricing preserves an explicit transcript context window
+(pass) applyPricing prices cache tokens at reduced rates [0.02ms]
+(pass) applyPricing yields zero cost and default window for an unknown model [0.02ms]
+
+ 22 pass
+ 0 fail
+ 85 expect() calls
+Ran 22 tests across 1 file. [29.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess.test.ts:
+(pass) summary objective prefers the current loop heading over a terse follow-up [0.15ms]
+(pass) summary objective ignores a newer bridge helper result
+(pass) governess observes agents through persisted post-split pane targets [35.39ms]
+(pass) governess config resolution does not rewrite restored topology [15.42ms]
+(pass) governess rejects persisted panes without their agent ownership [13.84ms]
+(pass) governess refreshes late and changed agent session bindings [16.10ms]
+(pass) governess preserves known bindings across empty or malformed manifests [16.14ms]
+(pass) context preparation is action-oriented, durable, and sent once per agent [5.27ms]
+(pass) session pressure state survives Governess persistence [0.82ms]
+(pass) pressure-triggered handover pins its epoch across Governess persistence [0.52ms]
+(pass) enforce starts exactly one governed handover while safety modes do not [0.08ms]
+(pass) suspect + stuck in dry-run: judges and decides but executes nothing [0.56ms]
+(pass) suspect + stuck live: executes the first ladder rung and records history [0.26ms]
+(pass) LLM unreachable suppresses recovery and flags the board [0.23ms]
+(pass) dual local judges render separate token rows and require agreement [0.36ms]
+(pass) small panes collapse excess judge rows within the viewport budget [0.15ms]
+(pass) round-robin local judge mode calls one model for that tick [0.24ms]
+(pass) board labels an agent [thinking] while its pane is animating [0.13ms]
+(pass) board keeps the configured leader row first [0.21ms]
+(pass) codex session pressure hands driver role to claude until reset [0.47ms]
+(pass) codex limit handoff does not repeat when reset detail appears later [0.18ms]
+(pass) codex limit reset restores driver role without compacting context [0.43ms]
+(pass) handover mode suppresses pending limit role-transition messages [0.18ms]
+(pass) a missing limit snapshot does not restore before a known future reset [0.32ms]
+(pass) one missing limit snapshot starts a cooldown instead of restoring [0.16ms]
+(pass) restore briefing stays pending while its target is active [0.51ms]
+(pass) pressure on a non-driver is deduped without messaging or a handoff [0.22ms]
+(pass) claude session pressure hands driver role to codex until reset [0.30ms]
+(pass) proactive quota balance is disabled by default [0.43ms]
+(pass) proactive quota balance moves driver when local LLM approves [0.58ms]
+(pass) proactive quota balance is skipped when local LLM vetoes [0.38ms]
+(pass) board labels an agent [idle] once its pane is frozen [0.10ms]
+(pass) board converts the agent's live remaining context % to used context [0.20ms]
+(pass) board ignores narrative effort words and uses the final valid status-line effort [0.04ms]
+(pass) board preserves provider effort when pane has no recognized effort marker [0.18ms]
+(pass) board shows latest bridge messages in both directions [0.46ms]
+(pass) board keeps warning-colored agent columns aligned [0.16ms]
+(pass) board renders only aggregate dynamic usage tracker windows
+(pass) board shows input, cached, and output token details [0.81ms]
+(pass) board uses only Progress and Next from the structured summary
+(pass) board uses the recovered summary area for Nanny and Au Pair metrics [6.33ms]
+(pass) small governess viewports retain both agents, Nanny, and Au Pair [0.26ms]
+(pass) viewportRows=5 keeps the Direct row when the direct tier holds the run's work [2.77ms]
+(pass) Au Pair row hides the internal routed-utility state name [1.46ms]
+(pass) observed progress clears the agent's recovery history [0.12ms]
+(pass) a cleanly-ended turn stays idle and is never judged, even past the idle window [0.23ms]
+(pass) board flags an agent that is waiting for the human
+(pass) board labels a session-limit pane as limited, not waiting for the human
+(pass) board does not treat an available usage-limit reset as a blocked agent [0.35ms]
+(pass) board does not label governess limit handoff text as a session limit [0.15ms]
+(pass) board does not label Codex context compaction as a usage limit [0.11ms]
+(pass) a confirmed waiting pair clears the moment an agent goes active
+(pass) a confirmed idle pair shows the LLM's ask and escalates once [0.37ms]
+(pass) both idle but unconfirmed by the LLM does not alert [0.06ms]
+(pass) escalates once when the session crosses its cost budget [0.15ms]
+(pass) composePaneTitle composes glyph, agent, and task label [0.04ms]
+(pass) governess run identity includes full loop name and path [0.04ms]
+(pass) board merges loop and path into the first time/status line [0.09ms]
+(pass) governess pane identity is reapplied without deduplication
+(pass) governess pane identity writes the border option and native title
+(pass) runGoverness applies pane identity once on startup [2.60ms]
+(pass) runGoverness renders a degraded tick without recovery when tmux capture is unknown [0.52ms]
+(pass) governessTick stops probing after one tmux failure and recovers next tick [0.19ms]
+(pass) governessTick treats one batched pane-command timeout as a degraded tick [0.11ms]
+(pass) large Unicode pane output does not enlarge the bounded Governess board [0.32ms]
+(pass) Governess frame deltas update only changed lines without clearing [0.10ms]
+(pass) Governess restart clears stale history before drawing one live snapshot
+(pass) runGoverness refreshes a late Codex binding before reading usage [0.78ms]
+(pass) governessTick sets each agent's pane border title and skips redundant sets [0.10ms]
+(pass) governessTick folds the stored LLM label into the border title [0.06ms]
+(pass) sendRenameCommands is disabled by default [0.05ms]
+(pass) agent rename config requires an explicit truthy environment value
+(pass) sendRenameCommands injects /rename when explicitly enabled [0.09ms]
+(pass) sendRenameCommands sends nothing in dry-run
+(pass) sendRenameCommands does not re-send an unchanged rename [0.09ms]
+(pass) sendRenameCommands does not inject into an agent that is mid-turn
+(pass) sendRenameCommands fails closed without state and turn-end evidence
+(pass) sendRenameCommands preserves a user draft after a Stop hook
+
+ 78 pass
+ 0 fail
+ 444 expect() calls
+Ran 78 tests across 1 file. [168.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/iteration.test.ts:
+(pass) iterationCooldown reads LOOP_COOLDOWN_MS at call time [1.34ms]
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [21.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/launch-reservation.test.ts:
+(pass) concurrent fresh claims for one workspace produce one winner [35.84ms]
+(pass) lock heartbeat survives a reservation scan longer than the stale window [6228.66ms]
+(pass) same branch or same root conflicts while terminal dead ownership permits [21.20ms]
+(pass) active legacy and unknown topology fail closed without mutation [14.16ms]
+(pass) active alphanumeric run ids participate in workspace conflict checks [13.62ms]
+(pass) concurrent cold resumes grant exactly one bootstrap attempt [57.64ms]
+(pass) explicit resume reuses the matching claim and task binding is immutable [33.45ms]
+(pass) live reattach validates but never invents source-charter evidence [31.68ms]
+(pass) stale canonical lock reclamation stays single-owner [33.92ms]
+(pass) a delayed stale cancel cannot clear a replacement resume attempt [51.50ms]
+(pass) distinct registered worktrees on distinct branches can both reserve [82.45ms]
+(pass) a fresh reservation binds the resolved socket into the manifest [13.62ms]
+(pass) an unusable socket fails before any run is reserved on disk [6.67ms]
+(pass) resume never consults the ambient resolver, even when it would throw [96.07ms]
+(pass) a fresh launch does consult the resolver, so the counter discriminates [13.52ms]
+(pass) a named launch for a non-existent run still resolves before reserving [21.94ms]
+(pass) manifestCanStillOwnWorkspace keeps a tmuxSession manifest with an unusable target as owning the workspace [14.91ms]
+(pass) reserveRequestedLaunch conflicts without mutation when requested tmuxSession has an unusable target [32.37ms]
+
+ 18 pass
+ 0 fail
+ 60 expect() calls
+Ran 18 tests across 1 file. [6.83s]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/launch-smoke-manifest.test.ts:
+(pass) release smoke manifest discovery fails closed unless one producer manifest exists [10.71ms]
+
+ 1 pass
+ 0 fail
+ 9 expect() calls
+Ran 1 test across 1 file. [27.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/main.test.ts:
+(pass) runLoop dispatches paired mode to the paired runner [0.28ms]
+(pass) runLoop dispatches default mode to the single runner [0.23ms]
+
+ 2 pass
+ 0 fail
+ 6 expect() calls
+Ran 2 tests across 1 file. [16.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/memory-checkpoint.test.ts:
+(pass) memory checkpoints > writes one deterministic Claude pre-compaction checkpoint [9.68ms]
+(pass) memory checkpoints > uses a redacted pre-turn fallback for Codex [4.24ms]
+(pass) memory checkpoints > does not checkpoint unrelated hook events [0.21ms]
+(pass) curated memory promotion > promotes an allowlisted verified entry as Markdown plus provenance [4.73ms]
+(pass) curated memory promotion > fails closed for missing provenance and transient claims [0.48ms]
+
+ 5 pass
+ 0 fail
+ 15 expect() calls
+Ran 5 tests across 1 file. [36.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/native-subagent.test.ts:
+(pass) native fallback mode defaults utility-first and unknown values fail strict [0.46ms]
+(pass) native fallback requests require utility evidence and reject protected scope
+(pass) Governess requires substantive utility evidence, not only a settled state [3.78ms]
+(pass) Governess grants one lease and provider hooks consume and close it once [3.72ms]
+(pass) unused native fallback lease expires and stale epochs cannot grant [2.10ms]
+(pass) Codex native fallback is denied because its child inherits the parent sandbox [1.83ms]
+(pass) running native fallback expires before further tools or completion [2.12ms]
+(pass) a new Governess epoch immediately fences a running native child [2.02ms]
+(pass) loop-scoped provider definitions enforce one read-only fallback [0.25ms]
+(pass) ensureLoopCodexHome disables Codex native spawning without a fallback profile [0.46ms]
+(pass) native fallback slot is one-at-a-time: completion and expiry free it, active occupancy denies [4.10ms]
+(pass) governed pane env unsets fleet surfaces and the composed command still runs [3.41ms]
+
+ 12 pass
+ 0 fail
+ 73 expect() calls
+Ran 12 tests across 1 file. [52.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/openai-compatible.test.ts:
+(pass) sends bearer auth, tools, and a non-streaming wire-compatible conversation [0.85ms]
+(pass) omits authorization when no API key is configured
+(pass) extracts token details and OpenRouter cost fields
+(pass) retries 429 and 5xx with Retry-After or exponential backoff [0.27ms]
+(pass) returns a structured HTTP error after bounded retries [0.15ms]
+(pass) does not retry ordinary 4xx responses [0.02ms]
+(pass) times out a slow attempt with a structured error [5.29ms]
+(pass) returns structured network and invalid-response errors [0.24ms]
+(pass) trace hook redacts credentials in URLs, bodies, responses, and errors [0.13ms]
+
+ 9 pass
+ 0 fail
+ 24 expect() calls
+Ran 9 tests across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/oss-agent-seat.test.ts:
+(pass) the launchable topology is exactly claude, codex, and oss [0.42ms]
+(pass) every ordered distinct Claude/Codex/OSS pairing parses in either order [0.64ms]
+(pass) every launchable agent has a launchable default peer [0.03ms]
+(pass) retired agents are rejected for agent, pair, review, and plan review [0.24ms]
+(pass) retired only-mode and model flags fail closed naming oss [0.22ms]
+(pass) a manifest naming a retired seat stays readable but cannot relaunch [9.22ms]
+(pass) GLM-5.2 is the default OSS profile, not a hard-coded dependency [0.19ms]
+(pass) any non-empty provider/model identifier reaches OpenCode unrewritten [0.04ms]
+(pass) an empty OSS model is rejected rather than silently defaulted
+(pass) generated OpenCode config is run-scoped, bridge-only, and source oss [0.54ms]
+(pass) the generated OpenCode config carries no credential value [0.39ms]
+(pass) the bridge config does not depend on ambient user configuration
+(pass) a provider key file is only used when it is a mode-0600 regular file [0.21ms]
+(pass) an explicitly disabled key file never loads a credential
+(pass) a first OSS turn takes a title and a resume takes the stored session id
+(pass) the OSS session id is recovered from either shape of JSON event
+(pass) a stored OSS session id always wins over a title lookup
+(pass) a missing OSS session id is recovered by run title, or left empty
+(pass) the session lookup runs against the run-scoped config directory
+(pass) a paired manifest round-trips the OSS session id [7.78ms]
+(pass) governess observes an OSS seat through its persisted pane target [14.56ms]
+(pass) governess skips a retired seat instead of observing it as live [14.43ms]
+
+[loop] review with oss
+(pass) an OSS reviewer APPROVE cannot open the release gate without a policy grant [0.37ms]
+
+[loop] review with oss
+(pass) an OSS reviewer APPROVE opens the release gate only under an explicit grant
+
+[loop] review with oss
+(pass) an advisory OSS reviewer still blocks on FAIL [0.36ms]
+
+[loop] review with claude
+
+[loop] review with oss
+
+[loop] review with oss
+(pass) an advisory OSS APPROVE does not open the gate even beside a native pass [0.01ms]
+(pass) release authority is a property of policy, never of seat occupancy
+
+ 27 pass
+ 0 fail
+ 162 expect() calls
+Ran 27 tests across 1 file. [76.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/paired-loop.test.ts:
+(pass) runPairedLoop fails when --run-id does not resolve to an existing manifest [10.22ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 11
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop starts the non-primary peer session in review mode [16.23ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 12
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 13
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) non-tmux paired prompts apply Caveman guidance with an exact off switch [26.47ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop resolves a stored raw session id back to its run manifest [23.56ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop restarts a completed paired run with fresh agent sessions [16.12ms]
+(pass) preparePairedOptions loads stored pair ids before planning [18.13ms]
+(pass) preparePairedOptions writes a resumeable manifest for a fresh paired run [14.90ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: raw
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop seeds a fresh paired run from a raw primary session id [18.52ms]
+(pass) runPairedLoop marks a failed startup as failed [16.13ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4a
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop records structured lifecycle events when no bridge traffic occurs [17.17ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4c
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+(pass) runPairedLoop does not mark a run completed when the draft PR step fails [13.46ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers forwarded bridge messages to the target agent [13.62ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4-supervisor
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) a pending supervisor escalation does not block paired-agent delivery [13.29ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop keeps a failed bridge message queued until the next run [20.74ms]
+
+[loop] PLAN.md:
+
+Ship feature
+
+Follow-up:
+Add the missing edge-case test.
+[loop] paired run: 4d
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop restores a pending follow-up prompt on resume [20.00ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 5
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers peer messages back to the primary agent [13.59ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 9
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop skips the default work turn after draining input for the primary agent [12.92ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 7
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop uses the paired peer reviewer in paired mode [13.61ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 8
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop uses the paired peer instead of same-agent review in paired mode [12.78ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 10
+
+[loop] iteration 1/2
+
+[loop] review with codex
+
+[loop] bridge codex -> claude
+
+[loop] reviewer feedback delivered through bridge.
+
+[loop] iteration 2/2
+
+[loop] reached max iterations (2), stopping.
+(pass) runPairedLoop does not duplicate bridged peer review notes in the next prompt [14.90ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 6
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers cross-direction bridge messages without permanent suppression [12.90ms]
+
+ 21 pass
+ 0 fail
+ 96 expect() calls
+Ran 21 tests across 1 file. [365.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/paired-options.test.ts:
+(pass) preparePairedRun persists resolved asymmetric launch effort [10.30ms]
+(pass) live tmux reattach rejects an effort change it cannot apply [14.41ms]
+(pass) prepared runs reject a superseded bootstrap attempt [13.60ms]
+(pass) preparePairedOptions accepts a raw session id without creating a paired manifest [16.97ms]
+(pass) paired resumes restore Caveman modes unless CLI explicitly overrides [25.05ms]
+(pass) legacy resumes apply only Caveman modes their agents can receive [171.41ms]
+(pass) preparePairedOptions writes a readable Claude bridge server for fresh runs [10.92ms]
+(pass) preparePairedOptions keeps non-tmux native policy off without global MCP config [10.59ms]
+(pass) preparePairedRun upgrades an older hashed Claude bridge server name [13.95ms]
+(pass) preparePairedOptions ignores stored session ids from a completed paired run [21.85ms]
+(pass) preparePairedRun clears stale tmux state and Codex governance outside tmux mode [24.66ms]
+(pass) preparePairedRun preserves governed Codex gates and removes stale child profiles on live tmux reattach [25.41ms]
+
+ 12 pass
+ 0 fail
+ 60 expect() calls
+Ran 12 tests across 1 file. [379.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/panel.test.ts:
+(pass) parseProcessList keeps codex engine and deduplicates wrapper [0.34ms]
+(pass) parseProcessList deduplicates codex app-server wrapper and engine [0.19ms]
+(pass) parseProcessList handles node app-server launches with runtime flags [0.06ms]
+(pass) parseProcessList detects a direct codex app-server process [0.03ms]
+(pass) parseProcessList detects a bare app-server process
+(pass) parseProcessList detects a bun app-server invocation with flags [0.11ms]
+(pass) parseProcessList detects a standalone app-server invocation [0.04ms]
+(pass) parseLsofSnapshot extracts cwd and file names
+(pass) parseTmuxSessions keeps active loop sessions and extracts ids [0.39ms]
+(pass) parseTmuxSessions keeps alphanumeric loop sessions [0.08ms]
+(pass) parseTmuxSessions keeps hyphen and underscore loop sessions
+(pass) projectKeyFromCwd matches claude project folder naming
+(pass) parseTimestampMs returns NaN for invalid timestamp
+(pass) collectLoopRuns loads manifests and keeps newest first [0.65ms]
+(pass) reconcileDoneRows moves disappeared instance into done section
+(pass) reconcileDoneRows removes done entry when session is running again
+(pass) buildLines uses stacked layout on narrow terminals
+(pass) parseCodexHistoryRow falls back to top-level session keys when payload is missing [0.90ms]
+
+ 18 pass
+ 0 fail
+ 31 expect() calls
+Ran 18 tests across 1 file. [22.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/pi-runtime.test.ts:
+(pass) shared Pi runtime > registers Nanny with bounded output and explicit thinking controls [5.94ms]
+(pass) shared Pi runtime > resolves the Au Pair through Pi's OpenRouter catalog without network refresh [1.25ms]
+(pass) shared Pi runtime > runs a no-tools Nanny completion with normalized usage [16.80ms]
+(pass) shared Pi runtime > runs an Au Pair completion through the same Pi runtime [3.80ms]
+(pass) shared Pi runtime > exposes only the explicit custom tool and completes a tool turn [9.11ms]
+
+ 5 pass
+ 0 fail
+ 19 expect() calls
+Ran 5 tests across 1 file. [499.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/pr.test.ts:
+
+[loop] review passed. asking model to create draft PR.
+(pass) runDraftPrStep prompts model to create draft PR [0.44ms]
+
+[loop] review passed. asking model to send commit.
+(pass) runDraftPrStep prompts model to send a follow-up commit when PR exists [0.01ms]
+
+[loop] review passed. asking model to create draft PR.
+(pass) runDraftPrStep throws when model exits non-zero [0.12ms]
+
+ 3 pass
+ 0 fail
+ 10 expect() calls
+Ran 3 tests across 1 file. [15.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/process.test.ts:
+(pass) killChildProcess no-ops when child is undefined [0.05ms]
+(pass) killChildProcess uses process group signaling when detached mode is supported [0.04ms]
+(pass) killChildProcess falls back to direct child kill when group kill throws [0.05ms]
+
+ 3 pass
+ 0 fail
+ 5 expect() calls
+Ran 3 tests across 1 file. [14.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/prompts.test.ts:
+(pass) buildPlanPrompt asks for PLAN.md
+(pass) buildPlanReviewPrompt asks to review PLAN.md only
+(pass) buildWorkPrompt keeps task, optional sections, and done instruction
+(pass) buildWorkPrompt does not duplicate proof when task already contains it
+(pass) buildWorkPrompt keeps proof when only a substring appears in task
+(pass) buildReviewPrompt includes strict review signal instructions
+(pass) buildReviewPrompt omits proof requirements when proof is empty
+
+ 7 pass
+ 0 fail
+ 42 expect() calls
+Ran 7 tests across 1 file. [15.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/recon-pane.test.ts:
+(pass) Recon panes project route, exact tool failure, and pending result truth [6.47ms]
+
+ 1 pass
+ 0 fail
+ 20 expect() calls
+Ran 1 test across 1 file. [24.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/review-request-gate.test.ts:
+(pass) review request gate emits a provenance stamp only for protected lineage [104.17ms]
+(pass) review request gate emits nothing for a sibling lineage [84.75ms]
+(pass) review request gate emits nothing when a protection symbol is absent [87.16ms]
+(pass) stamped sender calls the channel once with gate-certified output [511.05ms]
+(pass) stamped sender makes zero channel calls when the gate refuses lineage [117.25ms]
+(pass) stamped sender refuses exit-zero gate output without a provenance stamp [269.66ms]
+(pass) stamped sender refuses exit-zero gate output without PASS status [253.54ms]
+
+ 7 pass
+ 0 fail
+ 91 expect() calls
+Ran 7 tests across 1 file. [1444.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/review-run.test.ts:
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview approves when all reviewers pass [0.56ms]
+
+[loop] review with codex
+(pass) runReview ignores transport noise in combined when parsed has final pass signal [0.18ms]
+
+[loop] review with codex
+(pass) runReview treats mixed PASS and FAIL as failure
+
+[loop] review with codex
+(pass) runReview rejects missing final review signal
+
+[loop] review with codex
+(pass) runReview rejects malformed final review signal
+
+[loop] review with codex
+(pass) runReview rejects trailing content after final review signal
+
+[loop] review with codex
+(pass) runReview accepts quoted final review signal [0.26ms]
+
+[loop] review with codex
+(pass) runReview uses fallback message when fail output has no body [0.03ms]
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview marks consensus failure when every reviewer fails [0.03ms]
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview accepts pass signal from combined output with parsed body [0.09ms]
+
+[loop] review with codex
+(pass) runReview reads fail signal from combined output with body [0.05ms]
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview is not consensus failure when only one reviewer fails [0.01ms]
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview keeps parallel results when one reviewer exits non-zero [0.07ms]
+
+[loop] review with codex
+(pass) runReview handles non-zero exit for a single reviewer as failure
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview supports one failing reviewer through rejection and keeps deterministic notes [0.14ms]
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview keeps deterministic note ordering regardless completion order [21.35ms]
+
+[loop] review with codex
+(pass) runReview formats non-Error reviewer rejection deterministically
+
+ 17 pass
+ 0 fail
+ 58 expect() calls
+Ran 17 tests across 1 file. [44.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/review.test.ts:
+(pass) resolveReviewers returns empty list when review is not enabled
+(pass) resolveReviewers returns claudex reviewers in deterministic order
+(pass) resolveReviewers returns the explicit reviewer
+
+[loop] review with codex
+(pass) runReview approves only when final line is a valid pass signal
+
+[loop] review with codex
+(pass) runReview accepts quoted final signal and ignores non-final review lines
+
+[loop] review with codex
+(pass) runReview accepts final signal with surrounding whitespace
+
+[loop] review with codex
+(pass) runReview accepts final signal from combined output with trailing blank lines
+
+[loop] review with codex
+(pass) runReview rejects output with missing final review signal
+
+[loop] review with codex
+(pass) runReview accepts quoted final fail with whitespace-only body
+
+[loop] review with codex
+(pass) runReview rejects trailing token on quoted final signal [1.07ms]
+
+[loop] review with codex
+(pass) runReview accepts final signal when parsed is empty and combined contains body [0.03ms]
+
+[loop] review with codex
+(pass) runReview rejects output with quoted final fail plus non-final pass
+
+[loop] review with codex
+(pass) runReview rejects output with final pass and earlier fail
+
+[loop] review with codex
+(pass) runReview rejects malformed final signal text [0.01ms]
+
+[loop] review with codex
+(pass) runReview rejects output with extra non-empty content after final signal
+
+[loop] review with codex
+(pass) runReview rejects non-final or malformed review signals [0.01ms]
+
+[loop] review with codex
+(pass) runReview requires deterministic output when both pass and fail are present
+
+[loop] review with codex
+(pass) runReview extracts fail reasons from body before final signal [0.10ms]
+
+[loop] review with codex
+(pass) runReview keeps deterministic output when both pass and fail are present [0.04ms]
+
+[loop] review with codex
+(pass) runReview keeps deterministic output when one pass and one fail in output
+
+[loop] review with codex
+
+[loop] review with claude
+(pass) runReview keeps deterministic note ordering regardless completion order [21.46ms]
+
+[loop] review with codex
+(pass) runReview handles non-zero exit code as deterministic reviewer failure
+
+[loop] review with codex
+(pass) runReview handles reviewer runtime failures [0.29ms]
+
+[loop] review with claude
+
+[loop] review with codex
+(pass) runReview marks consensus failure when all reviewers fail [0.13ms]
+
+ 24 pass
+ 0 fail
+ 54 expect() calls
+Ran 24 tests across 1 file. [42.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/run-process-cleanup.test.ts:
+(pass) teardown signals only bridge processes registered to the exact run [0.96ms]
+(pass) teardown requires both app-server command and owned listener port [0.34ms]
+(pass) startup GC reaps only provably abandoned runs in the current repository [4.79ms]
+(pass) startup GC preserves an active detached run with missing tmux ownership [0.72ms]
+(pass) startup GC never signals stale-run processes that fail ownership proof [1.09ms]
+(pass) startup GC preserves a run present in the bounded tmux snapshot [1.03ms]
+(pass) startup GC retains app-server ownership evidence after a signal failure [1.33ms]
+(pass) startup GC contains tmux snapshot failures and preserves tmux-owned runs [0.63ms]
+(pass) startup GC contains manifest repair failures before signaling and continues [1.13ms]
+(pass) startup GC retains bridge registration after a signal failure [1.03ms]
+(pass) cross-repo sweep signals only exact bridges for terminal or absent runs [1.47ms]
+(pass) cross-repo sweep ignores parent commands with embedded bridge JSON [0.08ms]
+(pass) cross-repo sweep rejects non-canonical commands and changed PID identity [0.20ms]
+(pass) cross-repo sweep preserves a contradictory active terminal manifest [0.43ms]
+(pass) cross-repo sweep rechecks terminal state before its final PID check [0.11ms]
+(pass) cross-repo sweep contains enumeration and per-process inspection failures [0.16ms]
+
+ 16 pass
+ 0 fail
+ 58 expect() calls
+Ran 16 tests across 1 file. [33.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/run-state.test.ts:
+(pass) resolveRepoId prefers git common dir and stays stable across worktrees
+(pass) resolveRepoId falls back to top-level when git common dir is unavailable
+(pass) resolveStorageRoot and run path helpers build the expected layout
+(pass) resolveRunStorage resolves the same run dir for a resumed run id
+(pass) resolveRunId prefers LOOP_RUN_ID over auto-incrementing storage [1.14ms]
+(pass) resolveRunId increments from the latest stored run [0.57ms]
+(pass) reserveRunStorage exclusively creates the next numeric run directory [0.58ms]
+(pass) competing processes reserve distinct numeric run directories [31.35ms]
+(pass) manifest round-trips the observed Claude CLI version [0.99ms]
+(pass) manifest helpers write, read, and touch run metadata [0.30ms]
+(pass) manifest reader rejects an invalid World Model binding as a whole [0.41ms]
+(pass) createRunManifest rejects an invalid source task SHA-256 [0.02ms]
+(pass) manifest reader preserves legacy manifests without launch bindings [0.17ms]
+(pass) writeRunManifest atomically replaces a complete manifest [0.58ms]
+(pass) writeRunManifest removes its temporary file when rename fails [0.24ms]
+(pass) manifest reader ignores malformed files [0.47ms]
+(pass) loadRunState resolves an existing run by run id [0.74ms]
+(pass) resolveExistingRunId returns a matching stored run id [1.01ms]
+(pass) resolveExistingRunId matches stored Claude and Codex session ids [0.69ms]
+(pass) transcript helpers append and read jsonl entries [0.39ms]
+(pass) transcript helpers parse structured status, review, and result entries [0.27ms]
+(pass) structured transcript entries round-trip without undefined optional fields [0.30ms]
+(pass) run ids are validated before storage paths are built [0.02ms]
+(pass) manifest round trip preserves the canonical tmuxSocket [0.17ms]
+(pass) snake-case tmux_socket is read when it is the only key present [0.25ms]
+(pass) a camel/snake socket conflict is unknown targeting, never a coerced pick [0.21ms]
+(pass) identical camel and snake socket values are not a conflict [0.43ms]
+(pass) an invalid socket becomes unknown targeting and is never resolved against cwd [0.22ms]
+(pass) a legacy manifest with no socket yields a handle that targets nothing [0.27ms]
+(pass) the handle carries runId, manifest path, and the SHA-256 of the bytes read [0.19ms]
+(pass) pane targets come from the same handle as the target [0.36ms]
+(pass) clearing tmux topology clears socket, session, and all seven pane fields [0.02ms]
+(pass) every persisted pane field is covered by the atomic clear [0.16ms]
+
+ 33 pass
+ 0 fail
+ 79 expect() calls
+Ran 33 tests across 1 file. [60.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/runner.test.ts:
+(pass) runAgent uses non-persistent app-server threads by default [2.97ms]
+(pass) runAgent keeps app-server threads persistent for explicit resume
+(pass) runAgent launches Codex app-server with loop-scoped Codex home [0.48ms]
+(pass) buildCommand uses the provided Claude model
+(pass) buildCommand carries Codex bridge approval config for legacy exec [0.28ms]
+(pass) buildCommand builds an oss command that forwards the model verbatim [0.02ms]
+(pass) buildCommand passes an arbitrary provider/model id to OpenCode unrewritten
+(pass) buildCommand resumes an oss session through its stored session id
+(pass) runAgent honors CODEX_TRANSPORT=exec and uses legacy codex exec
+(pass) runAgent propagates turn/completed success exit code
+(pass) runAgent propagates turn/completed failure exit code [0.18ms]
+(pass) runReviewerAgent uses codex reviewer model for codex reviews
+(pass) runReviewerAgent uses claude reviewer model for claude reviews
+(pass) startPersistentAgentSession enables persistent Claude sessions [0.19ms]
+(pass) startPersistentAgentSession enables persistent Codex threads
+(pass) startPersistentAgentSession resumes persistent Codex threads
+(pass) runAgent inserts pretty-mode blank line after message completion [0.93ms]
+(pass) runAgent preserves nested delta newline content in pretty mode [0.02ms]
+{"method":"item/agentMessage/delta","params":{"delta":"partial output"}}
+{"method":"item/agentMessage/delta","params":{"delta":"final output"}}
+(pass) runAgent retries once after an unexpected app-server exit [0.26ms]
+(pass) runAgent falls back after retrying an unexpected app-server exit [0.01ms]
+(pass) runAgent only falls back to legacy once per process for app-server compatibility errors
+(pass) runAgent does not fallback on non-compatibility app-server failures [0.18ms]
+(pass) SIGINT forwards to interruptAppServer while app-server run is active [0.13ms]
+
+ 23 pass
+ 0 fail
+ 79 expect() calls
+Ran 23 tests across 1 file. [22.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/session-pressure.test.ts:
+(pass) session pressure profiles > selects model-specific thresholds instead of one global turn count
+(pass) evaluateSessionPressure > prepares and hands off GPT-5.6 from measured context first
+(pass) evaluateSessionPressure > does not prepare or hand off from high turns at low context
+(pass) evaluateSessionPressure > compaction precedence outranks context and turn crossings
+(pass) evaluateSessionPressure > does not treat an explicitly manual Claude compaction as automatic
+(pass) evaluateSessionPressure > does not fabricate context pressure when context is unknown
+(pass) context handoff mode defaults to enforce with explicit observe and off
+
+ 7 pass
+ 0 fail
+ 20 expect() calls
+Ran 7 tests across 1 file. [14.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/single-loop.test.ts:
+
+[loop] PLAN.md:
+
+Ship feature
+
+[loop] done signal "<done/>" detected, stopping.
+(pass) runSingleLoop uses the resumed session id on the first turn and stops on done [5.62ms]
+
+ 1 pass
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [19.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/task-router.test.ts:
+(pass) routes a bounded low-risk edit to a capable utility tier [0.59ms]
+(pass) keeps sequential work with the current driver [0.10ms]
+(pass) keeps unknown work with the current driver
+(pass) legacy missing work shape fails closed
+(pass) keeps a small edit with missing read context out of utility [0.16ms]
+(pass) keeps a small edit with more than four read files out of utility
+(pass) keeps a small edit with more than two write files out of utility
+(pass) keeps a small edit with missing scoped-edit capability out of utility
+(pass) keeps a small edit with write target absent from read context out of utility
+(pass) keeps a small edit with incompatible execution profile out of utility
+(pass) routing is provider generic
+(pass) applies generic tier patterns and an eligible default fallback [0.35ms]
+(pass) cost-quality policy changes which eligible tier wins [0.09ms]
+(pass) fails closed on invalid generic routing policy metadata
+(pass) review and authority precedence is retained for unknown work shape [0.14ms]
+(pass) routes an explicit bounded utility audit to a capable utility tier
+(pass) keeps a utility audit with writes away from Au Pair
+(pass) keeps a utility audit with non-low risk away from Au Pair
+(pass) keeps a utility audit with release authority away from Au Pair
+(pass) keeps a utility audit with too many scopes away from Au Pair
+(pass) keeps a utility audit with missing inspect capability away from Au Pair
+(pass) keeps a utility audit with protected scope away from Au Pair
+(pass) rejects review mode on a non-review request [0.21ms]
+(pass) utility audit still requires a live Governess epoch and healthy GLM tier
+(pass) fail-closed gates > keeps missing epoch with the driver
+(pass) fail-closed gates > keeps missing acceptance with the driver
+(pass) fail-closed gates > keeps unknown risk with the driver
+(pass) fail-closed gates > keeps protected path with the driver
+(pass) fail-closed gates > keeps credential directory with the driver
+(pass) fail-closed gates > keeps agent settings with the driver
+(pass) fail-closed gates > keeps nested credential directory with the driver
+(pass) fail-closed gates > keeps nested governing spec with the driver
+(pass) fail-closed gates > keeps nested architecture with the driver
+(pass) fail-closed gates > keeps copilot instructions with the driver
+(pass) fail-closed gates > keeps case-varied nested agent settings with the driver
+(pass) fail-closed gates > keeps write conflict with the driver
+(pass) fail-closed gates > keeps missing capability with the driver
+(pass) fail-closed gates > keeps unhealthy tier with the driver
+(pass) fail-closed gates > escalates forbidden credentialAccess authority
+(pass) fail-closed gates > escalates forbidden dependencyChange authority
+(pass) fail-closed gates > escalates forbidden destructive authority
+(pass) fail-closed gates > escalates forbidden migration authority [0.27ms]
+(pass) fail-closed gates > escalates forbidden productDecision authority [0.03ms]
+(pass) fail-closed gates > escalates forbidden remoteMutation authority
+(pass) fail-closed gates > escalates forbidden release authority [0.09ms]
+(pass) fail-closed gates > cost estimates do not gate routing [0.05ms]
+(pass) normalizes requests and creates a stable idempotency key [0.03ms]
+(pass) normalizes context refs and includes them in idempotency
+(pass) fails closed on invalid or excessive context refs [0.46ms]
+(pass) treats a protected execution cwd as protected scope [0.05ms]
+(pass) routes a fully structured focused check [0.11ms]
+(pass) routes only an exactly bounded file-read profile [0.02ms]
+(pass) routes a bounded read-plan profile without command or write authority [0.15ms]
+(pass) routes a mixed structured plan with one exact focused-check stage
+(pass) rejects malformed or unsafe focused-check plan stage
+(pass) rejects malformed or unsafe focused-check plan stage
+(pass) rejects malformed or unsafe focused-check plan stage [0.27ms]
+(pass) keeps malformed structured read plans with the driver [0.03ms]
+(pass) keeps malformed structured read plans with the driver [0.03ms]
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) keeps malformed structured read plans with the driver
+(pass) routes a structurally exact Git inspection
+(pass) normalizes and routes a structured output boundary
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.27ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver [0.06ms]
+(pass) keeps malformed persisted execution metadata with the driver [0.02ms]
+(pass) keeps malformed persisted execution metadata with the driver [0.03ms]
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+(pass) keeps malformed persisted execution metadata with the driver
+
+ 80 pass
+ 0 fail
+ 100 expect() calls
+Ran 80 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/task.test.ts:
+(pass) resolveTask throws when no prompt input and PLAN.md is missing [1.68ms]
+(pass) resolveTask uses PLAN.md when prompt input is missing
+(pass) resolveTask reads markdown prompt input directly
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+(pass) resolveTask treats spaced text ending with .md as prompt text
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+(pass) resolveTask creates PLAN.md first for plain-text prompt input [0.66ms]
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+(pass) resolveTask prepares paired planning without creating a manifest [0.33ms]
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+(pass) resolveTask primes paired planning sessions before agent turns
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+(pass) paired plan and plan-review prompts receive Caveman guidance
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+(pass) resolveTask reviews PLAN.md with other model by default in plain-text flow
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with codex.
+(pass) resolveTask uses codex as review-plan=other reviewer when primary is claude
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] skipping PLAN.md review (--review-plan none).
+(pass) resolveTask skips plan review when review-plan is none
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+(pass) resolveTask warns when plan review exits non-zero
+
+[loop] prompt text detected. creating PLAN.md first.
+(pass) resolveTask throws when planning exits non-zero
+
+[loop] prompt text detected. creating PLAN.md first.
+(pass) resolveTask throws when planning does not create PLAN.md
+
+ 14 pass
+ 0 fail
+ 33 expect() calls
+Ran 14 tests across 1 file. [17.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux-control.test.ts:
+(pass) tmux liveness probes are bounded and kill the timed-out client [0.17ms]
+(pass) tmux liveness distinguishes confirmed live and dead sessions [0.09ms]
+(pass) an absent session reads unknown, never dead (verify 10)
+(pass) an absent session reads unknown on the async path too [0.03ms]
+(pass) target-bound liveness names the run's own socket, not the ambient one [0.15ms]
+(pass) an unusable target reads unknown and contacts no server [0.02ms]
+(pass) target-bound liveness keeps the bounded-timeout semantics (verify 17) [0.02ms]
+(pass) a nonzero exit with empty stderr is unknown, not dead [0.05ms]
+(pass) can't-find-session stderr on the run's own server is genuinely dead
+(pass) no-server-running stderr on the run's own socket is genuinely dead
+(pass) ENOENT socket stderr is unknown, not dead
+(pass) file-name-too-long socket stderr is unknown, not dead [0.03ms]
+(pass) non-socket stderr is unknown, not dead
+(pass) permission-denied stderr is unknown, not dead
+(pass) unrecognised stderr is unknown, not dead
+(pass) a spawn throw on the target path reads unknown
+(pass) the async target path resolves unknown for an unusable target [0.02ms]
+(pass) async target liveness: exit zero is live [1.36ms]
+(pass) async target liveness: can't-find-session stderr is dead [1.26ms]
+(pass) async target liveness: no-server-running stderr is dead [1.19ms]
+(pass) async target liveness: empty stderr nonzero exit is unknown [1.18ms]
+(pass) async target liveness: unrecognised stderr is unknown [1.21ms]
+(pass) async target liveness: ENOENT stderr is unknown [1.25ms]
+(pass) async target liveness: file-name-too-long stderr is unknown [1.22ms]
+(pass) async target liveness: non-socket stderr is unknown [1.16ms]
+(pass) async target liveness: permission-denied stderr is unknown [1.50ms]
+(pass) async target liveness: signal is unknown before stderr authority [1.27ms]
+(pass) async target liveness: spawn error event is unknown [1.26ms]
+(pass) async target liveness: spawn throw is unknown
+(pass) async race: exit, then stderr, then close waits for close [0.22ms]
+
+ 30 pass
+ 0 fail
+ 40 expect() calls
+Ran 30 tests across 1 file. [29.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux-socket.test.ts:
+(pass) resolveTmuxSocket precedence (verify 1) > LOOP_TMUX_SOCKET wins when TMUX is also set
+(pass) resolveTmuxSocket precedence (verify 1) > parses $TMUX by removing exactly the final two metadata fields
+(pass) resolveTmuxSocket precedence (verify 1) > preserves a socket pathname containing a legal comma
+(pass) resolveTmuxSocket precedence (verify 1) > rule three honours an operator-exported TMUX_TMPDIR and records it
+(pass) resolveTmuxSocket precedence (verify 1) > rule three defaults to /tmp when TMUX_TMPDIR is unset
+(pass) resolveTmuxSocket precedence (verify 1) > every successful result is absolute
+(pass) resolveTmuxSocket precedence (verify 1) > an explicitly empty launch value is a hard error, not an absent one
+(pass) resolveTmuxSocket precedence (verify 1) > a malformed $TMUX is a hard error, never a fallback to rule three
+(pass) socket validation (verify 2) > rejects empty, relative, and NUL-containing values
+(pass) socket validation (verify 2) > a relative LOOP_TMUX_SOCKET is a hard error, never resolved against cwd
+(pass) socket validation (verify 2) > Darwin boundary: 103 bytes passes, 104 fails
+(pass) socket validation (verify 2) > Linux boundary: 107 bytes passes, 108 fails
+(pass) socket validation (verify 2) > character count is not the instrument: multibyte under chars, over bytes
+(pass) socket validation (verify 2) > the failure reports UTF-8 byte length and the platform limit
+(pass) target provenance (verify 5a) > targetFromManifest takes exactly one parameter
+(pass) target provenance (verify 5a) > an unbranded plain object throws TmuxTargetProvenanceError
+(pass) target provenance (verify 5a) > the module-private socket-only tmuxArgv is absent from public exports
+(pass) target provenance (verify 5a) > ManifestHandle is frozen and carries runId, path, and bytes SHA-256
+(pass) target provenance (verify 5a) > a TmuxTarget exposes no socket or session field to read or swap
+(pass) target provenance (verify 5a) > negative type tests: the wrong-run pairing does not compile
+(pass) unknown targeting and pane subordination (verify 3) > a legacy manifest with no socket yields no target, never a partial one
+(pass) unknown targeting and pane subordination (verify 3) > an invalid socket is unknown targeting, never a coerced value
+(pass) unknown targeting and pane subordination (verify 3) > a camel/snake conflict is explicit unknown targeting, not a coerced pick
+(pass) unknown targeting and pane subordination (verify 3) > manifestHasTarget agrees with whether a target can be built
+(pass) unknown targeting and pane subordination (verify 3) > a valid socket with no session yields no target and reads unknown
+(pass) unknown targeting and pane subordination (verify 3) > paneTargetFromManifest yields nothing when the socket is unknown [0.62ms]
+(pass) unknown targeting and pane subordination (verify 3) > recon panes are addressed by index and stay bound to the owning handle [0.04ms]
+(pass) unknown targeting and pane subordination (verify 3) > the array pane field fails closed without an index
+(pass) unknown targeting and pane subordination (verify 3) > a scalar pane field fails closed when an index is supplied
+(pass) unknown targeting and pane subordination (verify 3) > negative, fractional, and out-of-range indices all fail closed
+(pass) unknown targeting and pane subordination (verify 3) > a pane target carries its owning handle's socket, not a supplied one
+(pass) unknown targeting and pane subordination (verify 3) > a session-creating command supplies -s rather than -t
+(pass) unknown targeting and pane subordination (verify 3) > a caller-supplied target flag is rejected, plain and =-joined
+(pass) unknown targeting and pane subordination (verify 3) > splitting into Node spawn form does not drop -S
+(pass) attach hints (verify 12) > socket and session round trip as data through the hint
+(pass) attach hints (verify 12) > a single quote in the socket path is escaped, not terminated [0.28ms]
+(pass) attach hints (verify 12) > a legacy row has an explicit unknown-socket line and no command
+(pass) skip records (verify 8) > a record carries every field a consumer must name [0.03ms]
+(pass) launch-window composers > session creation names the socket and supplies -s itself [0.02ms]
+(pass) launch-window composers > the pre-session probe addresses the same server
+(pass) launch-window composers > caller-supplied target flags are rejected, as in the target-bound trio [0.04ms]
+(pass) launch-window composers > the hint is built from the same socket the session was created on
+(pass) launch-window composers > socket and session round trip as data through the hint
+(pass) launch-window composers > the launch window does not mint a TmuxTarget (verify 5a preserved)
+(pass) launch-window composers > launch-only composers stay confined to named pre-manifest call sites [2.45ms]
+
+ 45 pass
+ 0 fail
+ 115 expect() calls
+Ran 45 tests across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) paired command builders default both providers to medium effort [0.62ms]
+(pass) paired command builder maps asymmetric role effort to either provider [0.43ms]
+(pass) runInTmux returns false when --tmux is not present [0.06ms]
+(pass) runInTmux starts a detached session without auto-attach when already inside tmux [0.82ms]
+(pass) runInTmux throws install message when tmux is missing
+(pass) runInTmux exposes launch socket failure before tmux contact
+(pass) runInTmux socket-qualifies non-paired handoff probe, remain-on-exit, gone re-probe, and interactive attach [0.46ms]
+(pass) runInTmux keeps explicit run id in single-agent mode [0.34ms]
+(pass) runInTmux paired launch emits the exact run manifest path contract line [3.86ms]
+(pass) tmux absence classification handles cold macOS socket during initial preflight without widening cleanup authority
+(pass) tmux absence classification handles missing macOS socket after resource creation without widening cleanup authority
+(pass) tmux absence classification handles missing named session without widening cleanup authority
+(pass) tmux absence classification handles permission failure without widening cleanup authority
+(pass) tmux absence classification handles overlong socket path without widening cleanup authority
+(pass) runInTmux preserves stable pane targets when reattaching a live paired session [0.27ms]
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [1.13ms]
+(pass) runInTmux writes paired session refs before starting governess [9.91ms]
+(pass) the Nanny/Au Pair column defaults to the right fifth with an explicit opt-out
+(pass) governed layout preserves legacy numeric fallbacks without tmux stdout [8.06ms]
+(pass) runInTmux starts paired tmux panes for the OSS seat and Codex [0.87ms]
+(pass) runInTmux releases local codex app-server handles after paired handoff [0.82ms]
+(pass) runInTmux closes local Codex ownership without rewriting a completed manifest after attach [1.71ms]
+(pass) runInTmux starts paired interactive tmux panes without a task [1.10ms]
+(pass) runInTmux fails closed when Claude never reaches an input-ready prompt [1.44ms]
+(pass) runInTmux still terminalizes an unexpected Claude readiness probe failure [1.05ms]
+(pass) runInTmux fails closed and cleans up when the Claude kickoff is never confirmed [1.23ms]
+(pass) tmux prompts keep the paired review workflow explicit
+(pass) fresh paired charters bind and constrain the run World Model [0.43ms]
+(pass) paired prompts apply Caveman guidance with an exact off switch [0.05ms]
+(pass) tmux prompts make Claude the context steward and Codex recent-focused [0.09ms]
+(pass) tmux prompts respect --pair-with for non-default peers [0.10ms]
+(pass) interactive tmux prompts tell both agents to wait for the human [0.13ms]
+(pass) runInTmux replays the captured Claude pre-connect warning before bootstrap [2.58ms]
+(pass) captured Claude suggestions are not ready without an active probe [0.14ms]
+(pass) Claude suggestion probe preserves and rejects a human Try draft [0.33ms]
+(pass) runInTmux preserves the live workspace when a post-End draft capture fails [0.95ms]
+(pass) tmux pane snapshots bind styled text and cursor in one payload
+(pass) Claude suggestion probe requires an acknowledged redraw [0.33ms]
+(pass) Claude suggestion probe treats a send timeout as recoverable draft risk
+(pass) Claude suggestion probe rejects attached or piped panes [0.07ms]
+(pass) Claude suggestion probe waits across the activity second [0.10ms]
+(pass) Claude changed suggestions receive a fresh acknowledged probe [0.22ms]
+(pass) Claude draft probe restores Home and fails closed when activity acknowledgment is missing [0.67ms]
+(pass) runInTmux auto-confirms Claude startup prompts in paired mode [1.21ms]
+(pass) runInTmux confirms wrapped Claude dev-channel prompts [0.93ms]
+(pass) Claude dev-channel confirmation settles before retrying a swallowed key [0.23ms]
+(pass) Claude dev-channel confirmation never retries after activity advances on a stale frame
+(pass) Claude dev-channel progress extends the readiness deadline past twenty seconds [0.76ms]
+(pass) Claude dev-channel confirmation fails closed after bounded swallowed keys [0.27ms]
+(pass) Claude dev-channel confirmation waits through an incomplete modal redraw [0.09ms]
+(pass) Claude dev-channel confirmation never enters when exit is selected
+(pass) Claude dev-channel confirmation ignores a stale modal above the current composer
+(pass) Claude bypass confirmation never enters when navigation is swallowed [0.52ms]
+(pass) Claude bypass confirmation enters only after a fresh selected-accept capture [0.14ms]
+(pass) runInTmux catches a delayed Claude dev-channel prompt [0.96ms]
+(pass) runInTmux confirms the current Claude bypass prompt wording [0.88ms]
+(pass) runInTmux still confirms Claude trust prompts in paired mode [0.77ms]
+(pass) runInTmux still catches a delayed Claude trust prompt [0.90ms]
+(pass) runInTmux reopens paired tmux panes without replaying the task [0.38ms]
+(pass) runInTmux resolves paired run id through an existing manifest [15.16ms]
+(pass) runInTmux rejects unknown run id before starting tmux session [6.33ms]
+(pass) runInTmux honors paired run resume from --session [13.33ms]
+(pass) runInTmux resolves paired resume from a worktree using git common dir [0.41ms]
+(pass) runInTmux strips a worktree suffix when git metadata is unavailable [0.17ms]
+(pass) runInTmux resolves raw stored session ids from --session [15.65ms]
+(pass) runInTmux ignores an unresolved raw session id in paired mode [12.33ms]
+(pass) runInTmux keeps raw --session values in single-agent mode [0.54ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-2"
+[loop] attach with: tmux -S '/tmp/ls-a/a.sock' attach -t 'repo-loop-2'
+(pass) runInTmux increments session index on conflicts [0.26ms]
+[loop] starting tmux session...
+(pass) runInTmux surfaces tmux startup errors [3.18ms]
+[loop] starting tmux session...
+(pass) runInTmux fails nonzero when the tmux control plane times out [2.94ms]
+[loop] starting tmux session...
+(pass) runInTmux refuses success when post-launch session liveness is unknown [0.23ms]
+[loop] starting tmux session...
+(pass) runInTmux keeps named-socket-missing non-paired handoff liveness unknown [0.18ms]
+[loop] starting tmux session...
+(pass) runInTmux keeps unrelated nonzero handoff stderr unknown [0.17ms]
+(pass) runInTmux preserves paired probe argv byte-for-byte with a launch socket available [0.24ms]
+(pass) runInTmux preserves current transport and active state on paired timeout liveness [0.86ms]
+(pass) runInTmux preserves current transport and active state on paired unrecognized nonzero liveness [0.67ms]
+(pass) runInTmux preserves current transport and active state when paired layout outcome is unknown [0.68ms]
+(pass) runInTmux never mutates home Claude MCP registration on startup failure [1.80ms]
+(pass) runInTmux terminalizes a hook-preparation failure before new-session [0.49ms]
+(pass) runInTmux never kills a winner when paired new-session loses a duplicate-session race [0.85ms]
+(pass) runInTmux cleans an owned paired session when setup fails after new-session [0.80ms]
+(pass) runInTmux terminalizes the paired manifest when the workspace disappears before attach [0.69ms]
+(pass) runInTmux preserves external transport ownership when a resumed workspace disappears [0.24ms]
+(pass) runInTmux terminalizes a paired manifest when attach confirms the workspace is gone [0.23ms]
+(pass) runInTmux preserves the active manifest when attach-path liveness is unknown [0.21ms]
+(pass) runInTmux treats an attach capability error as non-fatal when the exact paired session remains live [0.25ms]
+(pass) runInTmux rejects a failed pre-handoff window setup and terminalizes the manifest [0.18ms]
+(pass) runInTmux treats optional remain-on-exit timeout as best-effort and preserves the live manifest [0.20ms]
+(pass) runInTmux rejects a noninteractive handoff race and terminalizes the active manifest [0.21ms]
+(pass) runInTmux does not report a successful handoff for an already-failed manifest [0.24ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-1"
+[loop] attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'
+(pass) runInTmux skips auto-attach for non-interactive sessions [0.19ms]
+(pass) persistent Codex bootstrap failure falls back to tmux delivery [0.07ms]
+[loop] starting tmux session...
+(pass) runInTmux reports when tmux session exits before attach [6.40ms]
+(pass) tmux internals strip --tmux from forwarded args [0.01ms]
+(pass) tmux internals build launch argv from exec path
+(pass) tmux internals build launch argv for bun-compiled binary
+(pass) tmux internals build launch argv for executable with no script arg
+(pass) tmux internals build launch argv for installed executable
+(pass) tmux internals build launch argv when bun executes installed binary
+(pass) tmux internals quote single quotes safely
+(pass) tmux internals build shell command with escaping
+(pass) tmux internals unref detached helper processes
+(pass) tmux internals launch Claude in bypass mode
+(pass) tmux internals build run names
+(pass) tmux internals detect session conflicts
+(pass) tmux internals sanitize run base names
+
+ 106 pass
+ 0 fail
+ 543 expect() calls
+Ran 106 tests across 1 file. [175.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/update.test.ts:
+(pass) isNewerVersion returns true when remote is newer (patch) [0.72ms]
+(pass) isNewerVersion returns true when remote is newer (minor) [0.21ms]
+(pass) isNewerVersion returns true when remote is newer (major) [0.02ms]
+(pass) isNewerVersion returns false when versions are equal [0.02ms]
+(pass) isNewerVersion returns false when remote is older [0.02ms]
+(pass) isNewerVersion strips v prefix
+(pass) getAssetName returns platform-specific name
+(pass) isDevMode returns true when execPath ends with bun [0.41ms]
+(pass) isDevMode returns false when execPath is loop binary [0.50ms]
+[loop] running from source — use git pull to update
+(pass) handleManualUpdateCommand returns true for update [0.02ms]
+[loop] running from source — use git pull to update
+(pass) handleManualUpdateCommand returns true for upgrade
+(pass) handleManualUpdateCommand returns false for other commands
+(pass) applyStagedUpdateOnStartup skips when no staged binary [0.85ms]
+(pass) startAutoUpdateCheck does not block [0.08ms]
+(pass) awaitAutoUpdateCheck respects timeout for awaited startup path [22.36ms]
+(pass) auto-check respects throttle interval [101.68ms]
+(pass) getCurrentVersion returns a valid semver string
+(pass) getAssetName throws for unsupported OS [1.18ms]
+(pass) getAssetName throws for unsupported architecture [0.35ms]
+(pass) applyStagedUpdateOnStartup applies staged binary and cleans up [1.62ms]
+(pass) applyStagedUpdateOnStartup logs error on write failure [0.53ms]
+(pass) handleManualUpdateCommand applies update to executable [1.62ms]
+(pass) parseReleaseResponse accepts valid input [0.15ms]
+(pass) parseReleaseResponse throws for non-object [0.04ms]
+(pass) parseReleaseResponse throws for missing tag_name
+(pass) parseReleaseResponse throws for missing assets
+(pass) parseReleaseResponse throws for asset missing name
+(pass) parseReleaseResponse throws for asset missing browser_download_url [0.20ms]
+(pass) update verifies matching checksum [0.80ms]
+(pass) update rejects mismatched checksum [0.56ms]
+(pass) update rejects when no checksum available [0.51ms]
+
+ 31 pass
+ 0 fail
+ 58 expect() calls
+Ran 31 tests across 1 file. [151.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-context.test.ts:
+(pass) builds a deterministic bounded capsule and persists the exact prompt [2.37ms]
+(pass) binds the exact effective broker capability map into the capsule hash [0.22ms]
+(pass) binds existing and new write-target state into the capsule hash [0.64ms]
+(pass) missing instructions are valid and selected refs obey per-file and total budgets [1.30ms]
+(pass) rejects invalid context paths, symlinks, directories, and governing files [0.99ms]
+(pass) capsule hash changes when selected context changes [0.38ms]
+
+ 6 pass
+ 0 fail
+ 34 expect() calls
+Ran 6 tests across 1 file. [25.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-evidence-recovery-legacy.test.ts:
+(pass) the legacy harness also earns exactly one evidence-recovery turn [10.69ms]
+(pass) an edit completing without a patch artifact stays terminal with no recovery [4.12ms]
+
+ 2 pass
+ 0 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [36.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-evidence-recovery.test.ts:
+(pass) a prose-only Nanny completion earns exactly one evidence-recovery turn [206.15ms]
+(pass) a second unsupported Nanny completion still fails closed [8.13ms]
+(pass) the evidence-recovery turn widens no tool beyond what was already exposed [9.09ms]
+(pass) CONTEXT_INSUFFICIENT receives no recovery turn [6.36ms]
+(pass) the recovery prompt names the currently exposed tools [9.74ms]
+(pass) the recovery turn reuses the same capsule, scopes, and authority [7.96ms]
+(pass) a read-plan recovery prompt names the current step tool and omits future steps [7.64ms]
+
+ 7 pass
+ 0 fail
+ 30 expect() calls
+Ran 7 tests across 1 file. [276.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-execution-tier.test.ts:
+(pass) utility execution tier classification > exact file reads bypass every model [0.44ms]
+(pass) utility execution tier classification > exact focused checks bypass every model
+(pass) utility execution tier classification > exact Git inspections bypass every model
+(pass) utility execution tier classification > fully exact mixed plans bypass every model [0.21ms]
+(pass) utility execution tier classification > small structured read-only reasoning goes to Nanny [0.08ms]
+(pass) utility execution tier classification > utility audits always keep synthesis with Au Pair [0.03ms]
+(pass) utility execution tier classification > broader profiled inspection and reasoning-backed commands go to Au Pair [0.05ms]
+(pass) utility execution tier classification > a three-stage reasoning plan goes to Au Pair
+(pass) utility execution tier classification > small code-writing proposals and broader plans go to Au Pair [0.21ms]
+(pass) utility execution tier classification > unprofiled bounded inspections go to Nanny [0.03ms]
+(pass) utility execution tier classification > unprofiled Nanny inspections fail closed outside the narrow band
+
+ 11 pass
+ 0 fail
+ 26 expect() calls
+Ran 11 tests across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-observability.test.ts:
+(pass) utility observability safely handles absent and malformed journals [2.24ms]
+(pass) utility observability saturates malformed numeric artifacts [2.97ms]
+(pass) routing observability counts candidates rejected before job creation [0.53ms]
+(pass) helper tiers partition terminal jobs and expose the unattributed remainder [6.33ms]
+(pass) utility observability totals worker usage and builds a safe transcript [3.13ms]
+
+ 5 pass
+ 0 fail
+ 31 expect() calls
+Ran 5 tests across 1 file. [32.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-pi-harness.test.ts:
+(pass) Nanny executes a brokered Pi tool turn with durable evidence [198.98ms]
+(pass) Au Pair recovers from searching an exact declared new file and proposes it [11.60ms]
+(pass) Pi forces synthesis before the hard tool ceiling [10.84ms]
+(pass) Pi preserves every required structured-plan call at the configured ceiling [13.83ms]
+(pass) Pi counts a rejected sibling batch as one model round and can adapt [8.88ms]
+(pass) Pi receives a safely narrowed 500-line read and continues at the next line [23.35ms]
+(pass) Pi fails after three rejected model rounds with exact broker evidence [10.69ms]
+(pass) Direct exact reads produce evidence without contacting a model [3.15ms]
+(pass) Pi accepts a fifteen-call sibling audit with the default limit [15.11ms]
+(pass) Pi stops an oversized sibling tool batch before broker execution [7.71ms]
+(pass) Pi refuses broker work after durable cancellation [6.66ms]
+
+ 11 pass
+ 0 fail
+ 64 expect() calls
+Ran 11 tests across 1 file. [333.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-readiness.test.ts:
+(pass) Direct readiness requires only the fresh matching dispatcher lease [0.79ms]
+(pass) missing, stale, and mismatched dispatcher evidence fails open [0.87ms]
+(pass) Nanny readiness needs a recent real model completion [1.05ms]
+(pass) selected-tier failures open a short routing circuit [0.40ms]
+(pass) expired success is stale and cannot authorize an automatic denial [0.52ms]
+
+ 5 pass
+ 0 fail
+ 11 expect() calls
+Ran 5 tests across 1 file. [19.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-runtime.test.ts:
+(pass) OpenRouter GLM is the default but remains disabled without a credential
+(pass) helper Caveman mode is validated and applied once to the system prompt [0.32ms]
+(pass) system prompt uses dedicated broker tools instead of executable probing
+(pass) Au Pair and Nanny role-specific switches override compatibility names
+(pass) worker concurrency is configurable within a bounded range
+(pass) auto execution profiles expose only satisfiable broker tools
+(pass) structured cat plans cannot invoke Git tools [2.54ms]
+(pass) structured Git metadata rejects forged narrow file scope [0.58ms]
+(pass) structured multi-directory plans cannot read content or cross stages [1.21ms]
+(pass) structured mixed plans retain exact slices and output filters [1.67ms]
+(pass) structured focused-check stages expose only their exact run_check boundary [9.08ms]
+(pass) file-read runtime carries an exact broker range and fails closed without one [0.37ms]
+(pass) a mode-0600 key file enables the tier without exporting the secret [0.18ms]
+(pass) detached utility worker environment is allowlist-built, not inherited
+(pass) governess passes only the minimal key-file worker environment [2.77ms]
+(pass) governess route processing dispatches eligible work without provider I/O [1.26ms]
+(pass) worker routing ignores cost estimates [2.59ms]
+(pass) the default worker pool runs four jobs and leaves a fifth pending [5.15ms]
+(pass) unprofiled bounded inspections persist Nanny ownership without spilling to Au Pair [2.82ms]
+(pass) a three-document audit without narrative context refs reaches Au Pair [1.66ms]
+(pass) an explicit utility audit reaches Au Pair instead of the peer [1.35ms]
+(pass) a full Nanny slot does not block eligible Au Pair work in the same tick [2.56ms]
+(pass) unprofiled bounded inspections fail closed when Nanny is unavailable [1.56ms]
+(pass) a recent Nanny inference failure opens the routing circuit [1.77ms]
+(pass) peer-routed reviews preserve the requester and ask the peer to act [1.28ms]
+(pass) non-peer request-not-bounded outcomes return to the requester instead of the current driver [1.32ms]
+(pass) non-peer authority-needs-human outcomes return to the requester instead of the current driver [1.12ms]
+(pass) safe key diagnostics persist in routing observability, not the output-only worker pane [1.60ms]
+(pass) spawn failure terminates the job instead of stranding routed utility work [1.62ms]
+(pass) an unclaimed routed job fails closed after its claim deadline [1.45ms]
+(pass) a dead claimed worker fails immediately and releases its write scope [2.88ms]
+(pass) a live worker remains claimed before its external runtime deadline [1.50ms]
+(pass) governess externally terminates a live worker past its runtime [1.88ms]
+(pass) terminal completion racing the reaper is preserved [2.13ms]
+(pass) overlapping utility writes are not dispatched concurrently [1.79ms]
+(pass) worker pane is a colored output-only request, tool, and response stream [3.19ms]
+(pass) utility pane keeps a failed worker response visible within its viewport [0.59ms]
+(pass) Nanny and Au Pair panes show only their own tier [2.76ms]
+(pass) Nanny pane excludes governess advisory and project description [0.28ms]
+(pass) a new governess epoch fences an orphaned utility claim [1.57ms]
+(pass) requester routing is relative to the requester, not the current driver [1.22ms]
+(pass) a full agent applies a completed utility patch with pre/postimage journal proof [15.41ms]
+(pass) guarded patch application refuses wrong hashes and proposal-time drift [3.46ms]
+(pass) utility worker completes against an OpenAI-compatible local endpoint [8.20ms]
+(pass) context-insufficient response escalates once without evidence retries [4.56ms]
+(pass) worker tools cannot read their persisted context capsule [4.59ms]
+(pass) utility worker stops after three consecutive broker rejections [5.45ms]
+(pass) a successful broker call resets the consecutive rejection breaker [5.21ms]
+(pass) utility worker refuses to execute a third identical tool call [4.62ms]
+(pass) utility worker stops before a sixty-fifth model call [36.09ms]
+(pass) worker consolidates multiple file proposals into one guarded patch [17.00ms]
+(pass) utility worker rejects prose-only completion without repository evidence [4.28ms]
+(pass) a failing focused check cannot satisfy command completion evidence [10.84ms]
+
+ 53 pass
+ 0 fail
+ 249 expect() calls
+Ran 53 tests across 1 file. [213.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-scope-evidence-recovery.test.ts:
+(pass) run_check is withheld when no declared cwd can satisfy it [1.77ms]
+(pass) run_check stays exposed when a declared directory cwd can satisfy it [0.73ms]
+(pass) run_check stays exposed when the readScopes fallback is a directory [0.58ms]
+(pass) run_check is withheld when every declared cwd is missing from disk [0.56ms]
+(pass) every exposure surface agrees about a withheld run_check [0.61ms]
+(pass) a cwd that becomes a file after broker creation fails closed without running [1.23ms]
+(pass) a withheld run_check reports why, not a generic profile message [0.59ms]
+
+ 7 pass
+ 0 fail
+ 20 expect() calls
+Ran 7 tests across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-store.test.ts:
+(pass) persists route requests and reads pending jobs [1.07ms]
+(pass) deduplicates route requests by idempotency key [0.84ms]
+(pass) makes event ids idempotent and rejects collisions [1.04ms]
+(pass) makes repeated pending route decisions idempotent within one epoch [1.03ms]
+(pass) claims a routed job with a durable governess epoch [1.58ms]
+(pass) waits for a fresh contended lock instead of fencing a concurrent worker [144.00ms]
+(pass) two contending worker processes claim distinct routed jobs [341.84ms]
+(pass) fails closed after a bounded wait without removing a live owner lock [2003.48ms]
+(pass) recovers a lock only after its stale-age boundary [2.30ms]
+(pass) does not claim overlapping write scopes concurrently [3.50ms]
+(pass) a successor epoch atomically fences workers from the prior route [2.28ms]
+(pass) enforces safe transitions and epoch claims [1.17ms]
+(pass) persists compact results and makes terminal jobs immutable [2.91ms]
+(pass) journals a patch application after completion without reopening the job [2.93ms]
+(pass) fails closed on a malformed journal [0.76ms]
+
+ 15 pass
+ 0 fail
+ 42 expect() calls
+Ran 15 tests across 1 file. [2.53s]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-tools.test.ts:
+(pass) publishes provider-agnostic definitions for bounded tools
+(pass) inspects loop-140 review files without spawning commands or disclosing content [7.33ms]
+(pass) rejects unsafe file-inspection requests [4.71ms]
+(pass) reads only declared bounded JSON Pointer values without spawning commands [4.18ms]
+(pass) rejects malformed, prototype-like, duplicate, and out-of-scope JSON reads [4.10ms]
+(pass) rejects selected JSON output above the shared broker limit [4.14ms]
+(pass) describes the effective broker capabilities and denial alternatives [3.90ms]
+(pass) counts lines across bounded files without spawning a command [4.29ms]
+(pass) rejects unsafe or oversized line-count requests [3.54ms]
+(pass) exposes and enforces only the tools allowed for an exact request [3.15ms]
+(pass) reads and searches only declared non-secret scope [4.13ms]
+(pass) treats safely bounded absent search paths as empty without weakening path gates [5.31ms]
+(pass) missing reads suggest only bounded in-scope filename matches [4.24ms]
+(pass) missing-path suggestions do not traverse a symlinked read-scope root [3.62ms]
+(pass) lists one bounded directory without exposing protected entries [4.44ms]
+(pass) directory listing truncates before the shared output byte limit [3.25ms]
+(pass) reads an exact bounded tail without widening file authority [3.69ms]
+(pass) broker enforces the persisted exact read range against model deviation [3.85ms]
+(pass) broker caps range reads even when exact metadata is tampered [3.31ms]
+(pass) broker narrows an oversized model-driven read with continuation evidence [3.40ms]
+(pass) a malformed automatic file-read boundary fails closed [3.09ms]
+(pass) reads a bounded range from a regular file larger than 128 KiB [3.55ms]
+(pass) search rejects matching output larger than the broker output budget [3.73ms]
+(pass) git_inspect runs only literal bounded read-only metadata commands [3.84ms]
+(pass) central protected-path policy denies credential and agent settings [3.54ms]
+(pass) rejects traversal and symlink escape [3.47ms]
+(pass) runs literal allowlisted argv with a scrubbed environment [3.71ms]
+(pass) broker enforces merged tail output for a focused check [3.38ms]
+(pass) broker applies literal presentation filters without a shell [3.47ms]
+(pass) broker slices list output and marks the listing truncated [3.80ms]
+(pass) explicit focused cwd is exact while legacy read-scope cwd remains contained [3.40ms]
+(pass) focused check cwd does not widen its exact file authority [3.54ms]
+(pass) focused checks reject files above the configured input bound [3.60ms]
+(pass) broker rejects a tampered focused check with more than four files [3.89ms]
+(pass) git_diff supports bounded commit comparison and diff check [4.53ms]
+(pass) loads a repository policy for local offline npx vitest checks [17.71ms]
+(pass) supports a local offline vitest check without repository mutation [3.57ms]
+(pass) resolves a monorepo package-local vitest from the declared cwd [3.77ms]
+(pass) repository command policy fails closed when malformed or open-world [3.53ms]
+(pass) repository npx policy refuses a missing local binary [3.85ms]
+(pass) rejects timed out and oversized command output [3.87ms]
+(pass) stores a validated patch proposal without modifying the source [3.96ms]
+(pass) treats an exact declared new write file as an empty search domain [3.70ms]
+(pass) exact edit scopes cannot act as directory-wide patch authority [3.79ms]
+(pass) guarded apply enforces exact scopes and patch size for legacy artifacts [4.40ms]
+(pass) guarded apply revalidates write scope and dependency targets [4.25ms]
+(pass) guarded apply refuses symlink escapes from write scope [3.92ms]
+(pass) guarded apply refuses an in-repository symlink write-scope escape [3.71ms]
+(pass) environment scrubbing is allowlist based [0.02ms]
+
+ 49 pass
+ 0 fail
+ 179 expect() calls
+Ran 49 tests across 1 file. [222.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-workspace.test.ts:
+(pass) linked worktree scopes resolve to one root-relative verified workspace [106.51ms]
+(pass) edit workspace resolution accepts files and rejects directory-wide scope [86.85ms]
+(pass) linked focused-check cwd and argv resolve and execute in the verified workspace [242.60ms]
+(pass) linked exact read range resolves with the same verified workspace [110.74ms]
+(pass) linked structured read plan preserves every stage boundary [127.88ms]
+(pass) active paths resolve only to the run root or a registered linked worktree [124.08ms]
+(pass) unrelated, mixed-worktree, and symlink escape scopes fail closed [156.72ms]
+(pass) a copied linked-worktree gitdir pointer cannot spoof registration [101.42ms]
+(pass) runtime journals a safe mismatch detail instead of spawning utility [103.26ms]
+(pass) same linked-worktree writes conflict after scope normalization [147.04ms]
+(pass) identical relative paths in base and linked worktrees do not conflict [134.10ms]
+(pass) routing persists the adopted root and the worker reads the linked checkout [139.94ms]
+(pass) guarded apply reuses the verified linked-worktree boundary [153.69ms]
+
+ 13 pass
+ 0 fail
+ 33 expect() calls
+Ran 13 tests across 1 file. [1.76s]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utils.test.ts:
+(pass) hasSignal detects exact signal lines with extra whitespace
+(pass) hasSignal detects quoted signal variants
+(pass) hasSignal avoids substring false positives
+(pass) hasSignal returns false when signal is missing
+(pass) isFile distinguishes files from directories [0.67ms]
+(pass) readPrompt returns direct text for non-file input
+(pass) readPrompt reads file contents when input points to a file [0.50ms]
+
+ 7 pass
+ 0 fail
+ 10 expect() calls
+Ran 7 tests across 1 file. [17.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/workspace-binding.test.ts:
+(pass) resolves a linked worktree to its canonical root and full branch ref [89.06ms]
+(pass) resolves explicit worktree subdirectories and symlinks to one binding [85.03ms]
+(pass) rejects missing and explicit non-Git workspace paths [77.97ms]
+(pass) rejects a Git-looking path absent from the worktree registry
+(pass) accepts a detached registered worktree without inventing a branch [88.02ms]
+(pass) distinct linked worktrees produce distinct bindings in one repo [86.02ms]
+(pass) default non-Git cwd falls back to a stable canonical binding [16.61ms]
+
+ 7 pass
+ 0 fail
+ 19 expect() calls
+Ran 7 tests across 1 file. [460.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/worktree.test.ts:
+(pass) maybeEnterWorktree is a no-op when --worktree is disabled
+(pass) maybeEnterWorktree is a no-op when already in a git worktree
+(pass) maybeEnterWorktree is a no-op in linked worktree without superproject path
+(pass) maybeEnterWorktree is a no-op when superproject detection fails but git dir is linked
+(pass) maybeEnterWorktree creates and enters worktree #1
+(pass) maybeEnterWorktree moves PLAN.md into the worktree root
+(pass) maybeEnterWorktree moves PLAN.md into the worktree subpath
+(pass) maybeEnterWorktree increments index when branch name is taken
+(pass) maybeEnterWorktree copies files when repo has no commits
+(pass) maybeEnterWorktree honors requested run id from env
+(pass) maybeEnterWorktree keeps explicit run id in single-agent mode
+(pass) maybeEnterWorktree keeps alphanumeric run id in single-agent mode
+(pass) maybeEnterWorktree resolves paired run id through an existing manifest [8.91ms]
+(pass) maybeEnterWorktree rejects unknown paired run id before creating a worktree [6.32ms]
+(pass) maybeEnterWorktree honors paired run resume from --session [6.97ms]
+(pass) maybeEnterWorktree resolves raw stored session ids from --session [10.30ms]
+(pass) maybeEnterWorktree ignores an unresolved raw session id in paired mode [6.49ms]
+(pass) maybeEnterWorktree keeps raw --session values in single-agent mode [0.10ms]
+(pass) maybeEnterWorktree re-enters an existing worktree for requested run id [6.92ms]
+(pass) maybeEnterWorktree re-enters requested run id when the worktree directory is missing [7.02ms]
+(pass) maybeEnterWorktree prunes stale registration and retries same id
+(pass) maybeEnterWorktree surfaces git errors clearly [0.41ms]
+(pass) worktree internals build numbered names
+(pass) worktree internals detect conflicts
+(pass) worktree internals detect stale registration errors
+(pass) worktree internals sanitize base names
+
+ 26 pass
+ 0 fail
+ 69 expect() calls
+Ran 26 tests across 1 file. [71.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/world-model-cli.test.ts:
+(pass) loop world builds and queries a local producer-backed database [127.83ms]
+(pass) loop world fails nonzero for corrupt or authority-escalating input [43.99ms]
+(pass) loop world ingest fails nonzero for empty assertion files [36.60ms]
+(pass) loop world ingest fails nonzero for array assertion files [37.62ms]
+(pass) loop world ingest fails nonzero for malformed assertion files [36.52ms]
+(pass) world command dispatch does not change ordinary immediate CLI handling [68.63ms]
+
+ 6 pass
+ 0 fail
+ 18 expect() calls
+Ran 6 tests across 1 file. [368.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/world-model-runtime.test.ts:
+(pass) prepareRunWorldModel binds producer-backed task context to the run manifest [102.69ms]
+(pass) prepareRunWorldModel binds exact bytes from a committed blob larger than the default child-process buffer [114.55ms]
+(pass) prepareRunWorldModel uses deterministic fallback seeds and capsule [156.81ms]
+(pass) prepareRunWorldModel fails closed without advertising partial context [4.73ms]
+(pass) prepareRunWorldModel cleans producer artifacts when the manifest is absent at bind time [92.68ms]
+
+ 5 pass
+ 0 fail
+ 22 expect() calls
+Ran 5 tests across 1 file. [490.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/world-model.test.ts:
+(pass) Project World Model materializer > rebuilds an identical bounded graph from the same committed producer state [136.70ms]
+(pass) Project World Model materializer > binds changed file evidence to the new commit [142.22ms]
+(pass) Project World Model materializer > replaces deterministic projection without deleting explicit assertions [126.80ms]
+(pass) Project World Model materializer > marks explicit count and depth truncation instead of hiding it [79.36ms]
+(pass) Project World Model assertions and time > fails closed for ontology corruption and empty evidence [1.12ms]
+(pass) Project World Model assertions and time > rejects candidate observations and preserves temporal supersession [1.98ms]
+(pass) Project World Model assertions and time > reports contradictory current single-valued assertions with both sources [2.04ms]
+(pass) Project World Model fail-closed validation > rejects an empty database path before SQLite opens
+(pass) Project World Model fail-closed validation > rejects a corrupt persisted entity type on read [79.75ms]
+(pass) Project World Model fail-closed validation > rejects a corrupt persisted predicate on read [78.31ms]
+(pass) Project World Model fail-closed validation > rejects a corrupt persisted status on read [78.92ms]
+(pass) Project World Model fail-closed validation > rejects a corrupt persisted evidence SHA-256 on read [85.28ms]
+(pass) Project World Model fail-closed validation > rejects a persisted statement without evidence source [1.59ms]
+(pass) Project World Model fail-closed validation > rejects a persisted statement without extraction method [1.56ms]
+(pass) Project World Model fail-closed validation > rejects a persisted statement without authority class [1.69ms]
+(pass) Project World Model fail-closed validation > rejects a persisted statement without source kind [1.30ms]
+(pass) Project World Model fail-closed validation > rejects persisted confidence outside 0..1 [1.56ms]
+(pass) Project World Model fail-closed validation > rejects corrupt persisted observedAt [1.30ms]
+(pass) Project World Model fail-closed validation > rejects corrupt persisted validFrom [1.25ms]
+(pass) Project World Model fail-closed validation > rejects corrupt persisted validTo [1.38ms]
+(pass) Project World Model fail-closed validation > rejects malformed assertion evidence SHA-256 on ingest [0.65ms]
+(pass) Project World Model fail-closed validation > rejects invalid observedAt independently [0.89ms]
+(pass) Project World Model fail-closed validation > rejects invalid validFrom independently [0.80ms]
+(pass) Project World Model fail-closed validation > rejects invalid validTo independently [0.84ms]
+(pass) Project World Model fail-closed validation > rejects a temporal range ending at or before its start [0.99ms]
+(pass) Project World Model fail-closed validation > rejects persisted temporal corruption on read [1.56ms]
+(pass) Project World Model fail-closed validation > rejects candidate deterministic-producer authority [0.39ms]
+(pass) Project World Model fail-closed validation > rejects candidate ingestion without an evidence source [0.56ms]
+(pass) Project World Model fail-closed validation > rejects unknown entity type [0.39ms]
+(pass) Project World Model fail-closed validation > rejects empty entity key [0.32ms]
+(pass) Project World Model fail-closed validation > rejects invalid direct statement predicate [0.81ms]
+(pass) Project World Model fail-closed validation > rejects invalid direct statement status [0.80ms]
+(pass) Project World Model fail-closed validation > rejects invalid direct statement observed authority [0.79ms]
+(pass) Project World Model fail-closed validation > rejects invalid direct statement evidence source [0.90ms]
+(pass) Project World Model fail-closed validation > rejects invalid direct statement extraction method [0.80ms]
+(pass) Project World Model fail-closed validation > rejects invalid direct statement authority class [0.82ms]
+(pass) Project World Model fail-closed validation > rejects invalid direct statement source kind [0.79ms]
+(pass) Project World Model fail-closed validation > rejects invalid confidence [0.90ms]
+(pass) Project World Model fail-closed validation > rejects missing statement evidence provenance [0.91ms]
+(pass) Project World Model fail-closed validation > rejects a missing superseded statement [0.96ms]
+(pass) Project World Model fail-closed validation > rejects unknown candidate predicate [0.46ms]
+(pass) Project World Model fail-closed validation > rejects unknown candidate status [0.45ms]
+(pass) Project World Model fail-closed validation > rejects empty seeds and each context bound independently [0.43ms]
+
+ 43 pass
+ 0 fail
+ 64 expect() calls
+Ran 43 tests across 1 file. [859.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/ws-client.test.ts:
+(pass) ws client reassembles fragmented text with an interleaved ping [4.45ms]
+(pass) ws client preserves a first frame coalesced with the HTTP upgrade [1.79ms]
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [22.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/release-packaging.test.ts:
+11 |   const workflow = readFileSync(
+12 |     join(repositoryRoot, ".github", "workflows", "release.yml"),
+13 |     "utf8"
+14 |   );
+15 |
+16 |   expect(pkg.version).toBe("1.0.35");
+                           ^
+error: expect(received).toBe(expected)
+
+Expected: "1.0.35"
+Received: "1.0.38"
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab/.worktrees/d015-paired-attach/loop-fork/tests/release-packaging.test.ts:16:23)
+(fail) root release workflow packages the full-repository Loop layout [0.57ms]
+
+ 0 pass
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [14.00ms]
+error: script "test:ci" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-09T18:13:14Z

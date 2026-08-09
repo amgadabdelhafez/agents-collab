@@ -1,0 +1,38 @@
+{
+  "task_id": "d015-paired-attach-terminal",
+  "status": "pass",
+  "required": [
+    "unit",
+    "static",
+    "build"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/d015-paired-attach-terminal/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/d015-paired-attach-terminal/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/d015-paired-attach-terminal/artifacts/unit/attempt-002.json"
+    },
+    "static": {
+      "status": "pass",
+      "artifact": "runs/d015-paired-attach-terminal/artifacts/static/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/d015-paired-attach-terminal/artifacts/static/attempt-002.log",
+      "latest_attempt_meta": "runs/d015-paired-attach-terminal/artifacts/static/attempt-002.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/d015-paired-attach-terminal/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/d015-paired-attach-terminal/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/d015-paired-attach-terminal/artifacts/build/attempt-001.json"
+    }
+  }
+}

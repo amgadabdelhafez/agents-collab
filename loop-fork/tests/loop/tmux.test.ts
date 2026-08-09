@@ -772,7 +772,9 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
   expect(typed).toEqual([]);
   expect(logs[0]).toBe("[loop] starting paired tmux workspace...");
   expect(logs).toContain('[loop] started tmux session "repo-loop-1"');
-  expect(logs).toContain("[loop] attach with: tmux attach -t repo-loop-1");
+  expect(logs).toContain(
+    "[loop] attach with: tmux -S '/tmp/ls-a/a.sock' attach -t 'repo-loop-1'"
+  );
   expect(manifest.claudeSessionId).toBe("claude-session-1");
   expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
   expect(manifest.codexThreadId).toBe("codex-thread-1");
@@ -5773,7 +5775,14 @@ test("runInTmux preserves the active manifest when attach-path liveness is unkno
   expect(manifest).toMatchObject({ state: "working", status: "running" });
 });
 
-test("runInTmux trusts a fresh live probe over a stale attach no-session error", async () => {
+test("runInTmux treats an attach capability error as non-fatal when the exact paired session remains live", async () => {
+  const attaches: Array<{ session: string; socket?: string }> = [];
+  const calls: string[][] = [];
+  const logs: string[] = [];
+  const postStartProbes: string[][] = [];
+  let released = 0;
+  let sessionCreated = false;
+  const runDir = makeTempRunDir();
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -5783,44 +5792,90 @@ test("runInTmux trusts a fresh live probe over a stale attach no-session error",
     state: "working",
     status: "running",
     tmuxSession: "repo-loop-1",
+    tmuxSocket: "/tmp/ai-cur-tmux/tmux-501/default",
   });
   const storage = {
     manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
     repoId: "repo-123",
-    runDir: "/isolated/home/.loop/runs/repo-123/1",
+    runDir,
     runId: "1",
     storageRoot: "/isolated/home/.loop/runs/repo-123",
     transcriptPath: "/isolated/home/.loop/runs/repo-123/1/transcript.jsonl",
   };
 
-  await expect(
-    runInTmux(
-      ["--tmux"],
-      {
-        attach: () => {
-          throw new Error("no server running on stale socket");
-        },
-        cwd: "/repo",
-        env: {},
-        findBinary: () => true,
-        isInteractive: () => true,
-        log: (): void => undefined,
-        ...healthyClaudeKickoffDeps(),
-        preparePairedRun: () => ({ manifest, storage }),
-        spawn: () => ({ exitCode: 0, stderr: "" }),
-        updateRunManifest: (_path, update) => {
-          manifest = update(manifest) ?? manifest;
-          return manifest;
-        },
+  const delegated = await runInTmux(
+    ["--tmux"],
+    {
+      attach: (session, socket) => {
+        attaches.push({ session, socket });
+        throw new Error(
+          "open terminal failed: terminal does not support clear"
+        );
       },
-      {
-        opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
-        task: "Resume feature",
-      }
-    )
-  ).rejects.toThrow("no server running on stale socket");
+      cwd: "/repo",
+      env: {},
+      findBinary: () => true,
+      isInteractive: () => true,
+      log: (line): void => {
+        logs.push(line);
+      },
+      ...healthyClaudeKickoffDeps(),
+      preparePairedRun: () => ({ manifest, storage }),
+      releasePersistentCodexSession: () => {
+        released += 1;
+      },
+      spawn: (args: string[]) => {
+        calls.push(args);
+        if (args[0] === "tmux" && args[1] === "new-session") {
+          sessionCreated = true;
+          return { exitCode: 0, stderr: "", stdout: "%91" };
+        }
+        if (args.includes("has-session")) {
+          if (sessionCreated) {
+            postStartProbes.push(args);
+          }
+          return sessionCreated
+            ? { exitCode: 0, stderr: "" }
+            : { exitCode: 1, stderr: "session not found" };
+        }
+        return { exitCode: 0, stderr: "" };
+      },
+      updateRunManifest: (_path, update) => {
+        manifest = update(manifest) ?? manifest;
+        return manifest;
+      },
+    },
+    {
+      opts: makePairedOptions({ agent: "gemini", pairWith: "cursor" }),
+      task: "Resume feature",
+    }
+  );
 
+  expect(delegated).toBe(true);
+  expect(sessionCreated).toBe(true);
+  expect(postStartProbes.length).toBeGreaterThan(0);
+  expect(postStartProbes).toEqual(
+    postStartProbes.map(() => [
+      "tmux",
+      "-S",
+      "/tmp/ai-cur-tmux/tmux-501/default",
+      "has-session",
+      "-t",
+      "repo-loop-1",
+    ])
+  );
+  expect(attaches).toEqual([
+    {
+      session: "repo-loop-1",
+      socket: "/tmp/ai-cur-tmux/tmux-501/default",
+    },
+  ]);
+  expect(logs).toContain(
+    "[loop] warning: foreground tmux attach failed (open terminal failed: terminal does not support clear); detached session \"repo-loop-1\" remains live. Attach manually with: tmux -S '/tmp/ai-cur-tmux/tmux-501/default' attach -t 'repo-loop-1'"
+  );
+  expect(released).toBe(1);
   expect(manifest).toMatchObject({ state: "working", status: "running" });
+  rmSync(runDir, { force: true, recursive: true });
 });
 
 test("runInTmux rejects a failed pre-handoff window setup and terminalizes the manifest", async () => {

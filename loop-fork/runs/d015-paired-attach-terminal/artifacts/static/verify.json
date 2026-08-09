@@ -1,0 +1,18 @@
+{
+  "task_id": "d015-paired-attach-terminal",
+  "dimension": "static",
+  "attempt": "003",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-09T18:17:21Z",
+  "ended_at": "2026-08-09T18:17:21Z",
+  "artifact": "runs/d015-paired-attach-terminal/artifacts/static/attempt-003.log",
+  "command": [
+    "bunx",
+    "ultracite",
+    "check",
+    "src/loop/tmux.ts",
+    "tests/loop/tmux.test.ts"
+  ]
+}

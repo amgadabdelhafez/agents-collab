@@ -1,0 +1,7 @@
+{
+  "id": "d015-paired-attach-terminal",
+  "mode": "planned",
+  "created_at": "2026-08-09T18:06:14Z",
+  "status": "active",
+  "description": "Treat tmux foreground attach capability failure as a non-fatal warning after a healthy detached paired launch, with exact socket-aware recovery guidance."
+}

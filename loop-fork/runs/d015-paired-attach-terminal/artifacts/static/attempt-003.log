@@ -1,0 +1,12 @@
+task_id: d015-paired-attach-terminal
+dimension: static
+attempt: 003
+started_at: 2026-08-09T18:17:21Z
+command: bunx ultracite check src/loop/tmux.ts tests/loop/tmux.test.ts
+--- output ---
+Checked 2 files in 51ms. No fixes applied.
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-09T18:17:21Z
