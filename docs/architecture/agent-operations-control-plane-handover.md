@@ -155,18 +155,20 @@ Founder decisions recorded after this handover was created
   locally runnable OTel and experiment contracts remain canonical. Send only
   synthetic or explicitly redacted cases until the data-locality decision is
   separately resolved.
+- Keep Temporal as the workflow baseline and run exactly one frozen,
+  identical-scenario Restate challenger bakeoff before final lock-in. This does
+  not authorize service installation or live workflow authority.
 
 Current founder decisions to resolve
 
-1. Confirm Temporal plus one Restate bakeoff, or select Temporal directly.
-2. Confirm first pilot, recommended agents-collab plus one product project.
-3. Confirm the initial role catalog.
-4. Confirm local-only versus hosted non-authoritative memory inference.
-5. Confirm SQLite baseline versus Postgres default for the World Model bakeoff.
-6. Confirm internal A2A-compatible schema now and protocol adapter later.
-7. Confirm CLI/Markdown management views first versus an early web dashboard.
-8. Define founder notification severity and shift-handoff policy.
-9. Define retention periods for workflow history, broker events, evidence,
+1. Confirm first pilot, recommended agents-collab plus one product project.
+2. Confirm the initial role catalog.
+3. Confirm local-only versus hosted non-authoritative memory inference.
+4. Confirm SQLite baseline versus Postgres default for the World Model bakeoff.
+5. Confirm internal A2A-compatible schema now and protocol adapter later.
+6. Confirm CLI/Markdown management views first versus an early web dashboard.
+7. Define founder notification severity and shift-handoff policy.
+8. Define retention periods for workflow history, broker events, evidence,
     episodes, and curated memory.
 
 How to continue

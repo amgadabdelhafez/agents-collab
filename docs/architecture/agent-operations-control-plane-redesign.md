@@ -20,7 +20,7 @@ The provisional target stack is:
 
 | Concern | Provisional owner | Decision state |
 |---|---|---|
-| Durable business and operational workflows | Temporal | Accepted direction; run one lightweight Restate bakeoff before lock-in |
+| Durable business and operational workflows | Temporal baseline | Accepted; run exactly one frozen Restate bakeoff before final lock-in |
 | Commands, events, fan-out, and replay | NATS JetStream | Accepted direction |
 | Portfolio/project/shift management projection | PostgreSQL | Proposed |
 | Agent-to-tool interface | MCP | Preserve and standardize |
@@ -281,6 +281,11 @@ timers, external events, exactly-once-per-ID workflows, and keyed virtual
 objects with single-writer state. Its smaller operational footprint and
 stateful entity model could map cleanly to `Project`, `Shift`, `WorkItem`, or
 `AgentRuntime` identities.
+
+The founder approved Temporal as the baseline and exactly one Restate challenger
+bakeoff. This records the comparison path, not the final engine winner. The
+bakeoff must remain local, isolated, non-authoritative, and identical-case; it
+cannot activate workflow authority or expand into a second platform build.
 
 The bakeoff must implement the same small scenario in both engines:
 
@@ -1280,26 +1285,28 @@ are admitted to implementation.
   candidate. Portable OpenTelemetry traces and locally runnable experiment
   contracts remain canonical. Braintrust receives only synthetic or explicitly
   redacted cases until a separate data-locality decision permits more.
+- **2026-08-08, accepted:** keep Temporal as the workflow baseline and run
+  exactly one frozen, identical-scenario Restate challenger bakeoff before
+  final engine lock-in. This decision authorizes comparison design only, not a
+  service installation or live-authority cutover.
 
 ### 17.2 Decisions still required
 
-1. **Workflow lock-in:** keep Temporal as the baseline and approve the one-scenario
-   Restate bakeoff, or choose Temporal without a bakeoff?
-2. **First management scope:** model all projects immediately, or pilot with
+1. **First management scope:** model all projects immediately, or pilot with
    agents-collab plus one product project?
-3. **Initial role catalog:** which roles must exist in the first control-plane
+2. **Initial role catalog:** which roles must exist in the first control-plane
    slice, and which can remain generic adapters?
-4. **Memory locality:** must all memory and World Model inference remain local,
+3. **Memory locality:** must all memory and World Model inference remain local,
    or may an approved hosted model create non-authoritative candidates?
-5. **World Model bakeoff:** preserve SQLite as the likely default, or make
+4. **World Model bakeoff:** preserve SQLite as the likely default, or make
    Postgres the default projection before evaluating Graphiti?
-6. **A2A boundary:** generate compatible Agent Cards now, or adopt only the
+5. **A2A boundary:** generate compatible Agent Cards now, or adopt only the
    internal schema and defer protocol compatibility?
-7. **Management UI:** start with CLI/Markdown views or build a web dashboard in
+6. **Management UI:** start with CLI/Markdown views or build a web dashboard in
    the first pilot?
-8. **Founder notification policy:** which severities and decisions should wake
+7. **Founder notification policy:** which severities and decisions should wake
    the founder immediately versus wait for shift handoff?
-9. **Retention:** how long should workflow histories, broker events, raw
+8. **Retention:** how long should workflow histories, broker events, raw
     operational evidence, agent episodes, and curated memories remain online?
 
 ### 17.3 Recommended decision sequence
@@ -1320,8 +1327,6 @@ the order that unlocks bounded, reversible evidence:
 The remaining recommended default answers, pending founder confirmation, are:
 
 - first pilot: `agents-collab` plus one product project, not the full estate;
-- workflow selection: keep Temporal as baseline and retain the one-scenario
-  Restate challenger;
 - management view: CLI and Markdown first, web projection after workflow and
   event truth is stable;
 - A2A: internal compatible schemas now, network protocol adapter later;
@@ -1375,6 +1380,8 @@ The remaining recommended default answers, pending founder confirmation, are:
 
 ## 20. Change log
 
+- 2026-08-08: Recorded Temporal as the approved baseline with exactly one
+  frozen, identical-scenario Restate challenger bakeoff before final lock-in.
 - 2026-08-08: Recorded approval of Braintrust as the first Phase 0C shadow
   adapter under portable-contract, redaction, non-authority, and no-live-impact
   constraints.
