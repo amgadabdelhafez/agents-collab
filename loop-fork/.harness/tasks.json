@@ -681,6 +681,26 @@
       "eval_status": "pass",
       "ended_at": "2026-08-09T22:11:33Z",
       "spec_path": "specs/d028-installed-forward-compat.md"
+    },
+    {
+      "id": "d029-immutable-run-static-scope",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-08-09T22:15:00Z",
+      "run_dir": "runs/d029-immutable-run-static-scope",
+      "eval_status": "pass",
+      "ended_at": "2026-08-09T22:27:00Z",
+      "spec_path": "specs/d029-immutable-run-static-scope.md"
+    },
+    {
+      "id": "d030-manifest-handle-type-import",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-08-09T22:18:00Z",
+      "run_dir": "runs/d030-manifest-handle-type-import",
+      "eval_status": "pass",
+      "ended_at": "2026-08-09T22:23:00Z",
+      "spec_path": "specs/d030-manifest-handle-type-import.md"
     }
   ]
 }

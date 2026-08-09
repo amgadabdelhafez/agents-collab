@@ -1,0 +1,23 @@
+{
+  "task_id": "d029-immutable-run-static-scope",
+  "status": "pass",
+  "required": ["scope", "static", "immutability", "review"],
+  "dimensions": {
+    "scope": {
+      "status": "pass",
+      "evidence": "Biome configuration adds only the root runs-folder negation. A verbose source probe processed src/cli.ts, while a verbose historical-run probe processed zero files and explicitly reported runs/d014-paired-launch-cleanup-order/eval.json as ignored."
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "Repository bun run check passed and processed 205 source-owned files with no fixes or diagnostics; git diff --check also passed."
+    },
+    "immutability": {
+      "status": "pass",
+      "evidence": "A freshly derived byte, mtime, and SHA-256 inventory retained every line of the first T16 pre-inventory exactly. The only additions are the bounded D-029 and D-030 task records; no preexisting historical run file changed or disappeared."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent review confirmed exact runs-only exclusion semantics, coherent active/current Harness state for D-029, completed D-030 prerequisite state, and no product, modernization, or existing lane mutation."
+    }
+  }
+}

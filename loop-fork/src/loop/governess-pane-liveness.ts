@@ -9,13 +9,13 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "bun";
 import {
   isActiveRunState,
-  type ManifestHandle,
   type RunManifest,
   readRunManifest,
   readRunManifestHandle,
 } from "./run-state";
 import { boundedTmuxOptions, tmuxCommandTimedOut } from "./tmux-control";
 import {
+  type ManifestHandle,
   manifestSocketState,
   type OwnedPaneTarget,
   paneArgv,

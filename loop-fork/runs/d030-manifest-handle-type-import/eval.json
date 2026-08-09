@@ -1,0 +1,27 @@
+{
+  "task_id": "d030-manifest-handle-type-import",
+  "status": "pass",
+  "required": ["typescript", "migration", "unit", "static", "review"],
+  "dimensions": {
+    "typescript": {
+      "status": "pass",
+      "evidence": "The exact TypeScript invocation documented in docs/testing/commands.md passed: bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts."
+    },
+    "migration": {
+      "status": "pass",
+      "evidence": "The AST-derived tmux migration checker passed, and createManifestHandle remains imported only by the authoritative manifest read path in run-state.ts."
+    },
+    "unit": {
+      "status": "pass",
+      "evidence": "The Governess pane-liveness owning suite passed 30 tests with 94 assertions."
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "Repository Ultracite checked 205 files with no diagnostics, and git diff --check passed."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent review confirmed the production diff is only a type import relocation to the declaring tmux-socket module, with no emitted value import, authority widening, product-lane change, or modernization scope."
+    }
+  }
+}
