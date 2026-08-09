@@ -159,7 +159,15 @@ import {
   tmuxCommandTimedOut,
   tmuxTargetLiveness,
 } from "./tmux-control";
-import { type TmuxTarget, targetArgv, targetFromManifest } from "./tmux-socket";
+import {
+  describeTmuxTarget,
+  type OwnedPaneTarget,
+  paneArgv,
+  paneTargetByValueFromManifest,
+  type TmuxTarget,
+  targetArgv,
+  targetFromManifest,
+} from "./tmux-socket";
 import type {
   Agent,
   AgentLiveness,
@@ -402,7 +410,10 @@ export interface GovernessDeps {
     session: string,
     manifestPath: string
   ) => boolean | "unknown";
-  replacementSessionReady: (session: string) => boolean | "unknown";
+  replacementSessionReady: (
+    session: string,
+    manifestPath: string
+  ) => boolean | "unknown";
   respawnPane: (pane: string) => void;
   saveState: (stateFile: string | undefined, state: GovernessRunState) => void;
   sendBridge: (
@@ -1612,11 +1623,11 @@ export const applyGovernessPaneIdentity = (
 };
 
 export const governessPaneIdentityTmuxCommands = (
-  pane: string,
+  target: OwnedPaneTarget,
   label: string
 ): string[][] => [
-  ["set-option", "-p", "-t", pane, "@loop_label", label],
-  ["select-pane", "-t", pane, "-T", label],
+  paneArgv(target, "set-option", ["-p", "@loop_label", label]),
+  paneArgv(target, "select-pane", ["-T", label]),
 ];
 
 // Compose a pane-border title: "<glyph> <agent> · <task>", dropping the task
@@ -4987,9 +4998,13 @@ export const advanceHandoverControl = async (
             replacementManifestPath
           ) ?? false)
         : false;
-    const replacementReadyProbe = replacementSession
-      ? deps.replacementSessionReady(replacementSession)
-      : false;
+    const replacementReadyProbe =
+      replacementSession && replacementManifestPath
+        ? deps.replacementSessionReady(
+            replacementSession,
+            replacementManifestPath
+          )
+        : false;
     const replacementAlive = replacementAliveProbe === true;
     const replacementReady = replacementReadyProbe === true;
     const handoverAccepted = Boolean(
@@ -5185,9 +5200,10 @@ export const advanceHandoverControl = async (
           launched.manifestPath
         ) ?? false)
       : false;
-  const replacementReadyProbe = launched.session
-    ? deps.replacementSessionReady(launched.session)
-    : false;
+  const replacementReadyProbe =
+    launched.session && launched.manifestPath
+      ? deps.replacementSessionReady(launched.session, launched.manifestPath)
+      : false;
   const replacementAlive = replacementAliveProbe === true;
   const replacementReady = replacementReadyProbe === true;
   recordGovernessObservation(config, deps, {
@@ -6110,40 +6126,41 @@ export const governessTick = async (
 };
 
 const runBoundedTmux = (
-  args: string[],
-  options: { stderr?: "ignore" | "pipe"; stdout?: "ignore" | "pipe" } = {}
+  argv: string[],
+  options: { stderr?: "ignore" | "pipe"; stdout?: "ignore" | "pipe" } = {},
+  runner: typeof spawnSync = spawnSync
 ) => {
   let result: ReturnType<typeof spawnSync>;
   try {
-    result = spawnSync(
-      ["tmux", ...args],
+    result = runner(
+      argv,
       boundedTmuxOptions({
         stderr: options.stderr ?? "ignore",
         stdout: options.stdout ?? "ignore",
       })
     );
   } catch (error) {
-    throw new TmuxControlUnavailableError(args, error);
+    throw new TmuxControlUnavailableError(argv, error);
   }
   if (tmuxCommandTimedOut(result)) {
-    throw new TmuxControlUnavailableError(args);
+    throw new TmuxControlUnavailableError(argv);
   }
   return result;
 };
 
-const tmux = (args: string[]): string =>
-  decode(runBoundedTmux(args, { stdout: "pipe" }).stdout);
+const tmux = (argv: string[], runner: typeof spawnSync): string =>
+  decode(runBoundedTmux(argv, { stdout: "pipe" }, runner).stdout);
 
-const runTmuxEffect = (args: string[]): void => {
-  const result = runBoundedTmux(args);
+const runTmuxEffect = (argv: string[], runner: typeof spawnSync): void => {
+  const result = runBoundedTmux(argv, {}, runner);
   if (result.exitCode !== 0) {
-    throw new Error(`tmux control failed: tmux ${args.join(" ")}`);
+    throw new Error(`tmux control failed: ${argv.join(" ")}`);
   }
 };
 
-const bestEffortTmux = (args: string[]): void => {
+const bestEffortTmux = (argv: string[], runner: typeof spawnSync): void => {
   try {
-    runBoundedTmux(args);
+    runBoundedTmux(argv, {}, runner);
   } catch (error) {
     if (!isTmuxControlUnavailableError(error)) {
       throw error;
@@ -6152,31 +6169,30 @@ const bestEffortTmux = (args: string[]): void => {
 };
 
 const readPaneCommandsFromTmux = (
-  panes: GovernessAgentInfo[]
+  panes: GovernessAgentInfo[],
+  resolvePane: (pane: string) => OwnedPaneTarget,
+  runner: typeof spawnSync
 ): Partial<Record<Agent, string>> => {
-  const result = runBoundedTmux(
-    [
-      "list-panes",
-      "-a",
-      "-F",
-      "#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_dead}:#{pane_current_command}",
-    ],
-    { stdout: "pipe" }
-  );
-  if (result.exitCode !== 0) {
-    return Object.fromEntries(panes.map((info) => [info.agent, "1:missing"]));
-  }
-  const probes = new Map<string, string>();
-  for (const line of decode(result.stdout).split("\n")) {
-    const [paneId, paneTarget, probe] = line.split("\t");
-    if (!(paneId && paneTarget && probe)) {
-      continue;
-    }
-    probes.set(paneId, probe);
-    probes.set(paneTarget, probe);
-  }
+  const targets = panes.map((info) => ({
+    info,
+    target: resolvePane(info.pane),
+  }));
   return Object.fromEntries(
-    panes.map((info) => [info.agent, probes.get(info.pane) ?? "1:missing"])
+    targets.map(({ info, target }) => {
+      const result = runBoundedTmux(
+        paneArgv(target, "display-message", [
+          "-p",
+          "#{pane_dead}:#{pane_current_command}",
+        ]),
+        { stdout: "pipe" },
+        runner
+      );
+      return [
+        info.agent,
+        paneProbeFromTmuxResult(result.exitCode, decode(result.stdout)) ??
+          "1:missing",
+      ];
+    })
   );
 };
 
@@ -6433,7 +6449,11 @@ const releasePredecessorWorkspaceReservation = (
     const released = updateRunManifest(manifestPath, (manifest) =>
       manifest
         ? setRunManifestState(
-            { ...manifest, tmuxSession: undefined },
+            {
+              ...manifest,
+              workspaceBinding: undefined,
+              workspaceReleasedAt: new Date().toISOString(),
+            },
             "stopped"
           )
         : undefined
@@ -6455,6 +6475,11 @@ interface GovernessReplacementDeps {
   targetLiveness: (target: TmuxTarget | undefined) => TmuxLiveness;
 }
 
+interface GovernessTmuxDeps {
+  readManifestHandle: typeof readRunManifestHandle;
+  run: typeof spawnSync;
+}
+
 export const defaultGovernessDeps = (
   readUsageLimits = createStableUsageLimitReader(),
   replacementDeps: GovernessReplacementDeps = {
@@ -6463,313 +6488,373 @@ export const defaultGovernessDeps = (
     run: spawnSync,
     sleep,
     targetLiveness: (target) => tmuxTargetLiveness(target),
+  },
+  manifestPath?: string,
+  tmuxDeps: GovernessTmuxDeps = {
+    readManifestHandle: readRunManifestHandle,
+    run: spawnSync,
   }
-): GovernessDeps => ({
-  assessRoleBalance: (req) => assessRoleBalance(req),
-  assessWaiting: (req) => assessWaiting(req),
-  appendLog: (file, record) => {
-    mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
-  },
-  capturePane: (pane, styled = false) =>
-    tmux(["capture-pane", "-p", ...(styled ? ["-e"] : []), "-t", pane]),
-  cleanupRunProcesses: (config) => {
-    if (!config.runDir) {
-      return undefined;
+): GovernessDeps => {
+  const requireTarget = (session: string, path = manifestPath): TmuxTarget => {
+    const handle = path ? tmuxDeps.readManifestHandle(path) : undefined;
+    const target = handle ? targetFromManifest(handle) : undefined;
+    if (!(target && describeTmuxTarget(target).session === session)) {
+      throw new TmuxControlUnavailableError(["manifest-target", session]);
     }
-    const manifest = config.manifestPath
-      ? readRunManifest(config.manifestPath)
+    return target;
+  };
+  const requirePane = (pane: string): OwnedPaneTarget => {
+    const handle = manifestPath
+      ? tmuxDeps.readManifestHandle(manifestPath)
       : undefined;
-    return cleanupRunOwnedProcesses(config.runDir, manifest);
-  },
-  fenceCurrent: (config) => {
-    if (!(config.stateFile && typeof config.epoch === "number")) {
-      return false;
-    }
-    return (
-      loadGovernessState(config.stateFile)?.governessEpoch === config.epoch
-    );
-  },
-  initPaneBorders: (session) => {
-    bestEffortTmux(["set-option", "-t", session, "pane-border-status", "top"]);
-    bestEffortTmux([
-      "set-option",
-      "-t",
-      session,
-      "pane-border-format",
-      GOVERNESS_DEAD_PANE_BORDER_FORMAT,
-    ]);
-  },
-  judge: (req) => judgeAgent(req),
-  labelPanes: (req) => labelPanes(req),
-  loadState: (stateFile) => loadGovernessState(stateFile),
-  launchReplacementLoop: async (config, handoverManifest) => {
-    const primary = config.initialDriver ?? config.agents[0]?.agent;
-    const peer = config.agents.find((info) => info.agent !== primary)?.agent;
-    if (primary === undefined || peer === undefined) {
-      return { error: "handover requires two agents", ok: false };
-    }
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(([key]) => key !== "LOOP_RUN_ID")
-    );
-    const manifest = replacementDeps.readHandoffManifest(handoverManifest);
-    if (!manifest) {
-      return { error: "handover manifest changed before launch", ok: false };
-    }
-    const handoffDir = dirname(handoverManifest);
-    env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
-    const predecessorReleaseError = releasePredecessorWorkspaceReservation(
-      config.manifestPath
-    );
-    if (predecessorReleaseError) {
-      return { error: predecessorReleaseError, ok: false };
-    }
-    let result: ReturnType<typeof spawnSync>;
-    try {
-      result = replacementDeps.run(
-        [
-          ...buildLaunchArgv(),
-          ...replacementLoopArgs(primary, peer, handoffDir, {
-            driverEffort: manifest.driverEffort,
-            reviewerEffort: manifest.reviewerEffort,
-          }),
-        ],
-        {
-          cwd: config.cwd,
-          env,
-          killSignal: "SIGKILL",
-          stderr: "pipe",
-          stdout: "pipe",
-          timeout: 60_000,
-        }
-      );
-    } catch (error) {
-      return {
-        error: error instanceof Error ? error.message : String(error),
-        ok: false,
-      };
-    }
-    const stdout = decode(result.stdout);
-    const stderr = decode(result.stderr);
-    if (result.signalCode) {
-      return {
-        error: "replacement launcher timed out after 60000ms",
-        ok: false,
-      };
-    }
-    if (result.exitCode !== 0) {
-      return {
-        error: (stderr || stdout || `exit ${result.exitCode}`).trim(),
-        ok: false,
-      };
-    }
-    const session = stdout.match(STARTED_TMUX_SESSION_RE)?.[1];
-    if (!session) {
-      return {
-        error: "replacement command succeeded without reporting a tmux session",
-        ok: false,
-      };
-    }
-    const manifestToken = stdout.match(RUN_MANIFEST_RE)?.[1];
-    let manifestPath: string | undefined;
-    if (manifestToken) {
-      try {
-        const decoded = JSON.parse(manifestToken) as unknown;
-        manifestPath =
-          typeof decoded === "string" && decoded.trim().length > 0
-            ? decoded
-            : undefined;
-      } catch {
-        manifestPath = undefined;
-      }
-    }
-    if (!manifestPath) {
-      return {
-        error: "replacement command succeeded without reporting a run manifest",
-        ok: false,
-      };
-    }
-    let target: ReturnType<typeof targetFromManifest>;
-    for (let read = 0; read < 5; read += 1) {
-      const handle = replacementDeps.readManifestHandle(manifestPath);
-      target = handle ? targetFromManifest(handle) : undefined;
-      if (target) {
-        if (targetArgv(target, "has-session").at(-1) !== session) {
-          return {
-            error:
-              "replacement manifest target disagrees with reported session",
-            ok: false,
-          };
-        }
-        break;
-      }
-      if (read < 4) {
-        await replacementDeps.sleep(50);
-      }
-    }
+    const target = handle
+      ? paneTargetByValueFromManifest(handle, pane)
+      : undefined;
     if (!target) {
-      return {
-        error:
-          "replacement run manifest stayed unreadable or incomplete after bounded retry",
-        ok: false,
-      };
+      throw new TmuxControlUnavailableError(["manifest-pane", pane]);
     }
-    const sessionLiveness = replacementDeps.targetLiveness(target);
-    if (sessionLiveness === "dead") {
-      return {
-        error: `replacement tmux session ${session} is not running`,
-        ok: false,
-      };
-    }
-    if (sessionLiveness === "unknown") {
-      return {
-        error: `replacement tmux session ${session} liveness is unknown`,
-        ok: false,
-      };
-    }
-    return { manifestPath, ok: true, session };
-  },
-  markRunStopped: (config, reason) => {
-    if (config.manifestPath) {
-      updateRunManifest(config.manifestPath, (manifest) =>
-        manifest ? setRunManifestState(manifest, "stopped") : undefined
-      );
-    }
-    config.transcriptPath &&
-      appendFileSync(
-        config.transcriptPath,
-        `${JSON.stringify({
-          at: new Date().toISOString(),
-          detail: reason,
-          kind: "status",
-          state: "stopped",
-        })}\n`,
-        "utf8"
-      );
-  },
-  killSession: (session) => {
-    runBoundedTmux(["kill-session", "-t", session]);
-  },
-  notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
-  now: () => Date.now(),
-  openKeyInput: () => openRawKeyInput(),
-  paneCommand: (pane) => {
-    let result: ReturnType<typeof spawnSync>;
-    try {
-      result = runBoundedTmux(
-        [
-          "display-message",
+    return target;
+  };
+  return {
+    assessRoleBalance: (req) => assessRoleBalance(req),
+    assessWaiting: (req) => assessWaiting(req),
+    appendLog: (file, record) => {
+      mkdirSync(dirname(file), { recursive: true });
+      appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
+    },
+    capturePane: (pane, styled = false) =>
+      tmux(
+        paneArgv(requirePane(pane), "capture-pane", [
           "-p",
-          "-t",
-          pane,
-          "#{pane_dead}:#{pane_current_command}",
-        ],
-        { stdout: "pipe" }
-      );
-    } catch (error) {
-      if (isTmuxControlUnavailableError(error)) {
+          ...(styled ? ["-e"] : []),
+        ]),
+        tmuxDeps.run
+      ),
+    cleanupRunProcesses: (config) => {
+      if (!config.runDir) {
         return undefined;
       }
-      throw error;
-    }
-    return paneProbeFromTmuxResult(result.exitCode, decode(result.stdout));
-  },
-  readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
-  readBridgeLatest: (runDir) => readBridgeLatest(runDir),
-  readHooks: (file) => {
-    try {
-      return readFileSync(file, "utf8")
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line) => {
-          try {
-            return JSON.parse(line) as HookEvent;
-          } catch {
-            return undefined;
-          }
-        })
-        .filter((event): event is HookEvent => event !== undefined);
-    } catch {
-      return [];
-    }
-  },
-  readHumanMessages: (agent, sessionRef, codexHome) =>
-    readHumanMessages(agent, sessionRef, codexHome),
-  readLocalLlmRuntime: (input) => readLocalLlmRuntime(input),
-  readPaneCommands: (panes) => readPaneCommandsFromTmux(panes),
-  readUsage: (agent, sessionRef, codexHome) =>
-    readAgentUsage(agent, sessionRef, codexHome),
-  readUsageLimits: (config) =>
-    readUsageLimits({
-      secret: config.usageTrackerSecret,
-      timeoutMs: config.usageTrackerTimeoutMs,
-      url: config.usageTrackerUrl,
-    }),
-  replacementSessionAlive: (session, manifestPath) => {
-    const handle = replacementDeps.readManifestHandle(manifestPath);
-    const target = handle ? targetFromManifest(handle) : undefined;
-    if (!(target && targetArgv(target, "has-session").at(-1) === session)) {
-      return "unknown";
-    }
-    const liveness = replacementDeps.targetLiveness(target);
-    return liveness === "unknown" ? "unknown" : liveness === "live";
-  },
-  replacementSessionReady: (session) => {
-    let result: ReturnType<typeof spawnSync>;
-    try {
-      result = runBoundedTmux(
-        [
-          "list-panes",
-          "-t",
-          session,
-          "-F",
-          "#{pane_dead}:#{pane_current_command}",
-        ],
-        { stdout: "pipe" }
+      const manifest = config.manifestPath
+        ? readRunManifest(config.manifestPath)
+        : undefined;
+      return cleanupRunOwnedProcesses(config.runDir, manifest);
+    },
+    fenceCurrent: (config) => {
+      if (!(config.stateFile && typeof config.epoch === "number")) {
+        return false;
+      }
+      return (
+        loadGovernessState(config.stateFile)?.governessEpoch === config.epoch
       );
-    } catch (error) {
-      if (isTmuxControlUnavailableError(error)) {
+    },
+    initPaneBorders: (session) => {
+      bestEffortTmux(
+        targetArgv(requireTarget(session), "set-option", [
+          "pane-border-status",
+          "top",
+        ]),
+        tmuxDeps.run
+      );
+      bestEffortTmux(
+        targetArgv(requireTarget(session), "set-option", [
+          "pane-border-format",
+          GOVERNESS_DEAD_PANE_BORDER_FORMAT,
+        ]),
+        tmuxDeps.run
+      );
+    },
+    judge: (req) => judgeAgent(req),
+    labelPanes: (req) => labelPanes(req),
+    loadState: (stateFile) => loadGovernessState(stateFile),
+    launchReplacementLoop: async (config, handoverManifest) => {
+      const primary = config.initialDriver ?? config.agents[0]?.agent;
+      const peer = config.agents.find((info) => info.agent !== primary)?.agent;
+      if (primary === undefined || peer === undefined) {
+        return { error: "handover requires two agents", ok: false };
+      }
+      const env = Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => key !== "LOOP_RUN_ID")
+      );
+      const manifest = replacementDeps.readHandoffManifest(handoverManifest);
+      if (!manifest) {
+        return { error: "handover manifest changed before launch", ok: false };
+      }
+      const handoffDir = dirname(handoverManifest);
+      env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
+      const predecessorReleaseError = releasePredecessorWorkspaceReservation(
+        config.manifestPath
+      );
+      if (predecessorReleaseError) {
+        return { error: predecessorReleaseError, ok: false };
+      }
+      let result: ReturnType<typeof spawnSync>;
+      try {
+        result = replacementDeps.run(
+          [
+            ...buildLaunchArgv(),
+            ...replacementLoopArgs(primary, peer, handoffDir, {
+              driverEffort: manifest.driverEffort,
+              reviewerEffort: manifest.reviewerEffort,
+            }),
+          ],
+          {
+            cwd: config.cwd,
+            env,
+            killSignal: "SIGKILL",
+            stderr: "pipe",
+            stdout: "pipe",
+            timeout: 60_000,
+          }
+        );
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error.message : String(error),
+          ok: false,
+        };
+      }
+      const stdout = decode(result.stdout);
+      const stderr = decode(result.stderr);
+      if (result.signalCode) {
+        return {
+          error: "replacement launcher timed out after 60000ms",
+          ok: false,
+        };
+      }
+      if (result.exitCode !== 0) {
+        return {
+          error: (stderr || stdout || `exit ${result.exitCode}`).trim(),
+          ok: false,
+        };
+      }
+      const session = stdout.match(STARTED_TMUX_SESSION_RE)?.[1];
+      if (!session) {
+        return {
+          error:
+            "replacement command succeeded without reporting a tmux session",
+          ok: false,
+        };
+      }
+      const manifestToken = stdout.match(RUN_MANIFEST_RE)?.[1];
+      let manifestPath: string | undefined;
+      if (manifestToken) {
+        try {
+          const decoded = JSON.parse(manifestToken) as unknown;
+          manifestPath =
+            typeof decoded === "string" && decoded.trim().length > 0
+              ? decoded
+              : undefined;
+        } catch {
+          manifestPath = undefined;
+        }
+      }
+      if (!manifestPath) {
+        return {
+          error:
+            "replacement command succeeded without reporting a run manifest",
+          ok: false,
+        };
+      }
+      let target: ReturnType<typeof targetFromManifest>;
+      for (let read = 0; read < 5; read += 1) {
+        const handle = replacementDeps.readManifestHandle(manifestPath);
+        target = handle ? targetFromManifest(handle) : undefined;
+        if (target) {
+          if (targetArgv(target, "has-session").at(-1) !== session) {
+            return {
+              error:
+                "replacement manifest target disagrees with reported session",
+              ok: false,
+            };
+          }
+          break;
+        }
+        if (read < 4) {
+          await replacementDeps.sleep(50);
+        }
+      }
+      if (!target) {
+        return {
+          error:
+            "replacement run manifest stayed unreadable or incomplete after bounded retry",
+          ok: false,
+        };
+      }
+      const sessionLiveness = replacementDeps.targetLiveness(target);
+      if (sessionLiveness === "dead") {
+        return {
+          error: `replacement tmux session ${session} is not running`,
+          ok: false,
+        };
+      }
+      if (sessionLiveness === "unknown") {
+        return {
+          error: `replacement tmux session ${session} liveness is unknown`,
+          ok: false,
+        };
+      }
+      return { manifestPath, ok: true, session };
+    },
+    markRunStopped: (config, reason) => {
+      if (config.manifestPath) {
+        updateRunManifest(config.manifestPath, (manifest) =>
+          manifest ? setRunManifestState(manifest, "stopped") : undefined
+        );
+      }
+      config.transcriptPath &&
+        appendFileSync(
+          config.transcriptPath,
+          `${JSON.stringify({
+            at: new Date().toISOString(),
+            detail: reason,
+            kind: "status",
+            state: "stopped",
+          })}\n`,
+          "utf8"
+        );
+    },
+    killSession: (session) => {
+      runBoundedTmux(
+        targetArgv(requireTarget(session), "kill-session"),
+        {},
+        tmuxDeps.run
+      );
+    },
+    notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
+    now: () => Date.now(),
+    openKeyInput: () => openRawKeyInput(),
+    paneCommand: (pane) => {
+      let result: ReturnType<typeof spawnSync>;
+      try {
+        result = runBoundedTmux(
+          paneArgv(requirePane(pane), "display-message", [
+            "-p",
+            "#{pane_dead}:#{pane_current_command}",
+          ]),
+          { stdout: "pipe" },
+          tmuxDeps.run
+        );
+      } catch (error) {
+        if (isTmuxControlUnavailableError(error)) {
+          return undefined;
+        }
+        throw error;
+      }
+      return paneProbeFromTmuxResult(result.exitCode, decode(result.stdout));
+    },
+    readBridge: (transcriptPath) => readBridgeCounts(transcriptPath),
+    readBridgeLatest: (runDir) => readBridgeLatest(runDir),
+    readHooks: (file) => {
+      try {
+        return readFileSync(file, "utf8")
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .map((line) => {
+            try {
+              return JSON.parse(line) as HookEvent;
+            } catch {
+              return undefined;
+            }
+          })
+          .filter((event): event is HookEvent => event !== undefined);
+      } catch {
+        return [];
+      }
+    },
+    readHumanMessages: (agent, sessionRef, codexHome) =>
+      readHumanMessages(agent, sessionRef, codexHome),
+    readLocalLlmRuntime: (input) => readLocalLlmRuntime(input),
+    readPaneCommands: (panes) =>
+      readPaneCommandsFromTmux(panes, requirePane, tmuxDeps.run),
+    readUsage: (agent, sessionRef, codexHome) =>
+      readAgentUsage(agent, sessionRef, codexHome),
+    readUsageLimits: (config) =>
+      readUsageLimits({
+        secret: config.usageTrackerSecret,
+        timeoutMs: config.usageTrackerTimeoutMs,
+        url: config.usageTrackerUrl,
+      }),
+    replacementSessionAlive: (session, manifestPath) => {
+      const handle = replacementDeps.readManifestHandle(manifestPath);
+      const target = handle ? targetFromManifest(handle) : undefined;
+      if (!(target && targetArgv(target, "has-session").at(-1) === session)) {
         return "unknown";
       }
-      throw error;
-    }
-    if (result.exitCode !== 0) {
-      return false;
-    }
-    const livePanes = decode(result.stdout)
-      .split("\n")
-      .filter((line) => line.startsWith("0:")).length;
-    return livePanes >= 3;
-  },
-  render: (text) => {
-    renderDefaultGovernessFrame(text);
-  },
-  respawnPane: (pane) => {
-    runTmuxEffect(["respawn-pane", "-k", "-t", pane]);
-  },
-  saveState: (stateFile, state) => saveGovernessState(stateFile, state),
-  sendBridge: (runDir, source, target, message, options) =>
-    sendGovernessBridgeMessage(runDir, source, target, message, options),
-  setPaneLabel: (pane, label) => {
-    bestEffortTmux(["set-option", "-p", "-t", pane, "@loop_label", label]);
-  },
-  setGovernessPaneIdentity: (pane, label) => {
-    for (const args of governessPaneIdentityTmuxCommands(pane, label)) {
-      bestEffortTmux(args);
-    }
-  },
-  sendKeys: (pane, keys) => {
-    runTmuxEffect(["send-keys", "-t", pane, ...keys]);
-  },
-  sendText: (pane, text) => {
-    runTmuxEffect(["send-keys", "-t", pane, "-l", "--", text]);
-  },
-  sleep: (ms) =>
-    new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    }),
-  summarize: (req) => summarizeSession(req),
-});
+      const liveness = replacementDeps.targetLiveness(target);
+      return liveness === "unknown" ? "unknown" : liveness === "live";
+    },
+    replacementSessionReady: (session, replacementManifestPath) => {
+      let result: ReturnType<typeof spawnSync>;
+      try {
+        result = runBoundedTmux(
+          targetArgv(
+            requireTarget(session, replacementManifestPath),
+            "list-panes",
+            ["-F", "#{pane_dead}:#{pane_current_command}"]
+          ),
+          { stdout: "pipe" },
+          tmuxDeps.run
+        );
+      } catch (error) {
+        if (isTmuxControlUnavailableError(error)) {
+          return "unknown";
+        }
+        throw error;
+      }
+      if (result.exitCode !== 0) {
+        return false;
+      }
+      const livePanes = decode(result.stdout)
+        .split("\n")
+        .filter((line) => line.startsWith("0:")).length;
+      return livePanes >= 3;
+    },
+    render: (text) => {
+      renderDefaultGovernessFrame(text);
+    },
+    respawnPane: (pane) => {
+      runTmuxEffect(
+        paneArgv(requirePane(pane), "respawn-pane", ["-k"]),
+        tmuxDeps.run
+      );
+    },
+    saveState: (stateFile, state) => saveGovernessState(stateFile, state),
+    sendBridge: (runDir, source, target, message, options) =>
+      sendGovernessBridgeMessage(runDir, source, target, message, options),
+    setPaneLabel: (pane, label) => {
+      bestEffortTmux(
+        paneArgv(requirePane(pane), "set-option", ["-p", "@loop_label", label]),
+        tmuxDeps.run
+      );
+    },
+    setGovernessPaneIdentity: (pane, label) => {
+      bestEffortTmux(
+        paneArgv(requirePane(pane), "set-option", ["-p", "@loop_label", label]),
+        tmuxDeps.run
+      );
+      bestEffortTmux(
+        paneArgv(requirePane(pane), "select-pane", ["-T", label]),
+        tmuxDeps.run
+      );
+    },
+    sendKeys: (pane, keys) => {
+      runTmuxEffect(
+        paneArgv(requirePane(pane), "send-keys", keys),
+        tmuxDeps.run
+      );
+    },
+    sendText: (pane, text) => {
+      runTmuxEffect(
+        paneArgv(requirePane(pane), "send-keys", ["-l", "--", text]),
+        tmuxDeps.run
+      );
+    },
+    sleep: (ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
+    summarize: (req) => summarizeSession(req),
+  };
+};
 
 const MS_PER_SECOND = 1000;
 
@@ -7094,8 +7179,11 @@ export const resolveGovernessConfig = (
 // tick, and are folded in when they complete.
 export const runGoverness = async (
   config: GovernessConfig,
-  deps: GovernessDeps = defaultGovernessDeps()
+  injectedDeps?: GovernessDeps
 ): Promise<void> => {
+  const deps =
+    injectedDeps ??
+    defaultGovernessDeps(undefined, undefined, config.manifestPath);
   const states = new Map<Agent, AgentLivenessState>();
   let runState = deps.loadState(config.stateFile) ?? freshRunState();
   if (config.journalFile) {

@@ -20,6 +20,7 @@ import {
   composeGovernessPaneTitle,
   composeGovernessRunIdentity,
   composePaneTitle,
+  defaultGovernessDeps,
   freshRunState,
   type GovernessConfig,
   type GovernessDeps,
@@ -50,6 +51,10 @@ import {
 import { evaluateSessionPressure } from "../../src/loop/session-pressure";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
+import {
+  createManifestHandle,
+  paneTargetFromManifest,
+} from "../../src/loop/tmux-socket";
 import type {
   Agent,
   AgentLivenessState,
@@ -2831,10 +2836,281 @@ test("governess pane identity is reapplied without deduplication", () => {
 
 test("governess pane identity writes the border option and native title", () => {
   const label = "governess.harvto-loop-34";
-  expect(governessPaneIdentityTmuxCommands("%9", label)).toEqual([
-    ["set-option", "-p", "-t", "%9", "@loop_label", label],
-    ["select-pane", "-t", "%9", "-T", label],
+  const handle = createManifestHandle({
+    manifestPath: "/tmp/run/manifest.json",
+    manifestSha256: "a".repeat(64),
+    panes: { tmuxPaneGoverness: "%9" },
+    runId: "34",
+    session: "harvto-loop-34",
+    socket: "/tmp/governess.sock",
+  });
+  const target = paneTargetFromManifest(handle, "tmuxPaneGoverness");
+  if (!target) {
+    throw new Error("expected a Governess pane target");
+  }
+  expect(governessPaneIdentityTmuxCommands(target, label)).toEqual([
+    [
+      "tmux",
+      "-S",
+      "/tmp/governess.sock",
+      "set-option",
+      "-t",
+      "%9",
+      "-p",
+      "@loop_label",
+      label,
+    ],
+    [
+      "tmux",
+      "-S",
+      "/tmp/governess.sock",
+      "select-pane",
+      "-t",
+      "%9",
+      "-T",
+      label,
+    ],
   ]);
+});
+
+test("default Governess tmux controls stay on the manifest-owned server", () => {
+  const handle = createManifestHandle({
+    manifestPath: "/tmp/run/manifest.json",
+    manifestSha256: "a".repeat(64),
+    panes: {
+      tmuxPaneGoverness: "%9",
+      tmuxPaneLeft: "%1",
+      tmuxPaneRight: "%2",
+    },
+    runId: "34",
+    session: "harvto-loop-34",
+    socket: "/tmp/governess.sock",
+  });
+  const calls: string[][] = [];
+  const deps = defaultGovernessDeps(
+    undefined,
+    undefined,
+    "/tmp/run/manifest.json",
+    {
+      readManifestHandle: () => handle,
+      run: ((argv: string[]) => {
+        calls.push(argv);
+        const command = argv[3];
+        let stdout = "";
+        if (command === "capture-pane") {
+          stdout = "pane text";
+        } else if (command === "display-message") {
+          stdout = "0:node";
+        } else if (command === "list-panes") {
+          stdout = "0:a\n0:b\n0:c\n";
+        }
+        return {
+          exitCode: 0,
+          signalCode: null,
+          stderr: Buffer.from(""),
+          stdout: Buffer.from(stdout),
+        };
+      }) as never,
+    }
+  );
+
+  expect(deps.capturePane("%1", true)).toBe("pane text");
+  expect(deps.paneCommand?.("%1")).toBe("0:node");
+  expect(
+    deps.readPaneCommands?.([
+      { agent: "claude", pane: "%1" },
+      { agent: "codex", pane: "%2" },
+    ])
+  ).toEqual({ claude: "0:node", codex: "0:node" });
+  deps.initPaneBorders("harvto-loop-34");
+  deps.respawnPane("%1");
+  deps.setPaneLabel("%1", "Claude");
+  deps.setGovernessPaneIdentity("%9", "Governess");
+  deps.sendKeys("%1", ["Enter"]);
+  deps.sendText("%2", "hello");
+  deps.killSession?.("harvto-loop-34");
+  expect(
+    deps.replacementSessionReady("harvto-loop-34", "/tmp/run/manifest.json")
+  ).toBe(true);
+
+  expect(calls.length).toBeGreaterThan(0);
+  expect(calls.every((argv) => argv[0] === "tmux")).toBe(true);
+  expect(calls.every((argv) => argv[1] === "-S")).toBe(true);
+  expect(calls.every((argv) => argv[2] === "/tmp/governess.sock")).toBe(true);
+  expect(calls).toContainEqual([
+    "tmux",
+    "-S",
+    "/tmp/governess.sock",
+    "send-keys",
+    "-t",
+    "%2",
+    "-l",
+    "--",
+    "hello",
+  ]);
+  expect(calls).toContainEqual([
+    "tmux",
+    "-S",
+    "/tmp/governess.sock",
+    "kill-session",
+    "-t",
+    "harvto-loop-34",
+  ]);
+});
+
+test.each([
+  ["missing", undefined],
+  [
+    "invalid",
+    createManifestHandle({
+      manifestPath: "/tmp/run/manifest.json",
+      manifestSha256: "a".repeat(64),
+      panes: { tmuxPaneLeft: "%1" },
+      runId: "34",
+      session: "harvto-loop-34",
+      socket: "relative.sock",
+    }),
+  ],
+  [
+    "conflicting",
+    createManifestHandle({
+      manifestPath: "/tmp/run/manifest.json",
+      manifestSha256: "a".repeat(64),
+      panes: { tmuxPaneLeft: "%1" },
+      runId: "34",
+      session: "harvto-loop-34",
+      socket: "/tmp/governess.sock",
+      socketConflict: true,
+    }),
+  ],
+  [
+    "unrecorded pane",
+    createManifestHandle({
+      manifestPath: "/tmp/run/manifest.json",
+      manifestSha256: "a".repeat(64),
+      panes: { tmuxPaneLeft: "%2" },
+      runId: "34",
+      session: "harvto-loop-34",
+      socket: "/tmp/governess.sock",
+    }),
+  ],
+] as const)("default Governess rejects a %s target before tmux contact", (_label, handle) => {
+  const calls: string[][] = [];
+  const deps = defaultGovernessDeps(
+    undefined,
+    undefined,
+    "/tmp/run/manifest.json",
+    {
+      readManifestHandle: () => handle,
+      run: ((argv: string[]) => {
+        calls.push(argv);
+        return { exitCode: 0 };
+      }) as never,
+    }
+  );
+  expect(() => deps.capturePane("%1")).toThrow();
+  expect(calls).toEqual([]);
+});
+
+test("replacement readiness uses the replacement manifest server", () => {
+  const current = createManifestHandle({
+    manifestPath: "/tmp/current/manifest.json",
+    manifestSha256: "a".repeat(64),
+    panes: { tmuxPaneLeft: "%1" },
+    runId: "current",
+    session: "current-loop",
+    socket: "/tmp/current.sock",
+  });
+  const replacement = createManifestHandle({
+    manifestPath: "/tmp/replacement/manifest.json",
+    manifestSha256: "b".repeat(64),
+    panes: { tmuxPaneLeft: "%9" },
+    runId: "replacement",
+    session: "replacement-loop",
+    socket: "/tmp/replacement.sock",
+  });
+  const calls: string[][] = [];
+  const deps = defaultGovernessDeps(
+    undefined,
+    undefined,
+    "/tmp/current/manifest.json",
+    {
+      readManifestHandle: (path) =>
+        path === "/tmp/replacement/manifest.json" ? replacement : current,
+      run: ((argv: string[]) => {
+        calls.push(argv);
+        return {
+          exitCode: 0,
+          signalCode: null,
+          stderr: Buffer.from(""),
+          stdout: Buffer.from("0:a\n0:b\n0:c\n"),
+        };
+      }) as never,
+    }
+  );
+
+  expect(
+    deps.replacementSessionReady(
+      "replacement-loop",
+      "/tmp/replacement/manifest.json"
+    )
+  ).toBe(true);
+  expect(calls).toEqual([
+    [
+      "tmux",
+      "-S",
+      "/tmp/replacement.sock",
+      "list-panes",
+      "-t",
+      "replacement-loop",
+      "-F",
+      "#{pane_dead}:#{pane_current_command}",
+    ],
+  ]);
+});
+
+test("batched pane reads resolve every current capability before tmux contact", () => {
+  const first = createManifestHandle({
+    manifestPath: "/tmp/run/manifest.json",
+    manifestSha256: "a".repeat(64),
+    panes: { tmuxPaneLeft: "%1" },
+    runId: "34",
+    session: "harvto-loop-34",
+    socket: "/tmp/governess.sock",
+  });
+  const changed = createManifestHandle({
+    manifestPath: "/tmp/run/manifest.json",
+    manifestSha256: "b".repeat(64),
+    panes: { tmuxPaneLeft: "%1" },
+    runId: "34",
+    session: "harvto-loop-34",
+    socket: "/tmp/changed.sock",
+  });
+  let reads = 0;
+  const calls: string[][] = [];
+  const deps = defaultGovernessDeps(
+    undefined,
+    undefined,
+    "/tmp/run/manifest.json",
+    {
+      readManifestHandle: () => {
+        reads += 1;
+        return reads === 1 ? first : changed;
+      },
+      run: ((argv: string[]) => {
+        calls.push(argv);
+        return { exitCode: 0 };
+      }) as never,
+    }
+  );
+
+  expect(() =>
+    deps.readPaneCommands?.([
+      { agent: "claude", pane: "%1" },
+      { agent: "codex", pane: "%2" },
+    ])
+  ).toThrow();
+  expect(calls).toEqual([]);
 });
 
 test("runGoverness applies pane identity once on startup", async () => {

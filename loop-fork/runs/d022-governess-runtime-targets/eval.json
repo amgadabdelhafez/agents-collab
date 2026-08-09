@@ -1,0 +1,23 @@
+{
+  "task_id": "d022-governess-runtime-targets",
+  "status": "pass",
+  "required": ["unit", "static", "build", "review"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "236/236 assertions passed across launch-reservation, Governess, Governess exit, tmux-socket, run-state, and Governess runtime suites."
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "Ultracite passed for the exact eight changed production and test files; git diff --check passed."
+    },
+    "build": {
+      "status": "pass",
+      "evidence": "bun run build completed successfully."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent zero-write review confirmed manifest-derived tmux authority, fail-closed workspace release, exact predecessor teardown, and zero-contact degraded paths."
+    }
+  }
+}

@@ -132,6 +132,20 @@ const manifestCanStillOwnWorkspace = async (
   target: TmuxTarget | undefined,
   deps: LaunchReservationDeps
 ): Promise<boolean> => {
+  const releasedAtMs = manifest.workspaceReleasedAt
+    ? Date.parse(manifest.workspaceReleasedAt)
+    : Number.NaN;
+  const hasCanonicalRelease =
+    Number.isFinite(releasedAtMs) &&
+    new Date(releasedAtMs).toISOString() === manifest.workspaceReleasedAt;
+  if (
+    manifest.state === "stopped" &&
+    manifest.workspaceBinding === undefined &&
+    hasCanonicalRelease &&
+    target
+  ) {
+    return false;
+  }
   if (!target) {
     deps.skipSink.record({
       consumer: "launch-reservation.manifestCanStillOwnWorkspace",

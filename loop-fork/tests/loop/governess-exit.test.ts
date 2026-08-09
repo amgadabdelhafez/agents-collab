@@ -28,7 +28,6 @@ import {
   acceptGovernessHandoff,
   readGovernessHandoffManifest,
 } from "../../src/loop/governess-handoff";
-import { launchReservationInternals } from "../../src/loop/launch-reservation";
 import {
   createRunManifest,
   readRunManifest,
@@ -1299,23 +1298,39 @@ test("defaultGovernessDeps launchReplacementLoop releases the predecessor worksp
     });
     expect(captured?.state).toBe("stopped");
     expect(captured?.status).toBe("stopped");
-    expect(captured?.tmuxSession).toBeUndefined();
+    expect(captured?.tmuxSession).toBe("predecessor");
     expect(captured?.tmuxSocket).toBe("/tmp/predecessor.sock");
-    expect(captured?.workspaceBinding).toEqual({
-      repoId: "repo-123",
-      root: "/repo",
-    });
+    expect(captured?.workspaceBinding).toBeUndefined();
+    expect(Date.parse(captured?.workspaceReleasedAt ?? "")).not.toBeNaN();
     const persisted = readRunManifest(predecessorPath);
     if (!persisted) {
       throw new Error("predecessor manifest was not persisted");
     }
-    expect(
-      await launchReservationInternals.manifestCanStillOwnWorkspace(
-        persisted,
-        undefined,
-        { tmuxLiveness: async () => "live" } as never
-      )
-    ).toBe(false);
+    expect(persisted.workspaceBinding).toBeUndefined();
+    const teardownCalls: string[][] = [];
+    const teardownDeps = defaultGovernessDeps(
+      undefined,
+      undefined,
+      predecessorPath,
+      {
+        readManifestHandle: (path) => readRunManifestHandle(path),
+        run: ((argv: string[]) => {
+          teardownCalls.push(argv);
+          return { exitCode: 0 };
+        }) as never,
+      }
+    );
+    teardownDeps.killSession?.("predecessor");
+    expect(teardownCalls).toEqual([
+      [
+        "tmux",
+        "-S",
+        "/tmp/predecessor.sock",
+        "kill-session",
+        "-t",
+        "predecessor",
+      ],
+    ]);
   } finally {
     harness.cleanup();
     rmSync(predecessorRoot, { force: true, recursive: true });

@@ -20,6 +20,7 @@ import {
   manifestSocketState,
   pairedLaunchArgv,
   paneArgv,
+  paneTargetByValueFromManifest,
   paneTargetFromManifest,
   parseTmuxEnvSocket,
   requireTmuxSocket,
@@ -238,6 +239,22 @@ describe("target provenance (verify 5a)", () => {
     expect(() => describeTmuxTarget({} as TmuxTarget)).toThrow(
       TmuxTargetProvenanceError
     );
+  });
+
+  test("legacy pane strings resolve only when recorded by the current handle", () => {
+    const handle = handleFor();
+    const pane = paneTargetByValueFromManifest(handle, "%1");
+    expect(pane).toBeDefined();
+    expect(pane ? paneArgv(pane, "capture-pane", ["-p"]) : []).toEqual([
+      "tmux",
+      "-S",
+      SOCKET_A,
+      "capture-pane",
+      "-t",
+      "%1",
+      "-p",
+    ]);
+    expect(paneTargetByValueFromManifest(handle, "%999")).toBeUndefined();
   });
 
   test("the module-private socket-only tmuxArgv is absent from public exports", () => {

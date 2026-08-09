@@ -508,6 +508,30 @@ export const paneTargetFromManifest = (
   return makePaneTarget(socket, session, value);
 };
 
+/**
+ * Resolves a persisted pane string back to its owning opaque pane capability.
+ * This is for runtime adapters that receive legacy pane-string callbacks: the
+ * value must occur in the current handle, so an arbitrary caller string cannot
+ * select a pane on another server.
+ */
+export const paneTargetByValueFromManifest = (
+  handle: ManifestHandle,
+  pane: string
+): OwnedPaneTarget | undefined => {
+  const { panes } = contentsOf(handle);
+  for (const [field, value] of Object.entries(panes)) {
+    if (Array.isArray(value)) {
+      const index = value.indexOf(pane);
+      if (index >= 0) {
+        return paneTargetFromManifest(handle, field, index);
+      }
+    } else if (value === pane) {
+      return paneTargetFromManifest(handle, field);
+    }
+  }
+  return undefined;
+};
+
 const makePaneTarget = (
   socket: TmuxSocket,
   session: string,

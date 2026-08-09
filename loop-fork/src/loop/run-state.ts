@@ -135,6 +135,7 @@ export interface RunManifest {
   tmuxSocket?: string;
   updatedAt: string;
   workspaceBinding?: LaunchWorkspaceBinding;
+  workspaceReleasedAt?: string;
   worldModel?: RunWorldModelBinding;
 }
 
@@ -229,6 +230,7 @@ interface RunManifestInput {
   tmuxSocket?: string;
   updatedAt?: string;
   workspaceBinding?: LaunchWorkspaceBinding;
+  workspaceReleasedAt?: string;
   worldModel?: RunWorldModelBinding;
 }
 
@@ -513,6 +515,7 @@ const launchReservationManifestFields = (
     | "launchClaimId"
     | "sourceTaskSha256"
     | "workspaceBinding"
+    | "workspaceReleasedAt"
   >
 ): Pick<
   RunManifest,
@@ -521,6 +524,7 @@ const launchReservationManifestFields = (
   | "launchClaimId"
   | "sourceTaskSha256"
   | "workspaceBinding"
+  | "workspaceReleasedAt"
 > => ({
   ...(input.launchAttemptId ? { launchAttemptId: input.launchAttemptId } : {}),
   ...(input.launchAttemptPid
@@ -533,6 +537,9 @@ const launchReservationManifestFields = (
   ...(input.workspaceBinding
     ? { workspaceBinding: { ...input.workspaceBinding } }
     : {}),
+  ...(input.workspaceReleasedAt
+    ? { workspaceReleasedAt: input.workspaceReleasedAt }
+    : {}),
 });
 
 const readLaunchReservationManifestFields = (
@@ -544,6 +551,7 @@ const readLaunchReservationManifestFields = (
   | "launchClaimId"
   | "sourceTaskSha256"
   | "workspaceBinding"
+  | "workspaceReleasedAt"
 > => {
   const launchAttemptId = firstString(parsed, [
     "launchAttemptId",
@@ -568,12 +576,17 @@ const readLaunchReservationManifestFields = (
   const workspaceBinding = readWorkspaceBinding(
     parsed.workspaceBinding ?? parsed.workspace_binding
   );
+  const workspaceReleasedAt = firstString(parsed, [
+    "workspaceReleasedAt",
+    "workspace_released_at",
+  ]);
   return {
     ...(launchAttemptId ? { launchAttemptId } : {}),
     ...(launchAttemptPid && launchAttemptPid > 0 ? { launchAttemptPid } : {}),
     ...(launchClaimId ? { launchClaimId } : {}),
     ...(sourceTaskSha256 ? { sourceTaskSha256 } : {}),
     ...(workspaceBinding ? { workspaceBinding } : {}),
+    ...(workspaceReleasedAt ? { workspaceReleasedAt } : {}),
   };
 };
 

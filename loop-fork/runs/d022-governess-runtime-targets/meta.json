@@ -1,0 +1,9 @@
+{
+  "id": "d022-governess-runtime-targets",
+  "mode": "planned",
+  "created_at": "2026-08-09T19:28:00Z",
+  "status": "done",
+  "description": "Bind the main Governess runtime command set and handoff teardown to manifest tmux targets.",
+  "estimated_loc": 650,
+  "ended_at": "2026-08-09T19:46:23Z"
+}

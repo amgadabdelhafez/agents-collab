@@ -804,6 +804,62 @@ test("manifestCanStillOwnWorkspace records unavailable targets and preserves own
   }
 });
 
+test("a durable Governess workspace release permits the successor reservation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    writeFixtureManifest(home, binding, {
+      state: "stopped",
+      tmuxSession: "predecessor-loop",
+      tmuxSocket: "/tmp/predecessor.sock",
+      workspaceReleasedAt: "2026-08-09T19:30:00.000Z",
+    });
+    let tmuxContacts = 0;
+
+    const claim = await reservePairedLaunch(makeOptions(), binding, {
+      ...reservationDeps(home),
+      tmuxLiveness: () => {
+        tmuxContacts += 1;
+        return "live";
+      },
+    });
+
+    expect(claim.reserved).toBe(true);
+    expect(tmuxContacts).toBe(0);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test.each([
+  "2026-02-30T19:30:00.000Z",
+  "2026-08-09T19:30:00Z",
+] as const)("a non-canonical workspace release %s grants no authority", async (workspaceReleasedAt) => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    writeFixtureManifest(home, binding, {
+      state: "stopped",
+      tmuxSession: "predecessor-loop",
+      tmuxSocket: "/tmp/predecessor.sock",
+      workspaceReleasedAt,
+    });
+
+    await expect(
+      reservePairedLaunch(makeOptions(), binding, {
+        ...reservationDeps(home),
+        tmuxLiveness: () => "live",
+      })
+    ).rejects.toThrow("still owns workspace");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test("reserveRequestedLaunch records unavailable targets and refuses mutation", async () => {
   for (const fixture of unavailableTargetFixtures) {
     const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
