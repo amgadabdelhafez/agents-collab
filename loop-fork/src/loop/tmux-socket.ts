@@ -444,6 +444,18 @@ const targetOf = (target: TmuxTarget) => {
 };
 
 /**
+ * Read-only identity for diagnostics and rendering. This does not mint a
+ * target and cannot authorize an effect; it only exposes the two values from
+ * the same opaque target snapshot so observers cannot mix manifest versions.
+ */
+export const describeTmuxTarget = (
+  target: TmuxTarget
+): Readonly<{ session: string; socket: string }> => {
+  const { session, socket } = targetOf(target);
+  return Object.freeze({ session, socket });
+};
+
+/**
  * The one and only production constructor of `OwnedPaneTarget` (R10, as ruled
  * by the harness owner 2026-08-08). Reads a pane field from the same handle
  * that yields the target, so a pane can never be paired with a foreign target.

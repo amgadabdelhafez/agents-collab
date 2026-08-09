@@ -1,0 +1,11 @@
+{
+  "task_id": "d020-panel-tmux-targets",
+  "status": "pass",
+  "required": ["unit", "static", "build", "review"],
+  "dimensions": {
+    "unit": { "status": "pass", "evidence": "Panel and tmux-socket suites 68/68" },
+    "static": { "status": "pass", "evidence": "Exact four-file Ultracite check and git diff check clean" },
+    "build": { "status": "pass", "evidence": "bun run build succeeded" },
+    "review": { "status": "pass", "evidence": "Independent corrected zero-write review PASS" }
+  }
+}

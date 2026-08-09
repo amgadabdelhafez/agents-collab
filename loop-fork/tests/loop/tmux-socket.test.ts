@@ -10,6 +10,7 @@ import {
   createManifestHandle,
   createTmuxSkipSink,
   DARWIN_SOCKET_BYTE_LIMIT,
+  describeTmuxTarget,
   LINUX_SOCKET_BYTE_LIMIT,
   launchAttachCommand,
   launchServerArgv,
@@ -222,6 +223,21 @@ describe("target provenance (verify 5a)", () => {
       socket: "/tmp/ls-b/b.sock",
     } as unknown as ManifestHandle;
     expect(() => targetFromManifest(forged)).toThrow(TmuxTargetProvenanceError);
+  });
+
+  test("diagnostic identity comes from one target and cannot mint authority", () => {
+    const target = targetFromManifest(handleFor());
+    expect(target).toBeDefined();
+    expect(describeTmuxTarget(target as TmuxTarget)).toEqual({
+      session: SESSION_A,
+      socket: SOCKET_A,
+    });
+    expect(Object.isFrozen(describeTmuxTarget(target as TmuxTarget))).toBe(
+      true
+    );
+    expect(() => describeTmuxTarget({} as TmuxTarget)).toThrow(
+      TmuxTargetProvenanceError
+    );
   });
 
   test("the module-private socket-only tmuxArgv is absent from public exports", () => {

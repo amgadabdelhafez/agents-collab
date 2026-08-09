@@ -153,6 +153,208 @@ repo-loop-abc123\t1
   ]);
 });
 
+test("panel enumerates only recorded sockets and keeps same-named sessions distinct", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-panel-targets-"));
+  const writeManifest = (
+    runId: string,
+    fields: Record<string, unknown>
+  ): void => {
+    const runDir = join(root, "repo", runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, "manifest.json"),
+      `${JSON.stringify({ runId, ...fields })}\n`
+    );
+  };
+  writeManifest("1", {
+    tmuxSession: "repo-loop-shared",
+    tmuxSocket: "/tmp/panel-a.sock",
+  });
+  writeManifest("2", {
+    tmuxSession: "repo-loop-shared",
+    tmuxSocket: "/tmp/panel-b.sock",
+  });
+  writeManifest("3", { tmuxSession: "repo-loop-legacy" });
+  writeManifest("4", {
+    tmuxSession: "repo-loop-dead",
+    tmuxSocket: "/tmp/panel-a.sock",
+  });
+  writeManifest("5", {
+    tmuxSession: "repo-loop-indeterminate",
+    tmuxSocket: "/tmp/panel-c.sock",
+  });
+  writeManifest("6", {
+    tmuxSession: "repo-loop-invalid",
+    tmuxSocket: "relative.sock",
+  });
+  writeManifest("7", {
+    tmux_session: "repo-loop-conflicting",
+    tmux_socket: "/tmp/panel-b.sock",
+    tmuxSocket: "/tmp/panel-a.sock",
+  });
+  const calls: string[][] = [];
+
+  try {
+    const rows = await panelInternals.collectManifestTmuxRows(root, (argv) => {
+      calls.push(argv);
+      if (argv[2] === "/tmp/panel-a.sock") {
+        return Promise.resolve("repo-loop-shared\t1\n");
+      }
+      if (argv[2] === "/tmp/panel-b.sock") {
+        return Promise.resolve("repo-loop-shared\t0\n");
+      }
+      return Promise.reject(new Error("socket query failed"));
+    });
+
+    expect(calls).toHaveLength(3);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        [
+          "tmux",
+          "-S",
+          "/tmp/panel-a.sock",
+          "list-sessions",
+          "-F",
+          "#{session_name}\t#{session_attached}",
+        ],
+        [
+          "tmux",
+          "-S",
+          "/tmp/panel-b.sock",
+          "list-sessions",
+          "-F",
+          "#{session_name}\t#{session_attached}",
+        ],
+        [
+          "tmux",
+          "-S",
+          "/tmp/panel-c.sock",
+          "list-sessions",
+          "-F",
+          "#{session_name}\t#{session_attached}",
+        ],
+      ])
+    );
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get("1")).toMatchObject({
+      attachCommand: "tmux -S '/tmp/panel-a.sock' attach -t 'repo-loop-shared'",
+      state: "live",
+    });
+    expect(byId.get("2")).toMatchObject({
+      attachCommand: "tmux -S '/tmp/panel-b.sock' attach -t 'repo-loop-shared'",
+      state: "live",
+    });
+    expect(byId.get("3")).toMatchObject({ state: "unknown" });
+    expect(byId.get("3")?.attachCommand).toBeUndefined();
+    expect(byId.get("4")).toMatchObject({ state: "dead" });
+    expect(byId.get("4")?.attachCommand).toBeUndefined();
+    expect(byId.get("5")).toMatchObject({ state: "unknown" });
+    expect(byId.get("5")?.attachCommand).toBeUndefined();
+    expect(byId.get("6")).toMatchObject({
+      socketState: "invalid",
+      state: "unknown",
+    });
+    expect(byId.get("6")?.attachCommand).toBeUndefined();
+    expect(byId.get("7")).toMatchObject({
+      socketState: "conflicting",
+      state: "unknown",
+    });
+    expect(byId.get("7")?.attachCommand).toBeUndefined();
+    const lines = panelInternals.buildLines(
+      { loopRuns: [], rows: [], tmuxRows: rows },
+      [],
+      240
+    );
+    expect(lines.find((line) => line.startsWith("id=1 "))).toContain(
+      "attach: tmux -S '/tmp/panel-a.sock' attach -t 'repo-loop-shared'"
+    );
+    expect(lines.find((line) => line.startsWith("id=3 "))).toContain(
+      "(unknown) socket: unknown/non-attachable"
+    );
+    expect(lines.find((line) => line.startsWith("id=3 "))).not.toContain(
+      "attach:"
+    );
+    expect(lines.find((line) => line.startsWith("id=4 "))).toContain(
+      "(dead) non-attachable"
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("panel attach hints shell-quote the exact recorded target", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-panel-attach-"));
+  const runDir = join(root, "repo", "shell");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      runId: "shell",
+      tmuxSession: "repo-loop-shell",
+      tmuxSocket: "/tmp/panel weird;$x.sock",
+    })}\n`
+  );
+  try {
+    const rows = await panelInternals.collectManifestTmuxRows(root, () =>
+      Promise.resolve("repo-loop-shell\t0\n")
+    );
+    expect(rows[0]?.attachCommand).toBe(
+      "tmux -S '/tmp/panel weird;$x.sock' attach -t 'repo-loop-shell'"
+    );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("panel keeps display and attach identity on one manifest snapshot", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-panel-snapshot-"));
+  const runDir = join(root, "repo", "snapshot");
+  const manifestPath = join(runDir, "manifest.json");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      runId: "snapshot",
+      tmuxSession: "repo-loop-before",
+      tmuxSocket: "/tmp/panel-before.sock",
+    })}\n`
+  );
+  try {
+    const rows = await panelInternals.collectManifestTmuxRows(root, (argv) => {
+      expect(argv).toEqual([
+        "tmux",
+        "-S",
+        "/tmp/panel-before.sock",
+        "list-sessions",
+        "-F",
+        "#{session_name}\t#{session_attached}",
+      ]);
+      writeFileSync(
+        manifestPath,
+        `${JSON.stringify({
+          runId: "snapshot",
+          tmuxSession: "repo-loop-after",
+          tmuxSocket: "/tmp/panel-after.sock",
+        })}\n`
+      );
+      return Promise.resolve("repo-loop-before\t0\nrepo-loop-after\t1\n");
+    });
+    expect(rows).toEqual([
+      {
+        attached: false,
+        attachCommand:
+          "tmux -S '/tmp/panel-before.sock' attach -t 'repo-loop-before'",
+        id: "snapshot",
+        session: "repo-loop-before",
+        socketState: "unknown",
+        state: "live",
+      },
+    ]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("projectKeyFromCwd matches claude project folder naming", () => {
   expect(panelInternals.projectKeyFromCwd("/Users/me/code/loop")).toBe(
     "-Users-me-code-loop"

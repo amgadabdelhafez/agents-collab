@@ -10,11 +10,24 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { file, spawn } from "bun";
-import { parseRunLifecycleState, runStatusFromState } from "./run-state";
+import {
+  parseRunLifecycleState,
+  readRunManifestHandle,
+  runStatusFromState,
+} from "./run-state";
 import {
   TMUX_CONTROL_KILL_SIGNAL,
   TMUX_CONTROL_TIMEOUT_MS,
 } from "./tmux-control";
+import {
+  describeTmuxTarget,
+  manifestSocketState,
+  serverArgv,
+  type TmuxSocketState,
+  type TmuxTarget,
+  targetFromManifest,
+  tmuxAttachCommand,
+} from "./tmux-socket";
 
 type Agent = "claude" | "codex";
 
@@ -65,9 +78,12 @@ interface LoopRunEntry {
 }
 
 interface TmuxRow {
+  attachCommand?: string;
   attached: boolean;
   id: string;
   session: string;
+  socketState?: TmuxSocketState;
+  state?: "dead" | "live" | "unknown";
 }
 
 interface ClaudeCache {
@@ -274,6 +290,26 @@ const parseTmuxSessions = (text: string): TmuxRow[] => {
     (a, b) =>
       TMUX_ID_COLLATOR.compare(a.id, b.id) || a.session.localeCompare(b.session)
   );
+  return rows;
+};
+
+const parseListedTmuxSessions = (text: string): TmuxRow[] => {
+  const rows: TmuxRow[] = [];
+  for (const line of text.split(NEWLINE_RE)) {
+    if (!line.trim()) {
+      continue;
+    }
+    const [sessionRaw, attachedRaw = "0"] = line.split("\t");
+    const session = sessionRaw?.trim() ?? "";
+    if (!session) {
+      continue;
+    }
+    rows.push({
+      attached: attachedRaw.trim() === "1",
+      id: session,
+      session,
+    });
+  }
   return rows;
 };
 
@@ -843,11 +879,15 @@ const claudeRow = async (
 
 const collectSnapshot = async (cache: ClaudeCache): Promise<Snapshot> => {
   const loopRuns = collectLoopRuns(LOOP_RUNS_DIR);
-  const tmuxRows = parseTmuxSessions(
-    await run(
-      ["tmux", "list-sessions", "-F", "#{session_name}\t#{session_attached}"],
-      true
-    )
+  const tmuxRows = await collectManifestTmuxRows(
+    LOOP_RUNS_DIR,
+    async (argv) => {
+      try {
+        return await run(argv);
+      } catch {
+        return undefined;
+      }
+    }
   );
   const ps = await run(["ps", "-Ao", "pid,ppid,command", "-ww"], true);
   if (!ps.trim()) {
@@ -1039,6 +1079,118 @@ const collectLoopRuns = (root: string): LoopRunEntry[] => {
   return runs.slice(0, LOOP_RUN_LIMIT);
 };
 
+type PanelTmuxQuery = (argv: string[]) => Promise<string | undefined>;
+
+interface ManifestTmuxEntry {
+  id: string;
+  session: string;
+  socketState: TmuxSocketState;
+  target?: TmuxTarget;
+}
+
+const collectManifestTmuxEntries = (root: string): ManifestTmuxEntry[] =>
+  newestFirst(listFiles(root, "manifest.json"))
+    .map((manifestPath): ManifestTmuxEntry | undefined => {
+      const handle = readRunManifestHandle(manifestPath);
+      const manifest = readJson(manifestPath);
+      if (!(handle && manifest)) {
+        return undefined;
+      }
+      const target = targetFromManifest(handle);
+      const targetIdentity = target ? describeTmuxTarget(target) : undefined;
+      return {
+        id: handle.runId,
+        session: targetIdentity
+          ? targetIdentity.session
+          : str(manifest, "tmuxSession") ||
+            str(manifest, "tmux_session") ||
+            "-",
+        socketState: manifestSocketState(handle),
+        target,
+      };
+    })
+    .filter((entry): entry is ManifestTmuxEntry => entry !== undefined);
+
+const collectManifestTmuxRows = async (
+  root: string,
+  query: PanelTmuxQuery
+): Promise<TmuxRow[]> => {
+  const entries = collectManifestTmuxEntries(root);
+  const requests = new Map<
+    string,
+    { argv: string[]; result?: Promise<string | undefined> }
+  >();
+  for (const entry of entries) {
+    if (!entry.target) {
+      continue;
+    }
+    const argv = serverArgv(entry.target, [
+      "list-sessions",
+      "-F",
+      "#{session_name}\t#{session_attached}",
+    ]);
+    const socket = argv[2];
+    if (socket && !requests.has(socket)) {
+      requests.set(socket, { argv });
+    }
+  }
+  for (const request of requests.values()) {
+    request.result = query(request.argv).catch(() => undefined);
+  }
+
+  const sessionsBySocket = new Map<string, TmuxRow[] | undefined>();
+  for (const [socket, request] of requests) {
+    const output = await request.result;
+    sessionsBySocket.set(
+      socket,
+      output === undefined ? undefined : parseListedTmuxSessions(output)
+    );
+  }
+
+  return entries.map((entry): TmuxRow => {
+    if (!entry.target) {
+      return {
+        attached: false,
+        id: entry.id,
+        session: entry.session,
+        socketState: entry.socketState,
+        state: "unknown",
+      };
+    }
+    const socket = serverArgv(entry.target, ["list-sessions"])[2];
+    const listed = socket ? sessionsBySocket.get(socket) : undefined;
+    if (!listed) {
+      return {
+        attached: false,
+        id: entry.id,
+        session: entry.session,
+        socketState: "unknown",
+        state: "unknown",
+      };
+    }
+    const live = listed.find(
+      (candidate) => candidate.session === entry.session
+    );
+    if (!live) {
+      return {
+        attached: false,
+        id: entry.id,
+        session: entry.session,
+        socketState: entry.socketState,
+        state: "dead",
+      };
+    }
+    return {
+      attached: live.attached,
+      attachCommand: tmuxAttachCommand(entry.target),
+      id: entry.id,
+      session: entry.session,
+      socketState: entry.socketState,
+      state: "live",
+    };
+  });
+};
+
 const seedDoneRows = (): DoneRow[] => {
   const codexPaths = newestFirst(listFiles(CODEX_SESSIONS_DIR, ".jsonl")).slice(
     0,
@@ -1161,12 +1313,25 @@ const pushStackedSection = <T>(
   }
 };
 
-const tmuxState = (attached: boolean): string =>
-  attached ? "attached" : "detached";
+const tmuxState = (row: TmuxRow): string => {
+  if (row.state && row.state !== "live") {
+    return row.state;
+  }
+  return row.attached ? "live, attached" : "live, detached";
+};
+
+const tmuxRowAction = (row: TmuxRow): string => {
+  if (row.attachCommand) {
+    return ` attach: ${row.attachCommand}`;
+  }
+  return row.state === "dead"
+    ? " non-attachable"
+    : " socket: unknown/non-attachable";
+};
 
 const tmuxLine = (row: TmuxRow, width: number): string =>
   trimText(
-    `id=${row.id} session=${row.session} (${tmuxState(row.attached)}) attach: tmux attach -t ${row.session}`,
+    `id=${row.id} session=${row.session} (${tmuxState(row)})${tmuxRowAction(row)}`,
     Math.max(20, width)
   );
 
@@ -1347,6 +1512,7 @@ export const runPanel = async (): Promise<void> => {
 
 export const panelInternals = {
   buildLines,
+  collectManifestTmuxRows,
   collectLoopRuns,
   parseLsofSnapshot,
   parseProcessList,
