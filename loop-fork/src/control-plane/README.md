@@ -28,5 +28,16 @@ field, changing its meaning, or changing validation of an accepted value needs
 a new `agentops/vN` version and parallel validation support while older records
 remain in use. Unknown schema or CloudEvents versions fail closed.
 
-The module defines data boundaries only. It does not choose lifecycle states,
-workflow authority, delivery semantics, storage, or an execution engine.
+`management-state.ts` adds the approved Phase 0B pure management semantics:
+
+- legal work-item, assignment, incident, review, and release transitions;
+- dependency and WIP admission gates plus explicit release approval;
+- ordered priority/severity definitions and deterministic deadline attention;
+- configurable IANA portfolio shifts at local `00:00`, `08:00`, and `16:00`,
+  defaulting to `America/Los_Angeles`;
+- retrospective and acknowledged handoff records that require
+  `workerContinuity: preserve`.
+
+Both modules remain engine-neutral and side-effect free. They do not choose
+workflow authority, delivery, storage, an evaluation backend, or an execution
+engine, and they are not imported by the installed runtime.

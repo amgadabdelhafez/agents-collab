@@ -1,0 +1,126 @@
+{
+  "task_id": "agent-operations-phase0b-management",
+  "feature": "agent-operations-phase0b-management",
+  "timestamp": "2026-08-09T05:05:50Z",
+  "evaluator": "codex-implementation-evidence",
+  "verdict": "pass",
+  "base_commit": "3c504ee3a593aa91d8d5f5a6810617e8725a33ff",
+  "baseline_failures": [],
+  "findings": [
+    {
+      "id": "R1",
+      "status": "resolved",
+      "severity": "blocking",
+      "summary": "Added an exact due state, runtime dependency and WIP validation, a trusted approval resolver boundary, explicit DST gap/fold disambiguation, and complete handoff validation."
+    },
+    {
+      "id": "R2",
+      "status": "resolved",
+      "severity": "blocking",
+      "summary": "Applied stable-ID validation to transition policy input, rejected unknown aggregates without throwing, validated approval authority and provenance evidence, and rejected calendar-invalid timestamps at every consumer."
+    },
+    {
+      "id": "R3",
+      "status": "resolved",
+      "severity": "blocking",
+      "summary": "Applied stable and unique identity validation to handoff shift and open-work IDs and added missing degraded approval and persisted-acknowledgement timestamp evidence."
+    }
+  ],
+  "checks": {
+    "focused_test": {
+      "status": "pass",
+      "command": "cd loop-fork && bun run test:file -- tests/control-plane/management-state.test.ts",
+      "passed": 8,
+      "failed": 0,
+      "assertions": 60
+    },
+    "scoped_typecheck": {
+      "status": "pass",
+      "command": "cd loop-fork && ./node_modules/.bin/tsc --noEmit --strict --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/control-plane/contracts.ts src/control-plane/management-state.ts tests/control-plane/management-state.test.ts"
+    },
+    "scoped_static_check": {
+      "status": "pass",
+      "command": "cd loop-fork && bun run check -- src/control-plane/management-state.ts tests/control-plane/management-state.test.ts",
+      "errors": 0,
+      "warnings": 0,
+      "files_checked": 2
+    },
+    "build_smoke": {
+      "status": "pass",
+      "command": "cd loop-fork && bun run build",
+      "modules_bundled": 3054,
+      "note": "The pure module is intentionally outside the existing runtime import graph."
+    },
+    "diff_check": {
+      "status": "pass",
+      "command": "git diff --check"
+    }
+  },
+  "acceptance": {
+    "legal_and_illegal_transitions": true,
+    "malformed_transition_input_rejects_without_throwing": true,
+    "dependencies_fail_closed": true,
+    "wip_admission_fails_closed": true,
+    "release_approval_uses_trusted_resolver": true,
+    "deadline_due_and_overdue_are_distinct": true,
+    "calendar_invalid_timestamps_rejected_at_every_consumer": true,
+    "default_timezone_is_america_los_angeles": true,
+    "winter_and_summer_offsets_verified": true,
+    "dst_gap_and_fold_disambiguation_verified": true,
+    "handoff_requires_all_acknowledgements": true,
+    "handoff_preserves_worker_continuity": true,
+    "engine_neutral": true,
+    "service_free": true,
+    "existing_runtime_import_graph_unchanged": true
+  },
+  "candidate_file_sha256": {
+    "loop-fork/src/control-plane/README.md": "440295ec6ff68d3105cc916231217c21a16fdc3efde7f7c101fe9080d4100b5e",
+    "loop-fork/src/control-plane/management-state.ts": "a3b20f5032b6bfad84ef792f9be67319d28dda2a11432d9f5b02680afa66ff67",
+    "loop-fork/tests/control-plane/management-state.test.ts": "89a9865802be2ce663c1bbcd88353fc991a11ddf61fb58ddd229e9c6fdc0f5a9",
+    "specs/agent-operations-phase0b-management/spec.md": "184a9ff175a94acb26274d4515661a8b56450759afad80d684f10c7a40a4bbbd",
+    "specs/agent-operations-phase0b-management/plan.md": "e65efb49d6bac83b155fba355cd785ec152dbc3e4b7f0de14c86ba3b05321864",
+    "specs/agent-operations-phase0b-management/tasks.md": "5f8d1a7bd296c9d51519b624d4056a9f04b7c54c482ae6df9729bfd39150943a",
+    "specs/agent-operations-phase0b-management/verify.md": "b3e573a904d34caf89d00065859f77acabd8767e03e6138df95591bf596e0459",
+    "runs/agent-operations-phase0b-management/meta.json": "a6cf2b1211bd5e5f1fc7d158029ace096ef89fcf9f282368df5ce89b6f2a5102",
+    "runs/agent-operations-phase0b-management/task-log.md": "702abece4f9a46dbf9b88f0ef569b28fd8088b62416f5e90b100826e717a90cc"
+  },
+  "review": {
+    "reviewer": "codex-native-subagent",
+    "mode": "zero-write",
+    "verdict": "PASS",
+    "rounds": [
+      {
+        "verdict": "REVISE",
+        "blocking_findings": ["deadline due state", "runtime policy shapes", "release authority", "DST disambiguation", "handoff validation"]
+      },
+      {
+        "verdict": "REVISE",
+        "blocking_findings": ["stable policy IDs", "unknown aggregate", "trusted approval resolution", "real-calendar timestamps"]
+      },
+      {
+        "verdict": "REVISE",
+        "blocking_findings": ["handoff stable IDs", "remaining timestamp consumer regressions"]
+      },
+      {
+        "verdict": "PASS",
+        "blocking_findings": []
+      }
+    ]
+  },
+  "live_verification": {
+    "harvto": "run 177 remained live on /private/tmp/harvto-tmux/tmux-501/default",
+    "ai_cur": "lane advanced independently from run 12 to run 14 and remained live on /private/tmp/ai-cur-tmux/tmux-501/default",
+    "installed_binary_sha256": "88dcfe2d6bacb6ff6083dde31fbee96fae608d54eff5861e0763310c98810bf5",
+    "signals_or_messages_sent": false
+  },
+  "side_effects": {
+    "live_service_started": false,
+    "installed_binary_changed": false,
+    "product_lane_changed": false,
+    "defect_backlog_changed": false,
+    "dependency_manifest_changed": false,
+    "global_install": false,
+    "remote_push": false,
+    "merge": false
+  }
+}

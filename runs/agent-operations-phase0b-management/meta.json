@@ -1,0 +1,10 @@
+{
+  "task_id": "agent-operations-phase0b-management",
+  "base_commit": "3c504ee3a593aa91d8d5f5a6810617e8725a33ff",
+  "branch": "codex/agent-operations-phase0b-management",
+  "worktree": "/private/tmp/agents-collab-agent-operations-phase0b-management",
+  "reserved_tmux_socket": "/private/tmp/agent-operations-phase0b-management-tmux/tmux-501/default",
+  "runtime_started": false,
+  "runtime_reason": "The approved slice is a pure service-free contract module; no app or tmux session is permitted or required.",
+  "live_authority": false
+}
