@@ -6,6 +6,7 @@ import {
   gcStaleClaudeBridgeRegistrations,
   resolveClaudeRegistryPath,
 } from "../../src/loop/claude-config-gc";
+import { type TmuxSkipRecord, targetArgv } from "../../src/loop/tmux-socket";
 
 const makeRoot = (): string =>
   mkdtempSync(join(tmpdir(), "loop-claude-config-gc-"));
@@ -56,9 +57,11 @@ test("startup GC removes only dead loop-owned bridge registrations", () => {
   });
   writeManifest(deadRun, {
     pid: 333,
+    runId: "dead",
     state: "working",
     status: "running",
     tmuxSession: "dead-loop",
+    tmuxSocket: "/tmp/loop-dead.sock",
   });
   const registryPath = join(root, ".claude.json");
   writeFileSync(
@@ -80,6 +83,7 @@ test("startup GC removes only dead loop-owned bridge registrations", () => {
     "utf8"
   );
   const calls: Array<{ args: string[]; cwd: string }> = [];
+  const tmuxCalls: string[][] = [];
   const lines: string[] = [];
   const result = gcStaleClaudeBridgeRegistrations({
     deps: {
@@ -89,7 +93,10 @@ test("startup GC removes only dead loop-owned bridge registrations", () => {
         calls.push({ args, cwd });
         return { exitCode: 0 };
       },
-      tmuxSessionAlive: () => false,
+      tmuxLiveness: (target) => {
+        tmuxCalls.push(targetArgv(target, "has-session"));
+        return "dead";
+      },
     },
     log: (line) => lines.push(line),
     registryPath,
@@ -102,6 +109,9 @@ test("startup GC removes only dead loop-owned bridge registrations", () => {
     "loop-bridge-missing",
   ]);
   expect(calls.every((call) => call.cwd === projectPath)).toBe(true);
+  expect(tmuxCalls).toEqual([
+    ["tmux", "-S", "/tmp/loop-dead.sock", "has-session", "-t", "dead-loop"],
+  ]);
   expect(lines).toHaveLength(3);
   rmSync(root, { force: true, recursive: true });
 });
@@ -142,12 +152,15 @@ test("startup GC preserves a registration when tmux liveness is unknown", () => 
   const projectPath = join(root, "project");
   const runDir = join(root, "run");
   const registryPath = join(root, ".claude.json");
+  const skips: TmuxSkipRecord[] = [];
   mkdirSync(projectPath, { recursive: true });
   writeManifest(runDir, {
     pid: 999,
+    runId: "unknown",
     state: "working",
     status: "running",
     tmuxSession: "possibly-live-loop",
+    tmuxSocket: "/tmp/possibly-live.sock",
   });
   writeFileSync(
     registryPath,
@@ -169,11 +182,91 @@ test("startup GC preserves a registration when tmux liveness is unknown", () => 
       runCommand: () => {
         throw new Error("unknown liveness must not remove the registration");
       },
-      tmuxSessionAlive: () => undefined,
+      skipSink: { record: (record) => skips.push(record) },
+      tmuxLiveness: () => "unknown",
     },
     registryPath,
   });
   expect(result).toEqual({ failed: 0, kept: 1, removed: 0, scanned: 1 });
+  expect(skips).toEqual([
+    {
+      consumer: "claude-config-gc.staleReason",
+      effectSkipped: "remove-claude-bridge-registration",
+      pane: null,
+      reason:
+        "exact manifest target liveness is indeterminate; preserving registration",
+      runId: "unknown",
+      session: "possibly-live-loop",
+      socketState: "unknown",
+    },
+  ]);
+  rmSync(root, { force: true, recursive: true });
+});
+
+test.each([
+  ["missing", {}, "missing"],
+  ["invalid", { tmuxSocket: "relative.sock" }, "invalid"],
+  [
+    "conflicting",
+    { tmux_socket: "/tmp/server-b.sock", tmuxSocket: "/tmp/server-a.sock" },
+    "conflicting",
+  ],
+] as const)("startup GC records a %s manifest target and removes nothing", (label, socketFields, socketState) => {
+  const root = makeRoot();
+  const projectPath = join(root, "project");
+  const runDir = join(root, "run");
+  const registryPath = join(root, ".claude.json");
+  const skips: TmuxSkipRecord[] = [];
+  mkdirSync(projectPath, { recursive: true });
+  writeManifest(runDir, {
+    pid: 999,
+    runId: label,
+    state: "working",
+    status: "running",
+    tmuxSession: "possibly-live-loop",
+    ...socketFields,
+  });
+  writeFileSync(
+    registryPath,
+    `${JSON.stringify({
+      projects: {
+        [projectPath]: {
+          mcpServers: {
+            "loop-bridge-invalid": bridgeConfig(runDir),
+          },
+        },
+      },
+    })}\n`,
+    "utf8"
+  );
+
+  const result = gcStaleClaudeBridgeRegistrations({
+    deps: {
+      pathExists: () => true,
+      pidAlive: () => false,
+      runCommand: () => {
+        throw new Error("invalid target must not remove the registration");
+      },
+      skipSink: { record: (record) => skips.push(record) },
+      tmuxLiveness: () => {
+        throw new Error("invalid target must not be probed");
+      },
+    },
+    registryPath,
+  });
+
+  expect(result).toEqual({ failed: 0, kept: 1, removed: 0, scanned: 1 });
+  expect(skips).toEqual([
+    {
+      consumer: "claude-config-gc.staleReason",
+      effectSkipped: "remove-claude-bridge-registration",
+      pane: null,
+      reason: "manifest target is unavailable; preserving registration",
+      runId: label,
+      session: "possibly-live-loop",
+      socketState,
+    },
+  ]);
   rmSync(root, { force: true, recursive: true });
 });
 
@@ -185,6 +278,7 @@ test("startup GC preserves an active detached run with missing tmux ownership", 
   mkdirSync(projectPath, { recursive: true });
   writeManifest(runDir, {
     pid: 4405,
+    runId: "101",
     state: "working",
     status: "running",
     tmuxPaneLeft: "%0",
@@ -204,6 +298,7 @@ test("startup GC preserves an active detached run with missing tmux ownership", 
     "utf8"
   );
 
+  const skips: TmuxSkipRecord[] = [];
   const result = gcStaleClaudeBridgeRegistrations({
     deps: {
       pathExists: () => true,
@@ -211,13 +306,26 @@ test("startup GC preserves an active detached run with missing tmux ownership", 
       runCommand: () => {
         throw new Error("missing topology must not remove an active bridge");
       },
-      tmuxSessionAlive: () => {
-        throw new Error("there is no session identifier to probe");
+      skipSink: { record: (record) => skips.push(record) },
+      tmuxLiveness: () => {
+        throw new Error("there is no target to probe");
       },
     },
     registryPath,
   });
 
   expect(result).toEqual({ failed: 0, kept: 1, removed: 0, scanned: 1 });
+  expect(skips).toEqual([
+    {
+      consumer: "claude-config-gc.staleReason",
+      effectSkipped: "remove-claude-bridge-registration",
+      pane: null,
+      reason:
+        "active run has no manifest-backed tmux target; preserving registration",
+      runId: "101",
+      session: null,
+      socketState: "unknown",
+    },
+  ]);
   rmSync(root, { force: true, recursive: true });
 });

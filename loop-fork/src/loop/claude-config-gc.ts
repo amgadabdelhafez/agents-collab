@@ -2,6 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { spawnSync } from "bun";
+import { readRunManifestHandle } from "./run-state";
+import { type TmuxLiveness, tmuxTargetLiveness } from "./tmux-control";
+import {
+  manifestSocketState,
+  type TmuxSkipSink,
+  type TmuxTarget,
+  targetFromManifest,
+} from "./tmux-socket";
 
 const LOOP_BRIDGE_PREFIX = "loop-bridge-";
 const BRIDGE_SUBCOMMAND = "__bridge-mcp";
@@ -33,7 +41,8 @@ interface GcDependencies {
     cwd: string,
     env: NodeJS.ProcessEnv
   ) => CommandResult;
-  tmuxSessionAlive: (session: string) => boolean | undefined;
+  skipSink: TmuxSkipSink;
+  tmuxLiveness: (target: TmuxTarget) => TmuxLiveness;
 }
 
 export interface ClaudeBridgeGcResult {
@@ -66,25 +75,10 @@ const defaultPidAlive = (pid: number): boolean => {
   }
 };
 
-const TMUX_LIVENESS_TIMEOUT_MS = 750;
 const CLAUDE_MCP_REMOVE_TIMEOUT_MS = 1500;
 
-const defaultTmuxSessionAlive = (session: string): boolean | undefined => {
-  try {
-    const result = spawnSync(["tmux", "has-session", "-t", session], {
-      killSignal: "SIGKILL",
-      stderr: "ignore",
-      stdout: "ignore",
-      timeout: TMUX_LIVENESS_TIMEOUT_MS,
-    });
-    if (result.signalCode) {
-      return undefined;
-    }
-    return result.exitCode === 0;
-  } catch {
-    return undefined;
-  }
-};
+const defaultTmuxLiveness = (target: TmuxTarget): TmuxLiveness =>
+  tmuxTargetLiveness(target, spawnSync);
 
 const defaultRunCommand = (
   args: string[],
@@ -104,7 +98,8 @@ const defaultDependencies: GcDependencies = {
   pathExists: existsSync,
   pidAlive: defaultPidAlive,
   runCommand: defaultRunCommand,
-  tmuxSessionAlive: defaultTmuxSessionAlive,
+  skipSink: { record: () => undefined },
+  tmuxLiveness: defaultTmuxLiveness,
 };
 
 export const resolveClaudeRegistryPath = (
@@ -192,6 +187,59 @@ const declaresActiveRun = (manifest: Record<string, unknown>): boolean =>
     (value) => value && (ACTIVE_STATES.has(value) || value === "running")
   );
 
+const recordTmuxSkip = (
+  deps: GcDependencies,
+  manifest: Record<string, unknown>,
+  registration: LoopBridgeRegistration,
+  session: string | null,
+  socketState: "conflicting" | "invalid" | "missing" | "unknown",
+  reason: string
+): void =>
+  deps.skipSink.record({
+    consumer: "claude-config-gc.staleReason",
+    effectSkipped: "remove-claude-bridge-registration",
+    pane: null,
+    reason,
+    runId: stringField(manifest, "runId") ?? registration.runDir,
+    session,
+    socketState,
+  });
+
+const recordedTmuxLiveness = (
+  registration: LoopBridgeRegistration,
+  manifest: Record<string, unknown>,
+  session: string,
+  deps: GcDependencies
+): TmuxLiveness => {
+  const handle = readRunManifestHandle(
+    join(registration.runDir, "manifest.json")
+  );
+  const target = handle ? targetFromManifest(handle) : undefined;
+  if (!target) {
+    recordTmuxSkip(
+      deps,
+      manifest,
+      registration,
+      session,
+      handle ? manifestSocketState(handle) : "unknown",
+      "manifest target is unavailable; preserving registration"
+    );
+    return "unknown";
+  }
+  const liveness = deps.tmuxLiveness(target);
+  if (liveness === "unknown") {
+    recordTmuxSkip(
+      deps,
+      manifest,
+      registration,
+      session,
+      "unknown",
+      "exact manifest target liveness is indeterminate; preserving registration"
+    );
+  }
+  return liveness;
+};
+
 const staleReason = (
   registration: LoopBridgeRegistration,
   deps: GcDependencies
@@ -217,13 +265,26 @@ const staleReason = (
   if (!tmuxSession && declaresActiveRun(manifest)) {
     // Detached workspaces routinely outlive the launcher. Missing durable tmux
     // ownership is incomplete evidence, not proof that an active run died.
+    recordTmuxSkip(
+      deps,
+      manifest,
+      registration,
+      null,
+      "unknown",
+      "active run has no manifest-backed tmux target; preserving registration"
+    );
     return undefined;
   }
   if (tmuxSession) {
-    const alive = deps.tmuxSessionAlive(tmuxSession);
+    const liveness = recordedTmuxLiveness(
+      registration,
+      manifest,
+      tmuxSession,
+      deps
+    );
     // A timed-out or failed liveness probe is unknown, not proof of death.
     // Preserve the registration rather than disrupting a possibly live loop.
-    if (alive !== false) {
+    if (liveness !== "dead") {
       return undefined;
     }
   }

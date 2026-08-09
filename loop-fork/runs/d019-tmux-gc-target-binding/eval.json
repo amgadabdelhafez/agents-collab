@@ -1,0 +1,11 @@
+{
+  "task_id": "d019-tmux-gc-target-binding",
+  "status": "pass",
+  "required": ["unit", "static", "build", "review"],
+  "dimensions": {
+    "unit": { "status": "pass", "evidence": "28/28 focused GC tests and 41/41 loop CLI tests" },
+    "static": { "status": "pass", "evidence": "Exact four-file Ultracite check and git diff check clean" },
+    "build": { "status": "pass", "evidence": "bun run build succeeded" },
+    "review": { "status": "pass", "evidence": "Independent zero-write review PASS" }
+  }
+}

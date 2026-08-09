@@ -13,11 +13,19 @@ import {
   isActiveRunState,
   type RunManifest,
   readRunManifest,
+  readRunManifestHandle,
   resolveRepoId,
   resolveStorageRoot,
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
+import { type TmuxLiveness, tmuxTargetLiveness } from "./tmux-control";
+import {
+  manifestSocketState,
+  type TmuxSkipSink,
+  type TmuxTarget,
+  targetFromManifest,
+} from "./tmux-socket";
 
 const PROCESS_REGISTRY_DIR = "run-processes";
 const BRIDGE_PROCESS_PREFIX = "bridge-";
@@ -39,9 +47,10 @@ export interface RunProcessCleanupResult {
 interface RunProcessCleanupDeps {
   commandForPid: (pid: number) => string | undefined;
   listeningPids: (port: number) => number[];
-  listTmuxSessions: () => ReadonlySet<string> | undefined;
   pidAlive: (pid: number) => boolean;
   signal: (pid: number, signal: NodeJS.Signals) => void;
+  skipSink: TmuxSkipSink;
+  tmuxLiveness: (target: TmuxTarget) => TmuxLiveness;
   updateManifest: typeof updateRunManifest;
 }
 
@@ -90,39 +99,13 @@ const defaultPidAlive = (pid: number): boolean => {
   }
 };
 
-const defaultListTmuxSessions = (): ReadonlySet<string> | undefined => {
-  try {
-    const result = spawnSync(
-      ["tmux", "list-sessions", "-F", "#{session_name}"],
-      {
-        killSignal: "SIGKILL",
-        stderr: "pipe",
-        stdout: "pipe",
-        timeout: 750,
-      }
-    );
-    if (result.signalCode) {
-      return undefined;
-    }
-    if (result.exitCode === 0) {
-      return new Set(
-        decode(result.stdout).split(WHITESPACE_RE).filter(Boolean)
-      );
-    }
-    return decode(result.stderr).includes("no server running")
-      ? new Set()
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
 const cleanupDeps: RunProcessCleanupDeps = {
   commandForPid: defaultCommandForPid,
-  listTmuxSessions: defaultListTmuxSessions,
   listeningPids: defaultListeningPids,
   pidAlive: defaultPidAlive,
   signal: (pid, signal) => process.kill(pid, signal),
+  skipSink: { record: () => undefined },
+  tmuxLiveness: (target) => tmuxTargetLiveness(target, spawnSync),
   updateManifest: updateRunManifest,
 };
 
@@ -287,29 +270,65 @@ export const cleanupRunOwnedProcesses = (
 
 const runIsProvablyAbandoned = (
   manifest: RunManifest,
-  liveTmuxSessions: ReadonlySet<string> | undefined,
+  handle: ReturnType<typeof readRunManifestHandle>,
+  target: TmuxTarget | undefined,
   deps: RunProcessCleanupDeps
 ): boolean => {
   if (isActiveRunState(manifest.state) && !manifest.tmuxSession) {
     // Detached workspaces outlive their launcher PID. An active manifest with
     // missing topology is corrupt/unknown and must be preserved for repair.
+    deps.skipSink.record({
+      consumer: "run-process-cleanup.runIsProvablyAbandoned",
+      effectSkipped: "signal-run-processes-and-fail-manifest",
+      pane: null,
+      reason:
+        "active run has no manifest-backed tmux target; preserving ownership",
+      runId: manifest.runId,
+      session: null,
+      socketState: "unknown",
+    });
     return false;
   }
-  if (
-    manifest.tmuxSession &&
-    (!liveTmuxSessions || liveTmuxSessions.has(manifest.tmuxSession))
-  ) {
-    return false;
+  if (manifest.tmuxSession) {
+    if (!target) {
+      deps.skipSink.record({
+        consumer: "run-process-cleanup.runIsProvablyAbandoned",
+        effectSkipped: "signal-run-processes-and-fail-manifest",
+        pane: null,
+        reason: "manifest target is unavailable; preserving ownership",
+        runId: manifest.runId,
+        session: manifest.tmuxSession,
+        socketState: handle ? manifestSocketState(handle) : "unknown",
+      });
+      return false;
+    }
+    const liveness = deps.tmuxLiveness(target);
+    if (liveness === "unknown") {
+      deps.skipSink.record({
+        consumer: "run-process-cleanup.runIsProvablyAbandoned",
+        effectSkipped: "signal-run-processes-and-fail-manifest",
+        pane: null,
+        reason:
+          "exact manifest target liveness is indeterminate; preserving ownership",
+        runId: manifest.runId,
+        session: manifest.tmuxSession,
+        socketState: "unknown",
+      });
+    }
+    if (liveness !== "dead") {
+      return false;
+    }
   }
   return !deps.pidAlive(manifest.pid);
 };
 
 const cleanupAbandonedRun = (input: {
   deps: RunProcessCleanupDeps;
-  liveTmuxSessions: ReadonlySet<string> | undefined;
+  handle: ReturnType<typeof readRunManifestHandle>;
   manifest: RunManifest;
   manifestPath: string;
   runDir: string;
+  target: TmuxTarget | undefined;
 }): RunProcessCleanupResult | undefined => {
   const hasProcessEvidence = Boolean(
     input.manifest.codexAppServerPid ||
@@ -319,7 +338,12 @@ const cleanupAbandonedRun = (input: {
   if (
     !(
       (hasProcessEvidence || needsStateRepair) &&
-      runIsProvablyAbandoned(input.manifest, input.liveTmuxSessions, input.deps)
+      runIsProvablyAbandoned(
+        input.manifest,
+        input.handle,
+        input.target,
+        input.deps
+      )
     )
   ) {
     return undefined;
@@ -360,13 +384,13 @@ const cleanupAbandonedRun = (input: {
 
 const inspectStoredRun = (input: {
   deps: RunProcessCleanupDeps;
-  liveTmuxSessions: ReadonlySet<string> | undefined;
   repoId: string;
   runDir: string;
   runId: string;
 }): { cleanup?: RunProcessCleanupResult; scanned: boolean } => {
   const manifestPath = buildManifestPath(input.runDir);
   const manifest = readRunManifest(manifestPath);
+  const handle = readRunManifestHandle(manifestPath);
   if (
     !(
       manifest &&
@@ -379,10 +403,11 @@ const inspectStoredRun = (input: {
   return {
     cleanup: cleanupAbandonedRun({
       deps: input.deps,
-      liveTmuxSessions: input.liveTmuxSessions,
+      handle,
       manifest,
       manifestPath,
       runDir: input.runDir,
+      target: handle ? targetFromManifest(handle) : undefined,
     }),
     scanned: true,
   };
@@ -391,7 +416,6 @@ const inspectStoredRun = (input: {
 const collectStoredRunCleanup = (input: {
   deps: RunProcessCleanupDeps;
   entries: string[];
-  liveTmuxSessions: ReadonlySet<string> | undefined;
   log: (line: string) => void;
   repoId: string;
   repoRuns: string;
@@ -408,7 +432,6 @@ const collectStoredRunCleanup = (input: {
     try {
       const inspected = inspectStoredRun({
         deps: input.deps,
-        liveTmuxSessions: input.liveTmuxSessions,
         repoId: input.repoId,
         runDir,
         runId,
@@ -461,19 +484,9 @@ export const gcAbandonedRunProcesses = (
   } catch {
     return { cleaned: 0, kept: 0, killed: [], scanned: 0, skipped: [] };
   }
-  let liveTmuxSessions: ReadonlySet<string> | undefined;
-  try {
-    liveTmuxSessions = deps.listTmuxSessions();
-  } catch (error) {
-    log(
-      `[loop] abandoned-run cleanup could not inspect tmux; preserving tmux-owned runs: ${error instanceof Error ? error.message : String(error)}`
-    );
-    liveTmuxSessions = undefined;
-  }
   const result = collectStoredRunCleanup({
     deps,
     entries,
-    liveTmuxSessions,
     log,
     repoId,
     repoRuns,
