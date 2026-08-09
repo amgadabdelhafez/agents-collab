@@ -912,18 +912,23 @@ approved bounded slices become implementation work. The legacy defect register
 in `docs/quality/quality-scorecard.md` remains independently authoritative for
 installed-harness incidents and is maintained throughout the redesign.
 
-### Active slice: Phase 0A executable contracts
+### Completed slice: Phase 0A executable contracts
 
-- [ ] P0A-01 Define stable IDs, schema versions, and runtime-validated records
+Phase 0A passed native and independent root review at implementation commit
+`3c504ee3a593aa91d8d5f5a6810617e8725a33ff`. The branch remains additive and
+unmerged: no live runtime authority, service, dependency, or installed binary
+was changed.
+
+- [x] P0A-01 Define stable IDs, schema versions, and runtime-validated records
       for the core management entities without selecting a workflow engine.
-- [ ] P0A-02 Define a CloudEvents-compatible command/event envelope with lane,
+- [x] P0A-02 Define a CloudEvents-compatible command/event envelope with lane,
       project, causation, correlation, idempotency, provenance, and authority
       fields.
-- [ ] P0A-03 Reject missing, cross-lane, version-incompatible, and malformed
+- [x] P0A-03 Reject missing, cross-lane, version-incompatible, and malformed
       records fail closed with machine-readable reasons.
-- [ ] P0A-04 Add one focused executable smoke covering valid round-trip and the
+- [x] P0A-04 Add one focused executable smoke covering valid round-trip and the
       confirmed high-risk lane-mismatch rejection.
-- [ ] P0A-05 Produce `eval.json`, a clean scoped commit, and stop for independent
+- [x] P0A-05 Produce `eval.json`, a clean scoped commit, and stop for independent
       root review. Do not merge, install, or activate runtime authority.
 
 ### Standing operations-maintenance queue
@@ -1056,8 +1061,8 @@ installed-harness incidents and is maintained throughout the redesign.
 
 ## 17. Founder decisions still required
 
-These decisions gate later phases but do not block the additive Phase 0A
-contracts slice described above.
+Phase 0A is complete. These decisions now gate admission of the next bounded
+slice; none should be inferred from the engine-neutral contracts implementation.
 
 1. **Workflow lock-in:** keep Temporal as the baseline and approve the one-scenario
    Restate bakeoff, or choose Temporal without a bakeoff?
@@ -1125,6 +1130,8 @@ contracts slice described above.
 
 ## 20. Change log
 
+- 2026-08-08: Recorded Phase 0A completion at `3c504ee`, with native and root
+  review PASS, while preserving the unmerged shadow-only boundary.
 - 2026-08-08: First living draft. Consolidated the proposed workflow and
   messaging layers with portfolio/project/shift management, role-specific
   profiles, context compilation, memory taxonomy, temporal World Model,
