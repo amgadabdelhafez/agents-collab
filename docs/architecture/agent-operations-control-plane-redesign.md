@@ -31,6 +31,7 @@ The provisional target stack is:
 | Working and curated memory | Provenance-backed memory service and project files | Redesign |
 | World Model | Rebuildable temporal projection with explicit provenance | Preserve concept; redesign interfaces |
 | Traces, metrics, and logs | OpenTelemetry conventions and collectors | Proposed |
+| Evaluation and optimization | Portable experiment contracts with a Braintrust-class adapter | Accepted direction; upstream selection pending |
 
 The control plane is not another agent. It is deterministic infrastructure.
 Models propose, interpret, summarize, implement, review, and escalate. Typed
@@ -143,6 +144,13 @@ Execution adapters        Context compiler   Projection workers
        v                        v
 MCP tools/resources       Git, project KB, memory store,
 and A2A adapters          World Model, artifact store
+            |
+            v
+Evaluation and Optimization Plane
+  - OTel traces and production feedback
+  - versioned datasets and immutable experiments
+  - deterministic scorers and calibrated LLM judges
+  - model-mix quality, cost, and latency comparison
 ```
 
 Temporal or its selected challenger owns the durable state machines. NATS
@@ -785,6 +793,122 @@ confirmed live incident
 Synthetic tests certify deterministic contracts. Live UAT certifies real
 integration. Neither substitutes for the other.
 
+### 13.1 Evaluation and Optimization Plane
+
+Add a first-class **Evaluation and Optimization Plane** to the target
+architecture and harness upgrade path. It serves the role that platforms such
+as Braintrust serve: capture agent traces, curate versioned datasets, run
+immutable experiments, apply code and model-based scorers, compare candidate
+configurations, monitor production/shadow traces, and feed discovered failures
+back into regression datasets. It is evidence and policy input, never workflow,
+release, or live-routing authority.
+
+Historical loop, Codex, Claude, utility-worker, incident, review, and UAT data
+provide benchmark cases and observed baselines. They do not prove how an unrun
+model mix would have performed. Counterfactual claims require executing the same
+frozen case with the alternative configuration in a replayable environment.
+
+Every experiment binds an immutable manifest containing:
+
+- dataset/case/split/fixture hashes and expected evidence;
+- task class, role, risk, project sensitivity, and replay-environment version;
+- profile, prompt, context recipe, memory policy, tool bundle, and routing
+  policy versions;
+- model/provider, reasoning configuration, sampling, fallback, and judge
+  configuration;
+- code commit, harness/runtime version, dependency lock, and service versions;
+- pricing snapshot, token/cache/tool accounting, latency, retry, timeout, seed,
+  and repetition policy;
+- trace IDs, output artifacts, scorer results, disagreements, and disposition.
+
+Datasets are stratified by role, task shape, duration, risk, context pressure,
+tool use, project, and observed failure mode. Development, scorer-calibration,
+regression, and time-separated holdout sets remain distinct. Sensitive session
+data is minimized, redacted, and admitted under the originating project's data
+policy.
+
+### 13.2 Harness trace and feedback contract
+
+The upgraded harness emits the same OpenTelemetry-linked causal chain during
+historical replay, shadow observation, and live execution:
+
+```text
+portfolio / project / work item / attempt
+  -> assignment and context compile
+  -> model turn and reasoning configuration
+  -> tool calls, artifacts, retries, handoffs, and runtime events
+  -> deterministic checks, scorer and reviewer outcomes
+  -> usage, cost, latency, release disposition, and observed UAT result
+```
+
+The harness writes through a narrow evaluation adapter. A Braintrust adapter is
+the initial upstream candidate, but the canonical trace and experiment contract
+must remain OpenTelemetry-based and exportable so the control plane is not
+locked to one hosted UI. Adapter failure cannot block or change a product lane;
+it is buffered, bounded, freshness-visible, and reconciled later.
+
+The harness upgrade sequence is additive:
+
+1. normalize existing JSONL, manifests, transcripts, usage, and eval artifacts
+   into the common trace/experiment schema offline;
+2. emit shadow trace spans from loop, Governess, bridge, model, tool, context,
+   utility, review, and release boundaries;
+3. extract reviewed historical traces into pinned benchmark datasets;
+4. replay identical cases across versioned model, effort, prompt, tool, context,
+   and routing mixes;
+5. sample live shadow traces for asynchronous scoring and regression harvesting;
+6. promote a routing policy only through explicit shadow, canary, approval, and
+   rollback workflows.
+
+### 13.3 Scoring and LLM-as-judge policy
+
+Use graders in descending order of authority:
+
+1. deterministic acceptance checks, schemas, artifacts, and safety invariants;
+2. task-specific executable or reference-based scorers;
+3. blinded rubric-bound LLM judges for qualities that are not directly
+   measurable;
+4. calibrated human or native zero-write review for disputed, novel, or
+   high-impact cases.
+
+LLM judges receive the task objective, rubric, required evidence, candidate
+output, and allowed artifacts, but not model/vendor identity or cost. Pairwise
+comparisons randomize candidate order. Judge prompts, models, and versions are
+part of the experiment manifest. Calibrate judges against frozen human-reviewed
+cases and report agreement, disagreement, uncertainty, and position bias. A
+judge cannot be the sole grader of its own output, and no judge score can
+override a deterministic failure, missing evidence, unsafe action, or required
+human approval.
+
+### 13.4 Metrics and model-mix selection
+
+Primary metrics are qualified task success, quality-adjusted cost per qualified
+success, and quality-adjusted end-to-end latency. Diagnostics include token and
+cache classes, calls, turns, tool calls, retries, handoffs, context growth,
+compactions, scorer disagreement, and failure identity. Guardrails include
+unsafe/catastrophic failure, evidence omission, cross-lane violation,
+non-determinism, and named regression failures.
+
+Model mixes are versioned policies over role, workflow stage, task class, risk,
+context pressure, and tool needs. Experiments compare identical cases and
+publish the quality/cost/latency Pareto frontier rather than hiding tradeoffs in
+one aggregate score. Lower cost, tokens, turns, or latency is not an improvement
+unless the same mandatory quality and safety gate still passes. Start with
+preregistered baselines and one changed variable; adaptive search or bandit
+routing is admitted only after measurements are calibrated and leakage-free.
+
+### 13.5 Evaluation lifecycle
+
+```text
+trace intake -> case extraction/redaction -> replay qualification
+  -> scorer calibration -> frozen experiment -> blinded comparison
+  -> error analysis -> shadow policy -> bounded canary
+  -> explicit approval/rejection -> drift monitoring -> scheduled re-evaluation
+```
+
+No experiment service or optimizer may silently change a live model, prompt,
+tool bundle, reasoning effort, context policy, or release gate.
+
 ## 14. What stays, what is wrapped, what is retired
 
 ### 14.1 Preserve
@@ -808,6 +932,8 @@ integration. Neither substitutes for the other.
 - Git worktree and release operations;
 - local executable installation and rollback;
 - project-specific supervisor channels.
+- trace, usage, transcript, eval, and review export into the Evaluation and
+  Optimization Plane.
 
 Adapters consume typed commands, publish events, and report capability and
 readiness. They do not decide the project workflow.
@@ -875,6 +1001,18 @@ loop, change the installed harness, or mutate a product lane.
 - finalize job profile, assignment, context package, and memory schemas;
 - decide workflow engine after Temporal/Restate bakeoff;
 - decide portfolio timezone and initial role catalog.
+
+### Phase 0C: evaluation foundation shadow
+
+- define portable trace, benchmark-case, dataset, experiment, scorer, feedback,
+  pricing-snapshot, and model-mix policy contracts;
+- build offline importers for existing loop/session/eval artifacts without
+  changing the installed harness;
+- create one redacted, frozen historical benchmark slice and reproduce its
+  observed baseline;
+- compare the portable local result with one Braintrust-class adapter in shadow
+  mode;
+- keep all scoring, comparison, and policy recommendations non-authoritative.
 
 ### Phase 1: messaging shadow
 
@@ -1096,6 +1234,28 @@ shadow-only and service-free rules in section 15.0.
       and prompt-charter code.
 - [ ] J-06 Retire replaced components only after live cutover and rollback proof.
 
+### Epic K: evaluation and optimization plane
+
+- [ ] K-01 Define trace, benchmark-case, dataset, split, experiment, scorer,
+      feedback, pricing-snapshot, and model-mix policy schemas.
+- [ ] K-02 Inventory historical loop, Codex, Claude, utility, incident, review,
+      eval, and UAT sources; quantify coverage, sensitivity, and sampling bias.
+- [ ] K-03 Normalize offline historical evidence into OpenTelemetry-linked,
+      provenance-bound traces without claiming counterfactual results.
+- [ ] K-04 Define deterministic, reference, rubric, pairwise, and LLM-judge
+      scorers with calibration, uncertainty, bias, and disagreement reporting.
+- [ ] K-05 Build identical-case replay across versioned model, effort, prompt,
+      tool, context, memory, and routing mixes.
+- [ ] K-06 Define qualified success, quality-adjusted cost/latency, safety
+      guardrails, failure identity, pricing snapshots, and Pareto reporting.
+- [ ] K-07 Add a bounded shadow trace/eval adapter to the harness; adapter
+      failure must never block or mutate a product lane.
+- [ ] K-08 Evaluate Braintrust as the initial upstream experiment/observability
+      backend against portability, privacy, self-hosting, cost, and export
+      requirements before adoption.
+- [ ] K-09 Define offline replay, asynchronous shadow scoring, bounded canary,
+      approval, rollback, drift detection, and scheduled re-evaluation.
+
 ## 17. Founder decisions
 
 Phase 0A is complete. Founder decisions are recorded here before their effects
@@ -1109,6 +1269,11 @@ are admitted to implementation.
 - **2026-08-08, accepted:** use `America/Los_Angeles` as the configurable
   default portfolio timezone. Portfolio records may explicitly override it;
   exact daylight-saving and boundary rules are part of Phase 0B.
+- **2026-08-08, accepted direction:** add a first-class Evaluation and
+  Optimization Plane to the target architecture and harness upgrade path. It
+  provides Braintrust-class traces, datasets, experiments, scorers, production
+  feedback, and model-mix quality/cost optimization while remaining
+  non-authoritative and separate from Phase 0B.
 
 ### 17.2 Decisions still required
 
@@ -1204,6 +1369,10 @@ The remaining recommended default answers, pending founder confirmation, are:
 
 ## 20. Change log
 
+- 2026-08-08: Added the Evaluation and Optimization Plane and Phase 0C harness
+  shadow path, including portable OTel traces, historical replay limits,
+  versioned experiments, calibrated LLM judges, model-mix comparison, live
+  feedback, and a Braintrust adapter evaluation backlog.
 - 2026-08-08: Recorded founder approval of the shadow-only, service-free Phase
   0B management-state slice and `America/Los_Angeles` as the configurable
   default portfolio timezone.

@@ -80,6 +80,13 @@ Founder direction already established
     most one direct regression for a confirmed defect, focused build/type
     smoke, one native zero-write review, concise independent review, and live
     observation. Avoid speculative test matrices and repeated planning loops.
+15. Evaluation and optimization is a first-class, non-authoritative plane in
+    both the target architecture and harness upgrade path. It provides
+    Braintrust-class traces, versioned datasets, immutable experiments, code
+    and LLM scorers, production feedback, and model-mix comparisons. Historical
+    sessions provide benchmark cases and observed baselines; alternative mixes
+    require identical frozen replay. Optimizers cannot change live policy
+    without shadow, canary, approval, and rollback workflows.
 
 Important research conclusions and upstream candidates
 
@@ -140,6 +147,10 @@ Founder decisions recorded after this handover was created
 - Approved the shadow-only, service-free Phase 0B management-state slice.
 - Set `America/Los_Angeles` as the configurable default portfolio timezone;
   exact daylight-saving and shift-boundary rules belong to Phase 0B.
+- Add the Evaluation and Optimization Plane plus a Phase 0C shadow harness
+  upgrade path. Keep its OTel trace and experiment contracts portable, evaluate
+  Braintrust as the first upstream adapter candidate, and grant it no workflow,
+  routing, release, or product-lane authority.
 
 Current founder decisions to resolve
 
