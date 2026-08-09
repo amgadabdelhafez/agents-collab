@@ -1,0 +1,8 @@
+{
+  "id": "d027-two-server-tmux-certification",
+  "mode": "planned",
+  "created_at": "2026-08-09T21:34:00Z",
+  "status": "done",
+  "description": "Certify manifest-bound tmux consumers against hostile same-named real servers.",
+  "estimated_loc": 700
+}

@@ -591,28 +591,37 @@ harness for consumers with no CLI surface.
 **Output:** Producer-backed run on A, same-named decoy on B, consumer matrix
 under hostile B ambient state, cleanup and survivor proof.
 **Done when:**
-- [ ] Trap is installed before any server or process is created and runs on
+- [x] Trap is installed before any server or process is created and runs on
       success, assertion failure, and signal (verify 15).
-- [ ] Server PIDs and every run-owned launcher/pane/bridge/proxy/app-server PID
+- [x] Server PIDs and every run-owned launcher/pane/bridge/proxy/app-server PID
       are recorded before teardown, then polled with a bounded deadline
       (verify 15).
-- [ ] The zero-survivor proof fails when nothing was recorded; the positive
+- [x] The zero-survivor proof fails when nothing was recorded; the positive
       control runs **before** real cleanup and the detector returns failure on a
       known-live recorded PID; the control is then cleared, cleanup runs, and
       the post-cleanup proof passes — in that order, because a control run after
       cleanup has no survivor left to detect (verify 16).
-- [ ] The trap kills only recorded run-owned PIDs and never an unrelated PID;
+- [x] The trap kills only recorded run-owned PIDs and never an unrelated PID;
       servers are addressed by explicit socket path and a bare
       `tmux kill-server` is never issued (verify 16).
-- [ ] Post-cleanup proof: no live recorded PID, no A/B socket, no session on
+- [x] Post-cleanup proof: no live recorded PID, no A/B socket, no session on
       either explicit socket, no touched host or product run path (verify 16).
-- [ ] Consumer matrix has named per-consumer assertions, not one shared-helper
+- [x] Consumer matrix has named per-consumer assertions, not one shared-helper
       assertion (verify 7, 8).
-- [ ] Destructive non-effects are asserted (verify 9); decoy B content is
+- [x] Destructive non-effects are asserted (verify 9); decoy B content is
       byte-identical before and after (verify 7).
-- [ ] Consumers with no CLI surface run against the producer-written manifest
+- [x] Consumers with no CLI surface run against the producer-written manifest
       and the same two real servers, never a hand-authored manifest.
-- [ ] No installed-binary deployment occurs during certification.
+- [x] No installed-binary deployment occurs during certification.
+
+**Completed 2026-08-09 in D-027.** A compiled current-agent producer created
+the run on real server A while a same-named decoy lived on real server B and
+all three ambient selectors derived B. Twenty-seven named seams produced 74
+per-consumer-attributed exact-A contacts; destructive consumers preserved A
+and the decoy hash stayed byte-identical. Assertion and SIGTERM trap probes,
+empty/live survivor controls, and exact cleanup proved zero residual PIDs,
+sockets, sessions, or product paths. Two independent executions and an
+independent zero-write review passed.
 
 ### T-15 — Installed-binary forward-compatibility
 

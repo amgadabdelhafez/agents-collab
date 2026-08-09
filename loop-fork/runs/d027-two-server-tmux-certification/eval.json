@@ -1,0 +1,19 @@
+{
+  "task_id": "d027-two-server-tmux-certification",
+  "status": "pass",
+  "required": ["smoke", "static", "review"],
+  "dimensions": {
+    "smoke": {
+      "status": "pass",
+      "evidence": "two independent real two-server runs: 27 named seams, 74 per-seam-attributed exact-A contacts, stable B hash, assertion and SIGTERM trap probes, 6 live PID positive controls, and zero post-cleanup residuals"
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "bash syntax, Bun bundle, scoped Ultracite, and git diff check pass"
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "independent zero-write review passed T-14 and verify 7, 8, 9, 15, and 16"
+    }
+  }
+}
