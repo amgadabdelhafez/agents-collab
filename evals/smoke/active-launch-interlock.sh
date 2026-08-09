@@ -20,7 +20,7 @@ SMOKE_REPO="${SMOKE_ROOT}/repo"
 WORKSPACE_ONE="${SMOKE_ROOT}/workspace-one"
 WORKSPACE_TWO="${SMOKE_ROOT}/workspace-two"
 SMOKE_TMUX_TMPDIR="${SMOKE_ROOT}/tmux"
-SMOKE_SOCKET="loop-interlock-$RANDOM-$$"
+SMOKE_SOCKET="${SMOKE_ROOT}/tmux.sock"
 PROMPT_PATH="${SMOKE_ROOT}/charter.md"
 START_GATE="${SMOKE_ROOT}/start-gate"
 RESUME_GATE="${SMOKE_ROOT}/resume-gate"
@@ -79,9 +79,8 @@ smoke_tmux() {
     "PATH=${SYSTEM_PATH}" \
     "SHELL=/bin/sh" \
     "TERM=xterm-256color" \
-    "TMUX_TMPDIR=${SMOKE_TMUX_TMPDIR}" \
     "USER=${SMOKE_USER}" \
-    "${REAL_TMUX}" -L "${SMOKE_SOCKET}" "$@"
+    "${REAL_TMUX}" -S "${SMOKE_SOCKET}" "$@"
 }
 
 cleanup() {
@@ -131,7 +130,7 @@ run_isolated_launch() {
     LOOP_NANNY_ENABLED=0 \
     LOOP_RECON_PANES=0 \
     "LOOP_SMOKE_REAL_TMUX=${REAL_TMUX}" \
-    "LOOP_SMOKE_TMUX_SOCKET=${SMOKE_SOCKET}" \
+    "LOOP_TMUX_SOCKET=${SMOKE_SOCKET}" \
     "LOOP_SMOKE_TRACE_PATH=${SMOKE_ROOT}/trace.log" \
     LOOP_UTILITY_PANE=0 \
     "PATH=${SMOKE_BIN}:${SYSTEM_PATH}" \
@@ -151,7 +150,7 @@ run_isolated_launch() {
 assert_manifest_set() {
   local expected_count="$1"
   shift
-  bun -e '
+  SMOKE_EXPECTED_TMUX_SOCKET="${SMOKE_SOCKET}" bun -e '
     import { createHash } from "node:crypto";
     import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
     import { join } from "node:path";
@@ -178,6 +177,9 @@ assert_manifest_set() {
     const runIds = new Set();
     const repoIds = new Set();
     for (const { path, value: manifest } of manifests) {
+      if (manifest.tmuxSocket !== process.env.SMOKE_EXPECTED_TMUX_SOCKET) {
+        throw new Error(`${path} socket ${manifest.tmuxSocket ?? "missing"} != ${process.env.SMOKE_EXPECTED_TMUX_SOCKET}`);
+      }
       if (!/^[1-9][0-9]*$/.test(manifest.runId)) throw new Error(`non-numeric reserved run ${manifest.runId}`);
       if (runIds.has(manifest.runId)) throw new Error(`duplicate run id ${manifest.runId}`);
       runIds.add(manifest.runId);

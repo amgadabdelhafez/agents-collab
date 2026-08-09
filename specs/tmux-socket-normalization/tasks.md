@@ -26,7 +26,7 @@
 - [ ] **T-09** Migrate panel enumeration and row rendering.
 - [ ] **T-10** Migrate Governess pane effects, handover, and replay.
 - [x] **T-11** Derived migration check plus seeded non-vacuity proof.
-- [ ] **T-12** Smoke shim migration to absolute `LOOP_TMUX_SOCKET`.
+- [x] **T-12** Smoke shim migration to absolute `LOOP_TMUX_SOCKET`.
 - [ ] **T-13** Producer fixture capture and provenance index.
 - [ ] **T-14** Two-server certification smoke with trap and survivor proof.
 - [ ] **T-15** Installed-binary forward-compatibility check.
@@ -542,13 +542,20 @@ repository search.
 **Output:** Every call site sets product `LOOP_TMUX_SOCKET` to an absolute
 socket path and inspects/cleans up with real `tmux -S`.
 **Done when:**
-- [ ] Repository search proves the old product-facing label shim is gone or no
+- [x] Repository search proves the old product-facing label shim is gone or no
       longer on the product's PATH (verify 13).
-- [ ] Each migrated smoke asserts the socket file it created is the one the
+- [x] Each migrated smoke asserts the socket file it created is the one the
       product actually used.
-- [ ] `large-prompt-launch.sh`'s Darwin-only character-count assertion is
+- [x] `large-prompt-launch.sh`'s Darwin-only character-count assertion is
       replaced by the producer's byte-based property (verify 13).
-- [ ] T-11 runs before any smoke that could contact a host server.
+- [x] T-11 runs before any smoke that could contact a host server.
+
+**Completed 2026-08-09 in D-024.** Every scoped wrapper rejects non-absolute
+socket values and passes through only the singleton version probe or product
+argv already bound to the exact configured `-S` path. All inspection, cleanup,
+manifest, and recovery assertions use the same socket identity; the redraw
+smoke passed against a real private server. The separate retired-agent producer
+fixture defect is parked as D-025 and is not release evidence for this slice.
 
 ### T-13 — Producer fixture and provenance
 

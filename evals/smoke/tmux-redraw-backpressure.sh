@@ -43,14 +43,14 @@ cleanup() {
     fi
     if [[ -n "${REAL_TMUX}" && -n "${SOCKET}" && -n "${GOVERNESS_PANE}" ]]; then
       echo "--- governess pane (last 40 lines) ---" >&2
-      "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -S -40 \
+      "${REAL_TMUX}" -S "${SOCKET}" capture-pane -p -S -40 \
         -t "${GOVERNESS_PANE}" >&2 || true
     else
       echo "--- governess pane unavailable at ${SMOKE_STAGE} ---" >&2
     fi
   fi
   if [[ -n "${REAL_TMUX}" && -n "${SOCKET}" ]]; then
-    "${REAL_TMUX}" -L "${SOCKET}" kill-server 2>/dev/null || true
+    "${REAL_TMUX}" -S "${SOCKET}" kill-server 2>/dev/null || true
   fi
   if [[ "${SMOKE_PASSED}" == "1" && "${SMOKE_ROOT_CREATED}" == "1" ]]; then
     rm -rf -- "${SMOKE_ROOT}"
@@ -77,6 +77,7 @@ if [[ -n "${LOOP_SMOKE_PARENT:-}" ]]; then
 else
   SMOKE_ROOT="$(mktemp -d)"
 fi
+SMOKE_ROOT="$(cd "${SMOKE_ROOT}" && pwd -P)"
 SMOKE_ROOT_CREATED=1
 SMOKE_STAGE="root-created"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -85,7 +86,7 @@ LOOP_BIN="${LOOP_ROOT}/loop"
 REAL_TMUX="$(command -v tmux)"
 RUN_ID="tmux-redraw-smoke"
 SESSION="loop-tmux-redraw-smoke-$$"
-SOCKET="loop-tmux-redraw-smoke-$$"
+SOCKET="${SMOKE_ROOT}/tmux.sock"
 SMOKE_HOME="${SMOKE_ROOT}/home"
 STALL_MARKER="${SMOKE_ROOT}/stall"
 WRAPPER_BIN="${SMOKE_ROOT}/bin"
@@ -118,17 +119,17 @@ chmod +x "${GOVERNESS_LAUNCHER}"
 SMOKE_STAGE="fixtures-ready"
 
 LEFT_PANE="$(
-  "${REAL_TMUX}" -L "${SOCKET}" new-session -d -P -F '#{pane_id}' \
+  "${REAL_TMUX}" -S "${SOCKET}" new-session -d -P -F '#{pane_id}' \
     -s "${SESSION}" -x 140 -y 42 \
     "while true; do printf 'Claude evidence │ 密度 🧭\\n'; sleep 1; done"
 )"
 RIGHT_PANE="$(
-  "${REAL_TMUX}" -L "${SOCKET}" split-window -h -P -F '#{pane_id}' \
+  "${REAL_TMUX}" -S "${SOCKET}" split-window -h -P -F '#{pane_id}' \
     -t "${LEFT_PANE}" \
     "while true; do printf 'Codex evidence │ 密度 🧭\\n'; sleep 1; done"
 )"
 GOVERNESS_PANE="$(
-  "${REAL_TMUX}" -L "${SOCKET}" split-window -v -d -P -F '#{pane_id}' \
+  "${REAL_TMUX}" -S "${SOCKET}" split-window -v -d -P -F '#{pane_id}' \
     -t "${LEFT_PANE}" "while true; do sleep 1; done"
 )"
 SMOKE_STAGE="panes-created"
@@ -138,6 +139,7 @@ SMOKE_LEFT="${LEFT_PANE}" \
 SMOKE_RIGHT="${RIGHT_PANE}" \
 SMOKE_GOVERNESS="${GOVERNESS_PANE}" \
 SMOKE_SESSION="${SESSION}" \
+SMOKE_SOCKET="${SOCKET}" \
 SMOKE_RUN_ID="${RUN_ID}" \
   bun -e '
     import { mkdirSync } from "node:fs";
@@ -167,6 +169,7 @@ SMOKE_RUN_ID="${RUN_ID}" \
         tmuxPaneRight: process.env.SMOKE_RIGHT,
         tmuxPaneRightAgent: "codex",
         tmuxSession: process.env.SMOKE_SESSION,
+        tmuxSocket: process.env.SMOKE_SOCKET,
       })
     );
   ' \
@@ -181,8 +184,15 @@ RUN_DIR="$(
 STATE_FILE="${RUN_DIR}/governess-state.json"
 JOURNAL_FILE="${RUN_DIR}/governess.jsonl"
 SMOKE_STAGE="manifest-ready"
+SMOKE_SOCKET="${SOCKET}" HOME="${SMOKE_HOME}" bun -e '
+  import { readRunManifest, resolveRunStorage } from "./loop-fork/src/loop/run-state.ts";
+  const manifest = readRunManifest(resolveRunStorage(process.argv[1]).manifestPath);
+  if (manifest?.tmuxSocket !== process.env.SMOKE_SOCKET) {
+    throw new Error(`manifest socket ${manifest?.tmuxSocket ?? "missing"} != ${process.env.SMOKE_SOCKET}`);
+  }
+' "${RUN_ID}"
 printf -v GOVERNESS_COMMAND 'exec %q' "${GOVERNESS_LAUNCHER}"
-"${REAL_TMUX}" -L "${SOCKET}" respawn-pane -k -t "${GOVERNESS_PANE}" \
+"${REAL_TMUX}" -S "${SOCKET}" respawn-pane -k -t "${GOVERNESS_PANE}" \
   "${GOVERNESS_COMMAND}"
 SMOKE_STAGE="governess-started"
 
@@ -213,7 +223,7 @@ if [[ "${LOOP_SMOKE_FORCE_FAILURE:-}" == "after-healthy" ]]; then
 fi
 
 HEALTHY_FRAME="$(
-  "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -t "${GOVERNESS_PANE}"
+  "${REAL_TMUX}" -S "${SOCKET}" capture-pane -p -t "${GOVERNESS_PANE}"
 )"
 if [[ "${HEALTHY_FRAME}" == *"tmux degraded"* ]]; then
   echo "healthy board unexpectedly degraded" >&2
@@ -234,7 +244,7 @@ for _ in {1..35}; do
 done
 
 DEGRADED_FRAME="$(
-  "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -t "${GOVERNESS_PANE}"
+  "${REAL_TMUX}" -S "${SOCKET}" capture-pane -p -t "${GOVERNESS_PANE}"
 )"
 if [[ "${DEGRADED_FRAME}" != *"tmux degraded"* ]]; then
   echo "degraded board marker was not rendered" >&2
@@ -261,7 +271,7 @@ for _ in {1..50}; do
 done
 
 RECOVERED_FRAME="$(
-  "${REAL_TMUX}" -L "${SOCKET}" capture-pane -p -t "${GOVERNESS_PANE}"
+  "${REAL_TMUX}" -S "${SOCKET}" capture-pane -p -t "${GOVERNESS_PANE}"
 )"
 if [[ "${RECOVERED_FRAME}" == *"tmux degraded"* ]]; then
   echo "board did not clear degraded state after tmux recovery" >&2

@@ -1,2 +1,17 @@
 #!/bin/sh
-exec /opt/homebrew/bin/tmux -L "${LOOP_SMOKE_TMUX_SOCKET}" "$@"
+: "${LOOP_TMUX_SOCKET:?LOOP_TMUX_SOCKET is required}"
+case "${LOOP_TMUX_SOCKET}" in
+  /*) ;;
+  *)
+    echo "tmux fixture: LOOP_TMUX_SOCKET must be absolute" >&2
+    exit 2
+    ;;
+esac
+if [ "${1:-}" = "-V" ] && [ "$#" -eq 1 ]; then
+  exec /opt/homebrew/bin/tmux "$@"
+fi
+if [ "${1:-}" != "-S" ] || [ "${2:-}" != "${LOOP_TMUX_SOCKET}" ]; then
+  echo "tmux fixture: product argv did not use exact LOOP_TMUX_SOCKET" >&2
+  exit 2
+fi
+exec /opt/homebrew/bin/tmux "$@"

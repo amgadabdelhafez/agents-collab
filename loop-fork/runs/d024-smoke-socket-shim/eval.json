@@ -1,0 +1,19 @@
+{
+  "task_id": "d024-smoke-socket-shim",
+  "status": "pass",
+  "required": ["static", "smoke", "review"],
+  "dimensions": {
+    "static": {
+      "status": "pass",
+      "evidence": "bash -n passed for every changed shell; old product-facing socket shim is absent from shell sources; git diff --check passed."
+    },
+    "smoke": {
+      "status": "pass",
+      "evidence": "All three wrappers rejected relative sockets and the canonical wrapper accepted exact absolute argv; the real private-socket redraw/backpressure smoke passed twice."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent zero-write review passed after every wrapper enforced absoluteness and every TMPDIR-derived root was canonicalized."
+    }
+  }
+}

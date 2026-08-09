@@ -8,6 +8,7 @@ SMOKE_LOOP_BINARY="${LOOP_SMOKE_BINARY:-}"
 SMOKE_EXPECTED_SHA256="${LOOP_SMOKE_EXPECTED_SHA256:-}"
 SMOKE_USES_PREBUILT=0
 FIXTURES="${REPO_ROOT}/runs/large-prompt-launch/artifacts/fake-bin"
+TMUX_WRAPPER="${REPO_ROOT}/evals/smoke/fixtures/isolated-tmux.sh"
 HASH_TUI="${REPO_ROOT}/evals/smoke/fixtures/hash-bound-tui.py"
 MANIFEST_RESOLVER="${REPO_ROOT}/evals/smoke/resolve-single-manifest.sh"
 ORIGINAL_HOME="${HOME:?large-prompt smoke requires HOME for host-isolation checks}"
@@ -72,12 +73,12 @@ FAILURE_TMUX_TMPDIR="${FAILURE_ROOT}/tmux"
 INFO_TMUX_TMPDIR="${INFO_ROOT}/tmux"
 CLAUDE_READY_TMUX_TMPDIR="${CLAUDE_READY_ROOT}/tmux"
 CLAUDE_TIMEOUT_TMUX_TMPDIR="${CLAUDE_TIMEOUT_ROOT}/tmux"
-SMOKE_SOCKET="loop-large-prompt-$RANDOM-$$"
-HASH_SMOKE_SOCKET="loop-hash-mismatch-$RANDOM-$$"
-FAILURE_SMOKE_SOCKET="loop-missing-workspace-$RANDOM-$$"
-INFO_SMOKE_SOCKET="loop-info-no-maintenance-$RANDOM-$$"
-CLAUDE_READY_SMOKE_SOCKET="loop-claude-ready-$RANDOM-$$"
-CLAUDE_TIMEOUT_SMOKE_SOCKET="loop-claude-timeout-$RANDOM-$$"
+SMOKE_SOCKET="${SUCCESS_ROOT}/tmux.sock"
+HASH_SMOKE_SOCKET="${HASH_ROOT}/tmux.sock"
+FAILURE_SMOKE_SOCKET="${FAILURE_ROOT}/tmux.sock"
+INFO_SMOKE_SOCKET="${INFO_ROOT}/tmux.sock"
+CLAUDE_READY_SMOKE_SOCKET="${CLAUDE_READY_ROOT}/tmux.sock"
+CLAUDE_TIMEOUT_SMOKE_SOCKET="${CLAUDE_TIMEOUT_ROOT}/tmux.sock"
 SUCCESS_RUN_ID="large-prompt-success"
 HASH_RUN_ID="large-prompt-hash"
 FAILURE_RUN_ID="large-prompt-failure"
@@ -89,7 +90,6 @@ CHARTER_SENTINEL="BEGIN-LARGE-CHARTER-$RANDOM-$$"
 CHARTER_TRAILING_SENTINEL="END-LARGE-CHARTER-$RANDOM-$$"
 SYSTEM_PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 SMOKE_USER="$(id -un)"
-SMOKE_UID="$(id -u)"
 SMOKE_SHELL="/bin/sh"
 SMOKE_TERM="xterm-256color"
 SMOKE_LANG="C"
@@ -156,11 +156,11 @@ assert_prebuilt_binary_unchanged() {
 }
 
 assert_tmux_socket_path_budget() {
-  local tmux_tmpdir="$1"
-  local socket="$2"
-  local socket_path="${tmux_tmpdir}/tmux-${SMOKE_UID}/${socket}"
-  if [ "${#socket_path}" -gt 103 ]; then
-    echo "large-prompt smoke: tmux socket path exceeds Darwin's 103-byte pathname budget: ${socket_path}" >&2
+  local socket_path="$1"
+  local socket_bytes
+  socket_bytes="$(printf '%s' "${socket_path}" | wc -c | tr -d ' ')"
+  if [ "${socket_bytes}" -gt 103 ]; then
+    echo "large-prompt smoke: tmux socket path exceeds Darwin's 103-byte pathname budget (${socket_bytes} bytes): ${socket_path}" >&2
     exit 1
   fi
 }
@@ -209,7 +209,7 @@ make_agent_bin() {
   cp "${HASH_TUI}" "${target}/gemini"
   cp "${HASH_TUI}" "${target}/cursor"
   cp "${HASH_TUI}" "${target}/claude"
-  cp "${FIXTURES}/tmux" "${target}/tmux"
+  cp "${TMUX_WRAPPER}" "${target}/tmux"
   chmod +x "${target}/"*
 }
 
@@ -243,11 +243,12 @@ run_isolated_loop() {
     "LANG=${SMOKE_LANG}" \
     "LOOP_RUN_ID=${run_id}" \
     "LOOP_SMOKE_CLAUDE_STARTUP=${LOOP_SMOKE_CLAUDE_STARTUP:-}" \
+    "LOOP_SMOKE_REAL_TMUX=/opt/homebrew/bin/tmux" \
     "LOOP_SMOKE_TRACE_PATH=${root}/trace.log" \
     LOOP_AU_PAIR_ENABLED=0 \
     LOOP_NANNY_ENABLED=0 \
     "LOOP_RECON_PANES=${recon_panes}" \
-    "LOOP_SMOKE_TMUX_SOCKET=${socket}" \
+    "LOOP_TMUX_SOCKET=${socket}" \
     "LOOP_UTILITY_PANE=${utility_pane}" \
     "${SMOKE_LOOP_BINARY}" "$@"
 }
@@ -267,7 +268,18 @@ smoke_tmux() {
     "TERM=${SMOKE_TERM}" \
     "LANG=${SMOKE_LANG}" \
     "TMUX_TMPDIR=${tmux_tmpdir}" \
-    /opt/homebrew/bin/tmux -L "${socket}" "$@"
+    /opt/homebrew/bin/tmux -S "${socket}" "$@"
+}
+
+assert_manifest_socket() {
+  local manifest_path="$1"
+  local expected_socket="$2"
+  local recorded
+  recorded="$(manifest_field "${manifest_path}" tmuxSocket)"
+  if [ "${recorded}" != "${expected_socket}" ]; then
+    echo "large-prompt smoke: manifest socket ${recorded:-missing} != ${expected_socket}" >&2
+    exit 1
+  fi
 }
 
 expected_repo_id() {
@@ -477,16 +489,12 @@ assert_full_layout_geometry() {
   printf '%s' "${geometry}"
 }
 
-assert_tmux_socket_path_budget "${SUCCESS_TMUX_TMPDIR}" "${SMOKE_SOCKET}"
-assert_tmux_socket_path_budget "${HASH_TMUX_TMPDIR}" "${HASH_SMOKE_SOCKET}"
-assert_tmux_socket_path_budget "${FAILURE_TMUX_TMPDIR}" "${FAILURE_SMOKE_SOCKET}"
-assert_tmux_socket_path_budget "${INFO_TMUX_TMPDIR}" "${INFO_SMOKE_SOCKET}"
-assert_tmux_socket_path_budget \
-  "${CLAUDE_READY_TMUX_TMPDIR}" \
-  "${CLAUDE_READY_SMOKE_SOCKET}"
-assert_tmux_socket_path_budget \
-  "${CLAUDE_TIMEOUT_TMUX_TMPDIR}" \
-  "${CLAUDE_TIMEOUT_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${HASH_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${FAILURE_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${INFO_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${CLAUDE_READY_SMOKE_SOCKET}"
+assert_tmux_socket_path_budget "${CLAUDE_TIMEOUT_SMOKE_SOCKET}"
 
 cd "${LOOP_ROOT}"
 assert_prebuilt_binary_unchanged "before launch"
@@ -510,7 +518,7 @@ make_agent_bin "${CLAUDE_READY_BIN}"
 make_agent_bin "${CLAUDE_TIMEOUT_BIN}"
 cp "${HASH_TUI}" "${HASH_BIN}/gemini"
 cp "${FIXTURES}/cursor" "${HASH_BIN}/cursor"
-cp "${FIXTURES}/tmux" "${HASH_BIN}/tmux"
+cp "${TMUX_WRAPPER}" "${HASH_BIN}/tmux"
 cp "${HASH_TUI}" "${FAILURE_BIN}/gemini"
 cp "${HASH_TUI}" "${FAILURE_BIN}/cursor"
 cp "${FIXTURES}/tmux-no-session" "${FAILURE_BIN}/tmux"
@@ -595,6 +603,7 @@ run_isolated_loop \
   -p "${PROMPT_PATH}" >"${SMOKE_ROOT}/success.out" 2>"${SMOKE_ROOT}/success.err"
 
 SUCCESS_MANIFEST="$(resolve_case_manifest "${SUCCESS_HOME}" "${SUCCESS_REPO_ID}")"
+assert_manifest_socket "${SUCCESS_MANIFEST}" "${SMOKE_SOCKET}"
 SUCCESS_RUN_ID="$(manifest_field "${SUCCESS_MANIFEST}" runId)"
 
 assert_manifest_binding \
@@ -678,6 +687,7 @@ run_isolated_loop \
   >"${SMOKE_ROOT}/claude-ready.out" \
   2>"${SMOKE_ROOT}/claude-ready.err"
 CLAUDE_READY_MANIFEST="$(resolve_case_manifest "${CLAUDE_READY_HOME}" "${CLAUDE_READY_REPO_ID}")"
+assert_manifest_socket "${CLAUDE_READY_MANIFEST}" "${CLAUDE_READY_SMOKE_SOCKET}"
 CLAUDE_READY_RUN_ID="$(manifest_field "${CLAUDE_READY_MANIFEST}" runId)"
 assert_manifest_binding \
   "${CLAUDE_READY_MANIFEST}" \
@@ -738,6 +748,7 @@ grep -Fq \
   'did not reach an input-ready prompt within 20000ms' \
   "${SMOKE_ROOT}/claude-timeout.err"
 CLAUDE_TIMEOUT_MANIFEST="$(resolve_case_manifest "${CLAUDE_TIMEOUT_HOME}" "${CLAUDE_TIMEOUT_REPO_ID}")"
+assert_manifest_socket "${CLAUDE_TIMEOUT_MANIFEST}" "${CLAUDE_TIMEOUT_SMOKE_SOCKET}"
 CLAUDE_TIMEOUT_RUN_ID="$(manifest_field "${CLAUDE_TIMEOUT_MANIFEST}" runId)"
 assert_manifest_binding \
   "${CLAUDE_TIMEOUT_MANIFEST}" \
@@ -758,7 +769,7 @@ if [ -z "${CLAUDE_TIMEOUT_SESSION}" ]; then
   exit 1
 fi
 grep -Fq \
-  "The live tmux session \"${CLAUDE_TIMEOUT_SESSION}\" was preserved; attach with: tmux attach -t ${CLAUDE_TIMEOUT_SESSION}" \
+  "The live tmux session \"${CLAUDE_TIMEOUT_SESSION}\" was preserved; attach with: tmux -S '${CLAUDE_TIMEOUT_SMOKE_SOCKET}' attach -t '${CLAUDE_TIMEOUT_SESSION}'" \
   "${SMOKE_ROOT}/claude-timeout.err"
 if grep -Fq '[loop] started tmux session' \
   "${SMOKE_ROOT}/claude-timeout.out" \
@@ -861,6 +872,7 @@ if [ "${HASH_LAUNCH_STATUS}" -ne 0 ]; then
   exit "${HASH_LAUNCH_STATUS}"
 fi
 HASH_MANIFEST="$(resolve_case_manifest "${HASH_HOME}" "${HASH_REPO_ID}")"
+assert_manifest_socket "${HASH_MANIFEST}" "${HASH_SMOKE_SOCKET}"
 HASH_RUN_ID="$(manifest_field "${HASH_MANIFEST}" runId)"
 assert_manifest_binding \
   "${HASH_MANIFEST}" \
@@ -912,6 +924,7 @@ if [ "${FAILURE_STATUS}" -eq 0 ]; then
 fi
 grep -Fq 'exited before attach' "${SMOKE_ROOT}/failure.err"
 FAILURE_MANIFEST="$(resolve_case_manifest "${FAILURE_HOME}" "${FAILURE_REPO_ID}")"
+assert_manifest_socket "${FAILURE_MANIFEST}" "${FAILURE_SMOKE_SOCKET}"
 FAILURE_RUN_ID="$(manifest_field "${FAILURE_MANIFEST}" runId)"
 assert_manifest_binding \
   "${FAILURE_MANIFEST}" \

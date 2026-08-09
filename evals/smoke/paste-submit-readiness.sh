@@ -4,18 +4,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOOP_ROOT="${REPO_ROOT}/loop-fork"
 HASH_TUI="${REPO_ROOT}/evals/smoke/fixtures/hash-bound-tui.py"
-TMUX_FIXTURE="${REPO_ROOT}/runs/paste-submit-readiness/artifacts/tmux"
+TMUX_WRAPPER="${REPO_ROOT}/evals/smoke/fixtures/isolated-tmux.sh"
 SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/loop-bridge-nudge-smoke.XXXXXX")"
-SMOKE_SOCKET="loop-bridge-nudge-$RANDOM-$$"
+SMOKE_ROOT="$(cd "${SMOKE_ROOT}" && pwd -P)"
+SMOKE_SOCKET="${SMOKE_ROOT}/tmux.sock"
 
 cleanup() {
   local status=$?
-  local socket_dir="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"
   trap - EXIT
-  /opt/homebrew/bin/tmux -L "${SMOKE_SOCKET}" kill-server >/dev/null 2>&1 || true
-  if [ -S "${socket_dir}/${SMOKE_SOCKET}" ]; then
-    mv "${socket_dir}/${SMOKE_SOCKET}" "${SMOKE_ROOT}/${SMOKE_SOCKET}.socket"
-  fi
+  /opt/homebrew/bin/tmux -S "${SMOKE_SOCKET}" kill-server >/dev/null 2>&1 || true
   rm -rf "${SMOKE_ROOT}"
   exit "${status}"
 }
@@ -40,7 +37,7 @@ wait_for_pane_text() {
   local text="$2"
   local output=""
   for _attempt in $(seq 1 40); do
-    output="$(/opt/homebrew/bin/tmux -L "${SMOKE_SOCKET}" capture-pane -p -J -S -200 -t "${pane}")"
+    output="$(/opt/homebrew/bin/tmux -S "${SMOKE_SOCKET}" capture-pane -p -J -S -200 -t "${pane}")"
     if grep -Fq "${text}" <<<"${output}"; then
       printf '%s' "${output}"
       return 0
@@ -54,7 +51,7 @@ wait_for_pane_text() {
 mkdir -p "${SMOKE_ROOT}/bin" "${SMOKE_ROOT}/home" "${SMOKE_ROOT}/repo"
 cp "${HASH_TUI}" "${SMOKE_ROOT}/bin/claude"
 cp "${HASH_TUI}" "${SMOKE_ROOT}/bin/gemini"
-cp "${TMUX_FIXTURE}" "${SMOKE_ROOT}/bin/tmux"
+cp "${TMUX_WRAPPER}" "${SMOKE_ROOT}/bin/tmux"
 chmod +x "${SMOKE_ROOT}/bin/"*
 git init -q "${SMOKE_ROOT}/repo"
 PROMPT_PATH="${SMOKE_ROOT}/charter.md"
@@ -73,7 +70,8 @@ env \
   LOOP_AU_PAIR_ENABLED=0 \
   LOOP_NANNY_ENABLED=0 \
   LOOP_RECON_PANES=0 \
-  "LOOP_SMOKE_TMUX_SOCKET=${SMOKE_SOCKET}" \
+  "LOOP_SMOKE_REAL_TMUX=/opt/homebrew/bin/tmux" \
+  "LOOP_TMUX_SOCKET=${SMOKE_SOCKET}" \
   LOOP_UTILITY_PANE=0 \
   "PATH=${SMOKE_ROOT}/bin:${PATH}" \
   "${LOOP_ROOT}/loop" --tmux --agent gemini --pair-with claude \
@@ -92,13 +90,18 @@ if [ -z "${MANIFEST_PATH}" ]; then
   exit 1
 fi
 TMUX_SESSION="$(manifest_field "${MANIFEST_PATH}" tmuxSession)"
+RECORDED_SOCKET="$(manifest_field "${MANIFEST_PATH}" tmuxSocket)"
 GEMINI_PANE="$(pane_for_agent "${MANIFEST_PATH}" gemini)"
 CLAUDE_PANE="$(pane_for_agent "${MANIFEST_PATH}" claude)"
+if [ "${RECORDED_SOCKET}" != "${SMOKE_SOCKET}" ]; then
+  echo "bridge-nudge smoke: manifest socket ${RECORDED_SOCKET:-missing} != ${SMOKE_SOCKET}" >&2
+  exit 1
+fi
 if [ -z "${TMUX_SESSION}" ] || [ -z "${GEMINI_PANE}" ] || [ -z "${CLAUDE_PANE}" ]; then
   echo "bridge-nudge smoke: incomplete pane manifest" >&2
   exit 1
 fi
-/opt/homebrew/bin/tmux -L "${SMOKE_SOCKET}" has-session -t "${TMUX_SESSION}"
+/opt/homebrew/bin/tmux -S "${SMOKE_SOCKET}" has-session -t "${TMUX_SESSION}"
 wait_for_pane_text "${GEMINI_PANE}" "BOOTSTRAP_VERIFIED gemini" >/dev/null
 wait_for_pane_text "${CLAUDE_PANE}" "BOOTSTRAP_VERIFIED claude" >/dev/null
 
@@ -124,7 +127,8 @@ bun -e '
 
 env \
   "HOME=${SMOKE_ROOT}/home" \
-  "LOOP_SMOKE_TMUX_SOCKET=${SMOKE_SOCKET}" \
+  "LOOP_SMOKE_REAL_TMUX=/opt/homebrew/bin/tmux" \
+  "LOOP_TMUX_SOCKET=${SMOKE_SOCKET}" \
   "PATH=${SMOKE_ROOT}/bin:${PATH}" \
   "${LOOP_ROOT}/loop" __bridge-mcp "${RUN_DIR}" claude \
   <"${BRIDGE_REQUEST_PATH}" >"${SMOKE_ROOT}/bridge.out" 2>"${SMOKE_ROOT}/bridge.err"
@@ -159,7 +163,8 @@ MESSAGE_ID="$(bun -e '
 printf '%s\n' '{"id":2,"jsonrpc":"2.0","method":"tools/call","params":{"arguments":{},"name":"receive_messages"}}' >"${SMOKE_ROOT}/receive-request.jsonl"
 env \
   "HOME=${SMOKE_ROOT}/home" \
-  "LOOP_SMOKE_TMUX_SOCKET=${SMOKE_SOCKET}" \
+  "LOOP_SMOKE_REAL_TMUX=/opt/homebrew/bin/tmux" \
+  "LOOP_TMUX_SOCKET=${SMOKE_SOCKET}" \
   "PATH=${SMOKE_ROOT}/bin:${PATH}" \
   "${LOOP_ROOT}/loop" __bridge-mcp "${RUN_DIR}" gemini \
   <"${SMOKE_ROOT}/receive-request.jsonl" >"${SMOKE_ROOT}/receive.out" 2>"${SMOKE_ROOT}/receive.err"
