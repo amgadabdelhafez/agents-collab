@@ -151,6 +151,10 @@ Founder decisions recorded after this handover was created
   upgrade path. Keep its OTel trace and experiment contracts portable, evaluate
   Braintrust as the first upstream adapter candidate, and grant it no workflow,
   routing, release, or product-lane authority.
+- Approve Braintrust as that first Phase 0C shadow-adapter candidate. Portable,
+  locally runnable OTel and experiment contracts remain canonical. Send only
+  synthetic or explicitly redacted cases until the data-locality decision is
+  separately resolved.
 
 Current founder decisions to resolve
 

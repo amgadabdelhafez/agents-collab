@@ -31,7 +31,7 @@ The provisional target stack is:
 | Working and curated memory | Provenance-backed memory service and project files | Redesign |
 | World Model | Rebuildable temporal projection with explicit provenance | Preserve concept; redesign interfaces |
 | Traces, metrics, and logs | OpenTelemetry conventions and collectors | Proposed |
-| Evaluation and optimization | Portable experiment contracts with a Braintrust-class adapter | Accepted direction; upstream selection pending |
+| Evaluation and optimization | Portable experiment contracts with a Braintrust shadow adapter | Accepted direction; Braintrust is first candidate, not authority |
 
 The control plane is not another agent. It is deterministic infrastructure.
 Models propose, interpret, summarize, implement, review, and escalate. Typed
@@ -841,11 +841,13 @@ portfolio / project / work item / attempt
   -> usage, cost, latency, release disposition, and observed UAT result
 ```
 
-The harness writes through a narrow evaluation adapter. A Braintrust adapter is
-the initial upstream candidate, but the canonical trace and experiment contract
-must remain OpenTelemetry-based and exportable so the control plane is not
-locked to one hosted UI. Adapter failure cannot block or change a product lane;
-it is buffered, bounded, freshness-visible, and reconciled later.
+The harness writes through a narrow evaluation adapter. The founder approved
+Braintrust as the first Phase 0C shadow-adapter candidate, but the canonical
+trace and experiment contract remains OpenTelemetry-based, locally runnable,
+and exportable so the control plane is not locked to one hosted UI. Until the
+data-locality policy is settled, only synthetic or explicitly redacted cases
+may be transmitted to Braintrust. Adapter failure cannot block or change a
+product lane; it is buffered, bounded, freshness-visible, and reconciled later.
 
 The harness upgrade sequence is additive:
 
@@ -1010,8 +1012,8 @@ loop, change the installed harness, or mutate a product lane.
   changing the installed harness;
 - create one redacted, frozen historical benchmark slice and reproduce its
   observed baseline;
-- compare the portable local result with one Braintrust-class adapter in shadow
-  mode;
+- compare the portable local result with the approved Braintrust candidate in
+  shadow mode using only synthetic or explicitly redacted cases;
 - keep all scoring, comparison, and policy recommendations non-authoritative.
 
 ### Phase 1: messaging shadow
@@ -1250,9 +1252,9 @@ shadow-only and service-free rules in section 15.0.
       guardrails, failure identity, pricing snapshots, and Pareto reporting.
 - [ ] K-07 Add a bounded shadow trace/eval adapter to the harness; adapter
       failure must never block or mutate a product lane.
-- [ ] K-08 Evaluate Braintrust as the initial upstream experiment/observability
-      backend against portability, privacy, self-hosting, cost, and export
-      requirements before adoption.
+- [ ] K-08 Implement and evaluate the approved Braintrust shadow-adapter
+      candidate against portability, privacy, self-hosting, cost, and export
+      requirements before any adoption or sensitive-data use.
 - [ ] K-09 Define offline replay, asynchronous shadow scoring, bounded canary,
       approval, rollback, drift detection, and scheduled re-evaluation.
 
@@ -1274,6 +1276,10 @@ are admitted to implementation.
   provides Braintrust-class traces, datasets, experiments, scorers, production
   feedback, and model-mix quality/cost optimization while remaining
   non-authoritative and separate from Phase 0B.
+- **2026-08-08, accepted:** use Braintrust as the first Phase 0C shadow-adapter
+  candidate. Portable OpenTelemetry traces and locally runnable experiment
+  contracts remain canonical. Braintrust receives only synthetic or explicitly
+  redacted cases until a separate data-locality decision permits more.
 
 ### 17.2 Decisions still required
 
@@ -1369,6 +1375,9 @@ The remaining recommended default answers, pending founder confirmation, are:
 
 ## 20. Change log
 
+- 2026-08-08: Recorded approval of Braintrust as the first Phase 0C shadow
+  adapter under portable-contract, redaction, non-authority, and no-live-impact
+  constraints.
 - 2026-08-08: Added the Evaluation and Optimization Plane and Phase 0C harness
   shadow path, including portable OTel traces, historical replay limits,
   versioned experiments, calibrated LLM judges, model-mix comparison, live
