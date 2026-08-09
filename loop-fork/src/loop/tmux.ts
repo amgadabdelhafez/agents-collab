@@ -1075,19 +1075,6 @@ const buildSessionSizeArgs = (
   return ["-x", String(size.columns), "-y", String(size.rows)];
 };
 
-const sessionExists = (
-  session: string,
-  spawnFn: TmuxDeps["spawn"]
-): boolean => {
-  const result = spawnFn(["tmux", "has-session", "-t", session]);
-  if (result.timedOut) {
-    throw new Error(
-      `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while checking session "${session}"`
-    );
-  }
-  return result.exitCode === 0;
-};
-
 interface HandoffSessionProbe {
   liveness: TmuxLiveness;
   result?: SpawnResult;
@@ -1944,18 +1931,37 @@ const cleanupFailedPairedSessionStart = (
   deps: TmuxDeps,
   session: string,
   ownsTmuxSession: boolean,
+  launchSocket: TmuxSocket | undefined,
   _serverName: string | undefined,
   _runId: string
-): void => {
+): "confirmed-gone" | "not-owned" | "unknown" => {
   if (!ownsTmuxSession) {
-    return;
+    return "not-owned";
+  }
+  if (!launchSocket) {
+    return "unknown";
   }
   try {
-    if (sessionExists(session, deps.spawn)) {
-      deps.spawn(["tmux", "kill-session", "-t", session]);
+    const probe = probeHandoffSession(session, deps.spawn, true, launchSocket);
+    if (probe.liveness === "dead") {
+      return "confirmed-gone";
     }
+    if (probe.liveness === "unknown") {
+      return "unknown";
+    }
+    if (probe.liveness === "live") {
+      const killed = deps.spawn(
+        launchServerArgv(launchSocket, "kill-session", session)
+      );
+      if (killed.timedOut || killed.exitCode !== 0) {
+        return "unknown";
+      }
+    }
+    const after = probeHandoffSession(session, deps.spawn, true, launchSocket);
+    return after.liveness === "dead" ? "confirmed-gone" : "unknown";
   } catch {
     // Best-effort cleanup after a failed paired startup.
+    return "unknown";
   }
 };
 
@@ -3176,6 +3182,9 @@ const startPairedSession = async (
   const primaryAgent = launch.opts.agent;
   const secondaryAgent = pairedPeer(launch.opts);
   const paneAgents = resolveTmuxPaneAgents(primaryAgent, secondaryAgent);
+  const launchSocket = manifest.tmuxSocket
+    ? requireTmuxSocket(manifest.tmuxSocket)
+    : undefined;
   const claudeChannelServer = [primaryAgent, secondaryAgent].includes("claude")
     ? resolveClaudeChannelServerName(
         storage.runId,
@@ -3265,14 +3274,21 @@ const startPairedSession = async (
     if (terminalizationResult) {
       return terminalizationResult;
     }
-    await cleanupOwnedPersistentTransport();
-    cleanupFailedPairedSessionStart(
+    const sessionCleanup = cleanupFailedPairedSessionStart(
       deps,
       session,
       ownedTmuxSession,
+      launchSocket,
       claudeChannelServer,
       storage.runId
     );
+    if (sessionCleanup === "unknown") {
+      preserveUnknownStart();
+      deps.log(
+        `[loop] failed-start cleanup could not confirm tmux session "${session}" absent on its recorded socket; preserving manifest and transport identity for recovery.`
+      );
+      return "undurable";
+    }
     try {
       const updated = deps.updateRunManifest(
         storage.manifestPath,
@@ -3280,22 +3296,38 @@ const startPairedSession = async (
           if (!current) {
             return undefined;
           }
-          const withoutOwnedTransport = clearOwnedTransportFields(current);
           if (!isActiveRunState(current.state)) {
-            return withoutOwnedTransport;
+            return current;
           }
-          return setRunManifestState(withoutOwnedTransport, "failed");
+          return setRunManifestState(current, "failed");
         }
       );
       if (!updated || isActiveRunState(updated.state)) {
+        preserveUnknownStart();
+        deps.log(
+          `[loop] failed-start cleanup could not durably terminalize run ${storage.runId}; preserving exact transport identity for recovery.`
+        );
         return "undurable";
       }
       terminalizationResult = updated.state;
-      return terminalizationResult;
     } catch {
       // Preserve the original launch error; startup GC reads durable ownership.
+      preserveUnknownStart();
+      deps.log(
+        `[loop] failed-start cleanup could not persist terminal state for run ${storage.runId}; preserving exact transport identity for recovery.`
+      );
       return "undurable";
     }
+    await cleanupOwnedPersistentTransport();
+    try {
+      deps.updateRunManifest(storage.manifestPath, (current) =>
+        current ? clearOwnedTransportFields(current) : undefined
+      );
+    } catch {
+      // The terminal state already revoked live ownership. Startup GC can use
+      // the retained exact transport fields to finish bounded cleanup.
+    }
+    return terminalizationResult;
   };
   // A cold custom socket on macOS reports `No such file or directory`, not
   // `no server running`. It is safe to create the first session here because

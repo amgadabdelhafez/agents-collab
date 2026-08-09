@@ -1,0 +1,170 @@
+task_id: d014-paired-launch-cleanup-order
+dimension: unit
+attempt: 001
+started_at: 2026-08-09T18:32:58Z
+command: bun run test:file -- tests/loop/tmux.test.ts tests/loop/codex-tmux-proxy.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/tmux.test.ts tests/loop/codex-tmux-proxy.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+(pass) paired command builders default both providers to medium effort [0.73ms]
+(pass) paired command builder maps asymmetric role effort to either provider [0.14ms]
+(pass) runInTmux returns false when --tmux is not present [0.23ms]
+(pass) runInTmux starts a detached session without auto-attach when already inside tmux [0.67ms]
+(pass) runInTmux throws install message when tmux is missing
+(pass) runInTmux exposes launch socket failure before tmux contact
+(pass) runInTmux socket-qualifies non-paired handoff probe, remain-on-exit, gone re-probe, and interactive attach [0.54ms]
+(pass) runInTmux keeps explicit run id in single-agent mode [0.95ms]
+(pass) runInTmux paired launch emits the exact run manifest path contract line [3.88ms]
+(pass) tmux absence classification handles cold macOS socket during initial preflight without widening cleanup authority
+(pass) tmux absence classification handles missing macOS socket after resource creation without widening cleanup authority
+(pass) tmux absence classification handles missing named session without widening cleanup authority
+(pass) tmux absence classification handles permission failure without widening cleanup authority
+(pass) tmux absence classification handles overlong socket path without widening cleanup authority
+(pass) runInTmux preserves stable pane targets when reattaching a live paired session [0.35ms]
+(pass) runInTmux transports a realistic charter through hash-bound pointer bootstraps [1.22ms]
+(pass) runInTmux writes paired session refs before starting governess [10.43ms]
+(pass) the Nanny/Au Pair column defaults to the right fifth with an explicit opt-out [0.37ms]
+(pass) governed layout preserves legacy numeric fallbacks without tmux stdout [9.17ms]
+(pass) runInTmux starts paired tmux panes for the OSS seat and Codex [1.21ms]
+(pass) runInTmux releases local codex app-server handles after paired handoff [1.29ms]
+(pass) runInTmux closes local Codex ownership without rewriting a completed manifest after attach [1.91ms]
+(pass) runInTmux starts paired interactive tmux panes without a task [1.22ms]
+(pass) runInTmux fails closed when Claude never reaches an input-ready prompt [1.56ms]
+(pass) runInTmux still terminalizes an unexpected Claude readiness probe failure [1.12ms]
+(pass) runInTmux fails closed and cleans up when the Claude kickoff is never confirmed [1.58ms]
+(pass) tmux prompts keep the paired review workflow explicit [0.29ms]
+(pass) fresh paired charters bind and constrain the run World Model [0.17ms]
+(pass) paired prompts apply Caveman guidance with an exact off switch [0.09ms]
+(pass) tmux prompts make Claude the context steward and Codex recent-focused [0.07ms]
+(pass) tmux prompts respect --pair-with for non-default peers [0.10ms]
+(pass) interactive tmux prompts tell both agents to wait for the human [0.18ms]
+(pass) runInTmux replays the captured Claude pre-connect warning before bootstrap [2.81ms]
+(pass) captured Claude suggestions are not ready without an active probe [0.31ms]
+(pass) Claude suggestion probe preserves and rejects a human Try draft [0.43ms]
+(pass) runInTmux preserves the live workspace when a post-End draft capture fails [1.13ms]
+(pass) tmux pane snapshots bind styled text and cursor in one payload
+(pass) Claude suggestion probe requires an acknowledged redraw [0.49ms]
+(pass) Claude suggestion probe treats a send timeout as recoverable draft risk [0.25ms]
+(pass) Claude suggestion probe rejects attached or piped panes [0.04ms]
+(pass) Claude suggestion probe waits across the activity second [0.19ms]
+(pass) Claude changed suggestions receive a fresh acknowledged probe [0.32ms]
+(pass) Claude draft probe restores Home and fails closed when activity acknowledgment is missing [1.04ms]
+(pass) runInTmux auto-confirms Claude startup prompts in paired mode [1.14ms]
+(pass) runInTmux confirms wrapped Claude dev-channel prompts [0.96ms]
+(pass) Claude dev-channel confirmation settles before retrying a swallowed key [0.20ms]
+(pass) Claude dev-channel confirmation never retries after activity advances on a stale frame
+(pass) Claude dev-channel progress extends the readiness deadline past twenty seconds [0.87ms]
+(pass) Claude dev-channel confirmation fails closed after bounded swallowed keys [0.32ms]
+(pass) Claude dev-channel confirmation waits through an incomplete modal redraw [0.13ms]
+(pass) Claude dev-channel confirmation never enters when exit is selected [0.02ms]
+(pass) Claude dev-channel confirmation ignores a stale modal above the current composer [0.08ms]
+(pass) Claude bypass confirmation never enters when navigation is swallowed [0.42ms]
+(pass) Claude bypass confirmation enters only after a fresh selected-accept capture [0.17ms]
+(pass) runInTmux catches a delayed Claude dev-channel prompt [1.11ms]
+(pass) runInTmux confirms the current Claude bypass prompt wording [0.99ms]
+(pass) runInTmux still confirms Claude trust prompts in paired mode [0.91ms]
+(pass) runInTmux still catches a delayed Claude trust prompt [1.10ms]
+(pass) runInTmux reopens paired tmux panes without replaying the task [0.45ms]
+(pass) runInTmux resolves paired run id through an existing manifest [17.16ms]
+(pass) runInTmux rejects unknown run id before starting tmux session [7.72ms]
+(pass) runInTmux honors paired run resume from --session [16.41ms]
+(pass) runInTmux resolves paired resume from a worktree using git common dir [0.37ms]
+(pass) runInTmux strips a worktree suffix when git metadata is unavailable [0.19ms]
+(pass) runInTmux resolves raw stored session ids from --session [19.75ms]
+(pass) runInTmux ignores an unresolved raw session id in paired mode [14.65ms]
+(pass) runInTmux keeps raw --session values in single-agent mode [0.52ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-2"
+[loop] attach with: tmux -S '/tmp/ls-a/a.sock' attach -t 'repo-loop-2'
+(pass) runInTmux increments session index on conflicts [0.28ms]
+[loop] starting tmux session...
+(pass) runInTmux surfaces tmux startup errors [3.49ms]
+[loop] starting tmux session...
+(pass) runInTmux fails nonzero when the tmux control plane times out [3.31ms]
+[loop] starting tmux session...
+(pass) runInTmux refuses success when post-launch session liveness is unknown [0.28ms]
+[loop] starting tmux session...
+(pass) runInTmux keeps named-socket-missing non-paired handoff liveness unknown [0.18ms]
+[loop] starting tmux session...
+(pass) runInTmux keeps unrelated nonzero handoff stderr unknown [0.17ms]
+(pass) runInTmux preserves paired probe argv byte-for-byte with a launch socket available [0.27ms]
+(pass) runInTmux preserves current transport and active state on paired timeout liveness [1.06ms]
+(pass) runInTmux preserves current transport and active state on paired unrecognized nonzero liveness [0.62ms]
+(pass) runInTmux preserves current transport and active state when paired layout outcome is unknown [0.73ms]
+(pass) runInTmux never mutates home Claude MCP registration on startup failure [2.00ms]
+(pass) runInTmux terminalizes a hook-preparation failure before new-session [0.54ms]
+(pass) runInTmux never kills a winner when paired new-session loses a duplicate-session race [0.80ms]
+(pass) runInTmux cleans an owned paired session when setup fails after new-session [0.91ms]
+(pass) runInTmux terminalizes the paired manifest when the workspace disappears before attach [0.71ms]
+(pass) runInTmux preserves external transport ownership when a resumed workspace disappears [0.40ms]
+(pass) runInTmux terminalizes a paired manifest when attach confirms the workspace is gone [0.25ms]
+(pass) runInTmux preserves the active manifest when attach-path liveness is unknown [0.21ms]
+(pass) runInTmux treats an attach capability error as non-fatal when the exact paired session remains live [0.94ms]
+(pass) runInTmux rejects a failed pre-handoff window setup and terminalizes the manifest [0.20ms]
+(pass) runInTmux treats optional remain-on-exit timeout as best-effort and preserves the live manifest [0.19ms]
+(pass) runInTmux rejects a noninteractive handoff race and terminalizes the active manifest [0.20ms]
+(pass) runInTmux does not report a successful handoff for an already-failed manifest [0.20ms]
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-1"
+[loop] attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'
+(pass) runInTmux skips auto-attach for non-interactive sessions [0.30ms]
+(pass) persistent Codex bootstrap failure falls back to tmux delivery [0.08ms]
+[loop] starting tmux session...
+(pass) runInTmux reports when tmux session exits before attach [7.94ms]
+(pass) tmux internals strip --tmux from forwarded args
+(pass) tmux internals build launch argv from exec path
+(pass) tmux internals build launch argv for bun-compiled binary
+(pass) tmux internals build launch argv for executable with no script arg
+(pass) tmux internals build launch argv for installed executable
+(pass) tmux internals build launch argv when bun executes installed binary
+(pass) tmux internals quote single quotes safely
+(pass) tmux internals build shell command with escaping
+(pass) tmux internals unref detached helper processes
+(pass) tmux internals launch Claude in bypass mode
+(pass) tmux internals build run names
+(pass) tmux internals detect session conflicts
+(pass) tmux internals sanitize run base names
+
+tests/loop/codex-tmux-proxy.test.ts:
+(pass) codex tmux proxy waits briefly for the tmux session to appear [0.09ms]
+(pass) codex tmux proxy requires confirmed dead duration after startup grace [0.02ms]
+(pass) codex tmux proxy does not let unknown liveness complete dead evidence
+(pass) codex tmux proxy preserves a session when liveness is unknown [0.03ms]
+(pass) dead tmux reconciliation stops the still-bound active manifest [1.21ms]
+(pass) live tmux reconciliation preserves the active manifest [0.36ms]
+(pass) unknown tmux reconciliation preserves the active manifest [0.33ms]
+(pass) dead tmux reconciliation preserves a concurrently rebound manifest [0.45ms]
+(pass) dead tmux reconciliation preserves an already terminal manifest [0.34ms]
+(pass) tmux reconciliation failure preserves the manifest and proxy shutdown path [0.43ms]
+(pass) missing socket cannot authorize dead tmux reconciliation [0.40ms]
+(pass) invalid socket cannot authorize dead tmux reconciliation [0.37ms]
+(pass) requested shutdown accepts dead evidence from the matching target [0.36ms]
+(pass) requested shutdown rejects missing socket evidence as unknown [0.43ms]
+(pass) requested shutdown rejects invalid socket evidence as unknown [0.31ms]
+(pass) requested shutdown rejects stale dead evidence after identity changes [0.59ms]
+(pass) proxy stop reason accepts dead evidence from the matching target [0.72ms]
+(pass) proxy stop reason treats missing socket evidence as unknown [0.48ms]
+(pass) proxy stop reason treats invalid socket evidence as unknown [0.38ms]
+(pass) proxy stop reason rejects stale dead evidence after state changes [0.39ms]
+(pass) codex tmux proxy exposes no bridge-body delivery path
+(pass) codex tmux proxy persists newer live thread ids to the run manifest [0.65ms]
+(pass) codex tmux proxy records a mechanical command candidate without command text [0.94ms]
+(pass) closed loop bridge MCP calls are identified narrowly
+(pass) codex tmux proxy reloads MCP servers after a closed loop bridge call [186.60ms]
+(pass) codex tmux proxy reconnects to a live upstream without dropping the tui socket [2005.29ms]
+(pass) codex tmux proxy recovers after more than the former reconnect limit [1007.50ms]
+(pass) codex tmux proxy never injects a bridge request into app-server after reconnect [2008.59ms]
+(pass) codex tmux proxy has no headless fallback when visible delivery is unavailable [2007.73ms]
+(pass) codex tmux proxy records the producer and rejects shutdown while tmux is live [159.68ms]
+
+ 136 pass
+ 0 fail
+ 635 expect() calls
+Ran 136 tests across 2 files. [7.58s]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-09T18:33:06Z

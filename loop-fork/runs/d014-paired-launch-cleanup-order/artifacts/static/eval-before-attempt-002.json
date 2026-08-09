@@ -1,0 +1,28 @@
+{
+  "task_id": "d014-paired-launch-cleanup-order",
+  "status": "fail",
+  "required": [
+    "unit",
+    "static"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/d014-paired-launch-cleanup-order/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/d014-paired-launch-cleanup-order/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/d014-paired-launch-cleanup-order/artifacts/unit/attempt-001.json"
+    },
+    "static": {
+      "status": "fail",
+      "artifact": "runs/d014-paired-launch-cleanup-order/artifacts/static/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/d014-paired-launch-cleanup-order/artifacts/static/attempt-001.log",
+      "latest_attempt_meta": "runs/d014-paired-launch-cleanup-order/artifacts/static/attempt-001.json"
+    }
+  }
+}

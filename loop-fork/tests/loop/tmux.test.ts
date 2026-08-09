@@ -1742,6 +1742,7 @@ test("runInTmux closes local Codex ownership without rewriting a completed manif
     repoId: "repo-123",
     runId: "1",
     status: "running",
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   const opts = makePairedOptions();
   const storage = {
@@ -1793,7 +1794,7 @@ test("runInTmux closes local Codex ownership without rewriting a completed manif
       startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
       startPersistentAgentSession: () => Promise.resolve(undefined),
       spawn: (args: string[]) => {
-        if (args[0] === "tmux" && args[1] === "has-session") {
+        if (args[0] === "tmux" && args.includes("has-session")) {
           return sessionAlive
             ? { exitCode: 0, stderr: "" }
             : { exitCode: 1, stderr: "session not found" };
@@ -2078,6 +2079,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
   let closed = 0;
   let released = 0;
   let sessionStarted = false;
+  let stoppedProxy = 0;
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -2085,6 +2087,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
     repoId: "repo-123",
     runId: "1",
     status: "running",
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
@@ -2132,9 +2135,22 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
         sleep: () => Promise.resolve(),
         startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
         startPersistentAgentSession: () => Promise.resolve(undefined),
+        stopCodexProxy: (_proxyUrl, request) => {
+          stoppedProxy += 1;
+          expect(request).toEqual({
+            caller: "paired-start-cleanup",
+            requesterPid: process.pid,
+          });
+          expect(sessionStarted).toBe(false);
+          expect(manifest).toMatchObject({
+            state: "failed",
+            status: "failed",
+          });
+          return Promise.resolve();
+        },
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && args.includes("has-session")) {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
@@ -2142,7 +2158,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
           if (args[0] === "tmux" && args[1] === "new-session") {
             sessionStarted = true;
           }
-          if (args[0] === "tmux" && args[1] === "kill-session") {
+          if (args[0] === "tmux" && args.includes("kill-session")) {
             sessionStarted = false;
           }
           return { exitCode: 0, stderr: "" };
@@ -2157,11 +2173,144 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
   ).rejects.toThrow("synthetic capture failure");
 
   expect(closed).toBe(1);
+  expect(stoppedProxy).toBe(1);
   expect(released).toBe(0);
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some((args) => args[0] === "tmux" && args.includes("kill-session"))
   ).toBe(true);
+  expect(
+    calls.filter((args) => args[0] === "tmux" && args.includes("kill-session"))
+  ).toEqual([
+    ["tmux", "-S", "/tmp/ls-a/a.sock", "kill-session", "-t", "repo-loop-1"],
+  ]);
   expect(manifest).toMatchObject({ state: "failed", status: "failed" });
+});
+
+test.each([
+  "nonzero-kill",
+  "unknown-after-kill",
+  "manifest-stays-active",
+  "manifest-update-throws",
+] as const)("runInTmux preserves exact recovery identity when failed-start cleanup is %s", async (cleanupFailure) => {
+  let closed = 0;
+  let postKillProbe = false;
+  let released = 0;
+  let sessionLive = false;
+  let stoppedProxy = 0;
+  let manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 1234,
+    repoId: "repo-123",
+    runId: "1",
+    status: "running",
+    tmuxSocket: "/tmp/ls-a/a.sock",
+  });
+  const storage = {
+    manifestPath: "/repo/.loop/runs/1/manifest.json",
+    repoId: "repo-123",
+    runDir: makeTempRunDir(),
+    runId: "1",
+    storageRoot: "/repo/.loop/runs",
+    transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
+  };
+
+  await expect(
+    runInTmux(
+      ["--tmux"],
+      {
+        capturePane: () => {
+          throw new Error("primary synthetic startup failure");
+        },
+        closePersistentCodexSession: () => {
+          closed += 1;
+          return Promise.resolve();
+        },
+        cwd: "/repo",
+        env: {},
+        findBinary: () => true,
+        getCodexAppServerPid: () => 4321,
+        getCodexAppServerUrl: () => "ws://127.0.0.1:4500",
+        getLastCodexThreadId: () => "codex-thread-1",
+        isInteractive: () => false,
+        launchArgv: ["bun", "/repo/src/cli.ts"],
+        log: (): void => undefined,
+        makeClaudeSessionId: () => "claude-session-1",
+        ...healthyClaudeKickoffDeps(),
+        preparePairedRun: (nextOpts) => {
+          nextOpts.codexMcpConfigArgs = [
+            "-c",
+            'mcp_servers.loop-bridge.command="loop"',
+          ];
+          return { manifest, storage };
+        },
+        releasePersistentCodexSession: () => {
+          released += 1;
+        },
+        sendKeys: (): void => undefined,
+        sendText: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
+        startPersistentAgentSession: () => Promise.resolve(undefined),
+        stopCodexProxy: () => {
+          stoppedProxy += 1;
+          return Promise.resolve();
+        },
+        spawn: (args: string[]) => {
+          if (args[0] === "tmux" && args.includes("has-session")) {
+            if (postKillProbe) {
+              return { exitCode: 1, stderr: "permission denied" };
+            }
+            return sessionLive
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "session not found" };
+          }
+          if (args[0] === "tmux" && args[1] === "new-session") {
+            sessionLive = true;
+            return { exitCode: 0, stderr: "", stdout: "%91" };
+          }
+          if (args[0] === "tmux" && args.includes("kill-session")) {
+            if (cleanupFailure === "nonzero-kill") {
+              return { exitCode: 1, stderr: "permission denied" };
+            }
+            if (cleanupFailure === "unknown-after-kill") {
+              postKillProbe = true;
+            } else {
+              sessionLive = false;
+            }
+            return { exitCode: 0, stderr: "" };
+          }
+          return { exitCode: 0, stderr: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          const next = update(manifest) ?? manifest;
+          if (next.state === "failed") {
+            if (cleanupFailure === "manifest-update-throws") {
+              throw new Error("synthetic manifest write failure");
+            }
+            if (cleanupFailure === "manifest-stays-active") {
+              return manifest;
+            }
+          }
+          manifest = next;
+          return manifest;
+        },
+      },
+      { opts: makePairedOptions({ proof: "" }) }
+    )
+  ).rejects.toThrow("primary synthetic startup failure");
+
+  expect(closed).toBe(0);
+  expect(stoppedProxy).toBe(0);
+  expect(released).toBe(1);
+  expect(manifest.state).not.toBe("failed");
+  expect(manifest).toMatchObject({
+    codexAppServerPid: 4321,
+    codexRemoteUrl: "ws://127.0.0.1:4500",
+    codexThreadId: "codex-thread-1",
+    tmuxSession: "repo-loop-1",
+    tmuxSocket: "/tmp/ls-a/a.sock",
+  });
 });
 
 test("runInTmux fails closed and cleans up when the Claude kickoff is never confirmed", async () => {
@@ -2193,6 +2342,7 @@ test("runInTmux fails closed and cleans up when the Claude kickoff is never conf
     repoId: "repo-123",
     runId: "1",
     status: "running",
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   const storage = {
     manifestPath: "/repo/.loop/runs/1/manifest.json",
@@ -2249,7 +2399,7 @@ test("runInTmux fails closed and cleans up when the Claude kickoff is never conf
         startPersistentAgentSession: () => Promise.resolve(undefined),
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && args.includes("has-session")) {
             return sessionStarted
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
@@ -2260,7 +2410,7 @@ test("runInTmux fails closed and cleans up when the Claude kickoff is never conf
           if (args[0] === "tmux" && args[1] === "paste-buffer") {
             pasted = true;
           }
-          if (args[0] === "tmux" && args[1] === "kill-session") {
+          if (args[0] === "tmux" && args.includes("kill-session")) {
             sessionStarted = false;
           }
           return { exitCode: 0, stderr: "" };
@@ -2277,7 +2427,7 @@ test("runInTmux fails closed and cleans up when the Claude kickoff is never conf
   // Zero survivors: the tmux session is killed and the owned Codex transport
   // is closed, and the manifest records the failure rather than a running loop.
   expect(
-    calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
+    calls.some((args) => args[0] === "tmux" && args.includes("kill-session"))
   ).toBe(true);
   expect(closed).toBe(1);
   expect(released).toBe(0);
@@ -5460,6 +5610,7 @@ test("runInTmux cleans an owned paired session when setup fails after new-sessio
     runId: "1",
     state: "submitted",
     status: "running",
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   let sessionLive = false;
   const storage = {
@@ -5484,7 +5635,7 @@ test("runInTmux cleans an owned paired session when setup fails after new-sessio
         preparePairedRun: () => ({ manifest, storage }),
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && args.includes("has-session")) {
             return sessionLive
               ? { exitCode: 0, stderr: "" }
               : { exitCode: 1, stderr: "session not found" };
@@ -5496,7 +5647,7 @@ test("runInTmux cleans an owned paired session when setup fails after new-sessio
           if (args[0] === "tmux" && args[1] === "split-window") {
             return { exitCode: 1, stderr: "split boom" };
           }
-          if (args[0] === "tmux" && args[1] === "kill-session") {
+          if (args[0] === "tmux" && args.includes("kill-session")) {
             sessionLive = false;
           }
           return { exitCode: 0, stderr: "" };
@@ -5515,8 +5666,10 @@ test("runInTmux cleans an owned paired session when setup fails after new-sessio
 
   expect(sessionLive).toBe(false);
   expect(
-    calls.filter((args) => args[0] === "tmux" && args[1] === "kill-session")
-  ).toEqual([["tmux", "kill-session", "-t", "repo-loop-1"]]);
+    calls.filter((args) => args[0] === "tmux" && args.includes("kill-session"))
+  ).toEqual([
+    ["tmux", "-S", "/tmp/ls-a/a.sock", "kill-session", "-t", "repo-loop-1"],
+  ]);
   expect(manifest).toMatchObject({ state: "failed", status: "failed" });
 });
 
@@ -5531,6 +5684,7 @@ test("runInTmux terminalizes the paired manifest when the workspace disappears b
     runId: "1",
     state: "submitted",
     status: "running",
+    tmuxSocket: "/tmp/ls-a/a.sock",
   });
   const storage = {
     manifestPath: "/isolated/home/.loop/runs/repo-123/1/manifest.json",
@@ -5559,7 +5713,7 @@ test("runInTmux terminalizes the paired manifest when the workspace disappears b
         sleep: () => Promise.resolve(),
         spawn: (args: string[]) => {
           calls.push(args);
-          if (args[0] === "tmux" && args[1] === "has-session") {
+          if (args[0] === "tmux" && args.includes("has-session")) {
             return { exitCode: 1, stderr: "session not found" };
           }
           return { exitCode: 0, stderr: "" };

@@ -1,0 +1,72 @@
+task_id: d014-paired-launch-cleanup-order
+dimension: static
+attempt: 001
+started_at: 2026-08-09T18:33:11Z
+command: bunx ultracite check src/loop/tmux.ts tests/loop/tmux.test.ts
+--- output ---
+src/loop/tmux.ts:1078:7 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × This variable sessionExists is unused.
+
+    1076 │ };
+    1077 │
+  > 1078 │ const sessionExists = (
+         │       ^^^^^^^^^^^^^
+    1079 │   session: string,
+    1080 │   spawnFn: TmuxDeps["spawn"]
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend sessionExists with an underscore.
+
+    1076 1076 │   };
+    1077 1077 │
+    1078      │ - const·sessionExists·=·(
+         1078 │ + const·_sessionExists·=·(
+    1079 1079 │     session: string,
+    1080 1080 │     spawnFn: TmuxDeps["spawn"]
+
+
+tests/loop/tmux.test.ts:539:5 lint/suspicious/noDuplicateObjectKeys  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━
+
+  × This property is later overwritten by an object member with the same name.
+
+    537 │     runId: "1",
+    538 │     status: "running",
+  > 539 │     tmuxSocket: "/tmp/ls-a/a.sock",
+        │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    540 │     tmuxPaneGoverness: "%old-governess",
+    541 │     tmuxPaneLeft: "%old-left",
+
+  i Overwritten with this property.
+
+    542 │     tmuxPaneRight: "%old-right",
+    543 │     // Bound by the launch reservation before this launch began (T-04 phase 1).
+  > 544 │     tmuxSocket: "/tmp/ls-a/a.sock",
+        │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    545 │   });
+    546 │   const opts = makePairedOptions({
+
+  i If an object property with the same name is defined multiple times (except when combining a getter with a setter), only the last definition makes it into the object and previous definitions are ignored.
+
+  i Unsafe fix: Remove this property.
+
+     537  537 │       runId: "1",
+     538  538 │       status: "running",
+     539      │ - ····tmuxSocket:·"/tmp/ls-a/a.sock",
+     540  539 │       tmuxPaneGoverness: "%old-governess",
+     541  540 │       tmuxPaneLeft: "%old-left",
+
+
+Checked 2 files in 49ms. No fixes applied.
+Found 2 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+
+
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-09T18:33:11Z
