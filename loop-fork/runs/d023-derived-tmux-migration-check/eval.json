@@ -1,0 +1,27 @@
+{
+  "task_id": "d023-derived-tmux-migration-check",
+  "status": "pass",
+  "required": ["unit", "static", "build", "review"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "274 focused tests passed with 1,161 assertions; checker seed suite passed 26/26."
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "Exact nine-file Ultracite check and git diff --check passed."
+    },
+    "build": {
+      "status": "pass",
+      "evidence": "bun run build compiled the loop binary successfully."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent zero-write review passed after namespace import, export-star, and NamespaceExport authority bypasses were closed."
+    }
+  },
+  "limitations": [
+    "The AST checker resolves supported file-local lexical aliases but is not an interprocedural type-flow proof.",
+    "Arbitrary TmuxLiveness production remains covered by named consumer regressions, not claimed by this checker."
+  ]
+}

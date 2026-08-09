@@ -118,6 +118,7 @@ import {
   requireTmuxSocket,
   resolveTmuxSocket,
   type TmuxSocket,
+  TmuxSocketUnknownError,
 } from "./tmux-socket";
 import type { Agent, EffortLevel, Options, RunLifecycleState } from "./types";
 import {
@@ -278,7 +279,7 @@ interface StartedPairedSession {
   manifestPath: string;
   preserveUnknownStart: () => void;
   session: string;
-  socket?: TmuxSocket;
+  socket: TmuxSocket;
   terminalizeFailedStart: () => Promise<RunLifecycleState | "undurable">;
 }
 
@@ -3400,9 +3401,7 @@ const startPairedSession = async (
       manifestPath: storage.manifestPath,
       preserveUnknownStart,
       session,
-      ...(manifest.tmuxSocket
-        ? { socket: requireTmuxSocket(manifest.tmuxSocket) }
-        : {}),
+      socket: launchSocket,
       terminalizeFailedStart,
     };
   }
@@ -3676,9 +3675,7 @@ const startPairedSession = async (
       manifestPath: storage.manifestPath,
       preserveUnknownStart,
       session,
-      ...(manifest.tmuxSocket
-        ? { socket: requireTmuxSocket(manifest.tmuxSocket) }
-        : {}),
+      socket: launchSocket,
       terminalizeFailedStart,
     };
   } catch (error: unknown) {
@@ -3835,10 +3832,13 @@ const startAutoSession = (
 
 const defaultDeps = (): TmuxDeps => ({
   attach: (session: string, launchSocket?: TmuxSocket) => {
+    if (!launchSocket) {
+      throw new TmuxSocketUnknownError(
+        "attach requires the socket resolved for this launch"
+      );
+    }
     const result = spawnSync(
-      launchSocket
-        ? launchServerArgv(launchSocket, "attach", session)
-        : ["tmux", "attach", "-t", session],
+      launchServerArgv(launchSocket, "attach", session),
       {
         stderr: "inherit",
         stdin: "inherit",
@@ -3850,16 +3850,19 @@ const defaultDeps = (): TmuxDeps => ({
     }
   },
   capturePane: (pane: string, styled = false, launchSocket?: TmuxSocket) => {
+    if (!launchSocket) {
+      throw new TmuxSocketUnknownError(
+        "pane capture requires the socket resolved for this launch"
+      );
+    }
     const result = spawnSync(
-      launchSocket
-        ? pairedLaunchArgv(launchSocket, [
-            "capture-pane",
-            "-p",
-            ...(styled ? ["-e"] : []),
-            "-t",
-            pane,
-          ])
-        : ["tmux", "capture-pane", "-p", ...(styled ? ["-e"] : []), "-t", pane],
+      pairedLaunchArgv(launchSocket, [
+        "capture-pane",
+        "-p",
+        ...(styled ? ["-e"] : []),
+        "-t",
+        pane,
+      ]),
       boundedTmuxOptions({
         stderr: "ignore",
         stdout: "pipe",
@@ -3876,6 +3879,11 @@ const defaultDeps = (): TmuxDeps => ({
     return decode(result.stdout);
   },
   capturePaneSnapshot: (pane: string, launchSocket?: TmuxSocket) => {
+    if (!launchSocket) {
+      throw new TmuxSocketUnknownError(
+        "pane snapshot requires the socket resolved for this launch"
+      );
+    }
     const snapshotArgs = [
       "capture-pane",
       "-p",
@@ -3890,9 +3898,7 @@ const defaultDeps = (): TmuxDeps => ({
       `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
     ];
     const result = spawnSync(
-      launchSocket
-        ? pairedLaunchArgv(launchSocket, snapshotArgs)
-        : ["tmux", ...snapshotArgs],
+      pairedLaunchArgv(launchSocket, snapshotArgs),
       boundedTmuxOptions({
         stderr: "ignore",
         stdout: "pipe",
@@ -3960,10 +3966,13 @@ const defaultDeps = (): TmuxDeps => ({
     resolveTmuxSocket(process.env, { uid: process.getuid?.() ?? 0 }).socket,
   runGit: (cwd: string, args: string[]) => runGit(cwd, args),
   sendKeys: (pane: string, keys: string[], launchSocket?: TmuxSocket) => {
+    if (!launchSocket) {
+      throw new TmuxSocketUnknownError(
+        "pane key delivery requires the socket resolved for this launch"
+      );
+    }
     const result = spawnSync(
-      launchSocket
-        ? pairedLaunchArgv(launchSocket, ["send-keys", "-t", pane, ...keys])
-        : ["tmux", "send-keys", "-t", pane, ...keys],
+      pairedLaunchArgv(launchSocket, ["send-keys", "-t", pane, ...keys]),
       boundedTmuxOptions({ stderr: "ignore" })
     );
     if (tmuxCommandTimedOut(result)) {
@@ -3976,17 +3985,20 @@ const defaultDeps = (): TmuxDeps => ({
     }
   },
   sendText: (pane: string, text: string, launchSocket?: TmuxSocket) => {
+    if (!launchSocket) {
+      throw new TmuxSocketUnknownError(
+        "pane text delivery requires the socket resolved for this launch"
+      );
+    }
     const result = spawnSync(
-      launchSocket
-        ? pairedLaunchArgv(launchSocket, [
-            "send-keys",
-            "-t",
-            pane,
-            "-l",
-            "--",
-            text,
-          ])
-        : ["tmux", "send-keys", "-t", pane, "-l", "--", text],
+      pairedLaunchArgv(launchSocket, [
+        "send-keys",
+        "-t",
+        pane,
+        "-l",
+        "--",
+        text,
+      ]),
       boundedTmuxOptions({
         stderr: "ignore",
       })
@@ -4214,9 +4226,7 @@ export const runInTmux = async (
       `[loop] run manifest ${JSON.stringify(launchContext.manifestPath)}`
     );
   }
-  const attachCommand = launchContext.socket
-    ? launchAttachCommand(launchContext.socket, session)
-    : `tmux attach -t ${session}`;
+  const attachCommand = launchAttachCommand(launchContext.socket, session);
   deps.log(`[loop] attach with: ${attachCommand}`);
   let handedOff: boolean;
   try {

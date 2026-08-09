@@ -60,7 +60,12 @@ import {
 } from "./tmux-control";
 import {
   manifestSocketState,
+  type OwnedPaneTarget,
+  paneArgv,
+  paneTargetFromManifest,
+  serverArgv,
   type TmuxSkipSink,
+  type TmuxTarget,
   targetFromManifest,
 } from "./tmux-socket";
 import type { Agent } from "./types";
@@ -710,15 +715,73 @@ export const stripClaudeSuggestionSpans = (line: string): string => {
   return plain.replace(ANSI_ESCAPE_RE, "");
 };
 
-const tmuxPane = (session: string, paneId: string): string =>
-  `${session}:${paneId}`;
+interface BridgePaneAuthority {
+  readonly handleSha256: string;
+  readonly pane: OwnedPaneTarget;
+  readonly runDir: string;
+  readonly target: BridgeMessage["target"];
+  readonly tmux: TmuxTarget;
+}
 
-const capturePane = (pane: string, styled = false): string | undefined => {
+const readBridgePaneAuthority = (
+  runDir: string,
+  target: BridgeMessage["target"]
+): BridgePaneAuthority | undefined => {
+  const manifestPath = join(runDir, "manifest.json");
+  const before = readRunManifestHandle(manifestPath);
+  const manifest = readRunManifest(manifestPath);
+  const after = readRunManifestHandle(manifestPath);
+  if (
+    !(
+      before &&
+      after &&
+      manifest &&
+      before.manifestSha256 === after.manifestSha256 &&
+      before.runId === after.runId
+    )
+  ) {
+    return undefined;
+  }
+  let field: "tmuxPaneLeft" | "tmuxPaneRight" | undefined;
+  if (manifest.tmuxPaneLeftAgent === target) {
+    field = "tmuxPaneLeft";
+  } else if (manifest.tmuxPaneRightAgent === target) {
+    field = "tmuxPaneRight";
+  }
+  if (!field) {
+    return undefined;
+  }
+  const pane = paneTargetFromManifest(after, field);
+  const tmux = targetFromManifest(after);
+  return pane && tmux
+    ? {
+        handleSha256: after.manifestSha256,
+        pane,
+        runDir,
+        target,
+        tmux,
+      }
+    : undefined;
+};
+
+const revalidateBridgePaneAuthority = (
+  authority: BridgePaneAuthority
+): BridgePaneAuthority | undefined => {
+  const current = readBridgePaneAuthority(authority.runDir, authority.target);
+  return current?.handleSha256 === authority.handleSha256 ? current : undefined;
+};
+
+const capturePane = (
+  authority: BridgePaneAuthority,
+  styled = false
+): string | undefined => {
   try {
+    const current = revalidateBridgePaneAuthority(authority);
+    if (!current) {
+      return undefined;
+    }
     const result = bridgeRuntimeCommandDeps.spawnSync(
-      styled
-        ? ["tmux", "capture-pane", "-p", "-e", "-t", pane]
-        : ["tmux", "capture-pane", "-p", "-t", pane],
+      paneArgv(current.pane, "capture-pane", ["-p", ...(styled ? ["-e"] : [])]),
       boundedTmuxOptions({
         stderr: "ignore",
         stdout: "pipe",
@@ -733,10 +796,17 @@ const capturePane = (pane: string, styled = false): string | undefined => {
   }
 };
 
-const sendPaneKeys = (pane: string, keys: string[]): boolean => {
+const sendPaneKeys = (
+  authority: BridgePaneAuthority,
+  keys: string[]
+): boolean => {
   try {
+    const current = revalidateBridgePaneAuthority(authority);
+    if (!current) {
+      return false;
+    }
     const result = bridgeRuntimeCommandDeps.spawnSync(
-      ["tmux", "send-keys", "-t", pane, ...keys],
+      paneArgv(current.pane, "send-keys", keys),
       boundedTmuxOptions({
         stderr: "ignore",
       })
@@ -747,10 +817,17 @@ const sendPaneKeys = (pane: string, keys: string[]): boolean => {
   }
 };
 
-const sendPaneText = (pane: string, text: string): boolean => {
+const sendPaneText = (
+  authority: BridgePaneAuthority,
+  text: string
+): boolean => {
   try {
+    const current = revalidateBridgePaneAuthority(authority);
+    if (!current) {
+      return false;
+    }
     const result = bridgeRuntimeCommandDeps.spawnSync(
-      ["tmux", "send-keys", "-t", pane, "-l", "--", text],
+      paneArgv(current.pane, "send-keys", ["-l", "--", text]),
       boundedTmuxOptions({
         stderr: "ignore",
       })
@@ -761,23 +838,36 @@ const sendPaneText = (pane: string, text: string): boolean => {
   }
 };
 
-const pastePaneText = (runDir: string, pane: string, text: string): boolean => {
+const pastePaneText = (
+  authority: BridgePaneAuthority,
+  text: string
+): boolean => {
   const id = randomUUID();
   const buffer = `loop-bridge-${id}`;
-  const path = join(runDir, `.bridge-paste-${id}.txt`);
+  const path = join(authority.runDir, `.bridge-paste-${id}.txt`);
   let bufferLoaded = false;
+  let loadedOn: BridgePaneAuthority | undefined;
   try {
     writeFileSync(path, text, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    const initial = revalidateBridgePaneAuthority(authority);
+    if (!initial) {
+      return false;
+    }
     const loaded = bridgeRuntimeCommandDeps.spawnSync(
-      ["tmux", "load-buffer", "-b", buffer, path],
+      serverArgv(initial.tmux, ["load-buffer", "-b", buffer, path]),
       boundedTmuxOptions({ stderr: "ignore" })
     );
     if (tmuxCommandTimedOut(loaded) || loaded.exitCode !== 0) {
       return false;
     }
     bufferLoaded = true;
+    loadedOn = initial;
+    const current = revalidateBridgePaneAuthority(initial);
+    if (!current) {
+      return false;
+    }
     const pasted = bridgeRuntimeCommandDeps.spawnSync(
-      ["tmux", "paste-buffer", "-d", "-p", "-b", buffer, "-t", pane],
+      paneArgv(current.pane, "paste-buffer", ["-d", "-p", "-b", buffer]),
       boundedTmuxOptions({ stderr: "ignore" })
     );
     if (tmuxCommandTimedOut(pasted) || pasted.exitCode !== 0) {
@@ -789,10 +879,10 @@ const pastePaneText = (runDir: string, pane: string, text: string): boolean => {
     return false;
   } finally {
     rmSync(path, { force: true });
-    if (bufferLoaded) {
+    if (bufferLoaded && loadedOn) {
       try {
         bridgeRuntimeCommandDeps.spawnSync(
-          ["tmux", "delete-buffer", "-b", buffer],
+          serverArgv(loadedOn.tmux, ["delete-buffer", "-b", buffer]),
           boundedTmuxOptions({ stderr: "ignore" })
         );
       } catch {
@@ -819,11 +909,11 @@ const isCodexPaneReady = (output: string): boolean => {
 };
 
 const waitForCodexPane = async (
-  pane: string,
+  authority: BridgePaneAuthority,
   attempts = CODEX_TMUX_READY_POLLS
 ): Promise<boolean> => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const output = capturePane(pane);
+    const output = capturePane(authority);
     if (output === undefined) {
       return false;
     }
@@ -886,20 +976,19 @@ type ClaudeSubmissionState =
   | "unknown";
 
 const confirmClaudeSubmission = async (
-  runDir: string,
-  pane: string,
+  authority: BridgePaneAuthority,
   previousTranscriptVersion: string | undefined,
   expectedComposerText: string
 ): Promise<ClaudeSubmissionState> => {
   let sawStrandedComposer = false;
   for (let attempt = 0; attempt < CLAUDE_DELIVERY_CONFIRM_POLLS; attempt += 1) {
-    const output = capturePane(pane, true);
+    const output = capturePane(authority, true);
     if (output === undefined) {
       return "unknown";
     }
     const composer = claudeComposerText(output);
     const transcriptVersion =
-      bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(runDir);
+      bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(authority.runDir);
     if (
       transcriptVersion !== undefined &&
       transcriptVersion !== previousTranscriptVersion &&
@@ -923,19 +1012,18 @@ const confirmClaudeSubmission = async (
 };
 
 const waitForClaudePane = async (
-  runDir: string,
-  pane: string,
+  authority: BridgePaneAuthority,
   attempts = GENERIC_TMUX_READY_POLLS
 ): Promise<boolean> => {
-  if (isClaudeTurnActive(runDir)) {
+  if (isClaudeTurnActive(authority.runDir)) {
     return false;
   }
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const output = capturePane(pane, true);
+    const output = capturePane(authority, true);
     if (output === undefined) {
       return false;
     }
-    if (!isClaudeTurnActive(runDir) && isClaudePaneReady(output)) {
+    if (!isClaudeTurnActive(authority.runDir) && isClaudePaneReady(output)) {
       return true;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
@@ -944,11 +1032,11 @@ const waitForClaudePane = async (
 };
 
 const waitForInteractivePane = async (
-  pane: string,
+  authority: BridgePaneAuthority,
   attempts = GENERIC_TMUX_READY_POLLS
 ): Promise<boolean> => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const output = capturePane(pane);
+    const output = capturePane(authority);
     if (output === undefined) {
       return false;
     }
@@ -961,73 +1049,62 @@ const waitForInteractivePane = async (
 };
 
 const waitForBridgePaneReady = (
-  runDir: string,
-  pane: string,
-  target: BridgeMessage["target"],
+  authority: BridgePaneAuthority,
   attempts?: number
 ): Promise<boolean> => {
-  if (target === "codex") {
-    return waitForCodexPane(pane, attempts);
+  if (authority.target === "codex") {
+    return waitForCodexPane(authority, attempts);
   }
-  if (target === "claude") {
-    return waitForClaudePane(runDir, pane, attempts);
+  if (authority.target === "claude") {
+    return waitForClaudePane(authority, attempts);
   }
-  return waitForInteractivePane(pane, attempts);
+  return waitForInteractivePane(authority, attempts);
 };
 
 const injectTmuxMessage = async (
-  runDir: string,
-  pane: string,
-  target: BridgeMessage["target"],
+  authority: BridgePaneAuthority,
   message: string,
   readyAttempts?: number
 ): Promise<boolean> => {
-  const ready = await waitForBridgePaneReady(
-    runDir,
-    pane,
-    target,
-    readyAttempts
-  );
-  if (!(pane && ready)) {
+  const ready = await waitForBridgePaneReady(authority, readyAttempts);
+  if (!ready) {
     return false;
   }
   if (Buffer.byteLength(message, "utf8") >= MAX_TMUX_BRIDGE_NUDGE_BYTES) {
     return false;
   }
   const transcriptVersion =
-    target === "claude"
-      ? bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(runDir)
+    authority.target === "claude"
+      ? bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(authority.runDir)
       : undefined;
   const expectedClaudeComposerText = message.split("\n")[0]?.trim() ?? "";
-  if (!pastePaneText(runDir, pane, message)) {
+  if (!pastePaneText(authority, message)) {
     return false;
   }
-  if (!sendPaneKeys(pane, ["Enter"])) {
+  if (!sendPaneKeys(authority, ["Enter"])) {
     return false;
   }
-  if (target !== "claude") {
+  if (authority.target !== "claude") {
     return true;
   }
   const firstConfirmation = await confirmClaudeSubmission(
-    runDir,
-    pane,
+    authority,
     transcriptVersion,
     expectedClaudeComposerText
   );
   if (firstConfirmation === "confirmed") {
     return true;
   }
-  if (firstConfirmation !== "stranded" || !sendPaneText(pane, " ")) {
+  if (firstConfirmation !== "stranded" || !sendPaneText(authority, " ")) {
     return false;
   }
   await wait(100);
-  if (!sendPaneKeys(pane, ["Enter"])) {
+  if (!sendPaneKeys(authority, ["Enter"])) {
     return false;
   }
   return (
     (await confirmClaudeSubmission(
-      runDir,
-      pane,
+      authority,
       transcriptVersion,
       expectedClaudeComposerText
     )) === "confirmed"
@@ -1079,24 +1156,6 @@ const paneIdForTarget = (
     return TMUX_LEFT_PANE;
   }
   return undefined;
-};
-
-const tmuxPaneForTarget = (
-  runDir: string,
-  target: BridgeMessage["target"]
-): string | undefined => {
-  const manifest = readRunManifestForBridge(runDir);
-  if (!manifest?.tmuxSession || hasIncompletePersistedAgentTopology(manifest)) {
-    return undefined;
-  }
-  if (manifest.tmuxPaneLeftAgent === target && manifest.tmuxPaneLeft) {
-    return manifest.tmuxPaneLeft;
-  }
-  if (manifest.tmuxPaneRightAgent === target && manifest.tmuxPaneRight) {
-    return manifest.tmuxPaneRight;
-  }
-  const paneId = paneIdForTarget(runDir, target);
-  return paneId ? tmuxPane(manifest.tmuxSession, paneId) : undefined;
 };
 
 export const buildTmuxBridgeNudge = (pending: number): string =>
@@ -1283,7 +1342,7 @@ export const flushClaudeChannelMessages = (
   const status = readBridgeRuntimeStatus(runDir);
   if (
     status.tmuxLiveness !== "dead" &&
-    tmuxPaneForTarget(runDir, "claude") !== undefined
+    readBridgePaneAuthority(runDir, "claude") !== undefined
   ) {
     return;
   }
@@ -1347,7 +1406,7 @@ const resolveTmuxBridgeDelivery = (
   runDir: string,
   target: BridgeMessage["target"],
   pending: number
-): { content: string; pane: string } | undefined => {
+): { authority: BridgePaneAuthority; content: string } | undefined => {
   const status = readBridgeRuntimeStatus(runDir);
   if (!status.tmuxSession) {
     return undefined;
@@ -1359,9 +1418,9 @@ const resolveTmuxBridgeDelivery = (
   if (status.tmuxLiveness === "unknown") {
     return undefined;
   }
-  const pane = tmuxPaneForTarget(runDir, target);
+  const authority = readBridgePaneAuthority(runDir, target);
   const content = buildTmuxBridgeNudge(pending);
-  return pane && content ? { content, pane } : undefined;
+  return authority && content ? { authority, content } : undefined;
 };
 
 export const submitTmuxBridgeMessage = (
@@ -1410,7 +1469,7 @@ export const notifyTmuxBridgeInbox = async (
     if (!resolved) {
       return false;
     }
-    if (!(await waitForBridgePaneReady(runDir, resolved.pane, target))) {
+    if (!(await waitForBridgePaneReady(resolved.authority))) {
       return false;
     }
     const stillPending = readPendingBridgeMessages(runDir, nowMs).filter(
@@ -1420,9 +1479,7 @@ export const notifyTmuxBridgeInbox = async (
       return false;
     }
     const notified = await injectTmuxMessage(
-      runDir,
-      resolved.pane,
-      target,
+      resolved.authority,
       buildTmuxBridgeNudge(stillPending.length),
       readyAttempts ?? 1
     );
@@ -1562,7 +1619,7 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
       }
       const observedVersion = bridgeJournalVersion(runDir);
       recordBridgeReconciliation(runDir, reconciliationReason, observedVersion);
-      if (!delivered && observedVersion !== inspectedVersion) {
+      if (observedVersion !== inspectedVersion) {
         reconciliationReason = "changed";
         continue;
       }

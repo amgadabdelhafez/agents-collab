@@ -5,8 +5,6 @@ import type { spawnSync } from "bun";
 import {
   TMUX_CONTROL_KILL_SIGNAL,
   TMUX_CONTROL_TIMEOUT_MS,
-  tmuxSessionLiveness,
-  tmuxSessionLivenessAsync,
   tmuxTargetLiveness,
   tmuxTargetLivenessAsync,
 } from "../../src/loop/tmux-control";
@@ -29,59 +27,6 @@ const fakeSpawn = (
     calls.push({ args, options });
     return result;
   }) as unknown as typeof spawnSync;
-
-test("tmux liveness probes are bounded and kill the timed-out client", () => {
-  const calls: RecordedCall[] = [];
-  expect(
-    tmuxSessionLiveness(
-      "repo-loop-98",
-      fakeSpawn({ exitCode: 0, signalCode: "SIGKILL" }, calls)
-    )
-  ).toBe("unknown");
-  expect(calls).toEqual([
-    {
-      args: ["tmux", "has-session", "-t", "repo-loop-98"],
-      options: {
-        killSignal: TMUX_CONTROL_KILL_SIGNAL,
-        stderr: "ignore",
-        stdout: "ignore",
-        timeout: TMUX_CONTROL_TIMEOUT_MS,
-      },
-    },
-  ]);
-});
-
-test("tmux liveness distinguishes confirmed live and dead sessions", () => {
-  expect(tmuxSessionLiveness("live", fakeSpawn({ exitCode: 0 }, []))).toBe(
-    "live"
-  );
-  expect(tmuxSessionLiveness("dead", fakeSpawn({ exitCode: 1 }, []))).toBe(
-    "dead"
-  );
-  expect(
-    tmuxSessionLiveness("error", (() => {
-      throw new Error("tmux unavailable");
-    }) as typeof spawnSync)
-  ).toBe("unknown");
-});
-
-test("an absent session reads unknown, never dead (verify 10)", () => {
-  // A legacy manifest — recorded before socket normalization — has no usable
-  // session/socket. "dead" is the verdict that grants cleanup authority, so
-  // returning it here would let a caller signal PIDs and remove config for a
-  // run that is alive on a server nobody asked about. Absence of evidence is
-  // not evidence of absence.
-  const calls: RecordedCall[] = [];
-  expect(tmuxSessionLiveness("", fakeSpawn({ exitCode: 1 }, calls))).toBe(
-    "unknown"
-  );
-  // And it must reach no tmux server at all to decide that.
-  expect(calls).toEqual([]);
-});
-
-test("an absent session reads unknown on the async path too", async () => {
-  await expect(tmuxSessionLivenessAsync("")).resolves.toBe("unknown");
-});
 
 // --- target-bound liveness (T-05 cascade landing point) ----------------------
 

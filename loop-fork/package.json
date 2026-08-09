@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "bun build --compile --outfile loop src/cli.ts",
+    "check:tmux-migration": "bun scripts/check-tmux-migration.ts",
     "install:global": "bun run build && bun run src/install.ts",
     "test:file": "LOOP_TEST_CERTIFICATION_MODE=single-file bun test",
     "test:ci": "for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file bun test \"$file\" || exit 1; done",

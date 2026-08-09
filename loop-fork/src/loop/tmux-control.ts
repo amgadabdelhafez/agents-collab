@@ -41,83 +41,10 @@ export const boundedTmuxOptions = <const T extends object>(
 export const tmuxCommandTimedOut = (result: TmuxCommandResult): boolean =>
   Boolean(result.signalCode);
 
-export const tmuxSessionLiveness = (
-  session: string,
-  run: typeof spawnSync = spawnSync
-): TmuxLiveness => {
-  if (!session) {
-    // NOT "dead". An absent session name is absence of evidence, not evidence
-    // of absence — it is what a legacy manifest looks like. "dead" is the
-    // verdict that grants cleanup authority, so returning it here lets a
-    // caller signal PIDs and remove config for a run that may be perfectly
-    // alive on a server nobody asked about (verify 10).
-    return "unknown";
-  }
-  try {
-    const result = run(
-      ["tmux", "has-session", "-t", session],
-      boundedTmuxOptions({ stderr: "ignore", stdout: "ignore" })
-    );
-    if (tmuxCommandTimedOut(result)) {
-      return "unknown";
-    }
-    return result.exitCode === 0 ? "live" : "dead";
-  } catch {
-    return "unknown";
-  }
-};
-
-export const tmuxSessionLivenessAsync = (
-  session: string,
-  run: typeof spawn = spawn
-): Promise<TmuxLiveness> => {
-  if (!session) {
-    // Same fail-closed rule as the sync path above.
-    return Promise.resolve("unknown");
-  }
-  return new Promise((resolve) => {
-    let settled = false;
-    let timedOut = false;
-    let child: ChildProcess | undefined;
-    const finish = (liveness: TmuxLiveness) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      resolve(liveness);
-    };
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child?.kill(TMUX_CONTROL_KILL_SIGNAL);
-      finish("unknown");
-    }, TMUX_CONTROL_TIMEOUT_MS);
-    try {
-      child = run("tmux", ["has-session", "-t", session], {
-        stdio: "ignore",
-      });
-      child.once("error", () => finish("unknown"));
-      child.once("exit", (code, signal) => {
-        if (timedOut || signal) {
-          finish("unknown");
-          return;
-        }
-        finish(code === 0 ? "live" : "dead");
-      });
-    } catch {
-      finish("unknown");
-    }
-  });
-};
-
 // --- Target-bound liveness --------------------------------------------------
-// The socket-blind `tmuxSessionLiveness` pair above asks "does a session with
-// this name exist on whatever server my environment points at". That question
-// has the wrong shape: a same-named session on another server answers "live"
-// and a live run on its own server answers "dead". These take the run's own
-// target, so the server is named by the manifest rather than by ambient state.
-// Consumers migrate to these; the session-bound pair is retired once none
-// remain (T-06, T-08, T-10).
+// Socket-blind liveness was removed after every production consumer migrated.
+// These APIs accept only a manifest-derived target, so a same-named session on
+// another server cannot answer for this run.
 
 export const NO_SESSION_RE =
   /no server running|no sessions|can't find session|couldn't find session|session.*not found/i;

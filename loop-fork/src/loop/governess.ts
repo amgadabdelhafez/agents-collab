@@ -361,6 +361,13 @@ export type BridgeLatest = Record<string, Record<string, BridgeMessage>>;
 export type BridgeSendStatus = "accepted" | "delivered" | "queued";
 export type LocalLlmUsageByJudge = Record<string, LocalLlmUsage>;
 
+/**
+ * @tmux-pane-request-only
+ * Pane strings in this injected compatibility surface are lookup requests,
+ * never tmux authority. The default runtime re-resolves every request through
+ * the current manifest handle before contact, and an injected callback owns
+ * its own effect implementation rather than receiving a socket capability.
+ */
 export interface GovernessDeps {
   appendLog: (file: string, record: unknown) => void;
   assessRoleBalance: (req: RoleBalanceRequest) => Promise<RoleBalanceResult>;

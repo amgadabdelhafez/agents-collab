@@ -1,0 +1,9 @@
+{
+  "id": "d023-derived-tmux-migration-check",
+  "mode": "planned",
+  "created_at": "2026-08-09T19:48:00Z",
+  "status": "done",
+  "ended_at": "2026-08-09T20:21:40Z",
+  "description": "Enforce the tmux socket migration with a derived source check and seeded non-vacuity proofs.",
+  "estimated_loc": 500
+}

@@ -25,7 +25,7 @@
 - [ ] **T-08** Migrate reservation, proxy, and paired options.
 - [ ] **T-09** Migrate panel enumeration and row rendering.
 - [ ] **T-10** Migrate Governess pane effects, handover, and replay.
-- [ ] **T-11** Derived migration check plus seeded non-vacuity proof.
+- [x] **T-11** Derived migration check plus seeded non-vacuity proof.
 - [ ] **T-12** Smoke shim migration to absolute `LOOP_TMUX_SOCKET`.
 - [ ] **T-13** Producer fixture capture and provenance index.
 - [ ] **T-14** Two-server certification smoke with trap and survivor proof.
@@ -498,17 +498,17 @@ bare `replacementSession` name, at **all three** declaration sites:
 invocations, bare-session shared-liveness calls, and unqualified attach
 formatters; wired into `scripts/verify.sh`.
 **Done when:**
-- [ ] The check passes against tracked source (verify 6).
-- [ ] Seeded Bun-array, Node command/args, and second-`install.ts`-invocation
+- [x] The check passes against tracked source (verify 6).
+- [x] Seeded Bun-array, Node command/args, and second-`install.ts`-invocation
       violations each fail the check **independently**, in temporary seeded
       trees and never by editing tracked source (verify 6).
-- [ ] The `install.ts` `tmux -V` exception matches on exact path **and** exact
+- [x] The `install.ts` `tmux -V` exception matches on exact path **and** exact
       argv, so a different invocation in the same file still fails (verify 6).
-- [ ] The analysis method is stated. If regex-based, a seeded indirect
+- [x] The analysis method is stated. If regex-based, a seeded indirect
       helper/alias case is added and the coverage limitation is recorded; if
       AST/parser-based, that is stated and the indirect case is caught
       (verify 6).
-- [ ] The three API-shape rules from R12 are implemented and each is proven
+- [x] The three API-shape rules from R12 are implemented and each is proven
       non-vacuous by its own independently nonzero seeded violation (verify 6):
       a seeded import or barrel re-export of the module-private socket-only
       `tmuxArgv` outside `tmux-socket.ts`; a seeded `-S`/`-t`/`-s` or `=`-joined
@@ -516,10 +516,19 @@ formatters; wired into `scripts/verify.sh`.
       seeded pane-effecting signature taking a bare `string` pane id or a
       `(TmuxTarget, paneId)` pair. These rules are what keep the unexported
       helper unexported and `OwnedPaneTarget` unbypassed.
-- [ ] The check cannot prove runtime provenance; T-05's verify 5a
+- [x] The check cannot prove runtime provenance; T-05's verify 5a
       unconstructibility assertions and verify 5b cross-run non-contact cover
       what this check structurally cannot, and the verify 5c residual is
       recorded rather than claimed as covered.
+
+**Completed 2026-08-09 in D-023.** The AST checker and 26 independent seed
+tests passed; the four owning checker/tmux/bridge suites passed 274/274 with
+1,161 assertions; exact scoped static analysis, build, diff check, and an
+independent zero-write review passed. The review drove explicit coverage for
+lexical shadowing, spread heads, namespace imports, plain and namespace export
+stars, and the exact Governess-only compatibility surface. Arbitrary semantic
+`TmuxLiveness` value flow remains the named-consumer-test residual described
+above.
 
 ### T-12 — Smoke shim migration
 

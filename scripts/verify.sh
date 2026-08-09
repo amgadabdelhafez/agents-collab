@@ -16,6 +16,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 echo "=== verify.sh: task=${TASK_ID} feature=${FEATURE} ==="
 
+echo "--- tmux migration guard ---"
+(cd loop-fork && bun run check:tmux-migration)
+
 echo "--- lint ---"
 (cd loop-fork && bun run check)
 
