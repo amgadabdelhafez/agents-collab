@@ -1,0 +1,23 @@
+{
+  "task_id": "d028-installed-forward-compat",
+  "status": "pass",
+  "required": ["compatibility", "isolation", "static", "review"],
+  "dimensions": {
+    "compatibility": {
+      "status": "pass",
+      "evidence": "Installed loop v1.0.38 at independently reverified SHA-256 88dcfe2d6bacb6ff6083dde31fbee96fae608d54eff5861e0763310c98810bf5 exited zero for governess doctor 1, reported checks.manifest true and session workspace-loop-1, and preserved the copied producer fixture at SHA-256 4a629cf9245346cc6daa9e5db4334aedea3c9aead2faf7aa6769aadb0ae0bb64."
+    },
+    "isolation": {
+      "status": "pass",
+      "evidence": "Independent capture used a closed environment and task-local denying wrapper; both exact-socket has-session and list-panes attempts were intercepted and rejected, no real tmux server was reachable, isolated HOME retained exactly the copied manifest, and the isolated tmux root contained zero sockets."
+    },
+    "static": {
+      "status": "pass",
+      "evidence": "Capture and wrapper bash syntax, Harness JSON and JSONL parsing, git diff --check, authoritative plan correction, and the exactly-one-object additive Harness task-index diff passed."
+    },
+    "review": {
+      "status": "pass",
+      "evidence": "Independent review passed D-028 and T-15 after stale-pin correction, non-contact instrumentation, fixture immutability proof, and restoration of all preexisting Harness task bytes and state."
+    }
+  }
+}

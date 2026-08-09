@@ -28,8 +28,8 @@
 - [x] **T-11** Derived migration check plus seeded non-vacuity proof.
 - [x] **T-12** Smoke shim migration to absolute `LOOP_TMUX_SOCKET`.
 - [x] **T-13** Producer fixture capture and provenance index.
-- [ ] **T-14** Two-server certification smoke with trap and survivor proof.
-- [ ] **T-15** Installed-binary forward-compatibility check.
+- [x] **T-14** Two-server certification smoke with trap and survivor proof.
+- [x] **T-15** Installed-binary forward-compatibility check.
 - [ ] **T-16** Full verification, dependency map, no-mutation evidence.
 - [ ] **T-17** Independent evaluator writes `eval.json`; governed verify.
 - [ ] **T-18** Commit, request exact-SHA review, stop at the gate.
@@ -627,16 +627,22 @@ independent zero-write review passed.
 
 **Goal:** Retire an inference in `spec.md`'s risk list.
 **Files:** `runs/tmux-socket-normalization/forward-compat.txt` (evidence only).
-**Inputs:** Pinned installed binary
-`/Users/amgad/.local/bin/loop`, SHA-256
-`9ca9f74fa66e1ea0dd2a1a821e0db4e000b64b84aa1903b3db40f820a5fc93f1`.
+**Inputs:** Installed binary `/Users/amgad/.local/bin/loop`, with its SHA-256
+re-verified at use time. The T-00 snapshot was `9ca9f74f…`; the 2026-08-09 T-15
+runtime truth was `88dcfe2d6bacb6ff6083dde31fbee96fae608d54eff5861e0763310c98810bf5`.
 **Output:** Recorded behaviour of the old binary reading a manifest containing
 `tmuxSocket`.
 **Done when:**
-- [ ] The check runs against a **copied non-product fixture only**, never a live
+- [x] The check runs against a **copied non-product fixture only**, never a live
       product run path.
-- [ ] The binary SHA-256 is re-verified at use time and recorded.
-- [ ] The result states observed behaviour, not the prior inference.
+- [x] The binary SHA-256 is re-verified at use time and recorded.
+- [x] The result states observed behaviour, not the prior inference.
+
+Completed 2026-08-09: installed v1.0.38 at SHA-256 `88dcfe2d…` read an
+isolated byte-identical copy of the producer fixture with `tmuxSocket`.
+`governess doctor 1` exited zero and reported `checks.manifest: true`; the
+fixture hash remained `4a629cf9…`. The stale T-00 binary pin is recorded as a
+superseded runtime snapshot, not reused as present-tense evidence.
 
 ### T-16 — Full verification and no-mutation evidence
 

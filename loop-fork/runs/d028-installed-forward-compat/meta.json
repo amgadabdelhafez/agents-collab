@@ -1,0 +1,9 @@
+{
+  "id": "d028-installed-forward-compat",
+  "mode": "planned",
+  "created_at": "2026-08-09T22:02:47Z",
+  "status": "done",
+  "ended_at": "2026-08-09T22:11:33Z",
+  "description": "Observe installed v1.0.38 reading an isolated copied tmuxSocket manifest.",
+  "estimated_loc": 90
+}

@@ -134,10 +134,12 @@ the socket identity seam to the cross-cutting and blast-radius tables.
   suffix approach the 104-byte Darwin `sun_path` limit. → Mitigation:
   launch-time UTF-8 byte-length budget check that fails before reservation
   rather than at first connect.
-- **Manifest forward-compatibility** — an older installed binary reading
-  `tmuxSocket` should ignore an additive field, but that is inference. →
-  Mitigation: compatibility check with the pinned installed binary against a
-  copied non-product fixture only; never pointed at live product runs.
+- **Manifest forward-compatibility** — resolved by observation on 2026-08-09.
+  The installed v1.0.38 binary at reverified SHA-256 `88dcfe2d…` read a copied
+  producer manifest containing `tmuxSocket`, reported `checks.manifest: true`,
+  and preserved its bytes. A denying trace wrapper intercepted every tmux
+  attempt, so the check could not contact a live product server. The earlier
+  T-00 SHA is retained only as a superseded historical snapshot.
 - **Handover identity drift** — replacement sessions persist only a name today,
   so replay can accept or kill the wrong server when sockets differ. →
   Mitigation: make the replacement target durable or resolve it from the

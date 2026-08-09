@@ -1,0 +1,36 @@
+T-15 installed-binary forward-compatibility evidence
+captured_utc=2026-08-09T22:02:47Z
+candidate_head=fcf946386b39bb148b56085bbd24ec739d8ae9ac
+
+installed_binary=/Users/amgad/.local/bin/loop
+installed_version=loop v1.0.38
+installed_sha256=88dcfe2d6bacb6ff6083dde31fbee96fae608d54eff5861e0763310c98810bf5
+t00_snapshot_sha256=9ca9f74fa66e1ea0dd2a1a821e0db4e000b64b84aa1903b3db40f820a5fc93f1
+snapshot_status=superseded: current runtime truth differs from the T-00 snapshot
+
+source_fixture=loop-fork/tests/fixtures/tmux-socket-normalization/manifest-new.json
+source_fixture_sha256=4a629cf9245346cc6daa9e5db4334aedea3c9aead2faf7aa6769aadb0ae0bb64
+copied_fixture=isolated-home/.loop/runs/agents-collab-fa87e8608224/1/manifest.json
+copied_fixture_sha256_before=4a629cf9245346cc6daa9e5db4334aedea3c9aead2faf7aa6769aadb0ae0bb64
+
+environment=closed env with isolated HOME, TMPDIR, and TMUX_TMPDIR; PATH puts a denying trace wrapper before required Bun and system binaries
+command=/Users/amgad/.local/bin/loop governess doctor 1
+exit_code=0
+observed_checks.manifest=true
+observed_runId=1
+observed_session=workspace-loop-1
+observed_sessionLiveness=unknown
+observed_sessionReady=false
+observed_overall_ok=false (expected: copied fixture intentionally has no journal, state, bridge transport, or live session)
+
+tmux_trace=tmux <-S> </tmp/loop-fixture/producer.sock> <has-session> <-t> <workspace-loop-1>
+tmux_trace=tmux <-S> </tmp/loop-fixture/producer.sock> <list-panes> <-t> <workspace-loop-1> <-F> <#{pane_dead}>
+tmux_instrument=Both attempted exact-socket commands were intercepted and rejected with exit 17 by the task-local wrapper; no real tmux binary or server was reachable through PATH.
+
+copied_fixture_sha256_after=4a629cf9245346cc6daa9e5db4334aedea3c9aead2faf7aa6769aadb0ae0bb64
+isolated_home_files_after=isolated-home/.loop/runs/agents-collab-fa87e8608224/1/manifest.json only
+isolated_tmux_socket_after=absent
+
+observed_conclusion=The installed v1.0.38 binary accepted and read the additive tmuxSocket manifest field. It exited zero, reported the copied manifest present, preserved its bytes, and created no additional file. This is observed behavior for SHA-256 88dcfe2d..., not an inference from the prior T-00 pin.
+live_product_contact=none
+install_or_binary_mutation=none

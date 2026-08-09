@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+: "${LOOP_T15_TMUX_TRACE:?LOOP_T15_TMUX_TRACE is required}"
+printf 'tmux' >> "${LOOP_T15_TMUX_TRACE}"
+for arg in "$@"; do
+  printf ' <%s>' "${arg}" >> "${LOOP_T15_TMUX_TRACE}"
+done
+printf '\n' >> "${LOOP_T15_TMUX_TRACE}"
+exit 17

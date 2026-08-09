@@ -575,10 +575,11 @@ repository.
 - **Socket path length.** Long `/private/tmp/...` worktree paths plus a socket
   suffix approach the Darwin limit; R5 fails early rather than at
   first connect.
-- **Manifest forward-compatibility.** An older installed binary reading a
-  manifest containing `tmuxSocket` should ignore it because the field is
-  additive, but that is inference until verified. Checked with the pinned
-  installed binary against a copied non-product fixture only.
+- **Manifest forward-compatibility.** The installed v1.0.38 binary observed on
+  2026-08-09 (SHA-256 `88dcfe2d…`) successfully read a copied non-product
+  manifest containing `tmuxSocket`: `governess doctor 1` exited zero, reported
+  `checks.manifest: true`, and preserved the fixture byte-for-byte. The check
+  used isolated HOME and tmux roots; it did not read or contact a live run.
 - **Handover identity drift.** Replacement sessions currently persist only a
   name; if launch and observer sockets differ, replay can accept or kill the
   wrong server.

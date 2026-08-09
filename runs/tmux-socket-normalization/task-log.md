@@ -110,9 +110,21 @@ recorded ghost-composer string was surfaced to the founder before proceeding,
 not resolved silently; the two are distinguishable by channel, and this one
 arrived on the authoritative input path with no pane read. All T-00 bindings
 re-verified and recorded in `approval.md`: base resolves, HEAD equals base,
-installed binary matches the pinned `9ca9f74f…`, tmux 3.7b, `loop-fork` status
-count 0. Captured the `loop-fork/runs/` pre-state baseline (1582 files, digest
+installed binary matched the then-pinned `9ca9f74f…` T-00 snapshot, tmux 3.7b,
+`loop-fork` status count 0. Captured the `loop-fork/runs/` pre-state baseline (1582 files, digest
 `2022557f…`) for the verify 18 no-mutation comparison, before creating anything.
+
+---
+
+### 2026-08-09 — T-15 installed-binary forward compatibility
+
+Reverified runtime truth superseded the T-00 binary snapshot: the installed
+v1.0.38 binary is now SHA-256 `88dcfe2d…`, not `9ca9f74f…`. Against an isolated
+HOME and tmux root, it read a byte-identical copy of the producer manifest
+containing `tmuxSocket`; `governess doctor 1` exited zero and reported
+`checks.manifest: true`. The copied manifest remained SHA-256 `4a629cf9…` and
+no other file appeared in the isolated root. Full evidence is in
+`forward-compat.txt`. No install or live-run contact occurred.
 
 ---
 

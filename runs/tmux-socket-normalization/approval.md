@@ -75,7 +75,7 @@ founder before proceeding rather than resolved silently.
 |---|---|---|
 | Base commit resolves | `git rev-parse --verify ddf134b9200a3fda3cac68dcdd7868f28c94160d^{commit}` | `ddf134b9200a3fda3cac68dcdd7868f28c94160d` |
 | HEAD equals base | `git rev-parse HEAD` | `ddf134b9200a3fda3cac68dcdd7868f28c94160d` |
-| Installed binary | `shasum -a 256 /Users/amgad/.local/bin/loop` | `9ca9f74fa66e1ea0dd2a1a821e0db4e000b64b84aa1903b3db40f820a5fc93f1` — matches the pinned assignment value |
+| Installed binary at T-00 (historical snapshot) | `shasum -a 256 /Users/amgad/.local/bin/loop` | `9ca9f74fa66e1ea0dd2a1a821e0db4e000b64b84aa1903b3db40f820a5fc93f1` — matched the assignment value at T-00; superseded by the reverified T-15 runtime SHA `88dcfe2d…` |
 | tmux | `tmux -V` | `tmux 3.7b` |
 | Product runs untouched | `git status --short loop-fork \| wc -l` | `0` |
 
