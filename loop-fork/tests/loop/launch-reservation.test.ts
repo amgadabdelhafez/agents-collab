@@ -703,3 +703,36 @@ test("ghost manifest no longer blocks a fresh launch on its workspace", async ()
     rmSync(home, { force: true, recursive: true });
   }
 });
+
+// Terminal state must not borrow liveness from the run pid: once the run is
+// stopped, only a live bootstrap attempt can still own the workspace.
+test("terminal state with a live run pid does not own the workspace", async () => {
+  const manifest = ghostManifest({
+    pid: 4242,
+    state: "stopped",
+    tmuxSession: "dead-session",
+  });
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      ownershipDeps([4242])
+    )
+  ).toBe(false);
+});
+
+test("terminal state with a live launch attempt pid still owns the workspace", async () => {
+  const manifest = ghostManifest({
+    launchAttemptPid: 4321,
+    pid: 999,
+    state: "stopped",
+    tmuxSession: "dead-session",
+  });
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      ownershipDeps([4321])
+    )
+  ).toBe(true);
+});

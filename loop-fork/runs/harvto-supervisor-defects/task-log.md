@@ -43,13 +43,20 @@ suite lie is precisely the environment loop agents run in.
   aborts on the first failure and hides everything after it. Baseline 1532 pass / 3 fail,
   patched 1539 pass / 3 fail, failure sets diffed by NAME and identical. After D13 the
   suite is 1542 pass / 0 fail across 77 of 77 files, recorded by
-  `./harness verify unit -- bun run test:ci` (`eval.json` status `pass`, exit 0).
+  `./harness verify unit -- bun run test:ci` (`eval.json` status `pass`, exit 0). After the
+  two extra terminal-state controls Codex asked for, the suite is 1544 pass / 0 fail.
 - `bun run check` reports 4 errors both before and after this change, all in
   Harness-generated evidence JSON under `runs/`. Touched files were formatted with biome
   directly rather than `bun run fix`, which would rewrite that evidence.
-- Proof-command deviation, flagged not silently substituted: the slice names
-  `./harness verify unit -- bun test`, but this repo hard-blocks bare `bun test` and
-  `AGENTS.md` directs `bun run test:ci` for the complete suite. Used the latter.
+- Proof-command deviation, flagged not silently substituted, and recorded in the Harness
+  evidence chain rather than only in prose. The slice names
+  `./harness verify unit -- bun test`. That exact command was run as attempt-002 and
+  refused deterministically at exit 2 by the repo guard in `tests/setup.ts:5-9`:
+  "[loop] direct `bun test` is unsupported because Bun can terminate a shared-process suite
+  before all files run". That is a tool-contract refusal, not a product or test failure --
+  no test executed. `bun run test:ci` is authoritative for the complete suite per
+  `package.json:15` and `AGENTS.md:8`, and was run as attempt-003: 1544 pass / 0 fail across
+  77 of 77 files, exit 0. Current unit evidence and `./harness preflight --json` are green.
 - Three pre-existing launch-reservation tests had ghost fixtures (`pid: 999` against a
   `reservationDeps` that reports only 4242 alive). Fixtures updated to carry real liveness;
   no assertion changed. Codex peer confirmation requested on that judgment call.
