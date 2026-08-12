@@ -36,4 +36,3 @@
 - [ ] `./harness stop-gate --json`
 - [ ] Exact-SHA zero-write final review with findings resolved or explicitly recorded.
 - [ ] Complete Harness bookkeeping without merging or pushing.
-

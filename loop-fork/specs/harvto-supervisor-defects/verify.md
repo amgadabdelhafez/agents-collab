@@ -26,4 +26,3 @@ Harness must record the mandatory suites. A green focused subset is not campaign
 ## Review
 
 The peer reviewer must perform a zero-write review of the exact implementation SHA and report `PASS` or actionable findings. Any correction creates a new SHA and requires a fresh exact-SHA verdict.
-

@@ -54,4 +54,3 @@ Evidence sources are read-only:
 - Do not inject `/compact` or `/rename` into any live agent.
 - Do not weaken release authority or make the OSS utility seat authoritative for release.
 - Keep `src/loop/main.ts` under 150 lines.
-

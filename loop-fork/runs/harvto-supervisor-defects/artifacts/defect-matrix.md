@@ -84,8 +84,19 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
   "active", and under the corrected invariant active must mean process-alive, so the
   fixtures now carry real liveness. The terminal-state case was deliberately left at
   `pid: 999` so it keeps proving that terminal ownership is permitted. Peer confirmation of
-  this reading is requested from Codex (bridge `05cd0cf5-8551-4de4-9326-59c22e2d49a3`).
-- Status: **fixed**.
+  this reading was requested from Codex and CONFIRMED (bridge `5d8c827d-7d43-4aff-92cf-d844d726cb19`):
+  "They previously asserted conflicts using dead tmux + dead pid + active state, which is
+  exactly D2 lying-liveness. Changing only liveness inputs preserves assertions and intended
+  branch meaning." Codex also rejected the counter-reading that D2 belongs at the archival/GC
+  layer: "GC can reduce ghosts but cannot make reservation race-safe; ownership predicate
+  must validate evidence at decision time."
+- Peer verdict: **PASS**, zero-write, at exact SHA `267c14b3059e87bcc34e81179e1c31c7b01135ca`
+  against base `0f69b9a99f9163bf9f83075530e26aed21258463`
+  (bridge `00c767cd-b065-456e-83a7-9bbe92cdfbb3`). Codex independently re-derived the suite
+  numbers rather than accepting mine: 77 Bun file banners, 1544 summed pass, no failing file.
+  Codex also independently confirmed blast radius: production use is only `assertNoConflict`
+  and `reserveRequestedLaunch` via the shared helper.
+- Status: **fixed, peer-PASSED**.
 
 ### D3 — `route_task` admits work with no router or eligible tier and stays `pending-route` forever (P1)
 
@@ -112,6 +123,11 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
   Governess routing log. `bridge_status` at the same time reported the bridge healthy
   (`status: running`, `tmuxLiveness: live`, `deadLetters: 0`, `pending: 0`), so absence of
   routing capacity presented as a healthy system.
+  Independent second-party reproduction from the paired peer in the same run: Codex reported
+  its own utility-audit routes `6ac1984b-b1d5-4083-9497-f781c09b1630` and
+  `d32fd58c-807f-4961-ae7c-851bd588a7e3` also stuck at `pending-route`. Two agents on
+  separate lanes, five packets total, zero routed — the symptom is not specific to one
+  requester.
 - Violated required outcome: "Make absence of delivery, routing capacity, liveness, or
   completion evidence fail closed rather than appear healthy"; and the acceptance principle
   "Routing must reject or durably fail a job when no eligible worker exists; it may not
