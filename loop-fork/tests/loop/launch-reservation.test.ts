@@ -14,10 +14,12 @@ import { runGit } from "../../src/loop/git";
 import {
   bindLaunchTask,
   cancelPairedLaunch,
+  launchReservationInternals,
   reservePairedLaunch,
 } from "../../src/loop/launch-reservation";
 import {
   createRunManifest,
+  type RunManifest,
   readRunManifest,
   resolveRepoId,
   resolveRunStorage,
@@ -194,7 +196,11 @@ test("same branch or same root conflicts while terminal dead ownership permits",
   const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
   try {
     const binding = makeBinding(root);
+    // 4242 is the pid `reservationDeps` reports alive: these two cases assert
+    // that a genuinely live owner conflicts. The third case below keeps the
+    // terminal-state path, which needs no process evidence to be permitted.
     const storage = writeFixtureManifest(home, binding, {
+      pid: 4242,
       workspaceBinding: { ...binding, root: `${root}-other` },
     });
     await expect(
@@ -208,7 +214,7 @@ test("same branch or same root conflicts while terminal dead ownership permits",
         codexThreadId: "",
         cwd: root,
         mode: "paired",
-        pid: 999,
+        pid: 4242,
         repoId: storage.repoId,
         runId: "1",
         state: "submitted",
@@ -250,7 +256,7 @@ test("active legacy and unknown topology fail closed without mutation", async ()
   const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
   try {
     const binding = makeBinding(root);
-    const storage = writeFixtureManifest(home, binding);
+    const storage = writeFixtureManifest(home, binding, { pid: 4242 });
     await expect(
       reservePairedLaunch(makeOptions(), binding, reservationDeps(home))
     ).rejects.toThrow("legacy-unknown");
@@ -297,7 +303,7 @@ test("active alphanumeric run ids participate in workspace conflict checks", asy
         codexThreadId: "",
         cwd: root,
         mode: "paired",
-        pid: 999,
+        pid: 4242,
         repoId: storage.repoId,
         runId: "alpha",
         state: "submitted",
@@ -550,6 +556,150 @@ test("distinct registered worktrees on distinct branches can both reserve", asyn
     expect([first.storage.runId, second.storage.runId]).toEqual(["1", "2"]);
   } finally {
     rmSync(parent, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+// Harvto supervisor defect D2 (lying liveness). A crashed start and a legacy
+// manifest ghost both leave an active-looking `state` behind with no surviving
+// process. Ownership must come from positive evidence, never from that record.
+const ownershipDeps = (
+  livePids: readonly number[]
+): Parameters<
+  typeof launchReservationInternals.manifestCanStillOwnWorkspace
+>[1] =>
+  ({
+    ...reservationDeps(""),
+    isPidAlive: (candidate: number) => livePids.includes(candidate),
+  }) as Parameters<
+    typeof launchReservationInternals.manifestCanStillOwnWorkspace
+  >[1];
+
+const ghostManifest = (overrides: Partial<RunManifest> = {}): RunManifest =>
+  createRunManifest({
+    claudeSessionId: "",
+    codexThreadId: "",
+    cwd: "/tmp/ghost-workspace",
+    mode: "paired",
+    pid: 999,
+    repoId: "ghost-repo",
+    runId: "ghost",
+    state: "working",
+    ...overrides,
+  });
+
+test("crashed start with a dead tmux target and no live pid cannot own the workspace", async () => {
+  const manifest = ghostManifest({
+    launchAttemptPid: 4321,
+    state: "submitted",
+    tmuxSession: "crashed-start-session",
+  });
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      ownershipDeps([])
+    )
+  ).toBe(false);
+});
+
+test("legacy manifest ghost without a tmux target cannot own the workspace", async () => {
+  const manifest = ghostManifest({ state: "working" });
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      ownershipDeps([])
+    )
+  ).toBe(false);
+});
+
+test("dead tmux target with a live run pid still owns the workspace", async () => {
+  const manifest = ghostManifest({
+    state: "working",
+    tmuxSession: "dead-session",
+  });
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      ownershipDeps([999])
+    )
+  ).toBe(true);
+});
+
+test("dead tmux target with a live launch attempt pid still owns the workspace", async () => {
+  const manifest = ghostManifest({
+    launchAttemptPid: 4321,
+    state: "submitted",
+    tmuxSession: "dead-session",
+  });
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      ownershipDeps([4321])
+    )
+  ).toBe(true);
+});
+
+test("live tmux target owns the workspace without any pid evidence", async () => {
+  const manifest = ghostManifest({
+    state: "working",
+    tmuxSession: "live-session",
+  });
+  const deps = {
+    ...ownershipDeps([]),
+    tmuxLiveness: () => "live" as const,
+  };
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      deps
+    )
+  ).toBe(true);
+});
+
+test("unknown tmux liveness owns the workspace rather than failing open", async () => {
+  const manifest = ghostManifest({
+    state: "stopped",
+    tmuxSession: "unknown-session",
+  });
+  const deps = {
+    ...ownershipDeps([]),
+    tmuxLiveness: () => "unknown" as const,
+  };
+
+  expect(
+    await launchReservationInternals.manifestCanStillOwnWorkspace(
+      manifest,
+      deps
+    )
+  ).toBe(true);
+});
+
+test("ghost manifest no longer blocks a fresh launch on its workspace", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    writeFixtureManifest(home, binding, {
+      pid: 31_337,
+      state: "working",
+      tmuxSession: "ghost-session",
+      workspaceBinding: binding,
+    });
+
+    const claim = await reservePairedLaunch(
+      makeOptions(),
+      binding,
+      reservationDeps(home, 4242)
+    );
+
+    expect(claim.storage.runId).toBe("2");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
     rmSync(home, { force: true, recursive: true });
   }
 });

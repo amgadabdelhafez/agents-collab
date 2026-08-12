@@ -458,16 +458,6 @@
       "spec_path": "specs/launch-smoke-reservation-binding.md"
     },
     {
-      "id": "context-pressure-handoff",
-      "mode": "planned",
-      "status": "done",
-      "created_at": "2026-08-04T19:36:58Z",
-      "run_dir": "runs/context-pressure-handoff",
-      "eval_status": "pass",
-      "ended_at": "2026-08-04T19:47:18Z",
-      "spec_path": "specs/context-pressure-handoff.md"
-    },
-    {
       "id": "project-world-model",
       "mode": "planned",
       "status": "done",
@@ -476,6 +466,16 @@
       "eval_status": "pass",
       "ended_at": "2026-08-04T19:23:30Z",
       "spec_path": "specs/project-world-model.md"
+    },
+    {
+      "id": "context-pressure-handoff",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-08-04T19:36:58Z",
+      "run_dir": "runs/context-pressure-handoff",
+      "eval_status": "pass",
+      "ended_at": "2026-08-04T19:47:18Z",
+      "spec_path": "specs/context-pressure-handoff.md"
     },
     {
       "id": "project-world-model-validation",
@@ -498,6 +498,14 @@
       "spec_path": "specs/bridge-mcp-response-drain.md"
     },
     {
+      "id": "context-pressure-current-lineage",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-08-05T05:58:48Z",
+      "run_dir": "runs/context-pressure-current-lineage",
+      "spec_path": "specs/context-pressure-current-lineage.md"
+    },
+    {
       "id": "handover-fidelity-dedup",
       "mode": "planned",
       "status": "done",
@@ -506,14 +514,6 @@
       "eval_status": "pass",
       "ended_at": "2026-08-05T06:51:24Z",
       "spec_path": "specs/handover-fidelity-dedup.md"
-    },
-    {
-      "id": "context-pressure-current-lineage",
-      "mode": "planned",
-      "status": "active",
-      "created_at": "2026-08-05T05:58:48Z",
-      "run_dir": "runs/context-pressure-current-lineage",
-      "spec_path": "specs/context-pressure-current-lineage.md"
     },
     {
       "id": "project-world-model-activation",
@@ -532,6 +532,14 @@
       "run_dir": "runs/worktree-reaper-hardening",
       "eval_status": "pass",
       "ended_at": "2026-08-06T05:11:28Z"
+    },
+    {
+      "id": "harvto-supervisor-defects",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-08-12T16:39:48Z",
+      "run_dir": "runs/harvto-supervisor-defects",
+      "eval_status": "pass"
     }
   ]
 }

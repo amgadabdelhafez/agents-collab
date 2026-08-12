@@ -1,8 +1,30 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
 import { resolve } from "node:path";
 import type { ImmediateInfoRequest } from "../src/loop/args";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
 import type { LaunchWorkspaceBinding, Options } from "../src/loop/types";
+
+// `runCli` branches on process.env.TMUX. This suite runs inside a loop tmux
+// pane, where that variable leaks in and silently routes the "started outside
+// tmux" tests down the in-tmux branch. Neutralize it for the whole file and let
+// the few tests that need TMUX set it themselves.
+const setTmuxEnv = (value: string | undefined): void => {
+  if (value === undefined) {
+    Reflect.deleteProperty(process.env, "TMUX");
+    return;
+  }
+  process.env.TMUX = value;
+};
+
+const inheritedTmux = process.env.TMUX;
+
+beforeAll(() => {
+  setTmuxEnv(undefined);
+});
+
+afterAll(() => {
+  setTmuxEnv(inheritedTmux);
+});
 
 const makeOptions = (): Options => ({
   agent: "codex",
@@ -624,7 +646,7 @@ test("runCli prints tmux detach hint first when inside tmux", async () => {
   try {
     await runCli(["--proof", "verify with tests"]);
   } finally {
-    process.env.TMUX = originalTmux;
+    setTmuxEnv(originalTmux);
     console.log = originalLog;
   }
 
@@ -649,7 +671,7 @@ test("runCli does not print tmux detach hint outside tmux", async () => {
   try {
     await runCli(["--proof", "verify with tests"]);
   } finally {
-    process.env.TMUX = originalTmux;
+    setTmuxEnv(originalTmux);
     console.log = originalLog;
   }
 
@@ -884,7 +906,7 @@ test("runCli keeps promptless paired tmux inside tmux on fire-and-forget auto-up
       "[loop] interactive paired tmux mode must be started outside tmux."
     );
   } finally {
-    process.env.TMUX = originalTmux;
+    setTmuxEnv(originalTmux);
   }
 
   expect(awaitAutoUpdateCheckMock).not.toHaveBeenCalled();

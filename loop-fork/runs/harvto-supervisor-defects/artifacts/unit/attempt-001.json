@@ -1,0 +1,16 @@
+{
+  "task_id": "harvto-supervisor-defects",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-12T16:58:53Z",
+  "ended_at": "2026-08-12T16:59:33Z",
+  "artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "test:ci"
+  ]
+}

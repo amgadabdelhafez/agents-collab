@@ -92,6 +92,18 @@ const workspaceConflict = (
     left.branchRef && right.branchRef && left.branchRef === right.branchRef
   );
 
+// A manifest's `state` is a record written before a crash, not evidence that
+// anything survived it. Ownership therefore needs a process that is alive now:
+// the bootstrap attempt, or the run pid while the run still claims to be active.
+const liveManifestPid = (
+  manifest: RunManifest,
+  deps: LaunchReservationDeps
+): number | undefined =>
+  [
+    manifest.launchAttemptPid,
+    ...(isActiveRunState(manifest.state) ? [manifest.pid] : []),
+  ].find((pid): pid is number => Boolean(pid && deps.isPidAlive(pid)));
+
 const manifestCanStillOwnWorkspace = async (
   manifest: RunManifest,
   deps: LaunchReservationDeps
@@ -102,7 +114,7 @@ const manifestCanStillOwnWorkspace = async (
   if (tmux !== "dead") {
     return true;
   }
-  return isActiveRunState(manifest.state);
+  return liveManifestPid(manifest, deps) !== undefined;
 };
 
 const conflictError = (manifest: RunManifest): Error => {
@@ -208,10 +220,7 @@ const reserveRequestedLaunch = async (
   if (tmux === "live") {
     return { reserved: false, storage, workspaceBinding: binding };
   }
-  const liveAttemptPid = [
-    requested.launchAttemptPid,
-    ...(isActiveRunState(requested.state) ? [requested.pid] : []),
-  ].find((pid): pid is number => Boolean(pid && deps.isPidAlive(pid)));
+  const liveAttemptPid = liveManifestPid(requested, deps);
   if (liveAttemptPid) {
     throw new Error(
       `[loop] launch conflict: run ${requested.runId} already has a bootstrap attempt owned by live pid ${liveAttemptPid}`
