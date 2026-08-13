@@ -13,9 +13,14 @@ correlated response before completion, terminalizes from durable bridge failure 
 idempotent across replay. Three named regressions pass, as do bridge/D1/store controls, static
 check, canonical typecheck, build, and all 77 serial test files.
 
-Both Harness gates and the root verifier pass. Current step: prove explicit D4-only scope, commit,
-and request Claude zero-write review of the exact SHA. On `PASS`, record the verdict, close Harness,
-commit final bookkeeping, and stop without remote or wider-defect action.
+Both Harness gates and the root verifier passed for initial review commit
+`26e5cfd6998602ff7c2452c9006ad13fe26449dc`. Claude returned zero-write `REVISE` via
+`c96f267b-ad2b-48ea-a273-2c8509eb2610`: acknowledgements and legacy-untyped rows could complete
+before the actual decision. The corrected contract accepts only explicit `decision` responses;
+the ack/untyped/decision replay regression and all proportional gates plus all 77 serial test files
+pass. Harness preflight/stop-gate and the root verifier also pass after correction. Current step:
+commit explicit correction paths and request fresh exact-SHA review. On `PASS`, record the verdict,
+close Harness, commit final bookkeeping, and stop without remote or wider-defect action.
 
 ## Goal and authority
 

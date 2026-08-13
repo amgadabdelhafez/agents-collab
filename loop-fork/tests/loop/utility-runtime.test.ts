@@ -17,6 +17,7 @@ import {
   dispatchBridgeMessage,
 } from "../../src/loop/bridge-dispatch";
 import {
+  appendBridgeEvent,
   markBridgeMessage,
   readBridgeEvents,
   readBridgeTargetLiveness,
@@ -1255,7 +1256,7 @@ test("peer-routed reviews preserve the requester and ask the peer to act", async
   }
 });
 
-test("D4 live peer consumption and correlated response terminalize routed-peer once across replay", async () => {
+test("D4 ack and untyped replies stay nonterminal until an exact decision completes once across replay", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-d4-live-peer-"));
   const runDir = join(repoRoot, ".loop", "runs", "d4-live-peer");
   mkdirSync(runDir, { recursive: true });
@@ -1347,6 +1348,38 @@ test("D4 live peer consumption and correlated response terminalize routed-peer o
     );
     expect(consumed).toEqual([requestMessage]);
 
+    await dispatchBridgeMessage(
+      runDir,
+      "claude",
+      "codex",
+      "ACK: exact peer consumed the request.",
+      undefined,
+      undefined,
+      {
+        replyTo: requestMessage.id,
+        taskId: request.id,
+        type: "ack",
+      }
+    );
+    appendBridgeEvent(runDir, {
+      at: new Date().toISOString(),
+      id: "d4-legacy-untyped-progress",
+      kind: "message",
+      message: "Review is still in progress.",
+      priority: "normal",
+      replyTo: requestMessage.id,
+      source: "claude",
+      target: "codex",
+      taskId: request.id,
+    });
+    await processPendingUtilityRoutes(context, {
+      LOOP_UTILITY_API_KEY_FILE: "",
+    });
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: undefined,
+      state: "routed-peer",
+    });
+
     const decisionText = "PASS: docs-only commit abc123 is banked.";
     await dispatchBridgeMessage(
       runDir,
@@ -1366,12 +1399,17 @@ test("D4 live peer consumption and correlated response terminalize routed-peer o
         .filter(
           (event) => event.kind === "message" || event.kind === "delivered"
         )
-        .map((event) => `${event.kind}:${event.source}:${event.target}`)
+        .map(
+          (event) =>
+            `${event.kind}:${event.source}:${event.target}:${event.kind === "message" ? (event.type ?? "untyped") : "-"}`
+        )
     ).toEqual([
-      "message:codex:claude",
-      "message:utility:supervisor",
-      "delivered:codex:claude",
-      "message:claude:codex",
+      "message:codex:claude:review_request",
+      "message:utility:supervisor:work_request",
+      "delivered:codex:claude:-",
+      "message:claude:codex:ack",
+      "message:claude:codex:message",
+      "message:claude:codex:decision",
     ]);
 
     await processPendingUtilityRoutes(context, {

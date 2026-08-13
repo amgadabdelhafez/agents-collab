@@ -922,8 +922,7 @@ const isPeerResponseMessage = (
   message.target === job.request.requester &&
   message.taskId === job.jobId &&
   (message.replyTo === undefined || message.replyTo === request.id) &&
-  (message.type === undefined ||
-    ["ack", "decision", "handover", "message"].includes(message.type));
+  message.type === "decision";
 
 const transitionRoutedPeerJob = (
   context: UtilityQueueContext,

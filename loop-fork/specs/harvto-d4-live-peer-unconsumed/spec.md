@@ -54,10 +54,15 @@ No notification or heartbeat signal may be promoted into delivery or consumption
 - Missing request append after a routed-state crash window is re-created with a stable dedupe key;
   repeated reconciliation produces one effective request message.
 - A peer response is correlated by the same job `taskId`, exact reverse source/target, and request
-  identity when `replyTo` is present. Its durable append implies peer consumption; notification or
-  request delivery alone does not imply a verdict.
+  identity when `replyTo` is present. Because legacy missing types normalize to `message` on read,
+  only an explicit `decision` is result-bearing for a peer review. `ack`, `message`, `handover`, and
+  untyped legacy rows prove neither a verdict nor completion and keep the job recoverable.
+  Notification or request delivery alone also does not imply a verdict.
 - One correlated response records one deterministic `completed` result carrying the peer summary
   and artifacts. Reconciliation/replay appends no second terminal event.
 - Bridge terminal resolution backed by its existing D1 liveness policy may fail the route. Live or
   unknown liveness without response remains recoverable; utility code does not reinterpret either
   state as consumption, failure, or success.
+- If D1 queue pressure returns pre-append `backpressure`, D4 makes no tight-loop retry: one dispatch
+  attempt occurs per later Governess reconciliation cycle. The utility job remains recoverable and
+  bridge-owned retained-queue bounds remain authoritative.

@@ -517,3 +517,21 @@ second full 77-file serial suite, and the empty baseline allowlist check.
 
 Next: prove D4-only diff scope, commit explicit paths, and request zero-write Claude review of that
 exact SHA.
+
+## 2026-08-13 — D4 exact-SHA review revision
+
+Claude returned zero-write `REVISE` for
+`26e5cfd6998602ff7c2452c9006ad13fe26449dc` via bridge
+`c96f267b-ad2b-48ea-a273-2c8509eb2610`. The blocking finding is valid: an `ack` or untyped bridge
+reply could complete the utility job before the actual decision. Durable parsing normalizes legacy
+untyped rows to `message`, so the correction makes only explicit `decision` responses
+result-bearing. A named
+ack-then-untyped-then-decision regression proves acknowledgements and progress remain
+`routed-peer`, while the later decision completes exactly once across replay.
+
+Post-correction verification passes: utility-runtime 55, bridge 109, D1 liveness 16, utility-store
+15, lint, canonical typecheck, build, all 77 serial test files, Harness preflight/stop-gate, and the
+root verifier with empty baseline allowlist.
+
+Next: commit explicit D4 correction paths and request a fresh zero-write review of the new exact
+SHA.

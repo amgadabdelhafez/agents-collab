@@ -6,21 +6,23 @@
 utility recovery. It rediscovers the exact `review_request`, repairs a missing append with stable
 dedupe key `utility-peer-route:<jobId>`, requires durable delivery before accepting a response,
 correlates the exact reverse source/target and task ID (plus `replyTo` when present), and records one
-deterministic terminal utility event. Existing bridge `blocked`, `dead-letter`, `expired`, and
-`superseded` evidence fails the route once. Pending and unknown routes remain recoverable.
+deterministic terminal utility event only for an explicit `decision`. Existing bridge `blocked`,
+`dead-letter`, `expired`, and `superseded` evidence fails the route once. Acknowledgements, generic
+or legacy-untyped messages, pending routes, and unknown liveness remain recoverable.
 
 Production change is limited to `src/loop/utility-runtime.ts`; no journal schema or D1 bridge
 liveness/retention policy changed.
 
 ## Regression coverage
 
-- `D4 live peer consumption and correlated response terminalize routed-peer once across replay`
+- `D4 ack and untyped replies stay nonterminal until an exact decision completes once across
+  replay`
 - `D4 routed-peer reconciliation recovers the dispatch crash window without duplicate requests`
 - `D4 unknown peer remains recoverable and durable dead-letter fails once across replay`
 
-These cover exact positive liveness, durable consumption and response correlation, stable request
-dedupe, restart epochs, one terminal event, unknown fail-closed recovery, durable terminal failure,
-and unrelated supervisor traffic.
+These cover exact positive liveness, durable consumption and response correlation, non-terminal
+acknowledgements and untyped progress, stable request dedupe, restart epochs, one terminal event,
+unknown fail-closed recovery, durable terminal failure, and unrelated supervisor traffic.
 
 ## Commands and results
 
@@ -44,3 +46,23 @@ All commands ran on 2026-08-13 from `loop-fork` unless otherwise noted.
 ## UI
 
 No rendered UI changed. Screenshots are not required.
+
+## Exact-SHA review correction
+
+Claude returned zero-write `REVISE` for
+`26e5cfd6998602ff7c2452c9006ad13fe26449dc` via
+`c96f267b-ad2b-48ea-a273-2c8509eb2610`. The accepted finding was that `ack` and legacy-untyped
+responses could win before the actual verdict. Legacy missing types normalize to `message` during
+durable read, so the fail-closed terminal predicate now accepts only `type: "decision"`. The named
+regression appends an `ack`, then a raw untyped progress row, proves the job remains `routed-peer`,
+then appends the decision and proves exactly one completed result across replay.
+
+The review's non-blocking backpressure note is documented in the settled contract: when bridge
+pressure refuses a pre-append request, reconciliation attempts dispatch once per Governess cycle,
+keeps the utility job recoverable, and retains D1 bridge queue bounds. No additional queue policy or
+journal schema was introduced.
+
+Post-correction verification repeats every required result in the command table above: focused
+utility-runtime/bridge/D1/utility-store controls pass; check, canonical typecheck, build, and all 77
+serial test files pass; Harness preflight and stop-gate pass; and the repo-root verifier passes its
+second lint/typecheck/build/full-suite run plus the empty baseline allowlist gate.

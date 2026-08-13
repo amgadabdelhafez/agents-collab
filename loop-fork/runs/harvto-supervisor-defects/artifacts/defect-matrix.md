@@ -177,10 +177,11 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
   utility result.
 - Fix: `src/loop/utility-runtime.ts` now reconciles durable routed-peer jobs with a stable
   `utility-peer-route:<jobId>` bridge dedupe key. It requires original-request delivery, correlates
-  exact reverse source/target and task ID (plus `replyTo` when present), completes once from the
-  durable peer response, and fails once from existing durable bridge terminal evidence. Live and
-  unknown liveness alone remain non-terminal under bridge-owned D1 policy.
-- Regressions: `D4 live peer consumption and correlated response terminalize routed-peer once
+  exact reverse source/target and task ID (plus `replyTo` when present), completes once only from an
+  explicit `decision`, and fails once from existing durable bridge terminal evidence. `ack`, generic
+  or legacy-untyped messages, live liveness, and unknown liveness remain non-terminal under
+  bridge-owned D1 policy.
+- Regressions: `D4 ack and untyped replies stay nonterminal until an exact decision completes once
   across replay`; `D4 routed-peer reconciliation recovers the dispatch crash window without
   duplicate requests`; `D4 unknown peer remains recoverable and durable dead-letter fails once
   across replay`.
