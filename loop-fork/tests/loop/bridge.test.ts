@@ -3826,7 +3826,7 @@ test("Codex tmux notification preserves a leading-newline multiline draft", asyn
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          "\u001b[39m› \u001b[0m\n  finish the human draft\n\n  Ctrl+J newline · gpt-5.6-sol xhigh · ~/repo\n",
+          "\u001b[39m› \u001b[0m\n  finish · human draft with Ctrl+J newline\n\n  Ctrl+J newline · gpt-5.6-sol xhigh · ~/repo\n",
           "utf8"
         ),
       };

@@ -8,27 +8,27 @@
       "artifact": "runs/harvto-supervisor-defects/artifacts/unit/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "007",
-      "latest_attempt_artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-007.log",
-      "latest_attempt_meta": "runs/harvto-supervisor-defects/artifacts/unit/attempt-007.json"
+      "latest_attempt": "006",
+      "latest_attempt_artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-006.log",
+      "latest_attempt_meta": "runs/harvto-supervisor-defects/artifacts/unit/attempt-006.json"
     },
     "lint": {
       "status": "pass",
       "artifact": "runs/harvto-supervisor-defects/artifacts/lint/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "005",
-      "latest_attempt_artifact": "runs/harvto-supervisor-defects/artifacts/lint/attempt-005.log",
-      "latest_attempt_meta": "runs/harvto-supervisor-defects/artifacts/lint/attempt-005.json"
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/harvto-supervisor-defects/artifacts/lint/attempt-004.log",
+      "latest_attempt_meta": "runs/harvto-supervisor-defects/artifacts/lint/attempt-004.json"
     },
     "build": {
       "status": "pass",
       "artifact": "runs/harvto-supervisor-defects/artifacts/build/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "004",
-      "latest_attempt_artifact": "runs/harvto-supervisor-defects/artifacts/build/attempt-004.log",
-      "latest_attempt_meta": "runs/harvto-supervisor-defects/artifacts/build/attempt-004.json"
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/harvto-supervisor-defects/artifacts/build/attempt-003.log",
+      "latest_attempt_meta": "runs/harvto-supervisor-defects/artifacts/build/attempt-003.json"
     }
   }
 }

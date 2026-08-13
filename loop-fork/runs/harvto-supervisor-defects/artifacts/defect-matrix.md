@@ -215,6 +215,10 @@ unresolved, not omitted from intake.
   because the empty-composer predicate covered only the first visual line. The correction
   now classifies the entire current composer region up to the Codex footer, including a
   leading-newline Ctrl+J draft, before either immediate or worker notification can paste.
+- Third exact-SHA review at `bf7d10b2f5bc5e4f4776019852993ff4e0ad7df4` returned REVISE
+  because footer substrings could also occur in draft text. The parser now selects the last
+  structurally anchored footer line ending in a workspace path; earlier deceptive ` · ` and
+  `Ctrl+J newline` text remains inside the composer region and fails closed.
 - Mandatory gates after correction: lint PASS, build PASS, and 77 certified test files with
   1547 pass / 0 fail.
 - Status: **fixed, exact-SHA review pending**.

@@ -78,10 +78,10 @@ const TMUX_LEFT_PANE = "0.0";
 const TMUX_RIGHT_PANE = "0.1";
 const CODEX_TMUX_READY_DELAY_MS = 250;
 const CODEX_TMUX_READY_POLLS = 20;
-const CODEX_TMUX_SEND_FOOTER = "Ctrl+J newline";
 const CODEX_TMUX_PROMPT_PREFIX = "› ";
-const CODEX_TMUX_FOOTER_SEPARATOR = " · ";
 const CODEX_TMUX_READY_TAIL_LINES = 8;
+const CODEX_TMUX_FOOTER_RE =
+  /^\s{2}(?:Ctrl\+J newline · )?.+ · (?:~\/|\/)\S+\s*$/;
 const CLAUDE_TMUX_PROMPT_PREFIX = "❯";
 const LINE_SPLIT_RE = /\r?\n/;
 const GENERIC_TMUX_READY_POLLS = 12;
@@ -805,15 +805,13 @@ const codexComposerText = (output: string): string | undefined => {
     .trimStart()
     .slice(CODEX_TMUX_PROMPT_PREFIX.length)
     .trim();
+  const footerIndex = tail.findLastIndex((line) =>
+    CODEX_TMUX_FOOTER_RE.test(stripDimSpans(line))
+  );
   const continuation: string[] = [];
-  for (const line of tail.slice(promptIndex + 1)) {
+  const composerEnd = footerIndex > promptIndex ? footerIndex : tail.length;
+  for (const line of tail.slice(promptIndex + 1, composerEnd)) {
     const plain = stripDimSpans(line);
-    if (
-      plain.includes(CODEX_TMUX_SEND_FOOTER) ||
-      plain.includes(CODEX_TMUX_FOOTER_SEPARATOR)
-    ) {
-      break;
-    }
     if (plain.trim()) {
       continuation.push(plain.trim());
     }
@@ -825,9 +823,6 @@ const isCodexPaneReady = (output: string): boolean => {
   if (codexComposerText(output) !== "") {
     return false;
   }
-  if (output.includes(CODEX_TMUX_SEND_FOOTER)) {
-    return true;
-  }
   const tail = output.split(LINE_SPLIT_RE).slice(-CODEX_TMUX_READY_TAIL_LINES);
   const promptIndex = tail.findLastIndex((line) =>
     stripDimSpans(line).trimStart().startsWith(CODEX_TMUX_PROMPT_PREFIX)
@@ -836,7 +831,7 @@ const isCodexPaneReady = (output: string): boolean => {
     promptIndex >= 0 &&
     tail
       .slice(promptIndex + 1)
-      .some((line) => line.includes(CODEX_TMUX_FOOTER_SEPARATOR))
+      .some((line) => CODEX_TMUX_FOOTER_RE.test(stripDimSpans(line)))
   );
 };
 
