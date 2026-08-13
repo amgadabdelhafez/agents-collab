@@ -18,7 +18,7 @@
 
 - [ ] Make no-worker routing terminate durably and visibly.
 - [ ] Make bounded task completion emit durable supervisor-visible closure.
-- [ ] Run focused tests and exact-SHA peer review.
+- [x] Run focused tests and exact-SHA peer review for the D14 lifecycle correction.
 
 ## T4: P2 fixes
 
