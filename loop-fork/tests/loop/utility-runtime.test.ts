@@ -12,11 +12,20 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "bun";
-import { readBridgeEvents } from "../../src/loop/bridge-store";
+import {
+  consumeBridgeInbox,
+  dispatchBridgeMessage,
+} from "../../src/loop/bridge-dispatch";
+import {
+  markBridgeMessage,
+  readBridgeEvents,
+  readBridgeTargetLiveness,
+} from "../../src/loop/bridge-store";
 import {
   appendDelegationEvent,
   makeDelegationEvent,
 } from "../../src/loop/delegation-policy";
+import type { RunManifest } from "../../src/loop/run-state";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import { utilityContextPath } from "../../src/loop/utility-context";
 import { readUtilityObservability } from "../../src/loop/utility-observability";
@@ -1241,6 +1250,338 @@ test("peer-routed reviews preserve the requester and ask the peer to act", async
     expect(message?.message).toContain("explicit verdict to codex");
     expect(message?.message).not.toContain("Worker route");
     expect(message?.message).not.toContain("informational routing notice");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("D4 live peer consumption and correlated response terminalize routed-peer once across replay", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-d4-live-peer-"));
+  const runDir = join(repoRoot, ".loop", "runs", "d4-live-peer");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return an explicit verdict"],
+    authority: {},
+    id: "d4-live-peer-job",
+    kind: "review",
+    objective: "Review docs-only commit abc123 and return a verdict.",
+    readScope: ["docs/result.md"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  const context = {
+    currentDriver: "codex" as const,
+    epoch: 40,
+    peer: "claude" as const,
+    repoRoot,
+    runDir,
+  };
+
+  try {
+    await processPendingUtilityRoutes(context, {
+      LOOP_UTILITY_API_KEY_FILE: "",
+    });
+
+    const routedJob = readUtilityJob(runDir, request.id);
+    expect(
+      routedJob?.events.map((event) => `${event.type}:${event.state}`)
+    ).toEqual([
+      "route-requested:pending-route",
+      "state-transition:routed-peer",
+    ]);
+    const requestMessages = readBridgeEvents(runDir).filter(
+      (event) =>
+        event.kind === "message" &&
+        event.taskId === request.id &&
+        event.type === "review_request"
+    );
+    expect(requestMessages).toHaveLength(1);
+    expect(requestMessages[0]).toMatchObject({
+      source: "codex",
+      target: "claude",
+      taskId: request.id,
+      type: "review_request",
+    });
+    const requestMessage = requestMessages[0];
+    if (!requestMessage || requestMessage.kind !== "message") {
+      throw new Error("missing D4 peer review request");
+    }
+
+    const liveManifest = {
+      tmuxPaneRight: "%9",
+      tmuxPaneRightAgent: "claude",
+      tmuxSession: "d4-live-session",
+    } as RunManifest;
+    expect(
+      readBridgeTargetLiveness(runDir, "claude", {
+        paneLiveness: (session, pane) => {
+          expect(session).toBe("d4-live-session");
+          expect(pane).toBe("%9");
+          return "live";
+        },
+        processLiveness: () => {
+          throw new Error("Claude liveness must use its exact tmux pane");
+        },
+        readManifest: () => liveManifest,
+      })
+    ).toBe("live");
+
+    await dispatchBridgeMessage(
+      runDir,
+      "utility",
+      "supervisor",
+      "unrelated supervisor control",
+      undefined,
+      undefined,
+      { taskId: "unrelated-d4-control", type: "work_request" }
+    );
+    const consumed = consumeBridgeInbox(
+      runDir,
+      "claude",
+      "D4 exact peer consumed routed review",
+      (message) => message.taskId === request.id
+    );
+    expect(consumed).toEqual([requestMessage]);
+
+    const decisionText = "PASS: docs-only commit abc123 is banked.";
+    await dispatchBridgeMessage(
+      runDir,
+      "claude",
+      "codex",
+      decisionText,
+      undefined,
+      undefined,
+      {
+        replyTo: requestMessage.id,
+        taskId: request.id,
+        type: "decision",
+      }
+    );
+    expect(
+      readBridgeEvents(runDir)
+        .filter(
+          (event) => event.kind === "message" || event.kind === "delivered"
+        )
+        .map((event) => `${event.kind}:${event.source}:${event.target}`)
+    ).toEqual([
+      "message:codex:claude",
+      "message:utility:supervisor",
+      "delivered:codex:claude",
+      "message:claude:codex",
+    ]);
+
+    await processPendingUtilityRoutes(context, {
+      LOOP_UTILITY_API_KEY_FILE: "",
+    });
+
+    const completed = readUtilityJob(runDir, request.id);
+    expect(completed).toMatchObject({
+      result: {
+        status: "completed",
+        summary: decisionText,
+      },
+      state: "completed",
+    });
+    expect(
+      completed?.events.filter((event) => event.state === "completed")
+    ).toHaveLength(1);
+
+    await processPendingUtilityRoutes(
+      { ...context, epoch: 41 },
+      { LOOP_UTILITY_API_KEY_FILE: "" }
+    );
+    const replayed = readUtilityJob(runDir, request.id);
+    expect(replayed?.state).toBe("completed");
+    expect(
+      replayed?.events.filter((event) => event.state === "completed")
+    ).toHaveLength(1);
+    expect(
+      readBridgeEvents(runDir).filter(
+        (event) => event.kind === "message" && event.type === "review_request"
+      )
+    ).toHaveLength(1);
+    expect(
+      readBridgeEvents(runDir).filter(
+        (event) => event.kind === "message" && event.type === "decision"
+      )
+    ).toHaveLength(1);
+    expect(
+      readBridgeEvents(runDir).find(
+        (event) =>
+          event.kind === "message" && event.taskId === "unrelated-d4-control"
+      )
+    ).toMatchObject({ source: "utility", target: "supervisor" });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("D4 routed-peer reconciliation recovers the dispatch crash window without duplicate requests", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-d4-dispatch-"));
+  const runDir = join(repoRoot, ".loop", "runs", "d4-dispatch");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return a verdict"],
+    authority: {},
+    id: "d4-dispatch-job",
+    kind: "review",
+    objective: "Review the bounded D4 proposal.",
+    readScope: ["docs/result.md"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 50);
+  transitionUtilityJob(runDir, request.id, "routed-peer", {
+    decision: { reason: "review-needs-peer", target: "peer" },
+    eventId: `route-decision:50:${request.id}`,
+    reason: "review-needs-peer",
+  });
+  const context = {
+    currentDriver: "codex" as const,
+    epoch: 50,
+    peer: "claude" as const,
+    repoRoot,
+    runDir,
+  };
+
+  try {
+    await processPendingUtilityRoutes(context, {
+      LOOP_UTILITY_API_KEY_FILE: "",
+    });
+    await processPendingUtilityRoutes(context, {
+      LOOP_UTILITY_API_KEY_FILE: "",
+    });
+
+    expect(readUtilityJob(runDir, request.id)?.state).toBe("routed-peer");
+    const requests = readBridgeEvents(runDir).filter(
+      (event) =>
+        event.kind === "message" &&
+        event.taskId === request.id &&
+        event.type === "review_request"
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      dedupeKey: `utility-peer-route:${request.id}`,
+      source: "codex",
+      target: "claude",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("D4 unknown peer remains recoverable and durable dead-letter fails once across replay", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-d4-liveness-"));
+  const runDir = join(repoRoot, ".loop", "runs", "d4-liveness");
+  mkdirSync(runDir, { recursive: true });
+  const makePeerRequest = (id: string) =>
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["return a verdict"],
+      authority: {},
+      id,
+      kind: "review",
+      objective: `Review ${id}.`,
+      readScope: ["docs/result.md"],
+      requester: "codex",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      workShape: "separable",
+      writeScope: [],
+    });
+  const unknownRequest = makePeerRequest("d4-unknown-job");
+  const deadRequest = makePeerRequest("d4-dead-job");
+  appendUtilityRouteRequest(runDir, unknownRequest);
+  appendUtilityRouteRequest(runDir, deadRequest);
+  const context = {
+    currentDriver: "codex" as const,
+    epoch: 60,
+    peer: "claude" as const,
+    repoRoot,
+    runDir,
+  };
+
+  try {
+    await processPendingUtilityRoutes(context, {
+      LOOP_UTILITY_API_KEY_FILE: "",
+    });
+    const manifest = {
+      tmuxPaneRight: "%12",
+      tmuxPaneRightAgent: "claude",
+      tmuxSession: "d4-liveness-session",
+    } as RunManifest;
+    const liveness = (state: "dead" | "unknown") =>
+      readBridgeTargetLiveness(runDir, "claude", {
+        paneLiveness: (session, pane) => {
+          expect(session).toBe("d4-liveness-session");
+          expect(pane).toBe("%12");
+          return state;
+        },
+        processLiveness: () => {
+          throw new Error("Claude liveness must use its exact tmux pane");
+        },
+        readManifest: () => manifest,
+      });
+    expect(liveness("unknown")).toBe("unknown");
+    expect(liveness("dead")).toBe("dead");
+
+    const peerRequests = readBridgeEvents(runDir).filter(
+      (event) => event.kind === "message" && event.type === "review_request"
+    );
+    expect(peerRequests).toHaveLength(2);
+    const deadMessage = peerRequests.find(
+      (event) => event.kind === "message" && event.taskId === deadRequest.id
+    );
+    if (!(deadMessage && deadMessage.kind === "message")) {
+      throw new Error("missing D4 dead-peer request");
+    }
+    markBridgeMessage(
+      runDir,
+      deadMessage,
+      "dead-letter",
+      "confirmed-dead D4 control"
+    );
+
+    await processPendingUtilityRoutes(context, {
+      LOOP_UTILITY_API_KEY_FILE: "",
+    });
+    expect(readUtilityJob(runDir, unknownRequest.id)).toMatchObject({
+      result: undefined,
+      state: "routed-peer",
+    });
+    expect(readUtilityJob(runDir, deadRequest.id)).toMatchObject({
+      result: {
+        blocker: expect.stringContaining("dead-letter"),
+        status: "failed",
+      },
+      state: "failed",
+    });
+
+    await processPendingUtilityRoutes(
+      { ...context, epoch: 61 },
+      { LOOP_UTILITY_API_KEY_FILE: "" }
+    );
+    const replayedUnknown = readUtilityJob(runDir, unknownRequest.id);
+    const replayedDead = readUtilityJob(runDir, deadRequest.id);
+    expect(replayedUnknown?.state).toBe("routed-peer");
+    expect(
+      replayedUnknown?.events.filter((event) => event.state === "routed-peer")
+    ).toHaveLength(1);
+    expect(
+      replayedDead?.events.filter((event) => event.state === "failed")
+    ).toHaveLength(1);
+    expect(
+      readBridgeEvents(runDir).filter(
+        (event) => event.kind === "message" && event.type === "review_request"
+      )
+    ).toHaveLength(2);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

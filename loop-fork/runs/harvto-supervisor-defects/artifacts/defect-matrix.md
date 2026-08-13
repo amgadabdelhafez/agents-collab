@@ -162,6 +162,34 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
 - Regression test: to be named on implementation.
 - Status: **confirmed**.
 
+### D4 — Routed peer message remains unconsumed while the exact peer is live (P0)
+
+- Report: W33 S3 2026-08-10, "reviewer sat jammed on a new delivery-defect flavor (queue
+  routed-peer, unconsumed while live)."
+- Base reproduction: unchanged production SHA `0822c3546c44521ea778324d66d6c4c98f3972fb` entered
+  durable utility state `routed-peer`, appended the exact Codex-to-Claude `review_request`, proved
+  Claude's exact pane positively live, recorded exact peer consumption, and appended a correlated
+  Claude-to-Codex decision. One further reconciliation still left `state=routed-peer` and
+  `result=undefined`. The named regression failed 1 with 52 existing controls passing.
+- Mechanism: `processPendingUtilityRoutes` routed a peer review but only claimable helper jobs had a
+  recovery owner. No path rediscovered a durable routed-peer request, repaired the
+  transition-before-dispatch crash window, or correlated a consumed peer response into a terminal
+  utility result.
+- Fix: `src/loop/utility-runtime.ts` now reconciles durable routed-peer jobs with a stable
+  `utility-peer-route:<jobId>` bridge dedupe key. It requires original-request delivery, correlates
+  exact reverse source/target and task ID (plus `replyTo` when present), completes once from the
+  durable peer response, and fails once from existing durable bridge terminal evidence. Live and
+  unknown liveness alone remain non-terminal under bridge-owned D1 policy.
+- Regressions: `D4 live peer consumption and correlated response terminalize routed-peer once
+  across replay`; `D4 routed-peer reconciliation recovers the dispatch crash window without
+  duplicate requests`; `D4 unknown peer remains recoverable and durable dead-letter fails once
+  across replay`.
+- Verification: utility-runtime 55 pass, bridge 109 pass, D1 liveness 16 pass, utility-store 15
+  pass; check, canonical typecheck, build, and all 77 serial test files pass. No UI changed.
+- Evidence: `runs/harvto-d4-live-peer-unconsumed/artifacts/baseline-reproduction.md` and
+  `runs/harvto-d4-live-peer-unconsumed/artifacts/fix-verification.md`.
+- Status: **fixed; exact-SHA peer review pending**.
+
 ## Drained open backlog
 
 Reproduction and code tracing not yet complete for these; they are recorded here so the
@@ -171,7 +199,6 @@ unresolved, not omitted from intake.
 
 | Id | Report | Priority | Source |
 |---|---|---|---|
-| D4 | Routed peer message unconsumed while that peer is live ("reviewer sat jammed on a new delivery-defect flavor (queue routed-peer, unconsumed while live)") | P0 | W33 S3 2026-08-10 |
 | D5 | Silent completion x2 — runs 192/193 finished with no supervisor close signal, collected only on direct worktree verification | P1 | W33 S2 |
 | D6 | Read-only tmux attach blocks targeted recovery delivery; stale read-only viewer wedged run-186 delivery ~2h | P2 | W33 S1, W33 S3 2026-08-10 |
 | D7 | Uncommanded Codex handoff switched model/effort `sol-high -> luna-low` (run 191, post-verdict) | P2 | W33 S2 |

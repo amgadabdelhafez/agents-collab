@@ -1,0 +1,13 @@
+{
+  "task_id": "harvto-d4-live-peer-unconsumed",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "55 utility-runtime, 109 bridge, 16 D1 liveness, and 15 utility-store tests pass; check, canonical typecheck, build, and all 77 serial test files pass"
+    }
+  }
+}

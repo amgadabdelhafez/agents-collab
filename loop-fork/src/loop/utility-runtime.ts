@@ -8,6 +8,11 @@ import type {
 import { spawn } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
 import {
+  type BridgeEvent,
+  type BridgeMessage,
+  readBridgeEvents,
+} from "./bridge-store";
+import {
   cavemanHelperReinforcement,
   DEFAULT_HELPER_CAVEMAN_MODE,
   parseCavemanMode,
@@ -661,6 +666,12 @@ const stateForDecision = (
   return target === "escalate" ? "escalated" : "routed-driver";
 };
 
+const routedPeerTarget = (
+  context: UtilityQueueContext,
+  requester: Agent
+): Agent =>
+  requester === context.currentDriver ? context.peer : context.currentDriver;
+
 const failUtilityJob = async (
   context: UtilityQueueContext,
   job: UtilityJobSnapshot,
@@ -852,12 +863,10 @@ const dispatchNonUtilityRoute = async (
   target: "driver" | "peer" | "requester" | "escalate",
   reason: string
 ): Promise<void> => {
-  const requesterPeer =
-    job.request.requester === context.currentDriver
-      ? context.peer
-      : context.currentDriver;
   const peerRoute = target === "peer";
-  const bridgeTarget = peerRoute ? requesterPeer : job.request.requester;
+  const bridgeTarget = peerRoute
+    ? routedPeerTarget(context, job.request.requester)
+    : job.request.requester;
   const message = peerRoute
     ? [
         `Peer review requested by ${job.request.requester}.`,
@@ -880,10 +889,156 @@ const dispatchNonUtilityRoute = async (
     undefined,
     undefined,
     {
+      ...(peerRoute ? { dedupeKey: `utility-peer-route:${job.jobId}` } : {}),
       taskId: job.jobId,
       type,
     }
   );
+};
+
+type FailedPeerRouteKind = "blocked" | "dead-letter" | "expired" | "superseded";
+
+const failedPeerRouteKind = (
+  event: BridgeEvent
+): FailedPeerRouteKind | undefined => {
+  switch (event.kind) {
+    case "blocked":
+    case "dead-letter":
+    case "expired":
+    case "superseded":
+      return event.kind;
+    default:
+      return undefined;
+  }
+};
+
+const isPeerResponseMessage = (
+  message: BridgeMessage,
+  request: BridgeMessage,
+  job: UtilityJobSnapshot
+): boolean =>
+  message.id !== request.id &&
+  message.source === request.target &&
+  message.target === job.request.requester &&
+  message.taskId === job.jobId &&
+  (message.replyTo === undefined || message.replyTo === request.id) &&
+  (message.type === undefined ||
+    ["ack", "decision", "handover", "message"].includes(message.type));
+
+const transitionRoutedPeerJob = (
+  context: UtilityQueueContext,
+  job: UtilityJobSnapshot,
+  state: "completed" | "failed",
+  eventId: string,
+  result: UtilityCompactResult
+): void => {
+  try {
+    transitionUtilityJob(context.runDir, job.jobId, state, {
+      eventId,
+      reason: state === "completed" ? "peer-response" : "peer-route-failed",
+      result,
+    });
+  } catch (error) {
+    const raced = readUtilityJob(context.runDir, job.jobId);
+    if (
+      raced &&
+      ["completed", "failed", "escalated", "canceled"].includes(raced.state)
+    ) {
+      return;
+    }
+    throw error;
+  }
+};
+
+const reconcileRoutedPeerJobs = async (
+  context: UtilityQueueContext
+): Promise<void> => {
+  for (const job of readUtilityJobs(context.runDir).filter(
+    (candidate) => candidate.state === "routed-peer"
+  )) {
+    const events = readBridgeEvents(context.runDir);
+    const target = routedPeerTarget(context, job.request.requester);
+    const requestIndex = events.findIndex(
+      (event) =>
+        event.kind === "message" &&
+        event.source === job.request.requester &&
+        event.target === target &&
+        event.taskId === job.jobId &&
+        event.type === "review_request"
+    );
+    const request = events[requestIndex];
+    if (!(request && request.kind === "message")) {
+      const reason = job.decision?.detail
+        ? `${job.decision.reason} (${job.decision.detail})`
+        : (job.decision?.reason ?? "review-needs-peer");
+      await dispatchNonUtilityRoute(context, job, "peer", reason);
+      continue;
+    }
+
+    const failed = events.find(
+      (event) =>
+        event.id === request.id && failedPeerRouteKind(event) !== undefined
+    );
+    const failedKind = failed ? failedPeerRouteKind(failed) : undefined;
+    if (failed && failedKind) {
+      const failureReason =
+        "reason" in failed && typeof failed.reason === "string"
+          ? failed.reason
+          : "bridge request reached a terminal resolution";
+      const summary = `Peer route ${job.jobId} ${failedKind}: ${failureReason}`;
+      transitionRoutedPeerJob(
+        context,
+        job,
+        "failed",
+        `peer-route-resolution:${job.jobId}:${request.id}:${failedKind}`,
+        {
+          artifactRefs: [],
+          blocker: summary,
+          checks: [],
+          filesChanged: [],
+          paneSummary: summary,
+          status: "failed",
+          summary,
+        }
+      );
+      continue;
+    }
+
+    const delivered = events.some(
+      (event) => event.id === request.id && event.kind === "delivered"
+    );
+    if (!delivered) {
+      continue;
+    }
+    const response = events
+      .slice(requestIndex + 1)
+      .find(
+        (event): event is BridgeMessage =>
+          event.kind === "message" && isPeerResponseMessage(event, request, job)
+      );
+    if (!response) {
+      continue;
+    }
+
+    const summary = response.message.slice(0, 4000);
+    transitionRoutedPeerJob(
+      context,
+      job,
+      "completed",
+      `peer-response:${job.jobId}:${response.id}`,
+      {
+        artifactRefs: (response.artifactRefs ?? []).map((path) => ({
+          kind: "report",
+          path,
+        })),
+        checks: [],
+        filesChanged: [],
+        paneSummary: summary.slice(0, 1000),
+        status: "completed",
+        summary,
+      }
+    );
+  }
 };
 
 const processPendingUtilityJob = async (input: {
@@ -998,6 +1153,7 @@ export const processPendingUtilityRoutes = async (
   if (!activateUtilityEpoch(context.runDir, context.epoch)) {
     throw new Error("stale Governess epoch cannot activate helper routing");
   }
+  await reconcileRoutedPeerJobs(context);
   await recoverStaleUtilityJobs(context, config, deps);
   const pending = readPendingRouteRequests(context.runDir);
   const activeByTier = new Map<UtilityExecutionTierId, number>();

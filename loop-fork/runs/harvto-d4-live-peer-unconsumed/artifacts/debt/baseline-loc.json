@@ -1,0 +1,384 @@
+{
+  "task_id": "harvto-d4-live-peer-unconsumed",
+  "created_at": "2026-08-13T08:42:39Z",
+  "files": {
+    "src/claude-loop.ts": {
+      "loc": 14
+    },
+    "src/cli.ts": {
+      "loc": 454
+    },
+    "src/codex-loop.ts": {
+      "loc": 14
+    },
+    "src/copilot-loop.ts": {
+      "loc": 10
+    },
+    "src/cursor-loop.ts": {
+      "loc": 10
+    },
+    "src/gemini-loop.ts": {
+      "loc": 10
+    },
+    "src/install.ts": {
+      "loc": 160
+    },
+    "src/loop/agents.ts": {
+      "loc": 26
+    },
+    "src/loop/args.ts": {
+      "loc": 860
+    },
+    "src/loop/bridge-claude-registration.ts": {
+      "loc": 88
+    },
+    "src/loop/bridge-config.ts": {
+      "loc": 224
+    },
+    "src/loop/bridge-constants.ts": {
+      "loc": 4
+    },
+    "src/loop/bridge-dispatch.ts": {
+      "loc": 130
+    },
+    "src/loop/bridge-guidance.ts": {
+      "loc": 81
+    },
+    "src/loop/bridge-message-format.ts": {
+      "loc": 41
+    },
+    "src/loop/bridge-runtime.ts": {
+      "loc": 1591
+    },
+    "src/loop/bridge-store.ts": {
+      "loc": 901
+    },
+    "src/loop/bridge-utility.ts": {
+      "loc": 1145
+    },
+    "src/loop/bridge.ts": {
+      "loc": 872
+    },
+    "src/loop/caveman-skill.d.ts": {
+      "loc": 4
+    },
+    "src/loop/caveman.ts": {
+      "loc": 106
+    },
+    "src/loop/claude-config-gc.ts": {
+      "loc": 304
+    },
+    "src/loop/claude-sdk-server.ts": {
+      "loc": 693
+    },
+    "src/loop/codex-app-server.ts": {
+      "loc": 1520
+    },
+    "src/loop/codex-home.ts": {
+      "loc": 150
+    },
+    "src/loop/codex-render.ts": {
+      "loc": 231
+    },
+    "src/loop/codex-tmux-proxy.ts": {
+      "loc": 1015
+    },
+    "src/loop/communication-guidance.ts": {
+      "loc": 24
+    },
+    "src/loop/constants.ts": {
+      "loc": 178
+    },
+    "src/loop/delegation-policy.ts": {
+      "loc": 2436
+    },
+    "src/loop/deps.ts": {
+      "loc": 37
+    },
+    "src/loop/effort.ts": {
+      "loc": 27
+    },
+    "src/loop/git.ts": {
+      "loc": 78
+    },
+    "src/loop/governess-context.ts": {
+      "loc": 83
+    },
+    "src/loop/governess-cycle.ts": {
+      "loc": 90
+    },
+    "src/loop/governess-detect.ts": {
+      "loc": 100
+    },
+    "src/loop/governess-exit.ts": {
+      "loc": 322
+    },
+    "src/loop/governess-handoff.ts": {
+      "loc": 267
+    },
+    "src/loop/governess-journal.ts": {
+      "loc": 701
+    },
+    "src/loop/governess-llm.ts": {
+      "loc": 1056
+    },
+    "src/loop/governess-notify.ts": {
+      "loc": 47
+    },
+    "src/loop/governess-pane-liveness.ts": {
+      "loc": 341
+    },
+    "src/loop/governess-policy.ts": {
+      "loc": 108
+    },
+    "src/loop/governess-recover.ts": {
+      "loc": 154
+    },
+    "src/loop/governess-replay.ts": {
+      "loc": 430
+    },
+    "src/loop/governess-runtime.ts": {
+      "loc": 166
+    },
+    "src/loop/governess-usage-limits.ts": {
+      "loc": 772
+    },
+    "src/loop/governess-usage.ts": {
+      "loc": 944
+    },
+    "src/loop/governess.ts": {
+      "loc": 7521
+    },
+    "src/loop/hooks/emit.ts": {
+      "loc": 1223
+    },
+    "src/loop/hooks/settings.ts": {
+      "loc": 49
+    },
+    "src/loop/iteration.ts": {
+      "loc": 86
+    },
+    "src/loop/launch-reservation.ts": {
+      "loc": 388
+    },
+    "src/loop/launch.ts": {
+      "loc": 43
+    },
+    "src/loop/legacy-governess-compat.ts": {
+      "loc": 62
+    },
+    "src/loop/main.ts": {
+      "loc": 11
+    },
+    "src/loop/memory-checkpoint.ts": {
+      "loc": 440
+    },
+    "src/loop/native-subagent.ts": {
+      "loc": 1022
+    },
+    "src/loop/openai-compatible.ts": {
+      "loc": 705
+    },
+    "src/loop/paired-loop.ts": {
+      "loc": 614
+    },
+    "src/loop/paired-options.ts": {
+      "loc": 507
+    },
+    "src/loop/panel.ts": {
+      "loc": 1360
+    },
+    "src/loop/pi-runtime.ts": {
+      "loc": 300
+    },
+    "src/loop/ports.ts": {
+      "loc": 44
+    },
+    "src/loop/pr.ts": {
+      "loc": 36
+    },
+    "src/loop/process.ts": {
+      "loc": 26
+    },
+    "src/loop/prompts.ts": {
+      "loc": 126
+    },
+    "src/loop/recon-pane.ts": {
+      "loc": 286
+    },
+    "src/loop/review.ts": {
+      "loc": 384
+    },
+    "src/loop/run-process-cleanup.ts": {
+      "loc": 491
+    },
+    "src/loop/run-state.ts": {
+      "loc": 1305
+    },
+    "src/loop/runner.ts": {
+      "loc": 782
+    },
+    "src/loop/session-pressure.ts": {
+      "loc": 384
+    },
+    "src/loop/single-loop.ts": {
+      "loc": 109
+    },
+    "src/loop/stale-bridge-cleanup.ts": {
+      "loc": 364
+    },
+    "src/loop/task-router.ts": {
+      "loc": 1102
+    },
+    "src/loop/task.ts": {
+      "loc": 118
+    },
+    "src/loop/tmux-control.ts": {
+      "loc": 152
+    },
+    "src/loop/tmux.ts": {
+      "loc": 3821
+    },
+    "src/loop/types.ts": {
+      "loc": 423
+    },
+    "src/loop/update-deps.ts": {
+      "loc": 13
+    },
+    "src/loop/update.ts": {
+      "loc": 395
+    },
+    "src/loop/utility-context.ts": {
+      "loc": 261
+    },
+    "src/loop/utility-execution-tier.ts": {
+      "loc": 167
+    },
+    "src/loop/utility-observability.ts": {
+      "loc": 845
+    },
+    "src/loop/utility-path-policy.ts": {
+      "loc": 166
+    },
+    "src/loop/utility-readiness.ts": {
+      "loc": 228
+    },
+    "src/loop/utility-runtime.ts": {
+      "loc": 2931
+    },
+    "src/loop/utility-store.ts": {
+      "loc": 785
+    },
+    "src/loop/utility-tools.ts": {
+      "loc": 2732
+    },
+    "src/loop/utility-workspace.ts": {
+      "loc": 446
+    },
+    "src/loop/utils.ts": {
+      "loc": 21
+    },
+    "src/loop/workspace-binding.ts": {
+      "loc": 161
+    },
+    "src/loop/worktree.ts": {
+      "loc": 404
+    },
+    "src/loop/world-model-cli.ts": {
+      "loc": 160
+    },
+    "src/loop/world-model-ontology.ts": {
+      "loc": 87
+    },
+    "src/loop/world-model-runtime.ts": {
+      "loc": 143
+    },
+    "src/loop/world-model.ts": {
+      "loc": 1072
+    },
+    "src/loop/ws-client.ts": {
+      "loc": 337
+    },
+    "v2/kit/scripts/activate.sh": {
+      "loc": 49
+    },
+    "v2/kit/scripts/audit.sh": {
+      "loc": 204
+    },
+    "v2/kit/scripts/checkpoint.sh": {
+      "loc": 90
+    },
+    "v2/kit/scripts/coordination.sh": {
+      "loc": 144
+    },
+    "v2/kit/scripts/debt-scan.sh": {
+      "loc": 186
+    },
+    "v2/kit/scripts/debt-snapshot.sh": {
+      "loc": 115
+    },
+    "v2/kit/scripts/done.sh": {
+      "loc": 144
+    },
+    "v2/kit/scripts/eval-dim.sh": {
+      "loc": 175
+    },
+    "v2/kit/scripts/loop-prompt.sh": {
+      "loc": 198
+    },
+    "v2/kit/scripts/park-idea.sh": {
+      "loc": 117
+    },
+    "v2/kit/scripts/park.sh": {
+      "loc": 50
+    },
+    "v2/kit/scripts/plan-save.sh": {
+      "loc": 71
+    },
+    "v2/kit/scripts/post-task.sh": {
+      "loc": 29
+    },
+    "v2/kit/scripts/pre-task.sh": {
+      "loc": 17
+    },
+    "v2/kit/scripts/preflight.sh": {
+      "loc": 205
+    },
+    "v2/kit/scripts/promote.sh": {
+      "loc": 166
+    },
+    "v2/kit/scripts/regression-harvest.sh": {
+      "loc": 204
+    },
+    "v2/kit/scripts/research.sh": {
+      "loc": 210
+    },
+    "v2/kit/scripts/resume.sh": {
+      "loc": 33
+    },
+    "v2/kit/scripts/retrospect.sh": {
+      "loc": 1392
+    },
+    "v2/kit/scripts/session-export.sh": {
+      "loc": 359
+    },
+    "v2/kit/scripts/state-check.sh": {
+      "loc": 132
+    },
+    "v2/kit/scripts/stop-gate.sh": {
+      "loc": 101
+    },
+    "v2/kit/scripts/task.sh": {
+      "loc": 215
+    },
+    "v2/kit/scripts/tasks-index.sh": {
+      "loc": 203
+    },
+    "v2/kit/scripts/tracker.sh": {
+      "loc": 265
+    },
+    "v2/kit/scripts/verify.sh": {
+      "loc": 348
+    }
+  }
+}

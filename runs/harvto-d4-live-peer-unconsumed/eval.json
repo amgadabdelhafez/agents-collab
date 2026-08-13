@@ -1,0 +1,16 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d4-live-peer-unconsumed",
+  "baseline_failures": [],
+  "summary": "D4 routed-peer jobs now reconcile exact durable peer requests and responses into one replay-safe terminal result while unknown routes remain recoverable and durable bridge failures fail once.",
+  "checks": {
+    "focused_utility_runtime": "55 pass, 0 fail",
+    "focused_bridge": "109 pass, 0 fail",
+    "focused_d1_liveness": "16 pass, 0 fail",
+    "focused_utility_store": "15 pass, 0 fail",
+    "lint": "pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "test_ci": "77 files pass"
+  }
+}
