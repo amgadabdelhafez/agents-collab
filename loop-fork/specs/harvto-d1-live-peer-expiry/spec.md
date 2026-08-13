@@ -56,8 +56,9 @@ release.
 - Tmux target: `RunManifest.tmuxSession`, exact `tmuxPaneLeft|Right`, and matching
   `tmuxPaneLeftAgent|RightAgent`, followed by bounded `display-message` evidence for `pane_dead`.
   Pane absence is dead only when an independent session probe is live in the same resolution.
-  Session dead/unknown, probe timeout/throw, or unparseable pane output is unknown; this prevents a
-  tmux restart from terminalizing every target queue.
+  Session dead/unknown, nonzero pane-probe exit, probe timeout/throw, or unparseable pane output is
+  unknown; this prevents a tmux restart or transient probe failure from terminalizing a target
+  queue. Only successful exact output with `pane_dead=1` proves pane death.
 - Codex app server: configured remote transport, manifest `codexAppServerPid`, and tri-state
   `process.kill(pid, 0)` evidence. Success is live, `ESRCH` is dead, other errors are unknown.
 - Multiple configured target routes: any live evidence means live; all present evidence dead means
@@ -85,3 +86,8 @@ journals omit it and continue to parse. Older readers reconstruct known message 
 optional field without rewriting the append-only message line. Unknown event kinds remain ignored.
 Queue pressure does not add a `BridgeQueueHealth` field; existing status schema and terminal counts
 remain compatible.
+
+Utility-runtime bridge sends remain redundant notifications after authoritative utility-job state
+transitions. Backpressure can miss a nudge there, but cannot erase or falsely complete the durable
+route/result state; moving notification ahead of that transition is outside D1 and would weaken the
+durable-state guarantee.

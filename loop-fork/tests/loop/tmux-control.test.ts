@@ -127,13 +127,6 @@ test("tmux pane liveness distinguishes a dead or absent pane only in a live sess
       )
     )
   ).toBe("dead");
-  expect(
-    tmuxPaneLiveness(
-      "repo-loop-98",
-      "%5",
-      fakeSpawnSequence([], [{ exitCode: 0 }, { exitCode: 1 }])
-    )
-  ).toBe("dead");
 });
 
 test("tmux pane liveness fails closed when session evidence is not live", () => {
@@ -157,6 +150,7 @@ test("tmux pane liveness fails closed when session evidence is not live", () => 
 test("tmux pane liveness fails closed on invalid pane evidence", () => {
   const paneResults: Array<Error | SpawnResult> = [
     { exitCode: 0, signalCode: "SIGKILL" },
+    { exitCode: 1 },
     new Error("pane probe failed"),
     { exitCode: 0, stdout: "garbage" },
     { exitCode: 0, stdout: "other-session\t%5\t0" },

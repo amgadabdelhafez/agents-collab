@@ -6,8 +6,12 @@ Recorded: 2026-08-12 (America/Los_Angeles)
 
 - Task: `harvto-d1-live-peer-expiry`
 - Base SHA: `52e244b8d49258ea1768580fba2042719030d884`
-- Implementation commit: pending explicit-path commit
-- Claude exact-SHA review: pending
+- Initial implementation commit: `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d`
+- Replacement fail-closed commit: pending explicit-path commit
+- Initial Claude review request: bridge `ba1ee254-7043-4291-b179-fb2140a50d31`; its PASS was
+  superseded before delivery by bridge `216fbb8d-9ddd-42b5-9d64-1a8033909ef0` because nonzero
+  pane-probe exits were not authoritative dead evidence
+- Replacement exact-SHA Claude review: pending
 - Baseline failures: none
 
 ## Focused proof
@@ -38,8 +42,9 @@ Result: 109 pass, 0 fail, 473 expectations. Backpressure formatting is distinct 
 cd loop-fork && bun run test:file -- tests/loop/tmux-control.test.ts
 ```
 
-Result: 6 pass, 0 fail, 21 expectations. Exact pane live/dead evidence is bounded; session
-dead/unknown, whole-server throw, timeout, and malformed pane output remain unknown.
+Result after fail-closed correction: 6 pass, 0 fail, 21 expectations. Exact pane live/dead evidence
+is bounded; session dead/unknown, nonzero pane-probe exit, whole-server throw, timeout, and malformed
+pane output remain unknown. Only successful exact `pane_dead=1` output is dead.
 
 ## Repository gates
 
@@ -83,6 +88,8 @@ Result: pass, exit 0. Verifier repeated lint, canonical typecheck, build, and al
 files, then reported `baseline allowlist empty: runs/harvto-d1-live-peer-expiry/eval.json` and
 `=== verify.sh complete ===`.
 
+All focused and repository gates above were rerun after the nonzero-pane-probe correction.
+
 ## Compatibility and scope
 
 - Pre-fix message lines without `retainedReason` parse in fixed code.
@@ -94,7 +101,7 @@ files, then reported `baseline allowlist empty: runs/harvto-d1-live-peer-expiry/
 - Repo-root `runs/harvto-d1-live-peer-expiry/eval.json` has `verdict: "pass"` and an empty
   `baseline_failures` list.
 
-## Pre-commit scope proof
+## Initial pre-commit scope proof
 
 - `git diff --name-only` was empty after explicit staging; only untracked `.loop/` helper
   artifacts remain outside the index.
@@ -105,3 +112,12 @@ files, then reported `baseline allowlist empty: runs/harvto-d1-live-peer-expiry/
 - `git diff --cached --numstat` exactly matches
   `git diff --cached --numstat --ignore-all-space`; no whitespace-only reformat is present.
 - `git diff --cached --check` passes.
+
+## Replacement pre-commit scope proof
+
+- Replacement diff contains nine explicit D1 paths: fail-closed tmux source/test, promoted D1
+  spec/plan/tasks/verification, the D1 matrix hunk, `PLAN.md`, and `status.md`.
+- No path exists in any Harvto checkout or D2-D14 artifact.
+- `defect-matrix.md` has one replacement hunk wholly between the D1 and D2 headings.
+- Normal and `--ignore-all-space` numstats are byte-identical; `git diff --check` passes.
+- Untracked `.loop/` helper artifacts remain excluded.

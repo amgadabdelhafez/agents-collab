@@ -37,6 +37,7 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
   `retainedReason: "queue-pressure"`; default `maxRetained` is 33 (`maxOutstanding + 1`). At the
   retained ceiling, net-new work returns pre-accept `backpressure` with no bridge/transcript event.
   Supersession runs before the ceiling. `src/loop/tmux-control.ts` adds exact-pane tri-state probing;
+  nonzero probe exits remain unknown, and only successful exact `pane_dead=1` output proves dead.
   `src/loop/bridge-dispatch.ts`, `src/loop/governess.ts`, and `appendBridgeMessage` expose or reject
   backpressure without reporting queued success. No new event kind or queue-health field exists.
 - Named controls in `tests/loop/governess-p0-runtime.test.ts`: `D1 unknown liveness retains
@@ -53,8 +54,10 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
 - Verification: D1 file 16 pass / 0 fail; bridge file 109 pass / 0 fail; tmux file 6 pass / 0 fail;
   `bun run check`, canonical `bunx tsc --noEmit ...`, and `bun run build` pass; all 77 serial
   `bun run test:ci` files pass. Repo-root eval verdict is `pass` with empty `baseline_failures`.
-- Review: design clearance bridge `1c929e52-f05e-4528-8beb-a2320bd14e48`; implementation commit
-  and exact-SHA Claude verdict pending explicit-path commit.
+- Review: design clearance bridge `1c929e52-f05e-4528-8beb-a2320bd14e48`; initial commit
+  `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d` and request
+  `ba1ee254-7043-4291-b179-fb2140a50d31` were superseded after both reviewers identified the
+  nonzero-probe ambiguity. Replacement commit and exact-SHA verdict pending.
 - Status: **confirmed, fixed locally; exact-SHA review pending**.
 
 ### D2 — Lying liveness: workspace ownership derived from recorded state prose, not process evidence (P0)

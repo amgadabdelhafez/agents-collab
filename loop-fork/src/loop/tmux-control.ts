@@ -127,7 +127,7 @@ export const tmuxPaneLiveness = (
       return "unknown";
     }
     if (result.exitCode !== 0) {
-      return "dead";
+      return "unknown";
     }
     const output = result.stdout?.toString().trim() ?? "";
     const fields = output.split("\t");

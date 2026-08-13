@@ -191,5 +191,10 @@ peer-liveness evidence and all callers of `readPendingBridgeMessages` and
   durable slot, then return pre-accept `backpressure` without a journal or transcript event.
 - Confirmed-dead, unknown, ceiling, later-dead, supersession, formatter, journal compatibility,
   and no-duplicate controls pass in existing bridge boundaries. Remaining sequence: settle the
-  Utility-runtime notification scope, run all 77 serial test files and Harness gates, update
-  evidence, commit explicit paths, and request Claude exact-SHA zero-write review.
+  Utility-runtime notification scope is documented as redundant after durable job transition.
+  All 77 serial test files and Harness gates pass; explicit-path commit
+  `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d` review was superseded after a utility audit found
+  nonzero pane-probe exits were not authoritative dead evidence. Apply the scoped
+  nonzero-to-`unknown` correction. Correction now passes focused tests, check, canonical typecheck,
+  build, all 77 serial test files, Harness preflight/stop-gate, and root verifier. Remaining:
+  commit the nine explicitly proven D1 paths and request Claude review on replacement SHA.

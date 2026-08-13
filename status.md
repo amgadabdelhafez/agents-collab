@@ -92,3 +92,55 @@ Risks/open work:
 Next bounded action: settle Utility-runtime scope with Claude, prove D1-only diff containment, commit
 explicit paths, and request exact-SHA zero-write review. Do not touch Harvto, D2-D14, dependencies,
 remote state, or git history.
+
+## 2026-08-12 — D1 exact-SHA review requested
+
+Result: explicit-path D1 commit created and sent for zero-write peer review.
+
+- Base: `52e244b8d49258ea1768580fba2042719030d884`.
+- Commit: `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d`.
+- Review request: bridge `ba1ee254-7043-4291-b179-fb2140a50d31`, no TTL, exact base/head and
+  32 committed paths supplied.
+- Pre-commit proof: no unstaged tracked diff; no Harvto or D2-D14 path; only D1 matrix hunk;
+  normal/ignore-space numstats identical; `git diff --cached --check` passed.
+- Post-commit status before this evidence refresh contained only untracked `.loop/` helper artifacts.
+
+Next bounded action: wait for Claude `PASS` or `REVISE`. On `REVISE`, fix D1 only and rerun gates.
+On `PASS`, record verdict and bridge ID, then stop without merge, rebase, push, or deploy.
+
+## 2026-08-12 — D1 exact-SHA review superseded
+
+Result: post-commit utility audit found one fail-closed defect; old review SHA must not pass.
+
+- Superseded commit: `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d`.
+- Finding: `tmuxPaneLiveness` classified every nonzero pane-probe exit as `dead` after a live
+  session check. A nonzero probe failure does not positively prove pane death and could
+  terminalize retained live/unknown-peer messages.
+- Decision: nonzero pane-probe exit is `unknown`; only successful exact parsed
+  `pane_dead=1` evidence is `dead`.
+- Claude supersession notice: bridge `216fbb8d-9ddd-42b5-9d64-1a8033909ef0`.
+- Scoped edit task: `170c3bf1-01d9-4d27-9b1d-8cdc4b29e608`; only
+  `loop-fork/src/loop/tmux-control.ts` and `loop-fork/tests/loop/tmux-control.test.ts`.
+
+Next bounded action: review and apply the scoped correction, rerun focused and required full
+gates, create a replacement explicit-path commit, then request a new exact-SHA Claude verdict.
+
+## 2026-08-12 — D1 fail-closed correction verified
+
+Result: nonzero pane-probe exits now remain `unknown`; replacement verification is green.
+
+- Source: only successful exact pane output with `pane_dead=1` proves dead. Nonzero exit, timeout,
+  throw, malformed output, and session/pane mismatch remain unknown.
+- Focused tmux test: 6 pass, 0 fail, 21 expectations. Named D1 regression: 1 pass, 0 fail.
+- `bun run check`, canonical typecheck, and `bun run build`: pass.
+- `bun run test:ci`: all 77 sorted files pass serially.
+- Harness preflight and stop-gate: pass.
+- Root `scripts/verify.sh harvto-d1-live-peer-expiry harvto-d1-live-peer-expiry`: pass through
+  all 77 files and empty baseline allowlist.
+- Replacement scope proof: nine explicit D1 paths; no Harvto or D2-D14 path; one matrix hunk
+  wholly inside D1; normal and ignore-space numstats identical; diff check passes.
+- Claude's historical `bcabd31b` PASS included the same ambiguity as non-blocking F4; Codex had
+  already superseded that review because D1 requires positive dead evidence.
+
+Next bounded action: commit the nine explicitly proven D1 paths, request exact-SHA zero-write
+review, and stop only after final `PASS` is recorded.

@@ -30,6 +30,7 @@
 
 - Treating session existence, route configuration, notification, or heartbeat as live peer proof.
 - Treating missing/unknown evidence as dead.
+- Treating a nonzero pane-probe command exit as authoritative pane death.
 - Unlimited live/unknown queue growth.
 - Dropping or superseding old work solely to admit a higher-priority pressure message.
 - New terminal or pressure event variant that old readers may not recognize.
