@@ -1,0 +1,15 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d1-live-peer-expiry",
+  "baseline_failures": [],
+  "summary": "D1 live and unknown peer messages retain across TTL and queue pressure with bounded backpressure and idempotent recovery.",
+  "checks": {
+    "focused_bridge": "109 pass, 0 fail",
+    "focused_d1": "16 pass, 0 fail",
+    "focused_tmux": "6 pass, 0 fail",
+    "lint": "pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "test_ci": "77 files pass"
+  }
+}

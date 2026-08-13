@@ -2,7 +2,8 @@
   "id": "harvto-supervisor-defects",
   "mode": "planned",
   "created_at": "2026-08-12T16:39:48Z",
-  "status": "active",
+  "status": "parked",
   "description": "Reproduce and fix Harvto-reported paired-loop delivery, manifest liveness, routing, and completion-signal defects with exact-SHA peer review.",
-  "estimated_loc": 400
+  "estimated_loc": 400,
+  "parked_at": "2026-08-13T05:43:08Z"
 }

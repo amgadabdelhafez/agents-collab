@@ -102,3 +102,51 @@ export const tmuxSessionLivenessAsync = (
     }
   });
 };
+
+export const tmuxPaneLiveness = (
+  session: string,
+  pane: string,
+  run: typeof spawnSync = spawnSync
+): TmuxLiveness => {
+  if (tmuxSessionLiveness(session, run) !== "live") {
+    return "unknown";
+  }
+  try {
+    const result = run(
+      [
+        "tmux",
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{session_name}\t#{pane_id}\t#{pane_dead}",
+      ],
+      boundedTmuxOptions({ stderr: "ignore", stdout: "pipe" })
+    );
+    if (tmuxCommandTimedOut(result)) {
+      return "unknown";
+    }
+    if (result.exitCode !== 0) {
+      return "dead";
+    }
+    const output = result.stdout?.toString().trim() ?? "";
+    const fields = output.split("\t");
+    if (fields.length !== 3) {
+      return "unknown";
+    }
+    const [actualSession, actualPane, paneDead] = fields;
+    if (
+      actualSession !== session ||
+      !actualPane.startsWith("%") ||
+      (pane.startsWith("%") && actualPane !== pane)
+    ) {
+      return "unknown";
+    }
+    if (paneDead === "0") {
+      return "live";
+    }
+    return paneDead === "1" ? "dead" : "unknown";
+  } catch {
+    return "unknown";
+  }
+};

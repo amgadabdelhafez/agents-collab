@@ -23,7 +23,8 @@ export interface DeliveryResult {
     | "queued"
     | "duplicate"
     | "dead-letter"
-    | "expired";
+    | "expired"
+    | "backpressure";
   target: BridgeTarget;
 }
 
@@ -121,6 +122,8 @@ export const formatDispatchResult = ({
       return `dead-lettered ${entry.id} for ${target}: ${reason ?? "queue rejected"}`;
     case "expired":
       return `expired ${entry.id} for ${target}`;
+    case "backpressure":
+      return `backpressure ${entry.id} for ${target}: ${reason ?? "target queue saturated"}`;
     default:
       return `queued ${entry.id} for ${target}`;
   }

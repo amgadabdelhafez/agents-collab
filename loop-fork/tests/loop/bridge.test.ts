@@ -5508,6 +5508,53 @@ test("dispatchBridgeMessage formats accepted status with the target name", async
   rmSync(root, { recursive: true, force: true });
 });
 
+test("dispatchBridgeMessage reports backpressure distinct from queued", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const live = () => "live" as const;
+  const options = {
+    maxOutstanding: 1,
+    maxRetained: 2,
+    targetLiveness: live,
+    type: "work_request" as const,
+  };
+  bridge.enqueueBridgeMessage(runDir, "claude", "codex", "base work", {
+    ...options,
+    now: "2026-07-25T10:00:00.000Z",
+  });
+  bridge.enqueueBridgeMessage(runDir, "claude", "codex", "retained work", {
+    ...options,
+    now: "2026-07-25T10:00:01.000Z",
+  });
+  const eventCount = bridge.readBridgeEvents(runDir).length;
+
+  const result = await bridge.dispatchBridgeMessage(
+    runDir,
+    "claude",
+    "codex",
+    "rejected work",
+    undefined,
+    undefined,
+    { ...options, now: "2026-07-25T10:00:02.000Z" }
+  );
+  expect(result.status).toBe("backpressure");
+  expect(bridge.formatDispatchResult(result)).toBe(
+    `backpressure ${result.entry.id} for codex: target retained queue limit 2 reached`
+  );
+  expect(bridge.readBridgeEvents(runDir)).toHaveLength(eventCount);
+  expect(() =>
+    bridge.appendBridgeMessage(runDir, "claude", "codex", "wrapper rejection", {
+      ...options,
+      now: "2026-07-25T10:00:03.000Z",
+    })
+  ).toThrow("target retained queue limit 2 reached");
+  expect(bridge.readBridgeEvents(runDir)).toHaveLength(eventCount);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("bridge MCP send_message normalizes copilot as a valid target", async () => {
   const bridge = await loadBridge();
   const root = makeTempDir();

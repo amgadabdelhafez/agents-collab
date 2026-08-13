@@ -8,8 +8,10 @@ import { normalizeBridgeMessage } from "./bridge-message-format";
 import {
   appendRunTranscriptEntry,
   buildTranscriptPath,
+  type RunManifest,
   readRunManifest,
 } from "./run-state";
+import { type TmuxLiveness, tmuxPaneLiveness } from "./tmux-control";
 import type { Agent } from "./types";
 
 export type BridgeSource = Agent | "supervisor" | "utility";
@@ -19,6 +21,7 @@ const BRIDGE_FILE = "bridge.jsonl";
 const LINE_SPLIT_RE = /\r?\n/;
 const MAX_STATUS_MESSAGES = 100;
 export const DEFAULT_BRIDGE_MAX_OUTSTANDING = 32;
+export const DEFAULT_BRIDGE_MAX_RETAINED = DEFAULT_BRIDGE_MAX_OUTSTANDING + 1;
 
 export type BridgeMessageType =
   | "message"
@@ -36,6 +39,10 @@ export type BridgeResolution =
   | "superseded"
   | "dead-letter";
 export type BridgeNotificationKind = "notified";
+export type BridgeTargetLiveness = TmuxLiveness;
+export type BridgeTargetLivenessResolver = (
+  target: BridgeTarget
+) => BridgeTargetLiveness;
 
 const MESSAGE_TYPES = new Set<BridgeMessageType>([
   "message",
@@ -77,6 +84,7 @@ export interface BridgeMessage extends BridgeBaseEvent {
   message: string;
   priority?: BridgePriority;
   replyTo?: string;
+  retainedReason?: "queue-pressure";
   subject?: string;
   taskId?: string;
   threadId?: string;
@@ -101,11 +109,13 @@ export interface BridgeEnqueueOptions {
   dedupeKey?: string;
   expiresAt?: string;
   maxOutstanding?: number;
+  maxRetained?: number;
   now?: string;
   priority?: BridgePriority;
   replyTo?: string;
   subject?: string;
   supersede?: boolean;
+  targetLiveness?: BridgeTargetLivenessResolver;
   taskId?: string;
   threadId?: string;
   ttlMs?: number;
@@ -115,7 +125,7 @@ export interface BridgeEnqueueOptions {
 export interface BridgeEnqueueResult {
   entry: BridgeMessage;
   reason?: string;
-  status: "queued" | "duplicate" | "dead-letter" | "expired";
+  status: "queued" | "duplicate" | "dead-letter" | "expired" | "backpressure";
 }
 
 export interface BridgeQueueHealth {
@@ -168,6 +178,9 @@ const asPriority = (value: unknown): BridgePriority | undefined =>
   typeof value === "string" && PRIORITIES.has(value as BridgePriority)
     ? (value as BridgePriority)
     : undefined;
+
+const asRetainedReason = (value: unknown): "queue-pressure" | undefined =>
+  value === "queue-pressure" ? "queue-pressure" : undefined;
 
 export const normalizeAgent = (value: unknown): Agent | undefined => {
   if (typeof value === "string" && AGENTS.includes(value as Agent)) {
@@ -226,6 +239,7 @@ const parseBridgeMessage = (
   const dedupeKey = asString(parsed.dedupeKey);
   const expiresAt = asString(parsed.expiresAt);
   const replyTo = asString(parsed.replyTo);
+  const retainedReason = asRetainedReason(parsed.retainedReason);
   const subject = asString(parsed.subject);
   const taskId = asString(parsed.taskId);
   const threadId = asString(parsed.threadId);
@@ -238,6 +252,7 @@ const parseBridgeMessage = (
     message,
     priority: asPriority(parsed.priority) ?? "normal",
     ...(replyTo ? { replyTo } : {}),
+    ...(retainedReason ? { retainedReason } : {}),
     signature: bridgeSignature(base.source, base.target, message),
     ...(subject ? { subject } : {}),
     ...(taskId ? { taskId } : {}),
@@ -360,9 +375,117 @@ const appendBridgeResolution = (
   });
 };
 
+export interface BridgeTargetLivenessDeps {
+  paneLiveness: (session: string, pane: string) => BridgeTargetLiveness;
+  processLiveness: (pid: number) => BridgeTargetLiveness;
+  readManifest: (path: string) => RunManifest | undefined;
+}
+
+const bridgeProcessLiveness = (pid: number): BridgeTargetLiveness => {
+  if (!(Number.isInteger(pid) && pid > 0)) {
+    return "unknown";
+  }
+  try {
+    process.kill(pid, 0);
+    return "live";
+  } catch (error) {
+    if (isRecord(error) && error.code === "ESRCH") {
+      return "dead";
+    }
+    return "unknown";
+  }
+};
+
+const DEFAULT_BRIDGE_TARGET_LIVENESS_DEPS: BridgeTargetLivenessDeps = {
+  paneLiveness: tmuxPaneLiveness,
+  processLiveness: bridgeProcessLiveness,
+  readManifest: readRunManifest,
+};
+
+const combineTargetLiveness = (
+  evidence: BridgeTargetLiveness[]
+): BridgeTargetLiveness => {
+  if (evidence.includes("live")) {
+    return "live";
+  }
+  return evidence.length > 0 && evidence.every((state) => state === "dead")
+    ? "dead"
+    : "unknown";
+};
+
+export const readBridgeTargetLiveness = (
+  runDir: string,
+  target: BridgeTarget,
+  overrides: Partial<BridgeTargetLivenessDeps> = {}
+): BridgeTargetLiveness => {
+  if (target === "supervisor") {
+    return "unknown";
+  }
+  const deps = { ...DEFAULT_BRIDGE_TARGET_LIVENESS_DEPS, ...overrides };
+  const manifest = deps.readManifest(join(runDir, "manifest.json"));
+  if (!manifest) {
+    return "unknown";
+  }
+
+  const evidence: BridgeTargetLiveness[] = [];
+  let pane: string | undefined;
+  let hasPaneAssignment = false;
+  if (manifest.tmuxPaneLeftAgent === target) {
+    pane = manifest.tmuxPaneLeft;
+    hasPaneAssignment = true;
+  } else if (manifest.tmuxPaneRightAgent === target) {
+    pane = manifest.tmuxPaneRight;
+    hasPaneAssignment = true;
+  }
+  if (hasPaneAssignment) {
+    evidence.push(
+      manifest.tmuxSession && pane
+        ? deps.paneLiveness(manifest.tmuxSession, pane)
+        : "unknown"
+    );
+  }
+
+  if (target === "codex" && manifest.codexRemoteUrl && manifest.codexThreadId) {
+    evidence.push(
+      manifest.codexAppServerPid
+        ? deps.processLiveness(manifest.codexAppServerPid)
+        : "unknown"
+    );
+  }
+
+  return combineTargetLiveness(evidence);
+};
+
+const resolveBridgeTargetLiveness = (
+  runDir: string,
+  target: BridgeTarget,
+  resolver: BridgeTargetLivenessResolver | undefined,
+  cache: Map<BridgeTarget, BridgeTargetLiveness>
+): BridgeTargetLiveness => {
+  const cached = cache.get(target);
+  if (cached) {
+    return cached;
+  }
+  let liveness: BridgeTargetLiveness = "unknown";
+  try {
+    const resolved = resolver
+      ? resolver(target)
+      : readBridgeTargetLiveness(runDir, target);
+    if (resolved === "dead" || resolved === "live" || resolved === "unknown") {
+      liveness = resolved;
+    }
+  } catch {
+    // Resolver failures cannot prove that discarding a message is safe.
+  }
+  cache.set(target, liveness);
+  return liveness;
+};
+
 export const readPendingBridgeMessages = (
   runDir: string,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  targetLiveness?: BridgeTargetLivenessResolver,
+  livenessCache = new Map<BridgeTarget, BridgeTargetLiveness>()
 ): BridgeMessage[] => {
   const pending = pendingFromEvents(readBridgeEvents(runDir));
   const active: BridgeMessage[] = [];
@@ -371,12 +494,25 @@ export const readPendingBridgeMessages = (
     const expiresAt = message.expiresAt
       ? Date.parse(message.expiresAt)
       : Number.POSITIVE_INFINITY;
-    if (Number.isFinite(expiresAt) && expiresAt <= nowMs) {
+    const isExpired = Number.isFinite(expiresAt) && expiresAt <= nowMs;
+    const isPressureRetained = message.retainedReason === "queue-pressure";
+    if (
+      (isExpired || isPressureRetained) &&
+      resolveBridgeTargetLiveness(
+        runDir,
+        message.target,
+        targetLiveness,
+        livenessCache
+      ) === "dead"
+    ) {
+      const kind = isExpired ? "expired" : "dead-letter";
       appendBridgeResolution(
         runDir,
         message,
-        "expired",
-        `expired at ${message.expiresAt}`,
+        kind,
+        isExpired
+          ? `expired at ${message.expiresAt}`
+          : "target confirmed dead after queue pressure",
         now
       );
       continue;
@@ -533,6 +669,7 @@ export const formatBridgeInbox = (messages: BridgeMessage[]): string =>
       message: message.message,
       priority: message.priority ?? "normal",
       replyTo: message.replyTo,
+      retainedReason: message.retainedReason,
       subject: message.subject,
       taskId: message.taskId,
       threadId: message.threadId,
@@ -605,7 +742,25 @@ export const enqueueBridgeMessage = (
 ): BridgeEnqueueResult => {
   const entry = createBridgeMessage(source, target, message, options);
   const nowMs = Date.parse(entry.at);
-  const pending = readPendingBridgeMessages(runDir, nowMs);
+  const maxOutstanding =
+    options.maxOutstanding ?? DEFAULT_BRIDGE_MAX_OUTSTANDING;
+  const maxRetained =
+    options.maxRetained ??
+    (options.maxOutstanding === undefined
+      ? DEFAULT_BRIDGE_MAX_RETAINED
+      : maxOutstanding + 1);
+  if (!(Number.isInteger(maxRetained) && maxRetained > maxOutstanding)) {
+    throw new Error(
+      "bridge maxRetained must be an integer greater than maxOutstanding"
+    );
+  }
+  const livenessCache = new Map<BridgeTarget, BridgeTargetLiveness>();
+  const pending = readPendingBridgeMessages(
+    runDir,
+    nowMs,
+    options.targetLiveness,
+    livenessCache
+  );
   const duplicate = options.dedupeKey
     ? pending.find(
         (candidate) =>
@@ -630,34 +785,70 @@ export const enqueueBridgeMessage = (
       entry.at
     );
   }
-  appendBridgeEvent(runDir, entry);
+  const targetPending = pending.filter(
+    (candidate) => candidate.target === target && candidate.id !== duplicate?.id
+  );
+  const isExpired = Boolean(
+    entry.expiresAt && Date.parse(entry.expiresAt) <= nowMs
+  );
+  const isQueuePressure = targetPending.length >= maxOutstanding;
+  const liveness =
+    isExpired || isQueuePressure
+      ? resolveBridgeTargetLiveness(
+          runDir,
+          target,
+          options.targetLiveness,
+          livenessCache
+        )
+      : undefined;
+
+  if (
+    isQueuePressure &&
+    liveness !== "dead" &&
+    targetPending.length >= maxRetained
+  ) {
+    const reason = `target retained queue limit ${maxRetained} reached`;
+    return { entry, reason, status: "backpressure" };
+  }
+
+  const acceptedEntry =
+    isQueuePressure && liveness !== "dead"
+      ? { ...entry, retainedReason: "queue-pressure" as const }
+      : entry;
+  appendBridgeEvent(runDir, acceptedEntry);
   appendRunTranscriptEntry(buildTranscriptPath(runDir), {
-    at: entry.at,
+    at: acceptedEntry.at,
     from: source,
     message,
     to: target,
   });
-  if (entry.expiresAt && Date.parse(entry.expiresAt) <= nowMs) {
+
+  if (isExpired && liveness === "dead") {
     appendBridgeResolution(
       runDir,
-      entry,
+      acceptedEntry,
       "expired",
-      `expired at ${entry.expiresAt}`,
-      entry.at
+      `expired at ${acceptedEntry.expiresAt}`,
+      acceptedEntry.at
     );
-    return { entry, reason: "message already expired", status: "expired" };
+    return {
+      entry: acceptedEntry,
+      reason: "message already expired",
+      status: "expired",
+    };
   }
-  const targetPending = pending.filter(
-    (candidate) => candidate.target === target && candidate.id !== duplicate?.id
-  );
-  const maxOutstanding =
-    options.maxOutstanding ?? DEFAULT_BRIDGE_MAX_OUTSTANDING;
-  if (targetPending.length >= maxOutstanding) {
+  if (isQueuePressure && liveness === "dead") {
     const reason = `target queue limit ${maxOutstanding} reached`;
-    appendBridgeResolution(runDir, entry, "dead-letter", reason, entry.at);
-    return { entry, reason, status: "dead-letter" };
+    appendBridgeResolution(
+      runDir,
+      acceptedEntry,
+      "dead-letter",
+      reason,
+      acceptedEntry.at
+    );
+    return { entry: acceptedEntry, reason, status: "dead-letter" };
   }
-  return { entry, status: "queued" };
+  return { entry: acceptedEntry, status: "queued" };
 };
 
 export const appendBridgeMessage = (
@@ -666,8 +857,13 @@ export const appendBridgeMessage = (
   target: BridgeTarget,
   message: string,
   options: BridgeEnqueueOptions = {}
-): BridgeMessage =>
-  enqueueBridgeMessage(runDir, source, target, message, options).entry;
+): BridgeMessage => {
+  const result = enqueueBridgeMessage(runDir, source, target, message, options);
+  if (result.status === "backpressure") {
+    throw new Error(result.reason ?? "bridge backpressure");
+  }
+  return result.entry;
+};
 
 export const readBridgeQueueHealth = (
   runDir: string,

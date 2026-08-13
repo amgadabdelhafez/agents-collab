@@ -6348,7 +6348,11 @@ const sendGovernessBridgeMessage = async (
     undefined,
     options
   );
-  if (result.status === "dead-letter" || result.status === "expired") {
+  if (
+    result.status === "dead-letter" ||
+    result.status === "expired" ||
+    result.status === "backpressure"
+  ) {
     throw new Error(result.reason ?? `bridge ${result.status}`);
   }
   if (result.status === "duplicate") {

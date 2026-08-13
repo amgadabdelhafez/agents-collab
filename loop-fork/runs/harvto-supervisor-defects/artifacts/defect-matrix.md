@@ -19,25 +19,43 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
 ### D1 — Bridge message expires or dead-letters without regard to peer liveness (P0)
 
 - Reports: loop-173 occurrences 1-3 (decisions `cd019cb7`, `7a6669ba` late, resends
-  `38be2d13`, `a06c5d36`, `185495aa` required); loop-177 occurrences 4-5 (helper escalations
-  `4c163b80-6031-46ee-9847-14374bfbcc85`, `bea46d68-884f-47b1-b547-72f10db28f72`
-  courier-dead-lettered after bodies expired, recovered in `e2000036-a36c-481c-9f88-40712a626da5`);
-  W33 S2 "five TTL dead-letters recovered from bridge.jsonl" (`f92c998d`, `4c163b80`,
-  `bea46d68`, `723137ff`, `79327e63`); W33 S3 "TTL dead-letters x2 more"
-  (`1c73567d`, `02312a32`); W33 S1 "TTL expiry ate further bridge bodies".
-- Code: `src/loop/bridge-store.ts:363-390` (`readPendingBridgeMessages`) and
-  `src/loop/bridge-store.ts:640-659` (enqueue path).
-- Mechanism: expiry is decided purely on wall clock —
-  `if (Number.isFinite(expiresAt) && expiresAt <= nowMs)` at `bridge-store.ts:374` — with no
-  input from whether the intended peer is live or whether any delivery attempt was ever made.
-  The enqueue path additionally dead-letters on queue depth alone
-  (`targetPending.length >= maxOutstanding`, `bridge-store.ts:655`, with
-  `DEFAULT_BRIDGE_MAX_OUTSTANDING = 32` at `bridge-store.ts:21`).
-  A live peer that has simply not drained yet is indistinguishable from an absent peer.
-- Violated acceptance principle: "Delivery recovery must preserve idempotency and must not
-  silently discard or duplicate messages."
-- Regression test: to be named on implementation.
-- Status: **confirmed**.
+  `38be2d13`, `a06c5d36`, `185495aa` required); loop-177 occurrences 4-5; W33 S1-S3 repeated
+  TTL/dead-letter recovery from `bridge.jsonl`.
+- Reproduction at base `52e244b8d49258ea1768580fba2042719030d884`: named test
+  `D1 live liveness callback suppresses ttl expiry and queue-depth dead-letter terminalization`
+  ran both operations before assertions and failed unpatched with `Expected length: 1` /
+  `Received length: 0`. Its TTL journal appended `expired`; its live queue overflow appended
+  `dead-letter` with `target queue limit 1 reached`. Exact command and journal lines are in
+  `runs/harvto-d1-live-peer-expiry/artifacts/baseline-reproduction.md`.
+- Invariant: TTL/depth terminalization requires current peer-scoped authoritative `dead` evidence.
+  Live and unknown retain. Exact manifest left/right pane mapping plus bounded pane evidence and
+  configured Codex app-server PID evidence compose tri-state liveness; notification, heartbeat,
+  pane prose, session-only evidence, and missing evidence cannot prove safe discard.
+- Fix: `src/loop/bridge-store.ts` lazily resolves and memoizes liveness only for elapsed TTL or
+  pressure, threads one cache through enqueue's transitive pending read, and preserves old
+  expired/dead-letter behavior only for `dead`. One live/unknown pressure slot persists optional
+  `retainedReason: "queue-pressure"`; default `maxRetained` is 33 (`maxOutstanding + 1`). At the
+  retained ceiling, net-new work returns pre-accept `backpressure` with no bridge/transcript event.
+  Supersession runs before the ceiling. `src/loop/tmux-control.ts` adds exact-pane tri-state probing;
+  `src/loop/bridge-dispatch.ts`, `src/loop/governess.ts`, and `appendBridgeMessage` expose or reject
+  backpressure without reporting queued success. No new event kind or queue-health field exists.
+- Named controls in `tests/loop/governess-p0-runtime.test.ts`: `D1 unknown liveness retains
+  ttl-expired messages fail-closed`, `D1 live pressure slot reaches a pre-accept retained ceiling`,
+  `D1 later-dead evidence terminalizes retained ttl and pressure once`, `D1 same-dedupe
+  supersession remains accepted at retained ceiling`, `D1 repeated recovery reads and consumes
+  deliver one retained identity once`, `D1 old and fixed message shapes reconstruct compatibly`,
+  and `D1 target liveness combines exact configured evidence fail-closed`. Pane/server controls are
+  in `tests/loop/tmux-control.test.ts`; formatter/wrapper control is `dispatchBridgeMessage reports
+  backpressure distinct from queued` in `tests/loop/bridge.test.ts`.
+- No-duplicate proof: three reconstructed pending reads, then two consumes, produce one effective
+  delivery and exactly one `delivered` resolution. Repeated later-dead reads append exactly one
+  `expired` or `dead-letter` for each retained identity.
+- Verification: D1 file 16 pass / 0 fail; bridge file 109 pass / 0 fail; tmux file 6 pass / 0 fail;
+  `bun run check`, canonical `bunx tsc --noEmit ...`, and `bun run build` pass; all 77 serial
+  `bun run test:ci` files pass. Repo-root eval verdict is `pass` with empty `baseline_failures`.
+- Review: design clearance bridge `1c929e52-f05e-4528-8beb-a2320bd14e48`; implementation commit
+  and exact-SHA Claude verdict pending explicit-path commit.
+- Status: **confirmed, fixed locally; exact-SHA review pending**.
 
 ### D2 — Lying liveness: workspace ownership derived from recorded state prose, not process evidence (P0)
 

@@ -1,0 +1,13 @@
+{
+  "task_id": "harvto-d1-live-peer-expiry",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "16 D1, 109 bridge, 6 tmux tests pass; all 77 serial test files pass"
+    }
+  }
+}
