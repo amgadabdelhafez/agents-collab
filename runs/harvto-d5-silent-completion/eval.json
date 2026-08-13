@@ -1,0 +1,19 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d5-silent-completion",
+  "baseline_failures": [],
+  "summary": "D5 paired completion now durably enqueues or reconciles one exact supervisor close before terminal manifest state, fails closed without attribution or enqueue proof, and remains replay-safe after delivery.",
+  "checks": {
+    "focused_paired_integration": "6 pass, 0 fail",
+    "focused_paired_unit": "21 pass, 0 fail",
+    "focused_bridge": "109 pass, 0 fail",
+    "focused_d1_liveness": "16 pass, 0 fail",
+    "focused_d3_governess": "79 pass, 0 fail",
+    "focused_d3_d4_utility_runtime": "56 pass, 0 fail",
+    "focused_utility_store": "15 pass, 0 fail",
+    "lint": "885 files pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "test_ci": "77 files pass"
+  }
+}

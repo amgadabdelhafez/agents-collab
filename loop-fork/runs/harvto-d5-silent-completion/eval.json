@@ -1,0 +1,13 @@
+{
+  "task_id": "harvto-d5-silent-completion",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "6 paired-loop integration, 21 paired-loop unit, 109 bridge, 16 D1 liveness, 79 D3 Governess, 56 D3/D4 utility-runtime, and 15 utility-store tests pass; check passes 885 files; canonical typecheck, build, and all 77 serial test files pass"
+    }
+  }
+}

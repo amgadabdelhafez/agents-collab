@@ -1,0 +1,6 @@
+{"at":"2026-08-13T20:06:44.047Z","kind":"status","state":"submitted"}
+{"at":"2026-08-13T20:06:44.049Z","detail":"paired sessions ready","kind":"status","state":"working"}
+{"at":"2026-08-13T20:06:44.052Z","detail":"<done/>","kind":"result","result":"done-signal-detected"}
+{"at":"2026-08-13T20:06:44.052Z","detail":"review in progress","kind":"status","state":"reviewing"}
+{"at":"2026-08-13T20:06:44.052Z","kind":"review","reviewer":"claude","status":"pass"}
+{"at":"2026-08-13T20:06:44.053Z","detail":"review approved","kind":"status","state":"completed"}

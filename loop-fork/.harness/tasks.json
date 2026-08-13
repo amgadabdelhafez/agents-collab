@@ -570,6 +570,15 @@
       "eval_status": "pass",
       "ended_at": "2026-08-13T18:49:48Z",
       "spec_path": "specs/harvto-d3-pending-route.md"
+    },
+    {
+      "id": "harvto-d5-silent-completion",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-08-13T19:04:51Z",
+      "run_dir": "runs/harvto-d5-silent-completion",
+      "eval_status": "pending",
+      "spec_path": "specs/harvto-d5-silent-completion.md"
     }
   ]
 }

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "loop-bridge": {
+      "args": [
+        "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork/tests/loop/00-paired-loop.integration.test.ts",
+        "__bridge-mcp",
+        "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork/runs/harvto-d5-silent-completion/artifacts/red/home/.loop/runs/agents-collab-fa87e8608224/d5-supervisor-close",
+        "gemini"
+      ],
+      "command": "/Users/amgad/.bun/bin/bun",
+      "type": "stdio"
+    }
+  }
+}

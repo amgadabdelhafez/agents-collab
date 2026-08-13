@@ -1,0 +1,9 @@
+{
+  "id": "harvto-d5-silent-completion",
+  "mode": "planned",
+  "created_at": "2026-08-13T19:04:51Z",
+  "status": "active",
+  "description": "D5 P1: make task completion emit durable supervisor-visible closure across restart/replay; reproduce runs finishing without close signal.",
+  "promoted_from": "specs/harvto-d5-silent-completion.md",
+  "promoted_at": "2026-08-13T19:04:51Z"
+}

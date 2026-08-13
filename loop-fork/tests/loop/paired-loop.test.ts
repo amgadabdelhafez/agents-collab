@@ -28,6 +28,7 @@ type PairedLoopModule = typeof import("../../src/loop/paired-loop");
 type AgentRunKind = "review" | "work";
 
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-paired-"));
+const attributableSourceTaskSha256 = "9".repeat(64);
 const makeOptions = (overrides: Partial<Options> = {}): Options => ({
   agent: "codex",
   codexModel: "test-model",
@@ -159,9 +160,25 @@ const withTempHome = async (
   process.env.HOME = home;
   process.env.LOOP_COOLDOWN_MS = "0";
   process.env.LOOP_RUN_ID = runId;
+  const storage = resolveRunStorage(runId, process.cwd());
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      claudeSessionId: "",
+      codexThreadId: "",
+      cwd: process.cwd(),
+      mode: "paired",
+      pid: process.pid,
+      repoId: storage.repoId,
+      runId,
+      sourceTaskSha256: attributableSourceTaskSha256,
+      state: "submitted",
+      workspaceBinding: { repoId: storage.repoId, root: process.cwd() },
+    })
+  );
 
   try {
-    await fn(resolveRunStorage(runId, process.cwd()).runDir);
+    await fn(storage.runDir);
   } finally {
     if (originalHome === undefined) {
       Reflect.deleteProperty(process.env, "HOME");
@@ -323,7 +340,9 @@ test("runPairedLoop resolves a stored raw session id back to its run manifest", 
           pid: 1234,
           repoId: storage.repoId,
           runId: "alpha",
+          sourceTaskSha256: attributableSourceTaskSha256,
           status: "running",
+          workspaceBinding: { repoId: storage.repoId, root: process.cwd() },
         },
         "2026-03-22T10:00:00.000Z"
       )
@@ -388,7 +407,9 @@ test("runPairedLoop restarts a completed paired run with fresh agent sessions", 
           pid: 1234,
           repoId: storage.repoId,
           runId: "alpha",
+          sourceTaskSha256: attributableSourceTaskSha256,
           status: "done",
+          workspaceBinding: { repoId: storage.repoId, root: process.cwd() },
         },
         "2026-03-22T10:00:00.000Z"
       )
@@ -567,6 +588,16 @@ test("runPairedLoop marks a failed startup as failed", async () => {
     expect(readRunManifest(join(runDir, "manifest.json"))?.status).toBe(
       "failed"
     );
+    expect(
+      bridgeInternals
+        .readBridgeEvents(runDir)
+        .filter(
+          (event) =>
+            event.kind === "message" &&
+            event.target === "supervisor" &&
+            event.subject === "paired run completed"
+        )
+    ).toHaveLength(0);
   });
 });
 
@@ -666,6 +697,16 @@ test("runPairedLoop delivers forwarded bridge messages to the target agent", asy
     expect(readRunManifest(join(runDir, "manifest.json"))?.status).toBe(
       "stopped"
     );
+    expect(
+      bridgeInternals
+        .readBridgeEvents(runDir)
+        .filter(
+          (event) =>
+            event.kind === "message" &&
+            event.target === "supervisor" &&
+            event.subject === "paired run completed"
+        )
+    ).toHaveLength(0);
   });
 });
 
@@ -804,7 +845,9 @@ test("runPairedLoop restores a pending follow-up prompt on resume", async () => 
         pid: 1234,
         repoId: storage.repoId,
         runId: "4d",
+        sourceTaskSha256: attributableSourceTaskSha256,
         state: "input-required",
+        workspaceBinding: { repoId: storage.repoId, root: process.cwd() },
       })
     );
 

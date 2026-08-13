@@ -1,0 +1,2 @@
+{"at":"2026-03-22T10:00:00.000Z","id":"bridge-1","kind":"message","message":"Please review the implementation details.","source":"codex","target":"claude"}
+{"at":"2026-08-13T20:06:44.052Z","id":"bridge-1","kind":"delivered","signature":"ec921861506d73e3a2c964beca0ca20d7526f1f94a6387c4a5c259345c13b181","source":"codex","target":"claude"}

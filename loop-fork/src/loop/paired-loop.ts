@@ -1,4 +1,6 @@
+import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { isDeepStrictEqual } from "node:util";
 import { defaultPeerAgent, isPersistentAgent } from "./agents";
 import {
   type AgentBridgeMessage,
@@ -14,10 +16,16 @@ import {
   bridgeSourceLabel,
   formatBridgeDeliveryMessage,
 } from "./bridge-message-format";
+import {
+  type BridgeMessage,
+  enqueueBridgeMessage,
+  readBridgeEvents,
+} from "./bridge-store";
 import { cavemanAgentGuidance, DEFAULT_CAVEMAN_MODE } from "./caveman";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
 import { INTERNAL_AGENT_COMMUNICATION_GUIDANCE } from "./communication-guidance";
+import { runGit } from "./git";
 import {
   doneText,
   formatFollowUp,
@@ -67,10 +75,12 @@ interface PairedState {
 }
 
 interface PairedLoopDependencies {
+  runGit: typeof runGit;
   startPersistentAgentSession: typeof startPersistentAgentSession;
 }
 
 const pairedLoopDefaultDeps: PairedLoopDependencies = {
+  runGit,
   startPersistentAgentSession,
 };
 
@@ -413,7 +423,6 @@ const handleDoneSignal = async (
   );
 
   if (reviewers.length === 0) {
-    transitionRunState(state, "completed", "done signal detected");
     console.log(
       `\n[loop] ${doneText(state.options.doneSignal)} detected, stopping.`
     );
@@ -436,7 +445,6 @@ const handleDoneSignal = async (
   );
   if (review.approved) {
     await runDraftPrStep(task, state.options);
-    transitionRunState(state, "completed", "review approved");
     console.log(
       `\n[loop] ${doneText(state.options.doneSignal)} detected and review passed, stopping.`
     );
@@ -520,11 +528,204 @@ const runIterations = async (
   return false;
 };
 
+interface SupervisorCompletionPayload {
+  gitHead: string;
+  kind: "paired-run-completed";
+  repoId: string;
+  repositoryRoot: string;
+  runId: string;
+  sourceTaskSha256: string;
+  status: "completed";
+}
+
+const SOURCE_TASK_SHA256_RE = /^[a-f0-9]{64}$/u;
+const GIT_HEAD_RE = /^[a-f0-9]{40,64}$/u;
+const COMPLETION_SUBJECT = "paired run completed";
+
+const parseCompletionPayload = (
+  message: string
+): SupervisorCompletionPayload | undefined => {
+  try {
+    const parsed = JSON.parse(message) as unknown;
+    if (!(typeof parsed === "object" && parsed !== null)) {
+      return undefined;
+    }
+    const record = parsed as Record<string, unknown>;
+    if (
+      record.kind !== "paired-run-completed" ||
+      record.status !== "completed" ||
+      typeof record.repoId !== "string" ||
+      typeof record.repositoryRoot !== "string" ||
+      typeof record.runId !== "string" ||
+      typeof record.sourceTaskSha256 !== "string" ||
+      typeof record.gitHead !== "string"
+    ) {
+      return undefined;
+    }
+    return {
+      gitHead: record.gitHead,
+      kind: "paired-run-completed",
+      repoId: record.repoId,
+      repositoryRoot: record.repositoryRoot,
+      runId: record.runId,
+      sourceTaskSha256: record.sourceTaskSha256,
+      status: "completed",
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const completionDedupeKey = (payload: SupervisorCompletionPayload): string =>
+  [
+    payload.kind,
+    payload.repoId,
+    payload.runId,
+    payload.sourceTaskSha256,
+    payload.gitHead,
+  ].join(":");
+
+const completionRowMatches = (
+  row: BridgeMessage,
+  payload: SupervisorCompletionPayload
+): boolean =>
+  row.target === "supervisor" &&
+  row.type === "ack" &&
+  row.subject === COMPLETION_SUBJECT &&
+  row.taskId === payload.sourceTaskSha256 &&
+  row.threadId === `${payload.repoId}:${payload.runId}` &&
+  row.dedupeKey === completionDedupeKey(payload) &&
+  isDeepStrictEqual(parseCompletionPayload(row.message), payload);
+
+const ensureSupervisorCompletion = (state: PairedState): void => {
+  const { manifest } = state;
+  const sourceTaskSha256 = manifest.sourceTaskSha256;
+  if (!(sourceTaskSha256 && SOURCE_TASK_SHA256_RE.test(sourceTaskSha256))) {
+    throw new Error(
+      `[loop] run ${manifest.runId} cannot complete without sourceTaskSha256`
+    );
+  }
+  if (
+    manifest.workspaceBinding &&
+    manifest.workspaceBinding.repoId !== manifest.repoId
+  ) {
+    throw new Error(
+      `[loop] run ${manifest.runId} workspace binding does not match repoId`
+    );
+  }
+  const repositoryRoot = manifest.workspaceBinding
+    ? manifest.workspaceBinding.root
+    : manifest.cwd;
+  if (!(repositoryRoot?.trim() && isAbsolute(repositoryRoot))) {
+    throw new Error(
+      `[loop] run ${manifest.runId} cannot complete without an absolute repository root`
+    );
+  }
+
+  const completionRows = readBridgeEvents(state.storage.runDir).filter(
+    (event): event is BridgeMessage =>
+      event.kind === "message" &&
+      event.target === "supervisor" &&
+      (event.subject === COMPLETION_SUBJECT ||
+        event.dedupeKey?.startsWith(
+          `paired-run-completed:${manifest.repoId}:${manifest.runId}:`
+        ) === true ||
+        parseCompletionPayload(event.message)?.kind === "paired-run-completed")
+  );
+  if (completionRows.length > 1) {
+    throw new Error(
+      `[loop] run ${manifest.runId} has multiple supervisor completion rows`
+    );
+  }
+  const existing = completionRows[0];
+  if (existing) {
+    const payload = parseCompletionPayload(existing.message);
+    if (
+      !payload ||
+      payload.repoId !== manifest.repoId ||
+      payload.repositoryRoot !== repositoryRoot ||
+      payload.runId !== manifest.runId ||
+      payload.sourceTaskSha256 !== sourceTaskSha256 ||
+      !GIT_HEAD_RE.test(payload.gitHead) ||
+      !completionRowMatches(existing, payload)
+    ) {
+      throw new Error(
+        `[loop] run ${manifest.runId} has a malformed supervisor completion row`
+      );
+    }
+    return;
+  }
+
+  const git = pairedLoopDeps.runGit(repositoryRoot, ["rev-parse", "HEAD"]);
+  const gitHead = git.stdout.trim();
+  if (git.exitCode !== 0 || !GIT_HEAD_RE.test(gitHead)) {
+    throw new Error(
+      `[loop] run ${manifest.runId} cannot resolve Git HEAD from ${repositoryRoot}`
+    );
+  }
+  const payload: SupervisorCompletionPayload = {
+    gitHead,
+    kind: "paired-run-completed",
+    repoId: manifest.repoId,
+    repositoryRoot,
+    runId: manifest.runId,
+    sourceTaskSha256,
+    status: "completed",
+  };
+  const result = enqueueBridgeMessage(
+    state.storage.runDir,
+    state.options.agent,
+    "supervisor",
+    JSON.stringify(payload),
+    {
+      dedupeKey: completionDedupeKey(payload),
+      subject: COMPLETION_SUBJECT,
+      taskId: sourceTaskSha256,
+      threadId: `${manifest.repoId}:${manifest.runId}`,
+      type: "ack",
+    }
+  );
+  if (
+    (result.status !== "queued" && result.status !== "duplicate") ||
+    !completionRowMatches(result.entry, payload)
+  ) {
+    throw new Error(
+      `[loop] run ${manifest.runId} could not durably enqueue supervisor completion`
+    );
+  }
+};
+
 const finishRun = (
   state: PairedState,
   finalState: "completed" | "failed" | "stopped"
 ): void => {
   const previousState = state.manifest.state;
+  if (finalState === "completed") {
+    const touched = touchRunManifest(
+      {
+        ...state.manifest,
+        claudeSessionId:
+          getLastClaudeSessionId() || state.manifest.claudeSessionId || "",
+        codexThreadId:
+          getLastCodexThreadId() || state.manifest.codexThreadId || "",
+        pid: process.pid,
+      },
+      new Date().toISOString()
+    );
+    state.manifest = touched;
+    ensureSupervisorCompletion(state);
+    const next = setRunManifestState(
+      touched,
+      finalState,
+      new Date().toISOString()
+    );
+    writeRunManifest(state.storage.manifestPath, next);
+    state.manifest = next;
+    if (previousState !== finalState) {
+      appendTranscript(state, createRunStatusEntry(finalState));
+    }
+    return;
+  }
   const next = updateRunManifest(state.storage.manifestPath, (manifest) => {
     const currentManifest = manifest ?? state.manifest;
     const touched = touchRunManifest(

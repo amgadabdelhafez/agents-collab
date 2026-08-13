@@ -1,0 +1,21 @@
+{
+  "cavemanMode": "lite",
+  "claudeChannelServer": "loop-bridge-agents-collab-d5-supervisor-close",
+  "helperCavemanMode": "full",
+  "sourceTaskSha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "workspaceBinding": {
+    "repoId": "agents-collab-fa87e8608224",
+    "root": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork"
+  },
+  "claudeSessionId": "claude-session-1",
+  "codexThreadId": "codex-thread-1",
+  "createdAt": "2026-08-13T20:06:44.035Z",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "mode": "paired",
+  "pid": 58932,
+  "repoId": "agents-collab-fa87e8608224",
+  "runId": "d5-supervisor-close",
+  "state": "completed",
+  "status": "done",
+  "updatedAt": "2026-08-13T20:06:44.053Z"
+}

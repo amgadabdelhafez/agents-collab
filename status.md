@@ -922,3 +922,325 @@ Next bounded action for the successor: confirm clean tracked state and no active
 the D3 closure commit, then promote `harvto-d5-silent-completion`. Preserve task order D5, D16,
 D15, then D6-D12. Paid utility remains disabled. Do not repeat D3 closure or start from the
 implementation commit alone.
+
+## 2026-08-13 — D5 promoted and contract initialized
+
+Result: canonical task `harvto-d5-silent-completion` is active at exact base
+`6cdb9ad60e7c2b18926a70e25debf877302bc014`; no source or test file has been edited.
+
+Current state:
+
+- Harness promotion completed at `2026-08-13T19:04:51Z`; status reports planned mode and pending
+  unit eval.
+- Harness-owned `loop-fork/runs/harvto-d5-silent-completion/plan.md` is initialized and refined.
+- Canonical `loop-fork/specs/harvto-d5-silent-completion/{spec,plan,tasks,verify}.md` defines exact
+  attribution, fail-closed completion, restart/replay durability, delivered-message dedupe,
+  focused controls, mandatory gates, and exclusions.
+- Read-only trace found paired completion writes manifest/transcript terminal state in
+  `loop-fork/src/loop/paired-loop.ts`; no automatic completion is enqueued to supervisor.
+- Paid utility inference remains disabled. One zero-cost Direct read confirmed the parked D5 spec;
+  task `a1340d30-bdfe-4d77-b32b-6d857712b50b` performed no writes.
+- `.loop/` remains present and untracked; it has not been edited, staged, or removed.
+
+Open question: reproduction must settle whether narrow ownership belongs entirely in paired-loop
+finalization or requires persisting a completion identity with terminal manifest state to repair
+the manifest-write/bridge-enqueue crash window.
+
+Risks:
+
+- Existing bridge dedupe checks pending messages only; supervisor delivery followed by replay must
+  not append another close.
+- Success must include exact run, source-task SHA-256, and Git HEAD. Missing attribution must fail
+  closed without breaking failed/stopped flows.
+- D16 remains open, so Git-derived scope is authoritative over routed scope summaries.
+
+Next: obtain Claude zero-write plan feedback, then add the smallest deterministic D5 regression
+against unchanged production and record exact red proof before any source correction.
+
+## 2026-08-13 — D5 fresh-loop handover after initialization
+
+Result: D5 promotion and pre-edit planning are complete. Governess ordered fresh-loop preparation
+via bridge `ae28964d-a932-4d08-83b4-d3af73ee0145`; no red-test or production edit has started.
+
+Current objective:
+
+- Reproduce a paired run reaching manifest `done` without one exact durable supervisor completion,
+  then fix only the proven terminalization gap with restart/replay idempotency.
+
+Exact changed scope:
+
+- Root session state: `PLAN.md`, `status.md`.
+- Harness intake: `loop-fork/.harness/current-task`, `.harness/parked-ideas.jsonl`,
+  `.harness/tasks.json`, and `loop-fork/agents/coordination.jsonl`.
+- Generated D5 run: `loop-fork/runs/harvto-d5-silent-completion/`.
+- Canonical D5 contracts: `loop-fork/specs/harvto-d5-silent-completion/`.
+- Production/test diff: empty. Cached diff: empty. `.loop/` remains untracked and untouched.
+
+Checks/results:
+
+- Exact HEAD/base: `6cdb9ad60e7c2b18926a70e25debf877302bc014`.
+- Harness reports `harvto-d5-silent-completion` active in planned mode with pending unit eval.
+- `git diff --check` passes.
+- `git diff --name-only -- loop-fork/src loop-fork/tests` is empty.
+- Direct read task `a1340d30-bdfe-4d77-b32b-6d857712b50b` returned the exact parked spec with
+  zero writes and no provider spend.
+- Claude plan review request is bridge `071748dd-5b49-47f8-9129-9465d90196d0`; verdict remains
+  pending because the preparation decision arrived first.
+
+Blocker: context preparation threshold only; no technical blocker.
+
+Risks:
+
+- Existing bridge dedupe is pending-only, so delivered completion replay needs explicit proof.
+- The completion must be bound to exact repo/run/source-task/Git identity and fail closed if
+  attribution or durable enqueue is unavailable.
+- D16 remains open; Git-derived paths remain authoritative for every scope boundary.
+
+Next bounded action: receive Claude's zero-write plan verdict. On `PASS`, add the smallest named D5
+regression against unchanged production and capture exact red manifest/transcript/bridge evidence.
+On `REVISE`, update D5 planning only before the test edit. Do not re-promote D5, alter Harness
+lifecycle, edit Harvto, or start D16/D15/D6-D12 before D5 closes.
+
+Handover state: Governess began graceful handover epoch `1786647683686113` at
+`2026-08-13T19:20:56.712Z`. Run-59 manifest and live tmux inspection confirm full topology:
+Claude `%0`, Codex `%1`, Governess `%2`, Au Pair `%3`, Nanny `%4`, and Recon `%5`. Review request
+`071748dd-5b49-47f8-9129-9465d90196d0` remains durably queued for Claude. Codex must write its
+validated bundle and exit; Governess owns replacement launch and successor manifest acceptance.
+
+## 2026-08-13 — D5 plan REVISE applied in run 60
+
+Result: Claude returned `REVISE` for durable plan request
+`071748dd-5b49-47f8-9129-9465d90196d0` via bridge
+`3d1bb504-2707-4093-9327-1b57dcb8f138`. All five items are accepted and applied to D5 planning;
+no production or test file has changed.
+
+Accepted plan corrections:
+
+- `status.md` is now maintained as the current D5 phase handoff while older sections remain
+  archival evidence.
+- D5 has an explicit `not-reproduced` branch: contrary proof skips production edits.
+- Mandatory commands, canonical Harness identity, both eval paths/schemas, baseline allowlist
+  semantics, and the full serial certification suite are named in the live D5 plan.
+- Run-59 topology is labeled historical; run 60 is the accepted continuation.
+- Attribution assertions bind manifest `repoId`, `workspaceBinding.root`/bound `cwd`, `runId`, and
+  `sourceTaskSha256` plus pre-terminalization `gitHead` to the same structured supervisor bridge
+  close and its `taskId`, `threadId`, and `dedupeKey`.
+
+Constraint incident:
+
+- Claude routed Au Pair task `3466ccae-7ca4-4eb9-be18-b645a77aa019` before reading the no-paid
+  authority boundary. `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/60/utility/usage.jsonl`
+  records OpenRouter model `z-ai/glm-5.2`, cost `$0.003881967`, and 4212 total tokens at
+  `2026-08-13T19:37:47.517Z`. Result discarded.
+- Zero-cost Nanny task `6747f5a7-f35a-446d-9690-3b7f64feed42` also produced false scope evidence.
+  Au Pair reported eight paths instead of Git's nine and omitted the canonical D5 spec directory;
+  Nanny falsely reported that directory empty. Native `ls` showed all four contract files. Preserve
+  both outputs for D16 only; neither supports D5.
+- No further utility routing is authorized. Git-derived scope remains authoritative.
+
+Exact state: HEAD/base remains `6cdb9ad60e7c2b18926a70e25debf877302bc014`; active task is
+`harvto-d5-silent-completion`; `git diff -- loop-fork/src loop-fork/tests` remains empty; untracked
+`.loop/` remains preserved.
+
+Next bounded action: obtain fresh Claude `PASS` on revised planning. Only then add the named
+exact-base regression and capture manifest/transcript/bridge red evidence before source work.
+
+Plan gate passed: Claude returned fresh zero-write `PASS` via bridge
+`7e1d33de-d003-4220-bd46-ebeec47f955a`. Claude reverified exact base
+`6cdb9ad60e7c2b18926a70e25debf877302bc014`, `git diff --check`, empty source/test diff, the exact
+nine-path Git status, preserved untracked `.loop/`, all five plan corrections, and durable incident
+bookkeeping using native local reads only. Authorized next action is the named exact-base red;
+production remains frozen until decisive red evidence is saved.
+
+## 2026-08-13 — Run-60 preparation boundary after D5 plan PASS
+
+Result: Governess decision `d043df03-18d9-41d0-8833-fc44c98d8e01` ordered fresh-loop preparation
+after Codex reached its context threshold. The current atomic step is complete; no red-test or
+production edit started.
+
+Current objective: add one named paired-loop regression on unchanged production that reaches
+manifest `done` and expects the exact structured supervisor close. Preserve manifest, transcript,
+bridge rows, command, and decisive zero-close failure before changing source. If a compliant close
+already exists, record `not-reproduced` and skip production edits.
+
+Exact changed scope:
+
+- Root session state: `PLAN.md`, `status.md`.
+- Harness intake/coordination: `loop-fork/.harness/current-task`,
+  `loop-fork/.harness/parked-ideas.jsonl`, `loop-fork/.harness/tasks.json`, and
+  `loop-fork/agents/coordination.jsonl`.
+- Generated D5 run: `loop-fork/runs/harvto-d5-silent-completion/`.
+- Canonical D5 planning: `loop-fork/specs/harvto-d5-silent-completion/`.
+- Production/test diff: empty. `.loop/` remains untracked and preserved.
+
+Checks/results:
+
+- HEAD/base: `6cdb9ad60e7c2b18926a70e25debf877302bc014`.
+- Harness: `harvto-d5-silent-completion` active, planned, eval pending.
+- `git diff --check`: pass.
+- `git diff --name-only -- loop-fork/src loop-fork/tests`: empty.
+- Claude plan `PASS`: bridge `7e1d33de-d003-4220-bd46-ebeec47f955a`, zero writes and native local
+  reads only.
+- Exact payload contract added to canonical `spec.md`; root/canonical/run planning is consistent.
+- Claude handover check `c167174d-839d-4c06-9f11-518d4ebcc1c6` accepted the bundle; its sole
+  divergence was fixed by making canonical `spec.md` authoritative in root `PLAN.md` for payload
+  shape and repository-root precedence.
+- Unauthorized spend incident `$0.003881967` and false D16 scope evidence are durably recorded;
+  helper results remain discarded.
+
+Risks:
+
+- No current supervisor-close row exists, so the regression asserts a newly defined exact payload.
+- Completion must enqueue durably before healthy terminal state without creating duplicates across
+  restart, delivery, or replay.
+- D16 remains open; only Git-derived scope is authoritative.
+
+Next bounded action: in the fresh loop, read governing architecture/testing files and exact source
+seams locally, add the named red test only, run it, and save red evidence. Do not edit production,
+route utility, mutate Harness lifecycle, or touch Harvto before that proof.
+
+Handover launch requirement: human ordered governed handover immediately. Replacement must be
+manifest-backed and launched with `LOOP_UTILITY_ENABLED=0` and
+`LOOP_UTILITY_DELEGATION_MODE=off`; preserve full expected topology except paid Au Pair remains
+disabled. Preserve the exact nine-path planning scope and untracked `.loop/`. Successor consumes
+existing plan `PASS` `7e1d33de-d003-4220-bd46-ebeec47f955a`, does not re-review or re-promote, and
+starts the exact-base red after reading local governing/source/test seams. Canonical `spec.md`
+already defines the new close payload and root precedence; no further pre-test design gate remains.
+
+## 2026-08-13 — Run-61 D5 resumption
+
+Result: validated run-60 handover accepted. D5 remains active at exact base
+`6cdb9ad60e7c2b18926a70e25debf877302bc014`; no source or test edit has started.
+
+Proof and boundaries:
+
+- Claude plan `PASS` `7e1d33de-d003-4220-bd46-ebeec47f955a` is accepted without re-review.
+- Harness reports `harvto-d5-silent-completion` active in planned mode with pending eval.
+- Canonical `spec.md` already defines the structured supervisor-close payload and definite
+  `workspaceBinding.root` then `cwd` repository-root precedence.
+- `git diff --check` passes; production/test diff remains empty; exact planning scope and untracked
+  `.loop/` are preserved.
+- Utility routing remains hard-disabled; no helper route, paid utility, provider, or model action is
+  authorized.
+
+Next: inspect exact local seams, add the smallest named regression only, run it once against
+unchanged production, and capture manifest/transcript/bridge red evidence before source correction.
+
+## 2026-08-13 — D5 exact-base red reproduced
+
+Result: D5 reproduced on unchanged production. Paired run reached manifest `done` and transcript
+completion with zero matching durable supervisor close rows.
+
+Proof:
+
+- Exact HEAD/base: `6cdb9ad60e7c2b18926a70e25debf877302bc014`.
+- Named test: `runPairedLoop durably closes a completed run to the supervisor with exact identity`.
+- Decisive red: `Expected length: 1`, `Received length: 0`; 0 pass, 1 fail.
+- Raw manifest, transcript, bridge, exact command, decisive output, and SHA-256 hashes are preserved
+  in `loop-fork/runs/harvto-d5-silent-completion/artifacts/red-reproduction.md` and
+  `artifacts/red/home/`.
+- Manifest recorded `state: "completed"`, `status: "done"`, exact `repoId`, `runId`,
+  `sourceTaskSha256`, and `workspaceBinding.root`.
+- Bridge journal recorded only the test Codex-to-Claude message and delivery; no supervisor row.
+- `git diff --name-only -- loop-fork/src` remains empty; `.loop/` remains untracked and untouched.
+
+Next: implement the smallest fail-closed paired-finalization correction, then add restart/replay,
+delivered-dedupe, exact-attribution, and non-success controls before broad verification.
+
+## 2026-08-13 — Run-61 focused implementation handover
+
+Result: D5 focused correction and controls are implemented but uncommitted. Governess decision
+`01bea514-bee6-4ef4-8ed9-0dce20f3c3bf` ordered fresh-loop preparation before another broad slice.
+
+Current behavior:
+
+- Supervisor completion is durably enqueued/reconciled before terminal manifest `done`.
+- Payload and metadata bind exact `repoId`, repository root, `runId`, `sourceTaskSha256`, and Git
+  HEAD; `workspaceBinding.root` wins over `cwd`.
+- Missing source identity, Git resolution failure, and supervisor queue backpressure leave manifest
+  non-terminal and throw.
+- Delivered completion replay reuses one historical row; unrelated supervisor traffic is ignored.
+- Failed and stopped controls emit no completion.
+
+Exact changed scope:
+
+- HEAD/base remains `6cdb9ad60e7c2b18926a70e25debf877302bc014`.
+- Preserved planning/intake/evidence: root `PLAN.md`, `status.md`,
+  `loop-fork/.harness/{current-task,parked-ideas.jsonl,tasks.json}`,
+  `loop-fork/agents/coordination.jsonl`, D5 run directory, canonical D5 spec directory, and
+  untracked `.loop/`.
+- New tracked implementation/test paths:
+  `loop-fork/src/loop/paired-loop.ts`,
+  `loop-fork/tests/loop/00-paired-loop.integration.test.ts`, and
+  `loop-fork/tests/loop/paired-loop.test.ts`.
+- Git status has exactly 12 entries. No production path outside `paired-loop.ts` changed. No commit
+  exists yet.
+
+Proof/checks:
+
+- Exact-base named red preserved: manifest `done`, zero matching close,
+  `Expected length: 1`, `Received length: 0`, with raw manifest/transcript/bridge hashes.
+- Current focused integration: 6 pass, 0 fail, 33 assertions.
+- Paired-loop unit file: 21 pass, 0 fail, 98 assertions before final predicate-only narrowing;
+  rerun is next.
+- Current `bun run check`: pass, 885 files.
+- Current `git diff --check`: pass.
+- Utility routing remained disabled; no helper, provider, model, Harvto, remote, or `.loop/` action
+  occurred.
+
+Open work and risks:
+
+- Rerun paired-loop unit on current source, then bridge/D1/D3/D4 controls.
+- Run canonical typecheck, build, complete serial suite, both eval schemas, Harness gates, and root
+  verifier.
+- Perform final self-review and Git-derived scope proof before explicit-path commit.
+- Obtain Claude zero-write `PASS` on exact committed SHA, close Harness once, commit bookkeeping,
+  then continue D16, D15, and D6-D12 separately.
+
+Next bounded action: rerun only `tests/loop/paired-loop.test.ts`; do not start a broad suite or edit
+source unless that focused check fails. No technical blocker; handover is context-driven.
+
+Graceful handover epoch: `1786651310142809`. Run 61 stops at this preserved uncommitted boundary;
+the successor resumes with the focused paired-loop test above.
+
+## 2026-08-13 — Run-62 D5 verified pre-commit
+
+Result: D5 implementation and all pre-review gates pass at exact base/HEAD
+`6cdb9ad60e7c2b18926a70e25debf877302bc014`. No commit exists yet.
+
+Proof:
+
+- Current paired-loop unit rerun: 21 pass, 0 fail, 98 assertions.
+- Focused controls: bridge 109, D1 liveness 16, D3 Governess 79, D3/D4 utility runtime 56, and
+  utility store 15 tests pass. Full certification independently reran D5 integration 6/6.
+- Canonical typecheck and build pass. Complete serial `bun run test:ci` passes all 77 sorted test
+  files.
+- Canonical Harness task is `harvto-d5-silent-completion`; both eval schemas report pass with empty
+  `baseline_failures`; preflight and stop-gate pass.
+- Root `scripts/verify.sh harvto-d5-silent-completion harvto-d5-silent-completion` passes check
+  across 885 files, canonical typecheck, build, all 77 serial files, and baseline gate.
+- Self-review found no blocking source issue. Only `src/loop/paired-loop.ts` changes production.
+  Root `.loop/` remains untracked, unmodified, and excluded. No helper route or paid utility action
+  occurred.
+
+Scope note: `loop-fork/runs/harvto-d5-silent-completion/plan.md` and
+`loop-fork/specs/harvto-d5-silent-completion/plan.md` are ignored by the generic `PLAN.md` rule but
+are required D5 evidence. Force-stage those exact files only. D16 remains open, so Git-derived
+paths are authoritative.
+
+Next bounded action: complete exact Git path proof, stage explicit D5 paths, commit, then request
+Claude zero-write review for exact base/head. Do not close Harness before `PASS`; preserve all D5
+evidence and root `.loop/`.
+
+### Run-62 preparation boundary
+
+Governess decision `33e1b29c-aba4-49b9-807d-bead538f7abb` ordered fresh-loop preparation before
+staging. Current atomic scope-proof step is complete. Exact candidate commit scope is 36 files,
+recorded in `loop-fork/runs/harvto-d5-silent-completion/artifacts/precommit-scope.md`; it includes
+the two ignored required plan files. No file is staged and no commit exists.
+
+No technical blocker exists. Handover is context-driven. Successor must revalidate exact HEAD
+`6cdb9ad60e7c2b18926a70e25debf877302bc014`, 13-entry collapsed short status, 36-file candidate
+scope, empty index, `git diff --check`, and root `.loop/` preservation. Then stage only those exact
+files, force-add only the two plan files, verify cached scope/numstats, commit D5, and request Claude
+zero-write exact-SHA review. Do not rerun broad gates unless state changed or review requires it.

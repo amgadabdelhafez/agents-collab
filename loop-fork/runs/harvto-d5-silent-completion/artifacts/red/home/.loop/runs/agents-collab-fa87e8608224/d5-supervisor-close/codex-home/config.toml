@@ -1,0 +1,8 @@
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
+service_tier = "standard"
+
+[projects."/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork"]
+trust_level = "trusted"
