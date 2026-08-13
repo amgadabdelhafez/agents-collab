@@ -1577,11 +1577,16 @@ export class UtilityToolBroker {
       );
     }
     if (result.exitCode !== 0) {
+      const detail = result.stderr
+        .replace(ANSI_SGR_RE, "")
+        .trim()
+        .slice(0, 1000);
+      const message = checkOnly
+        ? "Patch is malformed or no longer applies cleanly"
+        : "Patch application failed";
       throw new ToolPolicyError(
         "patch_conflict",
-        checkOnly
-          ? "Patch no longer applies cleanly"
-          : "Patch application failed"
+        detail ? `${message}: ${detail}` : message
       );
     }
   }

@@ -1521,7 +1521,10 @@ test("rejects a malformed patch proposal before publishing an artifact", async (
     });
 
     expect(result).toMatchObject({
-      error: { code: "patch_conflict" },
+      error: {
+        code: "patch_conflict",
+        message: expect.stringContaining("corrupt patch"),
+      },
       ok: false,
     });
     expect(result.artifact).toBeUndefined();
