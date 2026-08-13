@@ -7,6 +7,7 @@ import {
   readdir,
   readFile,
   realpath,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import {
@@ -2698,6 +2699,12 @@ export class UtilityToolBroker {
     };
     const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
     await writeFile(patchPath, patch, { encoding: "utf8", flag: "wx" });
+    try {
+      await this.runGitApply(relative(this.repoRoot, patchPath), true);
+    } catch (error) {
+      await unlink(patchPath).catch(() => undefined);
+      throw error;
+    }
     await writeFile(manifestPath, manifestText, {
       encoding: "utf8",
       flag: "wx",

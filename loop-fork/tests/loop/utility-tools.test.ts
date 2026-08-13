@@ -1505,6 +1505,35 @@ test("stores a validated patch proposal without modifying the source", async () 
   });
 });
 
+test("rejects a malformed patch proposal before publishing an artifact", async () => {
+  await withRepo(async (root) => {
+    const broker = await brokerFor(root);
+    const malformed = [
+      "--- a/src/hello.ts",
+      "+++ b/src/hello.ts",
+      "@@ -1 +1 @@",
+      "-export const hello = 'world';",
+      "",
+    ].join("\n");
+    const result = await broker.execute({
+      arguments: { patch: malformed, summary: "malformed edit" },
+      name: "propose_patch",
+    });
+
+    expect(result).toMatchObject({
+      error: { code: "patch_conflict" },
+      ok: false,
+    });
+    expect(result.artifact).toBeUndefined();
+    expect(await readFile(join(root, "src", "hello.ts"), "utf8")).toBe(
+      "export const hello = 'world';\n"
+    );
+    await expect(
+      lstat(join(root, ".utility-artifacts", "patch-1.patch"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
 test("treats an exact declared new write file as an empty search domain", async () => {
   await withRepo(async (root) => {
     const broker = await createUtilityToolBroker(
