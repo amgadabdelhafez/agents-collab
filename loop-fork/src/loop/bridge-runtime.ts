@@ -801,10 +801,24 @@ const codexComposerText = (output: string): string | undefined => {
   if (promptIndex < 0) {
     return undefined;
   }
-  return stripDimSpans(tail[promptIndex] ?? "")
+  const promptText = stripDimSpans(tail[promptIndex] ?? "")
     .trimStart()
     .slice(CODEX_TMUX_PROMPT_PREFIX.length)
     .trim();
+  const continuation: string[] = [];
+  for (const line of tail.slice(promptIndex + 1)) {
+    const plain = stripDimSpans(line);
+    if (
+      plain.includes(CODEX_TMUX_SEND_FOOTER) ||
+      plain.includes(CODEX_TMUX_FOOTER_SEPARATOR)
+    ) {
+      break;
+    }
+    if (plain.trim()) {
+      continuation.push(plain.trim());
+    }
+  }
+  return [promptText, ...continuation].filter(Boolean).join("\n");
 };
 
 const isCodexPaneReady = (output: string): boolean => {

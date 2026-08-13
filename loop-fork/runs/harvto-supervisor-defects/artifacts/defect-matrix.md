@@ -203,15 +203,20 @@ unresolved, not omitted from intake.
 - Regressions: `handover uses the durable bridge without typing over a composer draft` and
   `handover revalidates the completed turn after pane capture` in
   `tests/loop/governess-exit.test.ts`; `Codex tmux notification preserves a non-empty user
-  draft` in `tests/loop/bridge.test.ts`. Focused results: 30 pass / 0 fail and 107 pass /
-  0 fail respectively.
+  draft` and `Codex tmux notification preserves a leading-newline multiline draft` in
+  `tests/loop/bridge.test.ts`. Focused results: 30 pass / 0 fail and 108 pass / 0 fail
+  respectively.
 - First exact-SHA review at `67424a9da46153017c745d91c2171b3a47df04ac` returned REVISE:
   the Codex bridge notifier did not require an empty composer, and two hook reads could race.
   The correction now samples styled pane state before one final hook read, distinguishes
   unsafe-turn from unsafe-composer, requires an empty styled Codex composer in the production
   tmux notifier, and carries bounded readiness attempts through both notifier checks.
+- Second exact-SHA review at `aae7c14329962ddbbcaea1a021dbed384df6d0ca` returned REVISE
+  because the empty-composer predicate covered only the first visual line. The correction
+  now classifies the entire current composer region up to the Codex footer, including a
+  leading-newline Ctrl+J draft, before either immediate or worker notification can paste.
 - Mandatory gates after correction: lint PASS, build PASS, and 77 certified test files with
-  1546 pass / 0 fail.
+  1547 pass / 0 fail.
 - Status: **fixed, exact-SHA review pending**.
 
 ## Drain receipt
