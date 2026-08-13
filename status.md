@@ -551,3 +551,26 @@ Post-revision verification passes: utility-runtime 55, bridge 109, D1 liveness 1
 the root verifier's second full suite plus empty baseline allowlist.
 
 Next: commit explicit D4 correction paths and request a fresh zero-write exact-SHA review.
+
+## 2026-08-13 — D4 exact-SHA review passed
+
+Correction commit `b77cf81d7ffb2e9178e4a72030335fae764090df` received Claude zero-write
+`PASS` via bridge decision `c059a661-7e85-458b-ade9-338b3cca568c`. Claude independently inspected
+both the focused correction and cumulative D4 range, reran utility-runtime 55, bridge 109, D1
+liveness 16, and utility-store 15 with zero failures, confirmed the producer instruction and
+decision-only consumer are pinned by one regression, and reported post-review status exactly
+`?? .loop/`.
+
+Next: record final D4 evidence, close Harness exactly once, commit explicit bookkeeping paths, and
+stop without merge, rebase, push, deploy, PR creation, or wider-defect work.
+
+## 2026-08-13 — D4 Harness lifecycle closed
+
+`./harness done harvto-d4-live-peer-unconsumed` completed exactly once at
+`2026-08-13T12:09:58Z`. Task metadata and the Harness index are `done`, `.harness/current-task` was
+removed, post-task state invariants passed, the LOC-growth debt indicator was recorded, and
+`./harness status --json` now reports no active task. Regression harvest recorded a truthful skip
+because its task-log bug-fix classifier did not fire; the three named D4 regressions and their
+passing evidence remain durable in the promoted task and fix-verification artifact.
+
+Next: commit only explicit D4/Harness bookkeeping paths, preserve untracked `.loop/`, and stop.

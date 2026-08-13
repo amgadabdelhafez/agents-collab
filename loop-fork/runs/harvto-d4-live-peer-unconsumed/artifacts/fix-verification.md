@@ -73,3 +73,34 @@ Post-correction verification repeats every required result in the command table 
 utility-runtime/bridge/D1/utility-store controls pass; check, canonical typecheck, build, and all 77
 serial test files pass; Harness preflight and stop-gate pass; and the repo-root verifier passes its
 second lint/typecheck/build/full-suite run plus the empty baseline allowlist gate.
+
+## Final exact-SHA review
+
+Claude returned zero-write `PASS` for exact SHA
+`b77cf81d7ffb2e9178e4a72030335fae764090df` via bridge decision
+`c059a661-7e85-458b-ade9-338b3cca568c`. The reviewer independently inspected the focused
+`c3468c2f2b83eb8ec104a895c5d6da49dd90f7dc..b77cf81d7ffb2e9178e4a72030335fae764090df`
+correction and the cumulative
+`0822c3546c44521ea778324d66d6c4c98f3972fb..b77cf81d7ffb2e9178e4a72030335fae764090df`
+D4 range. It confirmed the producer and decision-only consumer are pinned together, all D4
+delivery/correlation/dedupe/replay/failure/liveness controls hold, D1 policy is unchanged, and the
+post-review worktree contained only preserved untracked `.loop/`.
+
+Claude independently reran utility-runtime 55, bridge 109, Governess P0 runtime 16, and
+utility-store 15 with zero failures. Native Git scope checks—not the reviewer's unreliable routed
+path-filter audit—confirmed the correction contains exactly seven intended paths, whitespace-aware
+and whitespace-ignored numstats match, the matrix hunk is D4-only, and no Harvto, dependency,
+lockfile, or `.loop/` path changed.
+
+## Harness closure
+
+`./harness done harvto-d4-live-peer-unconsumed` completed exactly once at
+`2026-08-13T12:09:58Z`. The source parked-spec blob before Harness's expected completion-spec
+overwrite was `59fc09d37842aac773e1fbb544b6dfe422bc86aa`. Harness marked task metadata and its index
+`done`, removed `.harness/current-task`, wrote a `done` coordination row, passed the post-task state
+invariant, and left no active Harness task.
+
+The generated debt scan passed while recording one non-blocking LOC-growth indicator for
+`src/loop/utility-runtime.ts` (`2931` to `3086`, delta `155`). Regression harvest recorded
+`skipped: no bug-fix signal in task log`; no generated regression entry was fabricated. The three
+named D4 regressions and their passing results remain recorded above and in the canonical task.

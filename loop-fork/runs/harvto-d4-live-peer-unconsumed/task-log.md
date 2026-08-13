@@ -16,6 +16,10 @@ response correlation, dispatch replay, duplicate suppression, unknown liveness, 
 failure, unrelated traffic, and epoch restart. Updated D4-only specifications, evidence, evals,
 matrix status, and handoff records.
 
+Coupled the result-bearing consumer to its producer by requiring the peer review instruction to
+return the verdict with bridge message type `decision`; acknowledgements and generic or
+legacy-untyped progress remain nonterminal.
+
 ## Why
 
 The unchanged D4 base durably entered `routed-peer` and appended/delivered the exact peer request,
@@ -29,3 +33,7 @@ D1 bridge implementation. Utility reconciliation does not infer success or failu
 unknown liveness. No UI, Harvto, dependency, provider, model, remote, deployment, or release path
 changed. Verification evidence is in `artifacts/baseline-reproduction.md` and
 `artifacts/fix-verification.md`.
+
+Exact review commit `b77cf81d7ffb2e9178e4a72030335fae764090df` received Claude zero-write
+`PASS` via bridge decision `c059a661-7e85-458b-ade9-338b3cca568c`. Harness closure completed once
+at `2026-08-13T12:09:58Z`.

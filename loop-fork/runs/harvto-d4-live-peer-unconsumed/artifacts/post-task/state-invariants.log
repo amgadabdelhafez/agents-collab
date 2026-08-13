@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active harvto-d4-live-peer-unconsumed
+[pass] state/invariants/10-current-task.sh

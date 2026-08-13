@@ -11,5 +11,5 @@
 - [x] Run focused and mandatory full verification.
 - [x] Write Harness eval and repo-root eval; pass stop-gate and root verifier.
 - [x] Update D4 matrix/evidence only and prove exact path/hunk scope.
-- [ ] Commit explicit D4 paths and obtain Claude zero-write `PASS` on exact SHA.
-- [ ] Commit final D4 bookkeeping and stop.
+- [x] Commit explicit D4 paths and obtain Claude zero-write `PASS` on exact SHA.
+- [x] Commit final D4 bookkeeping and stop.

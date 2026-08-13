@@ -189,7 +189,9 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
   pass; check, canonical typecheck, build, and all 77 serial test files pass. No UI changed.
 - Evidence: `runs/harvto-d4-live-peer-unconsumed/artifacts/baseline-reproduction.md` and
   `runs/harvto-d4-live-peer-unconsumed/artifacts/fix-verification.md`.
-- Status: **fixed; exact-SHA peer review pending**.
+- Status: **fixed and exact-SHA reviewed** at
+  `b77cf81d7ffb2e9178e4a72030335fae764090df`; Claude zero-write `PASS` bridge decision
+  `c059a661-7e85-458b-ade9-338b3cca568c`.
 
 ## Drained open backlog
 

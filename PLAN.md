@@ -1,6 +1,6 @@
 # Current Plan — D1 Harness Closure, Then D4 Live Peer Unconsumed
 
-## Execution update — D4 locally verified, exact-SHA review next
+## Execution update — D4 complete, final bookkeeping commit next
 
 D1 Harness closure is committed as `0822c3546c44521ea778324d66d6c4c98f3972fb`. Canonical D4 task
 `harvto-d4-live-peer-unconsumed` is promoted and reproduced red on that unchanged production base:
@@ -24,8 +24,11 @@ consumer lacked a matching producer instruction. The minimal correction requires
 `decision` in the peer review request and pins that instruction in the existing D4 superset
 regression. The focused controls, check, canonical typecheck, build, both full 77-file serial
 suites, Harness preflight/stop-gate, and root verifier all pass after this revision. Current step:
-commit explicit correction paths and request fresh exact-SHA review. On `PASS`, record the verdict,
-close Harness, commit final bookkeeping, and stop without remote or wider-defect action.
+exact review commit `b77cf81d7ffb2e9178e4a72030335fae764090df` received Claude zero-write
+`PASS` via bridge `c059a661-7e85-458b-ade9-338b3cca568c`. Harness closure completed once at
+`2026-08-13T12:09:58Z`; the task and index are `done`, post-task invariants passed, debt evidence
+was captured, and no active Harness task remains. Only the explicit bookkeeping commit remains,
+then work stops without remote or wider-defect action.
 
 ## Goal and authority
 

@@ -20,6 +20,9 @@ Exit: `1`. Existing file controls: `52 pass`; D4 regression: `1 fail`.
 
 `D4 live peer consumption and correlated response terminalize routed-peer once across replay`
 
+This historical red proof was later renamed, with strict-superset assertions preserved, to
+`D4 peer instruction requires decision while ack and untyped replies stay nonterminal across replay`.
+
 The test proves exact Claude target liveness independently with injected manifest mapping
 `tmuxPaneRightAgent: "claude"`, pane `%9`, session `d4-live-session`, and positive pane evidence.
 No real tmux, provider, network call, or sleep is used.

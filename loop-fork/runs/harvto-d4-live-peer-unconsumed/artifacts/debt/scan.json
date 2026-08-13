@@ -1,0 +1,19 @@
+{
+  "task_id": "harvto-d4-live-peer-unconsumed",
+  "scanned_at": "2026-08-13T12:09:58Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-13T12:09:58Z",
+      "task_id": "harvto-d4-live-peer-unconsumed",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-runtime.ts",
+      "before_loc": 2931,
+      "after_loc": 3086,
+      "delta_loc": 155,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}
