@@ -1256,7 +1256,7 @@ test("peer-routed reviews preserve the requester and ask the peer to act", async
   }
 });
 
-test("D4 ack and untyped replies stay nonterminal until an exact decision completes once across replay", async () => {
+test("D4 peer instruction requires decision while ack and untyped replies stay nonterminal across replay", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-d4-live-peer-"));
   const runDir = join(repoRoot, ".loop", "runs", "d4-live-peer");
   mkdirSync(runDir, { recursive: true });
@@ -1311,6 +1311,9 @@ test("D4 ack and untyped replies stay nonterminal until an exact decision comple
     if (!requestMessage || requestMessage.kind !== "message") {
       throw new Error("missing D4 peer review request");
     }
+    expect(requestMessage.message).toContain(
+      'through the loop bridge with message type "decision"'
+    );
 
     const liveManifest = {
       tmuxPaneRight: "%9",

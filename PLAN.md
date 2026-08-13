@@ -18,7 +18,12 @@ Both Harness gates and the root verifier passed for initial review commit
 `c96f267b-ad2b-48ea-a273-2c8509eb2610`: acknowledgements and legacy-untyped rows could complete
 before the actual decision. The corrected contract accepts only explicit `decision` responses;
 the ack/untyped/decision replay regression and all proportional gates plus all 77 serial test files
-pass. Harness preflight/stop-gate and the root verifier also pass after correction. Current step:
+pass. Harness preflight/stop-gate and the root verifier also pass after correction. Claude returned
+a second zero-write `REVISE` via `46fbee8b-b835-4c03-913e-1e2d9224f19e`: the decision-only
+consumer lacked a matching producer instruction. The minimal correction requires message type
+`decision` in the peer review request and pins that instruction in the existing D4 superset
+regression. The focused controls, check, canonical typecheck, build, both full 77-file serial
+suites, Harness preflight/stop-gate, and root verifier all pass after this revision. Current step:
 commit explicit correction paths and request fresh exact-SHA review. On `PASS`, record the verdict,
 close Harness, commit final bookkeeping, and stop without remote or wider-defect action.
 

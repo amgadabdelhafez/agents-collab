@@ -535,3 +535,19 @@ root verifier with empty baseline allowlist.
 
 Next: commit explicit D4 correction paths and request a fresh zero-write review of the new exact
 SHA.
+
+## 2026-08-13 — D4 producer/consumer contract revision
+
+Claude returned zero-write `REVISE` for
+`c3468c2f2b83eb8ec104a895c5d6da49dd90f7dc` via
+`46fbee8b-b835-4c03-913e-1e2d9224f19e`. The decision-only consumer was not coupled to its producer:
+the peer instruction requested an explicit verdict but did not require bridge type `decision`.
+The minimal fail-closed correction adds that exact requirement to the dispatched `review_request`
+and asserts the producer instruction in the existing D4 superset regression. Generic progress and
+acknowledgements remain nonterminal.
+
+Post-revision verification passes: utility-runtime 55, bridge 109, D1 liveness 16, utility-store
+15, check, canonical typecheck, build, all 77 serial test files, Harness preflight/stop-gate, and
+the root verifier's second full suite plus empty baseline allowlist.
+
+Next: commit explicit D4 correction paths and request a fresh zero-write exact-SHA review.

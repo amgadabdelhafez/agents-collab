@@ -50,7 +50,9 @@ No notification or heartbeat signal may be promoted into delivery or consumption
 - `processPendingUtilityRoutes` owns reconciliation of durable `routed-peer` jobs on each Governess
   cycle and after restart.
 - The original peer request is the bridge `review_request` whose `taskId` equals the job ID and
-  whose source/requester and exact target peer match the route decision.
+  whose source/requester and exact target peer match the route decision. Its producer instruction
+  requires the peer to return its verdict with bridge message type `decision`, matching the only
+  result-bearing consumer type.
 - Missing request append after a routed-state crash window is re-created with a stable dedupe key;
   repeated reconciliation produces one effective request message.
 - A peer response is correlated by the same job `taskId`, exact reverse source/target, and request

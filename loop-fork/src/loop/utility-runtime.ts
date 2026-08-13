@@ -872,7 +872,7 @@ const dispatchNonUtilityRoute = async (
         `Peer review requested by ${job.request.requester}.`,
         `Direct, Nanny, and Au Pair were not used because this task requires peer judgment (${reason}).`,
         `Objective: ${job.request.objective}`,
-        `Action: perform the review and return an explicit verdict to ${job.request.requester} through the loop bridge. Act on this request.`,
+        `Action: perform the review and return an explicit verdict to ${job.request.requester} through the loop bridge with message type "decision". Act on this request.`,
       ].join(" ")
     : `Helper route ${job.jobId} returned to requester ${job.request.requester}: ${reason}. Objective: ${job.request.objective}`;
   let type: "escalation" | "review_request" | "work_request" = "work_request";

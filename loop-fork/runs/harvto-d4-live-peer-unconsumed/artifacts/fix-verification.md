@@ -15,7 +15,7 @@ liveness/retention policy changed.
 
 ## Regression coverage
 
-- `D4 ack and untyped replies stay nonterminal until an exact decision completes once across
+- `D4 peer instruction requires decision while ack and untyped replies stay nonterminal across
   replay`
 - `D4 routed-peer reconciliation recovers the dispatch crash window without duplicate requests`
 - `D4 unknown peer remains recoverable and durable dead-letter fails once across replay`
@@ -56,6 +56,13 @@ responses could win before the actual verdict. Legacy missing types normalize to
 durable read, so the fail-closed terminal predicate now accepts only `type: "decision"`. The named
 regression appends an `ack`, then a raw untyped progress row, proves the job remains `routed-peer`,
 then appends the decision and proves exactly one completed result across replay.
+
+Claude returned a second zero-write `REVISE` for
+`c3468c2f2b83eb8ec104a895c5d6da49dd90f7dc` via
+`46fbee8b-b835-4c03-913e-1e2d9224f19e`: the decision-only consumer was not coupled to a producer
+instruction. The peer `review_request` now explicitly requires the verdict to use bridge message
+type `decision`, and the same regression asserts that exact instruction before proving ack and
+legacy progress remain nonterminal and the decision completes once.
 
 The review's non-blocking backpressure note is documented in the settled contract: when bridge
 pressure refuses a pre-append request, reconciliation attempts dispatch once per Governess cycle,
