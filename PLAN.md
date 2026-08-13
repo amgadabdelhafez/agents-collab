@@ -271,6 +271,26 @@ Current short status remains the preserved 12-entry run-61 state plus the requir
 with root `.loop/` still untracked. Successor first revalidates exact base/status and scope artifact,
 then stages the 36 exact files, force-adding only the two ignored plan files.
 
+Human intervention superseded the unconsumed handover and authorized continuation in run 62.
+Exact 36-file scope revalidated, staged, and committed as
+`13a6e8fd37084359fafb4813b462375662b21966` over exact parent
+`6cdb9ad60e7c2b18926a70e25debf877302bc014`. Post-commit tracked tree was clean; root `.loop/`
+remained untracked. Claude zero-write exact-SHA review request is
+`c64acab6-c63c-43de-ba8a-62ed6b7410b1`. Next: receive `PASS` or `REVISE`; change D5 only on a
+blocking finding. Do not close Harness before `PASS` and do not rerun broad gates without a source
+or test change.
+
+Claude returned zero-write exact-SHA `PASS` for
+`13a6e8fd37084359fafb4813b462375662b21966` via bridge
+`ccb2d981-4fd8-4908-ab3f-1536eba9a508`. Independent focused reruns passed 21/21 paired-loop and
+6/6 integration. No D5 correction is required. Next: close Harness exactly once, inspect every
+lifecycle write, commit explicit D5 bookkeeping, then promote D16 separately.
+
+Harness closed D5 exactly once at `2026-08-13T21:03:12Z`; post-task invariants passed and no active
+task remains. Lifecycle writes, the generated completion summary, debt indicator, regression-harvest
+skip, and campaign matrix closure were inspected and normalized. Next: commit only explicit D5
+bookkeeping paths while preserving untracked root `.loop/`, then promote D16 separately.
+
 ## Archived D3 plan from parked spec
 
 ### Contract

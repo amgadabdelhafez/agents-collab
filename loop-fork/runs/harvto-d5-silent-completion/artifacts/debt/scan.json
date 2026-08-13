@@ -1,0 +1,19 @@
+{
+  "task_id": "harvto-d5-silent-completion",
+  "scanned_at": "2026-08-13T21:03:12Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-13T21:03:12Z",
+      "task_id": "harvto-d5-silent-completion",
+      "signal": "loc_growth",
+      "file": "src/loop/paired-loop.ts",
+      "before_loc": 614,
+      "after_loc": 815,
+      "delta_loc": 201,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

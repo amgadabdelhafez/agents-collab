@@ -207,6 +207,27 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
   `b77cf81d7ffb2e9178e4a72030335fae764090df`; Claude zero-write `PASS` bridge decision
   `c059a661-7e85-458b-ade9-338b3cca568c`.
 
+### D5 — Paired completion emits no durable supervisor close (P1)
+
+- Report: W33 S2, runs 192/193 completed with no supervisor close signal and were discovered only
+  by direct worktree verification.
+- Exact-base reproduction: unchanged production SHA
+  `6cdb9ad60e7c2b18926a70e25debf877302bc014` reached terminal manifest `done` and transcript
+  completion while the bridge journal contained zero matching supervisor-close rows. The named
+  regression failed with `Expected length: 1`, `Received length: 0`.
+- Fix: `src/loop/paired-loop.ts` now durably enqueues or reconciles one exact supervisor close
+  before terminal success. Identity binds repository, workspace root, run, source-task SHA-256,
+  captured Git HEAD, task ID, thread ID, and dedupe key. Missing identity, Git failure, or bridge
+  backpressure fails closed; restart and delivered replay preserve one effective close; failed and
+  stopped runs emit none.
+- Verification: paired integration 6, paired unit 21, bridge 109, D1 liveness 16, D3 Governess 79,
+  D3/D4 utility runtime 56, and utility store 15 tests pass. Check passes 885 files; canonical
+  typecheck, build, all 77 serial test files, both eval schemas, Harness gates, and the root verifier
+  pass.
+- Status: **fixed, exact-SHA reviewed, Harness closed**. Implementation commit
+  `13a6e8fd37084359fafb4813b462375662b21966` received Claude zero-write `PASS` via bridge
+  `ccb2d981-4fd8-4908-ab3f-1536eba9a508`; Harness closed at `2026-08-13T21:03:12Z`.
+
 ## Drained open backlog
 
 Reproduction and code tracing not yet complete for these; they are recorded here so the
@@ -216,7 +237,6 @@ unresolved, not omitted from intake.
 
 | Id | Report | Priority | Source |
 |---|---|---|---|
-| D5 | Silent completion x2 — runs 192/193 finished with no supervisor close signal, collected only on direct worktree verification | P1 | W33 S2 |
 | D6 | Read-only tmux attach blocks targeted recovery delivery; stale read-only viewer wedged run-186 delivery ~2h | P2 | W33 S1, W33 S3 2026-08-10 |
 | D7 | Uncommanded Codex handoff switched model/effort `sol-high -> luna-low` (run 191, post-verdict) | P2 | W33 S2 |
 | D8 | Stale utility edit lease `d161e3d6` ruled dead yet routed a two-file write (ruling `sup-187-util-dead`) | P2 | loop-173 engineer record |

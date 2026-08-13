@@ -54,3 +54,4 @@
 {"ts": "2026-08-04T19:47:18Z", "task_id": "context-pressure-handoff", "signal": "loc_growth", "file": "src/loop/session-pressure.ts", "before_loc": 0, "after_loc": 384, "delta_loc": 384, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-13T07:35:12Z", "task_id": "harvto-d1-live-peer-expiry", "signal": "loc_growth", "file": "src/loop/bridge-store.ts", "before_loc": 705, "after_loc": 901, "delta_loc": 196, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-13T12:09:58Z", "task_id": "harvto-d4-live-peer-unconsumed", "signal": "loc_growth", "file": "src/loop/utility-runtime.ts", "before_loc": 2931, "after_loc": 3086, "delta_loc": 155, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-13T21:03:12Z", "task_id": "harvto-d5-silent-completion", "signal": "loc_growth", "file": "src/loop/paired-loop.ts", "before_loc": 614, "after_loc": 815, "delta_loc": 201, "threshold": 100, "severity": "indicator"}

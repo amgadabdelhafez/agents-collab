@@ -16,6 +16,6 @@
 - [x] Run check, canonical typecheck, build, and complete serial test suite.
 - [x] Read canonical ID from Harness status; write passing Harness and repo-root eval schemas; pass
       preflight, stop-gate, full serial certification, and root verifier.
-- [ ] Prove Git-derived D5-only scope and commit explicit paths.
-- [ ] Obtain Claude zero-write exact-SHA `PASS`; correct and re-review as required.
-- [ ] Close Harness exactly once and commit bookkeeping; continue to D16 separately.
+- [x] Prove Git-derived D5-only scope and commit explicit paths.
+- [x] Obtain Claude zero-write exact-SHA `PASS`; correct and re-review as required.
+- [x] Close Harness exactly once and commit bookkeeping; continue to D16 separately.

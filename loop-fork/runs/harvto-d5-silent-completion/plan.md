@@ -42,8 +42,8 @@ delivery, and prevent duplicate closure on replay.
 - [x] Run focused paired-loop, bridge, D1, D3, and D4 controls.
 - [x] Read canonical ID from Harness status; run check, canonical typecheck, build, complete serial
       certification, Harness gates, both eval schemas, and root verifier.
-- [ ] Commit explicit D5 paths and obtain Claude zero-write exact-SHA `PASS`.
-- [ ] Close Harness once, commit bookkeeping, then continue to D16.
+- [x] Commit explicit D5 paths and obtain Claude zero-write exact-SHA `PASS`.
+- [x] Close Harness once, commit bookkeeping, then continue to D16.
 
 ## Non-goals
 

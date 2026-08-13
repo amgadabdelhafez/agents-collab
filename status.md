@@ -1244,3 +1244,58 @@ No technical blocker exists. Handover is context-driven. Successor must revalida
 scope, empty index, `git diff --check`, and root `.loop/` preservation. Then stage only those exact
 files, force-add only the two plan files, verify cached scope/numstats, commit D5, and request Claude
 zero-write exact-SHA review. Do not rerun broad gates unless state changed or review requires it.
+
+## 2026-08-13 — D5 exact-SHA review requested
+
+Result: human intervention resumed run 62 after the supervisor handover remained unconsumed. D5 is
+committed and awaiting Claude zero-write review.
+
+- Exact base: `6cdb9ad60e7c2b18926a70e25debf877302bc014`.
+- Exact D5 commit: `13a6e8fd37084359fafb4813b462375662b21966`.
+- Commit contains exactly the 36 paths in `artifacts/precommit-scope.md`; only the two recorded
+  ignored plan files were force-added.
+- Cached path comparison, diff check, normal versus ignore-all-space numstats, and later-defect
+  exclusions passed. Before this status update, post-commit tracked state was clean and only root
+  `.loop/` remained untracked.
+- Claude review request: `c64acab6-c63c-43de-ba8a-62ed6b7410b1`, zero writes, no utility routing,
+  exact base/head, no broad rerun absent a concrete concern.
+
+Next: receive Claude verdict. On `REVISE`, correct D5 only and rerun proportional checks. On
+`PASS`, record exact verdict, close Harness once, inspect lifecycle writes, and commit explicit D5
+bookkeeping before promoting D16.
+
+## 2026-08-13 — D5 exact-SHA review PASS
+
+Result: Claude returned zero-write `PASS` for exact D5 commit
+`13a6e8fd37084359fafb4813b462375662b21966`.
+
+- Review request: `c64acab6-c63c-43de-ba8a-62ed6b7410b1`.
+- PASS response: `ccb2d981-4fd8-4908-ab3f-1536eba9a508`.
+- Claude independently resolved base/head and one-commit ancestry, derived all 36 paths with zero
+  symmetric difference, confirmed clean diff and whitespace scope, and found no later-defect path.
+- Claude independently reran supported focused wrappers: paired-loop 21/21 and integration 6/6.
+- Zero writes, Harness actions, utility routing, provider spend, or broad suite rerun occurred.
+- Non-blocking notes: terminal manifest writes retain the file's existing in-memory write idiom;
+  delivered-close dedupe intentionally depends on the full append-only bridge history scan. Neither
+  requires D5 correction.
+
+Next: close Harness exactly once, inspect generated lifecycle paths, update D5 completion evidence,
+and commit explicit bookkeeping. Preserve root `.loop/`, then promote D16 separately.
+
+## 2026-08-13 — D5 Harness closure complete
+
+Result: `./harness done harvto-d5-silent-completion` ran exactly once and completed successfully at
+`2026-08-13T21:03:12Z`.
+
+- Post-task invariants passed; Harness task status is `done` and no active task remains.
+- The debt scan passed with one LOC-growth indicator for `src/loop/paired-loop.ts` (+201 lines over
+  the 100-line threshold). The generated regression harvest was skipped with reason
+  `no bug-fix signal in task log`; committed named D5 regressions remain authoritative.
+- Every lifecycle write was inspected. The stale generated completion summary was corrected, D5
+  was moved out of the campaign matrix's open backlog, and canonical/run checklists now record
+  closure.
+- No source or test changed after exact-SHA review, so broad gates were not rerun. Root `.loop/`
+  remains untracked and excluded; no utility routing or provider spend occurred.
+
+Next: stage and commit only explicit D5 closure paths, verify no active task and root `.loop/`-only
+residue, then promote D16 as a separate task.

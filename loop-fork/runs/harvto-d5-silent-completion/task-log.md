@@ -50,3 +50,23 @@ edit.
 - Both D5 eval schemas report pass with empty `baseline_failures`; Harness preflight and stop-gate
   pass; the repository-root verifier passes check, canonical typecheck, build, all 77 serial test
   files, and the empty baseline allowlist.
+
+## Exact-SHA review
+
+- Committed the exact 36-file D5 range as
+  `13a6e8fd37084359fafb4813b462375662b21966` over base
+  `6cdb9ad60e7c2b18926a70e25debf877302bc014`.
+- Claude returned zero-write `PASS` via bridge `ccb2d981-4fd8-4908-ab3f-1536eba9a508` for that exact
+  SHA after independent path/diff inspection and focused 21/21 plus 6/6 reruns.
+- No review correction was required.
+
+## Harness closure
+
+- Ran `./harness done harvto-d5-silent-completion` exactly once. Post-task invariants passed and
+  Harness recorded task status `done` at `2026-08-13T21:03:12Z`; no active task remains.
+- The post-task debt scan passed with one indicator: `src/loop/paired-loop.ts` grew by 201 lines over
+  its 100-line threshold. The generated regression harvest recorded `skipped` with reason
+  `no bug-fix signal in task log`; the named D5 regressions remain preserved in the committed test
+  files and run evidence.
+- Lifecycle writes were inspected before explicit-path staging. Root `.loop/` remained untracked
+  and excluded.

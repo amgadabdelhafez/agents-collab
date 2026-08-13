@@ -36,3 +36,15 @@ Exact base/HEAD before commit:
 - Both eval schemas parse, report pass, and contain empty `baseline_failures`.
 - `scripts/verify.sh harvto-d5-silent-completion harvto-d5-silent-completion`: pass through check,
   canonical typecheck, build, all 77 serial test files, and empty baseline allowlist.
+- Exact implementation commit: `13a6e8fd37084359fafb4813b462375662b21966`.
+- Claude zero-write exact-SHA `PASS`: bridge `ccb2d981-4fd8-4908-ab3f-1536eba9a508`; independent
+  paired-loop 21/21 and integration 6/6 focused reruns passed.
+
+## Closure
+
+- `./harness done harvto-d5-silent-completion` ran exactly once and passed post-task invariants.
+- Harness recorded `done` at `2026-08-13T21:03:12Z`; no active task remains.
+- Debt scan passed with one LOC-growth indicator for `src/loop/paired-loop.ts` (+201 lines against a
+  100-line threshold). Regression harvest was skipped by Harness with reason
+  `no bug-fix signal in task log`; committed D5 regressions and their verification evidence remain
+  authoritative.
