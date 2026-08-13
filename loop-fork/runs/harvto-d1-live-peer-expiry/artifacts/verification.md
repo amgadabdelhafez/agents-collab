@@ -7,11 +7,12 @@ Recorded: 2026-08-12 (America/Los_Angeles)
 - Task: `harvto-d1-live-peer-expiry`
 - Base SHA: `52e244b8d49258ea1768580fba2042719030d884`
 - Initial implementation commit: `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d`
-- Replacement fail-closed commit: pending explicit-path commit
+- Replacement fail-closed commit: `2986c38c4499cdd27162801880d5e4aef0f173c0`
 - Initial Claude review request: bridge `ba1ee254-7043-4291-b179-fb2140a50d31`; its PASS was
   superseded before delivery by bridge `216fbb8d-9ddd-42b5-9d64-1a8033909ef0` because nonzero
   pane-probe exits were not authoritative dead evidence
-- Replacement exact-SHA Claude review: pending
+- Replacement exact-SHA Claude review request: bridge `6e16287c-28d3-494e-9026-be1bf8df0a3e`;
+  zero-write `PASS` response bridge `c0c49af4-e3ed-4f7d-ada2-7fc562e28e23`
 - Baseline failures: none
 
 ## Focused proof
@@ -121,3 +122,10 @@ All focused and repository gates above were rerun after the nonzero-pane-probe c
 - `defect-matrix.md` has one replacement hunk wholly between the D1 and D2 headings.
 - Normal and `--ignore-all-space` numstats are byte-identical; `git diff --check` passes.
 - Untracked `.loop/` helper artifacts remain excluded.
+
+## Final peer verdict
+
+Claude independently verified final commit `2986c38c4499cdd27162801880d5e4aef0f173c0`, reran all
+three focused files and root `scripts/verify.sh`, re-derived 32-path D1-only scope containment,
+and returned zero-write `PASS` in bridge `c0c49af4-e3ed-4f7d-ada2-7fc562e28e23`. This supersedes
+the historical verdict on `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d`.

@@ -144,3 +144,46 @@ Result: nonzero pane-probe exits now remain `unknown`; replacement verification 
 
 Next bounded action: commit the nine explicitly proven D1 paths, request exact-SHA zero-write
 review, and stop only after final `PASS` is recorded.
+
+## 2026-08-12 — D1 replacement exact-SHA review requested
+
+Result: fail-closed follow-up committed and sent for final zero-write peer review.
+
+- Base: `52e244b8d49258ea1768580fba2042719030d884`.
+- Final head: `2986c38c4499cdd27162801880d5e4aef0f173c0`.
+- Review request: bridge `6e16287c-28d3-494e-9026-be1bf8df0a3e`, no TTL, exact base/head,
+  invariant, reproduction, all gate results, and 32 explicit base-to-head paths supplied.
+- Post-commit tracked tree was clean; only untracked `.loop/` helper artifacts remained before this
+  evidence refresh.
+
+Next bounded action: wait for Claude `PASS` or `REVISE`. On `REVISE`, address D1 only and rerun
+required gates. On `PASS`, record verdict and bridge ID, then stop without merge, rebase, push,
+deploy, or PR creation.
+
+## 2026-08-12 — D1 final exact-SHA review PASS
+
+Result: D1 complete. Claude returned zero-write `PASS` on final exact SHA.
+
+- Final commit: `2986c38c4499cdd27162801880d5e4aef0f173c0`.
+- Review request: `6e16287c-28d3-494e-9026-be1bf8df0a3e`.
+- PASS response: `c0c49af4-e3ed-4f7d-ada2-7fc562e28e23`.
+- Claude independently reran tmux, D1 Governess runtime, bridge tests, and root verifier; all passed.
+- Claude independently counted all 77 serial files, confirmed empty baseline failures, re-derived
+  32-path D1-only scope, and found no blocking findings.
+- Historical `bcabd31b` verdict remains superseded; final verdict applies only to `2986c38c`.
+- No merge, rebase, push, deploy, dependency change, Harvto edit, D2-D14 work, or PR creation was
+  performed.
+
+Stop condition reached. No next action in this run.
+
+## 2026-08-12 — Governess fresh-loop handover
+
+Result: ready for handover epoch `1786599609309218`; current atomic step complete.
+
+- Reviewed head remains `2986c38c4499cdd27162801880d5e4aef0f173c0`.
+- Final Claude zero-write `PASS`: bridge `c0c49af4-e3ed-4f7d-ada2-7fc562e28e23`.
+- Uncommitted tracked files are post-review evidence only: `PLAN.md`, `status.md`, D1
+  `verification.md`, and D1 `defect-matrix.md`; untracked `.loop/` helper artifacts remain.
+- Preserve all changes. No commit, push, merge, rebase, deploy, discard, or new work slice.
+
+Next: fresh loop remains stopped until human provides new scope.

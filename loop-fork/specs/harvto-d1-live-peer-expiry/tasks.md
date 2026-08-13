@@ -9,4 +9,4 @@
 - [x] Run focused and full required verification.
 - [x] Write repo-root eval and pass `scripts/verify.sh` plus Harness gates.
 - [x] Prove D1-only scope and commit explicit paths.
-- [ ] Obtain Claude zero-write `PASS` on exact final SHA and record bridge ID.
+- [x] Obtain Claude zero-write `PASS` on exact final SHA and record bridge ID.

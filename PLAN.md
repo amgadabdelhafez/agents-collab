@@ -1,4 +1,4 @@
-# D1 Live Peer Expiry Plan
+# Archived D1 Live Peer Expiry Plan
 
 Execution status: fresh-loop handover prepared after baseline reproduction and invariant recording.
 Base is `52e244b8d49258ea1768580fba2042719030d884`; canonical task ID is
@@ -197,4 +197,12 @@ peer-liveness evidence and all callers of `readPendingBridgeMessages` and
   nonzero pane-probe exits were not authoritative dead evidence. Apply the scoped
   nonzero-to-`unknown` correction. Correction now passes focused tests, check, canonical typecheck,
   build, all 77 serial test files, Harness preflight/stop-gate, and root verifier. Remaining:
-  commit the nine explicitly proven D1 paths and request Claude review on replacement SHA.
+  replacement commit `2986c38c4499cdd27162801880d5e4aef0f173c0` received final Claude
+  zero-write `PASS` via bridge `c0c49af4-e3ed-4f7d-ada2-7fc562e28e23`. D1 is complete; stop
+  without merge, rebase, push, deploy, or PR creation.
+
+## Handover epoch 1786599609309218
+
+D1 stop condition is reached. Preserve reviewed head
+`2986c38c4499cdd27162801880d5e4aef0f173c0` and uncommitted post-review evidence. Fresh loop
+must not start another slice unless human supplies new scope.

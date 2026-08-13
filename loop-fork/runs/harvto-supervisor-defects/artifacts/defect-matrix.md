@@ -57,8 +57,11 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
 - Review: design clearance bridge `1c929e52-f05e-4528-8beb-a2320bd14e48`; initial commit
   `bcabd31b551f3adbf5dbeccd39439a6a84edfe1d` and request
   `ba1ee254-7043-4291-b179-fb2140a50d31` were superseded after both reviewers identified the
-  nonzero-probe ambiguity. Replacement commit and exact-SHA verdict pending.
-- Status: **confirmed, fixed locally; exact-SHA review pending**.
+  nonzero-probe ambiguity. Replacement commit `2986c38c4499cdd27162801880d5e4aef0f173c0`
+  received zero-write Claude `PASS` via response bridge
+  `c0c49af4-e3ed-4f7d-ada2-7fc562e28e23` to request
+  `6e16287c-28d3-494e-9026-be1bf8df0a3e`.
+- Status: **confirmed, fixed, verified, and exact-SHA reviewed PASS**.
 
 ### D2 — Lying liveness: workspace ownership derived from recorded state prose, not process evidence (P0)
 
