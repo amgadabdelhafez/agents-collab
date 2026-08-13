@@ -138,10 +138,12 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
 - Regression test: to be named on implementation.
 - Status: **confirmed**.
 
-## Reports pending classification
+## Drained open backlog
 
 Reproduction and code tracing not yet complete for these; they are recorded here so the
 matrix stays a complete census of the evidence rather than a list of the convenient items.
+Each row also has a parked Harness idea with the same defect id. "Open" means durable and
+unresolved, not omitted from intake.
 
 | Id | Report | Priority | Source |
 |---|---|---|---|
@@ -181,6 +183,33 @@ matrix stays a complete census of the evidence rather than a list of the conveni
   inside tmux 41 pass / 0 fail; `env -u TMUX` 41 pass / 0 fail; `TMUX=/tmp/fake,1,0`
   41 pass / 0 fail.
 - Status: **fixed**.
+
+### D14 — Safe composer blocks durable handover, preventing successor launch (found live in run 50, fixed)
+
+- Not a Harvto-reported item. Found while tearing down the campaign loop after the founder
+  requested the defect work continue without another routine authorization pause.
+- Live evidence: run 50 reached `phase: "handoff"` for both peers, but
+  `exitControl.notified` and `handoverBundles` contained only Codex. Claude remained live and
+  undrained, so `allHandoverAgentsExited` could never become true and the manifest-backed
+  successor launch gate could never run.
+- Code: `src/loop/governess.ts`, `notifyHandoverAgents` called `directInputIsSafe` before the
+  runtime adapter. That predicate combines a completed-turn hook boundary with an empty/dim
+  composer requirement. The composer requirement is necessary for tmux injection, but it
+  incorrectly blocked the durable bridge path too.
+- Fix: split completed-turn safety from composer safety. Handover still fails closed unless
+  the last non-transparent hook is a real `Stop`. When a run-scoped bridge source exists,
+  an unsafe composer no longer blocks the runtime adapter; the adapter uses the durable
+  bridge and independently preserves the composer guard before any tmux fallback.
+- Regression test: `handover uses the durable bridge without typing over a composer draft`
+  in `tests/loop/governess-exit.test.ts`. Focused result: 29 pass / 0 fail / 156 assertions.
+- Mandatory gates: lint PASS, build PASS, and 77 certified test files with 1544 pass / 0 fail.
+- Status: **fixed, exact-SHA review pending**.
+
+## Drain receipt
+
+The complete import cursor, source hashes, incident-to-backlog mapping, and exclusions are
+recorded in `runs/harvto-supervisor-defects/artifacts/harvto-supervisor-drain.md`. At those
+exact source hashes, no Harvto supervisor control-plane incident remains outside D1-D12.
 
 ## Full-suite baseline comparison
 

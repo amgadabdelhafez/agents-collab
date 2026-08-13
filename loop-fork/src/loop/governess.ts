@@ -4575,20 +4575,27 @@ const isTransparentHandoverHook = (event: {
   (event.event === "Notification" &&
     event.detail === "Claude is waiting for your input");
 
+const completedTurnIsSafeForHandover = (
+  deps: Pick<GovernessDeps, "readHooks">,
+  info: GovernessAgentInfo
+): boolean => {
+  const events = deps.readHooks(info.hookFile);
+  const parentTurnBoundary = events.findLast(
+    (event) => !isTransparentHandoverHook(event)
+  );
+  return parentTurnBoundary?.event === "Stop";
+};
+
 const directInputIsSafe = (
   deps: GovernessDeps,
   info: GovernessAgentInfo
 ): boolean => {
-  const events = deps.readHooks(info.hookFile);
   // A Notification can mean "permission/input required", not an empty
   // composer. Only a real Stop hook proves a completed turn is safe for
   // direct text injection. Claude emits SubagentStop and then one exact,
   // producer-owned idle notification after the parent Stop. Those two events
   // are transparent; every other trailing hook remains fail-closed.
-  const parentTurnBoundary = events.findLast(
-    (event) => !isTransparentHandoverHook(event)
-  );
-  if (parentTurnBoundary?.event !== "Stop") {
+  if (!completedTurnIsSafeForHandover(deps, info)) {
     return false;
   }
   let paneText: string;
@@ -4658,8 +4665,17 @@ const notifyHandoverAgents = async (
       deps.saveState(config.stateFile, runState);
       continue;
     }
-    if (!directInputIsSafe(deps, info)) {
+    if (!completedTurnIsSafeForHandover(deps, info)) {
       continue;
+    }
+    if (!directInputIsSafe(deps, info)) {
+      // Composer safety is required only for the tmux fallback. The runtime
+      // adapter delivers through the durable bridge when one is configured
+      // and applies this guard itself before any terminal injection.
+      const source = bridgeSourceFor(info.agent, undefined, config);
+      if (!(config.runDir && source)) {
+        continue;
+      }
     }
     if (record && config.journalFile) {
       transitionGovernessControl(

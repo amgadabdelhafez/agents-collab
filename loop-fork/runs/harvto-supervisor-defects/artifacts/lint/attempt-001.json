@@ -1,0 +1,12 @@
+{
+  "task_id": "harvto-supervisor-defects",
+  "dimension": "lint",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-08-13T04:59:00Z",
+  "ended_at": "2026-08-13T04:59:00Z",
+  "artifact": "runs/harvto-supervisor-defects/artifacts/lint/attempt-001.log",
+  "command": ["bun", "run", "check"]
+}

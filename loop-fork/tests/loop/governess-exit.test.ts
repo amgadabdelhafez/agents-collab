@@ -528,7 +528,7 @@ test("handover exits Claude after its exact generic idle notification", async ()
   });
 });
 
-test("handover still blocks a non-dim composer draft", async () => {
+test("handover uses the durable bridge without typing over a composer draft", async () => {
   const config = handoverConfig();
   const state = freshRunState();
   state.exitControl = { mode: "handover", notified: {} };
@@ -555,8 +555,8 @@ test("handover still blocks a non-dim composer draft", async () => {
       codex: "idle",
     })
   ).toEqual({ status: "waiting" });
-  expect(state.exitControl.notified).toEqual({});
-  expect(bridged).toEqual([]);
+  expect(state.exitControl.notified).toEqual({ codex: true });
+  expect(bridged).toEqual(["codex"]);
 });
 
 test("valid ready bundles close each drained TUI exactly once before launch", async () => {

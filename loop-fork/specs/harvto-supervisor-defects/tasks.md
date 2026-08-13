@@ -2,7 +2,7 @@
 
 ## T1: intake and reproduction
 
-- [ ] Extract exact Harvto supervisor incidents into `runs/harvto-supervisor-defects/artifacts/defect-matrix.md`.
+- [x] Extract exact Harvto supervisor incidents into `runs/harvto-supervisor-defects/artifacts/defect-matrix.md` and park every unresolved item in Harness.
 - [ ] Trace each report to current source and existing tests.
 - [ ] Add a focused failing regression for every confirmed defect before changing production logic.
 - [ ] Record refutations and duplicates with evidence instead of forcing a patch.

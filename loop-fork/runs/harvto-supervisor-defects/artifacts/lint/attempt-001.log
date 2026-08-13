@@ -1,0 +1,153 @@
+task_id: harvto-supervisor-defects
+dimension: lint
+attempt: 001
+started_at: 2026-08-13T04:59:00Z
+command: bun run check
+--- output ---
+$ ultracite check
+runs/harvto-supervisor-defects/artifacts/lint/eval-before-attempt-001.json format ━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "harvto-supervisor-defects",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+  
+
+runs/harvto-supervisor-defects/artifacts/unit/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-12T16:59:33Z",
+    10 10 │     "artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/harvto-supervisor-defects/artifacts/unit/attempt-002.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-12T17:02:46Z",
+    10 10 │     "artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"test"
+    14    │ - ··]
+       11 │ + ··"command":·["bun",·"test"]
+    15 12 │   }
+    16 13 │   
+  
+
+runs/harvto-supervisor-defects/artifacts/unit/attempt-003.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-12T17:03:32Z",
+    10 10 │     "artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-003.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/harvto-supervisor-defects/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "harvto-supervisor-defects",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+  
+
+runs/harvto-supervisor-defects/artifacts/unit/eval-before-attempt-002.json format ━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "harvto-supervisor-defects",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+  
+
+runs/harvto-supervisor-defects/artifacts/unit/eval-before-attempt-003.json format ━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "harvto-supervisor-defects",
+     3  3 │     "status": "fail",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+  
+
+runs/harvto-supervisor-defects/artifacts/unit/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-12T17:03:32Z",
+    10 10 │     "artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-003.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/harvto-supervisor-defects/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "harvto-supervisor-defects",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit"
+     6    │ - ··],
+        4 │ + ··"required":·["unit"],
+     7  5 │     "dimensions": {
+     8  6 │       "unit": {
+  
+
+Checked 844 files in 285ms. No fixes applied.
+Found 9 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+error: script "check" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-13T04:59:00Z
