@@ -793,13 +793,30 @@ const pastePaneText = (runDir: string, pane: string, text: string): boolean => {
   }
 };
 
+const codexComposerText = (output: string): string | undefined => {
+  const tail = output.split(LINE_SPLIT_RE).slice(-CODEX_TMUX_READY_TAIL_LINES);
+  const promptIndex = tail.findLastIndex((line) =>
+    stripDimSpans(line).trimStart().startsWith(CODEX_TMUX_PROMPT_PREFIX)
+  );
+  if (promptIndex < 0) {
+    return undefined;
+  }
+  return stripDimSpans(tail[promptIndex] ?? "")
+    .trimStart()
+    .slice(CODEX_TMUX_PROMPT_PREFIX.length)
+    .trim();
+};
+
 const isCodexPaneReady = (output: string): boolean => {
+  if (codexComposerText(output) !== "") {
+    return false;
+  }
   if (output.includes(CODEX_TMUX_SEND_FOOTER)) {
     return true;
   }
   const tail = output.split(LINE_SPLIT_RE).slice(-CODEX_TMUX_READY_TAIL_LINES);
-  const promptIndex = tail.findIndex((line) =>
-    line.trimStart().startsWith(CODEX_TMUX_PROMPT_PREFIX)
+  const promptIndex = tail.findLastIndex((line) =>
+    stripDimSpans(line).trimStart().startsWith(CODEX_TMUX_PROMPT_PREFIX)
   );
   return (
     promptIndex >= 0 &&
@@ -814,7 +831,7 @@ const waitForCodexPane = async (
   attempts = CODEX_TMUX_READY_POLLS
 ): Promise<boolean> => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const output = capturePane(pane);
+    const output = capturePane(pane, true);
     if (output === undefined) {
       return false;
     }
@@ -1382,7 +1399,14 @@ export const notifyTmuxBridgeInbox = async (
     if (!resolved) {
       return false;
     }
-    if (!(await waitForBridgePaneReady(runDir, resolved.pane, target))) {
+    if (
+      !(await waitForBridgePaneReady(
+        runDir,
+        resolved.pane,
+        target,
+        readyAttempts
+      ))
+    ) {
       return false;
     }
     const stillPending = readPendingBridgeMessages(runDir, nowMs).filter(

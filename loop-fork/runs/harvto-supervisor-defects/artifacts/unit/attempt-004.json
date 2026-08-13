@@ -8,9 +8,5 @@
   "started_at": "2026-08-13T04:59:43Z",
   "ended_at": "2026-08-13T05:00:24Z",
   "artifact": "runs/harvto-supervisor-defects/artifacts/unit/attempt-004.log",
-  "command": [
-    "bun",
-    "run",
-    "test:ci"
-  ]
+  "command": ["bun", "run", "test:ci"]
 }

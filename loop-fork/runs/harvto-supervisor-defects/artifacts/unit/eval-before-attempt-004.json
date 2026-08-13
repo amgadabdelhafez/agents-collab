@@ -1,10 +1,7 @@
 {
   "task_id": "harvto-supervisor-defects",
   "status": "pass",
-  "required": [
-    "unit",
-    "lint"
-  ],
+  "required": ["unit", "lint"],
   "dimensions": {
     "unit": {
       "status": "pass",

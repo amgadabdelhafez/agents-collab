@@ -3465,7 +3465,7 @@ test("bridge drains codex messages through the persisted stable pane target", as
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          "› Use /skills to list available skills\n\n  gpt-5.6-sol xhigh · ~/repo\n",
+          "\u001b[39m› \u001b[2mUse /skills to list available skills\u001b[0m\n\n  gpt-5.6-sol xhigh · ~/repo\n",
           "utf8"
         ),
       };
@@ -3743,6 +3743,77 @@ test("Claude pane delivery preserves a non-empty user draft", async () => {
       "❯\nshort prior output\n❯ human draft\n\nOpus 5 | ctx: 59%"
     )
   ).toBe(false);
+});
+
+test("Codex tmux notification preserves a non-empty user draft", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          "\u001b[39m› finish the human draft first\u001b[0m\n\n  gpt-5.6-sol xhigh · ~/repo\n",
+          "utf8"
+        ),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%1",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-codex-draft-safe",
+    kind: "message",
+    message: "Prepare the handover bundle.",
+    source: "claude",
+    target: "codex",
+  });
+
+  expect(
+    await bridge.notifyTmuxBridgeInbox(runDir, "codex", Date.now(), 1)
+  ).toBe(false);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) =>
+        args[0] === "tmux" &&
+        (args[1] === "load-buffer" ||
+          args[1] === "paste-buffer" ||
+          args[1] === "send-keys")
+    )
+  ).toEqual([]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("Claude pane readiness treats a dim type-ahead suggestion as empty", async () => {
@@ -4322,7 +4393,7 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          "\u203a Use /skills to list available skills\n\n  gpt-5.6-sol xhigh \u00b7 ~/repo\n",
+          "\u001b[39m\u203a \u001b[2mUse /skills to list available skills\u001b[0m\n\n  gpt-5.6-sol xhigh \u00b7 ~/repo\n",
           "utf8"
         ),
       };

@@ -4575,44 +4575,49 @@ const isTransparentHandoverHook = (event: {
   (event.event === "Notification" &&
     event.detail === "Claude is waiting for your input");
 
-const completedTurnIsSafeForHandover = (
-  deps: Pick<GovernessDeps, "readHooks">,
-  info: GovernessAgentInfo
-): boolean => {
-  const events = deps.readHooks(info.hookFile);
-  const parentTurnBoundary = events.findLast(
-    (event) => !isTransparentHandoverHook(event)
-  );
-  return parentTurnBoundary?.event === "Stop";
-};
+type HandoverInputSafety = "safe" | "unsafe-composer" | "unsafe-turn";
 
-const directInputIsSafe = (
+const handoverInputSafety = (
   deps: GovernessDeps,
   info: GovernessAgentInfo
-): boolean => {
+): HandoverInputSafety => {
+  let paneText: string | undefined;
+  try {
+    paneText = deps.capturePane(info.pane, true);
+  } catch (error) {
+    if (!isTmuxControlUnavailableError(error)) {
+      throw error;
+    }
+  }
   // A Notification can mean "permission/input required", not an empty
   // composer. Only a real Stop hook proves a completed turn is safe for
   // direct text injection. Claude emits SubagentStop and then one exact,
   // producer-owned idle notification after the parent Stop. Those two events
-  // are transparent; every other trailing hook remains fail-closed.
-  if (!completedTurnIsSafeForHandover(deps, info)) {
-    return false;
+  // are transparent; every other trailing hook remains fail-closed. Read
+  // hooks after pane capture so this is the final evidence sampled before a
+  // handover dispatch rather than a stale pre-capture boundary.
+  const parentTurnBoundary = deps
+    .readHooks(info.hookFile)
+    .findLast((event) => !isTransparentHandoverHook(event));
+  if (parentTurnBoundary?.event !== "Stop") {
+    return "unsafe-turn";
   }
-  let paneText: string;
-  try {
-    paneText = deps.capturePane(info.pane, true);
-  } catch (error) {
-    if (isTmuxControlUnavailableError(error)) {
-      return false;
-    }
-    throw error;
+  if (paneText === undefined) {
+    return "unsafe-composer";
   }
   const tail = paneText.split(LINE_SPLIT_RE).slice(-10).map(stripDimSpans);
   // Both Codex and Claude prefix a non-empty composer with one of these prompt
   // glyphs. A Stop hook alone proves turn completion, not that the human has
   // not started typing since then.
-  return !tail.some((line) => NONEMPTY_COMPOSER_RE.test(line));
+  return tail.some((line) => NONEMPTY_COMPOSER_RE.test(line))
+    ? "unsafe-composer"
+    : "safe";
 };
+
+const directInputIsSafe = (
+  deps: GovernessDeps,
+  info: GovernessAgentInfo
+): boolean => handoverInputSafety(deps, info) === "safe";
 
 const notifyHandoverAgents = async (
   config: GovernessConfig,
@@ -4665,13 +4670,15 @@ const notifyHandoverAgents = async (
       deps.saveState(config.stateFile, runState);
       continue;
     }
-    if (!completedTurnIsSafeForHandover(deps, info)) {
+    const inputSafety = handoverInputSafety(deps, info);
+    if (inputSafety === "unsafe-turn") {
       continue;
     }
-    if (!directInputIsSafe(deps, info)) {
+    if (inputSafety === "unsafe-composer") {
       // Composer safety is required only for the tmux fallback. The runtime
       // adapter delivers through the durable bridge when one is configured
-      // and applies this guard itself before any terminal injection.
+      // and the bridge's own tmux notifier independently requires an empty
+      // styled composer before pasting or submitting a nudge.
       const source = bridgeSourceFor(info.agent, undefined, config);
       if (!(config.runDir && source)) {
         continue;

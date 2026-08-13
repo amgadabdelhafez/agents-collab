@@ -559,6 +559,44 @@ test("handover uses the durable bridge without typing over a composer draft", as
   expect(bridged).toEqual(["codex"]);
 });
 
+test("handover revalidates the completed turn after pane capture", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = { mode: "handover", notified: {} };
+  const bridged: string[] = [];
+  let latestHook = { agent: "codex" as const, event: "Stop", ts: "stopped" };
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () => {
+      latestHook = {
+        agent: "codex" as const,
+        event: "Notification",
+        ts: "permission-request",
+      };
+      return "\u001b[39m› \u001b[2mAsk for follow-up\u001b[0m\nfooter";
+    },
+    fenceCurrent: () => true,
+    now: () => 0,
+    paneCommand: () => "0:codex-aarch64-a",
+    readHooks: () => [latestHook],
+    saveState: () => undefined,
+    sendBridge: (_runDir: string, _source: string, target: string) => {
+      bridged.push(target);
+      return Promise.resolve("accepted" as const);
+    },
+  };
+
+  expect(
+    await advanceHandoverControl(config, deps, state, {
+      claude: "working",
+      codex: "idle",
+    })
+  ).toEqual({ status: "waiting" });
+  expect(state.exitControl.notified).toEqual({});
+  expect(bridged).toEqual([]);
+});
+
 test("valid ready bundles close each drained TUI exactly once before launch", async () => {
   const config = handoverConfig();
   const state = freshRunState();
