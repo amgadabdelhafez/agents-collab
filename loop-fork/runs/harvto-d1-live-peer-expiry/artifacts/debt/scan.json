@@ -1,0 +1,19 @@
+{
+  "task_id": "harvto-d1-live-peer-expiry",
+  "scanned_at": "2026-08-13T08:40:14Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-13T08:40:14Z",
+      "task_id": "harvto-d1-live-peer-expiry",
+      "signal": "loc_growth",
+      "file": "src/loop/bridge-store.ts",
+      "before_loc": 705,
+      "after_loc": 901,
+      "delta_loc": 196,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

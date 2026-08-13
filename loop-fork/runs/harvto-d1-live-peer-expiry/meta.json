@@ -2,8 +2,9 @@
   "id": "harvto-d1-live-peer-expiry",
   "mode": "emergent",
   "created_at": "2026-08-13T05:43:08Z",
-  "status": "active",
+  "status": "done",
   "description": "D1 P0: reproduce and fix bridge TTL/dead-letter behavior that discards a message while its intended peer is live; preserve idempotency and prove no duplicate.",
   "promoted_from": "specs/harvto-d1-live-peer-expiry.md",
-  "promoted_at": "2026-08-13T05:43:09Z"
+  "promoted_at": "2026-08-13T05:43:09Z",
+  "ended_at": "2026-08-13T08:40:14Z"
 }

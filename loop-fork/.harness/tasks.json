@@ -544,10 +544,11 @@
     {
       "id": "harvto-d1-live-peer-expiry",
       "mode": "emergent",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-08-13T05:43:08Z",
       "run_dir": "runs/harvto-d1-live-peer-expiry",
-      "eval_status": "pending",
+      "eval_status": "pass",
+      "ended_at": "2026-08-13T08:40:14Z",
       "spec_path": "specs/harvto-d1-live-peer-expiry.md"
     }
   ]

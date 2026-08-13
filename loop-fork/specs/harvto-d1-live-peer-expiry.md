@@ -1,27 +1,20 @@
----
-kind: parked-idea
-id: harvto-d1-live-peer-expiry
-status: parked
-created_at: 2026-08-13T04:58:19Z
-source_task: harvto-supervisor-defects
----
-
 # harvto-d1-live-peer-expiry
 
-Idea captured 2026-08-13T04:58:19Z.
+Task completed 2026-08-13T08:40:14Z, mode emergent.
 
-## Capture
+## What was built
 
-D1 P0: reproduce and fix bridge TTL/dead-letter behavior that discards a message while its intended peer is live; preserve idempotency and prove no duplicate.
+Reviewed fix commit 2986c38c4499cdd27162801880d5e4aef0f173c0 implemented tri-state target liveness, lazy memoized pane probing, retained-count ceiling, typed pre-accept backpressure, and confirmed-dead-only terminalization across bridge-store.ts, tmux-control.ts, bridge-dispatch.ts, and governess.ts.
 
-## Source
+## Decisions made
 
-- Active task: harvto-supervisor-defects
+- Promoted parked idea `specs/harvto-d1-live-peer-expiry.md` into active task `harvto-d1-live-peer-expiry`.
 
-## Promotion
+## Open items at completion
 
-Run:
+- Implement the promoted idea and complete normal verification.
 
-```bash
-./harness promote harvto-d1-live-peer-expiry
-```
+## Trajectory
+
+- 001 - initial (2026-08-13T05:43:08Z)
+- 002 - promoted parked idea (2026-08-13T05:43:09Z)
