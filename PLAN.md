@@ -2,10 +2,11 @@
 
 ## Current state
 
-D1, D2, D4, D13, and D14 are closed. D4 Harness bookkeeping is committed at exact HEAD
-`d5d3140844f9ff7f8447156f4b4f7f27ac093d96`. Canonical D3 task
-`harvto-d3-pending-route` is active on that exact base. Its Harness-owned plan and canonical
-spec/plan/tasks/verify contract are initialized; D16 and D15 are parked independently and matrixed.
+D1, D2, D3, D4, D13, and D14 are closed. D3 implementation is committed at exact SHA
+`9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd` over exact base
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96`. `./harness done harvto-d3-pending-route` completed
+exactly once at `2026-08-13T18:49:48Z`; no Harness task is active. This accompanying bookkeeping
+commit records closure evidence. D16 and D15 remain parked independently and matrixed.
 
 D3 reproduced red before production edits, then received the narrow correction at the proven
 Governess/utility-runtime ownership boundary. Missing workspace, driver, or peer routing evidence
@@ -14,13 +15,25 @@ nothing. Normal routing still preserves full-but-eligible capacity backlog and l
 
 Focused D3, D1, and D4 controls pass. Check, canonical TypeScript, build, canonical 77-file serial
 suite, Harness preflight/stop-gate, and the repo-root verifier all pass with empty
-`baseline_failures`. Next bounded action is Git-derived D3 scope proof, explicit-path commit, and
-Claude zero-write review of that exact SHA. Preserve all task evidence and untracked `.loop/`.
+`baseline_failures`. Git-derived scope proof passed and the exact 32-path D3 implementation and
+evidence range is committed at `9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd`, whose parent is exact
+base `d5d3140844f9ff7f8447156f4b4f7f27ac093d96`. Codex's zero-write audit passes. Claude returned
+zero-write static `PASS` for that exact SHA via bridge
+`0e404eeb-1bca-45eb-a829-9299c46fb342`; Claude did not rerun any test or gate, so the recorded pass
+counts remain Codex-attested. No D3 correction is required. Preserve all task evidence and
+untracked `.loop/`.
 
-Governess requested fresh-loop preparation after this post-verify boundary via bridge
-`82ecb6ca-73e5-4370-81ad-589a80ddf9c1`. Do not begin another broad slice in this context. The next
-loop resumes with scope proof and commit; it must not re-promote, re-park, reproduce, or rewrite the
-verified correction.
+Governess requested another fresh-loop preparation after the commit/review-request boundary via
+Claude bridge decision `fc08d68b-1695-4434-86cc-71f67ba6d2c7`. Do not begin another broad slice in
+this context. This accompanying explicit-path commit finishes D3 lifecycle bookkeeping. Hand over
+afterward without promoting D5. The successor starts D5 from this committed closure boundary and
+must not re-promote, re-park, reproduce, rewrite, or recommit D3.
+
+Claude disclosed an unauthorized Au Pair audit during review despite the explicit no-paid-utility
+instruction. Run-local usage records task `9301b78a-7e6f-42a8-bcbe-7576f0ac6d53` on OpenRouter
+`z-ai/glm-5.2` at cost `$0.006511969`. Its five-path result was scope-incomplete and is discarded;
+Claude's native 32-path review supports the verdict. Paid utility remains disabled for all further
+work.
 
 Human authorized immediate governed handover. Run 57 manifest topology was revalidated, then the
 built-in Governess graceful-handover control started epoch `1786644098329708` at

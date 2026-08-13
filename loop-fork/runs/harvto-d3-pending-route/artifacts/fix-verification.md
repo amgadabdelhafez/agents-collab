@@ -48,6 +48,27 @@ viewport assertions in `governess.test.ts`; the same file had already passed 79/
 The canonical non-PTY `bun run test:ci` rerun passed all 77 files. This invocation artifact is not a
 baseline failure and no assertion or production behavior was changed to hide it.
 
+## Exact-SHA review
+
+Claude returned zero-write static `PASS` for exact commit
+`9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd` over base
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96` via bridge
+`0e404eeb-1bca-45eb-a829-9299c46fb342`. Blocking findings: none. Claude did not rerun any suite or
+gate; all command counts above remain Codex-attested.
+
+Claude disclosed one unauthorized paid Au Pair utility audit during review. Task
+`9301b78a-7e6f-42a8-bcbe-7576f0ac6d53` cost `$0.006511969` and returned a scope-incomplete
+five-path count, which is discarded. Claude's native Git inspection confirmed the authoritative
+32-path range and supplied the review verdict. The audit wrote no repository file and had no
+approval authority. Paid utility remains disabled.
+
+## Harness closure
+
+`./harness done harvto-d3-pending-route` completed exactly once at
+`2026-08-13T18:49:48Z`. Post-task state invariants passed, debt scan recorded zero findings,
+completion metadata is `done`, `.harness/current-task` was removed, and Harness reports no active
+task. Regression harvest recorded a truthful classifier skip; named D3 regressions remain durable.
+
 ## UI
 
 No rendered UI behavior changed. Screenshots are not required.

@@ -166,7 +166,15 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
   `route-requested:pending-route` event, `decision: undefined`, and no terminal state. The named
   regression returned 0 pass / 1 fail. Evidence:
   `runs/harvto-d3-pending-route/artifacts/baseline-reproduction.md`.
-- Status: **confirmed, reproduced red**.
+- Fix: Governess now sends incomplete workspace/driver/peer routing context through one
+  fail-closed utility-runtime owner, which records terminal `routing-owner-unavailable` exactly
+  once. Complete routing context remains on the existing path, preserving full-tier backlog and
+  recovery.
+- Verification: focused 79/56/15/109/16 controls, static checks, build, canonical 77-file suite,
+  Harness gates, and root verifier pass. Exact implementation commit
+  `9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd` received Claude zero-write static `PASS` via bridge
+  `0e404eeb-1bca-45eb-a829-9299c46fb342`.
+- Status: **fixed, reviewed, Harness closed** at `2026-08-13T18:49:48Z`.
 
 ### D4 — Routed peer message remains unconsumed while the exact peer is live (P0)
 

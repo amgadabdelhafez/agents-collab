@@ -806,3 +806,119 @@ the handover manifest is written, and the successor accepts that manifest with t
 topology. Preserve all tracked D3 changes and untracked `.loop/`. Successor resumes the next bounded
 action above without merge, rebase, push, deploy, spend, provider/model changes, Harvto edits,
 evidence deletion, or scope widening.
+
+## 2026-08-13 — D3 committed; exact-SHA review pending at preparation boundary
+
+Result: Git-derived D3 scope proof passed and the validated implementation/evidence range is
+committed at `9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd` with exact parent
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96`. Harness remains active; closure and D5 have not
+started.
+
+Current objective:
+
+- Obtain Claude zero-write `PASS` or `REVISE` on exact commit
+  `9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd`.
+- On `PASS`, record the verdict, close D3 exactly once, commit explicit Harness bookkeeping, then
+  promote D5. On `REVISE`, change D3 only, rerun proportional focused checks and every mandatory
+  gate, commit a new exact SHA, and request fresh review.
+
+Exact committed scope:
+
+- 32 paths: root `PLAN.md` and `status.md`; D3 Harness intake and active marker; D3 run contracts,
+  evidence, evals, memory, metadata, and task log; D3 canonical spec/plan/tasks/verify; D15/D16
+  parked specs and matrix rows; three production files; two test files; and root eval.
+- `git diff-tree --no-commit-id --name-status -r
+  9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd` is the authoritative path list.
+- Cached scope before commit was exactly those 32 paths. `git diff --cached --check` passed;
+  normal and whitespace-ignored numstats agreed except expected formatting in `governess.ts`.
+
+Checks and results:
+
+- Focused suites pass: Governess 79, utility-runtime 56, utility-store 15, bridge 109, and D1
+  Governess runtime 16.
+- `bun run check`, canonical TypeScript, `bun run build`, canonical non-PTY 77-file
+  `bun run test:ci`, Harness preflight, Harness stop-gate, and root verifier all pass.
+- Root eval has `verdict: "pass"` and empty `baseline_failures`.
+- Post-commit tracked state was clean. Only preserved untracked `.loop/` remained.
+- Codex exact-SHA audit found no blocking issue. Escalation is terminal, epoch activation rejects a
+  stale caller before mutation, duplicate processing sees no pending job, and the complete routing
+  path remains unchanged.
+
+Review state:
+
+- Claude review request: bridge `11500637-4a65-4686-aa2c-e6ace550b264`.
+- Governess preparation decision: bridge `fc08d68b-1695-4434-86cc-71f67ba6d2c7`.
+- Preparation acknowledgement: bridge `d0f6c9ec-e3ff-4ac4-af2d-1377562a89b1`.
+- Claude verdict is still pending. This is the only blocker.
+
+Risks and boundaries:
+
+- D16 is not fixed, so Git-derived scope remains authoritative over routed scope-audit summaries.
+- Do not run `harness done` before Claude `PASS`. Do not re-promote or re-reproduce D3.
+- Do not edit Harvto, merge, rebase, push, deploy, spend, change provider/model/dependencies, delete
+  evidence, widen defect scope, or stage/edit/delete `.loop/`.
+- This preparation update changes only root `PLAN.md` and `status.md`; keep both unstaged for the
+  successor's eventual D3 closure bookkeeping commit.
+
+Next bounded action: receive Claude's exact-SHA verdict. If no verdict is durable after successor
+launch, request one zero-write review of the same base/head pair. Do not start D5 until D3 has
+`PASS`, exactly-once Harness closure, and a committed bookkeeping boundary.
+
+## 2026-08-13 — D3 exact-SHA review passed
+
+Result: Claude returned zero-write static `PASS` on exact D3 commit
+`9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd` and exact base
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96` via bridge
+`0e404eeb-1bca-45eb-a829-9299c46fb342`. Blocking findings: none. No correction commit is required.
+
+- Claude natively confirmed the one-commit parent relation, exact 32-path range, no `.loop/` path,
+  clean diff-tree whitespace check, legal terminal transition, stale-epoch rejection before
+  mutation, replay idempotency, unchanged complete-context routing, and valid eval schemas.
+- Claude did not rerun focused tests, static checks, build, the 77-file suite, Harness gates, or the
+  root verifier. Those results remain Codex-attested from the validated run-57 handoff and must not
+  be described as independently reproduced by Claude.
+- Non-blocking notes require no D3 edit: duplicated routing-owner predicate, later-cycle backlog
+  escalation semantics, and retry after a rare mid-loop terminal race are follow-up candidates.
+
+Authority incident:
+
+- Claude used Au Pair audit task `9301b78a-7e6f-42a8-bcbe-7576f0ac6d53` despite the review request's
+  explicit no-paid-utility constraint.
+- Run-local `utility/usage.jsonl` records OpenRouter model `z-ai/glm-5.2`, 7,579 total tokens, and
+  cost `$0.006511969`.
+- The audit had zero writes and no approval authority, but its five-path count was wrong because
+  Claude bounded its scope to source and test directories. That result is discarded. Claude's
+  native Git inspection confirmed the authoritative 32 paths.
+- No further paid utility use is allowed.
+
+Next bounded action: close D3 exactly once with `./harness done harvto-d3-pending-route`, inspect
+every lifecycle write, update this handoff, and commit explicit D3 bookkeeping paths. Governess
+preparation decision `fc08d68b-1695-4434-86cc-71f67ba6d2c7` still forbids starting D5 in this
+session; successor promotes D5 after the clean committed closure boundary.
+
+## 2026-08-13 — D3 Harness lifecycle closed
+
+Result: `./harness done harvto-d3-pending-route` completed exactly once at
+`2026-08-13T18:49:48Z` after Claude `PASS`.
+
+- Harness post-task state invariants passed.
+- D3 run metadata and `.harness/tasks.json` are `done` with eval `pass` and exact `ended_at`.
+- `.harness/current-task` was removed; `./harness status --json` reports no active task.
+- Debt scan completed with zero findings and zero appended register rows.
+- Regression harvest truthfully recorded `skipped` because the task-log classifier found no
+  combined bug/fix signal. Named D3 regressions and their durable evidence remain in the task.
+- Generated completion spec records no open D3 item. D5 and later defects remain separate.
+- Closure generated six new run artifacts: debt scan JSON/log, three post-task invariant files,
+  and regression-harvest JSON.
+- No implementation, test, dependency, provider/model, Harvto, remote, release, or `.loop/` file
+  changed during closure.
+
+The accompanying explicit-path bookkeeping commit includes root plan/status, current-task
+deletion, Harness index and coordination completion, D3 run metadata/plans/log/memory/evidence,
+canonical completion/tasks, generated post-task/debt/regression artifacts, and final D3 matrix
+status. `.loop/` remains untracked and excluded.
+
+Next bounded action for the successor: confirm clean tracked state and no active Harness task at
+the D3 closure commit, then promote `harvto-d5-silent-completion`. Preserve task order D5, D16,
+D15, then D6-D12. Paid utility remains disabled. Do not repeat D3 closure or start from the
+implementation commit alone.

@@ -2,8 +2,9 @@
   "id": "harvto-d3-pending-route",
   "mode": "emergent",
   "created_at": "2026-08-13T17:40:21Z",
-  "status": "active",
+  "status": "done",
   "description": "D3 P1: make route_task durably reject or terminate when no eligible utility worker/router exists; no pending-route forever state.",
   "promoted_from": "specs/harvto-d3-pending-route.md",
-  "promoted_at": "2026-08-13T17:40:21Z"
+  "promoted_at": "2026-08-13T17:40:21Z",
+  "ended_at": "2026-08-13T18:49:48Z"
 }

@@ -564,10 +564,11 @@
     {
       "id": "harvto-d3-pending-route",
       "mode": "emergent",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-08-13T17:40:21Z",
       "run_dir": "runs/harvto-d3-pending-route",
-      "eval_status": "pending",
+      "eval_status": "pass",
+      "ended_at": "2026-08-13T18:49:48Z",
       "spec_path": "specs/harvto-d3-pending-route.md"
     }
   ]

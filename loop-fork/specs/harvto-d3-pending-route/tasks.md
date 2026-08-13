@@ -12,6 +12,6 @@
 - [x] Run focused D3 and D1/D4 regression files.
 - [x] Run check, canonical typecheck, build, and complete serial test suite.
 - [x] Write Harness and repo-root evals; pass preflight, stop-gate, and root verifier.
-- [ ] Prove Git-derived D3-only scope and commit explicit paths.
-- [ ] Obtain Claude zero-write exact-SHA `PASS`; correct and re-review as required.
-- [ ] Close Harness exactly once, commit bookkeeping, and continue to D5.
+- [x] Prove Git-derived D3-only scope and commit explicit paths.
+- [x] Obtain Claude zero-write exact-SHA `PASS`; correct and re-review as required.
+- [x] Close Harness exactly once and commit bookkeeping; continue to D5 separately.

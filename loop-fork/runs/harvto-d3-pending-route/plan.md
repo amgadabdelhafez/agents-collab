@@ -33,10 +33,10 @@ it, while preserving intentional backlog for a temporarily full eligible pool.
 
 ### 3. Test and verify
 
-- [ ] Run Governess, utility-runtime/store, bridge, and D1/D4 focused controls.
-- [ ] Run check, canonical typecheck, build, full serial suite, Harness gates, and root verifier.
-- [ ] Commit explicit D3 paths and obtain Claude zero-write exact-SHA `PASS`.
-- [ ] Close Harness once after review and continue to D5.
+- [x] Run Governess, utility-runtime/store, bridge, and D1/D4 focused controls.
+- [x] Run check, canonical typecheck, build, full serial suite, Harness gates, and root verifier.
+- [x] Commit explicit D3 paths and obtain Claude zero-write exact-SHA `PASS`.
+- [x] Close Harness once after review; continue to D5 as a separate task.
 
 ## Non-goals
 

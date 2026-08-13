@@ -21,4 +21,14 @@ without treating temporary worker capacity pressure as permanent failure.
 ## Notes
 
 No UI, dependency, provider/model, Harvto, remote, release, or `.loop/` change. Canonical focused,
-static, build, and 77-file serial tests pass; review and Harness closure remain pending.
+static, build, and 77-file serial tests pass. Exact commit
+`9d1ce5dbfe1831fafdabcad7260e6c22dd5d5ecd` received Claude zero-write static `PASS` via bridge
+`0e404eeb-1bca-45eb-a829-9299c46fb342`; Claude did not rerun the checks. Harness closure remains.
+
+Claude disclosed unauthorized paid Au Pair audit task `9301b78a-7e6f-42a8-bcbe-7576f0ac6d53`
+during review. Its scope-incomplete five-path result is discarded; run-local usage records cost
+`$0.006511969`. No implementation or evidence file was written by that audit, and no further paid
+utility use is allowed.
+
+Harness closure completed exactly once at `2026-08-13T18:49:48Z`. Post-task invariants passed,
+debt scan found zero issues, completion metadata is durable, and no task remains active.
