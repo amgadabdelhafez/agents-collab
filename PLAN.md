@@ -1,244 +1,257 @@
-# Current Plan — D1 Harness Closure, Then D4 Live Peer Unconsumed
+# Current Plan — Harvto Supervisor Defect Campaign, D3 Through D12
 
-## Execution update — D4 complete, final bookkeeping commit next
+## Current state
 
-D1 Harness closure is committed as `0822c3546c44521ea778324d66d6c4c98f3972fb`. Canonical D4 task
-`harvto-d4-live-peer-unconsumed` is promoted and reproduced red on that unchanged production base:
-the exact positively live peer consumed and answered its durable request, but the utility job
-remained `routed-peer` with no result.
+D1, D2, D4, D13, and D14 are closed. D4 Harness bookkeeping is committed at exact HEAD
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96`. Canonical D3 task
+`harvto-d3-pending-route` is active on that exact base. Its Harness-owned plan and canonical
+spec/plan/tasks/verify contract are initialized; D16 and D15 are parked independently and matrixed.
 
-The D4-only correction is implemented in `loop-fork/src/loop/utility-runtime.ts`. Reconciliation
-now repairs a missing peer-request append with stable dedupe, requires delivery plus an exact
-correlated response before completion, terminalizes from durable bridge failure evidence, and is
-idempotent across replay. Three named regressions pass, as do bridge/D1/store controls, static
-check, canonical typecheck, build, and all 77 serial test files.
+D3 reproduced red before production edits, then received the narrow correction at the proven
+Governess/utility-runtime ownership boundary. Missing workspace, driver, or peer routing evidence
+now records one durable `routing-owner-unavailable` escalation; stale and duplicate replay append
+nothing. Normal routing still preserves full-but-eligible capacity backlog and later recovery.
 
-Both Harness gates and the root verifier passed for initial review commit
-`26e5cfd6998602ff7c2452c9006ad13fe26449dc`. Claude returned zero-write `REVISE` via
-`c96f267b-ad2b-48ea-a273-2c8509eb2610`: acknowledgements and legacy-untyped rows could complete
-before the actual decision. The corrected contract accepts only explicit `decision` responses;
-the ack/untyped/decision replay regression and all proportional gates plus all 77 serial test files
-pass. Harness preflight/stop-gate and the root verifier also pass after correction. Claude returned
-a second zero-write `REVISE` via `46fbee8b-b835-4c03-913e-1e2d9224f19e`: the decision-only
-consumer lacked a matching producer instruction. The minimal correction requires message type
-`decision` in the peer review request and pins that instruction in the existing D4 superset
-regression. The focused controls, check, canonical typecheck, build, both full 77-file serial
-suites, Harness preflight/stop-gate, and root verifier all pass after this revision. Current step:
-exact review commit `b77cf81d7ffb2e9178e4a72030335fae764090df` received Claude zero-write
-`PASS` via bridge `c059a661-7e85-458b-ade9-338b3cca568c`. Harness closure completed once at
-`2026-08-13T12:09:58Z`; the task and index are `done`, post-task invariants passed, debt evidence
-was captured, and no active Harness task remains. Only the explicit bookkeeping commit remains,
-then work stops without remote or wider-defect action.
+Focused D3, D1, and D4 controls pass. Check, canonical TypeScript, build, canonical 77-file serial
+suite, Harness preflight/stop-gate, and the repo-root verifier all pass with empty
+`baseline_failures`. Next bounded action is Git-derived D3 scope proof, explicit-path commit, and
+Claude zero-write review of that exact SHA. Preserve all task evidence and untracked `.loop/`.
 
-## Goal and authority
+Governess requested fresh-loop preparation after this post-verify boundary via bridge
+`82ecb6ca-73e5-4370-81ad-589a80ddf9c1`. Do not begin another broad slice in this context. The next
+loop resumes with scope proof and commit; it must not re-promote, re-park, reproduce, or rewrite the
+verified correction.
 
-First repair only `loop-fork/runs/harvto-d1-live-peer-expiry/task-log.md` through a fresh governed
-GLM utility patch. Then complete and commit legitimate D1 Harness closure evidence. Promote,
-reproduce, fix, verify, exact-SHA review, and bookkeep D4
-`harvto-d4-live-peer-unconsumed` without waiting between safe phases.
+Human authorized immediate governed handover. Run 57 manifest topology was revalidated, then the
+built-in Governess graceful-handover control started epoch `1786644098329708` at
+`2026-08-13T18:21:18.663Z`. Successor launch remains gated on validated Claude and Codex bundles,
+both agent exits, and manifest acceptance. Resume instructions remain scope proof, commit, review,
+closure, then D5.
 
-- Codex owns decisions, writes, tests, commits, and review corrections.
-- Governed Utility uses existing `openrouter/z-ai/glm-5.2` only for bounded secondary work and patch
-  proposals. No provider or model change.
-- Claude is zero-write reviewer of exact committed SHA only.
-- Do not merge, rebase, push, deploy, spend outside governed routes, edit Harvto, mutate preserved
-  Harvto runs, delete evidence, stage `.loop/`, change dependencies, or touch D2-D3/D5-D14.
-- Preserve existing untracked `.loop/` artifacts and partial D1 post-task, debt, and regression
-  evidence. Automatic continuation ends after D4 bookkeeping because wider defects are forbidden.
+## Authority and boundaries
+
+- Work only in this existing campaign worktree and branch. One active Harness task, defect,
+  implementation commit range, Claude review, closure, and bookkeeping boundary at a time.
+- Codex owns implementation, tests, explicit-path commits, corrections, and lifecycle bookkeeping.
+  Claude reviews exact committed SHAs with zero-write authority only.
+- Do not edit Harvto, mutate preserved Harvto runs, merge, rebase, push, deploy, release, spend, use
+  paid utility providers, change models/providers, change dependencies, delete evidence, or stage,
+  edit, or remove `.loop/`.
+- Do not trust routed scope-audit path lists as complete until the new scope-audit defect is fixed.
+  Git-derived path sets are authoritative and any disagreement fails closed.
+- Maintain root `PLAN.md` and `status.md` at every task phase boundary. Keep canonical task planning
+  in `loop-fork/runs/<task-id>/plan.md` after promotion.
+
+`status.md` already exists at repository root but is stale: its latest entry is the
+`2026-08-12` D1 fresh-loop handover and it does not describe D4 closure or D3. It must be rewritten
+to current D3 state (base SHA, canonical task ID, phase, open questions, risks) immediately after
+promotion and **before any source or test edit**, then refreshed at every phase boundary
+(post-promotion, post-repro, post-fix, post-verify, post-review, post-close). Do not create a new
+status file; edit the existing one and keep prior entries as dated archival sections.
 
 Authoritative inputs: `specs/constitution.md`, `docs/architecture/system-overview.md`,
-`docs/testing/commands.md`, `loop-fork/specs/harvto-supervisor-defects/{spec,verify}.md`, parked D4
-spec `loop-fork/specs/harvto-d4-live-peer-unconsumed.md`, and canonical defect matrix.
+`docs/testing/commands.md`, `loop-fork/specs/harvto-supervisor-defects/{spec,verify}.md`, each
+parked defect spec, and
+`loop-fork/runs/harvto-supervisor-defects/artifacts/{defect-matrix.md,harvto-supervisor-drain.md}`.
 
-## Preconditions verified from source (2026-08-13, read-only)
+## Campaign order
 
-`status.md` already exists at repository root (333 lines, current entry
-`2026-08-13 — D1 closure and D4 continuation plan refresh`). It is the durable handoff record and
-must be refreshed at every phase boundary; it does not need to be created.
+1. `harvto-d3-pending-route` — P1, next and based on current exact HEAD.
+2. `harvto-d5-silent-completion` — P1.
+3. New `harvto-d16-scope-audit-completeness` — campaign-integrity P0, ranked before teardown among
+   newly verified work because every future scope verdict depends on complete path enumeration.
+4. New `harvto-d15-teardown-process-orphans` — lifecycle P0, proving completed Governess teardown
+   reaps the exact run launcher and Claude child as well as tmux and manifest runtime.
+5. `harvto-d6-readonly-attach` through `harvto-d12-socket-discovery` — P2, numeric order.
 
-Mechanics read from `loop-fork/v2/kit/scripts/`:
+Explicit user order keeps D3, D5, D16, D15, then D6-D12. New defects must be durably parked during
+D3 and remain independent task boundaries. If a current task
+reveals a safety blocker in another defect, finish or safely park the current task before promotion;
+never mix fixes.
 
-- `done.sh:29,102-125` writes `specs/${TASK_ID}.md`. That path is the **tracked parked D1 spec**
-  `loop-fork/specs/harvto-d1-live-peer-expiry.md` (confirmed by `git ls-files --error-unmatch`).
-  `harness done` therefore OVERWRITES an authoritative input with the generated completion spec.
-  This is expected Harness behavior, not corruption, but the pre-close blob must be recorded first.
-- `done.sh:76-79` is the only task-log gate: `## What I changed` must be non-empty. `## Why` and
-  `## Notes` are unchecked. `section()` (`done.sh:49-61`) collects lines after the exact heading
-  until the next line starting `## `, then strips.
-- `runs/harvto-d1-live-peer-expiry/meta.json` has `mode: "emergent"`, so the
-  `investigation`/`notes.md` branch (`done.sh:66-74`) does not apply.
-- `done.sh:82-84` requires `runs/<id>/memory/[0-9][0-9][0-9]-*.md`. Present: `001-initial.md`,
-  `002-promoted-parked-idea.md`.
-- `done.sh:45-46` raises `error: task already done` when `meta.status == "done"`. `harness done` is
-  not idempotent and has no rollback; a mid-python failure leaves partial writes.
-- `done.sh:135-137` deletes `.harness/current-task`, which is **tracked**. Closure therefore
-  produces a staged deletion, plus `.harness/tasks.json` mark-done (`tasks-index.sh`) and a
-  coordination record (`coordination.sh write ... --intent done`).
-- `promote.sh:47-51` refuses to promote while `.harness/current-task` is non-empty, so D1 closure
-  must land before D4 promotion. `promote.sh:64-72` derives the canonical task ID from the `^id:`
-  frontmatter line of `specs/harvto-d4-live-peer-unconsumed.md` (tracked), falling back to the file
-  stem; `promote.sh:200`/`task.sh` rewrites `.harness/current-task`.
-- `stop-gate.sh:60+` reads `loop-fork/runs/<id>/eval.json` and checks `required` against
-  `dimensions[*].status`. This is a DIFFERENT file and schema from repo-root `runs/<id>/eval.json`
-  read by `scripts/verify.sh:14` and `scripts/check-baseline-allowlist.py`. D4 needs BOTH.
-  D1's `loop-fork/runs/harvto-d1-live-peer-expiry/eval.json` already has `required: ["unit"]` with
-  `unit.status: "pass"`, so the stop gate should pass once the task log is repaired.
-- `bun run check` is `ultracite check` (biome). Never run `bun run fix`: it rewrites `runs/`
-  evidence. Format only touched files by invoking biome on explicit paths.
+## D3 plan from parked spec
 
-## Execution plan
+### Contract
 
-1. Repair D1 task log as one guarded atomic step.
-   - Recheck HEAD, branch/worktree identity, staged/unstaged/untracked Git state, and active Harness
-     identity. Record hashes of every partial D1 closure artifact before any retry.
-   - Require current task-log SHA-256 exactly
-     `677a977ae6b49e94d1fc3d25807e2ca496509c55dd99bdc42bc0533997e29d33`, no current Git diff, and
-     final byte `0a`. Any mismatch stops this step for reconciliation.
-   - Route a fresh one-file patch request to governed `openrouter/z-ai/glm-5.2`. Bind it to that
-     exact preimage and require factual D1-only text under `What I changed`, `Why`, and `Notes`.
-     Require preservation of existing final newline and forbid any
-     `\\ No newline at end of file` marker.
-   - Inspect utility metadata and patch bytes. Require only the task-log path, exact preimage hash,
-     valid unified diff, no D4 content, no unrelated rewrite, and a recorded patch SHA-256.
-   - Run native `git apply --check <patch>` from repository root. Do not apply with native Git.
-     Apply only through guarded `apply_task_patch` using exact utility task and patch SHA.
-   - Verify changed task-log content, final byte `0a`, absence of no-newline marker, exact one-file
-     diff, `git diff --check`, and full Git status. Stop this atomic step if any check fails.
-   - Pin the check invocation: run `git apply --check -p1 --whitespace=nowarn <patch>` from the
-     repository root with `a/loop-fork/runs/...` / `b/loop-fork/runs/...` prefixes; record exit code
-     and full stderr verbatim. Prior attempts failed as `corrupt patch ...:16` (task
-     `76af947a-43ca-461c-9ef0-973cb44e7fee`) and `patch does not apply` from a spurious
-     `\\ No newline at end of file` marker (task `bce0fe17-8172-4644-a0a6-4a9c9cc5c95c`, patch
-     SHA-256 `0d8a39abb3a6ecee299564a7d6c892528f0866102562195573d0a1146339a93f`).
-   - Require the patch to place non-blank text directly under `## What I changed`; that section
-     alone is gated. Empty `## Why`/`## Notes` would still pass the gate but are unacceptable
-     evidence, so fill all three.
-   - Bound the retry: at most two further governed patch attempts. If both fail, stop and escalate
-     to the human with exact task IDs, patch SHA-256s, and `git apply --check` stderr. Do not
-     hand-write the task log outside guarded `apply_task_patch`.
+`route_task` may accept durable work only when a current router can make a decision or when the job
+has a durable bounded owner/recovery path. Absence of a lease holder, utility peer, router, or any
+eligible tier must reject at admission or write one attributable terminal decision. It must never
+look healthy while remaining `pending-route` forever.
 
-2. Close D1 Harness lifecycle without losing partial evidence.
-   - Compare current partial post-task/debt/regression artifacts to recorded hashes; retain all
-     files and the existing deduplicated `debt/register.jsonl` row.
-   - Before running `done`, record the pre-close blob of the parked D1 spec:
-     `git rev-parse HEAD:loop-fork/specs/harvto-d1-live-peer-expiry.md` plus its working-tree
-     SHA-256, and confirm it is recoverable from Git history. `harness done` will overwrite it with
-     the generated completion spec.
-   - Confirm the two memory files exist and `meta.json` status is still `active` before invoking
-     `done`; both are hard preconditions.
-   - Re-run D1 `preflight` and `stop-gate`, then run
-     `./harness done harvto-d1-live-peer-expiry` once. `done.sh` reruns post-task checks before
-     closure; expect timestamp-bearing files to refresh, but never delete prior paths. Debt scan
-     must report zero duplicate append for existing fingerprint.
-   - If `harness done` fails, do not rerun blindly: read `meta.json` status first. Status `done`
-     means the python block completed and a rerun will abort with `error: task already done`;
-     status `active` with partial writes requires manual reconciliation before any retry.
-   - Require successful task-log gate, generated completion spec, `meta.json` status `done`, task
-     index/coordination closure, cleared `.harness/current-task`, and preserved post-task/debt/
-     regression evidence. Inspect exact Git state immediately afterward.
-   - Classify every changed/untracked path. Legitimate D1 closure evidence may include task log,
-     post-task/debt/regression outputs, generated completion spec, run metadata, task index,
-     coordination records, and the existing debt-register row only when directly produced by
-     Harness and internally consistent. Exclude `.loop/`, D4 planning, unrelated generated files,
-     and any unexplained path.
-   - The accepted set must explicitly include the tracked deletion `.harness/current-task`
-     (`git add -- .harness/current-task`), the `.harness/tasks.json` mark-done edit, the
-     coordination record, the overwritten `loop-fork/specs/harvto-d1-live-peer-expiry.md`, and
-     `loop-fork/runs/harvto-d1-live-peer-expiry/{task-log.md,meta.json}`.
-   - Stage each accepted D1 closure path explicitly. Require cached path list, `git diff
-     --cached --check`, no `.loop/`, no Harvto path, no D2-D14 content, and matching normal versus
-     `--ignore-all-space` numstats. Commit legitimate D1 closure evidence only; record exact SHA.
-   - After the commit, re-run `git status --porcelain` and prove `.loop/` and every preserved D1
-     artifact path are still present and still untracked or committed as intended. Nothing was
-     deleted.
+Preserve intentional backlog behavior: a temporarily full but otherwise eligible worker pool may
+remain `pending-route` until capacity frees. Distinguish temporary capacity pressure from no router,
+no eligible capability, stale epoch/authority, and permanently unroutable work. Retries and replay
+must not duplicate requests or terminal events.
 
-3. Promote D4 canonically.
-   - Confirm `.harness/current-task` is absent/empty (promotion refuses otherwise), then run
-     `cd loop-fork && ./harness promote harvto-d4-live-peer-unconsumed`.
-   - Pre-read the `^id:` frontmatter line of `loop-fork/specs/harvto-d4-live-peer-unconsumed.md` to
-     predict the canonical ID, then confirm it against `./harness status --json`. Do not assume the
-     slug.
-   - Read `./harness status --json`; record canonical task ID and D4 base as D1 closure commit.
-     Do not hand-create promoted artifacts if promotion fails.
-   - Read generated run/spec files and refine promoted `spec.md`, `plan.md`, `tasks.md`, and
-     `verify.md` before production edits. Keep repo-root `runs/` verification evidence distinct
-     from `loop-fork/runs/` Harness evidence.
+Starting source seams are `src/loop/bridge-utility.ts` (`routeTask`),
+`src/loop/utility-store.ts` (request/decision transitions), `src/loop/task-router.ts`
+(`utility-unavailable`), and `src/loop/governess.ts` / `src/loop/utility-runtime.ts` (pending-route
+drain ownership). Final owner and fix seam come from reproduction, not assumption.
 
-4. Reproduce D4 before production change.
-   - Trace utility `routed-peer` transition, durable bridge append/delivery, exact-peer inbox
-     consumption, response correlation, and terminal utility state. Treat liveness, notification,
-     delivery, consumption, and completion as separate evidence.
-   - Use bounded zero-write GLM audits where useful. Starting anchors are
-     `utility-store.ts`, `utility-runtime.ts`, `native-subagent.ts`, bridge dispatch, and worker
-     wake/reconciliation tests.
-   - Add smallest deterministic named regression at existing utility-runtime/bridge boundary.
-     Assert exact target, positive live evidence, durable journal sequence, bounded consumption or
-     terminal outcome, restart/replay behavior, and no duplicate. Avoid sleeps, real tmux, and real
-     provider calls.
-   - Run test against unchanged D4 base and save command, exact SHA, decisive failure, journal rows,
-     and controls under D4 evidence. If invariant already holds, record `already-fixed` or
-     `not-reproduced` with exact proof and skip production patch.
+### Execution
 
-5. Fix only reproduced D4 branch.
-   - Set contract from reproduction: owner of transition out of `routed-peer`, bounded retry and
-     reconciliation, live/dead/unknown behavior, idempotent completion, and durable evidence.
-   - Use governed GLM for bounded audit or patch proposal only. Codex applies smallest scoped
-     correction.
-   - Preserve D1 retention/liveness, journal compatibility, routing policy, ordering, dedupe,
-     acknowledgement, fail-closed unknown liveness, and Claude zero-write isolation.
+1. Confirm exact base `d5d3140844f9ff7f8447156f4b4f7f27ac093d96`, clean tracked state, preserved
+   `.loop/`, and no active Harness task. Promote `harvto-d3-pending-route`; confirm canonical ID and
+   base through `./harness status --json`.
+2. Read generated run files. Refine promoted `spec.md`, `plan.md`, `tasks.md`, and `verify.md` before
+   any source or test edit. Record exact acceptance cases, candidate files, mandatory commands,
+   evidence paths, and exclusions.
+3. While D3 is active, durably park D15 and D16 as separate Harness ideas/specs without activating
+   either. Use `cd loop-fork && ./harness park-idea "<statement>" --name harvto-d16-scope-audit-completeness`
+   and the same for `harvto-d15-teardown-process-orphans`. Do **not** use bare `./harness park
+   <task-id>`: that form marks a task parked and clears the current marker, which would deactivate
+   D3. Verify after each call that `./harness status --json` still reports the D3 task active and
+   that `loop-fork/specs/harvto-d1{5,6}-*.md` exist with `status: parked`. Add separate matrix rows with source statement, priority, invariant, and `confirmed`
+   status. Do not inspect or mutate Harvto to reconstruct evidence.
+4. Trace admission and drain paths read-only. Add smallest deterministic D3 regression while
+   production remains at exact base. Cover no router/holder/peer, no eligible tier, and bounded
+   restart/replay. Save exact SHA, command, decisive red output, and durable journal rows. Run a
+   temporarily-full eligible-pool control to prevent collapsing valid backlog into failure.
+5. If D3 does not reproduce, record `already-fixed` or `not-reproduced` with exact contrary proof
+   and skip production edits. If reproduced, implement narrow fail-closed correction at the owner
+   proven by the test. Avoid broad routing policy, worker-pool, provider, or model changes.
+6. Re-run unchanged red test plus stale epoch, malformed evidence, duplicate reconciliation,
+   capacity-recovery, unrelated routing, and D1/D4 bridge controls. Record evidence in both Harness
+   run artifacts and root eval.
+7. Run focused files, `bun run check`, canonical `bunx tsc --noEmit --skipLibCheck --types
+   bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts
+   src/loop/caveman-skill.d.ts`, `bun run build`, and `bun run test:ci` from `loop-fork`. Run Harness
+   `preflight` and `stop-gate`, then root
+   `scripts/verify.sh <feature> <canonical-task-id>` with a passing root
+   `runs/<canonical-task-id>/eval.json` and empty `baseline_failures`.
+   Constraints that have bitten before and still apply:
+   - Use the canonical task ID read from `./harness status --json`; never assume it equals the
+     parked slug.
+   - The eval file must live at repository-root `runs/<task-id>/eval.json`. `scripts/verify.sh:13`
+     sets `ARTIFACTS_DIR="runs/${TASK_ID}"` relative to repository root, so an eval written under
+     `loop-fork/runs/` fails the gate as missing.
+   - The eval must satisfy `scripts/check-baseline-allowlist.py`: top-level `verdict` (or `result`)
+     exactly `"pass"`, `baseline_failures` present and an empty list, and no other baseline+fail key
+     truthy anywhere in the document. Allowlist by test NAME; never accept a tolerated-failure count.
+   - `bun run test:ci` iterates every `tests/**/*.test.ts` serially under
+     `LOOP_TEST_CERTIFICATION_MODE=single-file` and is slow. Budget for it; a filtered run never
+     substitutes for the full gate.
+8. Derive complete scope from Git, stage explicit paths only, and commit. `PLAN.md` and `status.md`
+   ride in the same defect commit as their task's evidence. Send Claude exact
+   base/head SHAs, Git-derived path list, invariant, red proof, and verification results. On
+   `REVISE`, correct D3 only, rerun proportional focused tests and every mandatory gate, create a
+   new explicit-path commit, and request fresh exact-SHA review. Repeat until `PASS` or a genuine
+   blocker.
+9. After `PASS`, record exact verdict, bridge ID, SHA, and checks. Run `harness done` exactly once
+   after preflight/stop-gate. Inspect all lifecycle writes, commit explicit D3 bookkeeping paths,
+   confirm no active task and only preserved `.loop/` remains, then promote D5 automatically.
 
-6. Verify and write D4 evidence.
-   - Re-run unchanged named regression plus dead/unknown peer, duplicate wake/reconciliation,
-     restart/replay, unrelated target, and routed-driver/requester/utility controls.
-   - Run affected full test files, then `bun run check`, canonical `bunx tsc --noEmit ...`,
-     `bun run build`, and serial `bun run test:ci` from `loop-fork`.
-   - Create BOTH evals: `loop-fork/runs/<canonical-task-id>/eval.json` with `required` plus
-     `dimensions[*].status` acceptable to `stop-gate.sh`, and repo-root
-     `runs/<canonical-task-id>/eval.json` with top-level `verdict: "pass"` and empty
-     `baseline_failures`. Run `scripts/verify.sh <feature> <canonical-task-id>` from repo root.
-   - If `bun run check` flags Harness-generated files, format only those exact paths with biome
-     directly. Never run `bun run fix`.
-   - Update only D4 promoted/run artifacts and D4 matrix scope. Move D4 from backlog row to one
-     confirmed-defect section after D3, or record exact `already-fixed`/`not-reproduced` result.
-     Never alter D1-D3 or D5-D14 text.
+## Repeated lifecycle for D5, D16, D15, and D6-D12
 
-7. Commit, review, correct, and bookkeep D4.
-   - Prove exact path scope, matrix hunk bounds, `git diff --check`, matching normal versus
-     ignore-space numstats, no Harvto, no `.loop/`, no D1, and no other defect.
-   - Stage explicit D4 paths and commit. Send Claude exact base/head SHA, path list, invariant, red
-     proof, verification evidence, and no-TTL zero-write review request.
-   - On `REVISE`, correct D4 only, rerun proportional and mandatory gates, commit explicit paths,
-     and request fresh review of new exact SHA. Repeat until `PASS` or genuine blocker.
-   - On `PASS`, record verdict, bridge ID, exact SHA, tests, and final status in D4 evidence,
-     matrix, `PLAN.md`, and `status.md`; commit bookkeeping explicitly. Stop without remote,
-     release, or wider-defect action.
+For each task, use the previous task's committed bookkeeping SHA as exact base:
+
+1. Confirm no active task and clean tracked state; promote only the next parked ID. Refine generated
+   spec/plan/tasks/verify before implementation.
+2. Reproduce the named invariant against unchanged production at that base. Preserve exact command,
+   red result, state/journal evidence, and controls. Close with contrary evidence if already fixed.
+3. Implement only the reproduced branch. Keep one defect's source, tests, matrix hunk, run evidence,
+   evals, and lifecycle files separate from every other defect.
+4. Run focused regression/control files and the full mandatory verification set listed for D3.
+   UI capture is required only if rendered UI behavior changes.
+5. Commit explicit paths; obtain zero-write Claude `PASS` on exact final SHA. Any correction gets a
+   new SHA and review. Then close Harness exactly once and commit bookkeeping before promotion of
+   the next task.
+
+Defect-specific invariants:
+
+- D5: completion is durable and attributable to exact run/task/SHA across restart/replay; no
+  completed work remains supervisor-open or closes twice.
+- D6: stale read-only tmux viewers cannot block durable targeted recovery, and recovery never types
+  into an unsafe pane or composer.
+- D7: handoff preserves provider, model, effort, workspace, run identity, and explicit authority
+  unless an authorized transition changes them.
+- D8: stale/dead utility write leases fail before mutation after epoch or authority changes.
+- D9: one resolved acknowledgement yields one durable emission across retries and replay.
+- D10: guarded apply rejects absent, stale, or non-applicable targets with exact target/preimage
+  evidence and no write.
+- D11: recovery uses durable transport and preserves non-empty composers.
+- D12: discovery uses manifest-recorded tmux socket/target identity; default-socket globs cannot
+  declare a live non-default run absent.
+- D16: scope audit enumerates the complete Git-derived modified-path set, including new, deleted,
+  renamed, ignored-for-routing but tracked, staged, and committed-range paths; omission or mismatch
+  returns a failing/unknown verdict, never a clean false negative.
+- D15: completed teardown does not mark lifecycle stopped/completed until exact manifest-owned tmux,
+  launcher, Claude child, bridge, and app-server processes are reaped or durable unresolved cleanup
+  is recorded. Tests use isolated owned fixtures only; never signal unrelated or preserved live
+  runs.
+
+### Verification gaps to close for the two new defects
+
+- D15 liveness must be proven POSITIVELY. Absence of a tmux session, a quiet log, or a
+  zero-exit teardown command is not proof a process died: assert with `ps -p <pid>` (or an
+  equivalent direct probe) on the exact recorded launcher and Claude-child PIDs, both before
+  teardown (must be alive) and after (must be gone), and record what was probed. A teardown
+  command's exit status is not acceptance. Kill paths must not rely on unquoted `$PIDS` in zsh
+  (single newline-joined argument, no-op behind `2>/dev/null`); pipe to `xargs` and re-enumerate
+  PIDs to verify, never trust the kill's exit code.
+- D15 fixtures spawn their own short-lived child processes in an isolated temp root with a
+  fixture-owned manifest. Assert explicitly that no signal is sent to any PID absent from the
+  fixture manifest, and that preserved live runs and `.loop/` are untouched.
+- D16 needs a red test that reproduces the ACTUAL observed false negative — an audit of a scope
+  with known modified paths returning a clean verdict — not merely a unit test of a path
+  formatter. Cover each omitted path class separately: added, deleted, renamed/copied, staged,
+  committed-range, and tracked-but-routing-ignored.
+- D16 also needs the negative control: a genuinely clean scope must still return a clean verdict
+  after the fix. A blanket "always unknown" fail-closed is a regression, not a fix.
+- D16's fix must make omission observable at the CONSUMER, not just inside the audit: prove the
+  caller that renders/acts on the verdict fails closed on a count or hash mismatch against the
+  Git-derived set. Prefer deriving the comparison from the artifact's own path set over an
+  enumerated allowlist.
+- Both new defects, once verified, must have their matrix rows written during D3 and never edited
+  from another defect's commit.
+
+## Scope and commit proof
+
+Until D16 is fixed, compute authoritative sets with Git for every boundary:
+
+- Before staging: `git status --porcelain=v2 --untracked-files=all`, `git diff --name-status`, and
+  `git diff --cached --name-status`.
+- After commit: `git diff-tree --no-commit-id --name-status -r <sha>` and
+  `git diff --name-status <task-base>..<task-head>`.
+- Compare routed audit output as an untrusted advisory set against the Git set. Any missing or extra
+  path blocks commit/review until reconciled.
+- Check `git diff --check`, cached diff, normal versus `--ignore-all-space` numstats, matrix hunk
+  bounds, and explicit exclusions. Stage with `git add -- <exact paths>`; force-add ignored Harness
+  evidence only when classified and required.
+- After each commit and Harness close, prove `.loop/` still exists, remains untracked, and is absent
+  from commit range. Also prove no Harvto, unrelated defect, dependency, provider/model, remote,
+  deployment, or release path entered the range.
 
 ## Acceptance criteria
 
-- Fresh utility patch is pinned to exact task-log preimage, passes native `git apply --check`, and
-  is applied only through guarded `apply_task_patch`; final newline remains present.
-- D1 closes successfully; partial and refreshed closure evidence remains available; only legitimate
-  D1 closure paths are committed; `.loop/` remains untracked.
-- D4 is promoted from parked spec and reproduced red on exact base, or closed with exact contrary
-  proof before any production patch.
-- Confirmed fix yields bounded, replay-safe live-peer consumption/completion with no duplicate;
-  dead and unknown behavior fails closed; D1 regressions remain green.
-- Focused tests, affected files, check, canonical typecheck, build, serial full suite, Harness gates,
-  root verifier, and eval pass.
-- Claude returns zero-write `PASS` for exact final D4 SHA after all corrections.
-- The pre-close blob of `loop-fork/specs/harvto-d1-live-peer-expiry.md` is recorded before `harness
-  done` overwrites it, and the overwrite is committed as intended closure evidence.
-- After every commit, `.loop/` and all preserved D1 artifacts still exist; `.loop/` remains
-  untracked.
-- Final commits contain only explicit D1 closure or D4 paths. No Harvto, `.loop/`, D2-D3/D5-D14,
-  dependency, provider, model, remote, deployment, or release changes.
+- D3 starts from exact base `d5d3140844f9ff7f8447156f4b4f7f27ac093d96`, is promoted from its
+  parked spec, and has a refined Harness-owned plan before implementation.
+- Every confirmed defect has red exact-base proof, a narrow fail-closed fix, replay/idempotency
+  controls, focused tests, mandatory suite evidence, both eval schemas, Harness gates, and root
+  verifier pass.
+- Review mechanism for every task: routed `kind=review` with `review_mode=peer-verdict` (or omitted)
+  against the exact committed SHA, no TTL, every write/authority flag false, carrying base SHA, head
+  SHA, Git-derived path list, invariant, red proof, and verification results. `utility-audit` mode is
+  advisory evidence only and never a review verdict. A `PASS` is recorded with its bridge ID.
+- Every final implementation SHA receives zero-write Claude `PASS`; every revision is separately
+  committed, reverified, and reviewed.
+- Every Harness task closes exactly once and its lifecycle/bookkeeping commit lands before the next
+  promotion. No active task remains after final D15 closure.
+- D15 and D16 are durably parked during D3, retain independent specs/tasks/commits/reviews, and are
+  closed only after ordered D3, D5, and D6-D12 work.
+- All path sets reconcile against Git-derived truth. `.loop/` remains preserved and untracked.
+- No prohibited action or campaign widening occurs.
 
-## Open questions resolved during execution
+## Open questions to resolve from reproduction
 
-- Which D1 closure files refresh versus remain byte-identical on safe `harness done` retry?
-- Does D4 “unconsumed” occur in bridge pending state, peer intake, response correlation, utility
-  `routed-peer` terminalization, or several boundaries?
-- Which component owns bounded terminal transition after exact live peer consumes routed work?
+- Does any confirmed defect fail to reproduce at its exact base? If so the deliverable is a
+  recorded refutation (`already-fixed` / `not-reproduced`) with exact contrary proof, not a patch
+  shaped to the ticket.
+- D3: can admission prove permanent ineligibility, or must durable reconciliation own the bounded
+  terminal transition while preserving temporary eligible-pool backlog?
+- D5-D12: exact failure owner and smallest deterministic boundary for each parked report.
+- D16: which routed audit stage drops paths and which path classes are omitted.
+- D15: which teardown owner loses exact launcher/child registration after tmux and manifest stop.
 
 ---
 

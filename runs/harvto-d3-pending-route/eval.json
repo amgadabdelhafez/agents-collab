@@ -1,0 +1,17 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d3-pending-route",
+  "baseline_failures": [],
+  "summary": "D3 pending utility work now receives one durable attributable escalation when Governess has no current routing owner, while stale replay is inert and temporary capacity backlog still recovers.",
+  "checks": {
+    "focused_governess": "79 pass, 0 fail",
+    "focused_utility_runtime": "56 pass, 0 fail",
+    "focused_utility_store": "15 pass, 0 fail",
+    "focused_bridge": "109 pass, 0 fail",
+    "focused_d1_liveness": "16 pass, 0 fail",
+    "lint": "pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "test_ci": "77 files pass"
+  }
+}

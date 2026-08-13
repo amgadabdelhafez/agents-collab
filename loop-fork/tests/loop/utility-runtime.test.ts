@@ -34,6 +34,7 @@ import {
   applyUtilityJobPatch,
   buildUtilityWorkerEnvironment,
   createUtilityReadPlanBroker,
+  failPendingUtilityRoutesWithoutOwner,
   processPendingUtilityRoutes,
   renderUtilityPane,
   resolveUtilityRuntimeConfig,
@@ -50,6 +51,51 @@ import {
   transitionUtilityJob,
 } from "../../src/loop/utility-store";
 import { createUtilityToolBroker } from "../../src/loop/utility-tools";
+
+test("D3 missing routing owner escalates once and stale replay cannot mutate", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-no-owner-"));
+  const runDir = join(repoRoot, ".loop", "runs", "no-owner");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return bounded evidence"],
+    authority: {},
+    id: "no-owner-job",
+    kind: "inspect",
+    objective: "Inspect one bounded scope",
+    readScope: ["src/sample.ts"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 42);
+
+  try {
+    expect(() => failPendingUtilityRoutesWithoutOwner(runDir, 41)).toThrow(
+      "stale Governess epoch cannot fail pending helper routing"
+    );
+    expect(readUtilityJob(runDir, request.id)?.state).toBe("pending-route");
+
+    expect(failPendingUtilityRoutesWithoutOwner(runDir, 42)).toBe(1);
+    expect(failPendingUtilityRoutesWithoutOwner(runDir, 42)).toBe(0);
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      decision: {
+        reason: "routing-owner-unavailable",
+        target: "escalate",
+      },
+      state: "escalated",
+    });
+    expect(
+      readUtilityJob(runDir, request.id)?.events.map(
+        (event) => `${event.type}:${event.state}`
+      )
+    ).toEqual(["route-requested:pending-route", "state-transition:escalated"]);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
 
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/;

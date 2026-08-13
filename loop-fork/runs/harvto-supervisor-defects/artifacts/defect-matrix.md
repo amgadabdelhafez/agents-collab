@@ -159,8 +159,14 @@ baseline), `already-fixed`, `duplicate`, `not-reproduced`.
 - Note: `routeUtilityRequest` (`src/loop/task-router.ts:1080-1094`) does correctly fail over
   to the driver with reason `utility-unavailable` when no tier is eligible. That logic is
   sound; the defect is that it is never reached when no drain occurs.
-- Regression test: to be named on implementation.
-- Status: **confirmed**.
+- Regression: `D3 Governess fails closed once when pending utility work has no routing peer` in
+  `tests/loop/governess.test.ts`.
+- Exact-base reproduction: at `d5d3140844f9ff7f8447156f4b4f7f27ac093d96`, two bounded
+  Governess cycles with one current driver and no peer left exactly one
+  `route-requested:pending-route` event, `decision: undefined`, and no terminal state. The named
+  regression returned 0 pass / 1 fail. Evidence:
+  `runs/harvto-d3-pending-route/artifacts/baseline-reproduction.md`.
+- Status: **confirmed, reproduced red**.
 
 ### D4 — Routed peer message remains unconsumed while the exact peer is live (P0)
 
@@ -210,6 +216,30 @@ unresolved, not omitted from intake.
 | D10 | Guarded apply for patch `e7695c7b...5314` reported `Patch no longer applies cleanly` against an absent target | P2 | loop-173 engineer record |
 | D11 | Two stuck composer nudges (run-190, both panes) | P2 | W33 S2 |
 | D12 | Beat/courier discovery globs blind to the harvto tmux socket ("no live runs" blindness) | P2 | W33 S3 2026-08-10 |
+| D15 | Completed teardown leaves exact manifest-owned launcher or Claude child processes alive | P0 | Supervisor campaign continuation directive, 2026-08-13 |
+| D16 | Scope audit can return clean while omitting Git-derived modified paths | P0 | Supervisor campaign continuation directive, 2026-08-13 |
+
+### D15 — Teardown reports completion while owned processes remain alive (P0)
+
+- Source statement: the supervisor directed this campaign to cover teardown orphan processes and
+  required positive liveness checks for exact manifest-owned launcher and Claude-child PIDs.
+- Invariant: lifecycle cannot become stopped/completed until exact manifest-owned tmux, launcher,
+  Claude child, bridge, and app-server processes are directly proven gone, or durable unresolved
+  cleanup is recorded. Isolated fixtures may signal only PIDs they own and record.
+- Harness intake: parked independently as `harvto-d15-teardown-process-orphans` while D3 remains
+  active.
+- Status: **confirmed**; reproduction and implementation remain isolated to D15.
+
+### D16 — Scope audit false negatives omit modified paths (P0)
+
+- Source statement: the supervisor identified scope-audit false negatives as a campaign-integrity
+  defect because clean routed verdicts omitted known Git-derived modified paths.
+- Invariant: scope evidence must enumerate added, deleted, renamed/copied, staged,
+  committed-range, and tracked-but-routing-ignored paths. Any count/hash mismatch at the consumer
+  fails closed; a genuinely clean scope still returns clean.
+- Harness intake: parked independently as `harvto-d16-scope-audit-completeness` while D3 remains
+  active.
+- Status: **confirmed**; reproduction and implementation remain isolated to D16.
 
 ### D13 — Suite result depends on inherited `TMUX`, so agents cannot trust their own proof (found in this campaign, fixed)
 

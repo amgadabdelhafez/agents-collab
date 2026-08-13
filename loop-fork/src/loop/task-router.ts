@@ -230,6 +230,7 @@ export type UtilityRouteReason =
   | "write-conflict"
   | "capability-unavailable"
   | "utility-unavailable"
+  | "routing-owner-unavailable"
   | "routing-policy-invalid";
 
 export interface UtilityRouteDecision {

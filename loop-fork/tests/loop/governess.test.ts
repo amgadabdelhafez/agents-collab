@@ -64,6 +64,7 @@ import {
   activateUtilityEpoch,
   appendUtilityRouteRequest,
   claimUtilityJob,
+  readUtilityJob,
   transitionUtilityJob,
 } from "../../src/loop/utility-store";
 
@@ -2866,6 +2867,60 @@ test("runGoverness applies pane identity once on startup", async () => {
     spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")
   ).toBe(true);
   expect(closed).toBe(true);
+});
+
+test("D3 Governess fails closed once when pending utility work has no routing peer", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-d3-unowned-route-"));
+  const runDir = join(root, ".loop", "runs", "d3-unowned-route");
+  mkdirSync(runDir, { recursive: true });
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return exact bounded evidence"],
+    authority: {},
+    id: "d3-unowned-route",
+    kind: "inspect",
+    objective: "Inspect one bounded source scope",
+    readScope: ["src/loop"],
+    requester: "claude",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const keys = ["x", "e"];
+  deps.openKeyInput = () => ({
+    close: () => undefined,
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+
+  try {
+    await runGoverness(
+      baseConfig({
+        agents: [{ agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" }],
+        cwd: root,
+        runDir,
+      }),
+      deps
+    );
+
+    const job = readUtilityJob(runDir, request.id);
+    expect(job).toMatchObject({
+      decision: {
+        reason: "routing-owner-unavailable",
+        target: "escalate",
+      },
+      state: "escalated",
+    });
+    expect(job?.events.map((event) => `${event.type}:${event.state}`)).toEqual([
+      "route-requested:pending-route",
+      "state-transition:escalated",
+    ]);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
 });
 
 test("runGoverness renders a degraded tick without recovery when tmux capture is unknown", async () => {

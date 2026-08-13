@@ -1196,6 +1196,27 @@ export const processPendingUtilityRoutes = async (
   return pending.length;
 };
 
+export const failPendingUtilityRoutesWithoutOwner = (
+  runDir: string,
+  epoch: number
+): number => {
+  if (!activateUtilityEpoch(runDir, epoch)) {
+    throw new Error("stale Governess epoch cannot fail pending helper routing");
+  }
+  const pending = readPendingRouteRequests(runDir);
+  for (const job of pending) {
+    transitionUtilityJob(runDir, job.jobId, "escalated", {
+      decision: {
+        reason: "routing-owner-unavailable",
+        target: "escalate",
+      },
+      eventId: `routing-owner-unavailable:${epoch}:${job.jobId}`,
+      reason: "routing-owner-unavailable",
+    });
+  }
+  return pending.length;
+};
+
 const appendJsonl = (path: string, value: unknown): void => {
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${JSON.stringify(value)}\n`, "utf8");

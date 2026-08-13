@@ -560,6 +560,15 @@
       "eval_status": "pass",
       "ended_at": "2026-08-13T12:09:58Z",
       "spec_path": "specs/harvto-d4-live-peer-unconsumed.md"
+    },
+    {
+      "id": "harvto-d3-pending-route",
+      "mode": "emergent",
+      "status": "active",
+      "created_at": "2026-08-13T17:40:21Z",
+      "run_dir": "runs/harvto-d3-pending-route",
+      "eval_status": "pending",
+      "spec_path": "specs/harvto-d3-pending-route.md"
     }
   ]
 }

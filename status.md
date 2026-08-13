@@ -574,3 +574,235 @@ because its task-log bug-fix classifier did not fire; the three named D4 regress
 passing evidence remain durable in the promoted task and fix-verification artifact.
 
 Next: commit only explicit D4/Harness bookkeeping paths, preserve untracked `.loop/`, and stop.
+
+## 2026-08-13 — D3 through D12 campaign plan
+
+Result: plan ready; no Harness promotion, defect intake mutation, implementation, test edit,
+staging, commit, review request, or external action occurred.
+
+Current state:
+
+- Branch `codex/harvto-supervisor-defects` is at exact D4 closure commit
+  `d5d3140844f9ff7f8447156f4b4f7f27ac093d96` and is 19 commits ahead of `origin/main`.
+- Harness reports no active task. D1, D2, D4, D13, and D14 are closed.
+- Parked tasks D3, D5, and D6-D12 exist with canonical IDs/specs. D3
+  `harvto-d3-pending-route` is next.
+- Only `.loop/` was untracked before this plan-only write. It remains preserved and excluded.
+- Root `PLAN.md` now defines exact-base D3 reproduction, narrow fail-closed correction, focused and
+  mandatory suites, explicit-path commits, zero-write exact-SHA Claude review, correction loop,
+  Harness closure, and automatic continuation through D5 then D6-D12.
+- Two newly verified defects have planned independent IDs: `harvto-d15-teardown-process-orphans`
+  and `harvto-d16-scope-audit-completeness`. D16 ranks first among the pair because later scope
+  verdicts depend on complete modified-path enumeration. User-ordered D3, D5, and D6-D12 execution
+  remains ahead of both; durable parking occurs during D3.
+
+Proof/checks:
+
+- Read constitution, architecture map, test commands, campaign spec/verify, Harness workflow,
+  parked D3/D5/D6-D12 specs, drain receipt, D3 matrix evidence, current Git log/status, and Harness
+  status.
+- Confirmed exact HEAD, branch, no active Harness task, and untracked `.loop/` only before edits.
+- Plan uses `bun run test:ci`, not direct `bun test`, matching current repository certification.
+- No Harvto file was read or changed. No implementation or Harness state changed.
+
+Open questions:
+
+- D3 reproduction must decide whether admission can prove permanent ineligibility or durable
+  reconciliation must own terminalization while preserving temporarily full eligible pools.
+- D15 must locate the exact teardown ownership gap for launcher and Claude child registration.
+- D16 must identify which routed audit stage and path classes cause under-enumeration.
+
+Risk: routed scope audits are not authoritative until D16 closes. Every earlier task must compare
+audit output against Git-derived staged, unstaged, untracked, commit, and base-to-head path sets;
+any mismatch fails closed.
+
+Next exact step: confirm HEAD and no active task again, then run
+`cd loop-fork && ./harness promote harvto-d3-pending-route`. Read and refine all promoted D3
+spec/plan/tasks/verify files before any source or regression-test edit.
+
+## 2026-08-13 — D3 promoted and contract initialized
+
+Result: canonical task `harvto-d3-pending-route` is active at exact base
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96`; no source or test file has been edited.
+
+Current state:
+
+- Harness promotion completed at `2026-08-13T17:40:21Z`; status reports task active with pending
+  unit eval.
+- Harness-owned `runs/harvto-d3-pending-route/plan.md` is initialized and refined.
+- Canonical `specs/harvto-d3-pending-route/{spec,plan,tasks,verify}.md` defines exact-base red proof,
+  fail-closed ownership, capacity-backlog control, replay/idempotency, focused tests, and mandatory
+  gates.
+- Campaign order follows user authority: D3, D5, D16, D15, then D6 through D12.
+- `.loop/` remains present and untracked; it has not been edited, staged, or removed.
+
+Open question: reproduction must determine whether missing routing ownership belongs at Governess
+drain reconciliation or can be proved safely at admission without rejecting recoverable backlog.
+
+Next: park D16 and D15 without deactivating D3, add independent confirmed matrix rows, then add the
+smallest deterministic D3 regression against unchanged production.
+
+## 2026-08-13 — D3 intake boundary complete
+
+Result: D16 and D15 are durably parked as independent tasks; D3 remains active.
+
+- `harvto-d16-scope-audit-completeness` and `harvto-d15-teardown-process-orphans` each have a
+  parked spec with `status: parked` and `source_task: harvto-d3-pending-route`.
+- Canonical defect matrix now has separate D15 and D16 source, priority, invariant, Harness intake,
+  and `confirmed` entries.
+- `./harness status --json` still reports `harvto-d3-pending-route` active.
+- No D3 source or test edit has occurred. Exact production base remains
+  `d5d3140844f9ff7f8447156f4b4f7f27ac093d96`.
+
+Next: create the smallest no-routing-owner regression and record its exact-base red proof before
+any production correction.
+
+## 2026-08-13 — D3 reproduced red on exact base
+
+Result: D3 is confirmed on unchanged production SHA
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96`.
+
+- Named regression: `D3 Governess fails closed once when pending utility work has no routing peer`.
+- Command returned 0 pass / 1 fail with production diff empty.
+- After two bounded Governess cycles, snapshot remained `state: pending-route`,
+  `decision: undefined`, `result: undefined`, and `routeEpoch: undefined`.
+- Durable journal contained exactly `route-requested:pending-route`; no route decision, worker
+  start, bridge dispatch, or terminal result existed.
+- Existing capacity control establishes that a full eligible pool must remain valid backlog and
+  later route once; the fix must target missing routing ownership only.
+- Proof: `loop-fork/runs/harvto-d3-pending-route/artifacts/baseline-reproduction.md`.
+
+Settled owner: Governess currently skips the entire utility reconciliation path when run/workspace,
+lease holder, or peer evidence is absent. The narrow correction must durably terminalize that
+unowned branch once while leaving `processPendingUtilityRoutes` capacity behavior unchanged.
+
+Next: implement the one-owner fail-closed transition, then rerun the unchanged regression and
+focused no-tier, stale-epoch, replay, capacity-recovery, D1, and D4 controls.
+
+## 2026-08-13 — D3 fresh-loop handover after exact-base reproduction
+
+Result: current atomic step is complete. D3 is initialized, planned, and reproduced red; production
+remains unchanged. Governess requested fresh-loop preparation at context threshold before source
+implementation.
+
+Current objective:
+
+- Make accepted utility work leave `pending-route` exactly once when no current routing owner
+  exists, without breaking valid full-but-eligible capacity backlog.
+
+Exact changed scope:
+
+- Root session planning: `PLAN.md`, `status.md`.
+- Harness promotion/intake: `loop-fork/.harness/current-task`, `.harness/parked-ideas.jsonl`,
+  `.harness/tasks.json`, `agents/coordination.jsonl`, and generated
+  `loop-fork/runs/harvto-d3-pending-route/` files.
+- Canonical D3 contracts: `loop-fork/specs/harvto-d3-pending-route/`.
+- Parked future defects: `loop-fork/specs/harvto-d16-scope-audit-completeness.md` and
+  `loop-fork/specs/harvto-d15-teardown-process-orphans.md`.
+- Campaign evidence: D3/D15/D16 hunks only in
+  `loop-fork/runs/harvto-supervisor-defects/artifacts/defect-matrix.md`.
+- Red regression only: `loop-fork/tests/loop/governess.test.ts`.
+- Production source diff: empty. Cached diff: empty. `.loop/` remains untracked and untouched.
+
+Checks/results:
+
+- HEAD: `d5d3140844f9ff7f8447156f4b4f7f27ac093d96`.
+- Harness status: `harvto-d3-pending-route` active; eval pending.
+- D16 and D15 parked specs each report `status: parked` and
+  `source_task: harvto-d3-pending-route`; D3 stayed active after both calls.
+- Named exact-base regression: 0 pass / 1 fail. Received `state: pending-route`,
+  `decision: undefined`, and exactly one `route-requested:pending-route` event.
+- `git diff --name-only -- loop-fork/src`: empty.
+- No D3 Bun test process remains after the red run.
+
+Blocker: no technical blocker. Fresh-loop preparation threshold prevents starting the production
+edit in this context.
+
+Risks:
+
+- Missing routing ownership must terminalize durably and idempotently, but a temporarily full
+  eligible pool must remain pending and later recover.
+- No-holder/no-peer handling must not synthesize a peer, change provider/model policy, or alter D1
+  and D4 bridge behavior.
+- Until D16 is fixed, Git-derived status/diff sets remain authoritative for scope proof.
+
+Next bounded action: read this handover and D3 canonical contracts, then implement the smallest
+decision-bearing terminal transition at the proven Governess/utility-runtime missing-owner branch.
+Rerun the unchanged named regression first, then no-tier, stale-epoch, duplicate-replay,
+capacity-recovery, unrelated routing, D1, and D4 focused controls. Do not re-promote D3 or re-park
+D15/D16.
+
+## 2026-08-13 — D3 implementation verified
+
+Result: narrow D3 correction is complete and all pre-review gates pass.
+
+- `src/loop/governess.ts` now processes every durable run: complete routing context uses the
+  existing router; incomplete workspace, holder, or peer evidence uses the fail-closed owner.
+- `src/loop/utility-runtime.ts` records one deterministic `escalated` transition with decision
+  `routing-owner-unavailable` after current-epoch activation. Same-epoch replay returns zero;
+  stale epochs throw before mutation.
+- `src/loop/task-router.ts` adds only the attributable route-reason type. No journal schema,
+  provider/model, tier policy, or capacity behavior changed.
+- Named D3 Governess regression passes 1/1. Full focused files pass: Governess 79,
+  utility-runtime 56, utility-store 15, bridge 109, and D1 Governess runtime 16.
+- `bun run check`, canonical TypeScript, `bun run build`, and canonical non-PTY
+  `bun run test:ci` pass; all 77 serial files are green.
+- Harness preflight and stop-gate pass. Root
+  `scripts/verify.sh harvto-d3-pending-route harvto-d3-pending-route` passes the repeated full suite
+  and empty baseline allowlist.
+- First full-suite attempt used a PTY and invalidated 12 viewport assertions at 80 columns. The
+  prior non-PTY focused file was 79/79, and the required non-PTY full rerun passed all 77 files. No
+  code or assertion was changed for that invocation artifact.
+
+Open work: derive authoritative D3 scope from Git, reconcile all task evidence, commit explicit
+paths, and request Claude zero-write exact-SHA review. `.loop/` remains preserved and excluded.
+
+## 2026-08-13 — D3 fresh-loop handover after verification
+
+Result: D3 implementation and every pre-review gate are complete. Governess requested fresh-loop
+preparation via bridge `82ecb6ca-73e5-4370-81ad-589a80ddf9c1` before scope proof, commit, or review.
+
+Exact changed scope to preserve:
+
+- Session state: `PLAN.md`, `status.md`.
+- Harness intake: `loop-fork/.harness/current-task`, `.harness/parked-ideas.jsonl`,
+  `.harness/tasks.json`, and `agents/coordination.jsonl`.
+- Campaign evidence: `loop-fork/runs/harvto-supervisor-defects/artifacts/defect-matrix.md` with D3,
+  D15, and D16 hunks only.
+- Production: `loop-fork/src/loop/governess.ts`, `task-router.ts`, and `utility-runtime.ts`.
+- Tests: `loop-fork/tests/loop/governess.test.ts` and `utility-runtime.test.ts`.
+- D3 contracts/evidence: `loop-fork/specs/harvto-d3-pending-route/`,
+  `loop-fork/runs/harvto-d3-pending-route/`, and `runs/harvto-d3-pending-route/eval.json`.
+- Parked future defects: `loop-fork/specs/harvto-d15-teardown-process-orphans.md` and
+  `loop-fork/specs/harvto-d16-scope-audit-completeness.md`.
+
+Checks/results: focused files 79/56/15/109/16 pass; check, canonical TypeScript, build, canonical
+77-file `test:ci`, Harness preflight, Harness stop-gate, and root verifier pass. `git diff --check`
+passes; cached diff is empty; exact HEAD remains
+`d5d3140844f9ff7f8447156f4b4f7f27ac093d96`; Harness reports D3 active with eval `pass`.
+
+Blocker: context preparation threshold only; no technical or test blocker. `.loop/` exists,
+remains untracked, and must not be staged, edited, or deleted.
+
+Risks: D16 is not fixed yet, so routed scope audits remain advisory. Next loop must derive the full
+path set from Git, include ignored-but-required canonical D3 evidence explicitly, compare normal
+and whitespace-ignored numstats, and reject any Harvto, unrelated defect, dependency, provider,
+model, remote, release, or `.loop/` path.
+
+Next bounded action: perform Git-derived D3-only scope proof, stage exact paths, commit, and request
+Claude zero-write exact-SHA review. On `PASS`, record verdict, run Harness closure exactly once,
+commit closure bookkeeping, then promote D5. Do not rerun completed implementation or broad gates
+unless scope review discovers a change.
+
+## 2026-08-13 — Governed handover initiated
+
+Result: run 57 entered graceful handover mode at `2026-08-13T18:21:18.663Z`, epoch
+`1786644098329708`, through the Governess `%2` control pane after exact manifest/session/pane
+validation. Claude drain delivery is accepted. Codex notification waits for this turn to end, as
+required by the safe-turn gate.
+
+Replacement launch must remain blocked until both agent bundles validate, both old agents exit,
+the handover manifest is written, and the successor accepts that manifest with the full paired
+topology. Preserve all tracked D3 changes and untracked `.loop/`. Successor resumes the next bounded
+action above without merge, rebase, push, deploy, spend, provider/model changes, Harvto edits,
+evidence deletion, or scope widening.

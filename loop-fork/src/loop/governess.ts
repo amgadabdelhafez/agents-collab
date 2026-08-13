@@ -189,7 +189,10 @@ import {
   readUtilityObservability,
   type UtilityObservabilitySnapshot,
 } from "./utility-observability";
-import { processPendingUtilityRoutes } from "./utility-runtime";
+import {
+  failPendingUtilityRoutesWithoutOwner,
+  processPendingUtilityRoutes,
+} from "./utility-runtime";
 import { activateUtilityEpoch } from "./utility-store";
 
 export const GOVERNESS_SUBCOMMAND = "__governess";
@@ -7286,20 +7289,29 @@ export const runGoverness = async (
       const utilityPeer = config.agents.find(
         (info) => info.agent !== holder
       )?.agent;
-      if (config.runDir && config.cwd && holder && utilityPeer) {
+      if (config.runDir) {
         try {
-          const routed = await processPendingUtilityRoutes({
-            currentDriver: holder,
-            epoch: acquiredEpoch,
-            peer: utilityPeer,
-            repoRoot: config.cwd,
-            runDir: config.runDir,
-          });
+          const routed =
+            config.cwd && holder && utilityPeer
+              ? await processPendingUtilityRoutes({
+                  currentDriver: holder,
+                  epoch: acquiredEpoch,
+                  peer: utilityPeer,
+                  repoRoot: config.cwd,
+                  runDir: config.runDir,
+                })
+              : failPendingUtilityRoutesWithoutOwner(
+                  config.runDir,
+                  acquiredEpoch
+                );
           if (routed > 0) {
             deps.appendLog(config.logFile, {
               at: lifecycleAt,
               epoch: acquiredEpoch,
-              event: "utility-routes-processed",
+              event:
+                config.cwd && holder && utilityPeer
+                  ? "utility-routes-processed"
+                  : "utility-routes-failed-closed",
               routed,
             });
           }
