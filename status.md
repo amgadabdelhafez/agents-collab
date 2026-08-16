@@ -1299,3 +1299,1038 @@ Result: `./harness done harvto-d5-silent-completion` ran exactly once and comple
 
 Next: stage and commit only explicit D5 closure paths, verify no active task and root `.loop/`-only
 residue, then promote D16 as a separate task.
+
+## 2026-08-13 — D5 bookkeeping committed; D16 promoted
+
+Result: D5 closure bookkeeping committed as
+`ee559c4f75dfe36e2dd61c607d48a3aba4faa500` over reviewed implementation commit
+`13a6e8fd37084359fafb4813b462375662b21966`. Immediately afterward, tracked state was clean,
+Harness had no active task, and only root `.loop/` remained untracked.
+
+D16 is now the sole active task:
+
+- Canonical ID: `harvto-d16-scope-audit-completeness`.
+- Exact base: `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- Promotion time: `2026-08-13T21:07:18Z`; Harness mode `emergent`, eval pending.
+- Promotion and plan initialization ran with `LOOP_UTILITY_ENABLED=0`,
+  `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0`.
+- Canonical spec/plan/tasks/verify now require deterministic Git-derived records for untracked/
+  added, deleted, rename/copy, staged, unstaged, committed-range, and tracked routing-ignored paths;
+  count/hash must be validated by the consumer before complete/clean is accepted.
+- Actual observed evidence remains run-60 job `3466ccae-7ca4-4eb9-be18-b645a77aa019`: successful
+  `git-status` broker call, completed utility result with eight rows versus Git's nine, omitted D5
+  spec bundle, and an unsafe no-production/no-test conclusion. Job
+  `6747f5a7-f35a-446d-9690-3b7f64feed42` separately inverted the populated four-file bundle to
+  empty. Both are evidence only; neither is trusted proof.
+- Production and tests remain unchanged. Root `.loop/` is preserved and untracked. No helper route
+  or provider spend occurred.
+
+Next: preserve the exact historical request/result evidence in the D16 run, finish source tracing,
+then add and run one named exact-base red regression before any production edit.
+
+### D16 historical evidence and source trace complete
+
+- `artifacts/observed-false-negative.md` records both run-60 jobs, the exact omitted ninth Git entry,
+  the false-empty four-file bundle result, and SHA-256 provenance for jobs, contexts, tool events,
+  and usage ledgers.
+- `artifacts/source-trace.md` confirms the gap spans broker text output, model synthesis, compact
+  result persistence, store replay, and unvalidated `get_task_result` consumption.
+- Source inspection confirms the exact omission stage: `git_status` applies protected Git
+  exclusions including `specs/*/{spec,plan,tasks,verify}.md`, so the D5 bundle was removed before
+  synthesis. The named red will pair an ordinary modified path with a routing-protected untracked
+  spec path, then require a complete consumer manifest that current production does not provide.
+- Production and tests are still unchanged; no utility route, spend, or root `.loop/` mutation
+  occurred.
+
+Next: add the single named D16 regression only, run it at exact base, and preserve its decisive red
+before any production change.
+
+### D16 exact-base red reproduced
+
+Result: the named D16 regression fails decisively with production unchanged at exact base
+`ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+
+- Temporary Git fixture reports modified `src/tracked.ts` plus untracked `specs/` containing
+  `specs/d16-fixture/spec.md`.
+- The real `git_status` broker's routing exclusions remove the spec path; fake local provider input
+  contains only `src/tracked.ts` and its synthesis reports one path.
+- Utility journal still records `state=completed` and `result.status=completed`; `scopeAudit` is
+  absent. Expected two canonical records plus count/hash, received no manifest.
+- Focused result: 0 pass, 11 filtered out, 1 fail, 5 assertions. Raw decisive details are in
+  `runs/harvto-d16-scope-audit-completeness/artifacts/red/reproduction.md`.
+- Production diff remains empty. No real utility routing, helper invocation, provider spend, or root
+  `.loop/` mutation occurred.
+
+Next: implement only the reproduced producer-to-consumer evidence boundary, then make this named
+regression green before adding the remaining path-class and tamper/replay controls.
+
+## 2026-08-13 — Run-62 D16 context-pressure handover
+
+Result: intervention stopped D16 expansion after the current edit/check boundary. D16 remains active
+and uncommitted at exact base/HEAD `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`; index remains empty.
+
+Preserved state:
+
+- D5 is fully committed, reviewed, and Harness-closed. D16 is sole active Harness task
+  `harvto-d16-scope-audit-completeness`, promoted at `2026-08-13T21:07:18Z`.
+- Canonical/run planning, historical false-negative evidence, source trace, and exact-base red are
+  complete. The red records 0 pass, 11 filtered, 1 fail against missing two-record `scopeAudit`
+  evidence, with production unchanged at that point.
+- Partial D16 production now exists in `src/loop/utility-scope-audit.ts`, `src/loop/task-router.ts`,
+  and `src/loop/utility-tools.ts`; the regression is in
+  `tests/loop/utility-pi-harness.test.ts`. Runtime/store/bridge consumer wiring is not yet present.
+- Canonical TypeScript passes and `git diff --check` passes. Targeted Biome check fails with 15
+  diagnostics across the partial files: import ordering, top-level regex placement, parser and
+  `gitDiff` complexity, nested ternaries/conditional style, formatting, and undeclared `Bun` in the
+  test. No source should be committed or reviewed at this boundary.
+- No helper route, utility execution, provider spend, staging, commit, Harness close, Harvto access,
+  or root `.loop/` mutation occurred during D16. Required ignored run/spec `plan.md` files remain on
+  disk and must be preserved.
+
+Next exact action: successor reads canonical D16 contracts plus
+`artifacts/{source-trace.md,red/reproduction.md}`, then finishes existing scope-evidence retention
+through runtime, store replay, and `get_task_result`; resolves bounded Biome diagnostics; reruns only
+the named D16 red until green; then adds path-class/tamper/replay/clean controls. Broad verification,
+commit, Claude review, and Harness closure remain later phases.
+
+Handover epoch: `1786652500290340`. Codex bundle is published under the run-62 home handoff
+directory. Preserve full worktree state and untracked root `.loop/`.
+
+## 2026-08-13 — Post-run-62 plan-only reconciliation
+
+Result: D16 continuation plan is ready. No implementation, staging, commit, Harness lifecycle
+action, helper route, provider spend, Harvto access, or root `.loop/` mutation occurred.
+
+Current state:
+
+- Read and verified both epoch `1786652500290340` handoff bundles. Claude records D5's zero-write
+  review snapshot at `13a6e8fd37084359fafb4813b462375662b21966`; Codex records the later,
+  authoritative post-closure state at exact current HEAD/base
+  `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- Index is empty. Branch is ahead of `origin/main` by 23 commits. Sole active Harness task is
+  `harvto-d16-scope-audit-completeness`, mode `emergent`, eval pending.
+- Every Codex-bundle dirty path exists, including both ignored D16 `plan.md` files. Root `.loop/`
+  remains untracked with 60 files. Existing partial D16 source, test, Harness, coordination,
+  planning, and evidence work remains unstaged.
+- Re-read canonical D16 spec/plan/tasks/verify, source trace, exact-base red, run plan/log,
+  constitution, architecture, and testing contract.
+
+Proof/checks:
+
+- `git rev-parse HEAD` returned `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- `git diff --cached --quiet` exited 0; `git diff --check` exited 0.
+- `./harness status --json` with utility, delegation, and Au Pair disabled reports only D16 active.
+- Exact-base red remains recorded as 0 pass, 11 filtered, 1 fail, 5 assertions with production
+  unchanged when captured.
+- Current targeted Biome rerun checks four partial D16 files and reproduces exactly 15 errors:
+  import order, top-level regexes, parser/`gitDiff` complexity, conditional style/nested ternaries,
+  formatting, and undeclared `Bun`. No fixes were applied.
+
+Open questions/risks:
+
+- No human decision is needed. Existing contracts must settle multi-tool manifest handling and the
+  durable failed/unknown shape without widening D16.
+- Partial source is not commit-ready. Broad gates, commit, review, and Harness close remain blocked
+  on focused implementation and controls, not on external action.
+
+Next exact step: finish existing D16 broker-to-runtime evidence retention, then store replay and
+`get_task_result` validation; resolve the 15 bounded diagnostics; rerun only the named D16
+regression until green. Preserve root `.loop/`, ignored plan files, empty index, and disabled paid
+utility throughout.
+
+## 2026-08-13 — Run-66 D16 focused contract slice; fresh-loop handover
+
+Result: the named D16 omission regression is green and the bounded producer-to-consumer evidence
+contract now passes its first parser, broker, replay, and consumer controls. Governess reached the
+context preparation threshold and ordered a fresh-loop handover before another broad slice. D16
+remains active and uncommitted at exact base/HEAD
+`ee559c4f75dfe36e2dd61c607d48a3aba4faa500`; index remains empty.
+
+Implemented scope:
+
+- `src/loop/utility-scope-audit.ts` defines canonical status/diff records, protected metadata-only
+  routing classification, deterministic sort/count/clean/SHA-256, and independent reconciliation.
+- `src/loop/utility-tools.ts` emits a second authoritative porcelain-v2 or NUL name-status Git
+  inventory without helper-visible protected path exclusions. Committed diffs use rename and hard
+  copy detection. Failed inventory throws `tool_failed`.
+- `src/loop/utility-runtime.ts` validates and retains one scope manifest, fails on conflicting
+  manifests or missing evidence for required current audits, persists the same manifest, records it
+  in tool events, and removes it from helper-visible legacy/Pi tool payloads.
+- `src/loop/utility-store.ts` revalidates every persisted manifest during authoritative replay.
+  Historical scope results missing the new field remain replayable as legacy.
+- `src/loop/bridge-utility.ts` rejects completed current/legacy scope results without evidence and
+  revalidates canonical evidence before returning `get_task_result`.
+- Existing `src/loop/task-router.ts` optional compact field and
+  `utilityRequestRequiresScopeAudit` classifier remain part of the D16 working set.
+- Focused controls now live in `tests/loop/utility-pi-harness.test.ts`,
+  `tests/loop/utility-scope-audit.test.ts`, `tests/loop/utility-tools.test.ts`,
+  `tests/loop/utility-store.test.ts`, and `tests/loop/bridge-utility.test.ts`.
+
+Proof/checks:
+
+- Named omission command now reports `1 pass, 11 filtered out, 0 fail, 5 expect() calls`.
+- The first current-tree attempt reported `0 pass, 11 filtered out, 1 fail, 4 expect() calls`
+  because `scopeAudit` metadata was serialized to the fake provider. After runtime-only
+  serialization, the helper still sees filtered `stdout` and the consumer receives the full
+  two-record manifest.
+- `utility-scope-audit.test.ts`: `4 pass, 0 fail, 16 expect() calls`.
+- `utility-tools.test.ts`: `47 pass, 0 fail, 169 expect() calls`.
+- `utility-store.test.ts`: `18 pass, 0 fail, 46 expect() calls`.
+- `bridge-utility.test.ts`: `2 pass, 0 fail, 2 expect() calls`.
+- Targeted Biome over 11 D16 source/test files: clean, no fixes applied.
+- Canonical TypeScript command exits 0. `git diff --check` exits 0.
+- Harness status with `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, and
+  `LOOP_AU_PAIR_ENABLED=0` reports current task `harvto-d16-scope-audit-completeness`, mode
+  `emergent`, eval pending.
+- Root `.loop/` remains untracked with 60 files. Both ignored required D16 `plan.md` files remain on
+  disk. No staging, commit, Harness close, Harvto access, provider/model/dependency change, push,
+  deploy, or evidence deletion occurred.
+
+Review/delegation state:
+
+- Claude design review request `10069fa8-5335-474d-8eb6-8fa35ba60a7b` is delivered. No design
+  verdict arrived before Governess's handover decision; exact-SHA zero-write review has not begun.
+- Claude reviewer state at handover: no inspection of D16 source, tests, or spec occurred, so no
+  design verdict, partial finding, or approval of any kind exists. Review request
+  `10069fa8-5335-474d-8eb6-8fa35ba60a7b` arrived in the same bridge pull as the urgent Governess
+  handover `35aeaaf4-52d4-4cb0-bbe1-4c476d08aeeb`, and the later handover order controlled.
+  Codex's three named open design choices carry forward unanswered: legacy completed scope-audit
+  rows without evidence materializing internally while `get_task_result` rejects them as
+  `legacy/unverified`; byte-equivalence required across repeated successful broker manifests with
+  `scope audit broker results conflict` on mismatch; and runtime missing evidence throwing into
+  the existing worker catch path as a durable failed result.
+- Five initial `route_task` submissions were rejected as under-bounded before dispatch. No helper
+  task ID, execution, utility result, repository mutation, or provider spend occurred. D16's
+  explicit prohibition controls; do not retry helper routing.
+
+Open work and risks:
+
+- Add only remaining runtime missing-evidence/conflicting-manifest and task-router classifier
+  controls after pulling Claude's design response. Then run affected focused files, including
+  `utility-runtime.test.ts`, `task-router.test.ts`, and existing `bridge.test.ts`.
+- Reconcile the acceptance matrix after those controls. Broad `check`, build, serial `test:ci`,
+  evals, Harness/root gates, explicit scope commit, exact-SHA review, and one Harness close remain
+  pending.
+- Current implementation is not commit-ready or review-gate-ready. Preserve the full dirty set,
+  root `.loop/`, and disabled paid utility settings across the fresh-loop boundary.
+
+Next exact action: fresh successor receives any pending Claude design response, verifies unchanged
+HEAD/index/current-task/root-evidence state, reads the current six-source/five-test diff, and adds
+only the remaining runtime/classifier controls before focused verification.
+
+## 2026-08-13 — Run-67 D16 continuation reconciliation
+
+Result: run-66 focused contract work is intact and D16 remains the sole active, uncommitted task at
+exact base/HEAD `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`. Index is empty.
+
+- Re-read and verified epoch `1786652500290340` handoff bundles. Codex bundle `gitHead` matches
+  live HEAD; Claude bundle remains the earlier D5 review snapshot.
+- World-model bootstrap file SHA-256
+  `9827d88a3770b72df0bbeef15c5620fa420b1cd0ff14b4b7ae22c17267b62ede`, logical capsule SHA-256
+  `7c2e57ab419848895ebe273fb31a511ecd1adf7c71eae39f3755fb7c2eaa1339`, and repository commit all
+  match launch instructions. Its depth and statement limits were hit, so it remains a partial,
+  non-authoritative index.
+- Live D16 source/test scope has progressed beyond the run-62 bundle exactly as recorded by the
+  run-66 section: six source files and five focused test files implement the current contract.
+- Harness current task is `harvto-d16-scope-audit-completeness`. Environment remains
+  `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0`.
+- Root `.loop/` remains untracked with 60 files. Both ignored required D16 `plan.md` files remain on
+  disk. No staging, commit, Harness close, Harvto access, provider/model/dependency change, push,
+  deploy, evidence deletion, or root `.loop/` mutation occurred.
+- Four run-67 `route_task` submissions were rejected by deterministic-bounds validation before any
+  task ID or dispatch. They caused no helper execution, utility result, provider spend, or
+  repository write. D16's explicit no-helper/no-spend restriction controls; no routing retry will
+  occur.
+- Pending Claude inbox was empty. Fresh zero-write design review request
+  `2c15370f-5759-4038-b928-c954f23091bf` asks for a bounded fail-closed verdict on current contract
+  and three open design choices; exact-SHA review remains later.
+
+Next: add only runtime missing/conflicting evidence and request-classification controls after
+reviewing current seams, then run `utility-runtime.test.ts`, `task-router.test.ts`, and
+`bridge.test.ts` plus the existing focused D16 set before mandatory suites.
+
+## 2026-08-15 — Run-69 D16 zero-write design gate; fresh-loop preparation
+
+Result: current D16 worktree is reconciled and a fresh zero-write Claude design review is pending.
+No D16 source/test edit, test execution, staging, commit, Harness lifecycle action, Harvto access,
+provider/model change, spend, evidence deletion, or root `.loop/` mutation occurred.
+
+Verified state:
+
+- Launch charter SHA-256 matched
+  `c8a7e84866cbe47bdf307542615c21716706deecfdb5b174ecc5687ff009ac0` before work.
+- World-model bootstrap file SHA-256 matched
+  `9827d88a3770b72df0bbeef15c5620fa420b1cd0ff14b4b7ae22c17267b62ede`; logical capsule matched
+  `7c2e57ab419848895ebe273fb31a511ecd1adf7c71eae39f3755fb7c2eaa1339`; all statement commit SHAs
+  were `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- Both run-62 handoff bundles parse and share epoch `1786652500290340`. Codex bundle binds exact
+  current HEAD; Claude bundle is the earlier D5 review snapshot and contains no D16 verdict.
+- Live HEAD is `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`; `git diff --cached --name-status` is empty.
+- Sole active Harness task is `harvto-d16-scope-audit-completeness`, mode `emergent`, eval pending.
+- Root `.loop/` remains untracked with 60 files. Both ignored required D16 `plan.md` files remain
+  present. Current six-source/five-test D16 implementation and all run/spec/evidence paths remain
+  unstaged.
+
+Direct inspection:
+
+- Re-read canonical D16 spec/plan/tasks/verify, run plan/log, source trace, and exact-base red.
+- Current tracked diff is 13 modified files with 1,261 insertions and 59 deletions, plus preserved
+  untracked D16 source/test/spec/run evidence. Production slice remains
+  `utility-scope-audit.ts`, `utility-tools.ts`, `utility-runtime.ts`, `utility-store.ts`,
+  `task-router.ts`, and `bridge-utility.ts`; focused controls remain the five run-66 test files.
+- Recorded run-66 focused results were not rerun. No fresh execution proof is claimed.
+- Review request includes observed risks: non-NUL-terminated records may evade truncation rejection;
+  `localeCompare` may weaken canonical cross-environment ordering; store replay validates evidence
+  only when present; bridge missing-evidence rejection is not itself a durable transition; and
+  `utilityRequestRequiresScopeAudit` may omit `executionPlan` request shapes.
+
+Review and authority state:
+
+- Human intervention forbids helper routing. Fresh Claude zero-write design review request
+  `a1afc3c6-ca24-45f3-9e6f-958ce8d8c982` was accepted and asks for first-token `PASS` or `REVISE`.
+  Run-66 and run-67 requests remain non-verdict history and grant no approval.
+- Before intervention, route IDs `1e9882f6-c240-4aa9-ad0f-23103dca7f4c` and
+  `d57d4d15-0509-4dbf-a6bb-428f7963136c` settled `utility-unavailable` under
+  `LOOP_AU_PAIR_ENABLED=0`. No helper executed, no provider spend occurred, and no repository write
+  resulted. No route retry is authorized.
+- Claude returned only Governess decision `5b138325-581f-4117-bfaa-2ae2ed233a06`, ordering
+  fresh-loop preparation. It is not a D16 design verdict.
+
+Next exact action: pull Claude response to review request
+`a1afc3c6-ca24-45f3-9e6f-958ce8d8c982` and wait for explicit `PASS` or `REVISE`. Do not add remaining
+runtime/classifier work before verdict. On `REVISE`, address only blocking D16 findings. On `PASS`,
+add only missing/conflicting-evidence runtime controls and request-classifier controls, then run
+`utility-runtime.test.ts`, `task-router.test.ts`, `bridge.test.ts`, and existing focused D16 files
+before mandatory suites.
+
+Actual governed handover is active at epoch `1786837846881948`. Direct delivery of queued request
+`a1afc3c6-ca24-45f3-9e6f-958ce8d8c982` is unsafe because Claude is idle with a non-empty composer;
+it remains no-verdict evidence only. Successor must obtain a fresh Claude zero-write `PASS` or
+`REVISE` before any remaining runtime/classifier work. Run 69 starts no further slice.
+
+## Claude reviewer close-out — run 69, handover epoch 1786837846881948
+
+Recorded by Claude. Zero repository writes beyond this note and the matching PLAN.md correction.
+
+Verified before writing:
+
+- Launch charter `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/69/launch-charters/claude.md`
+  SHA-256 `4b718b80ff93ab2e5f13bfca2bf911d469b7226aa020ff93b3cc69b415946aab` matched expected.
+- World-model bootstrap file SHA-256 `9827d88a3770b72df0bbeef15c5620fa420b1cd0ff14b4b7ae22c17267b62ede`
+  matched; embedded `capsuleSha256` matched `7c2e57ab419848895ebe273fb31a511ecd1adf7c71eae39f3755fb7c2eaa1339`.
+  The bootstrap JSON carries no `repositoryCommit` key; commit binding is via the database filename
+  `project-ee559c4f75dfe36e2dd61c607d48a3aba4faa500.sqlite`.
+- Live HEAD `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`. `git diff --cached --name-only` returned 0
+  files. Worktree dirty set matched Codex's report exactly: 13 modified tracked files and 7
+  untracked paths including root `.loop/`.
+
+Delivery correction: review request `a1afc3c6-ca24-45f3-9e6f-958ce8d8c982` was delivered and pulled
+successfully. The earlier "direct delivery is unsafe" note is superseded.
+
+Verdict state: NO VERDICT. Claude returned neither `PASS` nor `REVISE`, by decision, under the
+urgent Governess handover directive that allows only the current atomic step. Run-66, run-67, and
+now run-69 requests all carry zero durable verdicts. No inherited approval exists.
+
+Claude ran no test, no build, no lint, and no typecheck. All run-66 focused results in this file
+remain recorded history, not re-executed proof.
+
+Next exact action for the successor: re-issue the zero-write D16 design review against verified
+preserved state, requiring a first-token `PASS` or `REVISE`, before any remaining runtime or
+classifier control is written.
+
+## 2026-08-15 — Run-70 D16 design REVISE and fresh-loop preparation
+
+Result: D16 now has a durable design verdict. Claude zero-write review
+`cf060ab5-47b6-41c5-a52a-0894463b9054` returned first-token `REVISE` with six bounded blockers;
+follow-up decision `3aebdf98-0649-4b70-9dc2-0108b8254e5f` confirmed a seventh range-binding blocker.
+No approval was inherited from runs 66, 67, or 69. Governess then ordered fresh-loop preparation at
+the context threshold, so only the current `utility-scope-audit.ts` contract step was finished.
+
+Verified preserved state before work:
+
+- Launch charter SHA-256 matched
+  `f4dfca5ffdbe0f38a19d3ae9a7bb5422cc1e691c85189706c1ff9dd8575029db`.
+- Both run-69 handoff bundles were read. World-model bootstrap file SHA-256 matched
+  `d876e7cc0eb80b61b115ee6a39c0545d9360f0b2092f4ef6bbccc2b4c8e8d3c8`; embedded capsule matched
+  `907da911e475cd2c37f427efcd8b664ba56715358e892a5bd1e387609422e15c`; all embedded commit bindings
+  were `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`. The bootstrap has no `repositoryCommit` key.
+- Live HEAD remains `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`; index remains empty.
+- Sole active Harness task remains `harvto-d16-scope-audit-completeness`, mode `emergent`, eval null.
+- Environment remains `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, and
+  `LOOP_AU_PAIR_ENABLED=0`. Root `.loop/`, both ignored D16 plan files, and all evidence remain
+  preserved.
+
+Claude blocking findings accepted:
+
+- B1: manifest query lacked declared pathspec, allowing model-narrowed authoritative clean.
+- B2: one global manifest slot wrongly conflicted across legitimate staged/unstaged queries.
+- B3: classifier omitted `read-plan` Git steps and non-`utility-audit` Git profiles.
+- B4: completion notification rendered synthesized prose before deterministic validation.
+- B5: `localeCompare` made canonical order environment-dependent.
+- B6: consumer accepted invalid mode/ref combinations.
+- B7: default symbolic `HEAD` silently rotted committed-range provenance.
+
+Chosen bounded design:
+
+- Tool calls still produce one `UtilityScopeAuditEvidence` manifest.
+- Compact results persist `UtilityScopeAuditCollection = { schemaVersion: 1, manifests: [...] }`.
+- Query identity includes canonical declared pathspec, mode, literal refs, and recorded three-dot
+  operator. Repeated calls under one query key must be byte-identical; distinct keys coexist.
+- Broker resolves base/head once and uses the same literal SHAs in helper-visible and authoritative
+  commands. Three-dot semantics stay for compatibility and become explicit in the query.
+- Scope-audit notifications report deterministic mode/count/clean/SHA per manifest and mark model
+  synthesis advisory.
+- Existing 64 KiB command budget remains fail-closed; no silent truncation or limit widening.
+
+Current changed scope from run 70:
+
+- `loop-fork/src/loop/utility-scope-audit.ts` now defines query pathspec/range fields, deterministic
+  ordering, mode/ref/pathspec validation, query identity, collection build/reconciliation, and
+  non-NUL parser defense. Current file SHA-256 is
+  `8abbd805a3b308e11b3a43b2c7ed41fae27ef710e5644537be801e90829f207f`.
+- `PLAN.md` and `status.md` contain this governed handoff. No other source, test, spec, Harness, or
+  evidence path was changed by run 70.
+
+Checks run after the atomic source step:
+
+- `bunx biome check src/loop/utility-scope-audit.ts` passed: 1 file checked, no fixes applied.
+- `git diff --check` passed.
+- No typecheck, focused test, build, serial suite, eval, Harness gate, or root verifier was run after
+  the new collection declaration. Existing callers still use the old query and singular result
+  shape, so the cross-file worktree must be treated as intentionally incomplete and not build-ready.
+
+No helper route, utility execution, provider spend, staging, commit, Harness lifecycle action,
+Harvto access, merge, rebase, push, deploy, release, dependency/model change, evidence deletion, or
+root `.loop/` mutation occurred.
+
+Next exact action: continue B1 and B7 in `utility-tools.ts`, then wire the collection and classifier
+through runtime/store/bridge before changing tests. Add Claude's required controls for declared
+pathspec coverage, top-level/read-plan classification, same-key equality/mismatch, distinct-key
+coexistence, deterministic notification, codepoint ordering, query invariants, and parser
+termination. Then run the focused D16 set before mandatory suites. Exact-SHA Claude `PASS` remains
+required before Harness closure.
+
+### Actual governed handover — epoch 1786839685729749
+
+Human requested the fresh-loop handover after seven idle minutes in prepare. Governess handover
+message `0747ba68-6b51-4779-a8c3-6bf71aea2e46` requires the Codex bundle at
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/70/handoff/1786839685729749/codex.json`.
+Run 70 starts no further implementation. Preserve exact HEAD, empty index, every dirty path,
+root `.loop/`, ignored plans, B1-B7, selected collection shape, disabled utility, and the next action
+recorded above.
+
+### Claude reviewer record — run 70, epoch 1786839685729749
+
+Durable review provenance for the D16 design gate, recorded by the reviewer:
+
+- Design verdict `REVISE` is bridge message `cf060ab5-47b6-41c5-a52a-0894463b9054`, carrying B1-B6
+  against the preserved uncommitted worktree at HEAD
+  `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`. No approval was inherited from run-66
+  `10069fa8-5335-474d-8eb6-8fa35ba60a7b`, run-67 `2c15370f-5759-4038-b928-c954f23091bf`, or run-69
+  `a1afc3c6-ca24-45f3-9e6f-958ce8d8c982`.
+- B7 range-binding adjudication is bridge message
+  `3aebdf98-0649-4b70-9dc2-0108b8254e5f`. Required behavior: resolve the head commit to a literal
+  SHA once, before either command runs, and use that one resolved value in the persisted
+  `query.headRef`, the authoritative evidence command, and the helper-visible command. Requiring an
+  explicit caller-supplied `headRef` was considered and rejected: it moves ref resolution to the
+  model and a model-supplied SHA need not be the commit the diff actually ran against.
+- Per the run charter, bounded corrections from `REVISE` are sufficient to continue. No second
+  design gate is required. Claude zero-write exact-SHA review still gates the commit.
+
+Reviewer-confirmed sound in the pre-correction contract, keep through the rewrite: evidence commands
+omit `gitExclusions` so protected paths survive as `routing: "metadata-only"`; `helperVisibleToolResult`
+strips `scopeAudit` from model-visible payloads; porcelain-v2 field arithmetic (7/8/9 fields, NUL
+`origPath`); the durable failure owner, `assertConversationEvidence` throwing into the existing
+`runUtilityWorker` catch.
+
+Residual finding B1c, not yet covered by the declared contract and required in the remaining wiring:
+the manifest hash covers its own `query.paths`, so a persisted row whose pathspec is narrower than
+the job's declared scope reconciles internally and reads as authoritative clean. Producing the
+inventory from declared broker `readScopes` closes the live path but not the durable/tamper path.
+`bridge-utility.ts` must additionally compare each manifest's `query.paths` against the job's
+declared `readScope` for classified audits and fail closed when coverage is short. Add a control for
+a hand-edited narrowed persisted manifest.
+
+Reviewer note on the parser: `runBounded` already fails closed on command-level truncation via
+`result.truncated`, so the new non-NUL termination check in `nulDelimitedValues` is defense in depth.
+Do not cite it as the truncation fail-close in eval or review evidence.
+
+## 2026-08-15 — Run-71 D16 B1+B7 broker correction; fresh-loop preparation
+
+Result: B1+B7 broker behavior is implemented and targeted source checks pass. Governess decision
+`b784dd05-6a30-4f99-9454-0dffce31e17e` stopped further expansion at the context preparation
+threshold. D16 remains active and uncommitted at exact HEAD/base
+`ee559c4f75dfe36e2dd61c607d48a3aba4faa500`; index is empty.
+
+Bootstrap and preserved state:
+
+- Run-71 charter SHA-256 matched
+  `0a083efb6467c779fef3eab85d19b7ba1d6d1af14b0a7638f1e580c1b5b4babf` before work.
+- Both run-70 epoch `1786839685729749` bundles validated as `ready` and bind current HEAD.
+- World-model bootstrap file SHA-256 matched
+  `d876e7cc0eb80b61b115ee6a39c0545d9360f0b2092f4ef6bbccc2b4c8e8d3c8`; logical capsule matched
+  `907da911e475cd2c37f427efcd8b664ba56715358e892a5bd1e387609422e15c`; embedded commit bindings
+  all matched current HEAD.
+- Harness still reports only `harvto-d16-scope-audit-completeness`, emergent, active, eval pending.
+  Environment remains `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, and
+  `LOOP_AU_PAIR_ENABLED=0`. Root `.loop/` still contains 60 preserved files; both ignored D16
+  `plan.md` files remain present.
+
+Implemented:
+
+- `src/loop/utility-tools.ts` binds status evidence/query paths to declared broker read scopes.
+- Diff evidence ignores model-selected narrowing and inventories declared broker read scopes;
+  helper-visible output may remain narrowed.
+- Range mode resolves base/head once each before either diff command and fails closed unless each
+  resolution returns a full literal commit SHA. Both diff commands use one identical resolved
+  three-dot range; query persists the same SHAs, declared paths, and `rangeOperator: "..."`.
+- `src/loop/task-router.ts` now types compact evidence as `UtilityScopeAuditCollection` and expands
+  the classifier to top-level/read-plan Git status/diff regardless of request kind/review mode.
+- `src/loop/utility-store.ts` now calls `assertUtilityScopeAuditCollection` for persisted results.
+
+Checks:
+
+- `bunx biome check src/loop/utility-scope-audit.ts src/loop/utility-tools.ts src/loop/task-router.ts
+  src/loop/utility-store.ts` passed: four files checked, no fixes.
+- `git diff --check` passed.
+- Source SHA-256 values are `8abbd805...` (`utility-scope-audit.ts`), `d4bd221c...`
+  (`utility-tools.ts`), `9d5c833...` (`task-router.ts`), and `665b93b...` (`utility-store.ts`).
+
+Open work and risk:
+
+- Runtime and bridge still use singular manifests while router/store now declare collections;
+  tests also retain old fixtures. The preserved tree is intentionally not typecheck/test-ready.
+- B1c remains open: consumer must validate classified manifest path coverage against declared job
+  scope and reject a hand-edited narrowed persisted manifest.
+- B4 remains open: completion notification must render deterministic manifest state first and mark
+  synthesized prose advisory.
+- No helper route, utility execution, spend, test, typecheck, build, staging, commit, Harness
+  lifecycle action, Harvto access, merge, rebase, push, deploy, release, dependency/model change,
+  evidence deletion, or root `.loop/` mutation occurred.
+
+Next exact action: wire collection retention through `utility-runtime.ts`, then collection plus B1c
+consumer validation through `bridge-utility.ts`, and deterministic notification formatting. Update
+B1-B7/B1c controls only after source wiring; then run the focused D16 set before mandatory suites.
+
+### Actual governed handover — epoch 1786842065523738
+
+Human requested graceful handover. Run 71 stops at the exact partial collection boundary recorded
+above, without another source/test slice, commit, or lifecycle action. Required Codex bundle is
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/71/handoff/1786842065523738/codex.json`.
+
+#### Reviewer record — run 71 Claude (epoch 1786842065523738)
+
+Run 71 issued no new review verdict: Codex sent no review request before the governess handover, so
+the governing D16 design verdict remains run-70 `cf060ab5-47b6-41c5-a52a-0894463b9054` (REVISE,
+B1-B6) plus decision `3aebdf98-0649-4b70-9dc2-0108b8254e5f` (blocking B7). No approval exists for
+any run-71 source change; the exact-SHA zero-write PASS is still owed before any D16 commit.
+
+Reviewer verification performed in run 71 (zero-write, native read-only, no helper route, no spend):
+
+- Run-71 Claude charter SHA-256 matched `6f78110a4452333d3511af2bebf7dc7e1856d9e7d7e129cc162e965fd60738f3`.
+- World-model bootstrap file SHA-256 matched `d876e7cc0eb80b61b115ee6a39c0545d9360f0b2092f4ef6bbccc2b4c8e8d3c8`;
+  embedded `capsuleSha256` matched `907da911e475cd2c37f427efcd8b664ba56715358e892a5bd1e387609422e15c`;
+  capsule DB commit binding and `git rev-parse HEAD` both `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- Both run-70 epoch `1786839685729749` bundles read as `ready` and bind that same HEAD.
+- Index empty (`git diff --cached --name-only` returned 0 paths); 20 dirty paths; root `.loop/` 60 files.
+- Harness `.harness/current-task` is `harvto-d16-scope-audit-completeness`; `tasks.json` record is
+  `status: active`, `mode: emergent`, `eval_status: pending`.
+- Independent second-party SHA-256 of the D16 sources corroborates the Codex-recorded values:
+  `utility-scope-audit.ts` `8abbd805a3b308e11b3a43b2c7ed41fae27ef710e5644537be801e90829f207f`
+  (unchanged from run 70, so the reviewed contract was not silently edited),
+  `utility-tools.ts` `d4bd221c40187264a97835b68f3e81bdf159893008d26638e4bf43e63a6588ea`,
+  `task-router.ts` `9d5c833873be1955c3333b37cd35b0791e3ea2fb5f3ed516e294284093c95ea0`,
+  `utility-store.ts` `665b93b3696ad8a167e19779183874a6f04fb4e4f1420f7ee7f4a9313d71c6cc`.
+  Not yet reviewed for correctness, only measured: `utility-runtime.ts`
+  `2e4b5ccdb315a6211a7ab054884a9cd352f621d7f87f0e72920b1f20d621ec2d`, `bridge-utility.ts`
+  `923aad5fe442fb98f8617f94b5a69d27fed7a227352ff4e416df9e3e76a70001`.
+- Not independently verified this run: the utility environment flags. The `env` read was denied, so
+  `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, `LOOP_AU_PAIR_ENABLED=0` are carried
+  as Codex-reported, not reviewer-measured.
+
+Reviewer obligations the successor reviewer inherits, unchanged and still blocking PASS:
+
+- B1c: `bridge-utility.ts` must compare every classified manifest's `query.paths` against the job's
+  declared `readScope` and fail closed on short coverage, proven by a hand-edited narrowed
+  persisted-manifest control. A manifest hash covering its own `query.paths` reconciles internally,
+  so a narrowed row reads as authoritative clean without this consumer check.
+- B4: deterministic mode/count/clean/SHA notification text first, synthesized prose marked advisory.
+- The B1+B7 broker behavior in `utility-tools.ts` is claimed implemented but has received no review
+  and no typecheck or test execution. Treat it as unverified until the exact-SHA gate runs.
+- Accepted-not-fixed and still owed in `spec.md`: the 64 KiB shared stdout/stderr budget makes
+  large-scope authoritative inventories fail closed with `output_limit` rather than degrade.
+
+## 2026-08-15 — Run-72 D16 runtime collection retention; fresh-loop preparation
+
+Result: per-query collection retention and deterministic advisory completion text are implemented
+in `loop-fork/src/loop/utility-runtime.ts`. Governess decision
+`d994abb9-b37c-448e-8fdf-8c57910d6155` then ordered fresh-loop preparation, so no bridge/test or
+broad verification slice started.
+
+Verified bootstrap and preserved state:
+
+- Launch charter SHA-256 matched
+  `3d6a34ec4fe73e610a9e5a5876e7c2759241f50ef6758a78ce03e5322fd9ffa1` before work.
+- Both run-71 epoch `1786842065523738` bundles were `ready` and bound exact HEAD
+  `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- World-model bootstrap file SHA-256 matched
+  `d876e7cc0eb80b61b115ee6a39c0545d9360f0b2092f4ef6bbccc2b4c8e8d3c8`; logical capsule matched
+  `907da911e475cd2c37f427efcd8b664ba56715358e892a5bd1e387609422e15c`; all embedded
+  `commitSha` values matched current HEAD.
+- Index remained empty. Harness still selected only
+  `harvto-d16-scope-audit-completeness`, emergent, active, eval pending. Root `.loop/` remained at
+  60 files; ignored D16 plans remained present; utility environment measured `0/off/0`.
+
+Exact changed source scope:
+
+- `loop-fork/src/loop/utility-runtime.ts` now carries `UtilityScopeAuditCollection` through all
+  conversation harnesses. Same canonical query keys require byte-identical manifests; differing
+  bytes fail closed, while distinct query keys coexist in canonical collection order.
+- Completed scope messages start with deterministic
+  `mode=<mode> count=<count> clean=<boolean> sha256=<digest>` state and mark model text
+  `Advisory synthesis`.
+- Current SHA-256:
+  `a5698b774a2f0c3633d5fe94c7564009b5968d05642d41f3f28f69305542f7c8`.
+
+Checks:
+
+- `bunx biome check src/loop/utility-runtime.ts` passed: one file checked, no fixes.
+- `git diff --check` passed.
+- No typecheck or test ran because `bridge-utility.ts` and fixtures still use singular manifests;
+  no build, serial suite, eval, Harness gate, staging, commit, or lifecycle action ran.
+
+Open blockers and risks:
+
+- B1c remains open in `bridge-utility.ts`: validate collections against declared top-level/read-plan
+  path scopes and reject hand-edited narrowed persisted manifests.
+- Collection fixtures and runtime/router/bridge controls remain unmigrated, so the worktree is
+  intentionally not typecheck/test-ready.
+- Claude question `a090c7f1-b2d1-4c19-a8bc-09744ed88a35` has no response yet. It asks whether one
+  compatible union-path manifest may satisfy multiple same-mode read-plan steps. No verdict is
+  inferred.
+- Run-71 broker/router/store work and this runtime slice remain unreviewed. Exact-SHA Claude PASS
+  still gates the D16 commit and one Harness close.
+
+Next: pull any pending Claude response, implement only bridge collection+B1c validation and its
+narrowed-manifest control, then migrate focused fixtures and controls. Preserve utility `0/off/0`,
+empty index, root `.loop/`, ignored plans, all D16 evidence, and every campaign authority boundary.
+
+### Actual governed handover — epoch 1786843562643959
+
+Human requested graceful handover. Run 72 stops after the runtime collection/notification atomic
+step. Required Codex bundle is
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/72/handoff/1786843562643959/codex.json`.
+No additional source, test, verification, commit, review, or Harness lifecycle slice begins here.
+
+### Claude B1c verdict — REVISE (epoch 1786843562643959)
+
+Claude answered design question `a090c7f1-b2d1-4c19-a8bc-09744ed88a35` before exiting. Verdict is
+REVISE, delivered as bridge message `db2a8ff5-b447-406d-9e20-5e8957617312`. This is a design
+consult, not the exact-SHA gate; the D16 commit and the one Harness close still require a separate
+Claude zero-write exact-SHA PASS. Run-71 B1+B7 source and the run-72 runtime slice remain
+unreviewed.
+
+Accepted as proposed: runtime canonicalization/keying, bridge collection assertion first, literal
+canonical pathset inclusion with no filesystem ancestor semantics, and the union-path manifest
+allowance conditioned on R1 below.
+
+Rejected as fail-open: the "status versus any non-status" compatibility split in proposed item 4.
+`loop-fork/src/loop/utility-scope-audit.ts:35` declares four modes
+(`diff-index`, `diff-range`, `diff-worktree`, `status`), and `resolveGitDiffExecution` in
+`loop-fork/src/loop/utility-tools.ts` near lines 2415-2440 emits three of them from the single
+git_diff broker: absent `baseRef` yields `diff-index` or `diff-worktree` with no range fields,
+present `baseRef` yields `diff-range` with resolved literal `baseRef`/`headRef` and
+`rangeOperator: "..."`. The split therefore makes all three interchangeable for any declared
+git-diff step. Counterexample that passes the proposed rule and must fail: a declared step
+`git_diff` with literal base/head SHAs and `readScope: ["src/loop/utility-runtime.ts"]`, satisfied
+by a manifest `{ mode: "diff-worktree", paths: ["src/loop/utility-runtime.ts"] }` carrying no
+range fields. Uncommitted working-tree state would certify a commit-bound range step, leaving B7
+from decision `3aebdf98-0649-4b70-9dc2-0108b8254e5f` decorative at the completeness gate. The same
+root defect also lets a `diff-range` manifest bound to an unrelated commit pair pass, because
+nothing compares manifest range fields to the declared range.
+
+Required before or with the bridge B1c edit:
+
+- R1 (blocking): closed allowlist keyed on the step's declared selection. `git_status` requires
+  mode exactly `status`. `git_diff` with declared `baseRef` requires mode exactly `diff-range`
+  with `baseRef`/`headRef` equal to the resolved literal SHAs and `rangeOperator` `...`.
+  `git_diff` without `baseRef` requires exactly `diff-index` when staged and exactly
+  `diff-worktree` otherwise, with no range fields present. Any mode outside the allowlist is
+  rejected and never default-mapped.
+- R2 (blocking): apply the same range equality to classified top-level git-diff jobs, which
+  proposed item 3 currently omits.
+- R3 (blocking controls): keep the hand-edited narrowed persisted-manifest control and add a
+  substituted-mode control and a wrong-range control, each failing closed.
+- R4 (blocking, determinism): fix field order `mode,count,clean,sha256` within a manifest segment
+  and order across manifests by canonical `utilityScopeAuditQueryIdentity`; alphabetical sorting
+  would contradict the charter-mandated mode/count/clean/SHA order.
+- Vacuous-branch controls: read-plan with zero declared Git steps and zero manifests passes;
+  zero declared Git steps with one or more manifests fails closed as orphan.
+
+Per-step attribution stays explicitly out of B1c scope; B1c certifies declared-scope completeness
+only and must not be re-gated on attribution later.
+
+Claude state verification this turn, zero source writes: HEAD
+`ee559c4f75dfe36e2dd61c607d48a3aba4faa500`; staged set empty; utility measured `0/off/0`;
+`shasum -a 256 src/loop/utility-runtime.ts` returned
+`a5698b774a2f0c3633d5fe94c7564009b5968d05642d41f3f28f69305542f7c8`, matching the Codex ack exactly.
+
+## 2026-08-15 — Run-73 D16 B1c representation audit; fresh-loop preparation
+
+Result: pre-edit B1c inspection found missing structured git-diff declaration needed for R1/R2.
+Governess decision `24fcff6c-38d0-410a-8122-b1854d6de348` ordered fresh-loop preparation before any
+source, test, spec, run-evidence, Harness, staging, commit, or lifecycle change.
+
+Verified bootstrap and preserved state:
+
+- Launch charter SHA-256 matched
+  `aa3c63bdbf5285d25b7fad90f329ee1daa1b950fb2078719824f5c880df52ee8`.
+- Both run-72 epoch `1786843562643959` bundles were `ready`, complete, and bound exact HEAD/base
+  `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- World-model bootstrap file/capsule hashes matched the charter and every embedded `commitSha`
+  matched HEAD.
+- Index stayed empty; D16 remained sole active Harness task, emergent, eval pending; root `.loop/`
+  stayed at 60 files; ignored D16 plans remained present; utility measured `0/off/0`.
+- `src/loop/utility-runtime.ts` SHA-256 remained
+  `a5698b774a2f0c3633d5fe94c7564009b5968d05642d41f3f28f69305542f7c8`.
+
+Observed blocker:
+
+- `UtilityRouteRequest`, `UtilityReadPlanStep`, and route bridge input persist no git-diff
+  `baseRef`/`headRef`/`staged` selection. Direct read-plan git-diff emits only `paths`.
+- R1/R2 cannot compare exact mode and literal range from profile plus paths. Free-form objective
+  parsing is not a sound authority boundary.
+- Targeted Claude request `15a7013c-ea0a-453b-bc4d-cfd135746c9e` proposes structured
+  `execution_git_diff` metadata and shared runtime/bridge validation. It has no response yet; no
+  verdict is inferred.
+
+Checks/results: read-only Git, Harness, environment, governing-artifact, source, and fixture
+inspection completed. Inherited `git diff --check` passed. No typecheck, test, build, suite, eval,
+verifier, helper route, spend, Harvto access, merge, rebase, push, deploy, release, dependency/model
+change, evidence deletion, or root `.loop/` mutation occurred.
+
+Next: successor validates the fresh handoff, pulls the response to
+`15a7013c-ea0a-453b-bc4d-cfd135746c9e`, settles the smallest structured declaration contract, then
+implements B1c collection assertion plus exact mode/range/path coverage before fixture migration.
+
+### Actual governed handover — epoch 1786844896236203
+
+Human requested graceful handover. Run 73 stops after the zero-write B1c representation audit.
+Required bundle:
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/73/handoff/1786844896236203/codex.json`.
+No implementation, test, verification suite, commit, review gate, or Harness lifecycle work begins
+after this boundary.
+
+### Claude response to `15a7013c-ea0a-453b-bc4d-cfd135746c9e` — verdict `d708bc7f-1371-47c3-be76-7ef903789a9e`
+
+ACCEPT the structured git-diff declaration WITH six bounded corrections. The blocker recorded above
+is answered; the successor does not need to re-open it. This is a clarification inside already-bound
+B1c, not a new design gate. Claude exact-SHA zero-write PASS remains the sole remaining gate before
+the D16 commit and the one Harness close.
+
+- C1 (blocking): reject the proposed "no-selection git-diff defaults to unstaged/worktree"
+  compatibility rule. That is a default mapping banned by R1 and it defeats the R3 substituted-mode
+  control, because a commit-bound job whose SHAs live only in free-form objective text would
+  validate against a worktree manifest. Split execution default from validation identity. Execution
+  may still default to worktree; the persisted validation selection records `undeclared` for the
+  request and the actually-executed discriminant for the manifest. Equality runs off an explicit
+  pairing allowlist, never coercion: undeclared x worktree PASS (legacy); undeclared x index FAIL
+  closed; undeclared x range FAIL closed as orphan; range x worktree and range x index FAIL closed;
+  range x range PASS only when base, head, and operator are all byte-equal; worktree x index and
+  index x worktree FAIL closed.
+- C2: make illegal states unrepresentable. Normalize to exactly one of `{kind:"worktree"}`,
+  `{kind:"index"}`, `{kind:"range", base, head, operator}`. Reject at parse time `head_ref` without
+  `base_ref`, `staged:true` with any ref, and any base/head that is not lowercase 40-hex. No
+  abbreviated SHA, no symbolic ref, no ref resolution at validate time. Parse failure fails closed
+  with a distinct reason code and never silently drops the field.
+- C3: persist the range operator explicitly and compare it as data. `...` may be the only currently
+  legal value, but never re-infer the operator from base/head presence at compare time, or a later
+  `..` addition would compare equal to an existing `...` manifest.
+- C4: the normalized selection must be a component of the canonical query key feeding
+  `utilityScopeAuditQueryIdentity`, so two different ranges yield distinct keys and coexist instead
+  of colliding as a same-key conflict. Same key with differing manifest bytes stays a conflict under
+  B1 byte identity. R4 is unchanged: notification field order exactly `mode,count,clean,sha256`;
+  cross-manifest ordering by `utilityScopeAuditQueryIdentity`, not alphabetical.
+- C5: extend the R3 controls, each asserting the exact fail reason code rather than a boolean:
+  substituted mode, wrong range (base equal, head differing), orphan range against an undeclared
+  request, legacy undeclared-versus-worktree pass, plus the existing hand-edited narrowed pathset
+  under identical selection. Vacuous read-plan controls stay as bound.
+- C6: one shared B1c validator called by both runtime completion and the bridge consumer, with
+  tests driving both call sites so the bridge cannot drift. The no-objective-parsing rule is
+  accepted as binding.
+
+Scope bound: additive optional field only; no manifest byte change for jobs that declare nothing;
+route schema text may change only to document the new optional field. Per-step attribution stays out
+of B1c.
+
+Claude checks this turn, zero source writes: charter SHA-256
+`574ff91d9ac54f37f209498b655afd56914022ea451c75284442a97823534e6f` matched; world-model bootstrap
+file SHA-256 `d876e7cc0eb80b61b115ee6a39c0545d9360f0b2092f4ef6bbccc2b4c8e8d3c8` and capsule
+`907da911e475cd2c37f427efcd8b664ba56715358e892a5bd1e387609422e15c` matched; HEAD
+`ee559c4f75dfe36e2dd61c607d48a3aba4faa500`; staged set empty; `git diff --check` passed. No
+typecheck, test, suite, eval, helper route, or spend ran.
+
+#### Crossing note — codex.json is stale on one point
+
+Codex handover `07370caf-f09c-4485-a8ea-97af6f1c4fdf` and its bundle
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/73/handoff/1786844896236203/codex.json`
+(SHA-256 `6f9ee4d036a05c1ca23214b05d7d3e68b2501d01ae31a44a68cee987bd4a4177`, independently
+re-derived) both state that clarification `15a7013c-ea0a-453b-bc4d-cfd135746c9e` received no
+response and that no verdict may be inferred. That was true when Codex wrote it and is now stale:
+Claude verdict `d708bc7f-1371-47c3-be76-7ef903789a9e` was sent as bridge message
+`a8078822-e3aa-4b3e-85a8-a4e17c406586` and is recorded above and in `PLAN.md`. Codex exited before
+pulling it. The successor must treat the structured git-diff selection contract as SETTLED under
+verdict `d708bc7f-1371-47c3-be76-7ef903789a9e` and must not re-open it as a design question. Every
+other claim in `codex.json` was checked and stands.
+
+## 2026-08-15 — Run-74 D16 reconciliation complete
+
+Result: run-73 handover and C1-C6 authority are validated; source work may continue at preserved
+HEAD/base `ee559c4f75dfe36e2dd61c607d48a3aba4faa500` with empty index.
+
+- Launch charter SHA-256 matched
+  `84554f306c969276b6685410e6f137ce03d7d5f0a7ac4adedbdfaa0a0b9aaafc` before its contents were read.
+- Both epoch `1786844896236203` bundles were read completely. Claude's later verdict
+  `d708bc7f-1371-47c3-be76-7ef903789a9e`, delivered as
+  `a8078822-e3aa-4b3e-85a8-a4e17c406586`, controls the one stale Codex-bundle statement.
+- World-model file SHA-256, logical capsule, and every embedded `commitSha` matched charter values
+  and live HEAD. Runtime SHA-256 remained
+  `a5698b774a2f0c3633d5fe94c7564009b5968d05642d41f3f28f69305542f7c8`.
+- `.harness/current-task` selects `harvto-d16-scope-audit-completeness`; its task record is emergent,
+  active, eval pending. Root `.loop/` has 60 preserved files, both ignored D16 plans exist, and
+  utility environment is `0/off/0`. Two older task records also retain historical `status: active`;
+  no lifecycle mutation is inferred or performed from that stale-looking field.
+- Source inspection found no structured top-level/read-plan git-diff declaration and confirmed
+  Direct read-plan calls currently pass only paths. Existing commit-range tests are broker-level;
+  no commit-bound route fixture stores SHAs only in objective prose.
+
+Next: implement optional structured selection, shared B1c validator, Direct threading, and C1-C6
+controls. No helper route or spend is allowed; no typecheck/test starts until source and singular
+fixtures are migrated.
+
+## 2026-08-15 — Run-74 structured selection atomic slice; fresh-loop preparation
+
+Result: optional structured Git-diff selection is normalized and bounded in
+`loop-fork/src/loop/task-router.ts`. Governess decision
+`4599bdbe-960b-4836-8303-cbfb51560d31` then ordered fresh-loop preparation, so no bridge, runtime,
+shared-validator, fixture, or broad verification slice started.
+
+Exact run-74 writes:
+
+- `PLAN.md` and `status.md`: append-only run-74 reconciliation and handover sections.
+- `loop-fork/src/loop/task-router.ts`: added `UtilityGitDiffSelection` as
+  `{kind:"worktree"} | {kind:"index"} | {kind:"range",base,head,operator}`; added optional
+  `executionGitDiff` to top-level/read-plan request types; normalized request construction; stable
+  parse reason `scope-audit-selection-invalid`; boundedness rejects malformed or wrong-profile
+  metadata and edit packets.
+
+Checks:
+
+- `bunx biome check src/loop/task-router.ts`: pass, one file checked, no fixes.
+- `git diff --check`: pass.
+- `shasum -a 256 src/loop/task-router.ts`:
+  `dda4c3c7caa380d8949de0f11bae3945388bcdf68ddff520605c3fbbcd24b48c`.
+- No typecheck, focused test, build, serial suite, eval, verifier, staging, commit, Harness lifecycle,
+  helper route, spend, Harvto access, merge, rebase, push, deploy, release, dependency/model change,
+  evidence deletion, or root `.loop/` mutation occurred.
+
+Open cross-file boundary: bridge schema/parser does not yet accept `execution_git_diff`; Direct
+read-plan does not thread it into `git_diff`; no shared B1c validator exists; runtime and bridge still
+do not compare collection paths/modes/ranges to declarations; singular fixtures remain unmigrated.
+The worktree is intentionally not typecheck/test-ready.
+
+Next exact action: validate fresh bundles, preserve utility `0/off/0`, then add bridge parser/schema
+and Direct threading before shared validator/runtime/bridge wiring. Keep C1-C6 and verdict
+`d708bc7f-1371-47c3-be76-7ef903789a9e` settled; do not re-open design or migrate fixtures early.
+
+### Actual governed handover — epoch 1786846009516945
+
+Human requested graceful handover. Run 74 stops after the `task-router.ts` structured-selection
+atomic slice recorded above. Required bundle:
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/74/handoff/1786846009516945/codex.json`.
+No further source, test, verification, staging, commit, review, or Harness lifecycle work starts in
+this run.
+
+#### Reviewer (Claude) record — epoch 1786846009516945
+
+Claude bundle: `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/74/handoff/1786846009516945/claude.json`.
+Claude was idle by charter (reviewer ordering) for all of run 74: no repository mutation, no helper
+route, no spend, no review verdict issued.
+
+Independently verified at handover (read-only):
+
+- `git rev-parse HEAD` = `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`, matching the charter.
+- `git diff --cached --name-only` empty, confirming the index is clean.
+- `shasum -a 256 loop-fork/src/loop/task-router.ts` =
+  `dda4c3c7caa380d8949de0f11bae3945388bcdf68ddff520605c3fbbcd24b48c`, matching Codex's reported SHA.
+
+Not verified by Claude: C1-C6 conformance of the new `task-router.ts` code, and Codex's Biome and
+`git diff --check` results. Those were reported by Codex, not re-run here, and remain unreviewed
+source alongside runs 71 and 72.
+
+## 2026-08-15 — Run-75 D16 reconciliation; fresh-loop preparation
+
+Result: run-75 bootstrap and preserved-state reconciliation pass. Governess decision
+`29e82039-e002-4780-b431-6c23e1e5ac50` stops the run before the next source slice.
+
+Checks and results:
+
+- Launch charter bytes matched expected SHA-256
+  `96a3bc1090d4ece30c415969dd387d842fb6f2d23151facb5ccf7cfb71a0f9d3` before reading.
+- Run-74 ready bundles were read completely and matched manifest SHA-256 values: Claude
+  `3eaa27b3396e788a5f921ec2a2260e96ffc92db3071caf61f47f7288ae423d31`, Codex
+  `9a44e087bfc44dae7024ae1d79f49d1736e1548534d05772fd8a155303c4a591`; continuation matched
+  `f651c068f402d7ab4ce973f29f8d68c85fcaa319b5d96e0e0c608a8a734b5285`.
+- Read complete run-74 transcript plus full root PLAN/status and required D16 governing artifacts.
+- World-model bootstrap file SHA-256
+  `d876e7cc0eb80b61b115ee6a39c0545d9360f0b2092f4ef6bbccc2b4c8e8d3c8`, logical capsule
+  `907da911e475cd2c37f427efcd8b664ba56715358e892a5bd1e387609422e15c`, and every embedded
+  `commitSha` matched exact HEAD `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`.
+- Index remained empty. Harness reports only `harvto-d16-scope-audit-completeness`, emergent,
+  active, eval pending. Root `.loop/` remains 60 files; both ignored D16 plans remain present;
+  utility environment is `0/off/0`.
+- Source identity revalidated: `task-router.ts`
+  `dda4c3c7caa380d8949de0f11bae3945388bcdf68ddff520605c3fbbcd24b48c`; `utility-runtime.ts`
+  `a5698b774a2f0c3633d5fe94c7564009b5968d05642d41f3f28f69305542f7c8`. `git diff --check`
+  passed.
+
+Exact run-75 changed scope: append-only `PLAN.md` and `status.md` handover records. No source, test,
+spec, run evidence, Harness, root `.loop/`, staging, commit, helper, provider, model, dependency,
+Harvto, merge, rebase, push, deploy, release, or lifecycle mutation occurred.
+
+Open boundary and risk: bridge schema/parser still lacks `execution_git_diff`; Direct read-plan
+`git_diff` still receives paths only; no shared B1c validator exists; runtime/bridge do not compare
+collection mode/range/path coverage to declarations; singular fixtures remain. Current cross-file
+tree is intentionally not typecheck/test-ready. Claude exact-SHA zero-write PASS remains required
+before D16 commit and the one Harness close.
+
+Next exact action: add bridge `execution_git_diff` schema/parser and thread normalized selection
+through Direct read-plan `git_diff`; then add the one shared validator and call it from runtime plus
+bridge. Fixtures follow source seams. Keep verdict
+`d708bc7f-1371-47c3-be76-7ef903789a9e` and C1-C6 settled.
+
+### Actual governed handover — epoch 1786847216808383
+
+Human requested graceful handover after the run-75 reconciliation-only atomic step. Required bundle:
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/75/handoff/1786847216808383/codex.json`.
+No further source, test, verification, staging, commit, review, or Harness lifecycle work begins in
+run 75. Preserve every uncommitted D16 path and authority boundary for the successor.
+
+## 2026-08-15 — Plan-only continuation from epoch 1786847216808383
+
+Result: D16 continuation plan is ready; no code, test, evidence, Harness, index, history, or root
+`.loop/` mutation occurred in this session.
+
+Current state and proof:
+
+- Both handover JSON files parse and report `ready`, epoch `1786847216808383`, and exact HEAD
+  `ee559c4f75dfe36e2dd61c607d48a3aba4faa500`. SHA-256 values: Claude
+  `70c74a0f334669cb3411e294bfd1c9e5a517c4373464732721e36fb322b6ab75`; Codex
+  `0bb26ed5c2d80c7f9c3c7be5212ac9f181ca424abd2cc363a590ca6c9b797cad`.
+- Live HEAD matches; cached path count is zero. Root `.loop/` remains 60 files. Both D16 run/spec
+  plans remain ignored and present. Existing D16 evidence and inherited dirty scope remain intact.
+- `.harness/current-task` is `harvto-d16-scope-audit-completeness`; task record is `emergent`,
+  `active`, eval `pending`.
+- `task-router.ts` and `utility-runtime.ts` retain handover SHA-256 values
+  `dda4c3c7caa380d8949de0f11bae3945388bcdf68ddff520605c3fbbcd24b48c` and
+  `a5698b774a2f0c3633d5fe94c7564009b5968d05642d41f3f28f69305542f7c8`.
+- `git diff --check` passes. No typecheck, test, build, suite, eval, verifier, helper, or provider call
+  ran. Current shell omits the three utility variables; absence did not enable or invoke utility.
+  Future executable commands must set explicit `0/off/0` values.
+
+Open questions: none. C1-C6 and verdict `d708bc7f-1371-47c3-be76-7ef903789a9e` are settled.
+Claude exact-SHA zero-write PASS remains unfired and blocks Harness close.
+
+Risk: worktree remains intentionally cross-file incomplete and not typecheck/test-ready. Do not
+migrate fixtures or run broad suites before bridge, Direct, and shared-validator seams are wired.
+
+Next exact step: in implementation mode, add bridge `execution_git_diff` schema/parser at top level
+and read-plan steps, then thread normalized selection into Direct read-plan `git_diff`. Preserve
+HEAD/index/evidence/root `.loop/`; use no helper or spend.
+
+## 2026-08-15 — Run-76 D16 post-fix focused boundary
+
+Result: D16 cumulative producer-to-consumer fix and focused matrix pass at exact base/HEAD
+`ee559c4f75dfe36e2dd61c607d48a3aba4faa500`. Index has not been staged; active task remains
+`harvto-d16-scope-audit-completeness`, emergent/eval-pending.
+
+Changed implementation scope:
+
+- `loop-fork/src/loop/{utility-scope-audit,bridge-utility,task-router,utility-runtime,utility-store,utility-tools,utility-execution-tier}.ts`
+- `loop-fork/tests/loop/{utility-scope-audit,bridge-utility,utility-store,utility-tools,utility-pi-harness,utility-execution-tier}.test.ts`
+
+Implemented proof boundary:
+
+- Broker authoritative evidence binds declared Git pathspecs and resolves range refs once each to
+  literal SHAs before using one identical `base...head` in helper/evidence commands.
+- Structured selection preserves undeclared/worktree/index/range identity and rejects illegal input
+  with `scope-audit-selection-invalid`.
+- Runtime retains canonical collections by query identity, hides them from helper payloads, and
+  validates request coverage before completion. Bridge revalidates before `get_task_result`.
+- Stable missing/narrowed/mode/range/orphan failures, replay/hash/count/clean validation, clean zero
+  manifests, union-path read plans, legacy undeclared worktree, legacy missing-evidence rejection,
+  deterministic `mode,count,clean,sha256` notification text, and advisory synthesis are covered.
+- Self-review found and fixed two gaps: command packets previously returned before shared validation,
+  and broker tool arguments allowed `staged:true` with range refs.
+
+Checks:
+
+- D16 focused: scope `10/10` (34 assertions), bridge utility `5/5` (14), store `18/18` (46), tools
+  `49/49` (178), Pi harness `15/15` (81), execution tier `12/12` (28).
+- Inherited affected: utility runtime `56/56` (283), task router `80/80` (100), bridge `109/109`
+  (473).
+- Named omission regression remains `1 pass, 11 filtered, 0 fail, 5 expect() calls`.
+- Targeted Biome over 13 files clean; canonical source TypeScript exits 0; `git diff --check` exits 0.
+- Claude mid-implementation zero-write review request
+  `672dbd2e-4809-4240-992f-85be24fd8b96` accepted; response pending. This is not exact-SHA approval.
+
+Open questions: none in Codex review. Risk: cumulative diff remains uncommitted and Claude design
+review plus every mandatory gate/eval/scope/commit/review/closure step remain pending. Utility stayed
+`LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, `LOOP_AU_PAIR_ENABLED=0`; no helper,
+spend, staging, commit, lifecycle action, Harvto access, merge, rebase, push, deploy, release,
+provider/model/dependency change, evidence deletion, authority weakening, or root `.loop/` mutation.
+
+Next: mandatory check, canonical TypeScript, build, and complete serial suite; regenerate both evals;
+run Harness preflight/stop-gate and root verifier; prove/stage/commit only explicit D16 implementation
+paths; obtain Claude exact-SHA `PASS`; close Harness once; commit bookkeeping separately.
+
+## 2026-08-15 — Run-76 D16 mandatory verification passes
+
+Result: the cumulative D16 implementation is green before staging. `bun run check` passes 893
+files; canonical source TypeScript and build pass; all 79 certified serial test files pass. Both
+required evals now report `pass` with an empty `baseline_failures` array.
+
+Harness preflight and stop-gate each exit 0 for exact task
+`harvto-d16-scope-audit-completeness`. The root verifier exits 0 after lint, typecheck, build, full
+tests, and the empty baseline allowlist check. No UI behavior changed, so the verification contract
+requires no screenshot capture.
+
+No implementation path is staged yet. Utility remains `0/off/0`; no helper, spend, commit,
+lifecycle close, Harvto access, merge, rebase, push, deploy, release, provider/model/dependency
+change, evidence deletion, authority weakening, or root `.loop/` mutation occurred.
+
+Next: exact D16 scope proof and explicit implementation-only staging/commit, followed by Claude's
+literal exact-SHA `PASS`, one Harness close, and a separate bookkeeping commit.
+
+## 2026-08-15 — Run-76 D16 exact-SHA PASS and Harness close
+
+Result: D16 implementation commit `7c7acdea58c16a3c72a64443f052849ad9fecf3d`
+contains exactly the authorized 13 source/test paths. Normal and ignore-all-space numstats matched,
+the index was empty after commit, and no bookkeeping or evidence path leaked into implementation
+history.
+
+Claude independently reviewed the exact commit with zero writes and returned literal `PASS`,
+discharging B1-B7 and B1c R1-R4. Claude independently reran the focused matrix, check, canonical
+TypeScript, build, and all 79 serial test files with zero failures. Final Harness preflight,
+stop-gate, and root verification also passed at the reviewed SHA.
+
+Harness was closed exactly once. Post-task invariants passed; D16 is `done` with eval `pass`;
+`.harness/current-task` is absent. Root `.loop/` remains untracked at 60 files and the index remains
+empty. No Harvto, merge, rebase, push, deploy, release, dependency, provider, model, or evidence
+deletion occurred.
+
+Non-blocking follow-ups recorded without reopening D16: SHA-256-repository range portability,
+reason-code precedence for malformed orphan evidence, whole-journal tamper blast radius, and an
+unreachable empty-diff-scope diagnostic edge.
+
+Next: inspect and commit Harness/eval/spec/run/debt/coordination/root-log bookkeeping separately.

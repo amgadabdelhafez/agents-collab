@@ -1,0 +1,52 @@
+{
+  "task_id": "harvto-d16-scope-audit-completeness",
+  "scanned_at": "2026-08-16T03:46:58Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-16T03:46:58Z",
+      "task_id": "harvto-d16-scope-audit-completeness",
+      "signal": "loc_growth",
+      "file": "src/loop/bridge-utility.ts",
+      "before_loc": 1145,
+      "after_loc": 1264,
+      "delta_loc": 119,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-16T03:46:58Z",
+      "task_id": "harvto-d16-scope-audit-completeness",
+      "signal": "loc_growth",
+      "file": "src/loop/task-router.ts",
+      "before_loc": 1103,
+      "after_loc": 1211,
+      "delta_loc": 108,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-16T03:46:58Z",
+      "task_id": "harvto-d16-scope-audit-completeness",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-scope-audit.ts",
+      "before_loc": 0,
+      "after_loc": 831,
+      "delta_loc": 831,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-16T03:46:58Z",
+      "task_id": "harvto-d16-scope-audit-completeness",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-tools.ts",
+      "before_loc": 2732,
+      "after_loc": 2889,
+      "delta_loc": 157,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

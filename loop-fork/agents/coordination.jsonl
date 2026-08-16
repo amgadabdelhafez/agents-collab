@@ -7,3 +7,5 @@
 {"ts": "2026-08-13T18:49:48Z", "agent": "amgad-12944", "task": "harvto-d3-pending-route", "intent": "done", "file": null}
 {"ts": "2026-08-13T19:04:51Z", "agent": "amgad-65432", "task": "harvto-d5-silent-completion", "intent": "task-start", "file": null}
 {"ts": "2026-08-13T21:03:12Z", "agent": "amgad-26764", "task": "harvto-d5-silent-completion", "intent": "done", "file": null}
+{"ts": "2026-08-13T21:07:18Z", "agent": "amgad-35505", "task": "harvto-d16-scope-audit-completeness", "intent": "task-start", "file": null}
+{"ts": "2026-08-16T03:46:58Z", "agent": "amgad-91896", "task": "harvto-d16-scope-audit-completeness", "intent": "done", "file": null}

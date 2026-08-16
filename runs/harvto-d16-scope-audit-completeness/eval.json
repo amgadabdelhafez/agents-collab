@@ -1,0 +1,21 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d16-scope-audit-completeness",
+  "baseline_failures": [],
+  "summary": "D16 makes Git scope evidence authoritative, selection-bound, complete, canonical, replay-validated, and mandatory before completed utility results can be consumed.",
+  "checks": {
+    "focused_scope_audit": "10 pass, 0 fail",
+    "focused_bridge_utility": "5 pass, 0 fail",
+    "focused_utility_store": "18 pass, 0 fail",
+    "focused_utility_tools": "49 pass, 0 fail",
+    "focused_utility_pi_harness": "15 pass, 0 fail",
+    "focused_utility_execution_tier": "12 pass, 0 fail",
+    "focused_utility_runtime": "56 pass, 0 fail",
+    "focused_task_router": "80 pass, 0 fail",
+    "focused_bridge": "109 pass, 0 fail",
+    "lint": "893 files pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "test_ci": "79 files pass"
+  }
+}
