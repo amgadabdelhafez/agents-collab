@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -28,6 +35,12 @@ import {
   acceptGovernessHandoff,
   readGovernessHandoffManifest,
 } from "../../src/loop/governess-handoff";
+import {
+  cleanupRunOwnedProcesses,
+  registerRunOwnedProcess,
+  runProcessCleanupInternals,
+} from "../../src/loop/run-process-cleanup";
+import { createRunManifest } from "../../src/loop/run-state";
 import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
 
 test("x opens a reversible menu and only explicit e or h selects an exit", () => {
@@ -714,11 +727,13 @@ test("headless handover skips the missing pane and reaches owned teardown after 
     replacementSessionAlive: () => true,
     replacementSessionReady: () => true,
     saveState: () => order.push(`save:${state.exitControl.mode}`),
+    sessionLiveness: () => "dead" as const,
     sendKeys: (pane: string, keys: string[]) =>
       order.push(`keys:${pane}:${keys.join(",")}`),
     sendText: (pane: string, text: string) =>
       order.push(`text:${pane}:${text}`),
     sleep: async () => undefined,
+    tmuxIdentity: () => ({ session: config.session, socket: "fixture" }),
   };
 
   expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
@@ -744,10 +759,10 @@ test("headless handover skips the missing pane and reaches owned teardown after 
   expect(order).toEqual([
     "save:launched",
     "log:exit",
-    "mark",
     "cleanup",
     "log:run-process-cleanup",
     "kill",
+    "mark",
   ]);
 });
 
@@ -844,6 +859,8 @@ test("handover persists launch success before marking and killing the old loop",
     replacementSessionAlive: () => true,
     replacementSessionReady: () => true,
     saveState: () => order.push(`save:${state.exitControl.mode}`),
+    sessionLiveness: () => "dead" as const,
+    tmuxIdentity: () => ({ session: config.session, socket: "fixture" }),
   };
 
   expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
@@ -859,7 +876,7 @@ test("handover persists launch success before marking and killing the old loop",
   order.length = 0;
   expect(await driveHandoverControl(config, deps, state, {})).toBe(true);
   expect(launches).toBe(1);
-  expect(order).toEqual(["save:launched", "log:exit", "mark", "kill"]);
+  expect(order).toEqual(["save:launched", "log:exit", "kill", "mark"]);
 });
 
 test("handover launch failure never marks or kills the old loop", async () => {
@@ -1055,9 +1072,14 @@ test("an unconfirmed replacement probe is persisted without duplicate launch", a
   expect(launches).toBe(1);
 });
 
-test("explicit stop marks the run before killing its tmux session", () => {
+test("D15 tmux death is proved on the exact launch-recorded socket and session", () => {
   const config = handoverConfig();
   const order: string[] = [];
+  const tmuxCalls: Array<{
+    action: "kill" | "probe";
+    session: string;
+    socket: string;
+  }> = [];
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => order.push("log"),
@@ -1067,12 +1089,340 @@ test("explicit stop marks the run before killing its tmux session", () => {
       return { killed: [], skipped: [] };
     },
     fenceCurrent: () => true,
-    killSession: () => order.push("kill"),
+    killSession: (session: string, socket: string) => {
+      tmuxCalls.push({ action: "kill", session, socket });
+      order.push("kill");
+    },
     markRunStopped: () => order.push("mark"),
     now: () => 0,
+    sessionLiveness: (session: string, socket: string) => {
+      tmuxCalls.push({ action: "probe", session, socket });
+      return "dead" as const;
+    },
+    tmuxIdentity: () => ({
+      session: config.session,
+      socket: "/private/tmp/d15-exact.sock",
+    }),
   };
   stopGovernessLoop(config, deps, "user requested teardown");
-  expect(order).toEqual(["log", "mark", "cleanup", "kill"]);
+  expect(order).toEqual(["log", "cleanup", "kill", "mark"]);
+  expect(tmuxCalls).toEqual([
+    {
+      action: "kill",
+      session: config.session,
+      socket: "/private/tmp/d15-exact.sock",
+    },
+    {
+      action: "probe",
+      session: config.session,
+      socket: "/private/tmp/d15-exact.sock",
+    },
+  ]);
+});
+
+test("D15 missing tmux socket fails without default-socket fallback", () => {
+  const config = handoverConfig();
+  const states: string[] = [];
+  let unresolved: unknown;
+  stopGovernessLoop(
+    config,
+    {
+      ...defaultGovernessDeps(),
+      appendLog: () => undefined,
+      cleanupRunProcesses: () => ({ killed: [], skipped: [] }),
+      fenceCurrent: () => true,
+      killSession: () => {
+        throw new Error("default socket fallback attempted");
+      },
+      markRunFailed: () => states.push("failed"),
+      markRunStopped: () => states.push("stopped"),
+      now: () => 0,
+      recordCleanupUnresolved: (_config, issues) => {
+        unresolved = issues;
+      },
+      sessionLiveness: () => {
+        throw new Error("missing socket must not be probed");
+      },
+      tmuxIdentity: () => undefined,
+    },
+    "user requested teardown"
+  );
+
+  expect(states).toEqual(["failed"]);
+  expect(unresolved).toEqual([{ pid: 0, reason: "tmux-identity-unavailable" }]);
+});
+
+test("D15 ordinary teardown transfers only its exact self launcher and reaches stopped", () => {
+  const config = handoverConfig();
+  const runDir = config.runDir as string;
+  const original = { ...runProcessCleanupInternals.deps };
+  const states = new Map<number, string>([
+    [7801, "S"],
+    [7802, "S"],
+  ]);
+  const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const lifecycle: string[] = [];
+  const tmuxCalls: string[] = [];
+  try {
+    runProcessCleanupInternals.deps.commandForPid = (pid) =>
+      pid === 7801 ? "loop launcher" : "claude main agent";
+    runProcessCleanupInternals.deps.currentPid = () => 7801;
+    runProcessCleanupInternals.deps.now = () => "2026-08-15T12:00:00.000Z";
+    runProcessCleanupInternals.deps.parentPidFor = () => 1;
+    runProcessCleanupInternals.deps.pidAlive = () => true;
+    runProcessCleanupInternals.deps.sleep = () => undefined;
+    runProcessCleanupInternals.deps.startForPid = () =>
+      "Sat Aug 15 12:00:00 2026";
+    runProcessCleanupInternals.deps.stateForPid = (pid) => states.get(pid);
+    runProcessCleanupInternals.deps.signal = (pid, signal) => {
+      signals.push({ pid, signal });
+      states.set(pid, "Z");
+    };
+    const launcherPath = registerRunOwnedProcess(runDir, {
+      pid: 7801,
+      role: "launcher",
+    });
+    const agentPath = registerRunOwnedProcess(runDir, {
+      agent: "claude",
+      pid: 7802,
+      role: "agent",
+    });
+    const manifest = createRunManifest({
+      cwd: "/fixture/repo",
+      mode: "paired",
+      pid: 7801,
+      repoId: "fixture-repo",
+      runId: "15",
+      tmuxSession: config.session,
+      tmuxSocket: "/private/tmp/d15-exact.sock",
+    });
+
+    stopGovernessLoop(
+      config,
+      {
+        ...defaultGovernessDeps(),
+        appendLog: (_file, record) =>
+          lifecycle.push((record as { event: string }).event),
+        cleanupRunProcesses: () => cleanupRunOwnedProcesses(runDir, manifest),
+        fenceCurrent: () => true,
+        killSession: (session, socket) => {
+          tmuxCalls.push(`kill:${session}:${socket}`);
+        },
+        markRunFailed: () => lifecycle.push("failed"),
+        markRunStopped: () => lifecycle.push("stopped"),
+        now: () => 0,
+        recordCleanupUnresolved: () => {
+          throw new Error("ordinary teardown must have no unresolved receipt");
+        },
+        sessionLiveness: (session, socket) => {
+          tmuxCalls.push(`probe:${session}:${socket}`);
+          return "dead";
+        },
+        tmuxIdentity: () => ({
+          session: config.session,
+          socket: "/private/tmp/d15-exact.sock",
+        }),
+      },
+      "ordinary teardown"
+    );
+
+    const receiptPath = join(
+      runDir,
+      "run-processes",
+      "deferred-launcher-7801.json"
+    );
+    expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+      kind: "run-owned-deferred-launcher",
+      pid: 7801,
+      role: "launcher",
+      schemaVersion: 1,
+    });
+    expect(existsSync(launcherPath)).toBe(false);
+    expect(existsSync(agentPath)).toBe(false);
+    expect(
+      existsSync(join(runDir, "run-processes", "unresolved-cleanup.json"))
+    ).toBe(false);
+    expect(signals).toEqual([{ pid: 7802, signal: "SIGTERM" }]);
+    expect(tmuxCalls).toEqual([
+      "kill:session:/private/tmp/d15-exact.sock",
+      "probe:session:/private/tmp/d15-exact.sock",
+    ]);
+    expect(lifecycle).toContain("stopped");
+    expect(lifecycle).not.toContain("failed");
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("D15 production-shaped teardown settles launcher and agent before stopped", () => {
+  const config = handoverConfig();
+  const runDir = config.runDir as string;
+  const original = { ...runProcessCleanupInternals.deps };
+  const launcherPid = 7811;
+  const agentPid = 7812;
+  const states = new Map<number, string>([
+    [launcherPid, "S"],
+    [agentPid, "S"],
+  ]);
+  const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+  const lifecycle: string[] = [];
+  try {
+    runProcessCleanupInternals.deps.commandForPid = (pid) =>
+      pid === launcherPid ? "loop launcher" : "claude main agent";
+    runProcessCleanupInternals.deps.currentPid = () => 7899;
+    runProcessCleanupInternals.deps.parentPidFor = () => 1;
+    runProcessCleanupInternals.deps.pidAlive = () => true;
+    runProcessCleanupInternals.deps.sleep = () => undefined;
+    runProcessCleanupInternals.deps.startForPid = () =>
+      "Sat Aug 15 12:00:00 2026";
+    runProcessCleanupInternals.deps.stateForPid = (pid) => states.get(pid);
+    runProcessCleanupInternals.deps.signal = (pid, signal) => {
+      signals.push({ pid, signal });
+      if (pid === agentPid || signal === "SIGKILL") {
+        states.set(pid, "Z");
+      }
+    };
+    const launcherPath = registerRunOwnedProcess(runDir, {
+      pid: launcherPid,
+      role: "launcher",
+    });
+    const agentPath = registerRunOwnedProcess(runDir, {
+      agent: "claude",
+      pid: agentPid,
+      role: "agent",
+    });
+    const manifest = createRunManifest({
+      cwd: "/fixture/repo",
+      mode: "paired",
+      pid: launcherPid,
+      repoId: "fixture-repo",
+      runId: "15",
+      tmuxSession: config.session,
+      tmuxSocket: "/private/tmp/d15-production.sock",
+    });
+
+    stopGovernessLoop(
+      config,
+      {
+        ...defaultGovernessDeps(),
+        appendLog: () => undefined,
+        cleanupRunProcesses: () => cleanupRunOwnedProcesses(runDir, manifest),
+        fenceCurrent: () => true,
+        killSession: () => undefined,
+        markRunFailed: () => lifecycle.push("failed"),
+        markRunStopped: () => lifecycle.push("stopped"),
+        now: () => 0,
+        recordCleanupUnresolved: () => {
+          throw new Error(
+            "settled production topology must have no unresolved receipt"
+          );
+        },
+        sessionLiveness: () => "dead",
+        tmuxIdentity: () => ({
+          session: config.session,
+          socket: "/private/tmp/d15-production.sock",
+        }),
+      },
+      "ordinary teardown"
+    );
+
+    expect(signals.filter(({ pid }) => pid === launcherPid)).toEqual([
+      { pid: launcherPid, signal: "SIGTERM" },
+      { pid: launcherPid, signal: "SIGKILL" },
+    ]);
+    expect(signals.filter(({ pid }) => pid === agentPid)).toEqual([
+      { pid: agentPid, signal: "SIGTERM" },
+    ]);
+    expect(existsSync(launcherPath)).toBe(false);
+    expect(existsSync(agentPath)).toBe(false);
+    expect(
+      existsSync(
+        join(runDir, "run-processes", `deferred-launcher-${launcherPid}.json`)
+      )
+    ).toBe(false);
+    expect(lifecycle).toEqual(["stopped"]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("D15 process surviving KILL keeps teardown failed with ownership evidence", () => {
+  const config = handoverConfig();
+  const runDir = config.runDir as string;
+  const original = { ...runProcessCleanupInternals.deps };
+  const pid = 7820;
+  const signals: NodeJS.Signals[] = [];
+  const lifecycle: string[] = [];
+  let cleanupResult: ReturnType<typeof cleanupRunOwnedProcesses> | undefined;
+  let recordedUnresolved: unknown;
+  try {
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      "claude surviving agent";
+    runProcessCleanupInternals.deps.currentPid = () => 7899;
+    runProcessCleanupInternals.deps.parentPidFor = () => 1;
+    runProcessCleanupInternals.deps.pidAlive = () => true;
+    runProcessCleanupInternals.deps.sleep = () => undefined;
+    runProcessCleanupInternals.deps.startForPid = () =>
+      "Sat Aug 15 12:00:00 2026";
+    runProcessCleanupInternals.deps.stateForPid = () => "S";
+    runProcessCleanupInternals.deps.signal = (_pid, signal) => {
+      signals.push(signal);
+    };
+    const processPath = registerRunOwnedProcess(runDir, {
+      agent: "claude",
+      pid,
+      role: "agent",
+    });
+
+    stopGovernessLoop(
+      config,
+      {
+        ...defaultGovernessDeps(),
+        appendLog: () => undefined,
+        cleanupRunProcesses: () => {
+          cleanupResult = cleanupRunOwnedProcesses(runDir, undefined);
+          return cleanupResult;
+        },
+        fenceCurrent: () => true,
+        killSession: () => undefined,
+        markRunFailed: () => lifecycle.push("failed"),
+        markRunStopped: () => lifecycle.push("stopped"),
+        now: () => 0,
+        recordCleanupUnresolved: (_config, issues) => {
+          recordedUnresolved = issues;
+        },
+        sessionLiveness: () => "dead",
+        tmuxIdentity: () => ({
+          session: config.session,
+          socket: "/private/tmp/d15-survivor.sock",
+        }),
+      },
+      "ordinary teardown"
+    );
+
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(cleanupResult).toEqual({
+      killed: [],
+      skipped: [{ pid, reason: "survived-kill" }],
+      unresolved: [{ pid, reason: "survived-kill" }],
+    });
+    expect(recordedUnresolved).toEqual([{ pid, reason: "survived-kill" }]);
+    expect(existsSync(processPath)).toBe(true);
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(runDir, "run-processes", "unresolved-cleanup.json"),
+          "utf8"
+        )
+      )
+    ).toMatchObject({ unresolved: [{ pid, reason: "survived-kill" }] });
+    expect(lifecycle).toEqual(["failed"]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
 });
 
 test("cleanup failure cannot prevent explicit tmux teardown", () => {
@@ -1088,13 +1438,17 @@ test("cleanup failure cannot prevent explicit tmux teardown", () => {
     },
     fenceCurrent: () => true,
     killSession: () => order.push("kill"),
+    markRunFailed: () => order.push("fail"),
     markRunStopped: () => order.push("mark"),
     now: () => 0,
+    recordCleanupUnresolved: () => undefined,
+    sessionLiveness: () => "dead" as const,
+    tmuxIdentity: () => ({ session: config.session, socket: "fixture" }),
   };
 
   stopGovernessLoop(config, deps, "user requested teardown");
 
-  expect(order).toEqual(["log", "mark", "cleanup", "log", "kill"]);
+  expect(order).toEqual(["log", "cleanup", "log", "kill", "fail", "log"]);
 });
 
 test("explicit teardown returns and records an unconfirmed tmux kill", () => {
@@ -1113,14 +1467,23 @@ test("explicit teardown returns and records an unconfirmed tmux kill", () => {
         config.session,
       ]);
     },
+    markRunFailed: () => events.push("failed"),
     markRunStopped: () => events.push("mark"),
     now: () => 0,
+    recordCleanupUnresolved: () => undefined,
+    sessionLiveness: () => "unknown" as const,
+    tmuxIdentity: () => ({ session: config.session, socket: "fixture" }),
   };
 
   expect(() =>
     stopGovernessLoop(config, deps, "user requested teardown")
   ).not.toThrow();
-  expect(events).toEqual(["exit", "mark", "tmux-session-kill-unconfirmed"]);
+  expect(events).toEqual([
+    "exit",
+    "tmux-session-kill-unconfirmed",
+    "failed",
+    "run-cleanup-unresolved",
+  ]);
 });
 
 class FakeTty extends EventEmitter {

@@ -26,9 +26,15 @@ export const buildHookCommand = (
   hookFile: string,
   context?: "native-child"
 ): string =>
-  [...launchArgv, "__hook-emit", agent, hookFile, ...(context ? [context] : [])]
+  `exec ${[
+    ...launchArgv,
+    "__hook-emit",
+    agent,
+    hookFile,
+    ...(context ? [context] : []),
+  ]
     .map(quoteArg)
-    .join(" ");
+    .join(" ")}`;
 
 const buildHookConfig = (
   events: readonly string[],

@@ -129,7 +129,9 @@ import {
 } from "./native-subagent";
 import {
   cleanupRunOwnedProcesses,
+  type RunProcessCleanupIssue,
   type RunProcessCleanupResult,
+  recordRunCleanupUnresolved,
 } from "./run-process-cleanup";
 import {
   loadRunState,
@@ -152,6 +154,7 @@ import {
   boundedTmuxOptions,
   isTmuxControlUnavailableError,
   TmuxControlUnavailableError,
+  type TmuxLiveness,
   tmuxCommandTimedOut,
   tmuxSessionLiveness,
 } from "./tmux-control";
@@ -362,13 +365,14 @@ export interface GovernessDeps {
   // Turn on the pane-border title strip for the whole session (idempotent).
   initPaneBorders: (session: string) => void;
   judge: (req: JudgeRequest) => Promise<JudgeOutcome>;
-  killSession?: (session: string) => void;
+  killSession?: (session: string, socket: string) => void;
   labelPanes: (req: PaneLabelRequest) => Promise<PaneLabelResult>;
   launchReplacementLoop?: (
     config: GovernessConfig,
     handoverManifest: string
   ) => ReplacementLaunchResult;
   loadState: (stateFile?: string) => GovernessRunState | undefined;
+  markRunFailed?: (config: GovernessConfig, reason: string) => void;
   markRunStopped?: (config: GovernessConfig, reason: string) => void;
   notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
   now: () => number;
@@ -394,6 +398,10 @@ export interface GovernessDeps {
   readUsageLimits: (
     config: GovernessConfig
   ) => Promise<UsageLimitSnapshot | undefined>;
+  recordCleanupUnresolved?: (
+    config: GovernessConfig,
+    unresolved: RunProcessCleanupIssue[]
+  ) => void;
   render: (text: string) => void;
   replacementSessionAlive?: (session: string) => boolean | "unknown";
   replacementSessionReady: (session: string) => boolean | "unknown";
@@ -408,6 +416,7 @@ export interface GovernessDeps {
   ) => Promise<BridgeSendStatus>;
   sendKeys: (pane: string, keys: string[]) => void;
   sendText: (pane: string, text: string) => void;
+  sessionLiveness?: (session: string, socket: string) => TmuxLiveness;
   // Pin both the visible border label and tmux's native title for the
   // governess pane. Agent panes intentionally use setPaneLabel only.
   setGovernessPaneIdentity: (pane: string, label: string) => void;
@@ -415,6 +424,9 @@ export interface GovernessDeps {
   setPaneLabel: (pane: string, label: string) => void;
   sleep: (ms: number) => Promise<void>;
   summarize: (req: SummaryRequest) => Promise<SummaryResult>;
+  tmuxIdentity?: (
+    config: GovernessConfig
+  ) => { session: string; socket: string } | undefined;
 }
 
 // Cumulative, observed-since-start time budget per agent + both-idle time.
@@ -5294,49 +5306,117 @@ export const stopGovernessLoop = (
       now
     );
   }
-  deps.markRunStopped?.(config, reason);
+  const unresolved: RunProcessCleanupIssue[] = [];
   try {
     const cleanup = deps.cleanupRunProcesses?.(config);
-    if (cleanup && (cleanup.killed.length > 0 || cleanup.skipped.length > 0)) {
+    if (
+      cleanup &&
+      (cleanup.killed.length > 0 ||
+        cleanup.skipped.length > 0 ||
+        Boolean(cleanup.deferred?.length) ||
+        Boolean(cleanup.unresolved?.length))
+    ) {
       deps.appendLog(config.logFile, {
         at: new Date(deps.now()).toISOString(),
         event: "run-process-cleanup",
         ...cleanup,
       });
     }
+    if (cleanup?.unresolved?.length) {
+      unresolved.push(...cleanup.unresolved);
+    }
   } catch (error) {
+    unresolved.push({
+      pid: 0,
+      reason: `cleanup-exception:${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    });
     deps.appendLog(config.logFile, {
       at: new Date(deps.now()).toISOString(),
       error: error instanceof Error ? error.message : String(error),
       event: "run-process-cleanup-failed",
     });
   }
-  try {
-    deps.killSession?.(config.session);
-    if (record && config.journalFile) {
-      transitionGovernessControl(
-        config.journalFile,
-        record.controlId,
-        "accepted",
-        new Date(deps.now()).toISOString()
-      );
-    }
-  } catch (error) {
+
+  const tmuxIdentity = deps.tmuxIdentity?.(config);
+  if (
+    !tmuxIdentity ||
+    tmuxIdentity.session !== config.session ||
+    !tmuxIdentity.socket
+  ) {
+    unresolved.push({ pid: 0, reason: "tmux-identity-unavailable" });
+  } else {
+    try /* Exact launch-recorded socket only; no default fallback. */ {
+      if (!deps.killSession) {
+        throw new Error("tmux kill unavailable");
+      }
+      deps.killSession(tmuxIdentity.session, tmuxIdentity.socket);
+    } catch (caught) {
+      unresolved.push({
+        pid: 0,
+        reason: `tmux-kill-failed:${
+          caught instanceof Error ? caught.message : String(caught)
+        }`,
+      });
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        error: caught instanceof Error ? caught.message : String(caught),
+        event: "tmux-session-kill-unconfirmed",
+        session: config.session,
+        socket: tmuxIdentity.socket,
+      });
+    } // Exact-socket kill attempt complete.
+    const liveness =
+      deps.sessionLiveness?.(tmuxIdentity.session, tmuxIdentity.socket) ??
+      "unknown";
+    if (liveness !== "dead") {
+      unresolved.push({
+        pid: 0,
+        reason: `tmux-session-${liveness}`,
+      });
+    } // Direct dead proof remains mandatory.
+  } // Exact tmux identity branch complete.
+
+  if (unresolved.length > 0) {
+    try /* Persist retry evidence before terminal failure. */ {
+      deps.recordCleanupUnresolved?.(config, unresolved);
+    } catch (receiptError) {
+      deps.appendLog(config.logFile, {
+        at: new Date(deps.now()).toISOString(),
+        error:
+          receiptError instanceof Error
+            ? receiptError.message
+            : String(receiptError),
+        event: "run-cleanup-receipt-failed",
+      });
+    } // Receipt failure remains visible and cannot restore stopped state.
+    deps.markRunFailed?.(config, reason);
     if (record && config.journalFile) {
       transitionGovernessControl(
         config.journalFile,
         record.controlId,
         "failed",
         new Date(deps.now()).toISOString(),
-        error instanceof Error ? error.message : String(error)
+        unresolved.map((entry) => entry.reason).join(",")
       );
     }
     deps.appendLog(config.logFile, {
       at: new Date(deps.now()).toISOString(),
-      error: error instanceof Error ? error.message : String(error),
-      event: "tmux-session-kill-unconfirmed",
-      session: config.session,
+      event: "run-cleanup-unresolved",
+      unresolved,
     });
+    return;
+  }
+
+  deps.markRunStopped?.(config, reason);
+  if (record && config.journalFile) {
+    transitionGovernessControl(
+      config.journalFile,
+      record.controlId,
+      "accepted",
+      new Date(deps.now()).toISOString()
+    );
   }
 };
 
@@ -6128,6 +6208,29 @@ const runTmuxEffect = (args: string[]): void => {
   }
 };
 
+const exactTmuxSocketArgs = (socket: string): string[] =>
+  socket.includes("/") ? ["-S", socket] : ["-L", socket];
+
+const exactTmuxSessionLiveness = (
+  session: string,
+  socket: string
+): TmuxLiveness => {
+  if (!(session && socket)) {
+    return "unknown";
+  }
+  try {
+    const result = runBoundedTmux([
+      ...exactTmuxSocketArgs(socket),
+      "has-session",
+      "-t",
+      session,
+    ]);
+    return result.exitCode === 0 ? "live" : "dead";
+  } catch {
+    return "unknown";
+  }
+};
+
 const bestEffortTmux = (args: string[]): void => {
   try {
     runBoundedTmux(args);
@@ -6529,6 +6632,24 @@ export const defaultGovernessDeps = (
     }
     return { ok: true, session };
   },
+  markRunFailed: (config, reason) => {
+    if (config.manifestPath) {
+      updateRunManifest(config.manifestPath, (manifest) =>
+        manifest ? setRunManifestState(manifest, "failed") : undefined
+      );
+    }
+    config.transcriptPath &&
+      appendFileSync(
+        config.transcriptPath,
+        `${JSON.stringify({
+          at: new Date().toISOString(),
+          detail: reason,
+          kind: "status",
+          state: "failed",
+        })}\n`,
+        "utf8"
+      );
+  },
   markRunStopped: (config, reason) => {
     if (config.manifestPath) {
       updateRunManifest(config.manifestPath, (manifest) =>
@@ -6547,8 +6668,13 @@ export const defaultGovernessDeps = (
         "utf8"
       );
   },
-  killSession: (session) => {
-    runBoundedTmux(["kill-session", "-t", session]);
+  killSession: (session, socket) => {
+    runTmuxEffect([
+      ...exactTmuxSocketArgs(socket),
+      "kill-session",
+      "-t",
+      session,
+    ]);
   },
   notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
   now: () => Date.now(),
@@ -6597,6 +6723,12 @@ export const defaultGovernessDeps = (
     readHumanMessages(agent, sessionRef, codexHome),
   readLocalLlmRuntime: (input) => readLocalLlmRuntime(input),
   readPaneCommands: (panes) => readPaneCommandsFromTmux(panes),
+  recordCleanupUnresolved: (config, unresolved) => {
+    if (!config.runDir) {
+      throw new Error("run directory unavailable for cleanup receipt");
+    }
+    recordRunCleanupUnresolved(config.runDir, unresolved);
+  },
   readUsage: (agent, sessionRef, codexHome) =>
     readAgentUsage(agent, sessionRef, codexHome),
   readUsageLimits: (config) =>
@@ -6659,11 +6791,22 @@ export const defaultGovernessDeps = (
   sendText: (pane, text) => {
     runTmuxEffect(["send-keys", "-t", pane, "-l", "--", text]);
   },
+  sessionLiveness: (session, socket) =>
+    exactTmuxSessionLiveness(session, socket),
   sleep: (ms) =>
     new Promise((resolve) => {
       setTimeout(resolve, ms);
     }),
   summarize: (req) => summarizeSession(req),
+  tmuxIdentity: (config) => {
+    const manifest = config.manifestPath
+      ? readRunManifest(config.manifestPath)
+      : undefined;
+    if (!(manifest?.tmuxSession && manifest.tmuxSocket)) {
+      return undefined;
+    }
+    return { session: manifest.tmuxSession, socket: manifest.tmuxSocket };
+  },
 });
 
 const MS_PER_SECOND = 1000;

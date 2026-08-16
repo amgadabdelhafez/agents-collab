@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -29,6 +31,10 @@ import {
   processPendingNativeFallbackRequests,
   readNativeFallbackRequests,
 } from "../../src/loop/native-subagent";
+import {
+  cleanupRunOwnedProcesses,
+  runProcessCleanupInternals,
+} from "../../src/loop/run-process-cleanup";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
   activateUtilityEpoch,
@@ -147,6 +153,115 @@ describe("runHookEmit", () => {
     });
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]).event).toBe("raw");
+  });
+
+  test("D15 native-child SessionStart creates no agent ownership record", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "loop-d15-hook-registration-"));
+    const hooksDir = join(runDir, "hooks");
+    const registrations: Array<{
+      agent: string;
+      pid: number;
+      role: string;
+      runDir: string;
+    }> = [];
+    mkdirSync(hooksDir, { recursive: true });
+    try {
+      const invoke = async (
+        agent: "claude" | "codex",
+        nativeChildContext: boolean
+      ): Promise<void> => {
+        await runHookEmit(agent, join(hooksDir, `${agent}.jsonl`), {
+          append: () => undefined,
+          nativeChildContext,
+          parentPid: agent === "claude" ? 8101 : 8102,
+          readManifest: () => ({ cwd: "/fixture/repo" }),
+          registerAgentProcess: (registeredRunDir, input) => {
+            registrations.push({
+              agent: input.agent,
+              pid: input.pid,
+              role: input.role,
+              runDir: registeredRunDir,
+            });
+            return join(registeredRunDir, `owned-${input.agent}.json`);
+          },
+          stdin: stdinPayload({ hook_event_name: "SessionStart" }),
+          writeCheckpoint: () => undefined,
+        });
+      };
+
+      await invoke("claude", false);
+      await invoke("codex", false);
+      await invoke("claude", true);
+      await invoke("codex", true);
+
+      expect(registrations).toEqual([
+        { agent: "claude", pid: 8101, role: "agent", runDir },
+        { agent: "codex", pid: 8102, role: "agent", runDir },
+      ]);
+    } finally {
+      rmSync(runDir, { force: true, recursive: true });
+    }
+  });
+
+  test("D15 SessionStart rejects a non-agent parent and leaves teardown unresolved", async () => {
+    const runDir = mkdtempSync(join(tmpdir(), "loop-d15-hook-parent-"));
+    const hooksDir = join(runDir, "hooks");
+    const hookFile = join(hooksDir, "codex.jsonl");
+    const parentPid = 8110;
+    const original = { ...runProcessCleanupInternals.deps };
+    mkdirSync(hooksDir, { recursive: true });
+    try {
+      runProcessCleanupInternals.deps.commandForPid = () =>
+        "sh -c loop __hook-emit codex /run/hooks/codex.jsonl";
+      runProcessCleanupInternals.deps.now = () => NOW;
+      runProcessCleanupInternals.deps.pidAlive = () => true;
+      runProcessCleanupInternals.deps.startForPid = () =>
+        "Sat Aug 15 12:00:00 2026";
+      runProcessCleanupInternals.deps.stateForPid = () => "S";
+
+      await runHookEmit("codex", hookFile, {
+        append: () => undefined,
+        parentPid,
+        readManifest: () => ({ cwd: "/fixture/repo" }),
+        stdin: stdinPayload({ hook_event_name: "SessionStart" }),
+        writeCheckpoint: () => undefined,
+      });
+
+      const registry = join(runDir, "run-processes");
+      const failurePath = join(
+        registry,
+        `registration-failure-agent-codex-${parentPid}.json`
+      );
+      expect(
+        existsSync(join(registry, `owned-agent-codex-${parentPid}.json`))
+      ).toBe(false);
+      expect(JSON.parse(readFileSync(failurePath, "utf8"))).toMatchObject({
+        agent: "codex",
+        kind: "run-owned-registration-failure",
+        pid: parentPid,
+        reason: "agent-command-unexpected",
+        role: "agent",
+      });
+      expect(cleanupRunOwnedProcesses(runDir, undefined)).toEqual({
+        killed: [],
+        skipped: [
+          {
+            pid: parentPid,
+            reason: "registration-failure:agent-command-unexpected",
+          },
+        ],
+        unresolved: [
+          {
+            pid: parentPid,
+            reason: "registration-failure:agent-command-unexpected",
+          },
+        ],
+      });
+      expect(existsSync(failurePath)).toBe(true);
+    } finally {
+      Object.assign(runProcessCleanupInternals.deps, original);
+      rmSync(runDir, { force: true, recursive: true });
+    }
   });
 
   test("enforce mode queues and denies an exact mechanical Claude tool", async () => {
@@ -1546,16 +1661,24 @@ describe("runHookEmit", () => {
 });
 
 describe("hook settings generators", () => {
-  const command = buildHookCommand(
+  const claudeCommand = buildHookCommand(
     ["bun", "src/cli.ts"],
     "claude",
     "/run/hooks/claude.jsonl"
   );
+  const codexCommand = buildHookCommand(
+    ["bun", "src/cli.ts"],
+    "codex",
+    "/run/hooks/codex.jsonl"
+  );
 
   test("builds a shell command that invokes the emitter", () => {
-    expect(command).toContain("__hook-emit");
-    expect(command).toContain("claude");
-    expect(command).toContain("/run/hooks/claude.jsonl");
+    expect(claudeCommand.startsWith("exec ")).toBe(true);
+    expect(claudeCommand).toContain("__hook-emit");
+    expect(claudeCommand).toContain("claude");
+    expect(claudeCommand).toContain("/run/hooks/claude.jsonl");
+    expect(codexCommand.startsWith("exec ")).toBe(true);
+    expect(codexCommand).toContain("/run/hooks/codex.jsonl");
   });
 
   test("builds an explicit profile-specific native child command", () => {
@@ -1570,27 +1693,27 @@ describe("hook settings generators", () => {
   });
 
   test("Claude settings register every Claude hook event", () => {
-    const settings = buildClaudeHookSettings(command);
+    const settings = buildClaudeHookSettings(claudeCommand);
     expect(Object.keys(settings.hooks).sort()).toEqual(
       [...CLAUDE_HOOK_EVENTS].sort()
     );
     expect(settings.hooks.PostToolUse[0].hooks[0]).toEqual({
-      command,
+      command: claudeCommand,
       type: "command",
     });
   });
 
   test("Codex hooks.json registers tool and subagent lifecycle events", () => {
-    const hooks = buildCodexHooksJson(command);
+    const hooks = buildCodexHooksJson(codexCommand);
     expect(Object.keys(hooks.hooks).sort()).toEqual(
       [...CODEX_HOOK_EVENTS].sort()
     );
     expect(hooks.hooks.PreToolUse?.[0]?.hooks[0]).toEqual({
-      command,
+      command: codexCommand,
       type: "command",
     });
     expect(hooks.hooks.SubagentStart?.[0]?.hooks[0]).toEqual({
-      command,
+      command: codexCommand,
       type: "command",
     });
   });

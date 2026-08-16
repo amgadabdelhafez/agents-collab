@@ -37,7 +37,11 @@ import {
   recordNativeFallbackDenial,
   resolveNativeSubagentMode,
 } from "../native-subagent";
-import { readRunManifest } from "../run-state";
+import {
+  type RunOwnedProcessRole,
+  registerRunOwnedProcess,
+} from "../run-process-cleanup";
+import { buildManifestPath, readRunManifest } from "../run-state";
 import {
   createUtilityRouteRequest,
   type UtilityRouteRequestInput,
@@ -240,12 +244,17 @@ interface HookEmitDeps {
   env?: NodeJS.ProcessEnv;
   nativeChildContext?: boolean;
   now?: () => string;
+  parentPid?: number;
   readManifest?: (path: string) => { cwd: string } | undefined;
   readUtilityReadiness?: (
     runDir: string,
     tierId: ReturnType<typeof classifyUtilityExecution>,
     nowMs: number
   ) => UtilityDispatchReadiness;
+  registerAgentProcess?: (
+    runDir: string,
+    input: { agent: Agent; pid: number; role: RunOwnedProcessRole }
+  ) => string;
   resolveWorkspaceRoot?: (runRoot: string, path: string) => string | undefined;
   stdin?: AsyncIterable<Uint8Array>;
   writeCheckpoint?: typeof writeMemoryCheckpoint;
@@ -283,6 +292,36 @@ const hookEventName = (raw: Record<string, unknown>): string | undefined =>
 
 const hookAgentId = (raw: Record<string, unknown>): string | undefined =>
   firstString(raw, ["agent_id", "agentId"]);
+
+const registerMainAgentSession = (
+  agent: Agent,
+  hookFile: string,
+  payload: unknown,
+  deps: HookEmitDeps
+): void => {
+  if (
+    deps.nativeChildContext ||
+    hookEventName(asRecord(payload)) !== "SessionStart"
+  ) {
+    return;
+  }
+  const hooksDir = dirname(hookFile);
+  if (basename(hooksDir) !== "hooks") {
+    return;
+  }
+  const runDir = dirname(hooksDir);
+  const manifest = (deps.readManifest ?? readRunManifest)(
+    buildManifestPath(runDir)
+  );
+  if (!manifest) {
+    return;
+  }
+  (deps.registerAgentProcess ?? registerRunOwnedProcess)(runDir, {
+    agent,
+    pid: deps.parentPid ?? process.ppid,
+    role: "agent",
+  });
+};
 
 const hookAgentType = (
   raw: Record<string, unknown>,
@@ -1147,6 +1186,12 @@ export const runHookEmit = async (
       payload = text.trim() ? JSON.parse(text) : {};
     } catch {
       payload = { hook_event_name: "raw", detail: text.trim().slice(0, 200) };
+    }
+    try {
+      registerMainAgentSession(agent, hookFile, payload, deps);
+    } catch {
+      // Registration writes its own failure marker when identity capture fails.
+      // Hook telemetry remains best-effort if the run registry itself is unavailable.
     }
     const at = now();
     try {

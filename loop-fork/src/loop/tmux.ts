@@ -69,6 +69,7 @@ import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
+import { registerRunOwnedProcess } from "./run-process-cleanup";
 import {
   isActiveRunState,
   type RunLaunchCharter,
@@ -187,6 +188,7 @@ interface TmuxDeps {
   makeClaudeSessionId: () => string;
   nowMs: () => number;
   preparePairedRun: typeof preparePairedRun;
+  registerRunOwnedProcess: typeof registerRunOwnedProcess;
   releasePersistentCodexSession: typeof releasePersistentCodexSession;
   runGit: (cwd: string, args: string[]) => GitResult;
   sendKeys: (pane: string, keys: string[]) => void;
@@ -1336,6 +1338,26 @@ class ClaudePostProbeIndeterminateError extends ClaudeComposerRecoveryError {
   }
 }
 
+const exactTmuxSocketForSession = (deps: TmuxDeps, session: string): string => {
+  const result = deps.spawn([
+    "tmux",
+    "display-message",
+    "-p",
+    "-t",
+    session,
+    "#{socket_path}",
+  ]);
+  const socket = result.stdout?.trim();
+  if (result.timedOut || result.exitCode !== 0) {
+    throw new Error(`Failed to record exact tmux socket for "${session}".`);
+  }
+  if (socket) {
+    return socket;
+  }
+  const inheritedSocket = deps.env.TMUX?.split(",")[0]?.trim();
+  return inheritedSocket || "default";
+};
+
 const bindPairedSessionIdentity = (
   deps: TmuxDeps,
   storage: RunStorage,
@@ -1344,8 +1366,11 @@ const bindPairedSessionIdentity = (
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
   clearPaneTargets = false
-): RunManifest =>
-  deps.updateRunManifest(storage.manifestPath, (current) =>
+): RunManifest => {
+  const tmuxSocket = clearPaneTargets
+    ? undefined
+    : exactTmuxSocketForSession(deps, session);
+  const updated = deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
       {
         ...(current ?? manifest),
@@ -1354,6 +1379,7 @@ const bindPairedSessionIdentity = (
         pid: process.pid,
         primaryAgent,
         tmuxSession: session,
+        ...(tmuxSocket ? { tmuxSocket } : {}),
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRightAgent: paneAgents.right,
         ...(clearPaneTargets
@@ -1370,7 +1396,15 @@ const bindPairedSessionIdentity = (
       },
       new Date().toISOString()
     )
-  ) ?? manifest;
+  );
+  if (existsSync(storage.runDir)) {
+    deps.registerRunOwnedProcess(storage.runDir, {
+      pid: process.pid,
+      role: "launcher",
+    });
+  }
+  return updated ?? manifest;
+};
 
 const updatePairedManifest = (
   deps: TmuxDeps,
@@ -3278,6 +3312,14 @@ const startPairedSession = async (
       runDir: storage.runDir,
       session,
     });
+    manifest = bindPairedSessionIdentity(
+      deps,
+      storage,
+      manifest,
+      session,
+      paneAgents,
+      primaryAgent
+    );
     updatePairedManifest(
       deps,
       storage,
@@ -3558,6 +3600,7 @@ const defaultDeps = (): TmuxDeps => ({
   makeClaudeSessionId: () => randomUUID(),
   nowMs: () => Date.now(),
   preparePairedRun,
+  registerRunOwnedProcess,
   runGit: (cwd: string, args: string[]) => runGit(cwd, args),
   sendKeys: (pane: string, keys: string[]) => {
     const result = spawnSync(

@@ -124,6 +124,7 @@ export interface RunManifest {
   tmuxPaneRightAgent?: Agent;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
+  tmuxSocket?: string;
   updatedAt: string;
   workspaceBinding?: LaunchWorkspaceBinding;
   worldModel?: RunWorldModelBinding;
@@ -215,6 +216,7 @@ interface RunManifestInput {
   tmuxPaneRightAgent?: Agent;
   tmuxPaneUtility?: string;
   tmuxSession?: string;
+  tmuxSocket?: string;
   updatedAt?: string;
   workspaceBinding?: LaunchWorkspaceBinding;
   worldModel?: RunWorldModelBinding;
@@ -228,6 +230,21 @@ const cavemanManifestFields = (
     ? { helperCavemanMode: input.helperCavemanMode }
     : {}),
 });
+
+const tmuxIdentityManifestFields = (
+  input: Pick<RunManifestInput, "tmuxSession" | "tmuxSocket">
+): Pick<RunManifest, "tmuxSession" | "tmuxSocket"> => ({
+  ...(input.tmuxSession ? { tmuxSession: input.tmuxSession } : {}),
+  ...(input.tmuxSocket ? { tmuxSocket: input.tmuxSocket } : {}),
+});
+
+const readTmuxIdentityManifestFields = (
+  parsed: Record<string, unknown>
+): Pick<RunManifest, "tmuxSession" | "tmuxSocket"> =>
+  tmuxIdentityManifestFields({
+    tmuxSession: firstString(parsed, ["tmuxSession", "tmux_session"]),
+    tmuxSocket: firstString(parsed, ["tmuxSocket", "tmux_socket"]),
+  });
 
 const effortManifestFields = (
   input: Pick<RunManifestInput, "driverEffort" | "reviewerEffort">
@@ -880,7 +897,7 @@ export const createRunManifest = (
     runId: validateRunId(input.runId),
     state,
     status: runStatusFromState(state),
-    ...(input.tmuxSession ? { tmuxSession: input.tmuxSession } : {}),
+    ...tmuxIdentityManifestFields(input),
     ...(input.tmuxPaneLeftAgent
       ? { tmuxPaneLeftAgent: input.tmuxPaneLeftAgent }
       : {}),
@@ -969,7 +986,6 @@ const readOptionalRunManifestFields = (
     "helperCavemanMode",
     "helper_caveman_mode",
   ]);
-  const tmuxSession = firstString(parsed, ["tmuxSession", "tmux_session"]);
   const tmuxPaneLeftAgent = firstAgent(parsed, [
     "tmuxPaneLeftAgent",
     "tmux_pane_left_agent",
@@ -1019,6 +1035,7 @@ const readOptionalRunManifestFields = (
     ...launchCharterManifestFields(parsed),
     ...readLaunchReservationManifestFields(parsed),
     ...readWorldModelManifestFields(parsed, manifestPath),
+    ...readTmuxIdentityManifestFields(parsed),
     ...(tmuxPaneGoverness ? { tmuxPaneGoverness } : {}),
     ...(tmuxPaneAuPair ? { tmuxPaneAuPair } : {}),
     ...(tmuxPaneLeft ? { tmuxPaneLeft } : {}),
@@ -1028,7 +1045,6 @@ const readOptionalRunManifestFields = (
     ...(tmuxPaneNanny ? { tmuxPaneNanny } : {}),
     ...(tmuxPaneRecon ? { tmuxPaneRecon } : {}),
     ...(tmuxPaneUtility ? { tmuxPaneUtility } : {}),
-    ...(tmuxSession ? { tmuxSession } : {}),
   };
 };
 
