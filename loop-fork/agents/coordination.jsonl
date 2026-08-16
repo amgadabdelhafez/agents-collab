@@ -9,3 +9,5 @@
 {"ts": "2026-08-13T21:03:12Z", "agent": "amgad-26764", "task": "harvto-d5-silent-completion", "intent": "done", "file": null}
 {"ts": "2026-08-13T21:07:18Z", "agent": "amgad-35505", "task": "harvto-d16-scope-audit-completeness", "intent": "task-start", "file": null}
 {"ts": "2026-08-16T03:46:58Z", "agent": "amgad-91896", "task": "harvto-d16-scope-audit-completeness", "intent": "done", "file": null}
+{"ts": "2026-08-16T03:56:30Z", "agent": "amgad-21435", "task": "harvto-d15-teardown-process-orphans", "intent": "task-start", "file": null}
+{"ts": "2026-08-16T06:56:26Z", "agent": "amgad-89192", "task": "harvto-d15-teardown-process-orphans", "intent": "done", "file": null}

@@ -1,0 +1,30 @@
+{
+  "task_id": "harvto-d15-teardown-process-orphans",
+  "scanned_at": "2026-08-16T06:56:25Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-16T06:56:25Z",
+      "task_id": "harvto-d15-teardown-process-orphans",
+      "signal": "loc_growth",
+      "file": "src/loop/governess.ts",
+      "before_loc": 7533,
+      "after_loc": 7676,
+      "delta_loc": 143,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-16T06:56:25Z",
+      "task_id": "harvto-d15-teardown-process-orphans",
+      "signal": "loc_growth",
+      "file": "src/loop/run-process-cleanup.ts",
+      "before_loc": 491,
+      "after_loc": 1239,
+      "delta_loc": 748,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

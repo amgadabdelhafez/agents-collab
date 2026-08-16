@@ -1,0 +1,13 @@
+{
+  "task_id": "harvto-d15-teardown-process-orphans",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "223 focused cleanup, Governess exit, hook, tmux, and run-state tests pass; check passes 898 files; canonical typecheck and build pass; all 79 serial test files pass"
+    }
+  }
+}

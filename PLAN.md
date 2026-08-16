@@ -1,4 +1,490 @@
-# Current Plan — Harvto Supervisor Defect Campaign, D16 Through D12
+# Current Plan — Close D15, Then Run Isolated D6-D12 Campaign
+
+## Run-78 execution plan — epoch `1786856716562565`
+
+Plan review for this epoch is complete and this section is the authoritative execution contract, not a
+plan-only note. The next action is the D15 pre-close lifecycle snapshot (step 2 below); no source edit
+and no D6 work may start before the D15 bookkeeping commit exists with an empty index.
+`status.md` already exists at repository root and is append-only — never rewrite or truncate it; append
+a new dated section at every phase or context boundary.
+
+### Objective
+
+- Close `harvto-d15-teardown-process-orphans` exactly once under exact-SHA approval
+  `b5280c18-08cc-439c-8009-9d121ea1dfe8`, then make one separate D15 bookkeeping/evidence commit.
+- Do not start D6 until that commit exists and the index is empty. Then run D6-D12 in order as
+  separate Harness tasks, each with plan review, exact-base red proof, bounded fix, full gates,
+  explicit implementation commit, Claude exact-SHA zero-write `PASS`, exactly one close, separate
+  bookkeeping commit, and governed handover.
+- Utility remains hard-disabled. No helper routing or spend. Never edit Harvto; merge, rebase, push,
+  deploy, release, change provider/model/dependencies, delete evidence, weaken authority, widen
+  scope, or inject `/compact` or `/rename`.
+
+### D15 closure result — 2026-08-15
+
+- Resume bundles, bootstrap binding, exact HEAD/parent, empty index, five-path inherited tracked
+  scope, 16 non-root untracked paths, 60-file root `.loop/`, utility `0/off/0`, frozen hashes, and
+  exact-SHA PASS `b5280c18-08cc-439c-8009-9d121ea1dfe8` all revalidated before close.
+- Pre-close lifecycle snapshot
+  `loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/close/pre-close-lifecycle.json`
+  records 11 files, terminal count 0, active D15, exact HEAD, empty index, full `-uall` status, byte
+  sizes, SHA-256 values, and bounded tails.
+- Exactly one `./harness done harvto-d15-teardown-process-orphans` exited 0. Post-close snapshot
+  records `active_task: null`, terminal count 1, unchanged total count 61, removed `current-task`,
+  changed `tasks.json`, unchanged HEAD, empty index, no source/test change, and root `.loop/` count
+  60. No retry occurred.
+- Next atomic action is exact-path D15 bookkeeping/evidence staging and one separate commit. D6 may
+  start only after that commit exists and the index is empty.
+
+### Validated resume boundary
+
+- Both ready bundles at
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/77/handoff/1786856716562565/{claude,codex}.json`
+  parse, carry `status: "ready"`, agree on epoch `1786856716562565`, and bind exact live HEAD
+  `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`.
+- Bundle validation is not parse-only. Before acting, recompute SHA-256 of `claude.json`, `codex.json`,
+  and `continuation.md` and match each against `manifest.json` `bundles.*.digest` /
+  `continuation.digest`; confirm `manifest.json` `epoch` equals `1786856716562565` and equals the
+  containing directory name. Expected digests: claude
+  `08ca8cfaf0f9b379b9c36c0bc6b5034427efc89f2efe2a641da6e12e56f5d86d`, codex
+  `4ea9cbc4ffe572e9644723ee2677d242b265ab20fa668ef7c44a2d80957749bc`, continuation
+  `6f1435dfa29ee37266becbe639e53154ad97c512c954ac09357f208ed73409c0`. Any digest or epoch mismatch
+  stops the resume; re-reading the bundle text is not a substitute for the digest check.
+- HEAD parent is `fb71f47bb126a39eae7f1613fa952c994421de5e`; the index is empty. The implementation commit
+  modifies exactly the approved six production and three test paths. Root `.loop/` remains
+  untracked with 60 files. Utility is positively `0/off/0`.
+- Harness reports only `harvto-d15-teardown-process-orphans` active with eval `pass`. No close has
+  run. Exact-SHA verdict `b5280c18-08cc-439c-8009-9d121ea1dfe8` authorizes one D15 close and one
+  separate bookkeeping commit only.
+- Frozen SHA-256 values match: spec
+  `9233cb254643fa5029c822808bcefb3c2df3e6136311258ccbcb4ab497c43c53`, plan
+  `5cbd5dd1870c61a859d09632a774a80aee1195911f7982f3cbc474bf8142326d`, verify
+  `27b85e35e64cd066cea93a204f2dd24039bc322b4ea56227cd08e9adf3cb463b`, and red
+  `cea7c590c92768f92db9647e25f359eafd4f1701d74572a438d71e905f6990c9`.
+- Untracked scope is counted with `git status --porcelain -uall`, never `-unormal`: `-unormal`
+  collapses the D15 run/spec directories and reports 9 entries where the authoritative count is 16
+  non-root-`.loop` untracked paths. Root `.loop/` file count is proven with
+  `find .loop -type f | wc -l` (expected `60`), not read off a status line.
+- Tracked dirty scope remains `PLAN.md`, `status.md`,
+  `loop-fork/.harness/{parked-ideas.jsonl,tasks.json}`, and
+  `loop-fork/agents/coordination.jsonl`. The 16 non-root-`.loop` untracked paths and both ignored
+  D15 plans match the bundles. Evidence remains preserved.
+
+### D15 close and bookkeeping plan
+
+1. Reconcile exact HEAD/parent, empty index, dirty scope, 60-file root `.loop/`, utility `0/off/0`,
+   sole active/eval-pass D15 state, frozen hashes, nine-path commit range, and exact-SHA PASS ID.
+   Any mismatch stops the close.
+2. From `loop-fork/`, inventory the `.harness` lifecycle scope with a NUL-safe sorted path list
+   (`find .harness -type f -print0 | sort -z`) so subdirectory contents are included, not just
+   top-level files. The scope observed at this epoch is `.harness/{README.md,config.json,
+   current-task,parked-ideas.jsonl,tasks.json}` plus the `hooks/`, `locks/`, and
+   `pre-task-artifacts/` subtrees; `current-task` and `locks/` are the entries the close is expected
+   to mutate or remove. Record `./harness status --json`, `git status --porcelain -uall`,
+   `git rev-parse HEAD`, byte size, SHA-256, and a bounded tail for every inventoried file into D15
+   run evidence. Preserve that snapshot as a machine-comparable file. The plan-review session did
+   not create it; it is the first execution action.
+3. Run exactly one command:
+
+   ```bash
+   ./harness done harvto-d15-teardown-process-orphans
+   ```
+
+   Do not retry automatically on any failure. Re-inventory the same lifecycle scope plus any newly
+   created lifecycle files; record post-close status, byte sizes, SHA-256, tails, and structured
+   deltas against the pre-close snapshot.
+
+   Positive close proof requires all of:
+   - `./harness status --json` exits zero and reports no active task (`active_task` absent or
+     `null`); a non-zero exit or missing key is a stop, not a pass.
+   - The count of `.harness/tasks.json` records with `id == "harvto-d15-teardown-process-orphans"`
+     and a terminal status (`done`/`closed`) goes from `0` pre-close to exactly `1` post-close, and
+     the total record count grows by at most one. Compare the two recorded numbers.
+   - No second D15 terminal record exists anywhere in the lifecycle scope.
+   - `git rev-parse HEAD` is still `5f5ddba66cdb1bc5d8f6212b763323f507b0b777` and the index is still
+     empty: the close must not commit, and `git status --porcelain -uall` must show no new or
+     changed path under `loop-fork/src/` or `loop-fork/tests/`.
+
+   Silence, deletion of `.harness/current-task` alone, or command exit `0` alone is insufficient
+   proof.
+4. Recompute the authorized path set **after** the close, never before: the close is expected to
+   delete untracked `loop-fork/.harness/current-task`, which is one of the 16 pre-close untracked
+   paths, so an array frozen before the close will not match the post-close tree. Refresh only D15
+   closure bookkeeping and evidence: D15 contracts/tasks, task log, evals, run
+   artifacts, defect matrix entries, Harness lifecycle records, coordination record, `PLAN.md`, and
+   `status.md`. Preserve all prior D15 evidence. Record the portability bound exactly: uppercase
+   `PLAN.md` in `loop-fork/.gitignore:3` matches lowercase `plan.md` on the current
+   case-insensitive macOS filesystem; a case-sensitive filesystem fails the force-add precheck
+   closed. Record `git config --get core.ignorecase` (including its absence when unset) beside the
+   bound, since the `check-ignore` result depends on it.
+5. Before force-adding, run `git check-ignore -v -- <path>` separately for:
+   `loop-fork/runs/harvto-d15-teardown-process-orphans/plan.md` and
+   `loop-fork/specs/harvto-d15-teardown-process-orphans/plan.md`. Both must resolve only to
+   `loop-fork/.gitignore:3:PLAN.md`; otherwise stop. Observed at this epoch both already resolve to
+   exactly that rule and neither path is tracked (`git ls-files` over both D15 directories is
+   empty), so the force-add is an add, not an overwrite. Re-run the check after the close, because
+   the check must be against the post-close tree.
+6. Build a quoted zsh array `P=(...)` containing every authorized bookkeeping/evidence path and no
+   source/test path. Stage each ordinary path explicitly with `git add -- "$path"`; use
+   `git add -f -- "$path"` only for the two checked ignored plans. Never broad-stage. Prove:
+
+   ```zsh
+   actual=("${(@f)$(git diff --cached --name-only -- "${P[@]}")}")
+   (( ${#actual[@]} == ${#P[@]} ))
+   diff -u <(printf '%s\n' "${(on)P[@]}") <(printf '%s\n' "${(on)actual[@]}")
+   git diff --cached --name-only | awk 'END { print NR }'
+   ```
+
+   Run these under `git -c core.quotePath=false` so non-ASCII paths are not octal-quoted into a
+   false mismatch. Assert each of the following and record its pass/fail:
+   - `P` holds no duplicate entry (`(( ${#P[@]} == ${#${(u)P[@]}} ))`); a duplicate would satisfy the
+     count comparison while covering fewer real paths.
+   - The final `awk` line count equals `${#P[@]}` and is non-zero, and the unfiltered
+     `git diff --cached --name-only` set equals `P` exactly, proving nothing outside `P` is staged.
+   - No staged path starts with `.loop/`, and no staged path lies under `loop-fork/src/` or
+     `loop-fork/tests/` — those nine paths belong to the implementation commit only.
+   - On any failed assertion: do not commit and do not retry. Record the exact staged set and stop.
+     Do not unstage on your own initiative; the index is evidence and restoring the empty-index
+     invariant is a supervisor decision.
+7. Review the cached diff and `git diff --cached --check`, and diff `git diff --cached --numstat`
+   against `git diff --cached --numstat --ignore-all-space`; disagreement means an unintended
+   reformat and stops the commit. Then create one separate D15 bookkeeping commit whose message
+   states bookkeeping/evidence only and cites exact-SHA PASS
+   `b5280c18-08cc-439c-8009-9d121ea1dfe8`. Prove afterwards: the commit path set
+   (`git show --name-only --format= HEAD`) equals `P`, the new HEAD's parent is
+   `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`, no root `.loop/` path is in the commit while
+   `find .loop -type f | wc -l` is still `60` and `.loop/` is still untracked, no Harness task is
+   active, every prior D15 evidence file is still present, and the index is empty. Do not amend,
+   rebase, or reword the implementation commit.
+
+### D6-D12 automatic isolated campaign
+
+Run only after D15 bookkeeping commit, in order:
+`harvto-d6-readonly-attach`, `harvto-d7-handoff-identity`,
+`harvto-d8-stale-write-lease`, `harvto-d9-duplicate-emission`,
+`harvto-d10-guarded-apply`, `harvto-d11-composer-nudge`, and
+`harvto-d12-socket-discovery`.
+
+For each task:
+
+1. Reconcile prior close/bookkeeping commit, empty index, preserved root `.loop/` (60 files, still
+   untracked), no active Harness task, and utility `0/off/0`. Confirm the target id exists in
+   `loop-fork/.harness/parked-ideas.jsonl` and that no task is active, then promote exactly one
+   parked Harness task. Create canonical spec/plan/tasks/verify and
+   run evidence from preserved defect-matrix authority. Obtain Claude literal zero-write plan
+   verdict and record its ID before any source edit.
+2. Capture one named exact-base red proof against fixture-owned state only. Preserve it unchanged.
+   Trace the narrow owner, implement only the bounded defect fix, and add positive, negative,
+   replay, fail-closed, and isolation controls required by that task contract.
+3. Run focused tests and targeted static checks, then mandatory `bun run check`, canonical
+   TypeScript, build, complete certified serial suite, passing Harness/root evals with
+   `baseline_failures: []` and empty by-name allowlist, Harness preflight/stop-gate, and root
+   `scripts/verify.sh`. Evals run against that task's `verify.md`, and both
+   `loop-fork/runs/<task-id>/eval.json` and `runs/<task-id>/eval.json` must exist and read `pass`
+   before any close. UI capture remains required only if rendered UI changes. Never run
+   `bun run fix` — it rewrites `runs/` evidence; format touched files with biome directly.
+4. Prove exact Git scope and normal/ignore-all-space numstats from repository root. Explicitly stage
+   only authorized implementation paths, create one implementation commit, and obtain Claude
+   literal zero-write `PASS` for that exact SHA. On `REVISE`, change only the current task, rerun
+   proportional focused checks plus every mandatory gate, commit corrections explicitly, and seek
+   a fresh verdict.
+5. After exact-SHA `PASS`, capture pre-close lifecycle status/sizes/tails, run exactly one Harness
+   close, prove exactly one new close record and no active task, then make one separate explicit
+   bookkeeping/evidence commit using the same quoted-array scope proof. Reconcile before promoting
+   the next task.
+6. At every phase or context boundary, append `status.md`, refresh this current-plan section, and
+   produce governed handover with exact HEAD, index, dirty paths, hashes, verdict IDs, test results,
+   Harness state, root `.loop/` count, utility state, and one next action.
+
+Task invariants remain separate: D6 read-only attachment cannot block targeted recovery delivery;
+D7 preserves model, effort, workspace, run, and manifest identity; D8 stale write authority cannot
+mutate; D9 one resolved acknowledgement emits once; D10 guarded apply requires an existing,
+applicable exact target; D11 recovery uses durable transport and never types over composers; D12
+live-run discovery follows manifest-recorded tmux sockets.
+
+### Acceptance and stop conditions
+
+- D15: exactly one positive close record, no active task, one separate bookkeeping commit, exact
+  staged path proof, root `.loop/` excluded, all evidence preserved.
+- D6-D12: each task has approved plan, preserved exact-base red, bounded implementation, mandatory
+  green gates/evals, explicit implementation commit, exact-SHA zero-write `PASS`, exactly one close,
+  separate bookkeeping commit, and governed handover.
+- Any state mismatch, bundle digest/epoch mismatch, failed close, missing review verdict, gate
+  failure, unexpected write, ignore mismatch, staged-set mismatch, HEAD movement during a close, or
+  scope mismatch stops the current task. Record blocker without retries, cleanup, or
+  scope widening.
+
+## Run-77 governed prepare boundary — exact-SHA PASS received, close pending
+
+### Current objective and state
+
+- Finish D15 only: exact-SHA PASS `b5280c18-08cc-439c-8009-9d121ea1dfe8` is granted for
+  implementation commit `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`; close the active Harness task
+  exactly once and commit closure bookkeeping separately. Do not begin D6 until that boundary is
+  complete.
+- Exact HEAD is `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`; exact parent is
+  `fb71f47bb126a39eae7f1613fa952c994421de5e`; index is empty. The commit contains only the approved
+  six production and three test paths already listed below. Range `git diff --check` passes.
+- Exact tracked dirty scope is five bookkeeping paths: `PLAN.md`,
+  `loop-fork/.harness/parked-ideas.jsonl`, `loop-fork/.harness/tasks.json`,
+  `loop-fork/agents/coordination.jsonl`, and `status.md`.
+- Exact non-root-`.loop` untracked scope is 16 paths:
+  `loop-fork/.harness/current-task`, D15 run files
+  `artifacts/debt/baseline-loc.json`, `artifacts/pre-task/10-current-task.sh.log`,
+  `artifacts/pre-task/state-invariants.jsonl`, `artifacts/pre-task/state-invariants.log`,
+  `artifacts/red/reproduction.md`, `eval.json`, `memory/001-initial.md`,
+  `memory/002-promoted-parked-idea.md`, `meta.json`, `parked-idea.md`, and `task-log.md` under
+  `loop-fork/runs/harvto-d15-teardown-process-orphans/`; D15 canonical `spec.md`, `tasks.md`, and
+  `verify.md` under `loop-fork/specs/harvto-d15-teardown-process-orphans/`; and root
+  `runs/harvto-d15-teardown-process-orphans/eval.json`.
+- Both required D15 `plan.md` files remain present and ignored by `loop-fork/.gitignore:3`. Root
+  `.loop/` remains untracked with exactly 60 files. Utility is positively `0/off/0`.
+
+### Completed checks and review state
+
+- Focused proof is 223 pass, 0 fail; targeted Ultracite, canonical TypeScript, and diff-check pass.
+  Mandatory `check` passes 898 files; build and all 79 certified serial test files pass; both evals
+  pass with `baseline_failures: []`; Harness preflight and stop-gate pass; root verifier passes.
+- Canonical spec/plan/verify and exact-base red hashes remain the exact values recorded below.
+  Harness still reports sole active task `harvto-d15-teardown-process-orphans`, eval `pass`; no
+  close or lifecycle transition has run.
+- Control-slice decision `4f9e84d4-34f9-4e6c-843b-c564420e9016` is literal `PASS`. Exact-SHA
+  decision `b5280c18-08cc-439c-8009-9d121ea1dfe8`, replying to request
+  `8aa2a171-7eb6-4ae9-8507-3750ad6129cc`, is also literal `PASS` for exact implementation commit
+  `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`. It authorizes exactly one D15 Harness close and one
+  separate bookkeeping commit, and nothing else. The verdict arrived after Governess's prepare
+  boundary, so run 77 records it without starting the new lifecycle phase.
+
+### Risks and next bounded action
+
+- Preserve the recorded non-blocking bounds: first-executable agent identity intentionally fails
+  closed for wrapper launches; polling is synchronous and serial; the documented same-second
+  identical-command collision lacks a dedicated control. Also, `loop-fork/.gitignore:3` contains
+  uppercase `PLAN.md` but matches the two lowercase D15 `plan.md` files only because the current
+  macOS filesystem is case-insensitive; on a case-sensitive filesystem the mandated pre-force-add
+  `git check-ignore -v` would fail closed and those plans would be ordinary untracked files. The
+  explicit-path staging rule remains protective. Do not rework these bounds during handover.
+- Next fresh loop: verify charter/bundles, exact HEAD/index/dirty scope, utility, root `.loop`,
+  Harness state, canonical/red hashes, exact commit range, and exact-SHA PASS ID. Capture pre-close
+  Harness status plus byte sizes and tails of every lifecycle file, run exactly one Harness close,
+  then positively prove one new D15 close record and no active task. Update and explicitly stage
+  only D15 closure bookkeeping/evidence, force-add only the two pre-verified ignored plans, prove
+  exact staged scope with a quoted zsh array and no root `.loop`, and create the one separate
+  bookkeeping commit. Do not rerun a broad suite unless source changes or review requires it.
+
+## Run-77 authoritative continuation plan — epoch `1786849270478176`
+
+### Validated boundary
+
+- Both ready bundles at
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/76/handoff/1786849270478176/{claude,codex}.json`
+  parse, report epoch `1786849270478176`, and bind to live HEAD
+  `fb71f47bb126a39eae7f1613fa952c994421de5e`.
+- Index is empty. Root `.loop/` remains untracked with exactly 60 files. No evidence was changed or
+  deleted. Harness reports sole active task `harvto-d15-teardown-process-orphans`, eval pending.
+- Canonical D15 hashes match Claude's literal `PLAN PASS` decision
+  `92de3425-0e1c-42e6-a89d-bda26e7bb578`: spec
+  `9233cb254643fa5029c822808bcefb3c2df3e6136311258ccbcb4ab497c43c53`, plan
+  `5cbd5dd1870c61a859d09632a774a80aee1195911f7982f3cbc474bf8142326d`, verify
+  `27b85e35e64cd066cea93a204f2dd24039bc322b4ea56227cd08e9adf3cb463b`.
+- D15 implementation is committed as exact SHA
+  `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`, whose exact parent is
+  `fb71f47bb126a39eae7f1613fa952c994421de5e`. Its tree delta contains exactly six production files
+  and three test files: `loop-fork/src/loop/{governess,hooks/emit,hooks/settings,run-process-cleanup,run-state,tmux}.ts`
+  and `loop-fork/tests/loop/{governess-exit,governess-hooks,run-process-cleanup}.test.ts`. Exact-SHA
+  zero-write decision `b5280c18-08cc-439c-8009-9d121ea1dfe8` is literal `PASS` for this commit.
+- Post-control focused result is 223 pass, 0 fail: cleanup `29/29`, Governess exit `34/34`,
+  Governess hooks `35/35`, tmux `103/103`, and run-state `22/22`. Targeted Biome and Ultracite over
+  all nine files, canonical TypeScript, and `git diff --check` pass.
+- Claude control review `1723a22b-2f3a-4573-ad47-db11eda4a718` returned `REVISE`; all three blockers
+  were closed in the working tree with named TERM/KILL survival controls, complete registration
+  failure lifecycle controls, retained global `exec`, and agent-command validation. Fresh
+  zero-write control decision `4f9e84d4-34f9-4e6c-843b-c564420e9016` returned literal `PASS` for
+  design and coverage. This remains separate from exact-SHA approval.
+- Mandatory pre-commit verification is green: `bun run check` passes 898 files; canonical TypeScript
+  and build pass; the official complete serial suite passes all 79 files; both evals pass with
+  `baseline_failures: []`; Harness preflight and stop-gate pass; and the root verifier completes
+  lint, typecheck, build, all tests, and baseline gate.
+- Normal and ignore-all-space source/test numstats now match on all nine paths:
+  `governess.ts` `163/20`, `hooks/emit.ts` `46/1`, `hooks/settings.ts` `8/2`,
+  `run-process-cleanup.ts` `799/51`, `run-state.ts` `19/3`, `tmux.ts` `46/3`,
+  `tests/loop/governess-exit.test.ts` `371/8`, `tests/loop/governess-hooks.test.ts` `132/9`, and
+  `tests/loop/run-process-cleanup.test.ts` `916/0`.
+- Preserved exact-base red proof sha256 is
+  `cea7c590c92768f92db9647e25f359eafd4f1701d74572a438d71e905f6990c9` for
+  `loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/red/reproduction.md`. Re-derive and
+  match this digest before the implementation commit, before the exact-SHA review request, and
+  before the Harness close.
+- `status.md` already exists at repository root (2459 lines, tracked, dirty). It must not be
+  created or truncated; each boundary appends to it. `PLAN.md` and `status.md` are bookkeeping
+  paths and never enter an implementation commit.
+- Both ignored plans are preserved:
+  `loop-fork/runs/harvto-d15-teardown-process-orphans/plan.md` and
+  `loop-fork/specs/harvto-d15-teardown-process-orphans/plan.md`.
+
+### Non-negotiable authority
+
+- Utility stays hard-disabled: `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`,
+  `LOOP_AU_PAIR_ENABLED=0`. No helper routing, native helper fallback, provider call, or spend.
+- Do not edit or control Harvto; merge, rebase, push, deploy, or release; alter provider, model,
+  effort, dependencies, remotes, or authority; delete evidence; widen defect scope; or inject
+  `/compact` or `/rename`.
+- Preserve exact inherited state until its owning phase commits it. Never broad-stage, clean the
+  worktree, reuse a task run, or mix D15 with D6-D12.
+
+### D15 execution
+
+1. Reconcile before each write and gate.
+   - Recheck exact HEAD, empty index, active Harness task, root `.loop/` count, utility `0/off/0`,
+     Git-derived dirty paths, ignored plans, and both handoff bundles.
+   - Read the complete inherited diff against canonical `spec.md`, `plan.md`, and `verify.md`.
+     Preserve the exact-base red at
+     `loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/red/reproduction.md`; never
+     recapture it over changed production.
+2. Complete only approved F1-F3 controls and fixes they expose.
+   - F1: add named `D15 zombie target is settled after TERM while its parent has not reaped it`.
+     Prove `kill(pid,0)` and `ps -p` still see the zombie, `ps stat` is `Z`/defunct, settlement
+     succeeds, and no KILL reaches a changed identity.
+   - F2: add named `D15 cleanup never signals itself or an ancestor`. Prove exact PPID walking,
+     zero signals, retained ownership, and durable `unresolved:self-or-ancestor`.
+   - F3: add named `D15 native-child SessionStart creates no agent ownership record`, paired with
+     main-agent positive registration and every affected Claude/Codex hook compatibility control.
+3. Complete M1-M3 and revised-plan R1/R2 controls.
+   - M1: prove exact command plus one-second `lstart` matching, including documented identical
+     command/same-second bound.
+   - M2: prove death on exact launch-recorded tmux socket and session; missing or unknown socket
+     fails without default-socket fallback.
+   - M3: prove enumeration stays under fixture `runDir`; preserved live runs are never inspected or
+     signaled.
+   - R1: add named `D15 ordinary teardown transfers only its exact self launcher and reaches
+     stopped`. Require durable versioned receipt before active-record removal, no inline unresolved
+     ownership, all other processes and exact tmux target settled, and lifecycle `stopped`.
+   - R2: add named `D15 abandoned-run GC treats a zombie manifest launcher as settled`. Exercise
+     the same zombie-aware predicate through teardown, `runIsProvablyAbandoned`, and deferred
+     receipt cleanup.
+   - M1 named control: `D15 launcher settlement matches exact command and one-second lstart`.
+   - M2 named control: `D15 tmux death is proved on the exact launch-recorded socket and session`.
+   - M3 named control: `D15 enumeration stays inside the fixture runDir and never touches live runs`.
+
+4. Run focused proof with utility fixed at `0/off/0`.
+   - Named exact-base regression, then each new named control.
+   - `bun run test:file -- tests/loop/run-process-cleanup.test.ts`
+   - `bun run test:file -- tests/loop/governess-exit.test.ts`
+   - `bun run test:file -- tests/loop/governess-hooks.test.ts`
+   - `bun run test:file -- tests/loop/tmux.test.ts`
+   - `bun run test:file -- tests/loop/run-state.test.ts`
+   - Targeted Biome and Ultracite over touched source/test files, canonical TypeScript, and
+     `git diff --check`. Fix only D15 failures; scope widening blocks work.
+5. Run mandatory gates from `loop-fork/`.
+   - `bun run check`
+   - `bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts`
+   - `bun run build`
+   - `LOOP_TEST_CERTIFICATION_MODE=single-file bun run test:ci`
+   - `./harness preflight --json`
+   - `./harness stop-gate --json`
+   - Regenerate passing Harness and repository-root evals with `baseline_failures: []`, then run
+     `./scripts/verify.sh harvto-d15-teardown-process-orphans harvto-d15-teardown-process-orphans`
+     from repository root. UI capture remains unnecessary.
+6. Prove and commit D15 implementation explicitly.
+   - Reconcile porcelain-v2 status, cached/unstaged name-status, normal versus ignore-all-space
+     numstats, diff-check, and exact staged path list.
+   - Stage only approved D15 source/test paths by explicit `git add -- <path>` calls. Never use
+     `git add -A`. Exclude root `.loop/`, Harness lifecycle files, plans/specs/run evidence,
+     coordination records, root logs, unrelated tasks, Harvto, dependencies, remotes, and release
+     paths from this implementation commit.
+   - Commit one D15 implementation SHA. Confirm its parent, exact path set, and no whitespace-only
+     or out-of-scope changes.
+7. Obtain Claude exact-SHA zero-write review.
+   - Send exact parent/SHA, exact path set, canonical hashes and PLAN PASS ID, red proof, F1-F3,
+     M1-M3, R1/R2 results, full gates, evals, and explicit zero-write/no-helper/no-spend authority.
+   - Require literal `PASS` or `REVISE` for that SHA. `PLAN PASS` is not implementation approval.
+   - On `REVISE`, change D15 only, rerun proportional focused checks plus every mandatory gate,
+     commit explicit correction paths, and request a fresh exact-SHA verdict. No Harness close
+     before literal `PASS`.
+8. Close once and bookkeep separately.
+   - After exact-SHA `PASS`, run exactly one `./harness done harvto-d15-teardown-process-orphans`.
+     Inspect all lifecycle writes and confirm no second close.
+   - Update D15 contracts, tasks, evals, task log, defect matrix, run evidence, `PLAN.md`, and
+     `status.md`. Explicitly stage bookkeeping/evidence paths. Force-add only the two required
+     ignored D15 plan files. Preserve root `.loop/`.
+   - Commit one separate D15 bookkeeping commit. Confirm no active task and no D15 leakage before
+     D6 promotion.
+
+### D6-D12 automatic isolated campaign
+
+Run in this order: `harvto-d6-readonly-attach`, `harvto-d7-handoff-identity`,
+`harvto-d8-stale-write-lease`, `harvto-d9-duplicate-emission`,
+`harvto-d10-guarded-apply`, `harvto-d11-composer-nudge`, then
+`harvto-d12-socket-discovery`.
+
+For each task, only after prior bookkeeping commit and clean index:
+
+1. Reconcile authority and promote exactly one parked Harness task. Create its run folder and
+   canonical spec/plan/tasks/verify from preserved matrix evidence. Obtain zero-write plan review
+   before source edits.
+2. Capture one exact-base red proving the named invariant without Harvto access, broad process
+   discovery, helper routing, or mutation outside fixture-owned state.
+3. Trace the narrow owner, implement the bounded fix, and add positive, negative, replay,
+   fail-closed, and isolation controls required by that task's contract.
+4. Run focused suites, targeted static checks, complete mandatory serial suite, passing evals,
+   Harness preflight/stop-gate, and root verifier. No filtered or attested result substitutes for
+   mandatory proof.
+5. Prove exact scope and create one explicit implementation commit. Obtain Claude literal
+   zero-write `PASS` for that exact SHA; correct and re-review until PASS.
+6. Run exactly one Harness close, inspect writes, then create one separate explicit bookkeeping
+   commit. Reconcile preserved evidence and empty index before promoting next task.
+
+Task invariants stay distinct: D6 read-only attachment cannot block targeted recovery delivery; D7
+handover preserves model, effort, workspace, run, and manifest identity; D8 stale write authority
+cannot mutate; D9 one resolved acknowledgement emits once; D10 guarded apply requires an existing,
+applicable exact target; D11 recovery uses durable transport and never types over composers; D12
+live-run discovery follows manifest-recorded tmux sockets.
+
+### Verification hardening — plan review at epoch `1786849270478176`
+
+These are mandatory additions to the D15 and D6-D12 steps above, not optional advice.
+
+- Run every Git scope, numstat, name-status, diff-check, and staged-path command from repository
+  root `/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects` with repository-root
+  relative pathspecs. A pathspec-scoped `git diff --numstat` can return empty output while the same
+  paths are genuinely modified; empty output is therefore a FAIL and must be re-derived, never read
+  as "no churn". Assert the numstat line count equals the expected path count before banking it.
+- Verify utility hard-disable positively at each phase boundary rather than assuming it:
+  `env | grep -E '^LOOP_(UTILITY_ENABLED|UTILITY_DELEGATION_MODE|AU_PAIR_ENABLED)='` must print
+  exactly `0`, `off`, `0`. Absence of output is a FAIL, not a pass.
+- Prove exactly one Harness close positively. Before `./harness done`, record
+  `./harness status --json` and the byte size plus tail of every `.harness` lifecycle file; after
+  it, re-read them and confirm exactly one new close record for
+  `harvto-d15-teardown-process-orphans` and no active task remains. Silence is not evidence of a
+  single close.
+- Before force-adding the two ignored D15 plan files, run `git check-ignore -v -- <path>` on each
+  to confirm they are the only force-adds, and after staging run `git diff --cached --name-only`
+  and confirm the staged set equals the intended set exactly, with no root `.loop/` entry.
+- Evals must be allowlisted by test NAME with the allowlist required empty, in addition to
+  `baseline_failures: []`. A tolerated-failure count is not acceptance.
+- The repository-root verifier is `scripts/verify.sh` (there is no `loop-fork/scripts/verify.sh`);
+  the Harness entrypoint is `loop-fork/harness`. Invoke each from its own correct root.
+- If a mandatory gate, focused control, or reviewer verdict cannot be obtained, stop that task,
+  record the blocker in `status.md` and this section, preserve all dirty state, and produce a
+  governed handover. Never substitute an attested or filtered prior result for a rerun.
+- For D6-D12, record the reviewer's literal plan-review verdict ID before any source edit, and the
+  literal exact-SHA `PASS` ID before the Harness close, in `status.md` and the task run evidence.
+  A plan-level PASS never authorizes a close.
+- If the context or handover threshold is reached mid-task, finish the current atomic action, do
+  not start a new phase, append `status.md`, and hand over with exact HEAD, dirty paths, staged
+  state, task/eval state, and next atomic action.
+
+### Handover and acceptance
+
+- At every loop boundary, append `status.md`, refresh this authoritative plan section, preserve all
+  dirty/evidence state, and create governed ready bundles for both agents. Handover records exact
+  HEAD, empty-index state, dirty paths, task/eval state, proof, open risks, and next atomic action.
+- Campaign acceptance: D15 and D6-D12 each have preserved red proof, bounded implementation,
+  passing focused and mandatory checks, passing evals, explicit implementation commit, Claude
+  exact-SHA zero-write `PASS`, exactly one Harness close, and separate bookkeeping commit.
+- No human decision is currently required. Any bundle/HEAD mismatch, unexpected staged path,
+  authority change, required scope widening, utility activation/spend, or missing exact reviewer
+  verdict blocks that task and must be recorded before further writes.
 
 ## Authoritative continuation plan — post-run-62 handover
 
@@ -1591,3 +2077,136 @@ occurred.
 
 Next: commit only the inspected bookkeeping/evidence/lifecycle records as a separate commit. D15
 and D6-D12 remain separate governed tasks and are not started here.
+
+## Run-76 D15 promotion and contract — 2026-08-15
+
+Result: D15 is the sole active Harness task at exact bookkeeping base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`; no source or regression edit has started.
+
+The canonical contract requires identity-bound launcher/agent registrations, positive pre-liveness,
+bounded TERM/KILL with identity revalidation, direct post-absence proof, preservation of every
+unowned PID, and durable failed/unresolved state instead of false `stopped`. Exact-base red uses
+only isolated fixture-owned child processes.
+
+Next: add and preserve the named exact-base regression against unchanged production, then request
+Claude zero-write plan review before the bounded implementation.
+
+## Run-76 D15 exact-base red — 2026-08-15
+
+Result: the named real-process regression fails decisively at unchanged production base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`. Direct probes found the registered launcher PID
+43762, registered Claude PID 43763, and unowned control PID 43764 live before cleanup. Current
+cleanup returned no killed PIDs and left all three alive; the required result is both owned PIDs
+absent while the control remains live.
+
+The fixture `finally` block reaped every fixture child, and a direct follow-up `ps` returned no
+rows. Exact command, identity records, observations, and failure are preserved under the D15 run
+artifacts. Production remains unchanged; the temporary diagnostic print was removed without
+changing assertions. Utility remains `0/off/0` and root `.loop/` remains preserved.
+
+Next: request Claude zero-write plan review, resolve findings, then implement the bounded D15
+ownership, reaping, and lifecycle-ordering fix.
+
+## Run-76 D15 fresh-loop handover — 2026-08-15
+
+Governess ordered a fresh-loop handover in decision
+`5e8f7154-6387-4cd1-b5d6-c499181dea2a` when Claude reached its preparation threshold. Finish only
+this handover boundary; do not start D15 production implementation, a broad suite, a commit, an
+exact-SHA review, or a Harness lifecycle action in run 76.
+
+Current objective remains active Harness task `harvto-d15-teardown-process-orphans` at exact
+HEAD/base `fb71f47bb126a39eae7f1613fa952c994421de5e`, with eval pending. D15 must ensure stopped or
+completed is impossible until exact run-owned launcher, main-agent, bridge, app-server, and tmux
+identities are directly absent; ambiguity or survival must retain durable cleanup evidence and end
+failed without signaling unowned or preserved-live processes.
+
+Exact changed scope at handover:
+
+- Bookkeeping/planning: `PLAN.md`, `status.md`, `loop-fork/.harness/{parked-ideas.jsonl,tasks.json}`,
+  `loop-fork/.harness/current-task`, `loop-fork/agents/coordination.jsonl`, and untracked canonical
+  `loop-fork/{runs,specs}/harvto-d15-teardown-process-orphans/`.
+- Regression only: `loop-fork/tests/loop/run-process-cleanup.test.ts` adds the named isolated
+  real-process red. No production source changed.
+- Preserved excluded state: root `.loop/` remains untracked with exactly 60 files; the Git index is
+  empty.
+
+Checks/results: the named regression at unchanged production exited 1 with all fixture PIDs live
+before cleanup, owned launcher 43762 and Claude 43763 still live afterward, unowned control 43764
+still live, and `killed=[]`; its `finally` block reaped all three and a direct follow-up `ps` found
+none. Exact evidence is in
+`loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/red/reproduction.md`.
+`git diff --check` passes, Harness reports D15 active/pending, and no path is staged.
+
+Claude plan review request `b6ac6287-e543-49c7-bb11-5b94d579d006` was delivered after a body-free
+terminal nudge and began, but no findings or verdict arrived before the Governess handover order.
+Treat the plan as unreviewed. The main risk is cross-cutting teardown ordering: cleanup must prove
+process absence and exact tmux death before lifecycle success while retaining retry evidence for
+any unknown branch. Utility remains hard-disabled at `0/off/0`; no helper, spend, Harvto, remote,
+dependency, provider/model, release, deployment, merge, rebase, push, evidence deletion, or root
+`.loop/` mutation occurred.
+
+Next bounded action in the fresh loop: verify the new charter and inherited state, pull any durable
+Claude response to the pending D15 plan review, resolve its findings in the canonical plan, then
+implement only the reviewed registry/registration/reaping/Governess boundary. Preserve the exact
+red assertion and do not reuse run 76 for another broad slice.
+
+### Late D15 plan-review verdict received after handover preparation
+
+Claude returned `REVISE` in decision `4a26400d-72a9-458f-8bf1-964b1dcca385`. No production work
+may begin from the current plan. The fresh-loop successor must first amend canonical
+`spec.md`/`plan.md`/`verify.md` for these findings and re-request plan review:
+
+- **F1 blocking:** bare `kill(pid, 0)` and `ps -p` both report an exited-but-unreaped zombie as
+  present. Define settled absence as PID absent **or** exact `ps stat` state `Z`/defunct. Make the
+  real-process regression await child `exit` deterministically before its post-cleanup assertion,
+  and add an unreaped-parent control proving a zombie is reaped rather than unresolved.
+- **F2 blocking:** cleanup can target its own launcher process. Walk exact PPIDs and never signal
+  `process.pid` or an ancestor; persist `unresolved:self-or-ancestor` for an external reaper. Add a
+  named no-self/no-ancestor signal control.
+- **F3 high:** register only a main-agent `SessionStart`, never a `native-child` SessionStart. State
+  that adding `exec` changes the process shape of every configured hook invocation, and add a
+  native-child-no-record control.
+- **M1-M3:** document the deliberate one-second `lstart` identity bound; probe the exact
+  manifest-recorded tmux socket/session rather than a default socket; keep all enumeration confined
+  to the fixture's own registry and never inspect or signal preserved live runs.
+
+Claude accepted the registry shape, malformed-record fail-closed behavior, non-vacuous exact
+`killed` assertion, lifecycle reordering direction, and focused gate list. The existing red need not
+be recaptured; only its post-cleanup zombie/reaping instrument must be corrected before the fix.
+
+## Run-76 D15 implementation handover — 2026-08-15
+
+Result: the current atomic D15 implementation slice is coherent and preserved uncommitted at
+HEAD/base `fb71f47bb126a39eae7f1613fa952c994421de5e`. Governess handover epoch
+`1786849270478176` has been active since `2026-08-16T04:32:42.356Z`; run 76 stops here without a
+commit or Harness lifecycle action.
+
+Claude issued literal `PLAN PASS` in decision `92de3425-0e1c-42e6-a89d-bda26e7bb578` for canonical
+hashes spec `9233cb254643fa5029c822808bcefb3c2df3e6136311258ccbcb4ab497c43c53`, plan
+`5cbd5dd1870c61a859d09632a774a80aee1195911f7982f3cbc474bf8142326d`, and verify
+`27b85e35e64cd066cea93a204f2dd24039bc322b4ea56227cd08e9adf3cb463b`. That verdict approves the
+design only; the current code has not received implementation or exact-SHA review.
+
+Current source/test scope is `loop-fork/src/loop/{governess,hooks/emit,hooks/settings,
+run-process-cleanup,run-state,tmux}.ts` and
+`loop-fork/tests/loop/{governess-exit,run-process-cleanup}.test.ts`. The slice adds exact
+launcher/main-agent records, failure evidence, zombie-aware settlement and abandoned-run checks,
+self/ancestor protection with deferred exact-self-launcher transfer, bounded identity-revalidated
+TERM/KILL, SessionStart registration with native-child exclusion, tmux socket identity persistence,
+and Governess cleanup/tmux proof before stopped.
+
+Proportional checks pass: targeted Biome and Ultracite report all 8 files clean; canonical source
+TypeScript exits 0; cleanup `17/17`, Governess exit `30/30`, Governess hooks `33/33`, tmux `103/103`,
+and run-state `22/22` pass, for 205 focused tests and zero failures. `git diff --check` passes, the
+index is empty, and root `.loop/` remains untracked with 60 files.
+
+Incomplete gates remain intentional for the successor: the five mandatory named controls in
+`verify.md` have not all been added, the partial implementation is unreviewed, and no build, full
+serial suite, eval regeneration, Harness preflight/stop-gate, root verifier, scope proof, commit,
+exact-SHA Claude review, or Harness close has run for D15.
+
+Next bounded action: read both validated epoch bundles, inspect this preserved diff, and add only the
+missing named D15 controls and any defects they expose. Then run the mandatory gates, regenerate
+passing evals, prove and commit explicit implementation scope, obtain Claude literal exact-SHA
+`PASS`, and close Harness exactly once. Preserve utility `0/off/0`, the empty index, and root
+`.loop/`; do not recapture the exact-base red.

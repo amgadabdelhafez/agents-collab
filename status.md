@@ -1,5 +1,67 @@
 # Session Status
 
+## 2026-08-15 — Run-78 plan-only resume from epoch `1786856716562565`
+
+Result: plan updated; implementation and D15 close remain unfired. Only `PLAN.md` and `status.md`
+were changed in this session.
+
+Current state:
+
+- Both handoff bundles parse as `ready`, agree on epoch `1786856716562565`, and bind exact HEAD
+  `5f5ddba66cdb1bc5d8f6212b763323f507b0b777` with parent
+  `fb71f47bb126a39eae7f1613fa952c994421de5e`.
+- Index is empty. Root `.loop/` remains untracked with 60 files. Utility is positively `0/off/0`.
+- Harness still reports sole active task `harvto-d15-teardown-process-orphans`, eval `pass`; no
+  close ran. Exact-SHA PASS remains `b5280c18-08cc-439c-8009-9d121ea1dfe8`.
+- Frozen spec/plan/verify/red hashes and exact nine-path implementation commit match both bundles.
+  Tracked dirty scope, 16 non-root-`.loop` untracked paths, and two ignored D15 plans also match.
+- Portability risk remains: `loop-fork/.gitignore:3` uses uppercase `PLAN.md`; lowercase D15
+  `plan.md` matches only on current case-insensitive macOS filesystem. Pre-force-add
+  `git check-ignore -v` must fail closed elsewhere.
+
+Proof/checks run: JSON bundle predicates and cross-bundle equality; Git HEAD/parent/index/dirty
+scope; root `.loop/` count; utility variables; D15 Harness status; canonical/red SHA-256 values;
+ignored-plan provenance; implementation commit path set. No tests rerun because source did not
+change and this session is plan-only.
+
+Open questions: none. Risk: close is irreversible lifecycle mutation; any pre-close mismatch or
+failed `harness done` must stop without retry.
+
+Next step: record pre-close Harness status plus byte sizes and tails of every `.harness` lifecycle
+file, run exactly one `./harness done harvto-d15-teardown-process-orphans`, prove exactly one new
+close record and no active task, then make one separately scoped bookkeeping/evidence commit before
+D6.
+
+## 2026-08-15 — Run-77 plan-only resume from epoch `1786849270478176`
+
+Result: continuation plan is ready. No source, test, Harness lifecycle, evidence, Harvto, remote,
+provider/model, dependency, or root `.loop/` mutation occurred in this session.
+
+Current state:
+
+- Both Claude and Codex handoff bundles are valid `ready` bundles for epoch
+  `1786849270478176` and exact live HEAD `fb71f47bb126a39eae7f1613fa952c994421de5e`.
+- Index is empty; root `.loop/` remains untracked with 60 files; sole active Harness task is
+  `harvto-d15-teardown-process-orphans`, eval pending.
+- Canonical D15 spec/plan/verify hashes match literal plan verdict
+  `92de3425-0e1c-42e6-a89d-bda26e7bb578`.
+- Inherited D15 scope remains six production and two test files, uncommitted and unreviewed.
+  `git diff --check` passes. Handoff-attested focused checks remain 205 pass, 0 fail; this session
+  did not rerun tests because authority was plan-only.
+- Both required D15 plan files remain ignored and preserved. Existing exact-base red and all run
+  evidence remain present.
+- Current source/test numstats differ under `--ignore-all-space`; final scope proof is not yet
+  satisfied and must be resolved before the implementation commit.
+
+Open questions/risks: no human decision required. Main risks are missing F1-F3/M1-M3/R1/R2 named
+controls, whitespace-only churn, and mistaking plan approval for exact-SHA implementation approval.
+Utility remains hard-disabled at `0/off/0`.
+
+Next: revalidate exact state, inspect inherited D15 diff, add only required named controls and fix
+what they expose, then run focused and mandatory gates. Commit explicit source/test scope, obtain
+Claude literal exact-SHA zero-write `PASS`, close Harness exactly once, and commit bookkeeping
+separately. Continue D6-D12 one isolated task at a time under the lifecycle recorded in `PLAN.md`.
+
 ## 2026-08-12 — D1 fresh-loop handover
 
 Result: D1 premise reproduced and exact invariant recorded. Production fix not started.
@@ -2334,3 +2396,323 @@ reason-code precedence for malformed orphan evidence, whole-journal tamper blast
 unreachable empty-diff-scope diagnostic edge.
 
 Next: inspect and commit Harness/eval/spec/run/debt/coordination/root-log bookkeeping separately.
+
+## 2026-08-15 — Run-76 D15 promoted and planned
+
+Result: supervisor-ordered D15 continuation is active at base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`. Harness pre-task invariants passed and the unit eval
+is pending. D15 canonical spec/plan/tasks/verify and run plan now exist.
+
+Traced defect boundary: `stopGovernessLoop` marks stopped before cleanup; process cleanup registers
+bridge PIDs only, reads app-server ownership from the manifest, omits launcher/agent ownership, and
+counts a successful `SIGTERM` without proving exit. Planned correction is exact identity-bound
+ownership plus bounded terminate/reprobe and durable unresolved failure before lifecycle completion.
+
+No source/test edit, helper route, spend, staging, commit, Harvto, remote, provider/model,
+dependency, release, deployment, or root `.loop/` mutation occurred. Utility remains `0/off/0`.
+
+Next: exact-base real-process red reproduction, followed by zero-write Claude plan review.
+
+## 2026-08-15 — Run-76 D15 exact-base red preserved
+
+Result: the named D15 regression fails at unchanged production base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`. All three isolated fixture children were live before
+teardown; current cleanup ignored the exact launcher and Claude ownership records, returned no
+killed PIDs, and left both owned PIDs alive alongside the intentionally unowned control.
+
+The required outcome remains exact: owned launcher and Claude PIDs absent, unowned control live.
+The fixture reaped all of its children afterward, and the evidence artifact preserves the exact
+command, PIDs, identity-record shape, direct observations, failure, and follow-up absence check.
+No production source changed. Utility remains `0/off/0`; no helper, spend, staging, commit,
+lifecycle close, Harvto, remote, dependency, provider/model, release, deployment, or root `.loop/`
+mutation occurred.
+
+Next: Claude zero-write plan review before bounded implementation.
+
+## 2026-08-15 — Run-76 D15 fresh-loop handover prepared
+
+Result: Governess decision `5e8f7154-6387-4cd1-b5d6-c499181dea2a` ordered a fresh-loop handover at
+Claude's preparation threshold. Run 76 stops after this bookkeeping boundary; no D15 production
+implementation, broad suite, commit, exact-SHA review, or Harness close has started.
+
+Current objective is active task `harvto-d15-teardown-process-orphans` at exact unchanged
+HEAD/base `fb71f47bb126a39eae7f1613fa952c994421de5e`, eval pending. Changed scope consists only of D15
+Harness/planning/evidence records plus the named red regression in
+`loop-fork/tests/loop/run-process-cleanup.test.ts`; production source is untouched. The exact-base
+test proved registered launcher 43762 and Claude 43763 remain alive after current cleanup while
+unowned control 43764 remains live, then fixture cleanup directly proved all three absent.
+
+Claude began zero-write plan review request `b6ac6287-e543-49c7-bb11-5b94d579d006` but returned no
+findings or verdict before handover. Treat the identity, retry, and lifecycle-ordering plan as
+unreviewed. `git diff --check` passes, the index is empty, Harness still reports D15 active, and
+root `.loop/` remains untracked with 60 preserved files. Utility stayed `0/off/0`; no helper,
+spend, staging, commit, Harvto, remote, dependency, provider/model, release, deployment, merge,
+rebase, push, evidence deletion, or lifecycle close occurred.
+
+Next: successor verifies its charter and exact inherited state, pulls any pending Claude response,
+resolves plan-review findings, and only then implements the bounded D15 fix.
+
+### Late review addendum
+
+Claude decision `4a26400d-72a9-458f-8bf1-964b1dcca385` returned `REVISE` after handover preparation.
+Blocking corrections are zombie-aware absence (`Z`/defunct, not bare `kill(pid,0)`), deterministic
+child reaping in the regression, and a self/ancestor signal prohibition with durable unresolved
+receipt. High-severity correction is main-agent-only `SessionStart` registration, excluding
+`native-child`. The successor must also document `lstart`'s one-second identity bound, use the exact
+manifest-recorded tmux socket/session, preserve live-run isolation, add the three named controls,
+and obtain a fresh plan verdict before production edits. Run 76 performs no implementation.
+
+## 2026-08-15 — Run-76 D15 coherent implementation slice handed over
+
+Result: stopped at the supervisor-ordered atomic boundary with the D15 working set preserved
+uncommitted at exact HEAD `fb71f47bb126a39eae7f1613fa952c994421de5e`. Governess handover epoch
+`1786849270478176` has been active since `2026-08-16T04:32:42.356Z`; no commit or lifecycle action
+was taken.
+
+Claude's approved-plan verdict is `92de3425-0e1c-42e6-a89d-bda26e7bb578` (`PLAN PASS`). Current
+dirty implementation is limited to six production files—`governess.ts`, `hooks/emit.ts`,
+`hooks/settings.ts`, `run-process-cleanup.ts`, `run-state.ts`, and `tmux.ts`—and two tests,
+`governess-exit.test.ts` and `run-process-cleanup.test.ts`. It is unreviewed and uncommitted.
+
+Coherence checks pass: Biome and Ultracite over all 8 touched source/test files; canonical source
+TypeScript; cleanup 17/17; Governess exit 30/30; Governess hooks 33/33; tmux 103/103; run-state
+22/22; `git diff --check`. Total focused result is 205 pass, 0 fail. The Git index remains empty and
+root `.loop/` remains untracked with 60 preserved files.
+
+Open work: the five mandatory named controls in the canonical D15 `verify.md` are not all present;
+build, complete serial suite, evals, Harness gates, root verifier, scope proof, commit, Claude
+exact-SHA review, and one Harness close remain unfired. The D15 Harness task remains active with eval
+pending.
+
+Next: successor reads both epoch bundles and the canonical spec/plan/verify, inspects the preserved
+diff, adds only the missing named controls and fixes any defects they reveal, then executes the
+mandatory gates and exact-SHA review/close sequence. Utility remains hard-disabled at `0/off/0`;
+there was no helper, spend, Harvto, staging, commit, merge, rebase, push, deploy, release,
+dependency/provider/model change, evidence deletion, or repository-root `.loop/` mutation.
+
+## 2026-08-15 — Run-77 D15 focused controls complete
+
+Result: all approved F1-F3, M1-M3, R1, and R2 controls now exist and pass at unchanged HEAD/base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`. The index remains empty; Harness still reports sole
+active task `harvto-d15-teardown-process-orphans`, eval pending. Root `.loop/` remains untracked with
+60 preserved files and utility remains hard-disabled at `0/off/0`.
+
+Current implementation scope is six production files—`governess.ts`, `hooks/emit.ts`,
+`hooks/settings.ts`, `run-process-cleanup.ts`, `run-state.ts`, and `tmux.ts`—plus three tests:
+`governess-exit.test.ts`, `governess-hooks.test.ts`, and `run-process-cleanup.test.ts`. Deferred
+self-launcher receipts now use file fsync plus atomic rename before active ownership removal. A
+receipt-write failure control proves active ownership and durable unresolved evidence remain.
+
+Focused proof is 214 pass, 0 fail: cleanup `23/23`, Governess exit `32/32`, Governess hooks `34/34`,
+tmux `103/103`, and run-state `22/22`. Named controls directly prove unreaped zombie settlement,
+self/ancestor no-signal behavior, main-agent-only SessionStart registration, one-second `lstart`
+identity, exact fixture-run enumeration, zombie abandoned-run/deferred-receipt GC, exact self-launcher
+transfer reaching `stopped`, and exact-socket tmux death with no missing-socket fallback. Targeted
+Biome and Ultracite over all nine files pass; canonical TypeScript and `git diff --check` pass.
+
+Normal and `--ignore-all-space` numstats are identical for every source/test path. Exact-base red
+evidence remains unchanged at SHA-256
+`cea7c590c92768f92db9647e25f359eafd4f1701d74572a438d71e905f6990c9`. Claude control-slice review
+request `648608f4-dabe-4955-ba2a-5784a9221bbc` is pending; it is not the later exact-SHA gate.
+
+Next: run mandatory `check`, canonical TypeScript, build, and complete certified serial suite;
+regenerate both passing evals; run Harness preflight/stop-gate and root verifier; then prove and
+commit explicit implementation scope before Claude exact-SHA review. No Harness close occurs before
+literal exact-SHA `PASS`.
+
+## 2026-08-15 — Run-77 D15 control-review blockers closed
+
+Claude zero-write control review decision `1723a22b-2f3a-4573-ad47-db11eda4a718` returned `REVISE`
+with three blockers: no KILL/survival branch coverage, no registration-failure lifecycle control,
+and no runtime evidence for the global hook `exec` shape. The working tree now closes all three
+without changing canonical spec/plan/verify bytes.
+
+Named controls prove TERM-resistant KILL settlement, post-TERM identity loss, KILL failure,
+post-KILL unknown liveness, survival after KILL with Governess `failed` rather than `stopped`, both
+command/start registration failures through settled removal, and SessionStart rejection of a
+non-agent parent command. A production-shaped Governess fixture uses a distinct non-ancestor
+launcher and Governess PID, sends launcher TERM then KILL, settles the agent, and reaches `stopped`
+only after exact process and tmux proof. Deferred receipt rename now fsyncs its containing directory.
+
+The global `exec` form remains for both agents. Local no-spend evidence from live run 77 shows exact
+ownership records bound directly to live commands beginning `claude` and `codex`; agent
+registration now validates the first executable and writes durable
+`registration-failure:agent-command-unexpected` evidence for a shell or other wrong parent.
+
+Revised focused proof is 223 pass, 0 fail: cleanup `29/29`, Governess exit `34/34`, Governess hooks
+`35/35`, tmux `103/103`, and run-state `22/22`. Targeted Ultracite and canonical TypeScript pass;
+`git diff --check` passes; normal and `--ignore-all-space` numstats match on all nine source/test
+paths. Canonical spec, plan, verify, and red hashes remain exact. Utility stayed `0/off/0`; the index
+is empty, root `.loop/` remains 60 untracked files, and Harness remains active/pending.
+
+Next: obtain a fresh Claude control-slice verdict, then restart mandatory gates from `bun run check`
+if literal `PASS`. Exact-SHA review remains a separate post-commit gate; no Harness close occurs
+before it. A final named PID-reuse control also proves a post-TERM `lstart` change prevents KILL
+from reaching the replacement process; normal and whitespace-ignored cleanup-test numstats remain
+equal at `916/0`.
+
+## 2026-08-15 — Run-77 D15 mandatory verification complete
+
+Every D15 pre-commit gate is green with utility fixed at `0/off/0`. `bun run check` passes 898
+files; canonical TypeScript and `bun run build` pass; the official certified serial suite passes all
+79 test files. The root verifier independently repeats lint, typecheck, build, all 79 serial files,
+and the empty baseline gate and exits 0.
+
+Harness and repository-root evals both report `pass` with `baseline_failures: []`. Harness
+`preflight --json` and `stop-gate --json` both pass for sole active task
+`harvto-d15-teardown-process-orphans`; no close or lifecycle transition has run. Focused D15 proof
+remains 223 pass, 0 fail.
+
+Protected state remains exact: HEAD/base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`, empty index, 60 untracked root `.loop/` files, active
+D15 task with eval pass, and red artifact SHA-256
+`cea7c590c92768f92db9647e25f359eafd4f1701d74572a438d71e905f6990c9`.
+
+Next: complete exact Git scope proof and explicit implementation-only staging. Do not commit until
+the pending zero-write control review is consumed; after the implementation commit, obtain the
+separate exact-SHA literal `PASS` before one Harness close.
+
+## 2026-08-15 — Run-77 D15 control-slice PASS consumed
+
+Claude decision `4f9e84d4-34f9-4e6c-843b-c564420e9016` returned literal `PASS` for the D15 design and
+coverage control slice. It independently re-derived unchanged HEAD/base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`, empty index, utility `0/off/0`, 60 preserved root
+`.loop/` files, exact canonical and red hashes, clean `git diff --check`, and byte-identical normal
+versus ignore-all-space numstats over all nine approved implementation paths.
+
+The review closed B1-B3 and N1-N3: exact TERM/KILL and survival branches, full registration-failure
+lifecycle and retry removal, live Claude/Codex global-`exec` provenance, production-shaped unrelated
+launcher topology, directory fsync after receipt rename, and pinned PID-reuse handling. It made zero
+writes, used no helper or fallback, incurred no spend, staged and committed nothing, and performed no
+Harness lifecycle action.
+
+Recorded non-blocking bounds: agent identity intentionally fails closed for wrapper-style launches
+whose first executable is not exactly `claude` or `codex`; live run 77 proves the supported bare-agent
+shape. Cleanup polling remains synchronous and serial, and the documented same-second
+identical-command collision has no dedicated control. Do not rework these bounds in D15.
+
+This verdict is not exact-SHA approval. Mandatory gates and evals were already re-derived after the
+last source/test change and remain green. Next: re-prove protected state and exact scope, stage and
+commit only the nine approved implementation paths, then request the separate Claude zero-write
+literal verdict for that exact commit. Do not close Harness before that exact-SHA `PASS`.
+
+## 2026-08-15 — Run-77 D15 exact-SHA review requested
+
+D15 implementation is committed as exact SHA
+`5f5ddba66cdb1bc5d8f6212b763323f507b0b777` with exact parent/base
+`fb71f47bb126a39eae7f1613fa952c994421de5e`. The commit contains exactly the six approved production
+and three approved test paths, totaling 2,500 insertions and 97 deletions. Normal and
+ignore-all-space range numstats are byte-identical across all nine non-empty path rows; range
+`git diff --check` passes and the post-commit index is empty.
+
+Post-commit proof re-derived utility `0/off/0`, 60 preserved untracked root `.loop/` files, exact
+canonical and red hashes, sole active D15 Harness state with eval pass, and no implementation
+residue outside the commit. No Harness close has run.
+
+Claude accepted zero-write exact-SHA review request
+`8aa2a171-7eb6-4ae9-8507-3750ad6129cc`. It names the literal parent/head, exact path set, PLAN and
+control PASS IDs, frozen hashes, focused 223/223 proof, all mandatory gates, passing evals, and
+strict no-write/no-helper/no-spend authority. Next: consume literal `PASS` or `REVISE`. Do not run
+`harness done` before exact-SHA `PASS`.
+
+## 2026-08-15 — Run-77 governed prepare handover at exact-SHA gate
+
+Governess instructed a fresh-loop handover after Claude reached its preparation threshold. The
+current atomic implementation-commit step is complete; no new verification slice, Harness action,
+or D6 work starts here.
+
+Exact state: HEAD `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`, parent
+`fb71f47bb126a39eae7f1613fa952c994421de5e`, empty index. The commit contains exactly the approved
+six production and three test paths and passes range diff-check. Tracked dirty state is exactly
+`PLAN.md`, `.harness/parked-ideas.jsonl`, `.harness/tasks.json`, `agents/coordination.jsonl`, and
+`status.md` (the latter four below `loop-fork/` except root logs). Non-root-`.loop` untracked state is
+the 16 D15 Harness/run/spec/eval paths enumerated in the current top section of `PLAN.md`; the two
+D15 plan files remain present and ignored. Root `.loop/` remains untracked with exactly 60 files.
+
+Checks remain green with no source/test change after verification: 223 focused tests, targeted
+Ultracite, canonical TypeScript, 898-file check, build, 79-file certified serial suite, two passing
+evals with empty baseline failures, Harness preflight/stop-gate, and root verifier. Utility remains
+positively `0/off/0`; exact-base red remains
+`cea7c590c92768f92db9647e25f359eafd4f1701d74572a438d71e905f6990c9`. Harness remains solely active
+on D15 with eval pass and has not been closed.
+
+Control-slice decision `4f9e84d4-34f9-4e6c-843b-c564420e9016` is literal `PASS`. Exact-SHA request
+`8aa2a171-7eb6-4ae9-8507-3750ad6129cc` was accepted, but no literal implementation verdict arrived
+before preparation; bridge status shows one outbound Claude item. That missing exact-SHA verdict is
+the sole blocker. Residual non-blocking risks remain the intentional wrapper-launch fail-close,
+serial synchronous polling, and the documented same-second identical-command collision without a
+dedicated test.
+
+Next bounded action in the governed fresh loop: reconcile this exact boundary and receive or
+re-request zero-write review of exact SHA `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`. On literal
+`PASS`, record pre-close lifecycle bytes/tails, run exactly one Harness close, prove one append and
+no active task, then commit bookkeeping separately. Do not compact, close Harness, edit source, or
+begin D6 at this boundary.
+
+## 2026-08-15 — Run-77 D15 exact-SHA PASS received after prepare
+
+Claude decision `b5280c18-08cc-439c-8009-9d121ea1dfe8` returned literal exact-SHA implementation
+`PASS` for commit `5f5ddba66cdb1bc5d8f6212b763323f507b0b777`. This is distinct from PLAN PASS
+`92de3425-0e1c-42e6-a89d-bda26e7bb578` and control-slice PASS
+`4f9e84d4-34f9-4e6c-843b-c564420e9016`. Claude independently re-derived the exact parent,
+one-commit ancestry, unscope-limited nine-path delta, byte-identical normal and ignore-all-space
+numstats, clean range diff-check, frozen hashes, empty index, root `.loop` isolation, active/eval-pass
+Harness state, and utility `0/off/0`.
+
+The reviewer independently reran all five focused suites (223 pass, 0 fail), the 898-file check,
+canonical TypeScript, the complete 79-file/1,618-test certified serial suite, Harness preflight and
+stop-gate, and both eval reads. It accepted build and the composite root verifier as attested because
+its authority was zero-write, while independently reproducing every non-build component. It also
+proved live run-77 process and ownership-record isolation across the real-process and serial suites.
+
+The decision authorizes exactly one
+`./harness done harvto-d15-teardown-process-orphans` followed by exactly one separate bookkeeping
+commit; it authorizes nothing else. Because the PASS arrived after Governess ordered the run-77
+prepare boundary, this run records the verdict but does not begin the new close phase. D15 remains
+solely active with eval pass; no close has run. Exact HEAD/index/protected-state checks still pass.
+
+Next fresh-loop action: revalidate this exact boundary and PASS ID; capture Harness status plus byte
+sizes and tails of every lifecycle file; run the authorized close exactly once; prove one new D15
+close record and no active task; then explicitly stage and commit closure bookkeeping, force-adding
+only the two verified ignored D15 plans and excluding root `.loop`. Do not begin D6 before that
+bookkeeping commit.
+
+Claude reviewer handover check `44251b5a-4e7d-49c6-98db-3a56d224cf70` independently verified the
+exact five tracked-dirty paths, 16 non-root-`.loop` untracked paths, two present/ignored D15 plans,
+empty index, 60-file root `.loop`, utility `0/off/0`, all three PASS records, and the prepared close
+sequence. It made no writes. One additional non-blocking portability bound is recorded: the literal
+uppercase `PLAN.md` pattern at `loop-fork/.gitignore:3` matches lowercase `plan.md` only on this
+case-insensitive macOS filesystem. On a case-sensitive filesystem the pre-force-add ignore check
+would fail closed and the plans would be ordinary untracked files; explicit-path staging remains
+required and protective. Do not rework this bound before the close.
+
+## 2026-08-15 — Run-78 D15 closed exactly once; bookkeeping commit pending
+
+Result: D15 close succeeded exactly once under Claude exact-SHA approval
+`b5280c18-08cc-439c-8009-9d121ea1dfe8`. Live implementation HEAD remains
+`5f5ddba66cdb1bc5d8f6212b763323f507b0b777`, parent
+`fb71f47bb126a39eae7f1613fa952c994421de5e`; no source or test path changed during close.
+
+Resume validation matched epoch `1786856716562565` bundle digests, bootstrap file/capsule/commit
+bindings, exact nine-path implementation range, frozen spec/plan/verify/red hashes, empty index,
+root `.loop/` count 60, and utility `0/off/0`. Pre-close lifecycle evidence records 11 sorted files,
+Harness active/eval-pass D15, 61 task records, and zero D15 terminal records at SHA-256
+`66666865793bc34d117e7f5a82d03e10b5482aa454dbe79bce8fb697f81e9d7e`.
+
+Exactly one command ran: `./harness done harvto-d15-teardown-process-orphans`. It exited 0 at
+`2026-08-16T06:56:26Z`; no retry occurred. Post-close Harness status exits 0 with
+`active_task: null`. D15 terminal records are exactly 1, total records remain 61, `current-task` is
+absent, HEAD is unchanged, index remains empty, no `loop-fork/src/` or `loop-fork/tests/` path is
+dirty, and root `.loop/` remains 60 untracked files. Structured post-close evidence SHA-256 is
+`fb0b63c017dea91d60fad622242b0fd7bd3f9eab14ce2fa48c23afdb41ba7a71`.
+
+Post-close ignore checks separately resolve both lowercase D15 plans only to
+`loop-fork/.gitignore:3:PLAN.md`; neither D15 directory contains a tracked path before staging.
+`git config --get core.ignorecase` returns `true`. Portability bound: uppercase `PLAN.md` in
+`loop-fork/.gitignore:3` matches lowercase `plan.md` on the current case-insensitive macOS
+filesystem; a case-sensitive filesystem fails the force-add precheck closed.
+
+Next: stage only the derived D15 bookkeeping/evidence set, force-add only the two verified ignored
+plans, prove exact staged equality plus normal/ignore-all-space numstat equality, and create one
+bookkeeping-only commit citing exact-SHA PASS `b5280c18-08cc-439c-8009-9d121ea1dfe8`. Do not begin
+D6 until that commit exists and the index is empty.

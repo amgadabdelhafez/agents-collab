@@ -1,0 +1,489 @@
+{
+  "schema_version": 1,
+  "phase": "post-close",
+  "recorded_at": "2026-08-16T06:57:19.089546Z",
+  "task_id": "harvto-d15-teardown-process-orphans",
+  "authorized_exact_sha_pass_id": "b5280c18-08cc-439c-8009-9d121ea1dfe8",
+  "close": {
+    "command": "./harness done harvto-d15-teardown-process-orphans",
+    "attempt_count": 1,
+    "exit": 0,
+    "stdout_lines": [
+      "post-task state invariant check passed; see runs/harvto-d15-teardown-process-orphans/artifacts/post-task/state-invariants.log",
+      "debt scan completed: 2 finding(s), 2 appended",
+      "regression harvest skipped: no bug-fix signal",
+      "specs/harvto-d15-teardown-process-orphans.md"
+    ],
+    "stderr": ""
+  },
+  "git_head": {
+    "exit": 0,
+    "stdout": "5f5ddba66cdb1bc5d8f6212b763323f507b0b777",
+    "stderr": ""
+  },
+  "git_index": {
+    "exit": 0,
+    "paths": [
+
+    ],
+    "stderr": ""
+  },
+  "git_status_porcelain_uall": {
+    "exit": 0,
+    "lines": [
+      " M PLAN.md",
+      " M loop-fork/.harness/parked-ideas.jsonl",
+      " M loop-fork/.harness/tasks.json",
+      " M loop-fork/agents/coordination.jsonl",
+      " M loop-fork/debt/register.jsonl",
+      " M loop-fork/specs/harvto-d15-teardown-process-orphans.md",
+      " M status.md",
+      "?? .loop/utility-artifacts/0cb3b7dd-07bc-4394-a8f1-83f3fa3640dc/50d97406-9d4f-47aa-88b9-c9f1c959f8b9.json",
+      "?? .loop/utility-artifacts/0cb3b7dd-07bc-4394-a8f1-83f3fa3640dc/50d97406-9d4f-47aa-88b9-c9f1c959f8b9.patch",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/048de46e-00ed-45e2-9023-6f25986afe2c.json",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/048de46e-00ed-45e2-9023-6f25986afe2c.patch",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/15f9f452-3864-4344-81b4-9a8357f346a8.json",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/15f9f452-3864-4344-81b4-9a8357f346a8.patch",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/92aaa963-06e4-41e7-bdfe-91cda2d891b7.json",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/92aaa963-06e4-41e7-bdfe-91cda2d891b7.patch",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/aa8f3d08-8ebd-441e-85a0-bf9a6ed16813.json",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/aa8f3d08-8ebd-441e-85a0-bf9a6ed16813.patch",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/b53c6790-f239-494d-8941-f93b7723bffa.json",
+      "?? .loop/utility-artifacts/170c3bf1-01d9-4d27-9b1d-8cdc4b29e608/b53c6790-f239-494d-8941-f93b7723bffa.patch",
+      "?? .loop/utility-artifacts/21fec957-7cd4-461a-988d-cfb1f4ce430f/af2fb17c-6aa1-4a97-bde1-54604317f79d.json",
+      "?? .loop/utility-artifacts/21fec957-7cd4-461a-988d-cfb1f4ce430f/af2fb17c-6aa1-4a97-bde1-54604317f79d.patch",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/509a3889-ea3d-43b4-b032-e82b2f16d5c1.json",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/509a3889-ea3d-43b4-b032-e82b2f16d5c1.patch",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/78c978dd-e826-48c4-bc3c-a7a487b2321a.json",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/78c978dd-e826-48c4-bc3c-a7a487b2321a.patch",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/98e35b4f-cdad-4830-8175-f62c05d18a5b.json",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/98e35b4f-cdad-4830-8175-f62c05d18a5b.patch",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/ac15d758-d0cf-4238-ac16-b1ff35a992cc.json",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/ac15d758-d0cf-4238-ac16-b1ff35a992cc.patch",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/e96feb65-45ad-46e5-8e65-44d1705acc8b.json",
+      "?? .loop/utility-artifacts/39162ad2-f3d6-470b-9f6b-64169f00da69/e96feb65-45ad-46e5-8e65-44d1705acc8b.patch",
+      "?? .loop/utility-artifacts/76af947a-43ca-461c-9ef0-973cb44e7fee/8c32ce79-3397-4fbe-98eb-b79e86756910.json",
+      "?? .loop/utility-artifacts/76af947a-43ca-461c-9ef0-973cb44e7fee/8c32ce79-3397-4fbe-98eb-b79e86756910.patch",
+      "?? .loop/utility-artifacts/a1e3942b-3284-4db8-b941-de708d84f0a2/a988dc47-59e3-4ac9-aff1-66145212450e.json",
+      "?? .loop/utility-artifacts/a1e3942b-3284-4db8-b941-de708d84f0a2/a988dc47-59e3-4ac9-aff1-66145212450e.patch",
+      "?? .loop/utility-artifacts/a6ccb25e-d650-40f3-bbcd-62da5e816eae/05e101f9-4cfb-4e62-b313-8f14c955f60f.json",
+      "?? .loop/utility-artifacts/a6ccb25e-d650-40f3-bbcd-62da5e816eae/05e101f9-4cfb-4e62-b313-8f14c955f60f.patch",
+      "?? .loop/utility-artifacts/a6ccb25e-d650-40f3-bbcd-62da5e816eae/34d2f75a-c32e-411b-bbd7-d42ea8d8e1d8.json",
+      "?? .loop/utility-artifacts/a6ccb25e-d650-40f3-bbcd-62da5e816eae/34d2f75a-c32e-411b-bbd7-d42ea8d8e1d8.patch",
+      "?? .loop/utility-artifacts/a6ccb25e-d650-40f3-bbcd-62da5e816eae/d2eef6ec-0281-4b37-83c1-719e572d38dd.json",
+      "?? .loop/utility-artifacts/a6ccb25e-d650-40f3-bbcd-62da5e816eae/d2eef6ec-0281-4b37-83c1-719e572d38dd.patch",
+      "?? .loop/utility-artifacts/a8cd7c8a-cf5e-4bb0-ab6c-4e72536ec656/1843c806-a8e4-4e8b-803f-6b85b35fa4b1.json",
+      "?? .loop/utility-artifacts/a8cd7c8a-cf5e-4bb0-ab6c-4e72536ec656/1843c806-a8e4-4e8b-803f-6b85b35fa4b1.patch",
+      "?? .loop/utility-artifacts/a8cd7c8a-cf5e-4bb0-ab6c-4e72536ec656/2706fef2-61d6-4f9a-b375-ee10d25069ea.json",
+      "?? .loop/utility-artifacts/a8cd7c8a-cf5e-4bb0-ab6c-4e72536ec656/2706fef2-61d6-4f9a-b375-ee10d25069ea.patch",
+      "?? .loop/utility-artifacts/a8cd7c8a-cf5e-4bb0-ab6c-4e72536ec656/5188248a-fdbc-40d1-af85-d51693ad2473.json",
+      "?? .loop/utility-artifacts/a8cd7c8a-cf5e-4bb0-ab6c-4e72536ec656/5188248a-fdbc-40d1-af85-d51693ad2473.patch",
+      "?? .loop/utility-artifacts/aa1a6f6e-54a5-4920-a5b1-0d4d964ff6a9/1f26ff51-ad6d-4bf7-a27b-7e0268d34d36.json",
+      "?? .loop/utility-artifacts/aa1a6f6e-54a5-4920-a5b1-0d4d964ff6a9/1f26ff51-ad6d-4bf7-a27b-7e0268d34d36.patch",
+      "?? .loop/utility-artifacts/aa1a6f6e-54a5-4920-a5b1-0d4d964ff6a9/85813a68-ee55-499a-b345-1344a091d5e4.json",
+      "?? .loop/utility-artifacts/aa1a6f6e-54a5-4920-a5b1-0d4d964ff6a9/85813a68-ee55-499a-b345-1344a091d5e4.patch",
+      "?? .loop/utility-artifacts/aa1a6f6e-54a5-4920-a5b1-0d4d964ff6a9/ff422d2b-4527-496b-a934-7579acd8c753.json",
+      "?? .loop/utility-artifacts/aa1a6f6e-54a5-4920-a5b1-0d4d964ff6a9/ff422d2b-4527-496b-a934-7579acd8c753.patch",
+      "?? .loop/utility-artifacts/b7df9e56-6b5f-4e56-b366-a08159e9194c/0b55a977-3eef-452e-abc3-3bf5d001e95a.json",
+      "?? .loop/utility-artifacts/b7df9e56-6b5f-4e56-b366-a08159e9194c/0b55a977-3eef-452e-abc3-3bf5d001e95a.patch",
+      "?? .loop/utility-artifacts/bce0fe17-8172-4644-a0a6-4a9c9cc5c95c/8312bc8f-18dd-4148-8aef-f1524a40ea46.json",
+      "?? .loop/utility-artifacts/bce0fe17-8172-4644-a0a6-4a9c9cc5c95c/8312bc8f-18dd-4148-8aef-f1524a40ea46.patch",
+      "?? .loop/utility-artifacts/c2238257-1737-4ec3-b29e-ff44e8bf141c/8e978d04-cd51-4eab-8ef9-d04770c8f39a.json",
+      "?? .loop/utility-artifacts/c2238257-1737-4ec3-b29e-ff44e8bf141c/8e978d04-cd51-4eab-8ef9-d04770c8f39a.patch",
+      "?? .loop/utility-artifacts/e3448eb1-3ec5-49e7-bd1d-603e5a761f69/c8738c27-43da-47f1-91b0-9e6031744925.json",
+      "?? .loop/utility-artifacts/e3448eb1-3ec5-49e7-bd1d-603e5a761f69/c8738c27-43da-47f1-91b0-9e6031744925.patch",
+      "?? .loop/utility-artifacts/e38620f2-a5d5-443b-934f-c5a0b7ea62ef/b1d8a82d-dc6c-4b5e-b5d5-a030715d328d.json",
+      "?? .loop/utility-artifacts/e38620f2-a5d5-443b-934f-c5a0b7ea62ef/b1d8a82d-dc6c-4b5e-b5d5-a030715d328d.patch",
+      "?? .loop/utility-artifacts/ea74e97e-9a8d-40c0-a277-e3812126ff74/ffa3e7db-4840-43f3-8841-e99bc9074239.json",
+      "?? .loop/utility-artifacts/ea74e97e-9a8d-40c0-a277-e3812126ff74/ffa3e7db-4840-43f3-8841-e99bc9074239.patch",
+      "?? .loop/utility-artifacts/f32cbbd9-7bde-42e2-a711-decd6a131287/6cbe53ad-ae81-4446-9f4f-5c213541570d.json",
+      "?? .loop/utility-artifacts/f32cbbd9-7bde-42e2-a711-decd6a131287/6cbe53ad-ae81-4446-9f4f-5c213541570d.patch",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/close/pre-close-lifecycle.json",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/debt/baseline-loc.json",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/debt/scan.json",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/debt/scan.log",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/post-task/10-current-task.sh.log",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/post-task/state-invariants.jsonl",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/post-task/state-invariants.log",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/pre-task/10-current-task.sh.log",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/pre-task/state-invariants.jsonl",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/pre-task/state-invariants.log",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/red/reproduction.md",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/artifacts/regression-harvest/harvest.json",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/eval.json",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/memory/001-initial.md",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/memory/002-promoted-parked-idea.md",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/meta.json",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/parked-idea.md",
+      "?? loop-fork/runs/harvto-d15-teardown-process-orphans/task-log.md",
+      "?? loop-fork/specs/harvto-d15-teardown-process-orphans/spec.md",
+      "?? loop-fork/specs/harvto-d15-teardown-process-orphans/tasks.md",
+      "?? loop-fork/specs/harvto-d15-teardown-process-orphans/verify.md",
+      "?? runs/harvto-d15-teardown-process-orphans/eval.json"
+    ],
+    "stderr": ""
+  },
+  "source_test_status": {
+    "exit": 0,
+    "lines": [
+
+    ],
+    "stderr": ""
+  },
+  "root_loop_file_count": {
+    "exit": 0,
+    "count": 60,
+    "stderr": ""
+  },
+  "core_ignorecase": {
+    "exit": 0,
+    "value": "true",
+    "stderr": ""
+  },
+  "harness_status": {
+    "exit": 0,
+    "stdout": {
+      "active_task": null,
+      "run_dir": null,
+      "meta": null,
+      "plan": null,
+      "latest_memory": null,
+      "eval_status": null
+    },
+    "stderr": ""
+  },
+  "tasks_json": {
+    "total_count": 61,
+    "matching_records": [
+      {
+        "id": "harvto-d15-teardown-process-orphans",
+        "mode": "emergent",
+        "status": "done",
+        "created_at": "2026-08-16T03:56:29Z",
+        "run_dir": "runs/harvto-d15-teardown-process-orphans",
+        "eval_status": "pass",
+        "ended_at": "2026-08-16T06:56:26Z",
+        "spec_path": "specs/harvto-d15-teardown-process-orphans.md"
+      }
+    ],
+    "terminal_count": 1
+  },
+  "lifecycle_directories": [
+    ".harness/",
+    ".harness/hooks/",
+    ".harness/locks/",
+    ".harness/pre-task-artifacts/"
+  ],
+  "inventory_command": "find .harness -type f -print0 | sort -z",
+  "files": [
+    {
+      "path": ".harness/README.md",
+      "bytes": 5805,
+      "sha256": "67786cb163c379be3ccad0bffd4e29ab3b30f37ee995e24b94ca209bdd000e4f",
+      "tail": [
+        "",
+        "The default research threshold is configured in `.harness/config.json`.",
+        "",
+        "## Files In This Directory",
+        "",
+        "- `config.json`: Harness settings for this repo.",
+        "- `tasks.json`: compact task index used by `./harness list`.",
+        "- `current-task`: active task marker, created only while a task is active.",
+        "- `hooks/`: optional hook entry points used by agents and wrapper flows.",
+        "",
+        "Generated task artifacts are intentionally outside this hidden directory:",
+        "`runs/` holds in-progress work and `specs/` holds completed task specs."
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/config.json",
+      "bytes": 143,
+      "sha256": "fd4501836f57cbefd03dc6be6eb4c38b665cac47a5cd2123852fde2d75d4a6e5",
+      "tail": [
+        "{",
+        "  \"version\": 1,",
+        "  \"research_loc_threshold\": 500,",
+        "  \"state_invariant_dirs\": [\"state/invariants\"],",
+        "  \"default_required_dimensions\": [\"unit\"]",
+        "}"
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/hooks/on-plan-exit.sh",
+      "bytes": 420,
+      "sha256": "ebf597a0ec0f177edbbb4ad251fd32a946e1c88a4415ffc2204e4f70d5cec458",
+      "tail": [
+        "",
+        "TASK_ID=\"${1:-}\"",
+        "if [[ -z \"${TASK_ID}\" ]]; then",
+        "  if [[ ! -f \".harness/current-task\" ]]; then",
+        "    echo \"error: no task id supplied and no .harness/current-task marker\" >&2",
+        "    exit 1",
+        "  fi",
+        "  TASK_ID=\"$(cat .harness/current-task)\"",
+        "fi",
+        "shift || true",
+        "",
+        "exec ./v2/kit/scripts/plan-save.sh \"${TASK_ID}\" \"$@\""
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/hooks/post-task.sh",
+      "bytes": 401,
+      "sha256": "71e6037aa05c8a187c838594e844242342985fc8a01c213e78049d18514e54d7",
+      "tail": [
+        "cd \"${ROOT_DIR}\"",
+        "",
+        "TASK_ID=\"${1:-}\"",
+        "if [[ -z \"${TASK_ID}\" ]]; then",
+        "  if [[ ! -f \".harness/current-task\" ]]; then",
+        "    echo \"error: no task id supplied and no .harness/current-task marker\" >&2",
+        "    exit 1",
+        "  fi",
+        "  TASK_ID=\"$(cat .harness/current-task)\"",
+        "fi",
+        "",
+        "exec ./v2/kit/scripts/post-task.sh \"${TASK_ID}\""
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/hooks/pre-task.sh",
+      "bytes": 153,
+      "sha256": "e0595059586c5cf1575586621f428d5fdc3a9dd52f17e9e8bae6ca044310771b",
+      "tail": [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        "ROOT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/../..\" && pwd)\"",
+        "exec \"${ROOT_DIR}/v2/kit/scripts/pre-task.sh\" \"$@\""
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/hooks/preflight.sh",
+      "bytes": 154,
+      "sha256": "6a56b85a9df041f15dcf053e6ee2c0fb387cd56368938e300cd1a168d5761919",
+      "tail": [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        "ROOT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/../..\" && pwd)\"",
+        "exec \"${ROOT_DIR}/v2/kit/scripts/preflight.sh\" \"$@\""
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/hooks/research-gate.sh",
+      "bytes": 405,
+      "sha256": "81c0f878803fd9363fb943bafe0a823b09e64ac940b287a6465a9ed802ccb34d",
+      "tail": [
+        "cd \"${ROOT_DIR}\"",
+        "",
+        "TASK_ID=\"${1:-}\"",
+        "if [[ -z \"${TASK_ID}\" ]]; then",
+        "  if [[ ! -f \".harness/current-task\" ]]; then",
+        "    echo \"error: no task id supplied and no .harness/current-task marker\" >&2",
+        "    exit 1",
+        "  fi",
+        "  TASK_ID=\"$(cat .harness/current-task)\"",
+        "fi",
+        "",
+        "exec ./v2/kit/scripts/research.sh gate \"${TASK_ID}\""
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/hooks/stop-gate.sh",
+      "bytes": 154,
+      "sha256": "8af22141c86b56d68704b689ab15e0d974acec3ee079a874eab1b7a023d74e40",
+      "tail": [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "",
+        "ROOT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/../..\" && pwd)\"",
+        "exec \"${ROOT_DIR}/v2/kit/scripts/stop-gate.sh\" \"$@\""
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/parked-ideas.jsonl",
+      "bytes": 5351,
+      "sha256": "3a613f809d719b23747b708c15fff1c0445625cf1e08082bf45623311f0f19ef",
+      "tail": [
+        "{\"id\": \"harvto-d3-pending-route\", \"status\": \"promoted\", \"created_at\": \"2026-08-13T04:58:21Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d3-pending-route.md\", \"capture\": \"D3 P1: make route_task durably reject or terminate when no eligible utility worker/router exists; no pending-route forever state.\", \"promoted_at\": \"2026-08-13T17:40:21Z\", \"run_dir\": \"runs/harvto-d3-pending-route\"}",
+        "{\"id\": \"harvto-d4-live-peer-unconsumed\", \"status\": \"promoted\", \"created_at\": \"2026-08-13T04:58:23Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d4-live-peer-unconsumed.md\", \"capture\": \"D4 P0: reproduce routed-peer messages remaining unconsumed while the exact target peer is live, then fix with delivery evidence.\", \"promoted_at\": \"2026-08-13T08:42:39Z\", \"run_dir\": \"runs/harvto-d4-live-peer-unconsumed\"}",
+        "{\"id\": \"harvto-d5-silent-completion\", \"status\": \"promoted\", \"created_at\": \"2026-08-13T04:58:25Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d5-silent-completion.md\", \"capture\": \"D5 P1: make task completion emit durable supervisor-visible closure across restart/replay; reproduce runs finishing without close signal.\", \"promoted_at\": \"2026-08-13T19:04:51Z\", \"run_dir\": \"runs/harvto-d5-silent-completion\"}",
+        "{\"id\": \"harvto-d6-readonly-attach\", \"status\": \"parked\", \"created_at\": \"2026-08-13T04:58:27Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d6-readonly-attach.md\", \"capture\": \"D6 P2: reproduce and fix targeted recovery delivery being blocked by a stale read-only tmux viewer without unsafe pane injection.\"}",
+        "{\"id\": \"harvto-d7-handoff-identity\", \"status\": \"parked\", \"created_at\": \"2026-08-13T04:58:29Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d7-handoff-identity.md\", \"capture\": \"D7 P2: preserve model, effort, workspace, and run identity across handoff; reproduce the uncommanded sol-high to luna-low transition.\"}",
+        "{\"id\": \"harvto-d8-stale-write-lease\", \"status\": \"parked\", \"created_at\": \"2026-08-13T04:58:31Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d8-stale-write-lease.md\", \"capture\": \"D8 P2: reject stale utility write leases before mutation after authority changes; reproduce the dead lease routing a two-file write.\"}",
+        "{\"id\": \"harvto-d9-duplicate-emission\", \"status\": \"parked\", \"created_at\": \"2026-08-13T04:58:34Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d9-duplicate-emission.md\", \"capture\": \"D9 P2: reproduce four duplicate bridge emissions of one resolved acknowledgement and enforce idempotent single delivery.\"}",
+        "{\"id\": \"harvto-d10-guarded-apply\", \"status\": \"parked\", \"created_at\": \"2026-08-13T04:58:36Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d10-guarded-apply.md\", \"capture\": \"D10 P2: reproduce guarded patch apply against an absent target and make the guard fail closed with exact target evidence.\"}",
+        "{\"id\": \"harvto-d11-composer-nudge\", \"status\": \"parked\", \"created_at\": \"2026-08-13T04:58:38Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d11-composer-nudge.md\", \"capture\": \"D11 P2: reproduce recovery nudges typing into non-empty composers and preserve composer contents while using durable transport.\"}",
+        "{\"id\": \"harvto-d12-socket-discovery\", \"status\": \"parked\", \"created_at\": \"2026-08-13T04:58:40Z\", \"source_task\": \"harvto-supervisor-defects\", \"spec_path\": \"specs/harvto-d12-socket-discovery.md\", \"capture\": \"D12 P2: derive live-run discovery from manifest-recorded tmux sockets so non-default Harvto sockets cannot appear absent.\"}",
+        "{\"id\": \"harvto-d16-scope-audit-completeness\", \"status\": \"promoted\", \"created_at\": \"2026-08-13T17:43:03Z\", \"source_task\": \"harvto-d3-pending-route\", \"spec_path\": \"specs/harvto-d16-scope-audit-completeness.md\", \"capture\": \"D16 campaign-integrity P0: scope audit can return a clean verdict while omitting Git-derived modified paths; require complete added, deleted, renamed/copied, staged, committed-range, and tracked-but-routing-ignored path enumeration plus consumer-side fail-closed count/hash reconciliation and a genuinely clean negative control.\", \"promoted_at\": \"2026-08-13T21:07:18Z\", \"run_dir\": \"runs/harvto-d16-scope-audit-completeness\"}",
+        "{\"id\": \"harvto-d15-teardown-process-orphans\", \"status\": \"promoted\", \"created_at\": \"2026-08-13T17:43:10Z\", \"source_task\": \"harvto-d3-pending-route\", \"spec_path\": \"specs/harvto-d15-teardown-process-orphans.md\", \"capture\": \"D15 lifecycle P0: completed Governess teardown leaves manifest-owned launcher or Claude child processes alive; require positive PID liveness before teardown, direct absence proof after teardown, isolated fixture-owned processes only, no signals outside manifest ownership, and durable unresolved cleanup instead of false completion.\", \"promoted_at\": \"2026-08-16T03:56:30Z\", \"run_dir\": \"runs/harvto-d15-teardown-process-orphans\"}"
+      ],
+      "terminal_records": [
+
+      ]
+    },
+    {
+      "path": ".harness/tasks.json",
+      "bytes": 19535,
+      "sha256": "cef409131389c1eec8513a509724a33915356dde080dcdffea4e9321c3ba15a8",
+      "tail": [
+        "    {",
+        "      \"id\": \"harvto-d15-teardown-process-orphans\",",
+        "      \"mode\": \"emergent\",",
+        "      \"status\": \"done\",",
+        "      \"created_at\": \"2026-08-16T03:56:29Z\",",
+        "      \"run_dir\": \"runs/harvto-d15-teardown-process-orphans\",",
+        "      \"eval_status\": \"pass\",",
+        "      \"ended_at\": \"2026-08-16T06:56:26Z\",",
+        "      \"spec_path\": \"specs/harvto-d15-teardown-process-orphans.md\"",
+        "    }",
+        "  ]",
+        "}"
+      ],
+      "terminal_records": [
+        {
+          "id": "harvto-d15-teardown-process-orphans",
+          "mode": "emergent",
+          "status": "done",
+          "created_at": "2026-08-16T03:56:29Z",
+          "run_dir": "runs/harvto-d15-teardown-process-orphans",
+          "eval_status": "pass",
+          "ended_at": "2026-08-16T06:56:26Z",
+          "spec_path": "specs/harvto-d15-teardown-process-orphans.md"
+        }
+      ]
+    }
+  ],
+  "terminal_records_total": 1,
+  "pre_snapshot": {
+    "path": "runs/harvto-d15-teardown-process-orphans/artifacts/close/pre-close-lifecycle.json",
+    "sha256": "66666865793bc34d117e7f5a82d03e10b5482aa454dbe79bce8fb697f81e9d7e"
+  },
+  "delta": {
+    "task_total_before": 61,
+    "task_total_after": 61,
+    "task_total_growth": 0,
+    "terminal_count_before": 0,
+    "terminal_count_after": 1,
+    "terminal_count_growth": 1,
+    "lifecycle_terminal_records_before": 0,
+    "lifecycle_terminal_records_after": 1,
+    "active_task_before": "harvto-d15-teardown-process-orphans",
+    "active_task_after": null,
+    "paths": [
+      {
+        "path": ".harness/README.md",
+        "state": "unchanged",
+        "before_bytes": 5805,
+        "after_bytes": 5805,
+        "before_sha256": "67786cb163c379be3ccad0bffd4e29ab3b30f37ee995e24b94ca209bdd000e4f",
+        "after_sha256": "67786cb163c379be3ccad0bffd4e29ab3b30f37ee995e24b94ca209bdd000e4f"
+      },
+      {
+        "path": ".harness/config.json",
+        "state": "unchanged",
+        "before_bytes": 143,
+        "after_bytes": 143,
+        "before_sha256": "fd4501836f57cbefd03dc6be6eb4c38b665cac47a5cd2123852fde2d75d4a6e5",
+        "after_sha256": "fd4501836f57cbefd03dc6be6eb4c38b665cac47a5cd2123852fde2d75d4a6e5"
+      },
+      {
+        "path": ".harness/current-task",
+        "state": "removed",
+        "before_bytes": 36,
+        "after_bytes": null,
+        "before_sha256": "1b02b28f289e472ac97493a91147c6fcd99ebd39c31110bc5b8799eac36569b2",
+        "after_sha256": null
+      },
+      {
+        "path": ".harness/hooks/on-plan-exit.sh",
+        "state": "unchanged",
+        "before_bytes": 420,
+        "after_bytes": 420,
+        "before_sha256": "ebf597a0ec0f177edbbb4ad251fd32a946e1c88a4415ffc2204e4f70d5cec458",
+        "after_sha256": "ebf597a0ec0f177edbbb4ad251fd32a946e1c88a4415ffc2204e4f70d5cec458"
+      },
+      {
+        "path": ".harness/hooks/post-task.sh",
+        "state": "unchanged",
+        "before_bytes": 401,
+        "after_bytes": 401,
+        "before_sha256": "71e6037aa05c8a187c838594e844242342985fc8a01c213e78049d18514e54d7",
+        "after_sha256": "71e6037aa05c8a187c838594e844242342985fc8a01c213e78049d18514e54d7"
+      },
+      {
+        "path": ".harness/hooks/pre-task.sh",
+        "state": "unchanged",
+        "before_bytes": 153,
+        "after_bytes": 153,
+        "before_sha256": "e0595059586c5cf1575586621f428d5fdc3a9dd52f17e9e8bae6ca044310771b",
+        "after_sha256": "e0595059586c5cf1575586621f428d5fdc3a9dd52f17e9e8bae6ca044310771b"
+      },
+      {
+        "path": ".harness/hooks/preflight.sh",
+        "state": "unchanged",
+        "before_bytes": 154,
+        "after_bytes": 154,
+        "before_sha256": "6a56b85a9df041f15dcf053e6ee2c0fb387cd56368938e300cd1a168d5761919",
+        "after_sha256": "6a56b85a9df041f15dcf053e6ee2c0fb387cd56368938e300cd1a168d5761919"
+      },
+      {
+        "path": ".harness/hooks/research-gate.sh",
+        "state": "unchanged",
+        "before_bytes": 405,
+        "after_bytes": 405,
+        "before_sha256": "81c0f878803fd9363fb943bafe0a823b09e64ac940b287a6465a9ed802ccb34d",
+        "after_sha256": "81c0f878803fd9363fb943bafe0a823b09e64ac940b287a6465a9ed802ccb34d"
+      },
+      {
+        "path": ".harness/hooks/stop-gate.sh",
+        "state": "unchanged",
+        "before_bytes": 154,
+        "after_bytes": 154,
+        "before_sha256": "8af22141c86b56d68704b689ab15e0d974acec3ee079a874eab1b7a023d74e40",
+        "after_sha256": "8af22141c86b56d68704b689ab15e0d974acec3ee079a874eab1b7a023d74e40"
+      },
+      {
+        "path": ".harness/parked-ideas.jsonl",
+        "state": "unchanged",
+        "before_bytes": 5351,
+        "after_bytes": 5351,
+        "before_sha256": "3a613f809d719b23747b708c15fff1c0445625cf1e08082bf45623311f0f19ef",
+        "after_sha256": "3a613f809d719b23747b708c15fff1c0445625cf1e08082bf45623311f0f19ef"
+      },
+      {
+        "path": ".harness/tasks.json",
+        "state": "changed",
+        "before_bytes": 19498,
+        "after_bytes": 19535,
+        "before_sha256": "146b4780ef39ba72e151712de076ca119c01aeef706abc0d8b7f116c225519cd",
+        "after_sha256": "cef409131389c1eec8513a509724a33915356dde080dcdffea4e9321c3ba15a8"
+      }
+    ]
+  }
+}

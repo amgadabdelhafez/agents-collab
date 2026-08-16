@@ -590,6 +590,16 @@
       "eval_status": "pass",
       "ended_at": "2026-08-16T03:46:58Z",
       "spec_path": "specs/harvto-d16-scope-audit-completeness.md"
+    },
+    {
+      "id": "harvto-d15-teardown-process-orphans",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-08-16T03:56:29Z",
+      "run_dir": "runs/harvto-d15-teardown-process-orphans",
+      "eval_status": "pass",
+      "ended_at": "2026-08-16T06:56:26Z",
+      "spec_path": "specs/harvto-d15-teardown-process-orphans.md"
     }
   ]
 }

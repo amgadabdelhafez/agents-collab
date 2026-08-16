@@ -1,0 +1,17 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d15-teardown-process-orphans",
+  "baseline_failures": [],
+  "summary": "D15 binds launcher and main-agent ownership to exact process identity, proves bounded process and exact tmux settlement before stopped, and retains durable unresolved evidence on every ambiguous or surviving branch.",
+  "checks": {
+    "focused_run_process_cleanup": "29 pass, 0 fail",
+    "focused_governess_exit": "34 pass, 0 fail",
+    "focused_governess_hooks": "35 pass, 0 fail",
+    "focused_tmux": "103 pass, 0 fail",
+    "focused_run_state": "22 pass, 0 fail",
+    "lint": "898 files pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "test_ci": "79 files pass"
+  }
+}

@@ -256,7 +256,12 @@ unresolved, not omitted from intake.
   cleanup is recorded. Isolated fixtures may signal only PIDs they own and record.
 - Harness intake: parked independently as `harvto-d15-teardown-process-orphans` while D3 remains
   active.
-- Status: **confirmed**; reproduction and implementation remain isolated to D15.
+- Status: **closed**. Exact-base red is preserved at SHA-256
+  `cea7c590c92768f92db9647e25f359eafd4f1701d74572a438d71e905f6990c9`; implementation commit
+  `5f5ddba66cdb1bc5d8f6212b763323f507b0b777` received Claude exact-SHA zero-write `PASS`
+  `b5280c18-08cc-439c-8009-9d121ea1dfe8`. Harness closed exactly once at
+  `2026-08-16T06:56:26Z`; terminal records changed 0 to 1, no task remains active, and D15 stayed
+  isolated from D6-D12.
 
 ### D16 — Scope audit false negatives omit modified paths (P0)
 
