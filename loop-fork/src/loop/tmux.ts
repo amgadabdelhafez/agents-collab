@@ -151,10 +151,21 @@ interface PaneCursor {
   y: number;
 }
 
+interface TmuxClientModeRecord {
+  identity: string;
+  readOnly: boolean;
+  sessionId: string;
+  windowId: string;
+}
+
 interface PaneSnapshot {
+  activeClientIdentities?: string[];
   activeClients: number;
+  clientModeRecords?: TmuxClientModeRecord[];
   cursor: PaneCursor;
   pipeOpen: boolean;
+  targetSessionId?: string;
+  targetWindowId?: string;
   text: string;
   windowActivity: number;
 }
@@ -2182,25 +2193,188 @@ const runTmuxCommand = (
 
 const TMUX_PANE_ID_RE = /^%\d+$/;
 const TMUX_PANE_SNAPSHOT_MARKER = "__LOOP_PANE_CURSOR__";
+const TMUX_PANE_CLIENTS_MARKER = "__LOOP_PANE_CLIENTS__";
+const TMUX_CLIENT_MODE_MARKER = "__LOOP_CLIENT_MODE__";
 const TMUX_PANE_SNAPSHOT_RE =
   /(?:^|\n)__LOOP_PANE_CURSOR__ (\d+) (\d+) (\d+) (\d+) ([01])\n?$/;
+const TMUX_CLIENT_IDENTITY_RE = /^[A-Za-z0-9./:_+-]+$/;
+const TMUX_SESSION_ID_RE = /^\$\d+$/;
+const TMUX_WINDOW_ID_RE = /^@\d+$/;
 
-const parseTmuxPaneSnapshot = (output: string): PaneSnapshot | undefined => {
+const buildTmuxPaneSnapshotArgs = (pane: string): string[] => [
+  "tmux",
+  "capture-pane",
+  "-p",
+  "-e",
+  "-t",
+  pane,
+  ";",
+  "display-message",
+  "-p",
+  "-t",
+  pane,
+  `${TMUX_PANE_CLIENTS_MARKER}\t#{pane_id}\t#{session_id}\t#{window_id}\t#{window_active_clients_list}`,
+  ";",
+  "display-message",
+  "-p",
+  "-t",
+  pane,
+  `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
+];
+
+const buildTmuxClientModeArgs = (pane: string): string[] => [
+  "tmux",
+  "list-clients",
+  "-t",
+  pane,
+  "-F",
+  `${TMUX_CLIENT_MODE_MARKER}\t#{client_name}\t#{client_readonly}\t#{session_id}\t#{window_id}`,
+];
+
+const parseTmuxClientIdentities = (value: string): string[] | undefined => {
+  if (!value) {
+    return [];
+  }
+  const identities = value.split(",");
+  if (
+    identities.some((identity) => !TMUX_CLIENT_IDENTITY_RE.test(identity)) ||
+    new Set(identities).size !== identities.length
+  ) {
+    return undefined;
+  }
+  return identities;
+};
+
+const parseTmuxClientModeRecords = (
+  output: string
+): TmuxClientModeRecord[] | undefined => {
+  if (!output) {
+    return [];
+  }
+  const lines = output.endsWith("\n")
+    ? output.slice(0, -1).split("\n")
+    : output.split("\n");
+  const records: TmuxClientModeRecord[] = [];
+  for (const line of lines) {
+    const fields = line.split("\t");
+    if (
+      fields.length !== 5 ||
+      fields[0] !== TMUX_CLIENT_MODE_MARKER ||
+      !fields[1] ||
+      !TMUX_CLIENT_IDENTITY_RE.test(fields[1]) ||
+      (fields[2] !== "0" && fields[2] !== "1") ||
+      !fields[3] ||
+      !TMUX_SESSION_ID_RE.test(fields[3]) ||
+      !fields[4] ||
+      !TMUX_WINDOW_ID_RE.test(fields[4])
+    ) {
+      return undefined;
+    }
+    records.push({
+      identity: fields[1],
+      readOnly: fields[2] === "1",
+      sessionId: fields[3],
+      windowId: fields[4],
+    });
+  }
+  if (
+    new Set(records.map(({ identity }) => identity)).size !== records.length
+  ) {
+    return undefined;
+  }
+  return records;
+};
+
+const parseTmuxPaneSnapshot = (
+  output: string,
+  clientModeOutput: string,
+  expectedPane?: string
+): PaneSnapshot | undefined => {
   const match = TMUX_PANE_SNAPSHOT_RE.exec(output);
   if (!match) {
     return undefined;
   }
+  const paneAndClients = output.slice(0, match.index);
+  const clientMarkerStart = paneAndClients.lastIndexOf("\n");
+  const clientMarkerLine = paneAndClients.slice(clientMarkerStart + 1);
+  const clientFields = clientMarkerLine.split("\t");
+  if (
+    clientFields.length !== 5 ||
+    clientFields[0] !== TMUX_PANE_CLIENTS_MARKER ||
+    !clientFields[1] ||
+    !TMUX_PANE_ID_RE.test(clientFields[1]) ||
+    (expectedPane !== undefined && clientFields[1] !== expectedPane) ||
+    !clientFields[2] ||
+    !TMUX_SESSION_ID_RE.test(clientFields[2]) ||
+    !clientFields[3] ||
+    !TMUX_WINDOW_ID_RE.test(clientFields[3])
+  ) {
+    return undefined;
+  }
+  const activeClientIdentities = parseTmuxClientIdentities(
+    clientFields[4] ?? ""
+  );
+  const clientModeRecords = parseTmuxClientModeRecords(clientModeOutput);
+  if (!(activeClientIdentities && clientModeRecords)) {
+    return undefined;
+  }
   return {
     activeClients: Number.parseInt(match[4] ?? "", 10),
+    activeClientIdentities,
+    clientModeRecords,
     cursor: {
       x: Number.parseInt(match[1] ?? "", 10),
       y: Number.parseInt(match[2] ?? "", 10),
     },
     pipeOpen: match[5] === "1",
-    text: output.slice(0, match.index),
+    targetSessionId: clientFields[2],
+    targetWindowId: clientFields[3],
+    text: paneAndClients.slice(0, Math.max(0, clientMarkerStart)),
     windowActivity: Number.parseInt(match[3] ?? "", 10),
   };
 };
+
+const captureTmuxPaneSnapshot = (
+  pane: string,
+  run: (args: string[]) => SpawnResult
+): PaneSnapshot | undefined => {
+  const paneResult = run(buildTmuxPaneSnapshotArgs(pane));
+  if (paneResult.timedOut) {
+    throw new Error(
+      `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane state for "${pane}"`
+    );
+  }
+  if (paneResult.exitCode !== 0) {
+    throw new Error(`Failed to capture tmux pane state for "${pane}".`);
+  }
+  const clientModeResult = run(buildTmuxClientModeArgs(pane));
+  if (clientModeResult.timedOut) {
+    throw new Error(
+      `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while reading client modes for "${pane}"`
+    );
+  }
+  if (clientModeResult.exitCode !== 0) {
+    throw new Error(`Failed to read tmux client modes for "${pane}".`);
+  }
+  return parseTmuxPaneSnapshot(
+    paneResult.stdout ?? "",
+    clientModeResult.stdout ?? "",
+    pane
+  );
+};
+
+const syntheticPaneSnapshot = (
+  pane: string,
+  capturePane: TmuxDeps["capturePane"]
+): PaneSnapshot => ({
+  activeClients: 0,
+  activeClientIdentities: [],
+  clientModeRecords: [],
+  cursor: { x: -1, y: -1 },
+  pipeOpen: false,
+  text: capturePane(pane, true),
+  windowActivity: 0,
+});
 
 const stablePaneId = (result: SpawnResult): string | undefined => {
   const paneId = result.stdout?.trim();
@@ -2396,11 +2570,87 @@ type ClaudeSuggestionProbeResult =
   | "indeterminate";
 type ClaudeDraftRestoreResult = "acknowledged" | "failed" | "unacknowledged";
 
+interface ClaudeSuggestionExpectation {
+  clientEvidenceKey: string;
+  row: number;
+  text: string;
+}
+
+const readOnlyTargetClientEvidenceKey = (
+  snapshot: PaneSnapshot
+): string | undefined => {
+  const { activeClientIdentities, clientModeRecords } = snapshot;
+  if (
+    !Number.isSafeInteger(snapshot.activeClients) ||
+    snapshot.activeClients < 0 ||
+    !activeClientIdentities ||
+    !clientModeRecords ||
+    activeClientIdentities.length !== snapshot.activeClients ||
+    activeClientIdentities.some(
+      (identity) => !TMUX_CLIENT_IDENTITY_RE.test(identity)
+    ) ||
+    new Set(activeClientIdentities).size !== activeClientIdentities.length ||
+    clientModeRecords.some(
+      ({ identity, readOnly, sessionId, windowId }) =>
+        !TMUX_CLIENT_IDENTITY_RE.test(identity) ||
+        typeof readOnly !== "boolean" ||
+        !TMUX_SESSION_ID_RE.test(sessionId) ||
+        !TMUX_WINDOW_ID_RE.test(windowId)
+    ) ||
+    new Set(clientModeRecords.map(({ identity }) => identity)).size !==
+      clientModeRecords.length
+  ) {
+    return undefined;
+  }
+
+  const { targetSessionId, targetWindowId } = snapshot;
+  if (!(targetSessionId && targetWindowId)) {
+    return snapshot.activeClients === 0 && clientModeRecords.length === 0
+      ? "explicit-empty"
+      : undefined;
+  }
+  if (
+    !(
+      TMUX_SESSION_ID_RE.test(targetSessionId) &&
+      TMUX_WINDOW_ID_RE.test(targetWindowId)
+    )
+  ) {
+    return undefined;
+  }
+
+  const targetRecords = clientModeRecords.filter(
+    ({ sessionId, windowId }) =>
+      sessionId === targetSessionId && windowId === targetWindowId
+  );
+  if (targetRecords.length !== activeClientIdentities.length) {
+    return undefined;
+  }
+  const targetRecordByIdentity = new Map(
+    targetRecords.map((record) => [record.identity, record])
+  );
+  if (
+    activeClientIdentities.some(
+      (identity) => !targetRecordByIdentity.get(identity)?.readOnly
+    )
+  ) {
+    return undefined;
+  }
+
+  return JSON.stringify({
+    clients: [...activeClientIdentities].sort(),
+    session: targetSessionId,
+    window: targetWindowId,
+  });
+};
+
 const matchesClaudeSuggestionSnapshot = (
   snapshot: PaneSnapshot,
-  expected: { row: number; text: string }
+  expected: ClaudeSuggestionExpectation
 ): boolean => {
-  if (snapshot.activeClients !== 0 || snapshot.pipeOpen) {
+  if (
+    snapshot.pipeOpen ||
+    readOnlyTargetClientEvidenceKey(snapshot) !== expected.clientEvidenceKey
+  ) {
     return false;
   }
   const composer = readClaudeComposer(snapshot.text);
@@ -2415,7 +2665,7 @@ const matchesClaudeSuggestionSnapshot = (
 const waitForClaudeActivityBoundary = async (
   pane: string,
   initial: PaneSnapshot,
-  expected: { cursorX: number; row: number; text: string },
+  expected: ClaudeSuggestionExpectation & { cursorX: number },
   deps: Pick<TmuxDeps, "capturePaneSnapshot" | "nowMs" | "sleep">
 ): Promise<PaneSnapshot | undefined> => {
   let baseline = initial;
@@ -2445,7 +2695,7 @@ const waitForClaudeActivityBoundary = async (
 const waitForClaudeActivityAdvance = async (
   pane: string,
   baselineActivity: number,
-  expected: { row: number; text: string },
+  expected: ClaudeSuggestionExpectation,
   deps: Pick<TmuxDeps, "capturePaneSnapshot" | "sleep">
 ): Promise<PaneSnapshot | undefined> => {
   for (let poll = 0; poll < CLAUDE_SUGGESTION_PROBE_POLLS; poll += 1) {
@@ -2469,7 +2719,7 @@ const CLAUDE_DRAFT_RESTORE_ATTEMPTS = 3;
 const restoreClaudeDraftCursor = async (
   pane: string,
   observed: PaneSnapshot,
-  expected: { row: number; text: string },
+  expected: ClaudeSuggestionExpectation,
   deps: Pick<TmuxDeps, "capturePaneSnapshot" | "nowMs" | "sendKeys" | "sleep">
 ): Promise<ClaudeDraftRestoreResult> => {
   let current = observed;
@@ -2530,16 +2780,24 @@ const probeClaudeSuggestedComposer = async (
   expected: { row: number; text: string },
   deps: Pick<TmuxDeps, "capturePaneSnapshot" | "nowMs" | "sendKeys" | "sleep">
 ): Promise<ClaudeSuggestionProbeResult> => {
+  const clientEvidenceKey = readOnlyTargetClientEvidenceKey(initial);
   if (
-    !matchesClaudeSuggestionSnapshot(initial, expected) ||
+    !(
+      clientEvidenceKey &&
+      matchesClaudeSuggestionSnapshot(initial, {
+        ...expected,
+        clientEvidenceKey,
+      })
+    ) ||
     initial.cursor.x !== CLAUDE_EMPTY_COMPOSER_CURSOR_X
   ) {
     return "indeterminate";
   }
+  const stableExpected = { ...expected, clientEvidenceKey };
   const quiet = await waitForClaudeActivityBoundary(
     pane,
     initial,
-    { ...expected, cursorX: CLAUDE_EMPTY_COMPOSER_CURSOR_X },
+    { ...stableExpected, cursorX: CLAUDE_EMPTY_COMPOSER_CURSOR_X },
     deps
   );
   if (!quiet) {
@@ -2553,16 +2811,18 @@ const probeClaudeSuggestedComposer = async (
     const acknowledged = await waitForClaudeActivityAdvance(
       pane,
       quiet.windowActivity,
-      expected,
+      stableExpected,
       deps
     );
     const observed = acknowledged ?? deps.capturePaneSnapshot(pane);
     if (!observed) {
       throw new ClaudePostProbeIndeterminateError(pane);
     }
-    if (!matchesClaudeSuggestionSnapshot(observed, expected)) {
+    if (!matchesClaudeSuggestionSnapshot(observed, stableExpected)) {
+      const observedClientEvidenceKey =
+        readOnlyTargetClientEvidenceKey(observed);
       const changed =
-        observed.activeClients === 0 && !observed.pipeOpen
+        observedClientEvidenceKey === clientEvidenceKey && !observed.pipeOpen
           ? inspectClaudeInput(observed.text, observed.cursor)
           : { kind: "blocked" as const };
       if (
@@ -2586,7 +2846,7 @@ const probeClaudeSuggestedComposer = async (
     const restored = await restoreClaudeDraftCursor(
       pane,
       observed,
-      expected,
+      stableExpected,
       deps
     );
     if (restored === "acknowledged") {
@@ -3518,6 +3778,23 @@ const startAutoSession = (
   return "";
 };
 
+const runBoundedTmuxSnapshotCommand = (args: string[]): SpawnResult => {
+  const result = spawnSync(
+    args,
+    boundedTmuxOptions({
+      stderr: "ignore",
+      stdout: "pipe",
+    })
+  );
+  const timedOut = tmuxCommandTimedOut(result);
+  return {
+    exitCode: timedOut ? 124 : result.exitCode,
+    stderr: "",
+    stdout: decode(result.stdout),
+    ...(timedOut ? { timedOut: true } : {}),
+  };
+};
+
 const defaultDeps = (): TmuxDeps => ({
   attach: (session: string) => {
     const result = spawnSync(["tmux", "attach", "-t", session], {
@@ -3547,37 +3824,8 @@ const defaultDeps = (): TmuxDeps => ({
     }
     return decode(result.stdout);
   },
-  capturePaneSnapshot: (pane: string) => {
-    const result = spawnSync(
-      [
-        "tmux",
-        "capture-pane",
-        "-p",
-        "-e",
-        "-t",
-        pane,
-        ";",
-        "display-message",
-        "-p",
-        "-t",
-        pane,
-        `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
-      ],
-      boundedTmuxOptions({
-        stderr: "ignore",
-        stdout: "pipe",
-      })
-    );
-    if (tmuxCommandTimedOut(result)) {
-      throw new Error(
-        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane state for "${pane}"`
-      );
-    }
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to capture tmux pane state for "${pane}".`);
-    }
-    return parseTmuxPaneSnapshot(decode(result.stdout));
-  },
+  capturePaneSnapshot: (pane: string) =>
+    captureTmuxPaneSnapshot(pane, runBoundedTmuxSnapshotCommand),
   cwd: process.cwd(),
   env: process.env,
   findBinary: (cmd: string) => commandExists(cmd),
@@ -3729,13 +3977,8 @@ export const runInTmux = async (
   if (overrides.capturePane && !overrides.capturePaneSnapshot) {
     // Unit tests and embedders that provide a pane capture do not get to mix
     // that synthetic text with cursor data from the user's real tmux server.
-    deps.capturePaneSnapshot = (pane: string) => ({
-      activeClients: 0,
-      cursor: { x: -1, y: -1 },
-      pipeOpen: false,
-      text: deps.capturePane(pane, true),
-      windowActivity: 0,
-    });
+    deps.capturePaneSnapshot = (pane: string) =>
+      syntheticPaneSnapshot(pane, deps.capturePane);
   }
   const insideTmux = Boolean(deps.env.TMUX);
 
@@ -3843,6 +4086,9 @@ export const tmuxInternals = {
   buildPrimaryPrompt,
   buildRunName,
   buildShellCommand,
+  buildTmuxClientModeArgs,
+  buildTmuxPaneSnapshotArgs,
+  captureTmuxPaneSnapshot,
   preparePersistentTmuxLaunch,
   spawnDetachedProcess,
   isSessionConflict,
@@ -3852,8 +4098,10 @@ export const tmuxInternals = {
   probeClaudeSuggestedComposer,
   quoteShellArg,
   restoreClaudeDraftCursor,
+  readOnlyTargetClientEvidenceKey,
   sanitizeBase,
   stripTmuxFlag,
+  syntheticPaneSnapshot,
   unblockClaudePane,
   writeLaunchCharter,
   utilityPaneEnabled,

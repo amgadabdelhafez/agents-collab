@@ -83,6 +83,32 @@ const readClaudeWarningComposer = (text: string): string => {
   return composer;
 };
 
+const EMPTY_TMUX_CLIENT_EVIDENCE = {
+  activeClientIdentities: [] as string[],
+  clientModeRecords: [] as Array<{
+    identity: string;
+    readOnly: boolean;
+    sessionId: string;
+    windowId: string;
+  }>,
+};
+
+const readOnlyTmuxClientEvidence = (
+  identities: string[],
+  targetSessionId = "$0",
+  targetWindowId = "@4"
+) => ({
+  activeClientIdentities: identities,
+  clientModeRecords: identities.map((identity) => ({
+    identity,
+    readOnly: true,
+    sessionId: targetSessionId,
+    windowId: targetWindowId,
+  })),
+  targetSessionId,
+  targetWindowId,
+});
+
 const currentRunBase = (
   cwd: string = process.cwd(),
   requestedId?: string
@@ -2548,6 +2574,7 @@ test("runInTmux replays the captured Claude pre-connect warning before bootstrap
         const frame = currentFixtureState();
         return {
           activeClients: frame.activeClients,
+          ...EMPTY_TMUX_CLIENT_EVIDENCE,
           cursor: frame.cursor,
           pipeOpen: frame.panePipe !== 0,
           text: currentFrame(),
@@ -2652,6 +2679,7 @@ test("Claude suggestion probe preserves and rejects a human Try draft", async ()
       capturePane: () => draftFrame,
       capturePaneSnapshot: () => ({
         activeClients: 0,
+        ...EMPTY_TMUX_CLIENT_EVIDENCE,
         cursor,
         pipeOpen: false,
         text: draftFrame,
@@ -2712,6 +2740,7 @@ test("runInTmux preserves the live workspace when a post-End draft capture fails
       ? undefined
       : {
           activeClients: current.activeClients,
+          ...EMPTY_TMUX_CLIENT_EVIDENCE,
           cursor: current.cursor,
           pipeOpen: current.panePipe !== 0,
           text: paneText(),
@@ -2804,17 +2833,221 @@ test("runInTmux preserves the live workspace when a post-End draft capture fails
 
 test("tmux pane snapshots bind styled text and cursor in one payload", () => {
   const parsed = tmuxInternals.parseTmuxPaneSnapshot(
-    "pane text\n__LOOP_PANE_CURSOR__ 2 16 1785474782 0 0\n"
+    "pane text\n__LOOP_PANE_CLIENTS__\t%1\t$0\t@4\t\n__LOOP_PANE_CURSOR__ 2 16 1785474782 0 0\n",
+    "",
+    "%1"
   );
   expect(parsed).toEqual({
     activeClients: 0,
+    activeClientIdentities: [],
+    clientModeRecords: [],
     cursor: { x: 2, y: 16 },
     pipeOpen: false,
+    targetSessionId: "$0",
+    targetWindowId: "@4",
     text: "pane text",
     windowActivity: 1_785_474_782,
   });
   expect(
-    tmuxInternals.parseTmuxPaneSnapshot("pane text\nmissing cursor marker\n")
+    tmuxInternals.parseTmuxPaneSnapshot(
+      "pane text\nmissing cursor marker\n",
+      "",
+      "%1"
+    )
+  ).toBeUndefined();
+});
+
+test("D6 default tmux queries bind pane identities and session client modes", () => {
+  expect(tmuxInternals.buildTmuxPaneSnapshotArgs("%1")).toEqual([
+    "tmux",
+    "capture-pane",
+    "-p",
+    "-e",
+    "-t",
+    "%1",
+    ";",
+    "display-message",
+    "-p",
+    "-t",
+    "%1",
+    "__LOOP_PANE_CLIENTS__\t#{pane_id}\t#{session_id}\t#{window_id}\t#{window_active_clients_list}",
+    ";",
+    "display-message",
+    "-p",
+    "-t",
+    "%1",
+    "__LOOP_PANE_CURSOR__ #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}",
+  ]);
+  expect(tmuxInternals.buildTmuxClientModeArgs("%1")).toEqual([
+    "tmux",
+    "list-clients",
+    "-t",
+    "%1",
+    "-F",
+    "__LOOP_CLIENT_MODE__\t#{client_name}\t#{client_readonly}\t#{session_id}\t#{window_id}",
+  ]);
+});
+
+test("D6 tmux client evidence parser fails closed on malformed or mismatched records", () => {
+  const validPaneOutput =
+    "pane text\n__LOOP_PANE_CLIENTS__\t%1\t$0\t@4\t/dev/ttys001\n__LOOP_PANE_CURSOR__ 2 16 1785474782 1 0\n";
+  const validModeOutput = "__LOOP_CLIENT_MODE__\t/dev/ttys001\t1\t$0\t@4\n";
+  const parsed = tmuxInternals.parseTmuxPaneSnapshot(
+    validPaneOutput,
+    validModeOutput,
+    "%1"
+  );
+  expect(parsed).toBeDefined();
+  expect(
+    parsed ? tmuxInternals.readOnlyTargetClientEvidenceKey(parsed) : undefined
+  ).toBeDefined();
+
+  const invalidCases = [
+    {
+      modeOutput: validModeOutput,
+      name: "missing pane client record",
+      pane: "%1",
+      paneOutput: "pane text\n__LOOP_PANE_CURSOR__ 2 16 1785474782 1 0\n",
+    },
+    {
+      modeOutput: validModeOutput,
+      name: "extra fixed-marker arity",
+      pane: "%1",
+      paneOutput: validPaneOutput.replace(" 1 0\n", " 1 0 extra\n"),
+    },
+    {
+      modeOutput: validModeOutput,
+      name: "duplicate pane identity",
+      pane: "%1",
+      paneOutput: validPaneOutput.replace(
+        "/dev/ttys001\n",
+        "/dev/ttys001,/dev/ttys001\n"
+      ),
+    },
+    {
+      modeOutput: validModeOutput,
+      name: "wrong target pane",
+      pane: "%2",
+      paneOutput: validPaneOutput,
+    },
+    {
+      modeOutput: validModeOutput.replace("\t1\t", "\tunknown\t"),
+      name: "unknown client mode",
+      pane: "%1",
+      paneOutput: validPaneOutput,
+    },
+    {
+      modeOutput: `${validModeOutput}${validModeOutput}`,
+      name: "duplicate client mode record",
+      pane: "%1",
+      paneOutput: validPaneOutput,
+    },
+  ];
+
+  for (const invalid of invalidCases) {
+    expect({
+      name: invalid.name,
+      parsed: tmuxInternals.parseTmuxPaneSnapshot(
+        invalid.paneOutput,
+        invalid.modeOutput,
+        invalid.pane
+      ),
+    }).toEqual({ name: invalid.name, parsed: undefined });
+  }
+});
+
+test("D6 tmux client query failure or timeout stops before probe delivery", async () => {
+  const paneOutput =
+    "pane text\n__LOOP_PANE_CLIENTS__\t%1\t$0\t@4\t\n__LOOP_PANE_CURSOR__ 2 16 1785474782 0 0\n";
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const failures = [
+    {
+      name: "pane query failure",
+      results: [{ exitCode: 1, stderr: "failed" }],
+    },
+    {
+      name: "pane query timeout",
+      results: [{ exitCode: 124, stderr: "timeout", timedOut: true }],
+    },
+    {
+      name: "mode query failure",
+      results: [
+        { exitCode: 0, stderr: "", stdout: paneOutput },
+        { exitCode: 1, stderr: "failed" },
+      ],
+    },
+    {
+      name: "mode query timeout",
+      results: [
+        { exitCode: 0, stderr: "", stdout: paneOutput },
+        { exitCode: 124, stderr: "timeout", timedOut: true },
+      ],
+    },
+  ];
+
+  for (const failure of failures) {
+    let call = 0;
+    const keyCalls: string[][] = [];
+    await expect(
+      tmuxInternals.unblockClaudePane("%1", {
+        capturePane: () => text,
+        capturePaneSnapshot: () =>
+          tmuxInternals.captureTmuxPaneSnapshot("%1", () => {
+            const result = failure.results[call];
+            call += 1;
+            return result ?? { exitCode: 1, stderr: "unexpected call" };
+          }),
+        nowMs: () => (ready.windowActivity + 2) * 1000,
+        sendKeys: (_pane, keys) => keyCalls.push(keys),
+        sleep: () => Promise.resolve(),
+      })
+    ).rejects.toThrow();
+    expect({ keyCalls, name: failure.name }).toEqual({
+      keyCalls: [],
+      name: failure.name,
+    });
+  }
+});
+
+test("D6 explicit empty client evidence and the synthetic shim are safe without vacuous missing evidence", () => {
+  const synthetic = tmuxInternals.syntheticPaneSnapshot(
+    "%1",
+    (pane, styled) => {
+      expect({ pane, styled }).toEqual({ pane: "%1", styled: true });
+      return "synthetic pane";
+    }
+  );
+  expect(synthetic).toEqual({
+    activeClients: 0,
+    activeClientIdentities: [],
+    clientModeRecords: [],
+    cursor: { x: -1, y: -1 },
+    pipeOpen: false,
+    text: "synthetic pane",
+    windowActivity: 0,
+  });
+  expect(tmuxInternals.readOnlyTargetClientEvidenceKey(synthetic)).toBe(
+    "explicit-empty"
+  );
+  expect(
+    tmuxInternals.readOnlyTargetClientEvidenceKey({
+      activeClients: 0,
+      cursor: { x: 2, y: 16 },
+      pipeOpen: false,
+      text: "pane",
+      windowActivity: 1,
+    })
+  ).toBeUndefined();
+  expect(
+    tmuxInternals.readOnlyTargetClientEvidenceKey({
+      activeClients: 1,
+      ...EMPTY_TMUX_CLIENT_EVIDENCE,
+      cursor: { x: 2, y: 16 },
+      pipeOpen: false,
+      text: "pane",
+      windowActivity: 1,
+    })
   ).toBeUndefined();
 });
 
@@ -2823,6 +3056,7 @@ test("Claude suggestion probe requires an acknowledged redraw", async () => {
   const ready = claudeWarningFixtureState("ready-before-end-clear");
   const snapshot = {
     activeClients: ready.activeClients,
+    ...EMPTY_TMUX_CLIENT_EVIDENCE,
     cursor: ready.cursor,
     pipeOpen: ready.panePipe !== 0,
     text,
@@ -2852,6 +3086,7 @@ test("Claude suggestion probe treats a send timeout as recoverable draft risk", 
   const ready = claudeWarningFixtureState("ready-before-end-clear");
   const snapshot = {
     activeClients: ready.activeClients,
+    ...EMPTY_TMUX_CLIENT_EVIDENCE,
     cursor: ready.cursor,
     pipeOpen: ready.panePipe !== 0,
     text,
@@ -2880,6 +3115,7 @@ test("Claude suggestion probe rejects attached or piped panes", async () => {
   const ready = claudeWarningFixtureState("ready-before-end-clear");
   const keyCalls: string[][] = [];
   const base = {
+    ...EMPTY_TMUX_CLIENT_EVIDENCE,
     cursor: ready.cursor,
     text,
     windowActivity: ready.windowActivity,
@@ -2910,6 +3146,266 @@ test("Claude suggestion probe rejects attached or piped panes", async () => {
   expect(keyCalls).toEqual([]);
 });
 
+test("D6 read-only target-window client does not block Claude suggested-composer recovery", async () => {
+  const pane = "%1";
+  const targetWindow = "@4";
+  const targetSession = "$0";
+  const targetWindowClientIdentities = ["/dev/ttys001"];
+  const sessionClientRecords = [
+    {
+      identity: "/dev/ttys001",
+      readOnly: true,
+      sessionId: targetSession,
+      windowId: targetWindow,
+    },
+  ];
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const readyAfter = claudeWarningFixtureState("ready-after-end-clear");
+  let windowActivity = ready.windowActivity;
+  const keyCalls: string[][] = [];
+  const snapshot = () => ({
+    activeClients: targetWindowClientIdentities.length,
+    activeClientIdentities: targetWindowClientIdentities,
+    clientModeRecords: sessionClientRecords,
+    cursor: ready.cursor,
+    pipeOpen: false,
+    targetSessionId: targetSession,
+    targetWindowId: targetWindow,
+    text,
+    windowActivity,
+  });
+
+  expect(sessionClientRecords).toEqual([
+    {
+      identity: targetWindowClientIdentities[0],
+      readOnly: true,
+      sessionId: targetSession,
+      windowId: targetWindow,
+    },
+  ]);
+
+  const result = await tmuxInternals.probeClaudeSuggestedComposer(
+    pane,
+    snapshot(),
+    { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+    {
+      capturePaneSnapshot: snapshot,
+      nowMs: () => (ready.windowActivity + 2) * 1000,
+      sendKeys: (_targetPane, keys) => {
+        keyCalls.push(keys);
+        windowActivity = readyAfter.windowActivity;
+      },
+      sleep: () => Promise.resolve(),
+    }
+  );
+
+  expect(result).toBe("empty");
+  expect(keyCalls).toEqual([["End", "C-l"]]);
+});
+
+test("D6 unsafe target-window client evidence fails before any probe key", async () => {
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const base = {
+    activeClients: 1,
+    cursor: ready.cursor,
+    pipeOpen: false,
+    text,
+    windowActivity: ready.windowActivity,
+  };
+  const safe = readOnlyTmuxClientEvidence(["/dev/ttys001"]);
+  const unsafeCases = [
+    { name: "missing evidence", snapshot: base },
+    {
+      name: "writable target client",
+      snapshot: {
+        ...base,
+        ...safe,
+        clientModeRecords: safe.clientModeRecords.map((record) => ({
+          ...record,
+          readOnly: false,
+        })),
+      },
+    },
+    {
+      name: "positive count with empty sets",
+      snapshot: { ...base, ...EMPTY_TMUX_CLIENT_EVIDENCE },
+    },
+    {
+      name: "count mismatch",
+      snapshot: { ...base, ...safe, activeClients: 2 },
+    },
+    {
+      name: "duplicate identity",
+      snapshot: {
+        ...base,
+        activeClientIdentities: ["/dev/ttys001", "/dev/ttys001"],
+        activeClients: 2,
+        clientModeRecords: [safe.clientModeRecords[0]],
+        targetSessionId: safe.targetSessionId,
+        targetWindowId: safe.targetWindowId,
+      },
+    },
+    {
+      name: "missing target intersection",
+      snapshot: {
+        ...base,
+        ...safe,
+        clientModeRecords: safe.clientModeRecords.map((record) => ({
+          ...record,
+          windowId: "@5",
+        })),
+      },
+    },
+    {
+      name: "wrong target binding",
+      snapshot: { ...base, ...safe, targetWindowId: "@9" },
+    },
+    {
+      name: "missing mode set",
+      snapshot: { ...base, ...safe, clientModeRecords: [] },
+    },
+    {
+      name: "malformed identity",
+      snapshot: {
+        ...base,
+        ...safe,
+        activeClientIdentities: ["client with spaces"],
+      },
+    },
+  ];
+
+  for (const unsafe of unsafeCases) {
+    const keyCalls: string[][] = [];
+    const result = await tmuxInternals.probeClaudeSuggestedComposer(
+      "%1",
+      unsafe.snapshot,
+      { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+      {
+        capturePaneSnapshot: () => undefined,
+        nowMs: () => (ready.windowActivity + 2) * 1000,
+        sendKeys: (_pane, keys) => keyCalls.push(keys),
+        sleep: () => Promise.resolve(),
+      }
+    );
+    expect({ keyCalls, name: unsafe.name, result }).toEqual({
+      keyCalls: [],
+      name: unsafe.name,
+      result: "indeterminate",
+    });
+  }
+});
+
+test("D6 client identity or mode changes before the probe send zero keys", async () => {
+  const text = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const initialEvidence = readOnlyTmuxClientEvidence(["/dev/ttys001"]);
+  const changedEvidence = [
+    {
+      name: "identity changed",
+      value: readOnlyTmuxClientEvidence(["/dev/ttys002"]),
+    },
+    {
+      name: "mode changed",
+      value: {
+        ...initialEvidence,
+        clientModeRecords: initialEvidence.clientModeRecords.map((record) => ({
+          ...record,
+          readOnly: false,
+        })),
+      },
+    },
+  ];
+
+  for (const changed of changedEvidence) {
+    const keyCalls: string[][] = [];
+    const initial = {
+      activeClients: 1,
+      ...initialEvidence,
+      cursor: ready.cursor,
+      pipeOpen: false,
+      text,
+      windowActivity: ready.windowActivity,
+    };
+    const result = await tmuxInternals.probeClaudeSuggestedComposer(
+      "%1",
+      initial,
+      { row: ready.cursor.y, text: readClaudeWarningComposer(text) },
+      {
+        capturePaneSnapshot: () => ({
+          ...initial,
+          ...changed.value,
+        }),
+        nowMs: () => (ready.windowActivity + 2) * 1000,
+        sendKeys: (_pane, keys) => keyCalls.push(keys),
+        sleep: () => Promise.resolve(),
+      }
+    );
+    expect({ keyCalls, name: changed.name, result }).toEqual({
+      keyCalls: [],
+      name: changed.name,
+      result: "indeterminate",
+    });
+  }
+});
+
+test("D6 read-only target evidence keeps a changed suggestion classifiable while another window is writable", async () => {
+  const first = readClaudeWarningState("ready-before-end-clear");
+  const ready = claudeWarningFixtureState("ready-before-end-clear");
+  const readyAfter = claudeWarningFixtureState("ready-after-end-clear");
+  const second = first.replace(
+    readClaudeWarningComposer(first),
+    'Try "explain this project"'
+  );
+  let text = first;
+  let windowActivity = ready.windowActivity;
+  const keyCalls: string[][] = [];
+  const snapshot = () => ({
+    activeClients: 1,
+    activeClientIdentities: ["/dev/ttys001"],
+    clientModeRecords: [
+      {
+        identity: "/dev/ttys001",
+        readOnly: true,
+        sessionId: "$0",
+        windowId: "@4",
+      },
+      {
+        identity: "/dev/ttys002",
+        readOnly: false,
+        sessionId: "$0",
+        windowId: "@5",
+      },
+    ],
+    cursor: ready.cursor,
+    pipeOpen: false,
+    targetSessionId: "$0",
+    targetWindowId: "@4",
+    text,
+    windowActivity,
+  });
+
+  const result = await tmuxInternals.probeClaudeSuggestedComposer(
+    "%1",
+    snapshot(),
+    { row: ready.cursor.y, text: readClaudeWarningComposer(first) },
+    {
+      capturePaneSnapshot: snapshot,
+      nowMs: () => (ready.windowActivity + 2) * 1000,
+      sendKeys: (_pane, keys) => {
+        keyCalls.push(keys);
+        text = second;
+        windowActivity = readyAfter.windowActivity;
+      },
+      sleep: () => Promise.resolve(),
+    }
+  );
+
+  expect(result).toBe("candidate-changed");
+  expect(keyCalls).toEqual([["End", "C-l"]]);
+});
+
 test("Claude suggestion probe waits across the activity second", async () => {
   const text = readClaudeWarningState("ready-before-end-clear");
   const ready = claudeWarningFixtureState("ready-before-end-clear");
@@ -2919,6 +3415,7 @@ test("Claude suggestion probe waits across the activity second", async () => {
   let sleeps = 0;
   const snapshot = () => ({
     activeClients: 0,
+    ...EMPTY_TMUX_CLIENT_EVIDENCE,
     cursor: ready.cursor,
     pipeOpen: false,
     text,
@@ -2959,6 +3456,7 @@ test("Claude changed suggestions receive a fresh acknowledged probe", async () =
   let probes = 0;
   const snapshot = () => ({
     activeClients: 0,
+    ...EMPTY_TMUX_CLIENT_EVIDENCE,
     cursor: ready.cursor,
     pipeOpen: false,
     text,
@@ -2994,6 +3492,7 @@ test("Claude draft probe restores Home and fails closed when activity acknowledg
   let homeCalls = 0;
   const snapshot = () => ({
     activeClients: 0,
+    ...EMPTY_TMUX_CLIENT_EVIDENCE,
     cursor,
     pipeOpen: false,
     text,
@@ -3260,6 +3759,7 @@ test("Claude dev-channel confirmation settles before retrying a swallowed key", 
     capturePane: () => paneText,
     capturePaneSnapshot: () => ({
       activeClients: 0,
+      ...EMPTY_TMUX_CLIENT_EVIDENCE,
       cursor: { x: -1, y: -1 },
       pipeOpen: false,
       text: paneText,
@@ -3302,6 +3802,7 @@ test("Claude dev-channel confirmation never retries after activity advances on a
       if (enterCalls === 0) {
         return {
           activeClients: 0,
+          ...EMPTY_TMUX_CLIENT_EVIDENCE,
           cursor: { x: -1, y: -1 },
           pipeOpen: false,
           text: modal,
@@ -3311,6 +3812,7 @@ test("Claude dev-channel confirmation never retries after activity advances on a
       postSendCaptures += 1;
       return {
         activeClients: 0,
+        ...EMPTY_TMUX_CLIENT_EVIDENCE,
         cursor: { x: -1, y: -1 },
         pipeOpen: false,
         text: postSendCaptures === 1 ? modal : "❯ ",
@@ -3350,6 +3852,7 @@ test("Claude dev-channel progress extends the readiness deadline past twenty sec
     capturePane: currentText,
     capturePaneSnapshot: () => ({
       activeClients: 0,
+      ...EMPTY_TMUX_CLIENT_EVIDENCE,
       cursor: { x: -1, y: -1 },
       pipeOpen: false,
       text: currentText(),
@@ -3385,6 +3888,7 @@ test("Claude dev-channel confirmation fails closed after bounded swallowed keys"
       capturePane: () => modal,
       capturePaneSnapshot: () => ({
         activeClients: 0,
+        ...EMPTY_TMUX_CLIENT_EVIDENCE,
         cursor: { x: -1, y: -1 },
         pipeOpen: false,
         text: modal,
@@ -3435,6 +3939,7 @@ test("Claude dev-channel confirmation waits through an incomplete modal redraw",
       }
       return {
         activeClients: 0,
+        ...EMPTY_TMUX_CLIENT_EVIDENCE,
         cursor: { x: -1, y: -1 },
         pipeOpen: false,
         text,
@@ -3467,6 +3972,7 @@ test("Claude dev-channel confirmation never enters when exit is selected", async
       capturePane: () => modal,
       capturePaneSnapshot: () => ({
         activeClients: 0,
+        ...EMPTY_TMUX_CLIENT_EVIDENCE,
         cursor: { x: -1, y: -1 },
         pipeOpen: false,
         text: modal,
@@ -3499,6 +4005,7 @@ test("Claude dev-channel confirmation ignores a stale modal above the current co
     capturePane: () => paneText,
     capturePaneSnapshot: () => ({
       activeClients: 0,
+      ...EMPTY_TMUX_CLIENT_EVIDENCE,
       cursor: { x: 2, y: 4 },
       pipeOpen: false,
       text: paneText,
@@ -3527,6 +4034,7 @@ test("Claude bypass confirmation never enters when navigation is swallowed", asy
       capturePane: () => modal,
       capturePaneSnapshot: () => ({
         activeClients: 0,
+        ...EMPTY_TMUX_CLIENT_EVIDENCE,
         cursor: { x: -1, y: -1 },
         pipeOpen: false,
         text: modal,
@@ -3567,6 +4075,7 @@ test("Claude bypass confirmation enters only after a fresh selected-accept captu
     capturePane: currentText,
     capturePaneSnapshot: () => ({
       activeClients: 0,
+      ...EMPTY_TMUX_CLIENT_EVIDENCE,
       cursor: { x: -1, y: -1 },
       pipeOpen: false,
       text: currentText(),
