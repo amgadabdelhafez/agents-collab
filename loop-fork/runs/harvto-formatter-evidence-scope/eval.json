@@ -1,0 +1,17 @@
+{
+  "task_id": "harvto-formatter-evidence-scope",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "Exact-base red, exact local array, config self-lint, 909-to-189 zero-addition/run-only accounting with 720/720 byte matches, source/test fail-open fixtures, inherited preset classes, all mandatory gates, and the root verifier pass."
+    }
+  },
+  "standalone_terminal_status": "PASS",
+  "exact_sha_review_verdict_id": "fed87397-a1a1-4e36-a984-2775a643b648",
+  "production_commit": "2e6adb8c3c2cf502ffea28c714685b2ea14b9822",
+  "standalone_terminal_recorded_at": "2026-08-16T20:58:51Z"
+}

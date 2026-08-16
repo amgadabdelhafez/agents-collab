@@ -1,4 +1,799 @@
-# Current Plan — Close D15, Then Run Isolated D6-D12 Campaign
+# Current Plan — Formatter Evidence Scope, D6 Re-review, Then D7-D12
+
+## Run-82 recovery amendment — resume run-79 epoch `1786902912181400`
+
+This section is current authority. It supersedes run identity and next-action wording in the
+run-80/run-81 recovery sections. Their detailed Phase A-C procedures, corrections 0-10,
+preservation rules, acceptance criteria, and path restrictions remain binding unless tightened
+below.
+
+### Validated resume boundary
+
+- Both ready bundles at
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/79/handoff/1786902912181400/{claude,codex}.json`
+  parse and agree on `status: "ready"`, epoch `1786902912181400`, and `gitHead`
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`. SHA-256 is Claude
+  `eb9fe4b1e5d16f6996e6bfb324fd26e201be68c30be0778fa459f5698fdb232b` and Codex
+  `7d2eaa597964c12f70ccfccb3d9ccaab37919cd49dadc4bf3e93f198c0e46559`.
+- Runs 80 and 81 are failed startup residue only. Both manifests report `status: "stopped"`; neither
+  run contains a handoff file, `governess-state.json`, Governess control log, or populated topology
+  or Governess manifest field. Preserve their files, but never resume, reconstruct, or use either
+  run as lifecycle authority.
+- Live HEAD is exact formatter production commit
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`; index is empty. D6 object
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827` resolves. Never amend, rebase, or replace either SHA.
+- `loop-fork/harness status --json` reports `harvto-d6-readonly-attach` as sole active task,
+  `meta.status: "active"`, eval `pending`. Harness hashes remain `tasks.json`
+  `42b30be61071b60a8e9d6838565d25a2abf36d7a2d8fc35499516f5f415f214d` and `current-task`
+  `f15fd0c0490dece3829ff14cb75706c5f696cca66d3bae8485b4a30a632a4e4e`.
+- Formatter exact-SHA Claude verdict remains literal `PASS`
+  `fed87397-a1a1-4e36-a984-2775a643b648`. Root `.loop/` remains 60 files and zero tracked files.
+  Utility is hard-disabled: `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, and all
+  execution preflights must positively prove the established third `0` state before work.
+- This session is plan-only. No terminal write, evidence/config/source/test edit, lifecycle action,
+  review request, staging, commit, helper route, or remote action is authorized here.
+
+### Execution plan after plan mode
+
+1. **Fail-closed preflight.** Revalidate both run-79 bundles and hashes; prove runs 80/81 remain
+   stopped and non-authoritative; verify exact HEAD lineage, empty index, dirty scope, formatter
+   verdict, formatter/D6/D15 inventories and protected hashes, ignored-plan provenance, Harness
+   status/hashes, root `.loop/`, and utility `0/off/0`. Stop and preserve evidence on any mismatch.
+2. **Capture D6 pre-state.** Before any write, create durable proof that D6 is sole active,
+   eval-pending, and unclosed. Freeze one canonical formatter terminal tuple, exact additive JSON
+   key names, exact `meta.json` transitions, all four pre-write key sets/hashes, and expected
+   post-write inventory delta.
+3. **Record one formatter terminal PASS.** Write exactly one standalone terminal `PASS`, tied to
+   verdict `fed87397-a1a1-4e36-a984-2775a643b648` and SHA `2e6adb8c…`, in only formatter
+   `task-log.md`, `meta.json`, loop-fork eval, and root eval. Existing eval keys/values remain
+   byte-equivalent; additions and named meta transitions only. Never call formatter `harness done`.
+4. **Capture post-state and bookkeep separately.** Prove only four authorized formatter surfaces
+   changed, retained keys match, D6 remains sole active/eval-pending, Harness hashes and protected
+   evidence match, utility stays `0/off/0`, HEAD/root `.loop/` stay unchanged, and index was empty
+   before staging. Stage exact paths only, verify cached scope and `git diff --cached --check`, then
+   create one bookkeeping commit on top of `2e6adb8c…`; never amend formatter production. Finish
+   with empty index and governed handover.
+5. **Review unchanged D6.** After validating formatter bookkeeping and handover, submit exactly one
+   zero-write Claude review for unchanged D6 SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827`, carrying
+   prior evidence-only `FAIL` `903ea1ff-acc3-4968-ba7d-70151b01bc04`, formatter `PASS`, frozen
+   contracts, and preserved verification/evidence. Silence is not PASS; do not re-request same SHA.
+6. **Close D6 once only on exact-SHA PASS.** On literal `PASS` naming exact D6 SHA, capture pre-close
+   state, run one D6 Harness close, prove one expected terminal transition, and create a separate
+   exact-path bookkeeping commit. On `REVISE`, mismatch, or partial Harness mutation, stop without
+   retry, code rework, or hand repair. Complete governed handover before D7.
+7. **Execute D7-D12 in order.** For each defect, use one isolated Harness lifecycle: validate prior
+   handover and empty index; promote once; freeze bounded contract and obtain Claude `PLAN PASS`;
+   make separate plan-freeze commit; preserve deterministic exact-base red; implement smallest
+   scoped fix and controls; run focused plus full required verification and dual evals; make an
+   explicit implementation commit; obtain literal exact-SHA Claude `PASS`; close once; make a
+   separate bookkeeping commit; validate empty index; update plan/status; produce governed handover.
+   No successor starts before predecessor is reviewed, closed, bookkept, and handed over.
+
+### Hard boundaries and acceptance
+
+- Never edit Harvto; merge, rebase, push, deploy, release, change provider/model/dependencies,
+  delete or normalize evidence, weaken authority/checks, widen scope, route helpers/spend utility,
+  or inject `/compact` or `/rename`.
+- Formatter ends with exactly one standalone terminal PASS, no Harness close, unchanged production
+  SHA, matching D6 pre/post proof, and one separate bookkeeping commit.
+- D6 remains unchanged through review, closes once only after exact-SHA PASS, and receives separate
+  bookkeeping before D7.
+- D7-D12 each complete full isolated plan/red/fix/verify/review/close/bookkeeping/handover lifecycle.
+  Root `.loop/`, ignored plans, protected evidence, preserved dirty state, and utility `0/off/0`
+  remain intact throughout.
+
+### Plan review corrections — run 82, epoch `1786902912181400`
+
+Read-only re-verification performed this review (no writes, no lifecycle action, no helper route):
+
+- Both bundles re-hashed: Claude `eb9fe4b1e5d16f6996e6bfb324fd26e201be68c30be0778fa459f5698fdb232b`,
+  Codex `7d2eaa597964c12f70ccfccb3d9ccaab37919cd49dadc4bf3e93f198c0e46559`; both parse with
+  `status: "ready"`, `epoch 1786902912181400`, `gitHead 2e6adb8c3c2cf502ffea28c714685b2ea14b9822`,
+  key `head` absent (`None`) — revalidation must read `gitHead`, never `head`.
+- `git rev-parse HEAD` = `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`;
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827^{commit}` resolves; `git diff --cached --name-only` = 0 lines.
+- `loop-fork/harness status --json`: `active_task` `harvto-d6-readonly-attach`, `meta.status`
+  `active`, `eval_status` `pending`. Hashes unchanged: `tasks.json`
+  `42b30be61071b60a8e9d6838565d25a2abf36d7a2d8fc35499516f5f415f214d`, `current-task`
+  `f15fd0c0490dece3829ff14cb75706c5f696cca66d3bae8485b4a30a632a4e4e`.
+  `grep -c formatter loop-fork/.harness/tasks.json` = 0 (formatter not Harness-admitted).
+- `find .loop -type f | wc -l` = 60, `git ls-files .loop | wc -l` = 0. Utility env is `0/off/0`.
+- Runs 80 and 81 manifests both `status: "stopped"`, `topology` and `governess` `null`; no run-level
+  handoff bundle and no `governess-state.json` under either (only vendored plugin-cache fixtures
+  named `handoff*` exist, which are not lifecycle artifacts). Run 82 manifest is `status: "running"`.
+
+Corrections binding on execution:
+
+11. **Session identity is run 82.** Run-81 amendment A is archival: every artifact, `status.md`
+    entry, commit message, review request, and governed handover produced by this recovery must name
+    run 82 (`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/82`, bridge
+    `loop-bridge-agents-collab-82`) as producing run and `1786902912181400` as the resumed epoch.
+12. **Run 81 inherits run 80's preservation rule.** Both `.../80` and `.../81` are preserved on disk
+    and never resumed, read as lifecycle authority, deleted, truncated, or normalized. Before Phase A
+    proceeds, positively prove for each of 80 and 81: manifest `status` is `stopped`, no run-level
+    handoff bundle, no `governess-state.json`. Silence is not proof — record the command output.
+13. **`status.md` line count in correction C is stale.** Repository-root `status.md` exists, is
+    tracked, dirty, and currently **3444 lines** (was 3403 at run 81, 3368 at run 80). The count is
+    informational; the binding rule is unchanged — append-only, never create fresh, rewrite, reorder,
+    or truncate. `git check-ignore -v PLAN.md status.md` exits 1 (neither ignored). `status.md`
+    already exists, so no create step is needed; the campaign must append one run-82 entry per
+    bookkeeping commit and never before the corresponding capture evidence exists.
+14. **Carry the frozen RFC3339 UTC timestamp into the run-82 tuple.** Run-82 step 2 omitted it.
+    The canonical formatter terminal tuple is exactly (`PASS`,
+    `fed87397-a1a1-4e36-a984-2775a643b648`, `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, one frozen
+    RFC3339 UTC timestamp). Freeze it before the first write; never re-derive per surface, or the
+    four surfaces will disagree.
+15. **Prove exactly-one, not merely present.** Post-write verification must assert a COUNT, not
+    existence: across the four authorized formatter surfaces the frozen verdict ID appears exactly
+    once per surface, and `standalone_terminal_status` transitions exactly once. A grep that only
+    proves the PASS is on the page cannot detect a duplicate terminal record — the named risk in
+    `status.md`. Line-oriented grep also misses wrapped text; pipe through `tr '\n' ' '` before
+    claiming a phrase is absent.
+16. **Never run repo-wide formatting on evidence.** Formatter-evidence edits are hand-authored JSON
+    and Markdown. Do not run `bun run fix` or any repo-wide formatter — it rewrites `runs/` evidence.
+    If formatting is required, run biome on the touched file only. Before every commit, diff
+    `git diff --numstat` against `git diff --numstat --ignore-all-space`; disagreement means an
+    unintended reformat and is a stop condition.
+17. **Utility ban outranks the bridge delegation mandate.** The bridge instructions mandate
+    `route_task` for separable work; this campaign hard-disables utility (`0/off/0`) and forbids
+    helper routing and spend. Plan authority wins: route nothing, and record the ban rather than
+    treating a quiet channel as permission.
+18. **Bundle immutability is an end-state check, not only a preflight one.** Re-hash both run-79
+    bundles after the formatter bookkeeping commit and after D6 closure; the two SHA-256 values in
+    the resume boundary must be byte-identical. Any change is a stop condition.
+19. **D6 close is gated on a positive terminal transition, not on absence of error.** Capture
+    pre-close `harness status --json` plus both harness hashes, run one close, then prove exactly one
+    expected transition and that no other task changed status. A skip or unread output is a
+    fail-open and must return nonzero.
+
+## Run-81 recovery session amendment — plan review at epoch `1786902912181400`
+
+Supersedes only session identity, stale counts, and the run-80 artifact rule below. All campaign
+phases, run-80 corrections 0-10, run-79 corrections 1-9, preservation rules, acceptance criteria,
+and path restrictions remain binding and unchanged.
+
+### Re-verified read-only this review (run 81)
+
+- Both bundles at `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/79/handoff/1786902912181400/{claude,codex}.json`
+  parse: `status: "ready"`, `epoch 1786902912181400`, `gitHead 2e6adb8c3c2cf502ffea28c714685b2ea14b9822`.
+  SHA-256 Claude `eb9fe4b1e5d16f6996e6bfb324fd26e201be68c30be0778fa459f5698fdb232b`, Codex
+  `7d2eaa597964c12f70ccfccb3d9ccaab37919cd49dadc4bf3e93f198c0e46559`. Key `head` is absent/`None` in
+  both, confirming run-79 correction: revalidation must read `gitHead`.
+- `git rev-parse HEAD` = `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`; `2e6adb8c…^{commit}` and
+  `254e1749…^{commit}` both resolve. `git diff --cached --name-only` = 0 lines.
+  `git show --stat 2e6adb8c` lists only `loop-fork/biome.jsonc` (1 insertion), subject
+  `fix: exclude generated run evidence from Biome`.
+- `./harness status --json`: `active_task` `harvto-d6-readonly-attach`, `meta.status` `active`,
+  `eval_status` `pending`. Hashes unchanged: `tasks.json`
+  `42b30be61071b60a8e9d6838565d25a2abf36d7a2d8fc35499516f5f415f214d`, `current-task`
+  `f15fd0c0490dece3829ff14cb75706c5f696cca66d3bae8485b4a30a632a4e4e`. `grep -c formatter
+  loop-fork/.harness/tasks.json` = 0, confirming the formatter is not Harness-admitted.
+- `find .loop -type f | wc -l` = 60; `git ls-files .loop` = 0. Utility env is `0/off/0`.
+- Current key sets confirm corrections 3 and 4 remain accurate:
+  `loop-fork/runs/harvto-formatter-evidence-scope/eval.json` =
+  `[baseline_failures, dimensions, required, status, task_id, verdict]`;
+  `runs/harvto-formatter-evidence-scope/eval.json` =
+  `[baseline_failures, checks, summary, task_id, verdict]`; formatter `meta.json` carries
+  `status`, `lifecycle`, `standalone_terminal_status`, `harness_admitted`,
+  `exact_sha_review_verdict`, `exact_sha_review_verdict_id`.
+
+### Amendments
+
+A. **Session identity is run 81, not run 80.** This recovery executes in run 81
+   (`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/81`, bridge
+   `loop-bridge-agents-collab-81`). Every artifact, `status.md` entry, commit message, review
+   request, and governed handover produced by the recovery must name run 81 as the producing run and
+   epoch `1786902912181400` as the resumed handover epoch. Wording of "run-80 execution" below is
+   read as "recovery execution under the run-80 corrections".
+
+B. **Run-80 artifacts are preserved, not deleted.** `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/80`
+   exists on disk (`manifest.json`, `transcript.jsonl`, `world-model/`, `codex-home/`, ...). It is
+   abandoned as authority and must never be resumed, read as lifecycle authority, or used to derive
+   state — and equally must never be deleted, truncated, or normalized. Confirm no handoff bundle
+   exists under run 80 before Phase A; if one is found, stop and report rather than adopting it.
+
+C. **Correction 2's `status.md` line count is stale.** Repository-root `status.md` is tracked, dirty,
+   and currently **3403 lines** (was 3368 when correction 2 was written). The count is informational
+   only; the binding rule is unchanged — append-only, never create fresh, rewrite, reorder, or
+   truncate. `git check-ignore -v PLAN.md status.md` exits 1 (neither ignored), so both stage by
+   exact path with plain `git add` and enter bookkeeping commits only. Do not re-verify against the
+   3368 figure; treat any line count >= 3403 with an intact prefix as expected.
+
+D. **Pre-state capture must record the verbatim pre-write key sets.** Before the single formatter
+   terminal write, the Phase A pre-state capture records the full sorted key list and SHA-256 of all
+   four authorized surfaces (`loop-fork/runs/harvto-formatter-evidence-scope/{eval.json,meta.json,task-log.md}`
+   and `runs/harvto-formatter-evidence-scope/eval.json`). The post-state check then proves, per file,
+   that the new key set is a strict superset of the old and every retained key's value is
+   byte-equivalent — the additive proof required by correction 3, made mechanical rather than
+   by inspection.
+
+## Post-run-80 recovery binding — resume epoch `1786902912181400`
+
+This section supersedes only run/session identity and next-action wording in the run-80 section
+below. Its campaign phases, corrections 1-10, preservation rules, acceptance criteria, and exact
+path restrictions remain binding.
+
+### Recovery decision
+
+- Resume from both run-79 ready bundles at
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/79/handoff/1786902912181400/{claude,codex}.json`.
+  Do not resume or reconstruct malformed run 80: launcher exited during Claude development-channel
+  confirmation before Governess/topology creation, and its partial session was torn down.
+- Both bundles parse and match `status: "ready"`, epoch `1786902912181400`, and `gitHead`
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`. SHA-256 remains Claude
+  `eb9fe4b1e5d16f6996e6bfb324fd26e201be68c30be0778fa459f5698fdb232b` and Codex
+  `7d2eaa597964c12f70ccfccb3d9ccaab37919cd49dadc4bf3e93f198c0e46559`.
+- Read-only recovery validation found HEAD `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, parent
+  `13b02be9b1783bbc7d955ff05e4470cb733dee9b`, empty index, formatter commit path exactly
+  `loop-fork/biome.jsonc`, and D6 object `254e1749ca67ad1d81cd434ef01db0aeabae5827`.
+- `./harness status --json` is lifecycle authority and reports current task
+  `harvto-d6-readonly-attach`, status `active`, eval `pending`. Harness hashes remain
+  `42b30be61071b60a8e9d6838565d25a2abf36d7a2d8fc35499516f5f415f214d` and
+  `f15fd0c0490dece3829ff14cb75706c5f696cca66d3bae8485b4a30a632a4e4e`.
+- Root `.loop/` remains 60 files, zero tracked. Utility environment is `0/off/0`. Formatter
+  exact-SHA Claude `PASS` `fed87397-a1a1-4e36-a984-2775a643b648` remains complete.
+- This is plan-only. No lifecycle transition, terminal record, evidence/config/source/test edit,
+  staging, commit, review request, Harness action, helper route, or remote action is authorized in
+  this session.
+
+### Execution sequence after plan mode
+
+1. Run Phase A preflight from current state. Revalidate both bundles, HEAD lineage, empty index,
+   formatter verdict, D6/D15 inventories and protected hashes, ignored-plan provenance, Harness
+   status/hashes, root `.loop/`, dirty scope, and utility `0/off/0`. Stop on any mismatch.
+2. Capture durable D6 pre-state before writes. In that capture, freeze one canonical terminal tuple
+   (`PASS`, verdict ID `fed87397-a1a1-4e36-a984-2775a643b648`, production SHA
+   `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, and one RFC3339 UTC timestamp), exact JSON key names,
+   exact `meta.json` state transitions, and expected post-write removed-file match count. Do not
+   infer or change schema after first write.
+3. Record exactly one standalone terminal event in formatter `task-log.md`, `meta.json`, and both
+   evals. Eval changes are additive only; existing verdict/status/baseline/check fields remain
+   byte-equivalent. Never run formatter `harness done`.
+4. Capture matching post-state and prove only four authorized formatter self-surfaces changed;
+   D6 remains current `active`/`pending`, Harness hashes remain exact, protected evidence matches,
+   HEAD and root `.loop/` remain unchanged, utility remains `0/off/0`, and index remains empty.
+5. Explicitly stage only authorized formatter terminal/bookkeeping paths plus current root
+   `PLAN.md` and append-only `status.md` when required by bookkeeping. Prove cached set and diff,
+   run `git diff --cached --check`, and create one separate bookkeeping commit on top of
+   `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`. Never amend formatter production commit.
+6. Produce governed handover. Then execute Phase B: resubmit unchanged D6 SHA
+   `254e1749ca67ad1d81cd434ef01db0aeabae5827` exactly once for Claude same-SHA zero-write review,
+   carrying prior evidence-only `FAIL` `903ea1ff-acc3-4968-ba7d-70151b01bc04` and formatter `PASS`.
+   Only literal exact-SHA `PASS` permits one D6 close and separate bookkeeping commit.
+7. After D6 closure and governed handover, execute D7-D12 in strict order using isolated lifecycle
+   gates in Phase C. No successor starts before predecessor exact-SHA PASS, single close,
+   bookkeeping commit, empty index, and validated handover.
+
+### Recovery acceptance
+
+- Run 80 remains abandoned and unresumed; no state depends on its partial session.
+- Formatter HEAD and D6 SHA remain unamended and unchanged. Formatter receives one standalone
+  terminal PASS and no Harness close; D6 remains current active/eval-pending through formatter
+  pre/post capture.
+- Formatter bookkeeping, D6 closure bookkeeping, and every D7-D12 lifecycle use separate explicit
+  commits with exact-path staging and empty-index boundaries.
+- Utility stays hard-disabled; no helper routing/spend. Root `.loop/`, ignored plans, evidence, and
+  unrelated dirty state remain preserved. All prohibited actions below remain prohibited.
+
+## Run-80 authoritative resume plan — handover epoch `1786902912181400`
+
+This section supersedes older next-action text below. Older sections remain campaign history.
+
+### Validated boundary
+
+- Both handoff files at
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/79/handoff/1786902912181400/{claude,codex}.json`
+  parse and report `status: "ready"`, epoch `1786902912181400`, and `gitHead`
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`. Current SHA-256 values are Claude
+  `eb9fe4b1e5d16f6996e6bfb324fd26e201be68c30be0778fa459f5698fdb232b` and Codex
+  `7d2eaa597964c12f70ccfccb3d9ccaab37919cd49dadc4bf3e93f198c0e46559`.
+- Live HEAD is exact formatter production commit
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, with parent plan-freeze commit
+  `13b02be9b1783bbc7d955ff05e4470cb733dee9b`; index is empty. Production commit contains only
+  `loop-fork/biome.jsonc`. Never amend or rebase it.
+- Formatter exact-SHA Claude verdict is complete: literal `PASS`
+  `fed87397-a1a1-4e36-a984-2775a643b648` for exact commit `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`.
+  Any older statement that request `8fde0b7b-36b6-4c75-ba30-b8b3f5424510` is pending is archival
+  and superseded.
+- Harness hashes match handoff: `tasks.json`
+  `42b30be61071b60a8e9d6838565d25a2abf36d7a2d8fc35499516f5f415f214d` and `current-task`
+  `f15fd0c0490dece3829ff14cb75706c5f696cca66d3bae8485b4a30a632a4e4e`. Harness reports
+  `harvto-d6-readonly-attach` as sole active task, status `active`, eval `pending`.
+- D6 implementation object exists at exact SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827`.
+  Root `.loop/` remains 60 untracked files and zero tracked files. Existing tracked/untracked
+  evidence, ignored plans, and coordination state remain preserved.
+- No open question or technical blocker. This plan-only session authorizes no lifecycle transition,
+  evidence edit, staging, commit, review request, close, source/test/config edit, or remote action.
+
+### Hard preservation and authority rules
+
+- Preserve formatter HEAD `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, D6 implementation SHA
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827`, D6 frozen contract hashes, D6/D15 inventories,
+  formatter evidence, root `.loop/`, ignored plans, and all existing dirty state. Never delete,
+  regenerate, normalize, or weaken evidence.
+- Formatter is standalone and was never Harness-admitted. Never call `harness done` for
+  `harvto-formatter-evidence-scope`.
+- D6 stays sole active, eval-pending, and unclosed until same-SHA Claude `PASS`. Do not edit,
+  amend, recommit, rebase, park, or rework D6.
+- Before executable campaign commands, set and prove `LOOP_UTILITY_ENABLED=0`,
+  `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0`. Route no helper and spend no
+  utility.
+- Never edit Harvto; merge, rebase, push, deploy, release, change provider/model/dependencies,
+  broaden permissions, widen scope, inject `/compact` or `/rename`, or broad-stage (`git add -A`,
+  `git add -u`, `git add .`, or directory staging).
+- Stop on any authority, hash, inventory, index, scope, lifecycle, or gate mismatch. Preserve exact
+  failure evidence; do not retry irreversible lifecycle actions or repair Harness by hand.
+
+### Phase A — Formatter standalone terminal and bookkeeping
+
+1. Revalidate both epoch bundles, exact HEAD/parent, empty index, dirty scope, formatter verdict,
+   D6 and D15 full SHA-256/size inventories, five frozen D6 contract hashes, protected D15 close
+   hashes, root `.loop/`, ignored-plan provenance, Harness hashes/status, and utility `0/off/0`.
+2. Capture a durable pre-state showing D6 is the sole Harness task with status `active` and eval
+   `pending`. Include exact Harness file hashes, HEAD, index, root `.loop/`, utility state, and
+   evidence-inventory result.
+3. Record exactly one standalone formatter terminal `PASS` tied to verdict
+   `fed87397-a1a1-4e36-a984-2775a643b648` and production SHA
+   `2e6adb8c3c2cf502ffea28c714685b2ea14b9822` in only these required lifecycle surfaces:
+   formatter `task-log.md`, formatter `meta.json`, `loop-fork/runs/harvto-formatter-evidence-scope/eval.json`,
+   and `runs/harvto-formatter-evidence-scope/eval.json`. Preserve prior eval facts and empty
+   `baseline_failures`; create no second terminal record. Do not call Harness.
+4. Capture matching post-state. Prove D6 remains sole active/eval-pending, both Harness hashes are
+   unchanged, HEAD is unchanged, index is empty before staging, protected inventories/hashes match,
+   utility remains `0/off/0`, and root `.loop/` is untouched.
+5. Stage each authorized terminal/bookkeeping/evidence path explicitly. Compare cached path set to
+   planned set, inspect cached diff, run `git diff --cached --check`, and prove no source, test,
+   config, contract, `.loop/`, D6 lifecycle, or unrelated evidence path entered staging.
+6. Create one separate explicit formatter bookkeeping commit. Do not amend formatter production.
+   Verify committed path set/content, empty post-commit index, unchanged D6 Harness state, and all
+   preservation checks. Append exact commit and proof to `PLAN.md` and `status.md`; produce governed
+   handover before opening D6 review.
+
+### Phase B — Unchanged D6 same-SHA review, single close, bookkeeping
+
+1. After Phase A commit and handover, revalidate D6 frozen contract hashes, exact implementation
+   SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827`, existing focused/full-suite/eval evidence, complete
+   D6/D15 inventories, empty index, root `.loop/`, utility `0/off/0`, and D6 sole-active/eval-pending
+   status. Do not recreate red or alter D6 code/contracts/evidence.
+2. Resubmit unchanged SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827` to Claude for zero-write
+   same-SHA exact review. Carry D6 `PLAN PASS` `80e774db-4748-4281-a6a0-1c9e54b7ccfc`, prior
+   evidence-integrity-only `FAIL` `903ea1ff-acc3-4968-ba7d-70151b01bc04`, formatter `PASS`
+   `fed87397-a1a1-4e36-a984-2775a643b648`, formatter bookkeeping commit, exact modified-path set,
+   preserved red, mandatory suites, dual evals, and evidence-integrity proof.
+3. Accept only literal Claude `PASS` for exact D6 SHA. On `REVISE` or any evidence mismatch, stop
+   before close; do not rework code unless later authority explicitly changes scope.
+4. On `PASS`, capture complete pre-close Harness state and terminal-record counts. Run exactly one
+   `./harness done harvto-d6-readonly-attach`. Never retry. Prove one new D6 close record, no active
+   D6, expected Harness hash/state delta only, unchanged implementation/evidence, and empty index.
+5. Stage only explicit D6 close/bookkeeping/evidence paths, prove cached scope, and create one
+   separate bookkeeping commit. Verify empty index and preserve all campaign boundaries. Append
+   exact verdict/close/commit proof and produce governed handover before D7 promotion.
+
+### Phase C — D7-D12 automatic isolated lifecycles
+
+Execute strictly in order:
+
+1. `harvto-d7-handoff-identity`: preserve model, effort, workspace, run, manifest, and authority
+   identity across handoff.
+2. `harvto-d8-stale-write-lease`: reject stale/dead utility write authority before mutation after
+   epoch or authority changes.
+3. `harvto-d9-duplicate-emission`: make one resolved acknowledgement produce one durable emission
+   across retry and replay.
+4. `harvto-d10-guarded-apply`: fail closed for absent, stale, or non-applicable targets with exact
+   target and preimage evidence.
+5. `harvto-d11-composer-nudge`: use durable recovery transport and preserve non-empty composers.
+6. `harvto-d12-socket-discovery`: derive live-run discovery from manifest-recorded tmux socket and
+   target identity, including non-default sockets.
+
+For each task, complete this lifecycle before touching the next:
+
+1. Revalidate prior bookkeeping commit, empty index, no active predecessor, root `.loop/`, utility
+   `0/off/0`, preserved campaign evidence, parked task identity, and governed handover. Promote
+   exactly once into its own Harness run; create/update its canonical spec, plan, tasks, verify,
+   task log, metadata, and root/loop eval surfaces.
+2. Freeze bounded invariants, authorized paths, named positive/negative/replay/fail-closed/isolation
+   controls, exact red command, mandatory suites, acceptance thresholds, and no-UI determination.
+   Obtain literal Claude zero-write `PLAN PASS` for exact contract hashes before source/test edits.
+3. Resolve ignore provenance per file. Force-add each reviewed contract file explicitly, prove the
+   cached set and hashes equal the reviewed set, then create a dedicated plan-freeze commit. Restore
+   empty index and revalidate preservation state.
+4. Reproduce deterministic exact-base red with production unchanged. Preserve command, output,
+   exit, assertion, base SHA, path inventory, and before/after evidence hashes. If premise does not
+   reproduce, stop and revise plan through Claude review; never manufacture red.
+5. Implement smallest authorized fix and controls. Keep each defect invariant separate; do not
+   absorb later tasks, Harvto, provider/model, dependencies, or unrelated cleanup.
+6. Run focused red-to-green controls, canonical check/typecheck/build, complete certified serial
+   suite, Harness preflight/stop-gate, dual evals with `baseline_failures: []`, root
+   `scripts/verify.sh`, evidence/hash inventories, normal versus ignore-all-space scope accounting,
+   and UI screenshot/DOM checks only if rendered UI changes.
+7. Stage only explicit implementation/test/evidence paths authorized by reviewed plan. Prove cached
+   path set, diff, numstat, `git diff --cached --check`, and exclusion of `.loop/`, unrelated dirty
+   state, later tasks, Harvto, and bookkeeping. Create one implementation commit; never amend.
+8. Obtain Claude literal zero-write exact-SHA `PASS` for exact implementation commit. On `REVISE`,
+   change only current approved scope, rerun all required gates/evals, create a new commit, and seek
+   new exact-SHA review. Never close on plan approval or stale SHA approval.
+9. After exact-SHA `PASS`, capture pre-close state, close current Harness task exactly once, prove
+   one expected terminal transition, then create one separate explicit bookkeeping/evidence commit.
+   Verify empty index and no active predecessor.
+10. Update `PLAN.md` and append `status.md` with exact evidence, risks, and next action. Complete a
+    governed handover. Continue automatically to next numbered task only after successor validates
+    that handover and prior lifecycle is fully closed/bookkept.
+
+### Acceptance criteria
+
+- Formatter has exactly one standalone terminal `PASS`, no formatter `harness done`, matching D6
+  pre/post sole-active/eval-pending proof, and one separate bookkeeping commit. Formatter production
+  remains exact unamended SHA `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`.
+- D6 remains exact implementation SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827`, receives literal
+  same-SHA Claude `PASS`, closes exactly once, and gets a separate bookkeeping commit before D7.
+- D7-D12 each have isolated reviewed contracts, durable plan-freeze commit, exact-base red, bounded
+  fix and controls, full green suites/evals, explicit implementation commit, Claude exact-SHA
+  `PASS`, one Harness close, separate bookkeeping commit, and governed handover.
+- Utility stays hard-disabled with no helper route or spend. Root `.loop/`, ignored plans, all
+  protected evidence, and unrelated dirty state remain preserved. No prohibited action occurs.
+
+### Plan review corrections — applied at epoch `1786902912181400` (run-80 plan review)
+
+Binding for run-80 execution; override any looser wording above in the run-80 section.
+
+0. **Boundary re-verified this review (read-only).** Both bundles parse with `status: "ready"`,
+   `epoch 1786902912181400`, `gitHead 2e6adb8c3c2cf502ffea28c714685b2ea14b9822`; SHA-256 Claude
+   `eb9fe4b1e5d16f6996e6bfb324fd26e201be68c30be0778fa459f5698fdb232b`, Codex
+   `7d2eaa597964c12f70ccfccb3d9ccaab37919cd49dadc4bf3e93f198c0e46559`. `git rev-parse HEAD` =
+   `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`; both `2e6adb8c…^{commit}` and `254e1749…^{commit}`
+   resolve. Index empty (`git diff --cached --name-only` = 0 lines). Harness hashes match the
+   recorded values; `current-task` = `harvto-d6-readonly-attach`. `find .loop -type f | wc -l` = 60;
+   `git ls-files .loop` = 0.
+1. **All run-79 plan review corrections 1-9 remain binding in run-80** and apply unchanged to
+   Phase A, Phase B, and every Phase C task: check-ignore result recorded either way and `git add -f`
+   mandated regardless; force-add file-by-file, never a directory and never `-A`/`-u`/`.`; read-only
+   Biome invocations only (no `--write`/`--fix`/`--unsafe`, no `bun run fix`); fail-open fixture
+   hygiene; Harness partial mutation is a stop, not a repair; phase ordering is a hard gate; bundle
+   revalidation reads `gitHead`, not `head`.
+2. **status.md exists and is append-only.** Repository-root `status.md` is tracked, dirty, 3368
+   lines. Never create fresh, rewrite, reorder, or truncate it. Append a dated run-80 subsection at
+   every phase boundary and at any stop, recording exact HEAD, index state, evidence-inventory
+   result, verdict IDs, and the next bounded action. `PLAN.md` and `status.md` are both tracked and
+   not ignored (`git check-ignore -v PLAN.md status.md` exits 1), so they stage with plain `git add`
+   by exact path; they are bookkeeping only and must never enter an implementation commit.
+3. **The terminal record is ADDITIVE; existing eval verdicts must not be rewritten.** Observed:
+   `loop-fork/runs/harvto-formatter-evidence-scope/eval.json` already has
+   `"status": "pass"`, `"verdict": "pass"`, `"baseline_failures": []`, `"required": ["unit"]`, and a
+   `dimensions.unit` block; `runs/harvto-formatter-evidence-scope/eval.json` already has
+   `"verdict": "pass"`, `"baseline_failures": []`, `summary`, and a ten-key `checks` object. Phase A
+   step 3 therefore adds new keys recording the standalone terminal (verdict ID
+   `fed87397-a1a1-4e36-a984-2775a643b648`, production SHA
+   `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, terminal timestamp) and must leave every existing key
+   and value byte-equivalent. Do not flip, duplicate, or restate `verdict`, `status`,
+   `baseline_failures`, `required`, `dimensions`, `summary`, or `checks`. Prove both files parse
+   (`python3 -m json.tool`) before and after, and diff old-versus-new key sets to show additions only.
+4. **Name the exact meta.json transition.** `loop-fork/runs/harvto-formatter-evidence-scope/meta.json`
+   currently carries `"status": "active"`, `"lifecycle":
+   "standalone-ratified-exact-sha-pass-received-terminal-pending-handover-prepared"`,
+   `"standalone_terminal_status": "pending-fresh-loop"`, `"harness_admitted": false`, and
+   `"exact_sha_review_verdict": "PASS"` / `"exact_sha_review_verdict_id":
+   "fed87397-a1a1-4e36-a984-2775a643b648"`. The single terminal write updates `status`, `lifecycle`,
+   and `standalone_terminal_status` and adds a terminal-timestamp key. Because
+   `harness_admitted` is `false`, this transition changes no Harness state: prove
+   `loop-fork/.harness/tasks.json` and `loop-fork/.harness/current-task` hashes are unchanged across
+   the write and that no formatter record exists in `tasks.json`. Never call `./harness done` for the
+   formatter.
+5. **Pre-declare the moving accounting figure so revalidation cannot fail spuriously.** The formatter
+   task log already records that the 720/720 removed-file byte-match figure is presently 718/720
+   because this task's own `eval.json` and `meta.json` took authorized later writes. Phase A step 3
+   writes those two files again plus `task-log.md`. Before writing, record the current inventory; the
+   protected-inventory comparison in Phase A step 4 covers D6, D15, and all foreign evidence
+   byte-for-byte, and explicitly excludes exactly the three authorized formatter self-surfaces
+   `loop-fork/runs/harvto-formatter-evidence-scope/{eval.json,meta.json,task-log.md}` plus
+   `runs/harvto-formatter-evidence-scope/eval.json`. State the expected post-write match count in the
+   pre-state capture and require the observed post-state count to equal it exactly. Any change to a
+   path outside that four-file exclusion is a stop.
+6. **Name the paths that must NOT be staged.** Phase A step 5 and every later staging step must prove
+   the cached set excludes `loop-fork/.harness/tasks.json`, `loop-fork/.harness/current-task`,
+   `loop-fork/.harness/parked-ideas.jsonl`, `loop-fork/agents/coordination.jsonl`, `.loop/`, all D6
+   paths (`loop-fork/specs/harvto-d6-readonly-attach/`,
+   `loop-fork/runs/harvto-d6-readonly-attach/`, `runs/harvto-d6-readonly-attach/`), and
+   `loop-fork/biome.jsonc`. These are preserved dirty/untracked state and stay out of every run-80
+   commit unless a later phase explicitly authorizes the exact path.
+7. **The formatter terminal record has no pre-existing schema.** `loop-fork/specs/harvto-formatter-evidence-scope/verify.md`
+   defines no `standalone_terminal` field. Fix the exact key names and values in the Phase A
+   pre-state capture before writing any file, then use that fixed set in all four surfaces so the
+   record is one consistent standalone terminal, not four divergent ones. Do not edit the frozen
+   plan-reviewed contract files (`spec.md`, `plan.md`, `tasks.md`, `verify.md`, run `plan.md`) —
+   their PLAN PASS hashes are frozen by commit `13b02be9b1783bbc7d955ff05e4470cb733dee9b`.
+8. **Phase B must re-prove formatter production is unamended.** Phase B step 1 additionally requires
+   `git rev-parse HEAD`, `git log --oneline` lineage showing
+   `2e6adb8c3c2cf502ffea28c714685b2ea14b9822` still present with parent
+   `13b02be9b1783bbc7d955ff05e4470cb733dee9b`, and `git show --stat 2e6adb8c…` still listing only
+   `loop-fork/biome.jsonc`. The Phase A bookkeeping commit lands on top; it never amends or reorders
+   the production commit.
+9. **One review request per SHA, no re-request on silence.** For Phase B and every Phase C exact-SHA
+   review, submit exactly one zero-write review request per SHA and record its request ID. Silence is
+   not a verdict: never infer PASS from an absent or timed-out reply, and never resubmit the same SHA
+   to obtain a different verdict. Only a literal `PASS` naming that exact SHA authorizes a close.
+10. **Every stop preserves evidence and reports.** On any authority, hash, inventory, scope,
+    lifecycle, gate, or review mismatch, stop with the exact command, output, exit status, and
+    before/after hashes recorded in the owning task's artifacts, append to `status.md`, and produce a
+    governed handover. Do not retry irreversible lifecycle actions, hand-edit Harness, or self-resolve
+    by parking, rebasing, widening scope, or weakening checks.
+
+### Exact next step
+
+Begin Phase A only after leaving plan mode, under the run-80 corrections above: perform read-only
+preflight and capture the D6 sole-active/eval-pending pre-state, which must also fix the exact
+terminal-record key set (correction 7) and the expected post-write inventory match count
+(correction 5). Then record one standalone formatter terminal `PASS` as additive keys only
+(correction 3) in exactly the four surfaces, capture the matching post-state, and make one separate
+bookkeeping commit excluding the paths named in correction 6. Never call formatter `harness done`.
+
+## Run-79 plan-only resume — handover epoch `1786863160636037`
+
+### Result and authority
+
+- Resume boundary validated from both ready bundles at
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/78/handoff/1786863160636037/{claude,codex}.json`.
+  Both parse, report `status: "ready"`, epoch `1786863160636037`, and exact Git HEAD
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827`. Run-78 `governess-state.json` points to both exact
+  paths at the same epoch; handover control records report both publications completed. Observed
+  bundle SHA-256 values are Claude `9df07edbee14c4497668193bac45402ccba3c089dafec5453ab08926182d7d7e`
+  and Codex `d5f17028f91fc1fea533bbd9e40da29617cb8a5dd77fb2b7f69661657c9e2b76`.
+- Live resume state matches: HEAD is exact `254e1749ca67ad1d81cd434ef01db0aeabae5827`; parent is
+  `ee1e7736d876d4b387f13580ec25ddf1c606e873`; index is empty; root `.loop/` contains 60 files and
+  no tracked path; utility is positively `0/off/0`; Harness reports only
+  `harvto-d6-readonly-attach` active with eval pending.
+- Current supervisor authority is `9d4620f7-1b3f-470c-8d3b-c243706ca7b3`. It supersedes
+  `d0d24bc6-82a7-4a59-905a-592d52524892`. Decision
+  `8415f50f-adb0-4026-88de-ece616c1b060` remains discharged.
+- D6 `PLAN PASS` `80e774db-4748-4281-a6a0-1c9e54b7ccfc` remains valid. Exact-SHA verdict
+  `903ea1ff-acc3-4968-ba7d-70151b01bc04` remains `FAIL` for evidence integrity only. D6 code at
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827` is not changed, amended, recommitted, rebased, parked,
+  or closed before a same-SHA `PASS`.
+- New lifecycle rule from supervisor: at every plan freeze, force-add ignored contract files and
+  commit the exact reviewed contract set before implementation so frozen hashes have Git objects
+  and a durable commit baseline. Never broad-stage. This applies to
+  `harvto-formatter-evidence-scope` and D7-D12; frozen D6 contract bytes remain untouched.
+
+### Non-negotiable preservation boundary
+
+- Preserve all existing worktree changes and every D6/D15 artifact byte-for-byte. Never edit or
+  regenerate anything under D6 `artifacts/red/`; never delete evidence. Before any lifecycle
+  attempt, inventory SHA-256 and size for the complete D6 and D15 evidence trees and compare them
+  after every phase.
+- Preserve frozen D6 contract hashes exactly: spec
+  `aaa58574cce19e466cafd8b5d7a51c03ea052457611b91d21170bc461106dfaa`, plan
+  `67fd510c0034378fcb83ef7ff7b99bdbb91ab92835d3de5d88299f2ce19b48d2`, tasks
+  `0bf974e3769aad738e7f3e56ac3fe377ca4697ff836c444bacc0283ddf3f2f6b`, verify
+  `5b4532f5011e5366a0735341a6861da11962d5a42abe917eb0b6e78669b29a9e`, and run plan
+  `4b840882ffee189649c31b7011e9fc48b0f997e5070140493cde86eef73a7baf`.
+- Preserve D15 close evidence at hashes
+  `66666865793bc34d117e7f5a82d03e10b5482aa454dbe79bce8fb697f81e9d7e` and
+  `fb0b63c017dea91d60fad622242b0fd7bd3f9eab14ce2fa48c23afdb41ba7a71`.
+- Only production path authorized for the root-cause task is `loop-fork/biome.jsonc`. Its only
+  semantic change is an exclusion for generated `loop-fork/runs/**` evidence. No source, test,
+  spec, root `runs/**`, existing override, rule, dependency, provider/model, or Harvto change.
+- Never run `bun run fix`. Never merge, rebase, amend, push, deploy, release, route helpers, spend
+  utility, inject `/compact` or `/rename`, or change D6 lifecycle state to accommodate Harness.
+
+### Phase 1 — Separate formatter task admission and plan freeze
+
+1. Revalidate exact resume state, frozen hashes, evidence inventories, empty index, ignored-plan
+   provenance, utility `0/off/0`, and D6 as sole active task. Record all checks in the formatter
+   standalone run directory.
+2. Create the bounded `harvto-formatter-evidence-scope` spec, plan, tasks, verify contract, run
+   plan, and run log. Contract must define inherited exact-base red, one-file production scope,
+   generated-evidence-only exclusion, fail-open controls, mandatory suites, evidence immutability,
+   refusal handling, and exact-SHA review gates.
+3. Attempt normal Harness promotion while D6 remains active and unchanged. Capture command, exact
+   stdout/stderr, exit status, pre/post Harness file hashes, active-task identity, HEAD, and index.
+   Do not retry a rejected promotion.
+4. If Harness accepts concurrent promotion, prove D6 remains active and unmodified and continue
+   under the formatter task identity. If Harness rejects it, finish the complete standalone
+   `loop-fork/specs/harvto-formatter-evidence-scope/`,
+   `loop-fork/runs/harvto-formatter-evidence-scope/`, and root
+   `runs/harvto-formatter-evidence-scope/` contract/run structure; place exact refusal evidence in
+   that task's artifacts; do not produce red, edit config, stage, commit, or change D6; then stop
+   for supervisor ratification.
+5. Obtain Claude literal zero-write `PLAN PASS` for exact contract hashes. On `REVISE`, update only
+   formatter contracts, re-hash, and resubmit before red or production work.
+6. At literal `PLAN PASS`, verify each ignored contract path resolves to the expected ignore rule.
+   Force-add only the exact formatter spec/plan/tasks/verify and run-plan files, prove the cached set
+   equals the reviewed hash set with no `.loop/`, source, test, evidence, or unrelated path, and make
+   a dedicated plan-freeze contract commit. Verify commit blobs reproduce every reviewed hash and
+   restore an empty index. This contract commit is separate from the one-file production commit.
+
+### Phase 2 — Exact-base red and one-file fix
+
+1. Record formatter implementation base after the plan-freeze commit. Reproduce inherited failure
+   without changing evidence: run repository Biome check against pristine generated run artifacts
+   and preserve command, output, exit status, checked-file inventory/count, config hash, evidence
+   inventory, HEAD, and empty index. Red must prove current config inspects `loop-fork/runs/**` and
+   fails on preserved generated JSON.
+2. Add controls before or with the narrow fix:
+   - Positive: `loop-fork/runs/**` generated evidence is excluded and remains byte-identical.
+   - Fail-open: representative `loop-fork/src/**` and `loop-fork/tests/**` files remain checked;
+     deliberate temporary invalid fixtures outside `runs/**` are rejected and removed without
+     touching preserved evidence.
+   - Scope accounting: every checked-file-count decrease is explained only by files under
+     `loop-fork/runs/**`; root `runs/**`, specs, config, source, and tests are not accidentally
+     excluded.
+   - Config integrity: existing overrides and rules are unchanged except the narrow exclusion.
+3. Edit only `loop-fork/biome.jsonc`. Do not format or rewrite evidence. Prove full evidence
+   inventories and frozen hashes remain byte-identical immediately after the edit and every test.
+
+### Phase 3 — Verification, one-file commit, and formatter review
+
+1. Run plan-defined focused red-to-green controls, targeted Biome checks, `bun run check`, canonical
+   TypeScript, `bun run build`, complete certified serial suite, Harness preflight/stop-gate when
+   represented, both passing evals with `baseline_failures: []`, and root
+   `scripts/verify.sh harvto-formatter-evidence-scope harvto-formatter-evidence-scope`. UI capture is
+   not required because rendered UI does not change.
+2. Recheck utility `0/off/0`, D6 lifecycle identity, all frozen hashes/evidence inventories, and
+   exact Git scope. Stage only `loop-fork/biome.jsonc`; require cached path count one, normal and
+   ignore-all-space numstats accounting, `git diff --cached --check`, and no contract/evidence file
+   in the implementation commit.
+3. Create one production commit containing exactly `loop-fork/biome.jsonc`. Do not amend or rebase.
+   Obtain Claude literal zero-write exact-SHA `PASS`; reviewer must independently verify the
+   generated-only exclusion, source/test fail-open guard, checked-file-count accounting, mandatory
+   gates, one-file commit, and evidence byte identity. On `REVISE`, change only current task scope,
+   rerun every required gate, create a new explicit commit, and seek a new exact-SHA verdict.
+4. After exact-SHA `PASS`, close formatter task exactly once only if Harness admitted it and all
+   lifecycle/eval gates pass. Capture pre/post close proof and make a separate exact-path
+   bookkeeping/evidence commit. If task exists only as supervisor-ratified standalone state, follow
+   the ratified close/bookkeeping procedure exactly; never infer authority.
+
+### Phase 4 — Same-SHA D6 review and close
+
+1. Reconfirm D6 contract hashes, D6/D15 evidence byte identity, D6 sole-active state, utility
+   `0/off/0`, and unchanged implementation object
+   `254e1749ca67ad1d81cd434ef01db0aeabae5827`. Do not recreate D6 red or alter its contract/code.
+2. Rerun D6 focused controls and all mandatory gates against current tree with formatter exclusion
+   active. Regenerate only authorized non-frozen eval/verification outputs; never touch frozen red
+   or D15 close evidence. Both eval locations must pass with empty baseline failures.
+3. Request Claude same-SHA exact review of D6 implementation SHA
+   `254e1749ca67ad1d81cd434ef01db0aeabae5827`, explicitly carrying prior `FAIL` and formatter-task
+   `PASS` evidence. Require literal zero-write `PASS` for that exact SHA.
+4. Only after `PASS`, capture D6 pre-close lifecycle proof, run exactly one Harness close, prove one
+   new close record and no active D6, then make one separate exact-path bookkeeping/evidence commit.
+   Never retry close. Any mismatch or failed close stops with exact evidence.
+
+### Phase 5 — Continue D7-D12 automatically
+
+Run in order: `harvto-d7-handoff-identity`, `harvto-d8-stale-write-lease`,
+`harvto-d9-duplicate-emission`, `harvto-d10-guarded-apply`, `harvto-d11-composer-nudge`, and
+`harvto-d12-socket-discovery`. Each gets isolated Harness lifecycle, exact-base red, bounded fix,
+named positive/negative/replay/fail-closed/isolation controls, mandatory suites, passing dual evals,
+explicit implementation commit, Claude literal exact-SHA `PASS`, exactly one close, and separate
+bookkeeping commit. At each plan freeze, force-add and commit exact reviewed contract files first.
+Stop on any authority, scope, evidence, hash, lifecycle, or gate mismatch; never self-resolve by
+parking, rebasing, widening scope, weakening checks, or changing prior task state.
+
+### Acceptance criteria
+
+- Formatter task has full governed lifecycle and exact evidence; production commit contains only
+  `loop-fork/biome.jsonc` and excludes only `loop-fork/runs/**` generated evidence.
+- All frozen D6/D15 evidence and D6 contract hashes remain byte-identical; root `.loop/` remains
+  untracked; utility remains `0/off/0`; no helper routing or spend occurs.
+- Formatter plan and exact-SHA reviews are literal Claude `PASS`; all focused, control, mandatory,
+  eval, preflight/stop-gate, and root verifier checks pass.
+- D6 implementation object stays exact `254e1749ca67ad1d81cd434ef01db0aeabae5827`, receives same-SHA
+  literal Claude `PASS`, closes exactly once, and is separately bookkept before D7 starts.
+- Every new frozen contract set is force-added and committed at plan freeze. D7-D12 then proceed in
+  order under the same gates and prohibitions.
+
+### Plan review corrections — applied at epoch `1786863160636037` (run-79 plan review)
+
+These corrections are binding for run-79 execution and override any looser wording above in this
+run-79 section.
+
+1. **Contract paths are NOT git-ignored — do not treat that as an anomaly.** Observed:
+   `git check-ignore -v` returns no rule (exit 1) for `loop-fork/specs/harvto-d6-readonly-attach`,
+   `loop-fork/runs/harvto-d6-readonly-attach`, `runs/harvto-d6-readonly-attach`, and `.loop`. The
+   only ignore rules in `loop-fork/.gitignore` are `/loop`, `node_modules`, `PLAN.md`, `.DS_Store`,
+   `agents/coordination.jsonl`; root `.gitignore` ignores none of the campaign paths. Therefore
+   Phase 1 step 6 must record, per contract path, either the exact matching ignore rule or the
+   literal `git check-ignore` exit-1 no-rule result, and proceed either way. Absence of an ignore
+   rule is not a stop condition and `git add -f` remains the mandated form so behaviour is identical
+   in both cases.
+2. **Force-add is file-by-file, never directory-by-directory.** Pass each exact contract file path
+   as its own argument. Never pass `loop-fork/specs/harvto-formatter-evidence-scope/` or any
+   directory to `git add`/`git add -f`, and never `git add -A`/`-u`/`.`. After staging, prove the
+   cached set equals the reviewed hash set exactly (`git diff --cached --name-only` count equals the
+   reviewed file count) before committing, and re-prove root `.loop/` is still 60 untracked files
+   and appears in neither the index nor the commit.
+3. **Biome exclusion syntax and root are pre-specified; verify the resolved config, do not assume.**
+   `loop-fork/biome.jsonc` currently has no top-level `files` key at all — it is `$schema`,
+   `extends: ["ultracite/biome/core"]`, and four `overrides` entries only. The narrow change is
+   therefore an added top-level `files.includes` negation whose glob is relative to the config root
+   `loop-fork/`, i.e. the pattern excludes `runs/**` as written in the file while denoting
+   `loop-fork/runs/**` on disk. Before and after the edit, capture the resolved configuration
+   (`biome explain`/verbose check output) to prove: (a) the `ultracite/biome/core` preset's own
+   `files` settings compose as intended and are not silently replaced, (b) all four existing
+   `overrides` blocks and their `includes` arrays are byte-identical, and (c) repository-root
+   `runs/**` — which lies outside the Biome root — is untouched by the change.
+4. **Read-only Biome invocations only.** Beyond the standing ban on `bun run fix`, the following are
+   prohibited in every phase: `biome check --write`, `--fix`, `--unsafe`, `biome format --write`,
+   `biome lint --write`, and any `bun run` script that wraps them. Red and controls use non-mutating
+   checks and capture the checked-file inventory/count explicitly (for example a summary/verbose
+   reporter), and every red/control step is bracketed by a full evidence SHA-256 inventory to prove
+   read-only behaviour against preserved artifacts.
+5. **Fail-open fixture hygiene.** The deliberate invalid fixture proving `loop-fork/src/**` and
+   `loop-fork/tests/**` are still checked must live outside `loop-fork/runs/**`, outside every
+   contract/evidence path, and outside the index. Prove by exact path that it is removed and that
+   `git status --porcelain` shows no residue before staging, and prove it is absent from
+   `git diff --cached --name-only` and from the commit tree.
+6. **Harness promotion attempt: partial mutation is a stop, not a repair.** Hash
+   `loop-fork/.harness/tasks.json` and `loop-fork/.harness/current-task` immediately before and
+   after the single promotion attempt. Observed current state: `current-task` contains exactly
+   `harvto-d6-readonly-attach`. If the attempt is rejected but left either file changed, or changed
+   D6's record in any way, do not revert, re-run, hand-edit, or otherwise repair it — record the
+   exact pre/post hashes and diff as refusal evidence and stop for supervisor ratification. Only a
+   clean no-mutation rejection permits continuing to the standalone-structure branch.
+7. **Phase ordering is a hard gate.** Phase 4 (D6 same-SHA review) starts only after a literal
+   Claude exact-SHA `PASS` for the formatter production commit, or after explicit supervisor
+   ratification of the standalone branch. If the formatter task ends in `REVISE`, refusal, or an
+   unratified standalone state, stop; do not begin D6 re-review or D7-D12.
+8. **status.md is append-only and required at every phase boundary of this run too.** `status.md`
+   exists at repository root (2975 lines, tracked, dirty) and must never be created fresh,
+   rewritten, or truncated. Append a dated run-79 subsection at each phase boundary and at any stop,
+   recording exact HEAD, index state, evidence-inventory result, verdict IDs, and the next bounded
+   action. `PLAN.md` and `status.md` updates are bookkeeping and must never enter the one-file
+   `loop-fork/biome.jsonc` production commit.
+9. **Bundle field names are fixed for revalidation.** Both bundles expose keys `agent`, `blockers`,
+   `checks`, `dirtyFiles`, `epoch`, `gitHead`, `next`, `status`. Revalidation must read `gitHead`
+   (not `head`) and require it to equal `254e1749ca67ad1d81cd434ef01db0aeabae5827`, `status` to be
+   `ready`, and `epoch` to be `1786863160636037`, alongside the recorded bundle SHA-256 values.
+
+### Current stop/next action
+
+Phase 1 revalidation and formatter contract creation completed. The one authorized concurrent
+Harness promotion attempt exited 1 because `harvto-d6-readonly-attach` remains active. Exact
+pre/post hashes prove no mutation to `.harness/tasks.json`, `.harness/current-task`, the D6 record,
+HEAD, or the empty index. Complete standalone formatter spec/run/root-run structure and refusal
+evidence now exist.
+
+Supervisor decision `99311508-b4a9-4bbd-af9a-f569c3cf16f5` ratified the standalone formatter
+lifecycle. Claude returned literal zero-write `PLAN PASS`
+`3a37e350-c389-4fd0-9b59-a49977b06a82` for request
+`e621ac84-8d94-4bb1-b4cc-b19c325aca52` and the exact hashes spec `84b42f75…f3e1d9`, plan
+`670df040…3ff5f`, tasks `1939347f…fd32b`, verify `79b85f53…34c6e4`, and run plan
+`be1cf808…1a0107`.
+
+Dedicated plan-freeze commit `13b02be9b1783bbc7d955ff05e4470cb733dee9b` now contains exactly
+the five reviewed blobs with their PLAN PASS hashes. Its parent is
+`254e1749ca67ad1d81cd434ef01db0aeabae5827`; the post-commit index is empty; root `.loop/` remains
+60 untracked files; Harness, D6/D15 evidence, config, source, and tests remain unchanged.
+
+Exact-base read-only red from `13b02be9…` is preserved: `bunx biome check --verbose .` exited 1,
+checked 909 files, applied zero fixes, and reported exactly the pristine D15 pre/post-close JSON
+evidence. Full output and the clean-tree 909-path inventory are under formatter `artifacts/red/`;
+D6/D15 inventories, config, HEAD, index, Harness, source, and tests remain unchanged.
+
+The one-file config edit and all focused controls pass. Parsed local scope is exact `["!runs"]`;
+the four overrides are byte-identical; config self-lint checks exactly one file; clean accounting is
+909→189 with zero additions, exactly 720 `runs/` removals, and 720/720 byte matches. Source/test
+fixtures were selected and rejected, inherited preset-class representatives stayed excluded, and
+all temporary controls are now absent from filesystem, status, index, and HEAD.
+
+All four mandatory commands pass: 189-file read-only check, canonical TypeScript, build, and the
+79-file certified serial suite. Dual evals now pass with empty `baseline_failures` and no tolerated
+test-name allowlist; evidence and config hashes remained exact after every gate.
+
+Root `./scripts/verify.sh harvto-formatter-evidence-scope harvto-formatter-evidence-scope` passed
+lint, typecheck, build, all 79 serial test files, and the empty-baseline gate. Post-verifier evidence,
+frozen hashes, Harness/D6 identity, utility, config, `.loop`, index, and control cleanup are exact.
+
+Production commit `2e6adb8c3c2cf502ffea28c714685b2ea14b9822` has parent `13b02be9…` and
+contains exactly one insertion in `loop-fork/biome.jsonc`. Normal and ignore-all-space numstats are
+both `1 0`; the post-commit index is empty; all preservation boundaries remain exact.
+
+Next bounded action: obtain Claude literal zero-write exact-SHA `PASS` or `REVISE` for
+`2e6adb8c…` under request `8fde0b7b-36b6-4c75-ba30-b8b3f5424510`. Do not record standalone
+terminal PASS, run formatter `harness done`, begin D6
+same-SHA review, or mutate D6 first.
+
+After formatter exact-SHA `PASS`, do not run `harness done` because Harness did not admit this task.
+Record exactly one standalone terminal `PASS`, make separate explicit bookkeeping, and prove D6
+remains sole active/eval-pending before resubmitting unchanged D6 SHA `254e1749…` for review.
 
 ## Run-78 execution plan — epoch `1786856716562565`
 
@@ -19,6 +814,73 @@ a new dated section at every phase or context boundary.
 - Utility remains hard-disabled. No helper routing or spend. Never edit Harvto; merge, rebase, push,
   deploy, release, change provider/model/dependencies, delete evidence, weaken authority, widen
   scope, or inject `/compact` or `/rename`.
+
+### Reviewer authority ledger — 2026-08-16
+
+Maintained by the Claude reviewer session. Read before acting on any older reviewer instruction.
+
+- D6 `PLAN PASS` `80e774db-4748-4281-a6a0-1c9e54b7ccfc` is **valid**. The contract amendment was
+  rolled back and all five files hash to the originally frozen values, verified by recomputation.
+  No fresh D6 plan verdict is required.
+- D6 exact-SHA `FAIL` `903ea1ff-acc3-4968-ba7d-70151b01bc04` stands for implementation SHA
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827`. The failure is **evidence integrity only**; the
+  committed code is correct and must not be reworked. The same SHA is re-reviewed once the tree is
+  clean. `FAIL` authorizes no Harness close.
+- Current supervisor authority is `9d4620f7-1b3f-470c-8d3b-c243706ca7b3`: the formatter repair is a
+  separate full-lifecycle task changing only `loop-fork/biome.jsonc` to exclude generated
+  `loop-fork/runs/**` evidence. Never run `bun run fix`; never reformat evidence to obtain green.
+- Superseded or discharged, do not act on either: `d0d24bc6-82a7-4a59-905a-592d52524892` (superseded by `9d4620f7`) and
+  `8415f50f-adb0-4026-88de-ece616c1b060` (its corrective re-freeze is moot after the rollback).
+- `bun run check` was already red at D6 base `ee1e7736…`; the red is inherited from `ee1e773`, not a
+  D6 defect. Root cause is `biome.jsonc` declaring no `runs/**` exclusion.
+- Escalated, not actioned: canonical contracts are frozen by hash but untracked until bookkeeping, so
+  any edit destroys the frozen bytes. Supervisor decision pending; do not widen a task to fix it.
+
+Full reviewer evidence, including the real-tmux 3.7b validation of the D6 query construction, is in
+the `status.md` section "2026-08-16 — Claude reviewer handover".
+
+Reviewer session closed at epoch `1786863160636037` with HEAD `254e1749…`, empty index, and the five
+D6 contract hashes still matching the frozen `PLAN PASS` set. Next bounded action is the separate
+`harvto-formatter-evidence-scope` lifecycle without mutating sole-active D6; if Harness rejects
+promotion, capture exact output and stop for supervisor ratification.
+
+### D6 active plan — 2026-08-16
+
+- D15 is closed and separately bookkept at exact base
+  `ee1e7736d876d4b387f13580ec25ddf1c606e873`; the index was empty before D6 promotion.
+- `harvto-d6-readonly-attach` was promoted exactly once at `2026-08-16T07:07:05Z` and is the sole
+  active Harness task with eval pending. Root `.loop/` remains 60 untracked files and utility is
+  `0/off/0`.
+- Source trace found the D6 owner in `loop-fork/src/loop/tmux.ts`: the exact Claude
+  suggested-composer recovery rejects every nonzero `window_active_clients` count, but tmux exposes
+  per-client `client_readonly` state and guarantees read-only clients cannot affect pane keys.
+- Canonical D6 contracts authorize only `loop-fork/src/loop/tmux.ts` and
+  `loop-fork/tests/loop/tmux.test.ts` for implementation. They require exact target
+  session/window/client binding, stable read-only classification around the mutation boundary,
+  writable/unknown fail-closed behavior, existing pane/composer protections, replay safety, and
+  other-window isolation.
+- D11 remains separate: D6 does not change Governess `answer-prompt` or `nudge` transport.
+
+Canonical hashes and the zero-source/test-diff boundary passed. Claude plan request
+`b09a991e-23fb-4366-a663-78cf986f95b9` is durably pending, but exact pane inspection found Claude
+idle behind stale non-empty draft `ping codex to start the D15 pre-close snapshot`. The bridge
+correctly refuses terminal injection into that composer, and Codex will not clear, submit, or type
+over it. Supervisor escalation `9961797c-a5bf-4d0f-8461-9cea17dc9a5e` requests safe Claude attention
+or a fresh governed reviewer session.
+
+Next atomic action: receive literal `PLAN PASS` or `REVISE` after the stale Claude composer is safely
+resolved. No red regression or production edit starts first; do not duplicate the pending request.
+
+Claude returned literal `REVISE` `cf16415b-f17f-4f1f-90cc-6a1327e290f1` with zero writes/helpers/
+spend. Required planning corrections are B1: include the post-send raw `activeClients === 0`
+changed-suggestion consumer and prove `candidate-changed` under stable read-only viewers; B2: prove
+target-window membership by pane-bound `window_active_clients_list` identity intersected with
+session-bound `client_readonly`, using count only as a cross-check; B3: keep variable identities out
+of the fixed-arity marker and define explicit zero/empty/empty synthetic-shim semantics. Also record
+that deterministic query tests do not certify deployed tmux output; unsupported output fails closed.
+
+Next atomic action: re-hash the revised canonical artifacts and run plan, prove the exact base and
+zero source/test diff, then request a fresh literal plan verdict. No red or production edit first.
 
 ### D15 closure result — 2026-08-15
 
@@ -2210,3 +3072,220 @@ missing named D15 controls and any defects they expose. Then run the mandatory g
 passing evals, prove and commit explicit implementation scope, obtain Claude literal exact-SHA
 `PASS`, and close Harness exactly once. Preserve utility `0/off/0`, the empty index, and root
 `.loop/`; do not recapture the exact-base red.
+
+## 2026-08-16 — D6 formatter gate contract amendment awaiting PLAN PASS
+
+Result: implementation SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827` remains unchanged and
+independently code-correct, but Claude exact-SHA decision `903ea1ff-acc3-4968-ba7d-70151b01bc04`
+failed evidence integrity. D6 red fixture byte provenance was lost by post-freeze formatting; the
+loss is recorded outside red, command/output remain untouched, and no red file will change again.
+The two D15 close-lifecycle files are restored byte-for-byte to implementation HEAD.
+
+Supervisor decision `d0d24bc6-82a7-4a59-905a-592d52524892` authorizes one narrow campaign gate
+repair: a separate `biome.jsonc` commit excluding generated `runs/**` evidence only. The amended
+contract forbids source/test/spec exclusions, existing-override changes, global rule disablement,
+unrelated ignores, evidence formatting, and implementation amendment/rebase.
+
+Amended hashes are spec `cf1a423c759e941a5debfd89729e2b9ae2c1a7d28b7e17504bfa694fa868bc10`,
+plan `3b50f713040019dc7f5a3112268cbef6244a14635e73bb82320d938d40c2c6e7`, tasks
+`0bf974e3769aad738e7f3e56ac3fe377ca4697ff836c444bacc0283ddf3f2f6b`, verify
+`7bf5885c926d239a42ebe6a37b5291c731a4b275b8cf881fe7d12aca1b6325a0`, and run plan
+`90f8e05bf837a2f577c7437e797ae09b8945d3ad01abb276f4a45d5449c69cab`.
+
+Next: obtain Claude literal zero-write `PLAN PASS` for the amended hashes. Do not edit
+`biome.jsonc`, rerun a fixer, close Harness, or alter implementation first.
+
+## 2026-08-16 — Run-78 D6/formatter root-cause fresh-loop handover
+
+Governess decision `f819db4c-ae07-4f87-b874-8f9c7163e5b6` orders preparation now; do not start the
+next broad slice in this loop.
+
+Urgent supervisor decision `9d4620f7-1b3f-470c-8d3b-c243706ca7b3` supersedes the prior instruction
+to amend D6. D6's canonical contract is restored exactly under original PLAN PASS
+`80e774db-4748-4281-a6a0-1c9e54b7ccfc`: spec `aaa58574…06dfaa`, plan
+`67fd510c…e19b48d2`, tasks `0bf974e3…f3f2f6b`, verify `5b4532f5…669b29a9e`, run plan
+`4b840882…f73a7baf`. Implementation SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827` remains the
+unchanged, independently code-correct two-file candidate.
+
+Current blocker: D6 exact-SHA decision `903ea1ff-acc3-4968-ba7d-70151b01bc04` is literal `FAIL` on
+evidence integrity and inherited formatter scope, not code. D6 red fixture original bytes are
+unrecoverable after post-freeze formatting; this is recorded outside red, while untouched
+command/output files corroborate only decisive semantics. D15 pre/post-close artifacts are restored
+byte-equal to HEAD at `66666865…9d7e` and `fb0b63c0…7e71`. With pristine D15 bytes,
+`bun run check` fails exactly on those two inherited files.
+
+Authorized remedy is a separate root-cause task, suggested id `harvto-formatter-evidence-scope`,
+with its own spec/plan/tasks/verify, exact-base red, one-file `loop-fork/biome.jsonc` fix, controls,
+commit, and Claude exact-SHA review. Scope is only a narrow exclusion for generated
+`loop-fork/runs/**`; no existing override/rule change, source/test/spec/root-runs exclusion, evidence
+rewrite, `bun run fix`, implementation amend/rebase, or unrelated ignore is allowed.
+
+State at handover: HEAD `254e1749ca67ad1d81cd434ef01db0aeabae5827`; index empty; no dirty
+`loop-fork/biome.jsonc`, source, test, or D15 evidence path; Harness sole-active D6/eval-pending; five
+tracked bookkeeping paths dirty; 20 non-root-`.loop` untracked D6 paths plus two present/ignored D6
+plans; root `.loop/` remains 60 untracked files; utility remains `0/off/0` with no helper or spend.
+
+Next bounded action: in the fresh loop, verify the new charter and state, then attempt the separate
+formatter task's Harness lifecycle without parking or closing D6. If Harness refuses concurrent
+promotion, preserve exact output, build the complete separate run directory manually, and report the
+deviation for supervisor ratification. Do not reproduce red or edit config before that boundary is
+recorded.
+
+## 2026-08-16 — Governess exit handover epoch 1786863160636037
+
+Current atomic step is complete. Preserve HEAD `254e1749ca67ad1d81cd434ef01db0aeabae5827`, the
+empty index, all uncommitted bookkeeping/run evidence, D6's sole-active Harness state, and untouched
+`loop-fork/biome.jsonc`. Decision `8415f50f-adb0-4026-88de-ece616c1b060` is discharged; original
+D6 `PLAN PASS` `80e774db-4748-4281-a6a0-1c9e54b7ccfc` remains valid.
+
+Fresh-loop next action: verify the replacement charter and this preserved state, then attempt the
+separate `harvto-formatter-evidence-scope` Harness lifecycle without parking or closing D6. If
+Harness rejects concurrent promotion, record the exact blocking output and stop for supervisor
+ratification. Only that task may authorize a one-file `loop-fork/biome.jsonc` exclusion for
+generated `loop-fork/runs/**`; after its exact-SHA `PASS`, return to unchanged D6 SHA `254e1749…`
+for same-SHA review. Do not edit anything under D6 `artifacts/red/`.
+
+## 2026-08-16 — Run-79 Governess prepare boundary
+
+Governess decision `6bc8b2a2-f244-48fb-8815-7853e83fe17c` orders a fresh-loop handover now and
+forbids starting another broad slice. This loop stops after durable handover preparation; it does
+not receive or process a later review result.
+
+Current objective: preserve Claude's literal exact-SHA `PASS`
+`fed87397-a1a1-4e36-a984-2775a643b648` for formatter production commit
+`2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, received under request
+`8fde0b7b-36b6-4c75-ba30-b8b3f5424510` only after an explicit bridge prompt during handover. The
+verdict is recorded but not processed in this loop. The successor may record the separately
+ratified standalone terminal result and its bookkeeping without `harness done`. D6 same-SHA review
+is a later, separate action and does not begin here.
+
+Exact committed scope is two commits: plan-freeze commit
+`13b02be9b1783bbc7d955ff05e4470cb733dee9b`, parent
+`254e1749ca67ad1d81cd434ef01db0aeabae5827`, contains exactly the five reviewed formatter contract
+files; production commit `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, parent `13b02be9…`, contains
+one insertion in exactly `loop-fork/biome.jsonc`. The preserved uncommitted scope is tracked
+bookkeeping only (`PLAN.md`, `status.md`, `loop-fork/.harness/{parked-ideas.jsonl,tasks.json}`, and
+`loop-fork/agents/coordination.jsonl`) plus untracked root `.loop/`, D6 run/spec evidence, formatter
+run/eval/memory/meta/task-log evidence, and the two root run directories shown by `git status`.
+The index is empty.
+
+Checks/results: exact-base Biome red was 909 checked files, exit 1, exactly two pristine D15
+generated-evidence errors, and zero fixes. The one-line config change produced 189 checked files,
+zero additions, exactly 720 run-only removals with 720/720 byte matches, selected/rejected source
+and test fixtures, inherited-exclusion controls, and zero fixture residue. `bun run check`, canonical
+TypeScript, build, all 79 serial test files, and the root verifier pass; dual evals pass with empty
+baseline failures. D6/D15 evidence inventories, frozen D6 hashes, sole-active D6 Harness identity,
+utility `0/off/0`, and the 60-file untracked root `.loop/` remain preserved.
+
+Handover boundary: literal exact-SHA `PASS` has been received, but Governess ordered this loop to
+finish only handover preparation. Do not record a terminal formatter result in Run 79, run formatter
+`harness done`, review or transition D6, broad-stage, rewrite evidence, or disturb the preserved
+dirty state.
+
+Fresh-loop next bounded action: verify the replacement charter/handover, exact verdict message
+`fed87397-a1a1-4e36-a984-2775a643b648`, HEAD `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`,
+empty index, exact dirty scope, D6/D15 inventories, Harness hashes/current task, utility `0/off/0`,
+and root `.loop/`. Then capture D6 sole-active/eval-pending pre-state, record exactly one standalone
+terminal `PASS` in formatter task-log, meta, and both evals, capture matching D6 post-state, and make
+one separate bookkeeping commit. Formatter `harness done` remains prohibited. Stop with an empty
+index before any later D6 same-SHA review.
+
+## 2026-08-16 — Claude reviewer handover (run-79 Governess prepare, epoch after exact-SHA PASS)
+
+Authored by the Claude reviewer session, appended without editing prior text.
+
+**Correction to the preceding section.** It states the fresh-loop next action is to call
+`receive_messages` for request `8fde0b7b-36b6-4c75-ba30-b8b3f5424510` and branch on `PASS`/`REVISE`.
+That request is ANSWERED. Literal exact-SHA `PASS` `fed87397-a1a1-4e36-a984-2775a643b648` was
+delivered for commit `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`. Do not re-request it and do not
+treat the verdict as pending.
+
+### Objective
+
+Formatter root-cause task `harvto-formatter-evidence-scope` is code-complete and approved. Remaining
+work is its standalone terminal transition and separate bookkeeping, then D6 same-SHA re-review.
+
+### Exact changed scope (two commits, six paths total)
+
+- `13b02be9b1783bbc7d955ff05e4470cb733dee9b` — contract freeze, exactly five reviewed files:
+  `loop-fork/specs/harvto-formatter-evidence-scope/{spec,plan,tasks,verify}.md` and
+  `loop-fork/runs/harvto-formatter-evidence-scope/plan.md`. Parent `254e1749…`.
+- `2e6adb8c3c2cf502ffea28c714685b2ea14b9822` — production, exactly `loop-fork/biome.jsonc`, one
+  inserted line `"files": { "includes": ["!runs"] },`. numstat `1 0` under both normal and
+  `--ignore-all-space`. No source, test, evidence, contract, `PLAN.md`, `status.md`, or `.loop/` path.
+
+### Design conclusion reached during plan review (four rounds)
+
+Biome 2.4.9 LAYERS a child `files.includes` after `extends`; it does not merge a catch-all safely. A
+local positive `"**"` re-includes preset-excluded paths and triggers `lint/suspicious/noBiomeFirstException`
+(error under `ultracite/biome/core`). A trailing `/**` folder form triggers `useBiomeIgnoreFolder`
+(also error). The only form that is both semantically correct and self-lint clean is the single
+negative `["!runs"]` with no local positive glob and no copied preset entry. Three earlier candidate
+forms were rejected on measured evidence, not on style.
+
+### Blockers, risks, authority
+
+- No open blocker.
+- `harness done` is PROHIBITED for the formatter task; Harness never admitted it.
+- `2e6adb8c` must not be amended or rebased.
+- D6 stays sole active and eval-pending; its code at `254e1749…` must not be reworked.
+- Supervisor authority `9d4620f7-1b3f-470c-8d3b-c243706ca7b3` plus ratification
+  `9a23e772…` / `99311508…` (one decision, two deliveries); ordering confirmed by `d2f32b69…`.
+
+### Next bounded action
+
+Standalone terminal bookkeeping commit by Codex, then resubmit unchanged D6 SHA
+`254e1749ca67ad1d81cd434ef01db0aeabae5827` for same-SHA review carrying prior `FAIL` `903ea1ff…`
+and formatter `PASS` `fed87397…`. Full evidence detail is in the matching `status.md` section.
+
+## 2026-08-16 — Governess handover epoch 1786902912181400
+
+Urgent handover `0a2d81fe-29df-48c9-9689-0e969eb1bbbc` requires this agent to stop after writing the
+epoch bundle. Preserve HEAD `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, empty index, all dirty
+bookkeeping/evidence, exact-SHA formatter `PASS` `fed87397-a1a1-4e36-a984-2775a643b648`, and D6
+sole-active/eval-pending state. No commit, terminal transition, formatter `harness done`, D6 work,
+push, merge, deploy, or discard is authorized in this loop.
+
+Fresh-loop next action remains the standalone terminal procedure: verify the epoch bundle and
+protected state; capture D6 pre-state; record exactly one formatter terminal `PASS` in task-log,
+meta, and both evals; capture matching D6 post-state; make one separate bookkeeping commit; and stop
+with an empty index before later resubmitting unchanged D6 SHA `254e1749…` for same-SHA review.
+
+## 2026-08-16 — Claude reviewer exit, epoch `1786902912181400`
+
+Reviewer atomic step complete: exact-SHA `PASS` `fed87397-a1a1-4e36-a984-2775a643b648` for
+`2e6adb8c3c2cf502ffea28c714685b2ea14b9822`. HEAD and index unchanged at exit; nothing staged or
+committed by the reviewer. Bundle at
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/79/handoff/1786902912181400/claude.json`.
+Next bounded action remains the standalone formatter terminal procedure and separate bookkeeping
+commit, then D6 same-SHA review at unchanged `254e1749ca67ad1d81cd434ef01db0aeabae5827`.
+`harness done` stays prohibited; do not amend or rebase `2e6adb8c`.
+
+## 2026-08-16 — Run-82 Phase A formatter terminal, resumed epoch `1786902912181400`
+
+Supervisor correction `a73e92c8-3691-4d16-93e8-460894398c5e` makes run 82 the executable
+successor and authorizes the already-approved Phase A standalone formatter terminal procedure.
+
+- Frozen terminal tuple: `PASS`,
+  `fed87397-a1a1-4e36-a984-2775a643b648`,
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`,
+  `2026-08-16T20:58:51Z`.
+- Frozen JSON keys: `standalone_terminal_status`, `exact_sha_review_verdict_id`,
+  `production_commit`, and `standalone_terminal_recorded_at`.
+- Meta transitions are exactly `status: active -> done`,
+  `lifecycle: standalone-ratified-exact-sha-pass-received-terminal-pending-handover-prepared ->
+  standalone-ratified-exact-sha-pass-terminal-recorded`,
+  `standalone_terminal_status: pending-fresh-loop -> PASS`, plus the timestamp key.
+- Pre/post proof keeps D6 sole active/eval-pending, Harness hashes exact, HEAD
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, index empty, utility `0/off/0`, root `.loop/`
+  at 60 files and zero tracked, D6 inventory 17/17, and D15 inventory 22/22.
+- Existing eval values are unchanged; task-log prefix is byte-identical. Frozen verdict ID and
+  `standalone_terminal_status` each occur exactly once per authorized surface. Removed-file
+  accounting remains 718/720 with only the already-authorized formatter `eval.json` and
+  `meta.json` mismatches.
+
+Next: stage exactly the four formatter terminal surfaces plus this `PLAN.md` and append-only
+`status.md`; compare normal and ignore-all-space numstats, prove cached scope, create one
+bookkeeping commit, re-hash both run-79 bundles, then request one zero-write same-SHA Claude review
+of unchanged D6 `254e1749ca67ad1d81cd434ef01db0aeabae5827`. Formatter `harness done` remains
+prohibited.

@@ -1,0 +1,23 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-formatter-evidence-scope",
+  "baseline_failures": [],
+  "summary": "The standalone formatter fix excludes only loop-fork/runs evidence while preserving inherited exclusions and source/test coverage; focused and mandatory gates pass with no baseline allowance.",
+  "checks": {
+    "resume_revalidation": "pass",
+    "evidence_inventory": "pass",
+    "promotion_attempt": "clean refusal, exit 1",
+    "supervisor_ratification": "pass: 99311508-b4a9-4bbd-af9a-f569c3cf16f5",
+    "plan_review": "pass: 3a37e350-c389-4fd0-9b59-a49977b06a82 for exact round-4 hashes",
+    "plan_freeze": "pass: 13b02be9b1783bbc7d955ff05e4470cb733dee9b, exact five reviewed blobs",
+    "exact_base_red": "pass: read-only exit 1, 909 checked files, exactly two pristine D15 close-evidence formatting errors",
+    "implementation": "focused controls pass: exact [\"!runs\"], config self-lint, 0 additions, 720 run-only removals, 720/720 byte matches, source/test fail-open and inherited-class matrix",
+    "mandatory_gates": "pass: read-only check, canonical TypeScript, build, and 79-file certified serial test suite",
+    "root_verifier": "pass: lint, typecheck, build, serial tests, and empty-baseline gate"
+    ,"production_commit": "pass: 2e6adb8c3c2cf502ffea28c714685b2ea14b9822 contains only loop-fork/biome.jsonc"
+  },
+  "standalone_terminal_status": "PASS",
+  "exact_sha_review_verdict_id": "fed87397-a1a1-4e36-a984-2775a643b648",
+  "production_commit": "2e6adb8c3c2cf502ffea28c714685b2ea14b9822",
+  "standalone_terminal_recorded_at": "2026-08-16T20:58:51Z"
+}
