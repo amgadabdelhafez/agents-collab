@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -11,7 +12,11 @@ import { join } from "node:path";
 import { type Server, serve } from "bun";
 import { PI_VERSION } from "../../src/loop/pi-runtime";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
-import { runUtilityWorker } from "../../src/loop/utility-runtime";
+import {
+  retainUtilityScopeAuditCollection,
+  runUtilityWorker,
+} from "../../src/loop/utility-runtime";
+import { buildUtilityScopeAuditEvidence } from "../../src/loop/utility-scope-audit";
 import {
   activateUtilityEpoch,
   appendUtilityRouteRequest,
@@ -158,6 +163,396 @@ test("Nanny executes a brokered Pi tool turn with durable evidence", async () =>
     expect(
       readFileSync(join(runDir, "utility", "llm-trace.jsonl"), "utf8")
     ).toContain('"harness":"pi-sdk"');
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("D16 utility scope audit preserves routing-hidden Git paths when synthesis reports only visible paths", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-d16-scope-audit-"));
+  const runDir = join(repoRoot, ".loop", "runs", "d16-scope-audit");
+  const git = (...args: string[]): string => {
+    const result = spawnSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    if (result.status !== 0) {
+      throw new Error(result.stderr);
+    }
+    return result.stdout;
+  };
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(join(repoRoot, "specs", "d16-fixture"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repoRoot, ".gitignore"), ".loop/\n");
+  writeFileSync(
+    join(repoRoot, "src", "tracked.ts"),
+    "export const tracked = 1;\n"
+  );
+  git("init", "--quiet");
+  git("config", "user.email", "d16@example.test");
+  git("config", "user.name", "D16 Fixture");
+  git("add", "--", ".gitignore", "src/tracked.ts");
+  git("commit", "--quiet", "-m", "fixture base");
+  writeFileSync(
+    join(repoRoot, "src", "tracked.ts"),
+    "export const tracked = 2;\n"
+  );
+  writeFileSync(
+    join(repoRoot, "specs", "d16-fixture", "spec.md"),
+    "# routing-hidden scope evidence\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["report every Git-derived changed path"],
+    authority: {},
+    executionProfile: "git-status",
+    id: "d16-scope-audit-job",
+    kind: "review",
+    objective: "Audit every changed path in the declared repository scope",
+    readScope: ["."],
+    requester: "codex",
+    reviewMode: "utility-audit",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 116);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-au-pair",
+    },
+    routeEpoch: 116,
+  });
+
+  const bodies: Record<string, unknown>[] = [];
+  const server = serve({
+    fetch: async (incoming) => {
+      bodies.push((await incoming.json()) as Record<string, unknown>);
+      return bodies.length === 1
+        ? response([
+            event({ role: "assistant" }),
+            event({
+              tool_calls: [
+                {
+                  function: { arguments: "{}", name: "git_status" },
+                  id: "d16-git-status",
+                  index: 0,
+                  type: "function",
+                },
+              ],
+            }),
+            event({}, "tool_calls"),
+          ])
+        : response([
+            event({ role: "assistant" }),
+            event({
+              content:
+                "Audit complete: one modified path, src/tracked.ts; no other changed paths.",
+            }),
+            event({}, "stop"),
+          ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+
+  try {
+    expect(git("status", "--porcelain=v1", "--untracked-files=normal")).toBe(
+      [" M src/tracked.ts", "?? specs/", ""].join("\n")
+    );
+    await runUtilityWorker(runDir, 116, request.id, {
+      LOOP_AU_PAIR_ENABLED: "1",
+      LOOP_AU_PAIR_MODEL: "fake-au-pair",
+      LOOP_AU_PAIR_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    expect(bodies).toHaveLength(2);
+    expect(JSON.stringify(bodies[1])).toContain("src/tracked.ts");
+    expect(JSON.stringify(bodies[1])).not.toContain(
+      "specs/d16-fixture/spec.md"
+    );
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        scopeAudit: {
+          manifests: [
+            {
+              clean: false,
+              count: 2,
+              records: expect.arrayContaining([
+                expect.objectContaining({
+                  path: "specs/d16-fixture/spec.md",
+                }),
+                expect.objectContaining({ path: "src/tracked.ts" }),
+              ]),
+              sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+            },
+          ],
+        },
+        status: "completed",
+      },
+      state: "completed",
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("D16 runtime retains equal query bytes, rejects conflict, and keeps distinct queries", () => {
+  const evidence = buildUtilityScopeAuditEvidence(
+    { mode: "status", paths: ["src"] },
+    [
+      {
+        indexStatus: ".",
+        kind: "modified",
+        path: "src/tracked.ts",
+        routing: "helper-visible",
+        surfaces: ["worktree"],
+        worktreeStatus: "M",
+      },
+    ]
+  );
+  const result = {
+    durationMs: 1,
+    ok: true as const,
+    scopeAudit: evidence,
+    tool: "git_status" as const,
+  };
+  const first = retainUtilityScopeAuditCollection(undefined, result);
+  expect(retainUtilityScopeAuditCollection(first, result)).toEqual(first);
+
+  const conflict = buildUtilityScopeAuditEvidence(
+    { mode: "status", paths: ["src"] },
+    [
+      {
+        indexStatus: ".",
+        kind: "deleted",
+        path: "src/tracked.ts",
+        routing: "helper-visible",
+        surfaces: ["worktree"],
+        worktreeStatus: "D",
+      },
+    ]
+  );
+  expect(() =>
+    retainUtilityScopeAuditCollection(first, {
+      ...result,
+      scopeAudit: conflict,
+    })
+  ).toThrow("scope audit broker results conflict for one query");
+
+  const distinct = retainUtilityScopeAuditCollection(first, {
+    durationMs: 1,
+    ok: true,
+    scopeAudit: buildUtilityScopeAuditEvidence(
+      { mode: "diff-worktree", paths: ["src"] },
+      []
+    ),
+    tool: "git_diff",
+  });
+  expect(distinct?.manifests).toHaveLength(2);
+});
+
+test("D16 Direct distinct ranges coexist with deterministic completion state", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-scope-ranges-"));
+  const runDir = join(repoRoot, ".loop", "runs", "scope-ranges");
+  const git = (...args: string[]): string => {
+    const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+    if (result.status !== 0) {
+      throw new Error(result.stderr);
+    }
+    return result.stdout.trim();
+  };
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  git("init", "--quiet");
+  git("config", "user.email", "d16@example.test");
+  git("config", "user.name", "D16 Fixture");
+  writeFileSync(join(repoRoot, "src", "tracked.ts"), "export const v = 1;\n");
+  git("add", "--", "src/tracked.ts");
+  git("commit", "--quiet", "-m", "fixture base");
+  const base = git("rev-parse", "HEAD");
+  writeFileSync(join(repoRoot, "src", "tracked.ts"), "export const v = 2;\n");
+  git("commit", "--all", "--quiet", "-m", "fixture middle");
+  const middle = git("rev-parse", "HEAD");
+  writeFileSync(join(repoRoot, "src", "tracked.ts"), "export const v = 3;\n");
+  git("commit", "--all", "--quiet", "-m", "fixture head");
+  const head = git("rev-parse", "HEAD");
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["retain both exact range manifests"],
+    authority: {},
+    executionPlan: [middle, head].map((rangeHead) => ({
+      executionGitDiff: {
+        base,
+        head: rangeHead,
+        kind: "range" as const,
+        operator: "..." as const,
+      },
+      executionProfile: "git-diff" as const,
+      objective: `Inspect range ending ${rangeHead}`,
+      readScope: ["src"],
+    })),
+    executionProfile: "read-plan",
+    id: "scope-distinct-ranges",
+    kind: "inspect",
+    objective: "Inspect two exact committed ranges",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 118);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-direct",
+    },
+    routeEpoch: 118,
+  });
+
+  try {
+    await runUtilityWorker(runDir, 118, request.id, {
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    const job = readUtilityJob(runDir, request.id);
+    const manifests = job?.result?.scopeAudit?.manifests ?? [];
+    expect(job?.state).toBe("completed");
+    expect(job?.result?.status).toBe("completed");
+    expect(manifests).toHaveLength(2);
+    const expectedQueries = [middle, head].map((rangeHead) => ({
+      baseRef: base,
+      headRef: rangeHead,
+      mode: "diff-range" as const,
+      paths: ["src"],
+      rangeOperator: "..." as const,
+    }));
+    expectedQueries.sort((left, right) => {
+      const leftJson = JSON.stringify(left);
+      const rightJson = JSON.stringify(right);
+      if (leftJson < rightJson) {
+        return -1;
+      }
+      if (leftJson > rightJson) {
+        return 1;
+      }
+      return 0;
+    });
+    expect(manifests.map((manifest) => manifest.query)).toEqual(
+      expectedQueries
+    );
+    const bridgeEvents = readFileSync(join(runDir, "bridge.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const completion = bridgeEvents.find(
+      (entry) => entry.kind === "message" && entry.taskId === request.id
+    );
+    const expectedState = manifests
+      .map(
+        (manifest) =>
+          `mode=${manifest.query.mode} count=${manifest.count} clean=${manifest.clean} sha256=${manifest.sha256}`
+      )
+      .join(" | ");
+    expect(completion?.message).toStartWith(expectedState);
+    expect(completion?.message).toContain("Advisory synthesis:");
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("D16 Direct mixed command validates Git evidence before completion", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-scope-command-"));
+  const runDir = join(repoRoot, ".loop", "runs", "scope-command");
+  const git = (...args: string[]): void => {
+    const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+    if (result.status !== 0) {
+      throw new Error(result.stderr);
+    }
+  };
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repoRoot, "src", "check.js"), "export const value = 1;\n");
+  git("init", "--quiet");
+  git("config", "user.email", "d16@example.test");
+  git("config", "user.name", "D16 Fixture");
+  git("add", "--", "src/check.js");
+  git("commit", "--quiet", "-m", "fixture base");
+  writeFileSync(join(repoRoot, "src", "check.js"), "export const value = 2;\n");
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return Git evidence and a passing syntax check"],
+    authority: {},
+    executionPlan: [
+      {
+        executionProfile: "git-status",
+        objective: "Inspect repository status",
+        readScope: ["."],
+      },
+      {
+        executionArgv: ["node", "--check", "src/check.js"],
+        executionCwd: ".",
+        executionProfile: "focused-check",
+        objective: "Check exact JavaScript syntax",
+        readScope: [".", "src/check.js"],
+      },
+    ],
+    executionProfile: "read-plan",
+    id: "scope-mixed-command",
+    kind: "command",
+    objective: "Inspect and verify exact scope",
+    readScope: [".", "src/check.js"],
+    requester: "codex",
+    requiredCapabilities: ["inspect", "focused-verify"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 119);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-direct",
+    },
+    routeEpoch: 119,
+  });
+
+  try {
+    await runUtilityWorker(runDir, 119, request.id, {
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    const job = readUtilityJob(runDir, request.id);
+    expect(job?.state).toBe("completed");
+    expect(job?.result?.checks).toEqual([
+      {
+        command: ["allowlisted-check"],
+        exitCode: 0,
+        summary: "check completed",
+      },
+    ]);
+    expect(job?.result?.scopeAudit?.manifests[0]?.query).toEqual({
+      mode: "status",
+      paths: ["."],
+    });
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

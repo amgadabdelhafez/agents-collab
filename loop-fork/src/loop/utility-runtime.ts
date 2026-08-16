@@ -71,6 +71,13 @@ import {
 } from "./utility-observability";
 import { utilityInferenceCircuitOpen } from "./utility-readiness";
 import {
+  assertUtilityScopeAuditCollectionForRequest,
+  assertUtilityScopeAuditEvidence,
+  buildUtilityScopeAuditCollection,
+  type UtilityScopeAuditCollection,
+  utilityScopeAuditQueryIdentity,
+} from "./utility-scope-audit";
+import {
   activateUtilityEpoch,
   claimUtilityJob,
   readPendingRouteRequests,
@@ -1376,6 +1383,7 @@ interface UtilityConversationResult {
   modelCalls: number;
   piVersion?: string;
   provider: string;
+  scopeAudit?: UtilityScopeAuditCollection;
   summary: string;
   toolCalls: number;
   toolRounds: number;
@@ -1414,12 +1422,46 @@ const recordToolResult = (
   }
 };
 
+export const retainUtilityScopeAuditCollection = (
+  current: UtilityScopeAuditCollection | undefined,
+  result: UtilityToolResult
+): UtilityScopeAuditCollection | undefined => {
+  if (!(result.ok && result.scopeAudit)) {
+    return current;
+  }
+  const evidence = assertUtilityScopeAuditEvidence(result.scopeAudit);
+  if (!current) {
+    return buildUtilityScopeAuditCollection([evidence]);
+  }
+  const queryIdentity = utilityScopeAuditQueryIdentity(evidence.query);
+  const existing = current.manifests.find(
+    (manifest) =>
+      utilityScopeAuditQueryIdentity(manifest.query) === queryIdentity
+  );
+  if (existing) {
+    if (JSON.stringify(existing) !== JSON.stringify(evidence)) {
+      throw new Error("scope audit broker results conflict for one query");
+    }
+    return current;
+  }
+  return buildUtilityScopeAuditCollection([...current.manifests, evidence]);
+};
+
+const helperVisibleToolResult = (
+  result: UtilityToolResult
+): Omit<UtilityToolResult, "scopeAudit"> => {
+  const { scopeAudit: _scopeAudit, ...visible } = result;
+  return visible;
+};
+
 const assertConversationEvidence = (
   request: UtilityRouteRequest,
   successfulTools: ReadonlySet<UtilityToolName>,
   artifacts: readonly UtilityArtifactReference[],
+  scopeAudit: UtilityScopeAuditCollection | undefined,
   role: "Direct" | "Nanny" | "Au Pair"
 ): void => {
+  assertUtilityScopeAuditCollectionForRequest(request, scopeAudit);
   if (request.kind === "edit") {
     if (
       !(
@@ -1464,6 +1506,7 @@ const executeUtilityBrokerCall = async (input: {
     exitCode: result.exitCode,
     jobId: input.jobId,
     ok: result.ok,
+    scopeAudit: result.scopeAudit,
     tool: name,
   });
   return { name, result };
@@ -1502,6 +1545,7 @@ const runLegacyUtilityConversation = async (input: {
   let consecutiveBrokerRejections = 0;
   let lastToolCallFingerprint = "";
   let repeatedToolCallCount = 0;
+  let scopeAudit: UtilityScopeAuditCollection | undefined;
   let usage = emptyUsage();
   const progress = (): UtilityConversationProgress => ({
     durationMs: Math.max(0, Date.now() - startedAt),
@@ -1555,6 +1599,7 @@ const runLegacyUtilityConversation = async (input: {
           input.request,
           successfulTools,
           artifacts,
+          scopeAudit,
           role
         );
       }
@@ -1567,6 +1612,7 @@ const runLegacyUtilityConversation = async (input: {
         provider: isLoopbackEndpoint(input.config.endpoint)
           ? "local"
           : "openrouter",
+        ...(scopeAudit ? { scopeAudit } : {}),
         summary,
       };
     }
@@ -1599,6 +1645,7 @@ const runLegacyUtilityConversation = async (input: {
         successfulTools.add(name);
       }
       recordToolResult(name, result, artifacts, checks);
+      scopeAudit = retainUtilityScopeAuditCollection(scopeAudit, result);
       if (result.ok) {
         consecutiveBrokerRejections = 0;
       } else {
@@ -1611,7 +1658,7 @@ const runLegacyUtilityConversation = async (input: {
         );
       }
       messages.push({
-        content: JSON.stringify(result),
+        content: JSON.stringify(helperVisibleToolResult(result)),
         name,
         role: "tool",
         tool_call_id: call.id,
@@ -1677,6 +1724,7 @@ const runDirectUtilityConversation = async (input: {
   const checks: UtilityCheckResult[] = [];
   const successfulTools = new Set<UtilityToolName>();
   const summaries: string[] = [];
+  let scopeAudit: UtilityScopeAuditCollection | undefined;
   let completedCalls = 0;
   for (const call of calls) {
     const { name, result } = await executeUtilityBrokerCall({
@@ -1687,6 +1735,7 @@ const runDirectUtilityConversation = async (input: {
       toolEventFile: input.toolEventFile,
     });
     recordToolResult(name, result, artifacts, checks);
+    scopeAudit = retainUtilityScopeAuditCollection(scopeAudit, result);
     if (!(result.ok && (name !== "run_check" || result.exitCode === 0))) {
       const failureDetail =
         result.error?.message ??
@@ -1713,6 +1762,7 @@ const runDirectUtilityConversation = async (input: {
     input.request,
     successfulTools,
     artifacts,
+    scopeAudit,
     "Direct"
   );
   return {
@@ -1722,6 +1772,7 @@ const runDirectUtilityConversation = async (input: {
     harness: "direct",
     modelCalls: 0,
     provider: "broker",
+    ...(scopeAudit ? { scopeAudit } : {}),
     summary: summaries.join("\n").slice(0, 4000),
     toolCalls: calls.length,
     toolRounds: calls.length > 0 ? 1 : 0,
@@ -1754,6 +1805,7 @@ interface PiToolDefinitionInput {
     checks: UtilityCheckResult[];
     lastToolCallFingerprint: string;
     repeatedToolCallCount: number;
+    scopeAudit?: UtilityScopeAuditCollection;
     successfulTools: Set<UtilityToolName>;
     toolCalls: number;
     toolRounds: number;
@@ -1872,6 +1924,10 @@ const recordPiToolResult = (
 ): void => {
   input.state.toolCalls += 1;
   recordToolResult(name, result, input.state.artifacts, input.state.checks);
+  input.state.scopeAudit = retainUtilityScopeAuditCollection(
+    input.state.scopeAudit,
+    result
+  );
   if (result.ok && (name !== "run_check" || result.exitCode === 0)) {
     input.state.successfulTools.add(name);
   }
@@ -1924,7 +1980,7 @@ const piToolDefinitions = (input: PiToolDefinitionInput): ToolDefinition[] =>
           content: [
             {
               text: JSON.stringify({
-                ...result,
+                ...helperVisibleToolResult(result),
                 loopHarness: {
                   hardToolCallCeiling: input.config.maxToolCalls,
                   instruction: finalizeNow
@@ -1976,6 +2032,7 @@ const runPiUtilityConversation = async (input: {
     lastToolCallFingerprint: "",
     modelCalls: 0,
     repeatedToolCallCount: 0,
+    scopeAudit: undefined as UtilityScopeAuditCollection | undefined,
     successfulTools: new Set<UtilityToolName>(),
     toolCalls: 0,
     toolRounds: 0,
@@ -2128,6 +2185,7 @@ const runPiUtilityConversation = async (input: {
       input.request,
       state.successfulTools,
       state.artifacts,
+      state.scopeAudit,
       role
     );
   }
@@ -2140,6 +2198,7 @@ const runPiUtilityConversation = async (input: {
     modelCalls: state.modelCalls,
     piVersion: PI_VERSION,
     provider: created.providerId,
+    ...(state.scopeAudit ? { scopeAudit: state.scopeAudit } : {}),
     summary: summary || `${utilityRoleName(input.tierId)} task completed.`,
     toolCalls: state.toolCalls,
     toolRounds: state.toolRounds,
@@ -2353,6 +2412,23 @@ const executionRequestForWorkspace = (
     readScope: workspace.readScope,
     writeScope: workspace.writeScope,
   };
+};
+
+const utilityCompletionMessage = (
+  roleName: string,
+  jobId: string,
+  result: UtilityCompactResult
+): string => {
+  if (!result.scopeAudit) {
+    return `${roleName} result ${jobId}: ${result.summary}`;
+  }
+  const manifestState = result.scopeAudit.manifests
+    .map(
+      (manifest) =>
+        `mode=${manifest.query.mode} count=${manifest.count} clean=${manifest.clean} sha256=${manifest.sha256}`
+    )
+    .join(" | ");
+  return `${manifestState}. Authoritative Git scope evidence for ${roleName} result ${jobId}. Advisory synthesis: ${result.summary}`;
 };
 
 export const runUtilityWorker = async (
@@ -2595,6 +2671,9 @@ export const runUtilityWorker = async (
       context,
       filesChanged: [],
       paneSummary: conversation.summary.slice(0, 1000),
+      ...(conversation.scopeAudit
+        ? { scopeAudit: conversation.scopeAudit }
+        : {}),
       status: "completed",
       summary: conversation.summary.slice(0, 4000),
     };
@@ -2622,7 +2701,7 @@ export const runUtilityWorker = async (
       runDir,
       "utility",
       claimed.request.requester,
-      `${roleName} result ${jobId}: ${result.summary}`,
+      utilityCompletionMessage(roleName, jobId, result),
       undefined,
       undefined,
       {

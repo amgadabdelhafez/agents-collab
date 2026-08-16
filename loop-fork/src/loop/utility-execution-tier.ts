@@ -47,12 +47,17 @@ const directReadPlanCall = (
     return { arguments: {}, name: "git_status" };
   }
   if (step.executionProfile === "git-diff") {
+    const selection = step.executionGitDiff;
     return {
       arguments: {
+        ...(selection?.kind === "range"
+          ? { baseRef: selection.base, headRef: selection.head }
+          : {}),
         paths:
           step.readScope.length === 1 && step.readScope[0] === "."
             ? []
             : [...step.readScope],
+        ...(selection?.kind === "index" ? { staged: true } : {}),
       },
       name: "git_diff",
     };

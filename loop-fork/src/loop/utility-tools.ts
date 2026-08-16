@@ -25,6 +25,14 @@ import {
   isUtilityProtectedPath,
   UTILITY_PROTECTED_GIT_GLOBS,
 } from "./utility-path-policy";
+import {
+  buildUtilityScopeAuditEvidence,
+  parseGitDiffScopeRecords,
+  parseGitStatusScopeRecords,
+  type UtilityScopeAuditEvidence,
+  type UtilityScopeAuditQuery,
+  type UtilityScopeAuditSurface,
+} from "./utility-scope-audit";
 import type {
   UtilityFileImage,
   UtilityPatchApplication,
@@ -74,6 +82,7 @@ export interface UtilityToolResult<T = unknown> {
   error?: UtilityToolError;
   exitCode?: number;
   ok: boolean;
+  scopeAudit?: UtilityScopeAuditEvidence;
   stderr?: string;
   stdout?: string;
   tool: UtilityToolName;
@@ -256,6 +265,7 @@ const GIT_BRANCH_PATTERN_RE = /^[A-Za-z0-9._/*?-]{1,128}$/;
 const LOCAL_BINARY_NAME_RE = /^[A-Za-z0-9_.-]+$/;
 const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,64}$/i;
+const RESOLVED_COMMIT_HASH_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const DEPENDENCY_FILES = new Set([
   "bun.lock",
   "bun.lockb",
@@ -723,6 +733,71 @@ const optionalStringArray = (
     );
   }
   return value as string[];
+};
+
+interface UtilityGitDiffSelection {
+  baseRef?: string;
+  check: boolean;
+  headRef?: string;
+  nameOnly: boolean;
+  paths: string[];
+  staged: boolean;
+  surface: Exclude<UtilityScopeAuditSurface, "untracked">;
+}
+
+interface UtilityGitDiffExecution {
+  query: UtilityScopeAuditQuery;
+  range?: string;
+}
+
+const utilityGitDiffSelection = (
+  args: Record<string, unknown>,
+  defaultPaths: readonly string[]
+): UtilityGitDiffSelection => {
+  const paths = [...(optionalStringArray(args, "paths") ?? defaultPaths)];
+  const staged = optionalBoolean(args, "staged") ?? false;
+  const baseRef = optionalString(args, "baseRef");
+  const headRef = optionalString(args, "headRef");
+  const check = optionalBoolean(args, "check") ?? false;
+  const nameOnly = optionalBoolean(args, "nameOnly") ?? false;
+  if (headRef && !baseRef) {
+    throw new ToolPolicyError("invalid_arguments", "headRef requires baseRef");
+  }
+  if (staged && (baseRef || headRef)) {
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      "staged Git diff cannot carry range refs"
+    );
+  }
+  for (const [label, ref] of [
+    ["baseRef", baseRef],
+    ["headRef", headRef],
+  ] as const) {
+    if (ref && !COMMIT_HASH_RE.test(ref)) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        `${label} must be a literal commit hash`
+      );
+    }
+  }
+  if (baseRef) {
+    return {
+      baseRef,
+      check,
+      headRef: headRef ?? "HEAD",
+      nameOnly,
+      paths,
+      staged,
+      surface: "commit",
+    };
+  }
+  return {
+    check,
+    nameOnly,
+    paths,
+    staged,
+    surface: staged ? "index" : "worktree",
+  };
 };
 
 const exactKeys = (
@@ -2325,6 +2400,53 @@ export class UtilityToolBroker {
     };
   }
 
+  private async resolveGitCommit(
+    ref: string,
+    label: "baseRef" | "headRef"
+  ): Promise<string> {
+    const result = await this.runBounded(
+      ["git", "rev-parse", "--verify", `${ref}^{commit}`],
+      this.repoRoot
+    );
+    const sha = result.stdout.trim();
+    if (result.exitCode !== 0 || !RESOLVED_COMMIT_HASH_RE.test(sha)) {
+      throw new ToolPolicyError(
+        "tool_failed",
+        `Unable to resolve ${label} to a literal commit SHA`
+      );
+    }
+    return sha.toLowerCase();
+  }
+
+  private async resolveGitDiffExecution(
+    selection: UtilityGitDiffSelection,
+    declaredPaths: readonly string[]
+  ): Promise<UtilityGitDiffExecution> {
+    if (!selection.baseRef) {
+      return {
+        query: {
+          mode: selection.staged ? "diff-index" : "diff-worktree",
+          paths: [...declaredPaths],
+        },
+      };
+    }
+    const baseRef = await this.resolveGitCommit(selection.baseRef, "baseRef");
+    const headRef = await this.resolveGitCommit(
+      selection.headRef ?? "HEAD",
+      "headRef"
+    );
+    return {
+      query: {
+        baseRef,
+        headRef,
+        mode: "diff-range",
+        paths: [...declaredPaths],
+        rangeOperator: "...",
+      },
+      range: `${baseRef}...${headRef}`,
+    };
+  }
+
   private async gitStatus(
     args: Record<string, unknown>
   ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
@@ -2334,7 +2456,7 @@ export class UtilityToolBroker {
         "git_status accepts no arguments"
       );
     }
-    const paths = this.readScopes.length > 0 ? this.readScopes : ["."];
+    const paths = this.readScopes.length > 0 ? [...this.readScopes] : ["."];
     const result = await this.runBounded(
       [
         "git",
@@ -2347,58 +2469,93 @@ export class UtilityToolBroker {
       ],
       this.repoRoot
     );
-    return this.commandResult(result);
+    const evidenceResult = await this.runBounded(
+      [
+        "git",
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+        "--renames",
+        "--",
+        ...paths,
+      ],
+      this.repoRoot
+    );
+    if (evidenceResult.exitCode !== 0) {
+      throw new ToolPolicyError(
+        "tool_failed",
+        "Authoritative Git status inventory failed"
+      );
+    }
+    return {
+      ...this.commandResult(result),
+      scopeAudit: buildUtilityScopeAuditEvidence(
+        { mode: "status", paths },
+        parseGitStatusScopeRecords(evidenceResult.stdout)
+      ),
+    };
   }
 
   private async gitDiff(
     args: Record<string, unknown>
   ): Promise<Omit<UtilityToolResult, "durationMs" | "ok" | "tool">> {
-    const paths = optionalStringArray(args, "paths") ?? this.readScopes;
-    const staged = optionalBoolean(args, "staged") ?? false;
-    const baseRef = optionalString(args, "baseRef");
-    const headRef = optionalString(args, "headRef");
-    const check = optionalBoolean(args, "check") ?? false;
-    const nameOnly = optionalBoolean(args, "nameOnly") ?? false;
-    if (headRef && !baseRef) {
-      throw new ToolPolicyError(
-        "invalid_arguments",
-        "headRef requires baseRef"
-      );
-    }
-    for (const [label, ref] of [
-      ["baseRef", baseRef],
-      ["headRef", headRef],
-    ] as const) {
-      if (ref && !COMMIT_HASH_RE.test(ref)) {
-        throw new ToolPolicyError(
-          "invalid_arguments",
-          `${label} must be a literal commit hash`
-        );
-      }
-    }
+    const selection = utilityGitDiffSelection(args, this.readScopes);
     const safePaths: string[] = [];
-    for (const path of paths) {
+    for (const path of selection.paths) {
       const target = await this.resolvePath(path, "read", false);
       safePaths.push(target.relative);
     }
+    const declaredPaths = [...this.readScopes];
+    const execution = await this.resolveGitDiffExecution(
+      selection,
+      declaredPaths
+    );
     const result = await this.runBounded(
       [
         "git",
         "diff",
         "--no-ext-diff",
-        ...(check ? ["--check"] : []),
-        ...(nameOnly ? ["--name-only"] : []),
-        ...(staged ? ["--cached"] : []),
-        ...(baseRef
-          ? [headRef ? `${baseRef}...${headRef}` : `${baseRef}...HEAD`]
-          : []),
+        ...(selection.check ? ["--check"] : []),
+        ...(selection.nameOnly ? ["--name-only"] : []),
+        ...(selection.staged ? ["--cached"] : []),
+        ...(execution.range ? [execution.range] : []),
         "--",
         ...safePaths,
         ...this.gitExclusions(),
       ],
       this.repoRoot
     );
-    return this.commandResult(result);
+    const evidenceResult = await this.runBounded(
+      [
+        "git",
+        "diff",
+        "--no-ext-diff",
+        "--name-status",
+        "-z",
+        "-M",
+        "-C",
+        "--find-copies-harder",
+        ...(selection.staged ? ["--cached"] : []),
+        ...(execution.range ? [execution.range] : []),
+        "--",
+        ...declaredPaths,
+      ],
+      this.repoRoot
+    );
+    if (evidenceResult.exitCode !== 0) {
+      throw new ToolPolicyError(
+        "tool_failed",
+        "Authoritative Git diff inventory failed"
+      );
+    }
+    return {
+      ...this.commandResult(result),
+      scopeAudit: buildUtilityScopeAuditEvidence(
+        execution.query,
+        parseGitDiffScopeRecords(evidenceResult.stdout, selection.surface)
+      ),
+    };
   }
 
   private async gitInspect(

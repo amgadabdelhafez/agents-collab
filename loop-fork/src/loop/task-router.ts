@@ -6,11 +6,13 @@ import {
   normalizeUtilityPolicyPath,
   utilityPathWithin,
 } from "./utility-path-policy";
+import type { UtilityScopeAuditCollection } from "./utility-scope-audit";
 
 export const MAX_UTILITY_CONTEXT_REFS = 6;
 export const MAX_UTILITY_EDIT_READ_SCOPES = 4;
 export const MAX_UTILITY_EDIT_WRITE_SCOPES = 2;
 const LINE_MATCHER_CONTROL_RE = /[\n\r\0]/;
+const LOWERCASE_FULL_COMMIT_RE = /^[0-9a-f]{40}$/;
 
 export type UtilityRequestKind =
   | "inspect"
@@ -107,6 +109,23 @@ export interface UtilityGitInspectionRequest {
   ref?: string;
 }
 
+export type UtilityGitDiffSelection =
+  | { kind: "worktree" }
+  | { kind: "index" }
+  | {
+      base: string;
+      head: string;
+      kind: "range";
+      operator: "...";
+    };
+
+export const UTILITY_GIT_DIFF_SELECTION_INVALID =
+  "scope-audit-selection-invalid" as const;
+
+export class UtilityGitDiffSelectionError extends Error {
+  readonly reasonCode = UTILITY_GIT_DIFF_SELECTION_INVALID;
+}
+
 export type UtilityReadPlanProfile = Exclude<
   UtilityExecutionProfile,
   "read-plan"
@@ -116,6 +135,7 @@ export interface UtilityReadPlanStep {
   executionArgv?: string[];
   executionCwd?: string;
   executionGit?: UtilityGitInspectionRequest;
+  executionGitDiff?: UtilityGitDiffSelection;
   executionOutput?: UtilityOutputRequest;
   executionProfile: UtilityReadPlanProfile;
   executionRead?: UtilityReadRequest;
@@ -134,6 +154,7 @@ export interface UtilityCompactResult {
   filesChanged: string[];
   paneSummary?: string;
   reasonCode?: "context-insufficient";
+  scopeAudit?: UtilityScopeAuditCollection;
   status: "completed" | "failed" | "escalated" | "canceled";
   summary: string;
 }
@@ -147,6 +168,7 @@ export interface UtilityRouteRequest {
   executionArgv?: string[];
   executionCwd?: string;
   executionGit?: UtilityGitInspectionRequest;
+  executionGitDiff?: UtilityGitDiffSelection;
   executionOutput?: UtilityOutputRequest;
   executionPlan?: UtilityReadPlanStep[];
   executionProfile?: UtilityExecutionProfile;
@@ -291,6 +313,53 @@ const uniqueTrimmed = (values: readonly string[]): string[] => [
   ...new Set(values.map((value) => value.trim()).filter(Boolean)),
 ];
 
+export const normalizeUtilityGitDiffSelection = (
+  input: unknown
+): UtilityGitDiffSelection => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new UtilityGitDiffSelectionError(
+      "execution git-diff selection must be an object"
+    );
+  }
+  const value = input as Record<string, unknown>;
+  if (value.kind === "worktree" || value.kind === "index") {
+    if (Object.keys(value).length !== 1) {
+      throw new UtilityGitDiffSelectionError(
+        "worktree/index git-diff selection cannot carry range fields"
+      );
+    }
+    return { kind: value.kind };
+  }
+  if (
+    value.kind !== "range" ||
+    Object.keys(value).length !== 4 ||
+    typeof value.base !== "string" ||
+    typeof value.head !== "string" ||
+    !LOWERCASE_FULL_COMMIT_RE.test(value.base) ||
+    !LOWERCASE_FULL_COMMIT_RE.test(value.head) ||
+    value.operator !== "..."
+  ) {
+    throw new UtilityGitDiffSelectionError(
+      "range git-diff selection requires lowercase full 40-hex base/head and explicit ... operator"
+    );
+  }
+  return {
+    base: value.base,
+    head: value.head,
+    kind: "range",
+    operator: "...",
+  };
+};
+
+const utilityGitDiffSelectionIsValid = (input: unknown): boolean => {
+  try {
+    normalizeUtilityGitDiffSelection(input);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const normalizedContextRefs = (
   values: readonly string[] | undefined
 ): string[] =>
@@ -331,6 +400,13 @@ export const createUtilityRouteRequest = (
       ? { executionCwd: normalizePath(input.executionCwd) }
       : {}),
     ...(input.executionGit ? { executionGit: { ...input.executionGit } } : {}),
+    ...(input.executionGitDiff === undefined
+      ? {}
+      : {
+          executionGitDiff: normalizeUtilityGitDiffSelection(
+            input.executionGitDiff
+          ),
+        }),
     ...(input.executionOutput
       ? { executionOutput: { ...input.executionOutput } }
       : {}),
@@ -346,6 +422,13 @@ export const createUtilityRouteRequest = (
             ...(step.executionGit
               ? { executionGit: { ...step.executionGit } }
               : {}),
+            ...(step.executionGitDiff === undefined
+              ? {}
+              : {
+                  executionGitDiff: normalizeUtilityGitDiffSelection(
+                    step.executionGitDiff
+                  ),
+                }),
             ...(step.executionOutput
               ? { executionOutput: { ...step.executionOutput } }
               : {}),
@@ -401,6 +484,18 @@ const isAuthorityRequest = (request: UtilityRouteRequest): boolean =>
 
 const isUtilityAudit = (request: UtilityRouteRequest): boolean =>
   request.kind === "review" && request.reviewMode === "utility-audit";
+
+export const utilityRequestRequiresScopeAudit = (
+  request: UtilityRouteRequest
+): boolean =>
+  request.executionProfile === "git-status" ||
+  request.executionProfile === "git-diff" ||
+  (request.executionProfile === "read-plan" &&
+    request.executionPlan?.some(
+      (step) =>
+        step.executionProfile === "git-status" ||
+        step.executionProfile === "git-diff"
+    ) === true);
 
 const hasForbiddenAuthority = (authority: UtilityAuthorityFlags): boolean =>
   Object.values(authority).some((value) => value === true);
@@ -635,6 +730,7 @@ const READ_PLAN_STEP_KEYS = new Set([
   "executionArgv",
   "executionCwd",
   "executionGit",
+  "executionGitDiff",
   "executionProfile",
   "executionRead",
   "objective",
@@ -708,7 +804,11 @@ const executionPlanProfileFieldsAreBounded = (
     step.executionCwd !== undefined ||
     (step.executionProfile === "git-inspect"
       ? !gitInspectionRequestIsBounded(step.executionGit)
-      : step.executionGit !== undefined)
+      : step.executionGit !== undefined) ||
+    (step.executionProfile === "git-diff"
+      ? step.executionGitDiff !== undefined &&
+        !utilityGitDiffSelectionIsValid(step.executionGitDiff)
+      : step.executionGitDiff !== undefined)
   ) {
     return false;
   }
@@ -773,6 +873,7 @@ const executionPlanIsBounded = (request: UtilityRouteRequest): boolean => {
     request.executionArgv !== undefined ||
     request.executionCwd !== undefined ||
     request.executionGit !== undefined ||
+    request.executionGitDiff !== undefined ||
     request.executionOutput !== undefined ||
     request.executionRead !== undefined ||
     !Array.isArray(input) ||
@@ -831,12 +932,18 @@ const executionMetadataIsBounded = (request: UtilityRouteRequest): boolean => {
     request.executionProfile === "git-inspect"
       ? gitInspectionRequestIsBounded(request.executionGit)
       : request.executionGit === undefined;
+  const gitDiffIsBounded =
+    request.executionProfile === "git-diff"
+      ? request.executionGitDiff === undefined ||
+        utilityGitDiffSelectionIsValid(request.executionGitDiff)
+      : request.executionGitDiff === undefined;
   return (
     contextRefsAreBounded &&
     profileIsKnown &&
     cwdIsBounded &&
     argvIsBounded &&
     gitIsBounded &&
+    gitDiffIsBounded &&
     executionReadIsBounded(request) &&
     executionOutputIsBounded(request) &&
     executionPlanIsBounded(request)
@@ -877,6 +984,7 @@ const utilityEditIsBounded = (request: UtilityRouteRequest): boolean =>
   request.executionArgv === undefined &&
   request.executionCwd === undefined &&
   request.executionGit === undefined &&
+  request.executionGitDiff === undefined &&
   request.executionOutput === undefined &&
   request.executionPlan === undefined &&
   request.executionRead === undefined;

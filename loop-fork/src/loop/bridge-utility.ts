@@ -16,9 +16,12 @@ import {
 import {
   createUtilityRouteRequest,
   MAX_UTILITY_CONTEXT_REFS,
+  normalizeUtilityGitDiffSelection,
+  UTILITY_GIT_DIFF_SELECTION_INVALID,
   type UtilityAuthorityFlags,
   type UtilityCapability,
   type UtilityExecutionProfile,
+  type UtilityGitDiffSelection,
   type UtilityGitInspectionRequest,
   type UtilityOutputRequest,
   type UtilityReadPlanStep,
@@ -29,6 +32,7 @@ import {
   type UtilityRouteRequest,
   type UtilityWorkShape,
   utilityRequestIsBounded,
+  utilityRequestRequiresScopeAudit,
 } from "./task-router";
 import type { Agent } from "./types";
 import {
@@ -36,10 +40,15 @@ import {
   normalizeUtilityPolicyPath,
 } from "./utility-path-policy";
 import { applyUtilityJobPatch } from "./utility-runtime";
+import { assertUtilityScopeAuditCollectionForRequest } from "./utility-scope-audit";
 
 type UtilityBridgeSource = Agent | "supervisor";
 
-import { appendUtilityRouteRequest, readUtilityJob } from "./utility-store";
+import {
+  appendUtilityRouteRequest,
+  readUtilityJob,
+  type UtilityJobSnapshot,
+} from "./utility-store";
 
 export const UTILITY_BRIDGE_TOOL_NAMES = [
   "route_task",
@@ -127,12 +136,23 @@ const EXECUTION_GIT_SCHEMA = {
   required: ["action"],
   type: "object",
 } as const;
+const EXECUTION_GIT_DIFF_SCHEMA = {
+  additionalProperties: false,
+  properties: {
+    base_ref: { pattern: "^[0-9a-f]{40}$", type: "string" },
+    head_ref: { pattern: "^[0-9a-f]{40}$", type: "string" },
+    operator: { enum: ["..."], type: "string" },
+    staged: { type: "boolean" },
+  },
+  type: "object",
+} as const;
 const READ_PLAN_STEP_SCHEMA = {
   additionalProperties: false,
   properties: {
     execution_argv: STRING_ARRAY_SCHEMA,
     execution_cwd: { minLength: 1, type: "string" },
     execution_git: EXECUTION_GIT_SCHEMA,
+    execution_git_diff: EXECUTION_GIT_DIFF_SCHEMA,
     execution_output: EXECUTION_OUTPUT_SCHEMA,
     execution_profile: {
       enum: READ_PLAN_PROFILE_VALUES,
@@ -185,6 +205,7 @@ export const UTILITY_BRIDGE_TOOLS = [
         execution_argv: STRING_ARRAY_SCHEMA,
         execution_cwd: { minLength: 1, type: "string" },
         execution_git: EXECUTION_GIT_SCHEMA,
+        execution_git_diff: EXECUTION_GIT_DIFF_SCHEMA,
         execution_output: EXECUTION_OUTPUT_SCHEMA,
         execution_plan: {
           items: READ_PLAN_STEP_SCHEMA,
@@ -620,6 +641,64 @@ const executionGit = (
   };
 };
 
+const invalidGitDiffSelection = (detail: string): never => {
+  throw new UtilityBridgeInputError(
+    `${UTILITY_GIT_DIFF_SELECTION_INVALID}: ${detail}`
+  );
+};
+
+const executionGitDiff = (
+  args: Record<string, unknown>,
+  key = "execution_git_diff"
+): UtilityGitDiffSelection | undefined => {
+  const value = optionalRecord(args, key);
+  if (!value) {
+    return undefined;
+  }
+  try {
+    rejectUnknownKeys(
+      value,
+      ["base_ref", "head_ref", "operator", "staged"],
+      key
+    );
+    const base = optionalString(value, "base_ref");
+    const head = optionalString(value, "head_ref");
+    const operator = optionalString(value, "operator");
+    const staged = optionalBoolean(value, "staged");
+    if (base === undefined && head === undefined && operator === undefined) {
+      return normalizeUtilityGitDiffSelection({
+        kind: staged === true ? "index" : "worktree",
+      });
+    }
+    if (
+      base === undefined ||
+      head === undefined ||
+      operator !== "..." ||
+      staged === true
+    ) {
+      return invalidGitDiffSelection(
+        `${key} range requires base_ref, head_ref, operator=..., and staged must not be true`
+      );
+    }
+    return normalizeUtilityGitDiffSelection({
+      base,
+      head,
+      kind: "range",
+      operator,
+    });
+  } catch (error) {
+    if (
+      error instanceof UtilityBridgeInputError &&
+      error.message.startsWith(UTILITY_GIT_DIFF_SELECTION_INVALID)
+    ) {
+      throw error;
+    }
+    return invalidGitDiffSelection(
+      error instanceof Error ? error.message : `${key} is invalid`
+    );
+  }
+};
+
 const executionPlan = (
   args: Record<string, unknown>
 ): UtilityReadPlanStep[] | undefined => {
@@ -642,6 +721,7 @@ const executionPlan = (
         "execution_argv",
         "execution_cwd",
         "execution_git",
+        "execution_git_diff",
         "execution_output",
         "execution_profile",
         "execution_read",
@@ -666,12 +746,16 @@ const executionPlan = (
         : stringArray(raw, "execution_argv");
     const executionCwd = optionalString(raw, "execution_cwd");
     const parsedExecutionGit = executionGit(raw);
+    const parsedExecutionGitDiff = executionGitDiff(raw);
     const parsedExecutionOutput = executionOutput(raw);
     const parsedExecutionRead = executionRead(raw);
     return {
       ...(executionArgv ? { executionArgv } : {}),
       ...(executionCwd ? { executionCwd } : {}),
       ...(parsedExecutionGit ? { executionGit: parsedExecutionGit } : {}),
+      ...(parsedExecutionGitDiff
+        ? { executionGitDiff: parsedExecutionGitDiff }
+        : {}),
       ...(parsedExecutionOutput
         ? { executionOutput: parsedExecutionOutput }
         : {}),
@@ -689,6 +773,7 @@ type UtilityExecutionMetadata = Partial<
     | "executionArgv"
     | "executionCwd"
     | "executionGit"
+    | "executionGitDiff"
     | "executionOutput"
     | "executionPlan"
     | "executionProfile"
@@ -703,6 +788,7 @@ const executionMetadata = (
   const parsedExecutionRead = executionRead(args);
   const parsedExecutionOutput = executionOutput(args);
   const parsedExecutionGit = executionGit(args);
+  const parsedExecutionGitDiff = executionGitDiff(args);
   const parsedExecutionPlan = executionPlan(args);
   const parsedExecutionArgv =
     args.execution_argv === undefined
@@ -713,6 +799,9 @@ const executionMetadata = (
     ...(parsedExecutionArgv ? { executionArgv: parsedExecutionArgv } : {}),
     ...(parsedExecutionCwd ? { executionCwd: parsedExecutionCwd } : {}),
     ...(parsedExecutionGit ? { executionGit: parsedExecutionGit } : {}),
+    ...(parsedExecutionGitDiff
+      ? { executionGitDiff: parsedExecutionGitDiff }
+      : {}),
     ...(parsedExecutionOutput
       ? { executionOutput: parsedExecutionOutput }
       : {}),
@@ -1083,6 +1172,36 @@ const routeTask = (
   };
 };
 
+const validatedUtilityTaskResult = (
+  job: UtilityJobSnapshot
+): UtilityJobSnapshot["result"] => {
+  const result = job.result;
+  if (
+    result?.status === "completed" &&
+    utilityRequestRequiresScopeAudit(job.request) &&
+    !result.scopeAudit
+  ) {
+    throw new UtilityBridgeInputError(
+      "scope audit result is legacy/unverified because authoritative Git evidence is absent"
+    );
+  }
+  if (result?.scopeAudit) {
+    try {
+      assertUtilityScopeAuditCollectionForRequest(
+        job.request,
+        result.scopeAudit
+      );
+    } catch (error) {
+      throw new UtilityBridgeInputError(
+        error instanceof Error
+          ? error.message
+          : "scope audit evidence failed consumer validation"
+      );
+    }
+  }
+  return result;
+};
+
 export const callUtilityBridgeTool = async (
   name: UtilityBridgeToolName,
   runDir: string,
@@ -1132,7 +1251,7 @@ export const callUtilityBridgeTool = async (
   }
   return {
     application: job.application,
-    result: job.result,
+    result: validatedUtilityTaskResult(job),
     state: job.state,
     taskId: job.jobId,
   };

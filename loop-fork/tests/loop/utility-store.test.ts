@@ -14,6 +14,10 @@ import { pathToFileURL } from "node:url";
 import { type Subprocess, sleep, spawn } from "bun";
 import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
+  buildUtilityScopeAuditCollection,
+  buildUtilityScopeAuditEvidence,
+} from "../../src/loop/utility-scope-audit";
+import {
   activateUtilityEpoch,
   appendUtilityJobEvent,
   appendUtilityRouteRequest,
@@ -75,6 +79,67 @@ const routeToUtility = (
     },
     eventId: `decision-${id}`,
     routeEpoch: epoch,
+  });
+};
+
+const makeScopeAuditRequest = (id: string) =>
+  createUtilityRouteRequest({
+    acceptanceCriteria: ["report every Git-derived changed path"],
+    authority: {},
+    createdAt: "2026-08-13T22:00:00.000Z",
+    executionProfile: "git-status",
+    id,
+    idempotencyKey: `request-${id}`,
+    kind: "review",
+    objective: "Audit the declared Git scope",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    reviewMode: "utility-audit",
+    risk: "low",
+    workShape: "separable",
+    writeScope: [],
+  });
+
+const completeScopeAudit = (
+  runDir: string,
+  id: string,
+  withEvidence: boolean
+) => {
+  const request = makeScopeAuditRequest(id);
+  activateUtilityEpoch(runDir, 16);
+  appendUtilityRouteRequest(runDir, request);
+  transitionUtilityJob(runDir, id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-au-pair",
+    },
+    routeEpoch: 16,
+  });
+  claimUtilityJob(runDir, 16, { jobId: id });
+  transitionUtilityJob(runDir, id, "running");
+  const scopeAudit = buildUtilityScopeAuditCollection([
+    buildUtilityScopeAuditEvidence({ mode: "status", paths: ["src"] }, [
+      {
+        indexStatus: ".",
+        kind: "modified",
+        path: "src/tracked.ts",
+        routing: "helper-visible",
+        surfaces: ["worktree"],
+        worktreeStatus: "M",
+      },
+    ]),
+  ]);
+  return transitionUtilityJob(runDir, id, "completed", {
+    result: {
+      artifactRefs: [],
+      checks: [],
+      filesChanged: [],
+      ...(withEvidence ? { scopeAudit } : {}),
+      status: "completed",
+      summary: "Scope audit completed.",
+    },
   });
 };
 
@@ -419,6 +484,49 @@ test("persists compact results and makes terminal jobs immutable", () => {
       },
     })
   ).toThrow("terminal");
+});
+
+test("replays canonical scope evidence identically", () => {
+  const runDir = makeRunDir();
+  const completed = completeScopeAudit(runDir, "scope-replay", true);
+
+  expect(readUtilityJob(runDir, "scope-replay")?.result?.scopeAudit).toEqual(
+    completed.result?.scopeAudit
+  );
+});
+
+test("replay rejects tampered scope evidence", () => {
+  const runDir = makeRunDir();
+  completeScopeAudit(runDir, "scope-tamper", true);
+  const eventsFile = utilityRunPaths(runDir).eventsFile;
+  const events = readFileSync(eventsFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const terminal = events.at(-1) as {
+    result: { scopeAudit: { manifests: [{ sha256: string }] } };
+  };
+  terminal.result.scopeAudit.manifests[0].sha256 = "0".repeat(64);
+  writeFileSync(
+    eventsFile,
+    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`
+  );
+
+  expect(() => readUtilityJob(runDir, "scope-tamper")).toThrow(
+    "scope audit evidence count/hash does not reconcile"
+  );
+});
+
+test("historical scope results without evidence remain replayable as legacy", () => {
+  const runDir = makeRunDir();
+  completeScopeAudit(runDir, "scope-legacy", false);
+
+  const replayed = readUtilityJob(runDir, "scope-legacy");
+  expect(replayed).toMatchObject({
+    result: { status: "completed" },
+    state: "completed",
+  });
+  expect(replayed?.result?.scopeAudit).toBeUndefined();
 });
 
 test("journals a patch application after completion without reopening the job", () => {

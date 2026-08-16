@@ -18,6 +18,7 @@ import type {
   UtilityRouteRequest,
 } from "./task-router";
 import type { Agent } from "./types";
+import { assertUtilityScopeAuditCollection } from "./utility-scope-audit";
 
 export type UtilityJobState =
   | "pending-route"
@@ -238,6 +239,9 @@ const assertEventShape = (event: UtilityJobEvent): void => {
   }
   if (event.result && event.result.status !== event.state) {
     throw new Error("utility result status must match event state");
+  }
+  if (event.result?.scopeAudit) {
+    assertUtilityScopeAuditCollection(event.result.scopeAudit);
   }
 };
 

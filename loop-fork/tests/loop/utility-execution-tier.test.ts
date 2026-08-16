@@ -131,6 +131,45 @@ describe("utility execution tier classification", () => {
     ]);
   });
 
+  test("Direct Git-diff plans preserve explicit worktree, index, and range selection", () => {
+    const base = "1".repeat(40);
+    const head = "2".repeat(40);
+    const request = inspectRequest({
+      executionPlan: [
+        {
+          executionGitDiff: { kind: "worktree" },
+          executionProfile: "git-diff",
+          objective: "Inspect worktree changes",
+          readScope: ["src"],
+        },
+        {
+          executionGitDiff: { kind: "index" },
+          executionProfile: "git-diff",
+          objective: "Inspect index changes",
+          readScope: ["tests"],
+        },
+        {
+          executionGitDiff: { base, head, kind: "range", operator: "..." },
+          executionProfile: "git-diff",
+          objective: "Inspect committed changes",
+          readScope: ["docs"],
+        },
+      ],
+      executionProfile: "read-plan",
+      readScope: ["src", "tests", "docs"],
+    });
+
+    expect(classifyUtilityExecution(request)).toBe(UTILITY_DIRECT_TIER);
+    expect(directUtilityCalls(request)).toEqual([
+      { arguments: { paths: ["src"] }, name: "git_diff" },
+      { arguments: { paths: ["tests"], staged: true }, name: "git_diff" },
+      {
+        arguments: { baseRef: base, headRef: head, paths: ["docs"] },
+        name: "git_diff",
+      },
+    ]);
+  });
+
   test("small structured read-only reasoning goes to Nanny", () => {
     expect(
       classifyUtilityExecution(

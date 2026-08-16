@@ -1,12 +1,15 @@
 import { expect, mock, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -106,6 +109,20 @@ const brokerFor = (
     },
     { id: () => "patch-1", now: () => 1_700_000_000_000, runCommand }
   );
+
+const git = (root: string, ...args: string[]): string => {
+  const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(result.stderr);
+  }
+  return result.stdout.trim();
+};
+
+const initializeGitRepo = (root: string): void => {
+  git(root, "init", "--quiet");
+  git(root, "config", "user.email", "utility-scope@example.test");
+  git(root, "config", "user.name", "Utility Scope Fixture");
+};
 
 test("publishes provider-agnostic definitions for bounded tools", () => {
   expect(UTILITY_TOOL_DEFINITIONS.map((tool) => tool.function.name)).toEqual([
@@ -767,7 +784,7 @@ test("central protected-path policy denies credential and agent settings", async
       expect(read.error?.code).toBe("path_denied");
     }
 
-    let statusRequest: CommandRequest | undefined;
+    const statusRequests: CommandRequest[] = [];
     const statusBroker = await createUtilityToolBroker(
       {
         artifactDir: ".utility-artifacts",
@@ -777,18 +794,149 @@ test("central protected-path policy denies credential and agent settings", async
       },
       {
         runCommand: (request) => {
-          statusRequest = request;
+          statusRequests.push(request);
           return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
         },
       }
     );
-    expect(
-      await statusBroker.execute({ arguments: {}, name: "git_status" })
-    ).toMatchObject({ ok: true });
-    expect(statusRequest?.argv).toContain(":(exclude,glob,icase)**/.cursor/**");
-    expect(statusRequest?.argv).toContain(
+    const status = await statusBroker.execute({
+      arguments: {},
+      name: "git_status",
+    });
+    expect(status).toMatchObject({
+      ok: true,
+      scopeAudit: { clean: true, count: 0, records: [] },
+    });
+    expect(statusRequests).toHaveLength(2);
+    expect(statusRequests[0]?.argv).toContain(
+      ":(exclude,glob,icase)**/.cursor/**"
+    );
+    expect(statusRequests[0]?.argv).toContain(
       ":(exclude,glob,icase)**/copilot-instructions.md"
     );
+    expect(statusRequests[1]?.argv).not.toContain(
+      ":(exclude,glob,icase)**/.cursor/**"
+    );
+  });
+});
+
+test("git status scope evidence covers staged, unstaged, rename, delete, and routing-hidden paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "utility-status-scope-"));
+  try {
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, "specs", "d16-fixture"), { recursive: true });
+    initializeGitRepo(root);
+    await writeFile(
+      join(root, "src", "modified.ts"),
+      "export const value = 1;\n"
+    );
+    await writeFile(join(root, "src", "deleted.ts"), "delete me\n");
+    await writeFile(join(root, "src", "old name.ts"), "rename me\n");
+    git(root, "add", "--", "src");
+    git(root, "commit", "--quiet", "-m", "fixture base");
+
+    await writeFile(
+      join(root, "src", "modified.ts"),
+      "export const value = 2;\n"
+    );
+    await rm(join(root, "src", "deleted.ts"));
+    await writeFile(
+      join(root, "src", "added.ts"),
+      "export const added = true;\n"
+    );
+    await rename(
+      join(root, "src", "old name.ts"),
+      join(root, "src", "new name.ts")
+    );
+    git(
+      root,
+      "add",
+      "--",
+      "src/added.ts",
+      "src/old name.ts",
+      "src/new name.ts"
+    );
+    await writeFile(
+      join(root, "specs", "d16-fixture", "spec.md"),
+      "# protected contents\n"
+    );
+
+    const broker = await createUtilityToolBroker({
+      artifactDir: ".utility-artifacts",
+      readScopes: ["."],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    const result = await broker.execute({ arguments: {}, name: "git_status" });
+    expect(result).toMatchObject({ ok: true });
+    expect(result.stdout).not.toContain("specs/d16-fixture/spec.md");
+    expect(result.scopeAudit).toMatchObject({ clean: false, count: 5 });
+    expect(result.scopeAudit?.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "added",
+          path: "src/added.ts",
+          surfaces: ["index"],
+        }),
+        expect.objectContaining({
+          kind: "deleted",
+          path: "src/deleted.ts",
+          surfaces: ["worktree"],
+        }),
+        expect.objectContaining({
+          kind: "modified",
+          path: "src/modified.ts",
+          surfaces: ["worktree"],
+        }),
+        expect.objectContaining({
+          kind: "renamed",
+          path: "src/new name.ts",
+          previousPath: "src/old name.ts",
+          surfaces: ["index"],
+        }),
+        expect.objectContaining({
+          kind: "untracked",
+          path: "specs/d16-fixture/spec.md",
+          routing: "metadata-only",
+          surfaces: ["untracked"],
+        }),
+      ])
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("git status fails closed when authoritative inventory fails", async () => {
+  await withRepo(async (root) => {
+    let calls = 0;
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["src"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: () => {
+          calls += 1;
+          return Promise.resolve(
+            calls === 1
+              ? { exitCode: 0, stderr: "", stdout: " M src/hello.ts\n" }
+              : { exitCode: 128, stderr: "inventory failed", stdout: "" }
+          );
+        },
+      }
+    );
+    expect(
+      await broker.execute({ arguments: {}, name: "git_status" })
+    ).toMatchObject({
+      error: {
+        code: "tool_failed",
+        message: "Authoritative Git status inventory failed",
+      },
+      ok: false,
+    });
   });
 });
 
@@ -1153,7 +1301,9 @@ test("broker rejects a tampered focused check with more than four files", async 
 
 test("git_diff supports bounded commit comparison and diff check", async () => {
   await withRepo(async (root) => {
-    let captured: CommandRequest | undefined;
+    const requests: CommandRequest[] = [];
+    const baseRef = "1".repeat(40);
+    const headRef = "2".repeat(40);
     const broker = await createUtilityToolBroker(
       {
         artifactDir: ".utility-artifacts",
@@ -1163,27 +1313,67 @@ test("git_diff supports bounded commit comparison and diff check", async () => {
       },
       {
         runCommand: (request) => {
-          captured = request;
+          requests.push(request);
+          if (request.argv[1] === "rev-parse") {
+            const ref = request.argv[3]?.replace(/\^\{commit\}$/, "") ?? "";
+            return Promise.resolve({
+              exitCode: 0,
+              stderr: "",
+              stdout: `${ref}\n`,
+            });
+          }
           return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
         },
       }
     );
-    expect(
-      await broker.execute({
-        arguments: {
-          baseRef: "28968b22",
-          check: true,
-          headRef: "e5bf6dc2",
-          nameOnly: true,
+    const result = await broker.execute({
+      arguments: { baseRef, check: true, headRef, nameOnly: true },
+      name: "git_diff",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      scopeAudit: {
+        clean: true,
+        count: 0,
+        query: {
+          baseRef,
+          headRef,
+          mode: "diff-range",
+          paths: ["src"],
+          rangeOperator: "...",
         },
-        name: "git_diff",
-      })
-    ).toMatchObject({ ok: true });
-    expect(captured?.argv).toEqual(
+      },
+    });
+    expect(requests).toHaveLength(4);
+    expect(requests[0]?.argv).toEqual([
+      "git",
+      "rev-parse",
+      "--verify",
+      `${baseRef}^{commit}`,
+    ]);
+    expect(requests[1]?.argv).toEqual([
+      "git",
+      "rev-parse",
+      "--verify",
+      `${headRef}^{commit}`,
+    ]);
+    expect(requests[2]?.argv).toEqual(
       expect.arrayContaining([
         "--check",
         "--name-only",
-        "28968b22...e5bf6dc2",
+        `${baseRef}...${headRef}`,
+        "--",
+        "src",
+      ])
+    );
+    expect(requests[3]?.argv).toEqual(
+      expect.arrayContaining([
+        "--name-status",
+        "-z",
+        "-M",
+        "-C",
+        "--find-copies-harder",
+        `${baseRef}...${headRef}`,
         "--",
         "src",
       ])
@@ -1196,7 +1386,169 @@ test("git_diff supports bounded commit comparison and diff check", async () => {
         })
       ).error?.code
     ).toBe("invalid_arguments");
+    expect(
+      (
+        await broker.execute({
+          arguments: { baseRef, headRef, staged: true },
+          name: "git_diff",
+        })
+      ).error
+    ).toMatchObject({
+      code: "invalid_arguments",
+      message: "staged Git diff cannot carry range refs",
+    });
   });
+});
+
+test("git diff evidence binds declared scopes despite helper-selected narrowing", async () => {
+  await withRepo(async (root) => {
+    const requests: CommandRequest[] = [];
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["src", "tests"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: (request) => {
+          requests.push(request);
+          return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
+        },
+      }
+    );
+
+    const result = await broker.execute({
+      arguments: { paths: ["src"] },
+      name: "git_diff",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      scopeAudit: {
+        query: { mode: "diff-worktree", paths: ["src", "tests"] },
+      },
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.argv).toContain("src");
+    expect(requests[0]?.argv).not.toContain("tests");
+    expect(requests[1]?.argv).toEqual(
+      expect.arrayContaining(["--name-status", "--", "src", "tests"])
+    );
+  });
+});
+
+test("git diff fails closed when authoritative inventory fails", async () => {
+  await withRepo(async (root) => {
+    let calls = 0;
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".utility-artifacts",
+        readScopes: ["src"],
+        repoRoot: root,
+        writeScopes: [],
+      },
+      {
+        runCommand: () => {
+          calls += 1;
+          return Promise.resolve({
+            exitCode: calls === 2 ? 1 : 0,
+            stderr: calls === 2 ? "inventory failed" : "",
+            stdout: "",
+          });
+        },
+      }
+    );
+
+    expect(
+      (
+        await broker.execute({
+          arguments: { paths: ["src"] },
+          name: "git_diff",
+        })
+      ).error
+    ).toMatchObject({
+      code: "tool_failed",
+      message: "Authoritative Git diff inventory failed",
+    });
+  });
+});
+
+test("git diff scope evidence preserves committed rename, copy, delete, and modification identity", async () => {
+  const root = await mkdtemp(join(tmpdir(), "utility-diff-scope-"));
+  try {
+    await mkdir(join(root, "src"), { recursive: true });
+    initializeGitRepo(root);
+    await writeFile(
+      join(root, "src", "source.ts"),
+      `${Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n")}\n`
+    );
+    await writeFile(join(root, "src", "deleted.ts"), "delete me\n");
+    await writeFile(join(root, "src", "old.ts"), "rename me\n");
+    git(root, "add", "--", "src");
+    git(root, "commit", "--quiet", "-m", "fixture base");
+    const baseRef = git(root, "rev-parse", "HEAD");
+
+    await writeFile(
+      join(root, "src", "source.ts"),
+      `${Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n")}\nnew line\n`
+    );
+    await copyFile(
+      join(root, "src", "source.ts"),
+      join(root, "src", "copy.ts")
+    );
+    await rename(join(root, "src", "old.ts"), join(root, "src", "new.ts"));
+    await rm(join(root, "src", "deleted.ts"));
+    git(root, "add", "--all", "--", "src");
+    git(root, "commit", "--quiet", "-m", "fixture changes");
+    const headRef = git(root, "rev-parse", "HEAD");
+
+    const broker = await createUtilityToolBroker({
+      artifactDir: ".utility-artifacts",
+      readScopes: ["src"],
+      repoRoot: root,
+      writeScopes: [],
+    });
+    const result = await broker.execute({
+      arguments: { baseRef, headRef },
+      name: "git_diff",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      scopeAudit: {
+        clean: false,
+        query: { baseRef, headRef, mode: "diff-range" },
+      },
+    });
+    expect(result.scopeAudit?.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "copied",
+          path: "src/copy.ts",
+          previousPath: "src/source.ts",
+          surfaces: ["commit"],
+        }),
+        expect.objectContaining({
+          kind: "deleted",
+          path: "src/deleted.ts",
+          surfaces: ["commit"],
+        }),
+        expect.objectContaining({
+          kind: "renamed",
+          path: "src/new.ts",
+          previousPath: "src/old.ts",
+          surfaces: ["commit"],
+        }),
+        expect.objectContaining({
+          kind: "modified",
+          path: "src/source.ts",
+          surfaces: ["commit"],
+        }),
+      ])
+    );
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });
 
 test("loads a repository policy for local offline npx vitest checks", async () => {
