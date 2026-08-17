@@ -1,0 +1,44 @@
+{
+  "task_id": "harvto-d8-stale-write-lease",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "D8 exact-base red is checksum-frozen and independently RED VALID. The stale-authority regression now passes with a specific authority error and 14 assertions. Final focused files passed store 21/21 with 68 assertions, runtime 57/57 with 298 assertions, tools 49/49 with 178 assertions, workspace 13/13 with 33 assertions, and bridge 5/5 with 14 assertions. The first mandatory check honestly failed on eight bounded lint/format findings; only the reviewed files were corrected, both affected focused files passed again, and the restarted check covered 189 files with no fixes. Explicit TypeScript, build, and the fresh terminal 79-file certified serial test:ci rerun all exited 0."
+    }
+  },
+  "run_88_verification": {
+    "implementation_base": "66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9",
+    "plan_freeze_commit": "089cd5b83a421e74facd67e9c7eb7c1c098bb54a",
+    "plan_pass_id": "d2ffde2c-950a-43b7-bb85-269e9e96af1a",
+    "g4_valid_id": "775e0fa9-451a-4ff8-944f-18959bb5e911",
+    "red_valid_id": "3c815df5-475e-431b-a49a-7a8444b80da3",
+    "red_manifest_sha256": "44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8",
+    "focused": {
+      "utility_store": "21 pass, 0 fail, 68 assertions",
+      "utility_runtime": "57 pass, 0 fail, 298 assertions",
+      "utility_tools": "49 pass, 0 fail, 178 assertions",
+      "utility_workspace": "13 pass, 0 fail, 33 assertions",
+      "bridge_utility": "5 pass, 0 fail, 14 assertions"
+    },
+    "mandatory": {
+      "initial_check_attempt": "exit 1: eight bounded lint/format findings; preserved as failed attempt",
+      "corrected_check": "exit 0: 189 files, no fixes applied",
+      "typecheck": "exit 0: explicit frozen command",
+      "build": "exit 0: 3051 modules",
+      "test_ci_initial_capture": "terminal exit not retained after yield; not counted green",
+      "test_ci_certified_serial": "fresh terminal exit 0: 79 sorted test files",
+      "certified_file_list_sha256": "465e9b1a9c34f66a618e581a2573188e61491ad3617af343fd18d46788d590ee",
+      "certification_command_sha256": "93c4fe26332ef70b15bb1da5ebb21dc0dc2f586a329c4a489da32e3e3c1361d3"
+    },
+    "implementation_sha256": {
+      "src/loop/utility-store.ts": "f07544ae2311666f5336b9f1cb4b001a4435cafb8d747f76372fd3a53c203632",
+      "src/loop/utility-runtime.ts": "56b61f6dfcaf507d6762be748f389c79a15ea31104cb727baf989adbf61cd441",
+      "tests/loop/utility-store.test.ts": "8d1fbc93aeef14e7cad767cd55ba6b362e03161f50708d959aa35c54afb76672",
+      "tests/loop/utility-runtime.test.ts": "8ee40fee282cf3df985956e767c57c54ab4ec83d51d67afa340f218b40244514"
+    }
+  }
+}

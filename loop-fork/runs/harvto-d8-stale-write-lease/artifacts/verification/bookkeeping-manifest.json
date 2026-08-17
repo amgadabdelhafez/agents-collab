@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "task_id": "harvto-d8-stale-write-lease",
+  "implementation_commit": "ece4c6eb92a9bc61034d181868c5cd9287bffb6e",
+  "exact_sha_pass_id": "1d2f0750-54de-41ba-8c03-bf69c2c4aa00",
+  "close_attempts": 1,
+  "included_paths": [
+    "PLAN.md",
+    "loop-fork/.harness/parked-ideas.jsonl",
+    "loop-fork/.harness/tasks.json",
+    "loop-fork/agents/coordination.jsonl",
+    "loop-fork/debt/register.jsonl",
+    "loop-fork/specs/harvto-d8-stale-write-lease.md",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/close/post-close-lifecycle.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/close/pre-close-lifecycle.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/debt/baseline-loc.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/debt/scan.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/debt/scan.log",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/post-task/10-current-task.sh.log",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/post-task/state-invariants.jsonl",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/post-task/state-invariants.log",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/pre-task/10-current-task.sh.log",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/pre-task/state-invariants.jsonl",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/pre-task/state-invariants.log",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/regression-harvest/harvest.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/verification/bookkeeping-manifest.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/verification/exact-sha-review.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/verification/final-gates.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/verification/implementation-commit.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/eval.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/memory/001-initial.md",
+    "loop-fork/runs/harvto-d8-stale-write-lease/memory/002-promoted-parked-idea.md",
+    "loop-fork/runs/harvto-d8-stale-write-lease/memory/003-implementation-pass.md",
+    "loop-fork/runs/harvto-d8-stale-write-lease/meta.json",
+    "loop-fork/runs/harvto-d8-stale-write-lease/parked-idea.md",
+    "loop-fork/runs/harvto-d8-stale-write-lease/task-log.md",
+    "runs/harvto-d8-stale-write-lease/eval.json",
+    "status.md"
+  ],
+  "included_path_count": 31,
+  "root_eval_included_deliberately": true,
+  "completion_spec_included_as_harness_lifecycle_output": true,
+  "excluded": {
+    "implementation_paths": [
+      "loop-fork/src/loop/utility-store.ts",
+      "loop-fork/src/loop/utility-runtime.ts",
+      "loop-fork/tests/loop/utility-store.test.ts",
+      "loop-fork/tests/loop/utility-runtime.test.ts"
+    ],
+    "already_committed_contracts": [
+      "loop-fork/specs/harvto-d8-stale-write-lease/spec.md",
+      "loop-fork/specs/harvto-d8-stale-write-lease/plan.md",
+      "loop-fork/specs/harvto-d8-stale-write-lease/tasks.md",
+      "loop-fork/specs/harvto-d8-stale-write-lease/verify.md",
+      "loop-fork/runs/harvto-d8-stale-write-lease/plan.md"
+    ],
+    "immutable_d8_red_directory": "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/red",
+    "preserved_unrelated": [
+      ".loop",
+      "loop-fork/runs/harvto-d6-readonly-attach/artifacts/red",
+      "loop-fork/runs/harvto-d7-handoff-identity/artifacts/red",
+      "loop-fork/runs/harvto-formatter-evidence-scope",
+      "all unrelated run artifacts"
+    ]
+  },
+  "pre_close_evidence_sha256": "1e7079d7ad01941524e4295e31f9ac5bed2833057b0e97700abd431caa1bbc39",
+  "post_close_evidence_sha256": "86eba765006273aa891c9a3f0a09528735c4dd3b9ec0055a46dc6e36c8463646",
+  "d8_red_manifest_sha256": "44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8",
+  "other_63_record_hash_map_sha256": "05aae5cbf5d6a3c2a6fed28f1c75575aa8f1c62aa33d4010662a4ececae33075"
+}

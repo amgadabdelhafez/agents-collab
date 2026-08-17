@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "task_id": "harvto-d8-stale-write-lease",
+  "recorded_at": "2026-08-17T18:43:53Z",
+  "run": 88,
+  "implementation_base": "66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9",
+  "plan_freeze_commit": "089cd5b83a421e74facd67e9c7eb7c1c098bb54a",
+  "review_authority": {
+    "plan_pass_id": "d2ffde2c-950a-43b7-bb85-269e9e96af1a",
+    "g4_valid_id": "775e0fa9-451a-4ff8-944f-18959bb5e911",
+    "red_valid_id": "3c815df5-475e-431b-a49a-7a8444b80da3"
+  },
+  "implementation_scope": [
+    {
+      "path": "loop-fork/src/loop/utility-store.ts",
+      "sha256": "f07544ae2311666f5336b9f1cb4b001a4435cafb8d747f76372fd3a53c203632"
+    },
+    {
+      "path": "loop-fork/src/loop/utility-runtime.ts",
+      "sha256": "56b61f6dfcaf507d6762be748f389c79a15ea31104cb727baf989adbf61cd441"
+    },
+    {
+      "path": "loop-fork/tests/loop/utility-store.test.ts",
+      "sha256": "8d1fbc93aeef14e7cad767cd55ba6b362e03161f50708d959aa35c54afb76672"
+    },
+    {
+      "path": "loop-fork/tests/loop/utility-runtime.test.ts",
+      "sha256": "8ee40fee282cf3df985956e767c57c54ab4ec83d51d67afa340f218b40244514"
+    }
+  ],
+  "red_evidence": {
+    "directory": "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/red",
+    "manifest_sha256": "44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8",
+    "manifest_entries_verified": 5,
+    "fixture_patch_sha256": "1289acf8fba0f154c473bc3366f60664bba6bb0a9f2dbe170db7ddeae8244e85",
+    "output_sha256": "606bf156bb1f9e4f5e3c3161f00c1049db1acb7b945a49b8177ab243224e6c96"
+  },
+  "focused_checks": [
+    {
+      "command": "bun run test:file -- tests/loop/utility-runtime.test.ts --test-name-pattern \"D8 stale utility write authority rejects before two-file mutation\"",
+      "exit": 0,
+      "tests_passed": 1,
+      "assertions": 14
+    },
+    {
+      "command": "bun test tests/loop/utility-store.test.ts",
+      "exit": 0,
+      "tests_passed": 21,
+      "tests_failed": 0,
+      "assertions": 68
+    },
+    {
+      "command": "bun test tests/loop/utility-runtime.test.ts",
+      "exit": 0,
+      "tests_passed": 57,
+      "tests_failed": 0,
+      "assertions": 298
+    },
+    {
+      "command": "bun test tests/loop/utility-tools.test.ts",
+      "exit": 0,
+      "tests_passed": 49,
+      "tests_failed": 0,
+      "assertions": 178
+    },
+    {
+      "command": "bun test tests/loop/utility-workspace.test.ts",
+      "exit": 0,
+      "tests_passed": 13,
+      "tests_failed": 0,
+      "assertions": 33
+    },
+    {
+      "command": "bun test tests/loop/bridge-utility.test.ts",
+      "exit": 0,
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "assertions": 14
+    }
+  ],
+  "mandatory_checks": [
+    {
+      "command": "bun run check",
+      "attempt": 1,
+      "exit": 1,
+      "result": "eight bounded lint/format findings in reviewed files; preserved as a real failed attempt"
+    },
+    {
+      "command": "bun test tests/loop/utility-store.test.ts && bun test tests/loop/utility-runtime.test.ts",
+      "attempt": "post-correction",
+      "exit": 0,
+      "result": "both affected focused files passed in full"
+    },
+    {
+      "command": "bun run check",
+      "attempt": 2,
+      "exit": 0,
+      "files_checked": 189,
+      "fixes_applied": 0
+    },
+    {
+      "command": "bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts",
+      "exit": 0
+    },
+    {
+      "command": "bun run build",
+      "exit": 0,
+      "modules": 3051
+    },
+    {
+      "command": "bun run test:ci",
+      "attempt": 1,
+      "exit": null,
+      "result": "terminal exit was not retained after yield; deliberately not counted green"
+    },
+    {
+      "command": "bun run test:ci",
+      "attempt": 2,
+      "exit": 0,
+      "certified_sorted_serial_files": 79,
+      "certified_file_list_sha256": "465e9b1a9c34f66a618e581a2573188e61491ad3617af343fd18d46788d590ee",
+      "package_script_sha256": "93c4fe26332ef70b15bb1da5ebb21dc0dc2f586a329c4a489da32e3e3c1361d3"
+    },
+    {
+      "command": "python3 scripts/check-baseline-allowlist.py loop-fork/runs/harvto-d8-stale-write-lease/eval.json",
+      "exit": 0
+    },
+    {
+      "command": "python3 scripts/check-baseline-allowlist.py runs/harvto-d8-stale-write-lease/eval.json",
+      "exit": 0
+    },
+    {
+      "command": "./harness preflight --json",
+      "exit": 0,
+      "result": "pass"
+    },
+    {
+      "command": "./harness stop-gate --json",
+      "exit": 0,
+      "result": "pass"
+    },
+    {
+      "command": "./scripts/verify.sh harvto-d8-stale-write-lease harvto-d8-stale-write-lease",
+      "exit": 0,
+      "result": "verify.sh complete"
+    }
+  ],
+  "evals": [
+    {
+      "path": "loop-fork/runs/harvto-d8-stale-write-lease/eval.json",
+      "sha256": "51956fe137b563fb7b472b6e4d9520cd1c376b44b64491617325cdd8f1272d61",
+      "verdict": "pass",
+      "baseline_failures": []
+    },
+    {
+      "path": "runs/harvto-d8-stale-write-lease/eval.json",
+      "sha256": "e06aa76048173630967f0e30d2b9c654a9f370f0deaf1a97ce3edbbd630469de",
+      "verdict": "pass",
+      "baseline_failures": []
+    }
+  ],
+  "diff": {
+    "production_and_test_paths": 4,
+    "index_empty_before_staging": true,
+    "diff_check_exit": 0,
+    "normal_numstat": {
+      "loop-fork/src/loop/utility-runtime.ts": "74/50",
+      "loop-fork/src/loop/utility-store.ts": "220/27",
+      "loop-fork/tests/loop/utility-runtime.test.ts": "191/0",
+      "loop-fork/tests/loop/utility-store.test.ts": "263/0"
+    },
+    "ignore_all_space_numstat": {
+      "loop-fork/src/loop/utility-runtime.ts": "34/10",
+      "loop-fork/src/loop/utility-store.ts": "200/7",
+      "loop-fork/tests/loop/utility-runtime.test.ts": "191/0",
+      "loop-fork/tests/loop/utility-store.test.ts": "263/0"
+    }
+  },
+  "verdict": "pass"
+}

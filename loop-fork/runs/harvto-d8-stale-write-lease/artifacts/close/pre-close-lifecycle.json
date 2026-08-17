@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "phase": "pre-close",
+  "recorded_at": "2026-08-17T19:00:26Z",
+  "task_id": "harvto-d8-stale-write-lease",
+  "authorized_plan_pass_id": "d2ffde2c-950a-43b7-bb85-269e9e96af1a",
+  "authorized_exact_sha_pass_id": "1d2f0750-54de-41ba-8c03-bf69c2c4aa00",
+  "review_request_id": "3f9108d9-5094-44bf-8c7e-1e2f0fb5aef1",
+  "supervisor_lifecycle_ruling": "continue-run88-no-handover-boundary",
+  "git_head": "ece4c6eb92a9bc61034d181868c5cd9287bffb6e",
+  "git_index_paths": [],
+  "implementation_paths_clean": true,
+  "tracked_intake_stub_clean": true,
+  "utility": {
+    "LOOP_UTILITY_ENABLED": "0",
+    "LOOP_UTILITY_DELEGATION_MODE": "off",
+    "LOOP_AU_PAIR_ENABLED": "0"
+  },
+  "frozen_evidence": {
+    "d8_red_file_count": 6,
+    "d8_red_verification": "5/5 OK",
+    "d8_red_sha256sums_sha256": "44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8",
+    "d7_red_verification": "5/5 OK"
+  },
+  "harness": {
+    "active_task": "harvto-d8-stale-write-lease",
+    "status": "active",
+    "eval_file_status": "pass",
+    "task_index_eval_status": "pending",
+    "preflight": "pass",
+    "stop_gate": "pass",
+    "total_task_records": 64,
+    "status_counts": {
+      "active": 3,
+      "done": 59,
+      "parked": 2
+    },
+    "d8_record_count": 1,
+    "d8_terminal_record_count": 0,
+    "current_task_sha256": "bc5bad0cd621506adbb1804847144042a648393fb8bc766ead7c91042fca1d17",
+    "tasks_json_sha256": "43a42b251d2c15d127588029bd063878265864463b6e138c0fc09c327279c207",
+    "parked_ideas_sha256": "dc7f8e879658ddfde358affe1ab5450c79b6cbcd7f148bdde815a14ba54da63d",
+    "coordination_sha256": "b530755ab9783c5a7470eaf8e624aa6ac4dc68fb8956c57055ddb83d3644a256",
+    "debt_register_sha256": "ff0569cccb83d8d98c592555cd097df59c520ed04d6ce8bddebeeab6042fbcb7",
+    "d8_meta_sha256": "e46f69db0192ed5eb326d829a59d5981a14b794495dc4b1c16450060fe221a33",
+    "d8_eval_sha256": "51956fe137b563fb7b472b6e4d9520cd1c376b44b64491617325cdd8f1272d61",
+    "d8_task_log_sha256": "183796578d3342482388099abbd61cabb2ef5a0a90021f8f30ff8c776e2e7855",
+    "d8_final_memory_sha256": "27aa6eb21a41487a50d7eb56c454539dc4f1d7778b73d9ed6d7f1a2f59d91065"
+  },
+  "d8_record": {
+    "created_at": "2026-08-17T16:27:46Z",
+    "eval_status": "pending",
+    "id": "harvto-d8-stale-write-lease",
+    "mode": "emergent",
+    "run_dir": "runs/harvto-d8-stale-write-lease",
+    "spec_path": "specs/harvto-d8-stale-write-lease.md",
+    "status": "active"
+  },
+  "d8_record_sha256": "d318dd8ae616c7777480de4eae5c4396af1226cbbacf828baf3d14995269d80a",
+  "unrelated_task_records": {
+    "record_count": 63,
+    "canonical_record_list_sha256": "f800add1625fb516de8a3a4893db5970560b87854472d1eef39176a70a852ab5",
+    "canonical_record_hash_map_sha256": "05aae5cbf5d6a3c2a6fed28f1c75575aa8f1c62aa33d4010662a4ececae33075",
+    "independently_precommitted_by_claude": true,
+    "active_launch_interlock_sha256": "88ed0455e62f9e9b325b48b0028cf4eb4328f34c7ef7545b85787241c1ef0ae1",
+    "context_pressure_current_lineage_sha256": "257b8a0348db35001049f5fbd6133db15f6ed79b79b225497f95ba119d679f70"
+  },
+  "close_contract": {
+    "command": "./harness done harvto-d8-stale-write-lease",
+    "maximum_attempts": 1,
+    "expected_d8_transition": "active/pending-index to done/pass-index",
+    "expected_current_task_transition": "present with D8 to absent",
+    "expected_total_task_record_count": 64,
+    "expected_unrelated_task_transition_count": 0
+  }
+}

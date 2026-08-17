@@ -1,0 +1,36 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d8-stale-write-lease",
+  "baseline_failures": [],
+  "summary": "D8 fences completed utility patch application with one awaited, refreshed, epoch/route/claim authority lock that spans broker mutation and locked application journaling. Stale authority rejects before broker construction; matching authority applies once and same-authority replay remains idempotent.",
+  "checks": {
+    "exact_base_red": "exit 1 at unchanged production: d161e3d6 route/claim epoch 30 versus current 31 resolved applied, mutated both valid targets, and appended one patch-applied event",
+    "red_validation": "RED VALID 3c815df5-475e-431b-a49a-7a8444b80da3; six files, checksum manifest 5/5, D10 false-red excluded",
+    "named_regression": "pass after fix: 14 assertions including stale-authority rejection identity and D10/busy exclusions",
+    "focused_utility_store": "21 pass, 0 fail, 68 assertions",
+    "focused_utility_runtime": "57 pass, 0 fail, 298 assertions",
+    "focused_utility_tools": "49 pass, 0 fail, 178 assertions",
+    "focused_utility_workspace": "13 pass, 0 fail, 33 assertions",
+    "focused_bridge_utility": "5 pass, 0 fail, 14 assertions",
+    "initial_lint_attempt": "exit 1 with eight bounded lint/format findings; corrected only inside reviewed scope and retained as failed attempt",
+    "lint": "fresh exit 0: 189 files, no fixes applied",
+    "typecheck": "exit 0: explicit frozen TypeScript command",
+    "build": "exit 0: 3051 modules",
+    "test_ci": "fresh terminal exit 0: all 79 certified sorted serial files",
+    "certified_file_list_sha256": "465e9b1a9c34f66a618e581a2573188e61491ad3617af343fd18d46788d590ee",
+    "certification_command_sha256": "93c4fe26332ef70b15bb1da5ebb21dc0dc2f586a329c4a489da32e3e3c1361d3"
+  },
+  "run_88_verification": {
+    "implementation_base": "66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9",
+    "plan_freeze_commit": "089cd5b83a421e74facd67e9c7eb7c1c098bb54a",
+    "red_evidence": "loop-fork/runs/harvto-d8-stale-write-lease/artifacts/red/SHA256SUMS",
+    "red_manifest_sha256": "44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8",
+    "certified_file_count": 79,
+    "implementation_scope": [
+      "loop-fork/src/loop/utility-store.ts",
+      "loop-fork/src/loop/utility-runtime.ts",
+      "loop-fork/tests/loop/utility-store.test.ts",
+      "loop-fork/tests/loop/utility-runtime.test.ts"
+    ]
+  }
+}

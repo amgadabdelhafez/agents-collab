@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "phase": "post-close",
+  "recorded_at": "2026-08-17T19:01:49Z",
+  "task_id": "harvto-d8-stale-write-lease",
+  "authorized_exact_sha_pass_id": "1d2f0750-54de-41ba-8c03-bf69c2c4aa00",
+  "pre_close_evidence_sha256": "1e7079d7ad01941524e4295e31f9ac5bed2833057b0e97700abd431caa1bbc39",
+  "close": {
+    "command": "./harness done harvto-d8-stale-write-lease",
+    "attempt_count": 1,
+    "retry_count": 0,
+    "exit": 0,
+    "ended_at": "2026-08-17T19:01:10Z",
+    "stdout_lines": [
+      "post-task state invariant check passed; see runs/harvto-d8-stale-write-lease/artifacts/post-task/state-invariants.log",
+      "debt scan completed: 1 finding(s), 1 appended",
+      "regression harvest skipped: no bug-fix signal",
+      "specs/harvto-d8-stale-write-lease.md"
+    ]
+  },
+  "git_head": "ece4c6eb92a9bc61034d181868c5cd9287bffb6e",
+  "git_index_paths": [],
+  "implementation_paths_clean": true,
+  "frozen_evidence": {
+    "d8_red_file_count": 6,
+    "d8_red_verification": "5/5 OK",
+    "d8_red_sha256sums_sha256": "44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8",
+    "d7_red_verification": "5/5 OK"
+  },
+  "harness": {
+    "active_task": null,
+    "current_task_absent": true,
+    "total_task_records": 64,
+    "status_counts": {
+      "active": 2,
+      "done": 60,
+      "parked": 2
+    },
+    "d8_record_count": 1,
+    "d8_terminal_record_count": 1,
+    "d8_eval_file_status": "pass",
+    "tasks_json_sha256": "c08bbe15bfc1c4d5b326ad62390071ccaa56f3895b30ca4e4c6f56d471fd84a1",
+    "parked_ideas_sha256": "dc7f8e879658ddfde358affe1ab5450c79b6cbcd7f148bdde815a14ba54da63d",
+    "coordination_sha256": "018245d26daa927abd0376c45e956097e0179cc8d8855464be78a7e8912433b4",
+    "debt_register_sha256": "4959945d889118daabf1ccbc7940025d7bdf3db5f988caf7a3bd04ee22c77486",
+    "d8_meta_sha256": "f6fe108ecb7150abe0f416f46361f2a16985f5b526e891f3441f0c9836d54d86",
+    "d8_eval_sha256": "51956fe137b563fb7b472b6e4d9520cd1c376b44b64491617325cdd8f1272d61",
+    "d8_task_log_sha256": "183796578d3342482388099abbd61cabb2ef5a0a90021f8f30ff8c776e2e7855",
+    "generated_completion_spec_sha256": "591fd05ba236caeab3e4b1df375e756e81f6aac3bd18ef77bd77212491f6bbf0"
+  },
+  "d8_record": {
+    "created_at": "2026-08-17T16:27:46Z",
+    "ended_at": "2026-08-17T19:01:10Z",
+    "eval_status": "pass",
+    "id": "harvto-d8-stale-write-lease",
+    "mode": "emergent",
+    "run_dir": "runs/harvto-d8-stale-write-lease",
+    "spec_path": "specs/harvto-d8-stale-write-lease.md",
+    "status": "done"
+  },
+  "d8_record_sha256": "8fe3a2ca5332a3bda111045185cec6851ec9a886b9f39c8569d0cf98edea223b",
+  "unrelated_task_records": {
+    "record_count": 63,
+    "pre_close_canonical_record_list_sha256": "f800add1625fb516de8a3a4893db5970560b87854472d1eef39176a70a852ab5",
+    "post_close_canonical_record_list_sha256": "f800add1625fb516de8a3a4893db5970560b87854472d1eef39176a70a852ab5",
+    "pre_close_canonical_record_hash_map_sha256": "05aae5cbf5d6a3c2a6fed28f1c75575aa8f1c62aa33d4010662a4ececae33075",
+    "post_close_canonical_record_hash_map_sha256": "05aae5cbf5d6a3c2a6fed28f1c75575aa8f1c62aa33d4010662a4ececae33075",
+    "byte_equivalent": true,
+    "active_launch_interlock_pre_sha256": "88ed0455e62f9e9b325b48b0028cf4eb4328f34c7ef7545b85787241c1ef0ae1",
+    "active_launch_interlock_post_sha256": "88ed0455e62f9e9b325b48b0028cf4eb4328f34c7ef7545b85787241c1ef0ae1",
+    "context_pressure_current_lineage_pre_sha256": "257b8a0348db35001049f5fbd6133db15f6ed79b79b225497f95ba119d679f70",
+    "context_pressure_current_lineage_post_sha256": "257b8a0348db35001049f5fbd6133db15f6ed79b79b225497f95ba119d679f70"
+  },
+  "generated_post_task_artifacts": {
+    "current_task_log_sha256": "70166586a8e58bd03ebb177848dc763bcef8260e62c6293183f27a03b68ed0af",
+    "state_invariants_jsonl_sha256": "672d39a33948757838f17b1868a803c3d1905b408dad7a64979019f72c92ef7b",
+    "state_invariants_log_sha256": "70166586a8e58bd03ebb177848dc763bcef8260e62c6293183f27a03b68ed0af",
+    "regression_harvest_sha256": "fdf43b7354ed62b38c2b01a61b4718b13488da38803797d2e2b6577df3a3b472",
+    "debt_findings_appended": 1
+  },
+  "transition_proof": {
+    "only_d8_task_record_changed": true,
+    "d8_transition": "active/pending-index to done/pass-index",
+    "unrelated_task_transition_count": 0,
+    "current_task_cleared": true,
+    "close_attempt_count": 1,
+    "close_retry_count": 0
+  }
+}

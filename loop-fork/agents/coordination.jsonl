@@ -15,3 +15,5 @@
 {"ts": "2026-08-17T04:57:50Z", "agent": "amgad-61305", "task": "harvto-d6-readonly-attach", "intent": "done", "file": null}
 {"ts": "2026-08-17T05:19:18Z", "agent": "amgad-17987", "task": "harvto-d7-handoff-identity", "intent": "task-start", "file": null}
 {"ts": "2026-08-17T08:41:15Z", "agent": "amgad-60873", "task": "harvto-d7-handoff-identity", "intent": "done", "file": null}
+{"ts": "2026-08-17T16:27:46Z", "agent": "amgad-19877", "task": "harvto-d8-stale-write-lease", "intent": "task-start", "file": null}
+{"ts": "2026-08-17T19:01:10Z", "agent": "amgad-71507", "task": "harvto-d8-stale-write-lease", "intent": "done", "file": null}

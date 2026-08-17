@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "task_id": "harvto-d8-stale-write-lease",
+  "recorded_at": "2026-08-17T18:57:38Z",
+  "review_request_id": "3f9108d9-5094-44bf-8c7e-1e2f0fb5aef1",
+  "decision_id": "1d2f0750-54de-41ba-8c03-bf69c2c4aa00",
+  "reviewer": "claude",
+  "mode": "zero-write",
+  "verdict": "PASS",
+  "implementation_commit": "ece4c6eb92a9bc61034d181868c5cd9287bffb6e",
+  "parent": "089cd5b83a421e74facd67e9c7eb7c1c098bb54a",
+  "verified": {
+    "exact_four_path_scope": true,
+    "direct_parent": true,
+    "no_amend": true,
+    "committed_blob_hashes": true,
+    "normal_and_ignore_all_space_numstats": true,
+    "frozen_red_manifest_5_of_5": true,
+    "red_fixture_reconstruction": true,
+    "named_regression": "1 pass, 0 fail, 14 assertions",
+    "focused_suites": "145 pass, 0 fail, 591 assertions",
+    "check": "exit 0, 189 files, no fixes",
+    "typecheck": "exit 0",
+    "build": "exit 0, 3051 modules",
+    "certified_test_ci": "exit 0, 79 files, 1637 passing tests",
+    "eval_hashes_and_empty_baselines": true,
+    "post_review_repo_porcelain_unchanged": true
+  },
+  "scope_limit": "The reviewer did not independently rerun Harness preflight, Harness stop-gate, or root verify.sh because the review was zero-write; it validated their recorded artifacts and reported exits.",
+  "non_blocking_observations": [
+    "A lock-ownership loss after working-tree mutation but before journaling can leave mutation without a patch-applied event; this is outside bounded D8 and should be carried into D10 context.",
+    "A refresh failure is surfaced at the next ownership assertion, which is fail-closed at the reviewed checkpoints."
+  ],
+  "grants": [
+    "exactly one D8 Harness close",
+    "one separate D8 bookkeeping commit"
+  ],
+  "grants_nothing_else": true
+}

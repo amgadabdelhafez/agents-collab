@@ -1,0 +1,19 @@
+{
+  "task_id": "harvto-d8-stale-write-lease",
+  "scanned_at": "2026-08-17T19:01:10Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-17T19:01:10Z",
+      "task_id": "harvto-d8-stale-write-lease",
+      "signal": "loc_growth",
+      "file": "src/loop/utility-store.ts",
+      "before_loc": 789,
+      "after_loc": 982,
+      "delta_loc": 193,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

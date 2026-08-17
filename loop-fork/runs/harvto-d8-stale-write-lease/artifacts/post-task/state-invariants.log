@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active harvto-d8-stale-write-lease
+[pass] state/invariants/10-current-task.sh

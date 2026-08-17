@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "task_id": "harvto-d8-stale-write-lease",
+  "recorded_at": "2026-08-17T18:50:00Z",
+  "implementation_commit": "ece4c6eb92a9bc61034d181868c5cd9287bffb6e",
+  "parent": "089cd5b83a421e74facd67e9c7eb7c1c098bb54a",
+  "message": "fix(d8): fence stale utility patch authority",
+  "amended": false,
+  "committed_paths": [
+    {
+      "path": "loop-fork/src/loop/utility-runtime.ts",
+      "sha256": "56b61f6dfcaf507d6762be748f389c79a15ea31104cb727baf989adbf61cd441"
+    },
+    {
+      "path": "loop-fork/src/loop/utility-store.ts",
+      "sha256": "f07544ae2311666f5336b9f1cb4b001a4435cafb8d747f76372fd3a53c203632"
+    },
+    {
+      "path": "loop-fork/tests/loop/utility-runtime.test.ts",
+      "sha256": "8ee40fee282cf3df985956e767c57c54ab4ec83d51d67afa340f218b40244514"
+    },
+    {
+      "path": "loop-fork/tests/loop/utility-store.test.ts",
+      "sha256": "8d1fbc93aeef14e7cad767cd55ba6b362e03161f50708d959aa35c54afb76672"
+    }
+  ],
+  "commit_stat": {
+    "files": 4,
+    "insertions": 748,
+    "deletions": 77
+  },
+  "proof": {
+    "cached_path_set_exact_before_commit": true,
+    "cached_diff_check_exit": 0,
+    "post_commit_index_empty": true,
+    "reviewed_worktree_paths_clean": true,
+    "red_manifest_sha256": "44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8",
+    "red_manifest_entries_verified": 5,
+    "task_local_eval_sha256": "51956fe137b563fb7b472b6e4d9520cd1c376b44b64491617325cdd8f1272d61",
+    "root_eval_sha256": "e06aa76048173630967f0e30d2b9c654a9f370f0deaf1a97ce3edbbd630469de"
+  },
+  "review_state": "pending-exact-sha-zero-write-review"
+}

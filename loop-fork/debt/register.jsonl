@@ -66,3 +66,4 @@
 {"ts": "2026-08-17T08:41:15Z", "task_id": "harvto-d7-handoff-identity", "signal": "loc_growth", "file": "src/loop/governess.ts", "before_loc": 7676, "after_loc": 7798, "delta_loc": 122, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-17T08:41:15Z", "task_id": "harvto-d7-handoff-identity", "signal": "loc_growth", "file": "src/loop/paired-options.ts", "before_loc": 507, "after_loc": 646, "delta_loc": 139, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-17T08:41:15Z", "task_id": "harvto-d7-handoff-identity", "signal": "loc_growth", "file": "src/loop/run-state.ts", "before_loc": 1321, "after_loc": 1593, "delta_loc": 272, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-17T19:01:10Z", "task_id": "harvto-d8-stale-write-lease", "signal": "loc_growth", "file": "src/loop/utility-store.ts", "before_loc": 789, "after_loc": 982, "delta_loc": 193, "threshold": 100, "severity": "indicator"}

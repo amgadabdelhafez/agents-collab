@@ -3942,3 +3942,967 @@ The corrected exact scope is 26 paths: seven tracked D7 lifecycle/ledger paths p
 evidence additions, including both close snapshots and both evals. The six frozen red files remain
 untracked and checksum-governed. This suffix supersedes only the preceding 32-path count; all close,
 PASS, no-D8, and governed-handover requirements remain unchanged.
+
+## 2026-08-17 — D7 bookkeeping complete; actual Governess handover epoch `1786947948923256`
+
+Bookkeeping commit `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9` is complete on implementation
+parent `ec93cd7be0c085e7320d590b344477a855042c8d`. It was created once without amendment and contains
+exactly 26 paths, 1,489 insertions, and 20 deletions. Commit scope/check and normal versus
+ignore-all-space numstats pass; the index and implementation scope are clean.
+
+D7 remains done/pass with exactly one terminal record and no current-task marker. All 62 unrelated
+task records retain canonical aggregate SHA-256
+`33338ab6660650d48a7a3720944a391d724da3fe5a4f3830222179740118af54`; both unrelated active
+records are unchanged. Frozen red remains deliberately untracked, byte-preserved, and 5/5 valid.
+`.gemini` is absent, utility is `0/off/0`, post-close Harness preflight/stop-gate pass, both baseline
+allowlists are empty, and the fresh post-close root verifier passes.
+
+The verified live Governess pane opened a real graceful handover at
+`2026-08-17T08:48:54.278Z`, epoch `1786947948923256`. Persisted exit control is in `handover` mode;
+Claude has been notified. No replacement, teardown, or D8 action has occurred.
+
+Next: publish the Codex ready bundle after this append, require both epoch-bound bundles to validate
+at exact HEAD `66fd1e1`, and leave manifest composition/replacement/teardown to Governess. A fresh
+successor must validate both bundles, empty index, terminal D7, preserved dirty scope/frozen red,
+and utility `0/off/0` before acting. D8 remains parked throughout run 85.
+
+## 2026-08-17 — Run87 successor plan-only boundary
+
+Result: Run87 D8-D12 governed successor plan is current. No teardown, successor launch, Harness
+promotion/close, contract/source/test/red/eval mutation, staging, commit, helper route, or remote
+action occurred.
+
+Current state:
+
+- Both run85 bundles are complete `ready` records for epoch `1786947948923256`, exact HEAD
+  `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`, agents Claude/Codex, and identical dirty scope.
+  Bundle SHA-256 values are Claude `20e6dff677c319eb43ec13ed760f0442e4f8d76294f3cf91e4d7cda4f931c8c2`
+  and Codex `3b144be31d623634a5df4dde7f71515d56acc9dfd271335cac5d7ae6f74adc20`.
+- Live HEAD matches; index is empty. D7 is `done/pass` at `2026-08-17T08:41:15Z`, has no current-task
+  marker, and its implementation paths are clean. D8-D12 remain parked.
+- Frozen D7 red validates 5/5 and remains untracked. Root `.loop/` remains 60 files and zero tracked.
+  Dirty/untracked scope matches both bundles. `LOOP_UTILITY_ENABLED=0`,
+  `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0` are exact.
+- `PLAN.md` now places epoch `1786947948923256` first and marks prior D7 authority archival. It
+  defines D8 as sole campaign task, then fresh governed successors for D9-D12.
+
+Proof/checks run: full bundle JSON reads and SHA-256; cross-bundle status/epoch/HEAD/agent/dirty
+predicates; Git HEAD/index/status/lineage and implementation diff; Harness D7 and parked-task
+records; current-task absence; D7 red checksum manifest; root `.loop/` inventory/tracking; ledger
+hashes; utility environment. No test suite ran because session is plan-only.
+
+Open questions: none. Risk: two unrelated Harness records remain active; plan defines D8 as sole
+campaign task and requires those records stay byte-preserved rather than closing or absorbing them.
+
+Next step: fresh Run87 execution session revalidates both bundles and agent-exit conditions, performs
+only exact manifest-backed Governess teardown of run85, launches a hard-disabled successor, then
+promotes D8 exactly once and begins its five-file plan-review lifecycle. Never resume runs 51-86.
+
+## 2026-08-17 — Run87 live-entry correction and D8 plan hardening
+
+Result: root `PLAN.md` is corrected under the plan-only charter. No D8 promotion, Harness write,
+contract/source/test/evidence mutation, test run, staging, commit, helper route, utility work, or
+remote action occurred. The prior status entry remains historical; its teardown/launch next step is
+superseded because run85 is already stopped and Run87 is already the live manifest-backed successor.
+
+Validated live state:
+
+- Run87 is `status: running`, exact workspace/branch/HEAD
+  `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`, Codex `gpt-5.6-sol`/`xhigh` driver, Claude
+  `opus`/`high` reviewer, recorded socket `/private/tmp/tmux-501/default`, session
+  `agents-collab-loop-87`, and live panes `%0` through `%5`. Both charter hashes and all 259
+  world-model commit bindings validate.
+- Run85 is already stopped with no tmux session. Run86 is malformed, non-authoritative residue with
+  no launch identity, charter/world-model set, or tmux target. Neither may be resumed or repaired.
+- Run87 utility state contains only `utility/epoch=1786982819498431`, equal to `governessEpoch`,
+  with no jobs, usage, delegation, or helper artifacts. Controls remain exact `0/off/0`; index is
+  empty; root `.loop/` remains 60 untracked files; D7 red remains 5/5 valid.
+
+Plan corrections:
+
+- `tasks.json` is recorded at its actual 63 records: two active, 59 done, two parked, and zero
+  D8-D12 records. Promotion proof now uses per-record preservation and the one D8 parked row.
+- D6 is correctly documented as four-file legacy red; D7 and future D8 use the six-file manifest
+  shape. Normal/ignore-all-space scope checks now distinguish whole-file additions.
+- Mandatory verification now runs plain `bun run test:ci`, then derives both evals from actual green
+  results, checks both baseline allowlists, runs Harness gates, and uses the root verifier as a
+  fail-closed sealing repeat.
+- Promotion now freezes every expected Harness/run/coordination/debt surface and requires the exact
+  D8 pre-task staging path absent before the one call. No retry or hand repair is allowed.
+- D8 now traces the missing current epoch/lease check before real `git apply` and `patch-applied`
+  journaling, requires a two-present-file stale-authority reproduction, and leaves absent,
+  stale-preimage, and non-applicable target behavior to D10.
+
+Claude zero-write review request `025c3e40-5f05-4246-bc44-f908df95e1c0` is pending. Claude also
+relayed a supervisor correction claiming D8 execution authority, but the verified Codex charter is
+explicitly plan-only. Direct supervisor clarification was requested as escalation
+`fdc369d6-f09d-4a8c-b904-8f471e4883f7`; no direct ruling has arrived. Until one explicitly
+supersedes the plan-only clause and names permitted writes, D8 remains blocked.
+
+Ledger proof: pre-update PLAN SHA-256
+`ef3d809db09fa11f524a65117ff185c3436ce73e0486ba7457d792f7d9497f22`; corrected PLAN SHA-256
+`9612100c86d93bf36916ebb0c3520448b9fa6c45bb7fe9f9aaa42f5942cfd70f`. The original 252,025
+status bytes retain SHA-256 `2af1ade7d260d0b0c66b50fd3996a41f431d4de98fb42ba6413e2acd29c14524`
+and are an exact prefix of this append-only update.
+
+Next: await the direct supervisor ruling and Claude plan review. Do not promote D8 or mutate Harness
+under relayed authority.
+
+## 2026-08-17 — Founder correction accepted; Run87 D8 pre-promotion freeze
+
+Result: direct founder authority in the live Codex thread supersedes only the false plan-only pause.
+Run87 is the executable manifest-backed successor. Do not request or launch another session. The
+root plan now records that ruling and Claude's root-plan-only literal `PLAN PASS`, decision
+`9614efc7-e967-497e-89f7-578af88460ed`, for prior PLAN SHA-256
+`9612100c86d93bf36916ebb0c3520448b9fa6c45bb7fe9f9aaa42f5942cfd70f` at exact HEAD. That verdict
+does not satisfy or consume the D8 G3 five-contract review cycle.
+
+Read-only boundary revalidation passes at exact HEAD
+`66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9` with empty index:
+
+- Run85 is stopped. Run86 remains malformed non-authoritative evidence of the D12 discovery hazard
+  and is not stopped, repaired, reconciled, or cleaned. Run87 manifest identity, exact socket/session,
+  and all six live panes match. Charter and world-model hashes validate.
+- Utility remains exact `0/off/0`; Run87 utility contains only
+  `epoch=1786982819498431`. No helper, utility job, usage, delegation, or spend exists.
+- D7 red is manifest-valid 5/5. D6 has no manifest; its immutable four-file SHA-256 baselines are
+  README `5fee6e797037c3a078fd6d36824baaee4c7cb08ac0720fc145125b1f2c25d8ed`,
+  command `b80df25d87d06408fe45a5e4a7f1dec14f21d5f61d0ae0c5bcc4ed49f994883e`,
+  fixture `a1585cccf9f57a1806a75f59ef5fdafc5ee17f5e5205c25fdb24c4d6aa389aca`, and
+  output `8103e398ecb891565fcd4b4fa3c93b35fa28c099cc3b358d1273d216fe766c03`.
+- `.harness/current-task`, exact D8 pre-task staging, D8 run directory, root eval directory, and
+  canonical contract directory are absent. Harness reports no current task.
+- `tasks.json` is 63 records: two active, 59 done, two parked, zero D8-D12. Its file SHA-256 is
+  `16260ff142a07d790efbece8b9e1b446bdb7f3eae866cbfa8e5cd8e03b3c3a55`; canonical full-array
+  SHA-256 under `jq -cS '.tasks'` is
+  `7f3b3c5d82632b9ff3af59998b9f0762f57e4df963e760df56aa5922d326f176`.
+- `parked-ideas.jsonl` has 13 lines, file SHA-256
+  `b356031a29c6deb106f742d84ad2a24c4b936b480363dd4cd047adf0d021660a`, D8-line SHA-256
+  `8b2630ca780231100b3e57e2ab4ffab404f52d024c5334834dbeacefa9af5c73`, and exact-byte non-D8
+  12-line aggregate `6386528049d833594771e46a2c60e5c323b9ad0f693893bbc1cad21d2fe6f5d7`.
+- Pre-promotion surface SHA-256 values: coordination
+  `01019634a0cf3b970bd9a5589109b9188d4f5599bf12b283039407d7ce78080f`; quality scorecard
+  `2be47448973aa32fd709c9dfbd86514ef982774ce9d9fcbb5e62433863598091`. Root `.loop/`
+  remains 60 untracked files. Dirty scope matches inherited evidence plus root ledger changes.
+
+The exact pre-promotion per-record map follows. Hashes are SHA-256 of each flat task record serialized
+with lexicographically sorted keys and no trailing newline:
+
+```json
+{
+  "active-launch-interlock": "88ed0455e62f9e9b325b48b0028cf4eb4328f34c7ef7545b85787241c1ef0ae1",
+  "automatic-worker-tool-widening": "c9f634f6785896e945ec7854e02a4f5877cc45eb93d1a831efc76de4dfc4141f",
+  "babysitter-no-repeat-compact": "7edd4978375087db6c09a80961e1fe6078f50e3ad9efdf7890950b38d9faab56",
+  "babysitter-pane": "1c6b7ab2f32e1097e82e431618da8e070621a7a287386007a3f0f594733cd212",
+  "bridge-mcp-response-drain": "23e7467942cda9b2147805d5cd54a5869f9183d529e262e885d7cf8a5b51ca3a",
+  "claude-bridge-low-latency": "0a14b6295c0a8b1f7d75df566936e701aa8a5ef7bdf8e9ff80c9f5e00d7ca270",
+  "claude-bridge-visible-tui": "3deea64246324183b22c7cc42a8df43cb471bb6c90acdd782d6f690d86f0c117",
+  "claude-config-bridge-gc": "a80f1a9951380771c3b7a45d3ba8e97e197f5a414855ecee718939aab8f4850c",
+  "claude-warning-producer-fixture": "e987c36cf519cedd58b7e57f6bd8e82ed12d94a94372b6737f9d752546e91883",
+  "codex-bridge-visible-tui": "41f7ec27a6429292987fc658b40c72b2e2ad4f3116cb1ea09977dc2acb023501",
+  "compound-worktree-observability": "aef15c6b5489584ce09f64c9b543470ff4ece222e143d6cc9a71e69a43df774a",
+  "constant-size-transport": "042737f78f43ef0043c435d198d7098a0563a0b56c5145d93d02040674255b8b",
+  "context-pressure-current-lineage": "257b8a0348db35001049f5fbd6133db15f6ed79b79b225497f95ba119d679f70",
+  "context-pressure-handoff": "06ddbffcf52b42abbbaaefde8eb502d6b4009b56ffbac2321e90095af2c4b043",
+  "cross-repo-stale-bridge-sweep": "e3f42286585f1b497616acefde803e663f0469012692cfd39373b640c20deaf3",
+  "delegation-grammar-widening": "49c58dbda1118be3c23631ac4e8835f2411d274847d229807030ce33418f85e0",
+  "fixture-provenance-policy": "3494351163e37f6b8c94015f1200c81962532e5f340cd2d6b20d40b5f3cc14a1",
+  "fresh-session-manifest-binding": "8187b6bd23a27bfcf2f4ded90fdf02fb787eacd87b5bd10b75b9b0bd0a9e744d",
+  "governess-column-alignment": "962b19b4ca33cadc6502dcfd6bf63c21a124b169d11eaeaf2ad7cc3cfe8a9b5a",
+  "governess-header-identity": "f410c46802f0cadef0c2a3f1c1f2071594b1abf54e5b88a5438011a4a23b0672",
+  "governess-native-runtime": "0b124b02c43c7a5737f8d26452e9999e876678ff538c5a7f7f0c498824ff7f86",
+  "governess-p0-runtime": "74d1e404e77804f36249825c15d2f5bc59474d0109393f959dc3a600e34c13f7",
+  "governess-pane-cleanup": "dc6a1ead590c5654a4e8c6cbd3b559a44eb7c0423bbb5e0643dbd5aa7508f139",
+  "governess-pane-identity": "4b50465ad6a122cc3abfa78e767f80e83fa281e5f4db218acbe45cebbe431d8c",
+  "governess-pane-liveness": "93a18f971d3b3cab76d9269a1ccff5a289145f1ec479fa9a3b0c51a388202389",
+  "handover-fidelity-dedup": "56ad285ca13176413ae74c1c1c1acf8a4e12e0c3beacd35449c15060b62af912",
+  "harvto-d1-live-peer-expiry": "afcc64bec9ad1e50e7d2d09244dd38225ff95898c7d6a8e7f070088e1c1ea749",
+  "harvto-d15-teardown-process-orphans": "4ec0529751306db6b9f8d058e55ff318ed6d31c1f8422c230e69a08599c35369",
+  "harvto-d16-scope-audit-completeness": "4ecb737d027d735d8c28657c407f58ea903aac5ff523f2c66c4cedf983ecc662",
+  "harvto-d3-pending-route": "163d7ff3f339599accb8c8421ae043efbf0af8c60bea94b77c26d1f37077231a",
+  "harvto-d4-live-peer-unconsumed": "37066ee1011ac0d35277d62a9a35f48733b6585c2471082301d7e02fc549b173",
+  "harvto-d5-silent-completion": "d6356cdad4584fb8d2df531eeb4969b13a2a525d78a4ae4e4f26aa4aaf2b785c",
+  "harvto-d6-readonly-attach": "c8e88b9e41b7f72a15a6104cfbd1530d81ebbfb0866bceeb1f18413754e6542d",
+  "harvto-d7-handoff-identity": "6fbde01a37b0511ed46b466d47c4e65eb41af4742f934f0dcf06fc7a501d0552",
+  "harvto-supervisor-defects": "5ecbfa0212b63a950d0a3d9b44b78ca32368527577a229c61b773c335a419870",
+  "headless-handover": "12b698e4abe64c3f08d4e653e2c8481f8a878ce700ac56d16ab2a986e6c15e0c",
+  "informational-command-no-maintenance": "7cfb284312105eb5231e15bcd5edc8c081d83d423cd2c2fd246a6cc8476a1bb0",
+  "launch-smoke-reservation-binding": "fb96c6a71ffe79913d288e1a91ccc67a92a5ef8debc8252aa25456d83fee08d7",
+  "loop102-launch-hardening": "fc012ddbecdf72473bdda7d2c38b85cb7dcc4e0d62362815c872c015addd5259",
+  "loop57-au-pair-recovery": "2e119e53fab577c149d530b44f1b3f1d885bf891d9b5b2eaad21f062f6fa8c3c",
+  "loop57-pane-model-identity": "66ce413f0557d95286b178a3cc7c0132033fabac03f2b24b3a4f2bf2425c51f3",
+  "loop57-runtime-fixes": "bb765dc43b25ddc946de33e7abe120eaeb172a25b275719efdc0148e7d70f88a",
+  "loop58-runtime-corrections": "60c44e7a712f51405fb389f1980b9c4529b533172b78f6fbaf7b2195cc5283ba",
+  "lower-agent-hardening": "5d67721f1f59e80225cbea6abd55ecdc3602d033018fd6d8db73cf9e4fa421e6",
+  "lower-agent-pane-default": "780bf55b979ec2b351732c2e8248f25c4c34195c341ee7c2fb53e0f7d2419494",
+  "lower-agent-release-integration": "698d4fc7e1cd4c9150b636ff205e1f710dbf44fab99d67f2d50bd84aaac3bfc6",
+  "lower-agent-router": "62adf0ecf67ed5e295d3b8f29895dd316c27e4032d8cd515adc4e680d7046196",
+  "nanny-bounded-inspection": "4740ba4c583b9970790de206d6d0e0370562e3660d54692e8aa0afd92b7f9b54",
+  "project-world-model": "caf411401996cce71eb448ef6001baba8bc95880eaa775e847cb06309912a308",
+  "project-world-model-activation": "390809233706e889fc6d62dc83d21d9a170aad778fc267a7db1c39b4ada4e39f",
+  "project-world-model-validation": "8ce3dd5266449666fae11f9bab10f27e3f6053beba6472260b018b5215b333b4",
+  "readiness-timeout-preservation": "f32fd3722068f2fb8be4424643b158dcc313c4daa28fd4909722c6630df37339",
+  "recon-pane-labels": "37caafb5e76ff4e6ad046cbb761e67b12f15b8cd01997a4751c04135b4bc388d",
+  "recon-pane-signal-density": "7423ec0087bef5ae3321296cf49fdf74722103a6ee8bcff85e21001f6c7cb7ed",
+  "recon-pane-width-followup": "d110ee2e46644199f00cb9e2d9f0bf6fd0af625adc79a19a910ef1c5539b0c12",
+  "review-sender-output-guards": "6da1364b8ebe443bfe6aa5e0a3a52b86c63c10c003ca89ae703d40408bdb4055",
+  "run-lifecycle-teardown": "1408331f0fbc61e8e3295424ae30aa578f545c817a5e869eaeddfa4d81a23a66",
+  "utility-context-capsules": "bb63c7ae30537095f17d5104e29d366d36f2703824b7b5a2a7ac7363d65af80d",
+  "utility-worker-four-slots": "fac119a9bf8bf53fedadc1f9ac8198f912fd4cc01bc27777db9243906820705c",
+  "utility-worker-runaway-guard": "a8c598d7dabe85f093c7b2a5097c3326f0dca075979223929289365a89386192",
+  "worker-routing-integrated-safe-plans": "8c455dca26536f35aabedf8640b080e1b06afb276a5cc8b8aa68c50bd5679740",
+  "worker-routing-live-integration": "4e68b7201a8e7a6e82a84ebf377aa2019de8c121e695d10f11bf778290bef652",
+  "worktree-reaper-hardening": "8143d8604bf328afa6683f6be51644b58886467bd5355de57d670fdf14b152ce"
+}
+```
+
+Updated root PLAN SHA-256 is
+`93aa1c6c468728ed6c56d005f9f51c19a6edb9426e1805faf4ddb64784455ef0`. The prior 255,349 status
+bytes retain SHA-256 `5cf38472c295461b45b7c3079cd56332f16fc64aa28c611bb1451c5b9460b55d`
+and are the exact prefix of this append.
+
+Next: invoke `./harness promote harvto-d8-stale-write-lease` exactly once. Then compare every
+pre-existing task hash, the canonical aggregate, all 12 non-D8 parked bytes, and every expected
+promotion surface before creating contracts.
+
+## 2026-08-17 — D8 promoted exactly once
+
+Result: `./harness promote harvto-d8-stale-write-lease` exited 0 on its sole invocation at
+`2026-08-17T16:27:46Z`. D8 is active/eval-pending and `.harness/current-task` contains exactly
+the D8 ID. No retry or hand repair occurred.
+
+Post-promotion proof:
+
+- `tasks.json` now has 64 records: three active, 59 done, two parked. The only new ID is D8. All
+  63 pre-existing records match their frozen per-record hashes, and the canonical aggregate after
+  excluding D8 remains `7f3b3c5d82632b9ff3af59998b9f0762f57e4df963e760df56aa5922d326f176`.
+- The D8 parked row alone changed to `promoted`, adding `promoted_at` and `run_dir`. The exact
+  aggregate of the other 12 lines remains
+  `6386528049d833594771e46a2c60e5c323b9ad0f693893bbc1cad21d2fe6f5d7`.
+- Exactly one coordination row was appended for D8 `task-start`. Expected D8 artifacts exist:
+  active `meta.json`, pending `eval.json`, task log, parked copy, two memory records, passing
+  pre-task invariant evidence, and debt baseline. The pre-task staging directory was moved away and
+  is absent. No canonical contract or root eval exists yet.
+- Quality scorecard SHA-256 remains
+  `2be47448973aa32fd709c9dfbd86514ef982774ce9d9fcbb5e62433863598091`.
+  Source/test status is clean, root `.loop/` remains 60 untracked files, exact HEAD and empty index
+  are preserved, D6/D7 evidence is unchanged, and utility remains `0/off/0`.
+
+The prior 264,953 status bytes retain SHA-256
+`1d1ccdfe1f258e64732be685f9e63a31d5c0d3e28a6c845e1c947f73580fcae7` and are the exact prefix of
+this append.
+
+Next: create only D8's canonical `spec.md`, `plan.md`, `tasks.md`, `verify.md`, and run
+`plan.md`. No source, test, or red-evidence write before a fresh five-file literal `PLAN PASS`.
+
+## 2026-08-17 — D8 five-contract freeze awaiting review
+
+Result: the canonical D8 contract is complete and planning edits have stopped. Exact implementation
+base remains `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`; the index is empty and there is zero source,
+test, or red-evidence delta.
+
+First frozen SHA-256 set:
+
+- `specs/harvto-d8-stale-write-lease/spec.md`:
+  `98410b6d2b80894dca4e762a8ecb58f0adfb4352ba4b3bf669be35ba987d48d9`
+- `specs/harvto-d8-stale-write-lease/plan.md`:
+  `fe44d6b77d47bcf4ff082b9e6454f888b3a3774305378d15da7d785fb0da360f`
+- `specs/harvto-d8-stale-write-lease/tasks.md`:
+  `8e4a645255c351aeb5d559249df7c2db9e11b894efdb407c8fccbf1355c7c74b`
+- `specs/harvto-d8-stale-write-lease/verify.md`:
+  `a226da299432674b4ed3fc81ad61dd00b243c3f8ac49dd6ed589a29c46320221`
+- `runs/harvto-d8-stale-write-lease/plan.md`:
+  `bd23a38c1758a34e533c341fc87e39a7dc6184b90a3f8e4fcd3f1a478d576821`
+
+The contract distinguishes actor-authority staleness from D10 object-byte drift, requires two valid
+applicable files with only current epoch changed for red, serializes epoch activation against
+validation/mutation/journaling, jointly asserts pre-broker rejection/no event/unchanged bytes, and
+preserves one live-authority apply plus same-authority dedupe replay. Exact implementation scope is
+two production and two test files.
+
+Claude independently confirmed the complete post-promotion boundary in message
+`2f062984-1172-4d8c-8624-3704094074b4`. Root PLAN now identifies the direct founder ruling as the
+Codex user turn headed `URGENT SUPERVISOR CORRECTION`, records its exact "corrects only the false
+plan-only pause" scope, and hashes to
+`d8fd157f1447444b8157894567c86c419a38fd0c7f9d414ef3ff2a5b68af02cc`.
+
+The prior 266,717 status bytes retain SHA-256
+`0e1ca43ca6d28cd0156b38b03f5e544bec550511ed9069bcf3d3cb624e6dc12a` and are the exact prefix of
+this append.
+
+Next: re-derive all five hashes immediately before the review request. Only Claude literal
+five-file `PLAN PASS` naming exact base and every current hash permits source/test/red work.
+
+## 2026-08-17 — D8 contract REVISE cycle 1 corrected and re-frozen
+
+Claude decision `7cc89126-3311-4d82-a9ab-d97f28de655b` returned bounded `REVISE`, cycle 1 of
+the two-cycle D8 cap. No source/test/red authority was granted. Claude independently re-derived the
+first five hashes, exact base, empty index, and clean implementation/evidence scope at verdict time.
+
+The sole blocker was the authority critical-section mechanism: synchronous `withStoreLock` would
+release before an awaited broker apply, while public journaling would re-enter the non-reentrant
+lock and fail busy. Bounded corrections now require:
+
+- async `withUtilityPatchAuthority` retaining and refreshing its owned lock through the awaited
+  broker mutation and journal append;
+- internal `recordUtilityPatchApplicationLocked`, used directly inside the owned section and by
+  the public lock-owning wrapper;
+- a deterministic control proving lock ownership spans the awaited mutation and activation cannot
+  interleave;
+- explicit activation contention semantics: activation advances after release or throws
+  `utility store is busy` at the existing deadline, and never returns `false` for contention.
+
+No scope, red premise, D8/D10 boundary, positive/replay control, mandatory sequence, or exclusion
+changed. Exact base remains `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`; index and
+source/test/red scope remain clean.
+
+Re-frozen SHA-256 set:
+
+- spec: `9665f79e02d16fc0a00a9a293e6d11469119b97cb763edf20e17d7d965954c60`
+- canonical plan: `0bb86fa6713c53db6234b9656edc2c29ba2643e51b927de5b60f097d9c4bd0e7`
+- tasks: `d0eb86685d96b5a876eeccf4e55813da6b941fbff942b3f0ab6f59d10008c898`
+- verify: `304d022f6f5329c303503a4d849ea8b1145a66ff9edd9f9ccdbffea00082a3c3`
+- run plan: `ad9b66f40e0590527740228365148ebacd16aeda26e87bdc7c13eeba06a6c482`
+
+The prior 268,769 status bytes retain SHA-256
+`08901650e4272c6afe77ee85918292a1a056480b0ae445ac9c788a060a694129` and are the exact prefix of
+this append.
+
+Next: re-derive the complete set immediately before one fresh full review request. A second
+non-converged `REVISE` stops and escalates; only literal exact-base/five-hash `PLAN PASS` permits
+source/test/red work.
+
+## 2026-08-17 — Run87 governed preparation at D8 cycle-2 review gate
+
+Governess decision `42c117ea-c7ff-47cf-a441-65933c48cc4d` placed Claude at its preparation
+threshold and ordered no new broad slice. The current atomic step is sealed without implementation.
+
+Current objective and blocker:
+
+- D8 is active/eval-pending after exactly one promotion. The sole next authority gate is Claude
+  literal five-file `PLAN PASS` at exact base
+  `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`.
+- Cycle-2 request `2c7b535f-8580-47d6-bb66-4558fce41e20` is queued with exact hashes spec
+  `9665f79e02d16fc0a00a9a293e6d11469119b97cb763edf20e17d7d965954c60`, canonical plan
+  `0bb86fa6713c53db6234b9656edc2c29ba2643e51b927de5b60f097d9c4bd0e7`, tasks
+  `d0eb86685d96b5a876eeccf4e55813da6b941fbff942b3f0ab6f59d10008c898`, verify
+  `304d022f6f5329c303503a4d849ea8b1145a66ff9edd9f9ccdbffea00082a3c3`, and run plan
+  `ad9b66f40e0590527740228365148ebacd16aeda26e87bdc7c13eeba06a6c482`.
+- No cycle-2 verdict has arrived. Cycle-1 `REVISE`
+  `7cc89126-3311-4d82-a9ab-d97f28de655b` was bounded and fully corrected. A second non-converged
+  `REVISE` stops and escalates.
+
+Exact changed scope:
+
+- Tracked: root `PLAN.md`, append-only `status.md`,
+  `loop-fork/.harness/parked-ideas.jsonl`, `loop-fork/.harness/tasks.json`, and
+  `loop-fork/agents/coordination.jsonl`.
+- D8-owned untracked: `loop-fork/.harness/current-task`, generated D8 run artifacts, and five
+  canonical contract files. Inherited root `.loop/`, D6/D7 red, and formatter artifacts remain
+  preserved.
+- Zero delta under source, tests, D8 red, and root D8 eval. Index remains empty. No test command,
+  staging, commit, close, helper, utility job, or remote action occurred after promotion.
+
+Checks/results: post-promotion record/line/surface reconciliation passed and was independently
+confirmed by Claude; cycle-2 first/pre-send hashes matched; scoped diff check passes; Run87 identity,
+exact HEAD, D6/D7 evidence, root `.loop/` count, and utility `0/off/0` remain valid. Root PLAN now
+contains the full preparation position and hashes to
+`d81fb7fa2155cf23edf967f6ef79182505dc4d20a547364117379df2722f087a`.
+
+Risk: a queued review, root-plan PASS, cycle-1 REVISE, or handover is not source/test/red authority.
+Never promote D8 again, never start D9, and never mutate implementation/evidence before literal
+cycle-2 `PLAN PASS`.
+
+The prior 270,943 status bytes retain SHA-256
+`dce4380f3bd5f01ad5fb340dbca990230a2695a313f9d3a6e1f2e6d568cf3383` and are the exact prefix of
+this append.
+
+Next bounded action: governed successor revalidates HEAD/index/utility/Harness and all five hashes,
+then drains or reissues the complete cycle-2 review without changing contract bytes. On exact
+`PLAN PASS`, use G4 exact staging and a five-file plan-freeze commit before red. On a second
+non-converged `REVISE`, stop and escalate.
+
+## 2026-08-17 — D8 literal five-file PLAN PASS received
+
+Claude decision `d2ffde2c-950a-43b7-bb85-269e9e96af1a` is literal `PLAN PASS` for exact
+implementation base `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9` and exactly the frozen D8
+five-hash set. It grants the G4 plan-freeze commit, then exact-base red and bounded changes only in
+`utility-store.ts`, `utility-runtime.ts`, `utility-store.test.ts`, and
+`utility-runtime.test.ts`. It is not implementation approval; a later exact-SHA `PASS` remains
+mandatory.
+
+Verdict-receipt checks pass:
+
+- All five current hashes remain spec
+  `9665f79e02d16fc0a00a9a293e6d11469119b97cb763edf20e17d7d965954c60`, canonical plan
+  `0bb86fa6713c53db6234b9656edc2c29ba2643e51b927de5b60f097d9c4bd0e7`, tasks
+  `d0eb86685d96b5a876eeccf4e55813da6b941fbff942b3f0ab6f59d10008c898`, verify
+  `304d022f6f5329c303503a4d849ea8b1145a66ff9edd9f9ccdbffea00082a3c3`, and run plan
+  `ad9b66f40e0590527740228365148ebacd16aeda26e87bdc7c13eeba06a6c482`.
+- Exact HEAD is unchanged, index is empty, source/tests have zero delta, D8 red remains absent,
+  Harness remains active/pending for D8, and utility remains `0/off/0`.
+- No planning byte changed between the cycle-2 request and verdict. Claude independently read all
+  five complete files and re-derived the same hashes at verdict receipt.
+
+Governess preparation decision `42c117ea-c7ff-47cf-a441-65933c48cc4d` still governs turn scope.
+The current atomic review step is complete; no staging, freeze commit, regression, red capture,
+test, source edit, close, helper, or remote action followed the verdict.
+
+Root PLAN now records the satisfied gate and exact G4 next action at SHA-256
+`d68148eb674b59537cdd34208fb108da6e16d7d2a02c895fc16c6502c036565a`. The prior 273,798 status
+bytes retain SHA-256 `1983a22ba4d77cb49e37620bfbc18d7f33a9116352799c0b9a11f91184fd0b6e`
+and are the exact prefix of this append.
+
+Next bounded action for the governed successor: revalidate every boundary and five hashes; perform
+G4 exact-path staging and the dedicated five-file plan-freeze commit; re-derive all reviewed
+SHA-256 values from the commit; only then add and run the named exact-base red regression.
+
+## 2026-08-17 — Formal Run87 handover epoch `1786982819498431`
+
+Governess handover decision `58598f15-be1a-4f57-9bd3-cdba1e0b7452` requires a graceful
+fresh-loop handover. The current atomic D8 review gate is complete and no new slice has begun.
+Codex will publish exactly one ready bundle only after this ledger append, then exit without
+staging, commit, push, merge, deploy, discard, cleanup, test, red capture, or implementation.
+
+Objective completed in Run87:
+
+- Direct founder authority made Run87 executable. The inherited boundary was fully revalidated.
+- D8 was promoted exactly once at `2026-08-17T16:27:46Z`; every pre-existing task record and
+  non-D8 parked line remains unchanged.
+- The canonical five-file contract was created, received bounded cycle-1 `REVISE`, was corrected
+  without scope widening, and received literal cycle-2 `PLAN PASS`
+  `d2ffde2c-950a-43b7-bb85-269e9e96af1a`.
+- Verdict-receipt hashes match exactly; source/tests remain clean, D8 red and root eval remain
+  absent, index is empty, D8 is active/pending, and utility remains `0/off/0`.
+
+Exact dirty scope to preserve:
+
+- `PLAN.md`
+- `status.md`
+- `loop-fork/.harness/parked-ideas.jsonl`
+- `loop-fork/.harness/tasks.json`
+- `loop-fork/agents/coordination.jsonl`
+- `.loop/`
+- `loop-fork/.harness/current-task`
+- `loop-fork/specs/harvto-d8-stale-write-lease/`
+- `loop-fork/runs/harvto-d8-stale-write-lease/`
+- `loop-fork/runs/harvto-d6-readonly-attach/artifacts/red/`
+- `loop-fork/runs/harvto-d7-handoff-identity/artifacts/red/`
+- `loop-fork/runs/harvto-formatter-evidence-scope/artifacts/`
+- `loop-fork/runs/harvto-formatter-evidence-scope/memory/`
+- `loop-fork/runs/harvto-formatter-evidence-scope/parked-idea.md`
+
+Checks/results: exact HEAD `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`; empty index; current
+five hashes `9665f79e…`, `0bb86fa6…`, `d0eb8668…`, `304d022f…`, and `ad9b66f4…`;
+scoped diff check passes; Harness reports D8 active/pending; D8 red absent; exact utility environment
+`0/off/0`; inherited D6/D7 red and root `.loop/` preserved. No test suite ran because source/red
+authority opened only after the preparation stop.
+
+Blockers and risks: Governess cannot launch the successor until both valid epoch-bound bundles exist
+and both agents exit. A lone or malformed bundle, wrong epoch/HEAD, changed contract byte, staged
+path, or missing agent exit blocks replacement. The PLAN PASS authorizes G4 freeze then red; it is
+not implementation approval. Never promote D8 again, start D9, or edit source/test/red before the
+reviewed plan-freeze commit.
+
+Root PLAN is final for handover at SHA-256
+`1a489294a276b1aa208f97dd65af4aba3db02d8caa8e6952416cb7a44db5bd46`. The prior 275,960 status
+bytes retain SHA-256 `2da6032fb81417c84dfe52fbf385e71c8fc628cba99bed821382fd220a99ae0b`
+and are the exact prefix of this append.
+
+Next: successor validates both epoch-`1786982819498431` bundles, exact HEAD/index/dirty scope,
+utility/Harness/five hashes, and PLAN PASS identity. Then perform G4 exact-path staging and the
+dedicated five-file plan-freeze commit; re-derive all five reviewed SHA-256 values from the commit;
+only then add and run the named exact-base red regression.
+
+## 2026-08-17 — Formal handover decision-ID correction
+
+After the first bundle write, Claude handover message `a1feaf9e-0dbf-4cdc-b1d8-b98b684b3140`
+identified that four ledger references had truncated the final `a` from the literal PLAN PASS
+decision ID. Exactly the two affected references in root `PLAN.md` and the two affected references
+in this status ledger now resolve to the complete decision
+`d2ffde2c-950a-43b7-bb85-269e9e96af1a`. No canonical D8 contract byte changed; all five reviewed
+SHA-256 values remain exact. This necessary correction supersedes the preceding claim that the
+first 275,960 status bytes remained byte-identical: their corrected SHA-256 is now
+`4a6c5d70551ebc4aa80f980c271facde9f5d46731f588f54c67c88e289d79766`.
+
+Root PLAN after the decision-ID correction has SHA-256
+`0095a0e25082ea9125d24f9a83584d4f7649ce98d756f0bb4a1f007c950482f8`. The 279,141 status bytes
+before this correction note have SHA-256
+`bb029a2bc3719d4f53df12ac888b7d8e127bfd730cddbe6ea18800193cb40202` and are the exact prefix of
+this append. The epoch bundle is regenerated only after this note and remains the final filesystem
+write for the handover.
+
+## 2026-08-17 — Run88 plan-only successor validation
+
+Result: Run88 execution plan recorded; implementation remains blocked by incomplete successor
+identity and a PLAN PASS ID mismatch. Only root `PLAN.md` and this append-only status entry changed
+in this session.
+
+Current state:
+
+- Both Run87 ready bundles validate for epoch `1786982819498431`, agents Claude/Codex, exact HEAD
+  `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`, matching 14-entry dirty scope, and manifest-recorded
+  digests `7957ab3f…ebf7` / `aa14ce5e…b8f2`. Live HEAD and dirty scope match; index is empty.
+- D8 is the sole promoted campaign task at active/eval-pending; D9-D12 have no task records.
+  Source/tests have zero delta. D8 has not been promoted again.
+- All five D8 contract hashes match both bundles exactly: `9665f79e…c60`, `0bb86fa6…0e7`,
+  `d0eb8668…898`, `304d022f…3c3`, and `ad9b66f4…482`. Both lowercase `plan.md` paths are ignored by
+  `loop-fork/.gitignore:3:PLAN.md`; the other three are not ignored.
+- Root `.loop/` remains 60 untracked files. D7 red remains six untracked immutable files and its
+  `SHA256SUMS` validates all five payloads. Utility environment is exact `0/off/0`.
+- Run88 manifest is only `running/submitted`; it lacks tmux identity, launch identity, charter,
+  world model, Git HEAD, and Governess epoch. No identity was inferred or repaired.
+
+Proof/checks run: bundle JSON predicates and digests; cross-bundle epoch/agent/HEAD/dirty equality;
+Git HEAD/index/status/source-test scope/diff check; five SHA-256 and ignore provenance checks;
+Harness counts/current-task; utility environment; root `.loop/` count/tracking; D7 checksum
+verification; Run88 manifest and artifact inventory. No tests ran because this session is plan-only.
+
+Open question/blocker: task text names `d2ffde2c-950a-43b7-bb85-269e9e96af1`, but both bundles and
+corrected ledgers name full literal PLAN PASS `d2ffde2c-950a-43b7-bb85-269e9e96af1a`. G4 must not
+start until supervisor confirms the trailing-`a` bundle identity and Governess supplies a complete
+manifest-backed successor.
+
+Risks: hand-repairing malformed Run88, inferring authority from Run87/default tmux state, staging
+root ledgers or ignored evidence during G4, accepting plan review as implementation approval,
+rewriting frozen D7 red, or starting D9 before D8's close/bookkeeping/two-bundle handover.
+
+Next step: obtain one complete Governess-created successor manifest plus confirmation that
+`d2ffde2c-950a-43b7-bb85-269e9e96af1a` governs. Then revalidate Phase 0 and perform only G4's exact
+five-file plan-freeze sequence before any red or implementation work.
+
+## 2026-08-17 — Run88 bootstrap revalidation correction
+
+Result: current plan corrected; execution remains fail-closed. This plan-only slice changed only
+root `PLAN.md` and this append-only status suffix. No staging, commit, review request, test, red
+capture, source/test edit, Harness transition, helper route, successor action, or remote action ran.
+
+Bootstrap proof:
+
+- Codex charter SHA-256 matches required
+  `7b952118c6e548b895d1ca118306686703dd777795c4b8a6301ffaa054a8665c`; all 4,946 lines were read.
+- World-model bootstrap bytes hash to
+  `2aa7adcfbdc4ed94d1bb6ad64f9b19c95045fda4d6af3f4b981803e7d77aae35`, declare capsule
+  `7443dc4c0c3dcf099423637317722a7b6597bb9f5e723b35d260b960677b230c`, and contain 259
+  `commitSha` fields whose sole value is exact HEAD
+  `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`.
+- Constitution was read completely before plan mutation.
+
+Plan corrections:
+
+- R1 now distinguishes three raw file digests from the manifest's code-defined canonical
+  self-digest. Raw `manifest.json` SHA-256 is
+  `0a96ebe50cd723fe46f0570f6ec872003f42777a688f005e3caab191f98a5982`; canonical compact JSON
+  excluding `createdAt` and `digest` re-derives exact embedded digest
+  `a1106cd5963f54b1da2e815a31baab11b50477da3c993c57a271c1df66988b2c`.
+- R10 now reads the actual shape: `loop-fork/.harness/tasks.json` is an object whose `.tasks` array
+  contains 64 records. D8 is the one matching `.tasks[]` record; D9-D12 have no task records.
+- Run88 manifest SHA-256 is
+  `73d9519fa71e1dde14798ced195b1ca5a094eee350398e5d3fecb858f8a0acd3` at `updatedAt`
+  `2026-08-17T17:17:36.614Z`. Bootstrap populated launch charters, launch identity, world-model
+  binding, flat tmux socket/session/panes, and Claude/Codex session identifiers after the initial
+  plan review. It still has no top-level `gitHead`, no `governessEpoch`, and no utility state.
+  Explicit R4 authority therefore still rejects Run88 for execution and requires Governess to
+  create a complete run89+ successor. Manifest and pid `38920` remained untouched.
+
+Preservation proof:
+
+- Run87 Claude/Codex bundle hashes remain `7957ab3f…ebf7` and `aa14ce5e…b8f2`; continuation remains
+  `da139fa8…82c`; both bundles are ready for epoch `1786982819498431`, exact HEAD, and the same
+  14-entry `dirtyFiles` set as live `git status --porcelain`.
+- HEAD is exact and index empty. Source/test delta is zero. All five D8 contract hashes remain
+  `9665f79e…c60`, `0bb86fa6…0e7`, `d0eb8668…898`, `304d022f…3c3`, and `ad9b66f4…482`.
+- Ignore proof emits exactly two `loop-fork/.gitignore:3:PLAN.md` lines. D7 `SHA256SUMS` remains
+  5/5 `OK`; root `.loop/` remains 60 files and zero tracked paths; D8 remains active/pending.
+
+Root `PLAN.md` now hashes to
+`0a031233e459c1b5551ad0ff84c1b2f3e4ab24ad50932da6898bd50f4cea676d`. The prior 282,922 status
+bytes hash to `da879efbf90feab23f64bf1a0a8978b883eba5df386c79f6a4f81fbc7b6ab52f` and are the exact
+prefix of this append.
+
+Blockers remain two fail-closed predicates: no complete Governess-created run89+ successor exists,
+and no supervisor confirmation says bundle-backed PLAN PASS
+`d2ffde2c-950a-43b7-bb85-269e9e96af1a` governs over the truncated task-text form. Until both are
+resolved, do not stage G4 or begin red/implementation work.
+
+## 2026-08-17 — Supervisor ruling validates Run88 and discharges Phase 0
+
+Result: live supervisor ruling corrects the false Phase-0 pause. Run88 is the complete executable
+successor under the recorded manifest schema; no Run89 or further founder input is required.
+Bundle-backed Claude `PLAN PASS` `d2ffde2c-950a-43b7-bb85-269e9e96af1a` governs, and truncated
+task-text form `d2ffde2c-950a-43b7-bb85-269e9e96af1` is superseded.
+
+Positive validation before any index mutation:
+
+- Manifest `launchIdentity` and `workspaceBinding` bind run `88`, exact workspace/repo/branch,
+  Codex `gpt-5.6-sol`/`xhigh` driver, and Claude `opus`/`high` reviewer. Claude/Codex agent IDs are
+  present. Launch-charter bytes reproduce exact recorded hashes
+  `9aa946f6…94e7` and `7b952118…a8665c`.
+- `worldModel.commitSha` equals live HEAD `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`;
+  context/capsule hashes reproduce `2aa7adcf…aae35` and `7443dc4c…30c` with all 259 embedded
+  `commitSha` fields equal to HEAD.
+- Manifest-recorded socket `/private/tmp/tmux-501/default` and session `agents-collab-loop-88`
+  resolve panes `%0` through `%5`; every pane reports `pane_dead=0`.
+- Pane `%3` process environment prints exactly `LOOP_UTILITY_ENABLED=0`,
+  `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0`. Run88 `utility/` contains only
+  `epoch`; its value and `governess-state.json` `governessEpoch` both equal `1786987056640178`.
+  No utility job, result, context, delegation, or helper artifact exists. Governess
+  `exitControl.mode` is `idle` and records Codex as current driver-lease holder.
+- Run87 handoff digests, canonical manifest digest, epoch, exact HEAD, and both 14-entry
+  `dirtyFiles` sets remain valid. Live index is empty; source/test delta is zero; D8 is active with
+  eval pending; D9-D12 have no task records; D7 frozen red remains 5/5 `OK`; root `.loop/` remains
+  60 files and zero tracked paths.
+
+The absent top-level `gitHead`, `governessEpoch`, and `utilityState` names cited by the prior pause
+are not fields required by the actual manifest schema. Supervisor authority supersedes only that
+pause, R4's Run89 disposition, and the PLAN PASS identity question. Every other reviewed control
+remains binding.
+
+Root `PLAN.md` now hashes to
+`7743867852e9972b03417f88571bbaaa4a36121729b37f8084f17fac15b43ba6`. The prior 286,189 status
+bytes hash to `54d20c2f1e931b0371a506326414ebe4ac2ba1f554a4d2c5d5c2355955b15cad` and are the exact
+prefix of this append.
+
+Next: perform only G4. Re-derive all five reviewed D8 hashes, require exact two-line ignore
+provenance, stage exactly the five contracts, inspect the full cached diff, pass cached diff check,
+create one dedicated plan-freeze commit without amendment, then re-derive all five SHA-256 values
+from committed bytes and prove the index empty before any red work.
+
+## 2026-08-17 — D8 G4 five-file plan freeze complete
+
+Result: dedicated G4 plan-freeze commit
+`089cd5b83a421e74facd67e9c7eb7c1c098bb54a` is complete on exact parent
+`66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`. It was created once without amendment and contains
+exactly five reviewed contract additions, 330 insertions, and no other path.
+
+Pre-commit proof:
+
+- The first pre-stage shell wrapper stopped before staging because zsh variable `path` replaced its
+  command-search array and produced `shasum: command not found`. Index remained empty. The corrected
+  wrapper used `file_path` and passed; no review or lifecycle predicate was retried after a state
+  mutation.
+- All five worktree hashes reproduced exact PLAN PASS values. Combined `git check-ignore -v`
+  output was exactly two lines, both `loop-fork/.gitignore:3:PLAN.md`, for the two lowercase
+  `plan.md` files and zero lines for `spec.md`, `tasks.md`, and `verify.md`.
+- HEAD/base, empty index, zero source/test delta, both Run87 `dirtyFiles` set comparisons, D8
+  active/pending identity, absent D9-D12 records, root `.loop/`, D7 frozen red, live Run88 panes,
+  equal utility/Governess epoch, and pane `%3` `0/off/0` all passed immediately before staging.
+- Force-add was limited to the two reviewed `plan.md` paths; plain exact-path add was limited to
+  `spec.md`, `tasks.md`, and `verify.md`. Cached pathset was exactly those five. Full cached diff was
+  reviewed; cached normal and ignore-all-space numstats both reported 330 additions; cached diff
+  check passed. Each index byte stream re-derived its reviewed SHA-256 before commit.
+
+Committed-byte proof:
+
+- `git diff-tree` reports exactly the five reviewed paths. Parent is exact reviewed base. Commit
+  check passes.
+- `git show 089cd5b83a421e74facd67e9c7eb7c1c098bb54a:<path> | shasum -a 256`
+  re-derives spec `9665f79e…c60`, canonical plan `0bb86fa6…0e7`, tasks `d0eb8668…898`, verify
+  `304d022f…3c3`, and run plan `ad9b66f4…482`.
+- Post-commit index is empty. Source/tests and tracked flat intake stub have zero delta. D8 remains
+  active/eval-pending. D7 red is 5/5 `OK`; root `.loop/` remains 60 untracked files; all Run88 panes
+  remain live; utility/Governess epoch match and pane `%3` remains `0/off/0`.
+
+No regression, red capture, test, implementation edit, Harness transition, exact-SHA implementation
+review, close, helper route, or remote action ran. G4 is plan durability only, not implementation
+approval.
+
+Root `PLAN.md` now hashes to
+`365c4e6390ed469ad087e2a42cc7c84b67b5a52eaad8bfbd6a259ba49de2ffa3`. The prior 289,028 status
+bytes hash to `faaff1468a786824954d688b8a67e80889c780d128f4e276d2e6873f63d9c4f1` and are the exact
+prefix of this append.
+
+Next bounded action: a fresh execution slice revalidates freeze commit, empty index, frozen hashes,
+Run88 authority, utility controls, Harness state, and preserved evidence, then adds only the named
+exact-base D8 regression and captures the six-file checksum-frozen red. No production edit starts
+before decisive red.
+
+## 2026-08-17 — Claude zero-write G4 validation received
+
+Claude returned literal `G4 VALID` in bridge decision
+`775e0fa9-451a-4ff8-944f-18959bb5e911`, replying to post-commit request
+`eb04a22d-bbae-4e92-a35a-881fde7a9eb3`. The verdict independently confirms exact plan-freeze
+commit `089cd5b83a421e74facd67e9c7eb7c1c098bb54a`, parent `66fd1e13745832cfb959e9fb1b3fb295f2ba5ee9`,
+single-write/no-amend history, exact five-path and 330-insertion scope, all five reviewed
+committed-byte SHA-256 values, empty index, zero source/test delta, preserved evidence, unchanged
+Harness state, and append-only status provenance. Claude made zero writes and reported no blockers.
+
+This verdict closes only G4 durability. It is not an implementation `PASS` and grants no source,
+test, Harness-close, or bookkeeping authority. Phase 2 has not started in this slice.
+
+## 2026-08-17 — D8 Phase 2 exact-base red frozen
+
+Result: the sole reviewed regression
+`D8 stale utility write authority rejects before two-file mutation` reproduced the imported D8
+premise decisively at plan-freeze HEAD `089cd5b83a421e74facd67e9c7eb7c1c098bb54a`. Before the edit
+and again at capture, production files `utility-store.ts` and `utility-runtime.ts` were byte-equal
+to the freeze at SHA-256 `665b93b3…c6cc` and `ac5fb496…46c3`; the index was empty.
+
+Only `tests/loop/utility-runtime.test.ts` changed, by 181 additions and zero deletions. Its
+deterministic fixture routed, claimed, completed, and created one broker-validated aggregate patch
+for lease `d161e3d6` at route/claim epoch 30. The two ordinary targets were present; exact preimages,
+target set, aggregate patch hash, and Git applicability passed before epoch advancement. The test
+then represented ruling `sup-187-util-dead` by changing only current utility epoch to 31.
+
+The exact reviewed command exited 1 because unchanged production resolved `applied`, mutated both
+files from their recorded preimage SHA-256 values to the proposed postimage values, and appended
+one `patch-applied` event. This is the required D8 actor-authority red, not a D10 target, preimage,
+manifest, patch-hash, or applicability rejection. No production, control-only, Harness, eval,
+dependency, helper, remote, or lifecycle edit ran.
+
+Frozen red is exactly six files under
+`loop-fork/runs/harvto-d8-stale-write-lease/artifacts/red/`. Manifest `SHA256SUMS` hashes to
+`44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8` and validates the other
+five files 5/5. `fixture.patch` is byte-identical to the live test diff and hashes to
+`1289acf8fba0f154c473bc3366f60664bba6bb0a9f2dbe170db7ddeae8244e85`; `output.txt` hashes to
+`606bf156bb1f9e4f5e3c3161f00c1049db1acb7b945a49b8177ab243224e6c96`. Independent output
+semantics, fixture JSON, production/base, test-file, numstat, exact-file-set, diff-check, and empty
+index checks all pass. The evidence is marked `recapture_allowed: false`.
+
+The prior 292,903 status bytes hash to
+`a28c756dfb2b54f779886e23f0ba7ebbaa0a4e9cdd2f783fb1ffea487df2c7de` and are the exact prefix of
+this append.
+
+Next gate: one Claude zero-write validation of this frozen red evidence. Do not edit
+`loop-fork/src` until Claude validates the exact six-file manifest, fixture/test diff, output, and
+unchanged-production proof. If validation revises the evidence, preserve the first run and correct
+bookkeeping only; never rerun or manufacture a different red.
+
+## 2026-08-17 — Claude zero-write D8 red validation received
+
+Claude returned literal `RED VALID` in decision
+`3c815df5-475e-431b-a49a-7a8444b80da3`, replying to review request
+`7a641134-03ae-49e6-9218-5de6711c494e`. The zero-write review independently confirmed exact G4
+HEAD and empty index; the sole 181/0 test delta; exact six-file set and 5/5 checksum manifest;
+byte-identical `fixture.patch`/live diff; command/output correspondence; unchanged production bytes
+against both implementation base and freeze; recomputed fixture pre/postimage hashes; and the
+route/claim 30 versus current 31 stale-authority premise.
+
+The reviewer derived that this red cannot be a D10 artifact: real broker proposal creation proved
+targets, preimages, aggregate patch hash, and Git applicability before the sole epoch change, while
+the observed `applied` result, exact postimages, and one `patch-applied` event prove every guarded
+object-integrity check passed. The verdict grants Phase 3 only and is not an implementation `PASS`.
+Frozen red remains immutable.
+
+Non-blocking hardening accepted for implementation: strengthen the same named regression to require
+the specific stale-authority rejection and exclude `utility store is busy` or D10-style errors, so
+an unrelated throw cannot create a false green. This stays within the already reviewed runtime-test
+path and does not alter or recapture frozen evidence.
+
+The prior 295,451 status bytes hash to
+`e80729448b55b5abee34ccfe0c342cb58a9ce49a2bb6fde21b9d79e2b7328f7b` and are the exact prefix of
+this append.
+
+Next: implement only the reviewed Phase 3 scope in `utility-store.ts`, `utility-runtime.ts`,
+`utility-store.test.ts`, and `utility-runtime.test.ts`. Preserve the awaited authority critical
+section, locked application journaling, stale/missing/mismatched rejection, activation ordering,
+valid apply, and replay controls. No other production or test path is authorized.
+
+## 2026-08-17 — D8 implementation and mandatory verification green
+
+Phase 3 is implemented within exactly the two reviewed production files and two reviewed test
+files. `utility-store.ts` now provides an awaited, periodically refreshed authority lock with
+owned-lock identity checks, validates current utility epoch plus routed-utility and persisted-claim
+authority, and journals application through a lock-held internal helper. `utility-runtime.ts`
+places broker construction, workspace mutation, and application journaling inside that authority
+section. Stale authority therefore rejects before broker construction or target mutation, while
+same-authority replay remains idempotent.
+
+The hardened named D8 regression passes with 14 assertions. Final focused suites all pass:
+utility-store 21 tests/68 assertions, utility-runtime 57/298, utility-tools 49/178,
+utility-workspace 13/33, and bridge-utility 5/14, for 145 tests and 591 assertions with no failures.
+The awaited-lock, competing activation, exact contention/busy identity, stale-authority rejection
+identity, and repeated-apply controls all pass.
+
+The first mandatory `bun run check` attempt is preserved as exit 1 with eight bounded lint/format
+findings. Corrections touched only reviewed files; both affected focused files passed again. The
+fresh mandatory sequence is fully green: `bun run check` exit 0 across 189 files with no fixes;
+explicit TypeScript compile exit 0; build exit 0 across 3,051 modules; and a fresh terminal
+`bun run test:ci` exit 0 across all 79 sorted, certification-mode serial files. The earlier yielded
+test capture whose terminal exit was not retained is recorded as inconclusive and is not counted
+green. Certified file-list SHA-256 is
+`465e9b1a9c34f66a618e581a2573188e61491ad3617af343fd18d46788d590ee`; certification-command
+SHA-256 is `93c4fe26332ef70b15bb1da5ebb21dc0dc2f586a329c4a489da32e3e3c1361d3`.
+
+Both empty-baseline evals validate and remain verdict `pass`: task-local eval SHA-256
+`51956fe137b563fb7b472b6e4d9520cd1c376b44b64491617325cdd8f1272d61`, root eval SHA-256
+`e06aa76048173630967f0e30d2b9c654a9f370f0deaf1a97ce3edbbd630469de`. Harness preflight and
+stop-gate both pass without closing D8. The sealing root verifier
+`./scripts/verify.sh harvto-d8-stale-write-lease harvto-d8-stale-write-lease` exited 0 through lint,
+typecheck, build, all certified tests, baseline allowlist, and `verify.sh complete`.
+
+Structured durable evidence is
+`loop-fork/runs/harvto-d8-stale-write-lease/artifacts/verification/final-gates.json`, SHA-256
+`86122cae4c0be0f89df74507694076e7abffff56d41de3d1072215f95fb3fe40`. It records commands,
+exits, counts, exact implementation/eval/red digests, the real failed and inconclusive attempts,
+and normal versus ignore-all-space numstats. Frozen red remains 5/5 under manifest SHA-256
+`44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8`.
+
+The prior 297,372 status bytes hash to
+`166dfd55fca98fca50578019df6f8bab54d0f167d628b0dc7033adc0ded646fe` and are the exact prefix of
+this append. No commit, exact-SHA implementation review, Harness close, helper route, dependency
+change, remote action, or out-of-scope production/test edit has occurred in this phase.
+
+Next: audit the complete four-file diff, stage exactly those four paths, prove staged bytes and
+scope, create the single no-amend implementation commit, then request Claude's zero-write exact-SHA
+`PASS`/`REVISE`. D8 remains active until that review passes and governed closure completes.
+
+## 2026-08-17 — D8 exact four-file implementation commit created
+
+Created one no-amend implementation commit
+`ece4c6eb92a9bc61034d181868c5cd9287bffb6e` (`fix(d8): fence stale utility patch authority`),
+with direct parent plan-freeze commit `089cd5b83a421e74facd67e9c7eb7c1c098bb54a`. The commit contains
+exactly the reviewed four-path set and reports 748 insertions, 77 deletions:
+
+- `loop-fork/src/loop/utility-runtime.ts` — SHA-256
+  `56b61f6dfcaf507d6762be748f389c79a15ea31104cb727baf989adbf61cd441`
+- `loop-fork/src/loop/utility-store.ts` — SHA-256
+  `f07544ae2311666f5336b9f1cb4b001a4435cafb8d747f76372fd3a53c203632`
+- `loop-fork/tests/loop/utility-runtime.test.ts` — SHA-256
+  `8ee40fee282cf3df985956e767c57c54ab4ec83d51d67afa340f218b40244514`
+- `loop-fork/tests/loop/utility-store.test.ts` — SHA-256
+  `8d1fbc93aeef14e7cad767cd55ba6b362e03161f50708d959aa35c54afb76672`
+
+Before commit, the cached name set exactly matched those four paths and
+`git diff --cached --check` passed. Normal and ignore-all-space numstats matched the frozen gate
+record. A read-only staged-hash report initially used zsh's special `path` parameter and therefore
+lost command lookup after the already-successful staging/scope/diff-check steps; it changed no
+file or index byte. The corrected proof then revalidated the exact cached set, clean cached diff,
+all four staged hashes, and expected stat before commit.
+
+After commit, the index is empty and all four reviewed worktree paths are clean. Committed-byte
+hashes match the gated source/test bytes exactly. Both pass eval hashes are unchanged, and frozen
+red still validates 5/5 under manifest SHA-256
+`44715c5e89a175266fc3c017f000d64304e244ce6d042f396a32e93fdda12ef8`. Commit-bound evidence is
+`loop-fork/runs/harvto-d8-stale-write-lease/artifacts/verification/implementation-commit.json`,
+SHA-256 `dfb6216740c3e3aee9437a5e55fe56c4e96cdbf535c474e7352f2af9cbff48a6`.
+
+The prior 300,866 status bytes hash to
+`1e17400e8b00f492f38ab039102d805dfc5ca150b5fce123ea2a2f152ba8bea4` and are the exact prefix of
+this append. No eval, red/verification evidence, PLAN/status, Harness, coordination, contract, or
+other bookkeeping path was included in the implementation commit. Harness remains active; no close
+has run.
+
+Next gate: one Claude zero-write exact-SHA review of commit
+`ece4c6eb92a9bc61034d181868c5cd9287bffb6e`, with literal `PASS` or bounded `REVISE`. Only exact-SHA
+`PASS` grants the one D8 close.
+
+## 2026-08-17 — Governess preparation checkpoint during exact-SHA review
+
+The exact-SHA zero-write review request was accepted for Claude as
+`3f9108d9-5094-44bf-8c7e-1e2f0fb5aef1`, bound to implementation commit
+`ece4c6eb92a9bc61034d181868c5cd9287bffb6e`, its direct plan-freeze parent, exact four committed
+paths and blob hashes, frozen red, focused/mandatory gates, both eval hashes, and required literal
+`PASS`/bounded `REVISE`. Bridge delivery is healthy with no dead letters or pending transport
+failure. Live Governess state showed Claude working under pane label `artifact verification`.
+
+Before a verdict arrived, Governess issued preparation decision
+`bf69d162-56e6-4d8c-81c9-1e996b707cb4`: Claude reached the profile preparation threshold while the
+review remained the current atomic step. Per that decision, root `PLAN.md` now records the current
+objective, exact committed scope, green checks/results, pending-review blocker, risks, and the sole
+bounded next action. No broad new slice has started.
+
+The implementation commit, empty index, clean four reviewed worktree paths, pass evals, frozen red,
+active Harness task, and all uncommitted bookkeeping/inherited evidence remain preserved. No amend,
+close, bookkeeping stage/commit, D9 action, handover launch, compact, helper route, or remote action
+ran. The only blocker is the not-yet-emitted exact-SHA verdict; liveness, UI state, and silence do
+not imply approval.
+
+The prior 303,313 status bytes hash to
+`37cee9885c9f80fe3ba99cf689389adf56cf683a1f1c9c614e298dfc16ac90c8` and are the exact prefix of
+this append.
+
+Next bounded action: receive and validate Claude's exact-SHA `PASS`/`REVISE` for
+`ece4c6eb92a9bc61034d181868c5cd9287bffb6e`, then durably record only that atomic result. Do not
+close D8 or begin a new slice before the verdict; Governess alone may start a fresh-loop handover.
+
+## 2026-08-17 — Claude exact-SHA D8 implementation PASS received
+
+Claude returned literal zero-write `PASS` in bridge decision
+`1d2f0750-54de-41ba-8c03-bf69c2c4aa00`, replying to review request
+`3f9108d9-5094-44bf-8c7e-1e2f0fb5aef1`, and explicitly naming exact implementation commit
+`ece4c6eb92a9bc61034d181868c5cd9287bffb6e`. The verdict grants exactly one D8 Harness close plus
+one separate bookkeeping commit, and nothing else.
+
+The reviewer independently proved the direct plan-freeze parent, one-commit/no-amend history,
+exact four-path scope, clean commit diff, empty index, clean reviewed worktree paths, all four
+committed-byte hashes, and reconciled normal/ignore-all-space numstats. It reconstructed the frozen
+red-era test from `fixture.patch`, matched its recorded hash, confirmed the red body was preserved
+with only the reviewed rejection-identity and one-event replay strengthenings, and revalidated the
+six-file frozen red manifest 5/5.
+
+Independent execution matched the durable results: named D8 1 test/14 assertions; focused suites
+145 tests/591 assertions; check 189 files/no fixes; explicit TypeScript exit 0; build 3,051 modules;
+and all 79 certified serial files with 1,637 passing tests. Claude re-derived the certified file-list
+and command digests, both eval hashes, and empty baseline allowlists. It deliberately did not rerun
+Harness preflight, Harness stop-gate, or root verifier because its review was zero-write; those
+remain supported by Codex's sealed exit records and artifacts.
+
+Claude's zero-write before/after porcelain comparison showed no repo change. Its only generated
+build output was the already-ignored `loop-fork/loop`. Two observations are non-blocking: a highly
+exceptional lock-ownership loss after working-tree mutation but before journaling can leave an
+unjournaled mutation and should be carried into D10 context; refresh failure surfaces at the next
+ownership assertion, which remains fail-closed at D8's reviewed checkpoints.
+
+Durable verdict evidence is
+`loop-fork/runs/harvto-d8-stale-write-lease/artifacts/verification/exact-sha-review.json`, SHA-256
+`8c1ea2e53a302bb5fadd4870f907cb19aa4eccf4134e660b001b1962bb9686d0`.
+
+The prior 305,173 status bytes hash to
+`7b9b6416e697e739881389722a1b49663dab12021609a34bb125295c760c57da` and are the exact prefix of
+this append. Per Governess preparation decision `bf69d162-56e6-4d8c-81c9-1e996b707cb4`, this slice
+finishes after recording the current atomic review result. No Harness close, bookkeeping stage or
+commit, D9 action, compact, handover launch, helper route, or remote action ran.
+
+Next fresh bounded action: revalidate exact PASS, HEAD, empty index, active D8 Harness state,
+utility `0/off/0`, frozen evidence, and all task-record/terminal-count preimages; then invoke exactly
+one D8 close and prove only D8 became `done/pass`. Governess alone decides whether a fresh-loop
+handover begins before that action.
+
+## 2026-08-17 — Exactly one D8 Harness close completed
+
+The supervisor ruled that Governess `exitControl` remained idle with no handover epoch or bundles,
+so the preparation checkpoint was not a stop boundary. Claude independently verified the live
+Run88 premises and precommitted canonical SHA-256
+`05aae5cbf5d6a3c2a6fed28f1c75575aa8f1c62aa33d4010662a4ececae33075` for the map of all 63
+non-D8 task-record hashes before any close.
+
+Codex then revalidated exact implementation HEAD
+`ece4c6eb92a9bc61034d181868c5cd9287bffb6e`, empty index, clean four-file implementation scope,
+utility `0/off/0`, exact D8 current-task identity, active/pending D8 index record, pass eval,
+preflight/stop-gate pass, zero prior D8 terminal records, 64 total records, both independent
+non-D8 aggregate forms, clean tracked intake stub, D8 red 5/5, and D7 red 5/5. Pre-close lifecycle
+evidence is
+`loop-fork/runs/harvto-d8-stale-write-lease/artifacts/close/pre-close-lifecycle.json`, SHA-256
+`1e7079d7ad01941524e4295e31f9ac5bed2833057b0e97700abd431caa1bbc39`.
+
+Exactly one `./harness done harvto-d8-stale-write-lease` exited 0 at
+`2026-08-17T19:01:10Z`; no retry occurred. Its post-task invariant check passed, debt scan appended
+one D8 finding, regression harvest recorded a no-bug-fix skip, and Harness generated the completion
+spec at `loop-fork/specs/harvto-d8-stale-write-lease.md` from the completed task log and final
+memory checkpoint.
+
+Post-close proof is decisive: total task records remain 64; D8 record count remains one; D8 alone
+changed from active/pending-index to done/pass-index with ended-at `2026-08-17T19:01:10Z`; its
+terminal count is exactly one; `.harness/current-task` is absent; status counts are now two active,
+60 done, and two parked. All 63 non-D8 records are byte-equivalent under both canonical aggregate
+methods: record-list SHA-256 remains
+`f800add1625fb516de8a3a4893db5970560b87854472d1eef39176a70a852ab5`, and Claude's precommitted
+hash-map SHA-256 remains
+`05aae5cbf5d6a3c2a6fed28f1c75575aa8f1c62aa33d4010662a4ececae33075`. The inherited
+`active-launch-interlock` and `context-pressure-current-lineage` record hashes are unchanged.
+
+The implementation commit, index, reviewed paths, pass eval, and frozen evidence are untouched;
+D8 and D7 red each validate 5/5. Post-close lifecycle evidence is
+`loop-fork/runs/harvto-d8-stale-write-lease/artifacts/close/post-close-lifecycle.json`, SHA-256
+`86eba765006273aa891c9a3f0a09528735c4dd3b9ec0055a46dc6e36c8463646`.
+
+The prior 308,094 status bytes hash to
+`2ddb76c172891aac1819ac342127f584dfb45125d7732a85ba07e7efb9b97e28` and are the exact prefix of
+this append. No implementation amend, second close, bookkeeping stage/commit, D9 action, handover,
+helper route, or remote action ran.
+
+Next: stage only the explicit D8 lifecycle, dual eval, non-red evidence, completion spec, and root
+ledger manifest for one separate bookkeeping commit. Exclude all implementation paths, five
+already committed contracts, root `.loop/`, D6/D7 red, immutable D8 red, formatter evidence, and
+every unrelated path.

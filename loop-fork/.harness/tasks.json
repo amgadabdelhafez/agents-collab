@@ -620,6 +620,16 @@
       "eval_status": "pass",
       "ended_at": "2026-08-17T08:41:15Z",
       "spec_path": "specs/harvto-d7-handoff-identity.md"
+    },
+    {
+      "id": "harvto-d8-stale-write-lease",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-08-17T16:27:46Z",
+      "run_dir": "runs/harvto-d8-stale-write-lease",
+      "eval_status": "pass",
+      "ended_at": "2026-08-17T19:01:10Z",
+      "spec_path": "specs/harvto-d8-stale-write-lease.md"
     }
   ]
 }
