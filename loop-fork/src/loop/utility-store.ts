@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  futimesSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -11,7 +13,7 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { sleepSync } from "bun";
+import { sleep, sleepSync } from "bun";
 import type {
   UtilityCompactResult,
   UtilityRouteDecision,
@@ -115,9 +117,20 @@ export interface UtilityClaimOptions {
   workerPid?: number;
 }
 
+export interface UtilityPatchAuthorityContext {
+  claimEpoch: number;
+  currentEpoch: number;
+  job: UtilityJobSnapshot;
+  recordPatchApplication: (
+    application: UtilityPatchApplication
+  ) => UtilityJobSnapshot;
+  routeEpoch: number;
+}
+
 const LOCK_STALE_AFTER_MS = 30_000;
 const LOCK_ACQUIRE_TIMEOUT_MS = 2000;
 const LOCK_RETRY_INTERVAL_MS = 5;
+const LOCK_REFRESH_INTERVAL_MS = Math.floor(LOCK_STALE_AFTER_MS / 3);
 const LEADING_CURRENT_DIR_RE = /^\.\//;
 const TRAILING_SLASH_RE = /\/$/;
 const TERMINAL_STATES = new Set<UtilityJobState>([
@@ -377,12 +390,110 @@ const acquireStoreLock = (
   }
 };
 
+const acquireStoreLockAwaited = async (
+  lockFile: string
+): Promise<{ descriptor: number; ownerToken: string }> => {
+  const deadline = Date.now() + LOCK_ACQUIRE_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return createOwnedLock(lockFile);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+      if (clearStaleLock(lockFile)) {
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("utility store is busy");
+      }
+      await sleep(LOCK_RETRY_INTERVAL_MS);
+    }
+  }
+};
+
+const assertOwnedStoreLock = (
+  lockFile: string,
+  descriptor: number,
+  ownerToken: string
+): void => {
+  try {
+    const descriptorStat = fstatSync(descriptor);
+    const pathStat = statSync(lockFile);
+    if (
+      descriptorStat.dev !== pathStat.dev ||
+      descriptorStat.ino !== pathStat.ino ||
+      readFileSync(lockFile, "utf8") !== ownerToken
+    ) {
+      throw new Error("utility store lock ownership changed");
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "utility store lock ownership changed"
+    ) {
+      throw error;
+    }
+    throw new Error("utility store lock ownership was lost", {
+      cause: error,
+    });
+  }
+};
+
+const refreshOwnedStoreLock = (
+  lockFile: string,
+  descriptor: number,
+  ownerToken: string
+): void => {
+  assertOwnedStoreLock(lockFile, descriptor, ownerToken);
+  const now = new Date();
+  futimesSync(descriptor, now, now);
+};
+
 const withStoreLock = <T>(paths: UtilityStorePaths, operation: () => T): T => {
   mkdirSync(paths.rootDir, { recursive: true });
   const { descriptor, ownerToken } = acquireStoreLock(paths.lockFile);
   try {
     return operation();
   } finally {
+    closeSync(descriptor);
+    removeOwnedLock(paths.lockFile, ownerToken);
+  }
+};
+
+const withStoreLockAwaited = async <T>(
+  paths: UtilityStorePaths,
+  operation: (assertOwned: () => void) => Promise<T>
+): Promise<T> => {
+  mkdirSync(paths.rootDir, { recursive: true });
+  const { descriptor, ownerToken } = await acquireStoreLockAwaited(
+    paths.lockFile
+  );
+  let refreshError: Error | undefined;
+  const assertOwned = (): void => {
+    if (refreshError) {
+      throw refreshError;
+    }
+    assertOwnedStoreLock(paths.lockFile, descriptor, ownerToken);
+  };
+  const refreshTimer = setInterval(() => {
+    try {
+      refreshOwnedStoreLock(paths.lockFile, descriptor, ownerToken);
+    } catch (error) {
+      refreshError =
+        error instanceof Error
+          ? error
+          : new Error("utility store lock refresh failed");
+    }
+  }, LOCK_REFRESH_INTERVAL_MS);
+  refreshTimer.unref();
+  try {
+    assertOwned();
+    const result = await operation(assertOwned);
+    assertOwned();
+    return result;
+  } finally {
+    clearInterval(refreshTimer);
     closeSync(descriptor);
     removeOwnedLock(paths.lockFile, ownerToken);
   }
@@ -653,39 +764,52 @@ export const transitionUtilityJob = (
   });
 };
 
+const recordUtilityPatchApplicationLocked = (
+  paths: UtilityStorePaths,
+  events: UtilityJobEvent[],
+  jobId: string,
+  application: UtilityPatchApplication
+): UtilityJobSnapshot => {
+  const current = snapshotFromEvents(events, jobId);
+  if (!current) {
+    throw new Error(`unknown utility job: ${jobId}`);
+  }
+  const existing = current.events.find(
+    (event) =>
+      event.type === "patch-applied" &&
+      event.application?.patchSha256 === application.patchSha256
+  );
+  if (existing) {
+    const snapshot = snapshotFromEvents(events, jobId);
+    if (!snapshot) {
+      throw new Error(`failed to materialize utility job ${jobId}`);
+    }
+    return snapshot;
+  }
+  return appendLocked(paths, events, {
+    application,
+    at: application.appliedAt,
+    eventId: `patch-application:${jobId}:${application.patchSha256}`,
+    jobId,
+    state: "completed",
+    type: "patch-applied",
+  });
+};
+
 export const recordUtilityPatchApplication = (
   runDir: string,
   jobId: string,
   application: UtilityPatchApplication
 ): UtilityJobSnapshot => {
   const paths = utilityRunPaths(runDir);
-  return withStoreLock(paths, () => {
-    const events = readEvents(paths.eventsFile);
-    const current = snapshotFromEvents(events, jobId);
-    if (!current) {
-      throw new Error(`unknown utility job: ${jobId}`);
-    }
-    const existing = current.events.find(
-      (event) =>
-        event.type === "patch-applied" &&
-        event.application?.patchSha256 === application.patchSha256
-    );
-    if (existing) {
-      const snapshot = snapshotFromEvents(events, jobId);
-      if (!snapshot) {
-        throw new Error(`failed to materialize utility job ${jobId}`);
-      }
-      return snapshot;
-    }
-    return appendLocked(paths, events, {
-      application,
-      at: application.appliedAt,
-      eventId: `patch-application:${jobId}:${application.patchSha256}`,
+  return withStoreLock(paths, () =>
+    recordUtilityPatchApplicationLocked(
+      paths,
+      readEvents(paths.eventsFile),
       jobId,
-      state: "completed",
-      type: "patch-applied",
-    });
-  });
+      application
+    )
+  );
 };
 
 const readEpochFile = (path: string): number | undefined => {
@@ -695,6 +819,75 @@ const readEpochFile = (path: string): number | undefined => {
   } catch {
     return undefined;
   }
+};
+
+const staleUtilityPatchAuthority = (detail: string): never => {
+  throw new Error(`stale utility patch authority: ${detail}`);
+};
+
+const patchAuthorityForJob = (
+  paths: UtilityStorePaths,
+  job: UtilityJobSnapshot
+): { claimEpoch: number; currentEpoch: number; routeEpoch: number } => {
+  const currentEpoch = readEpochFile(paths.epochFile);
+  if (currentEpoch === undefined) {
+    return staleUtilityPatchAuthority("current utility epoch is missing");
+  }
+  const routedUtility = job.events.some(
+    (event) =>
+      event.state === "routed-utility" && event.routeEpoch === job.routeEpoch
+  );
+  if (!(routedUtility && isPositiveEpoch(job.routeEpoch ?? 0))) {
+    return staleUtilityPatchAuthority(
+      "job has no positive utility route epoch"
+    );
+  }
+  if (!job.claim) {
+    return staleUtilityPatchAuthority("job has no persisted utility claim");
+  }
+  const routeEpoch = job.routeEpoch as number;
+  const claimEpoch = job.claim.epoch;
+  if (claimEpoch !== routeEpoch) {
+    return staleUtilityPatchAuthority(
+      `claim epoch ${claimEpoch} does not match route epoch ${routeEpoch}`
+    );
+  }
+  if (currentEpoch !== routeEpoch) {
+    return staleUtilityPatchAuthority(
+      `current epoch ${currentEpoch} does not match route epoch ${routeEpoch}`
+    );
+  }
+  return { claimEpoch, currentEpoch, routeEpoch };
+};
+
+export const withUtilityPatchAuthority = async <T>(
+  runDir: string,
+  jobId: string,
+  operation: (context: UtilityPatchAuthorityContext) => Promise<T>
+): Promise<T> => {
+  const paths = utilityRunPaths(runDir);
+  return await withStoreLockAwaited(paths, async (assertOwned) => {
+    const events = readEvents(paths.eventsFile);
+    const job = snapshotFromEvents(events, jobId);
+    if (!job) {
+      throw new Error(`unknown utility job: ${jobId}`);
+    }
+    const authority = patchAuthorityForJob(paths, job);
+    assertOwned();
+    return await operation({
+      ...authority,
+      job,
+      recordPatchApplication: (application) => {
+        assertOwned();
+        return recordUtilityPatchApplicationLocked(
+          paths,
+          events,
+          jobId,
+          application
+        );
+      },
+    });
+  });
 };
 
 export const activateUtilityEpoch = (

@@ -2642,6 +2642,192 @@ test("requester routing is relative to the requester, not the current driver", a
   }
 });
 
+test("D8 stale utility write authority rejects before two-file mutation", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-d8-stale-write-"));
+  const runDir = join(repoRoot, ".loop", "runs", "d8-stale-write");
+  const jobId = "d161e3d6";
+  const authorityRuling = "sup-187-util-dead";
+  const routeEpoch = 30;
+  const currentEpoch = 31;
+  const firstPath = join(repoRoot, "src", "one.ts");
+  const secondPath = join(repoRoot, "src", "two.ts");
+  const firstPreimage = "export const one = 1;\n";
+  const secondPreimage = "export const two = 2;\n";
+  const firstPostimage = "export const one = 10;\n";
+  const secondPostimage = "export const two = 20;\n";
+  const sha256 = (value: string): string =>
+    createHash("sha256").update(value).digest("hex");
+
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(firstPath, firstPreimage);
+  writeFileSync(secondPath, secondPreimage);
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: [
+      "apply the documented two-file write only while utility authority is live",
+    ],
+    authority: {},
+    id: jobId,
+    kind: "edit",
+    objective: `Fence the two-file edit after ${authorityRuling}`,
+    readScope: ["src/one.ts", "src/two.ts"],
+    requester: "codex",
+    requiredCapabilities: ["inspect", "scoped-edit"],
+    risk: "low",
+    workShape: "separable",
+    writeScope: ["src/one.ts", "src/two.ts"],
+  });
+  const patch = [
+    "diff --git a/src/one.ts b/src/one.ts",
+    "--- a/src/one.ts",
+    "+++ b/src/one.ts",
+    "@@ -1 +1 @@",
+    `-${firstPreimage.trimEnd()}`,
+    `+${firstPostimage.trimEnd()}`,
+    "diff --git a/src/two.ts b/src/two.ts",
+    "--- a/src/two.ts",
+    "+++ b/src/two.ts",
+    "@@ -1 +1 @@",
+    `-${secondPreimage.trimEnd()}`,
+    `+${secondPostimage.trimEnd()}`,
+    "",
+  ].join("\n");
+
+  try {
+    appendUtilityRouteRequest(runDir, request);
+    activateUtilityEpoch(runDir, routeEpoch);
+    transitionUtilityJob(runDir, jobId, "routed-utility", { routeEpoch });
+    const claimed = claimUtilityJob(runDir, routeEpoch, {
+      jobId,
+      workerId: "au-pair",
+      workerPid: 6161,
+    });
+    expect(claimed?.claim?.epoch).toBe(routeEpoch);
+    transitionUtilityJob(runDir, jobId, "running");
+
+    const broker = await createUtilityToolBroker({
+      artifactDir: `.loop/runs/d8-stale-write/utility/artifacts/${jobId}`,
+      commandAllowlist: [],
+      exactWriteScopes: true,
+      readScopes: ["src/one.ts", "src/two.ts"],
+      repoRoot,
+      writeScopes: ["src/one.ts", "src/two.ts"],
+    });
+    const proposal = await broker.execute({
+      arguments: { patch, summary: "update both ordinary fixture files" },
+      name: "propose_patch",
+    });
+    if (!(proposal.ok && proposal.artifact)) {
+      throw new Error("failed to create the valid D8 aggregate patch fixture");
+    }
+    expect(proposal.data).toMatchObject({
+      preimages: [
+        { path: "src/one.ts", sha256: sha256(firstPreimage) },
+        { path: "src/two.ts", sha256: sha256(secondPreimage) },
+      ],
+      targets: ["src/one.ts", "src/two.ts"],
+    });
+    expect(proposal.artifact.sha256).toBe(sha256(patch));
+
+    transitionUtilityJob(runDir, jobId, "completed", {
+      result: {
+        artifactRefs: [
+          {
+            kind: "diff",
+            manifestPath: proposal.artifact.manifestPath,
+            manifestSha256: proposal.artifact.manifestSha256,
+            path: proposal.artifact.path,
+            sha256: proposal.artifact.sha256,
+          },
+        ],
+        checks: [],
+        filesChanged: [],
+        status: "completed",
+        summary: "valid two-file patch proposed before authority was revoked",
+      },
+    });
+
+    const beforeAdvance = readUtilityJob(runDir, jobId);
+    expect(beforeAdvance).toMatchObject({
+      claim: { epoch: routeEpoch, workerId: "au-pair", workerPid: 6161 },
+      routeEpoch,
+      state: "completed",
+    });
+    expect(readFileSync(firstPath, "utf8")).toBe(firstPreimage);
+    expect(readFileSync(secondPath, "utf8")).toBe(secondPreimage);
+
+    activateUtilityEpoch(runDir, currentEpoch);
+    let outcome:
+      | { kind: "rejected"; message: string }
+      | { kind: "resolved"; status: "applied" | "already-applied" };
+    try {
+      const result = await applyUtilityJobPatch(
+        runDir,
+        jobId,
+        proposal.artifact.sha256,
+        "codex"
+      );
+      outcome = { kind: "resolved", status: result.status };
+    } catch (error) {
+      outcome = {
+        kind: "rejected",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    const afterApply = readUtilityJob(runDir, jobId);
+    const observation = {
+      authority: {
+        claimEpoch: afterApply?.claim?.epoch,
+        currentEpoch: Number.parseInt(
+          readFileSync(join(runDir, "utility", "epoch"), "utf8").trim(),
+          10
+        ),
+        ruling: authorityRuling,
+        routeEpoch: afterApply?.routeEpoch,
+      },
+      eventTypes: afterApply?.events.map((event) => event.type),
+      files: {
+        "src/one.ts": {
+          after: sha256(readFileSync(firstPath, "utf8")),
+          before: sha256(firstPreimage),
+          bytes: readFileSync(firstPath, "utf8"),
+        },
+        "src/two.ts": {
+          after: sha256(readFileSync(secondPath, "utf8")),
+          before: sha256(secondPreimage),
+          bytes: readFileSync(secondPath, "utf8"),
+        },
+      },
+      jobId,
+      outcome,
+      patchAppliedEvents:
+        afterApply?.events.filter((event) => event.type === "patch-applied")
+          .length ?? 0,
+    };
+
+    if (outcome.kind !== "rejected") {
+      throw new Error(
+        `D8 stale utility write authority mutated valid targets\n${JSON.stringify(observation, null, 2)}`
+      );
+    }
+    expect(outcome.message).toContain("stale utility patch authority");
+    expect(outcome.message).not.toContain("utility store is busy");
+    expect(outcome.message).not.toContain("preimage");
+    expect(outcome.message).not.toContain("manifest");
+    expect(outcome.message).not.toContain("applicability");
+    expect(readFileSync(firstPath, "utf8")).toBe(firstPreimage);
+    expect(readFileSync(secondPath, "utf8")).toBe(secondPreimage);
+    expect(observation.patchAppliedEvents).toBe(0);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("a full agent applies a completed utility patch with pre/postimage journal proof", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-guarded-apply-"));
   const runDir = join(repoRoot, ".loop", "runs", "apply");
@@ -2677,6 +2863,11 @@ test("a full agent applies a completed utility patch with pre/postimage journal 
       "claude"
     );
     expect(repeated.status).toBe("already-applied");
+    expect(
+      readUtilityJob(runDir, "guarded-edit")?.events.filter(
+        (event) => event.type === "patch-applied"
+      )
+    ).toHaveLength(1);
 
     writeFileSync(join(repoRoot, "src", "sample.ts"), "later drift\n");
     await expect(

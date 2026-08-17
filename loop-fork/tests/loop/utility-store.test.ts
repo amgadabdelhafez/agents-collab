@@ -28,6 +28,7 @@ import {
   recordUtilityPatchApplication,
   transitionUtilityJob,
   utilityRunPaths,
+  withUtilityPatchAuthority,
 } from "../../src/loop/utility-store";
 
 const tempDirs: string[] = [];
@@ -81,6 +82,42 @@ const routeToUtility = (
     routeEpoch: epoch,
   });
 };
+
+const completeUtilityEdit = (runDir: string, id = "job-1", epoch = 12) => {
+  routeToUtility(runDir, id, ["src/parser.ts"], epoch);
+  claimUtilityJob(runDir, epoch, {
+    jobId: id,
+    workerId: "au-pair",
+    workerPid: 5151,
+  });
+  transitionUtilityJob(runDir, id, "running");
+  return transitionUtilityJob(runDir, id, "completed", {
+    result: {
+      artifactRefs: [
+        {
+          kind: "diff",
+          path: `/repo/.loop/utility-artifacts/${id}/patch.patch`,
+          sha256: "a".repeat(64),
+        },
+      ],
+      checks: [],
+      filesChanged: [],
+      status: "completed",
+      summary: "patch proposed",
+    },
+  });
+};
+
+const patchApplication = (jobId = "job-1") => ({
+  appliedAt: "2026-07-26T16:30:00.000Z",
+  appliedBy: "claude" as const,
+  manifestPath: `.loop/utility-artifacts/${jobId}/patch.json`,
+  manifestSha256: "d".repeat(64),
+  patchPath: `.loop/utility-artifacts/${jobId}/patch.patch`,
+  patchSha256: "a".repeat(64),
+  postimages: [{ path: "src/parser.ts", sha256: "c".repeat(64) }],
+  preimages: [{ path: "src/parser.ts", sha256: "b".repeat(64) }],
+});
 
 const makeScopeAuditRequest = (id: string) =>
   createUtilityRouteRequest({
@@ -437,6 +474,232 @@ test("a successor epoch atomically fences workers from the prior route", () => {
   expect(activateUtilityEpoch(runDir, 5)).toBe(true);
   expect(claimUtilityJob(runDir, 4, { jobId: "job-1" })).toBeUndefined();
   expect(activateUtilityEpoch(runDir, 3)).toBe(false);
+});
+
+test("patch authority requires matching current route and claim epochs", async () => {
+  const changedRunDir = makeRunDir();
+  completeUtilityEdit(changedRunDir, "changed-epoch", 12);
+  activateUtilityEpoch(changedRunDir, 13);
+  let changedEntered = false;
+  await expect(
+    withUtilityPatchAuthority(changedRunDir, "changed-epoch", () => {
+      changedEntered = true;
+      return Promise.resolve();
+    })
+  ).rejects.toThrow(
+    "stale utility patch authority: current epoch 13 does not match route epoch 12"
+  );
+  expect(changedEntered).toBe(false);
+
+  const nonUtilityRunDir = makeRunDir();
+  const nonUtilityRequest = makeRequest("non-utility");
+  appendUtilityRouteRequest(nonUtilityRunDir, nonUtilityRequest);
+  activateUtilityEpoch(nonUtilityRunDir, 12);
+  transitionUtilityJob(nonUtilityRunDir, nonUtilityRequest.id, "routed-driver");
+  transitionUtilityJob(nonUtilityRunDir, nonUtilityRequest.id, "completed", {
+    result: {
+      artifactRefs: [],
+      checks: [],
+      filesChanged: [],
+      status: "completed",
+      summary: "driver completed",
+    },
+  });
+  await expect(
+    withUtilityPatchAuthority(
+      nonUtilityRunDir,
+      nonUtilityRequest.id,
+      async () => undefined
+    )
+  ).rejects.toThrow("stale utility patch authority");
+
+  const mismatchRunDir = makeRunDir();
+  completeUtilityEdit(mismatchRunDir, "mismatched-claim", 12);
+  const mismatchEventsFile = utilityRunPaths(mismatchRunDir).eventsFile;
+  const mismatchEvents = readFileSync(mismatchEventsFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const claimEvent = mismatchEvents.find((event) => event.type === "claimed") as
+    | { claim: { epoch: number } }
+    | undefined;
+  if (!claimEvent) {
+    throw new Error("missing claim fixture event");
+  }
+  claimEvent.claim.epoch = 11;
+  writeFileSync(
+    mismatchEventsFile,
+    `${mismatchEvents.map((event) => JSON.stringify(event)).join("\n")}\n`
+  );
+  await expect(
+    withUtilityPatchAuthority(
+      mismatchRunDir,
+      "mismatched-claim",
+      async () => undefined
+    )
+  ).rejects.toThrow(
+    "stale utility patch authority: claim epoch 11 does not match route epoch 12"
+  );
+});
+
+test("awaited patch authority holds one lock through journaling and activation", async () => {
+  const runDir = makeRunDir();
+  completeUtilityEdit(runDir, "awaited-authority", 12);
+  const paths = utilityRunPaths(runDir);
+  let enterSection = (): void => undefined;
+  const sectionEntered = new Promise<void>((resolve) => {
+    enterSection = resolve;
+  });
+  let releaseSection = (): void => undefined;
+  const sectionRelease = new Promise<void>((resolve) => {
+    releaseSection = resolve;
+  });
+  const authorityOperation = withUtilityPatchAuthority(
+    runDir,
+    "awaited-authority",
+    async ({
+      claimEpoch,
+      currentEpoch,
+      recordPatchApplication,
+      routeEpoch,
+    }) => {
+      expect({ claimEpoch, currentEpoch, routeEpoch }).toEqual({
+        claimEpoch: 12,
+        currentEpoch: 12,
+        routeEpoch: 12,
+      });
+      expect(existsSync(paths.lockFile)).toBe(true);
+      const ownerToken = readFileSync(paths.lockFile, "utf8");
+      enterSection();
+      await sectionRelease;
+      expect(readFileSync(paths.lockFile, "utf8")).toBe(ownerToken);
+      return recordPatchApplication(patchApplication("awaited-authority"));
+    }
+  );
+  await sectionEntered;
+
+  const moduleUrl = pathToFileURL(
+    join(import.meta.dir, "../../src/loop/utility-store.ts")
+  ).href;
+  const activation = spawn({
+    cmd: [
+      process.execPath,
+      "-e",
+      [
+        "const moduleUrl = process.env.UTILITY_TEST_MODULE;",
+        "const runDir = process.env.UTILITY_TEST_RUN_DIR;",
+        'if (!(moduleUrl && runDir)) throw new Error("missing test inputs");',
+        "const { activateUtilityEpoch } = await import(moduleUrl);",
+        "const activated = activateUtilityEpoch(runDir, 13);",
+        'process.stdout.write(String(activated) + "\\n");',
+      ].join(" "),
+    ],
+    env: {
+      ...process.env,
+      UTILITY_TEST_MODULE: moduleUrl,
+      UTILITY_TEST_RUN_DIR: runDir,
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  try {
+    await sleep(100);
+    expect(readFileSync(paths.epochFile, "utf8").trim()).toBe("12");
+    expect(existsSync(paths.lockFile)).toBe(true);
+    releaseSection();
+    const [applied, stdout, stderr, exitCode] = await Promise.all([
+      authorityOperation,
+      new Response(activation.stdout).text(),
+      new Response(activation.stderr).text(),
+      activation.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("true");
+    expect(readFileSync(paths.epochFile, "utf8").trim()).toBe("13");
+    expect(
+      applied.events.filter((event) => event.type === "patch-applied")
+    ).toHaveLength(1);
+  } finally {
+    releaseSection();
+    activation.kill();
+    await activation.exited;
+  }
+});
+
+test("contended activation reports busy and advances after patch authority releases", async () => {
+  const runDir = makeRunDir();
+  completeUtilityEdit(runDir, "busy-authority", 12);
+  const paths = utilityRunPaths(runDir);
+  let enterSection = (): void => undefined;
+  const sectionEntered = new Promise<void>((resolve) => {
+    enterSection = resolve;
+  });
+  let releaseSection = (): void => undefined;
+  const sectionRelease = new Promise<void>((resolve) => {
+    releaseSection = resolve;
+  });
+  const authorityOperation = withUtilityPatchAuthority(
+    runDir,
+    "busy-authority",
+    async () => {
+      enterSection();
+      await sectionRelease;
+      return "released";
+    }
+  );
+  await sectionEntered;
+
+  const moduleUrl = pathToFileURL(
+    join(import.meta.dir, "../../src/loop/utility-store.ts")
+  ).href;
+  const activation = spawn({
+    cmd: [
+      process.execPath,
+      "-e",
+      [
+        "const moduleUrl = process.env.UTILITY_TEST_MODULE;",
+        "const runDir = process.env.UTILITY_TEST_RUN_DIR;",
+        'if (!(moduleUrl && runDir)) throw new Error("missing test inputs");',
+        "const { activateUtilityEpoch } = await import(moduleUrl);",
+        "try {",
+        "  const activated = activateUtilityEpoch(runDir, 13);",
+        '  process.stdout.write("resolved:" + String(activated) + "\\n");',
+        "} catch (error) {",
+        '  process.stdout.write("rejected:" + (error instanceof Error ? error.message : String(error)) + "\\n");',
+        "}",
+      ].join(" "),
+    ],
+    env: {
+      ...process.env,
+      UTILITY_TEST_MODULE: moduleUrl,
+      UTILITY_TEST_RUN_DIR: runDir,
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(activation.stdout).text(),
+      new Response(activation.stderr).text(),
+      activation.exited,
+    ]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("rejected:utility store is busy");
+    expect(stdout).not.toContain("resolved:false");
+    expect(readFileSync(paths.epochFile, "utf8").trim()).toBe("12");
+
+    releaseSection();
+    expect(await authorityOperation).toBe("released");
+    expect(activateUtilityEpoch(runDir, 13)).toBe(true);
+    expect(readFileSync(paths.epochFile, "utf8").trim()).toBe("13");
+  } finally {
+    releaseSection();
+    activation.kill();
+    await activation.exited;
+  }
 });
 
 test("enforces safe transitions and epoch claims", () => {

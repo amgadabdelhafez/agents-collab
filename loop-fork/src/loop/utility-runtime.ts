@@ -84,9 +84,9 @@ import {
   readUtilityJob,
   readUtilityJobs,
   recordPendingUtilityRouteDecision,
-  recordUtilityPatchApplication,
   transitionUtilityJob,
   type UtilityJobSnapshot,
+  withUtilityPatchAuthority,
 } from "./utility-store";
 import {
   createUtilityToolBroker,
@@ -2791,56 +2791,80 @@ export const applyUtilityJobPatch = async (
   if (!SHA256_HEX_RE.test(expected)) {
     throw new Error("expected_patch_sha256 must be a SHA-256 hex digest");
   }
-  const artifacts = job.result.artifactRefs.filter(
-    (artifact) =>
-      artifact.kind === "diff" &&
-      artifact.path.endsWith(".patch") &&
-      artifact.sha256?.toLowerCase() === expected
+  return await withUtilityPatchAuthority(
+    runDir,
+    jobId,
+    async ({ job: authorizedJob, recordPatchApplication }) => {
+      if (
+        authorizedJob.state !== "completed" ||
+        authorizedJob.result?.status !== "completed" ||
+        authorizedJob.request.kind !== "edit"
+      ) {
+        throw new Error(
+          "guarded patch apply requires a completed Au Pair edit"
+        );
+      }
+      const artifacts = authorizedJob.result.artifactRefs.filter(
+        (artifact) =>
+          artifact.kind === "diff" &&
+          artifact.path.endsWith(".patch") &&
+          artifact.sha256?.toLowerCase() === expected
+      );
+      if (artifacts.length !== 1) {
+        throw new Error(
+          "expected patch artifact is missing or ambiguous for this Au Pair job"
+        );
+      }
+      const patchPath = artifacts[0]?.path;
+      const manifestPath = artifacts[0]?.manifestPath;
+      const manifestSha256 = artifacts[0]?.manifestSha256;
+      if (!(patchPath && manifestPath && manifestSha256)) {
+        throw new Error(
+          "Au Pair patch or manifest integrity metadata is missing"
+        );
+      }
+      const repoRoot = repoRootForRun(runDir);
+      const workspace = authorizedJob.decision?.workspace
+        ? verifyAdoptedUtilityWorkspace(
+            repoRoot,
+            authorizedJob.decision.workspace
+          )
+        : undefined;
+      if (authorizedJob.decision?.workspace && !workspace) {
+        throw new Error(
+          "verified helper workspace no longer matches the run repository"
+        );
+      }
+      const executionRoot = workspace?.root ?? repoRoot;
+      const readScopes =
+        workspace?.readScope ?? authorizedJob.request.readScope;
+      const writeScopes =
+        workspace?.writeScope ?? authorizedJob.request.writeScope;
+      const broker = await createUtilityToolBroker({
+        artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
+        commandAllowlist: [],
+        exactWriteScopes: true,
+        limits: { maxPatchBytes: MAX_AU_PAIR_EDIT_PATCH_BYTES },
+        readScopes: [...new Set([...readScopes, ...writeScopes])],
+        repoRoot: executionRoot,
+        writeScopes,
+      });
+      const result = await broker.applyPatchProposal({
+        appliedBy,
+        ...(authorizedJob.application
+          ? { existingApplication: authorizedJob.application }
+          : {}),
+        expectedManifestSha256: manifestSha256,
+        expectedPatchSha256: expected,
+        manifestPath,
+        patchPath,
+      });
+      if (result.status === "applied") {
+        recordPatchApplication(result.application);
+      }
+      return result;
+    }
   );
-  if (artifacts.length !== 1) {
-    throw new Error(
-      "expected patch artifact is missing or ambiguous for this Au Pair job"
-    );
-  }
-  const patchPath = artifacts[0]?.path;
-  const manifestPath = artifacts[0]?.manifestPath;
-  const manifestSha256 = artifacts[0]?.manifestSha256;
-  if (!(patchPath && manifestPath && manifestSha256)) {
-    throw new Error("Au Pair patch or manifest integrity metadata is missing");
-  }
-  const repoRoot = repoRootForRun(runDir);
-  const workspace = job.decision?.workspace
-    ? verifyAdoptedUtilityWorkspace(repoRoot, job.decision.workspace)
-    : undefined;
-  if (job.decision?.workspace && !workspace) {
-    throw new Error(
-      "verified helper workspace no longer matches the run repository"
-    );
-  }
-  const executionRoot = workspace?.root ?? repoRoot;
-  const readScopes = workspace?.readScope ?? job.request.readScope;
-  const writeScopes = workspace?.writeScope ?? job.request.writeScope;
-  const broker = await createUtilityToolBroker({
-    artifactDir: artifactDirForJob(executionRoot, runDir, jobId),
-    commandAllowlist: [],
-    exactWriteScopes: true,
-    limits: { maxPatchBytes: MAX_AU_PAIR_EDIT_PATCH_BYTES },
-    readScopes: [...new Set([...readScopes, ...writeScopes])],
-    repoRoot: executionRoot,
-    writeScopes,
-  });
-  const result = await broker.applyPatchProposal({
-    appliedBy,
-    ...(job.application ? { existingApplication: job.application } : {}),
-    expectedManifestSha256: manifestSha256,
-    expectedPatchSha256: expected,
-    manifestPath,
-    patchPath,
-  });
-  if (result.status === "applied") {
-    recordUtilityPatchApplication(runDir, jobId, result.application);
-  }
-  return result;
 };
 
 export const utilityJobStatus = (runDir: string, jobId: string) =>
