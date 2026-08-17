@@ -69,6 +69,7 @@ import {
   acceptGovernessHandoff,
   ensureGovernessHandoffDir,
   governessHandoffFile,
+  handoffLineageForReplacement,
   readGovernessHandoffAcceptance,
   readGovernessHandoffBundle,
   readGovernessHandoffBundleForAgent,
@@ -137,6 +138,7 @@ import {
   loadRunState,
   type RunManifest,
   readRunManifest,
+  runLaunchIdentityDigest,
   setRunManifestState,
   updateRunManifest,
 } from "./run-state";
@@ -4994,6 +4996,62 @@ export type HandoverAdvanceResult =
   | { error: string; status: "launch-error" }
   | { session?: string; status: "launched" };
 
+const sourceManifestMatchesHandoffConfig = (
+  config: GovernessConfig,
+  manifest: RunManifest | undefined
+): boolean => {
+  const identity = manifest?.launchIdentity;
+  if (!(manifest && identity)) {
+    return false;
+  }
+  const configAgents = config.agents.map((info) => info.agent);
+  const paneAgents = [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent];
+  return (
+    manifest.runId === identity.runId &&
+    manifest.repoId === identity.repoId &&
+    manifest.cwd === identity.cwd &&
+    manifest.driverEffort === identity.primary.effort &&
+    manifest.reviewerEffort === identity.peer.effort &&
+    manifest.primaryAgent === identity.primary.agent &&
+    manifest.tmuxSession === config.session &&
+    config.cwd === identity.cwd &&
+    config.driverEffort === identity.primary.effort &&
+    config.reviewerEffort === identity.peer.effort &&
+    config.initialDriver === identity.primary.agent &&
+    configAgents.length === 2 &&
+    new Set(configAgents).size === 2 &&
+    configAgents.includes(identity.primary.agent) &&
+    configAgents.includes(identity.peer.agent) &&
+    paneAgents.length === 2 &&
+    new Set(paneAgents).size === 2 &&
+    paneAgents.includes(identity.primary.agent) &&
+    paneAgents.includes(identity.peer.agent) &&
+    manifest.workspaceBinding?.root === identity.workspaceBinding.root &&
+    manifest.workspaceBinding.repoId === identity.workspaceBinding.repoId &&
+    manifest.workspaceBinding.branchRef === identity.workspaceBinding.branchRef
+  );
+};
+
+const acceptReplacementHandoff = (
+  handoffManifest: string,
+  session: string,
+  replacementEpoch: number,
+  acceptedAt: string,
+  replacementManifestPath: string | undefined,
+  hasMatchingLineage: boolean
+) => {
+  if (!(hasMatchingLineage && replacementManifestPath)) {
+    return undefined;
+  }
+  return acceptGovernessHandoff(
+    handoffManifest,
+    session,
+    replacementEpoch,
+    acceptedAt,
+    replacementManifestPath
+  );
+};
+
 export const advanceHandoverControl = async (
   config: GovernessConfig,
   deps: GovernessDeps,
@@ -5136,7 +5194,17 @@ export const advanceHandoverControl = async (
     return { status: "waiting" };
   }
   let handoverManifest: string | undefined;
-  if (config.runDir) {
+  const sourceManifest =
+    config.runDir && config.manifestPath
+      ? readRunManifest(config.manifestPath)
+      : undefined;
+  const sourceIdentity = sourceManifestMatchesHandoffConfig(
+    config,
+    sourceManifest
+  )
+    ? sourceManifest?.launchIdentity
+    : undefined;
+  if (config.runDir && sourceIdentity) {
     const handoffDir = ensureGovernessHandoffDir(config.runDir, handoverEpoch);
     const continuationFile = handoverContinuationFile(handoffDir);
     writeFileSync(
@@ -5153,7 +5221,8 @@ export const advanceHandoverControl = async (
       {
         driverEffort: config.driverEffort,
         reviewerEffort: config.reviewerEffort,
-      }
+      },
+      sourceIdentity
     );
   }
   if (!handoverManifest) {
@@ -6563,11 +6632,6 @@ export const defaultGovernessDeps = (
   labelPanes: (req) => labelPanes(req),
   loadState: (stateFile) => loadGovernessState(stateFile),
   launchReplacementLoop: (config, handoverManifest) => {
-    const primary = config.initialDriver ?? config.agents[0]?.agent;
-    const peer = config.agents.find((info) => info.agent !== primary)?.agent;
-    if (primary === undefined || peer === undefined) {
-      return { error: "handover requires two agents", ok: false };
-    }
     const env = Object.fromEntries(
       Object.entries(process.env).filter(([key]) => key !== "LOOP_RUN_ID")
     );
@@ -6575,20 +6639,55 @@ export const defaultGovernessDeps = (
     if (!manifest) {
       return { error: "handover manifest changed before launch", ok: false };
     }
+    const sourceManifest = config.manifestPath
+      ? readRunManifest(config.manifestPath)
+      : undefined;
+    const currentSourceIdentity = sourceManifestMatchesHandoffConfig(
+      config,
+      sourceManifest
+    )
+      ? sourceManifest?.launchIdentity
+      : undefined;
+    if (
+      !currentSourceIdentity ||
+      runLaunchIdentityDigest(currentSourceIdentity) !==
+        manifest.sourceManifestIdentityDigest
+    ) {
+      return {
+        error: "source launch identity changed before replacement launch",
+        ok: false,
+      };
+    }
+    const primary = manifest.sourceIdentity.primary.agent;
+    const peer = manifest.sourceIdentity.peer.agent;
+    const replacementModels = {
+      primaryModel: manifest.sourceIdentity.primary.model,
+      reviewerModel: manifest.sourceIdentity.peer.model,
+    };
     const handoffDir = dirname(handoverManifest);
+    const buildReplacementArgs = (
+      efforts: Parameters<typeof replacementLoopArgs>[3]
+    ) =>
+      replacementLoopArgs(
+        primary,
+        peer,
+        handoffDir,
+        efforts,
+        replacementModels
+      );
     env.LOOP_GOVERNESS_HANDOFF_MANIFEST = handoverManifest;
     let result: ReturnType<typeof spawnSync>;
     try {
       result = spawnSync(
         [
           ...buildLaunchArgv(),
-          ...replacementLoopArgs(primary, peer, handoffDir, {
+          ...buildReplacementArgs({
             driverEffort: manifest.driverEffort,
             reviewerEffort: manifest.reviewerEffort,
           }),
         ],
         {
-          cwd: config.cwd,
+          cwd: manifest.sourceIdentity.cwd,
           env,
           killSignal: "SIGKILL",
           stderr: "pipe",
@@ -7172,11 +7271,34 @@ export const runGoverness = async (
   applyGovernessPaneIdentity(config, deps);
   const parentHandoffManifest = process.env.LOOP_GOVERNESS_HANDOFF_MANIFEST;
   if (parentHandoffManifest) {
-    const acceptance = acceptGovernessHandoff(
+    const handoff = readGovernessHandoffManifest(parentHandoffManifest);
+    const replacementManifest = config.manifestPath
+      ? readRunManifest(config.manifestPath)
+      : undefined;
+    const lineage =
+      handoff && replacementManifest?.launchIdentity
+        ? handoffLineageForReplacement(
+            handoff,
+            replacementManifest.launchIdentity
+          )
+        : undefined;
+    if (lineage && config.manifestPath) {
+      updateRunManifest(config.manifestPath, (current) =>
+        current?.launchIdentity &&
+        replacementManifest?.launchIdentity &&
+        runLaunchIdentityDigest(current.launchIdentity) ===
+          runLaunchIdentityDigest(replacementManifest.launchIdentity)
+          ? { ...current, handoffLineage: lineage }
+          : undefined
+      );
+    }
+    const acceptance = acceptReplacementHandoff(
       parentHandoffManifest,
       config.session,
       acquiredEpoch,
-      new Date(deps.now()).toISOString()
+      new Date(deps.now()).toISOString(),
+      config.manifestPath,
+      Boolean(lineage)
     );
     deps.appendLog(config.logFile, {
       accepted: Boolean(acceptance),

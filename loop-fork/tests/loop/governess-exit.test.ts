@@ -9,7 +9,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { parseArgs } from "../../src/loop/args";
 import {
   advanceHandoverControl,
   defaultGovernessDeps,
@@ -33,6 +34,7 @@ import {
 } from "../../src/loop/governess-exit";
 import {
   acceptGovernessHandoff,
+  handoffLineageForReplacement,
   readGovernessHandoffManifest,
 } from "../../src/loop/governess-handoff";
 import {
@@ -40,7 +42,12 @@ import {
   registerRunOwnedProcess,
   runProcessCleanupInternals,
 } from "../../src/loop/run-process-cleanup";
-import { createRunManifest } from "../../src/loop/run-state";
+import {
+  createRunManifest,
+  readRunManifest,
+  writeRunManifest,
+} from "../../src/loop/run-state";
+import { tmuxInternals } from "../../src/loop/tmux";
 import { TmuxControlUnavailableError } from "../../src/loop/tmux-control";
 
 test("x opens a reversible menu and only explicit e or h selects an exit", () => {
@@ -183,6 +190,192 @@ test("replacement handover carries exact frozen role efforts", () => {
   ]);
 });
 
+test("D7 governed handoff preserves exact effective launch identity", () => {
+  const sourceIdentity = {
+    runId: "191",
+    repoId: "agents-collab-harvto-supervisor-defects",
+    workspace: {
+      root: "/tmp/d7-workspace",
+      repoId: "agents-collab-harvto-supervisor-defects",
+      branchRef: "refs/heads/d7-handoff-identity",
+    },
+    primary: "codex" as const,
+    peer: "claude" as const,
+    models: {
+      codex: "gpt-5.6-sol",
+      claude: "opus",
+    },
+    efforts: {
+      driverEffort: "high" as const,
+      reviewerEffort: "low" as const,
+    },
+  };
+  const ambientNames = [
+    "LOOP_CODEX_MODEL",
+    "LOOP_EFFORT",
+    "LOOP_DRIVER_EFFORT",
+    "LOOP_REVIEWER_EFFORT",
+  ] as const;
+  const ambientBefore = Object.fromEntries(
+    ambientNames.map((name) => [name, process.env[name]])
+  );
+  let observation:
+    | {
+        sourceIdentity: typeof sourceIdentity;
+        hostileAmbient: Record<string, string | undefined>;
+        replacementArgv: string[];
+        parsedOptions: Record<string, unknown>;
+        launchArgv: string[];
+        resolvedEffectiveModel: string | undefined;
+      }
+    | undefined;
+
+  try {
+    process.env.LOOP_CODEX_MODEL = "gpt-5.6-luna";
+    process.env.LOOP_EFFORT = "low";
+    Reflect.deleteProperty(process.env, "LOOP_DRIVER_EFFORT");
+    Reflect.deleteProperty(process.env, "LOOP_REVIEWER_EFFORT");
+
+    const replacementArgv = replacementLoopArgs(
+      sourceIdentity.primary,
+      sourceIdentity.peer,
+      "/tmp/d7-handoff",
+      sourceIdentity.efforts,
+      {
+        primaryModel: sourceIdentity.models.codex,
+        reviewerModel: sourceIdentity.models.claude,
+      }
+    );
+    const parsedOptions = parseArgs(replacementArgv);
+    parsedOptions.codexMcpConfigArgs = [
+      "-c",
+      'mcp_servers.loop-bridge.command="loop"',
+    ];
+    const launchArgv = tmuxInternals.buildPairedAgentCommand({
+      agent: "codex",
+      claudeChannelServer: "loop-bridge-d7",
+      claudeSessionId: "d7-claude-session",
+      codexProxyUrl: "ws://127.0.0.1:4600/",
+      hadSession: false,
+      nativeSubagentMode: "off",
+      opts: parsedOptions,
+    });
+    const modelIndex = launchArgv.indexOf("-m");
+    observation = {
+      sourceIdentity,
+      hostileAmbient: Object.fromEntries(
+        ambientNames.map((name) => [name, process.env[name]])
+      ),
+      replacementArgv,
+      parsedOptions: {
+        agent: parsedOptions.agent,
+        pairWith: parsedOptions.pairWith,
+        codexModel: parsedOptions.codexModel,
+        driverEffort: parsedOptions.driverEffort,
+        reviewerEffort: parsedOptions.reviewerEffort,
+        promptInput: parsedOptions.promptInput,
+        codexMcpConfigArgs: parsedOptions.codexMcpConfigArgs,
+      },
+      launchArgv,
+      resolvedEffectiveModel:
+        modelIndex === -1 ? undefined : launchArgv[modelIndex + 1],
+    };
+  } finally {
+    for (const name of ambientNames) {
+      const value = ambientBefore[name];
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, name);
+      } else {
+        process.env[name] = value;
+      }
+    }
+  }
+
+  expect(
+    Object.fromEntries(ambientNames.map((name) => [name, process.env[name]]))
+  ).toEqual(ambientBefore);
+  expect(observation).toBeDefined();
+  if (observation?.resolvedEffectiveModel !== sourceIdentity.models.codex) {
+    throw new Error(
+      `D7 hostile-default model drift: expected ${sourceIdentity.models.codex}, received ${observation?.resolvedEffectiveModel}\n${JSON.stringify(observation, null, 2)}`
+    );
+  }
+});
+
+test("D7 replacement argv maps frozen primary and reviewer models by role", () => {
+  const cases = [
+    {
+      expected: [
+        "--codex-model",
+        "codex-primary",
+        "--claude-reviewer-model",
+        "claude-peer",
+      ],
+      peer: "claude" as const,
+      primary: "codex" as const,
+      primaryModel: "codex-primary",
+      reviewerModel: "claude-peer",
+    },
+    {
+      expected: [
+        "--gemini-model",
+        "gemini-primary",
+        "--copilot-reviewer-model",
+        "copilot-peer",
+      ],
+      peer: "copilot" as const,
+      primary: "gemini" as const,
+      primaryModel: "gemini-primary",
+      reviewerModel: "copilot-peer",
+    },
+    {
+      expected: [
+        "--cursor-model",
+        "cursor-primary",
+        "--codex-reviewer-model",
+        "codex-peer",
+      ],
+      peer: "codex" as const,
+      primary: "cursor" as const,
+      primaryModel: "cursor-primary",
+      reviewerModel: "codex-peer",
+    },
+    {
+      expected: ["--gemini-reviewer-model", "gemini-peer"],
+      peer: "gemini" as const,
+      primary: "claude" as const,
+      primaryModel: "opus",
+      reviewerModel: "gemini-peer",
+    },
+  ];
+  for (const fixture of cases) {
+    const argv = replacementLoopArgs(
+      fixture.primary,
+      fixture.peer,
+      "/tmp/d7-handoff",
+      { driverEffort: "high", reviewerEffort: "low" },
+      {
+        primaryModel: fixture.primaryModel,
+        reviewerModel: fixture.reviewerModel,
+      }
+    );
+    const promptIndex = argv.indexOf("--prompt");
+    expect(
+      argv.slice(promptIndex - fixture.expected.length, promptIndex)
+    ).toEqual(fixture.expected);
+  }
+
+  expect(() =>
+    replacementLoopArgs(
+      "claude",
+      "codex",
+      "/tmp/d7-handoff",
+      { driverEffort: "high", reviewerEffort: "low" },
+      { primaryModel: "future-claude", reviewerModel: "codex-peer" }
+    )
+  ).toThrow("cannot preserve Claude primary model future-claude");
+});
+
 test("exit controls replace the status row without growing the board", () => {
   const board = "status\nrow 2\nrow 3";
   const agents = [
@@ -212,26 +405,88 @@ test("exit controls replace the status row without growing the board", () => {
   expect(progress.split("\n")[0]).toContain("codex:finishing");
 });
 
-const handoverConfig = (): GovernessConfig =>
-  ({
+const handoverConfig = (): GovernessConfig => {
+  const runDir = mkdtempSync(join(tmpdir(), "governess-exit-test-"));
+  return {
     agents: [
       { agent: "claude", hookFile: "claude", pane: "session:0.0" },
       { agent: "codex", hookFile: "codex", pane: "session:0.1" },
     ],
+    cwd: runDir,
     driverEffort: "medium",
     initialDriver: "claude",
     epoch: 1,
     logFile: "/tmp/governess-test.jsonl",
-    runDir: mkdtempSync(join(tmpdir(), "governess-exit-test-")),
+    manifestPath: join(runDir, "manifest.json"),
+    runDir,
+    runId: "source-run",
     reviewerEffort: "high",
     session: "session",
-  }) as GovernessConfig;
+  } as GovernessConfig;
+};
+
+const writeSourceLaunchManifest = (config: GovernessConfig): void => {
+  const primary = config.initialDriver ?? config.agents[0]?.agent;
+  const peer = config.agents.find((info) => info.agent !== primary)?.agent;
+  if (!(primary && peer && config.cwd && config.manifestPath)) {
+    throw new Error("invalid handover source fixture");
+  }
+  const repoId = "d7-fixture-repo";
+  const workspaceBinding = { repoId, root: config.cwd };
+  const modelFor = (agent: string): string => {
+    if (agent === "claude") {
+      return "opus";
+    }
+    if (agent === "codex") {
+      return "gpt-5.6-sol";
+    }
+    return `${agent}-model`;
+  };
+  const launchIdentity = {
+    cwd: config.cwd,
+    peer: {
+      agent: peer,
+      effort: config.reviewerEffort,
+      model: modelFor(peer),
+      role: "reviewer" as const,
+    },
+    primary: {
+      agent: primary,
+      effort: config.driverEffort,
+      model: modelFor(primary),
+      role: "driver" as const,
+    },
+    repoId,
+    runId: config.runId,
+    workspaceBinding,
+  };
+  writeRunManifest(
+    config.manifestPath,
+    createRunManifest({
+      cwd: config.cwd,
+      driverEffort: config.driverEffort,
+      launchIdentity,
+      mode: "paired",
+      pid: 1234,
+      primaryAgent: primary,
+      repoId,
+      reviewerEffort: config.reviewerEffort,
+      runId: config.runId,
+      state: "working",
+      tmuxPaneLeftAgent: config.agents[0]?.agent,
+      tmuxPaneRightAgent: config.agents[1]?.agent,
+      tmuxSession: config.session,
+      workspaceBinding,
+    })
+  );
+};
 
 const writeHandoverBundles = (
   config: GovernessConfig,
   state: ReturnType<typeof freshRunState>,
   agents: Array<"claude" | "codex"> = ["claude", "codex"]
 ): void => {
+  writeSourceLaunchManifest(config);
   const dir = join(
     config.runDir as string,
     "handoff",
@@ -264,11 +519,48 @@ const acceptReplacement = (
   if (!manifest) {
     throw new Error("handover manifest was not persisted");
   }
+  const handoff = readGovernessHandoffManifest(manifest);
+  if (!handoff) {
+    throw new Error("handover manifest was not readable");
+  }
+  const replacementIdentity = {
+    ...handoff.sourceIdentity,
+    runId: `${handoff.sourceIdentity.runId}-replacement`,
+  };
+  const lineage = handoffLineageForReplacement(handoff, replacementIdentity);
+  if (!lineage) {
+    throw new Error("replacement lineage did not match");
+  }
+  const replacementManifestPath = join(
+    dirname(manifest),
+    "replacement-manifest.json"
+  );
+  writeRunManifest(
+    replacementManifestPath,
+    createRunManifest({
+      cwd: replacementIdentity.cwd,
+      driverEffort: replacementIdentity.primary.effort,
+      handoffLineage: lineage,
+      launchIdentity: replacementIdentity,
+      mode: "paired",
+      pid: 4321,
+      primaryAgent: replacementIdentity.primary.agent,
+      repoId: replacementIdentity.repoId,
+      reviewerEffort: replacementIdentity.peer.effort,
+      runId: replacementIdentity.runId,
+      state: "working",
+      tmuxPaneLeftAgent: replacementIdentity.primary.agent,
+      tmuxPaneRightAgent: replacementIdentity.peer.agent,
+      tmuxSession: session,
+      workspaceBinding: replacementIdentity.workspaceBinding,
+    })
+  );
   const accepted = acceptGovernessHandoff(
     manifest,
     session,
     state.governessEpoch + 1,
-    "2026-07-25T00:00:01.000Z"
+    "2026-07-25T00:00:01.000Z",
+    replacementManifestPath
   );
   if (!accepted) {
     throw new Error("handover manifest was not accepted");
@@ -903,6 +1195,129 @@ test("handover launch failure never marks or kills the old loop", async () => {
   expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
   expect(destructive).toEqual([]);
   expect(state.exitControl.mode).toBe("launch-error");
+});
+
+test("D7 governed handoff rejects legacy missing launch identity before spawn", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    mode: "handover",
+    notified: { claude: true, codex: true },
+  };
+  writeHandoverBundles(config, state);
+  const source = readRunManifest(config.manifestPath as string);
+  if (!source) {
+    throw new Error("missing source fixture manifest");
+  }
+  writeRunManifest(config.manifestPath as string, {
+    ...source,
+    launchIdentity: undefined,
+  });
+  const destructive: string[] = [];
+  let launches = 0;
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () => "",
+    fenceCurrent: () => true,
+    killSession: () => destructive.push("kill"),
+    launchReplacementLoop: () => {
+      launches += 1;
+      return { ok: true, session: "replacement" } as const;
+    },
+    markRunStopped: () => destructive.push("mark"),
+    now: () => 0,
+    paneCommand: () => "0:zsh",
+    saveState: () => undefined,
+  };
+
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
+  expect(state.exitControl).toMatchObject({
+    launchError: "could not create validated handover manifest",
+    mode: "launch-error",
+  });
+  expect(launches).toBe(0);
+  expect(destructive).toEqual([]);
+});
+
+test("D7 replacement model mismatch cannot accept or tear down the old loop", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = {
+    mode: "handover",
+    notified: { claude: true, codex: true },
+  };
+  writeHandoverBundles(config, state);
+  const destructive: string[] = [];
+  let launches = 0;
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () => "",
+    fenceCurrent: () => true,
+    killSession: () => destructive.push("kill"),
+    launchReplacementLoop: () => {
+      launches += 1;
+      return { ok: true, session: "replacement" } as const;
+    },
+    markRunStopped: () => destructive.push("mark"),
+    now: () => 0,
+    paneCommand: () => "0:zsh",
+    replacementSessionAlive: () => true,
+    replacementSessionReady: () => true,
+    saveState: () => undefined,
+  };
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
+  const handoffPath = state.exitControl.handoverManifest as string;
+  const handoff = readGovernessHandoffManifest(handoffPath);
+  if (!handoff) {
+    throw new Error("missing handoff fixture manifest");
+  }
+  const replacementIdentity = {
+    ...handoff.sourceIdentity,
+    primary: {
+      ...handoff.sourceIdentity.primary,
+      model: "gpt-5.6-luna",
+    },
+    runId: "replacement",
+  };
+  const replacementManifestPath = join(
+    dirname(handoffPath),
+    "mismatched-replacement.json"
+  );
+  writeRunManifest(
+    replacementManifestPath,
+    createRunManifest({
+      cwd: replacementIdentity.cwd,
+      driverEffort: replacementIdentity.primary.effort,
+      launchIdentity: replacementIdentity,
+      mode: "paired",
+      pid: 4321,
+      primaryAgent: replacementIdentity.primary.agent,
+      repoId: replacementIdentity.repoId,
+      reviewerEffort: replacementIdentity.peer.effort,
+      runId: replacementIdentity.runId,
+      state: "working",
+      tmuxPaneLeftAgent: replacementIdentity.primary.agent,
+      tmuxPaneRightAgent: replacementIdentity.peer.agent,
+      tmuxSession: "replacement",
+      workspaceBinding: replacementIdentity.workspaceBinding,
+    })
+  );
+  expect(
+    acceptGovernessHandoff(
+      handoffPath,
+      "replacement",
+      state.governessEpoch + 1,
+      "2026-07-25T00:00:01.000Z",
+      replacementManifestPath
+    )
+  ).toBeUndefined();
+
+  expect(await driveHandoverControl(config, deps, state, {})).toBe(false);
+  expect(launches).toBe(1);
+  expect(destructive).toEqual([]);
+  expect(state.exitControl.mode).toBe("launched");
 });
 
 test("handover restart keeps the persisted transaction epoch for replacement launch", async () => {

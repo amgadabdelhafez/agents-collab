@@ -18,6 +18,7 @@ import {
   resolve as resolvePath,
 } from "node:path";
 import { isAgent } from "./agents";
+import { DEFAULT_CLAUDE_MODEL } from "./constants";
 import { isEffortLevel } from "./effort";
 import {
   type GitResult,
@@ -31,6 +32,7 @@ import type {
   CavemanMode,
   EffortLevel,
   LaunchWorkspaceBinding,
+  Options,
   ReviewStatus,
   RunLifecycleState,
   RunStatus,
@@ -89,6 +91,29 @@ export interface RunWorldModelBinding {
   statementCount: number;
 }
 
+export interface RunLaunchAgentIdentity {
+  agent: Agent;
+  effort: EffortLevel;
+  model: string;
+  role: "driver" | "reviewer";
+}
+
+export interface RunLaunchIdentity {
+  cwd: string;
+  peer: RunLaunchAgentIdentity;
+  primary: RunLaunchAgentIdentity;
+  repoId: string;
+  runId: string;
+  workspaceBinding: LaunchWorkspaceBinding;
+}
+
+export interface RunHandoffLineage {
+  handoffDigest: string;
+  handoffEpoch: number;
+  sourceIdentity: RunLaunchIdentity;
+  sourceManifestIdentityDigest: string;
+}
+
 export interface RunManifest {
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
@@ -100,11 +125,13 @@ export interface RunManifest {
   cwd: string;
   driverEffort?: EffortLevel;
   governess?: boolean;
+  handoffLineage?: RunHandoffLineage;
   helperCavemanMode?: CavemanMode;
   launchAttemptId?: string;
   launchAttemptPid?: number;
   launchCharters?: Partial<Record<Agent, RunLaunchCharter>>;
   launchClaimId?: string;
+  launchIdentity?: RunLaunchIdentity;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
@@ -193,10 +220,12 @@ interface RunManifestInput {
   cwd: string;
   driverEffort?: EffortLevel;
   governess?: boolean;
+  handoffLineage?: RunHandoffLineage;
   helperCavemanMode?: CavemanMode;
   launchAttemptId?: string;
   launchAttemptPid?: number;
   launchClaimId?: string;
+  launchIdentity?: RunLaunchIdentity;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
@@ -258,6 +287,50 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
+
+type EffectiveModelOptions = Pick<
+  Options,
+  | "agent"
+  | "claudeReviewerModel"
+  | "codexModel"
+  | "codexReviewerModel"
+  | "copilotModel"
+  | "copilotReviewerModel"
+  | "cursorModel"
+  | "cursorReviewerModel"
+  | "geminiModel"
+  | "geminiReviewerModel"
+>;
+
+export const resolveEffectiveAgentModel = (
+  agent: Agent,
+  opts: EffectiveModelOptions
+): string => {
+  const isPrimary = agent === opts.agent;
+  if (agent === "codex") {
+    return isPrimary
+      ? opts.codexModel
+      : (opts.codexReviewerModel ?? opts.codexModel);
+  }
+  if (agent === "claude") {
+    return isPrimary
+      ? DEFAULT_CLAUDE_MODEL
+      : (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL);
+  }
+  if (agent === "gemini") {
+    return isPrimary
+      ? opts.geminiModel
+      : (opts.geminiReviewerModel ?? opts.geminiModel);
+  }
+  if (agent === "copilot") {
+    return isPrimary
+      ? opts.copilotModel
+      : (opts.copilotReviewerModel ?? opts.copilotModel);
+  }
+  return isPrimary
+    ? opts.cursorModel
+    : (opts.cursorReviewerModel ?? opts.cursorModel);
+};
 
 const asInteger = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isInteger(value) ? value : undefined;
@@ -483,6 +556,167 @@ const readWorkspaceBinding = (
   };
 };
 
+const readLaunchAgentIdentity = (
+  value: unknown,
+  role: RunLaunchAgentIdentity["role"]
+): RunLaunchAgentIdentity | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const agent = asString(value.agent);
+  const effort = asString(value.effort);
+  const model = asString(value.model)?.trim();
+  if (!(agent && isAgent(agent) && effort && isEffortLevel(effort) && model)) {
+    return undefined;
+  }
+  if (value.role !== role) {
+    return undefined;
+  }
+  return { agent, effort, model, role };
+};
+
+export const readRunLaunchIdentity = (
+  value: unknown
+): RunLaunchIdentity | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const cwd = asString(value.cwd);
+  const repoId = asString(value.repoId ?? value.repo_id);
+  const runId = asString(value.runId ?? value.run_id);
+  const workspaceBinding = readWorkspaceBinding(
+    value.workspaceBinding ?? value.workspace_binding
+  );
+  const primary = readLaunchAgentIdentity(value.primary, "driver");
+  const peer = readLaunchAgentIdentity(value.peer, "reviewer");
+  if (
+    !(
+      cwd &&
+      repoId &&
+      runId &&
+      workspaceBinding &&
+      primary &&
+      peer &&
+      primary.agent !== peer.agent &&
+      workspaceBinding.repoId === repoId &&
+      workspaceBinding.root === cwd
+    )
+  ) {
+    return undefined;
+  }
+  try {
+    validateRunId(runId);
+  } catch {
+    return undefined;
+  }
+  return {
+    cwd,
+    peer,
+    primary,
+    repoId,
+    runId,
+    workspaceBinding,
+  };
+};
+
+const canonicalRunLaunchIdentity = (
+  identity: RunLaunchIdentity
+): RunLaunchIdentity => ({
+  cwd: identity.cwd,
+  peer: {
+    agent: identity.peer.agent,
+    effort: identity.peer.effort,
+    model: identity.peer.model,
+    role: "reviewer",
+  },
+  primary: {
+    agent: identity.primary.agent,
+    effort: identity.primary.effort,
+    model: identity.primary.model,
+    role: "driver",
+  },
+  repoId: identity.repoId,
+  runId: identity.runId,
+  workspaceBinding: {
+    ...(identity.workspaceBinding.branchRef
+      ? { branchRef: identity.workspaceBinding.branchRef }
+      : {}),
+    repoId: identity.workspaceBinding.repoId,
+    root: identity.workspaceBinding.root,
+  },
+});
+
+export const runLaunchIdentityDigest = (
+  identity: RunLaunchIdentity
+): string => {
+  const normalized = readRunLaunchIdentity(identity);
+  if (!normalized) {
+    throw new Error("Invalid run launch identity");
+  }
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalRunLaunchIdentity(normalized)))
+    .digest("hex");
+};
+
+export const replacementMatchesSourceIdentity = (
+  source: RunLaunchIdentity,
+  replacement: RunLaunchIdentity
+): boolean => {
+  const normalizedSource = readRunLaunchIdentity(source);
+  const normalizedReplacement = readRunLaunchIdentity(replacement);
+  if (!(normalizedSource && normalizedReplacement)) {
+    return false;
+  }
+  return (
+    normalizedReplacement.runId !== normalizedSource.runId &&
+    JSON.stringify({
+      ...canonicalRunLaunchIdentity(normalizedReplacement),
+      runId: undefined,
+    }) ===
+      JSON.stringify({
+        ...canonicalRunLaunchIdentity(normalizedSource),
+        runId: undefined,
+      })
+  );
+};
+
+export const readRunHandoffLineage = (
+  value: unknown
+): RunHandoffLineage | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const handoffDigest = asString(value.handoffDigest ?? value.handoff_digest);
+  const handoffEpoch = value.handoffEpoch ?? value.handoff_epoch;
+  const sourceIdentity = readRunLaunchIdentity(
+    value.sourceIdentity ?? value.source_identity
+  );
+  const sourceManifestIdentityDigest = asString(
+    value.sourceManifestIdentityDigest ?? value.source_manifest_identity_digest
+  );
+  if (
+    !(
+      handoffDigest &&
+      SHA256_RE.test(handoffDigest) &&
+      typeof handoffEpoch === "number" &&
+      Number.isSafeInteger(handoffEpoch) &&
+      handoffEpoch >= 0 &&
+      sourceIdentity &&
+      sourceManifestIdentityDigest &&
+      SHA256_RE.test(sourceManifestIdentityDigest) &&
+      sourceManifestIdentityDigest === runLaunchIdentityDigest(sourceIdentity)
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    handoffDigest,
+    handoffEpoch,
+    sourceIdentity,
+    sourceManifestIdentityDigest,
+  };
+};
+
 const validateSourceTaskSha256 = (value: string): string => {
   if (!SHA256_RE.test(value)) {
     throw new Error("Invalid source task SHA-256");
@@ -519,6 +753,27 @@ const launchReservationManifestFields = (
     ? { workspaceBinding: { ...input.workspaceBinding } }
     : {}),
 });
+
+const launchIdentityManifestFields = (
+  input: Pick<RunManifestInput, "handoffLineage" | "launchIdentity">
+): Pick<RunManifest, "handoffLineage" | "launchIdentity"> => {
+  const launchIdentity = input.launchIdentity
+    ? readRunLaunchIdentity(input.launchIdentity)
+    : undefined;
+  if (input.launchIdentity && !launchIdentity) {
+    throw new Error("Invalid run launch identity");
+  }
+  const handoffLineage = input.handoffLineage
+    ? readRunHandoffLineage(input.handoffLineage)
+    : undefined;
+  if (input.handoffLineage && !handoffLineage) {
+    throw new Error("Invalid run handoff lineage");
+  }
+  return {
+    ...(handoffLineage ? { handoffLineage } : {}),
+    ...(launchIdentity ? { launchIdentity } : {}),
+  };
+};
 
 const readLaunchReservationManifestFields = (
   parsed: Record<string, unknown>
@@ -877,6 +1132,7 @@ export const createRunManifest = (
   return {
     ...cavemanManifestFields(input),
     ...effortManifestFields(input),
+    ...launchIdentityManifestFields(input),
     ...launchReservationManifestFields(input),
     ...worldModelManifestFields(input.worldModel),
     ...(input.claudeChannelServer
@@ -950,6 +1206,21 @@ export const writeRunManifest = (
     rmSync(tempPath, { force: true });
     throw error;
   }
+};
+
+const readLaunchIdentityManifestFields = (
+  parsed: Record<string, unknown>
+): Pick<RunManifest, "handoffLineage" | "launchIdentity"> => {
+  const launchIdentity = readRunLaunchIdentity(
+    parsed.launchIdentity ?? parsed.launch_identity
+  );
+  const handoffLineage = readRunHandoffLineage(
+    parsed.handoffLineage ?? parsed.handoff_lineage
+  );
+  return {
+    ...(handoffLineage ? { handoffLineage } : {}),
+    ...(launchIdentity ? { launchIdentity } : {}),
+  };
 };
 
 const readOptionalRunManifestFields = (
@@ -1030,6 +1301,7 @@ const readOptionalRunManifestFields = (
     ...(codexAppServerPid ? { codexAppServerPid } : {}),
     ...(codexRemoteUrl ? { codexRemoteUrl } : {}),
     ...(governess ? { governess: true } : {}),
+    ...readLaunchIdentityManifestFields(parsed),
     ...(primaryAgent ? { primaryAgent } : {}),
     ...(helperCavemanMode ? { helperCavemanMode } : {}),
     ...launchCharterManifestFields(parsed),

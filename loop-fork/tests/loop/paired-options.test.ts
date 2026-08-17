@@ -90,6 +90,168 @@ test("preparePairedRun persists resolved asymmetric launch effort", () => {
   }
 });
 
+test("D7 live tmux resume restores persisted model identity and rejects an explicit conflict", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  process.env.HOME = home;
+  Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+  try {
+    const storage = resolveRunStorage("identity-live", process.cwd(), home);
+    const workspaceBinding = {
+      repoId: storage.repoId,
+      root: process.cwd(),
+    };
+    const launchIdentity = {
+      cwd: process.cwd(),
+      peer: {
+        agent: "claude" as const,
+        effort: "low" as const,
+        model: "opus",
+        role: "reviewer" as const,
+      },
+      primary: {
+        agent: "codex" as const,
+        effort: "high" as const,
+        model: "gpt-5.6-sol",
+        role: "driver" as const,
+      },
+      repoId: storage.repoId,
+      runId: "identity-live",
+      workspaceBinding,
+    };
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        claudeSessionId: "claude-session",
+        codexThreadId: "codex-thread",
+        cwd: process.cwd(),
+        driverEffort: "high",
+        launchIdentity,
+        mode: "paired",
+        pid: 1234,
+        primaryAgent: "codex",
+        repoId: storage.repoId,
+        reviewerEffort: "low",
+        runId: "identity-live",
+        state: "working",
+        tmuxPaneLeft: "repo-loop:0.0",
+        tmuxPaneLeftAgent: "claude",
+        tmuxPaneRight: "repo-loop:0.1",
+        tmuxPaneRightAgent: "codex",
+        tmuxSession: "repo-loop",
+        workspaceBinding,
+      })
+    );
+    const resumed = makeOptions({
+      codexModel: "gpt-5.6-luna",
+      pairedMode: true,
+      pairWith: "claude",
+      resumeRunId: "identity-live",
+      tmux: true,
+    });
+
+    const prepared = preparePairedRun(resumed, process.cwd(), () => true, []);
+
+    expect(resumed).toMatchObject({
+      agent: "codex",
+      codexModel: "gpt-5.6-sol",
+      driverEffort: "high",
+      pairWith: "claude",
+      reviewerEffort: "low",
+    });
+    expect(prepared.manifest.launchIdentity).toEqual(launchIdentity);
+
+    expect(() =>
+      preparePairedRun(
+        makeOptions({
+          codexModel: "gpt-5.6-luna",
+          pairedMode: true,
+          pairWith: "claude",
+          resumeRunId: "identity-live",
+          tmux: true,
+        }),
+        process.cwd(),
+        () => true,
+        ["--codex-model", "gpt-5.6-luna"]
+      )
+    ).toThrow("Cannot change --codex-model from gpt-5.6-sol");
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("D7 fresh manifest uses the command resolver for reviewer overrides and literal auto", () => {
+  const home = makeTempHome();
+  const projectDir = join(home, "project");
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  mkdirSync(projectDir, { recursive: true });
+  process.env.HOME = home;
+  process.env.LOOP_RUN_ID = "identity-fresh";
+  try {
+    const storage = resolveRunStorage("identity-fresh", projectDir, home);
+    const workspaceBinding = {
+      repoId: storage.repoId,
+      root: projectDir,
+    };
+    const prepared = preparePairedRun(
+      makeOptions({
+        agent: "gemini",
+        codexReviewerModel: "reviewer-sol",
+        driverEffort: "high",
+        geminiModel: "auto",
+        pairedMode: true,
+        pairWith: "codex",
+        reviewerEffort: "low",
+        workspaceBinding,
+      }),
+      projectDir
+    );
+
+    expect(prepared.manifest.launchIdentity).toEqual({
+      cwd: projectDir,
+      peer: {
+        agent: "codex",
+        effort: "low",
+        model: "reviewer-sol",
+        role: "reviewer",
+      },
+      primary: {
+        agent: "gemini",
+        effort: "high",
+        model: "auto",
+        role: "driver",
+      },
+      repoId: storage.repoId,
+      runId: "identity-fresh",
+      workspaceBinding,
+    });
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test("live tmux reattach rejects an effort change it cannot apply", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;

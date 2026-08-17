@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { ReadStream } from "node:tty";
+import { DEFAULT_CLAUDE_MODEL } from "./constants";
 import type { Agent, EffortLevel } from "./types";
 
 export type ExitControlMode = "idle" | "handover" | "launched" | "launch-error";
@@ -231,11 +232,41 @@ export const handoverContinuationFile = (handoffDir: string): string =>
 export const handoverContinuationText = (handoffDir: string): string =>
   `${HANDOVER_CONTINUATION_PROMPT} Read every validated handover bundle in ${handoffDir} before acting.`;
 
+export interface GovernessHandoffModels {
+  primaryModel: string;
+  reviewerModel: string;
+}
+
+const replacementModelArgs = (
+  primary: Agent,
+  peer: Agent,
+  models: GovernessHandoffModels | undefined
+): string[] => {
+  if (!models) {
+    return [];
+  }
+  const primaryModel = models.primaryModel.trim();
+  const reviewerModel = models.reviewerModel.trim();
+  if (!(primaryModel && reviewerModel)) {
+    throw new Error("handover requires non-empty effective models");
+  }
+  if (primary === "claude" && primaryModel !== DEFAULT_CLAUDE_MODEL) {
+    throw new Error(
+      `cannot preserve Claude primary model ${primaryModel}; this launcher can express only ${DEFAULT_CLAUDE_MODEL}`
+    );
+  }
+  const primaryArgs =
+    primary === "claude" ? [] : [`--${primary}-model`, primaryModel];
+  const reviewerPrefix = peer === "claude" ? "claude" : peer;
+  return [...primaryArgs, `--${reviewerPrefix}-reviewer-model`, reviewerModel];
+};
+
 export const replacementLoopArgs = (
   primary: Agent,
   peer: Agent,
   handoffDir?: string,
-  effort?: { driverEffort: EffortLevel; reviewerEffort: EffortLevel }
+  effort?: { driverEffort: EffortLevel; reviewerEffort: EffortLevel },
+  models?: GovernessHandoffModels
 ): string[] => [
   "--tmux",
   "--governess",
@@ -251,6 +282,7 @@ export const replacementLoopArgs = (
         effort.reviewerEffort,
       ]
     : []),
+  ...replacementModelArgs(primary, peer, models),
   "--prompt",
   handoffDir
     ? handoverContinuationFile(handoffDir)

@@ -1,7 +1,22 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { isEffortLevel } from "./effort";
+import {
+  type RunHandoffLineage,
+  type RunLaunchIdentity,
+  readRunHandoffLineage,
+  readRunLaunchIdentity,
+  readRunManifest,
+  replacementMatchesSourceIdentity,
+  runLaunchIdentityDigest,
+} from "./run-state";
 import type { Agent, EffortLevel } from "./types";
 
 export interface GovernessHandoffBundle {
@@ -24,6 +39,8 @@ export interface GovernessHandoffManifest {
   driverEffort: EffortLevel;
   epoch: number;
   reviewerEffort: EffortLevel;
+  sourceIdentity: RunLaunchIdentity;
+  sourceManifestIdentityDigest: string;
 }
 
 export interface GovernessHandoffEffort {
@@ -35,7 +52,12 @@ export interface GovernessHandoffAcceptance {
   acceptedAt: string;
   manifestDigest: string;
   replacementEpoch: number;
+  replacementManifestIdentityDigest: string;
+  replacementManifestPath: string;
+  replacementRepoId: string;
+  replacementRunId: string;
   replacementSession: string;
+  sourceManifestIdentityDigest: string;
 }
 
 const digest = (value: string): string =>
@@ -116,11 +138,21 @@ export const writeGovernessHandoffManifest = (
   agents: Agent[],
   nowIso: string,
   continuationFile: string,
-  effort: GovernessHandoffEffort
+  effort: GovernessHandoffEffort,
+  sourceIdentityInput: RunLaunchIdentity
 ): string | undefined => {
+  const sourceIdentity = readRunLaunchIdentity(sourceIdentityInput);
   if (
     !(
-      isEffortLevel(effort.driverEffort) && isEffortLevel(effort.reviewerEffort)
+      isEffortLevel(effort.driverEffort) &&
+      isEffortLevel(effort.reviewerEffort) &&
+      sourceIdentity &&
+      sourceIdentity.primary.effort === effort.driverEffort &&
+      sourceIdentity.peer.effort === effort.reviewerEffort &&
+      agents.length === 2 &&
+      new Set(agents).size === 2 &&
+      agents.includes(sourceIdentity.primary.agent) &&
+      agents.includes(sourceIdentity.peer.agent)
     )
   ) {
     return undefined;
@@ -149,6 +181,8 @@ export const writeGovernessHandoffManifest = (
     driverEffort: effort.driverEffort,
     epoch,
     reviewerEffort: effort.reviewerEffort,
+    sourceIdentity,
+    sourceManifestIdentityDigest: runLaunchIdentityDigest(sourceIdentity),
   });
   const manifest: GovernessHandoffManifest = {
     bundles,
@@ -158,6 +192,8 @@ export const writeGovernessHandoffManifest = (
     driverEffort: effort.driverEffort,
     epoch,
     reviewerEffort: effort.reviewerEffort,
+    sourceIdentity,
+    sourceManifestIdentityDigest: runLaunchIdentityDigest(sourceIdentity),
   };
   const path = governessHandoffManifestFile(runDir, epoch);
   writeAtomicJson(path, manifest);
@@ -171,12 +207,18 @@ export const readGovernessHandoffManifest = (
     const value = JSON.parse(
       readFileSync(manifestFile, "utf8")
     ) as Partial<GovernessHandoffManifest>;
+    const sourceIdentity = readRunLaunchIdentity(value.sourceIdentity);
     if (
       typeof value.epoch !== "number" ||
       typeof value.createdAt !== "string" ||
       typeof value.digest !== "string" ||
       !isEffortLevel(value.driverEffort ?? "") ||
       !isEffortLevel(value.reviewerEffort ?? "") ||
+      !sourceIdentity ||
+      value.sourceManifestIdentityDigest !==
+        runLaunchIdentityDigest(sourceIdentity) ||
+      sourceIdentity.primary.effort !== value.driverEffort ||
+      sourceIdentity.peer.effort !== value.reviewerEffort ||
       !value.bundles ||
       typeof value.bundles !== "object" ||
       !value.continuation ||
@@ -192,8 +234,18 @@ export const readGovernessHandoffManifest = (
       driverEffort: value.driverEffort,
       epoch: value.epoch,
       reviewerEffort: value.reviewerEffort,
+      sourceIdentity,
+      sourceManifestIdentityDigest: value.sourceManifestIdentityDigest,
     });
     if (digest(canonical) !== value.digest) {
+      return undefined;
+    }
+    const bundleAgents = Object.keys(value.bundles);
+    if (
+      bundleAgents.length !== 2 ||
+      !bundleAgents.includes(sourceIdentity.primary.agent) ||
+      !bundleAgents.includes(sourceIdentity.peer.agent)
+    ) {
       return undefined;
     }
     if (
@@ -213,29 +265,116 @@ export const readGovernessHandoffManifest = (
         return undefined;
       }
     }
-    return value as GovernessHandoffManifest;
+    return { ...value, sourceIdentity } as GovernessHandoffManifest;
   } catch {
     return undefined;
   }
+};
+
+export const handoffLineageForReplacement = (
+  manifest: GovernessHandoffManifest,
+  replacementIdentity: RunLaunchIdentity
+): RunHandoffLineage | undefined => {
+  if (
+    !replacementMatchesSourceIdentity(
+      manifest.sourceIdentity,
+      replacementIdentity
+    )
+  ) {
+    return undefined;
+  }
+  return readRunHandoffLineage({
+    handoffDigest: manifest.digest,
+    handoffEpoch: manifest.epoch,
+    sourceIdentity: manifest.sourceIdentity,
+    sourceManifestIdentityDigest: manifest.sourceManifestIdentityDigest,
+  });
+};
+
+const replacementManifestMatchesIdentity = (
+  manifestPath: string,
+  handoff: GovernessHandoffManifest,
+  replacementSession: string
+) => {
+  const replacement = readRunManifest(manifestPath);
+  const identity = replacement?.launchIdentity;
+  const expectedLineage = identity
+    ? handoffLineageForReplacement(handoff, identity)
+    : undefined;
+  if (
+    !(
+      replacement &&
+      identity &&
+      expectedLineage &&
+      replacement.handoffLineage &&
+      replacement.runId === identity.runId &&
+      replacement.repoId === identity.repoId &&
+      replacement.cwd === identity.cwd &&
+      replacement.driverEffort === identity.primary.effort &&
+      replacement.reviewerEffort === identity.peer.effort &&
+      replacement.primaryAgent === identity.primary.agent &&
+      replacement.tmuxSession === replacementSession &&
+      replacement.tmuxPaneLeftAgent &&
+      replacement.tmuxPaneRightAgent &&
+      new Set([replacement.tmuxPaneLeftAgent, replacement.tmuxPaneRightAgent])
+        .size === 2 &&
+      [replacement.tmuxPaneLeftAgent, replacement.tmuxPaneRightAgent].includes(
+        identity.primary.agent
+      ) &&
+      [replacement.tmuxPaneLeftAgent, replacement.tmuxPaneRightAgent].includes(
+        identity.peer.agent
+      ) &&
+      replacement.workspaceBinding?.root === identity.workspaceBinding.root &&
+      replacement.workspaceBinding.repoId ===
+        identity.workspaceBinding.repoId &&
+      replacement.workspaceBinding.branchRef ===
+        identity.workspaceBinding.branchRef &&
+      JSON.stringify(replacement.handoffLineage) ===
+        JSON.stringify(expectedLineage)
+    )
+  ) {
+    return undefined;
+  }
+  return { identity, replacement };
 };
 
 export const acceptGovernessHandoff = (
   manifestFile: string,
   replacementSession: string,
   replacementEpoch: number,
-  nowIso: string
+  nowIso: string,
+  replacementManifestPath: string
 ): GovernessHandoffAcceptance | undefined => {
+  const acceptanceFile = governessHandoffAcceptanceFile(manifestFile);
+  if (existsSync(acceptanceFile)) {
+    return readGovernessHandoffAcceptance(manifestFile, replacementSession);
+  }
   const manifest = readGovernessHandoffManifest(manifestFile);
-  if (!manifest) {
+  if (!(manifest && replacementEpoch > manifest.epoch)) {
+    return undefined;
+  }
+  const matched = replacementManifestMatchesIdentity(
+    replacementManifestPath,
+    manifest,
+    replacementSession
+  );
+  if (!matched) {
     return undefined;
   }
   const acceptance: GovernessHandoffAcceptance = {
     acceptedAt: nowIso,
     manifestDigest: manifest.digest,
     replacementEpoch,
+    replacementManifestIdentityDigest: runLaunchIdentityDigest(
+      matched.identity
+    ),
+    replacementManifestPath,
+    replacementRepoId: matched.replacement.repoId,
+    replacementRunId: matched.replacement.runId,
     replacementSession,
+    sourceManifestIdentityDigest: manifest.sourceManifestIdentityDigest,
   };
-  writeAtomicJson(governessHandoffAcceptanceFile(manifestFile), acceptance);
+  writeAtomicJson(acceptanceFile, acceptance);
   return acceptance;
 };
 
@@ -256,7 +395,27 @@ export const readGovernessHandoffAcceptance = (
       value.replacementSession !== replacementSession ||
       typeof value.replacementEpoch !== "number" ||
       value.replacementEpoch <= manifest.epoch ||
-      typeof value.acceptedAt !== "string"
+      typeof value.acceptedAt !== "string" ||
+      typeof value.replacementManifestPath !== "string" ||
+      typeof value.replacementManifestIdentityDigest !== "string" ||
+      typeof value.replacementRunId !== "string" ||
+      typeof value.replacementRepoId !== "string" ||
+      value.sourceManifestIdentityDigest !==
+        manifest.sourceManifestIdentityDigest
+    ) {
+      return undefined;
+    }
+    const matched = replacementManifestMatchesIdentity(
+      value.replacementManifestPath,
+      manifest,
+      replacementSession
+    );
+    if (
+      !matched ||
+      matched.replacement.runId !== value.replacementRunId ||
+      matched.replacement.repoId !== value.replacementRepoId ||
+      runLaunchIdentityDigest(matched.identity) !==
+        value.replacementManifestIdentityDigest
     ) {
       return undefined;
     }

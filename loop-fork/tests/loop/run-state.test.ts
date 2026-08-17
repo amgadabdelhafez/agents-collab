@@ -31,6 +31,7 @@ import {
   resolveRunId,
   resolveRunStorage,
   resolveStorageRoot,
+  runLaunchIdentityDigest,
   touchRunManifest,
   writeRunManifest,
 } from "../../src/loop/run-state";
@@ -339,6 +340,79 @@ test("manifest helpers write, read, and touch run metadata", () => {
   expect(touched.updatedAt).toBe("2026-03-22T11:00:00.000Z");
   expect(touched.createdAt).toBe(manifest.createdAt);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("D7 run manifests round-trip exact launch identity and reject partial handoff authority", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  const sourceIdentity = {
+    cwd: "/repo",
+    peer: {
+      agent: "claude" as const,
+      effort: "low" as const,
+      model: "opus",
+      role: "reviewer" as const,
+    },
+    primary: {
+      agent: "codex" as const,
+      effort: "high" as const,
+      model: "gpt-5.6-sol",
+      role: "driver" as const,
+    },
+    repoId: "repo-identity",
+    runId: "191",
+    workspaceBinding: {
+      branchRef: "refs/heads/d7",
+      repoId: "repo-identity",
+      root: "/repo",
+    },
+  };
+  const replacementIdentity = {
+    ...sourceIdentity,
+    runId: "192",
+  };
+  const manifest = createRunManifest({
+    claudeSessionId: "claude-session",
+    codexThreadId: "codex-thread",
+    cwd: "/repo",
+    driverEffort: "high",
+    handoffLineage: {
+      handoffDigest: "a".repeat(64),
+      handoffEpoch: 41,
+      sourceIdentity,
+      sourceManifestIdentityDigest: runLaunchIdentityDigest(sourceIdentity),
+    },
+    launchIdentity: replacementIdentity,
+    mode: "paired",
+    pid: 1234,
+    primaryAgent: "codex",
+    repoId: "repo-identity",
+    reviewerEffort: "low",
+    runId: "192",
+    state: "working",
+    workspaceBinding: replacementIdentity.workspaceBinding,
+  });
+  writeRunManifest(manifestPath, manifest);
+
+  expect(readRunManifest(manifestPath)).toEqual(manifest);
+  expect(
+    runLaunchIdentityDigest(
+      manifest.launchIdentity as typeof replacementIdentity
+    )
+  ).not.toBe(runLaunchIdentityDigest(sourceIdentity));
+
+  const partial = {
+    ...manifest,
+    launchIdentity: {
+      ...replacementIdentity,
+      peer: { agent: "claude", role: "reviewer" },
+    },
+  };
+  writeFileSync(manifestPath, `${JSON.stringify(partial, null, 2)}\n`, "utf8");
+  const legacyReadable = readRunManifest(manifestPath);
+  expect(legacyReadable).toBeDefined();
+  expect(legacyReadable?.launchIdentity).toBeUndefined();
+  expect(legacyReadable?.handoffLineage).toEqual(manifest.handoffLineage);
 });
 
 test("manifest reader rejects an invalid World Model binding as a whole", () => {

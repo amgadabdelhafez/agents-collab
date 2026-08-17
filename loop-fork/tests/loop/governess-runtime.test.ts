@@ -18,6 +18,7 @@ import {
 import {
   acceptGovernessHandoff,
   governessHandoffFile,
+  handoffLineageForReplacement,
   readGovernessHandoffAcceptance,
   readGovernessHandoffBundle,
   readGovernessHandoffManifest,
@@ -50,6 +51,7 @@ import {
   normalizeLegacyGovernessArgs,
   withLegacyGovernessEnv,
 } from "../../src/loop/legacy-governess-compat";
+import { createRunManifest, writeRunManifest } from "../../src/loop/run-state";
 
 const tempDir = (): string => mkdtempSync(join(tmpdir(), "governess-runtime-"));
 
@@ -486,37 +488,170 @@ test("digest-bound handoff accepts only a matching ready bundle", () => {
       summary: "finished atomic step",
     })
   );
+  writeFileSync(
+    governessHandoffFile(runDir, 9, "codex"),
+    JSON.stringify({
+      agent: "codex",
+      blockers: [],
+      checks: ["bun test"],
+      dirtyFiles: ["src/loop/governess.ts"],
+      epoch: 9,
+      gitHead: "abc123",
+      next: "resume from checkpoint",
+      status: "ready",
+      summary: "finished atomic step",
+    })
+  );
   expect(readGovernessHandoffBundle(file, "claude", 9)?.status).toBe("ready");
   expect(readGovernessHandoffBundle(file, "codex", 9)).toBeUndefined();
   expect(readGovernessHandoffBundle(file, "claude", 10)).toBeUndefined();
   const continuation = join(runDir, "handoff", "9", "continuation.md");
   writeFileSync(continuation, "continue from the verified bundles\n");
+  const sourceIdentity = {
+    cwd: runDir,
+    peer: {
+      agent: "codex" as const,
+      effort: "low" as const,
+      model: "gpt-5.6-sol",
+      role: "reviewer" as const,
+    },
+    primary: {
+      agent: "claude" as const,
+      effort: "high" as const,
+      model: "opus",
+      role: "driver" as const,
+    },
+    repoId: "d7-runtime-repo",
+    runId: "source",
+    workspaceBinding: { repoId: "d7-runtime-repo", root: runDir },
+  };
   const manifest = writeGovernessHandoffManifest(
     runDir,
     9,
-    ["claude"],
+    ["claude", "codex"],
     "2026-07-25T00:00:00.000Z",
     continuation,
-    { driverEffort: "high", reviewerEffort: "low" }
+    { driverEffort: "high", reviewerEffort: "low" },
+    sourceIdentity
   );
   expect(manifest).toBeString();
   expect(readGovernessHandoffManifest(manifest as string)).toMatchObject({
     continuation: { digest: expect.any(String), path: continuation },
     driverEffort: "high",
     reviewerEffort: "low",
+    sourceIdentity,
   });
+  const handoff = readGovernessHandoffManifest(manifest as string);
+  const replacementIdentity = { ...sourceIdentity, runId: "replacement" };
+  if (!handoff) {
+    throw new Error("missing D7 handoff fixture");
+  }
+  const mismatches = [
+    { ...replacementIdentity, runId: sourceIdentity.runId },
+    {
+      ...replacementIdentity,
+      primary: { ...replacementIdentity.primary, model: "future-claude" },
+    },
+    {
+      ...replacementIdentity,
+      peer: { ...replacementIdentity.peer, effort: "medium" as const },
+    },
+    {
+      ...replacementIdentity,
+      cwd: `${runDir}-other`,
+      workspaceBinding: {
+        ...replacementIdentity.workspaceBinding,
+        root: `${runDir}-other`,
+      },
+    },
+    {
+      ...replacementIdentity,
+      repoId: "other-repo",
+      workspaceBinding: {
+        ...replacementIdentity.workspaceBinding,
+        repoId: "other-repo",
+      },
+    },
+    {
+      ...replacementIdentity,
+      workspaceBinding: {
+        ...replacementIdentity.workspaceBinding,
+        branchRef: "refs/heads/other",
+      },
+    },
+    {
+      ...replacementIdentity,
+      peer: {
+        ...replacementIdentity.peer,
+        agent: replacementIdentity.primary.agent,
+      },
+    },
+  ];
+  for (const mismatch of mismatches) {
+    expect(handoffLineageForReplacement(handoff, mismatch)).toBeUndefined();
+  }
+  const lineage = handoffLineageForReplacement(handoff, replacementIdentity);
+  expect(lineage).toBeDefined();
+  const replacementManifest = join(runDir, "replacement-manifest.json");
+  writeRunManifest(
+    replacementManifest,
+    createRunManifest({
+      cwd: runDir,
+      driverEffort: "high",
+      handoffLineage: lineage,
+      launchIdentity: replacementIdentity,
+      mode: "paired",
+      pid: 4321,
+      primaryAgent: "claude",
+      repoId: "d7-runtime-repo",
+      reviewerEffort: "low",
+      runId: "replacement",
+      state: "working",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "replacement",
+      workspaceBinding: replacementIdentity.workspaceBinding,
+    })
+  );
   expect(
     acceptGovernessHandoff(
       manifest as string,
       "replacement",
       10,
-      "2026-07-25T00:00:01.000Z"
+      "2026-07-25T00:00:01.000Z",
+      replacementManifest
     )
   ).toBeDefined();
   expect(
     readGovernessHandoffAcceptance(manifest as string, "replacement")
-  ).toMatchObject({ manifestDigest: expect.any(String) });
+  ).toMatchObject({
+    manifestDigest: expect.any(String),
+    replacementManifestIdentityDigest: expect.any(String),
+    replacementRepoId: "d7-runtime-repo",
+    replacementRunId: "replacement",
+    sourceManifestIdentityDigest: expect.any(String),
+  });
+  expect(
+    readGovernessHandoffAcceptance(manifest as string, "other-session")
+  ).toBeUndefined();
+  const frozenReplacement = readFileSync(replacementManifest, "utf8");
+  const changedReplacement = JSON.parse(frozenReplacement) as {
+    launchIdentity: { primary: { model: string } };
+  };
+  changedReplacement.launchIdentity.primary.model = "gpt-5.6-luna";
+  writeFileSync(replacementManifest, JSON.stringify(changedReplacement));
+  expect(
+    readGovernessHandoffAcceptance(manifest as string, "replacement")
+  ).toBeUndefined();
+  writeFileSync(replacementManifest, frozenReplacement);
   const frozenManifest = readFileSync(manifest as string, "utf8");
+  const changedIdentity = JSON.parse(frozenManifest) as {
+    sourceIdentity: { primary: { model: string } };
+  };
+  changedIdentity.sourceIdentity.primary.model = "future-claude";
+  writeFileSync(manifest as string, JSON.stringify(changedIdentity));
+  expect(readGovernessHandoffManifest(manifest as string)).toBeUndefined();
+  writeFileSync(manifest as string, frozenManifest);
   const changedEffort = JSON.parse(frozenManifest) as Record<string, unknown>;
   changedEffort.driverEffort = "medium";
   writeFileSync(manifest as string, JSON.stringify(changedEffort));

@@ -43,7 +43,6 @@ import {
 } from "./communication-guidance";
 import {
   DEFAULT_CLAUDE_DRIVER_EFFORT,
-  DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_CONFIG_VALUES,
 } from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
@@ -76,6 +75,7 @@ import {
   type RunManifest,
   type RunStorage,
   type RunWorldModelBinding,
+  resolveEffectiveAgentModel,
   resolveExistingRunId,
   setRunManifestState,
   touchRunManifest,
@@ -637,33 +637,6 @@ const writeLaunchCharter = (
   writeFileSync(bootstrapPath, bootstrap, { encoding: "utf8", mode: 0o600 });
   chmodSync(bootstrapPath, 0o600);
   return { bootstrapPath, charter };
-};
-
-const resolveTmuxModel = (agent: Agent, opts: Options): string => {
-  const isPrimary = agent === opts.agent;
-  if (agent === "codex") {
-    return isPrimary
-      ? opts.codexModel
-      : (opts.codexReviewerModel ?? opts.codexModel);
-  }
-  if (agent === "claude") {
-    return isPrimary
-      ? DEFAULT_CLAUDE_MODEL
-      : (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL);
-  }
-  if (agent === "gemini") {
-    return isPrimary
-      ? opts.geminiModel
-      : (opts.geminiReviewerModel ?? opts.geminiModel);
-  }
-  if (agent === "copilot") {
-    return isPrimary
-      ? opts.copilotModel
-      : (opts.copilotReviewerModel ?? opts.copilotModel);
-  }
-  return isPrimary
-    ? opts.cursorModel
-    : (opts.cursorReviewerModel ?? opts.cursorModel);
 };
 
 export const claudeNativeFallbackDefinition = (): Record<
@@ -1385,7 +1358,10 @@ const bindPairedSessionIdentity = (
     touchRunManifest(
       {
         ...(current ?? manifest),
-        cwd: deps.cwd,
+        cwd:
+          current?.launchIdentity?.cwd ??
+          manifest.launchIdentity?.cwd ??
+          deps.cwd,
         mode: "paired",
         pid: process.pid,
         primaryAgent,
@@ -1438,7 +1414,10 @@ const updatePairedManifest = (
         codexAppServerPid: codexAppServerPid || undefined,
         codexRemoteUrl: codexRemoteUrl || undefined,
         codexThreadId,
-        cwd: deps.cwd,
+        cwd:
+          current?.launchIdentity?.cwd ??
+          manifest.launchIdentity?.cwd ??
+          deps.cwd,
         mode: "paired",
         pid: process.pid,
         primaryAgent,
@@ -2114,7 +2093,7 @@ const buildPairedAgentCommand = ({
   opts: Options;
   prompt?: string;
 }): string[] => {
-  const model = resolveTmuxModel(agent, opts);
+  const model = resolveEffectiveAgentModel(agent, opts);
   const effort =
     agent === opts.agent
       ? (opts.driverEffort ?? DEFAULT_CLAUDE_DRIVER_EFFORT)

@@ -13,9 +13,12 @@ import {
   createRunManifest,
   ensureRunStorage,
   isActiveRunState,
+  type RunLaunchIdentity,
   type RunManifest,
   type RunStorage,
+  readRunLaunchIdentity,
   readRunManifest,
+  resolveEffectiveAgentModel,
   resolveExistingRunId,
   resolveRepoId,
   resolveRunId,
@@ -25,7 +28,7 @@ import {
   writeRunManifest,
 } from "./run-state";
 import { type TmuxLiveness, tmuxSessionLiveness } from "./tmux-control";
-import type { Options, PairedSessionIds } from "./types";
+import type { Agent, Options, PairedSessionIds } from "./types";
 
 export interface PreparedRunState {
   allowRawSessionFallback: boolean;
@@ -92,18 +95,98 @@ const restorePersistedTmuxPair = (
   manifest: RunManifest | undefined,
   livePersistedTmux: boolean
 ): void => {
+  const identity = manifest?.launchIdentity;
   const left = manifest?.tmuxPaneLeftAgent;
   const right = manifest?.tmuxPaneRightAgent;
   if (!(livePersistedTmux && left && right && left !== right)) {
     return;
   }
   const storedPair = [left, right];
+  if (
+    identity &&
+    !(
+      storedPair.includes(identity.primary.agent) &&
+      storedPair.includes(identity.peer.agent)
+    )
+  ) {
+    throw new Error(
+      "Persisted launch identity does not match the live tmux agent topology"
+    );
+  }
   const primary =
-    manifest.primaryAgent && storedPair.includes(manifest.primaryAgent)
+    identity?.primary.agent ??
+    (manifest.primaryAgent && storedPair.includes(manifest.primaryAgent)
       ? manifest.primaryAgent
-      : left;
+      : left);
   opts.agent = primary;
   opts.pairWith = primary === left ? right : left;
+};
+
+const modelFlagForRole = (
+  agent: Agent,
+  role: "driver" | "reviewer"
+): string | undefined => {
+  if (agent === "claude" && role === "driver") {
+    return undefined;
+  }
+  const prefix = agent === "claude" ? "claude" : agent;
+  return role === "driver" ? `--${prefix}-model` : `--${prefix}-reviewer-model`;
+};
+
+const argvHasValueFlag = (argv: string[], flag: string): boolean =>
+  argv.some((value) => value === flag || value.startsWith(`${flag}=`));
+
+const restoreAgentModel = (
+  opts: Options,
+  identity: RunLaunchIdentity["primary"] | RunLaunchIdentity["peer"],
+  argv: string[]
+): void => {
+  const current = resolveEffectiveAgentModel(identity.agent, opts);
+  const flag = modelFlagForRole(identity.agent, identity.role);
+  if (current !== identity.model && flag && argvHasValueFlag(argv, flag)) {
+    throw new Error(
+      `Cannot change ${flag} from ${identity.model} to ${current} while reusing live tmux agents; start a new loop so the actual provider invocation receives the selected model`
+    );
+  }
+  if (identity.role === "driver") {
+    if (identity.agent === "codex") {
+      opts.codexModel = identity.model;
+    } else if (identity.agent === "gemini") {
+      opts.geminiModel = identity.model;
+    } else if (identity.agent === "copilot") {
+      opts.copilotModel = identity.model;
+    } else if (identity.agent === "cursor") {
+      opts.cursorModel = identity.model;
+    }
+  } else if (identity.agent === "claude") {
+    opts.claudeReviewerModel = identity.model;
+  } else if (identity.agent === "codex") {
+    opts.codexReviewerModel = identity.model;
+  } else if (identity.agent === "gemini") {
+    opts.geminiReviewerModel = identity.model;
+  } else if (identity.agent === "copilot") {
+    opts.copilotReviewerModel = identity.model;
+  } else {
+    opts.cursorReviewerModel = identity.model;
+  }
+  if (resolveEffectiveAgentModel(identity.agent, opts) !== identity.model) {
+    throw new Error(
+      `Persisted ${identity.agent} ${identity.role} model ${identity.model} cannot be restored for a live tmux agent`
+    );
+  }
+};
+
+const restorePersistedLaunchModels = (
+  opts: Options,
+  manifest: RunManifest | undefined,
+  livePersistedTmux: boolean,
+  argv: string[]
+): void => {
+  if (!(livePersistedTmux && manifest?.launchIdentity)) {
+    return;
+  }
+  restoreAgentModel(opts, manifest.launchIdentity.primary, argv);
+  restoreAgentModel(opts, manifest.launchIdentity.peer, argv);
 };
 
 const resolveRequestedRunState = (
@@ -286,7 +369,7 @@ export const resolvePreparedRunState = (
     claudeChannelServer: claudeChannelServerName(storage.runId, storage.repoId),
     claudeSessionId: "",
     codexThreadId: "",
-    cwd,
+    cwd: opts.workspaceBinding?.root ?? cwd,
     driverEffort: opts.driverEffort,
     mode: "paired",
     helperCavemanMode: opts.helperCavemanMode ?? DEFAULT_HELPER_CAVEMAN_MODE,
@@ -295,6 +378,7 @@ export const resolvePreparedRunState = (
     reviewerEffort: opts.reviewerEffort,
     runId: storage.runId,
     state: "submitted",
+    workspaceBinding: opts.workspaceBinding,
   });
   writeRunManifest(storage.manifestPath, manifest);
   return {
@@ -310,7 +394,8 @@ export const applyPairedOptions = (
   manifest: RunManifest | undefined,
   allowRawSessionFallback = false,
   cwd = process.cwd(),
-  livePersistedTmux = false
+  livePersistedTmux = false,
+  argv = process.argv.slice(2)
 ): void => {
   opts.cavemanMode ??= DEFAULT_CAVEMAN_MODE;
   opts.cavemanModeSource ??= "default";
@@ -320,6 +405,7 @@ export const applyPairedOptions = (
   // prompt contract bound to those actual agents instead of a new CLI default.
   restorePersistedTmuxPair(opts, manifest, livePersistedTmux);
   opts.pairWith ??= defaultPeerAgent(opts.agent);
+  restorePersistedLaunchModels(opts, manifest, livePersistedTmux, argv);
   applyLiveTmuxModeContract(opts, manifest, livePersistedTmux);
   const resumedSessionIds = pairedSessionIds(
     opts,
@@ -396,7 +482,8 @@ export const preparePairedOptions = (
   opts: Options,
   cwd = process.cwd(),
   createManifest = true,
-  sessionProbe: TmuxSessionProbe = isTmuxSessionLive
+  sessionProbe: TmuxSessionProbe = isTmuxSessionLive,
+  argv = process.argv.slice(2)
 ): void => {
   const { allowRawSessionFallback, manifest, storage } =
     resolvePreparedRunState(opts, cwd, createManifest);
@@ -411,7 +498,8 @@ export const preparePairedOptions = (
     manifest,
     allowRawSessionFallback,
     cwd,
-    livePersistedTmux
+    livePersistedTmux,
+    argv
   );
 };
 
@@ -428,10 +516,48 @@ const preparedEffortManifestFields = (
     : { reviewerEffort: opts.reviewerEffort }),
 });
 
+const pairedLaunchIdentity = (
+  opts: Options,
+  storage: RunStorage,
+  existing: RunManifest | undefined,
+  cwd: string
+): RunLaunchIdentity | undefined => {
+  const workspaceBinding = opts.workspaceBinding ?? existing?.workspaceBinding;
+  if (
+    !(
+      workspaceBinding &&
+      opts.pairWith &&
+      opts.driverEffort &&
+      opts.reviewerEffort
+    )
+  ) {
+    return undefined;
+  }
+  return readRunLaunchIdentity({
+    cwd: workspaceBinding.root ?? cwd,
+    peer: {
+      agent: opts.pairWith,
+      effort: opts.reviewerEffort,
+      model: resolveEffectiveAgentModel(opts.pairWith, opts),
+      role: "reviewer",
+    },
+    primary: {
+      agent: opts.agent,
+      effort: opts.driverEffort,
+      model: resolveEffectiveAgentModel(opts.agent, opts),
+      role: "driver",
+    },
+    repoId: storage.repoId,
+    runId: storage.runId,
+    workspaceBinding,
+  });
+};
+
 export const preparePairedRun = (
   opts: Options,
   cwd = process.cwd(),
-  sessionProbe: TmuxSessionProbe = isTmuxSessionLive
+  sessionProbe: TmuxSessionProbe = isTmuxSessionLive,
+  argv = process.argv.slice(2)
 ): PreparedPairedRun => {
   const {
     allowRawSessionFallback,
@@ -449,11 +575,18 @@ export const preparePairedRun = (
     existing,
     allowRawSessionFallback,
     cwd,
-    livePersistedTmux
+    livePersistedTmux,
+    argv
   );
 
   const resumable = canResumePairedManifest(existing) ? existing : undefined;
   const selectedAgents = new Set([opts.agent, opts.pairWith]);
+  const launchIdentity = pairedLaunchIdentity(opts, storage, existing, cwd);
+  const workspaceBinding =
+    launchIdentity?.workspaceBinding ??
+    opts.workspaceBinding ??
+    existing?.workspaceBinding;
+  const manifestCwd = launchIdentity?.cwd ?? workspaceBinding?.root ?? cwd;
   const manifest = existing
     ? touchRunManifest(
         {
@@ -473,14 +606,17 @@ export const preparePairedRun = (
             livePersistedTmux || selectedAgents.has("codex")
               ? resumable?.codexThreadId || opts.pairedSessionIds?.codex || ""
               : "",
-          cwd,
+          cwd: manifestCwd,
           ...preparedEffortManifestFields(opts, existing, livePersistedTmux),
           mode: "paired",
           helperCavemanMode: opts.helperCavemanMode,
+          launchIdentity,
           pid: process.pid,
+          primaryAgent: opts.agent,
           state: resumable?.state ?? "submitted",
           // Non-tmux resumes should not preserve a dead tmux routing hint.
           tmuxSession: opts.tmux ? existing.tmuxSession : undefined,
+          workspaceBinding,
         },
         new Date().toISOString()
       )
@@ -492,15 +628,18 @@ export const preparePairedRun = (
         ),
         claudeSessionId: opts.pairedSessionIds?.claude ?? "",
         codexThreadId: opts.pairedSessionIds?.codex ?? "",
-        cwd,
+        cwd: manifestCwd,
         driverEffort: opts.driverEffort,
         mode: "paired",
         helperCavemanMode: opts.helperCavemanMode,
+        launchIdentity,
         pid: process.pid,
+        primaryAgent: opts.agent,
         repoId: storage.repoId,
         reviewerEffort: opts.reviewerEffort,
         runId: storage.runId,
         state: "submitted",
+        workspaceBinding,
       });
   writeRunManifest(storage.manifestPath, manifest);
   return { manifest, storage };
