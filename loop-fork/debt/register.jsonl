@@ -61,3 +61,4 @@
 {"ts": "2026-08-16T03:46:58Z", "task_id": "harvto-d16-scope-audit-completeness", "signal": "loc_growth", "file": "src/loop/utility-tools.ts", "before_loc": 2732, "after_loc": 2889, "delta_loc": 157, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-16T06:56:25Z", "task_id": "harvto-d15-teardown-process-orphans", "signal": "loc_growth", "file": "src/loop/governess.ts", "before_loc": 7533, "after_loc": 7676, "delta_loc": 143, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-16T06:56:25Z", "task_id": "harvto-d15-teardown-process-orphans", "signal": "loc_growth", "file": "src/loop/run-process-cleanup.ts", "before_loc": 491, "after_loc": 1239, "delta_loc": 748, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-17T04:57:50Z", "task_id": "harvto-d6-readonly-attach", "signal": "loc_growth", "file": "src/loop/tmux.ts", "before_loc": 3864, "after_loc": 4112, "delta_loc": 248, "threshold": 100, "severity": "indicator"}

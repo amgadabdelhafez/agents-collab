@@ -1,0 +1,22 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d6-readonly-attach",
+  "baseline_failures": [],
+  "summary": "D6 permits suggested-composer recovery only when pane-bound target-window client identities exactly match stable session-bound read-only mode records; writable, missing, malformed, mismatched, or changing evidence remains zero-key fail-closed.",
+  "checks": {
+    "exact_base_red": "exit 1: expected empty, received indeterminate at blanket activeClients gate with zero key calls",
+    "named_regression": "1 pass, 0 fail",
+    "focused_tmux": "111 pass, 0 fail, 573 assertions",
+    "lint": "pass: 189 files checked, no fixes applied",
+    "typecheck": "pass: canonical command exited 0",
+    "build": "pass: 3051 modules, exit 0",
+    "test_ci": "pass: all 79 certified serial files"
+  },
+  "run_83_verification": {
+    "id": "run83-d6-4e293d78-44d3-4451-b942-0b92fab3aa0c",
+    "recorded_at": "2026-08-17T04:28:25Z",
+    "head": "ef17eb08139a7300316a3564782c216e7f19cfaf",
+    "implementation_sha": "254e1749ca67ad1d81cd434ef01db0aeabae5827",
+    "certified_file_count": 79
+  }
+}

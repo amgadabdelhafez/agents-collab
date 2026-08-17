@@ -1,4 +1,307 @@
-# Current Plan — Formatter Evidence Scope, D6 Re-review, Then D7-D12
+# Current Plan — D6 Gate Correction, Follow-up Review, Then D7-D12
+
+## Run-83 authoritative continuation — handover epoch `1786912909823827`
+
+This section is current authority. It supersedes earlier next-action and run-identity wording while
+preserving all tighter frozen-contract, evidence-integrity, exact-SHA, one-close, utility-ban, and
+isolated-lifecycle rules below. This session is plan-only: only `PLAN.md` may change. Do not run D6
+gates, regenerate evidence, update `status.md`, request review, close Harness, stage, commit, route a
+helper, or begin D7 in this step.
+
+### Validated starting boundary
+
+- Both handover files at
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/82/handoff/1786912909823827/{claude,codex}.json`
+  were read completely, parse as `status: "ready"`, agree on epoch `1786912909823827` and
+  `gitHead: ef17eb08139a7300316a3564782c216e7f19cfaf`, and hash to Claude
+  `71f3ea1bdd698d8d8835f1cd6ed7a1d71ff900872e50009f7a79491581dda3d7` and Codex
+  `bba79e5993906b1a5db3f163b81ffc0192abd9083990707a73532baae05a6a19`.
+- Run-82 `transcript.jsonl` was read. Claude verdict
+  `3ef105fc-210f-4b56-8dcb-1903fc05406d` is literal `REVISE` for unchanged D6 SHA
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827`: code, formatter discharge, and disclosed red
+  provenance are approved; only fresh mandatory gates and dual passing D6 evals remain.
+- Supervisor decisions `e12c4ffc-e4f1-4abc-be93-64b58ce46f17` and
+  `4662cdff-a52a-47ef-86fc-97c3ca2e56b7` authorize exactly one follow-up same-SHA review after
+  materially new green evidence exists. They authorize no D6 code, contract, frozen-red, Harness,
+  or close mutation before that review.
+- HEAD is `ef17eb08139a7300316a3564782c216e7f19cfaf`; the index is empty; D6 commit
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827` resolves and contains only
+  `loop-fork/src/loop/tmux.ts` and `loop-fork/tests/loop/tmux.test.ts`. Neither source nor tests are
+  dirty. Their commit blob hashes remain source
+  `e9fdabb8c367bfbec9998bb3601e9d35183173f472a994e5922c905b895d009e` and test
+  `5e11287a399647fb516d5d3fdbdcb609273ce9d59409b49076ed1e5335971db1`.
+- Harness reports D6 as sole active task, `meta.status: active`, eval `pending`. Hashes remain
+  `tasks.json` `42b30be61071b60a8e9d6838565d25a2abf36d7a2d8fc35499516f5f415f214d` and
+  `current-task` `f15fd0c0490dece3829ff14cb75706c5f696cca66d3bae8485b4a30a632a4e4e`.
+- Five frozen contract hashes remain
+  `aaa58574cce19e466cafd8b5d7a51c03ea052457611b91d21170bc461106dfaa`,
+  `67fd510c0034378fcb83ef7ff7b99bdbb91ab92835d3de5d88299f2ce19b48d2`,
+  `0bf974e3769aad738e7f3e56ac3fe377ca4697ff836c444bacc0283ddf3f2f6b`,
+  `5b4532f5011e5366a0735341a6861da11962d5a42abe917eb0b6e78669b29a9e`, and
+  `4b840882ffee189649c31b7011e9fc48b0f997e5070140493cde86eef73a7baf`. Frozen red hashes remain
+  README `5fee6e797037c3a078fd6d36824baaee4c7cb08ac0720fc145125b1f2c25d8ed`, command
+  `b80df25d87d06408fe45a5e4a7f1dec14f21d5f61d0ae0c5bcc4ed49f994883e`, fixture
+  `a1585cccf9f57a1806a75f59ef5fdafc5ee17f5e5205c25fdb24c4d6aa389aca`, and output
+  `8103e398ecb891565fcd4b4fa3c93b35fa28c099cc3b358d1273d216fe766c03`.
+- Both D6 evals exist but do not pass: loop-fork eval is `pending`; root eval is `fail`; both carry
+  the stale inherited formatter baseline. Root `.loop/` remains 60 files and zero tracked files.
+  Utility is positively `0/off/0`; helper routing remains prohibited even though run-83 bridge
+  `loop-bridge-agents-collab-83` is available for peer/supervisor coordination.
+- Existing uncommitted work is preserved. Handover hashes for the inherited dirty files match
+  `PLAN.md` `a67a1cae05aa13876d86bcf9d3c15148292456ab36e79301c000054a76201975` and
+  `status.md` `c442b2eea8d0a9de4f6e5096d7541307eb87b135173fe148273efa3fe80ffa85`
+  before this plan-only amendment.
+
+### D6 correction lifecycle
+
+1. **Fail-closed preflight before execution writes.** Revalidate both run-82 bundles and hashes,
+   HEAD/index/dirty scope, D6 commit paths and blob hashes, all frozen contract/red hashes, D15
+   protected evidence, formatter terminal and bookkeeping proof, D6 sole-active/eval-pending state,
+   Harness hashes, root `.loop/`, and utility `0/off/0`. Capture pre-write hashes and key sets for
+   every authorized D6 evidence surface. Any mismatch stops before gates or writes.
+2. **Run fresh mandatory gates first.** From `loop-fork/`, run in order:
+   `bun run check`; canonical
+   `bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts`;
+   `bun run build`; `LOOP_TEST_CERTIFICATION_MODE=single-file bun run test:ci`;
+   `./harness preflight --json`; and `./harness stop-gate --json`. Do not run `bun run fix`.
+   Preserve exact command, exit, summary, certified file count, and baseline allowlist result in D6
+   evidence. A failed or incomplete command stops; never convert tolerated counts into green.
+3. **Regenerate only bounded non-frozen D6 surfaces from actual results.** Authorized execution
+   writes are limited to both D6 `eval.json` files, D6 `task-log.md`, D6
+   `artifacts/green/verification.md` and any predeclared sibling command-output files under that
+   same `artifacts/green/` directory, plus append-only root `status.md`. Preserve existing useful
+   history. Both evals must truthfully read pass with `baseline_failures: []` and an empty by-name
+   allowlist. Do not edit D6 source/test, canonical contracts, run plan, `meta.json`, Harness state,
+   frozen `artifacts/red/`, D15 evidence, formatter evidence, or unrelated dirty files.
+4. **Run root verifier after dual eval regeneration.** From repository root run exactly
+   `./scripts/verify.sh harvto-d6-readonly-attach harvto-d6-readonly-attach`. Record actual output
+   in the bounded green evidence/status surfaces. If it fails, leave evals honest, record the
+   failure, and stop without review or lifecycle action.
+5. **Prove zero implementation or frozen-state change.** Recheck D6 source/test dirty count, exact
+   implementation object and blob hashes, five contract hashes, four red hashes, D15 protected
+   hashes/inventories, Harness state/hashes, formatter terminal counts, bundle hashes, root
+   `.loop/`, utility `0/off/0`, and normal versus ignore-all-space numstats for every written file.
+   Freeze the exact follow-up-review evidence inventory. Do not stage or commit before review.
+6. **Submit exactly one follow-up review through loop bridge.** Send one zero-write Claude
+   `review_request` for unchanged SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827`, naming prior
+   `REVISE` `3ef105fc-210f-4b56-8dcb-1903fc05406d`, supervisor authorization, formatter `PASS`
+   `fed87397-a1a1-4e36-a984-2775a643b648`, fresh gate outputs, both green evals, root verifier,
+   frozen hashes, and zero-change proof. No duplicate request, timeout retry, helper route, or
+   inferred verdict is allowed.
+7. **Consume verdict fail closed.** Only literal Claude `PASS` naming exact D6 SHA authorizes close.
+   On `REVISE`, silence, wrong SHA, partial response, or evidence mismatch, record bounded status
+   and stop without code rework, review retry, Harness mutation, or D7 promotion.
+8. **Close D6 exactly once after PASS.** Capture pre-close `harness status --json`, both Harness
+   hashes, current-task contents, task-status inventory, and terminal-count proof. Run exactly one
+   `./harness done harvto-d6-readonly-attach`; never retry. Require positive proof that only D6 made
+   the expected active-to-done transition, no other task changed, eval remains pass, and no active
+   D6 remains. Any failed, unreadable, or partial transition stops without hand repair.
+9. **Create separate D6 bookkeeping commit.** Determine exact D6-owned close delta against the
+   captured pre-state; explicitly stage only reviewed D6 contract/evidence/eval/Harness bookkeeping
+   plus this `PLAN.md` and append-only `status.md` where required. Never broad-stage. Exclude source,
+   tests, frozen red, `.loop/`, formatter artifacts, unrelated parked ideas, and unrelated dirty
+   work. Prove cached path set, hashes, normal/ignore-space numstats, and
+   `git diff --cached --check`; commit once without amendment. Verify committed scope, empty index,
+   terminal D6 state, unchanged implementation/frozen evidence, bundles, and utility state.
+10. **Handover before D7.** Update plan/status with exact verdict, close, commit, checks, risks, and
+    next action; produce validated governed handover. D7 cannot start in the same unhanded-over
+    lifecycle.
+
+### D7-D12 isolated campaign
+
+Proceed strictly in order: `harvto-d7-handoff-identity`, `harvto-d8-stale-write-lease`,
+`harvto-d9-duplicate-emission`, `harvto-d10-guarded-apply`, `harvto-d11-composer-nudge`, then
+`harvto-d12-socket-discovery`. For each task:
+
+1. Validate predecessor handover, empty index, no active predecessor, preserved dirty work,
+   utility `0/off/0`, and exact parked-task identity. Promote once into a new isolated Harness run.
+2. Build canonical spec/plan/tasks/verify from the parked report; freeze exact base, invariant,
+   paths, red command, controls, gates, and no-UI determination. Obtain literal Claude zero-write
+   `PLAN PASS`, then force-add only reviewed contract files and create a separate plan-freeze commit.
+3. Reproduce deterministic exact-base red without production mutation. Preserve command/output,
+   decisive assertion, hashes, and inventories. Stop and re-plan if premise does not reproduce.
+4. Implement smallest bounded fix with named positive, negative, replay, fail-closed, race, and
+   isolation controls relevant to that defect. Never absorb a later defect or touch Harvto,
+   provider/model, dependencies, remote, release, deploy, or unrelated cleanup scope.
+5. Run focused controls, check, canonical TypeScript, build, certified serial `test:ci`, Harness
+   preflight/stop-gate, dual passing evals with empty baseline failures and by-name allowlist, and
+   root verifier. Capture screenshots plus DOM only if rendered UI changes.
+6. Prove exact scope and evidence integrity; explicitly stage and create one implementation commit.
+   Obtain literal Claude zero-write `PASS` for that exact SHA. A `REVISE` permits changes only in
+   current approved scope, followed by fresh full gates, a new commit, and new exact-SHA review.
+7. After exact-SHA `PASS`, capture pre-close state, close exactly once, prove one positive terminal
+   transition, and create a separate exact-path bookkeeping commit. Verify empty index and all
+   preservation boundaries.
+8. Update `PLAN.md` and append-only `status.md`, then complete a governed handover. Start successor
+   only after the next loop validates that handover.
+
+Task invariants remain separate: D7 preserves model, effort, workspace, run, manifest, and authority
+identity; D8 rejects stale/dead utility write authority before mutation; D9 emits one durable
+acknowledgement once across retry/replay; D10 guarded apply requires exact existing applicable target
+and preimage; D11 uses durable recovery transport without typing over non-empty composers; D12 uses
+manifest-recorded tmux socket/target identity and rejects default-socket inference.
+
+### Acceptance and stop conditions
+
+- D6 mandatory commands and root verifier are fresh and green; both evals pass with empty baseline
+  failures and empty by-name allowlist; D6 code, contracts, frozen red, and implementation SHA never
+  change.
+- Exactly one authorized follow-up review is sent. D6 receives literal exact-SHA `PASS`, closes once
+  only after that PASS, and receives one separate exact-path bookkeeping commit before D7.
+- D7-D12 each complete plan review/freeze, exact-base red, bounded fix, fresh full verification,
+  dual evals, implementation commit, exact-SHA review, one close, separate bookkeeping, and governed
+  handover before the next task.
+- Stop immediately on authority, hash, scope, lifecycle, evidence, gate, review, or close mismatch.
+  Never retry a one-shot action, infer PASS, weaken checks, repair Harness by hand, overwrite frozen
+  evidence, route utility, or discard existing work.
+
+### Plan review corrections — run 83, epoch `1786912909823827` (plan-only, read-only re-verification)
+
+Re-verified this review with no writes outside `PLAN.md`, no gate run, no lifecycle action, no
+review request, no staging, no helper route:
+
+- `shasum -a 256` on both run-82 bundles reproduces Claude
+  `71f3ea1bdd698d8d8835f1cd6ed7a1d71ff900872e50009f7a79491581dda3d7` and Codex
+  `bba79e5993906b1a5db3f163b81ffc0192abd9083990707a73532baae05a6a19`; both parse `status: "ready"`,
+  `epoch 1786912909823827`, `gitHead ef17eb08139a7300316a3564782c216e7f19cfaf`, key `head` absent.
+- `git rev-parse HEAD` = `ef17eb08139a7300316a3564782c216e7f19cfaf`;
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827^{commit}` resolves; `git diff --cached --name-only` = 0
+  lines; `git show --stat 254e174` = exactly `loop-fork/src/loop/tmux.ts` and
+  `loop-fork/tests/loop/tmux.test.ts`, 810 insertions, 53 deletions.
+- `loop-fork/harness status --json`: `active_task harvto-d6-readonly-attach`, `meta.status active`,
+  `eval_status pending`; hashes unchanged `tasks.json`
+  `42b30be61071b60a8e9d6838565d25a2abf36d7a2d8fc35499516f5f415f214d`, `current-task`
+  `f15fd0c0490dece3829ff14cb75706c5f696cca66d3bae8485b4a30a632a4e4e`.
+- Root eval `runs/harvto-d6-readonly-attach/eval.json` is `verdict: "fail"`; loop-fork eval
+  `loop-fork/runs/harvto-d6-readonly-attach/eval.json` is `status: "pending"` with
+  `verdict: "pending"`; both still carry the one stale inherited formatter `baseline_failures`
+  string. Both `parked-ideas.jsonl` entries for `harvto-d7-handoff-identity`,
+  `harvto-d8-stale-write-lease`, `harvto-d9-duplicate-emission`, `harvto-d10-guarded-apply`,
+  `harvto-d11-composer-nudge`, `harvto-d12-socket-discovery` read `status: "parked"` (D1/D3/D4/D5/D6/D15/D16
+  read `promoted`), so the D7-D12 promotion order in this plan matches actual parked identity.
+
+Corrections binding on execution (continue the numbering of the run-82 corrections):
+
+20. **`status.md` exists; line count in correction 13 is stale.** `wc -l status.md` = **3611**
+    (was 3444 at run 82). `git check-ignore -v PLAN.md status.md` exits 1 — neither is ignored.
+    No create step is needed before implementation; the rule stays append-only, one run-83 entry per
+    bookkeeping commit, never written before the corresponding capture evidence exists. This
+    plan-only session must leave `status.md` byte-identical: its handover hash
+    `c442b2eea8d0a9de4f6e5096d7541307eb87b135173fe148273efa3fe80ffa85` must still match at execution
+    preflight. `PLAN.md` hash `a67a1cae05aa13876d86bcf9d3c15148292456ab36e79301c000054a76201975` is
+    superseded by this amendment; preflight must re-derive and record the new `PLAN.md` hash and must
+    not treat the handover value as a mismatch stop.
+21. **The root verifier re-runs the same four gates — do not read step 4 as an independent check.**
+    `scripts/verify.sh` runs `bun run check`, the canonical `bunx tsc` line, `bun run build`, and
+    `bun run test:ci` itself (all inside `loop-fork/`), then requires
+    `runs/<task-id>/eval.json` to exist and pipes it to `scripts/check-baseline-allowlist.py`.
+    Step 2's separate runs are for per-gate evidence capture; the verifier is the sealing run. Both
+    are still required, and a divergence between the two runs of the same gate is a stop condition,
+    not a retry.
+22. **The verifier machine-checks only the ROOT eval; the loop-fork eval is unchecked by it.**
+    `scripts/verify.sh` sets `ARTIFACTS_DIR="runs/${TASK_ID}"` relative to repo root, so
+    `loop-fork/runs/harvto-d6-readonly-attach/eval.json` never reaches the allowlist gate.
+    Step 3 must additionally run `python3 scripts/check-baseline-allowlist.py
+    loop-fork/runs/harvto-d6-readonly-attach/eval.json` explicitly and record its exit and stdout.
+    Claiming "dual passing evals" from a single verifier run is a fail-open.
+23. **Know the gate's exact predicates before writing either eval.** `check-baseline-allowlist.py`
+    requires: top-level `verdict` (falling back to `result`) exactly `"pass"`; a `baseline_failures`
+    key present somewhere and an empty list at EVERY occurrence; no `result`/`status`/`verdict`
+    value whose text normalizes to contain both `baseline` and `fail`; and no other
+    `*baseline*fail*` key holding a non-empty/true/non-zero allowance. The two evals have different
+    current shapes — root has `verdict`/`summary`/`checks`, loop-fork has `status` plus `verdict`,
+    `required`, `dimensions.unit.status` — so both `status` fields and both `verdict` fields must
+    read `pass`, and `dimensions.unit.status` must read `pass`, or the loop-fork eval will assert a
+    pass its own body contradicts. Do not delete existing keys to satisfy the gate.
+24. **`bun run check` is `ultracite check` (read-only); `bun run fix` is `ultracite fix` (writes).**
+    The standing ban is on `fix`. Before banking a green `check`, prove it wrote nothing: capture
+    `git status --porcelain` and the dirty-file hash set immediately before and after, and stop if
+    they differ. The formatter production commit `2e6adb8c…` is what makes this gate green now, so
+    a still-red `check` means the frozen exclusion regressed — that is a stop, never a re-`fix`.
+25. **`bun run build` emits an artifact; exclude it explicitly, do not just "verify dirty scope".**
+    `build` is `bun build --compile --outfile loop src/cli.ts` and writes `loop-fork/loop`.
+    `git check-ignore -v loop-fork/loop` = `loop-fork/.gitignore:1:/loop`, and `git ls-files
+    loop-fork/loop` is empty, so it is ignored and untracked. Expect it to appear or change mtime
+    after steps 2 and 4; that is not a scope violation and not evidence of source change. It must
+    never be staged, and the step-5 zero-change proof must be stated over tracked paths so the
+    binary cannot be misread as implementation drift.
+26. **Name the review transport and mode in step 6.** Use bridge `loop-bridge-agents-collab-83`,
+    `kind=review`, exact-SHA peer-verdict (omit `review_mode` or use `peer-verdict`) — never
+    `review_mode=utility-audit`, which grants no approval — with zero writes, zero authority flags,
+    and read scopes limited to the frozen follow-up evidence inventory. Carry the exact SHA
+    `254e1749ca67ad1d81cd434ef01db0aeabae5827` in the request body.
+27. **Bound the verdict wait and make silence explicit.** Consume the verdict only by reading the
+    bridge inbox (`receive_messages`) and record each poll with its result. Declare the bounded wait
+    before sending. On expiry, write a bounded status entry naming the timeout and stop: no second
+    `review_request` for this SHA, no helper route, no inferred PASS, no lifecycle action.
+28. **Re-verify the review's own preconditions immediately before sending.** Between step 5 and the
+    send, re-run HEAD, empty-index, D6 blob hashes, five contract hashes, four red hashes, and both
+    Harness hashes. A review request that quotes a stale evidence set is an evidence-integrity
+    failure of the same class as the prior `FAIL` `903ea1ff-acc3-4968-ba7d-70151b01bc04`.
+29. **Correction 15's exactly-one rule extends to the D6 evidence writes.** Post-write, assert
+    COUNTS on the bounded green surfaces: the fresh gate tuple appears exactly once per surface and
+    no second terminal or verdict record was appended. Pipe through `tr '\n' ' '` before claiming any
+    phrase is absent, and diff `git diff --numstat` against `git diff --numstat --ignore-all-space`
+    for every written file before staging.
+30. **Corrections 16, 17, 18, and 19 carry forward unchanged into run 83** (no repo-wide formatting
+    on evidence; utility ban outranks the bridge delegation mandate — route nothing even though
+    `loop-bridge-agents-collab-83` is available; bundle immutability is re-checked after the
+    bookkeeping commit and after close; close is gated on a positive terminal transition, not the
+    absence of an error). Session identity for every artifact, `status.md` entry, commit message,
+    review request, and handover produced by this campaign is run 83, epoch `1786912909823827`.
+31. **Move the Harness gates after truthful loop-fork eval regeneration.** The current ordering in
+    D6 lifecycle step 2 cannot succeed: `v2/kit/scripts/stop-gate.sh` first runs `preflight.sh`, then
+    accepts only `pass`, `skipped`, or `sign-off-granted` for every required dimension; the current
+    D6 eval requires `unit` and records it as `pending`. Running stop-gate before step 3 therefore
+    exits 1 and, under step 2's stop rule, prevents the authorized eval correction. Split the
+    sequence without omitting or retrying any gate: first run exactly the four code gates (`check`,
+    canonical TypeScript, `build`, certified `test:ci`); only if all four pass, regenerate both
+    evals from those results; run `check-baseline-allowlist.py` explicitly on BOTH evals; then run
+    `./harness preflight --json` followed by `./harness stop-gate --json`; finally run the root
+    verifier. The verifier's root-eval check remains the sealing repeat, not a substitute for the
+    pre-Harness dual-eval checks.
+32. **Predeclare the complete run-83 green command-output set and never overwrite it.** Step 1 must
+    prove the following paths are absent, then freeze them as the only new sibling outputs allowed
+    under `loop-fork/runs/harvto-d6-readonly-attach/artifacts/green/`:
+    `run-83-01-check.txt`, `run-83-02-typecheck.txt`, `run-83-03-build.txt`,
+    `run-83-04-test-ci.txt`, `run-83-05-loop-eval-baseline.txt`,
+    `run-83-06-root-eval-baseline.txt`, `run-83-07-harness-preflight.json`,
+    `run-83-08-harness-stop-gate.json`, and `run-83-09-root-verify.txt`. Capture combined
+    stdout/stderr, exact command, and the command's own exit status for each; a pipeline must use
+    pipefail and must not mistake `tee` success for command success. If any predeclared path already
+    exists, stop before gates rather than append, truncate, rename, or choose a second filename.
+33. **Do not let evidence capture invalidate the read-only gate proof.** Buffer each command's raw
+    output in one validated `mktemp -d` directory outside the repository while it runs. First
+    compare the repository status and dirty-file content-hash inventory before/after the command;
+    only after that comparison succeeds may the buffered bytes be materialized at the exact bounded
+    green path from correction 32. The ignored `loop-fork/loop` build product remains the sole
+    expected non-tracked command artifact. This makes correction 24's before/after equality real
+    rather than comparing a tree to itself plus its newly written log.
+34. **Give the fresh result one frozen identity and make exactly-once checks mechanical.** Before
+    the first execution write, freeze one run-83 verification ID and one RFC3339 UTC timestamp.
+    Record that pair exactly once in each mutable summary surface: loop-fork eval, root eval,
+    `task-log.md`, and `artifacts/green/verification.md`. Correction 29's count proof is over that
+    unique pair, not over generic command names already present in historical text. Each raw file
+    from correction 32 is referenced exactly once by `verification.md`; no second terminal,
+    verdict, or verification block is appended.
+35. **A sealing-run failure invalidates the provisional pass evals.** Evals become pass only after
+    the first four code gates are green. If either explicit baseline checker, Harness preflight,
+    Harness stop-gate, or any root-verifier subgate then fails or diverges, update both eval
+    surfaces to an honest overall `fail` (including loop-fork `status`, `verdict`, and
+    `dimensions.unit.status`), retain `baseline_failures: []` unless actual named baseline failures
+    exist, record the exact failed command/output once, and stop without review or lifecycle action.
+    Do not leave dual pass evals describing a verification sequence whose sealing run failed, and
+    do not rerun the failed gate to recover green.
+36. **Prove `status.md` append-only at byte level.** Before any authorized run-83 status append,
+    freeze its byte length and SHA-256. After the append, require the complete pre-write bytes to be
+    an exact prefix, require only the expected new run-83 block after that prefix, and count the
+    frozen verification ID exactly once. This supplements line-count checks and prevents a rewrite,
+    reorder, or newline-normalization from masquerading as an append.
+37. **Make the one-review wait finite before the irreversible send.** Immediately before sending,
+    freeze an absolute UTC deadline and a maximum of 30 inbox polls over at most 30 minutes, with no
+    individual wait longer than 60 seconds. Record each `receive_messages` result. The first
+    complete literal exact-SHA verdict ends the wait; expiry follows correction 27 and stops with no
+    duplicate request, helper route, inferred PASS, close, or D7 promotion.
 
 ## Run-82 recovery amendment — resume run-79 epoch `1786902912181400`
 
@@ -3289,3 +3592,121 @@ Next: stage exactly the four formatter terminal surfaces plus this `PLAN.md` and
 bookkeeping commit, re-hash both run-79 bundles, then request one zero-write same-SHA Claude review
 of unchanged D6 `254e1749ca67ad1d81cd434ef01db0aeabae5827`. Formatter `harness done` remains
 prohibited.
+
+## 2026-08-16 — Run-82 D6 review handover boundary, epoch `1786902912181400`
+
+Governess decision `6ecf831f-a49d-41f8-98d2-0869e581905f` orders fresh-loop preparation after
+Claude reached its context threshold. Finish only the current review-request atomic step; do not
+start D6 close, bookkeeping, D7, or another broad slice.
+
+- Formatter terminal/bookkeeping is committed at
+  `ef17eb08139a7300316a3564782c216e7f19cfaf`, parent exact production SHA
+  `2e6adb8c3c2cf502ffea28c714685b2ea14b9822`, with exactly six authorized paths.
+- One unchanged-D6 zero-write same-SHA review request was accepted as
+  `d0fe2757-a111-4d49-8e24-5abb5b1bd3e8` for
+  `254e1749ca67ad1d81cd434ef01db0aeabae5827`. No verdict arrived before preparation.
+- Silence is not `PASS`. Never duplicate this request or close D6 without a literal Claude verdict
+  naming the exact SHA.
+- Current state remains HEAD `ef17eb08139a7300316a3564782c216e7f19cfaf`, empty index, D6 sole
+  active/eval-pending, exact Harness hashes, utility `0/off/0`, 60 untracked root `.loop/` files,
+  and byte-identical run-79 bundles.
+
+Fresh-loop next action: validate the governed handover and preserved state, then continue the
+existing review thread/request and consume literal `PASS` or `REVISE`. On `PASS`, capture D6
+pre-close status/hashes and terminal counts, run exactly one D6 Harness close, prove one positive
+transition, and create separate bookkeeping. On `REVISE`, stop without code rework, retry, or hand
+repair.
+
+## 2026-08-16 — Run-82 D6 REVISE handover, epoch `1786902912181400`
+
+Claude decision `3ef105fc-210f-4b56-8dcb-1903fc05406d` is literal `REVISE` for exact unchanged
+D6 SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827`. It authorizes no close.
+
+- Code is approved; no D6 code, contract, red evidence, implementation commit, or lifecycle rework
+  is allowed.
+- Formatter PASS and terminal bookkeeping discharged the inherited formatter/evidence-integrity
+  gate. Reviewer independently reran `bun run check`: 189 files, no fixes, exit 0.
+- Remaining gate is dual eval regeneration from real green mandatory runs. Local evidence corrects
+  the review text: the loop-fork eval exists but is `pending`; root eval is `fail`; both carry the
+  stale formatter baseline and Harness eval remains pending.
+- Governess prepare decision `6ecf831f-a49d-41f8-98d2-0869e581905f` still blocks another broad
+  slice in this loop. No mandatory suite, eval write, staging, commit, re-review, or close starts
+  here.
+
+Fresh-loop next action: revalidate HEAD `ef17eb08139a7300316a3564782c216e7f19cfaf`, empty index,
+D6 sole-active/eval-pending state, protected inventories, root `.loop/`, bundles, and utility
+`0/off/0`; run the complete mandatory D6 gates; regenerate both evals only from actual green
+results; then ask supervisor/Governess whether materially changed evidence permits one follow-on
+same-SHA review. Never infer PASS or close from the code-approved REVISE.
+
+## 2026-08-16 — Supervisor ruling for D6 REVISE correction loop
+
+Supervisor decision `4662cdff-a52a-47ef-86fc-97c3ca2e56b7` resolves the same-SHA sequencing
+question. Exactly one follow-up review of unchanged D6
+`254e1749ca67ad1d81cd434ef01db0aeabae5827` is authorized after, and only after:
+
+1. a fresh real run of every specified D6 mandatory gate at current formatter-enabled HEAD;
+2. both D6 eval surfaces exist and pass with `baseline_failures: []` and empty by-name allowlist;
+3. bounded D6 eval/evidence/status updates are recorded with zero D6 code or frozen-red change.
+
+This is the charter REVISE correction loop, not duplicate verdict shopping. Context prepare still
+forbids running the broad gates here. Successor performs the rerun, writes only authorized
+D6 eval/evidence/status surfaces, proves unchanged implementation SHA, then sends exactly one
+follow-up review. D6 close remains prohibited until literal exact-SHA `PASS`.
+
+## 2026-08-16 — Governess handover epoch `1786912909823827`
+
+Human-requested graceful handover `3bfa1458-d26e-4a62-b68d-e3f5a40ecac9` stops run 82 after
+the D6 REVISE correction-loop ruling is durably recorded. No mandatory rerun, eval regeneration,
+follow-up review, D6 close, D7 work, staging, commit, push, merge, deploy, or discard begins here.
+
+Codex bundle must publish at
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/82/handoff/1786912909823827/codex.json`
+with status `ready`, exact HEAD `ef17eb08139a7300316a3564782c216e7f19cfaf`, empty index,
+complete dirty scope, checks, blockers, and the fresh-loop next action.
+
+Successor action remains exact: validate the bundle and preserved state; run every D6 mandatory gate;
+regenerate both evals from actual green results with empty baseline failures and by-name allowlist;
+prove D6 code/contracts/red/Harness remain unchanged; then submit the one supervisor-authorized
+follow-up review for unchanged SHA `254e1749ca67ad1d81cd434ef01db0aeabae5827`. Only literal
+`PASS` permits one close.
+
+## 2026-08-17 — Run-83 D6 PASS and close complete; bookkeeping is the only current action
+
+The run-83 correction and review atomic steps are complete. Request
+`58b6ea69-ce58-4125-853f-2c048160cd93` received literal Claude exact-SHA `PASS`
+`2bf89efd-4237-42f5-b3c3-a61bbf3df8c4` for unchanged D6
+`254e1749ca67ad1d81cd434ef01db0aeabae5827`. The one authorized close then exited 0 at
+`2026-08-17T04:57:50Z` and was not retried.
+
+Positive close proof: among 62 task-index records, only D6 changed. It moved
+`active/eval-pending` to `done/eval-pass` and gained `ended_at`; the other 61 records are
+byte-equivalent. The two pre-existing active records `active-launch-interlock` and
+`context-pressure-current-lineage` remain active unchanged. Post-close counts are 2 active, 58 done,
+and 2 parked. There is no active D6 and no current-task marker; this does not assert that no active
+task exists repository-wide.
+
+Reviewed evidence remains frozen. The present-tense `Blocked inherited gate` prose in
+`artifacts/green/verification.md` is historical and superseded by run-83 verification
+`run83-d6-4e293d78-44d3-4451-b942-0b92fab3aa0c` and exact PASS
+`2bf89efd-4237-42f5-b3c3-a61bbf3df8c4`; do not edit that reviewed file. The Harness task record's
+pre-close pending eval was stale relative to the pass eval file and is now pass through normal
+close refresh. The baseline checker covers allowlist predicates; the separate shape check covers
+the required unit dimension. Untracked D6 files will be staged as whole-file additions, so their
+normal/ignore-all-space numstat equality is not represented as meaningful whitespace proof.
+
+Current authorized action is exactly one D6 bookkeeping commit. Explicitly stage these categories
+only: the five reviewed contracts; D6 run plan, eval, task-log, memory, meta, parked-idea copy,
+pre/post-task artifacts, debt and regression-harvest artifacts, and run-83 green evidence; root D6
+eval; D6 promotion/terminal rows in parked ideas, task index, coordination, and debt register; the
+completion spec; this `PLAN.md`; and append-only `status.md`. The frozen four-file red directory,
+D6 source/test, formatter evidence, `.loop/`, and unrelated dirty state remain excluded. Expected
+cached cardinality is 39 paths. Prove tracked normal/ignore-space numstats, classify untracked files
+as additions, verify exact cached paths/hashes and `git diff --cached --check`, then commit once
+without amendment. The commit message must name run 83, epoch `1786912909823827`, PASS
+`2bf89efd-4237-42f5-b3c3-a61bbf3df8c4`, and the historical verification-section supersession.
+
+After commit, verify empty index, exact committed scope, terminal D6 state, unchanged code/contracts/
+red/evals/reviewed verification, bundle hashes, root `.loop/`, and utility `0/off/0`. Append exact
+commit/check/risk/next-action proof and publish the governed handover. Do not promote or start D7 in
+this run.

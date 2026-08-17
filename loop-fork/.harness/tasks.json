@@ -600,6 +600,16 @@
       "eval_status": "pass",
       "ended_at": "2026-08-16T06:56:26Z",
       "spec_path": "specs/harvto-d15-teardown-process-orphans.md"
+    },
+    {
+      "id": "harvto-d6-readonly-attach",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-08-16T07:07:05Z",
+      "run_dir": "runs/harvto-d6-readonly-attach",
+      "eval_status": "pass",
+      "ended_at": "2026-08-17T04:57:50Z",
+      "spec_path": "specs/harvto-d6-readonly-attach.md"
     }
   ]
 }

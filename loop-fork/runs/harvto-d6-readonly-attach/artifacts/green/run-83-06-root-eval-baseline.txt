@@ -1,0 +1,7 @@
+verification_id: run83-d6-4e293d78-44d3-4451-b942-0b92fab3aa0c
+recorded_at: 2026-08-17T04:28:25Z
+cwd: repository root
+command: python3 scripts/check-baseline-allowlist.py runs/harvto-d6-readonly-attach/eval.json
+baseline allowlist empty: runs/harvto-d6-readonly-attach/eval.json
+
+exit_status: 0

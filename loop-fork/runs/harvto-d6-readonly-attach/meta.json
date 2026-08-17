@@ -1,0 +1,10 @@
+{
+  "id": "harvto-d6-readonly-attach",
+  "mode": "emergent",
+  "created_at": "2026-08-16T07:07:05Z",
+  "status": "done",
+  "description": "D6 P2: reproduce and fix targeted recovery delivery being blocked by a stale read-only tmux viewer without unsafe pane injection.",
+  "promoted_from": "specs/harvto-d6-readonly-attach.md",
+  "promoted_at": "2026-08-16T07:07:05Z",
+  "ended_at": "2026-08-17T04:57:50Z"
+}

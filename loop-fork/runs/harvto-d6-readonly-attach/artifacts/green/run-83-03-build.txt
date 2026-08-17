@@ -1,0 +1,23 @@
+verification_id: run83-d6-4e293d78-44d3-4451-b942-0b92fab3aa0c
+recorded_at: 2026-08-17T04:28:25Z
+cwd: loop-fork
+command: bun run build
+$ bun build --compile --outfile loop src/cli.ts
+ [148ms]  bundle  3051 modules
+ [107ms] compile  loop
+
+exit_status: 0
+ignored_build_binary_before:
+  {
+    "present": true,
+    "bytes": 75418450,
+    "sha256": "2a2737437668ad008d008d25020a0fc23febf6a22798714461d3e5da6070368a",
+    "mtime_ns": 1786908540826702634
+  }
+ignored_build_binary_after:
+  {
+    "present": true,
+    "bytes": 75418450,
+    "sha256": "2a2737437668ad008d008d25020a0fc23febf6a22798714461d3e5da6070368a",
+    "mtime_ns": 1786941073684581974
+  }

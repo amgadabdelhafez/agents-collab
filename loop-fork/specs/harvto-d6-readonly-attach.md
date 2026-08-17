@@ -1,27 +1,26 @@
----
-kind: parked-idea
-id: harvto-d6-readonly-attach
-status: parked
-created_at: 2026-08-13T04:58:27Z
-source_task: harvto-supervisor-defects
----
-
 # harvto-d6-readonly-attach
 
-Idea captured 2026-08-13T04:58:27Z.
+Task completed 2026-08-17T04:57:50Z, mode emergent.
 
-## Capture
+## What was built
 
-D6 P2: reproduce and fix targeted recovery delivery being blocked by a stale read-only tmux viewer without unsafe pane injection.
+- Promoted D6 exactly once after D15 closed and its separate bookkeeping commit
+  `ee1e7736d876d4b387f13580ec25ddf1c606e873` existed with an empty index.
+- Created the canonical D6 spec, plan, tasks, verification contract, and run plan before source or
+  regression edits.
+- Traced the owner to `src/loop/tmux.ts`: pane evidence records only
+  `window_active_clients`, and `matchesClaudeSuggestionSnapshot` rejects every nonzero count even
+  though tmux exposes exact `client_readonly` state.
 
-## Source
+## Decisions made
 
-- Active task: harvto-supervisor-defects
+- Promoted parked idea `specs/harvto-d6-readonly-attach.md` into active task `harvto-d6-readonly-attach`.
 
-## Promotion
+## Open items at completion
 
-Run:
+- Implement the promoted idea and complete normal verification.
 
-```bash
-./harness promote harvto-d6-readonly-attach
-```
+## Trajectory
+
+- 001 - initial (2026-08-16T07:07:05Z)
+- 002 - promoted parked idea (2026-08-16T07:07:05Z)

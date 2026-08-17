@@ -1,0 +1,20 @@
+{
+  "task_id": "harvto-d6-readonly-attach",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "Run 83 fresh gates at HEAD ef17eb08139a7300316a3564782c216e7f19cfaf: ultracite checked 189 files with no fixes; canonical TypeScript passed; build passed with 3051 modules; all 79 certified serial test files passed. Raw outputs: artifacts/green/run-83-01-check.txt through artifacts/green/run-83-04-test-ci.txt."
+    }
+  },
+  "run_83_verification": {
+    "id": "run83-d6-4e293d78-44d3-4451-b942-0b92fab3aa0c",
+    "recorded_at": "2026-08-17T04:28:25Z",
+    "head": "ef17eb08139a7300316a3564782c216e7f19cfaf",
+    "implementation_sha": "254e1749ca67ad1d81cd434ef01db0aeabae5827",
+    "certified_file_count": 79
+  }
+}
