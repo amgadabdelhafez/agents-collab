@@ -1,0 +1,22 @@
+{
+  "task_id": "harvto-d7-handoff-identity",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": ["unit"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "Run 85 D7 final-byte gates at plan-freeze commit 3ec31c5391db12948f0e641e2094323b3a468e3e: named hostile-luna red remains frozen; run-state 23/23, paired-options 14/14, governess-runtime 13/13, and governess-exit 38/38 passed; check covered 189 files, canonical TypeScript passed, build compiled 3051 modules, and all 79 certified serial test files passed. Normal and ignore-all-space numstats match exactly. The generated .gemini/settings.json residue was removed, its fixture now uses a temporary project directory, and .gemini remained absent after focused and full tests."
+    }
+  },
+  "run_85_verification": {
+    "plan_pass_id": "3986fec8-fddb-4f21-80d0-ab6cdea7c807",
+    "plan_freeze_commit": "3ec31c5391db12948f0e641e2094323b3a468e3e",
+    "certified_file_count": 79,
+    "named_regression": "D7 governed handoff preserves exact effective launch identity",
+    "red_resolved_model": "gpt-5.6-luna",
+    "expected_source_model": "gpt-5.6-sol",
+    "generated_residue": "absent after temporary-project fixture cleanup and fresh focused/full tests"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d7-handoff-identity",
+  "baseline_failures": [],
+  "summary": "D7 persists normalized effective launch identity, restores role-correct model and effort selections into a fresh replacement run, digest-binds source identity and lineage, and requires an exact current replacement manifest before acceptance or old-loop teardown.",
+  "checks": {
+    "exact_base_red": "exit 1: resolved effective Codex model gpt-5.6-luna versus expected source gpt-5.6-sol through real parse, Options, and buildPairedAgentCommand resolution",
+    "named_regression": "pass after fix",
+    "focused_run_state": "23 pass, 0 fail",
+    "focused_paired_options": "14 pass, 0 fail",
+    "focused_governess_runtime": "13 pass, 0 fail",
+    "focused_governess_exit": "38 pass, 0 fail",
+    "focused_tmux": "111 pass, 0 fail",
+    "lint": "pass",
+    "typecheck": "pass: canonical command exited 0",
+    "build": "pass: 3051 modules",
+    "test_ci": "pass: all 79 certified serial files on final implementation bytes",
+    "generated_residue": "pass: loop-fork/.gemini absent after focused and full tests"
+  },
+  "run_85_verification": {
+    "plan_pass_id": "3986fec8-fddb-4f21-80d0-ab6cdea7c807",
+    "plan_freeze_commit": "3ec31c5391db12948f0e641e2094323b3a468e3e",
+    "certified_file_count": 79,
+    "red_evidence": "loop-fork/runs/harvto-d7-handoff-identity/artifacts/red/SHA256SUMS"
+  }
+}

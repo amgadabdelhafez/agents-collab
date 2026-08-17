@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "phase": "post-close",
+  "recorded_at": "2026-08-17T08:41:32Z",
+  "task_id": "harvto-d7-handoff-identity",
+  "authorized_exact_sha_pass_id": "9d73c532-9149-4a13-b760-b4e9796ba251",
+  "pre_close_evidence_sha256": "03a09e49a39e59cc82cafc793d5337f318f70b581ac7d1958c350d1d547889f3",
+  "close": {
+    "command": "./harness done harvto-d7-handoff-identity",
+    "attempt_count": 1,
+    "exit": 0,
+    "stdout_lines": [
+      "post-task state invariant check passed; see runs/harvto-d7-handoff-identity/artifacts/post-task/state-invariants.log",
+      "debt scan completed: 4 finding(s), 4 appended",
+      "regression harvest skipped: no bug-fix signal",
+      "specs/harvto-d7-handoff-identity.md"
+    ]
+  },
+  "git_head": "ec93cd7be0c085e7320d590b344477a855042c8d",
+  "git_index_paths": [],
+  "implementation_paths_clean": true,
+  "gemini_residue_absent": true,
+  "frozen_red_verification": "5/5 OK",
+  "harness": {
+    "active_task": null,
+    "current_task_absent": true,
+    "total_task_records": 63,
+    "status_counts": {
+      "active": 2,
+      "done": 59,
+      "parked": 2
+    },
+    "d7_terminal_record_count": 1,
+    "d7_eval_file_status": "pass",
+    "tasks_json_sha256": "16260ff142a07d790efbece8b9e1b446bdb7f3eae866cbfa8e5cd8e03b3c3a55",
+    "parked_ideas_sha256": "b356031a29c6deb106f742d84ad2a24c4b936b480363dd4cd047adf0d021660a",
+    "coordination_sha256": "01019634a0cf3b970bd9a5589109b9188d4f5599bf12b283039407d7ce78080f",
+    "debt_register_sha256": "ff0569cccb83d8d98c592555cd097df59c520ed04d6ce8bddebeeab6042fbcb7",
+    "d7_meta_sha256": "e6bab137f4e5fbb8bb2b7a459cb28b67a2fecdcabd98d794eff486af4c8d818c",
+    "d7_eval_sha256": "a67139dc770fdd5cc0aede78f39ee24aaa1a1d1b693b37d6887fb7728da109c3"
+  },
+  "d7_record": {
+    "created_at": "2026-08-17T05:19:18Z",
+    "ended_at": "2026-08-17T08:41:15Z",
+    "eval_status": "pass",
+    "id": "harvto-d7-handoff-identity",
+    "mode": "emergent",
+    "run_dir": "runs/harvto-d7-handoff-identity",
+    "spec_path": "specs/harvto-d7-handoff-identity.md",
+    "status": "done"
+  },
+  "unrelated_task_records": {
+    "pre_close_canonical_aggregate_sha256": "33338ab6660650d48a7a3720944a391d724da3fe5a4f3830222179740118af54",
+    "post_close_canonical_aggregate_sha256": "33338ab6660650d48a7a3720944a391d724da3fe5a4f3830222179740118af54",
+    "record_count": 62,
+    "byte_equivalent": true,
+    "active_launch_interlock_pre_sha256": "c34334dd7512fafd928015af6b26fdbf88faca7ef00b93bea8ac8653e4ae2f02",
+    "active_launch_interlock_post_sha256": "c34334dd7512fafd928015af6b26fdbf88faca7ef00b93bea8ac8653e4ae2f02",
+    "context_pressure_current_lineage_pre_sha256": "241c85e6e4f223a4248d669d842e9c4662bea2f3ee1508df0dff7c38f6fbd3e2",
+    "context_pressure_current_lineage_post_sha256": "241c85e6e4f223a4248d669d842e9c4662bea2f3ee1508df0dff7c38f6fbd3e2"
+  },
+  "transition_proof": {
+    "only_d7_task_record_changed": true,
+    "d7_transition": "active/pending-index to done/pass-index",
+    "d7_ended_at": "2026-08-17T08:41:15Z",
+    "unrelated_task_transition_count": 0,
+    "close_retry_count": 0
+  }
+}

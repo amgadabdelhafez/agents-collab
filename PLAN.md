@@ -1,4 +1,181 @@
-# Current Plan — D6 Gate Correction, Follow-up Review, Then D7-D12
+# Current Plan — D7 Plan Re-freeze, Full Review, and Governed Lifecycle
+
+## Current authority — handover epoch `1786940159492536`
+
+This section supersedes earlier next-action and hash-state wording while preserving all tighter
+authority, scope, evidence, one-close, exact-SHA, utility-ban, and handover rules below. This
+session writes only `PLAN.md` and append-only `status.md`; it may not edit D7's five planning files,
+source/tests, red evidence, evals, Harness state, the index, commits, or D8.
+
+### Validated boundary
+
+- Both validated bundles in
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/83/handoff/1786940159492536/` are
+  `status: "ready"`, agree on epoch `1786940159492536` and HEAD
+  `2c415e124c4cb2b39d81fa19a8e977e50dba48a9`, and preserve the documented dirty scope.
+- HEAD matches that base; index is empty; D7 is active/eval-pending; D6 remains done/pass. No
+  `loop-fork/src/` or `loop-fork/tests/` path has a worktree delta. Root `.loop/` remains 60 files
+  and zero tracked files. Run-83 utility contains only its epoch record, so utility is `0/off/0`.
+- Claude zero-write decision `ad396335-a328-4c79-b32c-6a418953f663` is literal `REVISE`, not
+  `PLAN PASS`. It confirms premise, mechanism, ten-file boundary, and fresh replacement-run lineage;
+  C1-C3 are now present in all five D7 planning files.
+- Run 84 was planning-only. It made the C1-C3 edits and stopped before a review request; its Claude
+  local-development confirmation failed. Never resume run 84 or treat that failure as a verdict.
+
+### Applied planning corrections
+
+1. **C1 — shared type home.** Declare and export normalized launch-identity type from
+   `loop-fork/src/loop/run-state.ts`, following existing `RunWorldModelBinding` ownership. Do not
+   add `src/loop/types.ts`; frozen implementation boundary remains six source and four test paths.
+2. **C2 — decisive end-to-end red.** Named exact-base regression obtains replacement argv from
+   `replacementLoopArgs`, passes it through real parsing into `Options`, then invokes shared
+   effective-model resolution. Under hostile ambient `gpt-5.6-luna`/low, unchanged base must
+   decisively resolve Codex to `gpt-5.6-luna` instead of source `gpt-5.6-sol`. Missing model token
+   is secondary mechanism evidence, not decisive assertion.
+3. **C3 — Claude-primary authority split.** Parent pre-spawn validation rejects only frozen
+   Claude-primary identity already provably inexpressible under parent's compiled CLI/default
+   contract. Replacement binary/default drift is detectable only replacement-side; exact identity
+   comparison must reject it before acceptance and before any parent mark/kill effect.
+
+Run-84 candidate hashes, verified again in this session:
+
+- spec: `9a58ab3c35e7d9469a485b4582f4769a2709a0dec62b96e1643af27bcfc21115`
+- plan: `86310f038b79456ee6fc5abfe02967b1ba7f9ed62f631db349e7882983765db4`
+- tasks: `e94fcd60a34ddeae92cd5514c00d266924b2775c39286507c7fe8c76da7128b0`
+- verify: `5449deeca05c4ae4d3d0cc2ecf0b7630d981a62e4c4eb2714d52cd079b4a5f1b`
+- run plan: `2a85bf3dd849c0c4242ef723560ab85b57f72d52b068ac4b601b08965481c1c5`
+
+These are neither reviewed nor frozen. They describe the preserved C1-C3 candidate bytes only and
+will become stale as soon as the required review-rule wording changes any planning file. No outward
+request may call them reviewed, approved, or frozen.
+
+Independently re-derived in this plan-review pass with
+`shasum -a 256 loop-fork/specs/harvto-d7-handoff-identity/{spec,plan,tasks,verify}.md loop-fork/runs/harvto-d7-handoff-identity/plan.md`:
+all five on-disk values equal the five listed above. `git rev-parse HEAD` returns
+`2c415e124c4cb2b39d81fa19a8e977e50dba48a9` and `git diff --cached --name-only` returns zero paths.
+C1-C3 were re-checked by content, not by trust: `src/loop/run-state.ts` ownership appears in all
+five files, `src/loop/types.ts` appears only as an explicit out-of-scope exclusion
+(`spec.md:31`, `verify.md:57`), `replacementLoopArgs` end-to-end wording appears in `verify.md`, and
+parent-provable inexpressibility wording appears in all five. The re-freeze/full-review rule is
+confirmed **absent** from all five files: no `re-freeze`, `recompute`, or `invalidat*` hit exists in
+that set. Adding it is therefore a real planning-byte change and will invalidate all five hashes
+above, as required.
+
+### Correct disposition of the five files versus other D7 run artifacts
+
+- The canonical five are exactly `loop-fork/specs/harvto-d7-handoff-identity/{spec,plan,tasks,verify}.md`
+  and `loop-fork/runs/harvto-d7-handoff-identity/plan.md`. Nothing else is in the contract.
+- Of the four `specs/` files, `spec.md`, `tasks.md`, and `verify.md` are untracked but not ignored;
+  plain `git add <path>` suffices for those three. Both canonical `plan.md` files —
+  `loop-fork/specs/harvto-d7-handoff-identity/plan.md` and
+  `loop-fork/runs/harvto-d7-handoff-identity/plan.md` — resolve to
+  `loop-fork/.gitignore:3` pattern `PLAN.md` on this APFS volume with `core.ignorecase=true`.
+  Because that match is filesystem-dependent, re-run and record `git check-ignore -v` separately
+  for all five immediately before plan freeze, use `git add -f` for exactly both `plan.md` paths
+  regardless of the result, use plain exact-path `git add` for the other three, and prove with
+  unfiltered `git diff --cached --name-only` that exactly the five reviewed paths are staged.
+- The sibling untracked D7 run artifacts `parked-idea.md`
+  (`e142424cb5aab97d085adfe74a1a5da83eeba6c582348b3e7f63e62ed38a9314`), `task-log.md`
+  (`6693800d8c8bf20ecea7b04f262c337a96ec50284428486cac0f4e8445964a35`), `meta.json`, `eval.json`,
+  `artifacts/`, and `memory/` are explicitly **excluded** from the plan-freeze commit and from the
+  reviewed hash set. They are preserved untouched; they are not planning bytes and their change does
+  not trigger re-freeze.
+
+### Re-freeze and full-review rule
+
+- Add to the canonical five-file contract that every planning-byte change invalidates the complete
+  five-hash set. Recompute and record all five SHA-256 values only after all planning edits stop.
+- Every new hash set requires one fresh Claude zero-write review of all five complete files against
+  exact base `2c415e124c4cb2b39d81fa19a8e977e50dba48a9`. Prior acceptance of unchanged sections and a
+  delta-only review cannot satisfy this gate.
+- A `REVISE`, partial verdict, wrong base/hash, silence, or any post-request planning edit invalidates
+  the request. Apply only bounded planning corrections, re-freeze all five again, and request another
+  full review. Literal `PLAN PASS` naming exact base and all five current hashes is sole authority for
+  source/test edits or red capture.
+- Canonical home for the rule text: state it as a numbered contract clause in
+  `specs/harvto-d7-handoff-identity/spec.md` and as an enforced gate line in
+  `specs/harvto-d7-handoff-identity/verify.md`, and cross-reference it from `plan.md`, `tasks.md`,
+  and the run plan. Fixing the home in advance avoids a further review cycle spent relocating it.
+- Hash timing is fail-closed at three points, not one: recompute all five after edits stop; re-derive
+  all five again immediately before sending the review request and require equality; re-derive all
+  five once more on verdict receipt and require both equality and that the verdict text names the
+  exact base and all five values. Any inequality voids the verdict and forces a new full review.
+- Cycle cap. Two consecutive `REVISE` verdicts on the same premise without convergence stop the loop.
+  Record the divergence and escalate to the supervisor rather than issuing a third re-freeze; an
+  unbounded correct-and-resubmit loop is itself a failure mode.
+
+### Execution plan after this plan-only session
+
+1. In a fresh run, never resumed run 84, revalidate exact HEAD, empty index, D7 active/eval-pending,
+   preserved dirty scope, utility `0/off/0`, zero source/test delta, and candidate hashes above.
+2. Change only D7's five canonical planning files to add the re-freeze/full-review rule and remove
+   any stale outward claim that the run-84 hashes are already frozen or reviewed. Recheck C1-C3
+   semantically across the complete contract. Make no source/test, red, eval, or lifecycle change.
+3. After planning bytes stop changing, compute all five SHA-256 values together. Revalidate the
+   boundary, then submit one fresh Claude zero-write full review naming prior `REVISE`, exact base,
+   all five new hashes, C1-C3, the ten-file scope, decisive red, controls, exclusions, and commands.
+4. Stop on `REVISE`, silence, wrong base/hash, partial response, or any later planning-byte change.
+   Apply bounded planning corrections only, then re-freeze and request a new full review. On literal
+   `PLAN PASS`, stage exactly the five reviewed files (`git add -f` for both canonical `plan.md`
+   paths, plain exact-path `git add` for the other three),
+   prove `git diff --cached --name-only` lists those five paths and nothing else, run
+   `git diff --cached --check`, and create a dedicated plan-freeze commit. Then re-derive each
+   committed file's SHA-256 from the commit itself
+   (`git show <freeze-sha>:<path> | shasum -a 256`) and require all five to equal the reviewed set:
+   a git blob hash is not the reviewed SHA-256 and must never be substituted for it. Finally prove
+   empty index and unchanged source/test bytes.
+5. At unchanged production base, add only named D7 regression. Capture deterministic end-to-end red
+   and frozen command/fixture/output/argv/parsed-options/resolved-model/hash evidence. If hostile
+   `luna` does not replace source `sol` through real resolution, record `not-reproduced` and stop.
+6. Implement smallest fix within frozen ten-file boundary: shared run-state identity type and
+   persistence, shared model resolver, role-correct replacement model flags, digest-bound source
+   identity and lineage, parent-side expressibility check, and replacement-side pre-acceptance
+   identity check. Preserve fresh replacement run ID and exact source lineage.
+7. Run named/focused controls, `bun run check`, canonical TypeScript, build, certified serial
+   `test:ci`, Harness preflight/stop-gate, dual passing evals with empty baseline failures and
+   by-name allowlist, then root verifier. No UI capture because rendered UI does not change.
+8. Prove exact scope and frozen-red integrity. Commit only six production and four regression paths.
+   Obtain literal Claude zero-write `PASS` for exact implementation SHA. On bounded `REVISE`, change
+   D7 scope only, rerun full gates, create new commit, and request new exact-SHA review.
+9. After exact-SHA `PASS`, close D7 exactly once, prove only D7 transitioned, and create separate
+   exact-path bookkeeping commit. Update plan/status and publish governed handover.
+10. Continue D8-D12 in strict order, each with isolated plan review/freeze, exact-base red, bounded
+   implementation, full verification, exact-SHA review, one close, bookkeeping, and governed
+   handover before successor starts.
+
+### Acceptance and stop conditions
+
+- Fresh Claude plan verdict is literal `PLAN PASS` after a full five-file review for exact base and
+  the final re-frozen hash set before any source/test edit or red capture.
+- Decisive red proves real parse/`Options`/effective-model drift; C1 keeps ten-file scope truthful;
+  C3 distinguishes parent-provable inexpressibility from replacement-only default drift.
+- Every authority, hash, scope, lifecycle, evidence, gate, review, or close mismatch stops work.
+  Never discard inherited work, hand-repair Harness, overwrite frozen evidence, route utility,
+  weaken checks, retry one-shot actions, infer approval, or absorb D8-D12 scope.
+
+### Status ledger requirement
+
+`status.md` already exists at repository root (3811 lines at the time of this pass) and carries the
+D7 entries `## 2026-08-16 — D7 C1-C3 planning correction complete` and
+`## 2026-08-16 — D7 re-freeze/full-review planning handoff`. No creation step is required.
+
+It is append-only, so an earlier entry is never rewritten. The first of those two entries labels the
+five values "Fresh hashes" with no reviewed/frozen qualifier; the correction is the later appended
+entry, and any future correction must likewise be a new dated entry that names the superseded entry
+by heading. Every downstream step below that produces a verdict, freeze, commit, close, or handover
+must append one such entry before the step is treated as finished.
+
+### Explicitly archival
+
+Everything from `# Historical Plan` onward, including its trailing
+`## 2026-08-17 — Governed handover epoch 1786940159492536` paragraphs, is a record of what was true
+when written. **AS RAISED, NOT CURRENT:** its instruction to "apply Claude corrections C1-C3 to the
+five D7 planning files" is already discharged, and its references to "the five reviewed planning
+hashes" are stale — the current five values are candidate bytes, neither reviewed nor frozen, as
+stated above. Read the historical sections for their tighter authority, scope, evidence, one-close,
+exact-SHA, and utility-ban rules only; never as a next action or as hash state.
+
+# Historical Plan — D6 Gate Correction, Follow-up Review, Then D7-D12
 
 ## Run-83 authoritative continuation — handover epoch `1786912909823827`
 
@@ -3710,3 +3887,207 @@ After commit, verify empty index, exact committed scope, terminal D6 state, unch
 red/evals/reviewed verification, bundle hashes, root `.loop/`, and utility `0/off/0`. Append exact
 commit/check/risk/next-action proof and publish the governed handover. Do not promote or start D7 in
 this run.
+
+## 2026-08-17 — Run-83 D6 lifecycle complete; fresh-successor boundary
+
+D6 bookkeeping commit `2c415e124c4cb2b39d81fa19a8e977e50dba48a9` is complete on parent
+`ef17eb08139a7300316a3564782c216e7f19cfaf`. It contains exactly the frozen 39-path manifest,
+7,492 insertions, and 20 deletions. The commit was created once and was not amended. The post-commit
+index is empty.
+
+Commit verification passed: cached/committed paths 39/39; all staged and committed bytes matched
+their worktree files; `git diff --cached --check` and commit check passed; no source/test,
+frozen-red, `.loop/`, formatter, or D7 path entered the commit. D6 remains `done/pass` with matching
+ended-at timestamp and no current-task marker. The two other pre-existing active records remain
+byte-equivalent; post-close counts are 2 active, 58 done, and 2 parked.
+
+Preservation revalidation passed after commit for exact D6 implementation/source/test, all five
+contracts, four frozen-red files, both evals, reviewed verification, D15 and formatter inventories,
+both run-82 bundles, root `.loop/` at 60 files and zero tracked, and utility `0/off/0`. The four red
+files, formatter evidence, and root utility artifacts remain deliberately untracked and preserved.
+This handover PLAN/status suffix is the expected tracked dirty state after the bookkeeping commit.
+
+Risks carried forward: reviewed verification contains historical inherited blocked prose; the
+generated completion spec carries stale pre-implementation open-item wording from the final memory;
+two unrelated pre-existing tasks remain active. None contradicts D6's exact-SHA PASS, positive
+single-close transition, pass evals, or terminal index record, and none should be hand-edited during
+handover validation.
+
+Next: a fresh successor validates this governed handover, empty index, exact commit, terminal D6,
+preserved dirty scope, parked `harvto-d7-handoff-identity`, and utility `0/off/0`. D7 may be promoted
+only after that validation; run 83 stops before D7.
+
+## 2026-08-17 — Run-83 D7 promotion and zero-write plan REVISE
+
+The supervisor's later correction supersedes the preceding stale D6 handover boundary: no governed
+handover was active, live `exitControl` was `idle` with no recognized bundles, and the manually
+written old-epoch file authorized neither pause nor teardown. D6 bookkeeping commit
+`2c415e124c4cb2b39d81fa19a8e977e50dba48a9` remained HEAD with an empty index. D7 was therefore
+promoted exactly once at `2026-08-17T05:19:18Z` as the next isolated Harness task. D6 stayed
+`done/pass`; the two unrelated pre-existing active records stayed untouched.
+
+Plan-only reconciliation created the canonical D7 spec, plan, tasks, verify contract, and run plan.
+The reviewed hashes are spec `95d71723fb3271dfba174ccd167a93798c0fc125521b1c68384ce9de980c9ebd`,
+plan `d43509025668409da67cac3d5864f89e430673076adb5023b9812a29b80b3471`, tasks
+`5869704f96c170f0e593467f5116388939620bed629a9499650eb15e6b79ceb1`, verify
+`a1fc5092710c25fee8975c364b0df749eb6ca05621e63a69c99cf69b5d575783`, and run plan
+`96716b3565217bd264460fa0a1bfa2b647c5e10ab5d36dbb063d945cc71bb6d1`. No implementation,
+regression, red evidence, eval, staging, commit, close, or D8 action occurred.
+
+Claude zero-write review request `20b7e07e-723b-49d7-8868-d5a5e42c6c7e` received literal
+`REVISE` `ad396335-a328-4c79-b32c-6a418953f663`. The reviewer independently confirmed the defect
+mechanism, exact ten-file boundary, existing model-flag inventory, and the safety requirement that
+a fresh replacement run preserve exact source lineage rather than reuse the live parent run ID.
+Three planning blockers remain:
+
+1. Declare the normalized launch-identity type in `src/loop/run-state.ts`, not an undeclared or
+   out-of-scope `types.ts`, and say so in spec/plan/verify.
+2. Make the decisive red exercise real replacement argv through parse/options/effective-model
+   resolution, proving unchanged base selects ambient `gpt-5.6-luna` instead of source
+   `gpt-5.6-sol`; a missing-token assertion may remain secondary but cannot prove the defect.
+3. Split Claude-primary handling: parent-side pre-spawn rejection covers values the parent can
+   already prove inexpressible, while replacement binary/default drift is caught only by the
+   replacement identity comparison before acceptance and before any parent teardown.
+
+After the verdict, Governess prepare decision `15901a0b-f2f0-4918-af27-74fe2d956276` reported that
+Claude crossed its context preparation threshold and ordered this atomic step finished without a
+new broad slice. The plan correction loop therefore remains for a fresh successor. It must first
+revalidate HEAD, empty index, active D7, the five reviewed hashes, and zero source/test delta; then
+apply only C1-C3 to the five planning files, freeze new hashes, and send one fresh Claude zero-write
+plan review. Literal `PLAN PASS` remains the sole authority to create the red regression or begin
+D7 implementation.
+
+## 2026-08-17 — Governed handover epoch `1786940159492536`
+
+Governess activated a human-requested graceful handover after the D7 zero-write `REVISE` atomic
+step completed. No correction-loop edit or new review was started. The exact boundary remains HEAD
+`2c415e124c4cb2b39d81fa19a8e977e50dba48a9`, empty index, active/eval-pending D7, five reviewed
+planning hashes recorded above, and zero D7 source, regression, red-evidence, eval, commit, or
+Harness-terminal change.
+
+The Codex ready bundle belongs at
+`/Users/amgad/.loop/runs/agents-collab-fa87e8608224/83/handoff/1786940159492536/codex.json`.
+The fresh replacement must validate both governed bundles, preserved dirty scope, exact HEAD and
+empty index, active D7, and utility `0/off/0`. Its first bounded action is planning-only: apply
+Claude corrections C1-C3 to the five D7 planning files, freeze five new hashes, and request one
+fresh zero-write Claude plan review. Literal `PLAN PASS` remains mandatory before any D7 regression,
+red capture, implementation, eval, close, commit, or D8 work.
+
+## 2026-08-17 — Run-85 D7 implementation review timeout
+
+D7 implementation is committed at
+`ec93cd7be0c085e7320d590b344477a855042c8d` on plan-freeze parent
+`3ec31c5391db12948f0e641e2094323b3a468e3e`. The commit contains exactly the approved six
+production and four test paths. Final focused controls, formatter, canonical TypeScript, build, all
+79 certified serial test files, both empty-baseline eval checks, Harness preflight/stop-gate, and the
+repository-root verifier passed. Normal and ignore-all-space numstats match exactly. Frozen red
+checksums pass, and generated `loop-fork/.gemini/settings.json` residue was removed; its fixture now
+uses a temporary project cwd, and `loop-fork/.gemini` remained absent through final gates.
+
+One zero-write exact-SHA Claude review request was accepted as
+`e08e1857-a870-4bcc-8a40-44550b184bce`. It names exact implementation SHA
+`ec93cd7be0c085e7320d590b344477a855042c8d`, exact scope, red evidence, final gates, eval hashes,
+and residue correction. Inbox polling returned no verdict. Thirty-one empty pulls occurred before
+the inherited maximum-30-poll bound was recognized; this process error is handled fail-closed.
+Polling stops at `2026-08-17T08:29:21Z`. Silence is not `PASS`; no duplicate review request, Harness
+close, bookkeeping commit, D8 promotion, push, merge, deploy, or release action occurred.
+
+Current boundary: HEAD remains `ec93cd7be0c085e7320d590b344477a855042c8d`, index is empty, the
+ten committed paths are clean, D7 remains active/eval-pass and unclosed, and unrelated inherited
+artifacts remain preserved. A later verdict is not silently accepted after this timeout. Supervisor
+must authorize how to handle any late exact-SHA response; no second request for this SHA is allowed.
+
+## 2026-08-17 — Run-85 Claude prepare decision after review timeout
+
+At `2026-08-17T08:29:23.212Z`, bridge message
+`bd838c0a-696d-4883-a058-4ea129f9083b` reported a Governess `prepare` decision because Claude
+crossed its context preparation threshold. This is a fresh-loop handover instruction, not the
+literal exact-SHA `PASS`/`REVISE` verdict requested by
+`e08e1857-a870-4bcc-8a40-44550b184bce`, and it grants no Harness-close authority.
+
+Current objective is to preserve the completed D7 implementation and all frozen evidence while
+handing off the fail-closed review-timeout boundary. Exact implementation scope remains commit
+`ec93cd7be0c085e7320d590b344477a855042c8d`: six production paths and four test paths, with no
+post-commit source/test drift. The index is empty; the ten implementation paths are clean;
+`loop-fork/.gemini` is absent; D7 remains active/eval-pass and unclosed. All focused and mandatory
+gates listed in the timeout entry remain green, including frozen-red integrity, 79 certified serial
+files, both empty baseline allowlists, Harness preflight/stop-gate, and the root verifier.
+
+Blocker: the exact-SHA Claude review has no literal verdict and its polling bound has expired.
+Risks are a late queued response, accidental acceptance after timeout, duplicate review, or an
+unauthorized lifecycle transition. Do not infer a verdict, send another request for this SHA,
+poll again, close D7, create a bookkeeping commit, or begin D8. The next bounded action belongs to
+a fresh governed successor: verify the charter, exact HEAD and empty index, clean implementation
+scope, active/eval-pass/unclosed Harness state, frozen plan/red evidence, and absent `.gemini`, then
+await a supervisor ruling on whether an explicitly identified late exact-SHA verdict may be used.
+No broad slice starts from this session.
+
+## 2026-08-17 — Supervisor accepts late D7 PASS; single close complete
+
+The supervisor explicitly ruled that the local polling timeout did not void durable Claude
+exact-SHA verdict `9d73c532-9149-4a13-b760-b4e9796ba251`. It is the single direct reply to request
+`e08e1857-a870-4bcc-8a40-44550b184bce` for implementation commit
+`ec93cd7be0c085e7320d590b344477a855042c8d`; there was no duplicate request and no intervening
+implementation, frozen-evidence, index, or lifecycle mutation. This ruling supersedes only the
+post-timeout blocker in the immediately preceding entries. All tighter exact-SHA, one-close,
+scope, evidence, utility, and no-D8 rules remain active.
+
+Pre-close proof at exact implementation HEAD showed an empty index, ten clean implementation
+paths, utility `0/off/0`, absent `loop-fork/.gemini`, D7 active with pass eval/preflight/stop-gate,
+zero prior D7 terminal records, and frozen red 5/5 intact. Pre-close lifecycle evidence is
+`loop-fork/runs/harvto-d7-handoff-identity/artifacts/close/pre-close-lifecycle.json`, SHA-256
+`03a09e49a39e59cc82cafc793d5337f318f70b581ac7d1958c350d1d547889f3`.
+
+Exactly one `./harness done harvto-d7-handoff-identity` exited 0 at
+`2026-08-17T08:41:15Z`; it was not retried. D7 transitioned from active/pending-index to
+done/pass-index, its terminal-record count changed from zero to one, and `.harness/current-task`
+was removed. All 62 non-D7 task records are byte-equivalent under canonical serialization: the
+aggregate SHA-256 is `33338ab6660650d48a7a3720944a391d724da3fe5a4f3830222179740118af54`
+both before and after. The two unrelated active records remain exact: `active-launch-interlock`
+`c34334dd7512fafd928015af6b26fdbf88faca7ef00b93bea8ac8653e4ae2f02` and
+`context-pressure-current-lineage`
+`241c85e6e4f223a4248d669d842e9c4662bea2f3ee1508df0dff7c38f6fbd3e2`. Post-close counts are two
+active, 59 done, and two parked. The index remains empty, implementation paths remain clean,
+frozen red remains 5/5, and `.gemini` remains absent. Post-close lifecycle evidence is
+`artifacts/close/post-close-lifecycle.json`, SHA-256
+`d1ad64b3ba004b8b21cda1f783f06aeed826b5f5a40463df94b6fb06559e31ff`.
+
+The separate D7 bookkeeping commit has a fixed 32-path scope: `PLAN.md`, append-only `status.md`,
+the D7 promotion/terminal deltas in `.harness/{parked-ideas.jsonl,tasks.json}` and
+`agents/coordination.jsonl`, four D7 rows in `debt/register.jsonl`, the generated completion spec,
+all 24 untracked D7 run evidence files (close, debt, post-task, pre-task, frozen red,
+regression-harvest, loop eval, memory, meta, parked capture, and task log), and the root D7 eval.
+The five frozen planning files are already committed at plan-freeze SHA
+`3ec31c5391db12948f0e641e2094323b3a468e3e`; the ten implementation paths are already committed at
+`ec93cd7b` and are excluded. Also excluded are root `.loop/`, D6/formatter evidence, old handover
+files, unrelated work, remotes, and D8.
+
+Carried non-blocking reviewer notes remain deferred: `replacementModelArgs` has an unreachable
+undefined-model fail-open shape, the reviewer-prefix ternary is cosmetic, and direct byte-mutation
+coverage for handoff-manifest identity is an enumeration gap rather than a behavior gap. The
+generated completion spec summarizes the task log's original `What I changed` section and therefore
+does not enumerate every later implementation detail; the complete reviewed ledger lives in this
+entry, `status.md`, the D7 task log, frozen evidence, and the two close snapshots. Do not hand-edit
+Harness output to cosmetically rewrite that historical summary.
+
+Next bounded action: explicitly stage the 32 paths, prove the exact cached manifest, compare normal
+and ignore-all-space numstats for every tracked modification, run cached diff checks, and create one
+separate bookkeeping commit without amendment. Then verify exact committed scope and empty index,
+open an actual Governess handover epoch, and require both valid ready bundles before any
+teardown/successor action. Run 85 must not start or promote D8.
+
+### D7 bookkeeping scope correction — frozen red preserved outside commit
+
+The first explicit 32-path staging attempt surfaced immutable provenance bytes rather than a code
+or lifecycle defect: `git diff --cached --check` reported the original blank-line/trailing-space
+content in frozen `artifacts/red/{command.txt,fixture.patch,output.txt}`. Rewriting, normalizing, or
+weakening checks for those frozen bytes is forbidden. All six red files were therefore removed only
+from the index and remain byte-preserved in the worktree; `shasum -a 256 -c SHA256SUMS` still passes
+5/5. No commit occurred and no other path was unstaged.
+
+This correction supersedes the preceding 32-path count only. The exact bookkeeping scope is 26
+paths: the same seven tracked D7-owned lifecycle/ledger paths plus 19 non-red D7 evidence additions
+(both close snapshots, debt, pre/post-task, regression-harvest, loop/root evals, memory, meta,
+parked capture, and task log). The six frozen red files remain preserved, untracked, excluded from
+the bookkeeping commit, and still governed by their SHA256SUMS manifest. Re-stage the three amended
+ledgers, require a clean whole-index diff check and exact 26-path manifest, then commit once.

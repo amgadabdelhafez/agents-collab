@@ -1,0 +1,52 @@
+{
+  "task_id": "harvto-d7-handoff-identity",
+  "scanned_at": "2026-08-17T08:41:15Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-17T08:41:15Z",
+      "task_id": "harvto-d7-handoff-identity",
+      "signal": "loc_growth",
+      "file": "src/loop/governess-handoff.ts",
+      "before_loc": 267,
+      "after_loc": 426,
+      "delta_loc": 159,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-17T08:41:15Z",
+      "task_id": "harvto-d7-handoff-identity",
+      "signal": "loc_growth",
+      "file": "src/loop/governess.ts",
+      "before_loc": 7676,
+      "after_loc": 7798,
+      "delta_loc": 122,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-17T08:41:15Z",
+      "task_id": "harvto-d7-handoff-identity",
+      "signal": "loc_growth",
+      "file": "src/loop/paired-options.ts",
+      "before_loc": 507,
+      "after_loc": 646,
+      "delta_loc": 139,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-17T08:41:15Z",
+      "task_id": "harvto-d7-handoff-identity",
+      "signal": "loc_growth",
+      "file": "src/loop/run-state.ts",
+      "before_loc": 1321,
+      "after_loc": 1593,
+      "delta_loc": 272,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

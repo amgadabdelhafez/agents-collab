@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "phase": "pre-close",
+  "recorded_at": "2026-08-17T08:40:27Z",
+  "task_id": "harvto-d7-handoff-identity",
+  "authorized_plan_pass_id": "3986fec8-fddb-4f21-80d0-ab6cdea7c807",
+  "authorized_exact_sha_pass_id": "9d73c532-9149-4a13-b760-b4e9796ba251",
+  "review_request_id": "e08e1857-a870-4bcc-8a40-44550b184bce",
+  "supervisor_late_verdict_ruling": "accepted",
+  "git_head": "ec93cd7be0c085e7320d590b344477a855042c8d",
+  "git_index_paths": [],
+  "implementation_paths_clean": true,
+  "utility": {
+    "LOOP_UTILITY_ENABLED": "0",
+    "LOOP_UTILITY_DELEGATION_MODE": "off",
+    "LOOP_AU_PAIR_ENABLED": "0"
+  },
+  "gemini_residue_absent": true,
+  "frozen_red": {
+    "verification": "5/5 OK when run from artifacts/red",
+    "sha256sums_sha256": "7797119d44dcf7381b9699b7bfd2227658512c3aaf013ef1a0847f501a6430a8"
+  },
+  "harness": {
+    "active_task": "harvto-d7-handoff-identity",
+    "status": "active",
+    "eval_file_status": "pass",
+    "preflight": "pass",
+    "stop_gate": "pass",
+    "total_task_records": 63,
+    "d7_terminal_record_count": 0,
+    "current_task_sha256": "bcd2d1741909ea33bcdec6091e2ff523f51fab67061ffb71f3cade284292407e",
+    "tasks_json_sha256": "55da47efb3b6b0a12ed65e30e7880d8739bbd23ead15fd47e48ea85617f2ad08",
+    "parked_ideas_sha256": "b356031a29c6deb106f742d84ad2a24c4b936b480363dd4cd047adf0d021660a",
+    "coordination_sha256": "c5ef045356ab247f83050745dd160194d985d8e2efe5bcff600ac621fc626f46",
+    "d7_meta_sha256": "0555a22766e149865c2d3dda8e215673f399c104b8f7a8156ac818dd16329457",
+    "d7_eval_sha256": "a67139dc770fdd5cc0aede78f39ee24aaa1a1d1b693b37d6887fb7728da109c3"
+  },
+  "d7_record": {
+    "created_at": "2026-08-17T05:19:18Z",
+    "eval_status": "pending",
+    "id": "harvto-d7-handoff-identity",
+    "mode": "emergent",
+    "run_dir": "runs/harvto-d7-handoff-identity",
+    "spec_path": "specs/harvto-d7-handoff-identity.md",
+    "status": "active"
+  },
+  "unrelated_task_records": {
+    "canonical_aggregate_sha256": "33338ab6660650d48a7a3720944a391d724da3fe5a4f3830222179740118af54",
+    "record_count": 62,
+    "active_launch_interlock_sha256": "c34334dd7512fafd928015af6b26fdbf88faca7ef00b93bea8ac8653e4ae2f02",
+    "context_pressure_current_lineage_sha256": "241c85e6e4f223a4248d669d842e9c4662bea2f3ee1508df0dff7c38f6fbd3e2"
+  },
+  "close_contract": {
+    "command": "./harness done harvto-d7-handoff-identity",
+    "maximum_attempts": 1,
+    "expected_d7_transition": "active/pending-index to done/pass-index",
+    "expected_current_task_transition": "present with D7 to absent",
+    "expected_unrelated_task_transition_count": 0
+  }
+}

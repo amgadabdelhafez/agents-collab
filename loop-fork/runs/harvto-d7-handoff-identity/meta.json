@@ -1,0 +1,10 @@
+{
+  "id": "harvto-d7-handoff-identity",
+  "mode": "emergent",
+  "created_at": "2026-08-17T05:19:18Z",
+  "status": "done",
+  "description": "D7 P2: preserve model, effort, workspace, and run identity across handoff; reproduce the uncommanded sol-high to luna-low transition.",
+  "promoted_from": "specs/harvto-d7-handoff-identity.md",
+  "promoted_at": "2026-08-17T05:19:18Z",
+  "ended_at": "2026-08-17T08:41:15Z"
+}
