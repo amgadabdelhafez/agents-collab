@@ -17,6 +17,7 @@ import {
   type BridgeTargetLiveness,
   enqueueBridgeMessage,
   formatBridgeInbox,
+  markBridgeMessage,
   readBridgeEvents,
   readBridgeQueueHealth,
   readBridgeTargetLiveness,
@@ -578,6 +579,486 @@ test("D1 repeated recovery reads and consumes deliver one retained identity once
   ).toHaveLength(1);
   expect(readPendingBridgeMessages(root, nowMs, live)).toHaveLength(0);
   rmSync(root, { force: true, recursive: true });
+});
+
+test("D9 resolved acknowledgement emits once across supersession retry and replay", () => {
+  const root = tempDir();
+  try {
+    const dedupeKeys = [
+      "loop183-case1-clear-premise-conflict",
+      "loop183-case1-clear-premise-conflict-followup",
+      "loop183-case1-clear-premise-conflict-consolidated",
+      "loop183-case1-consolidated-fallen-correction",
+    ];
+    const ackTimes = [
+      "2026-08-12T03:48:14.778Z",
+      "2026-08-12T03:48:15.026Z",
+      "2026-08-12T03:48:15.274Z",
+      "2026-08-12T03:48:15.528Z",
+    ];
+    const subject =
+      "RESOLVED: Loop-183 identity/predicate semantics; no ruling required";
+    const message = `RESOLVED from authoritative records; withdraw prior escalation under this key. No supervisor action required unless you disagree.
+
+Final facts:
+- Case 1 is d72e4fc...f189 per Loop-177 supersession; f8c... is diagnostic only.
+- "Known-positive passes" means presence=true, not composite.
+- T0 banked/fresh per-gate match is complete.
+- Repair-2 expected clear: d72=false (0), fallen=true (180), B=false (0), C=false (0).
+- Composite remains false for every case; fallen remains rejected on presence.
+- Claude accepted T0 and recommended continue. Prereg exact-blob review is next; no repair score has run.`;
+
+    const predecessors = dedupeKeys.map((dedupeKey, index) =>
+      enqueueBridgeMessage(
+        root,
+        "codex",
+        "supervisor",
+        `Run197 predecessor ${index + 1}`,
+        {
+          dedupeKey,
+          now: `2026-08-12T03:48:13.${index.toString().padStart(3, "0")}Z`,
+          priority: "high",
+          type: "escalation",
+        }
+      )
+    );
+    expect(readPendingBridgeMessages(root)).toHaveLength(4);
+
+    const attempts = dedupeKeys.map((dedupeKey, index) =>
+      enqueueBridgeMessage(root, "codex", "supervisor", message, {
+        dedupeKey,
+        now: ackTimes[index],
+        priority: "high",
+        subject,
+        supersede: true,
+        type: "ack",
+      })
+    );
+    const beforeConsume = readBridgeEvents(root);
+    const ackMessagesBeforeRetry = beforeConsume.filter(
+      (event) => event.kind === "message" && event.type === "ack"
+    );
+    const superseded = beforeConsume.filter(
+      (event) => event.kind === "superseded"
+    );
+    const transcriptBeforeRetry = readFileSync(
+      join(root, "transcript.jsonl"),
+      "utf8"
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { at: string; message: string })
+      .filter((entry) => entry.message === message);
+    const consumed = consumeBridgeInbox(
+      root,
+      "supervisor",
+      "D9 resolved acknowledgement consumed"
+    );
+    const beforeRetry = readBridgeEvents(root);
+    const deliveredBeforeRetry = beforeRetry.filter(
+      (event) => event.kind === "delivered" && event.message === message
+    );
+    const postDeliveryRetry = enqueueBridgeMessage(
+      root,
+      "codex",
+      "supervisor",
+      message,
+      {
+        dedupeKey: dedupeKeys[3],
+        now: "2026-08-12T03:48:16.000Z",
+        priority: "high",
+        subject,
+        supersede: true,
+        type: "ack",
+      }
+    );
+    const finalEvents = readBridgeEvents(root);
+    const finalAckMessages = finalEvents.filter(
+      (event) => event.kind === "message" && event.type === "ack"
+    );
+    const finalTranscriptAcks = readFileSync(
+      join(root, "transcript.jsonl"),
+      "utf8"
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { at: string; message: string })
+      .filter((entry) => entry.message === message);
+    const pendingAckIds = readPendingBridgeMessages(root)
+      .filter((entry) => entry.type === "ack")
+      .map((entry) => entry.id);
+    const canonicalId = attempts[0]?.entry.id;
+    expect({
+      ackIdsBeforeRetry: ackMessagesBeforeRetry.map((event) => event.id),
+      attemptIds: attempts.map((attempt) => attempt.entry.id),
+      attemptStatuses: attempts.map((attempt) => attempt.status),
+      consumedIds: consumed.map((entry) => entry.id),
+      deliveredIds: deliveredBeforeRetry.map((event) => event.id),
+      finalAckIds: finalAckMessages.map((event) => event.id),
+      finalTranscriptAckCount: finalTranscriptAcks.length,
+      pendingAckIds,
+      postDeliveryRetryId: postDeliveryRetry.entry.id,
+      postDeliveryRetryStatus: postDeliveryRetry.status,
+      supersededIds: superseded.map((event) => event.id),
+      supersededReasons: superseded.map((event) => event.reason),
+      transcriptAckCountBeforeRetry: transcriptBeforeRetry.length,
+    }).toEqual({
+      ackIdsBeforeRetry: [canonicalId],
+      attemptIds: [canonicalId, canonicalId, canonicalId, canonicalId],
+      attemptStatuses: ["queued", "duplicate", "duplicate", "duplicate"],
+      consumedIds: [canonicalId],
+      deliveredIds: [canonicalId],
+      finalAckIds: [canonicalId],
+      finalTranscriptAckCount: 1,
+      pendingAckIds: [],
+      postDeliveryRetryId: canonicalId,
+      postDeliveryRetryStatus: "duplicate",
+      supersededIds: predecessors.map((predecessor) => predecessor.entry.id),
+      supersededReasons: predecessors.map(() => `superseded by ${canonicalId}`),
+      transcriptAckCountBeforeRetry: 1,
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("D9 acknowledgement identity preserves correlations and non-ack independence", () => {
+  const root = tempDir();
+  try {
+    const identity = {
+      artifactRefs: ["artifacts/one", "artifacts/two"],
+      replyTo: "reply-one",
+      subject: "resolved subject",
+      taskId: "task-one",
+      threadId: "thread-one",
+      type: "ack" as const,
+    };
+    const canonical = enqueueBridgeMessage(
+      root,
+      "codex",
+      "supervisor",
+      "resolved body",
+      {
+        ...identity,
+        dedupeKey: "predecessor-one",
+        now: "2026-08-12T04:00:00.000Z",
+        priority: "high",
+      }
+    );
+    const metadataReplay = enqueueBridgeMessage(
+      root,
+      "codex",
+      "supervisor",
+      "resolved body",
+      {
+        ...identity,
+        dedupeKey: "predecessor-two",
+        expiresAt: "2026-08-12T05:00:00.000Z",
+        now: "2026-08-12T04:00:01.000Z",
+        priority: "low",
+      }
+    );
+    expect(metadataReplay).toMatchObject({
+      entry: { id: canonical.entry.id },
+      status: "duplicate",
+    });
+
+    const distinct = [
+      enqueueBridgeMessage(root, "claude", "supervisor", "resolved body", {
+        ...identity,
+        now: "2026-08-12T04:00:02.000Z",
+      }),
+      enqueueBridgeMessage(root, "codex", "codex", "resolved body", {
+        ...identity,
+        now: "2026-08-12T04:00:03.000Z",
+      }),
+      enqueueBridgeMessage(root, "codex", "supervisor", "changed body", {
+        ...identity,
+        now: "2026-08-12T04:00:04.000Z",
+      }),
+      enqueueBridgeMessage(root, "codex", "supervisor", "resolved body", {
+        ...identity,
+        now: "2026-08-12T04:00:05.000Z",
+        subject: "changed subject",
+      }),
+      enqueueBridgeMessage(root, "codex", "supervisor", "resolved body", {
+        ...identity,
+        now: "2026-08-12T04:00:06.000Z",
+        replyTo: "reply-two",
+      }),
+      enqueueBridgeMessage(root, "codex", "supervisor", "resolved body", {
+        ...identity,
+        now: "2026-08-12T04:00:07.000Z",
+        taskId: "task-two",
+      }),
+      enqueueBridgeMessage(root, "codex", "supervisor", "resolved body", {
+        ...identity,
+        now: "2026-08-12T04:00:08.000Z",
+        threadId: "thread-two",
+      }),
+      enqueueBridgeMessage(root, "codex", "supervisor", "resolved body", {
+        ...identity,
+        artifactRefs: ["artifacts/two", "artifacts/one"],
+        now: "2026-08-12T04:00:09.000Z",
+      }),
+    ];
+    expect(distinct.map((result) => result.status)).toEqual(
+      Array.from({ length: distinct.length }, () => "queued")
+    );
+    expect(new Set(distinct.map((result) => result.entry.id)).size).toBe(
+      distinct.length
+    );
+
+    const nonAckOne = enqueueBridgeMessage(
+      root,
+      "codex",
+      "supervisor",
+      "repeated ordinary body",
+      { now: "2026-08-12T04:00:10.000Z", type: "message" }
+    );
+    const nonAckTwo = enqueueBridgeMessage(
+      root,
+      "codex",
+      "supervisor",
+      "repeated ordinary body",
+      { now: "2026-08-12T04:00:11.000Z", type: "message" }
+    );
+    expect([nonAckOne.status, nonAckTwo.status]).toEqual(["queued", "queued"]);
+    expect(nonAckOne.entry.id).not.toBe(nonAckTwo.entry.id);
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("D9 acknowledgement replay avoids self-supersession and converges after pre-append crash", () => {
+  const sameKeyRoot = tempDir();
+  const crashRoot = tempDir();
+  try {
+    const canonical = enqueueBridgeMessage(
+      sameKeyRoot,
+      "codex",
+      "supervisor",
+      "resolved same key",
+      {
+        dedupeKey: "same-key",
+        now: "2026-08-12T04:10:00.000Z",
+        subject: "resolved",
+        type: "ack",
+      }
+    );
+    const sameKeyReplay = enqueueBridgeMessage(
+      sameKeyRoot,
+      "codex",
+      "supervisor",
+      "resolved same key",
+      {
+        dedupeKey: "same-key",
+        now: "2026-08-12T04:10:01.000Z",
+        subject: "resolved",
+        supersede: true,
+        type: "ack",
+      }
+    );
+    expect(sameKeyReplay).toMatchObject({
+      entry: { id: canonical.entry.id },
+      status: "duplicate",
+    });
+    expect(
+      readBridgeEvents(sameKeyRoot).filter(
+        (event) => event.kind === "superseded"
+      )
+    ).toHaveLength(0);
+
+    const predecessor = enqueueBridgeMessage(
+      crashRoot,
+      "codex",
+      "supervisor",
+      "pending predecessor",
+      {
+        dedupeKey: "crash-key",
+        now: "2026-08-12T04:11:00.000Z",
+        type: "escalation",
+      }
+    );
+    markBridgeMessage(
+      crashRoot,
+      predecessor.entry,
+      "superseded",
+      "simulated crash before ack append"
+    );
+    const acceptedAfterCrash = enqueueBridgeMessage(
+      crashRoot,
+      "codex",
+      "supervisor",
+      "resolved after crash",
+      {
+        dedupeKey: "crash-key",
+        now: "2026-08-12T04:11:01.000Z",
+        subject: "resolved",
+        supersede: true,
+        type: "ack",
+      }
+    );
+    const retryAfterAppend = enqueueBridgeMessage(
+      crashRoot,
+      "codex",
+      "supervisor",
+      "resolved after crash",
+      {
+        dedupeKey: "crash-key",
+        now: "2026-08-12T04:11:02.000Z",
+        subject: "resolved",
+        supersede: true,
+        type: "ack",
+      }
+    );
+    expect(acceptedAfterCrash.status).toBe("queued");
+    expect(retryAfterAppend).toMatchObject({
+      entry: { id: acceptedAfterCrash.entry.id },
+      status: "duplicate",
+    });
+    expect(
+      readBridgeEvents(crashRoot).filter(
+        (event) => event.kind === "message" && event.type === "ack"
+      )
+    ).toHaveLength(1);
+    expect(
+      readBridgeEvents(crashRoot).filter((event) => event.kind === "superseded")
+    ).toHaveLength(1);
+  } finally {
+    rmSync(sameKeyRoot, { force: true, recursive: true });
+    rmSync(crashRoot, { force: true, recursive: true });
+  }
+});
+
+test("D9 explicit legacy and expired acknowledgements fence replay without promoting untyped rows", () => {
+  const legacyRoot = tempDir();
+  const untypedRoot = tempDir();
+  const expiredRoot = tempDir();
+  try {
+    writeFileSync(
+      join(legacyRoot, "bridge.jsonl"),
+      `${[
+        {
+          at: "2026-08-12T04:20:00.000Z",
+          id: "legacy-ack-earliest",
+          kind: "message",
+          message: "legacy resolved",
+          source: "codex",
+          target: "supervisor",
+          type: "ack",
+        },
+        {
+          at: "2026-08-12T04:20:01.000Z",
+          id: "legacy-ack-earliest",
+          kind: "delivered",
+          source: "codex",
+          target: "supervisor",
+        },
+        {
+          at: "2026-08-12T04:20:02.000Z",
+          id: "legacy-ack-later",
+          kind: "message",
+          message: "legacy resolved",
+          source: "codex",
+          target: "supervisor",
+          type: "ack",
+        },
+        {
+          at: "2026-08-12T04:20:03.000Z",
+          id: "legacy-ack-later",
+          kind: "delivered",
+          source: "codex",
+          target: "supervisor",
+        },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join("\n")}\n{malformed\n`,
+      "utf8"
+    );
+    const legacyReplay = enqueueBridgeMessage(
+      legacyRoot,
+      "codex",
+      "supervisor",
+      "legacy resolved",
+      { now: "2026-08-12T04:20:04.000Z", type: "ack" }
+    );
+    expect(legacyReplay).toMatchObject({
+      entry: { id: "legacy-ack-earliest" },
+      status: "duplicate",
+    });
+    expect(existsSync(join(legacyRoot, "transcript.jsonl"))).toBe(false);
+
+    writeFileSync(
+      join(untypedRoot, "bridge.jsonl"),
+      `${JSON.stringify({
+        at: "2026-08-12T04:21:00.000Z",
+        id: "legacy-untyped-message",
+        kind: "message",
+        message: "legacy resolved",
+        source: "codex",
+        target: "supervisor",
+      })}\n`,
+      "utf8"
+    );
+    const explicitAfterUntyped = enqueueBridgeMessage(
+      untypedRoot,
+      "codex",
+      "supervisor",
+      "legacy resolved",
+      { now: "2026-08-12T04:21:01.000Z", type: "ack" }
+    );
+    expect(explicitAfterUntyped.status).toBe("queued");
+    expect(
+      readBridgeEvents(untypedRoot)
+        .filter((event) => event.kind === "message")
+        .map((event) => event.type)
+    ).toEqual(["message", "ack"]);
+
+    const expiring = enqueueBridgeMessage(
+      expiredRoot,
+      "codex",
+      "supervisor",
+      "expired resolved",
+      {
+        dedupeKey: "expiring-one",
+        expiresAt: "2026-08-12T04:22:01.000Z",
+        now: "2026-08-12T04:22:00.000Z",
+        type: "ack",
+      }
+    );
+    const expiredReplay = enqueueBridgeMessage(
+      expiredRoot,
+      "codex",
+      "supervisor",
+      "expired resolved",
+      {
+        dedupeKey: "expiring-two",
+        now: "2026-08-12T04:22:02.000Z",
+        priority: "urgent",
+        targetLiveness: () => "dead",
+        type: "ack",
+      }
+    );
+    expect(expiredReplay).toMatchObject({
+      entry: { id: expiring.entry.id },
+      status: "duplicate",
+    });
+    expect(
+      readBridgeEvents(expiredRoot).filter(
+        (event) => event.id === expiring.entry.id && event.kind === "expired"
+      )
+    ).toHaveLength(1);
+    expect(
+      readBridgeEvents(expiredRoot).filter(
+        (event) => event.kind === "message" && event.type === "ack"
+      )
+    ).toHaveLength(1);
+  } finally {
+    rmSync(legacyRoot, { force: true, recursive: true });
+    rmSync(untypedRoot, { force: true, recursive: true });
+    rmSync(expiredRoot, { force: true, recursive: true });
+  }
 });
 
 test("D1 old and fixed message shapes reconstruct compatibly", () => {

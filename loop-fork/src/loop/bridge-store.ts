@@ -218,6 +218,34 @@ const bridgeSignature = (
 const eventSignature = (event: BridgeMessage): string =>
   bridgeSignature(event.source, event.target, event.message);
 
+const sameBridgeAckIdentity = (
+  left: BridgeMessage,
+  right: BridgeMessage
+): boolean =>
+  left.type === "ack" &&
+  right.type === "ack" &&
+  eventSignature(left) === eventSignature(right) &&
+  left.subject === right.subject &&
+  left.replyTo === right.replyTo &&
+  left.taskId === right.taskId &&
+  left.threadId === right.threadId &&
+  (left.artifactRefs?.length ?? 0) === (right.artifactRefs?.length ?? 0) &&
+  (left.artifactRefs?.every(
+    (artifactRef, index) => artifactRef === right.artifactRefs?.[index]
+  ) ??
+    true);
+
+const findCanonicalBridgeAck = (
+  runDir: string,
+  entry: BridgeMessage
+): BridgeMessage | undefined =>
+  entry.type === "ack"
+    ? readBridgeEvents(runDir).find(
+        (event): event is BridgeMessage =>
+          event.kind === "message" && sameBridgeAckIdentity(event, entry)
+      )
+    : undefined;
+
 export const bridgePath = (runDir: string): string => join(runDir, BRIDGE_FILE);
 
 const ensureParentDir = (path: string): void => {
@@ -373,6 +401,25 @@ const appendBridgeResolution = (
     source: message.source,
     target: message.target,
   });
+};
+
+const supersedeBridgePredecessorForCanonicalAck = (
+  runDir: string,
+  pending: BridgeMessage | undefined,
+  canonicalAck: BridgeMessage,
+  entry: BridgeMessage,
+  supersede: boolean | undefined
+): void => {
+  if (!(pending && supersede) || sameBridgeAckIdentity(pending, entry)) {
+    return;
+  }
+  appendBridgeResolution(
+    runDir,
+    pending,
+    "superseded",
+    `superseded by ${canonicalAck.id}`,
+    entry.at
+  );
 };
 
 export interface BridgeTargetLivenessDeps {
@@ -733,15 +780,9 @@ const createBridgeMessage = (
   };
 };
 
-export const enqueueBridgeMessage = (
-  runDir: string,
-  source: BridgeSource,
-  target: BridgeTarget,
-  message: string,
-  options: BridgeEnqueueOptions = {}
-): BridgeEnqueueResult => {
-  const entry = createBridgeMessage(source, target, message, options);
-  const nowMs = Date.parse(entry.at);
+const bridgeQueueLimits = (
+  options: BridgeEnqueueOptions
+): { maxOutstanding: number; maxRetained: number } => {
   const maxOutstanding =
     options.maxOutstanding ?? DEFAULT_BRIDGE_MAX_OUTSTANDING;
   const maxRetained =
@@ -754,6 +795,19 @@ export const enqueueBridgeMessage = (
       "bridge maxRetained must be an integer greater than maxOutstanding"
     );
   }
+  return { maxOutstanding, maxRetained };
+};
+
+export const enqueueBridgeMessage = (
+  runDir: string,
+  source: BridgeSource,
+  target: BridgeTarget,
+  message: string,
+  options: BridgeEnqueueOptions = {}
+): BridgeEnqueueResult => {
+  const entry = createBridgeMessage(source, target, message, options);
+  const nowMs = Date.parse(entry.at);
+  const { maxOutstanding, maxRetained } = bridgeQueueLimits(options);
   const livenessCache = new Map<BridgeTarget, BridgeTargetLiveness>();
   const pending = readPendingBridgeMessages(
     runDir,
@@ -769,6 +823,21 @@ export const enqueueBridgeMessage = (
           candidate.dedupeKey === options.dedupeKey
       )
     : undefined;
+  const canonicalAck = findCanonicalBridgeAck(runDir, entry);
+  if (canonicalAck) {
+    supersedeBridgePredecessorForCanonicalAck(
+      runDir,
+      duplicate,
+      canonicalAck,
+      entry,
+      options.supersede
+    );
+    return {
+      entry: canonicalAck,
+      reason: `existing acknowledgement ${canonicalAck.id}`,
+      status: "duplicate",
+    };
+  }
   if (duplicate && !options.supersede) {
     return {
       entry: duplicate,
