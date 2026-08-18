@@ -1,0 +1,10 @@
+{
+  "command": "./harness stop-gate --json",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "startedAt": "2026-08-18T15:12:12.813Z",
+  "endedAt": "2026-08-18T15:12:13.178Z",
+  "exitCode": 0,
+  "outputSha256": "43357fc00348c9f6941666f69f2c6985b598a8ae7b2b861448c00b622f728bd2",
+  "status": "pass"
+}
+

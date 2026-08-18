@@ -1,0 +1,47 @@
+{
+  "verdict": "pass",
+  "task_id": "harvto-d10-guarded-apply",
+  "baseline_failures": [],
+  "summary": "D10 rejects guarded creation and stale preimages before mutation, preserves exact existing-target apply and replay, and emits only normalized target plus digest-or-absent diagnostics.",
+  "checks": {
+    "red_validation": "RED VALID 0e13914f-7fb6-4529-955e-692d8aff7dc5; authoritative red-postfreeze six files unchanged and 5/5",
+    "named_regression": "1 pass, 0 fail, 57 filtered",
+    "focused_utility_tools": "53 pass, 0 fail, 228 assertions",
+    "focused_utility_runtime": "58 pass, 0 fail, 310 assertions",
+    "focused_utility_workspace": "13 pass, 0 fail, 33 assertions",
+    "focused_bridge_utility": "5 pass, 0 fail, 14 assertions",
+    "lint": "exit 0: 189 files, no fixes applied",
+    "typecheck": "exit 0: canonical frozen command",
+    "build": "exit 0: 3051 modules",
+    "prior_test_ci_failures": "attempts 13 and 14 preserved exactly; each exit 1 with three rotating 5000 ms bridge timeouts",
+    "host_recovery_bridge": "exit 0: unchanged bridge.test.ts 109/109 in 8.94s; no orphan",
+    "test_ci": "founder-authorized host recovery; fresh plain serial exit 0 across all 79 sorted files",
+    "host_recovery_record": "SHA-256 1d55493e18da7af512eb5a8222eadbf48f5d4910cafca698d7b43795f28802df"
+  },
+  "run_93_verification": {
+    "implementation_base": "1282bd4c39ec7b3c0177810b30dab78ca6d66f41",
+    "plan_freeze_commit": "e632e54ffa1239ada679abf55eca75471e2ce851",
+    "plan_pass_id": "e41e470d-d7a3-4107-93d0-a90feb717439",
+    "red_valid_id": "0e13914f-7fb6-4529-955e-692d8aff7dc5",
+    "implementation_scope": [
+      "loop-fork/src/loop/utility-tools.ts",
+      "loop-fork/tests/loop/utility-tools.test.ts",
+      "loop-fork/tests/loop/utility-runtime.test.ts"
+    ],
+    "implementation_sha256": {
+      "loop-fork/src/loop/utility-tools.ts": "05db7d4bee5085888219471f8f7221bf34e5e71bf609ca9673f960f968f374d9",
+      "loop-fork/tests/loop/utility-tools.test.ts": "70c332d9b0da316d4562921715572c501e94599c8bfd479734f70c9aa07662bd",
+      "loop-fork/tests/loop/utility-runtime.test.ts": "2390ab439b8086f18094c1456df0bb2fecdbdbd1e5abd0f0144fe72d43cff518"
+    },
+    "recovery_manifest_sha256": "80c4bbf7f1e5e945ff5fbb9520365e1fc8409904cb402e41d89c89b626e96109",
+    "host_recovery_sha256": "1d55493e18da7af512eb5a8222eadbf48f5d4910cafca698d7b43795f28802df",
+    "successful_terminal_evidence": {
+      "bridge_manifest_sha256": "9c39787c66b3b173e275f800ee1b2a2da1e108a599774c89dc6beeb5458b579a",
+      "bridge_output_sha256": "b7fe6d95c05286813549f08c40c69d0efdafb2b6ca059bd2ea72582e11f23261",
+      "test_ci_manifest_sha256": "ef56e9ba31e1641aab1ad68e86eeed65fa4f1b2c37dde455aca8602664a89d4e",
+      "test_ci_output_sha256": "51f7ae1b2481a3560f8e027b27ec3a37671fc5665e7ca3f02ad54aa0f0c36282"
+    },
+    "preserved_failure_evidence": "loop-fork/runs/harvto-d10-guarded-apply/artifacts/verification/pre-recovery-fail-evals",
+    "verification_evidence": "loop-fork/runs/harvto-d10-guarded-apply/artifacts/verification"
+  }
+}

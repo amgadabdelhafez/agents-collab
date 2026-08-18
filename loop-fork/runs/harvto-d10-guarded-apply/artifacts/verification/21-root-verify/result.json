@@ -1,0 +1,13 @@
+{
+  "command": "./scripts/verify.sh harvto-d10-guarded-apply harvto-d10-guarded-apply",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects",
+  "startedAt": "2026-08-18T15:12:18.315Z",
+  "endedAt": "2026-08-18T15:12:42.149Z",
+  "exitCode": 1,
+  "outputSha256": "d86b1d04799f6c36457d2861574b6ada5eb55180753db4e46343c45f772a4cdd",
+  "status": "fail-non-authoritative-terminal-geometry",
+  "outputMaterialization": "captured PTY CRLF normalized to LF; full captured content retained",
+  "causalRuling": "narrow tmux PTY caused unchanged Governess board assertions to observe width truncation",
+  "authoritativeReplacement": "22-root-verify-nontty.output.txt"
+}
+

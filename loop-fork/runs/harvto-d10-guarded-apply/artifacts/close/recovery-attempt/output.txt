@@ -1,0 +1,5 @@
+post-task state invariant check passed; see runs/harvto-d10-guarded-apply/artifacts/post-task/state-invariants.log
+debt scan completed: 0 finding(s), 0 appended
+regression harvest skipped: no bug-fix signal
+specs/harvto-d10-guarded-apply.md
+

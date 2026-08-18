@@ -1,0 +1,33 @@
+{
+  "verdict": "fail",
+  "task_id": "harvto-d10-guarded-apply",
+  "baseline_failures": [
+    "tests/loop/bridge.test.ts: five shifting timeout failures across two plain serial test:ci attempts"
+  ],
+  "summary": "D10 guarded-apply behavior passes every focused suite, but the mandatory full serial certification is unresolved because unchanged bridge process tests timed out twice.",
+  "checks": {
+    "red_validation": "RED VALID 0e13914f-7fb6-4529-955e-692d8aff7dc5; authoritative red-postfreeze six files unchanged and 5/5",
+    "named_regression": "1 pass, 0 fail, 57 filtered",
+    "focused_utility_tools": "53 pass, 0 fail, 228 assertions",
+    "focused_utility_runtime": "58 pass, 0 fail, 310 assertions",
+    "focused_utility_workspace": "13 pass, 0 fail, 33 assertions",
+    "focused_bridge_utility": "5 pass, 0 fail, 14 assertions",
+    "lint": "exit 0: 189 files, no fixes applied",
+    "typecheck": "exit 0: canonical frozen command",
+    "build": "exit 0: 3051 modules",
+    "test_ci_attempt_1": "exit 1: 106 pass, 3 fail; shifting 5-second bridge timeouts",
+    "test_ci_attempt_2": "exit 1: 106 pass, 3 fail; shifting 5-second bridge timeouts",
+    "lifecycle": "blocked before allowlist checks, Harness gates, root verifier, staging, review, commit, or close"
+  },
+  "run_93_verification": {
+    "implementation_base": "1282bd4c39ec7b3c0177810b30dab78ca6d66f41",
+    "plan_freeze_commit": "e632e54ffa1239ada679abf55eca75471e2ce851",
+    "implementation_scope": [
+      "loop-fork/src/loop/utility-tools.ts",
+      "loop-fork/tests/loop/utility-tools.test.ts",
+      "loop-fork/tests/loop/utility-runtime.test.ts"
+    ],
+    "verification_evidence": "loop-fork/runs/harvto-d10-guarded-apply/artifacts/verification",
+    "blocked_at": "plain serial test:ci mandatory gate"
+  }
+}

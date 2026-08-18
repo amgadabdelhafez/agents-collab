@@ -1,0 +1,5 @@
+README.md: OK
+command.txt: OK
+fixture.json: OK
+fixture.patch: OK
+output.txt: OK

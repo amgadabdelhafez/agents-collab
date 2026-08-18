@@ -1,0 +1,22 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/utility-workspace.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-workspace.test.ts:
+(pass) linked worktree scopes resolve to one root-relative verified workspace [112.16ms]
+(pass) edit workspace resolution accepts files and rejects directory-wide scope [93.04ms]
+(pass) linked focused-check cwd and argv resolve and execute in the verified workspace [260.58ms]
+(pass) linked exact read range resolves with the same verified workspace [115.16ms]
+(pass) linked structured read plan preserves every stage boundary [132.07ms]
+(pass) active paths resolve only to the run root or a registered linked worktree [122.58ms]
+(pass) unrelated, mixed-worktree, and symlink escape scopes fail closed [160.83ms]
+(pass) a copied linked-worktree gitdir pointer cannot spoof registration [107.80ms]
+(pass) runtime journals a safe mismatch detail instead of spawning utility [110.19ms]
+(pass) same linked-worktree writes conflict after scope normalization [167.15ms]
+(pass) identical relative paths in base and linked worktrees do not conflict [136.17ms]
+(pass) routing persists the adopted root and the worker reads the linked checkout [150.50ms]
+(pass) guarded apply reuses the verified linked-worktree boundary [166.70ms]
+
+ 13 pass
+ 0 fail
+ 33 expect() calls
+Ran 13 tests across 1 file. [1.86s]

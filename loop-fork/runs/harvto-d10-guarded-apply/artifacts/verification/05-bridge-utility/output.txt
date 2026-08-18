@@ -1,0 +1,14 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/bridge-utility.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-utility.test.ts:
+(pass) get_task_result returns only revalidated current scope evidence [3.33ms]
+(pass) get_task_result rejects historical completed scope audits as legacy unverified [1.54ms]
+(pass) get_task_result rejects a valid but narrowed persisted manifest [1.62ms]
+(pass) route_task parses explicit worktree, index, range, and read-plan selections [2.18ms]
+(pass) route_task rejects illegal Git-diff selection states with stable reason [0.23ms]
+
+ 5 pass
+ 0 fail
+ 14 expect() calls
+Ran 5 tests across 1 file. [34.00ms]

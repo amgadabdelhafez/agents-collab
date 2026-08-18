@@ -1,0 +1,455 @@
+$ for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file bun test "$file" || exit 1; done
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/baseline-gate.test.ts:
+(pass) project verifier fails closed without task identity [2.44ms]
+(pass) baseline gate accepts only a passing eval with an empty named list [17.47ms]
+(pass) baseline gate rejects legacy or unresolved allowance 0 [16.84ms]
+(pass) baseline gate rejects legacy or unresolved allowance 1 [17.43ms]
+(pass) baseline gate rejects legacy or unresolved allowance 2 [16.86ms]
+(pass) baseline gate rejects legacy or unresolved allowance 3 [16.40ms]
+(pass) baseline gate rejects legacy or unresolved allowance 4 [16.17ms]
+
+ 7 pass
+ 0 fail
+ 14 expect() calls
+Ran 7 tests across 1 file. [121.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/install.test.ts:
+(pass) tmux install hint uses brew on macOS [0.02ms]
+(pass) tmux install hint stays generic on Linux [0.02ms]
+(pass) tmux nudge explains why bare loop fails without tmux [0.03ms]
+(pass) tmux install probe is kill-on-timeout bounded [0.01ms]
+
+ 4 pass
+ 0 fail
+ 5 expect() calls
+Ran 4 tests across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop.test.ts:
+(pass) runCli defaults empty argv to paired interactive tmux mode [17.12ms]
+(pass) runCli starts panel for dashboard command [2.46ms]
+(pass) runCli runs task flow when argv has options [2.16ms]
+(pass) runCli delegates paired tmux after resolving the task [2.06ms]
+(pass) runCli rejects a duplicate workspace before task or agent side effects [2.33ms]
+(pass) runCli enters explicit workspace while preserving a relative Markdown prompt [1.89ms]
+(pass) runCli preserves a nested relative Markdown prompt path [1.80ms]
+(pass) runCli anchors a missing relative Markdown prompt to the invocation directory [2.03ms]
+(pass) runCli starts paired interactive tmux without resolving a task [1.91ms]
+(pass) runCli cancels a promptless reservation when World Model preparation fails [2.09ms]
+(pass) runCli does not mutate World Model artifacts when reattaching a live run [2.35ms]
+(pass) runCli does not fall through to foreground work when paired tmux handoff returns false [2.20ms]
+(pass) runCli prints tmux detach hint first when inside tmux [1.86ms]
+(pass) runCli does not print tmux detach hint outside tmux [1.97ms]
+(pass) runCli creates worktree before resolving task when --worktree is set [1.75ms]
+(pass) runCli keeps claude-only task flow intact [1.98ms]
+(pass) runCli keeps codex-only tmux flow intact [1.80ms]
+(pass) runCli calls update hooks in correct order before task flow [1.82ms]
+(pass) runCli awaits auto-update before handing off promptless paired tmux startup [3.16ms]
+[loop] detach with Ctrl-b d
+(pass) runCli keeps promptless paired tmux inside tmux on fire-and-forget auto-update [1.72ms]
+(pass) runCli returns early when handleManualUpdateCommand returns true [1.69ms]
+(pass) runCli handles top-level long help before every startup action [1.69ms]
+(pass) runCli handles top-level short help before every startup action [1.57ms]
+(pass) runCli handles top-level long version before every startup action [1.87ms]
+(pass) runCli handles top-level short version before every startup action [2.02ms]
+(pass) runCli handles incident command before every startup action [1.91ms]
+(pass) runCli handles positional short help before every startup action [1.61ms]
+(pass) runCli handles positional long version before every startup action [1.84ms]
+(pass) runCli handles positional short version before every startup action [1.82ms]
+(pass) runCli handles dashboard help before every startup action [1.79ms]
+(pass) runCli handles manual update help before every startup action [1.70ms]
+(pass) runCli handles manual upgrade version before every startup action [1.56ms]
+(pass) runCli handles governess help before every startup action [1.74ms]
+(pass) runCli handles governess doctor help before every startup action [1.64ms]
+(pass) runCli handles governess replay help before every startup action [1.63ms]
+(pass) runCli handles governess explain version before every startup action [1.89ms]
+(pass) runCli handles hidden helper help before every startup action [1.46ms]
+(pass) runCli handles only-mode help before every startup action [1.58ms]
+(pass) runCli does not preclassify help-looking prompt value [2.04ms]
+(pass) runCli does not preclassify help after positional delimiter [1.83ms]
+(pass) runCli rejects malformed pane-death helper args before startup maintenance [1.75ms]
+
+ 41 pass
+ 0 fail
+ 416 expect() calls
+Ran 41 tests across 1 file. [109.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/00-paired-loop.integration.test.ts:
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 41
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop forwards a real bridge message in default paired mode [30.30ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-supervisor-close
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-supervisor-close
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop durably closes a completed run to the supervisor with exact identity [32.85ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-missing-source
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop refuses healthy completion without source task identity [14.27ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-workspace-root
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop prefers workspace binding root for completion Git identity [15.85ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-git-failure
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop keeps completion non-terminal when Git identity cannot resolve [14.33ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-enqueue-full
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop keeps completion non-terminal when supervisor enqueue is full [21.74ms]
+
+ 6 pass
+ 0 fail
+ 33 expect() calls
+Ran 6 tests across 1 file. [153.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/args.test.ts:
+(pass) parseArgs prints version and exits when --version is passed [0.58ms]
+(pass) parseArgs prints version and exits when -v is passed [0.08ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["--help"] [0.05ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["collab","-h"] [0.10ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["dashboard","--help"] [0.02ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["update","--version"]
+(pass) findImmediateInfoRequest recognizes active information argv ["governess","doctor","42","-v"] [0.02ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["--review","--help"] [0.03ms]
+(pass) findImmediateInfoRequest recognizes active information argv ["--review-plan","--version"] [0.04ms]
+(pass) findImmediateInfoRequest preserves spaced prompt value semantics [0.09ms]
+(pass) findImmediateInfoRequest preserves spaced proof value semantics [0.01ms]
+(pass) findImmediateInfoRequest preserves positional delimiter semantics
+(pass) findImmediateInfoRequest preserves strict model value error semantics
+(pass) findImmediateInfoRequest preserves strict run-id value error semantics
+(pass) findImmediateInfoRequest preserves unknown option first semantics
+(pass) findImmediateInfoRequest is independent of invalid ambient config [0.02ms]
+(pass) parseArgs returns expected defaults when proof is omitted [0.05ms]
+(pass) parseArgs resolves global and per-role effort with order-independent CLI precedence [0.08ms]
+(pass) parseArgs resolves role environment effort above the global fallback [0.03ms]
+(pass) parseArgs rejects malformed CLI and environment effort [0.08ms]
+(pass) parseArgs accepts Caveman CLI and environment modes [0.04ms]
+(pass) parseArgs rejects invalid Caveman modes before launch [0.05ms]
+(pass) parseArgs uses LOOP_CODEX_MODEL when present [0.02ms]
+(pass) parseArgs uses --codex-model when provided [0.02ms]
+(pass) parseArgs with --codex-model= overrides LOOP_CODEX_MODEL [0.02ms]
+(pass) parseArgs handles all value flags and explicit reviewer [0.07ms]
+(pass) parseArgs rejects invalid --review values in only-mode [0.07ms]
+(pass) parseArgs uses reviewer after --review when valid [0.02ms]
+(pass) parseArgs uses --reviewer as paired peer without changing completion review [0.02ms]
+(pass) parseArgs treats bare --review-plan as other when no reviewer follows [0.10ms]
+(pass) parseArgs uses reviewer after --review-plan when valid [0.03ms]
+(pass) parseArgs accepts none after --review-plan [0.03ms]
+(pass) parseArgs supports equals form for --review-plan [0.04ms]
+(pass) parseArgs supports equals form for --review-plan=none [0.06ms]
+(pass) parseArgs supports run id resume flags [0.05ms]
+(pass) parseArgs keeps run id resume separate from agent session resume [0.04ms]
+(pass) parseArgs sets agent/review/reviewPlan to claude with --claude-only [0.03ms]
+(pass) parseArgs sets agent/review/reviewPlan to codex with --codex-only [0.03ms]
+(pass) parseArgs throws on conflicting --claude-only and --codex-only [0.05ms]
+(pass) parseArgs keeps only-mode authoritative while honoring --review-plan none [0.03ms]
+(pass) parseArgs preserves explicit --review-plan none when only-mode comes later [0.01ms]
+(pass) parseArgs ignores later --agent after only-mode [0.02ms]
+(pass) parseArgs accepts --codex-only with both --codex-model flag forms [0.04ms]
+(pass) parseArgs accepts both reviewer-model flag forms [0.04ms]
+(pass) parseArgs rejects empty reviewer model values [0.03ms]
+(pass) parseArgs rejects missing model values when another flag follows [0.05ms]
+(pass) parseArgs rejects invalid --review-plan value [0.02ms]
+(pass) parseArgs enables tmux mode with --tmux [0.02ms]
+(pass) parseArgs enables worktree mode with --worktree [0.01ms]
+(pass) parseArgs accepts workspace binding ["--workspace","/tmp/repo-worktree"] [0.02ms]
+(pass) parseArgs accepts workspace binding ["--workspace=/tmp/repo-worktree"] [0.01ms]
+(pass) parseArgs rejects missing, empty, or conflicting workspace bindings [0.04ms]
+(pass) parseArgs joins positional prompt words [0.03ms]
+(pass) parseArgs rejects empty proof values [0.02ms]
+(pass) parseArgs rejects empty done signals [0.02ms]
+(pass) parseArgs throws for unknown flags [0.02ms]
+(pass) parseArgs rejects removed single-agent aliases [0.03ms]
+(pass) parseArgs throws when a value flag is missing its value [0.01ms]
+(pass) parseArgs throws for invalid max iteration value [0.01ms]
+(pass) parseArgs throws for fractional max iteration value [0.02ms]
+(pass) parseArgs trims done signal value [0.02ms]
+(pass) parseArgs throws when positional prompt is provided with --prompt [0.02ms]
+(pass) parseArgs sets agent/review/reviewPlan to copilot with --copilot-only [0.02ms]
+(pass) parseArgs throws on conflicting --copilot-only and --claude-only [0.02ms]
+(pass) parseArgs accepts copilot as --agent value [0.02ms]
+(pass) parseArgs handles --copilot-model and --copilot-reviewer-model [0.06ms]
+(pass) parseArgs handles --copilot-model= equals form [0.03ms]
+(pass) parseArgs accepts copilot as --pair-with value [0.02ms]
+(pass) parseArgs accepts copilot as --review value [0.02ms]
+(pass) parseArgs accepts copilot as --review-plan value [0.02ms]
+
+ 70 pass
+ 0 fail
+ 149 expect() calls
+Ran 70 tests across 1 file. [22.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-config.test.ts:
+(pass) claudeChannelServerName drops the repo hash suffix from storage ids [0.10ms]
+(pass) claudeChannelServerName preserves readable repo ids [0.02ms]
+(pass) claudeChannelServerName falls back to the legacy run-scoped name [0.01ms]
+
+ 3 pass
+ 0 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [15.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-guidance.test.ts:
+(pass) bridgeToolName namespaces Codex bridge tools only
+(pass) paired guidance requires one bridge transport [0.01ms]
+(pass) delegation guidance states the exact context and decomposition contract [0.07ms]
+(pass) native fallback tools describe the governed evidence and status contract [0.05ms]
+(pass) route_task describes the deterministic small-edit contract [0.05ms]
+(pass) Claude channel guidance preserves evidence-dense peer traffic [0.03ms]
+(pass) quotedBridgeTool wraps the resolved bridge tool name
+
+ 7 pass
+ 0 fail
+ 53 expect() calls
+Ran 7 tests across 1 file. [24.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-message-format.test.ts:
+(pass) internal utility sources use a neutral helper envelope [0.22ms]
+
+ 1 pass
+ 0 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [16.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge-utility.test.ts:
+(pass) get_task_result returns only revalidated current scope evidence [3.85ms]
+(pass) get_task_result rejects historical completed scope audits as legacy unverified [1.62ms]
+(pass) get_task_result rejects a valid but narrowed persisted manifest [1.66ms]
+(pass) route_task parses explicit worktree, index, range, and read-plan selections [2.06ms]
+(pass) route_task rejects illegal Git-diff selection states with stable reason [0.35ms]
+
+ 5 pass
+ 0 fail
+ 14 expect() calls
+Ran 5 tests across 1 file. [33.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/bridge.test.ts:
+(pass) bridge MCP detects reparented and missing parents [13.75ms]
+(pass) bridge MCP drains parsed requests after stdin ends despite parent loss [2.66ms]
+(pass) bridge MCP output flush waits for the writable callback [2.71ms]
+(pass) bridge message parsing ignores malformed lines and acked entries [3.51ms]
+(pass) bridge preserves utility results without treating utility as a full agent [3.53ms]
+(pass) markBridgeMessage records acknowledgements and clears pending entries [3.39ms]
+(pass) readBridgeStatus derives bridge naming and transport fields [3.46ms]
+(pass) readBridgeRuntimeStatus distinguishes live and stale tmux delivery [3.08ms]
+(pass) tmux timeout preserves bridge routing as unknown without fallback delivery [7.31ms]
+(pass) readPendingBridgeMessages keeps repeated messages until each is acknowledged [3.28ms]
+(pass) bridge normalization treats short and legacy Claude prefixes as equivalent [2.76ms]
+(pass) bridge MCP send_message queues a direct message through the CLI path [132.39ms]
+(pass) short-lived bridge MCP emits initialize and tool responses before exit [46.93ms]
+(pass) bridge MCP send_message normalizes target case and whitespace [46.61ms]
+(pass) bridge MCP route_task queues a bounded request from claude [1778.23ms]
+(pass) bridge MCP route_task queues a bounded request from codex [94.49ms]
+(pass) bridge MCP persists an explicit non-authoritative utility audit [43.33ms]
+(pass) route_task refuses missing or invalid work shape %s without creating a job [42.83ms]
+(pass) route_task refuses missing or invalid work shape sequential-ish without creating a job [41.58ms]
+killed 1 dangling process
+(fail) bridge native fallback request is pending until Governess grants it [5002.12ms]
+  ^ this test timed out after 5000ms.
+(pass) bridge rejects Codex native fallback because its child sandbox inherits the parent [44.46ms]
+(pass) only supervisor can assert a human-authorized native fallback [1616.32ms]
+(pass) route_task gives edit-specific recovery guidance [43.54ms]
+(pass) route_task rejects an unprofiled command with exact recovery guidance [42.45ms]
+(pass) route_task rejects narrative context refs before creating a doomed job [41.91ms]
+(pass) route_task rejects traversal-form context refs before normalization [42.27ms]
+(pass) route_task persists a structured bounded read plan [44.47ms]
+(pass) route_task drains only older unclaimed helper results for its caller [49.18ms]
+(pass) a bridge delivery claim outlives the app-server acceptance bound [3.20ms]
+(pass) external supervisor can submit a task with an explicit result target [46.66ms]
+(pass) external supervisor cannot apply a utility patch [43.09ms]
+(pass) Codex-to-Claude dispatch nudges the pane without resolving delivery [4.89ms]
+(pass) tmux inbox nudges throttle an unchanged inbox and allow a new message [5.40ms]
+(pass) large Claude bridge bodies stay in the ledger while the pane gets a bounded nudge [4.18ms]
+(pass) Claude delivery retries a stranded composer with space then Enter [2121.76ms]
+(pass) Claude delivery does not inject into an active turn with an empty composer [6.45ms]
+(pass) Claude delivery injects over a dim type-ahead suggestion [4.01ms]
+(pass) Claude delivery injects over a 2.1.221 suggestion-color ghost [4.38ms]
+(pass) Claude delivery holds no claim while the pane is not ready [3029.16ms]
+(pass) Claude delivery aborts without typing when the message is consumed mid-wait [4.83ms]
+(pass) Claude submission evidence advances when the hook journal advances [3.46ms]
+(pass) Claude delivery confirms when submission evidence advances into an active pane [3.98ms]
+(pass) unconfirmed Claude delivery remains pending after one retry [256.23ms]
+(pass) a post-injection human draft is never submitted by fallback [4.45ms]
+(pass) immediate Claude notification and worker drain nudge once without delivery [4.22ms]
+(pass) bridge MCP send_message rejects an empty target after trimming [42.07ms]
+(pass) bridge MCP send_message rejects an unknown normalized target [42.75ms]
+(pass) bridge MCP send_message rejects targeting the current agent [519.87ms]
+(pass) bridge MCP send_message rejects a valid agent absent from declared topology [44.47ms]
+killed 1 dangling process
+(fail) paired agents can escalate to the durable supervisor inbox [5002.04ms]
+  ^ this test timed out after 5000ms.
+(pass) bridge MCP rejects the old send_to_agent name with rename guidance [1991.45ms]
+(pass) bridge MCP handles standard empty-list and ping requests through the Claude CLI path [4219.52ms]
+(pass) bridge MCP advertises only the Codex-visible bridge tools [43.21ms]
+(pass) bridge MCP accepts typed work metadata and TTL [857.18ms]
+(pass) bridge MCP writes line-delimited JSON responses [1345.32ms]
+(pass) bridge runtime status reports app-server-backed config-file delivery [3.44ms]
+(pass) bridge runtime status reports live tmux delivery with a run-scoped Claude server [3.28ms]
+(pass) bridge MCP bridge_status includes runtime delivery fields [42.48ms]
+(pass) bridge MCP bridge_status tolerates a missing tmux binary [42.27ms]
+(pass) bridge MCP receive_messages returns and clears queued inbox items [45.03ms]
+(pass) bridge MCP receive_messages leaves an automatically claimed item alone [1091.93ms]
+(pass) bridge delivers Claude replies directly to Codex when app-server state is available [4.41ms]
+(pass) concurrent Codex delivery attempts share one app-server claim [4.93ms]
+(pass) bridge sends Codex through app-server even when tmux is live [3.37ms]
+(pass) direct Codex delivery does not probe or rewrite stored tmux state [3.36ms]
+(pass) bridge drains codex messages through the persisted stable pane target [4.31ms]
+(pass) bridge does not fall back positionally when persisted pane roles are missing [3.39ms]
+(pass) bridge drains pending cursor tmux messages through the stored pane routing [3.80ms]
+(pass) bridge drains pending Claude messages through the visible tmux pane [4.12ms]
+(pass) Claude pane delivery preserves a non-empty user draft [2.33ms]
+(pass) Codex tmux notification preserves a non-empty user draft [254.46ms]
+(pass) Codex tmux notification preserves a leading-newline multiline draft [257.58ms]
+(pass) Claude pane readiness treats a dim type-ahead suggestion as empty [3.83ms]
+(pass) Claude pane readiness recognizes the 2.1.221 suggestion palette only [3.73ms]
+(pass) Claude transcript lookup rejects traversal and external symlink proof [5.04ms]
+(pass) bridge stale tmux cleanup is a no-op when the manifest has no tmux session [4.44ms]
+(pass) terminal bridge cleanup logs non-zero Claude MCP remove exits [4.87ms]
+(pass) terminal bridge cleanup logs thrown Claude MCP remove errors [4.59ms]
+(pass) terminal bridge cleanup removes a persisted Claude server name [4.25ms]
+(pass) active bridge liveness miss preserves restored tmux ownership topology [4.61ms]
+(pass) runBridgeWorker delivers Codex without probing stale tmux state [110.15ms]
+(pass) ensureBridgeWorker launches one app-server worker per active run [4.03ms]
+(pass) runBridgeWorker retries queued codex app-server messages [135.97ms]
+(pass) runBridgeWorker nudges idle Codex when app-server delivery refuses [497.73ms]
+(pass) bridge worker wake closes the inspect-to-watch race and observes appends [2663.45ms]
+(pass) bridge worker metadata probe recovers an append when the watcher swallows events [6.68ms]
+(pass) bridge worker wake session reuses one watcher across retry cycles [7.09ms]
+(pass) runBridgeWorker persists five-minute reconciliation heartbeats [4.76ms]
+(pass) runBridgeWorker injects Codex directly and only nudges Claude [1396.80ms]
+(pass) bridge MCP delivers pending codex messages to Claude as channel notifications [99.47ms]
+(pass) Claude channel flush leaves live tmux messages pending for visible delivery [3.99ms]
+(pass) Claude channel stays active when the live tmux pair has no Claude pane [3.33ms]
+(pass) bridge MCP flushes new Claude channel messages after bridge file changes [3263.98ms]
+(pass) bridge MCP blocks an immediate bounce from the paired agent [47.98ms]
+(pass) bridge MCP allows the same message later after unrelated traffic [58.01ms]
+(pass) bridge MCP allows repeating the same message in the original direction [4517.80ms]
+(pass) bridge config helper builds the bridge MCP entry point for Codex [3.19ms]
+(pass) bridge config helper writes the Claude MCP config file [3.10ms]
+(pass) bridge config helper writes the Claude MCP config file for a custom server [3.20ms]
+(pass) bridge registration helper throws on unexpected Claude MCP add-json failures [2.72ms]
+(pass) dispatchBridgeMessage reports delivered when direct codex delivery succeeds [3.63ms]
+(pass) dispatchBridgeMessage stays queued when tmux metadata is stale [3.89ms]
+(pass) dispatchBridgeMessage formats accepted status with the target name [3.31ms]
+(pass) dispatchBridgeMessage reports backpressure distinct from queued [3.69ms]
+(pass) bridge MCP send_message normalizes copilot as a valid target [1446.93ms]
+killed 1 dangling process
+(fail) bridge queues cross-agent messages for all non-Claude/Codex pairs [5002.45ms]
+  ^ this test timed out after 5000ms.
+(pass) bridge config injection writes copilot config to .github/copilot/mcp.json [6.40ms]
+(pass) bridge pending count includes copilot messages [3.55ms]
+(pass) bridge drains pending copilot tmux messages through stored pane routing [3.76ms]
+
+3 tests failed:
+(fail) bridge native fallback request is pending until Governess grants it [5002.12ms]
+  ^ this test timed out after 5000ms.
+(fail) paired agents can escalate to the durable supervisor inbox [5002.04ms]
+  ^ this test timed out after 5000ms.
+(fail) bridge queues cross-agent messages for all non-Claude/Codex pairs [5002.45ms]
+  ^ this test timed out after 5000ms.
+
+ 106 pass
+ 3 fail
+ 455 expect() calls
+Ran 109 tests across 1 file. [50.01s]
+error: script "test:ci" exited with code 1

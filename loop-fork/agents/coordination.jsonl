@@ -19,3 +19,5 @@
 {"ts": "2026-08-17T19:01:10Z", "agent": "amgad-71507", "task": "harvto-d8-stale-write-lease", "intent": "done", "file": null}
 {"ts": "2026-08-17T19:41:49Z", "agent": "amgad-90019", "task": "harvto-d9-duplicate-emission", "intent": "task-start", "file": null}
 {"ts": "2026-08-18T07:19:09Z", "agent": "amgad-77754", "task": "harvto-d9-duplicate-emission", "intent": "done", "file": null}
+{"ts": "2026-08-18T08:17:07Z", "agent": "amgad-39238", "task": "harvto-d10-guarded-apply", "intent": "task-start", "file": null}
+{"ts": "2026-08-18T16:06:48Z", "agent": "amgad-37334", "task": "harvto-d10-guarded-apply", "intent": "done", "file": null}

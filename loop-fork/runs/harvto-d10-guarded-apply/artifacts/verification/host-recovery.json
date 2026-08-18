@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "taskId": "harvto-d10-guarded-apply",
+  "authority": "supervisor-recovery-ruling-with-founder-authorized-host-action",
+  "diagnosisMessageId": "27fbc485-c9c8-448b-8dd1-1f81abe59e23",
+  "hostAction": {
+    "removedFseventsdPid": 340,
+    "replacementFseventsdPid": 70263,
+    "replacementState": "Ss",
+    "cpuPercentBeforeAuthorizedBridgeRun": 0.1,
+    "cpuPercentAfterAuthorizedTestCi": 0.0
+  },
+  "unbankedSupervisorDeliveryIncident": {
+    "cause": "Shell quoting evaluated command text while the supervisor composed the recovery message.",
+    "process": "one accidental test-ci launch",
+    "terminatedBeforeCompletion": true,
+    "authoritativeResult": false,
+    "repositoryPathChanged": false,
+    "eligibleForAnyGate": false
+  },
+  "preservedPriorFailures": {
+    "attempt13ManifestSha256": "c1b937ea78c33fe0d6ec984ea25738a687ea593e3d64ab6335ecb47608417d8c",
+    "attempt14ManifestSha256": "1e475e82170648428afca81b922d5e5ce1ba6321045f23b6be8b1e745f7175c4",
+    "taskLocalFailEvalSha256": "64933a6d7884668383fd1e8506417f53aad85f50e7ca8db63728476b98d63ef0",
+    "rootFailEvalSha256": "00bde200b2d8803db37c1313f1d9ac7587c33695cd0d6c375235a2fe218e4c78"
+  },
+  "unchangedBridgeBytes": {
+    "loop-fork/src/loop/bridge.ts": "1dd970688aacfd504caa9a65e6ba0e44b8d5f71900094082801bd52db0ace967",
+    "loop-fork/tests/loop/bridge.test.ts": "7d0957ebb80e99ab42f2bb8020c79dbcd34e842ee45be86fdf66bd7a24af7a63"
+  },
+  "isolatedBridgeCertification": {
+    "command": "bun run test:file -- tests/loop/bridge.test.ts",
+    "startedAt": "2026-08-18T15:04:11.180Z",
+    "endedAt": "2026-08-18T15:04:20.415Z",
+    "exitCode": 0,
+    "testsPassed": 109,
+    "testsFailed": 0,
+    "assertions": 473,
+    "reportedDuration": "8.94s",
+    "evidenceManifestSha256": "9c39787c66b3b173e275f800ee1b2a2da1e108a599774c89dc6beeb5458b579a",
+    "outputSha256": "b7fe6d95c05286813549f08c40c69d0efdafb2b6ca059bd2ea72582e11f23261"
+  },
+  "postBridgeOrphanBracket": {
+    "pgrepExactBunExitCode": 1,
+    "bunExecutableCount": 0,
+    "replacementFseventsdState": "Ss",
+    "replacementFseventsdCpuPercent": 0.0,
+    "indexEmpty": true,
+    "dirtySourceTestPaths": [
+      "loop-fork/src/loop/utility-tools.ts",
+      "loop-fork/tests/loop/utility-runtime.test.ts",
+      "loop-fork/tests/loop/utility-tools.test.ts"
+    ]
+  },
+  "freshSerialCertification": {
+    "command": "bun run test:ci",
+    "startedAt": "2026-08-18T15:04:43.789Z",
+    "endedAt": "2026-08-18T15:05:29.988Z",
+    "exitCode": 0,
+    "certifiedSortedSerialFiles": 79,
+    "evidenceManifestSha256": "ef56e9ba31e1641aab1ad68e86eeed65fa4f1b2c37dde455aca8602664a89d4e",
+    "outputSha256": "51f7ae1b2481a3560f8e027b27ec3a37671fc5665e7ca3f02ad54aa0f0c36282"
+  },
+  "postTestCiOrphanBracket": {
+    "pgrepExactBunExitCode": 1,
+    "bunExecutableCount": 0,
+    "replacementFseventsdState": "Ss",
+    "replacementFseventsdCpuPercent": 0.0,
+    "indexEmpty": true,
+    "repositoryPathBoundaryUnchanged": true,
+    "immutableRedUnchangedAndValid": true
+  },
+  "lifecycleDisposition": {
+    "mandatorySerialGateNowGreen": true,
+    "priorFailEvidenceAndEvalsPreserved": true,
+    "stagingAuthorized": false,
+    "commitAuthorized": false,
+    "reviewAuthorized": false,
+    "closeAuthorized": false
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "command": "shasum -a 256 README.md command.txt fixture.json fixture.patch output.txt SHA256SUMS",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork/runs/harvto-d10-guarded-apply/artifacts/red-postfreeze",
+  "startedAt": "2026-08-18T14:08:47.294Z",
+  "endedAt": "2026-08-18T14:08:47.597Z",
+  "exitCode": 0,
+  "outputSha256": "0eca34d067d1180de2317aad825302002856ce6185d17c5a4bb6fbee2e9da7b5",
+  "status": "pass"
+}

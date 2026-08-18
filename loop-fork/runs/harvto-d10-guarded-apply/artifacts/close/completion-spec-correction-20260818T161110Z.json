@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-08-18T16:11:10Z",
+  "task_id": "harvto-d10-guarded-apply",
+  "phase": "post-close-bookkeeping",
+  "path": "loop-fork/specs/harvto-d10-guarded-apply.md",
+  "reason": "Replace the Harness-generated stale implementation open item with accurate terminal D10 bookkeeping and approved decisions.",
+  "preimage_sha256": "bd0ea2f5015252b0c27d65910a5d2c0b7f61b5d469f11eb07b4fb5a3634b54ac",
+  "repaired_sha256": "3b5420d1e96a38e62436495e94098c6239a0a592d8ba65c7739f5464feccb4a5",
+  "implementation_commit": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+  "plan_freeze_commit": "e632e54ffa1239ada679abf55eca75471e2ce851",
+  "implementation_pass_id": "183f6c68-edcc-43f0-8db6-f631ea4f131e",
+  "repair_valid_id": "8990382a-cbb2-4927-9953-66f70b8d3122",
+  "recovery_close_manifest_sha256": "4bafc7c1195e7635e2482b2d3afd98841667039be1f635561d06ef5bcdebad85",
+  "post_close_lifecycle_sha256": "592dc2d587f5629f6f6892b3312567165c8eda465443713bdc8895904e4c8eea",
+  "scope": {
+    "implementation_paths_changed": [],
+    "lifecycle_paths_changed": [],
+    "evidence_deleted_or_rewritten": [],
+    "d11_or_d12_started": false
+  }
+}

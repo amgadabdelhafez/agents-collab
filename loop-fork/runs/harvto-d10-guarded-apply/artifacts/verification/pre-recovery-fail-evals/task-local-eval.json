@@ -1,0 +1,52 @@
+{
+  "task_id": "harvto-d10-guarded-apply",
+  "status": "fail",
+  "verdict": "fail",
+  "baseline_failures": [
+    "tests/loop/bridge.test.ts: bridge MCP route_task queues a bounded request from claude timed out",
+    "tests/loop/bridge.test.ts: bridge native fallback request is pending until Governess grants it timed out",
+    "tests/loop/bridge.test.ts: only supervisor can assert a human-authorized native fallback timed out",
+    "tests/loop/bridge.test.ts: paired agents can escalate to the durable supervisor inbox timed out",
+    "tests/loop/bridge.test.ts: bridge queues cross-agent messages for all non-Claude/Codex pairs timed out"
+  ],
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "fail",
+      "evidence": "D10 named and focused suites pass, and check, canonical TypeScript, and build pass. Plain serial test:ci failed twice with three shifting 5-second timeouts in unchanged tests/loop/bridge.test.ts; both real terminal exits are preserved. The frozen contract requires an honest fail and blocks pass eval, staging, review, commit, Harness gates, and close."
+    }
+  },
+  "run_93_verification": {
+    "implementation_base": "1282bd4c39ec7b3c0177810b30dab78ca6d66f41",
+    "plan_freeze_commit": "e632e54ffa1239ada679abf55eca75471e2ce851",
+    "plan_pass_id": "e41e470d-d7a3-4107-93d0-a90feb717439",
+    "red_valid_id": "0e13914f-7fb6-4529-955e-692d8aff7dc5",
+    "recovery_manifest_sha256": "80c4bbf7f1e5e945ff5fbb9520365e1fc8409904cb402e41d89c89b626e96109",
+    "focused": {
+      "named_regression": "1 pass, 0 fail, 57 filtered",
+      "utility_tools": "53 pass, 0 fail, 228 assertions",
+      "utility_runtime": "58 pass, 0 fail, 310 assertions",
+      "utility_workspace": "13 pass, 0 fail, 33 assertions",
+      "bridge_utility": "5 pass, 0 fail, 14 assertions"
+    },
+    "mandatory": {
+      "check": "exit 0: 189 files, no fixes applied",
+      "typecheck": "exit 0: canonical command",
+      "build": "exit 0: 3051 modules",
+      "test_ci_attempt_1": "exit 1: 106 pass, 3 fail, 473 assertions; three 5-second bridge timeouts",
+      "test_ci_attempt_2": "exit 1: 106 pass, 3 fail, 455 assertions; three 5-second bridge timeouts"
+    },
+    "implementation_scope_sha256": {
+      "src/loop/utility-tools.ts": "05db7d4bee5085888219471f8f7221bf34e5e71bf609ca9673f960f968f374d9",
+      "tests/loop/utility-tools.test.ts": "70c332d9b0da316d4562921715572c501e94599c8bfd479734f70c9aa07662bd",
+      "tests/loop/utility-runtime.test.ts": "2390ab439b8086f18094c1456df0bb2fecdbdbd1e5abd0f0144fe72d43cff518"
+    },
+    "read_only_source_sha256": {
+      "src/loop/utility-runtime.ts": "56b61f6dfcaf507d6762be748f389c79a15ea31104cb727baf989adbf61cd441",
+      "src/loop/utility-store.ts": "f07544ae2311666f5336b9f1cb4b001a4435cafb8d747f76372fd3a53c203632"
+    },
+    "blocked_at": "plain serial test:ci mandatory gate"
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "phase": "post-exceptional-recovery-close",
+  "recorded_at": "2026-08-18T16:08:52.853Z",
+  "task_id": "harvto-d10-guarded-apply",
+  "implementation_commit": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+  "repair_valid_id": "8990382a-cbb2-4927-9953-66f70b8d3122",
+  "pre_recovery_close_sha256": "2e2836ebc64bf9432346681b0e4aa932e424239cf8c32bf6a3b333bcf6f9c106",
+  "first_failed_close_manifest_sha256": "146ca7012b692855ad4a5a1082c014b409916b5fd0e21910ad42b03f632c7bf4",
+  "recovery_close_manifest_sha256": "4bafc7c1195e7635e2482b2d3afd98841667039be1f635561d06ef5bcdebad85",
+  "close": {
+    "command": "./harness done harvto-d10-guarded-apply",
+    "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+    "exceptional_attempt_count": 1,
+    "total_close_invocations": 2,
+    "prior_invocation_exit": 1,
+    "recovery_invocation_exit": 0,
+    "started_at": "2026-08-18T16:06:47.821Z",
+    "ended_at": "2026-08-18T16:06:48.494Z",
+    "never_invoke_close_again": true
+  },
+  "git": {
+    "head": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+    "parent": "e632e54ffa1239ada679abf55eca75471e2ce851",
+    "index_paths": [],
+    "implementation_paths_clean": true
+  },
+  "lifecycle": {
+    "active_task": null,
+    "current_task_absent": true,
+    "total_task_records": 66,
+    "status_counts": {
+      "active": 2,
+      "done": 62,
+      "parked": 2
+    },
+    "d10_terminal_record_count": 1,
+    "d10_coordination_rows": 2,
+    "d10_terminal_coordination_rows": 1,
+    "d11_task_record_count": 0,
+    "d12_task_record_count": 0,
+    "tasks_json_sha256": "b0dc05464e9ed5a00b2ddf49cc92f211c4dc3b85da6df128aba63bf209ae5112",
+    "parked_ideas_sha256": "c47a51b8c62e564a1ddbc66dd09a98aff6ec09eff362b65fef6ccd5b84be5c2c",
+    "coordination_sha256": "5b70cba0249db20613cf114122a8a8a3b91f0ac2e842e1e2a655313e406fba2f",
+    "debt_register_sha256": "4959945d889118daabf1ccbc7940025d7bdf3db5f988caf7a3bd04ee22c77486",
+    "d10_meta_sha256": "4b7607fcc8e7b0342959742e0bd678f06bf9e8781deaa532735403a0055fabbd",
+    "d10_eval_sha256": "71117b6363753ba147fb8c3fc45f1d559d0a6f7057ba8fafaadf2ffefeb1941a",
+    "d10_task_log_sha256": "4aaa6b8352dc54b0840bee13e938faba0d610b0cbb18c7e89bee0e7fa2ca54bc",
+    "d10_parked_idea_sha256": "ed3371f188d7f74efe80be2826af4794e5a979838abfa5b15f0e7ab8a628db45",
+    "generated_completion_spec_pre_correction_sha256": "bd0ea2f5015252b0c27d65910a5d2c0b7f61b5d469f11eb07b4fb5a3634b54ac",
+    "unrelated_task_aggregate_pre_sha256": "931dd03b24601b345eb1a52c7fcf08665521a2f26c08774df8bcec9a0ab4d6d1",
+    "unrelated_task_aggregate_post_sha256": "931dd03b24601b345eb1a52c7fcf08665521a2f26c08774df8bcec9a0ab4d6d1",
+    "unrelated_task_byte_equivalent": true
+  },
+  "d10_record": {
+    "id": "harvto-d10-guarded-apply",
+    "mode": "emergent",
+    "status": "done",
+    "created_at": "2026-08-18T08:17:07Z",
+    "run_dir": "runs/harvto-d10-guarded-apply",
+    "eval_status": "pass",
+    "ended_at": "2026-08-18T16:06:48Z",
+    "spec_path": "specs/harvto-d10-guarded-apply.md"
+  },
+  "generated_artifacts": {
+    "debt_baseline_loc_sha256": "1c137ce608951d0ba81133f6c974732cd755de39fe7531afe3d6fb9bbd035628",
+    "debt_scan_json_sha256": "656162b74b3d4b6de4fc4ea3e9c63b9c77b4f8af5cb7e9284c51fdb119b85a5c",
+    "debt_scan_log_sha256": "2e246d3a369bc37c7152f0580a2df0af2701e579f432966f10017d75facef913",
+    "post_task_current_sha256": "25565be7d39ba2bec74ef83c33df226fe07d0f7a5ce2b90cc37bb45385b23db9",
+    "post_task_jsonl_sha256": "592af22ce7ad31f58961b69414e054456cfd6d2549f672d1e4af1451ecc961bd",
+    "post_task_log_sha256": "25565be7d39ba2bec74ef83c33df226fe07d0f7a5ce2b90cc37bb45385b23db9",
+    "regression_harvest_sha256": "5dd2598147370c9db47fcf6d07402c0073508880a9cb42441fe62e500caf8382"
+  },
+  "immutable_evidence": {
+    "red_postfreeze_sha256sums": "03964181d300520abb3b99c984287eb291d804ac0ed8dc4f250c07689abda747",
+    "quarantined_red_sha256sums": "6a8ffb917073e19b55515e727cf55db23795a3af3c3f9cc59fad9e44e7940f40",
+    "red_recovery_manifest": "80c4bbf7f1e5e945ff5fbb9520365e1fc8409904cb402e41d89c89b626e96109",
+    "final_gates": "5e049a7285a8e261d90da137d2829e3a755b98540924a616d6c49b1ddbd37421",
+    "original_pre_close": "ef17bc2e94665655d135ac4e000428d8e77eb62dc5bda59adcb8f948ebbe769f",
+    "task_log_repair_manifest": "ef509563a4197fe15f1f81139fe41946ff6ebfb66595c9c6b6a8b361b5f2b73d"
+  },
+  "transition_proof": {
+    "only_d10_task_record_changed": true,
+    "d10_transition": "active/pending/current to done/pass/no-current",
+    "exactly_one_terminal_row": true,
+    "current_task_cleared": true,
+    "non_d10_task_transition_count": 0,
+    "parked_rows_unchanged": true,
+    "debt_register_unchanged": true,
+    "close_retry_remaining": 0
+  }
+}
+

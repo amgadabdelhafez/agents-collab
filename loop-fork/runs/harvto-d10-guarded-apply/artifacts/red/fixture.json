@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "taskId": "harvto-d10-guarded-apply",
+  "regression": "D10 guarded apply rejects absent null-preimage target before mutation and journaling",
+  "exactBase": "1282bd4c39ec7b3c0177810b30dab78ca6d66f41",
+  "branchRef": "refs/heads/codex/harvto-supervisor-defects",
+  "capture": {
+    "command": "bun run test:file -- tests/loop/utility-runtime.test.ts --test-name-pattern \"D10 guarded apply rejects absent null-preimage target before mutation and journaling\"",
+    "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+    "startedAt": "2026-08-18T08:45:08Z",
+    "endedAt": "2026-08-18T08:45:09Z",
+    "exitCode": 1,
+    "selectedTests": 1,
+    "filteredTests": 57
+  },
+  "indexPaths": [],
+  "productionSha256": {
+    "src/loop/utility-tools.ts": "b15e620726db2fcac92b398ddc7b2c1994a6560e7072afa55cebfd9f678d3c62",
+    "src/loop/utility-runtime.ts": "56b61f6dfcaf507d6762be748f389c79a15ea31104cb727baf989adbf61cd441",
+    "src/loop/utility-store.ts": "f07544ae2311666f5336b9f1cb4b001a4435cafb8d747f76372fd3a53c203632"
+  },
+  "testEvidence": {
+    "path": "tests/loop/utility-runtime.test.ts",
+    "headSha256": "8ee40fee282cf3df985956e767c57c54ab4ec83d51d67afa340f218b40244514",
+    "worktreeSha256": "012778a797d950719e67a1b852e9784138ec3cab4eae4f4fef11af6e5cc083cd",
+    "diffSha256": "b63cc3faf1abad35775e9550b4a6f108dc5d9fb5dfa3dcccc133d6fcdb722ad5"
+  },
+  "expectedContract": {
+    "outcome": "rejected",
+    "target": {
+      "path": "src/new.ts",
+      "existsAfterCall": false,
+      "expectedPreimage": null,
+      "currentPreimage": null
+    },
+    "patchAppliedEvents": 0
+  },
+  "unchangedBaseObservation": {
+    "application": {
+      "appliedAt": "2026-08-18T08:45:09.329Z",
+      "appliedBy": "codex",
+      "manifestPath": ".loop/runs/apply/utility/artifacts/d10-absent-target/35dd6aa1-4a66-468a-9d3f-bc810e588308.json",
+      "manifestSha256": "bf0d5f8e11f5e353c8084b5323537f8a89e681d05367ead26548fc3266ac171a",
+      "patchPath": ".loop/runs/apply/utility/artifacts/d10-absent-target/35dd6aa1-4a66-468a-9d3f-bc810e588308.patch",
+      "patchSha256": "f077effdce9b0260c7d8c57980ae5128d150ecd4f253fa770ebc42833e67f10a",
+      "postimages": [
+        {
+          "path": "src/new.ts",
+          "sha256": "a568bdcc8ccc6cc56a201d8eee207a4ec38998aa78a0ad4edd66472ec50d7e41"
+        }
+      ],
+      "preimages": [
+        {
+          "path": "src/new.ts",
+          "sha256": null
+        }
+      ]
+    },
+    "artifacts": {
+      "manifestSha256": "bf0d5f8e11f5e353c8084b5323537f8a89e681d05367ead26548fc3266ac171a",
+      "patchSha256": "f077effdce9b0260c7d8c57980ae5128d150ecd4f253fa770ebc42833e67f10a"
+    },
+    "authority": {
+      "claimEpoch": 30,
+      "currentEpoch": 30,
+      "routeEpoch": 30
+    },
+    "eventTypes": [
+      "route-requested",
+      "state-transition",
+      "claimed",
+      "state-transition",
+      "result-recorded",
+      "patch-applied"
+    ],
+    "outcome": {
+      "kind": "resolved",
+      "status": "applied"
+    },
+    "patchAppliedEvents": 1,
+    "proposal": {
+      "preimages": [
+        {
+          "path": "src/new.ts",
+          "sha256": null
+        }
+      ],
+      "summary": "create one exact declared target",
+      "targets": [
+        "src/new.ts"
+      ]
+    },
+    "target": {
+      "currentBeforeApply": null,
+      "exists": true,
+      "expectedPreimage": null,
+      "path": "src/new.ts",
+      "sha256": "a568bdcc8ccc6cc56a201d8eee207a4ec38998aa78a0ad4edd66472ec50d7e41"
+    }
+  },
+  "falseRedExclusions": {
+    "authorityMatched": true,
+    "artifactHashesPresent": true,
+    "proposalTargetMatched": true,
+    "proposalPreimageWasNull": true,
+    "outcomeWasApplied": true,
+    "targetCreated": true,
+    "onePatchAppliedEvent": true
+  }
+}

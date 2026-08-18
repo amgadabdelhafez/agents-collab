@@ -1,0 +1,9 @@
+{
+  "command": "bun run test:file -- tests/loop/utility-runtime.test.ts",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "startedAt": "2026-08-18T14:08:28.041Z",
+  "endedAt": "2026-08-18T14:08:28.638Z",
+  "exitCode": 0,
+  "outputSha256": "2b56539f927b3de175459088cc620fed5371b4551aa91dbb09fb88ab9e37fa15",
+  "status": "pass"
+}

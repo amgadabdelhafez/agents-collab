@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "task_id": "harvto-d10-guarded-apply",
+  "recorded_at": "2026-08-18T14:13:12.466Z",
+  "run": 93,
+  "implementation_base": "1282bd4c39ec7b3c0177810b30dab78ca6d66f41",
+  "plan_freeze_commit": "e632e54ffa1239ada679abf55eca75471e2ce851",
+  "review_authority": {
+    "plan_pass_id": "e41e470d-d7a3-4107-93d0-a90feb717439",
+    "red_valid_id": "0e13914f-7fb6-4529-955e-692d8aff7dc5"
+  },
+  "implementation_scope": [
+    {
+      "path": "loop-fork/src/loop/utility-tools.ts",
+      "sha256": "05db7d4bee5085888219471f8f7221bf34e5e71bf609ca9673f960f968f374d9"
+    },
+    {
+      "path": "loop-fork/tests/loop/utility-tools.test.ts",
+      "sha256": "70c332d9b0da316d4562921715572c501e94599c8bfd479734f70c9aa07662bd"
+    },
+    {
+      "path": "loop-fork/tests/loop/utility-runtime.test.ts",
+      "sha256": "2390ab439b8086f18094c1456df0bb2fecdbdbd1e5abd0f0144fe72d43cff518"
+    }
+  ],
+  "red_evidence": {
+    "directory": "loop-fork/runs/harvto-d10-guarded-apply/artifacts/red-postfreeze",
+    "manifest_sha256": "03964181d300520abb3b99c984287eb291d804ac0ed8dc4f250c07689abda747",
+    "manifest_entries_verified": 5,
+    "quarantined_directory": "loop-fork/runs/harvto-d10-guarded-apply/artifacts/red",
+    "quarantined_manifest_sha256": "6a8ffb917073e19b55515e727cf55db23795a3af3c3f9cc59fad9e44e7940f40",
+    "recovery_manifest_sha256": "80c4bbf7f1e5e945ff5fbb9520365e1fc8409904cb402e41d89c89b626e96109"
+  },
+  "focused_checks": [
+    {
+      "command": "bun run test:file -- tests/loop/utility-runtime.test.ts --test-name-pattern \"D10 guarded apply rejects absent null-preimage target before mutation and journaling\"",
+      "exit": 0,
+      "tests_passed": 1,
+      "tests_failed": 0,
+      "tests_filtered": 57
+    },
+    {
+      "command": "bun run test:file -- tests/loop/utility-tools.test.ts",
+      "exit": 0,
+      "tests_passed": 53,
+      "tests_failed": 0,
+      "assertions": 228
+    },
+    {
+      "command": "bun run test:file -- tests/loop/utility-runtime.test.ts",
+      "exit": 0,
+      "tests_passed": 58,
+      "tests_failed": 0,
+      "assertions": 310
+    },
+    {
+      "command": "bun run test:file -- tests/loop/utility-workspace.test.ts",
+      "exit": 0,
+      "tests_passed": 13,
+      "tests_failed": 0,
+      "assertions": 33
+    },
+    {
+      "command": "bun run test:file -- tests/loop/bridge-utility.test.ts",
+      "exit": 0,
+      "tests_passed": 5,
+      "tests_failed": 0,
+      "assertions": 14
+    }
+  ],
+  "mandatory_checks": [
+    {
+      "command": "bun run check",
+      "exit": 0,
+      "files_checked": 189,
+      "fixes_applied": 0
+    },
+    {
+      "command": "bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts",
+      "exit": 0
+    },
+    {
+      "command": "bun run build",
+      "exit": 0,
+      "modules": 3051
+    },
+    {
+      "command": "bun run test:ci",
+      "attempt": 1,
+      "exit": 1,
+      "tests_passed_in_failing_file": 106,
+      "tests_failed_in_failing_file": 3,
+      "failure_mode": "three 5-second timeouts in unchanged tests/loop/bridge.test.ts"
+    },
+    {
+      "command": "bun run test:ci",
+      "attempt": 2,
+      "exit": 1,
+      "tests_passed_in_failing_file": 106,
+      "tests_failed_in_failing_file": 3,
+      "failure_mode": "three shifting 5-second timeouts in unchanged tests/loop/bridge.test.ts"
+    }
+  ],
+  "evidence_manifest_sha256": {
+    "01-named-regression": "75eb565cf71f624f5683d584ad4065c09f46f0d598827d6f6a3184af40368ab3",
+    "02-utility-tools": "e8d9cadbc07754b5138c73a8918125b851cbfd09c0ccc3e920d48c7790cbed09",
+    "03-utility-runtime": "10ebd3ce3b6d51f8f01bfd5a97154ccbb6b86831af63a130262878dc3da11f01",
+    "04-utility-workspace": "737a72d455605ca05470936bb37675f45db9b900c689145ffab2988e2d3ca43f",
+    "05-bridge-utility": "569bc688f9889c0722fd4e9ebcb93f6a564ea2772c5697ff001c57131dc41ca5",
+    "06-red-postfreeze-hashes": "551d1162bb7cb60efb63ea3639d461184f0355bcce001c435550aecfc3e6f228",
+    "07-red-postfreeze-check": "951cc6231ad36791eb64ca84db06d100b38f3241936b387828d818823f9caf90",
+    "08-quarantined-red-hashes": "aa5a83bb56c5c3e301e6b4c6f6a1ea9e7153c0241323e96ab5afe3bed93da047",
+    "09-quarantined-red-check": "abad0171708a8d7da686234dddc7d1353a2e993aa29b4f9c9b59c72829dc0cbe",
+    "10-check": "abe78ec87921b4e0f828cfa60b85827b4b0139179579dfa3609e3eb617bb5177",
+    "11-typescript": "7c60bc0fce384f7b820b8ae508ba60011107f3486d67a3a2982a415ea218b55b",
+    "12-build": "29d6ed9db443db6de893e1ef26f9f01661014d7c68dd44b90dfffdde8695b684",
+    "13-test-ci": "c1b937ea78c33fe0d6ec984ea25738a687ea593e3d64ab6335ecb47608417d8c",
+    "14-test-ci-retry": "1e475e82170648428afca81b922d5e5ce1ba6321045f23b6be8b1e745f7175c4"
+  },
+  "evals": [
+    {
+      "path": "loop-fork/runs/harvto-d10-guarded-apply/eval.json",
+      "sha256": "64933a6d7884668383fd1e8506417f53aad85f50e7ca8db63728476b98d63ef0",
+      "verdict": "fail"
+    },
+    {
+      "path": "runs/harvto-d10-guarded-apply/eval.json",
+      "sha256": "00bde200b2d8803db37c1313f1d9ac7587c33695cd0d6c375235a2fe218e4c78",
+      "verdict": "fail"
+    }
+  ],
+  "diff": {
+    "production_and_test_paths": 3,
+    "index_empty": true,
+    "diff_check_exit": 0,
+    "normal_numstat": {
+      "loop-fork/src/loop/utility-tools.ts": "42/9",
+      "loop-fork/tests/loop/utility-runtime.test.ts": "186/8",
+      "loop-fork/tests/loop/utility-tools.test.ts": "393/1"
+    },
+    "ignore_all_space_numstat": {
+      "loop-fork/src/loop/utility-tools.ts": "42/9",
+      "loop-fork/tests/loop/utility-runtime.test.ts": "186/8",
+      "loop-fork/tests/loop/utility-tools.test.ts": "393/1"
+    }
+  },
+  "lifecycle": {
+    "d10": "active/pending",
+    "current_task": "harvto-d10-guarded-apply",
+    "index": "empty",
+    "blocked_before": [
+      "baseline allowlist checks",
+      "Harness preflight",
+      "Harness stop-gate",
+      "root verifier",
+      "staging",
+      "implementation commit",
+      "implementation review",
+      "Harness close"
+    ]
+  },
+  "verdict": "fail"
+}

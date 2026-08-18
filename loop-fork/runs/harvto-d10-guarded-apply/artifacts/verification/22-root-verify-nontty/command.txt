@@ -1,0 +1,2 @@
+./scripts/verify.sh harvto-d10-guarded-apply harvto-d10-guarded-apply > loop-fork/runs/harvto-d10-guarded-apply/artifacts/verification/22-root-verify-nontty.output.txt 2>&1
+

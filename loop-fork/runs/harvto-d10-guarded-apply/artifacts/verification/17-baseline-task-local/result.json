@@ -1,0 +1,10 @@
+{
+  "command": "python3 scripts/check-baseline-allowlist.py loop-fork/runs/harvto-d10-guarded-apply/eval.json",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects",
+  "startedAt": "2026-08-18T15:12:05.308Z",
+  "endedAt": "2026-08-18T15:12:05.661Z",
+  "exitCode": 0,
+  "outputSha256": "2b3feb7d511e00b41d3ad510ce31bc4f16a4f72835cd395a5fcd99df06ceb9ae",
+  "status": "pass"
+}
+

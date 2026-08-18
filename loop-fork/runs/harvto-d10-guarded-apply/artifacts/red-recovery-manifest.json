@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "taskId": "harvto-d10-guarded-apply",
+  "authority": "supervisor-recovery-ruling-under-standing-loop-fix-authority",
+  "planPass": {
+    "messageId": "e41e470d-d7a3-4107-93d0-a90feb717439",
+    "base": "1282bd4c39ec7b3c0177810b30dab78ca6d66f41",
+    "contractSha256": {
+      "loop-fork/specs/harvto-d10-guarded-apply/spec.md": "d74edb478fe900de7d05c0009e2f52f90a509ff94d0cdea7caebef33f92f6e21",
+      "loop-fork/specs/harvto-d10-guarded-apply/plan.md": "fdf6e6b2509de04572f8c64f212b3b088b33d2d480d96485cda8c9b296593cb6",
+      "loop-fork/specs/harvto-d10-guarded-apply/tasks.md": "64fc11031b53113784b9f7fefdf47c6153aeacb34a4a1fba2e08b92c586721ae",
+      "loop-fork/specs/harvto-d10-guarded-apply/verify.md": "817258bcbe57cf90a47759d7d3201eadc334e5751aae1b36bca395ff0c08fd07",
+      "loop-fork/runs/harvto-d10-guarded-apply/plan.md": "79fdae08542a15ac46509a581500259a6d8e540c24fda081f9cf359db5dc311c"
+    }
+  },
+  "planFreeze": {
+    "sha": "e632e54ffa1239ada679abf55eca75471e2ce851",
+    "parent": "1282bd4c39ec7b3c0177810b30dab78ca6d66f41",
+    "noAmend": true,
+    "committedPaths": [
+      "loop-fork/runs/harvto-d10-guarded-apply/plan.md",
+      "loop-fork/specs/harvto-d10-guarded-apply/plan.md",
+      "loop-fork/specs/harvto-d10-guarded-apply/spec.md",
+      "loop-fork/specs/harvto-d10-guarded-apply/tasks.md",
+      "loop-fork/specs/harvto-d10-guarded-apply/verify.md"
+    ],
+    "committedContractHashesMatchPlanPass": true,
+    "productionChangedByCommit": false
+  },
+  "orderingIncident": {
+    "description": "The first red capture started at 2026-08-18T08:45:08Z and ended at 2026-08-18T08:45:09Z, before Claude sent PLAN PASS at approximately 2026-08-18T08:47:00Z and before the required five-file plan-freeze commit.",
+    "recordCorrection": {
+      "kind": "open-amendment",
+      "correctedAt": "2026-08-18T13:58:49Z",
+      "previousDescription": "The first red capture occurred after PLAN PASS but before the required five-file plan-freeze commit.",
+      "reason": "Claude independently compared the quarantined capture timestamps with the PLAN PASS send order and found that the original description inverted their order.",
+      "redValidMessageId": "0e13914f-7fb6-4529-955e-692d8aff7dc5",
+      "redValidReviewedManifestSha256": "a035e36bd6371fac1b1ef5df33b8457cc93d73f4b9243cdc6afaa0e0e60f8593"
+    },
+    "stopPreservedBytes": true,
+    "recoveryDisposition": "quarantine-premature-red-and-recapture-additively-after-plan-freeze",
+    "failedPostfreezeEvidenceWriteAttempt": {
+      "startedAt": "2026-08-18T13:36:40Z",
+      "endedAt": "2026-08-18T13:36:41Z",
+      "testExitCode": 1,
+      "evidenceFilesWritten": 0,
+      "reason": "Evidence-only porcelain predicate compared trimmed output with a leading-space form."
+    }
+  },
+  "quarantinedEvidence": {
+    "path": "loop-fork/runs/harvto-d10-guarded-apply/artifacts/red",
+    "role": "non-authoritative-ordering-incident-evidence",
+    "eligibleForRedValid": false,
+    "mustRemainByteExact": true,
+    "fileCount": 6,
+    "checksumCoverage": 5,
+    "checksumValidation": "5/5 pass before and after authoritative recapture",
+    "sha256": {
+      "README.md": "c88560010c83cc87c196d606208d7b25538649cfc05fdeed73d5ea66873bc884",
+      "command.txt": "c2247db8e0e7a62d3df571d239616e7405dc76d75e2213fb7f1af7e6cdafce15",
+      "fixture.json": "7189de7122238f46470616d980de97469cef82aaae11fc50f6444f56644015a7",
+      "fixture.patch": "b63cc3faf1abad35775e9550b4a6f108dc5d9fb5dfa3dcccc133d6fcdb722ad5",
+      "output.txt": "8fb3333bc481903314e6523bb2ec94af54a977033c65d05dc2e53101f6fe9071",
+      "SHA256SUMS": "6a8ffb917073e19b55515e727cf55db23795a3af3c3f9cc59fad9e44e7940f40"
+    }
+  },
+  "authoritativeEvidence": {
+    "path": "loop-fork/runs/harvto-d10-guarded-apply/artifacts/red-postfreeze",
+    "role": "authoritative-post-plan-freeze-red",
+    "eligibleForRedValid": true,
+    "capturedAfterPlanFreeze": true,
+    "fileCount": 6,
+    "checksumCoverage": 5,
+    "checksumValidation": "5/5 pass",
+    "capture": {
+      "startedAt": "2026-08-18T13:37:32Z",
+      "endedAt": "2026-08-18T13:37:33Z",
+      "exitCode": 1,
+      "selectedTests": 1,
+      "filteredTests": 57
+    },
+    "sha256": {
+      "README.md": "18d3b4c9f9065e69826ab82622fe7c0b97f151fed9fb66a90f834033fe59b8da",
+      "command.txt": "c2247db8e0e7a62d3df571d239616e7405dc76d75e2213fb7f1af7e6cdafce15",
+      "fixture.json": "a776f98dd7498281d39ccb333567e12d71ce00680331790f548d1e82c55c03dc",
+      "fixture.patch": "b63cc3faf1abad35775e9550b4a6f108dc5d9fb5dfa3dcccc133d6fcdb722ad5",
+      "output.txt": "de47032c405c90c3e10507231bbd264cb9f3a45ccb5473e4ad30d510ee5d8857",
+      "SHA256SUMS": "03964181d300520abb3b99c984287eb291d804ac0ed8dc4f250c07689abda747"
+    }
+  },
+  "productionSha256AtFreezeAndAuthoritativeCapture": {
+    "loop-fork/src/loop/utility-tools.ts": "b15e620726db2fcac92b398ddc7b2c1994a6560e7072afa55cebfd9f678d3c62",
+    "loop-fork/src/loop/utility-runtime.ts": "56b61f6dfcaf507d6762be748f389c79a15ea31104cb727baf989adbf61cd441",
+    "loop-fork/src/loop/utility-store.ts": "f07544ae2311666f5336b9f1cb4b001a4435cafb8d747f76372fd3a53c203632"
+  },
+  "testDiff": {
+    "path": "loop-fork/tests/loop/utility-runtime.test.ts",
+    "committedSha256": "8ee40fee282cf3df985956e767c57c54ab4ec83d51d67afa340f218b40244514",
+    "worktreeSha256": "012778a797d950719e67a1b852e9784138ec3cab4eae4f4fef11af6e5cc083cd",
+    "diffSha256": "b63cc3faf1abad35775e9550b4a6f108dc5d9fb5dfa3dcccc133d6fcdb722ad5",
+    "scope": "one required import plus only the named D10 regression"
+  },
+  "authoritativeObservation": {
+    "target": "src/new.ts",
+    "targetBefore": "absent",
+    "targetAfter": "created",
+    "returnedStatus": "applied",
+    "patchAppliedEventCount": 1,
+    "eventTypes": [
+      "route-requested",
+      "state-transition",
+      "claimed",
+      "state-transition",
+      "result-recorded",
+      "patch-applied"
+    ]
+  },
+  "redValid": {
+    "messageId": "0e13914f-7fb6-4529-955e-692d8aff7dc5",
+    "receivedAt": "2026-08-18T13:58:16.971Z",
+    "reviewedManifestSha256": "a035e36bd6371fac1b1ef5df33b8457cc93d73f4b9243cdc6afaa0e0e60f8593",
+    "verdict": "RED VALID",
+    "zeroWrite": true
+  },
+  "productionEditAuthorized": true,
+  "nextGate": "bounded three-path D10 implementation, verification, implementation commit, and literal Claude exact-SHA PASS"
+}

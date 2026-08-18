@@ -1,0 +1,9 @@
+{
+  "command": "bun run test:file -- tests/loop/bridge.test.ts",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "startedAt": "2026-08-18T15:04:11.180Z",
+  "endedAt": "2026-08-18T15:04:20.415Z",
+  "exitCode": 0,
+  "outputSha256": "b7fe6d95c05286813549f08c40c69d0efdafb2b6ca059bd2ea72582e11f23261",
+  "status": "pass"
+}

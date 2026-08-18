@@ -1,0 +1,1 @@
+bun run test:file -- tests/loop/utility-runtime.test.ts --test-name-pattern "D10 guarded apply rejects absent null-preimage target before mutation and journaling"

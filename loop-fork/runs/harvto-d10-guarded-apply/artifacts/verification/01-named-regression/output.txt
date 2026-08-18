@@ -1,0 +1,11 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/utility-runtime.test.ts --test-name-pattern "D10 guarded apply rejects absent null-preimage target before mutation and journaling"
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-runtime.test.ts:
+(pass) D10 guarded apply rejects absent null-preimage target before mutation and journaling [12.78ms]
+
+ 1 pass
+ 57 filtered out
+ 0 fail
+ 12 expect() calls
+Ran 1 test across 1 file. [41.00ms]

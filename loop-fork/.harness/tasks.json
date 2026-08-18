@@ -640,6 +640,16 @@
       "eval_status": "pass",
       "ended_at": "2026-08-18T07:19:09Z",
       "spec_path": "specs/harvto-d9-duplicate-emission.md"
+    },
+    {
+      "id": "harvto-d10-guarded-apply",
+      "mode": "emergent",
+      "status": "done",
+      "created_at": "2026-08-18T08:17:07Z",
+      "run_dir": "runs/harvto-d10-guarded-apply",
+      "eval_status": "pass",
+      "ended_at": "2026-08-18T16:06:48Z",
+      "spec_path": "specs/harvto-d10-guarded-apply.md"
     }
   ]
 }

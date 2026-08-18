@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "kind": "d10-task-log-bounded-repair",
+  "recorded_at": "2026-08-18T15:50:39.965Z",
+  "authority": "supervisor-bounded-recovery-authority",
+  "task_id": "harvto-d10-guarded-apply",
+  "implementation_commit": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+  "implementation_parent": "e632e54ffa1239ada679abf55eca75471e2ce851",
+  "repair_scope": {
+    "path": "loop-fork/runs/harvto-d10-guarded-apply/task-log.md",
+    "sections": [
+      "What I changed",
+      "Why",
+      "Notes"
+    ],
+    "preimage_sha256": "373870262d3abddc7799870dbc676b0196c5d8b9a692240916b8af182ad09b84",
+    "repaired_sha256": "4aaa6b8352dc54b0840bee13e938faba0d610b0cbb18c7e89bee0e7fa2ca54bc"
+  },
+  "before_after_equality": {
+    "head": {
+      "before": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+      "after": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+      "equal": true
+    },
+    "parent": {
+      "before": "e632e54ffa1239ada679abf55eca75471e2ce851",
+      "after": "e632e54ffa1239ada679abf55eca75471e2ce851",
+      "equal": true
+    },
+    "index_paths": {
+      "before": [],
+      "after": [],
+      "equal": true
+    },
+    "default_porcelain_sha256": {
+      "before": "619ae992df9aa2a926cc2b395c2637bc23a4a9b3a484cb117982e18472571e34",
+      "after": "619ae992df9aa2a926cc2b395c2637bc23a4a9b3a484cb117982e18472571e34",
+      "equal": true
+    },
+    "source_test_diff_paths": {
+      "before": [],
+      "after": [],
+      "equal": true
+    },
+    "lifecycle": {
+      "before": "D10 active/pending/current; zero terminal rows",
+      "after": "D10 active/pending/current; zero terminal rows",
+      "equal": true
+    },
+    "evidence": {
+      "red_postfreeze_sha256sums": {
+        "before": "03964181d300520abb3b99c984287eb291d804ac0ed8dc4f250c07689abda747",
+        "after": "03964181d300520abb3b99c984287eb291d804ac0ed8dc4f250c07689abda747",
+        "equal": true
+      },
+      "quarantined_red_sha256sums": {
+        "before": "6a8ffb917073e19b55515e727cf55db23795a3af3c3f9cc59fad9e44e7940f40",
+        "after": "6a8ffb917073e19b55515e727cf55db23795a3af3c3f9cc59fad9e44e7940f40",
+        "equal": true
+      },
+      "red_recovery_manifest": {
+        "before": "80c4bbf7f1e5e945ff5fbb9520365e1fc8409904cb402e41d89c89b626e96109",
+        "after": "80c4bbf7f1e5e945ff5fbb9520365e1fc8409904cb402e41d89c89b626e96109",
+        "equal": true
+      },
+      "final_gates": {
+        "before": "5e049a7285a8e261d90da137d2829e3a755b98540924a616d6c49b1ddbd37421",
+        "after": "5e049a7285a8e261d90da137d2829e3a755b98540924a616d6c49b1ddbd37421",
+        "equal": true
+      },
+      "pre_close": {
+        "before": "ef17bc2e94665655d135ac4e000428d8e77eb62dc5bda59adcb8f948ebbe769f",
+        "after": "ef17bc2e94665655d135ac4e000428d8e77eb62dc5bda59adcb8f948ebbe769f",
+        "equal": true
+      },
+      "failed_close_attempt": {
+        "before": "146ca7012b692855ad4a5a1082c014b409916b5fd0e21910ad42b03f632c7bf4",
+        "after": "146ca7012b692855ad4a5a1082c014b409916b5fd0e21910ad42b03f632c7bf4",
+        "equal": true
+      }
+    }
+  },
+  "repaired_facts": [
+    "approved implementation commit and exact three-path scope",
+    "replay-before-guard ordering and guarded preimage semantics",
+    "focused/mandatory/sealing gate results and recovery disclosure",
+    "first close failure preserved with no lifecycle transition",
+    "intentional add-file guarded-apply behavior narrowing"
+  ],
+  "prohibited_mutations_observed": {
+    "source_or_test": false,
+    "eval": false,
+    "red_evidence": false,
+    "lifecycle": false,
+    "index": false,
+    "head": false
+  },
+  "review_contract": {
+    "reviewer": "claude",
+    "zero_write": true,
+    "required_literal_verdict": "REPAIR VALID",
+    "alternative_verdict": "REVISE",
+    "no_close_before_repair_valid": true,
+    "exceptional_close_attempt_limit_after_valid": 1
+  }
+}
+

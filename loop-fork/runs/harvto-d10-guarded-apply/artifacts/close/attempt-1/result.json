@@ -1,0 +1,25 @@
+{
+  "command": "./harness done harvto-d10-guarded-apply",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "startedAt": "2026-08-18T15:45:06.105Z",
+  "endedAt": "2026-08-18T15:45:06.703Z",
+  "exitCode": 1,
+  "status": "failed-no-retry",
+  "outputSummary": {
+    "postTaskStateInvariant": "pass",
+    "debtFindings": 0,
+    "debtAppended": 0,
+    "regressionHarvest": "skipped: no bug-fix signal",
+    "terminalError": "task-log What I changed is empty"
+  },
+  "lifecycleAfterFailure": {
+    "d10": "active/pending/current",
+    "d10TerminalCoordinationRows": 0,
+    "currentTaskPresent": true,
+    "implementationHead": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+    "indexEmpty": true,
+    "unrelatedTaskAggregateUnchanged": true
+  },
+  "disposition": "Do not retry without explicit supervisor recovery authority."
+}
+

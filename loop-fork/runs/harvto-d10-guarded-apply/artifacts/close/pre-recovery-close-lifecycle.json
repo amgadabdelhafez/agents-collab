@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "phase": "pre-exceptional-recovery-close",
+  "recorded_at": "2026-08-18T16:06:33.142Z",
+  "task_id": "harvto-d10-guarded-apply",
+  "authority": "supervisor-bounded-recovery-authority-plus-repair-valid",
+  "repair_valid_id": "8990382a-cbb2-4927-9953-66f70b8d3122",
+  "repair_review_request_id": "bc13aef3-8532-4266-aace-fdcfdc03bdc6",
+  "implementation_commit": "3be913deedf27357b64bf9f9fe1c9788c74dfa2b",
+  "implementation_parent": "e632e54ffa1239ada679abf55eca75471e2ce851",
+  "task_log_sha256": "4aaa6b8352dc54b0840bee13e938faba0d610b0cbb18c7e89bee0e7fa2ca54bc",
+  "repair_manifest_sha256": "ef509563a4197fe15f1f81139fe41946ff6ebfb66595c9c6b6a8b361b5f2b73d",
+  "first_failed_close_manifest_sha256": "146ca7012b692855ad4a5a1082c014b409916b5fd0e21910ad42b03f632c7bf4",
+  "git": {
+    "index_paths": [],
+    "default_porcelain_sha256": "619ae992df9aa2a926cc2b395c2637bc23a4a9b3a484cb117982e18472571e34",
+    "source_test_diff_paths": []
+  },
+  "utility": {
+    "LOOP_UTILITY_ENABLED": "0",
+    "LOOP_UTILITY_DELEGATION_MODE": "off",
+    "LOOP_AU_PAIR_ENABLED": "0"
+  },
+  "lifecycle": {
+    "total_tasks": 66,
+    "status_counts": {
+      "done": 61,
+      "active": 3,
+      "parked": 2
+    },
+    "d10": "active/pending/current",
+    "d10_terminal_rows": 0,
+    "d11_task_records": 0,
+    "d12_task_records": 0,
+    "current_task_sha256": "b5916e1da08897a23aa9f92210e65cb436bc75416e85cf4dbb3c6a26d6a18d3c",
+    "tasks_sha256": "26379c86bf4d2f0d757a86c83bf6c8066c137911b9aa9e7531f92e1899390a68",
+    "parked_sha256": "c47a51b8c62e564a1ddbc66dd09a98aff6ec09eff362b65fef6ccd5b84be5c2c",
+    "coordination_sha256": "f105d586689ee7afd4871c7d6d89f8423f381ccaa222f5f689c36cb302b545c0",
+    "debt_sha256": "4959945d889118daabf1ccbc7940025d7bdf3db5f988caf7a3bd04ee22c77486",
+    "meta_sha256": "488b5910c39c26dd20f7c6a7589630327f18ca7b15ccce4cf6e2278dda3f20df",
+    "eval_sha256": "71117b6363753ba147fb8c3fc45f1d559d0a6f7057ba8fafaadf2ffefeb1941a",
+    "unrelated_task_aggregate_sha256": "931dd03b24601b345eb1a52c7fcf08665521a2f26c08774df8bcec9a0ab4d6d1"
+  },
+  "evidence": {
+    "red_postfreeze_sha256sums": "03964181d300520abb3b99c984287eb291d804ac0ed8dc4f250c07689abda747",
+    "quarantined_red_sha256sums": "6a8ffb917073e19b55515e727cf55db23795a3af3c3f9cc59fad9e44e7940f40",
+    "red_recovery_manifest": "80c4bbf7f1e5e945ff5fbb9520365e1fc8409904cb402e41d89c89b626e96109",
+    "final_gates": "5e049a7285a8e261d90da137d2829e3a755b98540924a616d6c49b1ddbd37421",
+    "original_pre_close": "ef17bc2e94665655d135ac4e000428d8e77eb62dc5bda59adcb8f948ebbe769f"
+  },
+  "recovery_close_contract": {
+    "command": "./harness done harvto-d10-guarded-apply",
+    "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+    "exceptional_attempt_limit": 1,
+    "never_invoke_close_again_under_any_outcome": true
+  }
+}
+

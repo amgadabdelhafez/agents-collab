@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active harvto-d10-guarded-apply
+[pass] state/invariants/10-current-task.sh

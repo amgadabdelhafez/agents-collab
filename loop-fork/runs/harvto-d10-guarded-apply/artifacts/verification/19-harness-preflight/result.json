@@ -1,0 +1,10 @@
+{
+  "command": "./harness preflight --json",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "startedAt": "2026-08-18T15:12:12.457Z",
+  "endedAt": "2026-08-18T15:12:12.813Z",
+  "exitCode": 0,
+  "outputSha256": "c8a93dff43cbbbbf0ceb10a5288e6829fcb17e4e47d562029bbc9ff5bd54d839",
+  "status": "pass"
+}
+

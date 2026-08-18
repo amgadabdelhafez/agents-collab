@@ -1,0 +1,2 @@
+./scripts/verify.sh harvto-d10-guarded-apply harvto-d10-guarded-apply
+

@@ -1,0 +1,10 @@
+{
+  "task_id": "harvto-d10-guarded-apply",
+  "status": "pass",
+  "run_dir": "runs/harvto-d10-guarded-apply",
+  "eval_status": "pass",
+  "required": [
+    "unit"
+  ]
+}
+

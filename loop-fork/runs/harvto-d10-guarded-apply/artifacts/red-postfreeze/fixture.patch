@@ -1,0 +1,193 @@
+diff --git a/loop-fork/tests/loop/utility-runtime.test.ts b/loop-fork/tests/loop/utility-runtime.test.ts
+index 40cb3a4..5c80d66 100644
+--- a/loop-fork/tests/loop/utility-runtime.test.ts
++++ b/loop-fork/tests/loop/utility-runtime.test.ts
+@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
+ import {
+   appendFileSync,
+   chmodSync,
++  existsSync,
+   mkdirSync,
+   mkdtempSync,
+   readFileSync,
+@@ -2828,6 +2829,180 @@ test("D8 stale utility write authority rejects before two-file mutation", async
+   }
+ });
+ 
++test("D10 guarded apply rejects absent null-preimage target before mutation and journaling", async () => {
++  const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-d10-absent-"));
++  const runDir = join(repoRoot, ".loop", "runs", "apply");
++  const jobId = "d10-absent-target";
++  const target = "src/new.ts";
++  const targetPath = join(repoRoot, target);
++  const patch = [
++    "diff --git a/src/new.ts b/src/new.ts",
++    "new file mode 100644",
++    "--- /dev/null",
++    "+++ b/src/new.ts",
++    "@@ -0,0 +1 @@",
++    "+export const created = true;",
++    "",
++  ].join("\n");
++
++  mkdirSync(join(repoRoot, "src"), { recursive: true });
++  mkdirSync(runDir, { recursive: true });
++  writeFileSync(
++    join(runDir, "manifest.json"),
++    JSON.stringify({ cwd: repoRoot })
++  );
++  const request = createUtilityRouteRequest({
++    acceptanceCriteria: [
++      "guarded apply must not create an absent exact target",
++    ],
++    authority: {},
++    id: jobId,
++    kind: "edit",
++    objective: "Propose one exact new-file patch for guarded full-agent review",
++    readScope: [target],
++    requester: "claude",
++    requiredCapabilities: ["inspect", "scoped-edit"],
++    risk: "low",
++    workShape: "separable",
++    writeScope: [target],
++  });
++
++  try {
++    appendUtilityRouteRequest(runDir, request);
++    activateUtilityEpoch(runDir, 30);
++    transitionUtilityJob(runDir, jobId, "routed-utility", {
++      routeEpoch: 30,
++    });
++    claimUtilityJob(runDir, 30, {
++      jobId,
++      workerId: "au-pair",
++      workerPid: 6061,
++    });
++    transitionUtilityJob(runDir, jobId, "running");
++
++    const broker = await createUtilityToolBroker({
++      artifactDir: `.loop/runs/apply/utility/artifacts/${jobId}`,
++      commandAllowlist: [],
++      exactWriteScopes: true,
++      readScopes: [target],
++      repoRoot,
++      writeScopes: [target],
++    });
++    const proposal = await broker.execute({
++      arguments: { patch, summary: "create one exact declared target" },
++      name: "propose_patch",
++    });
++    if (
++      !(
++        proposal.ok &&
++        proposal.artifact?.manifestPath &&
++        proposal.artifact.manifestSha256
++      )
++    ) {
++      throw new Error("failed to create the valid D10 absent-target proposal");
++    }
++    expect(proposal.data).toMatchObject({
++      preimages: [{ path: target, sha256: null }],
++      targets: [target],
++    });
++    expect(proposal.artifact.sha256).toBe(
++      createHash("sha256").update(patch).digest("hex")
++    );
++    expect(proposal.artifact.manifestSha256).toMatch(SHA256_HEX_RE);
++    expect(existsSync(targetPath)).toBe(false);
++
++    transitionUtilityJob(runDir, jobId, "completed", {
++      result: {
++        artifactRefs: [
++          {
++            kind: "diff",
++            manifestPath: proposal.artifact.manifestPath,
++            manifestSha256: proposal.artifact.manifestSha256,
++            path: proposal.artifact.path,
++            sha256: proposal.artifact.sha256,
++          },
++        ],
++        checks: [],
++        filesChanged: [],
++        status: "completed",
++        summary: "valid absent-target patch proposed under live authority",
++      },
++    });
++
++    let outcome:
++      | { kind: "rejected"; message: string }
++      | { kind: "resolved"; status: "applied" | "already-applied" };
++    try {
++      const result = await applyUtilityJobPatch(
++        runDir,
++        jobId,
++        proposal.artifact.sha256,
++        "codex"
++      );
++      outcome = { kind: "resolved", status: result.status };
++    } catch (error) {
++      outcome = {
++        kind: "rejected",
++        message: error instanceof Error ? error.message : String(error),
++      };
++    }
++
++    const afterApply = readUtilityJob(runDir, jobId);
++    const targetExists = existsSync(targetPath);
++    const observation = {
++      application: afterApply?.application,
++      artifacts: {
++        manifestSha256: proposal.artifact.manifestSha256,
++        patchSha256: proposal.artifact.sha256,
++      },
++      authority: {
++        claimEpoch: afterApply?.claim?.epoch,
++        currentEpoch: Number.parseInt(
++          readFileSync(join(runDir, "utility", "epoch"), "utf8").trim(),
++          10
++        ),
++        routeEpoch: afterApply?.routeEpoch,
++      },
++      eventTypes: afterApply?.events.map((event) => event.type),
++      outcome,
++      patchAppliedEvents:
++        afterApply?.events.filter((event) => event.type === "patch-applied")
++          .length ?? 0,
++      proposal: proposal.data,
++      target: {
++        currentBeforeApply: null,
++        exists: targetExists,
++        expectedPreimage: null,
++        path: target,
++        sha256: targetExists
++          ? createHash("sha256")
++              .update(readFileSync(targetPath))
++              .digest("hex")
++          : null,
++      },
++    };
++
++    if (outcome.kind !== "rejected") {
++      throw new Error(
++        `D10 guarded apply created or accepted an absent target\n${JSON.stringify(observation, null, 2)}`
++      );
++    }
++    expect(outcome.message).toContain(target);
++    expect(outcome.message).toContain("expected=absent");
++    expect(outcome.message).toContain("current=absent");
++    expect(observation.target).toEqual({
++      currentBeforeApply: null,
++      exists: false,
++      expectedPreimage: null,
++      path: target,
++      sha256: null,
++    });
++    expect(observation.patchAppliedEvents).toBe(0);
++  } finally {
++    rmSync(repoRoot, { recursive: true, force: true });
++  }
++});
++
+ test("a full agent applies a completed utility patch with pre/postimage journal proof", async () => {
+   const repoRoot = mkdtempSync(join(tmpdir(), "loop-utility-guarded-apply-"));
+   const runDir = join(repoRoot, ".loop", "runs", "apply");

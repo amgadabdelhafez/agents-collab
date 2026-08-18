@@ -1,0 +1,9 @@
+{
+  "command": "bun run test:file -- tests/loop/utility-runtime.test.ts --test-name-pattern \"D10 guarded apply rejects absent null-preimage target before mutation and journaling\"",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "startedAt": "2026-08-18T14:08:27.009Z",
+  "endedAt": "2026-08-18T14:08:27.355Z",
+  "exitCode": 0,
+  "outputSha256": "0ef6a61c6c24cfa58a3ab31d8c63cb7c9310e6fc9d50bda9b98ae4b572c16a96",
+  "status": "pass"
+}

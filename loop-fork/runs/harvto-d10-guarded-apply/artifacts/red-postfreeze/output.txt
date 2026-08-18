@@ -1,0 +1,84 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/utility-runtime.test.ts --test-name-pattern "D10 guarded apply rejects absent null-preimage target before mutation and journaling"
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/utility-runtime.test.ts:
+2981 |           : null,
+2982 |       },
+2983 |     };
+2984 | 
+2985 |     if (outcome.kind !== "rejected") {
+2986 |       throw new Error(
+                       ^
+error: D10 guarded apply created or accepted an absent target
+{
+  "application": {
+    "appliedAt": "2026-08-18T13:37:33.099Z",
+    "appliedBy": "codex",
+    "manifestPath": ".loop/runs/apply/utility/artifacts/d10-absent-target/af502c01-f501-4414-aa5a-90a5660e38f9.json",
+    "manifestSha256": "2dbf7f637104cfb6a3ca2c71b14569fe6fe45872bde885931464d91cfffb4232",
+    "patchPath": ".loop/runs/apply/utility/artifacts/d10-absent-target/af502c01-f501-4414-aa5a-90a5660e38f9.patch",
+    "patchSha256": "f077effdce9b0260c7d8c57980ae5128d150ecd4f253fa770ebc42833e67f10a",
+    "postimages": [
+      {
+        "path": "src/new.ts",
+        "sha256": "a568bdcc8ccc6cc56a201d8eee207a4ec38998aa78a0ad4edd66472ec50d7e41"
+      }
+    ],
+    "preimages": [
+      {
+        "path": "src/new.ts",
+        "sha256": null
+      }
+    ]
+  },
+  "artifacts": {
+    "manifestSha256": "2dbf7f637104cfb6a3ca2c71b14569fe6fe45872bde885931464d91cfffb4232",
+    "patchSha256": "f077effdce9b0260c7d8c57980ae5128d150ecd4f253fa770ebc42833e67f10a"
+  },
+  "authority": {
+    "claimEpoch": 30,
+    "currentEpoch": 30,
+    "routeEpoch": 30
+  },
+  "eventTypes": [
+    "route-requested",
+    "state-transition",
+    "claimed",
+    "state-transition",
+    "result-recorded",
+    "patch-applied"
+  ],
+  "outcome": {
+    "kind": "resolved",
+    "status": "applied"
+  },
+  "patchAppliedEvents": 1,
+  "proposal": {
+    "preimages": [
+      {
+        "path": "src/new.ts",
+        "sha256": null
+      }
+    ],
+    "summary": "create one exact declared target",
+    "targets": [
+      "src/new.ts"
+    ]
+  },
+  "target": {
+    "currentBeforeApply": null,
+    "exists": true,
+    "expectedPreimage": null,
+    "path": "src/new.ts",
+    "sha256": "a568bdcc8ccc6cc56a201d8eee207a4ec38998aa78a0ad4edd66472ec50d7e41"
+  }
+}
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork/tests/loop/utility-runtime.test.ts:2986:17)
+(fail) D10 guarded apply rejects absent null-preimage target before mutation and journaling [32.01ms]
+
+ 0 pass
+ 57 filtered out
+ 1 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [70.00ms]
+error: script "test:file" exited with code 1

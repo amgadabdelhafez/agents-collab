@@ -1,0 +1,1 @@
+shasum -a 256 README.md command.txt fixture.json fixture.patch output.txt SHA256SUMS
