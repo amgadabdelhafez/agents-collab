@@ -5957,3 +5957,50 @@ append.
 Next step: restage only `status.md`, repeat exact-scope/diff/content/preservation gates, confirm the
 branch is not `main`, and create the one no-amend bookkeeping commit. No review request occurs
 until the exact commit SHA exists. D10 remains forbidden.
+
+## 2026-08-18 — Run92 bookkeeping REVISE authorizes ledger-only correction
+
+Result: D9 bookkeeping commit `ca49485cbdfe87d675f5f7b6146b188ef2cb6aff` was created once,
+without amendment, on exact parent `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`. It contains the
+proven 87-path manifest with 8,748 insertions and 20 deletions. Path-list SHA-256 is
+`80c5f9e6705c18d832d92ae328f61ee733a450306c3801f7111a1abf7038e29a`; committed blob/path
+manifest SHA-256 is `698422849d0479d1ec7ac7372ae038de5b931a29c8cb1ce48619ce5d329fa8e7`.
+Post-commit index is empty and porcelain contains exactly the nine preserved untracked scopes.
+
+Claude returned authentic literal `REVISE` at `2026-08-18T07:36:23Z` in message
+`6a8bd258-2ac9-43d7-a516-e7545babd326`, received at `2026-08-18T07:37:45.663Z`. It quotes exact
+commit `ca49485cbdfe87d675f5f7b6146b188ef2cb6aff` and request
+`run92-bookkeeping-c2e9ac23-2d01-45dd-810b-903a1a8e2a43`, whose timestamp was
+`2026-08-18T07:32:35Z`. Claude independently passed commit shape, all 87 paths and blobs, full diff,
+numstats, D9-only lifecycle state, sealed evidence, exclusions, six-pane topology, and utility
+`0/off/0`. Sole defect was the logically unavoidable absence of the commit's own SHA and later
+review outcome from its committed `status.md` blob.
+
+Review was zero-write: immediate pre-request and post-verdict snapshots both have HEAD
+`ca49485cbdfe87d675f5f7b6146b188ef2cb6aff`, empty index, exact nine-scope porcelain SHA-256
+`0b934ae4fe40c372ef0395769603eaa2e9317af855c4314cb79eab950e67adfe`, sealed pre-close
+`8952015a…e9a2`, failed-close `0bda1cb1…06dc6`, repaired task log `b5193523…ee92`, and all three
+scratch files `214a2602…36d3`. Claude created no scratch or repository mutation.
+
+The prior repair verdict remains literal `REPAIR VALID` at `2026-08-18T07:15:23Z`, bound to
+request `run92-repair-743ebe63-c60b-4e25-830e-6c2b04ac9df7` and exact task-log SHA-256
+`b5193523d0fdc0b6bf308f90d16aa83248b11d9142542c9cb8c1ebcdfc59ee92`. Final lifecycle state
+remains 65 tasks with 61 done / 2 active / 2 parked; D9 alone is `done/pass` with `ended_at`
+`2026-08-18T07:19:09Z`; current-task is absent; coordination has 21 rows with exactly one D9 start
+and one D9 done row; all 64 non-D9 records remain unchanged.
+
+`REVISE` authorizes exactly one additive no-amend correction commit whose path set is only this
+append to root `status.md`. The required outcome is `BOOKKEEPING PASS` after this bounded REVISE
+correction, bound to the original bookkeeping request and the correction commit SHA. Literal
+follow-up `BOOKKEEPING PASS` remains pending and is a hard gate before handover. No prior status
+entry, `PLAN.md`, any of the 87 bookkeeping paths, lifecycle byte, frozen evidence, or scratch may
+change.
+
+The prior 380,335 `status.md` bytes, SHA-256
+`3f166796fcdf22bd3293732640fe73d66554aec53a0eecc2c2074c9c9ba4a1a0`, are the exact prefix of this
+append.
+
+Next step: stage only `status.md`, prove the append-only one-path delta and all protected state,
+create the single authorized correction commit without amendment, then send one follow-up
+zero-write review bound to both commit SHAs. Do not request handover before literal
+`BOOKKEEPING PASS`. D10 remains forbidden.
