@@ -1444,12 +1444,12 @@ export class UtilityToolBroker {
       return { application: existing, status: "already-applied" };
     }
 
-    await this.assertImagesMatch(manifestPreimages, "preimage");
-    await this.runGitApply(patchArtifact.relative, true);
+    await this.assertGuardedPreimages(manifestPreimages);
+    await this.runGitApply(patchArtifact.relative, true, manifestPreimages);
     // Recheck after git's applicability probe so concurrent byte drift cannot
     // pass only because the earlier proposal snapshot happened to match.
-    await this.assertImagesMatch(manifestPreimages, "preimage");
-    await this.runGitApply(patchArtifact.relative, false);
+    await this.assertGuardedPreimages(manifestPreimages);
+    await this.runGitApply(patchArtifact.relative, false, manifestPreimages);
     const postimages = await Promise.all(
       targetPaths.map((path) => this.currentImage(path))
     );
@@ -1606,6 +1606,39 @@ export class UtilityToolBroker {
     return { path: target.relative, sha256: content ? hash(content) : null };
   }
 
+  private imageComparisonEvidence(
+    expected: UtilityFileImage,
+    current: UtilityFileImage
+  ): string {
+    return `${expected.path} expected=${expected.sha256 ?? "absent"} current=${current.sha256 ?? "absent"}`;
+  }
+
+  private async guardedPreimageEvidence(
+    expected: readonly UtilityFileImage[]
+  ): Promise<string> {
+    const comparisons: string[] = [];
+    for (const image of expected) {
+      comparisons.push(
+        this.imageComparisonEvidence(image, await this.currentImage(image.path))
+      );
+    }
+    return comparisons.join("; ");
+  }
+
+  private async assertGuardedPreimages(
+    expected: readonly UtilityFileImage[]
+  ): Promise<void> {
+    for (const image of expected) {
+      const current = await this.currentImage(image.path);
+      if (image.sha256 === null || current.sha256 !== image.sha256) {
+        throw new ToolPolicyError(
+          "patch_drift",
+          `preimage drift detected: ${this.imageComparisonEvidence(image, current)}`
+        );
+      }
+    }
+  }
+
   private async assertImagesMatch(
     expected: readonly UtilityFileImage[],
     label: string
@@ -1623,7 +1656,8 @@ export class UtilityToolBroker {
 
   private async runGitApply(
     patchPath: string,
-    checkOnly: boolean
+    checkOnly: boolean,
+    guardedPreimages?: readonly UtilityFileImage[]
   ): Promise<void> {
     const result = await this.runCommand({
       argv: [
@@ -1652,10 +1686,9 @@ export class UtilityToolBroker {
       );
     }
     if (result.exitCode !== 0) {
-      const detail = result.stderr
-        .replace(ANSI_SGR_RE, "")
-        .trim()
-        .slice(0, 1000);
+      const detail = guardedPreimages
+        ? await this.guardedPreimageEvidence(guardedPreimages)
+        : result.stderr.replace(ANSI_SGR_RE, "").trim().slice(0, 1000);
       const message = checkOnly
         ? "Patch is malformed or no longer applies cleanly"
         : "Patch application failed";

@@ -15,7 +15,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   type CommandRequest,
   createUtilityToolBroker,
@@ -1936,6 +1936,398 @@ test("treats an exact declared new write file as an empty search domain", async 
     await expect(lstat(join(root, "src", "new.ts"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+});
+
+test("guarded apply rejects an absent preimage before Git but preserves recorded replay", async () => {
+  await withRepo(async (root) => {
+    const target = "src/new.ts";
+    const targetPath = join(root, target);
+    const createdBytes = "export const created = true;\n";
+    const requests: CommandRequest[] = [];
+    const runner = mock((request: CommandRequest) => {
+      requests.push(request);
+      return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
+    });
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".d10-absent-artifacts",
+        commandAllowlist: [],
+        exactWriteScopes: true,
+        readScopes: [target],
+        repoRoot: root,
+        writeScopes: [target],
+      },
+      {
+        id: () => "d10-absent",
+        now: () => 1_700_000_000_000,
+        runCommand: runner,
+      }
+    );
+    const patch = [
+      `diff --git a/${target} b/${target}`,
+      "new file mode 100644",
+      "--- /dev/null",
+      `+++ b/${target}`,
+      "@@ -0,0 +1 @@",
+      "+export const created = true;",
+      "",
+    ].join("\n");
+    const proposal = await broker.execute({
+      arguments: { patch, summary: "create exact absent target" },
+      name: "propose_patch",
+    });
+    if (
+      !(proposal.artifact?.manifestPath && proposal.artifact.manifestSha256)
+    ) {
+      throw new Error(
+        "D10 absent-target proposal did not publish both artifacts"
+      );
+    }
+    const input = {
+      appliedBy: "codex" as const,
+      expectedManifestSha256: proposal.artifact.manifestSha256,
+      expectedPatchSha256: proposal.artifact.sha256,
+      manifestPath: proposal.artifact.manifestPath,
+      patchPath: proposal.artifact.path,
+    };
+
+    let message = "";
+    try {
+      await broker.applyPatchProposal(input);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain(target);
+    expect(message).toContain("expected=absent");
+    expect(message).toContain("current=absent");
+    expect(message).not.toContain(createdBytes.trim());
+    expect(message).not.toContain("tests/example.test.ts");
+    await expect(lstat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.argv).toContain("--check");
+
+    await writeFile(targetPath, createdBytes);
+    const canonicalRoot = await realpath(root);
+    const replay = await broker.applyPatchProposal({
+      ...input,
+      existingApplication: {
+        appliedAt: "2026-08-18T00:00:00.000Z",
+        appliedBy: "codex",
+        manifestPath: relative(canonicalRoot, proposal.artifact.manifestPath),
+        manifestSha256: proposal.artifact.manifestSha256,
+        patchPath: relative(canonicalRoot, proposal.artifact.path),
+        patchSha256: proposal.artifact.sha256,
+        postimages: [
+          {
+            path: target,
+            sha256: createHash("sha256").update(createdBytes).digest("hex"),
+          },
+        ],
+        preimages: [{ path: target, sha256: null }],
+      },
+    });
+    expect(replay.status).toBe("already-applied");
+    expect(requests).toHaveLength(1);
+  });
+});
+
+test("guarded apply rejects removed and changed targets with digest-only evidence", async () => {
+  for (const scenario of ["removed", "changed"] as const) {
+    await withRepo(async (root) => {
+      const target = "src/hello.ts";
+      const targetPath = join(root, target);
+      const originalBytes = "export const hello = 'world';\n";
+      const changedBytes = "PRIVATE_CHANGED_TARGET_BYTES\n";
+      const unrelatedPath = "tests/example.test.ts";
+      const requests: CommandRequest[] = [];
+      const runner = mock((request: CommandRequest) => {
+        requests.push(request);
+        return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
+      });
+      const broker = await createUtilityToolBroker(
+        {
+          artifactDir: `.d10-${scenario}-artifacts`,
+          commandAllowlist: [],
+          exactWriteScopes: true,
+          readScopes: [target],
+          repoRoot: root,
+          writeScopes: [target],
+        },
+        {
+          id: () => `d10-${scenario}`,
+          now: () => 1_700_000_000_000,
+          runCommand: runner,
+        }
+      );
+      const patch = [
+        `diff --git a/${target} b/${target}`,
+        `--- a/${target}`,
+        `+++ b/${target}`,
+        "@@ -1 +1 @@",
+        "-export const hello = 'world';",
+        "+export const hello = 'guarded';",
+        "",
+      ].join("\n");
+      const proposal = await broker.execute({
+        arguments: { patch, summary: `D10 ${scenario} target` },
+        name: "propose_patch",
+      });
+      if (
+        !(proposal.artifact?.manifestPath && proposal.artifact.manifestSha256)
+      ) {
+        throw new Error(
+          `D10 ${scenario} proposal did not publish both artifacts`
+        );
+      }
+      if (scenario === "removed") {
+        await rm(targetPath);
+      } else {
+        await writeFile(targetPath, changedBytes);
+      }
+
+      let message = "";
+      try {
+        await broker.applyPatchProposal({
+          appliedBy: "codex",
+          expectedManifestSha256: proposal.artifact.manifestSha256,
+          expectedPatchSha256: proposal.artifact.sha256,
+          manifestPath: proposal.artifact.manifestPath,
+          patchPath: proposal.artifact.path,
+        });
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error);
+      }
+      const expectedSha256 = createHash("sha256")
+        .update(originalBytes)
+        .digest("hex");
+      const currentState =
+        scenario === "removed"
+          ? "absent"
+          : createHash("sha256").update(changedBytes).digest("hex");
+      expect(message).toContain(target);
+      expect(message).toContain(`expected=${expectedSha256}`);
+      expect(message).toContain(`current=${currentState}`);
+      expect(message).not.toContain(originalBytes.trim());
+      expect(message).not.toContain(changedBytes.trim());
+      expect(message).not.toContain(unrelatedPath);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.argv).toContain("--check");
+    });
+  }
+});
+
+test("guarded apply redacts applicability errors and rechecks concurrent drift", async () => {
+  await withRepo(async (root) => {
+    const target = "src/hello.ts";
+    const targetPath = join(root, target);
+    const originalBytes = "export const hello = 'world';\n";
+    const expectedSha256 = createHash("sha256")
+      .update(originalBytes)
+      .digest("hex");
+    const requests: CommandRequest[] = [];
+    const runner = mock((request: CommandRequest) => {
+      requests.push(request);
+      return Promise.resolve(
+        requests.length === 2
+          ? {
+              exitCode: 1,
+              stderr:
+                "PRIVATE_GIT_STDERR_BYTES tests/example.test.ts src/hello.ts",
+              stdout: "",
+            }
+          : { exitCode: 0, stderr: "", stdout: "" }
+      );
+    });
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".d10-non-applicable-artifacts",
+        commandAllowlist: [],
+        exactWriteScopes: true,
+        readScopes: [target],
+        repoRoot: root,
+        writeScopes: [target],
+      },
+      { id: () => "d10-non-applicable", runCommand: runner }
+    );
+    const patch = [
+      `diff --git a/${target} b/${target}`,
+      `--- a/${target}`,
+      `+++ b/${target}`,
+      "@@ -1 +1 @@",
+      "-export const hello = 'world';",
+      "+export const hello = 'guarded';",
+      "",
+    ].join("\n");
+    const proposal = await broker.execute({
+      arguments: { patch, summary: "become non-applicable at guarded apply" },
+      name: "propose_patch",
+    });
+    if (
+      !(proposal.artifact?.manifestPath && proposal.artifact.manifestSha256)
+    ) {
+      throw new Error(
+        "D10 non-applicable proposal did not publish both artifacts"
+      );
+    }
+
+    let message = "";
+    try {
+      await broker.applyPatchProposal({
+        appliedBy: "codex",
+        expectedManifestSha256: proposal.artifact.manifestSha256,
+        expectedPatchSha256: proposal.artifact.sha256,
+        manifestPath: proposal.artifact.manifestPath,
+        patchPath: proposal.artifact.path,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain(
+      "Patch is malformed or no longer applies cleanly"
+    );
+    expect(message).toContain(target);
+    expect(message).toContain(`expected=${expectedSha256}`);
+    expect(message).toContain(`current=${expectedSha256}`);
+    expect(message).not.toContain("PRIVATE_GIT_STDERR_BYTES");
+    expect(message).not.toContain(originalBytes.trim());
+    expect(message).not.toContain("tests/example.test.ts");
+    expect(await readFile(targetPath, "utf8")).toBe(originalBytes);
+    expect(requests).toHaveLength(2);
+    expect(requests.every((request) => request.argv.includes("--check"))).toBe(
+      true
+    );
+  });
+
+  await withRepo(async (root) => {
+    const target = "src/hello.ts";
+    const targetPath = join(root, target);
+    const originalBytes = "export const hello = 'world';\n";
+    const concurrentBytes = "PRIVATE_CONCURRENT_TARGET_BYTES\n";
+    const requests: CommandRequest[] = [];
+    const runner = mock(async (request: CommandRequest) => {
+      requests.push(request);
+      if (requests.length === 2) {
+        await writeFile(targetPath, concurrentBytes);
+      }
+      return { exitCode: 0, stderr: "", stdout: "" };
+    });
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".d10-concurrent-artifacts",
+        commandAllowlist: [],
+        exactWriteScopes: true,
+        readScopes: [target],
+        repoRoot: root,
+        writeScopes: [target],
+      },
+      { id: () => "d10-concurrent", runCommand: runner }
+    );
+    const patch = [
+      `diff --git a/${target} b/${target}`,
+      `--- a/${target}`,
+      `+++ b/${target}`,
+      "@@ -1 +1 @@",
+      "-export const hello = 'world';",
+      "+export const hello = 'guarded';",
+      "",
+    ].join("\n");
+    const proposal = await broker.execute({
+      arguments: { patch, summary: "drift after guarded applicability check" },
+      name: "propose_patch",
+    });
+    if (
+      !(proposal.artifact?.manifestPath && proposal.artifact.manifestSha256)
+    ) {
+      throw new Error("D10 concurrent proposal did not publish both artifacts");
+    }
+
+    let message = "";
+    try {
+      await broker.applyPatchProposal({
+        appliedBy: "codex",
+        expectedManifestSha256: proposal.artifact.manifestSha256,
+        expectedPatchSha256: proposal.artifact.sha256,
+        manifestPath: proposal.artifact.manifestPath,
+        patchPath: proposal.artifact.path,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain(target);
+    expect(message).toContain(
+      `expected=${createHash("sha256").update(originalBytes).digest("hex")}`
+    );
+    expect(message).toContain(
+      `current=${createHash("sha256").update(concurrentBytes).digest("hex")}`
+    );
+    expect(message).not.toContain(originalBytes.trim());
+    expect(message).not.toContain(concurrentBytes.trim());
+    expect(message).not.toContain("tests/example.test.ts");
+    expect(await readFile(targetPath, "utf8")).toBe(concurrentBytes);
+    expect(requests).toHaveLength(2);
+    expect(requests.every((request) => request.argv.includes("--check"))).toBe(
+      true
+    );
+  });
+});
+
+test("guarded apply changes an existing target once and replays without mutation", async () => {
+  await withRepo(async (root) => {
+    const target = "src/hello.ts";
+    const targetPath = join(root, target);
+    const broker = await createUtilityToolBroker(
+      {
+        artifactDir: ".d10-valid-artifacts",
+        commandAllowlist: [],
+        exactWriteScopes: true,
+        readScopes: [target],
+        repoRoot: root,
+        writeScopes: [target],
+      },
+      { id: () => "d10-valid", now: () => 1_700_000_000_000 }
+    );
+    const patch = [
+      `diff --git a/${target} b/${target}`,
+      `--- a/${target}`,
+      `+++ b/${target}`,
+      "@@ -1 +1 @@",
+      "-export const hello = 'world';",
+      "+export const hello = 'guarded';",
+      "",
+    ].join("\n");
+    const proposal = await broker.execute({
+      arguments: { patch, summary: "valid existing target" },
+      name: "propose_patch",
+    });
+    if (
+      !(proposal.artifact?.manifestPath && proposal.artifact.manifestSha256)
+    ) {
+      throw new Error("D10 valid proposal did not publish both artifacts");
+    }
+    const input = {
+      appliedBy: "codex" as const,
+      expectedManifestSha256: proposal.artifact.manifestSha256,
+      expectedPatchSha256: proposal.artifact.sha256,
+      manifestPath: proposal.artifact.manifestPath,
+      patchPath: proposal.artifact.path,
+    };
+
+    const applied = await broker.applyPatchProposal(input);
+    expect(applied.status).toBe("applied");
+    expect(await readFile(targetPath, "utf8")).toBe(
+      "export const hello = 'guarded';\n"
+    );
+    const replay = await broker.applyPatchProposal({
+      ...input,
+      appliedBy: "claude",
+      existingApplication: applied.application,
+    });
+    expect(replay.status).toBe("already-applied");
+    expect(replay.application).toEqual(applied.application);
+    expect(await readFile(targetPath, "utf8")).toBe(
+      "export const hello = 'guarded';\n"
+    );
   });
 });
 
