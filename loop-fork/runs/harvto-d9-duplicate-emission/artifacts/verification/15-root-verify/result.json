@@ -1,0 +1,6 @@
+{
+  "command": "./scripts/verify.sh harvto-d9-duplicate-emission harvto-d9-duplicate-emission",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects",
+  "exitCode": 0,
+  "status": "pass"
+}

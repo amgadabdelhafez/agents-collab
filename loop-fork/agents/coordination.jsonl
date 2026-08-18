@@ -17,3 +17,5 @@
 {"ts": "2026-08-17T08:41:15Z", "agent": "amgad-60873", "task": "harvto-d7-handoff-identity", "intent": "done", "file": null}
 {"ts": "2026-08-17T16:27:46Z", "agent": "amgad-19877", "task": "harvto-d8-stale-write-lease", "intent": "task-start", "file": null}
 {"ts": "2026-08-17T19:01:10Z", "agent": "amgad-71507", "task": "harvto-d8-stale-write-lease", "intent": "done", "file": null}
+{"ts": "2026-08-17T19:41:49Z", "agent": "amgad-90019", "task": "harvto-d9-duplicate-emission", "intent": "task-start", "file": null}
+{"ts": "2026-08-18T07:19:09Z", "agent": "amgad-77754", "task": "harvto-d9-duplicate-emission", "intent": "done", "file": null}

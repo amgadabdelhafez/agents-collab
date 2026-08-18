@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "task_id": "harvto-d9-duplicate-emission",
+  "recorded_at": "2026-08-17T20:46:00Z",
+  "commit_sha": "8c2a1c5ea5d49fcd98a9abf359a5120baf867043",
+  "parent_sha": "aeb1acdae649f20504f58cc75d262f94974d4b66",
+  "paths": [
+    {
+      "path": "loop-fork/src/loop/bridge-store.ts",
+      "sha256": "8e6f41b973b9ff853231beb583650890713834dc73d58c378b31065dae42a9ba",
+      "insertions": 78,
+      "deletions": 9
+    },
+    {
+      "path": "loop-fork/tests/loop/governess-p0-runtime.test.ts",
+      "sha256": "91b4562dc24929f237ee13e974f06453ffa2538967519cd20e35c41755670979",
+      "insertions": 481,
+      "deletions": 0
+    }
+  ],
+  "normal_and_ignore_all_space_numstats_equal": true,
+  "commit_diff_check_exit": 0,
+  "index_empty_after_commit": true,
+  "implementation_paths_clean_after_commit": true,
+  "final_gates_sha256": "a775514e0af19a16dd19a2ad7bcb238acd5322fe59d67108f3f6368437097325",
+  "frozen_red_manifest_sha256": "354e8146f6ca1c0976b4e7683b8372d3984e10911c3e76e3f0e89fa3ca95d7ae",
+  "review_status": "pending"
+}

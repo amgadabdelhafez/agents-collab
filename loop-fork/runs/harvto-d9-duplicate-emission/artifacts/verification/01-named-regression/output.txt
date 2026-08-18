@@ -1,0 +1,11 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test "tests/loop/governess-p0-runtime.test.ts" --test-name-pattern "D9 resolved acknowledgement emits once across supersession retry and replay"
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-p0-runtime.test.ts:
+(pass) D9 resolved acknowledgement emits once across supersession retry and replay [2.99ms]
+
+ 1 pass
+ 19 filtered out
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [23.00ms]

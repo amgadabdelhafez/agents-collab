@@ -1,0 +1,280 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/paired-loop.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/paired-loop.test.ts:
+(pass) runPairedLoop fails when --run-id does not resolve to an existing manifest [13.12ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 11
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop starts the non-primary peer session in review mode [20.53ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 12
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 13
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) non-tmux paired prompts apply Caveman guidance with an exact off switch [36.73ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop resolves a stored raw session id back to its run manifest [31.53ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop restarts a completed paired run with fresh agent sessions [23.35ms]
+(pass) preparePairedOptions loads stored pair ids before planning [22.48ms]
+(pass) preparePairedOptions writes a resumeable manifest for a fresh paired run [21.20ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: raw
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop seeds a fresh paired run from a raw primary session id [27.25ms]
+(pass) runPairedLoop marks a failed startup as failed [17.92ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4a
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop records structured lifecycle events when no bridge traffic occurs [22.31ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4c
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+(pass) runPairedLoop does not mark a run completed when the draft PR step fails [17.53ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers forwarded bridge messages to the target agent [18.68ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4-supervisor
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) a pending supervisor escalation does not block paired-agent delivery [16.23ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop keeps a failed bridge message queued until the next run [29.43ms]
+
+[loop] PLAN.md:
+
+Ship feature
+
+Follow-up:
+Add the missing edge-case test.
+[loop] paired run: 4d
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop restores a pending follow-up prompt on resume [31.42ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 5
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers peer messages back to the primary agent [17.76ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 9
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop skips the default work turn after draining input for the primary agent [15.69ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 7
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop uses the paired peer reviewer in paired mode [16.25ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 8
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop uses the paired peer instead of same-agent review in paired mode [15.79ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 10
+
+[loop] iteration 1/2
+
+[loop] review with codex
+
+[loop] bridge codex -> claude
+
+[loop] reviewer feedback delivered through bridge.
+
+[loop] iteration 2/2
+
+[loop] reached max iterations (2), stopping.
+(pass) runPairedLoop does not duplicate bridged peer review notes in the next prompt [18.50ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 6
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+(pass) runPairedLoop delivers cross-direction bridge messages without permanent suppression [15.89ms]
+
+ 21 pass
+ 0 fail
+ 98 expect() calls
+Ran 21 tests across 1 file. [482.00ms]

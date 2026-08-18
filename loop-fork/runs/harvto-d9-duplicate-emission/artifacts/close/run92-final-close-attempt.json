@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "run_id": 92,
+  "task_id": "harvto-d9-duplicate-emission",
+  "command": "./harness done harvto-d9-duplicate-emission",
+  "argv": [
+    "./harness",
+    "done",
+    "harvto-d9-duplicate-emission"
+  ],
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects/loop-fork",
+  "started_at": "2026-08-18T07:19:08.795932Z",
+  "ended_at": "2026-08-18T07:19:09.146690Z",
+  "duration_ms": 351,
+  "exit_code": 0,
+  "stdout": "specs/harvto-d9-duplicate-emission.md\n",
+  "stderr": "post-task state invariant check passed; see runs/harvto-d9-duplicate-emission/artifacts/post-task/state-invariants.log\ndebt scan completed: 0 finding(s), 0 appended\nregression harvest skipped: no bug-fix signal\n"
+}

@@ -1,0 +1,6 @@
+{
+  "command": "python3 scripts/check-baseline-allowlist.py runs/harvto-d9-duplicate-emission/eval.json",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects",
+  "exitCode": 0,
+  "status": "pass"
+}

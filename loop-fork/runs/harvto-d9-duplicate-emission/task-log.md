@@ -1,8 +1,10 @@
-# harvto-d9-duplicate-emission
+# Task harvto-d9-duplicate-emission
 
-Task completed 2026-08-18T07:19:09Z, mode emergent.
+Created: 2026-08-17T19:41:49Z
+Mode: emergent
+Description: D9 P2: reproduce four duplicate bridge emissions of one resolved acknowledgement and enforce idempotent single delivery.
 
-## What was built
+## What I changed
 
 - Updated `src/loop/bridge-store.ts` so explicit acknowledgement retries reuse the earliest
   reconstructed matching acknowledgement, comparing the recomputed source/target/body signature
@@ -15,15 +17,6 @@ Task completed 2026-08-18T07:19:09Z, mode emergent.
   earliest legacy canonical selection, malformed/untyped compatibility, and expired acknowledgement
   replay fencing.
 
-## Decisions made
+## Why
 
-- Promoted parked idea `specs/harvto-d9-duplicate-emission.md` into active task `harvto-d9-duplicate-emission`.
-
-## Open items at completion
-
-- Implement the promoted idea and complete normal verification.
-
-## Trajectory
-
-- 001 - initial (2026-08-17T19:41:49Z)
-- 002 - promoted parked idea (2026-08-17T19:41:49Z)
+## Notes

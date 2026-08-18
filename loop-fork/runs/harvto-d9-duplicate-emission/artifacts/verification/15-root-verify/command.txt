@@ -1,0 +1,1 @@
+./scripts/verify.sh harvto-d9-duplicate-emission harvto-d9-duplicate-emission

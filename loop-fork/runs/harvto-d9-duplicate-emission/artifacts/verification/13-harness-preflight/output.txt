@@ -1,0 +1,9 @@
+{
+  "task_id": "harvto-d9-duplicate-emission",
+  "status": "pass",
+  "run_dir": "runs/harvto-d9-duplicate-emission",
+  "eval_status": "pass",
+  "required": [
+    "unit"
+  ]
+}

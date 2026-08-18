@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "phase": "pre-close",
+  "recorded_at": "2026-08-17T21:01:10Z",
+  "task_id": "harvto-d9-duplicate-emission",
+  "supervisor_prepare_pause_ruling": "corrected-false-pause",
+  "governess": {
+    "epoch": 1786994688646150,
+    "exit_control_mode": "idle",
+    "handover_bundles": {},
+    "history": []
+  },
+  "authority": {
+    "plan_pass_id": "8a997fc9-5059-4ff0-8ad6-5f2e499981a2",
+    "red_valid_id": "e1eaabda-8aab-427e-be82-62edb66b3671",
+    "implementation_review_request_id": "1952cc9e-5110-46e2-a9ff-e8fc227a675e",
+    "implementation_pass_id": "e46fb317-3da1-4d7a-bc1c-9530c1fa0d11"
+  },
+  "git": {
+    "head": "8c2a1c5ea5d49fcd98a9abf359a5120baf867043",
+    "parent": "aeb1acdae649f20504f58cc75d262f94974d4b66",
+    "index_paths": [],
+    "implementation_paths_clean": true,
+    "production_sha256": "8e6f41b973b9ff853231beb583650890713834dc73d58c378b31065dae42a9ba",
+    "test_sha256": "91b4562dc24929f237ee13e974f06453ffa2538967519cd20e35c41755670979"
+  },
+  "utility": {
+    "LOOP_UTILITY_ENABLED": "0",
+    "LOOP_UTILITY_DELEGATION_MODE": "off",
+    "LOOP_AU_PAIR_ENABLED": "0"
+  },
+  "frozen_red": {
+    "verification": "5/5 OK",
+    "sha256sums_sha256": "354e8146f6ca1c0976b4e7683b8372d3984e10911c3e76e3f0e89fa3ca95d7ae"
+  },
+  "sealed_evidence": {
+    "final_gates_sha256": "a775514e0af19a16dd19a2ad7bcb238acd5322fe59d67108f3f6368437097325",
+    "implementation_commit_sha256": "9f65b180ff6d7bcda78a85a06634f539099414d198853ec2ea9d27949d51c5b7",
+    "task_eval_sha256": "179b71b99c2b1f2eb1dcc7d37f82c39555b405cdc9b310a44e03ff13a5dcf652",
+    "root_eval_sha256": "0da60930b68f4c0352f620fb8a5e3afdcd53f6cad0c01a7e5133d30317b27bb7"
+  },
+  "harness": {
+    "total_task_records": 65,
+    "status_counts": {
+      "active": 3,
+      "done": 60,
+      "parked": 2
+    },
+    "tasks_json_sha256": "54bd2952b2a8ba9657f852be91f259ae15608e1fe54939e1035b25c8cd21629c",
+    "all_task_records_sha256": "1962e4eaeace6dc20840101bd9b9b7d8ab14bfc807fdab086a1b2dd798cdd87d",
+    "non_d9_task_record_count": 64,
+    "non_d9_task_records_sha256": "35117d49b8ef645002af3f7d3d418face11900e4c9ae1b4c8df4474ddd579810",
+    "non_d9_per_record_hash_map_sha256": "f0c60fe347aeadc20c0b88c0e326d39d957abf55ffe86660628a792dad3cd381",
+    "parked_record_count": 13,
+    "non_d9_parked_record_count": 12,
+    "parked_ideas_sha256": "92d62a3ba252af5689edcffa69d8ae0a6ae76f2018d20b3c34ef4950c637360a",
+    "all_parked_records_sha256": "af2625bea18d4f1ae7e752cd27d9d310be1000381f499fcb271a63e3a247b1b2",
+    "non_d9_parked_records_sha256": "2828f444485a2d4b41344b3a088079e53f014a73faf407b38d7f2d4a3b9f27d9",
+    "coordination_record_count": 20,
+    "d9_coordination_record_count": 1,
+    "d9_terminal_record_count": 0,
+    "coordination_sha256": "16d5dd778df652dfd50ba66a8fe9326ad29b7be87fdb37e5cf6cdf191d0b9a9b",
+    "all_coordination_records_sha256": "0bf5ad0c98ddff7f962de62c640460694d3d0ef66c2d822d8d14969a301b38e8",
+    "non_d9_coordination_records_sha256": "1fd35775206c3b992b9cf7194241a52c4410de03522b409c8835d6cb4759b3e0",
+    "current_task_contents": "harvto-d9-duplicate-emission\n",
+    "current_task_sha256": "daad42e253619da99a0d63da3b259779f74da32f57ecd1123842fbbb40d2314a",
+    "flat_intake_sha256": "3f80ddba958c7ad0d3245f5825f62a878e45cfb157f4d6a2b2feeee1a6aab38e",
+    "meta_sha256": "5bd643fb82d692db8d0ea99deee63b5a00086cf2789bc2c334dc6c2a80cd585b",
+    "debt_register_line_count": 69,
+    "debt_register_sha256": "4959945d889118daabf1ccbc7940025d7bdf3db5f988caf7a3bd04ee22c77486"
+  },
+  "d9_record": {
+    "created_at": "2026-08-17T19:41:49Z",
+    "eval_status": "pending",
+    "id": "harvto-d9-duplicate-emission",
+    "mode": "emergent",
+    "run_dir": "runs/harvto-d9-duplicate-emission",
+    "spec_path": "specs/harvto-d9-duplicate-emission.md",
+    "status": "active"
+  },
+  "d9_record_sha256": "c52e4c95d6cb6d62346e93be9e58070a88b2e67906ff14ddf9d2514f8b27cb63",
+  "ledgers": {
+    "plan_sha256": "1582d42018ae589bb4b5fb93384a819b46b686c324f8ccdddbef33bbc2a19742",
+    "status_sha256": "91ce38be4a9b3e4b1ce295cbc1c774f147409e83e4ecc0cabe91f6e3f5def5e9"
+  },
+  "close_contract": {
+    "command": "./harness done harvto-d9-duplicate-emission",
+    "maximum_attempts": 1,
+    "expected_d9_transition": "active/pending-index to done/pass-index",
+    "expected_current_task_transition": "present with D9 to absent",
+    "expected_non_d9_task_transition_count": 0,
+    "expected_d9_terminal_record_count": 1,
+    "d10_d12_must_remain_parked": true
+  }
+}

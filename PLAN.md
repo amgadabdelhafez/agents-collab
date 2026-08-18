@@ -1,4 +1,1198 @@
-# Current Plan — Run88 D8-D12 Governed Successor Campaign
+# Current Plan — Run92 Manifest-Backed Governed D9 Closure Successor
+
+## Authority and decision — 2026-08-17
+
+Run92 is only a bootstrap successor candidate until its manifest records a complete live six-pane
+topology. Runs51-91 are closed historical evidence and must never be resumed, attached to,
+repaired in, or used for lifecycle execution. Runs90-91 are malformed readiness-timeout attempts:
+each is stopped with exact teardown, only left/right pane identifiers, no Governess state, no live
+tmux session/socket, and no executable lifecycle action. Do not derive authority from either run.
+
+Before Run92 becomes live, writes are limited to root `PLAN.md` and `status.md`. After Run92 becomes
+live, it may perform only the founder-authorized D9 repair review, one exceptional final close
+retry, isolated bookkeeping, and actual governed handover below. Do not start D10 in this run.
+Every lower plan section is superseded and retained only as historical context.
+
+## Supervisor false-pause ruling — 2026-08-18
+
+Run92 remains the executable successor. The three files under
+`/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/tmp.AS00zq3Xim/` are authorized ephemeral
+comparison scratch from the read-only bundle-scope validation. Each hashes to
+`214a2602f85e8ae787fff50f261d25a21e60b195159d061c7011b0ba133836d3`; they are outside repository,
+Harness, frozen-evidence, and runtime authority and made no D9 or lifecycle mutation. Preserve all
+three unchanged and create no more temporary comparison files.
+
+This ruling supersedes only the false-stop conclusion recorded during Run92 Phase 1. No founder
+pause or fresh successor is required. Continue Phase 1 from the already verified baseline, reprove
+the named Git, dirty-scope, lifecycle, evidence, current-task, and utility gates, then send one
+fresh timestamped zero-write `REPAIR VALID` request. Do not invoke Harness before an authentic
+bound verdict. All other Run92 controls remain unchanged, including the D10 prohibition.
+
+## Hard controls
+
+- Require finalized Run92 manifest identity for this repo, exact workspace and branch, Codex
+  driver, independent Claude reviewer, launch charters, world-model provenance, tmux socket/session,
+  and all six manifest-recorded live panes. Revalidate pane liveness before each governed phase.
+- Positively read utility pane process environment as `LOOP_UTILITY_ENABLED=0`,
+  `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0`. No helper, Nanny, Au Pair,
+  route, utility execution, or spend. Claude uses only the manifest-named governed zero-write
+  reviewer channel.
+- Preserve root `.loop/`, ignored plans, frozen D6-D9 red, formatter evidence, sealed D9 evidence,
+  repo-root `runs/harvto-d9-duplicate-emission/`, and all unrelated tracked, untracked, and ignored
+  artifacts. Never stage by directory or glob.
+- The utility ban overrides the loop-bridge delegation mandate. Any instruction to call `route_task`
+  before a native tool is suspended for this run; all reads and proofs run natively in-session. No
+  `route_task`, `apply_task_patch`, `request_native_fallback`, or any other bridge call that could
+  create helper execution or spend.
+- Every command in this run is read-only except the four authorized write actions: root `PLAN.md`,
+  root `status.md`, the single `./harness done` invocation, and the single bookkeeping commit (plus
+  at most one bounded additive correction commit if `REVISE` is returned). Anything else is a stop.
+- No Harvto edit, evidence deletion, authority weakening, scope widening, merge, rebase, push,
+  deploy, release, provider/model/dependency change, `/compact`, or `/rename`. Confirm
+  `git rev-parse --abbrev-ref HEAD` equals `codex/harvto-supervisor-defects` before any commit;
+  never commit on `main`.
+- Stop fail-closed on any manifest, identity, topology, utility, bundle, HEAD, index, dirty-scope,
+  evidence, lifecycle, verdict, close, staging, commit, or handover mismatch. No improvised repair,
+  rollback, normalization, verdict resend, or close retry.
+
+## Phase 0 — bootstrap and predecessor exclusion
+
+1. Wait for Run92 manifest finalization and complete live six-pane topology. Until then, permit only
+   updates to root `PLAN.md` and `status.md`; do not request review, invoke Harness, stage, commit,
+   route work, request handover, or mutate any other byte.
+2. Validate Runs90-91 directly from manifests and runtime records: `state/status` both
+   `stopped/stopped`, no Governess state, no tmux session/socket or live process, exact stopped
+   artifacts preserved, and no lifecycle command or D9 transition recorded. Any surviving process,
+   session, executable action, or uncertain teardown blocks Run92.
+3. Bind Run92 to this workspace, branch `refs/heads/codex/harvto-supervisor-defects`, exact incoming
+   HEAD `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`, manifest-named Codex/Claude identities, launch
+   charters, world model, and all six live panes. Require utility `0/off/0` from process environment.
+
+## Phase 1 — Run89 handover intake and immutable baseline
+
+1. Parse and SHA-256 both Run89 bundles under
+   `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/89/handoff/1786994688646150/`. Require:
+
+   - literal `status: "ready"`, epoch `1786994688646150`, distinct `agent` values `claude` and
+     `codex`, exact `gitHead` `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`;
+   - equal 20-entry `dirtyFiles` sets, compared as sets rather than list order;
+   - raw hashes Claude `f37db126f41944f82d8f2f5f918ccf75254cdc2ee88bf823149920d96133563e`
+     and Codex `f68a3cb36aeda10b0cdd1a100879d063c8640b52197948cc1d014552b626cfbc`;
+   - every `checks` digest rederived locally; Codex blockers parsed as binding forward constraints,
+     not incorrectly rejected merely because the array is nonempty;
+   - Run89 Governess state binds both exact paths to that epoch and Run89 is stopped.
+
+2. Require live HEAD exact, empty index, implementation paths clean, and porcelain equal to the
+   incoming 20-entry bundle scope. Observed baseline is exactly 20 entries and already contains
+   ` M PLAN.md` and ` M status.md`; authorized bootstrap ledger writes change those two files'
+   content, never the entry count or the entry set. A 21st entry, or loss of any of the 20, is a
+   stop. Inventory preserved dirty, untracked, and ignored bytes before any review.
+3. Recompute mandatory sealed hashes:
+
+   - pre-close lifecycle evidence:
+     `8952015abfb3f8701b06767f5cc158faff6bd4faa08d658df9d3e5dc541ce9a2`;
+   - failed-close evidence:
+     `0bda1cb1a34d1e49d129a4282db2996dad05d6a10607ddf78abf4e55b1a06dc6`;
+   - current repaired task log:
+     `b5193523d0fdc0b6bf308f90d16aa83248b11d9142542c9cb8c1ebcdfc59ee92`;
+   - reconstructed preimage:
+     `b13462eb0e5ebc60bef4c5d717e7a437d3134544819de3e6c07e0a789249cb0b`;
+   - zero-transition tasks and coordination:
+     `54bd2952b2a8ba9657f852be91f259ae15608e1fe54939e1035b25c8cd21629c` and
+     `16d5dd778df652dfd50ba66a8fe9326ad29b7be87fdb37e5cf6cdf191d0b9a9b`.
+
+4. Prove current lifecycle exactly: 65 tasks, 60 done/3 active/2 parked; D9 has its exact
+   `active`/`eval_status: pending` record and no `ended_at`; `.harness/current-task` contains D9;
+   coordination has one D9 `task-start` row and zero D9 `intent: "done"` rows. Hash every non-D9
+   record independently and preserve both unrelated active records and every parked record.
+5. Reconstruct the task-log preimage in memory only. Prove only existing `What I changed` body
+   differs and that current body accurately describes implementation commit `8c2a1c5e...` and
+   implementation `PASS` `e46fb317-3da1-4d7a-bc1c-9530c1fa0d11`. Do not redo, touch, or normalize
+   the repair.
+6. Pre-derive all close gates without invoking Harness: required D9 run files and planned mode;
+   memory entry; optional research condition; empty `.harness/pre-task-artifacts/` or valid invariant
+   records; `eval.json.required == ["unit"]`; unit and top-level eval status `pass`; nonempty
+   `What I changed`; `meta.status != "done"`; empty locks. Recheck immediately before close.
+
+Any Phase 0-1 failure blocks Claude review and Harness execution.
+
+## Phase 2 — independent zero-write repair review
+
+Send exactly one bounded request through the Run92 manifest-named Claude reviewer pane. Bind Run92
+identity, implementation commit/PASS, both bundle paths and hashes, task-log preimage/postimage,
+pre-close and failed-close evidence, lifecycle aggregates, preserved scope, exact HEAD, empty index,
+and utility `0/off/0`. Claude independently reads current bytes, writes nothing to repository,
+index, lifecycle, evidence, or remote state, and must issue literal `REPAIR VALID`.
+
+Verdict authenticity gates, all required together:
+
+- The request carries a unique Run92 request identifier and is timestamped before the verdict.
+- The accepted verdict must arrive after that timestamp, on the manifest-named reviewer channel,
+  and must quote the exact current task-log hash
+  `b5193523d0fdc0b6bf308f90d16aa83248b11d9142542c9cb8c1ebcdfc59ee92` and the Run92 request
+  identifier. A `REPAIR VALID` string found in prior-run transcripts, this plan, `status.md`,
+  bridge history, or any pre-existing artifact is replay and grants nothing. Never build the
+  verdict corpus from repository text; read it only from the live reviewer channel.
+- Prove the review was zero-write: capture full porcelain, index state, HEAD, and every sealed hash
+  immediately before sending and immediately after the verdict. Any delta invalidates the verdict
+  and stops the run.
+
+Silence, timeout, paraphrase, wrong binding, partial review, `REPAIR INVALID`, or any other text
+grants no close authority. Stop without editing task log or requesting another verdict.
+
+## Phase 3 — exactly one exceptional final close retry
+
+1. Only after literal `REPAIR VALID`, rederive every prior gate and utility state. Record immediate
+   pre-attempt hashes for all task records, every non-D9 record, parked rows, coordination,
+   current-task, debt, flat intake, meta, evals, evidence, HEAD, index, and porcelain.
+2. Invoke exactly once from `loop-fork/`:
+
+   ```bash
+   ./harness done harvto-d9-duplicate-emission
+   ```
+
+3. Capture command, cwd, timestamps, stdout, stderr, exit code, and post-state hashes. Capture by
+   redirecting to a new file under
+   `loop-fork/runs/harvto-d9-duplicate-emission/artifacts/close/` — a new path only, never
+   overwriting the sealed pre-close
+   (`8952015abfb3f8701b06767f5cc158faff6bd4faa08d658df9d3e5dc541ce9a2`) or failed-close
+   (`0bda1cb1a34d1e49d129a4282db2996dad05d6a10607ddf78abf4e55b1a06dc6`) evidence. Rehash both
+   sealed files after writing to prove they are untouched. This consumes the final founder
+   exception under every outcome. Never invoke again. On nonzero, ambiguous, partial, or over-broad
+   result, preserve resulting bytes, record evidence, and stop for new founder authority. Do not
+   roll back, repair, delete, normalize, or retry.
+4. Exit code `0` is not proof of transition. A zero exit that leaves D9 `active`, leaves
+   `current-task` present, or appends no terminal row is a silent no-op: it still consumes the
+   exception, and the run stops at Phase 4 for new founder authority rather than retrying.
+
+Expected Harness write set, all relative to `loop-fork/`:
+
+- `.harness/tasks.json`, `agents/coordination.jsonl`, removal of `.harness/current-task`, generated
+  `specs/harvto-d9-duplicate-emission.md`, and `runs/harvto-d9-duplicate-emission/meta.json`;
+- mechanically regenerated D9 `artifacts/post-task/*`, `artifacts/debt/scan.*`, and
+  `artifacts/regression-harvest/harvest.json`;
+- optional single D9 `loc_growth` append to `debt/register.jsonl` and bounded regression-harvest
+  outputs if normal Harness predicates trigger.
+
+All other writes are terminal over-broad failure. Sealed close evidence, task log, red,
+verification, pre-task evidence, baseline LOC, plans, parked idea, frozen D6-D8 evidence, formatter
+evidence, root `.loop/`, and unrelated artifacts must remain byte-identical.
+
+## Phase 4 — D9-only transition proof
+
+Before staging, prove all predicates together:
+
+- total tasks remains 65; done rises 60 to 61; active falls 3 to 2; parked remains 2;
+- D9 alone becomes `status: "done"`, `eval_status: "pass"`, with exactly one `ended_at`;
+- `.harness/current-task` is absent;
+- coordination appends exactly one D9 `intent: "done"` row; all 20 prior rows remain byte-identical;
+- every non-D9 task record remains byte-identical, including both unrelated active records;
+- all prior debt lines remain byte-identical; zero or one normal D9-scoped `loc_growth` append is
+  allowed; expected generated completion and post-task outputs exist;
+- implementation, frozen evidence, root `.loop/`, repo-root stray run, unrelated dirt, HEAD parent,
+  empty index, and utility `0/off/0` remain controlled.
+
+Any missing, duplicate, or unrelated transition stops before bookkeeping.
+
+## Phase 5 — separate bounded bookkeeping/evidence commit
+
+1. Derive an explicit path manifest from the proven close delta and D8 precedent. Include only D9
+   lifecycle outputs, generated flat completion spec, required close/verification/debt/pre-task/
+   post-task evidence, D9 eval/meta/task-log/memory records, repaired task log as recovery
+   bookkeeping, optional Harness-generated debt/regression outputs, the new close-evidence file from
+   Phase 3.3, and the root ledgers required for durable handoff — which are exactly `PLAN.md` and
+   `status.md`, named individually, and no other root path.
+2. Exclude implementation paths, every `*/artifacts/red/*`, formatter evidence, root `.loop/`,
+   repo-root `runs/harvto-d9-duplicate-emission/`, ignored plans not explicitly required, and all
+   unrelated dirt. Stage individual full paths only; no directory, glob, or root-relative `runs/`
+   path.
+3. Assert cached paths exactly equal manifest. Inspect full cached diff, pass
+   `git diff --cached --check`, and reconcile normal and `--ignore-all-space` numstats. Create exactly
+   one no-amend bookkeeping/evidence commit. Revalidate parent, committed paths and hashes, empty
+   index, D9 isolation, preserved scope, and utility `0/off/0`.
+4. Send exactly one zero-write Claude review through the Run92 reviewer pane, bound to exact
+   bookkeeping commit and proof set. Require literal `BOOKKEEPING PASS`. `REVISE` may authorize only
+   a bounded additive bookkeeping correction commit; never amend, rerun close, reopen
+   implementation, or touch frozen evidence. Any other verdict or timeout stops.
+
+   The `BOOKKEEPING PASS` verdict is subject to the same authenticity gates as Phase 2: it must
+   arrive after the request, on the manifest-named reviewer channel, and must quote the exact
+   bookkeeping commit SHA. Prove the review was zero-write by comparing porcelain, index, HEAD, and
+   sealed hashes immediately before and after. A matching string found anywhere in the repository or
+   in prior-run history is replay and grants nothing.
+
+5. Record the close outcome, both verdicts, the bookkeeping commit SHA, and the final proven state
+   in `status.md` before requesting handover. `status.md` exists at repo root and already carries a
+   Run92 entry; append a new dated entry and never rewrite prior entries. That edit is committed
+   inside the single bookkeeping commit of step 3, or inside the one bounded additive correction
+   commit if `REVISE` authorized it.
+
+## Phase 6 — actual governed handover before teardown
+
+Only after literal `BOOKKEEPING PASS`:
+
+1. Revalidate final HEAD, empty index, D9 one-record `done/pass`, one terminal row, absent
+   current-task, non-D9 byte equality, both Claude verdicts, preserved scope and evidence, live
+   six-pane identity, and utility `0/off/0`.
+2. Request actual Run92 Governess handover. Advisory preparation, local notes, or one bundle do not
+   count as handover.
+3. Require two new `ready` bundles at one new epoch, distinct Claude/Codex `agent` values, exact
+   final HEAD, equal dirty-scope sets, no contradicted state, and explicit D9 complete plus
+   do-not-start-D10 instructions. Parse and hash both independently; confirm live Governess
+   references both exact paths. Forward constraints may remain as blockers, but unfinished or
+   contradicted Run92 state invalidates a bundle.
+4. Teardown Run92 only after both outgoing bundles validate. Teardown means stopping the Run92 loop
+   through its own governed stop path and confirming `state/status` reach `stopped/stopped` with no
+   surviving tmux session, socket, or launch PID — verified positively with `ps -p` and a session
+   listing, never inferred from a quiet pane. No repository write occurs after teardown starts.
+   Do not start D10 before, during, or after handover in this run.
+
+## Acceptance criteria
+
+- Runs51-91 remain non-executable history; Runs90-91 exact teardown and zero lifecycle action are
+  proven before Run92 gains authority.
+- Both Run89 ready bundles validate at epoch `1786994688646150` and exact incoming HEAD; index,
+  dirty scope, lifecycle baseline, and sealed evidence match.
+- Existing task-log repair is unchanged and receives literal zero-write `REPAIR VALID` before one
+  final close retry; no later retry occurs under any outcome.
+- Successful close changes only D9 to `done/pass`, creates one terminal row, clears current-task,
+  and leaves all non-D9 records unchanged.
+- Separate bounded bookkeeping/evidence commit receives literal zero-write `BOOKKEEPING PASS`.
+- Actual governed handover produces and validates both ready bundles before teardown.
+- Utility remains `0/off/0`; no helpers, routes, execution, or spend; preserved evidence and
+  unrelated state remain intact; D10 never starts.
+- Both verdicts are proven live and non-replayed: each arrives after its request on the
+  manifest-named reviewer channel, quotes its bound identifier (task-log hash `b5193523...` for
+  `REPAIR VALID`, commit SHA for `BOOKKEEPING PASS`), and is bracketed by identical
+  porcelain/index/HEAD/sealed-hash snapshots proving zero writes during review.
+- Teardown is positively verified `stopped/stopped` with no surviving session, socket, or PID.
+- `status.md` carries a new dated Run92 outcome entry, committed, with prior entries unmodified.
+
+Open questions: none. Current blocker: Run92 manifest is only `submitted/running` and lacks launch
+identity, world model, tmux topology, and Governess state. Next action after plan mode: wait for
+complete live six-pane Run92 readiness, then execute Phase 0 without widening bootstrap authority.
+
+# Superseded Plan — Run91 Governed D9 Closure Successor
+
+## Decision and authority — 2026-08-17
+
+Run91 is only a bootstrap successor candidate until its manifest records a complete live six-pane
+topology. Runs51-90 are closed historical evidence and must never be resumed, attached to, repaired
+in, or used for lifecycle execution. Run90 is malformed and stopped after readiness timeout: it
+never obtained a full topology, Governess control, or executable lifecycle authority.
+
+Before Run91 becomes live, writes are limited to root `PLAN.md` and `status.md`. No review request,
+Harness command, staging, commit, helper route, handover mutation, or other repository write is
+allowed during bootstrap. After Run91 becomes live, it may complete only the founder-authorized D9
+recovery, bookkeeping, and governed handover below. It must not start D10.
+
+## Non-negotiable controls
+
+- Require finalized Run91 manifest identity for this repo, workspace, branch, Codex driver, Claude
+  reviewer, exact HEAD `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`, launch charters, world-model
+  provenance, tmux socket/session, and all six recorded live panes. Revalidate every pane as live.
+- Positively read utility pane process environment as `LOOP_UTILITY_ENABLED=0`,
+  `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0`. No helper, Nanny, Au Pair,
+  route, utility execution, or spend is allowed. Claude review uses only governed zero-write review
+  channel named by Run91 manifest.
+- Preserve root `.loop/`, ignored plans, frozen D6-D9 red, formatter evidence, all sealed D9
+  evidence, and unrelated tracked/untracked/ignored state byte-for-byte unless an exact D9 close or
+  bookkeeping output is explicitly allowed below.
+- No Harvto edits, evidence deletion, authority weakening, scope widening, merge, rebase, push,
+  deploy, release, provider/model/dependency change, `/compact`, or `/rename`.
+- Stop fail-closed on any identity, topology, utility, HEAD, index, dirty-scope, evidence, lifecycle,
+  verdict, close, staging, commit, or handover mismatch. Do not improvise a repair or retry.
+
+## Phase 1 — Run91 readiness and Run89 handover intake
+
+1. Wait for finalized Run91 manifest and full live six-pane topology. Validate manifest-backed
+   identities, exact workspace/branch, world model, launch charters, pane liveness, Governess
+   authority, and positive utility `0/off/0`. Run90 artifacts remain read-only proof of failed
+   startup and exact teardown, never authority.
+2. Parse and independently SHA-256 both Run89 bundles under
+   `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/89/handoff/1786994688646150/`. Require both
+   `status: "ready"`, epoch `1786994688646150`, distinct `agent` values `claude` and `codex`, exact
+   `gitHead` `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`, and equal 20-entry `dirtyFiles`
+   sets. Expected raw hashes are Claude
+   `f37db126f41944f82d8f2f5f918ccf75254cdc2ee88bf823149920d96133563e` and Codex
+   `f68a3cb36aeda10b0cdd1a100879d063c8640b52197948cc1d014552b626cfbc`.
+3. Parse every bundle check and blocker. Carry forward constraint blockers; reject any blocker that
+   asserts incomplete or contradicted intake state. Compare dirty scope as a set, not list order.
+   Confirm Run89 Governess state references both bundle paths at that epoch and Run89 is stopped.
+4. Require live HEAD exact, empty index, clean implementation paths, and porcelain equal to the
+   bundle scope plus only permitted Run91 ledger deltas. Inventory and hash preserved root `.loop/`,
+   ignored plans, D6-D9 red, formatter evidence, D9 evidence, and unrelated artifacts. Never stage,
+   normalize, recapture, or delete preserved files.
+5. Recompute all bundle-asserted digests locally. Mandatory sealed identities include:
+
+   - pre-close lifecycle evidence
+     `8952015abfb3f8701b06767f5cc158faff6bd4faa08d658df9d3e5dc541ce9a2`;
+   - failed-close evidence
+     `0bda1cb1a34d1e49d129a4282db2996dad05d6a10607ddf78abf4e55b1a06dc6`;
+   - current repaired task log
+     `b5193523d0fdc0b6bf308f90d16aa83248b11d9142542c9cb8c1ebcdfc59ee92`;
+   - reconstructed preimage
+     `b13462eb0e5ebc60bef4c5d717e7a437d3134544819de3e6c07e0a789249cb0b`;
+   - tasks and coordination zero-transition hashes
+     `54bd2952b2a8ba9657f852be91f259ae15608e1fe54939e1035b25c8cd21629c` and
+     `16d5dd778df652dfd50ba66a8fe9326ad29b7be87fdb37e5cf6cdf191d0b9a9b`.
+6. Prove current lifecycle exactly: 65 tasks, counts 60 done/3 active/2 parked; D9 alone has its
+   recorded `active`/`eval_status: pending` object with no `ended_at`; `.harness/current-task` names
+   D9; coordination has one D9 `task-start` row and zero D9 `intent: "done"` rows. The two unrelated
+   active records and every other non-D9 record must match sealed canonical hashes. D10-D12 remain
+   unstarted.
+7. Reconstruct task-log preimage without writing it. Compare sections and prove only existing
+   `What I changed` body differs, and that body accurately describes reviewed implementation commit
+   `8c2a1c5e...` and implementation `PASS` decision
+   `e46fb317-3da1-4d7a-bc1c-9530c1fa0d11`. Do not redo or normalize repair.
+
+Any Phase 1 failure blocks review and Harness execution.
+
+## Phase 2 — independent zero-write repair verdict
+
+Send exactly one bounded request through Run91 governed Claude review channel. Bind exact Run91
+identity, implementation commit/PASS, both bundle hashes, task-log preimage/postimage, pre-close and
+failed-close evidence, live lifecycle aggregates, preserved scope, empty index, and utility
+`0/off/0`. Claude independently reads current bytes, performs zero repository/index/lifecycle/
+evidence/remote writes, and must issue literal `REPAIR VALID`.
+
+Silence, timeout, paraphrase, wrong binding, partial review, or `REPAIR INVALID` grants no close
+authority. Stop without editing task log or requesting another verdict.
+
+## Phase 3 — one exceptional final close attempt
+
+1. Only after literal `REPAIR VALID`, rederive every Phase 1 gate and capture immediate pre-attempt
+   hashes for all task records, each non-D9 record, parked rows, coordination, current-task, debt,
+   flat intake, meta, evals, evidence, HEAD, index, and dirty scope.
+2. Invoke exactly once from `loop-fork/`:
+
+   ```bash
+   ./harness done harvto-d9-duplicate-emission
+   ```
+
+3. Capture command, cwd, timestamps, stdout, stderr, exit code, and post-state hashes. This consumes
+   final founder exception under every outcome. Never invoke it again. Any nonzero, ambiguous, or
+   over-broad result is terminal fail-closed stop requiring new founder authority.
+
+## Phase 4 — D9-only lifecycle proof
+
+Before staging anything, prove all predicates together:
+
+- total tasks remain 65; done rises 60 to 61; active falls 3 to 2; parked remains 2;
+- D9 alone becomes `status: "done"`, `eval_status: "pass"`, with exactly one `ended_at`;
+- `.harness/current-task` is absent;
+- coordination gains exactly one D9 `intent: "done"` row; every prior row remains byte-identical;
+- every non-D9 task record remains byte-identical, including both unrelated active records;
+- pre-existing debt lines remain byte-identical; zero or one new D9-scoped `loc_growth` row is
+  acceptable only if normal Harness behavior produced it;
+- Harness-generated D9 flat completion spec and other expected close outputs exist; no source,
+  test, implementation, frozen red, formatter, root `.loop/`, unrelated artifact, or utility state
+  changed.
+
+Any missing, duplicate, or unrelated transition stops before bookkeeping.
+
+## Phase 5 — separate bookkeeping/evidence commit
+
+1. Derive an exact path manifest from proven close delta and D8 precedent. Candidate paths are D9
+   lifecycle files, D9 close/verification/debt/pre-task/post-task evidence, generated flat
+   completion spec, required D9 run/eval/meta/task-log/memory records, optional D9 debt append, and
+   root `PLAN.md`/`status.md`. Include repaired task log as recovery bookkeeping. Exclude both
+   implementation paths, every `artifacts/red/` path, formatter evidence, root `.loop/`, ignored
+   plans not explicitly required, and unrelated dirt.
+2. Stage individual exact files only. Never stage a directory or glob. Assert cached paths exactly
+   equal manifest and no cached path matches `*/artifacts/red/*`. Inspect full cached diff; require
+   `git diff --cached --check`; reconcile normal and `--ignore-all-space` numstats.
+3. Create exactly one no-amend bounded bookkeeping/evidence commit. Revalidate parent, committed
+   path set and byte hashes, empty index, D9 isolation, preserved scope, and utility `0/off/0`.
+4. Request exactly one Claude zero-write review bound to exact bookkeeping commit and proof set.
+   Require literal `BOOKKEEPING PASS`. `REVISE` permits only a bounded additive bookkeeping
+   correction commit; never amend, rerun close, reopen implementation, or touch frozen evidence.
+
+## Phase 6 — actual governed handover, then teardown
+
+Only after literal `BOOKKEEPING PASS`:
+
+1. Revalidate final HEAD, empty index, D9 one-record `done/pass`, exactly one terminal row, absent
+   current-task, non-D9 equality, both Claude verdicts, preserved dirty scope, frozen evidence, and
+   utility `0/off/0`.
+2. Request actual Run91 Governess handover. Advisory preparation or local notes are not handover.
+3. Require two new `ready` bundles at one new epoch, distinct Claude/Codex `agent` values, exact
+   final HEAD, equal dirty-scope sets, no contradicted state, and explicit D9 complete plus do-not-
+   start-D10 instructions. Independently parse/hash both and confirm live Governess references both
+   exact paths.
+4. Teardown Run91 only after both outgoing bundles validate. Do not start D10 before handover,
+   during handover, or after bundle validation in this run.
+
+## Acceptance criteria
+
+- Runs51-90 remain non-executable history; Run91 acts only after complete manifest-backed topology.
+- Existing repair is unchanged and receives literal zero-write `REPAIR VALID` before one final
+  close attempt; no later retry occurs.
+- D9 alone reaches done/pass with one terminal row and cleared current-task; all non-D9 records are
+  unchanged.
+- Separate bounded bookkeeping/evidence commit receives literal zero-write `BOOKKEEPING PASS`.
+- Actual governed handover produces and validates both ready bundles before teardown.
+- Utility remains hard-disabled `0/off/0`; preserved evidence and unrelated state remain intact;
+  D10 is never started.
+
+Open questions: none. First conditional blocker is incomplete Run91 manifest/topology. Next action
+after plan mode: wait for full six-pane Run91 readiness, then execute Phase 1 without widening
+bootstrap write authority.
+
+## Run91 plan-review corrections — 2026-08-17 (binding, override Phases 1-6 above on conflict)
+
+Read-only verification performed this review (no writes outside root `PLAN.md`): `git rev-parse HEAD`
+= `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`; `git diff --cached --name-only` empty; `git status
+--porcelain` = exactly 20 entries equal to the Claude bundle `dirtyFiles` set; bundle hashes
+recomputed as `f37db126f41944f82d8f2f5f918ccf75254cdc2ee88bf823149920d96133563e` (claude.json) and
+`f68a3cb36aeda10b0cdd1a100879d063c8640b52197948cc1d014552b626cfbc` (codex.json); tasks.json = 65
+tasks, 60 done / 3 active / 2 parked, D9 `active` + `eval_status: pending`;
+`loop-fork/.harness/current-task` = `harvto-d9-duplicate-emission`; coordination.jsonl has exactly
+one D9 row, `intent: task-start`; sealed hashes resolve to
+`loop-fork/runs/harvto-d9-duplicate-emission/artifacts/close/pre-close-lifecycle.json` (8952015a...),
+`.../artifacts/close/failed-close-attempt.json` (0bda1cb1...), and
+`.../task-log.md` (b5193523...). `status.md` exists and already carries the Run91 intake entry, so
+no new-file creation is required; it must still be updated at each phase boundary (C10).
+
+### C1 — Pre-derive the close gates read-only before consuming the exception
+
+`./harness done <id>` dispatches `loop-fork/v2/kit/scripts/done.sh`, which runs `stop-gate.sh`
+(which runs `preflight.sh`) and then `post-task.sh` BEFORE any lifecycle mutation. A gate failure
+consumes the single founder exception for a cause that was fully knowable in advance. Before
+invoking Phase 3, prove read-only, and record each result:
+
+- `preflight.sh` inputs present and valid: `runs/harvto-d9-duplicate-emission/` dir, `meta.json`,
+  `eval.json`, `memory/` with at least one `NNN-*.md` file, `plan.md` (mode is planned),
+  `meta.research_required` satisfied if set, kebab-case task id.
+- `.harness/pre-task-artifacts/` is currently EMPTY, so preflight's `state-invariants.log` branch is
+  not entered. If any file appears there before the attempt, preflight requires
+  `state-invariants.log` and fails on any `state-invariants.jsonl` record with `status: "fail"`.
+  Re-check emptiness immediately pre-attempt.
+- `stop-gate.sh` eval predicate: `eval.json.required` = `["unit"]` and
+  `dimensions.unit.status` = `pass`, which is in the acceptable set
+  `{pass, skipped, sign-off-granted}`.
+- `done.sh` task-log predicate: `## What I changed` section of
+  `runs/harvto-d9-duplicate-emission/task-log.md` is non-empty. This is the exact assertion the
+  earlier failed close violated and the repair fixed. Assert non-empty on current bytes without
+  rewriting them.
+- `meta.json.status` is not already `done` (done.sh aborts with `error: task already done`).
+- `loop-fork/.harness/locks/` inventory (currently empty). A stale lock file must stop the run
+  before the attempt, not during it.
+
+Any C1 failure is a fail-closed stop BEFORE the attempt; the exception is not consumed and new
+founder authority is required to remedy.
+
+### C2 — Exact expected write set of the single close attempt
+
+Phase 4 must assert against this derived path set, not a paraphrase. All paths relative to
+`loop-fork/`:
+
+- `specs/harvto-d9-duplicate-emission.md` — created (this is the "flat completion spec").
+- `runs/harvto-d9-duplicate-emission/meta.json` — `status: "done"`, one new `ended_at`.
+- `.harness/tasks.json` — D9 record only: `status: "done"`, plus `eval_status` re-derived by
+  `tasks-index.sh mark-done` from `runs/<id>/eval.json` top-level `status`, which is currently
+  `"pass"`. If `eval.json` is not byte-identical at attempt time, the `pass` predicate is not
+  guaranteed; re-hash `eval.json` immediately pre-attempt.
+- `agents/coordination.jsonl` — exactly one appended D9 `intent: done` row.
+- `.harness/current-task` — removed (`rm -f`) because its content equals the task id.
+- Possible appends only: `debt/register.jsonl` (D9-scoped `loc_growth` finding, threshold
+  `debt_loc_growth_threshold`), and regression-harvest outputs `evals/regression/<bug-id>.md`,
+  its prompt file, and `runs/<id>/artifacts/regression-harvest/harvest.json`.
+
+Anything written outside this set is an over-broad result and a terminal stop.
+
+### C3 — Mechanically regenerated evidence is authorized; sealed evidence is not
+
+`post-task.sh` calls `state-check.sh <id> post`, which TRUNCATES and rewrites
+`runs/harvto-d9-duplicate-emission/artifacts/post-task/state-invariants.log`,
+`.../state-invariants.jsonl`, `.../dirs.txt`, and per-check `*.log`; `debt-scan.sh` rewrites
+`.../artifacts/debt/scan.log` and `scan.json`; `regression-harvest.sh` rewrites
+`.../artifacts/regression-harvest/harvest.json`. These regenerations are normal Harness behavior and
+do NOT violate the no-evidence-deletion control. Hash all of them pre-attempt and record both
+pre and post hashes.
+
+By contrast these must be byte-identical after the attempt, and any change is a terminal stop:
+`artifacts/close/pre-close-lifecycle.json` (`8952015a...`),
+`artifacts/close/failed-close-attempt.json` (`0bda1cb1...`), every `artifacts/red/*` path,
+every `artifacts/verification/**` path, `artifacts/pre-task/*`, `artifacts/debt/baseline-loc.json`,
+`task-log.md` (`b5193523...`), `plan.md`, `parked-idea.md`, and all frozen D6/D7/D8 red and
+formatter evidence.
+
+### C4 — Expected porcelain delta after close (replaces the vague "preserved dirty scope")
+
+Baseline is the 20-entry bundle set. After a correct close the expected differences are exactly:
+`loop-fork/.harness/current-task` disappears from untracked; `loop-fork/specs/` (or the specific
+spec file) appears; `loop-fork/debt/` and `loop-fork/evals/regression/` entries appear only if C2
+appends occurred; `loop-fork/runs/harvto-d9-duplicate-emission/artifacts/` and `meta.json` remain
+listed. Tracked modifications remain `PLAN.md`, `status.md`,
+`loop-fork/.harness/tasks.json`, `loop-fork/agents/coordination.jsonl`, and
+`loop-fork/.harness/parked-ideas.jsonl` (already dirty, must stay byte-identical through the close).
+Any other porcelain entry is a terminal stop.
+
+### C5 — Repo-root `runs/harvto-d9-duplicate-emission/` is not the harness run dir
+
+`done.sh` resolves `RUN_DIR=runs/<id>` relative to `loop-fork/`. The repo-root
+`runs/harvto-d9-duplicate-emission/eval.json` is an unrelated untracked stray. Preserve it
+byte-identical, never stage it, never delete it, and never let a Phase 5 path manifest glob match
+it. Every Phase 5 manifest entry must be written with its full `loop-fork/`-prefixed path.
+
+### C6 — Failure handling: no rollback, no repair, no second attempt
+
+If the single attempt exits nonzero or writes outside the C2 set, do not restore, revert, delete, or
+normalize any mutated byte. Record command, cwd, timestamps, stdout, stderr, exit code, and full
+pre/post hash tables into `status.md`, then stop fail-closed for new founder authority. Note that a
+partially-succeeded close leaves `meta.status: done`, which makes any later `done.sh` abort anyway;
+this is a mechanical fact, not an authorization to retry.
+
+### C7 — Review-channel binding is explicit
+
+Both Claude reviews (Phase 2 `REPAIR VALID`, Phase 5 `BOOKKEEPING PASS`) must be sent only through
+the Claude reviewer pane named by the finalized Run91 manifest, exactly once each, with zero-write
+scope stated in the request. A verdict arriving from any other channel or identity grants no
+authority. No verdict-chasing resend on timeout; timeout is a stop.
+
+### C8 — Utility proof is per-phase, not once
+
+Re-read the live utility pane environment (`LOOP_UTILITY_ENABLED=0`,
+`LOOP_UTILITY_DELEGATION_MODE=off`, `LOOP_AU_PAIR_ENABLED=0`) immediately before Phase 3, before
+Phase 5 staging, and before Phase 6 handover. A missing pane or unreadable environment is a stop,
+never an assumed `0/off/0`.
+
+### C9 — Staging assertions
+
+In addition to Phase 5.2: assert no cached path starts with `runs/` at repo root, none matches
+`*/artifacts/red/*`, none is `.loop/*`, and none touches `src/loop/bridge-store.ts` or
+`tests/loop/governess-p0-runtime.test.ts` (the two already-committed implementation paths recorded
+in `eval.json.run_89_verification.implementation_sha256`).
+
+### C10 — Ledger discipline
+
+`status.md` already exists. Append one dated entry at each phase boundary (Phase 1 intake result,
+Phase 2 verdict, Phase 3 attempt result with exit code, Phase 4 proof, Phase 5 commit SHA and
+verdict, Phase 6 handover epoch and bundle hashes). `PLAN.md`/`status.md` edits during bootstrap
+remain the only authorized writes.
+
+# Superseded Plan — Run90 Governed D9 Closure Successor
+
+## Run90 authoritative plan — 2026-08-17
+
+This section supersedes every lower Run89 execution instruction. Lower sections remain historical
+evidence only. Never resume, attach to, repair in, or execute from Runs51-89. Run90 is the sole
+successor candidate, and it may close only `harvto-d9-duplicate-emission`. Do not start D10 in this
+run. Read `Run90 plan-review corrections` below before
+executing any phase: C1-C15 override the Phase 1-6 wording they name.
+
+### Bootstrap boundary
+
+Run90 currently has only a submitted/running bootstrap manifest. Before a complete manifest-backed
+live six-pane topology exists, writes are limited to root `PLAN.md` and `status.md`. Do not request
+review, invoke Harness, stage, commit, route work, or mutate any other file during bootstrap.
+
+After topology becomes live, fail closed unless the finalized Run90 manifest positively binds:
+
+- run ID 90, this exact workspace/branch, driver Codex, independent reviewer Claude, launch
+  charters, world-model provenance, and all six live manifest-recorded panes;
+- incoming governed handover epoch `1786994688646150` and both Run89 bundle paths without using
+  Run89 as an execution context;
+- utility process environment exactly `LOOP_UTILITY_ENABLED=0`,
+  `LOOP_UTILITY_DELEGATION_MODE=off`, and `LOOP_AU_PAIR_ENABLED=0`.
+
+No helper, route, execution, or spend is allowed. Do not weaken authority to work around an
+incomplete manifest or topology.
+
+### Phase 1 — incoming handover and preservation gate
+
+1. Parse and independently hash both files under
+   `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/89/handoff/1786994688646150/`.
+   Require literal `ready`, distinct Claude/Codex agents, no blockers, epoch
+   `1786994688646150`, exact `gitHead`
+   `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`, and equal `dirtyFiles` sets. Intake hashes are
+   Claude `f37db126f41944f82d8f2f5f918ccf75254cdc2ee88bf823149920d96133563e` and Codex
+   `f68a3cb36aeda10b0cdd1a100879d063c8640b52197948cc1d014552b626cfbc`.
+2. Require live HEAD exactly `8c2a1c5ea5d49fcd98a9abf359a5120baf867043`, empty index,
+   clean implementation paths, and porcelain equal to the incoming bundle scope plus only the
+   permitted Run90 bootstrap changes to root `PLAN.md` and `status.md`. Preserve every unrelated
+   tracked, untracked, and ignored byte; never normalize or stage by directory or glob.
+3. Positively inventory root `.loop/` as preserved untracked state; preserve ignored plans, D6-D9
+   frozen red, formatter evidence, D9 verification/eval evidence, and all unrelated artifacts.
+   Revalidate D7-D9 red manifests without recapture. No evidence deletion is permitted.
+4. Recompute, rather than copy, the following sealed hashes:
+
+   - pre-close lifecycle:
+     `8952015abfb3f8701b06767f5cc158faff6bd4faa08d658df9d3e5dc541ce9a2`;
+   - failed close:
+     `0bda1cb1a34d1e49d129a4282db2996dad05d6a10607ddf78abf4e55b1a06dc6`;
+   - repaired task log:
+     `b5193523d0fdc0b6bf308f90d16aa83248b11d9142542c9cb8c1ebcdfc59ee92`;
+   - reconstructed task-log preimage:
+     `b13462eb0e5ebc60bef4c5d717e7a437d3134544819de3e6c07e0a789249cb0b`.
+
+5. Prove the failed close and existing repair made zero lifecycle transition: D9 remains the sole
+   relevant record, `active` with eval pending; `.harness/current-task` names D9; D9 has zero
+   terminal coordination rows; total task count and all non-D9 canonical record hashes equal the
+   sealed pre-close evidence; parked rows, coordination, debt, intakes, meta, evals, and frozen
+   evidence are unchanged. D10-D12 remain parked/unstarted.
+6. Compare reconstructed preimage to current task log section-by-section. Require the existing
+   `What I changed` body to be the only repair delta and to describe exact reviewed implementation
+   commit `8c2a1c5e...` accurately. Do not redo, touch, or normalize the repair.
+
+Any wrong bundle field, manifest binding, HEAD, index, dirty scope, hash, lifecycle state, evidence
+byte, topology, or utility value stops the run before review or close.
+
+### Phase 2 — independent repair verdict
+
+1. Send Claude one bounded zero-write repair-review request only after Phase 1 passes. Bind the
+   request to exact implementation commit and implementation `PASS`
+   `e46fb317-3da1-4d7a-bc1c-9530c1fa0d11`, task-log preimage/postimage hashes, both close-evidence
+   hashes, current lifecycle aggregates, preserved dirty scope, and utility `0/off/0`.
+2. Claude must independently inspect the current bytes and issue literal `REPAIR VALID` while
+   making zero repository, index, lifecycle, evidence, or remote writes. Silence, paraphrase,
+   partial review, wrong hash, or any other verdict grants no close authority.
+3. If Claude cannot issue literal `REPAIR VALID`, stop. Do not edit the task log again, request a
+   workaround verdict, or invoke Harness.
+
+### Phase 3 — one exceptional final close attempt
+
+1. After receiving literal `REPAIR VALID`, rederive every Phase 1 invariant and capture immediate
+   pre-attempt canonical hashes for all task records, each non-D9 record, parked rows, coordination,
+   current-task, debt, intakes, meta, evals, evidence, HEAD, index, and dirty scope.
+2. Invoke exactly once from `loop-fork/`:
+
+   ```bash
+   ./harness done harvto-d9-duplicate-emission
+   ```
+
+3. Capture exact command, cwd, stdout, stderr, exit code, timestamps, and resulting hashes. Never
+   invoke this command again under any outcome. Any nonzero result, ambiguous result, missing
+   expected transition, or extra transition is a fail-closed terminal stop requiring new founder
+   authority; no retry or repair is allowed.
+
+### Phase 4 — lifecycle isolation proof
+
+Before staging anything, prove all of these together:
+
+- D9 alone changed from `active`/pending to `done`/`pass`, with one `ended_at` and exactly one
+  terminal coordination row;
+- `.harness/current-task` is absent;
+- total task count is unchanged, done count rises by exactly one, and all non-D9 records match
+  their pre-attempt canonical hashes byte-for-byte;
+- parked rows, non-D9 coordination, debt, D10-D12 state, implementation commit/paths, frozen red,
+  formatter evidence, root `.loop/`, unrelated dirt, and utility `0/off/0` remain unchanged;
+- only expected Harness completion outputs and new bounded close proof changed. Harness-generated
+  flat completion spec is lifecycle/bookkeeping output, never an implementation edit.
+
+Any failed predicate stops before bookkeeping.
+
+### Phase 5 — separate bookkeeping/evidence commit
+
+1. Build an explicit path manifest from the proven D9 close delta. Include only D9 lifecycle,
+   close evidence, required eval/run records, Harness-generated completion output, and root
+   `PLAN.md`/`status.md` needed for durable handoff. Exclude both implementation paths, frozen D6-D9
+   red, formatter evidence, root `.loop/`, ignored plans not explicitly required, and every
+   unrelated dirty/untracked artifact.
+2. Stage exact paths only. Require cached path equality to the manifest, inspect the full cached
+   diff, reconcile `git diff --cached --numstat` with
+   `git diff --cached --numstat --ignore-all-space`, and pass `git diff --cached --check` without
+   modifying frozen evidence. Create one no-amend bookkeeping/evidence commit. No implementation,
+   Harvto, provider/model/dependency, remote, merge, rebase, push, deploy, release, or authority
+   change belongs in it.
+3. Revalidate empty index, exact bookkeeping parent/path set/committed-byte hashes, D9 isolation,
+   all preserved scope, and utility `0/off/0`.
+4. Request one independent Claude zero-write review bound to the exact bookkeeping commit and all
+   proof above. Require literal `BOOKKEEPING PASS`. `REVISE` permits only a new bounded bookkeeping
+   correction commit; never amend, reopen D9 implementation, rerun close, or touch frozen evidence.
+
+### Phase 6 — actual governed handover before teardown
+
+Only after literal `BOOKKEEPING PASS`:
+
+1. Revalidate exact final HEAD, empty index, D9 one-record `done/pass`, one terminal row, absent
+   current-task, non-D9 equality, both Claude verdicts, preserved dirty/untracked scope, frozen
+   evidence, and utility `0/off/0`.
+2. Request one actual Governess handover from Run90. Do not treat advisory preparation, local
+   notes, or one bundle as a handover.
+3. Require both new ready bundles at the same new epoch, distinct Claude/Codex agents, exact final
+   HEAD, identical dirty scope, no blockers, and explicit D9 completion plus no-D10 instructions.
+   Independently parse and hash both bundles and confirm live Governess references both paths.
+4. Teardown only after both bundles validate. Do not start D10 before or after requesting handover
+   in Run90.
+
+### Run90 plan-review corrections — 2026-08-17 (binding, override Phases 1-6 above)
+
+Independent zero-write review of this plan against live bytes at HEAD
+`8c2a1c5ea5d49fcd98a9abf359a5120baf867043`. Each item below overrides the earlier Phase wording it
+names. All values were derived natively (`git`, `shasum`, `python3 json`); none were copied from a
+bundle.
+
+**C1 — "no blockers" gate is wrong and would fail-close Run90 at intake (overrides Phase 1.1).**
+Observed: `claude.json` has `blockers: []`; `codex.json` has 5 blockers. They are carry-forward
+constraints (no teardown until both bundles validate; repair not yet Claude-validated; exactly one
+close retry; bookkeeping still required; no D10), not failure reports. Correct gate: both bundles
+must have `status: "ready"`; the Codex `blockers` array must be parsed and each entry carried into
+Run90 as a binding constraint; stop only if any blocker asserts an incomplete, failed, or
+contradicted state rather than a forward constraint. Do not require an empty `blockers` array on
+intake.
+
+**C2 — agent distinctness (overrides Phase 1.1).** Neither bundle carries `agentId`; the key set of
+both is exactly `agent, blockers, checks, dirtyFiles, epoch, gitHead, next, status, summary`.
+Distinctness must be proven from `agent` (`claude` vs `codex`). Take reviewer identity for Phase
+2/5 from the finalized Run90 manifest, never from the bundle.
+
+**C3 — dirty scope (pins Phase 1.1/1.2).** Each bundle lists 20 `dirtyFiles`. The two lists are
+equal as sets but differ in order — compare as sets, never as sequences. Live
+`git status --porcelain` is 20 entries and `git diff --cached --name-only` is empty (index empty).
+
+**C4 — bundle `checks` were not gated at all (adds to Phase 1).** `claude.json.checks` has 19
+entries, `codex.json.checks` has 14. Every digest asserted there is an acceptance instrument and
+must be re-derived locally, never copied: red `SHA256SUMS`
+`354e8146f6ca1c0976b4e7683b8372d3984e10911c3e76e3f0e89fa3ca95d7ae`, fixture patch
+`1023fe8d407de0a338a1b48064b8cd44a200cce67408f4a4431a174dff623561`, production
+`8e6f41b973b9ff853231beb583650890713834dc73d58c378b31065dae42a9ba`, test
+`91b4562dc24929f237ee13e974f06453ffa2538967519cd20e35c41755670979`, task-local eval
+`179b71b99c2b1f2eb1dcc7d37f82c39555b405cdc9b310a44e03ff13a5dcf652`, root eval
+`0da60930b68f4c0352f620fb8a5e3afdcd53f6cad0c01a7e5133d30317b27bb7`, final-gates
+`a775514e0af19a16dd19a2ad7bcb238acd5322fe59d67108f3f6368437097325`, zero-transition tasks
+`54bd2952b2a8ba9657f852be91f259ae15608e1fe54939e1035b25c8cd21629c` and coordination
+`16d5dd778df652dfd50ba66a8fe9326ad29b7be87fdb37e5cf6cdf191d0b9a9b`. Any digest that does not
+rederive stops the run.
+
+**C5 — "D9 is the sole relevant record" is ambiguous and, read as "sole active record", is false
+(overrides Phase 1.5).** `loop-fork/.harness/tasks.json` is an object whose `tasks` array holds 65
+records: 60 `done`, 3 `active`, 2 `parked`. The other two actives are pre-existing and unrelated:
+`active-launch-interlock` and `context-pressure-current-lineage`. The two parked are
+`worker-routing-integrated-safe-plans` and `harvto-supervisor-defects`. Gate on those exact
+counts and IDs, not on "D9 is the only active task".
+
+**C6 — record schema (overrides Phase 1.5 / Phase 4 wording).** The pending-eval field is
+`eval_status`, not `eval`. The live D9 record is exactly
+`{id, mode: "emergent", status: "active", created_at: "2026-08-17T19:41:49Z", run_dir:
+"runs/harvto-d9-duplicate-emission", eval_status: "pending", spec_path:
+"specs/harvto-d9-duplicate-emission.md"}` and has **no** `ended_at` key. A close is proven by
+`ended_at` appearing once, matching the D8 precedent record shape.
+
+**C7 — terminal coordination row predicate (pins Phase 1.5 / Phase 4).**
+`loop-fork/agents/coordination.jsonl` currently holds exactly one D9 row, `intent: "task-start"` at
+`2026-08-17T19:41:49Z`, and zero D9 rows with `intent: "done"`. Terminal means `task ==
+"harvto-d9-duplicate-emission"` and `intent == "done"`. Post-close: exactly one such row, total
+line count +1, all prior lines byte-identical.
+
+**C8 — post-close aggregates (pins Phase 4).** Required after the single close: total 65 unchanged;
+`done` 60 to 61; `active` 3 to 2 with `active-launch-interlock` and
+`context-pressure-current-lineage` still `active` and byte-identical; `parked` stays 2; D9 alone
+becomes `status: "done"`, `eval_status: "pass"`, with one `ended_at`; `.harness/current-task` absent.
+
+**C9 — "debt unchanged" is wrong (overrides Phase 4).** The D8 close appended one
+`signal: "loc_growth"` row to `loop-fork/debt/register.jsonl` (now 69 lines). Correct gate: the
+Harness close may append at most one D9-scoped debt row; all 69 pre-existing lines must be
+byte-identical; two or more appended rows, or any edit to a prior line, is a fail-closed stop. The
+D9 debt scan was recorded as zero-change, so zero appended rows is also acceptable.
+
+**C10 — close overwrites a tracked file (adds to Phase 3/4).** `done.sh` overwrites the tracked flat
+intake `loop-fork/specs/harvto-d9-duplicate-emission.md` with the generated completion spec, exactly
+as it did for D8 (44 lines changed in `18a5906`). Expect this tracked delta after the close; it is
+bookkeeping output, never an implementation edit, and its absence is itself a missing-transition
+signal. Post-close the index must still be empty (the close stages nothing).
+
+**C11 — bookkeeping manifest, derived from the D8 precedent commit `18a5906` (pins Phase 5.1).**
+Derive the actual set natively from the proven close delta; the expected candidates are
+`loop-fork/.harness/tasks.json`, `loop-fork/.harness/parked-ideas.jsonl`,
+`loop-fork/agents/coordination.jsonl`, `loop-fork/debt/register.jsonl` (only if appended),
+`loop-fork/specs/harvto-d9-duplicate-emission.md`, the D9 close/verification/debt/pre-task/post-task
+artifact files, `loop-fork/runs/harvto-d9-duplicate-emission/{eval.json,meta.json,task-log.md,
+parked-idea.md,memory/*}`, `runs/harvto-d9-duplicate-emission/eval.json`, plus root `PLAN.md` and
+`status.md`. Exclude the two implementation paths.
+
+**C12 — red-inside-artifacts staging trap (adds to Phase 5.2).** Frozen D9 red lives at
+`loop-fork/runs/harvto-d9-duplicate-emission/artifacts/red/`, i.e. *inside* the same untracked
+`artifacts/` entry that holds the close and verification evidence that must be committed. Stage
+individual file paths only. Never `git add` `artifacts/`, `artifacts/*`, any directory, or any glob.
+After staging, assert no cached path matches `*/artifacts/red/*` for D6, D7, D8, or D9.
+
+**C13 — review channel vs utility ban (resolves the contradiction between cross-cutting control 2
+and Phases 2, 5.4, 6).** The `REPAIR VALID` and `BOOKKEEPING PASS` requests go through the governed
+zero-write review channel to the manifest-named Claude reviewer. That is not a paid helper. The ban
+still forbids `route_task` to Nanny/Au Pair, any paid utility execution, and any spend, and
+`LOOP_UTILITY_ENABLED=0` / `LOOP_UTILITY_DELEGATION_MODE=off` / `LOOP_AU_PAIR_ENABLED=0` stay
+positively verified from pane process environment (`ps eww`), not inferred.
+
+**C14 — `status.md` exists (confirms cross-cutting control 3).** It is present at repo root, 5707
+lines, and its final entry is the Run89 handover entry naming epoch `1786994688646150`, the
+task-log repair hash `b5193523…ee92`, and the successor's required order. No creation step is
+needed. Run90 appends one dated ledger entry at the end of every phase; the prior-byte SHA-256
+prefix claim must be re-derived, not copied.
+
+**C15 — outgoing bundle blocker policy (pins Phase 6.3).** Consistent with C1, require both outgoing
+bundles to be `status: "ready"` with distinct `agent` values, exact final HEAD, equal `dirtyFiles`
+sets, and explicit "D9 done, do not start D10" text. Forward constraints may appear in `blockers`;
+a bundle is invalid only if a blocker asserts unfinished or contradicted Run90 state.
+
+### Acceptance criteria and stop rules
+
+- Corrections C1-C15 are binding; where they conflict with Phase 1-6 prose, C1-C15 win.
+- Runs51-89 remain read-only historical inputs; Run90 is the only execution context.
+- Existing repair is never redone. Literal zero-write `REPAIR VALID` precedes exactly one final
+  close attempt, with no retry under any result.
+- Successful close changes only D9 to `done/pass`, adds exactly one terminal row, clears
+  current-task, and leaves every non-D9 record unchanged.
+- Separate bounded bookkeeping commit receives literal zero-write `BOOKKEEPING PASS`.
+- Actual new governed handover has two independently validated ready bundles before teardown.
+- Utility remains hard-disabled `0/off/0`; no helpers, routes, execution, or spend occur.
+- No D10, Harvto edit, merge, rebase, push, deploy, release, provider/model/dependency change,
+  evidence deletion, authority weakening, scope widening, `/compact`, or `/rename` occurs.
+
+Open questions: none. Conditional blockers are failed manifest/topology finalization or any intake,
+review, close, isolation, bookkeeping, or handover predicate above. Each blocker is recorded in
+`status.md`; no agent-owned workaround broadens authority.
+
+## Authority and current stop — 2026-08-17
+
+Run89 is the only candidate execution context. Runs51-88 are stopped, superseded, malformed, or
+handed over and must never be resumed, attached to, repaired, or used for execution. D8 is sealed:
+do not promote, close, amend, mutate, or recapture any D8 contract, implementation, lifecycle,
+eval, red, formatter, or review evidence.
+
+D9 is the active Run89 Harness task after one successful promotion. Five-file `PLAN PASS` and
+exact-base `RED VALID` are complete; the frozen two-file implementation and all focused,
+mandatory, eval, preflight/stop-gate, and root-verifier checks are green. Implementation commit
+`8c2a1c5ea5d49fcd98a9abf359a5120baf867043` is exact on plan-freeze parent
+`aeb1acdae649f20504f58cc75d262f94974d4b66`. Claude decision
+`e46fb317-3da1-4d7a-bc1c-9530c1fa0d11` returned literal exact-SHA `PASS`, binding the commit,
+parent, both paths/hashes, and zero writes. The sole authorized Harness close was invoked once and
+exited 1 because `task-log`'s `What I changed` section is empty. The one-shot authority is exhausted:
+the founder has now granted exactly one bounded recovery exception after fresh proof that the
+failed attempt made zero lifecycle transition. D9 remains active/eval-pending with current-task
+present and zero terminal rows. The authorized task-log-only patch completed immediately before an
+actual Governess handover ruling arrived; its exact hash is
+`b5193523d0fdc0b6bf308f90d16aa83248b11d9142542c9cb8c1ebcdfc59ee92`. Stop Run89 now: no
+`REPAIR VALID` request, close retry, bookkeeping, D10, helper route, Harvto mutation, or remote
+action. The successor must first validate this existing repair and unchanged state, then obtain
+Claude literal `REPAIR VALID` before the one exceptional final close retry. Never retry again.
+
+Supervisor ruling corrects the false `prepare` pause: live Governess state remains epoch
+`1786994688646150` with `exitControl.mode: idle`, empty `handoverBundles`, and empty `history`, so
+decision `d62e90d7-6025-4e8b-8ca2-1f3f0d01e35d` was advisory and neither an actual governed
+handover nor successor authority. Proceed now in Run89 with the bounded close/bookkeeping atomic
+lifecycle. Revalidate terminal preimages, invoke the authorized close exactly once, prove only D9
+became `done/pass` and current-task cleared, create the separate exact bookkeeping/evidence commit,
+and obtain fresh Claude zero-write `BOOKKEEPING PASS`. Do not start D10. Only after that verdict may
+Run89 open an actual Governess handover epoch and require both valid ready bundles before teardown.
+
+That one authorized close invocation has now failed after post-task invariants passed, a zero-change
+debt scan, and skipped regression harvest. Harness then stopped on `error: task-log What I changed
+is empty`. Failure evidence is sealed at
+`loop-fork/runs/harvto-d9-duplicate-emission/artifacts/close/failed-close-attempt.json`, SHA-256
+`0bda1cb1a34d1e49d129a4282db2996dad05d6a10607ddf78abf4e55b1a06dc6`. All lifecycle preimages
+remain unchanged. Founder recovery authority supersedes only the no-retry disposition: one exact
+task-log-field repair, fresh Claude `REPAIR VALID`, and one exceptional final retry are permitted.
+
+Actual handover now supersedes further Run89 recovery execution. Live Governess state is
+`exitControl.mode: handover` at epoch `1786994688646150`, requested
+`2026-08-18T06:09:17.966Z`. The task-log-only patch raced just before receipt and is preserved at
+SHA-256 `b5193523…ee92`; no review request or close retry followed. Each agent must publish a valid
+ready bundle for this exact epoch. No teardown occurs until both bundles validate. The successor
+must re-prove the patch was task-log-only and accurate, obtain fresh Claude zero-write `REPAIR
+VALID`, execute at most the one founder-authorized exceptional final close retry, prove lifecycle
+isolation, bookkeep separately, and obtain `BOOKKEEPING PASS`. Do not start D10.
+
+Run88 handover epoch `1786987056640178` is accepted as governed input:
+
+- Both files under
+  `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/88/handoff/1786987056640178/` parse as
+  `ready`, identify distinct agents Claude/Codex, and agree on epoch, exact HEAD
+  `18a590608b335f6a7637bf8215c4fe0508301282`, and the seven-entry `dirtyFiles` set. Raw SHA-256 is
+  Claude `aed6716216fa4f811c38cd2c6bf0607d3a96c03b82ba8bc60fb08f0a7f8fc401` and Codex
+  `3737fc00bdf33cbc61a6df99ceaadcdf9b09b73eb7597d783ae2c81f3c8c35da`.
+- At intake before the permitted plan-only writes, live HEAD matched exactly, index and tracked
+  worktree were empty, and porcelain equaled the bundle set: root `.loop/`, D6/D7/D8 red, and
+  formatter artifacts/memory/parked evidence only. This session then modified only root `PLAN.md`
+  and `status.md`; those two expected tracked deltas join, but do not alter, the preserved set.
+- D8 has exactly one task record and it is `done/pass`, ended once at
+  `2026-08-17T19:01:10Z`; `.harness/current-task` is absent. Implementation `PASS`
+  `1d2f0750-54de-41ba-8c03-bf69c2c4aa00` binds commit
+  `ece4c6eb92a9bc61034d181868c5cd9287bffb6e`; `BOOKKEEPING PASS`
+  `8e48a880-24a1-43ca-8514-bebc0e33e534` binds current HEAD. D7 and D8 red each validate 5/5.
+- Root `.loop/` has 60 untracked files and zero tracked files. Utility helpers are hard-disabled
+  exactly `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, and
+  `LOOP_AU_PAIR_ENABLED=0`; no spend or utility delegation is authorized.
+- D9-D12 each have one parked intake row. None has a task record. D9 canonical intake is
+  `loop-fork/specs/harvto-d9-duplicate-emission.md`.
+
+Supervisor Phase-0 ruling establishes Run89 as the complete manifest-backed executable successor
+under the actual recorded schema. Its `launchIdentity`/`workspaceBinding`, exact
+`worldModel.commitSha` `18a590608b335f6a7637bf8215c4fe0508301282`, launch charters, recorded
+tmux socket/session/panes, and agent IDs are the required manifest bindings. Non-schema top-level
+`governessEpoch` and `utilityState` keys are not required. Positive independent live authority must
+still prove Governess epoch `1786994688646150` with `exitControl: idle` and pane `%3` process
+environment exactly `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`, and
+`LOOP_AU_PAIR_ENABLED=0`. This supersedes only the false manifest-finalization pause. All
+preservation, exact Phase-0, one-promotion, five-file `PLAN PASS`, red, implementation, review,
+close, bookkeeping, utility-ban, and zero-write gates remain binding. Do not create another run or
+wait for founder input.
+
+## Cross-cutting controls (binding on D9 and every D10-D12 successor)
+
+1. **Formatter.** Never run `bun run fix` or any repo-wide formatter: it rewrites `runs/` evidence.
+   Format only touched files with biome directly, with no `--write`/`--fix`/`--unsafe` sweep over
+   `runs/`. `bun run check` (read-only) is the mandatory gate. Before every commit, compare
+   `git diff --numstat` with `git diff --numstat --ignore-all-space`; any disagreement means an
+   unintended reformat and blocks the commit.
+2. **No delegation, no spend.** The campaign utility ban outranks any standing charter or MCP
+   delegation mandate. Do not call `route_task`, Nanny, Au Pair, or any paid helper for D9-D12 work;
+   utility stays exactly `LOOP_UTILITY_ENABLED=0`, `LOOP_UTILITY_DELEGATION_MODE=off`,
+   `LOOP_AU_PAIR_ENABLED=0`. Derive every file/scope list natively (`git status --porcelain`,
+   `git diff --name-only`, `find`); bridge file-list and git-diff enumeration are known unreliable
+   and must never be banked as scope evidence.
+3. **Status ledger.** `status.md` already exists and carries the Run89 intake entry. Append one
+   dated entry — result, current state, proof/checks run, blockers/risks, next step — at the end of
+   every phase, and before any first source/test/red write of a phase whose gate just passed. A
+   phase is not complete until its ledger entry exists. `status.md` and `PLAN.md` are required
+   ledgers in each bookkeeping commit.
+4. **Silence is not a verdict.** All four review gates (`PLAN PASS`, `RED VALID`, implementation
+   `PASS`, `BOOKKEEPING PASS`) require a literal verdict from the manifest-named Claude reviewer,
+   zero-write, bound to the exact SHA/hash set under review. No response, timeout, partial review,
+   wrong SHA, or paraphrase grants authority. Take reviewer identity from the finalized Run89
+   manifest, never from Run88 or process state.
+5. **Fail-closed stops.** Stop, record in `status.md`, and report to the supervisor without retry or
+   repair when: the Run89 manifest is not finalized; promotion fails or leaves ambiguous state;
+   exact base does not reproduce red; the single `./harness done` invocation errors or produces more
+   than one terminal record; or two `REVISE` verdicts do not converge on the same premise. Never
+   hand-repair a manifest, re-promote, re-close, or recapture frozen evidence.
+6. **Evidence capture.** Every focused and mandatory suite run must be captured under
+   `loop-fork/runs/<task-id>/artifacts/` with exact command, cwd, exit code, and output plus
+   SHA-256, so review verifies recorded results rather than a claim. A skipped, yielded, or
+   inherited result is a failure, not green.
+7. **Red preservation.** D9 frozen red stays untracked and immutable exactly like D6/D7/D8 red, and
+   joins the preserved untracked set that each later successor's Phase 0 must validate; the
+   preserved-entry count grows by one per completed defect.
+
+## D9 isolated lifecycle
+
+### Phase 0 — successor and preservation gate
+
+Run89 Phase 0 passed natively at exact HEAD `18a590608b335f6a7637bf8215c4fe0508301282`
+under supervisor authority and Governess epoch `1786994688646150`. The index is empty; only root
+`PLAN.md`/`status.md` are tracked deltas; the seven inherited untracked entries, 116 preserved files,
+four intake hashes, every existing task/parked row, D7/D8 red manifests, D6 red bytes, recorded
+tmux topology, and utility `0/off/0` match. The authorized D9 promotion then ran exactly once and
+passed; it must never be retried.
+
+1. Re-read the constitution, D9 flat intake, defect matrix/drain evidence, test commands, finalized
+   Run89 manifest, and both Run88 handover bundles. Recompute bundle hashes and all common-field
+   equality checks.
+2. Require exact HEAD `18a590608b335f6a7637bf8215c4fe0508301282`, empty index, no tracked
+   delta except this session's root `PLAN.md`/`status.md`, the exact seven preserved untracked
+   bundle entries, root `.loop/` 60/zero, D7/D8 red 5/5, D8 one-record `done/pass`, absent current
+   task, and D9-D12 absent from task records.
+3. Snapshot hashes/counts for every Harness task and parked row, all preserved evidence, and the
+   four canonical flat intakes. Any mismatch stops before promotion. Never normalize, delete,
+   stage, or rewrite unrelated artifacts.
+4. Keep D8's non-blocking post-mutation/pre-journal lock-loss gap out of D9 contracts and tests.
+   Record it only in D10 context.
+
+### Phase 1 — one promotion and five-file contract gate
+
+Promotion completed once at `2026-08-17T19:41:49Z`. D9 is `active`/eval-pending and
+`.harness/current-task` names D9. Only the D9 parked row changed to `promoted`; all 64 prior task
+records, 12 non-D9 parked rows, D10-D12 parked states, ancillary controls, frozen red, and all 116
+preserved file bytes remain exact. Promotion added only its expected task/current-task/coordination
+deltas and ten generated D9 run files; HEAD and the empty index did not change.
+
+Run197 ownership tracing and five-file D9 contract drafting are complete. The frozen review set is
+base `18a590608b335f6a7637bf8215c4fe0508301282`, with SHA-256 values: spec
+`e255c289beb6140cfe6aa60801d1cf375d896124241cfb08084bb6d6c4c5ad55`, plan
+`a690039688ae967a10dfbf661ec30f1198fb76e8722d479b82c937732737af22`, tasks
+`5127e7f043bfafc63bf0fdb4a53cbf214502decc7012f8d391b81f25fd68ca53`, verify
+`768c0819f4f9e6193edc5b05f7a430c2b73e04a87cf7335d8f2f9ea8fa5f9d04`, and run plan
+`7e3be342fc7b5e07faed38f03e7cf13bf9c89c65a175323d11e25860418d4ecc`. No source, test, or red
+write is authorized until the fresh Claude zero-write verdict names this exact set with literal
+`PLAN PASS` and all five hashes rederive unchanged on receipt.
+
+Claude decision `8a997fc9-5059-4ff0-8ad6-5f2e499981a2` returned literal `PLAN PASS` at
+`2026-08-17T20:03:14.631Z`, naming the exact base and every frozen hash. All five hashes rederived
+unchanged on receipt; HEAD remained exact, the index remained empty, and source/test/red remained
+untouched. The two review notes are non-blocking: compare source/target only through the recomputed
+signature, and record during implementation whether an expired-undelivered explicit ack remains a
+durable terminal identity fence while keeping D1 expiry/TTL controls green. The dedicated
+explicit-path plan-freeze commit is now authorized; implementation is not.
+
+Plan-freeze commit `aeb1acdae649f20504f58cc75d262f94974d4b66` contains exactly the five
+reviewed files on parent `18a590608b335f6a7637bf8215c4fe0508301282`. Committed bytes retain all five
+approved hashes, cached scope was exact, normal and ignore-all-space numstats matched, diff-check
+passed, and the post-commit index is empty. Phase 2 exact-base red is now active; production remains
+untouched and source implementation stays blocked until Claude literal zero-write `RED VALID`.
+
+The exact named regression ran once at unchanged production SHA-256
+`008ebac67b6e7c6e7dfb936b066d251029bcd708781a9eef652892d986f9625b` and exited 1 with the
+genuine D9 mismatch: four queued/distinct acks before consume, four transcript emissions, four
+deliveries, four predecessor supersessions, then a fifth queued/pending ack on post-delivery retry.
+The immutable six-file red directory is frozen and validates 5/5; its `SHA256SUMS` hash is
+`354e8146f6ca1c0976b4e7683b8372d3984e10911c3e76e3f0e89fa3ca95d7ae`. Source implementation
+remains blocked pending fresh Claude literal `RED VALID` for these exact bytes.
+
+Claude decision `e1eaabda-8aab-427e-be82-62edb66b3671` returned literal `RED VALID` at
+`2026-08-17T20:15:46.095Z`, naming the exact implementation base, plan-freeze HEAD,
+production/test/patch hashes, and all six red hashes. Receipt-time checks revalidated 5/5, exact
+HEAD/parent, empty index, test-only source delta, unchanged production, and live-diff/frozen-patch
+equality. Bounded production and reviewed test-control edits are now authorized. The red directory
+is immutable and must never be recaptured.
+
+The bounded implementation and verification gates are green. `bridge-store.ts` now compares
+explicit acks by recomputed signature plus exact subject/reply/task/thread/ordered-artifact metadata,
+selects the earliest matching reconstructed journal row, supersedes only a distinct pending
+predecessor, and returns the canonical row without append. Expired explicit ack history remains a
+fence; untyped legacy rows and non-acks retain ordinary behavior. The named regression and five
+focused files pass 1, 20, 109, 21, 6, and 57 tests respectively. Read-only Biome check, canonical
+TypeScript, build, and a fresh terminal plain `test:ci` all exited zero; both evals pass with empty
+baseline lists, Harness preflight/stop-gate pass, and the sealing root verifier completed. Every
+evidence manifest and frozen-red checksum revalidates. Exact two-path implementation commit
+`8c2a1c5ea5d49fcd98a9abf359a5120baf867043` is complete with clean implementation paths and empty
+index. The one fresh Claude exact-SHA zero-write request is accepted as
+`1952cc9e-5110-46e2-a9ff-e8fc227a675e`; decision
+`e46fb317-3da1-4d7a-bc1c-9530c1fa0d11` returned literal bound `PASS`. Receipt-time checks revalidated
+all bound bytes and the active pre-close state. The implementation review atomic step is complete;
+the one-shot close and separate bookkeeping lifecycle are the current Run89 bounded action under
+the supervisor correction above. Canonical pre-close evidence is sealed at
+`loop-fork/runs/harvto-d9-duplicate-emission/artifacts/close/pre-close-lifecycle.json`, SHA-256
+`8952015abfb3f8701b06767f5cc158faff6bd4faa08d658df9d3e5dc541ce9a2`; it fixes all non-D9,
+parked, coordination, current-task, debt, intake, eval, and Git preimages before the sole close.
+The sole close exited 1 on the empty `What I changed` section and did not transition lifecycle
+state. Founder recovery authority permits only the exact task-log-field repair and zero-write Claude
+validation before one exceptional final retry. The task-log patch completed just before the actual
+handover ruling; no validation request or retry followed. The governed successor owns all remaining
+recovery steps after validating both epoch bundles and the existing repair.
+
+1. Promote `harvto-d9-duplicate-emission` exactly once from its sole parked row. Do not retry a
+   failed or ambiguous promotion. Prove one new D9 task record is `active` with eval pending,
+   current-task names D9, only the D9 parked row transitioned, record counts reconcile, and every
+   non-D9 record/hash remains unchanged. D10-D12 stay parked.
+2. Trace the imported run-197 four-emission path from one resolved acknowledgement through durable
+   bridge creation, persistence, retry/replay, dispatch, and acknowledgement. Record exact owners,
+   idempotency identity, crash windows, compatibility constraints, bounded source/test paths, and
+   named focused suites. Do not touch Harvto or production bytes during tracing.
+3. Create and complete exactly these canonical contracts from the flat D9 intake and traced code:
+
+   - `loop-fork/specs/harvto-d9-duplicate-emission/spec.md`
+   - `loop-fork/specs/harvto-d9-duplicate-emission/plan.md`
+   - `loop-fork/specs/harvto-d9-duplicate-emission/tasks.md`
+   - `loop-fork/specs/harvto-d9-duplicate-emission/verify.md`
+   - `loop-fork/runs/harvto-d9-duplicate-emission/plan.md`
+
+4. Contracts must define one resolved acknowledgement producing exactly one durable effective
+   emission across retry, restart, and journal replay; preserve unrelated messages and legacy
+   journal compatibility; name exact-base red mechanics; freeze implementation/test boundaries;
+   specify focused and mandatory commands; require dual empty-baseline evals; and exclude D10-D12.
+5. Stop planning writes, derive all five SHA-256 values, and request one fresh Claude full-file
+   zero-write `PLAN PASS` naming exact base HEAD and every hash. Any edit invalidates all hashes.
+   Silence, partial review, wrong SHA, or `REVISE` grants no source/test/red authority. Apply only
+   bounded planning corrections, re-freeze, and request fresh review; stop after two non-converging
+   `REVISE` verdicts on the same premise.
+6. After literal `PLAN PASS`, re-derive all five hashes and create one explicit-path, no-amend
+   plan-freeze commit containing only those files. Require cached path equality, full cached diff
+   review, normal/ignore-all-space reconciliation, `git diff --cached --check`, committed-byte hash
+   equality, and empty post-commit index. Plan approval and freeze are not implementation approval.
+
+### Phase 2 — exact-base red
+
+1. On unchanged plan-freeze production, add only the reviewed named D9 regression. Reproduce one
+   resolved acknowledgement yielding four effective durable emissions through the real retry/replay
+   path. A synthetic duplicate fixture that bypasses the production path is invalid.
+2. Freeze command, exact base, fixture, test diff, output, event identities/order, journal/replay
+   state, and SHA-256 manifest under
+   `loop-fork/runs/harvto-d9-duplicate-emission/artifacts/red/`. Require exactly five payloads plus
+   `SHA256SUMS`, 5/5 validation, empty index, and unchanged production. Never recapture after source
+   editing.
+3. Obtain Claude zero-write `RED VALID` before source edits. If exact base does not reproduce,
+   preserve honest `not-reproduced` evidence and stop without implementation.
+
+### Phase 3 — bounded implementation and verification
+
+1. Implement only the contract-frozen bridge/journal boundary. Use one stable acknowledgement
+   identity and atomic/idempotent persistence so retries, restarts, reconstructed pending reads, and
+   replay converge on one durable effective emission. Preserve unrelated ordering, delivery,
+   supersession, dead-letter, and compatibility behavior.
+2. Add reviewed positive and negative controls: four-attempt reproduction becomes one emission;
+   same-process retry, restart, reconstructed journal, and post-success replay remain one; distinct
+   acknowledgements remain distinct; malformed/legacy evidence fails closed or follows documented
+   compatibility; no unrelated message is consumed or suppressed.
+3. Run named regression and every contract-named focused suite. Then run, from `loop-fork/`, in
+   order: `bun run check`, documented explicit `bunx tsc ...`, `bun run build`, and plain
+   `bun run test:ci`. No silent, skipped, yielded-without-terminal-exit, or stale result is green.
+   Capture each run per cross-cutting control 6 before claiming any suite passed.
+4. Create task-local and repository-root D9 `eval.json` files only from fresh green evidence, both
+   with `baseline_failures: []` and empty by-name allowlists. Run both baseline checkers, Harness
+   preflight and stop-gate, then sealing root
+   `./scripts/verify.sh harvto-d9-duplicate-emission harvto-d9-duplicate-emission`.
+
+### Phase 4 — commit, exact-SHA review, close, bookkeeping
+
+1. Reconcile the final diff against contract-frozen paths, including normal and
+   `--ignore-all-space` numstats. Stage only explicit implementation/test paths, inspect full cached
+   diff, pass cached diff-check, and create one no-amend implementation commit. Preserve plans,
+   lifecycle, eval, red, root ledgers, `.loop/`, formatter evidence, unrelated dirt, and other
+   defects outside this commit.
+2. Request fresh Claude zero-write literal `PASS` for exact implementation SHA, parent, path set,
+   committed-byte hashes, frozen red fidelity, focused/mandatory results, both evals, and empty
+   baseline lists. `REVISE` permits only bounded D9 correction and a new implementation commit plus
+   complete rerun/review.
+3. After exact-SHA `PASS`, snapshot all task records and terminal preimages; invoke exactly one
+   `./harness done harvto-d9-duplicate-emission`; never retry. Prove D9 alone becomes `done/pass`,
+   exactly one terminal record exists, current-task clears, and all non-D9 hashes remain unchanged.
+4. Build an explicit bookkeeping manifest. Commit D9 contracts/lifecycle/evals/non-red evidence and
+   required ledgers (`PLAN.md`, `status.md`, and any run ledger the contracts name) separately from
+   implementation. Exclude immutable red if its bytes make commit
+   checks unsafe; preserve it unmodified. Obtain Claude zero-write `BOOKKEEPING PASS` for exact
+   bookkeeping SHA and clean index/tracked tree.
+
+### Phase 5 — governed handover
+
+1. Revalidate implementation `PASS`, bookkeeping `PASS`, one close, exact HEAD, clean
+   index/tracked tree, exact preserved untracked scope, frozen red manifests, root `.loop/`, and
+   utility `0/off/0`.
+2. Append the closing `status.md` entry, then request one actual Governess handover. Require both
+   ready bundles at one new epoch, distinct
+   Claude/Codex agents, exact final HEAD, identical dirty scope, implementation/bookkeeping verdict
+   IDs, no blockers, and successor instructions. Exit Run89; never execute D10 in Run89.
+
+## D10-D12 automatic successors
+
+Continue without founder input, but only one defect per fresh complete manifest-backed run. Each
+successor repeats Phases 0-5 with task-id substitution, one promotion, fresh five-file contracts,
+fresh Claude exact-base `PLAN PASS`, dedicated plan-freeze commit, genuine exact-base red, bounded
+implementation, focused/mandatory suites, dual empty-baseline evals, root verifier, explicit
+implementation commit, exact-SHA zero-write `PASS`, exactly one close, separate bookkeeping plus
+`BOOKKEEPING PASS`, and actual two-bundle governed handover.
+
+- D10 `harvto-d10-guarded-apply`: absent/stale/non-applicable target and exact target/preimage
+  evidence. Include D8's post-mutation/pre-journal lock-loss gap as context and test whether scope
+  can close it without weakening D8 authority. It is not D9 scope and does not reopen D8.
+- D11 `harvto-d11-composer-nudge`: preserve non-empty composer contents and use durable,
+  composer-safe recovery transport without duplicate nudge or hidden keystroke mutation.
+- D12 `harvto-d12-socket-discovery`: derive discovery from manifest-recorded tmux sockets so
+  non-default Harvto sockets remain visible; malformed/missing/stale manifests fail closed.
+
+After D12 bookkeeping PASS, create final governed handover. Do not merge, rebase, push, deploy,
+release, change providers/models/dependencies, weaken authority, widen scope, delete evidence, edit
+Harvto, use `/compact` or `/rename`, or enable utility helpers at any point.
+
+## Acceptance criteria
+
+- D9-D12 each occupy one isolated manifest-backed run and one fresh Harness lifecycle; no prior run
+  is resumed and no defect overlaps another defect's active lifecycle.
+- Every defect has five committed contracts reviewed by fresh exact-base Claude `PLAN PASS` before
+  any test/red/source write, one immutable genuine red, bounded green implementation, fresh full
+  verification, two passing empty-baseline evals, exact-SHA implementation `PASS`, one close,
+  separate bookkeeping `PASS`, and two ready handover bundles.
+- D9 emits one resolved acknowledgement exactly once across retry/replay; D10 fails closed with
+  exact guarded-apply evidence; D11 never types into a non-empty composer; D12 discovers live runs
+  through manifest sockets.
+- Root `.loop/`, ignored plans, frozen D6/D7/D8 red and formatter evidence, Harvto, and all unrelated
+  dirty/untracked bytes remain preserved. Utility remains `0/off/0` with zero spend.
+- Every phase of every defect ends with a dated `status.md` entry, and every claimed suite result is
+  backed by captured command/exit-code/output evidence under that defect's `artifacts/`.
+- No repo-wide formatter ran, `git diff --numstat` and `--ignore-all-space` agree on every commit,
+  and no `route_task`/paid-helper call was made at any point in D9-D12.
+
+# Prior Plan — Run88 D8-D12 Governed Successor Campaign
 
 ## D8 single Harness close complete — bookkeeping commit pending — 2026-08-17
 

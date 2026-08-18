@@ -1,0 +1,44 @@
+{
+  "task_id": "harvto-d9-duplicate-emission",
+  "status": "pass",
+  "verdict": "pass",
+  "baseline_failures": [],
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "evidence": "D9 exact-base red is frozen 5/5 and independently RED VALID. The named regression passes, the owner file passes 20/20, and focused bridge, paired-loop, integration, and utility controls pass 109/109, 21/21, 6/6, and 57/57. Mandatory check, explicit TypeScript, build, and the fresh terminal 79-file sorted serial test:ci certification exited 0. The first test:ci capture yielded without a retained terminal exit and is deliberately not counted; the fresh certification is the authoritative result."
+    }
+  },
+  "run_89_verification": {
+    "implementation_base": "18a590608b335f6a7637bf8215c4fe0508301282",
+    "plan_freeze_commit": "aeb1acdae649f20504f58cc75d262f94974d4b66",
+    "plan_pass_id": "8a997fc9-5059-4ff0-8ad6-5f2e499981a2",
+    "red_valid_id": "e1eaabda-8aab-427e-be82-62edb66b3671",
+    "red_manifest_sha256": "354e8146f6ca1c0976b4e7683b8372d3984e10911c3e76e3f0e89fa3ca95d7ae",
+    "focused": {
+      "named_regression": "1 pass, 0 fail, 19 filtered",
+      "governess_p0_runtime": "20 pass, 0 fail, 108 assertions",
+      "bridge": "109 pass, 0 fail, 473 assertions",
+      "paired_loop": "21 pass, 0 fail, 98 assertions",
+      "paired_loop_integration": "6 pass, 0 fail, 33 assertions",
+      "utility_runtime": "57 pass, 0 fail, 298 assertions"
+    },
+    "mandatory": {
+      "check": "exit 0: 189 files, no fixes applied",
+      "typecheck": "exit 0: explicit contract command",
+      "build": "exit 0: 3051 modules",
+      "test_ci_initial_capture": "terminal exit not retained after yield; not counted green",
+      "test_ci_certified_serial": "fresh terminal exit 0: 79 sorted test files",
+      "certified_file_list_sha256": "465e9b1a9c34f66a618e581a2573188e61491ad3617af343fd18d46788d590ee",
+      "certification_command_sha256": "93c4fe26332ef70b15bb1da5ebb21dc0dc2f586a329c4a489da32e3e3c1361d3",
+      "certified_output_sha256": "ed5307b02112ffb7bb5ec95ce7ef10ab53c706919bcacb1c9a4c275dcfad83f7"
+    },
+    "implementation_sha256": {
+      "src/loop/bridge-store.ts": "8e6f41b973b9ff853231beb583650890713834dc73d58c378b31065dae42a9ba",
+      "tests/loop/governess-p0-runtime.test.ts": "91b4562dc24929f237ee13e974f06453ffa2538967519cd20e35c41755670979"
+    }
+  }
+}

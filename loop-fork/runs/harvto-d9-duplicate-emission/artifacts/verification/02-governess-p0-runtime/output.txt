@@ -1,0 +1,29 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test "tests/loop/governess-p0-runtime.test.ts"
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-p0-runtime.test.ts:
+(pass) journal v2 coalesces stable observations and writes one-record heartbeats [1.52ms]
+(pass) journal index rebuild preserves the idempotency fence after dispatch [0.94ms]
+(pass) journal compaction archives superseded observations without losing controls [2.17ms]
+(pass) malformed crash tails fail closed without automatic repair [0.60ms]
+(pass) duplicate hook evidence reconciles a dispatched control only once [0.71ms]
+(pass) typed bridge metadata round-trips and urgent work is delivered first [0.94ms]
+(pass) bridge QoS deduplicates, supersedes, bounds, and dead-letters work [0.66ms]
+(pass) bridge TTL survives a backward clock and expires deterministically [0.44ms]
+(pass) D1 live liveness callback suppresses ttl expiry and queue-depth dead-letter terminalization [0.93ms]
+(pass) D1 unknown liveness retains ttl-expired messages fail-closed [0.29ms]
+(pass) D1 live pressure slot reaches a pre-accept retained ceiling [0.44ms]
+(pass) D1 later-dead evidence terminalizes retained ttl and pressure once [1.09ms]
+(pass) D1 same-dedupe supersession remains accepted at retained ceiling [0.56ms]
+(pass) D1 repeated recovery reads and consumes deliver one retained identity once [0.52ms]
+(pass) D9 resolved acknowledgement emits once across supersession retry and replay [1.50ms]
+(pass) D9 acknowledgement identity preserves correlations and non-ack independence [1.54ms]
+(pass) D9 acknowledgement replay avoids self-supersession and converges after pre-append crash [0.95ms]
+(pass) D9 explicit legacy and expired acknowledgements fence replay without promoting untyped rows [1.00ms]
+(pass) D1 old and fixed message shapes reconstruct compatibly [0.25ms]
+(pass) D1 target liveness combines exact configured evidence fail-closed [0.14ms]
+
+ 20 pass
+ 0 fail
+ 108 expect() calls
+Ran 20 tests across 1 file. [39.00ms]

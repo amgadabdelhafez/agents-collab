@@ -1,0 +1,3 @@
+$ bun build --compile --outfile loop src/cli.ts
+ [152ms]  bundle  3051 modules
+  [85ms] compile  loop

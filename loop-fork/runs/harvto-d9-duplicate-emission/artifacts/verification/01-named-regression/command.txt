@@ -1,0 +1,1 @@
+bun run test:file -- tests/loop/governess-p0-runtime.test.ts --test-name-pattern "D9 resolved acknowledgement emits once across supersession retry and replay"

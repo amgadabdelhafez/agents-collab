@@ -1,0 +1,1 @@
+bun run test:file -- tests/loop/00-paired-loop.integration.test.ts

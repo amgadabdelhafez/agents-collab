@@ -1,0 +1,2 @@
+$ ultracite check
+Checked 189 files in 137ms. No fixes applied.

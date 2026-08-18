@@ -1,0 +1,10 @@
+{
+  "id": "harvto-d9-duplicate-emission",
+  "mode": "emergent",
+  "created_at": "2026-08-17T19:41:49Z",
+  "status": "done",
+  "description": "D9 P2: reproduce four duplicate bridge emissions of one resolved acknowledgement and enforce idempotent single delivery.",
+  "promoted_from": "specs/harvto-d9-duplicate-emission.md",
+  "promoted_at": "2026-08-17T19:41:49Z",
+  "ended_at": "2026-08-18T07:19:09Z"
+}

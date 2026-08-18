@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "task_id": "harvto-d9-duplicate-emission",
+  "recorded_at": "2026-08-17T20:38:35Z",
+  "run": 89,
+  "implementation_base": "18a590608b335f6a7637bf8215c4fe0508301282",
+  "plan_freeze_commit": "aeb1acdae649f20504f58cc75d262f94974d4b66",
+  "review_authority": {
+    "plan_pass_id": "8a997fc9-5059-4ff0-8ad6-5f2e499981a2",
+    "red_valid_id": "e1eaabda-8aab-427e-be82-62edb66b3671"
+  },
+  "implementation_scope": [
+    {
+      "path": "loop-fork/src/loop/bridge-store.ts",
+      "sha256": "8e6f41b973b9ff853231beb583650890713834dc73d58c378b31065dae42a9ba"
+    },
+    {
+      "path": "loop-fork/tests/loop/governess-p0-runtime.test.ts",
+      "sha256": "91b4562dc24929f237ee13e974f06453ffa2538967519cd20e35c41755670979"
+    }
+  ],
+  "red_evidence": {
+    "directory": "loop-fork/runs/harvto-d9-duplicate-emission/artifacts/red",
+    "manifest_sha256": "354e8146f6ca1c0976b4e7683b8372d3984e10911c3e76e3f0e89fa3ca95d7ae",
+    "manifest_entries_verified": 5,
+    "fixture_patch_sha256": "1023fe8d407de0a338a1b48064b8cd44a200cce67408f4a4431a174dff623561",
+    "output_sha256": "1fca4e369b1d0cf4d50543e1f23e297b313def08c5e1017b8e2016f3146d92a4"
+  },
+  "focused_checks": [
+    {
+      "command": "bun run test:file -- tests/loop/governess-p0-runtime.test.ts --test-name-pattern \"D9 resolved acknowledgement emits once across supersession retry and replay\"",
+      "exit": 0,
+      "tests_passed": 1,
+      "tests_failed": 0
+    },
+    {
+      "command": "bun run test:file -- tests/loop/governess-p0-runtime.test.ts",
+      "exit": 0,
+      "tests_passed": 20,
+      "tests_failed": 0,
+      "assertions": 108
+    },
+    {
+      "command": "bun run test:file -- tests/loop/bridge.test.ts",
+      "exit": 0,
+      "tests_passed": 109,
+      "tests_failed": 0,
+      "assertions": 473
+    },
+    {
+      "command": "bun run test:file -- tests/loop/paired-loop.test.ts",
+      "exit": 0,
+      "tests_passed": 21,
+      "tests_failed": 0,
+      "assertions": 98
+    },
+    {
+      "command": "bun run test:file -- tests/loop/00-paired-loop.integration.test.ts",
+      "exit": 0,
+      "tests_passed": 6,
+      "tests_failed": 0,
+      "assertions": 33
+    },
+    {
+      "command": "bun run test:file -- tests/loop/utility-runtime.test.ts",
+      "exit": 0,
+      "tests_passed": 57,
+      "tests_failed": 0,
+      "assertions": 298
+    }
+  ],
+  "mandatory_checks": [
+    {
+      "command": "bun run check",
+      "exit": 0,
+      "files_checked": 189,
+      "fixes_applied": 0
+    },
+    {
+      "command": "bunx tsc --noEmit --skipLibCheck --types bun-types --moduleResolution bundler --module preserve --target esnext src/cli.ts src/loop/caveman-skill.d.ts",
+      "exit": 0
+    },
+    {
+      "command": "bun run build",
+      "exit": 0,
+      "modules": 3051
+    },
+    {
+      "command": "bun run test:ci",
+      "attempt": 1,
+      "exit": null,
+      "result": "terminal exit was not retained after yield; deliberately not counted green"
+    },
+    {
+      "command": "bun run test:ci",
+      "attempt": 2,
+      "exit": 0,
+      "certified_sorted_serial_files": 79,
+      "certified_file_list_sha256": "465e9b1a9c34f66a618e581a2573188e61491ad3617af343fd18d46788d590ee",
+      "package_script_sha256": "93c4fe26332ef70b15bb1da5ebb21dc0dc2f586a329c4a489da32e3e3c1361d3",
+      "output_sha256": "ed5307b02112ffb7bb5ec95ce7ef10ab53c706919bcacb1c9a4c275dcfad83f7"
+    },
+    {
+      "command": "python3 scripts/check-baseline-allowlist.py loop-fork/runs/harvto-d9-duplicate-emission/eval.json",
+      "exit": 0
+    },
+    {
+      "command": "python3 scripts/check-baseline-allowlist.py runs/harvto-d9-duplicate-emission/eval.json",
+      "exit": 0
+    },
+    {
+      "command": "./harness preflight --json",
+      "exit": 0,
+      "result": "pass"
+    },
+    {
+      "command": "./harness stop-gate --json",
+      "exit": 0,
+      "result": "pass"
+    },
+    {
+      "command": "./scripts/verify.sh harvto-d9-duplicate-emission harvto-d9-duplicate-emission",
+      "exit": 0,
+      "result": "verify.sh complete",
+      "output_sha256": "6500bd08d6f6d9fb1649e7dd64fba47dade06c536061278d5a27f5cb3e34f37d"
+    }
+  ],
+  "evidence_manifest_sha256": {
+    "01-named-regression": "ac1b2d3a3f13ec2b2dd0459fe791a62be70e334a56d61565b8e2c9b0de15d82f",
+    "02-governess-p0-runtime": "0d6932621d563d28024d471dcd13da5dc2dcdcd7dabacce242cbf23e2d40afa1",
+    "03-bridge": "978b59ad35f614ba1df09b16c206a6987cda168120a7161fb4096678460e60f8",
+    "04-paired-loop": "6e3a3a6a492c1a8b782e16f51455af121fa9dfd51942a42cc322a5ed93c8dd69",
+    "05-paired-loop-integration": "87a414a4ef59107a1ee03a3904c2b77e57e447ef33bdd3aef50f5ba87fe96a83",
+    "06-utility-runtime": "c676a9451988bc268c60620e8d656aacddbebd8dc0869bdf741ac535fe1ce821",
+    "07-check": "fcad63afe8984adc0d74e91eac9c9c70e8585d9bd0e5d0c94ef94974539d4302",
+    "08-typescript": "dbb68c994874fe1df51c8eb660d0eb0d3ba13e571f7a4fbf467492b48d93839b",
+    "09-build": "34fb61456843ab70bae534c6cea12f114fba5c75d9d98f26e125d20376baecd2",
+    "10-test-ci": "af011438612320fb00827c2e9805b5a48199a0e6470a6014b2d2e1ee0a1ec490",
+    "11-baseline-task-local": "5fbfe0f33a22a7c866d6d7752af559d50b28c1825158a26c5ddbcf8ce4c800bd",
+    "12-baseline-root": "949b65b222db47a4479ee1e6ae5079a0a3989d4553ca5f504372e720360637bc",
+    "13-harness-preflight": "833af5f3014d51aa132d17dd5bf8bd1fd7c5468d968a2aee8be2b99e9acd0c1d",
+    "14-harness-stop-gate": "cf5879625aed7751c6042a5099dd22bcdedfde3c453c3b816624da8f47be91e0",
+    "15-root-verify": "2caf42b5d698150668422d4bfc2cb8d586387ca603b109a4668fec189ed29b1f"
+  },
+  "evals": [
+    {
+      "path": "loop-fork/runs/harvto-d9-duplicate-emission/eval.json",
+      "sha256": "179b71b99c2b1f2eb1dcc7d37f82c39555b405cdc9b310a44e03ff13a5dcf652",
+      "verdict": "pass",
+      "baseline_failures": []
+    },
+    {
+      "path": "runs/harvto-d9-duplicate-emission/eval.json",
+      "sha256": "0da60930b68f4c0352f620fb8a5e3afdcd53f6cad0c01a7e5133d30317b27bb7",
+      "verdict": "pass",
+      "baseline_failures": []
+    }
+  ],
+  "diff": {
+    "production_and_test_paths": 2,
+    "index_empty_before_staging": true,
+    "diff_check_exit": 0,
+    "normal_numstat": {
+      "loop-fork/src/loop/bridge-store.ts": "78/9",
+      "loop-fork/tests/loop/governess-p0-runtime.test.ts": "481/0"
+    },
+    "ignore_all_space_numstat": {
+      "loop-fork/src/loop/bridge-store.ts": "78/9",
+      "loop-fork/tests/loop/governess-p0-runtime.test.ts": "481/0"
+    }
+  },
+  "verdict": "pass"
+}

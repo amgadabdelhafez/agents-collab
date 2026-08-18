@@ -1,0 +1,120 @@
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test "tests/loop/00-paired-loop.integration.test.ts"
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/00-paired-loop.integration.test.ts:
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 41
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop forwards a real bridge message in default paired mode [33.80ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-supervisor-close
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-supervisor-close
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop durably closes a completed run to the supervisor with exact identity [42.58ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-missing-source
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop refuses healthy completion without source task identity [19.07ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-workspace-root
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop prefers workspace binding root for completion Git identity [18.60ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-git-failure
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop keeps completion non-terminal when Git identity cannot resolve [16.73ms]
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: d5-enqueue-full
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+(pass) runPairedLoop keeps completion non-terminal when supervisor enqueue is full [22.24ms]
+
+ 6 pass
+ 0 fail
+ 33 expect() calls
+Ran 6 tests across 1 file. [184.00ms]
