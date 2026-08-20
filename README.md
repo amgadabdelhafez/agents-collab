@@ -13,6 +13,12 @@ The active implementation is in [`loop-fork/`](loop-fork/README.md).
 - `evals/` — regression and behavior evaluations
 - `runs/` — task-specific evidence and verification artifacts
 
+## Current integration plan
+
+The completed Harvto supervisor fixes are published as a conflict-minimizing
+linear feature stack. See the [branch and verification map](docs/harvto-supervisor-defect-stack.md)
+and the [D11/D12 next-phase plan](docs/harvto-supervisor-next-phase.md).
+
 ## Quick start
 
 ```bash

@@ -1,6 +1,6 @@
 # Dependency Map
 
-Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
+Last updated: 2026-08-20
 
 ## Modules
 
@@ -107,3 +107,14 @@ optional bridge supervisor ──messages/route request──► bridge
 | Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
 | Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption; Claude gates the read-only fallback while Codex native spawn fails closed |
+
+## Harvto supervisor integration order
+
+The reviewed supervisor changes form a linear dependency stack. Workspace
+ownership and handover safety establish the state model used by peer delivery,
+utility routing, lifecycle settlement, stale-write fencing, bridge deduplication,
+and guarded patch application. Integrate the numbered branches in the order
+defined in [Harvto Supervisor Defect Stack](harvto-supervisor-defect-stack.md).
+
+D11 composer-safe recovery depends on the complete D10 tip. D12 manifest-backed
+socket discovery remains parked until D11 is closed and independently reviewed.

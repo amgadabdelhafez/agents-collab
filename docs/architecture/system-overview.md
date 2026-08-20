@@ -96,6 +96,12 @@ or claim authority.
 - Memory promotion is an explicit curated command. Pickbrain, Witchcraft, and
   any future local retrieval service consume its Markdown as a rebuildable
   projection and cannot mutate runtime truth.
+- Recovery must preserve non-empty Claude and Codex composers byte-for-byte.
+  Until D11 is implemented, no automated recovery path may inject submit,
+  clear, Escape, cursor, or duplicate-nudge keystrokes into those panes.
+- Tmux discovery must ultimately use manifest-recorded socket and session
+  identity. Until D12 is implemented, a default-socket probe is diagnostic and
+  cannot establish lifecycle authority by itself.
 
 ## Key data flows
 
@@ -146,4 +152,6 @@ or claim authority.
    denied, including `TeamCreate`.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
-contracts and promotion gates.
+contracts and promotion gates. See
+[Harvto Supervisor Next Phase](../harvto-supervisor-next-phase.md) for the D11
+and D12 sequencing contract.
