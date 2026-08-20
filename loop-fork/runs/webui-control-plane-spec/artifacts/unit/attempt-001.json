@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-control-plane-spec",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-20T07:20:13Z",
+  "ended_at": "2026-08-20T07:20:13Z",
+  "artifact": "runs/webui-control-plane-spec/artifacts/unit/attempt-001.log",
+  "command": [
+    "git",
+    "diff",
+    "--check"
+  ]
+}

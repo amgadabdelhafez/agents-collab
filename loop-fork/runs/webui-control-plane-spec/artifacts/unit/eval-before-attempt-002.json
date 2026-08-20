@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-control-plane-spec",
+  "status": "pass",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-control-plane-spec/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-control-plane-spec/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-control-plane-spec/artifacts/unit/attempt-001.json"
+    }
+  }
+}

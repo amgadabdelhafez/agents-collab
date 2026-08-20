@@ -1,0 +1,11 @@
+{
+  "id": "webui-control-plane-spec",
+  "mode": "planned",
+  "created_at": "2026-08-20T06:38:25Z",
+  "status": "done",
+  "description": "Define the local-first Web UI control surface, authority boundaries, migration slices, and verification contract.",
+  "research_required": true,
+  "research_reason": "explicit",
+  "research_path": "runs/webui-control-plane-spec/research.md",
+  "ended_at": "2026-08-20T07:20:38Z"
+}

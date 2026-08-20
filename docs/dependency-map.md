@@ -1,6 +1,6 @@
 # Dependency Map
 
-Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
+Last reviewed: <!-- 2026-08-20 by webui-control-plane design slice; planned boundary only, installed build graph unchanged -->
 
 ## Modules
 
@@ -49,6 +49,12 @@ Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
   owns: native-subagent.ts, loop-scoped provider profiles, provider hooks
   exposes: one short-lived Claude read-only lease, Codex fail-closed disablement, or strict zero-native mode
   consumes: settled utility evidence, current Governess epoch, provider lifecycle events
+
+[Planned Web control surface - not installed]
+  owns: control-surface projection/security/server modules and src/webui
+  exposes: redacted fleet/run/timeline/evidence GET APIs and ordered SSE
+  consumes: side-effect-free run, Governess, bridge, utility, usage, tmux/process diagnostic readers
+  future commands: untrusted inbox consumed only by the current Governess epoch
 ```
 
 ## Dependency graph
@@ -79,6 +85,11 @@ Codex spawn_agent ──config + PreToolUse──► denied (0.145 sandbox inher
 
 Nanny pane / Au Pair pane ──read only──► filtered utility store view
 optional bridge supervisor ──messages/route request──► bridge
+
+planned browser ──GET/SSE──► local Web projection ──read-only──► durable sources
+                                          └─diagnostic──► tmux/process probes
+
+planned browser command ─► untrusted inbox ─► Governess policy/epoch/journal
 ```
 
 ## Cross-cutting concerns
@@ -94,6 +105,8 @@ optional bridge supervisor ──messages/route request──► bridge
 | Native fallback | Governess lease store and provider hooks | `native-subagents/events.jsonl`, hook journals, Governess board |
 | Large outputs | Tool broker | patch/report artifacts referenced by result |
 | Visibility | Governess and optional utility pane | pane output; never a control dependency |
+| Planned browser projection | Control-surface projector | source revisions, freshness, data quality, conflict list; never authority |
+| Planned browser session | Control-surface security boundary | loopback bind, strict cookie, Host/Origin checks, redacted DTOs |
 
 ## Blast-radius guide
 
@@ -107,3 +120,8 @@ optional bridge supervisor ──messages/route request──► bridge
 | Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
 | Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption; Claude gates the read-only fallback while Codex native spawn fails closed |
+| Control-surface reader | Source revision rules, GET purity, redaction, corrupt/partial fixtures | A browser read must not perform runtime maintenance |
+| Public Web DTO | Security tests, evidence containment, secret/path/control-sequence corpus | The HTTP boundary is a new data-exposure boundary |
+| SSE cursor/stream | Snapshot rebuild, compaction/inode handling, bounded subscriber queues | Stream loss must resync, never invent or omit silently |
+| Future Web command | Governess policy, epoch, idempotency, journal phases, bridge/tmux readiness | The server cannot become a second control authority |
+| Tmux manifest identity | Launch/resume, diagnostics, future browser controls | Session name/socket path without server PID/process-birth identity is ambiguous after server reincarnation |
