@@ -63,3 +63,9 @@ Runtime state, `.loop/`, frozen run evidence, and dirty `PLAN.md`/`status.md`
 records are not product source. They must not be silently folded into a release
 branch. Campaign evidence remains local until a separate evidence-retention
 decision names what should be published.
+
+The 2026-08-20 cleanup retained each dirty non-root worktree as a checksummed
+local-only archive containing branch and HEAD identity, status, binary tracked
+and staged patches, an untracked-file manifest, and a compressed untracked-file
+snapshot. Raw run evidence remains outside Git history; only reusable product
+decisions and follow-up candidates belong in this documentation branch.

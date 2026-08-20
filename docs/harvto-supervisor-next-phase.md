@@ -94,3 +94,17 @@ After the stack is remote and exact tips are verified:
 The repository is clean only when every remaining worktree has an active
 purpose and every remaining local branch is either checked out, published, or
 named as a deliberate archive.
+
+## Recovered follow-up candidate
+
+Repository cleanup recovered an uncommitted three-file patch from an older
+lineage. It normalizes a flat Codex configuration argv fragment before the
+runner adds `-c` flags, with a regression asserting that bridge configuration
+never becomes `-c -c key=value`.
+
+The behavior is potentially useful, but the patch was based on an older runner
+implementation and must not be cherry-picked blindly. Re-derive the failure on
+the current GitHub `main`, confirm whether `buildCodexBridgeConfigArgs` still
+feeds flagged argv into `codexConfigValues`, and implement a current-lineage
+fix only if the red case reproduces. The original binary patch is retained in
+the local-only cleanup archive.
