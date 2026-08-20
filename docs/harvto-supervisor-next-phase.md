@@ -87,7 +87,8 @@ After the stack is remote and exact tips are verified:
    `main`;
 4. preserve every dirty or untracked worktree until its unique state is
    classified;
-5. run the safe worktree reaper in audit mode, then explicit apply mode;
+5. prune dead registrations, then re-check cleanliness, reachability, and live
+   process working directories before each non-forced removal;
 6. report the remaining exception set instead of forcing deletion.
 
 The repository is clean only when every remaining worktree has an active

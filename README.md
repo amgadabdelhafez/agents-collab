@@ -36,22 +36,15 @@ curl -fsSL https://raw.githubusercontent.com/amgadabdelhafez/agents-collab/main/
 
 ## Safe worktree hygiene
 
-Audit registered linked worktrees without changing them:
+`git worktree prune --verbose` removes registrations whose directories are
+already gone. Before removing a real worktree, verify all three properties
+directly: its tracked and untracked status is empty, its tip is reachable from
+the intended retained remote branch, and no live process has that directory as
+its working directory. Remove the worktree without `--force`, then handle its
+branch as a separate retention decision.
 
-```bash
-python3 loop-fork/scripts/reap-worktrees.py
-```
-
-The audit proves each candidate is merged into the exact `origin/main` commit,
-clean including untracked files, and unused by any process cwd. To remove only
-the candidates that pass every check, rerun explicitly in apply mode:
-
-```bash
-python3 loop-fork/scripts/reap-worktrees.py --apply
-```
-
-The command never forces removal or deletes branches. Any failed safety check
-keeps the worktree and returns a visible failure.
+There is currently no repository-owned automatic worktree reaper. Do not rely
+on historical documentation that refers to `scripts/reap-worktrees.py`.
 
 Loop can launch coding agents with broad permissions. Run it in an isolated VM
 or similarly controlled environment, and review the safety guidance in the
