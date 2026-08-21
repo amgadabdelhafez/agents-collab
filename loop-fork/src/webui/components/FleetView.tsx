@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { filterAndGroupRuns } from "../selectors";
 import type {
   ConnectionState,
+  DataSourceDTO,
   FleetFilterOptions,
   FleetGroupKey,
   FleetRunDTO,
@@ -66,7 +67,7 @@ const VALIDATED_RUN_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 
 export interface FleetViewProps {
   readonly connectionState: ConnectionState;
-  readonly fixtureNotice: string;
+  readonly dataSource: DataSourceDTO;
   readonly lifecycleFilter: RunLifecycle | "all";
   readonly onLifecycleFilterChange: (value: RunLifecycle | "all") => void;
   readonly onPausedChange: (paused: boolean) => void;
@@ -91,6 +92,25 @@ interface RunCardProps {
 interface CopyState {
   readonly runId: string;
   readonly status: "copied" | "failed";
+}
+
+function fleetConnectionPresentation(paused: boolean, isLive: boolean) {
+  if (paused) {
+    return {
+      description: "The last verified snapshot stays on screen",
+      label: "Live updates paused",
+    };
+  }
+  if (isLive) {
+    return {
+      description: "Read-only durable projection",
+      label: "Projection connected",
+    };
+  }
+  return {
+    description: "Synthetic demo data, not live runtime",
+    label: "Fixture snapshot",
+  };
 }
 
 function formatAge(timestamp: string): string {
@@ -163,10 +183,15 @@ function RunCard({
   const secondaryReasons = run.reasons.filter(
     (reason) => reason !== primaryReason
   );
-  const canAttach = VALIDATED_RUN_ID.test(run.runId);
+  const runtimeAttachable = run.adapters.some(
+    (adapter) =>
+      adapter.kind === "tmux" &&
+      (adapter.state === "healthy" || adapter.state === "surviving")
+  );
+  const canAttach = VALIDATED_RUN_ID.test(run.runId) && runtimeAttachable;
   const attachCommand = canAttach
     ? `loop attach --run-id ${run.runId}`
-    : "Attach unavailable: invalid run identity";
+    : "Attach unavailable: terminal identity is not fully verified";
   const copyResult = copyState?.runId === run.runId ? copyState.status : null;
 
   return (
@@ -353,8 +378,8 @@ function RunCard({
               ))}
             </ul>
             <p className="run-fixture-note">
-              <strong>{run.fixtureSource.scenario}</strong>
-              {run.fixtureSource.notice}
+              <strong>{run.dataSource.scenario}</strong>
+              {run.dataSource.notice}
             </p>
           </section>
         </div>
@@ -369,7 +394,7 @@ export function FleetView({
   repositoryFilter,
   lifecycleFilter,
   connectionState,
-  fixtureNotice,
+  dataSource,
   queuedUpdates = 0,
   paused,
   onSearchChange,
@@ -395,13 +420,16 @@ export function FleetView({
   const effectiveConnectionState: ConnectionState = paused
     ? "paused"
     : connectionState;
-  const connectionLabel = paused ? "Demo paused" : "Fixture snapshot";
-  const connectionDescription = paused
-    ? "Synthetic fixture updates are held"
-    : "Synthetic demo data, not live runtime";
+  const isLive = dataSource.kind === "live-redacted";
+  const connection = fleetConnectionPresentation(paused, isLive);
 
   const copyAttachCommand = (run: FleetRunDTO) => {
-    if (!VALIDATED_RUN_ID.test(run.runId)) {
+    const runtimeAttachable = run.adapters.some(
+      (adapter) =>
+        adapter.kind === "tmux" &&
+        (adapter.state === "healthy" || adapter.state === "surviving")
+    );
+    if (!(VALIDATED_RUN_ID.test(run.runId) && runtimeAttachable)) {
       setCopyState({ runId: run.runId, status: "failed" });
       return;
     }
@@ -437,7 +465,7 @@ export function FleetView({
 
         <div className="surface fleet-connection">
           <div
-            aria-label={`Connection ${connectionLabel}`}
+            aria-label={`Connection ${connection.label}`}
             className="fleet-connection-status"
             role="status"
           >
@@ -446,8 +474,8 @@ export function FleetView({
               className={`status-dot status-${effectiveConnectionState}`}
             />
             <span className="fleet-connection-copy">
-              <strong>{connectionLabel}</strong>
-              <span>{connectionDescription}</span>
+              <strong>{connection.label}</strong>
+              <span>{connection.description}</span>
             </span>
             {paused && queuedUpdates > 0 ? (
               <span className="chip status-behind">{queuedUpdates} new</span>
@@ -459,7 +487,7 @@ export function FleetView({
             onClick={() => onPausedChange(!paused)}
             type="button"
           >
-            {paused ? "Resume demo" : "Pause demo"}
+            {paused ? "Resume updates" : "Pause updates"}
           </button>
         </div>
       </header>
@@ -467,13 +495,19 @@ export function FleetView({
       <aside aria-label="Read-only guidance" className="surface fleet-readonly">
         <div className="fleet-readonly-labels">
           <span className="chip">Read-only</span>
-          <span className="chip fleet-demo-chip">Demo data</span>
+          <span className="chip fleet-demo-chip">
+            {isLive ? "Live data" : "Demo data"}
+          </span>
         </div>
         <div>
-          <strong>Synthetic fixture data, not a live runtime.</strong>
+          <strong>
+            {isLive
+              ? "Harvto records connected, redacted at the server boundary."
+              : "Synthetic fixture data, not a live runtime."}
+          </strong>
           <p>
-            {fixtureNotice} Agent input, cleanup, and runtime controls stay in
-            the terminal.
+            {dataSource.notice} Agent input, cleanup, and runtime controls stay
+            in the terminal.
           </p>
         </div>
       </aside>

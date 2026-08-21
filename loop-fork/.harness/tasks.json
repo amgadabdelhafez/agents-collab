@@ -552,6 +552,16 @@
       "eval_status": "pass",
       "ended_at": "2026-08-21T05:50:44Z",
       "spec_path": "specs/webui-readonly-mvp-direct.md"
+    },
+    {
+      "id": "webui-harvto-live-data",
+      "mode": "planned",
+      "status": "done",
+      "created_at": "2026-08-21T19:49:58Z",
+      "run_dir": "runs/webui-harvto-live-data",
+      "eval_status": "pass",
+      "ended_at": "2026-08-21T20:24:01Z",
+      "spec_path": "specs/webui-harvto-live-data.md"
     }
   ]
 }

@@ -1,8 +1,8 @@
 import type {
   AgentSeatDTO,
   ConnectionDTO,
+  DataSourceDTO,
   EvidenceItemDTO,
-  FixtureSourceDTO,
   FleetRunDTO,
   FleetSnapshotDTO,
   GovernessDTO,
@@ -27,7 +27,7 @@ const CONNECTION_LABELS: Readonly<Record<ConnectionDTO["state"], string>> = {
   reconnecting: "Reconnecting",
 };
 
-const fixtureSource = (scenario: string): FixtureSourceDTO => ({
+const fixtureSource = (scenario: string): DataSourceDTO => ({
   kind: "synthetic-redacted",
   generatedAt: GENERATED_AT,
   scenario,
@@ -165,7 +165,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
       "live",
       147
     ),
-    fixtureSource: fixtureSource("mixed-attention"),
+    dataSource: fixtureSource("mixed-attention"),
   },
   {
     version: WEBUI_DTO_VERSION,
@@ -221,7 +221,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
       "offline",
       74
     ),
-    fixtureSource: fixtureSource("failed-control"),
+    dataSource: fixtureSource("failed-control"),
   },
   {
     version: WEBUI_DTO_VERSION,
@@ -272,7 +272,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
       "Durable run evidence is internally consistent."
     ),
     connection: connection("atlas-088", "2026-08-20T19:44:02.000Z", "live", 91),
-    fixtureSource: fixtureSource("cleanup-debt"),
+    dataSource: fixtureSource("cleanup-debt"),
   },
   {
     version: WEBUI_DTO_VERSION,
@@ -321,7 +321,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
       "live",
       214
     ),
-    fixtureSource: fixtureSource("active-review"),
+    dataSource: fixtureSource("active-review"),
   },
   {
     version: WEBUI_DTO_VERSION,
@@ -378,7 +378,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
       132,
       3
     ),
-    fixtureSource: fixtureSource("stream-behind"),
+    dataSource: fixtureSource("stream-behind"),
   },
   {
     version: WEBUI_DTO_VERSION,
@@ -427,7 +427,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
       "offline",
       58
     ),
-    fixtureSource: fixtureSource("finished"),
+    dataSource: fixtureSource("finished"),
   },
 ];
 
@@ -580,7 +580,14 @@ const makeWorkers = (run: FleetRunDTO): readonly WorkerTierDTO[] => [
     tier: "direct",
     label: "Direct",
     description: "Bounded tool execution owned by the active frontier agent.",
-    counts: { queued: 0, active: 1, completed: 4, failed: 0 },
+    counts: {
+      queued: 0,
+      active: 1,
+      canceled: 0,
+      completed: 4,
+      escalated: 0,
+      failed: 0,
+    },
     activity: [
       {
         id: `worker-${run.runId}-direct-1`,
@@ -603,7 +610,14 @@ const makeWorkers = (run: FleetRunDTO): readonly WorkerTierDTO[] => [
     tier: "nanny",
     label: "Nanny",
     description: "Local bounded assistance routed by the frontier owner.",
-    counts: { queued: 0, active: 0, completed: 1, failed: 0 },
+    counts: {
+      queued: 0,
+      active: 0,
+      canceled: 0,
+      completed: 1,
+      escalated: 0,
+      failed: 0,
+    },
     activity: [
       {
         id: `worker-${run.runId}-nanny-1`,
@@ -627,7 +641,14 @@ const makeWorkers = (run: FleetRunDTO): readonly WorkerTierDTO[] => [
     tier: "au-pair",
     label: "Au Pair",
     description: "Optional paid utility tier. Disabled in this fixture.",
-    counts: { queued: 0, active: 0, completed: 0, failed: 0 },
+    counts: {
+      queued: 0,
+      active: 0,
+      canceled: 0,
+      completed: 0,
+      escalated: 0,
+      failed: 0,
+    },
     activity: [],
   },
 ];
@@ -771,7 +792,7 @@ const makeRunDetail = (run: FleetRunDTO): RunDetailDTO => ({
   evidence: makeEvidence(run),
   quality: run.quality,
   connection: run.connection,
-  fixtureSource: run.fixtureSource,
+  dataSource: run.dataSource,
 });
 
 export const fixtureRunDetails: Readonly<Record<string, RunDetailDTO>> =
@@ -792,5 +813,5 @@ export const fixtureFleetSnapshot: FleetSnapshotDTO = {
     sources: [provenance("fixture-fleet", "fixture", GENERATED_AT, "current")],
   },
   connection: connection("fleet", GENERATED_AT, "live", 408),
-  fixtureSource: fixtureSource("mixed-fleet"),
+  dataSource: fixtureSource("mixed-fleet"),
 };

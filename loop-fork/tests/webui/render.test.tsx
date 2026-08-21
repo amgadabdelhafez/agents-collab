@@ -16,7 +16,7 @@ describe("Web UI server-rendered contract", () => {
     const fleetMarkup = renderToStaticMarkup(
       <FleetView
         connectionState={fixtureFleetSnapshot.connection.state}
-        fixtureNotice={fixtureFleetSnapshot.fixtureSource.notice}
+        dataSource={fixtureFleetSnapshot.dataSource}
         lifecycleFilter="all"
         onLifecycleFilterChange={noop}
         onPausedChange={noop}

@@ -270,10 +270,16 @@ function AgentSeat({
   readonly onTabChange: (tab: AgentTab) => void;
   readonly index: number;
 }) {
-  const totalTokens =
-    agent.usage.inputTokens +
-    agent.usage.outputTokens +
-    agent.usage.cachedTokens;
+  const tokenParts = [
+    agent.usage.inputTokens,
+    agent.usage.outputTokens,
+    agent.usage.cachedTokens,
+  ];
+  const hasTokenUsage = tokenParts.some((value) => value !== undefined);
+  const totalTokens = tokenParts.reduce<number>(
+    (total, value) => total + (value ?? 0),
+    0
+  );
   const tabPrefix = `agent-${agent.id}`;
 
   const handleTabKeyDown = (
@@ -352,34 +358,50 @@ function AgentSeat({
         <div className="agent-context-metric">
           <div className="agent-context-heading">
             <span>Context</span>
-            <strong>{agent.usage.contextPercent}%</strong>
+            <strong>
+              {agent.usage.contextPercent === undefined
+                ? "Unknown"
+                : `${agent.usage.contextPercent}%`}
+            </strong>
           </div>
-          <div
-            aria-label={`${agent.usage.contextPercent}% context used`}
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={agent.usage.contextPercent}
-            className="agent-context-track"
-            role="progressbar"
-          >
-            <span
-              className="agent-context-fill"
-              style={{
-                width: `${Math.min(100, Math.max(0, agent.usage.contextPercent))}%`,
-              }}
-            />
-          </div>
+          {agent.usage.contextPercent === undefined ? (
+            <span>Utilization unavailable</span>
+          ) : (
+            <div
+              aria-label={`${agent.usage.contextPercent}% context used`}
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={agent.usage.contextPercent}
+              className="agent-context-track"
+              role="progressbar"
+            >
+              <span
+                className="agent-context-fill"
+                style={{
+                  width: `${Math.min(100, Math.max(0, agent.usage.contextPercent))}%`,
+                }}
+              />
+            </div>
+          )}
           <span>{agent.usage.compactions} compactions</span>
         </div>
         <Metric
-          detail={`${NUMBER_FORMAT.format(agent.usage.cachedTokens)} cached`}
+          detail={
+            agent.usage.cachedTokens === undefined
+              ? "not exposed"
+              : `${NUMBER_FORMAT.format(agent.usage.cachedTokens)} cached`
+          }
           label="Tokens"
-          value={NUMBER_FORMAT.format(totalTokens)}
+          value={hasTokenUsage ? NUMBER_FORMAT.format(totalTokens) : "Unknown"}
         />
         <Metric
           detail="cumulative"
           label="Cost"
-          value={formatMoney(agent.usage.costUsd)}
+          value={
+            agent.usage.costUsd === undefined
+              ? "Unknown"
+              : formatMoney(agent.usage.costUsd)
+          }
         />
         <Metric
           detail="in flight"
@@ -708,17 +730,39 @@ function WorkerActivity({
             </div>
             <span aria-hidden="true">→</span>
             <div>
-              <span>{activity.state === "failed" ? "Blocker" : "Result"}</span>
+              <span>
+                {activity.state === "failed" || activity.state === "escalated"
+                  ? "Blocker"
+                  : "Result"}
+              </span>
               <p>{activity.resultSummary}</p>
             </div>
           </fieldset>
           <div className="worker-job-metrics">
-            <Metric label="Model calls" value={String(activity.modelCalls)} />
+            <Metric
+              label="Model calls"
+              value={
+                activity.modelCalls === undefined
+                  ? "Unknown"
+                  : String(activity.modelCalls)
+              }
+            />
             <Metric
               label="Tokens"
-              value={NUMBER_FORMAT.format(activity.tokens)}
+              value={
+                activity.tokens === undefined
+                  ? "Unknown"
+                  : NUMBER_FORMAT.format(activity.tokens)
+              }
             />
-            <Metric label="Cost" value={formatMoney(activity.costUsd)} />
+            <Metric
+              label="Cost"
+              value={
+                activity.costUsd === undefined
+                  ? "Unknown"
+                  : formatMoney(activity.costUsd)
+              }
+            />
             <Metric
               label="Finished"
               value={
@@ -785,8 +829,16 @@ function WorkerTierPanel({
         <span>
           <strong>{tier.counts.completed}</strong> completed
         </span>
+        <span
+          className={tier.counts.escalated > 0 ? "worker-count--attention" : ""}
+        >
+          <strong>{tier.counts.escalated}</strong> escalated
+        </span>
         <span className={tier.counts.failed > 0 ? "worker-count--failed" : ""}>
           <strong>{tier.counts.failed}</strong> failed
+        </span>
+        <span>
+          <strong>{tier.counts.canceled}</strong> canceled
         </span>
       </fieldset>
       <div className="worker-job-list">
@@ -825,10 +877,12 @@ function WorkerPanel({
     (sum, worker) => ({
       queued: sum.queued + worker.counts.queued,
       active: sum.active + worker.counts.active,
+      canceled: sum.canceled + worker.counts.canceled,
       completed: sum.completed + worker.counts.completed,
+      escalated: sum.escalated + worker.counts.escalated,
       failed: sum.failed + worker.counts.failed,
     }),
-    { queued: 0, active: 0, completed: 0, failed: 0 }
+    { queued: 0, active: 0, canceled: 0, completed: 0, escalated: 0, failed: 0 }
   );
 
   return (
@@ -849,7 +903,9 @@ function WorkerPanel({
         <Metric label="Queued" value={String(totals.queued)} />
         <Metric label="Active" value={String(totals.active)} />
         <Metric label="Completed" value={String(totals.completed)} />
+        <Metric label="Escalated" value={String(totals.escalated)} />
         <Metric label="Failed" value={String(totals.failed)} />
+        <Metric label="Canceled" value={String(totals.canceled)} />
       </div>
       <div className="worker-tier-list">
         {workers.map((tier) => (
@@ -1303,11 +1359,10 @@ export function RunWorkspace({ run, onBack }: RunWorkspaceProps) {
         >
           <div>
             <strong>{run.quality.summary}</strong>
-            <span>{run.fixtureSource.notice}</span>
+            <span>{run.dataSource.notice}</span>
           </div>
           <span className="workspace-badge workspace-badge--fixture">
-            {sentenceCase(run.fixtureSource.kind)} ·{" "}
-            {run.fixtureSource.scenario}
+            {sentenceCase(run.dataSource.kind)} · {run.dataSource.scenario}
           </span>
         </div>
       </header>

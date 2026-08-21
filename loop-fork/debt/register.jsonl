@@ -59,3 +59,5 @@
 {"ts": "2026-08-21T05:50:44Z", "task_id": "webui-readonly-mvp-direct", "signal": "loc_growth", "file": "src/webui/selectors.ts", "before_loc": 0, "after_loc": 174, "delta_loc": 174, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-21T05:50:44Z", "task_id": "webui-readonly-mvp-direct", "signal": "loc_growth", "file": "src/webui/styles.css", "before_loc": 0, "after_loc": 2670, "delta_loc": 2670, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-21T05:50:44Z", "task_id": "webui-readonly-mvp-direct", "signal": "loc_growth", "file": "src/webui/types.ts", "before_loc": 0, "after_loc": 345, "delta_loc": 345, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-21T20:24:01Z", "task_id": "webui-harvto-live-data", "signal": "loc_growth", "file": "src/webui/api.ts", "before_loc": 65, "after_loc": 447, "delta_loc": 382, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-21T20:24:01Z", "task_id": "webui-harvto-live-data", "signal": "loc_growth", "file": "src/webui/server/harvto-live-data.ts", "before_loc": 1469, "after_loc": 1767, "delta_loc": 298, "threshold": 100, "severity": "indicator"}

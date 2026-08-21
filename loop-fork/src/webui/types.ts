@@ -56,7 +56,13 @@ export type AgentLifecycle =
 
 export type AgentRole = "driver" | "reviewer";
 export type WorkerTier = "direct" | "nanny" | "au-pair";
-export type WorkerState = "queued" | "active" | "completed" | "failed";
+export type WorkerState =
+  | "queued"
+  | "active"
+  | "completed"
+  | "escalated"
+  | "failed"
+  | "canceled";
 export type ReasonSeverity = "critical" | "high" | "medium" | "low";
 
 export type RunReasonCode =
@@ -104,9 +110,9 @@ export interface ConnectionDTO {
   readonly streamSequence: number;
 }
 
-export interface FixtureSourceDTO {
+export interface DataSourceDTO {
   readonly generatedAt: IsoTimestamp;
-  readonly kind: "synthetic-redacted";
+  readonly kind: "live-redacted" | "synthetic-redacted";
   readonly notice: string;
   readonly scenario: string;
 }
@@ -136,8 +142,8 @@ export interface FleetRunDTO {
   readonly adapters: readonly AdapterSummaryDTO[];
   readonly agents: readonly FleetAgentSummaryDTO[];
   readonly connection: ConnectionDTO;
+  readonly dataSource: DataSourceDTO;
   readonly driver: string;
-  readonly fixtureSource: FixtureSourceDTO;
   readonly lastDurableEventAt: IsoTimestamp;
   readonly lifecycle: RunLifecycle;
   readonly quality: QualityDTO;
@@ -161,19 +167,24 @@ export interface UsageWindowDTO {
 }
 
 export interface AgentUsageDTO {
-  readonly cachedTokens: number;
+  readonly cachedTokens?: number;
   readonly compactions: number;
-  readonly contextPercent: number;
-  readonly costUsd: number;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
+  readonly contextPercent?: number;
+  readonly costUsd?: number;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
   readonly windows: readonly UsageWindowDTO[];
 }
 
 export interface BridgeMessageSummaryDTO {
   readonly at: IsoTimestamp;
   readonly direction: "sent" | "received";
-  readonly status: "delivered" | "pending" | "failed";
+  readonly status:
+    | "delivered"
+    | "pending"
+    | "failed"
+    | "superseded"
+    | "expired";
   readonly summary: string;
 }
 
@@ -238,7 +249,9 @@ export interface GovernessDTO {
 
 export interface WorkerCountDTO {
   readonly active: number;
+  readonly canceled: number;
   readonly completed: number;
+  readonly escalated: number;
   readonly failed: number;
   readonly queued: number;
 }
@@ -246,17 +259,17 @@ export interface WorkerCountDTO {
 export interface WorkerActivityDTO {
   readonly artifactEvidenceIds: readonly OpaqueEvidenceId[];
   readonly contextCapsule: string;
-  readonly costUsd: number;
+  readonly costUsd?: number;
   readonly finishedAt?: IsoTimestamp;
   readonly id: string;
-  readonly modelCalls: number;
+  readonly modelCalls?: number;
   readonly requestSummary: string;
   readonly resultSummary: string;
   readonly routingReason: string;
   readonly startedAt: IsoTimestamp;
   readonly state: WorkerState;
   readonly tier: WorkerTier;
-  readonly tokens: number;
+  readonly tokens?: number;
   readonly toolSummary: string;
 }
 
@@ -312,8 +325,8 @@ export interface RunDetailDTO {
   readonly agents: readonly AgentSeatDTO[];
   readonly authority: RunAuthorityDTO;
   readonly connection: ConnectionDTO;
+  readonly dataSource: DataSourceDTO;
   readonly evidence: readonly EvidenceItemDTO[];
-  readonly fixtureSource: FixtureSourceDTO;
   readonly governess: GovernessDTO;
   readonly quality: QualityDTO;
   readonly summary: FleetRunDTO;
@@ -324,10 +337,17 @@ export interface RunDetailDTO {
 
 export interface FleetSnapshotDTO {
   readonly connection: ConnectionDTO;
-  readonly fixtureSource: FixtureSourceDTO;
+  readonly dataSource: DataSourceDTO;
   readonly observedAt: IsoTimestamp;
   readonly quality: QualityDTO;
   readonly runs: readonly FleetRunDTO[];
+  readonly version: WebUiDtoVersion;
+}
+
+export interface WebUiSnapshotDTO {
+  readonly details: Readonly<Record<string, RunDetailDTO>>;
+  readonly fleet: FleetSnapshotDTO;
+  readonly source: "harvto-live";
   readonly version: WebUiDtoVersion;
 }
 
