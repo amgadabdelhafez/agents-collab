@@ -1,0 +1,12 @@
+{
+  "id": "webui-readonly-mvp-direct",
+  "mode": "planned",
+  "created_at": "2026-08-21T05:11:05Z",
+  "status": "done",
+  "description": "Build the runnable read-only Loop Web UI fleet and run workspace directly from the reviewed control-surface specification",
+  "estimated_loc": 1800,
+  "research_required": true,
+  "research_reason": "explicit, estimate-loc>=500",
+  "research_path": "runs/webui-readonly-mvp-direct/research.md",
+  "ended_at": "2026-08-21T05:50:44Z"
+}

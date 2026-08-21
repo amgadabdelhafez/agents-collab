@@ -1,0 +1,210 @@
+- complementary "Primary navigation":
+  - button "Open Loop fleet": L
+  - navigation "Views":
+    - button "Fleet":
+      - generic: ⌁
+      - text: Fleet
+    - button "Working":
+      - generic: ●
+      - text: Working
+    - button "Run" [disabled]:
+      - generic: ▦
+      - text: Run
+  - generic "Local read-only fixture projection":
+    - generic "Read-only fixture projection"
+    - generic: Local
+- banner:
+  - generic: Agents Collab
+  - generic: /
+  - generic: Run fleet
+  - generic: 3 fixture runs active
+  - generic: Fixture snapshot
+- main:
+  - paragraph: Loop control plane
+  - heading "Run fleet" [level=1]
+  - paragraph: Triage durable paired-agent runs without changing runtime state.
+  - status "Connection Fixture snapshot":
+    - strong: Fixture snapshot
+    - generic: Synthetic demo data, not live runtime
+  - button "Pause demo"
+  - complementary "Read-only guidance":
+    - generic: Read-only
+    - generic: Demo data
+    - strong: Synthetic fixture data, not a live runtime.
+    - paragraph: Synthetic fixture data. Identifiers and content are fully redacted. Agent input, cleanup, and runtime controls stay in the terminal.
+  - region "Fleet filters":
+    - generic: Search runs
+    - searchbox "Search runs"
+    - generic: Repository
+    - combobox "Repository":
+      - option "All repositories" [selected]
+      - option "lattice/sentinel"
+      - option "northstar/relay"
+      - option "northstar/ridge"
+      - option "paperkite/orbit"
+      - option "seabird/atlas"
+    - generic: State
+    - combobox "State":
+      - option "All states" [selected]
+      - option "Submitted"
+      - option "Working"
+      - option "Reviewing"
+      - option "Input required"
+      - option "Completed"
+      - option "Failed"
+      - option "Stopped"
+    - strong: "6"
+    - generic: runs shown
+  - region "Needs attention":
+    - heading "Needs attention" [level=2]
+    - paragraph: Waiting on a decision or trustworthy authority.
+    - generic: "2"
+    - article "Audit lifecycle controls":
+      - button "lattice/sentinel sentinel-control-audit Audit lifecycle controls sentinel-042 failed Driver Claude 9h ago":
+        - generic: lattice/sentinel
+        - generic "sentinel-control-audit"
+        - strong: Audit lifecycle controls
+        - generic: sentinel-042
+        - generic: failed
+        - generic: Driver
+        - text: Claude
+        - time: 9h ago
+        - generic: Open run
+      - generic "Lifecycle and control acknowledgement disagree.": Data conflict
+      - generic "A sealed control has no matching acknowledgement in the durable journal.": Control acknowledgement failed
+      - list "Audit lifecycle controls agent status":
+        - generic: Claude
+        - generic: driver
+        - generic: crashed
+        - generic: Codex
+        - generic: reviewer
+        - generic: finished
+      - generic "+ Details and adapters 1 adapter":
+        - text: + Details and adapters
+        - generic: 1 adapter
+    - article "Recover durable message routing":
+      - button "northstar/relay relay-routing-recovery Recover durable message routing relay-214 input required Driver Codex 9h ago":
+        - generic: northstar/relay
+        - generic "relay-routing-recovery"
+        - strong: Recover durable message routing
+        - generic: relay-214
+        - generic: input required
+        - generic: Driver
+        - text: Codex
+        - time: 9h ago
+        - generic: Open run
+      - generic "Core identity is current; one adapter reconciliation is pending.": Data partial
+      - generic "A bounded scope choice must be confirmed before the next source write.": Operator input required
+      - generic "One adapter remains visible while the run waits for input.": Adapter still attached
+      - list "Recover durable message routing agent status":
+        - generic: Codex
+        - generic: driver
+        - generic: waiting human
+        - generic: Claude
+        - generic: reviewer
+        - generic: waiting peer
+      - generic "+ Details and adapters 2 adapters":
+        - text: + Details and adapters
+        - generic: 2 adapters
+  - region "Cleanup debt":
+    - heading "Cleanup debt" [level=2]
+    - paragraph: Ended runs with runtime residue to reconcile.
+    - generic: "1"
+    - article "Refresh project index":
+      - button "seabird/atlas atlas-index-refresh Refresh project index atlas-088 completed Driver Codex 10h ago":
+        - generic: seabird/atlas
+        - generic "atlas-index-refresh"
+        - strong: Refresh project index
+        - generic: atlas-088
+        - generic: completed
+        - generic: Driver
+        - text: Codex
+        - time: 10h ago
+        - generic: Open run
+      - generic "Durable run evidence is internally consistent.": Data healthy
+      - generic "The run completed, but a terminal adapter still answers its identity probe.": Cleanup verification needed
+      - list "Refresh project index agent status":
+        - generic: Codex
+        - generic: driver
+        - generic: finished
+        - generic: Claude
+        - generic: reviewer
+        - generic: finished
+      - generic "+ Details and adapters 1 adapter":
+        - text: + Details and adapters
+        - generic: 1 adapter
+  - region "Active":
+    - heading "Active" [level=2]
+    - paragraph: Submitted, working, or under review.
+    - generic: "2"
+    - article "Verify cache boundary":
+      - button "northstar/ridge ridge-cache-boundary Verify cache boundary ridge-298 working Driver Codex 9h ago":
+        - generic: northstar/ridge
+        - generic "ridge-cache-boundary"
+        - strong: Verify cache boundary
+        - generic: ridge-298
+        - generic: working
+        - generic: Driver
+        - text: Codex
+        - time: 9h ago
+        - generic: Open run
+      - generic "Identity is current; the event projection is three records behind.": Data partial
+      - generic "Three durable events are waiting to be projected.": Stream is behind
+      - list "Verify cache boundary agent status":
+        - generic: Codex
+        - generic: driver
+        - generic: working
+        - generic: Claude
+        - generic: reviewer
+        - generic: waiting peer
+      - generic "+ Details and adapters 1 adapter":
+        - text: + Details and adapters
+        - generic: 1 adapter
+    - article "Add bounded observability":
+      - button "northstar/ridge ridge-observability Add bounded observability ridge-301 reviewing Driver Claude 9h ago":
+        - generic: northstar/ridge
+        - generic "ridge-observability"
+        - strong: Add bounded observability
+        - generic: ridge-301
+        - generic: reviewing
+        - generic: Driver
+        - text: Claude
+        - time: 9h ago
+        - generic: Open run
+      - generic "All required durable sources are current.": Data healthy
+      - list "Add bounded observability agent status":
+        - generic: Claude
+        - generic: driver
+        - generic: reviewing
+        - generic: Codex
+        - generic: reviewer
+        - generic: working
+      - generic "+ Details and adapters 1 adapter":
+        - text: + Details and adapters
+        - generic: 1 adapter
+  - region "Finished":
+    - heading "Finished" [level=2]
+    - paragraph: Completed, failed, or deliberately stopped.
+    - generic: "1"
+    - article "Prepare release notes":
+      - button "paperkite/orbit orbit-release-notes Prepare release notes orbit-120 completed Driver Claude 11h ago":
+        - generic: paperkite/orbit
+        - generic "orbit-release-notes"
+        - strong: Prepare release notes
+        - generic: orbit-120
+        - generic: completed
+        - generic: Driver
+        - text: Claude
+        - time: 11h ago
+        - generic: Open run
+      - generic "Completion and review evidence are current.": Data healthy
+      - list "Prepare release notes agent status":
+        - generic: Claude
+        - generic: driver
+        - generic: finished
+        - generic: Codex
+        - generic: reviewer
+        - generic: finished
+      - generic "+ Details and adapters 1 adapter":
+        - text: + Details and adapters
+        - generic: 1 adapter

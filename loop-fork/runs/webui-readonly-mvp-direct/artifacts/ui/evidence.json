@@ -1,0 +1,37 @@
+{
+  "capturedAt": "2026-08-21T05:47:02Z",
+  "source": "http://127.0.0.1:46327/",
+  "dataMode": "synthetic-redacted-fixtures",
+  "consoleErrors": 0,
+  "captures": [
+    {
+      "file": "fleet-desktop.png",
+      "viewport": "1280x720",
+      "bytes": 73127,
+      "sha256": "3851227dc6b8695c4a2372aa6537154e75b543ca0802b8000b0f2e760fd123ea"
+    },
+    {
+      "file": "run-desktop.png",
+      "viewport": "1280x720",
+      "bytes": 79218,
+      "sha256": "a6d347f39f37765c38a761b1d1684729606de4f9d6cefc33aac8eb3cc4782153"
+    },
+    {
+      "file": "run-mobile.png",
+      "viewport": "390x844 at scrollY 1800",
+      "bytes": 40926,
+      "sha256": "530a0a60f3aaab5fb44bc213d2d98634f4106c16767689936d127d32246688ad"
+    }
+  ],
+  "assertions": {
+    "fixtureNoticeVisible": true,
+    "sessionAndWeeklyQuotaCards": 4,
+    "mobileBodyScrollWidth": 390,
+    "mobileClientWidth": 390,
+    "mobileAuthorityPosition": "sticky",
+    "mobileAuthorityTop": 64,
+    "browserBackForward": true,
+    "evidenceDialogKeyboardFlow": true,
+    "agentTabArrowNavigation": true
+  }
+}
