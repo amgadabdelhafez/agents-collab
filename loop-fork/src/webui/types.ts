@@ -1,5 +1,5 @@
 /** Public, read-only DTO contract used by the fixture-backed Web UI. */
-export const WEBUI_DTO_VERSION = "1" as const;
+export const WEBUI_DTO_VERSION = "2" as const;
 
 export type WebUiDtoVersion = typeof WEBUI_DTO_VERSION;
 export type IsoTimestamp = string;
@@ -10,6 +10,7 @@ export type RunLifecycle =
   | "working"
   | "reviewing"
   | "input-required"
+  | "blocked"
   | "completed"
   | "failed"
   | "stopped";
@@ -151,6 +152,7 @@ export interface FleetRunDTO {
   readonly repoId: string;
   readonly repository: string;
   readonly reviewer: string;
+  readonly routeId: string;
   readonly runId: string;
   readonly startedAt: IsoTimestamp;
   readonly title: string;
@@ -347,7 +349,7 @@ export interface FleetSnapshotDTO {
 export interface WebUiSnapshotDTO {
   readonly details: Readonly<Record<string, RunDetailDTO>>;
   readonly fleet: FleetSnapshotDTO;
-  readonly source: "harvto-live";
+  readonly source: "loop-registry-live";
   readonly version: WebUiDtoVersion;
 }
 

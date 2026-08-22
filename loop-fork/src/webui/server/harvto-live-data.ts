@@ -42,9 +42,11 @@ const ACTIVE_LIFECYCLES = new Set<RunLifecycle>([
   "working",
   "reviewing",
   "input-required",
+  "blocked",
 ]);
 const LIFECYCLES = new Set<RunLifecycle>([
   ...ACTIVE_LIFECYCLES,
+  "blocked",
   "completed",
   "failed",
   "stopped",
@@ -110,11 +112,16 @@ const BRIDGE_KINDS = new Set([
 const BRIDGE_SOURCES = new Set(["claude", "codex", "supervisor", "utility"]);
 const BRIDGE_TARGETS = new Set(["claude", "codex", "supervisor"]);
 const RUN_ID_PATTERN = /^[1-9][0-9]{0,11}$/;
+const REPO_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,114}-[0-9a-f]{12}$/;
+const REPO_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,114}$/;
 const LINE_SPLIT_PATTERN = /\r?\n/u;
 const MAX_JSON_BYTES = 512 * 1024;
 const MAX_JSONL_BYTES = 4 * 1024 * 1024;
 const MAX_JSONL_LINES = 10_000;
+const MAX_REPOSITORY_DIRECTORIES = 256;
 const MAX_RUN_DIRECTORIES = 1024;
+const MAX_TOTAL_RUN_DIRECTORIES = 4096;
+const MAX_ACTIVE_RUNS = 64;
 const MAX_WORKER_ACTIVITY = 8;
 
 type JsonRecord = Record<string, unknown>;
@@ -126,6 +133,11 @@ interface FileSnapshot {
   readonly text: string;
 }
 
+interface DirectoryIdentity {
+  readonly dev: number;
+  readonly ino: number;
+}
+
 interface ManifestView {
   readonly createdAt: IsoTimestamp;
   readonly driverEffort: string;
@@ -135,8 +147,45 @@ interface ManifestView {
   readonly runId: string;
   readonly runtime: RuntimeIdentity;
   readonly state: RunLifecycle;
+  readonly status: "running";
   readonly updatedAt: IsoTimestamp;
 }
+
+interface ManifestHeader {
+  readonly createdAt: IsoTimestamp;
+  readonly repoId: string;
+  readonly runId: string;
+  readonly state: RunLifecycle;
+  readonly status: string;
+  readonly updatedAt: IsoTimestamp;
+}
+
+interface RunCandidate {
+  readonly manifest: ManifestView;
+  readonly manifestFile: FileSnapshot;
+  readonly repoDir: string;
+  readonly repoDirectoryIdentity: DirectoryIdentity;
+  readonly repoId: string;
+  readonly repository: string;
+  readonly routeId: string;
+  readonly runDir: string;
+  readonly runDirectoryIdentity: DirectoryIdentity;
+  readonly runId: string;
+  readonly storageDirectoryIdentity: DirectoryIdentity;
+  readonly storageRoot: string;
+}
+
+interface ProjectedRun {
+  readonly detail: RunDetailDTO;
+  readonly summary: FleetRunDTO;
+}
+
+interface RegistryDiscovery {
+  readonly candidates: readonly RunCandidate[];
+  readonly rejectedEntries: number;
+}
+
+type CandidateDiscoveryResult = RunCandidate | "ignored" | "rejected";
 
 export interface RuntimeIdentity {
   readonly session: string;
@@ -162,6 +211,7 @@ export interface RuntimeProbeDependencies {
 interface HookView {
   readonly agent: "claude" | "codex";
   readonly event: string;
+  readonly lifecycleAt: IsoTimestamp;
   readonly sequence: number;
   readonly state: RunLifecycle;
   readonly ts: IsoTimestamp;
@@ -170,6 +220,10 @@ interface HookView {
 interface AgentStateView {
   readonly at: IsoTimestamp;
   readonly state: RunLifecycle;
+}
+
+interface CurrentAgentState extends AgentStateView {
+  readonly source: "governess" | "hook";
 }
 
 interface PressureView {
@@ -208,12 +262,19 @@ interface UtilityJobView {
   readonly tier?: WorkerTier;
 }
 
-export interface HarvtoLiveDataOptions {
+export interface LoopRegistryLiveDataOptions {
   readonly now?: () => Date;
-  readonly repoId?: string;
+  readonly registryFs?: RegistryDiscoveryDependencies;
   readonly runtimeProbe?: (identity: RuntimeIdentity) => RuntimeProbeResult;
   readonly storageRoot?: string;
 }
+
+export interface RegistryDiscoveryDependencies {
+  readonly lstat: (path: string) => Stats;
+  readonly readDirectory: (path: string) => readonly Dirent[];
+}
+
+export type HarvtoLiveDataOptions = LoopRegistryLiveDataOptions;
 
 export class LiveDataUnavailableError extends Error {
   readonly reason: string;
@@ -222,6 +283,13 @@ export class LiveDataUnavailableError extends Error {
     super(reason);
     this.name = "LiveDataUnavailableError";
     this.reason = reason;
+  }
+}
+
+class RegistryDirectoryIdentityError extends LiveDataUnavailableError {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "RegistryDirectoryIdentityError";
   }
 }
 
@@ -284,8 +352,8 @@ const allowlistedLabel = (
 const opaque = (scope: string, value: string): string =>
   createHash("sha256").update(`${scope}\0${value}`).digest("hex").slice(0, 16);
 
-const evidenceId = (runId: string, kind: string): OpaqueEvidenceId =>
-  `ev_${opaque(`harvto-${runId}`, kind)}`;
+const evidenceId = (scope: string, kind: string): OpaqueEvidenceId =>
+  `ev_${opaque(scope, kind)}`;
 
 const safeStat = (path: string): Stats => {
   try {
@@ -293,6 +361,65 @@ const safeStat = (path: string): Stats => {
   } catch {
     throw new LiveDataUnavailableError("required live evidence is missing");
   }
+};
+
+const DEFAULT_REGISTRY_FS: RegistryDiscoveryDependencies = {
+  lstat: (path) => lstatSync(path),
+  readDirectory: (path) => readdirSync(path, { withFileTypes: true }),
+};
+
+const readDirectoryIdentity = (
+  path: string,
+  dependencies: RegistryDiscoveryDependencies
+): DirectoryIdentity => {
+  let stat: Stats;
+  try {
+    stat = dependencies.lstat(path);
+  } catch {
+    throw new RegistryDirectoryIdentityError(
+      "loop registry directory identity is unavailable"
+    );
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new RegistryDirectoryIdentityError(
+      "loop registry directory identity is invalid"
+    );
+  }
+  return { dev: stat.dev, ino: stat.ino };
+};
+
+const assertDirectoryIdentity = (
+  path: string,
+  expected: DirectoryIdentity,
+  dependencies: RegistryDiscoveryDependencies
+): void => {
+  const current = readDirectoryIdentity(path, dependencies);
+  if (current.dev !== expected.dev || current.ino !== expected.ino) {
+    throw new RegistryDirectoryIdentityError(
+      "loop registry directory changed during projection"
+    );
+  }
+};
+
+const assertCandidateDirectoryIdentity = (
+  candidate: RunCandidate,
+  dependencies: RegistryDiscoveryDependencies
+): void => {
+  assertDirectoryIdentity(
+    candidate.storageRoot,
+    candidate.storageDirectoryIdentity,
+    dependencies
+  );
+  assertDirectoryIdentity(
+    candidate.repoDir,
+    candidate.repoDirectoryIdentity,
+    dependencies
+  );
+  assertDirectoryIdentity(
+    candidate.runDir,
+    candidate.runDirectoryIdentity,
+    dependencies
+  );
 };
 
 const readStableUtf8 = (path: string, maxBytes: number): FileSnapshot => {
@@ -337,6 +464,22 @@ const readStableUtf8 = (path: string, maxBytes: number): FileSnapshot => {
     revision: `r${Math.floor(after.mtimeMs)}-${after.size}`,
     text,
   };
+};
+
+const readOptionalStableUtf8 = (
+  path: string,
+  maxBytes: number
+): FileSnapshot | undefined => {
+  try {
+    lstatSync(path);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return undefined;
+    }
+    throw new LiveDataUnavailableError("optional live evidence is unreadable");
+  }
+  return readStableUtf8(path, maxBytes);
 };
 
 const parseJson = (snapshot: FileSnapshot): JsonRecord => {
@@ -386,64 +529,46 @@ const within = (root: string, path: string): boolean => {
   );
 };
 
-const selectLatestRun = (storageRoot: string, repoId: string): string => {
-  const repoDir = join(storageRoot, repoId);
-  if (!within(storageRoot, repoDir)) {
-    throw new LiveDataUnavailableError(
-      "lane identity is outside the storage root"
-    );
+const repositorySlug = (repoId: string): string => {
+  const slug = repoId.slice(0, -13);
+  if (!(REPO_ID_PATTERN.test(repoId) && REPO_SLUG_PATTERN.test(slug))) {
+    throw new LiveDataUnavailableError("repository identity is invalid");
   }
-  const rootStat = safeStat(repoDir);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new LiveDataUnavailableError("lane storage has an invalid file type");
-  }
-
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(repoDir, { withFileTypes: true });
-  } catch {
-    throw new LiveDataUnavailableError("lane storage could not be listed");
-  }
-  if (entries.length > MAX_RUN_DIRECTORIES) {
-    throw new LiveDataUnavailableError("lane exceeds its run-directory bound");
-  }
-
-  const runIds = entries
-    .filter(
-      (entry) =>
-        entry.isDirectory() &&
-        !entry.isSymbolicLink() &&
-        RUN_ID_PATTERN.test(entry.name)
-    )
-    .map((entry) => entry.name)
-    .sort((left, right) => Number(right) - Number(left));
-  const latest = runIds[0];
-  if (!latest) {
-    throw new LiveDataUnavailableError("the Harvto lane has no canonical runs");
-  }
-  return latest;
+  return slug;
 };
 
-const parseManifest = (
+const repositoryLabel = (repoId: string): string =>
+  repositorySlug(repoId)
+    .split("-")
+    .map((part) => {
+      if (part === "ai") {
+        return "AI";
+      }
+      if (part === "ui") {
+        return "UI";
+      }
+      return `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`;
+    })
+    .join(" ");
+
+const routeIdFor = (repoId: string, runId: string): string =>
+  `${repoId}:${runId}`;
+
+const parseManifestHeader = (
   record: JsonRecord,
   expectedRepoId: string,
   expectedRunId: string
-): ManifestView => {
+): ManifestHeader => {
   const repoId = stringAt(record, "repoId");
   const runId = stringAt(record, "runId");
   const state = asLifecycle(record.state);
-  const primaryAgent = stringAt(record, "primaryAgent");
-  const socketPath = stringAt(record, "tmuxSocket");
-  const session = stringAt(record, "tmuxSession");
+  const status = stringAt(record, "status");
   if (
     repoId !== expectedRepoId ||
     runId !== expectedRunId ||
     !state ||
-    (primaryAgent !== "claude" && primaryAgent !== "codex") ||
-    !socketPath ||
-    !isAbsolute(socketPath) ||
-    socketPath.length > 4096 ||
-    session !== `harvto-loop-${expectedRunId}`
+    !status ||
+    (ACTIVE_LIFECYCLES.has(state) && status !== "running")
   ) {
     throw new LiveDataUnavailableError(
       "run manifest identity or lifecycle conflicts"
@@ -451,47 +576,286 @@ const parseManifest = (
   }
   return {
     createdAt: requireIso(record.createdAt, "manifest created time"),
+    repoId,
+    runId,
+    state,
+    status,
+    updatedAt: requireIso(record.updatedAt, "manifest update time"),
+  };
+};
+
+const parseManifest = (
+  record: JsonRecord,
+  expectedRepoId: string,
+  expectedRunId: string
+): ManifestView => {
+  const header = parseManifestHeader(record, expectedRepoId, expectedRunId);
+  const primaryAgent = stringAt(record, "primaryAgent");
+  const socketPath = stringAt(record, "tmuxSocket");
+  const session = stringAt(record, "tmuxSession");
+  const expectedSession = `${repositorySlug(expectedRepoId)}-loop-${expectedRunId}`;
+  const workspaceBinding = recordAt(record, "workspaceBinding");
+  const workspaceRepoId = workspaceBinding
+    ? stringAt(workspaceBinding, "repoId")
+    : undefined;
+  if (
+    !ACTIVE_LIFECYCLES.has(header.state) ||
+    (primaryAgent !== "claude" && primaryAgent !== "codex") ||
+    !socketPath ||
+    !isAbsolute(socketPath) ||
+    socketPath.length > 4096 ||
+    session !== expectedSession ||
+    (workspaceRepoId !== undefined && workspaceRepoId !== expectedRepoId)
+  ) {
+    throw new LiveDataUnavailableError(
+      "run manifest identity or lifecycle conflicts"
+    );
+  }
+  return {
+    createdAt: header.createdAt,
     driverEffort: allowlistedLabel(
       record.driverEffort,
       EFFORT_LEVELS,
       "unspecified"
     ),
     primaryAgent,
-    repoId,
+    repoId: header.repoId,
     reviewerEffort: allowlistedLabel(
       record.reviewerEffort,
       EFFORT_LEVELS,
       "unspecified"
     ),
     runtime: { session, socketPath },
-    runId,
-    state,
-    updatedAt: requireIso(record.updatedAt, "manifest update time"),
+    runId: header.runId,
+    state: header.state,
+    status: "running",
+    updatedAt: header.updatedAt,
   };
+};
+
+const listRepositoryEntries = (
+  storageRoot: string,
+  storageIdentity: DirectoryIdentity,
+  dependencies: RegistryDiscoveryDependencies
+): readonly Dirent[] => {
+  let repositoryEntries: readonly Dirent[];
+  try {
+    repositoryEntries = dependencies.readDirectory(storageRoot);
+  } catch {
+    throw new LiveDataUnavailableError("loop registry could not be listed");
+  }
+  assertDirectoryIdentity(storageRoot, storageIdentity, dependencies);
+  if (repositoryEntries.length > MAX_REPOSITORY_DIRECTORIES) {
+    throw new LiveDataUnavailableError(
+      "loop registry exceeds its repository bound"
+    );
+  }
+
+  return repositoryEntries
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.isSymbolicLink() &&
+        REPO_ID_PATTERN.test(entry.name)
+    )
+    .sort((left, right) => left.name.localeCompare(right.name));
+};
+
+const listNumericRunEntries = (
+  storageRoot: string,
+  storageIdentity: DirectoryIdentity,
+  repoDir: string,
+  dependencies: RegistryDiscoveryDependencies
+): readonly Dirent[] | undefined => {
+  assertDirectoryIdentity(storageRoot, storageIdentity, dependencies);
+  let repoIdentity: DirectoryIdentity;
+  let runEntries: readonly Dirent[];
+  try {
+    repoIdentity = readDirectoryIdentity(repoDir, dependencies);
+    runEntries = dependencies.readDirectory(repoDir);
+    assertDirectoryIdentity(repoDir, repoIdentity, dependencies);
+  } catch {
+    return undefined;
+  }
+  assertDirectoryIdentity(storageRoot, storageIdentity, dependencies);
+  if (runEntries.length > MAX_RUN_DIRECTORIES) {
+    return undefined;
+  }
+  return runEntries
+    .filter((entry) => RUN_ID_PATTERN.test(entry.name))
+    .sort((left, right) => Number(left.name) - Number(right.name));
+};
+
+const readRunCandidate = (
+  storageRoot: string,
+  storageIdentity: DirectoryIdentity,
+  repositoryEntry: Dirent,
+  runEntry: Dirent,
+  dependencies: RegistryDiscoveryDependencies
+): CandidateDiscoveryResult => {
+  if (!(runEntry.isDirectory() && !runEntry.isSymbolicLink())) {
+    return "rejected";
+  }
+  const repoId = repositoryEntry.name;
+  const repoDir = join(storageRoot, repoId);
+  const runId = runEntry.name;
+  const runDir = join(repoDir, runId);
+  if (!(within(storageRoot, repoDir) && within(repoDir, runDir))) {
+    return "rejected";
+  }
+  assertDirectoryIdentity(storageRoot, storageIdentity, dependencies);
+
+  let repoDirectoryIdentity: DirectoryIdentity;
+  let runDirectoryIdentity: DirectoryIdentity;
+  try {
+    repoDirectoryIdentity = readDirectoryIdentity(repoDir, dependencies);
+    runDirectoryIdentity = readDirectoryIdentity(runDir, dependencies);
+  } catch {
+    return "rejected";
+  }
+
+  const manifestPath = join(runDir, "manifest.json");
+  let manifestStat: Stats;
+  try {
+    manifestStat = lstatSync(manifestPath);
+  } catch (error) {
+    const code = isRecord(error) ? error.code : undefined;
+    return code === "ENOENT" || code === "ENOTDIR" ? "ignored" : "rejected";
+  }
+  if (manifestStat.isSymbolicLink() || !manifestStat.isFile()) {
+    return "rejected";
+  }
+
+  let result: CandidateDiscoveryResult;
+  try {
+    const manifestFile = readStableUtf8(manifestPath, MAX_JSON_BYTES);
+    const record = parseJson(manifestFile);
+    const header = parseManifestHeader(record, repoId, runId);
+    assertDirectoryIdentity(repoDir, repoDirectoryIdentity, dependencies);
+    assertDirectoryIdentity(runDir, runDirectoryIdentity, dependencies);
+    if (ACTIVE_LIFECYCLES.has(header.state)) {
+      result = {
+        manifest: parseManifest(record, repoId, runId),
+        manifestFile,
+        repoDir,
+        repoDirectoryIdentity,
+        repoId,
+        repository: repositoryLabel(repoId),
+        routeId: routeIdFor(repoId, runId),
+        runDir,
+        runDirectoryIdentity,
+        runId,
+        storageDirectoryIdentity: storageIdentity,
+        storageRoot,
+      };
+    } else {
+      result = "ignored";
+    }
+  } catch {
+    return "rejected";
+  }
+  assertDirectoryIdentity(storageRoot, storageIdentity, dependencies);
+  return result;
+};
+
+const discoverActiveRuns = (
+  storageRoot: string,
+  dependencies: RegistryDiscoveryDependencies
+): RegistryDiscovery => {
+  const storageIdentity = readDirectoryIdentity(storageRoot, dependencies);
+  const repositoryEntries = listRepositoryEntries(
+    storageRoot,
+    storageIdentity,
+    dependencies
+  );
+
+  const candidates: RunCandidate[] = [];
+  let rejectedEntries = 0;
+  let totalRunDirectories = 0;
+
+  for (const repositoryEntry of repositoryEntries) {
+    const repoId = repositoryEntry.name;
+    const repoDir = join(storageRoot, repoId);
+    const numericEntries = listNumericRunEntries(
+      storageRoot,
+      storageIdentity,
+      repoDir,
+      dependencies
+    );
+    if (!numericEntries) {
+      rejectedEntries += 1;
+      continue;
+    }
+    totalRunDirectories += numericEntries.length;
+    if (totalRunDirectories > MAX_TOTAL_RUN_DIRECTORIES) {
+      throw new LiveDataUnavailableError(
+        "loop registry exceeds its run-directory bound"
+      );
+    }
+
+    for (const runEntry of numericEntries) {
+      const result = readRunCandidate(
+        storageRoot,
+        storageIdentity,
+        repositoryEntry,
+        runEntry,
+        dependencies
+      );
+      if (result === "rejected") {
+        rejectedEntries += 1;
+      } else if (result !== "ignored") {
+        candidates.push(result);
+      }
+    }
+  }
+
+  if (candidates.length > MAX_ACTIVE_RUNS) {
+    throw new LiveDataUnavailableError(
+      "loop registry exceeds its active-run bound"
+    );
+  }
+  return { candidates, rejectedEntries };
 };
 
 const parseHook = (
   records: readonly JsonRecord[],
   expectedAgent: "claude" | "codex"
 ): HookView => {
-  const record = records.at(-1);
-  if (!record) {
-    throw new LiveDataUnavailableError("normalized hook evidence is empty");
+  let activity:
+    | Pick<HookView, "agent" | "event" | "sequence" | "ts">
+    | undefined;
+  let lifecycle: Pick<HookView, "lifecycleAt" | "state"> | undefined;
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (!record) {
+      continue;
+    }
+    const agent = stringAt(record, "agent");
+    const sequence = numberAt(record, "sequence");
+    const ts = asIso(record.ts);
+    if (agent !== expectedAgent || sequence === undefined || !ts) {
+      continue;
+    }
+    if (!activity) {
+      const rawEvent = stringAt(record, "event");
+      activity = {
+        agent: expectedAgent,
+        event: rawEvent && AGENT_EVENTS.has(rawEvent) ? rawEvent : "Activity",
+        sequence: Math.max(0, Math.floor(sequence)),
+        ts,
+      };
+    }
+    const state = asLifecycle(record.state);
+    if (!lifecycle && state) {
+      lifecycle = { lifecycleAt: ts, state };
+    }
+    if (activity && lifecycle) {
+      return { ...activity, ...lifecycle };
+    }
   }
-  const agent = stringAt(record, "agent");
-  const state = asLifecycle(record.state);
-  const sequence = numberAt(record, "sequence");
-  if (agent !== expectedAgent || !state || sequence === undefined) {
-    throw new LiveDataUnavailableError("normalized hook identity is invalid");
-  }
-  const rawEvent = stringAt(record, "event");
-  return {
-    agent: expectedAgent,
-    event: rawEvent && AGENT_EVENTS.has(rawEvent) ? rawEvent : "Activity",
-    sequence: Math.max(0, Math.floor(sequence)),
-    state,
-    ts: requireIso(record.ts, "normalized hook time"),
-  };
+  throw new LiveDataUnavailableError(
+    "normalized hook lifecycle evidence is unavailable"
+  );
 };
 
 const parseAgentState = (value: unknown): AgentStateView | undefined => {
@@ -599,7 +963,7 @@ const DEFAULT_RUNTIME_PROBE_DEPENDENCIES: RuntimeProbeDependencies = {
   },
 };
 
-export const probeHarvtoRuntime = (
+export const probeLoopRuntime = (
   identity: RuntimeIdentity,
   dependencies: RuntimeProbeDependencies = DEFAULT_RUNTIME_PROBE_DEPENDENCIES
 ): RuntimeProbeResult => {
@@ -640,6 +1004,8 @@ export const probeHarvtoRuntime = (
   return { label: "Terminal session status unverified", state: "unknown" };
 };
 
+export const probeHarvtoRuntime = probeLoopRuntime;
+
 const maxIso = (...values: readonly (string | undefined)[]): IsoTimestamp => {
   const sorted = values
     .filter((value): value is string => Boolean(value))
@@ -663,53 +1029,79 @@ const source = (
   state,
 });
 
-const deriveLifecycle = (
-  manifest: ManifestView,
+const currentAgentState = (
+  governessState: AgentStateView | undefined,
+  hook: HookView
+): CurrentAgentState => {
+  if (governessState && governessState.at > hook.lifecycleAt) {
+    return { ...governessState, source: "governess" };
+  }
+  return { at: hook.lifecycleAt, source: "hook", state: hook.state };
+};
+
+const currentAgentStates = (
   governess: GovernessView,
   hooks: Readonly<Record<"claude" | "codex", HookView>>
+): Readonly<Record<"claude" | "codex", CurrentAgentState>> => ({
+  claude: currentAgentState(governess.lifecycle.claude, hooks.claude),
+  codex: currentAgentState(governess.lifecycle.codex, hooks.codex),
+});
+
+const deriveLifecycle = (
+  manifest: ManifestView,
+  current: Readonly<Record<"claude" | "codex", CurrentAgentState>>
 ): RunLifecycle => {
   if (!ACTIVE_LIFECYCLES.has(manifest.state)) {
     return manifest.state;
   }
-  const durableStates = [
-    governess.lifecycle.claude?.state,
-    governess.lifecycle.codex?.state,
-    hooks.claude.state,
-    hooks.codex.state,
-  ];
-  if (
-    governess.waitingConfirmed &&
-    durableStates.filter((state) => state === "input-required").length >= 2
-  ) {
+  const states = [current.claude.state, current.codex.state] as const;
+  if (states.includes("blocked")) {
+    return "blocked";
+  }
+  if (states.every((state) => state === "input-required")) {
+    return "input-required";
+  }
+  if (states.includes("reviewing")) {
+    return "reviewing";
+  }
+  if (states.includes("working")) {
+    return "working";
+  }
+  if (states.includes("input-required")) {
     return "input-required";
   }
   return manifest.state;
 };
 
 const agentLifecycle = (
+  current: CurrentAgentState,
   hook: HookView,
-  derivedLifecycle: RunLifecycle,
   runtimeState: RuntimeProbeResult["state"]
 ): AgentLifecycle => {
   if (runtimeState === "ended" || runtimeState === "mismatch") {
     return "stuck";
   }
-  if (
-    derivedLifecycle === "input-required" ||
-    hook.state === "input-required"
-  ) {
+  if (current.state === "input-required") {
     return "waiting-human";
   }
-  if (derivedLifecycle === "reviewing" || hook.state === "reviewing") {
+  if (current.state === "blocked") {
+    return "stuck";
+  }
+  if (current.state === "reviewing") {
     return "reviewing";
   }
-  if (derivedLifecycle === "failed") {
+  if (current.state === "failed") {
     return "crashed";
   }
-  if (derivedLifecycle === "completed" || derivedLifecycle === "stopped") {
+  if (current.state === "completed" || current.state === "stopped") {
     return "finished";
   }
-  return hook.event === "Stop" ? "waiting-peer" : "working";
+  if (current.state === "submitted") {
+    return "starting";
+  }
+  return hook.ts >= current.at && hook.event === "Stop"
+    ? "waiting-peer"
+    : "working";
 };
 
 const dataSource = (now: IsoTimestamp): DataSourceDTO => ({
@@ -717,7 +1109,7 @@ const dataSource = (now: IsoTimestamp): DataSourceDTO => ({
   kind: "live-redacted",
   notice:
     "Prompts, transcripts, paths, credentials, raw identifiers, and terminal content are excluded.",
-  scenario: "Harvto lane",
+  scenario: "Active loop registry",
 });
 
 const bridgeDeliveryStatus = (
@@ -743,18 +1135,19 @@ const bridgeDeliveryStatus = (
 
 const derivedTaskLabel = (
   lifecycle: AgentLifecycle,
-  runtimeState: RuntimeProbeResult["state"]
+  runtimeState: RuntimeProbeResult["state"],
+  repository: string
 ): string => {
   if (runtimeState === "ended" || runtimeState === "mismatch") {
     return "Last durable state required operator input; runtime unavailable";
   }
   if (lifecycle === "waiting-human") {
-    return "Waiting for operator input in the Harvto lane";
+    return `Waiting for operator input in the ${repository} loop`;
   }
   if (lifecycle === "reviewing") {
-    return "Reviewing durable Harvto lane work";
+    return `Reviewing durable ${repository} loop work`;
   }
-  return "Working in the Harvto lane";
+  return `Working in the ${repository} loop`;
 };
 
 const latestBridgeStatus = (
@@ -821,20 +1214,24 @@ const latestBridgeStatus = (
 const buildAgent = (input: {
   readonly agent: "claude" | "codex";
   readonly bridge: JournalView;
-  readonly derivedLifecycle: RunLifecycle;
   readonly governess: GovernessView;
+  readonly governessObservedAt: IsoTimestamp;
   readonly hook: HookView;
   readonly manifest: ManifestView;
+  readonly repository: string;
   readonly runtime: RuntimeProbeResult;
+  readonly scope: string;
 }): AgentSeatDTO => {
   const {
     agent,
     bridge,
-    derivedLifecycle,
     governess,
+    governessObservedAt,
     hook,
     manifest,
+    repository,
     runtime,
+    scope,
   } = input;
   const isDriver = governess.leaseHolder === agent;
   const pressure = governess.pressure[agent];
@@ -843,11 +1240,17 @@ const buildAgent = (input: {
     manifest.primaryAgent === agent
       ? manifest.driverEffort
       : manifest.reviewerEffort;
-  const lifecycle = agentLifecycle(hook, derivedLifecycle, runtime.state);
+  const current = currentAgentState(governess.lifecycle[agent], hook);
+  const lifecycle = agentLifecycle(current, hook, runtime.state);
+  let governessLifecycleSourceState: SourceState = "missing";
+  if (governess.lifecycle[agent]) {
+    governessLifecycleSourceState =
+      current.source === "governess" ? "current" : "stale";
+  }
   return {
-    currentTask: derivedTaskLabel(lifecycle, runtime.state),
+    currentTask: derivedTaskLabel(lifecycle, runtime.state, repository),
     displayName,
-    id: `harvto-${agent}`,
+    id: `agent_${opaque(scope, agent)}`,
     lastHookAt: hook.ts,
     lastHookEvent: hook.event,
     ...(latestBridgeStatus(bridge, agent)
@@ -857,28 +1260,31 @@ const buildAgent = (input: {
     model: pressure?.model ?? "Unavailable",
     provenance: [
       source(
-        manifest.runId,
+        scope,
         `${agent}-hooks`,
         "hook-journal",
-        hook.ts,
-        "current",
+        hook.lifecycleAt,
+        current.source === "hook" ? "current" : "stale",
         "Normalized lifecycle metadata only"
       ),
       source(
-        manifest.runId,
+        scope,
         `${agent}-governess`,
         "governess-journal",
-        governess.lifecycle[agent]?.at ?? hook.ts,
-        "current",
+        governess.lifecycle[agent]?.at ?? governessObservedAt,
+        governessLifecycleSourceState,
         "Persisted lifecycle and pressure metadata"
       ),
     ],
     provider: "Frontier runtime",
     reasoningEffort: effort,
     role: isDriver ? "driver" : "reviewer",
-    taskObservedAt: hook.ts,
-    taskSource: "derived lifecycle summary",
-    toolsInFlight: hook.event === "PreToolUse" ? 1 : 0,
+    taskObservedAt: current.at,
+    taskSource:
+      current.source === "governess"
+        ? "latest persisted Governess lifecycle"
+        : "latest normalized hook lifecycle",
+    toolsInFlight: hook.ts >= current.at && hook.event === "PreToolUse" ? 1 : 0,
     usage: {
       compactions: pressure?.compactions ?? 0,
       windows: [],
@@ -951,7 +1357,7 @@ const utilityJobs = (
 };
 
 const buildWorkers = (
-  runId: string,
+  scope: string,
   jobs: readonly UtilityJobView[]
 ): readonly WorkerTierDTO[] => {
   const definitions: ReadonlyArray<{
@@ -990,7 +1396,7 @@ const buildWorkers = (
           ...(["active", "queued"].includes(state)
             ? {}
             : { finishedAt: job.at }),
-          id: `worker_${opaque(runId, job.id)}`,
+          id: `worker_${opaque(scope, job.id)}`,
           requestSummary: `${job.kind[0]?.toUpperCase() ?? "T"}${job.kind.slice(1)} task; content redacted`,
           resultSummary: `Durable worker state: ${state}`,
           routingReason: "Selected by durable utility routing metadata",
@@ -1027,7 +1433,7 @@ const buildWorkers = (
 };
 
 const buildEvidence = (
-  runId: string,
+  scope: string,
   files: ReadonlyArray<{
     readonly id: string;
     readonly kind: EvidenceItemDTO["kind"];
@@ -1039,15 +1445,15 @@ const buildEvidence = (
   files.map((file) => ({
     byteCount: file.snapshot.bytes,
     capturedAt: file.snapshot.modifiedAt,
-    id: evidenceId(runId, file.id),
+    id: evidenceId(scope, file.id),
     kind: file.kind,
     mimeType:
       file.id === "manifest" || file.id === "governess"
         ? "application/json"
         : "text/plain",
     provenance: source(
-      runId,
-      `run-${runId}-${file.id}`,
+      scope,
+      `run-${scope}-${file.id}`,
       file.sourceKind,
       file.snapshot.modifiedAt
     ),
@@ -1056,17 +1462,71 @@ const buildEvidence = (
     title: file.title,
   }));
 
+const buildLifecycleConflictEvents = (input: {
+  readonly agentStates: Readonly<Record<"claude" | "codex", CurrentAgentState>>;
+  readonly derivedLifecycle: RunLifecycle;
+  readonly manifest: ManifestView;
+  readonly scope: string;
+}): readonly TimelineEventDTO[] => {
+  if (input.derivedLifecycle === input.manifest.state) {
+    return [];
+  }
+  return (["claude", "codex"] as const).flatMap((agent, index) => {
+    const current = input.agentStates[agent];
+    if (current.state === input.manifest.state) {
+      return [];
+    }
+    const sourceKind =
+      current.source === "governess" ? "governess-journal" : "hook-journal";
+    const evidenceKind =
+      current.source === "governess" ? "governess" : `${agent}-hooks`;
+    const key = `lifecycle-conflict-${agent}`;
+    return [
+      {
+        actor: agent === "claude" ? "Claude" : "Codex",
+        at: current.at,
+        category: "governess" as const,
+        detail: `The live projection shows ${input.derivedLifecycle}; the manifest still records ${input.manifest.state}.`,
+        evidenceIds: [evidenceId(input.scope, evidenceKind)],
+        id: `timeline_${opaque(input.scope, key)}`,
+        provenance: source(
+          input.scope,
+          `timeline-${key}`,
+          sourceKind,
+          current.at
+        ),
+        sequence: 20 + index,
+        title: "Newer lifecycle evidence disagrees with manifest",
+        tone: "warning" as const,
+      },
+    ];
+  });
+};
+
 const buildTimeline = (input: {
+  readonly agentStates: Readonly<Record<"claude" | "codex", CurrentAgentState>>;
   readonly bridge: JournalView;
   readonly derivedLifecycle: RunLifecycle;
   readonly hooks: Readonly<Record<"claude" | "codex", HookView>>;
   readonly jobs: readonly UtilityJobView[];
   readonly manifest: ManifestView;
   readonly now: IsoTimestamp;
+  readonly repository: string;
   readonly runtime: RuntimeProbeResult;
+  readonly scope: string;
 }): readonly TimelineEventDTO[] => {
-  const { bridge, derivedLifecycle, hooks, jobs, manifest, now, runtime } =
-    input;
+  const {
+    agentStates,
+    bridge,
+    derivedLifecycle,
+    hooks,
+    jobs,
+    manifest,
+    now,
+    repository,
+    runtime,
+    scope,
+  } = input;
   const events: TimelineEventDTO[] = [];
   const add = (
     key: string,
@@ -1086,8 +1546,8 @@ const buildTimeline = (input: {
       category,
       detail,
       evidenceIds,
-      id: `timeline_${opaque(manifest.runId, key)}`,
-      provenance: source(manifest.runId, `timeline-${key}`, sourceKind, at),
+      id: `timeline_${opaque(scope, key)}`,
+      provenance: source(scope, `timeline-${key}`, sourceKind, at),
       sequence,
       title,
       tone,
@@ -1099,12 +1559,12 @@ const buildTimeline = (input: {
     manifest.createdAt,
     "lifecycle",
     "Loop",
-    "Harvto run created",
-    `Run ${manifest.runId} entered the durable lane.`,
+    `${repository} run created`,
+    `Run ${manifest.runId} entered the durable registry.`,
     "info",
     "manifest",
     1,
-    [evidenceId(manifest.runId, "manifest")]
+    [evidenceId(scope, "manifest")]
   );
   for (const [index, agent] of (["claude", "codex"] as const).entries()) {
     const hook = hooks[agent];
@@ -1118,23 +1578,17 @@ const buildTimeline = (input: {
       hook.state === "input-required" ? "warning" : "info",
       "hook-journal",
       10 + index,
-      [evidenceId(manifest.runId, `${agent}-hooks`)]
+      [evidenceId(scope, `${agent}-hooks`)]
     );
   }
-  if (derivedLifecycle !== manifest.state) {
-    add(
-      "lifecycle-conflict",
-      maxIso(hooks.claude.ts, hooks.codex.ts),
-      "governess",
-      "Governess",
-      "Newer lifecycle evidence disagrees with manifest",
-      `The live projection shows ${derivedLifecycle}; the manifest still records ${manifest.state}.`,
-      "warning",
-      "governess-journal",
-      20,
-      [evidenceId(manifest.runId, "governess")]
-    );
-  }
+  events.push(
+    ...buildLifecycleConflictEvents({
+      agentStates,
+      derivedLifecycle,
+      manifest,
+      scope,
+    })
+  );
   if (bridge.lastAt) {
     add(
       "bridge",
@@ -1146,7 +1600,7 @@ const buildTimeline = (input: {
       "neutral",
       "bridge-journal",
       30,
-      [evidenceId(manifest.runId, "bridge")]
+      [evidenceId(scope, "bridge")]
     );
   }
   if (jobs[0]) {
@@ -1160,7 +1614,7 @@ const buildTimeline = (input: {
       "neutral",
       "worker-journal",
       40,
-      [evidenceId(manifest.runId, "utility")]
+      [evidenceId(scope, "utility")]
     );
   }
   add(
@@ -1196,6 +1650,15 @@ const buildRunReasons = (
       detail:
         "Both normalized frontier lifecycle records require operator input.",
       label: "Operator input required",
+      severity: "high",
+    });
+  }
+  if (lifecycle === "blocked") {
+    reasons.push({
+      code: "failed-control",
+      detail:
+        "Durable lifecycle evidence reports that frontier work is blocked.",
+      label: "Run blocked",
       severity: "high",
     });
   }
@@ -1251,7 +1714,10 @@ const governessInterpretation = (
   if (lifecycle === "input-required") {
     return "Both frontier seats' last durable state requires operator input.";
   }
-  return `The Harvto lane currently reports ${lifecycle}.`;
+  if (lifecycle === "blocked") {
+    return "Durable frontier lifecycle evidence reports blocked work.";
+  }
+  return `The loop currently reports ${lifecycle}.`;
 };
 
 const buildGovernessDto = (input: {
@@ -1267,6 +1733,7 @@ const buildGovernessDto = (input: {
   readonly runId: string;
   readonly runtime: RuntimeProbeResult;
   readonly runtimeConflict: boolean;
+  readonly scope: string;
 }): GovernessDTO => ({
   audit: [],
   driverLease: input.leaseCurrent
@@ -1277,7 +1744,10 @@ const buildGovernessDto = (input: {
     {
       label: "Derived lifecycle",
       provenance: input.factProvenance,
-      status: input.lifecycle === "input-required" ? "warning" : "ok",
+      status:
+        input.lifecycle === "input-required" || input.lifecycle === "blocked"
+          ? "warning"
+          : "ok",
       value: input.lifecycle,
     },
     {
@@ -1301,7 +1771,7 @@ const buildGovernessDto = (input: {
     {
       label: "Terminal identity",
       provenance: source(
-        input.runId,
+        input.scope,
         `run-${input.runId}-adapter-boundary`,
         "adapter-probe",
         input.now,
@@ -1348,33 +1818,16 @@ const buildGovernessDto = (input: {
   ],
 });
 
-export const readHarvtoLiveSnapshot = (
-  options: HarvtoLiveDataOptions = {}
-): WebUiSnapshotDTO => {
-  const now = (options.now ?? (() => new Date()))().toISOString();
-  const repoId = options.repoId ?? HARVTO_REPO_ID;
-  if (repoId !== HARVTO_REPO_ID) {
-    throw new LiveDataUnavailableError("the requested lane is not allowed");
-  }
-  const storageRoot =
-    options.storageRoot ??
-    join(process.env.HOME ?? process.cwd(), ".loop", "runs");
-  const runId = selectLatestRun(storageRoot, repoId);
-  const runDir = join(storageRoot, repoId, runId);
-  if (!within(join(storageRoot, repoId), runDir)) {
-    throw new LiveDataUnavailableError(
-      "run identity is outside the Harvto lane"
-    );
-  }
-
-  const manifestFile = readStableUtf8(
-    join(runDir, "manifest.json"),
-    MAX_JSON_BYTES
-  );
-  const manifest = parseManifest(parseJson(manifestFile), repoId, runId);
-  const runtime = (options.runtimeProbe ?? probeHarvtoRuntime)(
-    manifest.runtime
-  );
+const projectActiveRun = (
+  candidate: RunCandidate,
+  options: LoopRegistryLiveDataOptions,
+  now: IsoTimestamp
+): ProjectedRun => {
+  const { manifest, manifestFile, repoId, repository, routeId, runDir, runId } =
+    candidate;
+  const registryFs = options.registryFs ?? DEFAULT_REGISTRY_FS;
+  assertCandidateDirectoryIdentity(candidate, registryFs);
+  const runtime = (options.runtimeProbe ?? probeLoopRuntime)(manifest.runtime);
   const governessFile = readStableUtf8(
     join(runDir, "governess-state.json"),
     MAX_JSON_BYTES
@@ -1397,49 +1850,67 @@ export const readHarvtoLiveSnapshot = (
     MAX_JSONL_BYTES
   );
   const bridge = bridgeJournalView(parseJsonl(bridgeFile));
-  const reconciliationFile = readStableUtf8(
+  const reconciliationFile = readOptionalStableUtf8(
     join(runDir, "bridge-reconciliation.json"),
     MAX_JSON_BYTES
   );
-  parseJson(reconciliationFile);
+  if (reconciliationFile) {
+    parseJson(reconciliationFile);
+  }
   const utilityFile = readStableUtf8(
     join(runDir, "utility", "jobs.jsonl"),
     MAX_JSONL_BYTES
   );
   const jobs = utilityJobs(parseJsonl(utilityFile));
 
-  const lifecycle = deriveLifecycle(manifest, governess, hooks);
+  const agentStates = currentAgentStates(governess, hooks);
+  const lifecycle = deriveLifecycle(manifest, agentStates);
   const hasLifecycleConflict = lifecycle !== manifest.state;
+  const lifecycleObservedAt = maxIso(
+    agentStates.claude.at,
+    agentStates.codex.at
+  );
   const lastEventAt = maxIso(
     manifest.updatedAt,
+    lifecycleObservedAt,
     hooks.claude.ts,
     hooks.codex.ts,
     bridge.lastAt,
     jobs[0]?.at
   );
   const projectionSource = dataSource(now);
+  const sourcePrefix = `run-${opaque(routeId, "source")}`;
+  const governessLifecycleObservedAt = maxIso(
+    governess.lifecycle.claude?.at,
+    governess.lifecycle.codex?.at
+  );
+  let governessLifecycleState: SourceState = "missing";
+  if (governess.lifecycle.claude || governess.lifecycle.codex) {
+    governessLifecycleState =
+      agentStates.claude.source === "governess" &&
+      agentStates.codex.source === "governess"
+        ? "current"
+        : "stale";
+  }
   const provenance = [
-    source(runId, `run-${runId}-manifest`, "manifest", manifest.updatedAt),
+    source(routeId, `${sourcePrefix}-manifest`, "manifest", manifest.updatedAt),
     source(
-      runId,
-      `run-${runId}-hooks`,
+      routeId,
+      `${sourcePrefix}-hooks`,
       "hook-journal",
       maxIso(hooks.claude.ts, hooks.codex.ts)
     ),
     source(
-      runId,
-      `run-${runId}-governess`,
+      routeId,
+      `${sourcePrefix}-governess`,
       "governess-journal",
-      maxIso(
-        governess.lifecycle.claude?.at,
-        governess.lifecycle.codex?.at,
-        hooks.claude.ts,
-        hooks.codex.ts
-      )
+      governessLifecycleObservedAt,
+      governessLifecycleState,
+      "Persisted Governess lifecycle events only"
     ),
     source(
-      runId,
-      `run-${runId}-bridge`,
+      routeId,
+      `${sourcePrefix}-bridge`,
       "bridge-journal",
       bridge.lastAt ?? bridgeFile.modifiedAt
     ),
@@ -1452,7 +1923,7 @@ export const readHarvtoLiveSnapshot = (
     lastObservedAt: now,
     queuedUpdates: 0,
     state: "live" as const,
-    streamEpoch: `harvto-${governess.epoch}`,
+    streamEpoch: `loop-${opaque(routeId, governess.epoch)}`,
     streamSequence: hooks.claude.sequence + hooks.codex.sequence + bridge.count,
   };
   const runtimeConflict =
@@ -1469,20 +1940,24 @@ export const readHarvtoLiveSnapshot = (
     buildAgent({
       agent: "claude",
       bridge,
-      derivedLifecycle: lifecycle,
       governess,
+      governessObservedAt: governessFile.modifiedAt,
       hook: hooks.claude,
       manifest,
+      repository,
       runtime,
+      scope: routeId,
     }),
     buildAgent({
       agent: "codex",
       bridge,
-      derivedLifecycle: lifecycle,
       governess,
+      governessObservedAt: governessFile.modifiedAt,
       hook: hooks.codex,
       manifest,
+      repository,
       runtime,
+      scope: routeId,
     }),
   ];
   const summary: FleetRunDTO = {
@@ -1508,11 +1983,12 @@ export const readHarvtoLiveSnapshot = (
     quality,
     reasons,
     repoId,
-    repository: "Harvto",
+    repository,
     reviewer,
+    routeId,
     runId,
     startedAt: manifest.createdAt,
-    title: `Harvto lane · run ${runId}`,
+    title: `${repository} · run ${runId}`,
     version: WEBUI_DTO_VERSION,
     worktree: `Run ${runId} workspace`,
   };
@@ -1520,15 +1996,10 @@ export const readHarvtoLiveSnapshot = (
     governess.leaseExpiresAt !== undefined &&
     Date.parse(governess.leaseExpiresAt) >= Date.parse(now);
   const factProvenance = source(
-    runId,
-    `run-${runId}-governess-facts`,
+    routeId,
+    `${sourcePrefix}-governess-facts`,
     "governess-journal",
-    maxIso(
-      governess.lifecycle.claude?.at,
-      governess.lifecycle.codex?.at,
-      hooks.claude.ts,
-      hooks.codex.ts
-    )
+    governessFile.modifiedAt
   );
   const governessDto = buildGovernessDto({
     driver,
@@ -1543,8 +2014,9 @@ export const readHarvtoLiveSnapshot = (
     runId,
     runtime,
     runtimeConflict,
+    scope: routeId,
   });
-  const evidence = buildEvidence(runId, [
+  const evidence = buildEvidence(routeId, [
     {
       id: "manifest",
       kind: "artifact",
@@ -1604,31 +2076,425 @@ export const readHarvtoLiveSnapshot = (
     quality,
     summary,
     timeline: buildTimeline({
+      agentStates,
       bridge,
       derivedLifecycle: lifecycle,
       hooks,
       jobs,
       manifest,
       now,
+      repository,
       runtime,
+      scope: routeId,
     }),
     version: WEBUI_DTO_VERSION,
-    workers: buildWorkers(runId, jobs),
+    workers: buildWorkers(routeId, jobs),
+  };
+  assertCandidateDirectoryIdentity(candidate, registryFs);
+  return { detail, summary };
+};
+
+const projectDegradedRun = (
+  candidate: RunCandidate,
+  options: LoopRegistryLiveDataOptions,
+  now: IsoTimestamp
+): ProjectedRun => {
+  const { manifest, manifestFile, repoId, repository, routeId, runId } =
+    candidate;
+  const registryFs = options.registryFs ?? DEFAULT_REGISTRY_FS;
+  assertCandidateDirectoryIdentity(candidate, registryFs);
+  let runtime: RuntimeProbeResult;
+  try {
+    runtime = (options.runtimeProbe ?? probeLoopRuntime)(manifest.runtime);
+  } catch {
+    runtime = {
+      label: "Terminal session status unverified",
+      state: "unknown",
+    };
+  }
+  const projectionSource = dataSource(now);
+  const manifestProvenance = source(
+    routeId,
+    `run-${opaque(routeId, "source")}-manifest`,
+    "manifest",
+    manifest.updatedAt
+  );
+  const connection = {
+    label: "Projection partial",
+    lastEventAt: manifest.updatedAt,
+    lastObservedAt: now,
+    queuedUpdates: 0,
+    state: "behind" as const,
+    streamEpoch: `loop-${opaque(routeId, "degraded")}`,
+    streamSequence: 0,
+  };
+  const reasons: readonly RunReasonDTO[] = [
+    {
+      code: "corrupt-evidence",
+      detail:
+        "The manifest is valid, but one or more bounded durable evidence sources could not be projected.",
+      label: "Detailed evidence unavailable",
+      severity: "high",
+    },
+    ...buildRunReasons(manifest.state, manifest.state, runtime),
+  ];
+  const quality = {
+    label: "Degraded",
+    severity: "corrupt" as const,
+    sources: [manifestProvenance],
+    summary:
+      "Manifest identity is valid; detailed durable evidence is unavailable. No fixture data was substituted.",
+  };
+  const fallbackGoverness: GovernessView = {
+    epoch: "unavailable",
+    leaseHolder: manifest.primaryAgent,
+    lifecycle: {},
+    pressure: {},
+    recoveries: 0,
+    waitingConfirmed: false,
+  };
+  const fallbackBridge: JournalView = { count: 0, records: [] };
+  const fallbackHooks = {
+    claude: {
+      agent: "claude",
+      event: "Activity",
+      lifecycleAt: manifest.updatedAt,
+      sequence: 0,
+      state: manifest.state,
+      ts: manifest.updatedAt,
+    },
+    codex: {
+      agent: "codex",
+      event: "Activity",
+      lifecycleAt: manifest.updatedAt,
+      sequence: 0,
+      state: manifest.state,
+      ts: manifest.updatedAt,
+    },
+  } satisfies Readonly<Record<"claude" | "codex", HookView>>;
+  const agents = (["claude", "codex"] as const).map((agent) => ({
+    ...buildAgent({
+      agent,
+      bridge: fallbackBridge,
+      governess: fallbackGoverness,
+      governessObservedAt: manifestFile.modifiedAt,
+      hook: fallbackHooks[agent],
+      manifest,
+      repository,
+      runtime,
+      scope: routeId,
+    }),
+    currentTask: "Detailed lifecycle evidence unavailable",
+    lifecycle: "limited" as const,
+    provenance: [manifestProvenance],
+    toolsInFlight: 0,
+  }));
+  const driver = manifest.primaryAgent === "codex" ? "Codex" : "Claude";
+  const reviewer = manifest.primaryAgent === "codex" ? "Claude" : "Codex";
+  const summary: FleetRunDTO = {
+    adapters: [
+      {
+        kind: "tmux",
+        label: runtime.label,
+        lastProbedAt: now,
+        state: runtime.state,
+      },
+    ],
+    agents: agents.map((agent) => ({
+      displayName: agent.displayName,
+      id: agent.id,
+      lifecycle: agent.lifecycle,
+      role: agent.role,
+    })),
+    connection,
+    dataSource: projectionSource,
+    driver,
+    lastDurableEventAt: manifest.updatedAt,
+    lifecycle: manifest.state,
+    quality,
+    reasons,
+    repoId,
+    repository,
+    reviewer,
+    routeId,
+    runId,
+    startedAt: manifest.createdAt,
+    title: `${repository} · run ${runId}`,
+    version: WEBUI_DTO_VERSION,
+    worktree: `Run ${runId} workspace`,
+  };
+  const evidence = buildEvidence(routeId, [
+    {
+      id: "manifest",
+      kind: "artifact",
+      sourceKind: "manifest",
+      snapshot: manifestFile,
+      title: "Run manifest metadata",
+    },
+  ]);
+  const detail: RunDetailDTO = {
+    agents,
+    authority: {
+      currentDriver: driver,
+      epoch: "unavailable",
+      leaseState: "stale",
+      repoId,
+      runId,
+    },
+    connection,
+    dataSource: projectionSource,
+    evidence,
+    governess: buildGovernessDto({
+      driver,
+      factProvenance: manifestProvenance,
+      governess: fallbackGoverness,
+      hasLifecycleConflict: false,
+      leaseCurrent: false,
+      lifecycle: manifest.state,
+      manifestProvenance,
+      manifestState: manifest.state,
+      now,
+      runId,
+      runtime,
+      runtimeConflict:
+        runtime.state === "ended" || runtime.state === "mismatch",
+      scope: routeId,
+    }),
+    quality,
+    summary,
+    timeline: [
+      {
+        actor: "Web UI",
+        at: manifest.updatedAt,
+        category: "evidence",
+        detail:
+          "The valid manifest is shown while unavailable detailed evidence remains excluded.",
+        evidenceIds: [evidenceId(routeId, "manifest")],
+        id: `timeline_${opaque(routeId, "degraded")}`,
+        provenance: manifestProvenance,
+        sequence: 1,
+        title: "Detailed projection unavailable",
+        tone: "warning",
+      },
+    ],
+    version: WEBUI_DTO_VERSION,
+    workers: buildWorkers(routeId, []),
+  };
+  assertCandidateDirectoryIdentity(candidate, registryFs);
+  return { detail, summary };
+};
+
+const compareProjectedRuns = (
+  left: ProjectedRun,
+  right: ProjectedRun
+): number => {
+  const eventOrder = right.summary.lastDurableEventAt.localeCompare(
+    left.summary.lastDurableEventAt
+  );
+  if (eventOrder !== 0) {
+    return eventOrder;
+  }
+  const repositoryOrder = left.summary.repoId.localeCompare(
+    right.summary.repoId
+  );
+  if (repositoryOrder !== 0) {
+    return repositoryOrder;
+  }
+  const runOrder = Number(left.summary.runId) - Number(right.summary.runId);
+  return runOrder === 0
+    ? left.summary.routeId.localeCompare(right.summary.routeId)
+    : runOrder;
+};
+
+const aggregateQualitySeverity = (
+  projected: readonly ProjectedRun[],
+  rejectedEntries: number
+): FleetRunDTO["quality"]["severity"] => {
+  const severities = new Set(
+    projected.map((run) => run.summary.quality.severity)
+  );
+  if (severities.has("corrupt")) {
+    return "corrupt";
+  }
+  if (severities.has("conflict")) {
+    return "conflict";
+  }
+  if (severities.has("stale")) {
+    return "stale";
+  }
+  if (rejectedEntries > 0 || severities.has("partial")) {
+    return "partial";
+  }
+  return "healthy";
+};
+
+const aggregateQualityLabel = (
+  severity: FleetRunDTO["quality"]["severity"],
+  rejectedEntries: number
+): string => {
+  if (rejectedEntries > 0) {
+    return "Partial coverage";
+  }
+  if (severity === "corrupt") {
+    return "Corrupt evidence";
+  }
+  if (severity === "conflict") {
+    return "Identity conflict";
+  }
+  if (severity === "stale") {
+    return "Stale evidence";
+  }
+  return severity === "partial" ? "Partial" : "Healthy";
+};
+
+const aggregateQualitySummary = (
+  runCount: number,
+  severity: FleetRunDTO["quality"]["severity"],
+  rejectedEntries: number
+): string => {
+  if (rejectedEntries > 0) {
+    return `Projected ${runCount} active loops; some registry evidence could not be validated.`;
+  }
+  if (severity === "corrupt") {
+    return `Projected all ${runCount} validated active loops; detailed evidence is unavailable for at least one loop.`;
+  }
+  if (severity === "conflict") {
+    return `Projected all ${runCount} validated active loops; at least one loop has a runtime identity conflict.`;
+  }
+  if (severity === "stale") {
+    return `Projected all ${runCount} validated active loops; at least one loop has stale evidence.`;
+  }
+  if (runCount > 0) {
+    return `Projected all ${runCount} validated active loops.`;
+  }
+  return "A clean bounded registry scan found no active loops.";
+};
+
+const projectCandidate = (
+  candidate: RunCandidate,
+  options: LoopRegistryLiveDataOptions,
+  now: IsoTimestamp
+): ProjectedRun | "rejected" => {
+  try {
+    return projectActiveRun(candidate, options, now);
+  } catch (error) {
+    if (error instanceof RegistryDirectoryIdentityError) {
+      return "rejected";
+    }
+    const registryFs = options.registryFs ?? DEFAULT_REGISTRY_FS;
+    try {
+      assertCandidateDirectoryIdentity(candidate, registryFs);
+      return projectDegradedRun(candidate, options, now);
+    } catch (degradedError) {
+      if (degradedError instanceof RegistryDirectoryIdentityError) {
+        return "rejected";
+      }
+      throw degradedError;
+    }
+  }
+};
+
+const projectDiscoveredRuns = (
+  discovery: RegistryDiscovery,
+  options: LoopRegistryLiveDataOptions,
+  now: IsoTimestamp
+): { readonly projected: ProjectedRun[]; readonly rejectedEntries: number } => {
+  const projected: ProjectedRun[] = [];
+  let rejectedEntries = discovery.rejectedEntries;
+  for (const candidate of discovery.candidates) {
+    const result = projectCandidate(candidate, options, now);
+    if (result === "rejected") {
+      rejectedEntries += 1;
+    } else {
+      projected.push(result);
+    }
+  }
+  projected.sort(compareProjectedRuns);
+  return { projected, rejectedEntries };
+};
+
+export const readLoopRegistryLiveSnapshot = (
+  options: LoopRegistryLiveDataOptions = {}
+): WebUiSnapshotDTO => {
+  const now = (options.now ?? (() => new Date()))().toISOString();
+  const storageRoot =
+    options.storageRoot ??
+    join(process.env.HOME ?? process.cwd(), ".loop", "runs");
+  const discovery = discoverActiveRuns(
+    storageRoot,
+    options.registryFs ?? DEFAULT_REGISTRY_FS
+  );
+  if (discovery.candidates.length === 0 && discovery.rejectedEntries > 0) {
+    throw new LiveDataUnavailableError(
+      "active loop coverage could not be proven"
+    );
+  }
+  const { projected, rejectedEntries } = projectDiscoveredRuns(
+    discovery,
+    options,
+    now
+  );
+  if (projected.length === 0 && rejectedEntries > 0) {
+    throw new LiveDataUnavailableError(
+      "active loop coverage could not be proven"
+    );
+  }
+  const hasDegradedRun = projected.some(
+    (run) => run.summary.quality.severity === "corrupt"
+  );
+  const partialCoverage = rejectedEntries > 0 || hasDegradedRun;
+  const qualitySeverity = aggregateQualitySeverity(projected, rejectedEntries);
+  const projectionSource = dataSource(now);
+  const runs = projected.map((run) => run.summary);
+  const details: Record<string, RunDetailDTO> = {};
+  for (const run of projected) {
+    details[run.summary.routeId] = run.detail;
+  }
+  const lastEventAt =
+    runs.length > 0
+      ? maxIso(...runs.map((run) => run.lastDurableEventAt))
+      : now;
+  const connection = {
+    label: partialCoverage ? "Projection partial" : "Projection connected",
+    lastEventAt,
+    lastObservedAt: now,
+    queuedUpdates: 0,
+    state: partialCoverage ? ("behind" as const) : ("live" as const),
+    streamEpoch: `registry-${opaque(
+      "registry",
+      runs.map((run) => run.routeId).join("|")
+    )}`,
+    streamSequence: projected.reduce(
+      (sum, run) => sum + run.detail.connection.streamSequence,
+      0
+    ),
+  };
+  const quality = {
+    label: aggregateQualityLabel(qualitySeverity, rejectedEntries),
+    severity: qualitySeverity,
+    sources: projected.flatMap((run) => run.summary.quality.sources),
+    summary: aggregateQualitySummary(
+      runs.length,
+      qualitySeverity,
+      rejectedEntries
+    ),
   };
   return {
-    details: { [runId]: detail },
+    details,
     fleet: {
       connection,
       dataSource: projectionSource,
       observedAt: now,
       quality,
-      runs: [summary],
+      runs,
       version: WEBUI_DTO_VERSION,
     },
-    source: "harvto-live",
+    source: "loop-registry-live",
     version: WEBUI_DTO_VERSION,
   };
 };
+
+export const readHarvtoLiveSnapshot = readLoopRegistryLiveSnapshot;
 
 export interface LiveDataRequest {
   readonly host?: string;
@@ -1645,7 +2511,7 @@ export interface LiveDataResponse {
 
 export const handleLiveDataRequest = (
   request: LiveDataRequest,
-  options: HarvtoLiveDataOptions & { readonly expectedHost?: string } = {}
+  options: LoopRegistryLiveDataOptions & { readonly expectedHost?: string } = {}
 ): LiveDataResponse | undefined => {
   const path = request.url?.split("?", 1)[0];
   if (path !== LIVE_SNAPSHOT_PATH) {
@@ -1687,7 +2553,7 @@ export const handleLiveDataRequest = (
     };
   }
   try {
-    const body = JSON.stringify(readHarvtoLiveSnapshot(options));
+    const body = JSON.stringify(readLoopRegistryLiveSnapshot(options));
     return { body: method === "HEAD" ? "" : body, headers, status: 200 };
   } catch (error) {
     const reason =
@@ -1697,7 +2563,7 @@ export const handleLiveDataRequest = (
     return {
       body: JSON.stringify({
         code: "LIVE_DATA_UNAVAILABLE",
-        error: "Harvto live data is unavailable",
+        error: "Live loop data is unavailable",
         reason,
       }),
       headers,
@@ -1724,7 +2590,7 @@ const installMiddleware = (
       ) => void
     ): void;
   },
-  options: HarvtoLiveDataOptions & { readonly expectedHost?: string }
+  options: LoopRegistryLiveDataOptions & { readonly expectedHost?: string }
 ) => {
   middlewares.use((request, response, next) => {
     const result = handleLiveDataRequest(
@@ -1754,8 +2620,8 @@ const installMiddleware = (
   });
 };
 
-export const harvtoLiveDataPlugin = (
-  options: HarvtoLiveDataOptions & { readonly expectedHost?: string } = {}
+export const loopRegistryLiveDataPlugin = (
+  options: LoopRegistryLiveDataOptions & { readonly expectedHost?: string } = {}
 ): Plugin => ({
   configurePreviewServer(server) {
     installMiddleware(server.middlewares, options);
@@ -1763,5 +2629,7 @@ export const harvtoLiveDataPlugin = (
   configureServer(server) {
     installMiddleware(server.middlewares, options);
   },
-  name: "harvto-live-data",
+  name: "loop-registry-live-data",
 });
+
+export const harvtoLiveDataPlugin = loopRegistryLiveDataPlugin;

@@ -11,6 +11,7 @@ const RUN_LIFECYCLES = new Set([
   "working",
   "reviewing",
   "input-required",
+  "blocked",
   "completed",
   "failed",
   "stopped",
@@ -50,7 +51,6 @@ const SOURCE_KINDS = new Set([
   "worker-journal",
   "usage-snapshot",
   "adapter-probe",
-  "fixture",
 ]);
 const CONNECTION_STATES = new Set([
   "live",
@@ -83,10 +83,25 @@ const BRIDGE_STATUSES = new Set([
   "superseded",
   "expired",
 ]);
+const RUN_REASON_CODES = new Set([
+  "input-required",
+  "failed-control",
+  "stale-authority",
+  "corrupt-evidence",
+  "identity-conflict",
+  "surviving-adapter",
+  "active-looking-manifest",
+  "stream-behind",
+  "audit-partial",
+]);
+const RUN_ROUTE_ID_PATTERN =
+  /^[a-z0-9][a-z0-9-]{0,114}-[0-9a-f]{12}:[1-9][0-9]{0,11}$/u;
 
 const isString = (value: unknown): value is string => typeof value === "string";
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
+const isOptionalNonnegativeNumber = (value: unknown): boolean =>
+  value === undefined || (isFiniteNumber(value) && value >= 0);
 const isIso = (value: unknown): value is string =>
   isString(value) && Number.isFinite(Date.parse(value));
 const isStringArray = (value: unknown): value is readonly string[] =>
@@ -95,6 +110,9 @@ const arrayOf = (value: unknown, guard: (candidate: unknown) => boolean) =>
   Array.isArray(value) && value.every(guard);
 const isMember = (set: ReadonlySet<string>, value: unknown): boolean =>
   isString(value) && set.has(value);
+
+export const isRunRouteId = (value: unknown): value is string =>
+  isString(value) && RUN_ROUTE_ID_PATTERN.test(value);
 
 const isProvenance = (value: unknown): boolean =>
   isRecord(value) &&
@@ -118,7 +136,7 @@ const isConnection = (value: unknown): boolean =>
 const isDataSource = (value: unknown): boolean =>
   isRecord(value) &&
   isIso(value.generatedAt) &&
-  (value.kind === "live-redacted" || value.kind === "synthetic-redacted") &&
+  value.kind === "live-redacted" &&
   isString(value.notice) &&
   isString(value.scenario);
 
@@ -145,32 +163,45 @@ const isFleetAgent = (value: unknown): boolean =>
 
 const isRunReason = (value: unknown): boolean =>
   isRecord(value) &&
-  isString(value.code) &&
+  isMember(RUN_REASON_CODES, value.code) &&
   isString(value.detail) &&
   isString(value.label) &&
   ["critical", "high", "medium", "low"].includes(String(value.severity));
 
-const isFleetRun = (value: unknown): boolean =>
-  isRecord(value) &&
-  arrayOf(value.adapters, isAdapter) &&
-  arrayOf(value.agents, isFleetAgent) &&
-  isConnection(value.connection) &&
-  isDataSource(value.dataSource) &&
-  isString(value.driver) &&
-  isIso(value.lastDurableEventAt) &&
-  isMember(RUN_LIFECYCLES, value.lifecycle) &&
-  isQuality(value.quality) &&
-  arrayOf(value.reasons, isRunReason) &&
-  [
-    value.repoId,
-    value.repository,
-    value.reviewer,
-    value.runId,
-    value.title,
-    value.worktree,
-  ].every(isString) &&
-  isIso(value.startedAt) &&
-  value.version === WEBUI_DTO_VERSION;
+const isFleetRun = (value: unknown): boolean => {
+  if (
+    !(
+      isRecord(value) &&
+      arrayOf(value.adapters, isAdapter) &&
+      arrayOf(value.agents, isFleetAgent) &&
+      isConnection(value.connection) &&
+      isDataSource(value.dataSource) &&
+      isString(value.driver) &&
+      isIso(value.lastDurableEventAt) &&
+      isMember(RUN_LIFECYCLES, value.lifecycle) &&
+      isQuality(value.quality) &&
+      arrayOf(value.reasons, isRunReason) &&
+      [
+        value.repoId,
+        value.repository,
+        value.reviewer,
+        value.routeId,
+        value.runId,
+        value.title,
+        value.worktree,
+      ].every(isString) &&
+      isIso(value.startedAt) &&
+      value.version === WEBUI_DTO_VERSION
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    isRunRouteId(value.routeId) &&
+    value.routeId === `${String(value.repoId)}:${String(value.runId)}`
+  );
+};
 
 const isUsage = (value: unknown): boolean =>
   isRecord(value) &&
@@ -247,6 +278,10 @@ const isWorkerTier = (value: unknown): boolean => {
         isRecord(activity) &&
         isString(activity.id) &&
         isIso(activity.startedAt) &&
+        (activity.finishedAt === undefined || isIso(activity.finishedAt)) &&
+        [activity.costUsd, activity.modelCalls, activity.tokens].every(
+          isOptionalNonnegativeNumber
+        ) &&
         isMember(WORKER_STATES, activity.state) &&
         isMember(WORKER_TIERS, activity.tier) &&
         isStringArray(activity.artifactEvidenceIds) &&
@@ -257,6 +292,33 @@ const isWorkerTier = (value: unknown): boolean => {
           activity.routingReason,
           activity.toolSummary,
         ].every(isString)
+    )
+  );
+};
+
+const structurallyEqual = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => structurallyEqual(value, right[index]))
+    );
+  }
+  if (!(isRecord(left) && isRecord(right))) {
+    return false;
+  }
+
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] && structurallyEqual(left[key], right[key])
     )
   );
 };
@@ -376,7 +438,7 @@ export const isWebUiSnapshot = (value: unknown): value is WebUiSnapshotDTO => {
   const details = value.details;
   if (
     value.version !== WEBUI_DTO_VERSION ||
-    value.source !== "harvto-live" ||
+    value.source !== "loop-registry-live" ||
     fleet.version !== WEBUI_DTO_VERSION ||
     !isConnection(fleet.connection) ||
     !isDataSource(fleet.dataSource) ||
@@ -389,15 +451,32 @@ export const isWebUiSnapshot = (value: unknown): value is WebUiSnapshotDTO => {
   if (!Object.values(details).every(isRunDetail)) {
     return false;
   }
-  return (fleet.runs as readonly unknown[]).every((run: unknown) => {
-    if (!isRecord(run)) {
+
+  const runs = fleet.runs as readonly Record<string, unknown>[];
+  const routeIds = runs.map((run) => String(run.routeId));
+  const uniqueRouteIds = new Set(routeIds);
+  const detailKeys = Object.keys(details);
+  if (
+    uniqueRouteIds.size !== routeIds.length ||
+    detailKeys.length !== routeIds.length ||
+    detailKeys.some((key) => !uniqueRouteIds.has(key))
+  ) {
+    return false;
+  }
+
+  return runs.every((run) => {
+    const routeId = String(run.routeId);
+    const detail = details[routeId];
+    if (!(isRecord(detail) && isRecord(detail.summary))) {
       return false;
     }
-    const detail = details[String(run.runId)];
+
+    const authority = detail.authority;
     return (
-      isRecord(detail) &&
-      isRecord(detail.summary) &&
-      detail.summary.runId === run.runId
+      structurallyEqual(detail.summary, run) &&
+      isRecord(authority) &&
+      authority.repoId === run.repoId &&
+      authority.runId === run.runId
     );
   });
 };
@@ -406,7 +485,7 @@ export class LiveSnapshotError extends Error {
   readonly status?: number;
 
   constructor(status?: number) {
-    super("Harvto live data is unavailable");
+    super("Loop registry live data is unavailable");
     this.name = "LiveSnapshotError";
     this.status = status;
   }

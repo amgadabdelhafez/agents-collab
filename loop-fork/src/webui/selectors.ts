@@ -87,7 +87,8 @@ const compareRuns = (left: FleetRunDTO, right: FleetRunDTO): number => {
     return repositoryDifference;
   }
 
-  return compareText(left.runId, right.runId);
+  const runIdDifference = compareText(left.runId, right.runId);
+  return runIdDifference || compareText(left.routeId, right.routeId);
 };
 
 const includesOneOf = <T>(value: T, options: readonly T[]): boolean =>
@@ -101,6 +102,7 @@ const matchesSearch = (run: FleetRunDTO, query: string): boolean => {
 
   const searchable = [
     run.runId,
+    run.routeId,
     run.repoId,
     run.repository,
     run.worktree,
@@ -130,17 +132,18 @@ const matchesSearch = (run: FleetRunDTO, query: string): boolean => {
 export const getPrimaryRunGroup = (run: FleetRunDTO): FleetGroupKey => {
   if (
     run.lifecycle === "input-required" ||
+    run.lifecycle === "blocked" ||
     run.reasons.some((reason) => ATTENTION_REASONS.has(reason.code))
   ) {
     return "needs-attention";
   }
 
-  if (run.reasons.some((reason) => CLEANUP_REASONS.has(reason.code))) {
-    return "cleanup-debt";
-  }
-
   if (ACTIVE_LIFECYCLES.has(run.lifecycle)) {
     return "active";
+  }
+
+  if (run.reasons.some((reason) => CLEANUP_REASONS.has(reason.code))) {
+    return "cleanup-debt";
   }
 
   return "finished";
@@ -159,7 +162,7 @@ export const filterAndGroupRuns = (
     const group = getPrimaryRunGroup(run);
     return (
       matchesSearch(run, options.query ?? "") &&
-      includesOneOf(run.repository, repositories) &&
+      includesOneOf(run.repoId, repositories) &&
       includesOneOf(run.lifecycle, lifecycles) &&
       includesOneOf(group, groups)
     );

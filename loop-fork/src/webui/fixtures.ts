@@ -103,6 +103,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
     version: WEBUI_DTO_VERSION,
     runId: "relay-214",
     repoId: "repo-relay",
+    routeId: "repo-relay:relay-214",
     repository: "northstar/relay",
     worktree: "relay-routing-recovery",
     title: "Recover durable message routing",
@@ -171,6 +172,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
     version: WEBUI_DTO_VERSION,
     runId: "sentinel-042",
     repoId: "repo-sentinel",
+    routeId: "repo-sentinel:sentinel-042",
     repository: "lattice/sentinel",
     worktree: "sentinel-control-audit",
     title: "Audit lifecycle controls",
@@ -227,6 +229,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
     version: WEBUI_DTO_VERSION,
     runId: "atlas-088",
     repoId: "repo-atlas",
+    routeId: "repo-atlas:atlas-088",
     repository: "seabird/atlas",
     worktree: "atlas-index-refresh",
     title: "Refresh project index",
@@ -278,6 +281,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
     version: WEBUI_DTO_VERSION,
     runId: "ridge-301",
     repoId: "repo-ridge",
+    routeId: "repo-ridge:ridge-301",
     repository: "northstar/ridge",
     worktree: "ridge-observability",
     title: "Add bounded observability",
@@ -327,6 +331,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
     version: WEBUI_DTO_VERSION,
     runId: "ridge-298",
     repoId: "repo-ridge",
+    routeId: "repo-ridge:ridge-298",
     repository: "northstar/ridge",
     worktree: "ridge-cache-boundary",
     title: "Verify cache boundary",
@@ -384,6 +389,7 @@ export const fixtureRuns: readonly FleetRunDTO[] = [
     version: WEBUI_DTO_VERSION,
     runId: "orbit-120",
     repoId: "repo-orbit",
+    routeId: "repo-orbit:orbit-120",
     repository: "paperkite/orbit",
     worktree: "orbit-release-notes",
     title: "Prepare release notes",
@@ -798,7 +804,7 @@ const makeRunDetail = (run: FleetRunDTO): RunDetailDTO => ({
 export const fixtureRunDetails: Readonly<Record<string, RunDetailDTO>> =
   Object.freeze(
     Object.fromEntries(
-      fixtureRuns.map((run) => [run.runId, makeRunDetail(run)])
+      fixtureRuns.map((run) => [run.routeId, makeRunDetail(run)])
     )
   );
 

@@ -1,0 +1,36 @@
+{
+  "task_id": "webui-all-active-loops",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "browser",
+    "security",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "build": {
+      "status": "pending"
+    },
+    "browser": {
+      "status": "pending"
+    },
+    "security": {
+      "status": "pending"
+    },
+    "regression": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "task_id": "webui-all-active-loops",
+  "status": "pass",
+  "required": [
+    "unit",
+    "build",
+    "browser",
+    "security",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/unit/attempt-004.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/unit/attempt-004.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/build/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/build/attempt-003.json"
+    },
+    "browser": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/browser/route-evidence.json",
+      "reason": "Desktop and 390px mobile DOM and screenshots cover all live routes, repository filters, deep reload, and vanished-route handling.",
+      "method": "Browser plugin against http://127.0.0.1:46327/",
+      "signed_off_by": "Codex"
+    },
+    "security": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/security/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/security/attempt-002.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/security/attempt-002.json"
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/regression/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/regression/attempt-003.json"
+    },
+    "diff": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/diff/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/diff/attempt-002.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/diff/attempt-002.json"
+    },
+    "review": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/independent-review.md",
+      "reason": "Independent zero-write reviewer found no material issues and returned literal PASS on the current implementation.",
+      "method": "Read-only full-diff, focused-test, live-registry, browser-evidence, provenance, path-identity, and schema review.",
+      "signed_off_by": "active_loop_inventory"
+    }
+  }
+}

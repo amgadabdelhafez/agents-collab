@@ -21,6 +21,7 @@ const LIFECYCLE_OPTIONS: ReadonlyArray<{
   { value: "working", label: "Working" },
   { value: "reviewing", label: "Reviewing" },
   { value: "input-required", label: "Input required" },
+  { value: "blocked", label: "Blocked" },
   { value: "completed", label: "Completed" },
   { value: "failed", label: "Failed" },
   { value: "stopped", label: "Stopped" },
@@ -64,16 +65,29 @@ const REASON_GUIDANCE: Partial<Record<RunReasonCode, string>> = {
 };
 
 const VALIDATED_RUN_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const WORKING_LIFECYCLES = ["working", "reviewing"] as const;
+
+export type FleetLifecycleFilter = RunLifecycle | "all" | "working-set";
+
+const lifecyclesForFilter = (
+  filter: FleetLifecycleFilter
+): FleetFilterOptions["lifecycle"] => {
+  if (filter === "all") {
+    return undefined;
+  }
+  return filter === "working-set" ? WORKING_LIFECYCLES : filter;
+};
 
 export interface FleetViewProps {
+  readonly connectionLabel: string;
   readonly connectionState: ConnectionState;
   readonly dataSource: DataSourceDTO;
-  readonly lifecycleFilter: RunLifecycle | "all";
-  readonly onLifecycleFilterChange: (value: RunLifecycle | "all") => void;
+  readonly lifecycleFilter: FleetLifecycleFilter;
+  readonly onLifecycleFilterChange: (value: FleetLifecycleFilter) => void;
   readonly onPausedChange: (paused: boolean) => void;
   readonly onRepositoryFilterChange: (value: string) => void;
   readonly onSearchChange: (value: string) => void;
-  readonly onSelectRun: (runId: string) => void;
+  readonly onSelectRun: (routeId: string) => void;
   readonly paused: boolean;
   readonly queuedUpdates?: number;
   readonly repositoryFilter: string;
@@ -85,30 +99,68 @@ interface RunCardProps {
   readonly copyState: CopyState | null;
   readonly group: FleetRunGroupDTO;
   readonly onCopyAttach: (run: FleetRunDTO) => void;
-  readonly onSelectRun: (runId: string) => void;
+  readonly onSelectRun: (routeId: string) => void;
   readonly run: FleetRunDTO;
 }
 
 interface CopyState {
-  readonly runId: string;
+  readonly routeId: string;
   readonly status: "copied" | "failed";
 }
 
-function fleetConnectionPresentation(paused: boolean, isLive: boolean) {
-  if (paused) {
-    return {
-      description: "The last verified snapshot stays on screen",
-      label: "Live updates paused",
-    };
-  }
+interface FleetConnectionPresentation {
+  readonly description: string;
+  readonly guidance: string;
+  readonly label: string;
+}
+
+const LIVE_CONNECTION_PRESENTATIONS = {
+  behind: {
+    description: "Some durable updates are not yet visible",
+    guidance:
+      "The projection is behind. The last verified snapshot remains visible while unavailable updates catch up.",
+    label: "Projection behind",
+  },
+  live: {
+    description: "Read-only durable projection",
+    guidance:
+      "Loop registry records connected, redacted at the server boundary.",
+    label: "Projection connected",
+  },
+  offline: {
+    description: "The last verified snapshot stays on screen",
+    guidance:
+      "Live refresh is unavailable. The last verified snapshot remains visible; fixture data was not substituted.",
+    label: "Live refresh unavailable",
+  },
+  paused: {
+    description: "The last verified snapshot stays on screen",
+    guidance:
+      "Live updates are paused. The last verified snapshot remains visible until updates resume.",
+    label: "Live updates paused",
+  },
+  reconnecting: {
+    description: "The last verified snapshot stays on screen",
+    guidance:
+      "The live registry is reconnecting. The last verified snapshot remains visible; fixture data was not substituted.",
+    label: "Reconnecting to registry",
+  },
+} satisfies Readonly<Record<ConnectionState, FleetConnectionPresentation>>;
+
+function fleetConnectionPresentation(
+  state: ConnectionState,
+  isLive: boolean,
+  serverLabel: string
+): FleetConnectionPresentation {
   if (isLive) {
-    return {
-      description: "Read-only durable projection",
-      label: "Projection connected",
-    };
+    const presentation = LIVE_CONNECTION_PRESENTATIONS[state];
+    return state === "live" || state === "behind"
+      ? { ...presentation, label: serverLabel }
+      : presentation;
   }
   return {
     description: "Synthetic demo data, not live runtime",
+    guidance: "Synthetic fixture data, not a live runtime.",
     label: "Fixture snapshot",
   };
 }
@@ -192,7 +244,8 @@ function RunCard({
   const attachCommand = canAttach
     ? `loop attach --run-id ${run.runId}`
     : "Attach unavailable: terminal identity is not fully verified";
-  const copyResult = copyState?.runId === run.runId ? copyState.status : null;
+  const copyResult =
+    copyState?.routeId === run.routeId ? copyState.status : null;
 
   return (
     <article
@@ -203,7 +256,7 @@ function RunCard({
       <div className="run-card-main">
         <button
           className="run-open-button"
-          onClick={() => onSelectRun(run.runId)}
+          onClick={() => onSelectRun(run.routeId)}
           type="button"
         >
           <span className="run-identity">
@@ -393,6 +446,7 @@ export function FleetView({
   search,
   repositoryFilter,
   lifecycleFilter,
+  connectionLabel,
   connectionState,
   dataSource,
   queuedUpdates = 0,
@@ -405,23 +459,31 @@ export function FleetView({
 }: FleetViewProps) {
   const [copyState, setCopyState] = useState<CopyState | null>(null);
   const repositories = Array.from(
-    new Set(runs.map((run) => run.repository))
-  ).sort((left, right) => left.localeCompare(right));
+    new Map(runs.map((run) => [run.repoId, run.repository])).entries()
+  ).sort(
+    ([leftId, leftLabel], [rightId, rightLabel]) =>
+      leftLabel.localeCompare(rightLabel) || leftId.localeCompare(rightId)
+  );
   const options: FleetFilterOptions = {
     query: search || undefined,
     repository: repositoryFilter === "all" ? undefined : repositoryFilter,
-    lifecycle: lifecycleFilter === "all" ? undefined : lifecycleFilter,
+    lifecycle: lifecyclesForFilter(lifecycleFilter),
   };
   const groups = filterAndGroupRuns(runs, options);
   const visibleRunCount = groups.reduce(
     (count, group) => count + group.runs.length,
     0
   );
-  const effectiveConnectionState: ConnectionState = paused
-    ? "paused"
-    : connectionState;
+  let effectiveConnectionState: ConnectionState = connectionState;
+  if (connectionState !== "offline" && paused) {
+    effectiveConnectionState = "paused";
+  }
   const isLive = dataSource.kind === "live-redacted";
-  const connection = fleetConnectionPresentation(paused, isLive);
+  const connection = fleetConnectionPresentation(
+    effectiveConnectionState,
+    isLive,
+    connectionLabel
+  );
 
   const copyAttachCommand = (run: FleetRunDTO) => {
     const runtimeAttachable = run.adapters.some(
@@ -430,19 +492,19 @@ export function FleetView({
         (adapter.state === "healthy" || adapter.state === "surviving")
     );
     if (!(VALIDATED_RUN_ID.test(run.runId) && runtimeAttachable)) {
-      setCopyState({ runId: run.runId, status: "failed" });
+      setCopyState({ routeId: run.routeId, status: "failed" });
       return;
     }
 
     const command = `loop attach --run-id ${run.runId}`;
     if (!navigator.clipboard) {
-      setCopyState({ runId: run.runId, status: "failed" });
+      setCopyState({ routeId: run.routeId, status: "failed" });
       return;
     }
 
     navigator.clipboard.writeText(command).then(
-      () => setCopyState({ runId: run.runId, status: "copied" }),
-      () => setCopyState({ runId: run.runId, status: "failed" })
+      () => setCopyState({ routeId: run.routeId, status: "copied" }),
+      () => setCopyState({ routeId: run.routeId, status: "failed" })
     );
   };
 
@@ -500,11 +562,7 @@ export function FleetView({
           </span>
         </div>
         <div>
-          <strong>
-            {isLive
-              ? "Harvto records connected, redacted at the server boundary."
-              : "Synthetic fixture data, not a live runtime."}
-          </strong>
+          <strong>{connection.guidance}</strong>
           <p>
             {dataSource.notice} Agent input, cleanup, and runtime controls stay
             in the terminal.
@@ -532,8 +590,8 @@ export function FleetView({
             value={repositoryFilter}
           >
             <option value="all">All repositories</option>
-            {repositories.map((repository) => (
-              <option key={repository} value={repository}>
+            {repositories.map(([repoId, repository]) => (
+              <option key={repoId} value={repoId}>
                 {repository}
               </option>
             ))}
@@ -545,12 +603,13 @@ export function FleetView({
           <select
             onChange={(event) =>
               onLifecycleFilterChange(
-                event.currentTarget.value as RunLifecycle | "all"
+                event.currentTarget.value as FleetLifecycleFilter
               )
             }
             value={lifecycleFilter}
           >
             <option value="all">All states</option>
+            <option value="working-set">Working or reviewing</option>
             {LIFECYCLE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -576,12 +635,12 @@ export function FleetView({
           <p className="eyebrow">Quiet fleet</p>
           <h2 id="fleet-empty-heading">
             {runs.length === 0
-              ? "No persisted runs yet"
+              ? "No active runs found"
               : "No runs match these filters"}
           </h2>
           <p>
             {runs.length === 0
-              ? "Start a paired run from the terminal. A valid manifest will appear here automatically."
+              ? "A validated active loop will appear here automatically when the registry observes it."
               : "Clear the current search and filters to return to the complete fleet."}
           </p>
           {runs.length > 0 ? (
@@ -618,7 +677,7 @@ export function FleetView({
                     <RunCard
                       copyState={copyState}
                       group={group}
-                      key={`${run.repoId}:${run.runId}`}
+                      key={run.routeId}
                       onCopyAttach={copyAttachCommand}
                       onSelectRun={onSelectRun}
                       run={run}

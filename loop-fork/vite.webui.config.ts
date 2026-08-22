@@ -1,11 +1,11 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-import { harvtoLiveDataPlugin } from "./src/webui/server/harvto-live-data.ts";
+import { loopRegistryLiveDataPlugin } from "./src/webui/server/harvto-live-data.ts";
 
 export default defineConfig({
   root: "src/webui",
-  plugins: [harvtoLiveDataPlugin(), react()],
+  plugins: [loopRegistryLiveDataPlugin(), react()],
   server: {
     hmr: false,
     host: "127.0.0.1",

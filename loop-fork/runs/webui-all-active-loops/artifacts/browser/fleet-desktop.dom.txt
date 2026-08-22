@@ -1,0 +1,123 @@
+- complementary "Primary navigation":
+  - button "Open Loop fleet": L
+  - navigation "Views":
+    - button "Fleet":
+      - generic: ⌁
+      - text: Fleet
+    - button "Working":
+      - generic: ●
+      - text: Working
+    - button "Run" [disabled]:
+      - generic: ▦
+      - text: Run
+  - generic "Local read-only loop projection":
+    - generic "Read-only live projection"
+    - generic: Read only
+- banner:
+  - generic: Agents Collab
+  - generic: /
+  - generic: Loop run fleet
+  - generic: 2 loops covered and 1 working
+  - generic: Projection connected
+- main:
+  - paragraph: Loop control plane
+  - heading "Run fleet" [level=1]
+  - paragraph: Triage durable paired-agent runs without changing runtime state.
+  - status "Connection Projection connected":
+    - strong: Projection connected
+    - generic: Read-only durable projection
+  - button "Pause updates"
+  - complementary "Read-only guidance":
+    - generic: Read-only
+    - generic: Live data
+    - strong: Loop registry records connected, redacted at the server boundary.
+    - paragraph: Prompts, transcripts, paths, credentials, raw identifiers, and terminal content are excluded. Agent input, cleanup, and runtime controls stay in the terminal.
+  - region "Fleet filters":
+    - generic: Search runs
+    - searchbox "Search runs"
+    - generic: Repository
+    - combobox "Repository":
+      - option "All repositories" [selected]
+      - option "AI Cur"
+      - option "Harvto"
+    - generic: State
+    - combobox "State":
+      - option "All states" [selected]
+      - option "Working or reviewing"
+      - option "Submitted"
+      - option "Working"
+      - option "Reviewing"
+      - option "Input required"
+      - option "Blocked"
+      - option "Completed"
+      - option "Failed"
+      - option "Stopped"
+    - strong: "2"
+    - generic: runs shown
+  - region "Needs attention":
+    - heading "Needs attention" [level=2]
+    - paragraph: Waiting on a decision or trustworthy authority.
+    - generic: "1"
+    - article "Harvto · run 242":
+      - button "Harvto Run 242 workspace Harvto · run 242 242 input required Driver Codex 8h ago":
+        - generic: Harvto
+        - generic "Run 242 workspace"
+        - strong: Harvto · run 242
+        - generic: "242"
+        - generic: input required
+        - generic: Driver
+        - text: Codex
+        - time: 8h ago
+        - generic: Open run
+      - generic "Durable Governess and hook evidence reports input-required; the manifest still reports submitted. Terminal session present; server birth unverified.": Data partial
+      - generic "Both normalized frontier lifecycle records require operator input.": Operator input required
+      - generic "Newer durable lifecycle metadata reports input-required; the manifest remains submitted.": Manifest lifecycle behind
+      - generic "The exact terminal session was checked, but server birth identity is not persisted for full verification.": Runtime identity partial
+      - list "Harvto · run 242 agent status":
+        - generic: Claude
+        - generic: reviewer
+        - generic: waiting human
+        - generic: Codex
+        - generic: driver
+        - generic: waiting human
+      - generic "+ Details and adapters 1 adapter":
+        - text: + Details and adapters
+        - generic: 1 adapter
+  - region "Cleanup debt":
+    - heading "Cleanup debt" [level=2]
+    - paragraph: Ended runs with runtime residue to reconcile.
+    - generic: "0"
+    - paragraph: No runs in this group.
+  - region "Active":
+    - heading "Active" [level=2]
+    - paragraph: Submitted, working, or under review.
+    - generic: "1"
+    - article "AI Cur · run 54":
+      - button "AI Cur Run 54 workspace AI Cur · run 54 54 working Driver Claude Just now":
+        - generic: AI Cur
+        - generic "Run 54 workspace"
+        - strong: AI Cur · run 54
+        - generic: "54"
+        - generic: working
+        - generic: Driver
+        - text: Claude
+        - time: Just now
+        - generic: Open run
+      - generic "Durable Governess and hook evidence reports working; the manifest still reports submitted. Terminal session present; server birth unverified.": Data partial
+      - generic "Newer durable lifecycle metadata reports working; the manifest remains submitted.": Manifest lifecycle behind
+      - generic "The exact terminal session was checked, but server birth identity is not persisted for full verification.": Runtime identity partial
+      - list "AI Cur · run 54 agent status":
+        - generic: Claude
+        - generic: driver
+        - generic: working
+        - generic: Codex
+        - generic: reviewer
+        - generic: waiting human
+      - generic "+ Details and adapters 1 adapter":
+        - text: + Details and adapters
+        - generic: 1 adapter
+  - region "Finished":
+    - heading "Finished" [level=2]
+    - paragraph: Completed, failed, or deliberately stopped.
+    - generic: "0"
+    - paragraph: No runs in this group.

@@ -1,0 +1,17 @@
+{
+  "aiCur": {
+    "url": "http://127.0.0.1:46327/#/runs/ai-cur-458d3aca27ff%3A54",
+    "title": "AI Cur · run 54",
+    "deepLinkTitle": "AI Cur · run 54"
+  },
+  "harvto": {
+    "url": "http://127.0.0.1:46327/#/runs/harvto-b1e274e66299%3A242",
+    "title": "Harvto · run 242",
+    "deepLinkTitle": "Harvto · run 242"
+  },
+  "vanished": {
+    "url": "http://127.0.0.1:46327/#/runs/harvto-b1e274e66299%3A999999",
+    "heading": "Run no longer active",
+    "returnButtonCount": 1
+  }
+}

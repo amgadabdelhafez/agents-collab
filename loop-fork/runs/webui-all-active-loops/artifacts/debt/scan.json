@@ -1,0 +1,19 @@
+{
+  "task_id": "webui-all-active-loops",
+  "scanned_at": "2026-08-22T00:08:51Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-22T00:08:51Z",
+      "task_id": "webui-all-active-loops",
+      "signal": "loc_growth",
+      "file": "src/webui/server/harvto-live-data.ts",
+      "before_loc": 1767,
+      "after_loc": 2635,
+      "delta_loc": 868,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

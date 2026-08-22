@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { fixtureRuns } from "../../src/webui/fixtures";
+import { fixtureRuns as rawFixtureRuns } from "../../src/webui/fixtures";
 import {
   filterAndGroupRuns,
   getPrimaryRunGroup,
 } from "../../src/webui/selectors";
 import type { FleetRunDTO } from "../../src/webui/types";
+
+const fixtureRuns: readonly FleetRunDTO[] = rawFixtureRuns.map((candidate) => ({
+  ...candidate,
+  routeId: candidate.routeId || `${candidate.repoId}:${candidate.runId}`,
+}));
 
 const run = (runId: string): FleetRunDTO => {
   const match = fixtureRuns.find((candidate) => candidate.runId === runId);
@@ -40,9 +45,51 @@ describe("Web UI fleet selectors", () => {
       fixtureRuns.length
     );
     expect(
-      new Set(groups.flatMap((group) => group.runs.map((item) => item.runId)))
+      new Set(groups.flatMap((group) => group.runs.map((item) => item.routeId)))
         .size
     ).toBe(fixtureRuns.length);
+  });
+
+  test("keeps blocked runs in needs attention and out of the working set", () => {
+    const base = run("orbit-120");
+    const blocked: FleetRunDTO = {
+      ...base,
+      lifecycle: "blocked",
+      reasons: [],
+      repoId: "blocked-repo-cccccccccccc",
+      repository: "Blocked repository",
+      routeId: "blocked-repo-cccccccccccc:8",
+      runId: "8",
+    };
+
+    expect(getPrimaryRunGroup(blocked)).toBe("needs-attention");
+    const working = filterAndGroupRuns([blocked, run("ridge-301")], {
+      lifecycle: ["working", "reviewing"],
+    });
+    expect(
+      working.flatMap((group) => group.runs.map((item) => item.routeId))
+    ).not.toContain(blocked.routeId);
+  });
+
+  test("keeps a working run active while its manifest lifecycle catches up", () => {
+    const base = run("ridge-301");
+    const manifestBehind: FleetRunDTO = {
+      ...base,
+      lifecycle: "working",
+      reasons: [
+        {
+          code: "active-looking-manifest",
+          detail: "Newer durable lifecycle metadata reports working.",
+          label: "Manifest lifecycle behind",
+          severity: "medium",
+        },
+      ],
+    };
+
+    expect(getPrimaryRunGroup(manifestBehind)).toBe("active");
+    expect(
+      idsByGroup(filterAndGroupRuns([manifestBehind]), "cleanup-debt")
+    ).toEqual([]);
   });
 
   test("searches useful row and reason fields without case sensitivity", () => {
@@ -58,8 +105,9 @@ describe("Web UI fleet selectors", () => {
   });
 
   test("combines repository, lifecycle, and primary-group filters", () => {
+    const ridgeRepoId = run("ridge-301").repoId;
     const ridgeReview = filterAndGroupRuns(fixtureRuns, {
-      repository: "northstar/ridge",
+      repository: ridgeRepoId,
       lifecycle: ["reviewing", "working"],
       group: "active",
     });
@@ -86,11 +134,13 @@ describe("Web UI fleet selectors", () => {
     const base = run("orbit-120");
     const sameTimeB: FleetRunDTO = {
       ...base,
+      routeId: `${base.repoId}:stable-b`,
       runId: "stable-b",
       repository: "paperkite/same",
     };
     const sameTimeA: FleetRunDTO = {
       ...base,
+      routeId: `${base.repoId}:stable-a`,
       runId: "stable-a",
       repository: "paperkite/same",
     };
@@ -99,5 +149,35 @@ describe("Web UI fleet selectors", () => {
     const reverse = filterAndGroupRuns([sameTimeA, sameTimeB]);
     expect(idsByGroup(forward, "finished")).toEqual(["stable-a", "stable-b"]);
     expect(idsByGroup(reverse, "finished")).toEqual(["stable-a", "stable-b"]);
+  });
+
+  test("keeps identical run ids collision-safe across repositories", () => {
+    const base = run("orbit-120");
+    const alpha: FleetRunDTO = {
+      ...base,
+      repoId: "alpha-repo-aaaaaaaaaaaa",
+      repository: "Shared label",
+      routeId: "alpha-repo-aaaaaaaaaaaa:7",
+      runId: "7",
+    };
+    const beta: FleetRunDTO = {
+      ...base,
+      repoId: "beta-repo-bbbbbbbbbbbb",
+      repository: "Shared label",
+      routeId: "beta-repo-bbbbbbbbbbbb:7",
+      runId: "7",
+    };
+
+    const all = filterAndGroupRuns([beta, alpha]);
+    expect(
+      all.flatMap((group) => group.runs.map((item) => item.routeId))
+    ).toEqual([alpha.routeId, beta.routeId]);
+
+    const alphaOnly = filterAndGroupRuns([alpha, beta], {
+      repository: alpha.repoId,
+    });
+    expect(
+      alphaOnly.flatMap((group) => group.runs.map((item) => item.routeId))
+    ).toEqual([alpha.routeId]);
   });
 });

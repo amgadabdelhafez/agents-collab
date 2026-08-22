@@ -1,0 +1,12 @@
+{
+  "id": "webui-all-active-loops",
+  "mode": "planned",
+  "created_at": "2026-08-21T22:43:48Z",
+  "status": "done",
+  "description": "Discover and project every valid non-terminal loop across the shared run registry with per-run failure isolation and collision-safe routes.",
+  "estimated_loc": 500,
+  "research_required": true,
+  "research_reason": "estimate-loc>=500",
+  "research_path": "runs/webui-all-active-loops/research.md",
+  "ended_at": "2026-08-22T00:08:51Z"
+}
