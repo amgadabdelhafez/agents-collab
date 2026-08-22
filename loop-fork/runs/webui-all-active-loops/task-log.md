@@ -52,9 +52,13 @@ credentials and without one corrupt lane suppressing healthy peers.
 - Earlier exploratory files named `fleet-final-mobile-390*` measured 300 by 649
   after browser chrome was applied. They are preserved as non-certifying
   evidence; the `fleet-release-390x844*` captures are the exact mobile proof.
-- An independent zero-write reviewer returned literal `PASS` for exact current
-  source/test diff SHA-256
-  `27a22e75a5065c08036559e66169e2ae89349e51fd71a67485c91cf494205ad3`.
+- Fresh independent zero-write reviewers returned literal `PASS` for the
+  complete committed source/test diff SHA-256
+  `1b88b125b8f36627461bd8bc013cd07e41c33af4fc713e65341e97be27a77c9f`,
+  including `tests/webui/api-contract.test.ts`. The original pre-commit hash
+  excluded that then-untracked file and is retained only in immutable attempt
+  history; the canonical correction is recorded in
+  `runs/webui-all-active-loops-release-certification/`.
 - The repository capture wrapper could not complete because its local
   Playwright package was unavailable. The already-installed browser runtime
   captured DOM and screenshots instead; no dependency or network mutation was

@@ -1,0 +1,36 @@
+{
+  "task_id": "webui-all-active-loops-release-certification",
+  "status": "pass",
+  "required": [
+    "unit",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops-release-certification/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-all-active-loops-release-certification/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops-release-certification/artifacts/unit/attempt-001.json"
+    },
+    "diff": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops-release-certification/artifacts/diff/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-all-active-loops-release-certification/artifacts/diff/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops-release-certification/artifacts/diff/attempt-001.json"
+    },
+    "review": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops-release-certification/independent-review.md",
+      "reason": "Two zero-write reviewers returned literal PASS for complete committed diff SHA-256 1b88b125b8f36627461bd8bc013cd07e41c33af4fc713e65341e97be27a77c9f, including the previously omitted tracked API contract test.",
+      "method": "Independent exact-commit review plus shasum and OpenSSL recomputation",
+      "signed_off_by": "active_loop_inventory and multi_loop_adapter_review"
+    }
+  }
+}

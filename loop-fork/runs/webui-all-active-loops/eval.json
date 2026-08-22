@@ -65,10 +65,10 @@
     },
     "review": {
       "status": "pass",
-      "artifact": "runs/webui-all-active-loops/independent-review.md",
-      "reason": "Independent zero-write reviewer returned literal PASS for current source/test diff SHA-256 27a22e75a5065c08036559e66169e2ae89349e51fd71a67485c91cf494205ad3.",
-      "method": "Independent full-scope source, test, evidence, lifecycle, provenance, security, and responsive UI audit",
-      "signed_off_by": "active_loop_inventory"
+      "artifact": "runs/webui-all-active-loops-release-certification/independent-review.md",
+      "reason": "Fresh zero-write reviewers returned literal PASS for the complete committed source/test diff SHA-256 1b88b125b8f36627461bd8bc013cd07e41c33af4fc713e65341e97be27a77c9f, including the previously omitted tracked API contract test.",
+      "method": "Independent exact-commit source, test, evidence, lifecycle, provenance, security, and responsive UI audit with a deterministic hash recheck",
+      "signed_off_by": "active_loop_inventory and multi_loop_adapter_review"
     }
   }
 }
