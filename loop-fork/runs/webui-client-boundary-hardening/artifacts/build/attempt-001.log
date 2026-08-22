@@ -1,0 +1,22 @@
+task_id: webui-client-boundary-hardening
+dimension: build
+attempt: 001
+started_at: 2026-08-22T18:51:53Z
+command: bun run web:build
+--- output ---
+$ tsc -p tsconfig.webui.json && vite build --config vite.webui.config.ts
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 21 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/webui/index.html                   0.61 kB │ gzip:  0.35 kB
+dist/webui/assets/index-DVyStac5.css   38.54 kB │ gzip:  7.90 kB
+dist/webui/assets/index-B_OzN1H6.js   254.45 kB │ gzip: 76.04 kB │ map: 1,019.37 kB
+
+✓ built in 88ms
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-22T18:51:55Z

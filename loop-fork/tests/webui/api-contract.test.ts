@@ -19,8 +19,10 @@ import { WEBUI_DTO_VERSION } from "../../src/webui/types";
 const NOW = "2026-08-21T20:00:00.000Z";
 const REPO_ID = "alpha-repo-aaaaaaaaaaaa";
 const ROUTE_ID = `${REPO_ID}:7`;
+const EVIDENCE_ID = "ev_0123456789abcdef";
 
 const PROVENANCE: ProvenanceDTO = {
+  note: "Normalized metadata only.",
   observedAt: NOW,
   revision: "rev-7",
   sourceId: "manifest-7",
@@ -90,6 +92,12 @@ const DETAIL: RunDetailDTO = {
       id: "codex-driver",
       lastHookAt: NOW,
       lastHookEvent: "PostToolUse",
+      latestBridgeMessage: {
+        at: NOW,
+        direction: "received",
+        status: "delivered",
+        summary: "Durable bridge metadata recorded; content redacted.",
+      },
       lifecycle: "working",
       model: "gpt-5.6",
       provenance: [PROVENANCE],
@@ -100,14 +108,19 @@ const DETAIL: RunDetailDTO = {
       taskSource: "manifest",
       toolsInFlight: 0,
       usage: {
+        cachedTokens: 64,
         compactions: 0,
+        contextPercent: 25.5,
+        costUsd: 0.01,
+        inputTokens: 128,
+        outputTokens: 64,
         windows: [
           {
             kind: "session",
             provenance: PROVENANCE,
             resetAt: NOW,
             resetState: "known",
-            usedPercent: 25,
+            usedPercent: 25.5,
           },
         ],
       },
@@ -126,7 +139,7 @@ const DETAIL: RunDetailDTO = {
     {
       byteCount: 128,
       capturedAt: NOW,
-      id: "ev_projection",
+      id: EVIDENCE_ID,
       kind: "test",
       mimeType: "application/json",
       provenance: PROVENANCE,
@@ -136,7 +149,16 @@ const DETAIL: RunDetailDTO = {
     },
   ],
   governess: {
-    audit: [],
+    audit: [
+      {
+        acknowledgement: "Recorded",
+        at: NOW,
+        controlId: "control-7",
+        evidenceId: EVIDENCE_ID,
+        phase: "review",
+        transport: "durable",
+      },
+    ],
     driverLease: "Current",
     epoch: "7",
     facts: [
@@ -147,8 +169,23 @@ const DETAIL: RunDetailDTO = {
         value: "Current",
       },
     ],
-    interpretations: [],
-    policies: [],
+    interpretations: [
+      {
+        confidence: 0.75,
+        generatedAt: NOW,
+        kind: "progress",
+        source: "normalized lifecycle metadata",
+        summary: "The lane is working.",
+      },
+    ],
+    policies: [
+      {
+        disposition: "blocked",
+        reason: "No mutation endpoint is exposed.",
+        releaseLabel: "Read-only release",
+        title: "Browser mutations",
+      },
+    ],
   },
   quality: QUALITY,
   summary: { ...SUMMARY },
@@ -158,7 +195,7 @@ const DETAIL: RunDetailDTO = {
       at: NOW,
       category: "evidence",
       detail: "The live projection was validated.",
-      evidenceIds: ["ev_projection"],
+      evidenceIds: [EVIDENCE_ID],
       id: "event-7",
       provenance: PROVENANCE,
       sequence: 7,
@@ -171,9 +208,9 @@ const DETAIL: RunDetailDTO = {
     {
       activity: [
         {
-          artifactEvidenceIds: ["ev_projection"],
+          artifactEvidenceIds: [EVIDENCE_ID],
           contextCapsule: "Bounded API contract context",
-          costUsd: 0,
+          costUsd: 0.02,
           finishedAt: NOW,
           id: "worker-7",
           modelCalls: 1,
@@ -272,9 +309,673 @@ const mutateSnapshot = (...mutations: readonly Mutation[]): unknown => {
   return snapshot;
 };
 
+const deleteAt = (container: unknown, path: readonly PathSegment[]): void => {
+  const lastSegment = path.at(-1);
+  if (typeof lastSegment !== "string") {
+    throw new Error("Deleted snapshot field must be an object key");
+  }
+  let parent: unknown = container;
+  for (const segment of path.slice(0, -1)) {
+    parent = childAt(parent, segment);
+  }
+  if (!isMutableRecord(parent)) {
+    throw new Error("Expected an object while deleting snapshot field");
+  }
+  delete parent[lastSegment];
+};
+
+interface RejectionCase {
+  readonly label: string;
+  readonly mutations: readonly Mutation[];
+}
+
+const pairedSummaryMutations = (
+  path: readonly PathSegment[],
+  value: unknown
+): readonly Mutation[] => [
+  { path: ["fleet", "runs", 0, ...path], value },
+  { path: ["details", ROUTE_ID, "summary", ...path], value },
+];
+
+const UNKNOWN_FIELD_CASES: readonly RejectionCase[] = [
+  {
+    label: "snapshot",
+    mutations: [{ path: ["prompt"], value: "must stay private" }],
+  },
+  {
+    label: "fleet snapshot",
+    mutations: [{ path: ["fleet", "prompt"], value: "must stay private" }],
+  },
+  {
+    label: "connection",
+    mutations: [
+      { path: ["fleet", "connection", "prompt"], value: "must stay private" },
+    ],
+  },
+  {
+    label: "data source",
+    mutations: [
+      { path: ["fleet", "dataSource", "path"], value: "/private/run" },
+    ],
+  },
+  {
+    label: "quality",
+    mutations: [
+      { path: ["fleet", "quality", "prompt"], value: "must stay private" },
+    ],
+  },
+  {
+    label: "provenance",
+    mutations: [
+      {
+        path: ["fleet", "quality", "sources", 0, "credential"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "fleet run",
+    mutations: pairedSummaryMutations(["prompt"], "must stay private"),
+  },
+  {
+    label: "adapter summary",
+    mutations: pairedSummaryMutations(
+      ["adapters", 0, "path"],
+      "/private/socket"
+    ),
+  },
+  {
+    label: "fleet agent summary",
+    mutations: pairedSummaryMutations(
+      ["agents", 0, "credential"],
+      "must stay private"
+    ),
+  },
+  {
+    label: "run reason",
+    mutations: pairedSummaryMutations(
+      ["reasons"],
+      [
+        {
+          code: "input-required",
+          detail: "Operator input is required.",
+          label: "Input required",
+          prompt: "must stay private",
+          severity: "high",
+        },
+      ]
+    ),
+  },
+  {
+    label: "run detail",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "run authority",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "authority", "credential"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "agent seat",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "agents", 0, "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "agent usage",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "agents", 0, "usage", "credential"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "usage window",
+    mutations: [
+      {
+        path: [
+          "details",
+          ROUTE_ID,
+          "agents",
+          0,
+          "usage",
+          "windows",
+          0,
+          "prompt",
+        ],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "bridge message",
+    mutations: [
+      {
+        path: [
+          "details",
+          ROUTE_ID,
+          "agents",
+          0,
+          "latestBridgeMessage",
+          "prompt",
+        ],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "evidence item",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "evidence", 0, "path"],
+        value: "/private/evidence",
+      },
+    ],
+  },
+  {
+    label: "governess",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "governess audit",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "audit", 0, "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "governess fact",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "facts", 0, "credential"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "governess interpretation",
+    mutations: [
+      {
+        path: [
+          "details",
+          ROUTE_ID,
+          "governess",
+          "interpretations",
+          0,
+          "prompt",
+        ],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "governess policy",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "policies", 0, "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "worker tier",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "workers", 0, "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "worker counts",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "workers", 0, "counts", "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "worker activity",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "workers", 0, "activity", 0, "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+  {
+    label: "timeline event",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "timeline", 0, "prompt"],
+        value: "must stay private",
+      },
+    ],
+  },
+];
+
+const NON_CANONICAL_TIMESTAMP_CASES: readonly RejectionCase[] = [
+  {
+    label: "fleet observedAt",
+    mutations: [
+      { path: ["fleet", "observedAt"], value: "2026-08-21 20:00:00Z" },
+    ],
+  },
+  {
+    label: "provenance observedAt",
+    mutations: [
+      {
+        path: ["fleet", "quality", "sources", 0, "observedAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "connection lastEventAt",
+    mutations: [
+      {
+        path: ["fleet", "connection", "lastEventAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "connection lastObservedAt",
+    mutations: [
+      {
+        path: ["fleet", "connection", "lastObservedAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "data source generatedAt",
+    mutations: [
+      {
+        path: ["fleet", "dataSource", "generatedAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "adapter lastProbedAt",
+    mutations: pairedSummaryMutations(
+      ["adapters", 0, "lastProbedAt"],
+      "2026-08-21T20:00:00Z"
+    ),
+  },
+  {
+    label: "run lastDurableEventAt",
+    mutations: pairedSummaryMutations(
+      ["lastDurableEventAt"],
+      "2026-08-21T20:00:00Z"
+    ),
+  },
+  {
+    label: "run startedAt",
+    mutations: pairedSummaryMutations(["startedAt"], "2026-08-21T20:00:00Z"),
+  },
+  {
+    label: "usage resetAt",
+    mutations: [
+      {
+        path: [
+          "details",
+          ROUTE_ID,
+          "agents",
+          0,
+          "usage",
+          "windows",
+          0,
+          "resetAt",
+        ],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "bridge at",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "agents", 0, "latestBridgeMessage", "at"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "agent lastHookAt",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "agents", 0, "lastHookAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "agent taskObservedAt",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "agents", 0, "taskObservedAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "worker startedAt",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "workers", 0, "activity", 0, "startedAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "worker finishedAt",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "workers", 0, "activity", 0, "finishedAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "evidence capturedAt",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "evidence", 0, "capturedAt"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "timeline at",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "timeline", 0, "at"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "governess audit at",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "audit", 0, "at"],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+  {
+    label: "governess interpretation generatedAt",
+    mutations: [
+      {
+        path: [
+          "details",
+          ROUTE_ID,
+          "governess",
+          "interpretations",
+          0,
+          "generatedAt",
+        ],
+        value: "2026-08-21T20:00:00Z",
+      },
+    ],
+  },
+];
+
+const REQUIRED_COUNTER_PATHS: readonly (readonly PathSegment[])[] = [
+  ["fleet", "connection", "queuedUpdates"],
+  ["fleet", "connection", "streamSequence"],
+  ["details", ROUTE_ID, "agents", 0, "toolsInFlight"],
+  ["details", ROUTE_ID, "agents", 0, "usage", "compactions"],
+  ["details", ROUTE_ID, "evidence", 0, "byteCount"],
+  ["details", ROUTE_ID, "evidence", 0, "redactionsApplied"],
+  ["details", ROUTE_ID, "timeline", 0, "sequence"],
+  ["details", ROUTE_ID, "workers", 0, "counts", "active"],
+  ["details", ROUTE_ID, "workers", 0, "counts", "canceled"],
+  ["details", ROUTE_ID, "workers", 0, "counts", "completed"],
+  ["details", ROUTE_ID, "workers", 0, "counts", "escalated"],
+  ["details", ROUTE_ID, "workers", 0, "counts", "failed"],
+  ["details", ROUTE_ID, "workers", 0, "counts", "queued"],
+];
+
+const OPTIONAL_COUNTER_PATHS: readonly (readonly PathSegment[])[] = [
+  ["details", ROUTE_ID, "agents", 0, "usage", "cachedTokens"],
+  ["details", ROUTE_ID, "agents", 0, "usage", "inputTokens"],
+  ["details", ROUTE_ID, "agents", 0, "usage", "outputTokens"],
+  ["details", ROUTE_ID, "workers", 0, "activity", 0, "modelCalls"],
+  ["details", ROUTE_ID, "workers", 0, "activity", 0, "tokens"],
+];
+
 describe("Web UI live DTO boundary", () => {
   test("accepts the complete live-only snapshot contract", () => {
     expect(isWebUiSnapshot(structuredClone(VALID_SNAPSHOT))).toBe(true);
+  });
+
+  test("accepts declared optional fields when omitted", () => {
+    const candidate: unknown = structuredClone(VALID_SNAPSHOT);
+    const optionalPaths: readonly (readonly PathSegment[])[] = [
+      ["fleet", "quality", "sources", 0, "note"],
+      ["details", ROUTE_ID, "agents", 0, "latestBridgeMessage"],
+      ["details", ROUTE_ID, "agents", 0, "usage", "cachedTokens"],
+      ["details", ROUTE_ID, "agents", 0, "usage", "contextPercent"],
+      ["details", ROUTE_ID, "agents", 0, "usage", "costUsd"],
+      ["details", ROUTE_ID, "agents", 0, "usage", "inputTokens"],
+      ["details", ROUTE_ID, "agents", 0, "usage", "outputTokens"],
+      ["details", ROUTE_ID, "agents", 0, "usage", "windows", 0, "resetAt"],
+      ["details", ROUTE_ID, "workers", 0, "activity", 0, "costUsd"],
+      ["details", ROUTE_ID, "workers", 0, "activity", 0, "finishedAt"],
+      ["details", ROUTE_ID, "workers", 0, "activity", 0, "modelCalls"],
+      ["details", ROUTE_ID, "workers", 0, "activity", 0, "tokens"],
+    ];
+    for (const path of optionalPaths) {
+      deleteAt(candidate, path);
+    }
+    expect(isWebUiSnapshot(candidate)).toBe(true);
+  });
+
+  test("accepts canonical expanded-year timestamps emitted by Date.toISOString", () => {
+    expect(
+      isWebUiSnapshot(
+        mutateSnapshot({
+          path: ["fleet", "observedAt"],
+          value: "+010000-01-01T00:00:00.000Z",
+        })
+      )
+    ).toBe(true);
+  });
+
+  for (const scenario of UNKNOWN_FIELD_CASES) {
+    test(`rejects unknown own keys on ${scenario.label}`, () => {
+      expect(isWebUiSnapshot(mutateSnapshot(...scenario.mutations))).toBe(
+        false
+      );
+    });
+  }
+
+  for (const scenario of NON_CANONICAL_TIMESTAMP_CASES) {
+    test(`rejects non-canonical ISO timestamp for ${scenario.label}`, () => {
+      expect(isWebUiSnapshot(mutateSnapshot(...scenario.mutations))).toBe(
+        false
+      );
+    });
+  }
+
+  test("rejects invalid top-level source literals", () => {
+    expect(
+      isWebUiSnapshot(
+        mutateSnapshot({
+          path: ["source"],
+          value: "loop-registry-live-with-hidden-fallback",
+        })
+      )
+    ).toBe(false);
+  });
+
+  test("rejects non-literal read-only policy labels", () => {
+    for (const value of [
+      "read-only release",
+      "Read-only release ",
+      "Mutable release",
+    ]) {
+      expect(
+        isWebUiSnapshot(
+          mutateSnapshot({
+            path: [
+              "details",
+              ROUTE_ID,
+              "governess",
+              "policies",
+              0,
+              "releaseLabel",
+            ],
+            value,
+          })
+        )
+      ).toBe(false);
+    }
+  });
+
+  test("rejects malformed evidence identifiers at every reference site", () => {
+    const locations: readonly (readonly PathSegment[])[] = [
+      ["details", ROUTE_ID, "evidence", 0, "id"],
+      ["details", ROUTE_ID, "governess", "audit", 0, "evidenceId"],
+      ["details", ROUTE_ID, "timeline", 0, "evidenceIds"],
+      ["details", ROUTE_ID, "workers", 0, "activity", 0, "artifactEvidenceIds"],
+    ];
+
+    for (const path of locations) {
+      const lastSegment = path.at(-1);
+      const value =
+        typeof lastSegment === "string" && lastSegment.endsWith("Ids")
+          ? ["ev_raw-prompt"]
+          : "ev_raw-prompt";
+      expect(isWebUiSnapshot(mutateSnapshot({ path, value }))).toBe(false);
+    }
+  });
+
+  test("rejects every malformed opaque evidence-ID grammar branch", () => {
+    const invalidIds = [
+      "ev_",
+      "ev_0123456789abcde",
+      "ev_0123456789abcdef0",
+      "ev_0123456789abcdeF",
+      "ev_0123456789abcdeg",
+      "ev_raw-prompt",
+    ];
+    for (const value of invalidIds) {
+      expect(
+        isWebUiSnapshot(
+          mutateSnapshot({
+            path: ["details", ROUTE_ID, "evidence", 0, "id"],
+            value,
+          })
+        )
+      ).toBe(false);
+    }
+  });
+
+  test("rejects parseable but noncanonical and impossible timestamps", () => {
+    const invalidTimestamps = [
+      "2026-08-21T20:00:00Z",
+      "2026-08-21T13:00:00.000-07:00",
+      "2026-08-21",
+      "2026-02-30T20:00:00.000Z",
+    ];
+    for (const value of invalidTimestamps) {
+      expect(
+        isWebUiSnapshot(
+          mutateSnapshot({ path: ["fleet", "observedAt"], value })
+        )
+      ).toBe(false);
+    }
+  });
+
+  test("rejects negative, fractional, and unsafe required counters", () => {
+    for (const path of REQUIRED_COUNTER_PATHS) {
+      for (const value of [
+        -1,
+        0.5,
+        Number.MAX_SAFE_INTEGER + 1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+      ]) {
+        expect(isWebUiSnapshot(mutateSnapshot({ path, value }))).toBe(false);
+      }
+    }
+  });
+
+  test("rejects negative, fractional, and unsafe optional counters", () => {
+    for (const path of OPTIONAL_COUNTER_PATHS) {
+      for (const value of [
+        -1,
+        0.5,
+        Number.MAX_SAFE_INTEGER + 1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+      ]) {
+        expect(isWebUiSnapshot(mutateSnapshot({ path, value }))).toBe(false);
+      }
+    }
+  });
+
+  test("rejects out-of-range percentages and confidence", () => {
+    const percentagePaths: readonly (readonly PathSegment[])[] = [
+      ["details", ROUTE_ID, "agents", 0, "usage", "contextPercent"],
+      ["details", ROUTE_ID, "agents", 0, "usage", "windows", 0, "usedPercent"],
+    ];
+    for (const path of percentagePaths) {
+      for (const value of [-0.1, 100.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(isWebUiSnapshot(mutateSnapshot({ path, value }))).toBe(false);
+      }
+    }
+
+    const confidencePath = [
+      "details",
+      ROUTE_ID,
+      "governess",
+      "interpretations",
+      0,
+      "confidence",
+    ] as const;
+    for (const value of [-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        isWebUiSnapshot(mutateSnapshot({ path: confidencePath, value }))
+      ).toBe(false);
+    }
+  });
+
+  test("rejects negative or non-finite costs", () => {
+    const costPaths: readonly (readonly PathSegment[])[] = [
+      ["details", ROUTE_ID, "agents", 0, "usage", "costUsd"],
+      ["details", ROUTE_ID, "workers", 0, "activity", 0, "costUsd"],
+    ];
+    for (const path of costPaths) {
+      for (const value of [-0.01, Number.POSITIVE_INFINITY]) {
+        expect(isWebUiSnapshot(mutateSnapshot({ path, value }))).toBe(false);
+      }
+    }
   });
 
   test("rejects synthetic data-source markers at every DTO level", () => {

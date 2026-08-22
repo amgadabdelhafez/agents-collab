@@ -582,6 +582,15 @@
       "eval_status": "pass",
       "ended_at": "2026-08-22T18:37:17Z",
       "spec_path": "specs/webui-all-active-loops-release-certification.md"
+    },
+    {
+      "id": "webui-client-boundary-hardening",
+      "mode": "maintenance",
+      "status": "active",
+      "created_at": "2026-08-22T18:40:19Z",
+      "run_dir": "runs/webui-client-boundary-hardening",
+      "eval_status": "pending",
+      "spec_path": "specs/webui-client-boundary-hardening.md"
     }
   ]
 }

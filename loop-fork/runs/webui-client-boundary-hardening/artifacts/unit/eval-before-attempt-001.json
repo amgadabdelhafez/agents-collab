@@ -1,0 +1,12 @@
+{
+  "task_id": "webui-client-boundary-hardening",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

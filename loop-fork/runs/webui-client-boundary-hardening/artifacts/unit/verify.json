@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-client-boundary-hardening",
+  "dimension": "unit",
+  "attempt": "003",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-22T18:55:23Z",
+  "ended_at": "2026-08-22T18:55:23Z",
+  "artifact": "runs/webui-client-boundary-hardening/artifacts/unit/attempt-003.log",
+  "command": [
+    "bun",
+    "run",
+    "test:file",
+    "--",
+    "tests/webui/api-contract.test.ts"
+  ]
+}

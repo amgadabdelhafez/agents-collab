@@ -96,26 +96,64 @@ const RUN_REASON_CODES = new Set([
 ]);
 const RUN_ROUTE_ID_PATTERN =
   /^[a-z0-9][a-z0-9-]{0,114}-[0-9a-f]{12}:[1-9][0-9]{0,11}$/u;
+const EVIDENCE_ID_PATTERN = /^ev_[0-9a-f]{16}$/u;
+const CANONICAL_ISO_PATTERN =
+  /^(?:\d{4}|[+-]\d{6})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
 const isString = (value: unknown): value is string => typeof value === "string";
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
-const isOptionalNonnegativeNumber = (value: unknown): boolean =>
-  value === undefined || (isFiniteNumber(value) && value >= 0);
-const isIso = (value: unknown): value is string =>
-  isString(value) && Number.isFinite(Date.parse(value));
-const isStringArray = (value: unknown): value is readonly string[] =>
-  Array.isArray(value) && value.every(isString);
+const isNonnegativeNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0;
+const isNonnegativeSafeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isPercentage = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0 && value <= 100;
+const isConfidence = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= 0 && value <= 1;
+const isOptional = (
+  value: unknown,
+  guard: (candidate: unknown) => boolean
+): boolean => value === undefined || guard(value);
+const isIso = (value: unknown): value is string => {
+  if (!(isString(value) && CANONICAL_ISO_PATTERN.test(value))) {
+    return false;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+};
 const arrayOf = (value: unknown, guard: (candidate: unknown) => boolean) =>
   Array.isArray(value) && value.every(guard);
 const isMember = (set: ReadonlySet<string>, value: unknown): boolean =>
   isString(value) && set.has(value);
+const hasExactKeys = (
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = []
+): boolean => {
+  const ownKeys = Object.keys(value);
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    ownKeys.every((key) => required.includes(key) || optional.includes(key))
+  );
+};
 
 export const isRunRouteId = (value: unknown): value is string =>
   isString(value) && RUN_ROUTE_ID_PATTERN.test(value);
 
+const isEvidenceId = (value: unknown): value is string =>
+  isString(value) && EVIDENCE_ID_PATTERN.test(value);
+
+const isEvidenceIdArray = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every(isEvidenceId);
+
 const isProvenance = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(
+    value,
+    ["observedAt", "revision", "sourceId", "sourceKind", "state"],
+    ["note"]
+  ) &&
   isIso(value.observedAt) &&
   isString(value.revision) &&
   isString(value.sourceId) &&
@@ -125,16 +163,26 @@ const isProvenance = (value: unknown): boolean =>
 
 const isConnection = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, [
+    "label",
+    "lastEventAt",
+    "lastObservedAt",
+    "queuedUpdates",
+    "state",
+    "streamEpoch",
+    "streamSequence",
+  ]) &&
   isString(value.label) &&
   isIso(value.lastEventAt) &&
   isIso(value.lastObservedAt) &&
-  isFiniteNumber(value.queuedUpdates) &&
+  isNonnegativeSafeInteger(value.queuedUpdates) &&
   isMember(CONNECTION_STATES, value.state) &&
   isString(value.streamEpoch) &&
-  isFiniteNumber(value.streamSequence);
+  isNonnegativeSafeInteger(value.streamSequence);
 
 const isDataSource = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, ["generatedAt", "kind", "notice", "scenario"]) &&
   isIso(value.generatedAt) &&
   value.kind === "live-redacted" &&
   isString(value.notice) &&
@@ -142,6 +190,7 @@ const isDataSource = (value: unknown): boolean =>
 
 const isQuality = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, ["label", "severity", "sources", "summary"]) &&
   isString(value.label) &&
   isMember(QUALITY_SEVERITIES, value.severity) &&
   arrayOf(value.sources, isProvenance) &&
@@ -149,6 +198,7 @@ const isQuality = (value: unknown): boolean =>
 
 const isAdapter = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, ["kind", "label", "lastProbedAt", "state"]) &&
   (value.kind === "tmux" || value.kind === "native") &&
   isString(value.label) &&
   isIso(value.lastProbedAt) &&
@@ -156,6 +206,7 @@ const isAdapter = (value: unknown): boolean =>
 
 const isFleetAgent = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, ["displayName", "id", "lifecycle", "role"]) &&
   isString(value.displayName) &&
   isString(value.id) &&
   isMember(AGENT_LIFECYCLES, value.lifecycle) &&
@@ -163,6 +214,7 @@ const isFleetAgent = (value: unknown): boolean =>
 
 const isRunReason = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, ["code", "detail", "label", "severity"]) &&
   isMember(RUN_REASON_CODES, value.code) &&
   isString(value.detail) &&
   isString(value.label) &&
@@ -172,6 +224,26 @@ const isFleetRun = (value: unknown): boolean => {
   if (
     !(
       isRecord(value) &&
+      hasExactKeys(value, [
+        "adapters",
+        "agents",
+        "connection",
+        "dataSource",
+        "driver",
+        "lastDurableEventAt",
+        "lifecycle",
+        "quality",
+        "reasons",
+        "repoId",
+        "repository",
+        "reviewer",
+        "routeId",
+        "runId",
+        "startedAt",
+        "title",
+        "version",
+        "worktree",
+      ]) &&
       arrayOf(value.adapters, isAdapter) &&
       arrayOf(value.agents, isFleetAgent) &&
       isConnection(value.connection) &&
@@ -203,31 +275,37 @@ const isFleetRun = (value: unknown): boolean => {
   );
 };
 
+const isUsageWindow = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(
+    value,
+    ["kind", "provenance", "resetState", "usedPercent"],
+    ["resetAt"]
+  ) &&
+  (value.kind === "session" || value.kind === "weekly") &&
+  isProvenance(value.provenance) &&
+  isOptional(value.resetAt, isIso) &&
+  ["known", "unknown", "stale"].includes(String(value.resetState)) &&
+  isPercentage(value.usedPercent);
+
 const isUsage = (value: unknown): boolean =>
   isRecord(value) &&
-  [
-    value.cachedTokens,
-    value.contextPercent,
-    value.costUsd,
-    value.inputTokens,
-    value.outputTokens,
-  ].every(
-    (candidate) => candidate === undefined || isFiniteNumber(candidate)
+  hasExactKeys(
+    value,
+    ["compactions", "windows"],
+    ["cachedTokens", "contextPercent", "costUsd", "inputTokens", "outputTokens"]
   ) &&
-  isFiniteNumber(value.compactions) &&
-  Array.isArray(value.windows) &&
-  value.windows.every(
-    (window) =>
-      isRecord(window) &&
-      (window.kind === "session" || window.kind === "weekly") &&
-      isProvenance(window.provenance) &&
-      (window.resetAt === undefined || isIso(window.resetAt)) &&
-      ["known", "unknown", "stale"].includes(String(window.resetState)) &&
-      isFiniteNumber(window.usedPercent)
-  );
+  [value.cachedTokens, value.inputTokens, value.outputTokens].every(
+    (candidate) => isOptional(candidate, isNonnegativeSafeInteger)
+  ) &&
+  isOptional(value.contextPercent, isPercentage) &&
+  isOptional(value.costUsd, isNonnegativeNumber) &&
+  isNonnegativeSafeInteger(value.compactions) &&
+  arrayOf(value.windows, isUsageWindow);
 
 const isBridgeMessage = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, ["at", "direction", "status", "summary"]) &&
   isIso(value.at) &&
   (value.direction === "sent" || value.direction === "received") &&
   isMember(BRIDGE_STATUSES, value.status) &&
@@ -235,6 +313,27 @@ const isBridgeMessage = (value: unknown): boolean =>
 
 const isAgent = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(
+    value,
+    [
+      "currentTask",
+      "displayName",
+      "id",
+      "lastHookAt",
+      "lastHookEvent",
+      "lifecycle",
+      "model",
+      "provenance",
+      "provider",
+      "reasoningEffort",
+      "role",
+      "taskObservedAt",
+      "taskSource",
+      "toolsInFlight",
+      "usage",
+    ],
+    ["latestBridgeMessage"]
+  ) &&
   [
     value.currentTask,
     value.displayName,
@@ -250,51 +349,73 @@ const isAgent = (value: unknown): boolean =>
   isMember(AGENT_LIFECYCLES, value.lifecycle) &&
   isMember(AGENT_ROLES, value.role) &&
   arrayOf(value.provenance, isProvenance) &&
-  isFiniteNumber(value.toolsInFlight) &&
+  isNonnegativeSafeInteger(value.toolsInFlight) &&
   isUsage(value.usage) &&
   (value.latestBridgeMessage === undefined ||
     isBridgeMessage(value.latestBridgeMessage));
 
-const isWorkerTier = (value: unknown): boolean => {
-  if (!(isRecord(value) && isMember(WORKER_TIERS, value.tier))) {
-    return false;
-  }
-  const counts = value.counts;
-  return (
-    isString(value.description) &&
-    isString(value.label) &&
-    isRecord(counts) &&
+const isWorkerCounts = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, [
+    "active",
+    "canceled",
+    "completed",
+    "escalated",
+    "failed",
+    "queued",
+  ]) &&
+  [
+    value.active,
+    value.canceled,
+    value.completed,
+    value.escalated,
+    value.failed,
+    value.queued,
+  ].every(isNonnegativeSafeInteger);
+
+const isWorkerActivity = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(
+    value,
     [
-      counts.active,
-      counts.canceled,
-      counts.completed,
-      counts.escalated,
-      counts.failed,
-      counts.queued,
-    ].every(isFiniteNumber) &&
-    Array.isArray(value.activity) &&
-    value.activity.every(
-      (activity) =>
-        isRecord(activity) &&
-        isString(activity.id) &&
-        isIso(activity.startedAt) &&
-        (activity.finishedAt === undefined || isIso(activity.finishedAt)) &&
-        [activity.costUsd, activity.modelCalls, activity.tokens].every(
-          isOptionalNonnegativeNumber
-        ) &&
-        isMember(WORKER_STATES, activity.state) &&
-        isMember(WORKER_TIERS, activity.tier) &&
-        isStringArray(activity.artifactEvidenceIds) &&
-        [
-          activity.contextCapsule,
-          activity.requestSummary,
-          activity.resultSummary,
-          activity.routingReason,
-          activity.toolSummary,
-        ].every(isString)
-    )
-  );
-};
+      "artifactEvidenceIds",
+      "contextCapsule",
+      "id",
+      "requestSummary",
+      "resultSummary",
+      "routingReason",
+      "startedAt",
+      "state",
+      "tier",
+      "toolSummary",
+    ],
+    ["costUsd", "finishedAt", "modelCalls", "tokens"]
+  ) &&
+  isString(value.id) &&
+  isIso(value.startedAt) &&
+  isOptional(value.finishedAt, isIso) &&
+  isOptional(value.costUsd, isNonnegativeNumber) &&
+  isOptional(value.modelCalls, isNonnegativeSafeInteger) &&
+  isOptional(value.tokens, isNonnegativeSafeInteger) &&
+  isMember(WORKER_STATES, value.state) &&
+  isMember(WORKER_TIERS, value.tier) &&
+  isEvidenceIdArray(value.artifactEvidenceIds) &&
+  [
+    value.contextCapsule,
+    value.requestSummary,
+    value.resultSummary,
+    value.routingReason,
+    value.toolSummary,
+  ].every(isString);
+
+const isWorkerTier = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, ["activity", "counts", "description", "label", "tier"]) &&
+  isMember(WORKER_TIERS, value.tier) &&
+  isString(value.description) &&
+  isString(value.label) &&
+  isWorkerCounts(value.counts) &&
+  arrayOf(value.activity, isWorkerActivity);
 
 const structurallyEqual = (left: unknown, right: unknown): boolean => {
   if (Object.is(left, right)) {
@@ -325,20 +446,43 @@ const structurallyEqual = (left: unknown, right: unknown): boolean => {
 
 const isEvidence = (value: unknown): boolean =>
   isRecord(value) &&
-  isFiniteNumber(value.byteCount) &&
+  hasExactKeys(value, [
+    "byteCount",
+    "capturedAt",
+    "id",
+    "kind",
+    "mimeType",
+    "provenance",
+    "redactionsApplied",
+    "summary",
+    "title",
+  ]) &&
+  isNonnegativeSafeInteger(value.byteCount) &&
   isIso(value.capturedAt) &&
-  isString(value.id) &&
+  isEvidenceId(value.id) &&
   ["log", "test", "review", "control", "artifact"].includes(
     String(value.kind)
   ) &&
   (value.mimeType === "text/plain" || value.mimeType === "application/json") &&
   isProvenance(value.provenance) &&
-  isFiniteNumber(value.redactionsApplied) &&
+  isNonnegativeSafeInteger(value.redactionsApplied) &&
   isString(value.summary) &&
   isString(value.title);
 
 const isTimelineEvent = (value: unknown): boolean =>
   isRecord(value) &&
+  hasExactKeys(value, [
+    "actor",
+    "at",
+    "category",
+    "detail",
+    "evidenceIds",
+    "id",
+    "provenance",
+    "sequence",
+    "title",
+    "tone",
+  ]) &&
   [value.actor, value.detail, value.id, value.title].every(isString) &&
   isIso(value.at) &&
   [
@@ -350,67 +494,108 @@ const isTimelineEvent = (value: unknown): boolean =>
     "evidence",
     "adapter",
   ].includes(String(value.category)) &&
-  isStringArray(value.evidenceIds) &&
+  isEvidenceIdArray(value.evidenceIds) &&
   isProvenance(value.provenance) &&
-  isFiniteNumber(value.sequence) &&
+  isNonnegativeSafeInteger(value.sequence) &&
   ["neutral", "info", "success", "warning", "danger"].includes(
     String(value.tone)
   );
 
-const isGoverness = (value: unknown): boolean =>
+const isGovernessAudit = (value: unknown): boolean =>
   isRecord(value) &&
-  Array.isArray(value.audit) &&
-  value.audit.every(
-    (entry) =>
-      isRecord(entry) &&
-      [
-        entry.acknowledgement,
-        entry.controlId,
-        entry.evidenceId,
-        entry.phase,
-        entry.transport,
-      ].every(isString) &&
-      isIso(entry.at)
+  hasExactKeys(value, [
+    "acknowledgement",
+    "at",
+    "controlId",
+    "evidenceId",
+    "phase",
+    "transport",
+  ]) &&
+  [value.acknowledgement, value.controlId, value.phase, value.transport].every(
+    isString
   ) &&
-  isString(value.driverLease) &&
-  isString(value.epoch) &&
-  Array.isArray(value.facts) &&
-  value.facts.every(
-    (fact) =>
-      isRecord(fact) &&
-      [fact.label, fact.value].every(isString) &&
-      isProvenance(fact.provenance) &&
-      ["ok", "warning", "error", "neutral"].includes(String(fact.status))
-  ) &&
-  Array.isArray(value.interpretations) &&
-  value.interpretations.every(
-    (interpretation) =>
-      isRecord(interpretation) &&
-      isFiniteNumber(interpretation.confidence) &&
-      isIso(interpretation.generatedAt) &&
-      ["progress", "next", "waiting-human", "judge"].includes(
-        String(interpretation.kind)
-      ) &&
-      [interpretation.source, interpretation.summary].every(isString)
-  ) &&
-  Array.isArray(value.policies) &&
-  value.policies.every(
-    (policy) =>
-      isRecord(policy) &&
-      [policy.reason, policy.releaseLabel, policy.title].every(isString) &&
-      ["allowed", "blocked", "confirmation-bound"].includes(
-        String(policy.disposition)
-      )
+  isEvidenceId(value.evidenceId) &&
+  isIso(value.at);
+
+const isGovernessFact = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, ["label", "provenance", "status", "value"]) &&
+  [value.label, value.value].every(isString) &&
+  isProvenance(value.provenance) &&
+  ["ok", "warning", "error", "neutral"].includes(String(value.status));
+
+const isGovernessInterpretation = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, [
+    "confidence",
+    "generatedAt",
+    "kind",
+    "source",
+    "summary",
+  ]) &&
+  isConfidence(value.confidence) &&
+  isIso(value.generatedAt) &&
+  ["progress", "next", "waiting-human", "judge"].includes(String(value.kind)) &&
+  [value.source, value.summary].every(isString);
+
+const isGovernessPolicy = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, ["disposition", "reason", "releaseLabel", "title"]) &&
+  [value.reason, value.title].every(isString) &&
+  value.releaseLabel === "Read-only release" &&
+  ["allowed", "blocked", "confirmation-bound"].includes(
+    String(value.disposition)
   );
 
+const isGoverness = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasExactKeys(value, [
+    "audit",
+    "driverLease",
+    "epoch",
+    "facts",
+    "interpretations",
+    "policies",
+  ]) &&
+  arrayOf(value.audit, isGovernessAudit) &&
+  isString(value.driverLease) &&
+  isString(value.epoch) &&
+  arrayOf(value.facts, isGovernessFact) &&
+  arrayOf(value.interpretations, isGovernessInterpretation) &&
+  arrayOf(value.policies, isGovernessPolicy);
+
 const isRunDetail = (value: unknown): boolean => {
-  if (!isRecord(value)) {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, [
+        "agents",
+        "authority",
+        "connection",
+        "dataSource",
+        "evidence",
+        "governess",
+        "quality",
+        "summary",
+        "timeline",
+        "version",
+        "workers",
+      ])
+    )
+  ) {
     return false;
   }
   const authority = value.authority;
   return (
     arrayOf(value.agents, isAgent) &&
     isRecord(authority) &&
+    hasExactKeys(authority, [
+      "currentDriver",
+      "epoch",
+      "leaseState",
+      "repoId",
+      "runId",
+    ]) &&
     [
       authority.currentDriver,
       authority.epoch,
@@ -431,12 +616,27 @@ const isRunDetail = (value: unknown): boolean => {
 };
 
 export const isWebUiSnapshot = (value: unknown): value is WebUiSnapshotDTO => {
-  if (!(isRecord(value) && isRecord(value.fleet) && isRecord(value.details))) {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ["details", "fleet", "source", "version"]) &&
+      isRecord(value.fleet) &&
+      isRecord(value.details)
+    )
+  ) {
     return false;
   }
   const fleet = value.fleet;
   const details = value.details;
   if (
+    !hasExactKeys(fleet, [
+      "connection",
+      "dataSource",
+      "observedAt",
+      "quality",
+      "runs",
+      "version",
+    ]) ||
     value.version !== WEBUI_DTO_VERSION ||
     value.source !== "loop-registry-live" ||
     fleet.version !== WEBUI_DTO_VERSION ||
