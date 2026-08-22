@@ -768,6 +768,104 @@ const OPTIONAL_COUNTER_PATHS: readonly (readonly PathSegment[])[] = [
   ["details", ROUTE_ID, "workers", 0, "activity", 0, "tokens"],
 ];
 
+const COERCED_ENUM_CASES: readonly RejectionCase[] = [
+  {
+    label: "run-reason severity",
+    mutations: pairedSummaryMutations(
+      ["reasons"],
+      [
+        {
+          code: "input-required",
+          detail: "Operator input is required.",
+          label: "Input required",
+          severity: ["low"],
+        },
+      ]
+    ),
+  },
+  {
+    label: "usage reset state",
+    mutations: [
+      {
+        path: [
+          "details",
+          ROUTE_ID,
+          "agents",
+          0,
+          "usage",
+          "windows",
+          0,
+          "resetState",
+        ],
+        value: ["known"],
+      },
+    ],
+  },
+  {
+    label: "evidence kind",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "evidence", 0, "kind"],
+        value: ["artifact"],
+      },
+    ],
+  },
+  {
+    label: "timeline category",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "timeline", 0, "category"],
+        value: ["evidence"],
+      },
+    ],
+  },
+  {
+    label: "timeline tone",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "timeline", 0, "tone"],
+        value: ["success"],
+      },
+    ],
+  },
+  {
+    label: "Governess fact status",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "facts", 0, "status"],
+        value: ["ok"],
+      },
+    ],
+  },
+  {
+    label: "Governess interpretation kind",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "interpretations", 0, "kind"],
+        value: ["progress"],
+      },
+    ],
+  },
+  {
+    label: "Governess policy disposition",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "governess", "policies", 0, "disposition"],
+        value: ["blocked"],
+      },
+    ],
+  },
+  {
+    label: "authority lease state",
+    mutations: [
+      {
+        path: ["details", ROUTE_ID, "authority", "leaseState"],
+        value: ["current"],
+      },
+    ],
+  },
+];
+
 describe("Web UI live DTO boundary", () => {
   test("accepts the complete live-only snapshot contract", () => {
     expect(isWebUiSnapshot(structuredClone(VALID_SNAPSHOT))).toBe(true);
@@ -816,6 +914,14 @@ describe("Web UI live DTO boundary", () => {
 
   for (const scenario of NON_CANONICAL_TIMESTAMP_CASES) {
     test(`rejects non-canonical ISO timestamp for ${scenario.label}`, () => {
+      expect(isWebUiSnapshot(mutateSnapshot(...scenario.mutations))).toBe(
+        false
+      );
+    });
+  }
+
+  for (const scenario of COERCED_ENUM_CASES) {
+    test(`rejects array coercion for ${scenario.label}`, () => {
       expect(isWebUiSnapshot(mutateSnapshot(...scenario.mutations))).toBe(
         false
       );
@@ -883,6 +989,7 @@ describe("Web UI live DTO boundary", () => {
       "ev_0123456789abcdeF",
       "ev_0123456789abcdeg",
       "ev_raw-prompt",
+      "evidence_0123456789abcdef",
     ];
     for (const value of invalidIds) {
       expect(
@@ -972,7 +1079,7 @@ describe("Web UI live DTO boundary", () => {
       ["details", ROUTE_ID, "workers", 0, "activity", 0, "costUsd"],
     ];
     for (const path of costPaths) {
-      for (const value of [-0.01, Number.POSITIVE_INFINITY]) {
+      for (const value of [-0.01, Number.NaN, Number.POSITIVE_INFINITY]) {
         expect(isWebUiSnapshot(mutateSnapshot({ path, value }))).toBe(false);
       }
     }

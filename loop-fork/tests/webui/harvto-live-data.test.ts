@@ -770,6 +770,83 @@ describe("active loop registry Web UI projection", () => {
     expect(detail?.connection.streamSequence).toBe(33);
   });
 
+  test("skips invalid hook counters and normalizes invalid compaction counters", () => {
+    const root = createRegistry();
+    const fixture = createRun(root, AI_CUR_REPO_ID, "52");
+    const claudeHookPath = join(fixture.runDir, "hooks", "claude.jsonl");
+    writeJsonl(claudeHookPath, [
+      {
+        agent: "claude",
+        event: "Notification",
+        sequence: 11,
+        state: "working",
+        ts: "2026-08-21T18:20:00.000Z",
+      },
+      ...[-1, 0.5, Number.MAX_SAFE_INTEGER + 1].map((sequence, index) => ({
+        agent: "claude",
+        event: "PostToolUse",
+        sequence,
+        state: "working",
+        ts: `2026-08-21T18:20:0${index + 2}.000Z`,
+      })),
+    ]);
+
+    const governessPath = join(fixture.runDir, "governess-state.json");
+    const governess = readJson(governessPath);
+    const pressure = governess.sessionPressure as Record<string, unknown>;
+    const codexPressure = pressure.codex as Record<string, unknown>;
+    for (const compactions of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      writeJson(governessPath, {
+        ...governess,
+        sessionPressure: {
+          ...pressure,
+          codex: { ...codexPressure, compactions },
+        },
+      });
+      const snapshot = readLoopRegistryLiveSnapshot(liveOptions(root));
+      const detail = snapshot.details[fixture.routeId];
+      const codex = detail?.agents.find(
+        (agent) => agent.displayName === "Codex"
+      );
+
+      expect(detail?.connection.streamSequence).toBe(31);
+      expect(codex?.usage.compactions).toBe(0);
+      expect(isWebUiSnapshot(snapshot)).toBe(true);
+    }
+  });
+
+  test("saturates per-run and fleet sequence sums at a safe integer", () => {
+    const root = createRegistry();
+    const fixtures = [
+      createRun(root, HARVTO_REPO_ID, "242"),
+      createRun(root, AI_CUR_REPO_ID, "52"),
+    ];
+    for (const fixture of fixtures) {
+      for (const agent of ["claude", "codex"] as const) {
+        writeJsonl(join(fixture.runDir, "hooks", `${agent}.jsonl`), [
+          {
+            agent,
+            event: "Notification",
+            sequence: Number.MAX_SAFE_INTEGER,
+            state: "working",
+            ts: "2026-08-21T18:20:01.000Z",
+          },
+        ]);
+      }
+    }
+
+    const snapshot = readLoopRegistryLiveSnapshot(liveOptions(root));
+    expect(snapshot.fleet.connection.streamSequence).toBe(
+      Number.MAX_SAFE_INTEGER
+    );
+    expect(
+      Object.values(snapshot.details).every(
+        (detail) => detail.connection.streamSequence === Number.MAX_SAFE_INTEGER
+      )
+    ).toBe(true);
+    expect(isWebUiSnapshot(snapshot)).toBe(true);
+  });
+
   test("ignores stale waiting and blocked states when newer per-agent evidence reports progress", () => {
     const root = createRegistry();
     const fixture = createRun(root, AI_CUR_REPO_ID, "52");

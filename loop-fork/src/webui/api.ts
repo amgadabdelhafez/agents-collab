@@ -94,6 +94,44 @@ const RUN_REASON_CODES = new Set([
   "stream-behind",
   "audit-partial",
 ]);
+const REASON_SEVERITIES = new Set(["critical", "high", "medium", "low"]);
+const RESET_STATES = new Set(["known", "unknown", "stale"]);
+const EVIDENCE_KINDS = new Set([
+  "log",
+  "test",
+  "review",
+  "control",
+  "artifact",
+]);
+const TIMELINE_CATEGORIES = new Set([
+  "lifecycle",
+  "agent",
+  "bridge",
+  "governess",
+  "worker",
+  "evidence",
+  "adapter",
+]);
+const TIMELINE_TONES = new Set([
+  "neutral",
+  "info",
+  "success",
+  "warning",
+  "danger",
+]);
+const FACT_STATUSES = new Set(["ok", "warning", "error", "neutral"]);
+const INTERPRETATION_KINDS = new Set([
+  "progress",
+  "next",
+  "waiting-human",
+  "judge",
+]);
+const POLICY_DISPOSITIONS = new Set([
+  "allowed",
+  "blocked",
+  "confirmation-bound",
+]);
+const AUTHORITY_LEASE_STATES = new Set(["current", "stale", "conflict"]);
 const RUN_ROUTE_ID_PATTERN =
   /^[a-z0-9][a-z0-9-]{0,114}-[0-9a-f]{12}:[1-9][0-9]{0,11}$/u;
 const EVIDENCE_ID_PATTERN = /^ev_[0-9a-f]{16}$/u;
@@ -218,7 +256,7 @@ const isRunReason = (value: unknown): boolean =>
   isMember(RUN_REASON_CODES, value.code) &&
   isString(value.detail) &&
   isString(value.label) &&
-  ["critical", "high", "medium", "low"].includes(String(value.severity));
+  isMember(REASON_SEVERITIES, value.severity);
 
 const isFleetRun = (value: unknown): boolean => {
   if (
@@ -285,7 +323,7 @@ const isUsageWindow = (value: unknown): boolean =>
   (value.kind === "session" || value.kind === "weekly") &&
   isProvenance(value.provenance) &&
   isOptional(value.resetAt, isIso) &&
-  ["known", "unknown", "stale"].includes(String(value.resetState)) &&
+  isMember(RESET_STATES, value.resetState) &&
   isPercentage(value.usedPercent);
 
 const isUsage = (value: unknown): boolean =>
@@ -460,9 +498,7 @@ const isEvidence = (value: unknown): boolean =>
   isNonnegativeSafeInteger(value.byteCount) &&
   isIso(value.capturedAt) &&
   isEvidenceId(value.id) &&
-  ["log", "test", "review", "control", "artifact"].includes(
-    String(value.kind)
-  ) &&
+  isMember(EVIDENCE_KINDS, value.kind) &&
   (value.mimeType === "text/plain" || value.mimeType === "application/json") &&
   isProvenance(value.provenance) &&
   isNonnegativeSafeInteger(value.redactionsApplied) &&
@@ -485,21 +521,11 @@ const isTimelineEvent = (value: unknown): boolean =>
   ]) &&
   [value.actor, value.detail, value.id, value.title].every(isString) &&
   isIso(value.at) &&
-  [
-    "lifecycle",
-    "agent",
-    "bridge",
-    "governess",
-    "worker",
-    "evidence",
-    "adapter",
-  ].includes(String(value.category)) &&
+  isMember(TIMELINE_CATEGORIES, value.category) &&
   isEvidenceIdArray(value.evidenceIds) &&
   isProvenance(value.provenance) &&
   isNonnegativeSafeInteger(value.sequence) &&
-  ["neutral", "info", "success", "warning", "danger"].includes(
-    String(value.tone)
-  );
+  isMember(TIMELINE_TONES, value.tone);
 
 const isGovernessAudit = (value: unknown): boolean =>
   isRecord(value) &&
@@ -522,7 +548,7 @@ const isGovernessFact = (value: unknown): boolean =>
   hasExactKeys(value, ["label", "provenance", "status", "value"]) &&
   [value.label, value.value].every(isString) &&
   isProvenance(value.provenance) &&
-  ["ok", "warning", "error", "neutral"].includes(String(value.status));
+  isMember(FACT_STATUSES, value.status);
 
 const isGovernessInterpretation = (value: unknown): boolean =>
   isRecord(value) &&
@@ -535,7 +561,7 @@ const isGovernessInterpretation = (value: unknown): boolean =>
   ]) &&
   isConfidence(value.confidence) &&
   isIso(value.generatedAt) &&
-  ["progress", "next", "waiting-human", "judge"].includes(String(value.kind)) &&
+  isMember(INTERPRETATION_KINDS, value.kind) &&
   [value.source, value.summary].every(isString);
 
 const isGovernessPolicy = (value: unknown): boolean =>
@@ -543,9 +569,7 @@ const isGovernessPolicy = (value: unknown): boolean =>
   hasExactKeys(value, ["disposition", "reason", "releaseLabel", "title"]) &&
   [value.reason, value.title].every(isString) &&
   value.releaseLabel === "Read-only release" &&
-  ["allowed", "blocked", "confirmation-bound"].includes(
-    String(value.disposition)
-  );
+  isMember(POLICY_DISPOSITIONS, value.disposition);
 
 const isGoverness = (value: unknown): boolean =>
   isRecord(value) &&
@@ -602,7 +626,7 @@ const isRunDetail = (value: unknown): boolean => {
       authority.repoId,
       authority.runId,
     ].every(isString) &&
-    ["current", "stale", "conflict"].includes(String(authority.leaseState)) &&
+    isMember(AUTHORITY_LEASE_STATES, authority.leaseState) &&
     isConnection(value.connection) &&
     isDataSource(value.dataSource) &&
     arrayOf(value.evidence, isEvidence) &&

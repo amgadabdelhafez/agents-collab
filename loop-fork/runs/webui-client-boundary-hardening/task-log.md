@@ -20,6 +20,10 @@ Description: Fail closed on unknown DTO fields, exact read-only policy literals,
 - Added a negative matrix covering all shapes, all timestamp consumers, all
   evidence-reference consumers, every numeric consumer, optional-field omission,
   exact literals, source markers, and fetch-level fail-closed behavior.
+- Removed coercive enum membership checks and added one-element-array rejection
+  cases for all nine affected literal-union consumers.
+- Bounded persisted hook/compaction counters and saturated per-run/fleet sequence
+  sums so the producer always stays inside the client safe-integer contract.
 
 ## Why
 
@@ -32,13 +36,18 @@ fields even when matching fleet/detail summaries contained the same extra data.
 
 - Harness unit attempt 001 is the preserved pre-production RED result. It records
   the permissive validator accepting the newly prohibited payloads.
-- Focused GREEN: 62 tests, 195 assertions, zero failures.
-- Server producer compatibility: 30 tests, 175 assertions, zero failures, plus
+- Focused GREEN: 71 tests, 207 assertions, zero failures.
+- Server producer compatibility: 32 tests, 187 assertions, zero failures, plus
   the current live Harvto lane accepted by the hardened validator.
 - Live security scan: zero leaked persisted values, zero absolute paths, and zero
   raw runtime fields.
-- Full sequential regression passed 1,625 tests across 71 files.
+- Full sequential regression passed 1,645 tests across all 80 discovered files.
 - Web build, targeted formatter/lint checks, and diff whitespace checks pass.
 - The repository-wide formatter command reports generated Harness JSON
   formatting diagnostics, including immutable prior-run artifacts; the two
-  changed code/test files pass the same formatter with zero diagnostics.
+  four changed code/test files pass the same formatter with zero diagnostics.
+- Exact review candidate `c7da4ea` received literal FAIL. Reviewers found the
+  regression-count undercount, one-element-array coercion at nine enum fields,
+  and a full-diff whitespace mismatch in the preserved RED log. The branch was
+  not pushed and the PR remained draft. `review-attempt-001.md` preserves the
+  exact failed-review record and the original RED-log hash.

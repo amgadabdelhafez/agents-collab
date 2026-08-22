@@ -313,6 +313,25 @@ const numberAt = (record: JsonRecord, key: string): number | undefined => {
     : undefined;
 };
 
+const nonnegativeSafeIntegerAt = (
+  record: JsonRecord,
+  key: string
+): number | undefined => {
+  const value = numberAt(record, key);
+  return value !== undefined && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+};
+
+const saturatingCounterSum = (values: readonly number[]): number =>
+  values.reduce(
+    (sum, value) =>
+      sum > Number.MAX_SAFE_INTEGER - value
+        ? Number.MAX_SAFE_INTEGER
+        : sum + value,
+    0
+  );
+
 const booleanAt = (record: JsonRecord, key: string): boolean | undefined => {
   const value = record[key];
   return typeof value === "boolean" ? value : undefined;
@@ -831,7 +850,7 @@ const parseHook = (
       continue;
     }
     const agent = stringAt(record, "agent");
-    const sequence = numberAt(record, "sequence");
+    const sequence = nonnegativeSafeIntegerAt(record, "sequence");
     const ts = asIso(record.ts);
     if (agent !== expectedAgent || sequence === undefined || !ts) {
       continue;
@@ -841,7 +860,7 @@ const parseHook = (
       activity = {
         agent: expectedAgent,
         event: rawEvent && AGENT_EVENTS.has(rawEvent) ? rawEvent : "Activity",
-        sequence: Math.max(0, Math.floor(sequence)),
+        sequence,
         ts,
       };
     }
@@ -872,7 +891,7 @@ const parsePressure = (value: unknown): PressureView | undefined => {
     return undefined;
   }
   return {
-    compactions: Math.max(0, Math.floor(numberAt(value, "compactions") ?? 0)),
+    compactions: nonnegativeSafeIntegerAt(value, "compactions") ?? 0,
     model: allowlistedLabel(value.model, PRESSURE_MODELS, "Unavailable"),
     phase: allowlistedLabel(value.phase, PRESSURE_PHASES, "unknown"),
   };
@@ -1924,7 +1943,11 @@ const projectActiveRun = (
     queuedUpdates: 0,
     state: "live" as const,
     streamEpoch: `loop-${opaque(routeId, governess.epoch)}`,
-    streamSequence: hooks.claude.sequence + hooks.codex.sequence + bridge.count,
+    streamSequence: saturatingCounterSum([
+      hooks.claude.sequence,
+      hooks.codex.sequence,
+      bridge.count,
+    ]),
   };
   const runtimeConflict =
     runtime.state === "ended" || runtime.state === "mismatch";
@@ -2464,9 +2487,8 @@ export const readLoopRegistryLiveSnapshot = (
       "registry",
       runs.map((run) => run.routeId).join("|")
     )}`,
-    streamSequence: projected.reduce(
-      (sum, run) => sum + run.detail.connection.streamSequence,
-      0
+    streamSequence: saturatingCounterSum(
+      projected.map((run) => run.detail.connection.streamSequence)
     ),
   };
   const quality = {

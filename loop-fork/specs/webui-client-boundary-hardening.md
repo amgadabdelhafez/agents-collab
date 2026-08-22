@@ -19,10 +19,15 @@ read-only boundary wider than the declared DTO contract.
 - Every evidence reference matches the server-generated opaque form
   `ev_` followed by exactly 16 lowercase hexadecimal characters.
 - Governess policies accept only the declared `Read-only release` label.
+- Literal-union fields require a JSON string of the exact allowed value; arrays
+  and other values are never coerced before membership checks.
 - Counters and byte quantities are nonnegative safe integers. Token counts and
   compaction counts follow the same rule. Costs are finite and nonnegative,
   percentages are within 0 through 100, and interpretation confidence is within
   0 through 1.
+- The server skips invalid persisted hook counters, normalizes invalid optional
+  compaction counters to zero, and saturates diagnostic sequence sums so it
+  never emits a number outside the client contract.
 - Invalid network payloads continue to surface only as `LiveSnapshotError`.
 
 ## Acceptance
@@ -38,5 +43,5 @@ read-only boundary wider than the declared DTO contract.
 
 ## Non-goals
 
-No new public fields, server behavior, runtime mutation, UI redesign, dependency
+No new public fields or data sources, runtime mutation, UI redesign, dependency
 change, deployment, release, or direct merge to `main` is authorized here.
