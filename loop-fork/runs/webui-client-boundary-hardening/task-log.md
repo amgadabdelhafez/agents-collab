@@ -44,8 +44,8 @@ fields even when matching fleet/detail summaries contained the same extra data.
 - Full sequential regression passed 1,646 tests across all 80 discovered files.
 - Web build, targeted formatter/lint checks, and diff whitespace checks pass.
 - The repository-wide formatter command reports generated Harness JSON
-  formatting diagnostics, including immutable prior-run artifacts; the two
-  four changed code/test files pass the same formatter with zero diagnostics.
+  formatting diagnostics, including immutable prior-run artifacts; the four
+  changed code/test files pass the same formatter with zero diagnostics.
 - Exact review candidate `c7da4ea` received literal FAIL. Reviewers found the
   regression-count undercount, one-element-array coercion at nine enum fields,
   and a full-diff whitespace mismatch in the preserved RED log. The branch was
@@ -54,3 +54,6 @@ fields even when matching fleet/detail summaries contained the same extra data.
 - Exact review candidate `3053e13` was superseded after one PASS and one FAIL:
   the negative cost matrix did not explicitly prove that zero remains valid at
   both optional cost consumers. `review-attempt-002.md` preserves that verdict.
+- Exact review candidate `84bf07a` was superseded after one PASS and one FAIL:
+  the outward task record contained a wrapped `the two four` typo.
+  `review-attempt-003.md` preserves that verdict.
