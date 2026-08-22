@@ -1,6 +1,6 @@
 {
   "task_id": "webui-client-boundary-hardening",
-  "status": "pending",
+  "status": "pass",
   "required": [
     "unit",
     "build",
@@ -56,7 +56,11 @@
       "latest_attempt_meta": "runs/webui-client-boundary-hardening/artifacts/diff/attempt-005.json"
     },
     "review": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/webui-client-boundary-hardening/independent-review.md",
+      "reason": "two zero-write reviewers returned literal PASS for exact SHA and hashes",
+      "method": "independent-exact-sha",
+      "signed_off_by": "active_loop_inventory,multi_loop_adapter_review"
     }
   }
 }

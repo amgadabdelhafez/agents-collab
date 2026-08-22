@@ -62,3 +62,4 @@
 {"ts": "2026-08-21T20:24:01Z", "task_id": "webui-harvto-live-data", "signal": "loc_growth", "file": "src/webui/api.ts", "before_loc": 65, "after_loc": 447, "delta_loc": 382, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-21T20:24:01Z", "task_id": "webui-harvto-live-data", "signal": "loc_growth", "file": "src/webui/server/harvto-live-data.ts", "before_loc": 1469, "after_loc": 1767, "delta_loc": 298, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-22T00:08:51Z", "task_id": "webui-all-active-loops", "signal": "loc_growth", "file": "src/webui/server/harvto-live-data.ts", "before_loc": 1767, "after_loc": 2635, "delta_loc": 868, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-22T19:25:12Z", "task_id": "webui-client-boundary-hardening", "signal": "loc_growth", "file": "src/webui/api.ts", "before_loc": 526, "after_loc": 750, "delta_loc": 224, "threshold": 100, "severity": "indicator"}

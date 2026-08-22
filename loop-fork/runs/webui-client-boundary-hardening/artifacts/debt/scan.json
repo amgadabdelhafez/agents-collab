@@ -1,0 +1,19 @@
+{
+  "task_id": "webui-client-boundary-hardening",
+  "scanned_at": "2026-08-22T19:25:12Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-22T19:25:12Z",
+      "task_id": "webui-client-boundary-hardening",
+      "signal": "loc_growth",
+      "file": "src/webui/api.ts",
+      "before_loc": 526,
+      "after_loc": 750,
+      "delta_loc": 224,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

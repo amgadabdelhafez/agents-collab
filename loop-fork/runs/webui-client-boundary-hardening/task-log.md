@@ -57,3 +57,7 @@ fields even when matching fleet/detail summaries contained the same extra data.
 - Exact review candidate `84bf07a` was superseded after one PASS and one FAIL:
   the outward task record contained a wrapped `the two four` typo.
   `review-attempt-003.md` preserves that verdict.
+- Final review candidate `cc1b294` received two literal PASS verdicts bound to
+  full diff SHA-256 `78d51b5b1792d9a9689e7f8edc5793efff064b2d6a4a998e814fa9863aa3be08`
+  and product diff SHA-256
+  `c1d9339805ab803212874bc645e83aecf36333713681ba43099d47c0e46a6bb4`.
