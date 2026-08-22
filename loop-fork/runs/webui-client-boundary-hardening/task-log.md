@@ -36,12 +36,12 @@ fields even when matching fleet/detail summaries contained the same extra data.
 
 - Harness unit attempt 001 is the preserved pre-production RED result. It records
   the permissive validator accepting the newly prohibited payloads.
-- Focused GREEN: 71 tests, 207 assertions, zero failures.
+- Focused GREEN: 72 tests, 209 assertions, zero failures.
 - Server producer compatibility: 32 tests, 187 assertions, zero failures, plus
   the current live Harvto lane accepted by the hardened validator.
 - Live security scan: zero leaked persisted values, zero absolute paths, and zero
   raw runtime fields.
-- Full sequential regression passed 1,645 tests across all 80 discovered files.
+- Full sequential regression passed 1,646 tests across all 80 discovered files.
 - Web build, targeted formatter/lint checks, and diff whitespace checks pass.
 - The repository-wide formatter command reports generated Harness JSON
   formatting diagnostics, including immutable prior-run artifacts; the two
@@ -51,3 +51,6 @@ fields even when matching fleet/detail summaries contained the same extra data.
   and a full-diff whitespace mismatch in the preserved RED log. The branch was
   not pushed and the PR remained draft. `review-attempt-001.md` preserves the
   exact failed-review record and the original RED-log hash.
+- Exact review candidate `3053e13` was superseded after one PASS and one FAIL:
+  the negative cost matrix did not explicitly prove that zero remains valid at
+  both optional cost consumers. `review-attempt-002.md` preserves that verdict.

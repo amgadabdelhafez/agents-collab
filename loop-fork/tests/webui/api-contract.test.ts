@@ -1085,6 +1085,16 @@ describe("Web UI live DTO boundary", () => {
     }
   });
 
+  test("accepts zero at every optional cost consumer", () => {
+    const costPaths: readonly (readonly PathSegment[])[] = [
+      ["details", ROUTE_ID, "agents", 0, "usage", "costUsd"],
+      ["details", ROUTE_ID, "workers", 0, "activity", 0, "costUsd"],
+    ];
+    for (const path of costPaths) {
+      expect(isWebUiSnapshot(mutateSnapshot({ path, value: 0 }))).toBe(true);
+    }
+  });
+
   test("rejects synthetic data-source markers at every DTO level", () => {
     const locations: readonly (readonly Mutation[])[] = [
       [
