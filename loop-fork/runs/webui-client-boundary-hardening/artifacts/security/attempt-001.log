@@ -1,0 +1,24 @@
+task_id: webui-client-boundary-hardening
+dimension: security
+attempt: 001
+started_at: 2026-08-22T18:51:58Z
+command: bun runs/webui-all-active-loops/artifacts/security/live-redaction-check.ts
+--- output ---
+{
+  "absolutePathLeakCount": 0,
+  "activeRoutes": [
+    "harvto-b1e274e66299:243"
+  ],
+  "candidateSensitiveValueCount": 92,
+  "detailCount": 1,
+  "leakFingerprints": [],
+  "leakedValueCount": 0,
+  "rawRuntimeFieldCount": 0,
+  "source": "loop-registry-live",
+  "valid": true
+}
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-22T18:51:58Z

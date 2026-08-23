@@ -85,6 +85,6 @@ board, recovery, quota, exit-menu or paired-agent behavior.
 
 ## Non-goals
 
-- Adding more AI supervisor agents or a web dashboard.
+- AS DELIVERED FOR THIS FEATURE: adding more AI supervisor agents or a web dashboard. The separately planned browser projection is governed by `specs/webui-control-plane/`.
 - Replacing the existing bridge transport wholesale.
 - Removing compatibility aliases before a later deprecation release.

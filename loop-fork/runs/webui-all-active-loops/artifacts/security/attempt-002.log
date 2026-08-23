@@ -1,0 +1,25 @@
+task_id: webui-all-active-loops
+dimension: security
+attempt: 002
+started_at: 2026-08-21T23:58:02Z
+command: bun runs/webui-all-active-loops/artifacts/security/live-redaction-check.ts
+--- output ---
+{
+  "absolutePathLeakCount": 0,
+  "activeRoutes": [
+    "harvto-b1e274e66299:242",
+    "ai-cur-458d3aca27ff:54"
+  ],
+  "candidateSensitiveValueCount": 521,
+  "detailCount": 2,
+  "leakFingerprints": [],
+  "leakedValueCount": 0,
+  "rawRuntimeFieldCount": 0,
+  "source": "loop-registry-live",
+  "valid": true
+}
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-21T23:58:02Z

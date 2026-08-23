@@ -1,0 +1,62 @@
+{
+  "task_id": "webui-client-boundary-hardening",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "security",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-client-boundary-hardening/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "008",
+      "latest_attempt_artifact": "runs/webui-client-boundary-hardening/artifacts/unit/attempt-008.log",
+      "latest_attempt_meta": "runs/webui-client-boundary-hardening/artifacts/unit/attempt-008.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-client-boundary-hardening/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-client-boundary-hardening/artifacts/build/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-client-boundary-hardening/artifacts/build/attempt-003.json"
+    },
+    "security": {
+      "status": "pass",
+      "artifact": "runs/webui-client-boundary-hardening/artifacts/security/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-client-boundary-hardening/artifacts/security/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-client-boundary-hardening/artifacts/security/attempt-003.json"
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/webui-client-boundary-hardening/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "006",
+      "latest_attempt_artifact": "runs/webui-client-boundary-hardening/artifacts/regression/attempt-006.log",
+      "latest_attempt_meta": "runs/webui-client-boundary-hardening/artifacts/regression/attempt-006.json"
+    },
+    "diff": {
+      "status": "pass",
+      "artifact": "runs/webui-client-boundary-hardening/artifacts/diff/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/webui-client-boundary-hardening/artifacts/diff/attempt-004.log",
+      "latest_attempt_meta": "runs/webui-client-boundary-hardening/artifacts/diff/attempt-004.json"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

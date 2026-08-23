@@ -1,5 +1,6 @@
 /loop
 node_modules
+/dist
 PLAN.md
 .DS_Store
 agents/coordination.jsonl

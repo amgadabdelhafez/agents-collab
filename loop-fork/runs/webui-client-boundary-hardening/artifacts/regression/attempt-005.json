@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-client-boundary-hardening",
+  "dimension": "regression",
+  "attempt": "005",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-22T19:10:42Z",
+  "ended_at": "2026-08-22T19:11:25Z",
+  "artifact": "runs/webui-client-boundary-hardening/artifacts/regression/attempt-005.log",
+  "command": [
+    "bun",
+    "run",
+    "test:ci"
+  ]
+}

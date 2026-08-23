@@ -1,0 +1,74 @@
+{
+  "task_id": "webui-all-active-loops",
+  "status": "pass",
+  "required": [
+    "unit",
+    "build",
+    "browser",
+    "security",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "005",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/unit/attempt-005.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/unit/attempt-005.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/build/attempt-004.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/build/attempt-004.json"
+    },
+    "browser": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/browser/fleet-release-390x844-needs-attention.png",
+      "reason": "Live browser reload covers both current registry lanes; exact 390x844 viewport has scrollWidth 390, with companion desktop, active, and DOM evidence.",
+      "method": "Codex in-app browser, exact viewport metrics, screenshot and DOM capture",
+      "signed_off_by": "codex"
+    },
+    "security": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/security/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/security/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/security/attempt-003.json"
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/regression/attempt-004.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/regression/attempt-004.json"
+    },
+    "diff": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops/artifacts/diff/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-all-active-loops/artifacts/diff/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-all-active-loops/artifacts/diff/attempt-003.json"
+    },
+    "review": {
+      "status": "pass",
+      "artifact": "runs/webui-all-active-loops-release-certification/independent-review.md",
+      "reason": "Fresh zero-write reviewers returned literal PASS for the complete committed source/test diff SHA-256 1b88b125b8f36627461bd8bc013cd07e41c33af4fc713e65341e97be27a77c9f, including the previously omitted tracked API contract test.",
+      "method": "Independent exact-commit source, test, evidence, lifecycle, provenance, security, and responsive UI audit with a deterministic hash recheck",
+      "signed_off_by": "active_loop_inventory and multi_loop_adapter_review"
+    }
+  }
+}

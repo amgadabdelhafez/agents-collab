@@ -1,0 +1,20 @@
+{
+  "task_id": "webui-all-active-loops-release-certification",
+  "status": "pending",
+  "required": [
+    "unit",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

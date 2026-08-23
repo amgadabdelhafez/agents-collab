@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-client-boundary-hardening",
+  "dimension": "diff",
+  "attempt": "003",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-22T19:12:13Z",
+  "ended_at": "2026-08-22T19:12:13Z",
+  "artifact": "runs/webui-client-boundary-hardening/artifacts/diff/attempt-003.log",
+  "command": [
+    "git",
+    "diff",
+    "--cached",
+    "--check",
+    "c265b85b8707fd9b715dc29c1acf18f427a65b73"
+  ]
+}

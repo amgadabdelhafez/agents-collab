@@ -1,0 +1,29 @@
+task_id: webui-all-active-loops-release-certification
+dimension: unit
+attempt: 001
+started_at: 2026-08-22T18:32:26Z
+command: sh runs/webui-all-active-loops-release-certification/artifacts/exact-byte-check.sh
+--- output ---
+full_diff_sha256=1b88b125b8f36627461bd8bc013cd07e41c33af4fc713e65341e97be27a77c9f
+api_contract_blob_sha256=a573133761f544119a8d830caebc5855ffb9eca2531f4218ecee3e9051607fb1
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/api-contract.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/api-contract.test.ts:
+(pass) Web UI live DTO boundary > accepts the complete live-only snapshot contract [1.78ms]
+(pass) Web UI live DTO boundary > rejects synthetic data-source markers at every DTO level [0.36ms]
+(pass) Web UI live DTO boundary > rejects fixture provenance at every provenance-bearing DTO location [0.19ms]
+(pass) Web UI live DTO boundary > rejects a structurally different detail summary even when identity matches [0.14ms]
+(pass) Web UI live DTO boundary > rejects unknown reason codes even when fleet and detail summaries agree [0.10ms]
+(pass) Web UI live DTO boundary > rejects malformed or negative optional worker completion metrics [0.19ms]
+(pass) Web UI live DTO boundary > fetch rejects synthetic data and fixture provenance instead of accepting fallback DTOs [1.47ms]
+
+ 7 pass
+ 0 fail
+ 25 expect() calls
+Ran 7 tests across 1 file. [30.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-22T18:32:26Z

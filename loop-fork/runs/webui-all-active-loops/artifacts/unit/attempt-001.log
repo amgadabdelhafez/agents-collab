@@ -1,0 +1,15 @@
+task_id: webui-all-active-loops
+dimension: unit
+attempt: 001
+started_at: 2026-08-21T23:27:59Z
+command: bun test tests/webui/harvto-live-data.test.ts tests/webui/api-contract.test.ts tests/webui/render.test.tsx tests/webui/selectors.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/selectors.test.ts:
+[loop] direct `bun test` is unsupported because Bun can terminate a shared-process suite before all files run; use `bun run test:file -- <file>` for focused tests or `bun run test:ci` for the complete suite.
+
+--- result ---
+command_exit_code: 2
+exit_code: 2
+ended_at: 2026-08-21T23:27:59Z

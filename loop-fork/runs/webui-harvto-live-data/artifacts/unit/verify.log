@@ -1,0 +1,26 @@
+task_id: webui-harvto-live-data
+dimension: unit
+attempt: 003
+started_at: 2026-08-21T20:21:09Z
+command: bun run test:file -- tests/webui/harvto-live-data.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/harvto-live-data.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/harvto-live-data.test.ts:
+(pass) Harvto live Web UI projection > projects current durable metadata and redacts raw lane content [3.55ms]
+(pass) Harvto live Web UI projection > probes tmux with an exact session target
+(pass) Harvto live Web UI projection > probes exact manifest identity and keeps unknown labels fail-closed [1.22ms]
+(pass) Harvto live Web UI projection > fails closed on malformed UTF-8 and identity conflicts [2.23ms]
+(pass) Harvto live Web UI projection > allows only same-host read requests and never substitutes fixtures [1.52ms]
+(pass) Harvto live Web UI projection > browser client rejects server failures and malformed nested DTOs [0.15ms]
+
+ 6 pass
+ 0 fail
+ 53 expect() calls
+Ran 6 tests across 1 file. [28.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-21T20:21:09Z

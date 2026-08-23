@@ -1,0 +1,38 @@
+{
+  "task_id": "webui-harvto-live-data",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "browser",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-harvto-live-data/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-harvto-live-data/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-harvto-live-data/artifacts/unit/attempt-001.json"
+    },
+    "build": {
+      "status": "pending"
+    },
+    "browser": {
+      "status": "pending"
+    },
+    "regression": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

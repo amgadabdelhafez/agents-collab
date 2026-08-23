@@ -1,0 +1,15 @@
+{
+  "task_id": "webui-all-active-loops",
+  "dimension": "security",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-21T23:58:02Z",
+  "ended_at": "2026-08-21T23:58:02Z",
+  "artifact": "runs/webui-all-active-loops/artifacts/security/attempt-002.log",
+  "command": [
+    "bun",
+    "runs/webui-all-active-loops/artifacts/security/live-redaction-check.ts"
+  ]
+}

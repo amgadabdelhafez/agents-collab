@@ -55,6 +55,6 @@ exists for individual paths but is not exercised as a coherent fault matrix.
 
 ## Non-goals
 
-- A web dashboard, full A2A server, distributed database, or multi-host consensus.
+- AS DELIVERED FOR P0: a web dashboard, full A2A server, distributed database, or multi-host consensus. The separately planned browser projection is governed by the root `specs/webui-control-plane/` package.
 - Automatic repair of malformed durable control history.
 - Container isolation or a multi-worktree merge refinery.

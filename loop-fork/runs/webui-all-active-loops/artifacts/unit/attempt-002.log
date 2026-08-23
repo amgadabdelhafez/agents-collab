@@ -1,0 +1,43 @@
+task_id: webui-all-active-loops
+dimension: unit
+attempt: 002
+started_at: 2026-08-21T23:28:12Z
+command: bun run test:file -- tests/webui/harvto-live-data.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/harvto-live-data.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/harvto-live-data.test.ts:
+(pass) active loop registry Web UI projection > projects duplicate run numbers across repositories without identity collisions [5.95ms]
+(pass) active loop registry Web UI projection > discovers every direct active run and excludes terminal or noncanonical entries [6.00ms]
+(pass) active loop registry Web UI projection > validates generic exact sessions for Harvto and AI Cur [2.79ms]
+(pass) active loop registry Web UI projection > uses the latest valid lifecycle-bearing hook when a trailing row has no state [1.25ms]
+(pass) active loop registry Web UI projection > ignores stale waiting and blocked states when newer per-agent evidence reports progress [1.41ms]
+(pass) active loop registry Web UI projection > preserves newer waiting and blocked states when progress evidence is stale [1.35ms]
+(pass) active loop registry Web UI projection > degrades one malformed active detail without suppressing its valid peer [2.48ms]
+(pass) active loop registry Web UI projection > returns 503 when an invalid active manifest leaves no valid candidate [1.17ms]
+(pass) active loop registry Web UI projection > returns a validated empty snapshot after a clean no-active scan [1.04ms]
+(pass) active loop registry Web UI projection > orders active runs deterministically by durable event, repository, and numeric run [4.09ms]
+(pass) active loop registry Web UI projection > allows only same-host GET and HEAD requests [2.22ms]
+(pass) active loop registry Web UI projection > rejects duplicate, orphaned, missing, and mismatched DTO identities [3.21ms]
+(pass) active loop registry Web UI projection > probes every runtime with exact socket and exact session argv [0.01ms]
+(pass) active loop registry Web UI projection > redacts combined sensitive content from every projected repository [2.87ms]
+(pass) active loop registry Web UI projection > accepts the repository-entry limit and rejects the next entry [21.18ms]
+(pass) active loop registry Web UI projection > isolates a repository only after its run-entry limit is exceeded [89.27ms]
+(pass) active loop registry Web UI projection > accepts the total numeric run-directory limit and rejects the next directory [350.46ms]
+(pass) active loop registry Web UI projection > accepts the active-run limit and rejects the next validated manifest [15.14ms]
+(pass) active loop registry Web UI projection > accepts the JSON byte limit and degrades only that run above it [1.74ms]
+(pass) active loop registry Web UI projection > accepts the JSONL byte limit and degrades only that run above it [8.70ms]
+(pass) active loop registry Web UI projection > accepts the JSONL line limit and degrades only that run above it [3.07ms]
+(pass) active loop registry Web UI projection > keeps worker counts complete while bounding projected activity [1.88ms]
+(pass) active loop registry Web UI projection > browser client rejects server failures and malformed DTO versions [0.86ms]
+
+ 23 pass
+ 0 fail
+ 135 expect() calls
+Ran 23 tests across 1 file. [549.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-21T23:28:13Z

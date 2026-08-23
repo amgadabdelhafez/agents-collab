@@ -1,0 +1,91 @@
+task_id: webui-client-boundary-hardening
+dimension: unit
+attempt: 005
+started_at: 2026-08-22T19:04:48Z
+command: bun run test:file -- tests/webui/api-contract.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/api-contract.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/api-contract.test.ts:
+(pass) Web UI live DTO boundary > accepts the complete live-only snapshot contract [0.82ms]
+(pass) Web UI live DTO boundary > accepts declared optional fields when omitted [0.34ms]
+(pass) Web UI live DTO boundary > accepts canonical expanded-year timestamps emitted by Date.toISOString [0.19ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on snapshot [0.04ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on fleet snapshot [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on connection [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on data source [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on quality [0.01ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on provenance [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on fleet run [0.03ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on adapter summary [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on fleet agent summary [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on run reason [0.09ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on run detail [0.04ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on run authority [0.05ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on agent seat [0.20ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on agent usage [0.04ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on usage window [0.03ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on bridge message [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on evidence item [0.06ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on governess [0.05ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on governess audit [0.04ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on governess fact [0.03ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on governess interpretation [0.03ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on governess policy [0.02ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on worker tier [0.06ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on worker counts [0.04ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on worker activity [0.04ms]
+(pass) Web UI live DTO boundary > rejects unknown own keys on timeline event [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for fleet observedAt [0.04ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for provenance observedAt [0.02ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for connection lastEventAt [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for connection lastObservedAt
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for data source generatedAt [0.02ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for adapter lastProbedAt [0.02ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for run lastDurableEventAt [0.01ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for run startedAt [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for usage resetAt [0.04ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for bridge at [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for agent lastHookAt [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for agent taskObservedAt [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for worker startedAt [0.06ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for worker finishedAt [0.02ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for evidence capturedAt [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for timeline at [0.03ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for governess audit at [0.01ms]
+(pass) Web UI live DTO boundary > rejects non-canonical ISO timestamp for governess interpretation generatedAt [0.05ms]
+(pass) Web UI live DTO boundary > rejects array coercion for run-reason severity [0.02ms]
+(pass) Web UI live DTO boundary > rejects array coercion for usage reset state [0.04ms]
+(pass) Web UI live DTO boundary > rejects array coercion for evidence kind [0.03ms]
+(pass) Web UI live DTO boundary > rejects array coercion for timeline category [0.03ms]
+(pass) Web UI live DTO boundary > rejects array coercion for timeline tone
+(pass) Web UI live DTO boundary > rejects array coercion for Governess fact status
+(pass) Web UI live DTO boundary > rejects array coercion for Governess interpretation kind
+(pass) Web UI live DTO boundary > rejects array coercion for Governess policy disposition [0.14ms]
+(pass) Web UI live DTO boundary > rejects array coercion for authority lease state
+(pass) Web UI live DTO boundary > rejects invalid top-level source literals [0.05ms]
+(pass) Web UI live DTO boundary > rejects non-literal read-only policy labels [0.14ms]
+(pass) Web UI live DTO boundary > rejects malformed evidence identifiers at every reference site [0.17ms]
+(pass) Web UI live DTO boundary > rejects every malformed opaque evidence-ID grammar branch [0.19ms]
+(pass) Web UI live DTO boundary > rejects parseable but noncanonical and impossible timestamps
+(pass) Web UI live DTO boundary > rejects negative, fractional, and unsafe required counters [1.82ms]
+(pass) Web UI live DTO boundary > rejects negative, fractional, and unsafe optional counters [0.59ms]
+(pass) Web UI live DTO boundary > rejects out-of-range percentages and confidence [0.37ms]
+(pass) Web UI live DTO boundary > rejects negative or non-finite costs [0.20ms]
+(pass) Web UI live DTO boundary > rejects synthetic data-source markers at every DTO level [0.10ms]
+(pass) Web UI live DTO boundary > rejects fixture provenance at every provenance-bearing DTO location [0.16ms]
+(pass) Web UI live DTO boundary > rejects a structurally different detail summary even when identity matches [0.10ms]
+(pass) Web UI live DTO boundary > rejects unknown reason codes even when fleet and detail summaries agree [0.10ms]
+(pass) Web UI live DTO boundary > rejects malformed or negative optional worker completion metrics [0.24ms]
+(pass) Web UI live DTO boundary > fetch rejects synthetic data and fixture provenance instead of accepting fallback DTOs [1.05ms]
+
+ 71 pass
+ 0 fail
+ 207 expect() calls
+Ran 71 tests across 1 file. [28.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-22T19:04:48Z

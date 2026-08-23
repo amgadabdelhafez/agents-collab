@@ -1,0 +1,7 @@
+{
+  "task_id": "webui-control-plane-spec",
+  "scanned_at": "2026-08-20T07:20:38Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": []
+}

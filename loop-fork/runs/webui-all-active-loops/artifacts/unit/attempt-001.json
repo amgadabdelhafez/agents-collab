@@ -1,0 +1,19 @@
+{
+  "task_id": "webui-all-active-loops",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 2,
+  "command_exit_code": 2,
+  "started_at": "2026-08-21T23:27:59Z",
+  "ended_at": "2026-08-21T23:27:59Z",
+  "artifact": "runs/webui-all-active-loops/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/webui/harvto-live-data.test.ts",
+    "tests/webui/api-contract.test.ts",
+    "tests/webui/render.test.tsx",
+    "tests/webui/selectors.test.ts"
+  ]
+}

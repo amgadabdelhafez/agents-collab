@@ -1,0 +1,64 @@
+{
+  "task_id": "webui-harvto-live-data",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "browser",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-harvto-live-data/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/webui-harvto-live-data/artifacts/unit/attempt-002.log",
+      "latest_attempt_meta": "runs/webui-harvto-live-data/artifacts/unit/attempt-002.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-harvto-live-data/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-harvto-live-data/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-harvto-live-data/artifacts/build/attempt-001.json"
+    },
+    "browser": {
+      "status": "pass",
+      "artifact": "runs/webui-harvto-live-data/artifacts/browser/harvto-live-run.png",
+      "reason": "Live run 242 rendered with correct input-required lifecycle, zero new console errors, and 390px scrollWidth exactly 390.",
+      "method": "In-app browser DOM snapshot, desktop capture, mobile viewport metrics, and screenshot inspection."
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/webui-harvto-live-data/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-harvto-live-data/artifacts/regression/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-harvto-live-data/artifacts/regression/attempt-001.json"
+    },
+    "diff": {
+      "status": "pass",
+      "artifact": "runs/webui-harvto-live-data/artifacts/diff/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-harvto-live-data/artifacts/diff/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-harvto-live-data/artifacts/diff/attempt-001.json"
+    },
+    "review": {
+      "status": "pending"
+    },
+    "security": {
+      "status": "pass",
+      "reason": "The real run 242 endpoint excluded all 162 sampled sensitive source values and every absolute path; unit fixtures cover malformed UTF-8, identity conflict, host/origin/method rejection, and byte-preserving reads.",
+      "method": "Exact-value serialized-payload scan plus isolated fail-closed projection tests."
+    }
+  }
+}

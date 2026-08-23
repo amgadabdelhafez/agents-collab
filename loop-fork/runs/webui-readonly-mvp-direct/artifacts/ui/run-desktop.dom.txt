@@ -1,0 +1,383 @@
+- complementary "Primary navigation":
+  - button "Open Loop fleet": L
+  - navigation "Views":
+    - button "Fleet":
+      - generic: ⌁
+      - text: Fleet
+    - button "Working":
+      - generic: ●
+      - text: Working
+    - button "Run":
+      - generic: ▦
+      - text: Run
+  - generic "Local read-only fixture projection":
+    - generic "Read-only fixture projection"
+    - generic: Local
+- banner:
+  - generic: Agents Collab
+  - generic: /
+  - generic: Verify cache boundary
+  - generic: 3 fixture runs active
+  - generic: Fixture snapshot
+- banner:
+  - button "Fleet":
+    - generic: ←
+    - text: Fleet
+  - generic: northstar/ridge
+  - heading "Verify cache boundary" [level=1]
+  - paragraph: ridge-cache-boundary
+  - generic: Read-only release
+  - generic: Working
+  - generic: Run ID
+  - strong: ridge-298
+  - generic: Current driver
+  - strong: Codex
+  - generic: Governess epoch
+  - strong: epoch-ridge-298-04
+  - generic: Authority lease
+  - strong: Current
+  - generic: Data quality
+  - strong: Partial
+  - generic: Connection
+  - strong: Updates behind
+  - generic: Last observed
+  - strong: 10h ago
+  - strong: Identity is current; the event projection is three records behind.
+  - generic: Synthetic fixture data. Identifiers and content are fully redacted.
+  - generic: Synthetic Redacted · stream-behind
+- navigation "Run workspace sections":
+  - button "Overview"
+  - button "Agents"
+  - button "Activity"
+  - button "Timeline"
+- main:
+  - text: Paired frontier roles
+  - heading "Agents" [level=2]
+  - paragraph: Two peer seats. Lifecycle is factual; task labels are advisory.
+  - article:
+    - generic: Frontier agent seat 1
+    - heading "Codex" [level=2]
+    - generic: Driver
+    - paragraph: Codex · frontier-large · high
+    - generic: Working
+    - generic: 10h ago
+    - region "Codex current task":
+      - generic: Current task
+      - generic: Advisory
+      - paragraph: Verify cache boundary
+      - generic: "Source: Run charter · observed 10h ago"
+    - generic: Context
+    - strong: 42%
+    - progressbar "42% context used"
+    - generic: 0 compactions
+    - generic: Tokens
+    - strong: 31.4K
+    - generic: 7.8K cached
+    - generic: Cost
+    - strong: $1.84
+    - generic: cumulative
+    - generic: Tools
+    - strong: "1"
+    - generic: in flight
+    - region "Quota windows":
+      - article "Session quota, 38% used":
+        - generic: Session limit
+        - strong: 38% used
+        - generic: Hook Journal · Current
+        - generic: Reset Aug 20, 4:00:00 PM
+      - article "Weekly quota, 27% used":
+        - generic: Weekly limit
+        - strong: 27% used
+        - generic: Hook Journal · Current
+        - generic: Reset Aug 24, 5:00:00 PM
+    - tablist "Codex detail views":
+      - tab "Console" [selected]
+      - tab "Events"
+      - tab "Bridge"
+    - tabpanel "Console":
+      - generic: Diagnostic projection
+      - generic: Bounded and redacted. Terminal input is unavailable.
+      - code: "[Aug 20, 1:03:14 PM] Tool result recorded [task] Verify cache boundary [model] frontier-large · high [tools] 1 in flight [status] working"
+      - paragraph: This preview is assembled from redacted public fields. It is not a raw provider transcript or an interactive shell.
+  - article:
+    - generic: Frontier agent seat 2
+    - heading "Claude" [level=2]
+    - generic: Reviewer
+    - paragraph: Claude · frontier-review · medium
+    - generic: Waiting Peer
+    - generic: 10h ago
+    - region "Claude current task":
+      - generic: Current task
+      - generic: Advisory
+      - paragraph: Review evidence for verify cache boundary
+      - generic: "Source: Run charter · observed 10h ago"
+    - generic: Context
+    - strong: 51%
+    - progressbar "51% context used"
+    - generic: 1 compactions
+    - generic: Tokens
+    - strong: 35.6K
+    - generic: 8.9K cached
+    - generic: Cost
+    - strong: $2.57
+    - generic: cumulative
+    - generic: Tools
+    - strong: "0"
+    - generic: in flight
+    - region "Quota windows":
+      - article "Session quota, 52% used":
+        - generic: Session limit
+        - strong: 52% used
+        - generic: Hook Journal · Current
+        - generic: Reset Aug 20, 4:00:00 PM
+      - article "Weekly quota, 38% used":
+        - generic: Weekly limit
+        - strong: 38% used
+        - generic: Hook Journal · Current
+        - generic: Reset Aug 24, 5:00:00 PM
+    - tablist "Claude detail views":
+      - tab "Console" [selected]
+      - tab "Events"
+      - tab "Bridge"
+    - tabpanel "Console":
+      - generic: Diagnostic projection
+      - generic: Bounded and redacted. Terminal input is unavailable.
+      - code: "[Aug 20, 1:02:14 PM] Review state observed [task] Review evidence for verify cache boundary [model] frontier-review · medium [tools] 0 in flight [status] waiting-peer"
+      - paragraph: This preview is assembled from redacted public fields. It is not a raw provider transcript or an interactive shell.
+  - article:
+    - text: Deterministic control authority
+    - heading "Governess" [level=2]
+    - paragraph: Epoch epoch-ridge-298-04 · lease Codex owns the active lease
+    - generic: Read-only release
+    - text: Durable state
+    - heading "Facts" [level=3]
+    - generic: Authoritative
+    - article:
+      - text: Lifecycle
+      - strong: working
+      - generic: Governess Journal
+      - generic: ·
+      - generic: ridge-298-governess-detail
+      - generic: ·
+      - generic: 10h ago
+      - generic: Current
+    - article:
+      - text: Adapter health
+      - strong: healthy
+      - generic: Governess Journal
+      - generic: ·
+      - generic: ridge-298-governess-detail
+      - generic: ·
+      - generic: 10h ago
+      - generic: Current
+    - article:
+      - text: Data quality
+      - strong: Partial
+      - generic: Governess Journal
+      - generic: ·
+      - generic: ridge-298-governess-detail
+      - generic: ·
+      - generic: 10h ago
+      - generic: Current
+    - text: Model-assisted reading
+    - heading "Interpretation" [level=3]
+    - generic: Advisory only
+    - article:
+      - text: Progress
+      - strong: 91% confidence
+      - paragraph: Durable work is recorded for verify cache boundary.
+      - generic: Local fixture judge · generated 10h ago
+    - article:
+      - text: Next
+      - strong: 87% confidence
+      - paragraph: Continue with the next verified checkpoint.
+      - generic: Local fixture judge · generated 10h ago
+    - text: Policy projection
+    - heading "Policy and planned actions" [level=3]
+    - generic: No actions available
+    - article:
+      - generic: Allowed
+      - text: Read-only release
+      - heading "Repository writes" [level=4]
+      - paragraph: The current driver holds the bounded lease.
+    - article:
+      - generic: Confirmation Bound
+      - text: Read-only release
+      - heading "Lifecycle controls" [level=4]
+      - paragraph: Future controls require a separate confirmed release.
+    - text: Durable controls
+    - heading "Audit" [level=3]
+    - generic: 1 records
+    - table:
+      - rowgroup:
+        - row "Control Transport Acknowledgement Observed Record":
+          - columnheader "Control"
+          - columnheader "Transport"
+          - columnheader "Acknowledgement"
+          - columnheader "Observed"
+          - columnheader "Record"
+      - rowgroup:
+        - row "observedctl-ridge-298-06 durable journal recorded Aug 20, 12:52:14 PM Evidence":
+          - cell "observedctl-ridge-298-06":
+            - strong: observed
+            - text: ctl-ridge-298-06
+          - cell "durable journal"
+          - cell "recorded"
+          - cell "Aug 20, 12:52:14 PM":
+            - time: Aug 20, 12:52:14 PM
+          - cell "Evidence":
+            - button "Evidence": ⌁Evidence
+  - article:
+    - text: Governess-routed execution
+    - heading "Bounded worker activity" [level=2]
+    - paragraph: Direct, Nanny, and Au Pair are execution tiers, not peer agents.
+    - generic: Read-only activity
+    - generic: Queued
+    - strong: "0"
+    - generic: Active
+    - strong: "1"
+    - generic: Completed
+    - strong: "5"
+    - generic: Failed
+    - strong: "0"
+    - heading "Direct" [level=3]
+    - paragraph: Bounded tool execution owned by the active frontier agent.
+    - generic: Execution tier
+    - group "Direct job counts":
+      - generic: Direct job counts
+      - strong: "0"
+      - text: queued
+      - strong: "1"
+      - text: active
+      - strong: "4"
+      - text: completed
+      - strong: "0"
+      - text: failed
+    - article:
+      - button "Active Verify the current focused test evidence.The task requires repository-local inspection. 10h ago" [expanded]:
+        - generic: Active
+        - strong: Verify the current focused test evidence.
+        - text: The task requires repository-local inspection.
+        - generic: 10h ago
+        - generic: −
+      - group "Bounded worker flow":
+        - generic: Bounded worker flow
+        - text: Request
+        - paragraph: Verify the current focused test evidence.
+        - generic: →
+        - text: Tool activity
+        - paragraph: Read-only repository and test inspection
+        - generic: →
+        - text: Result
+        - paragraph: Focused evidence is internally consistent.
+      - generic: Model calls
+      - strong: "0"
+      - generic: Tokens
+      - strong: "0"
+      - generic: Cost
+      - strong: $0.000
+      - generic: Finished
+      - strong: In progress
+      - text: Bounded context capsule
+      - paragraph: fixture-capsule-direct-01
+      - generic: Artifact references
+      - button "ev_ridge-298_test": ⌁ev_ridge-298_test
+    - heading "Nanny" [level=3]
+    - paragraph: Local bounded assistance routed by the frontier owner.
+    - generic: Execution tier
+    - group "Nanny job counts":
+      - generic: Nanny job counts
+      - strong: "0"
+      - text: queued
+      - strong: "0"
+      - text: active
+      - strong: "1"
+      - text: completed
+      - strong: "0"
+      - text: failed
+    - article:
+      - button "Completed Summarize the named test results.A deterministic summary fit the local worker tier. 10h ago":
+        - generic: Completed
+        - strong: Summarize the named test results.
+        - text: A deterministic summary fit the local worker tier.
+        - generic: 10h ago
+        - generic: +
+    - heading "Au Pair" [level=3]
+    - paragraph: Optional paid utility tier. Disabled in this fixture.
+    - generic: Execution tier
+    - group "Au Pair job counts":
+      - generic: Au Pair job counts
+      - strong: "0"
+      - text: queued
+      - strong: "0"
+      - text: active
+      - strong: "0"
+      - text: completed
+      - strong: "0"
+      - text: failed
+    - generic: No activity in this projection.
+  - article:
+    - text: Combined durable history
+    - heading "Timeline" [level=2]
+    - paragraph: Lifecycle, agents, bridge, Governess, workers, evidence, and adapters.
+    - generic: Newest page
+    - generic: 3 of 3 events
+    - generic: Search timeline
+    - generic: ⌕
+    - searchbox "Search timeline"
+    - group "Timeline categories":
+      - generic: Timeline categories
+      - button "All" [pressed]
+      - button "Lifecycle"
+      - button "Agent"
+      - button "Bridge"
+      - button "Governess"
+      - button "Worker"
+      - button "Evidence"
+      - button "Adapter"
+    - article:
+      - generic: Lifecycle
+      - generic: "#104"
+      - text: Loop runtime
+      - time: Aug 20, 1:03:14 PM
+      - heading "Run is working" [level=3]
+      - paragraph: The latest canonical lifecycle was read from durable evidence.
+      - generic: Hook Journal
+      - generic: ·
+      - generic: ridge-298-timeline
+      - generic: ·
+      - generic: 10h ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Bridge
+      - generic: "#103"
+      - text: Claude
+      - time: Aug 20, 1:00:14 PM
+      - heading "Peer receipt confirmed" [level=3]
+      - paragraph: A durable bridge receipt matched the intended recipient.
+      - generic: Hook Journal
+      - generic: ·
+      - generic: ridge-298-timeline
+      - generic: ·
+      - generic: 10h ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Worker
+      - generic: "#102"
+      - text: Direct worker
+      - time: Aug 20, 12:55:14 PM
+      - heading "Focused verification completed" [level=3]
+      - paragraph: The bounded check produced named test evidence.
+      - generic: Hook Journal
+      - generic: ·
+      - generic: ridge-298-timeline
+      - generic: ·
+      - generic: 10h ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - navigation "Timeline pages":
+      - button "← Newer" [disabled]
+      - generic: Newest bounded snapshot · maximum 100 rows
+      - button "Older →" [disabled]

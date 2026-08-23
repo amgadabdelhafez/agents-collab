@@ -1,0 +1,32 @@
+{
+  "task_id": "webui-harvto-live-data",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "browser",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "build": {
+      "status": "pending"
+    },
+    "browser": {
+      "status": "pending"
+    },
+    "regression": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

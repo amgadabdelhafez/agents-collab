@@ -1,0 +1,30 @@
+{
+  "task_id": "webui-harvto-live-data",
+  "scanned_at": "2026-08-21T20:24:01Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-21T20:24:01Z",
+      "task_id": "webui-harvto-live-data",
+      "signal": "loc_growth",
+      "file": "src/webui/api.ts",
+      "before_loc": 65,
+      "after_loc": 447,
+      "delta_loc": 382,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-21T20:24:01Z",
+      "task_id": "webui-harvto-live-data",
+      "signal": "loc_growth",
+      "file": "src/webui/server/harvto-live-data.ts",
+      "before_loc": 1469,
+      "after_loc": 1767,
+      "delta_loc": 298,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

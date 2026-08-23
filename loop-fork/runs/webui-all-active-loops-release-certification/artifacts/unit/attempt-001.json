@@ -1,0 +1,15 @@
+{
+  "task_id": "webui-all-active-loops-release-certification",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-22T18:32:26Z",
+  "ended_at": "2026-08-22T18:32:26Z",
+  "artifact": "runs/webui-all-active-loops-release-certification/artifacts/unit/attempt-001.log",
+  "command": [
+    "sh",
+    "runs/webui-all-active-loops-release-certification/artifacts/exact-byte-check.sh"
+  ]
+}

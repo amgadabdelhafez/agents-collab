@@ -29,6 +29,22 @@ An external bridge supervisor can submit/observe messages, but is not a route
 or claim authority.
 ```
 
+## Planned Web control surface (not installed)
+
+`specs/webui-control-plane/` defines an additive local browser projection:
+
+```text
+browser ──GET/SSE──► loopback Web server ──read-only──► durable run sources
+   │                         │
+   │                         └─ diagnostics ─► bounded tmux/process probes
+   │
+   └─ later typed request ─► untrusted inbox ─► current Governess epoch
+```
+
+Release 1 has no mutation path. The browser and server do not own lifecycle,
+driver lease, routing, delivery, or control outcome. Tmux remains the current
+execution/presentation adapter until a separately approved parity cutover.
+
 ## Responsibilities
 
 | Boundary | Owns | Does not own |
@@ -48,6 +64,7 @@ or claim authority.
 | Memory checkpoint | Bounded pre-boundary continuity with exact run/session/source provenance | Raw transcripts, hidden reasoning, secrets, or operational authority |
 | Curated memory | Explicit allowlisted Markdown promotion with a JSON provenance sidecar | Automatic learning, unresolved hypotheses, or release/route authority |
 | Native fallback | One leased read-only provider child for bounded exploration or independent review after settled utility evidence | Worker pool, edits, shell mutation, MCP/web access, descendants, authority, or final review |
+| Planned Web control surface | Redacted fleet/run projections, live presentation, personal display preferences | Run truth, Governess policy, tmux control, worker tier choice, secrets, or direct file/journal mutation |
 
 ## Architecture invariants
 
@@ -96,6 +113,14 @@ or claim authority.
 - Memory promotion is an explicit curated command. Pickbrain, Witchcraft, and
   any future local retrieval service consume its Markdown as a rebuildable
   projection and cannot mutate runtime truth.
+- Any browser/Web status is a rebuildable projection. It exposes source,
+  freshness, data quality, and conflicts and never becomes lifecycle or control
+  authority.
+- Browser-facing reads are side-effect-free. Expiry, acknowledgement,
+  reconciliation, delivery, and cleanup remain explicit runtime maintenance.
+- Before browser controls are admitted, the manifest must bind the canonical
+  tmux socket plus server PID/process-birth identity; a session name or reused
+  socket on an unknown/reincarnated server is not a safe control target.
 
 ## Key data flows
 
@@ -144,6 +169,11 @@ or claim authority.
    run at once. The next exact fallback-profile spawn consumes it, lifecycle
    hooks bind/close it, and every other fleet or child mutation attempt is
    denied, including `TeamCreate`.
+9. **Planned browser projection:** `loop web` materializes one canonical run per
+   persisted repo/run key, streams ordered projection updates, and nests
+   tmux/process state as diagnostics. Later typed requests are accepted only by
+   the current Governess epoch through policy and the control journal.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
-contracts and promotion gates.
+contracts and promotion gates. See `specs/webui-control-plane/` and
+`docs/architecture/webui-control-plane.md` for the planned browser surface.

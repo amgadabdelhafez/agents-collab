@@ -1,0 +1,31 @@
+task_id: webui-harvto-live-data
+dimension: unit
+attempt: 001
+started_at: 2026-08-21T19:50:46Z
+command: env LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/harvto-live-data.test.ts tests/webui/selectors.test.ts tests/webui/render.test.tsx
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/selectors.test.ts:
+(pass) Web UI fleet selectors > applies the exclusive group precedence [0.30ms]
+(pass) Web UI fleet selectors > searches useful row and reason fields without case sensitivity [0.23ms]
+(pass) Web UI fleet selectors > combines repository, lifecycle, and primary-group filters [0.14ms]
+(pass) Web UI fleet selectors > sorts by severity, recent event, repository, and run id deterministically
+
+tests/webui/render.test.tsx:
+(pass) Web UI server-rendered contract > renders fleet triage and the read-only run workspace [11.02ms]
+
+tests/webui/harvto-live-data.test.ts:
+(pass) Harvto live Web UI projection > projects current durable metadata and redacts raw lane content [2.46ms]
+(pass) Harvto live Web UI projection > fails closed on malformed UTF-8 and identity conflicts [1.96ms]
+(pass) Harvto live Web UI projection > allows only same-host read requests and never substitutes fixtures [1.48ms]
+
+ 8 pass
+ 0 fail
+ 67 expect() calls
+Ran 8 tests across 3 files. [68.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-21T19:50:46Z

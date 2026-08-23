@@ -1,0 +1,85 @@
+{
+  "task_id": "webui-readonly-mvp-direct",
+  "scanned_at": "2026-08-21T05:50:44Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-21T05:50:44Z",
+      "task_id": "webui-readonly-mvp-direct",
+      "signal": "loc_growth",
+      "file": "src/webui/App.tsx",
+      "before_loc": 0,
+      "after_loc": 207,
+      "delta_loc": 207,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-21T05:50:44Z",
+      "task_id": "webui-readonly-mvp-direct",
+      "signal": "loc_growth",
+      "file": "src/webui/components/FleetView.tsx",
+      "before_loc": 0,
+      "after_loc": 603,
+      "delta_loc": 603,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-21T05:50:44Z",
+      "task_id": "webui-readonly-mvp-direct",
+      "signal": "loc_growth",
+      "file": "src/webui/components/RunWorkspace.tsx",
+      "before_loc": 0,
+      "after_loc": 1451,
+      "delta_loc": 1451,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-21T05:50:44Z",
+      "task_id": "webui-readonly-mvp-direct",
+      "signal": "loc_growth",
+      "file": "src/webui/fixtures.ts",
+      "before_loc": 0,
+      "after_loc": 796,
+      "delta_loc": 796,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-21T05:50:44Z",
+      "task_id": "webui-readonly-mvp-direct",
+      "signal": "loc_growth",
+      "file": "src/webui/selectors.ts",
+      "before_loc": 0,
+      "after_loc": 174,
+      "delta_loc": 174,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-21T05:50:44Z",
+      "task_id": "webui-readonly-mvp-direct",
+      "signal": "loc_growth",
+      "file": "src/webui/styles.css",
+      "before_loc": 0,
+      "after_loc": 2670,
+      "delta_loc": 2670,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-21T05:50:44Z",
+      "task_id": "webui-readonly-mvp-direct",
+      "signal": "loc_growth",
+      "file": "src/webui/types.ts",
+      "before_loc": 0,
+      "after_loc": 345,
+      "delta_loc": 345,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}
