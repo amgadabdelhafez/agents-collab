@@ -17,18 +17,18 @@
       "artifact": "runs/webui-mobile-tailscale/artifacts/unit/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "008",
-      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/unit/attempt-008.log",
-      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/unit/attempt-008.json"
+      "latest_attempt": "006",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/unit/attempt-006.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/unit/attempt-006.json"
     },
     "build": {
       "status": "pass",
       "artifact": "runs/webui-mobile-tailscale/artifacts/build/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "006",
-      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/build/attempt-006.log",
-      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/build/attempt-006.json"
+      "latest_attempt": "005",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/build/attempt-005.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/build/attempt-005.json"
     },
     "ui": {
       "status": "pass",
@@ -49,18 +49,18 @@
       "artifact": "runs/webui-mobile-tailscale/artifacts/network/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "003",
-      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/network/attempt-003.log",
-      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/network/attempt-003.json"
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/network/attempt-002.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/network/attempt-002.json"
     },
     "regression": {
       "status": "pass",
       "artifact": "runs/webui-mobile-tailscale/artifacts/regression/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "002",
-      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/regression/attempt-002.log",
-      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/regression/attempt-002.json"
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/regression/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/regression/attempt-001.json"
     },
     "diff": {
       "status": "pending"

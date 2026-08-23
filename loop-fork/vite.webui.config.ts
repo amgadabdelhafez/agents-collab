@@ -1,6 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+import { exactHostGuardPlugin } from "./src/webui/server/exact-host-guard.ts";
 import { loopRegistryLiveDataPlugin } from "./src/webui/server/harvto-live-data.ts";
 import { resolveWebUiServerEnvironment } from "./src/webui/tailscale.ts";
 
@@ -11,7 +12,11 @@ const expectedHosts = [network.host, ...(network.allowedHosts ?? [])].map(
 
 export default defineConfig({
   root: "src/webui",
-  plugins: [loopRegistryLiveDataPlugin({ expectedHosts }), react()],
+  plugins: [
+    exactHostGuardPlugin(expectedHosts),
+    loopRegistryLiveDataPlugin({ expectedHosts }),
+    react(),
+  ],
   server: {
     allowedHosts: network.allowedHosts,
     hmr: false,

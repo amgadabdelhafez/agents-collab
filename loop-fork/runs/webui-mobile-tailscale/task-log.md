@@ -16,6 +16,8 @@ Description: Add a phone-first Web UI layout and private tailnet-only launch pat
 - Extended the live-data Host and Origin guard from one expected localhost to
   an exact configured allowlist, preserving same-host enforcement for the
   derived Tailscale IP and MagicDNS name.
+- Added an earlier all-route exact Host guard so Vite root and asset responses
+  cannot rely on Vite's permissive numeric-host behavior.
 - Added fail-closed resolver tests and operator documentation.
 
 ## Why
@@ -29,14 +31,15 @@ two exact private hosts derived from healthy Tailscale status.
 ## Notes
 
 - Focused resolver suite: 6 tests, 15 assertions, zero failures.
+- Exact all-route Host guard suite: 3 tests, 11 assertions, zero failures.
 - Exact Host/Origin projection suite: 33 tests, 191 assertions, zero failures.
 - Server-rendered Web UI suite: 5 tests, 54 assertions, zero failures.
-- Full sequential regression: 82 test files, 1,659 tests, zero failures.
+- Full sequential regression: 83 test files, 1,662 tests, zero failures.
 - Production Web UI build and scoped formatting checks pass.
-- Repository-wide `bun run check` remains stopped by 89 formatting diagnostics
-  in generated Harness JSON, including the inherited completed-run baseline;
-  the ten changed source, test, configuration, and package files pass the
-  scoped check without diagnostics.
+- Repository-wide `bun run check` remains stopped by 89 out-of-scope baseline
+  diagnostics, dominated by generated Harness JSON and including pre-existing
+  loop-source lint; the thirteen changed source, test, configuration, HTML, and
+  package files pass the scoped check without diagnostics.
 - The mandatory root `scripts/verify.sh` reaches the same repository-wide lint
   stop before later gates; it reports no changed product or test diagnostic.
 - Live browser evidence covers 320x700, 390x844, and 430x932 with zero
@@ -44,5 +47,8 @@ two exact private hosts derived from healthy Tailscale status.
 - Real listeners are exact `127.0.0.1:46327` and `100.64.0.14:46327`; there is
   no wildcard listener. Both the private IP and `sweetmac14.sweet.home` return
   the validated redacted live snapshot.
+- A real unrelated numeric Host receives `403 HOST_REJECTED` for `/`,
+  `/main.tsx`, and `/api/v1/live-snapshot`; both exact allowed hosts return 200
+  for all three routes.
 - Tailscale ACLs, Serve configuration, firewall state, and public/LAN exposure
   were not changed.
