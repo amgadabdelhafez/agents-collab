@@ -606,10 +606,11 @@
     {
       "id": "webui-mobile-tailscale",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-08-23T06:11:43Z",
       "run_dir": "runs/webui-mobile-tailscale",
-      "eval_status": "pending",
+      "eval_status": "pass",
+      "ended_at": "2026-08-23T06:50:14Z",
       "spec_path": "specs/webui-mobile-tailscale.md"
     }
   ]

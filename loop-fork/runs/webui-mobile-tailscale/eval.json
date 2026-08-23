@@ -1,6 +1,6 @@
 {
   "task_id": "webui-mobile-tailscale",
-  "status": "pending",
+  "status": "pass",
   "required": [
     "unit",
     "build",
@@ -63,10 +63,18 @@
       "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/regression/attempt-002.json"
     },
     "diff": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/diff/committed-range.log",
+      "reason": "Both exact committed ranges pass git diff --check and are bound by recorded SHA-256 hashes.",
+      "method": "committed-range-diff-check",
+      "signed_off_by": "codex"
     },
     "review": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/independent-review.md",
+      "reason": "Independent zero-write reviewer returned literal PASS for the exact candidate and prior Host-guard correction.",
+      "method": "independent-exact-sha",
+      "signed_off_by": "webui_release_review"
     }
   }
 }

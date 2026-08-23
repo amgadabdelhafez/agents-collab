@@ -65,3 +65,4 @@
 {"ts": "2026-08-22T19:25:12Z", "task_id": "webui-client-boundary-hardening", "signal": "loc_growth", "file": "src/webui/api.ts", "before_loc": 526, "after_loc": 750, "delta_loc": 224, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-23T05:52:33Z", "task_id": "webui-theme-mode", "signal": "loc_growth", "file": "src/webui/styles.css", "before_loc": 2731, "after_loc": 2875, "delta_loc": 144, "threshold": 100, "severity": "indicator"}
 {"ts": "2026-08-23T05:52:33Z", "task_id": "webui-theme-mode", "signal": "loc_growth", "file": "src/webui/theme.ts", "before_loc": 0, "after_loc": 154, "delta_loc": 154, "threshold": 100, "severity": "indicator"}
+{"ts": "2026-08-23T06:50:14Z", "task_id": "webui-mobile-tailscale", "signal": "loc_growth", "file": "src/webui/tailscale.ts", "before_loc": 0, "after_loc": 153, "delta_loc": 153, "threshold": 100, "severity": "indicator"}
