@@ -596,10 +596,11 @@
     {
       "id": "webui-theme-mode",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-08-23T05:28:47Z",
       "run_dir": "runs/webui-theme-mode",
-      "eval_status": "pending",
+      "eval_status": "pass",
+      "ended_at": "2026-08-23T05:52:33Z",
       "spec_path": "specs/webui-theme-mode.md"
     }
   ]

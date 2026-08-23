@@ -1,6 +1,6 @@
 {
   "task_id": "webui-theme-mode",
-  "status": "pending",
+  "status": "pass",
   "required": [
     "unit",
     "build",
@@ -60,7 +60,11 @@
       "latest_attempt_meta": "runs/webui-theme-mode/artifacts/diff/attempt-001.json"
     },
     "review": {
-      "status": "pending"
+      "status": "pass",
+      "artifact": "runs/webui-theme-mode/independent-review.md",
+      "reason": "Independent exact-SHA reviewer returned literal PASS for candidate 0d950c04a230894b38fba44604c9590cdc2efecb.",
+      "method": "independent-exact-sha",
+      "signed_off_by": "webui_release_review"
     }
   }
 }
