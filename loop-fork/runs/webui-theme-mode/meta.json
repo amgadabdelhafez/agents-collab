@@ -1,0 +1,7 @@
+{
+  "id": "webui-theme-mode",
+  "mode": "planned",
+  "created_at": "2026-08-23T05:28:47Z",
+  "status": "active",
+  "description": "Add persistent dark, light, and follow-system appearance modes to the Web UI."
+}

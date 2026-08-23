@@ -1,0 +1,36 @@
+{
+  "task_id": "webui-theme-mode",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "ui",
+    "dom",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "build": {
+      "status": "pending"
+    },
+    "ui": {
+      "status": "pending"
+    },
+    "dom": {
+      "status": "pending"
+    },
+    "regression": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

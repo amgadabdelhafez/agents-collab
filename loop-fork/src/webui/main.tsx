@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
 import "./styles.css";
+import { initializeBrowserAppearance } from "./theme";
+
+initializeBrowserAppearance();
 
 const root = document.getElementById("root");
 

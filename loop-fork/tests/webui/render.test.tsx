@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { projectSelectedRunConnection } from "../../src/webui/App";
+import { AppearanceControl } from "../../src/webui/components/AppearanceControl";
 import { FleetView } from "../../src/webui/components/FleetView";
 import { RunWorkspace } from "../../src/webui/components/RunWorkspace";
 import {
@@ -18,6 +19,20 @@ const fixtureRuns: readonly FleetRunDTO[] = rawFixtureRuns.map((candidate) => ({
 }));
 
 describe("Web UI server-rendered contract", () => {
+  test("renders the labelled three-mode appearance control", () => {
+    const markup = renderToStaticMarkup(
+      <AppearanceControl mode="system" onChange={noop} />
+    );
+
+    expect(markup).toContain("Appearance");
+    expect(markup).toContain('aria-label="Appearance mode"');
+    expect(markup).toContain(
+      '<option value="system" selected="">Follow system'
+    );
+    expect(markup).toContain('<option value="light">Light');
+    expect(markup).toContain('<option value="dark">Dark');
+  });
+
   test("renders fleet triage and the read-only run workspace", () => {
     const fleetMarkup = renderToStaticMarkup(
       <FleetView
