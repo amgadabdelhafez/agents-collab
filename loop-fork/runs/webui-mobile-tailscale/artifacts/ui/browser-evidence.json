@@ -208,5 +208,6 @@
     "scrollWidth": 390,
     "width": 390
   },
-  "consoleWarningsAndErrors": []
+  "consoleWarningsAndErrors": [],
+  "viewportMeta": "width=device-width, initial-scale=1.0, viewport-fit=cover"
 }

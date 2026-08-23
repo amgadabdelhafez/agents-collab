@@ -9,7 +9,8 @@ Description: Add a phone-first Web UI layout and private tailnet-only launch pat
 - Reworked the phone header so the full page identity, appearance selector,
   and an accessible compact connection status remain visible down to 320px.
 - Made the bottom navigation safe-area aware while preserving the existing
-  fleet and run-workspace mobile information hierarchy.
+  fleet and run-workspace mobile information hierarchy, including the required
+  `viewport-fit=cover` browser contract.
 - Added `bun run web:tailscale`, which discovers healthy Tailscale state and
   binds Vite only to the exact `100.64.0.0/10` address.
 - Extended the live-data Host and Origin guard from one expected localhost to

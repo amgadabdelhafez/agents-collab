@@ -26,9 +26,9 @@
       "artifact": "runs/webui-mobile-tailscale/artifacts/build/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "005",
-      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/build/attempt-005.log",
-      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/build/attempt-005.json"
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/build/attempt-004.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/build/attempt-004.json"
     },
     "ui": {
       "status": "pass",
