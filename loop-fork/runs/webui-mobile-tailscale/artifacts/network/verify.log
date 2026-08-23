@@ -1,0 +1,16 @@
+task_id: webui-mobile-tailscale
+dimension: network
+attempt: 002
+started_at: 2026-08-23T06:26:52Z
+command: bash -lc $'set -euo pipefail\nlisteners="$(lsof -nP -iTCP:46327 -sTCP:LISTEN)"\nprintf "%s\\n" "$listeners"\n[[ "$listeners" == *"100.64.0.14:46327 (LISTEN)"* ]]\n[[ "$listeners" != *"*:46327 (LISTEN)"* ]]\nbody_file="$(mktemp)"\ntrap "rm -f \\"$body_file\\"" EXIT\nfor host in 100.64.0.14 sweetmac14.sweet.home; do\n  root_code="$(curl --noproxy "*" -sS -o /dev/null -w "%{http_code}" "http://$host:46327/")"\n  api_code="$(curl --noproxy "*" -sS -o "$body_file" -w "%{http_code}" "http://$host:46327/api/v1/live-snapshot?request=1")"\n  rg -q "\\"source\\":\\"loop-registry-live\\"" "$body_file"\n  printf "http://%s:46327/ -> %s; live snapshot -> %s, validated live source\\n" "$host" "$root_code" "$api_code"\n  [[ "$root_code" == "200" && "$api_code" == "200" ]]\ndone'
+--- output ---
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    95609 amgad   17u  IPv4 0xd9cf2476c3a46ab8      0t0  TCP 100.64.0.14:46327 (LISTEN)
+node    95711 amgad   17u  IPv4 0x79d5498bcc222b30      0t0  TCP 127.0.0.1:46327 (LISTEN)
+http://100.64.0.14:46327/ -> 200; live snapshot -> 200, validated live source
+http://sweetmac14.sweet.home:46327/ -> 200; live snapshot -> 200, validated live source
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-23T06:26:52Z

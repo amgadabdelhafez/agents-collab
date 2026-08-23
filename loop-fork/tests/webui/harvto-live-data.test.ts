@@ -1219,6 +1219,56 @@ describe("active loop registry Web UI projection", () => {
     ).toBeUndefined();
   });
 
+  test("allows only exact configured tailnet hosts and same-host origins", () => {
+    const root = createRegistry();
+    createRun(root, HARVTO_REPO_ID, "7");
+    const options = {
+      ...liveOptions(root),
+      expectedHosts: ["100.64.0.14:46327", "sweetmac14.sweet.home:46327"],
+    } as const;
+
+    const byIp = handleLiveDataRequest(
+      {
+        host: "100.64.0.14:46327",
+        method: "GET",
+        origin: "http://100.64.0.14:46327",
+        url: "/api/v1/live-snapshot",
+      },
+      options
+    );
+    const byDns = handleLiveDataRequest(
+      {
+        host: "sweetmac14.sweet.home:46327",
+        method: "GET",
+        origin: "http://sweetmac14.sweet.home:46327",
+        url: "/api/v1/live-snapshot",
+      },
+      options
+    );
+    const otherTailnetHost = handleLiveDataRequest(
+      {
+        host: "100.64.0.15:46327",
+        method: "GET",
+        url: "/api/v1/live-snapshot",
+      },
+      options
+    );
+    const crossHostOrigin = handleLiveDataRequest(
+      {
+        host: "100.64.0.14:46327",
+        method: "GET",
+        origin: "http://sweetmac14.sweet.home:46327",
+        url: "/api/v1/live-snapshot",
+      },
+      options
+    );
+
+    expect(byIp?.status).toBe(200);
+    expect(byDns?.status).toBe(200);
+    expect(otherTailnetHost?.status).toBe(403);
+    expect(crossHostOrigin?.status).toBe(403);
+  });
+
   test("rejects duplicate, orphaned, missing, and mismatched DTO identities", () => {
     const root = createRegistry();
     const harvto = createRun(root, HARVTO_REPO_ID, "7");

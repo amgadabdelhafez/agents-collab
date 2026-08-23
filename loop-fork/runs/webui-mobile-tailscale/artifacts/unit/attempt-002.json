@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "dimension": "unit",
+  "attempt": "002",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-08-23T06:14:28Z",
+  "ended_at": "2026-08-23T06:14:28Z",
+  "artifact": "runs/webui-mobile-tailscale/artifacts/unit/attempt-002.log",
+  "command": [
+    "bun",
+    "run",
+    "test:file",
+    "--",
+    "tests/webui/tailscale.test.ts"
+  ]
+}

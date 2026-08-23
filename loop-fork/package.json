@@ -13,6 +13,7 @@
     "web:build": "tsc -p tsconfig.webui.json && vite build --config vite.webui.config.ts",
     "web:dev": "vite --config vite.webui.config.ts",
     "web:preview": "vite preview --config vite.webui.config.ts",
+    "web:tailscale": "bun run src/webui/tailscale-launch.ts",
     "install:global": "bun run build && bun run src/install.ts",
     "test:file": "LOOP_TEST_CERTIFICATION_MODE=single-file bun test",
     "test:ci": "for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file bun test \"$file\" || exit 1; done",

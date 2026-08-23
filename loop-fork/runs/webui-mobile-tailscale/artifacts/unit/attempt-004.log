@@ -1,0 +1,70 @@
+task_id: webui-mobile-tailscale
+dimension: unit
+attempt: 004
+started_at: 2026-08-23T06:25:37Z
+command: bun run test:file -- tests/webui/harvto-live-data.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/harvto-live-data.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/harvto-live-data.test.ts:
+(pass) active loop registry Web UI projection > projects duplicate run numbers across repositories without identity collisions [6.89ms]
+(pass) active loop registry Web UI projection > discovers every direct active run and excludes terminal or noncanonical entries [6.27ms]
+(pass) active loop registry Web UI projection > rejects a repository replaced by an external symlink after root enumeration [3.86ms]
+(pass) active loop registry Web UI projection > fails closed when the registry root is replaced after enumeration [2.35ms]
+(pass) active loop registry Web UI projection > rejects a run replaced by an external symlink after repository enumeration [4.07ms]
+(pass) active loop registry Web UI projection > omits a run whose directory identity changes after candidate discovery [3.30ms]
+(pass) active loop registry Web UI projection > does not degrade a run swapped during detailed evidence projection [2.48ms]
+(pass) active loop registry Web UI projection > omits a run swapped during manifest-only degradation [2.98ms]
+(pass) active loop registry Web UI projection > validates generic exact sessions for Harvto and AI Cur [3.41ms]
+(pass) active loop registry Web UI projection > uses the latest valid lifecycle-bearing hook when a trailing row has no state [1.66ms]
+(pass) active loop registry Web UI projection > skips invalid hook counters and normalizes invalid compaction counters [3.03ms]
+(pass) active loop registry Web UI projection > saturates per-run and fleet sequence sums at a safe integer [3.16ms]
+(pass) active loop registry Web UI projection > ignores stale waiting and blocked states when newer per-agent evidence reports progress [1.89ms]
+(pass) active loop registry Web UI projection > keeps every provenance timestamp bound to its named source [2.07ms]
+(pass) active loop registry Web UI projection > preserves newer waiting and blocked states when progress evidence is stale [1.36ms]
+(pass) active loop registry Web UI projection > degrades one malformed active detail without suppressing its valid peer [2.75ms]
+(pass) active loop registry Web UI projection > returns 503 when an invalid active manifest leaves no valid candidate [1.27ms]
+(pass) active loop registry Web UI projection > returns a validated empty snapshot after a clean no-active scan [1.05ms]
+(pass) active loop registry Web UI projection > orders active runs deterministically by durable event, repository, and numeric run [3.90ms]
+(pass) active loop registry Web UI projection > allows only same-host GET and HEAD requests [1.71ms]
+1264 |         url: "/api/v1/live-snapshot",
+1265 |       },
+1266 |       options
+1267 |     );
+1268 |
+1269 |     expect(byIp?.status).toBe(200);
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: 200
+Received: 403
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-mobile-tailscale/loop-fork/tests/webui/harvto-live-data.test.ts:1269:26)
+(fail) active loop registry Web UI projection > allows only exact configured tailnet hosts and same-host origins [1.38ms]
+(pass) active loop registry Web UI projection > rejects duplicate, orphaned, missing, and mismatched DTO identities [3.07ms]
+(pass) active loop registry Web UI projection > probes every runtime with exact socket and exact session argv [0.10ms]
+(pass) active loop registry Web UI projection > redacts combined sensitive content from every projected repository [2.85ms]
+(pass) active loop registry Web UI projection > accepts the repository-entry limit and rejects the next entry [19.99ms]
+(pass) active loop registry Web UI projection > isolates a repository only after its run-entry limit is exceeded [95.49ms]
+(pass) active loop registry Web UI projection > accepts the total numeric run-directory limit and rejects the next directory [394.91ms]
+(pass) active loop registry Web UI projection > accepts the active-run limit and rejects the next validated manifest [18.33ms]
+(pass) active loop registry Web UI projection > accepts the JSON byte limit and degrades only that run above it [2.27ms]
+(pass) active loop registry Web UI projection > accepts the JSONL byte limit and degrades only that run above it [8.29ms]
+(pass) active loop registry Web UI projection > accepts the JSONL line limit and degrades only that run above it [2.82ms]
+(pass) active loop registry Web UI projection > keeps worker counts complete while bounding projected activity [1.76ms]
+(pass) active loop registry Web UI projection > browser client rejects server failures and malformed DTO versions [0.42ms]
+
+1 tests failed:
+(fail) active loop registry Web UI projection > allows only exact configured tailnet hosts and same-host origins [1.38ms]
+
+ 32 pass
+ 1 fail
+ 188 expect() calls
+Ran 33 tests across 1 file. [636.00ms]
+error: script "test:file" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-23T06:25:38Z

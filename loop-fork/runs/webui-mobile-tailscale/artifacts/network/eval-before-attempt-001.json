@@ -1,0 +1,52 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "ui",
+    "dom",
+    "network",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/unit/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/unit/attempt-003.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/build/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/build/attempt-003.json"
+    },
+    "ui": {
+      "status": "pending"
+    },
+    "dom": {
+      "status": "pending"
+    },
+    "network": {
+      "status": "pending"
+    },
+    "regression": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

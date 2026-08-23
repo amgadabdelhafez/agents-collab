@@ -1,0 +1,212 @@
+{
+  "capturedAt": "2026-08-23T06:30:04.985Z",
+  "source": "live redacted loop registry",
+  "viewportCases": [
+    {
+      "kind": "fleet",
+      "screenshot": "/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-mobile-tailscale/loop-fork/runs/webui-mobile-tailscale/artifacts/ui/fleet-mobile-320x700.jpg",
+      "appearance": {
+        "bottom": 49.5,
+        "height": 36,
+        "left": 124,
+        "right": 264,
+        "top": 13.5,
+        "width": 140
+      },
+      "appearanceMode": "system",
+      "connection": {
+        "bottom": 48.5,
+        "height": 34,
+        "left": 270,
+        "right": 304,
+        "top": 14.5,
+        "width": 34
+      },
+      "connectionLabel": "Connection: Projection connected",
+      "context": "Agents Collab",
+      "header": {
+        "bottom": 64,
+        "height": 64,
+        "left": 0,
+        "right": 320,
+        "top": 0,
+        "width": 320
+      },
+      "headerFits": true,
+      "height": 700,
+      "horizontalOverflow": false,
+      "nav": {
+        "bottom": 700,
+        "height": 70,
+        "left": 0,
+        "right": 320,
+        "top": 630,
+        "width": 320
+      },
+      "navVisible": true,
+      "route": "#/",
+      "runCount": 1,
+      "scrollWidth": 320,
+      "title": "Loop run fleet",
+      "titleFullyVisible": true,
+      "width": 320
+    },
+    {
+      "kind": "fleet",
+      "screenshot": "/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-mobile-tailscale/loop-fork/runs/webui-mobile-tailscale/artifacts/ui/fleet-mobile-390x844.jpg",
+      "appearance": {
+        "bottom": 49.5,
+        "height": 36,
+        "left": 190,
+        "right": 334,
+        "top": 13.5,
+        "width": 144
+      },
+      "appearanceMode": "system",
+      "connection": {
+        "bottom": 48.5,
+        "height": 34,
+        "left": 340,
+        "right": 374,
+        "top": 14.5,
+        "width": 34
+      },
+      "connectionLabel": "Connection: Projection connected",
+      "context": "Agents Collab",
+      "header": {
+        "bottom": 64,
+        "height": 64,
+        "left": 0,
+        "right": 390,
+        "top": 0,
+        "width": 390
+      },
+      "headerFits": true,
+      "height": 844,
+      "horizontalOverflow": false,
+      "nav": {
+        "bottom": 844,
+        "height": 70,
+        "left": 0,
+        "right": 390,
+        "top": 774,
+        "width": 390
+      },
+      "navVisible": true,
+      "route": "#/",
+      "runCount": 1,
+      "scrollWidth": 390,
+      "title": "Loop run fleet",
+      "titleFullyVisible": true,
+      "width": 390
+    },
+    {
+      "kind": "fleet",
+      "screenshot": "/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-mobile-tailscale/loop-fork/runs/webui-mobile-tailscale/artifacts/ui/fleet-mobile-430x932.jpg",
+      "appearance": {
+        "bottom": 49.5,
+        "height": 36,
+        "left": 230,
+        "right": 374,
+        "top": 13.5,
+        "width": 144
+      },
+      "appearanceMode": "system",
+      "connection": {
+        "bottom": 48.5,
+        "height": 34,
+        "left": 380,
+        "right": 414,
+        "top": 14.5,
+        "width": 34
+      },
+      "connectionLabel": "Connection: Projection connected",
+      "context": "Agents Collab",
+      "header": {
+        "bottom": 64,
+        "height": 64,
+        "left": 0,
+        "right": 430,
+        "top": 0,
+        "width": 430
+      },
+      "headerFits": true,
+      "height": 932,
+      "horizontalOverflow": false,
+      "nav": {
+        "bottom": 932,
+        "height": 70,
+        "left": 0,
+        "right": 430,
+        "top": 862,
+        "width": 430
+      },
+      "navVisible": true,
+      "route": "#/",
+      "runCount": 1,
+      "scrollWidth": 430,
+      "title": "Loop run fleet",
+      "titleFullyVisible": true,
+      "width": 430
+    },
+    {
+      "kind": "run",
+      "screenshot": "/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-mobile-tailscale/loop-fork/runs/webui-mobile-tailscale/artifacts/ui/run-mobile-390x844.jpg",
+      "activeBottom": "▦Run",
+      "authority": {
+        "bottom": 556,
+        "height": 52,
+        "left": 0,
+        "right": 390,
+        "top": 504,
+        "width": 390
+      },
+      "authorityDisplay": "grid",
+      "connectionLabel": "Connection: Projection connected",
+      "height": 844,
+      "horizontalOverflow": false,
+      "route": "#/runs/harvto-b1e274e66299%3A244",
+      "scrollWidth": 390,
+      "sectionNav": {
+        "bottom": 597,
+        "height": 41,
+        "left": 0,
+        "right": 390,
+        "top": 556,
+        "width": 390
+      },
+      "title": "Harvto · run 244",
+      "titleFullyVisible": true,
+      "width": 390,
+      "workspaceHeading": "Harvto · run 244"
+    },
+    {
+      "kind": "run-compact",
+      "appearanceRight": 264,
+      "connectionRight": 304,
+      "headerRight": 320,
+      "height": 700,
+      "horizontalOverflow": false,
+      "route": "#/runs/harvto-b1e274e66299%3A244",
+      "scrollWidth": 320,
+      "title": "Harvto · run 244",
+      "titleFullyVisible": true,
+      "width": 320
+    }
+  ],
+  "stickyChrome": {
+    "authorityPosition": "sticky",
+    "authorityTop": "64px",
+    "sectionPosition": "sticky",
+    "sectionTop": "116px"
+  },
+  "tailnet": {
+    "connection": "Connection: Projection connected",
+    "liveLabel": "Live data",
+    "origin": "http://sweetmac14.sweet.home:46327",
+    "runCount": 1,
+    "scrollWidth": 390,
+    "width": 390
+  },
+  "consoleWarningsAndErrors": []
+}

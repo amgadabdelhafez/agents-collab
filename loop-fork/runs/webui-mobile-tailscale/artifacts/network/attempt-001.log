@@ -1,0 +1,16 @@
+task_id: webui-mobile-tailscale
+dimension: network
+attempt: 001
+started_at: 2026-08-23T06:18:38Z
+command: bash -lc $'set -euo pipefail\nlisteners="$(lsof -nP -iTCP:46327 -sTCP:LISTEN)"\nprintf "%s\\n" "$listeners"\n[[ "$listeners" == *"100.64.0.14:46327 (LISTEN)"* ]]\n[[ "$listeners" != *"*:46327 (LISTEN)"* ]]\nfor url in http://100.64.0.14:46327/ http://sweetmac14.sweet.home:46327/; do\n  code="$(curl --noproxy "*" -sS -o /dev/null -w "%{http_code}" "$url")"\n  printf "%s -> %s\\n" "$url" "$code"\n  [[ "$code" == "200" ]]\ndone'
+--- output ---
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    75231 amgad   30u  IPv4 0xe08779376932c8c8      0t0  TCP 100.64.0.14:46327 (LISTEN)
+node    76286 amgad   17u  IPv4 0x397bf9d343a26838      0t0  TCP 127.0.0.1:46327 (LISTEN)
+http://100.64.0.14:46327/ -> 200
+http://sweetmac14.sweet.home:46327/ -> 200
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-23T06:18:38Z

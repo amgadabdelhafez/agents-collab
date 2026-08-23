@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "dimension": "regression",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-23T06:30:56Z",
+  "ended_at": "2026-08-23T06:31:38Z",
+  "artifact": "runs/webui-mobile-tailscale/artifacts/regression/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "test:ci"
+  ]
+}

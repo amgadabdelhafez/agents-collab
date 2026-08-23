@@ -400,8 +400,16 @@ export function App() {
             <span className="global-run-count">
               {coverageSummary(coveredLoopCount, workingRunCount)}
             </span>
-            <span className="connection-pill" data-state={liveConnection.state}>
-              {liveConnection.label}
+            <span
+              aria-label={`Connection: ${liveConnection.label}`}
+              className="connection-pill"
+              data-state={liveConnection.state}
+              role="status"
+              title={liveConnection.label}
+            >
+              <span className="connection-pill-label">
+                {liveConnection.label}
+              </span>
             </span>
           </div>
         </header>
