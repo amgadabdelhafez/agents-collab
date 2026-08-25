@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { redactPublicText } from "./redaction";
+import { escapePublicText, redactPublicText } from "./redaction";
 import type { RunKey, SourceKind, TimelineInput, TimelineItem } from "./types";
 
 const SOURCE_ORDER = new Map<SourceKind, number>(
@@ -49,7 +49,7 @@ export const buildTimeline = (
         event.source,
         event.locator ?? String(index)
       ),
-      message: redactPublicText(event.message),
+      message: escapePublicText(redactPublicText(event.message)),
       source: event.source,
     }));
   const next = cursor + page.length;

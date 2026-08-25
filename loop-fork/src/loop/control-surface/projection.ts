@@ -33,6 +33,9 @@ export const classifyFreshness = (
   if (recordedAt === undefined || !Number.isFinite(recordedAt)) {
     return "unknown";
   }
+  if (recordedAt > now) {
+    return "unknown";
+  }
   return now - recordedAt <= FRESHNESS_THRESHOLDS_MS[kind] ? "fresh" : "stale";
 };
 
@@ -49,6 +52,34 @@ const manifestRecord = (
   typeof snapshot.value === "object"
     ? (snapshot.value as Record<string, unknown>)
     : undefined;
+
+const LIFECYCLE_STATES = new Set([
+  "submitted",
+  "working",
+  "reviewing",
+  "input-required",
+  "completed",
+  "failed",
+  "stopped",
+]);
+const RUN_STATUSES = new Set(["running", "done", "failed", "stopped"]);
+const isCanonicalTimestamp = (value: unknown): value is string =>
+  typeof value === "string" &&
+  Number.isFinite(Date.parse(value)) &&
+  new Date(value).toISOString() === value;
+
+const isValidManifest = (manifest: Record<string, unknown>): boolean =>
+  typeof manifest.repoId === "string" &&
+  typeof manifest.runId === "string" &&
+  typeof manifest.state === "string" &&
+  LIFECYCLE_STATES.has(manifest.state) &&
+  typeof manifest.status === "string" &&
+  RUN_STATUSES.has(manifest.status) &&
+  isCanonicalTimestamp(manifest.updatedAt) &&
+  (manifest.resolvedConfig === undefined ||
+    selectPublicConfig(manifest.resolvedConfig) !== undefined) &&
+  (manifest.tmuxAdapterIdentity === undefined ||
+    selectPublicAdapter(manifest.tmuxAdapterIdentity) !== undefined);
 
 const requirement = (configured: unknown): Requirement => {
   if (configured === true) {
@@ -113,7 +144,7 @@ const buildProjection = (
 ): RunProjectionResult => {
   const manifest = manifestRecord(sources.manifest);
   if (
-    !manifest ||
+    !(manifest && isValidManifest(manifest)) ||
     manifest.repoId !== locator.repoId ||
     manifest.runId !== locator.runId
   ) {
@@ -139,6 +170,17 @@ const buildProjection = (
     governess: observe(sources["governess-state"], now),
     transcript: observe(sources.transcript, now),
   } satisfies RunProjection["observations"];
+  const governessValue = sources["governess-state"].value;
+  const governessState =
+    governessValue && typeof governessValue === "object"
+      ? (governessValue as Record<string, unknown>).state
+      : undefined;
+  const conflicts =
+    typeof governessState === "string" &&
+    LIFECYCLE_STATES.has(governessState) &&
+    governessState !== manifest.state
+      ? ["lifecycle-state-mismatch"]
+      : [];
   const publicSources = Object.fromEntries(
     SOURCE_KINDS.map((kind) => {
       const source = sources[kind];
@@ -160,10 +202,13 @@ const buildProjection = (
       ...(adapter ? { adapter } : {}),
       aggregate: {
         matrixVersion: 1,
-        status: aggregateStatus(requirements, observations),
+        status:
+          conflicts.length > 0
+            ? "conflict"
+            : aggregateStatus(requirements, observations),
       },
       ...(config ? { config } : {}),
-      conflicts: [],
+      conflicts,
       lifecycle: {
         ...(typeof manifest.state === "string"
           ? { state: manifest.state }

@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type {
   ReadModelCapabilities,
@@ -16,6 +22,7 @@ interface SnapshotOptions {
 }
 
 const LINE_SPLIT_RE = /\r?\n/u;
+const SAFE_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 
 const revisionOf = (bytes: Uint8Array): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -29,6 +36,9 @@ const readBytes = (
 ): SourceSnapshot<Uint8Array> => {
   const kind = options.kind ?? "manifest";
   try {
+    if (lstatSync(path).isSymbolicLink()) {
+      return { kind, observedAt: options.observedAt, status: "unavailable" };
+    }
     const stats = statSync(path);
     if (!stats.isFile()) {
       return { kind, observedAt: options.observedAt, status: "unavailable" };
@@ -103,6 +113,18 @@ export const assertContainedPath = (
   ) {
     throw new Error("Evidence path is outside the selected run directory");
   }
+  try {
+    const actualRoot = realpathSync(safeRoot);
+    const actualCandidate = realpathSync(safeCandidate);
+    const actualOffset = relative(actualRoot, actualCandidate);
+    if (!actualOffset || actualOffset.startsWith("..")) {
+      throw new Error("Evidence path is outside the selected run directory");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
   return safeCandidate;
 };
 
@@ -174,35 +196,44 @@ export const createFilesystemReadModelCapabilities = (
     );
   const readSources = (locator: RunLocator): RunSourceSnapshots => {
     const observedAt = now();
+    const safeSegment = (value: string): boolean =>
+      SAFE_SEGMENT_RE.test(value) && value !== "." && value !== "..";
     if (
+      !(safeSegment(locator.repoId) && safeSegment(locator.runId)) ||
       resolve(locator.storageRoot) !== safeStorageRoot ||
       resolve(locator.runDir) !==
-        resolve(safeStorageRoot, locator.repoId, locator.runId)
+        resolve(safeStorageRoot, locator.repoId, locator.runId) ||
+      relative(safeStorageRoot, resolve(locator.runDir)).startsWith("..")
     ) {
       throw new Error("Run locator is outside the configured storage root");
     }
-    const json = (kind: SourceKind, name: string, maxBytes = 2 * 1024 * 1024) =>
-      readJsonSnapshot(
-        assertContainedPath(locator.runDir, join(locator.runDir, name)),
-        {
-          kind,
-          maxBytes,
-          observedAt,
-        }
-      );
+    const safePath = (name: string): string | undefined => {
+      try {
+        return assertContainedPath(locator.runDir, join(locator.runDir, name));
+      } catch {
+        return undefined;
+      }
+    };
+    const json = (
+      kind: SourceKind,
+      name: string,
+      maxBytes = 2 * 1024 * 1024
+    ) => {
+      const path = safePath(name);
+      return path
+        ? readJsonSnapshot(path, { kind, maxBytes, observedAt })
+        : unavailable(kind, observedAt);
+    };
     const jsonl = (
       kind: SourceKind,
       name: string,
       maxBytes = 8 * 1024 * 1024
-    ) =>
-      readJsonlSnapshot(
-        assertContainedPath(locator.runDir, join(locator.runDir, name)),
-        {
-          kind,
-          maxBytes,
-          observedAt,
-        }
-      );
+    ) => {
+      const path = safePath(name);
+      return path
+        ? readJsonlSnapshot(path, { kind, maxBytes, observedAt })
+        : unavailable(kind, observedAt);
+    };
     const manifest = json("manifest", "manifest.json");
     const manifestValue = manifest.value as Record<string, unknown> | undefined;
     const adapter: SourceSnapshot =

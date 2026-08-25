@@ -51,8 +51,15 @@ export interface PublicResolvedConfig {
   governess: boolean;
   pairedMode: boolean;
   proofConfigured: boolean;
-  review?: "independent" | "none";
-  reviewPlan?: "independent" | "none";
+  review?: "claude" | "claudex" | "codex" | "copilot" | "cursor" | "gemini";
+  reviewPlan?:
+    | "claude"
+    | "codex"
+    | "copilot"
+    | "cursor"
+    | "gemini"
+    | "none"
+    | "other";
   tmux: boolean;
   version: 1;
   worktree: boolean;

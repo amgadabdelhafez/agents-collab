@@ -13,7 +13,11 @@ test("timeline is deterministic, bounded, redacted, and path-free", () => {
         message: "token=secret https://host/x /Users/me/private",
         source: "bridge",
       },
-      { at: "2026-01-01T00:00:00.000Z", message: "second", source: "hooks" },
+      {
+        at: "2026-01-01T00:00:00.000Z",
+        message: "<script>second</script>",
+        source: "hooks",
+      },
       { at: "invalid", message: "ignored", source: "transcript" },
     ],
     { limit: 1 }
@@ -24,6 +28,7 @@ test("timeline is deterministic, bounded, redacted, and path-free", () => {
   expect(JSON.stringify(rows)).not.toContain("secret");
   expect(JSON.stringify(rows)).not.toContain("https://");
   expect(JSON.stringify(rows)).not.toContain("/Users/");
+  expect(rows.items[0]?.message).toBe("&lt;script&gt;second&lt;/script&gt;");
 });
 
 test("opaque evidence references are stable and disclose no locator", () => {

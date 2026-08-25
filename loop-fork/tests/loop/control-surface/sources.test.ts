@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -108,6 +114,35 @@ test("evidence paths must remain contained by the selected run directory", () =>
       assertContainedPath(runDir, join(runDir, "..", "secret"))
     ).toThrow();
     expect(() => assertContainedPath(runDir, runDir)).toThrow();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("filesystem capabilities reject file symlinks and traversal-shaped locators", () => {
+  const root = makeRoot();
+  const runDir = join(root, "repo-a", "7");
+  const external = join(root, "external.json");
+  mkdirSync(runDir, { recursive: true });
+  try {
+    writeFileSync(external, '{"repoId":"repo-a","runId":"7"}');
+    symlinkSync(external, join(runDir, "manifest.json"));
+    const capabilities = createFilesystemReadModelCapabilities(root, () => 123);
+    const selected = capabilities.listRuns()[0];
+    if (!selected) {
+      throw new Error("Expected a discovered run");
+    }
+    expect(capabilities.readSources(selected).manifest.status).toBe(
+      "unavailable"
+    );
+    expect(() =>
+      capabilities.readSources({
+        repoId: "..",
+        runId: "outside",
+        runDir: join(root, "..", "outside"),
+        storageRoot: root,
+      })
+    ).toThrow();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

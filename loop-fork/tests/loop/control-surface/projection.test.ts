@@ -58,7 +58,7 @@ const makeCapabilities = (): ReadModelCapabilities => ({
       },
       runId: "7",
       state: "working",
-      status: "active",
+      status: "running",
       updatedAt: "2026-01-01T00:00:00.000Z",
     }),
     transcript: snapshot("transcript", []),
@@ -80,6 +80,7 @@ test("freshness thresholds are inclusive and tested on both sides", () => {
       "stale"
     );
   }
+  expect(classifyFreshness("manifest", 10_001, 10_000)).toBe("unknown");
 });
 
 test("canonical identity rejects path and manifest disagreement", () => {
@@ -109,7 +110,7 @@ test("requirements stay separate from observations and legacy absence stays unkn
     repoId: "repo-a",
     runId: "7",
     state: "working",
-    status: "active",
+    status: "running",
     updatedAt: "2026-01-01T00:00:00.000Z",
   });
   deps.readSources = () => sources;
@@ -158,5 +159,34 @@ test("public config and adapter DTOs expose only the strict allowlists", () => {
       "version",
     ]);
     expect(JSON.stringify(result.run)).not.toContain("/evidence");
+  }
+});
+
+test("malformed producer fields fail closed and lifecycle conflicts are explicit", () => {
+  const deps = makeCapabilities();
+  const sources = deps.readSources(locator);
+  sources.manifest = snapshot("manifest", {
+    repoId: "repo-a",
+    runId: "7",
+    state: "working",
+    status: "running",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    resolvedConfig: { version: 1, governess: "yes" },
+  });
+  deps.readSources = () => sources;
+  const malformed = projectRun(locator, deps);
+  expect(malformed.kind).toBe("rejected");
+
+  const validDeps = makeCapabilities();
+  const validSources = validDeps.readSources(locator);
+  validSources["governess-state"] = snapshot("governess-state", {
+    state: "reviewing",
+  });
+  validDeps.readSources = () => validSources;
+  const conflict = projectRun(locator, validDeps);
+  expect(conflict.kind).toBe("run");
+  if (conflict.kind === "run") {
+    expect(conflict.run.conflicts).toEqual(["lifecycle-state-mismatch"]);
+    expect(conflict.run.aggregate.status).toBe("conflict");
   }
 });
