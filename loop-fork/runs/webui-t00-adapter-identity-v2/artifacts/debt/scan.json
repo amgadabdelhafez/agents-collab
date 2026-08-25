@@ -1,0 +1,30 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "scanned_at": "2026-08-25T23:04:55Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-25T23:04:55Z",
+      "task_id": "webui-t00-adapter-identity-v2",
+      "signal": "loc_growth",
+      "file": "src/loop/run-state.ts",
+      "before_loc": 1305,
+      "after_loc": 1487,
+      "delta_loc": 182,
+      "threshold": 100,
+      "severity": "indicator"
+    },
+    {
+      "ts": "2026-08-25T23:04:55Z",
+      "task_id": "webui-t00-adapter-identity-v2",
+      "signal": "loc_growth",
+      "file": "src/loop/tmux-control.ts",
+      "before_loc": 104,
+      "after_loc": 304,
+      "delta_loc": 200,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

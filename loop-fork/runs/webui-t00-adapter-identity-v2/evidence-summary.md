@@ -46,7 +46,8 @@ diagnostics.
 historical `runs/*` JSON artifacts that are unchanged by this branch. Those
 unrelated evidence files were preserved; the scoped static gate is clean.
 
-## Remaining gate
+## Independent review
 
-Commit the exact scope, rerun the committed diff check, and record a zero-write
-exact-SHA review before Harness completion.
+Exact implementation SHA `a4b8e11b2ade432a87029db5e00d1e5dbb84f780`
+received an independent zero-write PASS with no blocking findings. The review
+receipt is `review.md`.
