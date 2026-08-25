@@ -1,0 +1,12 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}

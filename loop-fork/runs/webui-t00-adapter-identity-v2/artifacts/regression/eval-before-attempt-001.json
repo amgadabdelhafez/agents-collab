@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "status": "fail",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "fail",
+      "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/unit/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-t00-adapter-identity-v2/artifacts/unit/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-t00-adapter-identity-v2/artifacts/unit/attempt-003.json"
+    }
+  }
+}

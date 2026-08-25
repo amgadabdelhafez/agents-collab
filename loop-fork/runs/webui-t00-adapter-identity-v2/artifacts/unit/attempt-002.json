@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "dimension": "unit",
+  "attempt": "002",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-08-25T21:34:34Z",
+  "ended_at": "2026-08-25T21:34:35Z",
+  "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/unit/attempt-002.log",
+  "command": [
+    "bun",
+    "run",
+    "test:file",
+    "--",
+    "tests/loop/paired-options.test.ts"
+  ]
+}

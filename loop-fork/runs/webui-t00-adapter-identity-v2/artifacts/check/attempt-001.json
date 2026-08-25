@@ -1,0 +1,25 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "dimension": "check",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-25T21:43:55Z",
+  "ended_at": "2026-08-25T21:43:55Z",
+  "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/check/attempt-001.log",
+  "command": [
+    "bunx",
+    "ultracite",
+    "check",
+    "src/loop/run-state.ts",
+    "src/loop/paired-options.ts",
+    "src/loop/tmux-control.ts",
+    "src/loop/tmux.ts",
+    "tests/loop/run-state.test.ts",
+    "tests/loop/paired-options.test.ts",
+    "tests/loop/tmux-control.test.ts",
+    "tests/loop/tmux.test.ts",
+    "runs/webui-t00-adapter-identity-v2/artifacts/tmux-smoke.ts"
+  ]
+}

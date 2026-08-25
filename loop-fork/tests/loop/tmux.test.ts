@@ -430,6 +430,7 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
   }> = [];
   const bootstrapManifests: RunManifest[] = [];
   let sessionStarted = false;
+  const capturedIdentitySessions: string[] = [];
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -466,6 +467,16 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
     ["--tmux", "--proof", "verify with tests"],
     {
       capturePane: () => "❯ ",
+      captureTmuxAdapterIdentity: (session) => {
+        expect(sessionStarted).toBe(true);
+        capturedIdentitySessions.push(session);
+        return {
+          processBirthId: "darwin:1787693386000",
+          serverPid: 4242,
+          socketPath: "/private/tmp/tmux-501/default",
+          version: 1,
+        };
+      },
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -577,6 +588,7 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
   ]);
 
   expect(delegated).toBe(true);
+  expect(capturedIdentitySessions).toEqual(["repo-loop-1"]);
   expect(proxyCalls).toEqual([
     {
       remoteUrl: codexRemoteUrl,
@@ -670,6 +682,12 @@ test("runInTmux starts paired panes from a cold macOS tmux socket", async () => 
   expect(manifest.tmuxSession).toBe("repo-loop-1");
   expect(manifest.tmuxPaneLeftAgent).toBe("claude");
   expect(manifest.tmuxPaneRightAgent).toBe("codex");
+  expect(manifest.tmuxAdapterIdentity).toEqual({
+    processBirthId: "darwin:1787693386000",
+    serverPid: 4242,
+    socketPath: "/private/tmp/tmux-501/default",
+    version: 1,
+  });
 });
 
 test.each([
@@ -727,6 +745,12 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
   const delegated = await runInTmux(
     ["--tmux"],
     {
+      captureTmuxAdapterIdentity: () => ({
+        processBirthId: "darwin:1787693386000",
+        serverPid: 4242,
+        socketPath: "/private/tmp/tmux-501/default",
+        version: 1,
+      }),
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -752,6 +776,12 @@ test("runInTmux preserves stable pane targets when reattaching a live paired ses
     tmuxPaneLeft: "%left",
     tmuxPaneRight: "%right",
     tmuxSession: "repo-loop-1",
+    tmuxAdapterIdentity: {
+      processBirthId: "darwin:1787693386000",
+      serverPid: 4242,
+      socketPath: "/private/tmp/tmux-501/default",
+      version: 1,
+    },
   });
 });
 

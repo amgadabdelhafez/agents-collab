@@ -14,6 +14,7 @@ import {
   ensureRunStorage,
   isActiveRunState,
   type RunManifest,
+  type RunResolvedConfig,
   type RunStorage,
   readRunManifest,
   resolveExistingRunId,
@@ -39,6 +40,20 @@ export interface PreparedPairedRun {
 }
 
 type TmuxSessionProbe = (session: string) => boolean | TmuxLiveness;
+
+export const resolvedPairedConfigSnapshot = (
+  opts: Options
+): Readonly<RunResolvedConfig> =>
+  Object.freeze({
+    governess: opts.governess === true,
+    pairedMode: opts.pairedMode === true,
+    proofConfigured: Boolean(opts.proof.trim()),
+    ...(opts.review ? { review: opts.review } : {}),
+    ...(opts.reviewPlan ? { reviewPlan: opts.reviewPlan } : {}),
+    tmux: opts.tmux === true,
+    version: 1,
+    worktree: opts.worktree === true,
+  });
 
 const isTmuxSessionLive: TmuxSessionProbe = (session) =>
   tmuxSessionLiveness(session, spawnSync);
@@ -413,6 +428,15 @@ export const preparePairedOptions = (
     cwd,
     livePersistedTmux
   );
+  if (manifest) {
+    writeRunManifest(
+      storage.manifestPath,
+      touchRunManifest({
+        ...manifest,
+        resolvedConfig: resolvedPairedConfigSnapshot(opts),
+      })
+    );
+  }
 };
 
 const preparedEffortManifestFields = (
@@ -451,6 +475,7 @@ export const preparePairedRun = (
     cwd,
     livePersistedTmux
   );
+  const resolvedConfig = resolvedPairedConfigSnapshot(opts);
 
   const resumable = canResumePairedManifest(existing) ? existing : undefined;
   const selectedAgents = new Set([opts.agent, opts.pairWith]);
@@ -476,10 +501,14 @@ export const preparePairedRun = (
           cwd,
           ...preparedEffortManifestFields(opts, existing, livePersistedTmux),
           mode: "paired",
+          resolvedConfig,
           helperCavemanMode: opts.helperCavemanMode,
           pid: process.pid,
           state: resumable?.state ?? "submitted",
           // Non-tmux resumes should not preserve a dead tmux routing hint.
+          tmuxAdapterIdentity: opts.tmux
+            ? existing.tmuxAdapterIdentity
+            : undefined,
           tmuxSession: opts.tmux ? existing.tmuxSession : undefined,
         },
         new Date().toISOString()
@@ -498,6 +527,7 @@ export const preparePairedRun = (
         helperCavemanMode: opts.helperCavemanMode,
         pid: process.pid,
         repoId: storage.repoId,
+        resolvedConfig,
         reviewerEffort: opts.reviewerEffort,
         runId: storage.runId,
         state: "submitted",

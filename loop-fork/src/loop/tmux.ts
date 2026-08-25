@@ -74,6 +74,7 @@ import {
   type RunLaunchCharter,
   type RunManifest,
   type RunStorage,
+  type RunTmuxAdapterIdentity,
   type RunWorldModelBinding,
   resolveExistingRunId,
   setRunManifestState,
@@ -87,6 +88,7 @@ import {
 } from "./runner";
 import {
   boundedTmuxOptions,
+  captureTmuxAdapterIdentity,
   TMUX_CONTROL_TIMEOUT_MS,
   type TmuxLiveness,
   tmuxCommandTimedOut,
@@ -173,6 +175,9 @@ interface TmuxDeps {
   attach: (session: string) => void;
   capturePane: (pane: string, styled?: boolean) => string;
   capturePaneSnapshot: (pane: string) => PaneSnapshot | undefined;
+  captureTmuxAdapterIdentity?: (
+    session: string
+  ) => Readonly<RunTmuxAdapterIdentity>;
   closePersistentCodexSession: typeof closePersistentCodexSession;
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -1343,7 +1348,8 @@ const bindPairedSessionIdentity = (
   session: string,
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
-  clearPaneTargets = false
+  clearPaneTargets = false,
+  tmuxAdapterIdentity?: Readonly<RunTmuxAdapterIdentity>
 ): RunManifest =>
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
@@ -1356,6 +1362,7 @@ const bindPairedSessionIdentity = (
         tmuxSession: session,
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRightAgent: paneAgents.right,
+        ...(tmuxAdapterIdentity ? { tmuxAdapterIdentity } : {}),
         ...(clearPaneTargets
           ? {
               tmuxPaneAuPair: undefined,
@@ -1365,6 +1372,7 @@ const bindPairedSessionIdentity = (
               tmuxPaneRecon: undefined,
               tmuxPaneRight: undefined,
               tmuxPaneUtility: undefined,
+              tmuxAdapterIdentity: undefined,
             }
           : {}),
       },
@@ -1383,7 +1391,8 @@ const updatePairedManifest = (
   session: string,
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
-  paneTargets: PairedPaneTargets
+  paneTargets: PairedPaneTargets,
+  tmuxAdapterIdentity?: Readonly<RunTmuxAdapterIdentity>
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
@@ -1398,6 +1407,7 @@ const updatePairedManifest = (
         pid: process.pid,
         primaryAgent,
         tmuxSession: session,
+        ...(tmuxAdapterIdentity ? { tmuxAdapterIdentity } : {}),
         tmuxPaneLeft: paneTargets.left,
         tmuxPaneLeftAgent: paneAgents.left,
         tmuxPaneRight: paneTargets.right,
@@ -3065,13 +3075,16 @@ const startPairedSession = async (
     throw unknownHandoffLivenessError(session, existingSession);
   }
   if (existingSession.liveness === "live") {
+    const tmuxAdapterIdentity = deps.captureTmuxAdapterIdentity?.(session);
     bindPairedSessionIdentity(
       deps,
       storage,
       manifest,
       session,
       paneAgents,
-      primaryAgent
+      primaryAgent,
+      false,
+      tmuxAdapterIdentity
     );
     return { preserveUnknownStart, session, terminalizeFailedStart };
   }
@@ -3278,6 +3291,7 @@ const startPairedSession = async (
       runDir: storage.runDir,
       session,
     });
+    const tmuxAdapterIdentity = deps.captureTmuxAdapterIdentity?.(session);
     updatePairedManifest(
       deps,
       storage,
@@ -3289,7 +3303,8 @@ const startPairedSession = async (
       session,
       paneAgents,
       primaryAgent,
-      paneTargets
+      paneTargets,
+      tmuxAdapterIdentity
     );
     const livePaneTargets = startPairedControlPanes(
       deps,
@@ -3316,7 +3331,8 @@ const startPairedSession = async (
         session,
         paneAgents,
         primaryAgent,
-        livePaneTargets
+        livePaneTargets,
+        tmuxAdapterIdentity
       );
     }
     if (livePaneTargets.governess) {
@@ -3536,6 +3552,7 @@ const defaultDeps = (): TmuxDeps => ({
     }
     return parseTmuxPaneSnapshot(decode(result.stdout));
   },
+  captureTmuxAdapterIdentity,
   cwd: process.cwd(),
   env: process.env,
   findBinary: (cmd: string) => commandExists(cmd),
@@ -3683,6 +3700,11 @@ export const runInTmux = async (
   }
 
   const deps = { ...defaultDeps(), ...overrides };
+  if (overrides.spawn && !overrides.captureTmuxAdapterIdentity) {
+    // A synthetic tmux runner cannot be combined with a real-server identity
+    // probe. Tests and embedders that need this contract inject both together.
+    deps.captureTmuxAdapterIdentity = undefined;
+  }
   if (overrides.capturePane && !overrides.capturePaneSnapshot) {
     // Unit tests and embedders that provide a pane capture do not get to mix
     // that synthetic text with cursor data from the user's real tmux server.

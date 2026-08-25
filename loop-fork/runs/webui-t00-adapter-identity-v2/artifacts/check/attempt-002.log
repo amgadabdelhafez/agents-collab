@@ -1,0 +1,12 @@
+task_id: webui-t00-adapter-identity-v2
+dimension: check
+attempt: 002
+started_at: 2026-08-25T21:47:14Z
+command: bunx ultracite check src/loop/run-state.ts src/loop/paired-options.ts src/loop/tmux-control.ts src/loop/tmux.ts tests/loop/run-state.test.ts tests/loop/paired-options.test.ts tests/loop/tmux-control.test.ts tests/loop/tmux.test.ts runs/webui-t00-adapter-identity-v2/artifacts/tmux-smoke.ts
+--- output ---
+Checked 9 files in 66ms. No fixes applied.
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-25T21:47:14Z
