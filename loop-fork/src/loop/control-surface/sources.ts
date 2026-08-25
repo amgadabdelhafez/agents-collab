@@ -40,32 +40,48 @@ const readBytes = (
   const kind = options.kind ?? "manifest";
   let descriptor: number | undefined;
   try {
+    const parentPath = resolve(path, "..");
+    const parentBefore = lstatSync(parentPath, { bigint: true });
+    if (!parentBefore.isDirectory() || parentBefore.isSymbolicLink()) {
+      return { kind, observedAt: options.observedAt, status: "unavailable" };
+    }
     if (lstatSync(path).isSymbolicLink()) {
       return { kind, observedAt: options.observedAt, status: "unavailable" };
     }
     // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags are a bitmask.
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    assertContainedPath(resolve(path, ".."), path);
-    const stats = fstatSync(descriptor);
+    assertContainedPath(parentPath, path);
+    const stats = fstatSync(descriptor, { bigint: true });
     if (!stats.isFile()) {
       return { kind, observedAt: options.observedAt, status: "unavailable" };
     }
-    if (stats.size > options.maxBytes) {
+    if (stats.size > BigInt(options.maxBytes)) {
       return { kind, observedAt: options.observedAt, status: "oversize" };
     }
     const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
+    const after = fstatSync(descriptor, { bigint: true });
+    const pathAfter = lstatSync(path, { bigint: true });
+    const parentAfter = lstatSync(parentPath, { bigint: true });
+    assertContainedPath(parentPath, path);
     if (
       stats.dev !== after.dev ||
       stats.ino !== after.ino ||
-      stats.size !== after.size
+      stats.size !== after.size ||
+      stats.mtimeNs !== after.mtimeNs ||
+      stats.ctimeNs !== after.ctimeNs ||
+      after.dev !== pathAfter.dev ||
+      after.ino !== pathAfter.ino ||
+      parentBefore.dev !== parentAfter.dev ||
+      parentBefore.ino !== parentAfter.ino ||
+      parentBefore.mtimeNs !== parentAfter.mtimeNs ||
+      parentAfter.isSymbolicLink()
     ) {
       return { kind, observedAt: options.observedAt, status: "unavailable" };
     }
     return {
       kind,
       observedAt: options.observedAt,
-      recordedAt: stats.mtimeMs,
+      recordedAt: Number(stats.mtimeMs),
       revision: revisionOf(bytes),
       status: "available",
       value: bytes,

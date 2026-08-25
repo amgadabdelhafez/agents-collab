@@ -1,7 +1,8 @@
 import type { PublicAdapterIdentity, PublicResolvedConfig } from "./types";
 
 const URL_RE = /\b(?:https?|wss?):\/\/\S+/giu;
-const ABSOLUTE_PATH_RE = /(?:\/[\w.@+-]+){2,}/gu;
+const ABSOLUTE_PATH_RE = /(^|\s)(?:\/[\w.@+-]+)+/gu;
+const AUTHORIZATION_RE = /\bauthorization\s*[:=]\s*[^\r\n]+/giu;
 const SECRET_RE =
   /\b(?:token|password|secret|credential|authorization|api[_-]?key)\s*[:=]\s*\S+/giu;
 const PROCESS_BIRTH_RE = /^(?:darwin|linux):[1-9][0-9]*$/u;
@@ -17,9 +18,10 @@ const removeControlCharacters = (value: string): string =>
 
 export const redactPublicText = (value: unknown, maxLength = 500): string =>
   removeControlCharacters(String(value ?? ""))
+    .replace(AUTHORIZATION_RE, "[redacted]")
     .replace(SECRET_RE, "[redacted]")
     .replace(URL_RE, "[url]")
-    .replace(ABSOLUTE_PATH_RE, "[path]")
+    .replace(ABSOLUTE_PATH_RE, "$1[path]")
     .slice(0, maxLength);
 
 export const escapePublicText = (value: string): string =>

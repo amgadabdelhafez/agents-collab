@@ -10,7 +10,8 @@ test("timeline is deterministic, bounded, redacted, and path-free", () => {
     [
       {
         at: "2026-01-01T00:00:00.000Z",
-        message: "token=secret https://host/x /Users/me/private",
+        message:
+          "Authorization: Bearer abc123 https://host/x /Users/me/private /secret",
         source: "bridge",
       },
       {
@@ -26,6 +27,7 @@ test("timeline is deterministic, bounded, redacted, and path-free", () => {
   expect(rows.items[0]?.source).toBe("hooks");
   expect(rows.nextCursor).toBe(1);
   expect(JSON.stringify(rows)).not.toContain("secret");
+  expect(JSON.stringify(rows)).not.toContain("abc123");
   expect(JSON.stringify(rows)).not.toContain("https://");
   expect(JSON.stringify(rows)).not.toContain("/Users/");
   expect(rows.items[0]?.message).toBe("&lt;script&gt;second&lt;/script&gt;");
