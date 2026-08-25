@@ -192,13 +192,20 @@ const readHooks = (runDir: string, observedAt: number): SourceSnapshot => {
       ? { kind: "hooks", observedAt, status: "missing" }
       : unavailable("hooks", observedAt);
   }
-  const parts = names.map((name) =>
-    readJsonlSnapshot(assertContainedPath(runDir, join(directory, name)), {
-      kind: "hooks",
-      maxBytes: 2 * 1024 * 1024,
-      observedAt,
-    })
-  );
+  const parts: SourceSnapshot<unknown[]>[] = [];
+  for (const name of names) {
+    try {
+      parts.push(
+        readJsonlSnapshot(assertContainedPath(runDir, join(directory, name)), {
+          kind: "hooks",
+          maxBytes: 2 * 1024 * 1024,
+          observedAt,
+        })
+      );
+    } catch {
+      return unavailable("hooks", observedAt);
+    }
+  }
   const failed = parts.find((part) => part.status !== "available");
   if (failed) {
     return failed;

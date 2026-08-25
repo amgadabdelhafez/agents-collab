@@ -1,7 +1,7 @@
 import type { PublicAdapterIdentity, PublicResolvedConfig } from "./types";
 
 const URL_RE = /\b(?:https?|wss?):\/\/\S+/giu;
-const ABSOLUTE_PATH_RE = /(^|\s)(?:\/[\w.@+-]+)+/gu;
+const ABSOLUTE_PATH_RE = /(^|[^A-Za-z0-9<])(?:\/[\w.@+-]+)+/gu;
 const AUTHORIZATION_RE = /\bauthorization\s*[:=]\s*[^\r\n]+/giu;
 const SECRET_RE =
   /\b(?:token|password|secret|credential|authorization|api[_-]?key)\s*[:=]\s*\S+/giu;

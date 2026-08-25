@@ -147,3 +147,26 @@ test("filesystem capabilities reject file symlinks and traversal-shaped locators
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("symlinked hook evidence degrades without aborting the projection", () => {
+  const root = makeRoot();
+  const runDir = join(root, "repo-a", "7");
+  const external = join(root, "external.jsonl");
+  mkdirSync(join(runDir, "hooks"), { recursive: true });
+  try {
+    writeFileSync(
+      join(runDir, "manifest.json"),
+      '{"repoId":"repo-a","runId":"7"}'
+    );
+    writeFileSync(external, '{"event":"secret"}\n');
+    symlinkSync(external, join(runDir, "hooks", "codex.jsonl"));
+    const capabilities = createFilesystemReadModelCapabilities(root, () => 123);
+    const selected = capabilities.listRuns()[0];
+    if (!selected) {
+      throw new Error("Expected a discovered run");
+    }
+    expect(capabilities.readSources(selected).hooks.status).toBe("unavailable");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
