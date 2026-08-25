@@ -190,3 +190,46 @@ test("malformed producer fields fail closed and lifecycle conflicts are explicit
     expect(conflict.run.aggregate.status).toBe("conflict");
   }
 });
+
+test("unknown freshness and invalid producer schemas never become healthy", () => {
+  const deps = makeCapabilities();
+  const sources = deps.readSources(locator);
+  sources.transcript.recordedAt = undefined;
+  deps.readSources = () => sources;
+  const unknown = projectRun(locator, deps);
+  expect(unknown.kind).toBe("run");
+  if (unknown.kind === "run") {
+    expect(unknown.run.observations.transcript).toBe("unknown");
+    expect(unknown.run.aggregate.status).toBe("unknown");
+  }
+
+  for (const manifest of [
+    { ...(sources.manifest.value as object), createdAt: undefined },
+    {
+      ...(sources.manifest.value as object),
+      state: "completed",
+      status: "running",
+    },
+    {
+      ...(sources.manifest.value as object),
+      resolvedConfig: {
+        ...(sources.manifest.value as any).resolvedConfig,
+        hidden: "payload",
+      },
+    },
+    {
+      ...(sources.manifest.value as object),
+      tmuxAdapterIdentity: {
+        processBirthId: "darwin:1",
+        serverPid: 2,
+        version: 1,
+      },
+    },
+  ]) {
+    const invalidDeps = makeCapabilities();
+    const invalidSources = invalidDeps.readSources(locator);
+    invalidSources.manifest = snapshot("manifest", manifest);
+    invalidDeps.readSources = () => invalidSources;
+    expect(projectRun(locator, invalidDeps).kind).toBe("rejected");
+  }
+});

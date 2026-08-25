@@ -63,10 +63,63 @@ const LIFECYCLE_STATES = new Set([
   "stopped",
 ]);
 const RUN_STATUSES = new Set(["running", "done", "failed", "stopped"]);
+const CONFIG_KEYS = new Set([
+  "governess",
+  "pairedMode",
+  "proofConfigured",
+  "review",
+  "reviewPlan",
+  "tmux",
+  "version",
+  "worktree",
+]);
+const ADAPTER_KEYS = new Set([
+  "processBirthId",
+  "serverPid",
+  "socketPath",
+  "version",
+]);
 const isCanonicalTimestamp = (value: unknown): value is string =>
   typeof value === "string" &&
   Number.isFinite(Date.parse(value)) &&
   new Date(value).toISOString() === value;
+
+const hasOnlyKeys = (
+  value: Record<string, unknown>,
+  allowed: Set<string>
+): boolean => Object.keys(value).every((key) => allowed.has(key));
+
+const isValidProducerConfig = (value: unknown): boolean =>
+  value !== null &&
+  typeof value === "object" &&
+  hasOnlyKeys(value as Record<string, unknown>, CONFIG_KEYS) &&
+  selectPublicConfig(value) !== undefined;
+
+const isValidProducerAdapter = (value: unknown): boolean => {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    hasOnlyKeys(record, ADAPTER_KEYS) &&
+    typeof record.socketPath === "string" &&
+    record.socketPath.startsWith("/") &&
+    selectPublicAdapter(value) !== undefined
+  );
+};
+
+const lifecyclePairIsValid = (state: unknown, status: unknown): boolean => {
+  if (typeof state !== "string" || typeof status !== "string") {
+    return false;
+  }
+  if (["submitted", "working", "reviewing", "input-required"].includes(state)) {
+    return status === "running";
+  }
+  if (state === "completed") {
+    return status === "done";
+  }
+  return state === status;
+};
 
 const isValidManifest = (manifest: Record<string, unknown>): boolean =>
   typeof manifest.repoId === "string" &&
@@ -75,11 +128,13 @@ const isValidManifest = (manifest: Record<string, unknown>): boolean =>
   LIFECYCLE_STATES.has(manifest.state) &&
   typeof manifest.status === "string" &&
   RUN_STATUSES.has(manifest.status) &&
+  lifecyclePairIsValid(manifest.state, manifest.status) &&
+  isCanonicalTimestamp(manifest.createdAt) &&
   isCanonicalTimestamp(manifest.updatedAt) &&
   (manifest.resolvedConfig === undefined ||
-    selectPublicConfig(manifest.resolvedConfig) !== undefined) &&
+    isValidProducerConfig(manifest.resolvedConfig)) &&
   (manifest.tmuxAdapterIdentity === undefined ||
-    selectPublicAdapter(manifest.tmuxAdapterIdentity) !== undefined);
+    isValidProducerAdapter(manifest.tmuxAdapterIdentity));
 
 const requirement = (configured: unknown): Requirement => {
   if (configured === true) {
@@ -105,9 +160,11 @@ const observe = (
   if (snapshot.status !== "available" || !valid) {
     return "unknown";
   }
-  return classifyFreshness(snapshot.kind, snapshot.recordedAt, now) === "stale"
-    ? "stale"
-    : "present";
+  const freshness = classifyFreshness(snapshot.kind, snapshot.recordedAt, now);
+  if (freshness === "unknown") {
+    return "unknown";
+  }
+  return freshness === "stale" ? "stale" : "present";
 };
 
 const aggregateStatus = (

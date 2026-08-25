@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  constants,
+  fstatSync,
   lstatSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
-  statSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type {
@@ -35,18 +38,30 @@ const readBytes = (
   options: SnapshotOptions
 ): SourceSnapshot<Uint8Array> => {
   const kind = options.kind ?? "manifest";
+  let descriptor: number | undefined;
   try {
     if (lstatSync(path).isSymbolicLink()) {
       return { kind, observedAt: options.observedAt, status: "unavailable" };
     }
-    const stats = statSync(path);
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags are a bitmask.
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    assertContainedPath(resolve(path, ".."), path);
+    const stats = fstatSync(descriptor);
     if (!stats.isFile()) {
       return { kind, observedAt: options.observedAt, status: "unavailable" };
     }
     if (stats.size > options.maxBytes) {
       return { kind, observedAt: options.observedAt, status: "oversize" };
     }
-    const bytes = readFileSync(path);
+    const bytes = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    if (
+      stats.dev !== after.dev ||
+      stats.ino !== after.ino ||
+      stats.size !== after.size
+    ) {
+      return { kind, observedAt: options.observedAt, status: "unavailable" };
+    }
     return {
       kind,
       observedAt: options.observedAt,
@@ -63,6 +78,10 @@ const readBytes = (
       observedAt: options.observedAt,
       status: code === "ENOENT" ? "missing" : "unavailable",
     };
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
   }
 };
 
