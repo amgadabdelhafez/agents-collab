@@ -1,0 +1,12 @@
+{
+  "task_id": "webui-t01-read-model-v2",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}
