@@ -1,0 +1,26 @@
+task_id: webui-theme-mode
+dimension: unit
+attempt: 002
+started_at: 2026-08-23T05:43:05Z
+command: bun run test:file -- tests/webui/theme.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/theme.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/theme.test.ts:
+(pass) Web UI appearance mode > parses only exact supported modes [0.16ms]
+(pass) Web UI appearance mode > defaults invalid, missing, and inaccessible storage to system [0.13ms]
+(pass) Web UI appearance mode > persists only the selected appearance mode and tolerates failure [0.10ms]
+(pass) Web UI appearance mode > resolves explicit modes and follows the system preference
+(pass) Web UI appearance mode > applies selected and resolved themes to document chrome [0.14ms]
+(pass) Web UI appearance mode > subscribes to live system changes and removes the listener [0.06ms]
+
+ 6 pass
+ 0 fail
+ 21 expect() calls
+Ran 6 tests across 1 file. [53.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-23T05:43:05Z

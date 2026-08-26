@@ -896,3 +896,62 @@ test("preparePairedRun preserves governed Codex gates and removes stale child pr
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("preparePairedRun freezes a strict redacted resolved configuration", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  process.env.HOME = home;
+  process.env.LOOP_RUN_ID = "resolved-config";
+  try {
+    const opts = makeOptions({
+      claudeMcpConfigPath: "/private/claude.json",
+      codexHome: "/private/codex-home",
+      governess: undefined,
+      promptInput: "do not persist this prompt",
+      proof: "do not persist this proof",
+      review: "claudex",
+      reviewPlan: "other",
+      sessionId: "secret-session",
+      tmux: true,
+      workspace: "/private/workspace",
+      worktree: undefined,
+    });
+    const prepared = preparePairedRun(opts, process.cwd());
+    const snapshot = prepared.manifest.resolvedConfig;
+
+    expect(snapshot).toEqual({
+      governess: false,
+      pairedMode: true,
+      proofConfigured: true,
+      review: "claudex",
+      reviewPlan: "other",
+      tmux: true,
+      version: 1,
+      worktree: false,
+    });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain("private");
+    expect(JSON.stringify(snapshot)).not.toContain("secret-session");
+    expect(JSON.stringify(snapshot)).not.toContain("do not persist");
+
+    opts.proof = "changed";
+    opts.review = "codex";
+    expect(prepared.manifest.resolvedConfig).toEqual(snapshot);
+    expect(
+      readRunManifest(prepared.storage.manifestPath)?.resolvedConfig
+    ).toEqual(snapshot);
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});

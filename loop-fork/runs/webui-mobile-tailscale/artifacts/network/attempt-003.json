@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "dimension": "network",
+  "attempt": "003",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-23T06:42:42Z",
+  "ended_at": "2026-08-23T06:42:43Z",
+  "artifact": "runs/webui-mobile-tailscale/artifacts/network/attempt-003.log",
+  "command": [
+    "bash",
+    "-lc",
+    "set -euo pipefail\nlisteners=\"$(lsof -nP -iTCP:46327 -sTCP:LISTEN)\"\nprintf \"%s\\n\" \"$listeners\"\n[[ \"$listeners\" == *\"100.64.0.14:46327 (LISTEN)\"* ]]\n[[ \"$listeners\" != *\"*:46327 (LISTEN)\"* ]]\nbody_file=\"$(mktemp)\"\ntrap \"rm -f \\\"$body_file\\\"\" EXIT\nfor host in 100.64.0.14 sweetmac14.sweet.home; do\n  for route in / /main.tsx /api/v1/live-snapshot?request=1; do\n    code=\"$(curl --noproxy \"*\" -sS -o \"$body_file\" -w \"%{http_code}\" \"http://$host:46327$route\")\"\n    printf \"allowed Host %s route %s -> %s\\n\" \"$host\" \"$route\" \"$code\"\n    [[ \"$code\" == \"200\" ]]\n  done\n  rg -q \"\\\"source\\\":\\\"loop-registry-live\\\"\" \"$body_file\"\ndone\nfor route in / /main.tsx /api/v1/live-snapshot?request=1; do\n  code=\"$(curl --noproxy \"*\" -sS -H \"Host: 100.64.0.15:46327\" -o \"$body_file\" -w \"%{http_code}\" \"http://100.64.0.14:46327$route\")\"\n  rg -q \"\\\"code\\\":\\\"HOST_REJECTED\\\"\" \"$body_file\"\n  printf \"unrelated numeric Host route %s -> %s, exact rejection body\\n\" \"$route\" \"$code\"\n  [[ \"$code\" == \"403\" ]]\ndone"
+  ]
+}

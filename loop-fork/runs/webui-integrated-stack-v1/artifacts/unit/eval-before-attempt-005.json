@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-integrated-stack-v1",
+  "status": "fail",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "fail",
+      "artifact": "runs/webui-integrated-stack-v1/artifacts/unit/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/webui-integrated-stack-v1/artifacts/unit/attempt-004.log",
+      "latest_attempt_meta": "runs/webui-integrated-stack-v1/artifacts/unit/attempt-004.json"
+    }
+  }
+}

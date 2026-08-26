@@ -1,0 +1,15 @@
+{
+  "task_id": "webui-integrated-stack-v1",
+  "dimension": "review",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-26T02:33:13Z",
+  "ended_at": "2026-08-26T02:33:13Z",
+  "artifact": "runs/webui-integrated-stack-v1/artifacts/review/attempt-001.log",
+  "command": [
+    "node",
+    "runs/webui-integrated-stack-v1/artifacts/verify-integration.mjs"
+  ]
+}

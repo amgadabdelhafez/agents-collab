@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "dimension": "review",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-25T23:04:50Z",
+  "ended_at": "2026-08-25T23:04:50Z",
+  "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/review/attempt-001.log",
+  "command": [
+    "bash",
+    "-lc",
+    "test \"$(git rev-parse HEAD)\" = \"a4b8e11b2ade432a87029db5e00d1e5dbb84f780\" && rg -q \"^Verdict: PASS$\" runs/webui-t00-adapter-identity-v2/review.md && rg -q \"a4b8e11b2ade432a87029db5e00d1e5dbb84f780\" runs/webui-t00-adapter-identity-v2/review.md"
+  ]
+}

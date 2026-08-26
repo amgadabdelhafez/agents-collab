@@ -31,6 +31,8 @@ import type {
   CavemanMode,
   EffortLevel,
   LaunchWorkspaceBinding,
+  PlanReviewMode,
+  ReviewMode,
   ReviewStatus,
   RunLifecycleState,
   RunStatus,
@@ -89,6 +91,24 @@ export interface RunWorldModelBinding {
   statementCount: number;
 }
 
+export interface RunTmuxAdapterIdentity {
+  processBirthId: string;
+  serverPid: number;
+  socketPath: string;
+  version: 1;
+}
+
+export interface RunResolvedConfig {
+  governess: boolean;
+  pairedMode: boolean;
+  proofConfigured: boolean;
+  review?: ReviewMode;
+  reviewPlan?: PlanReviewMode;
+  tmux: boolean;
+  version: 1;
+  worktree: boolean;
+}
+
 export interface RunManifest {
   cavemanMode?: CavemanMode;
   claudeChannelServer?: string;
@@ -105,15 +125,18 @@ export interface RunManifest {
   launchAttemptPid?: number;
   launchCharters?: Partial<Record<Agent, RunLaunchCharter>>;
   launchClaimId?: string;
+  readonly manifestRevision?: string;
   mode: string;
   pid: number;
   primaryAgent?: Agent;
   repoId: string;
+  resolvedConfig?: Readonly<RunResolvedConfig>;
   reviewerEffort?: EffortLevel;
   runId: string;
   sourceTaskSha256?: string;
   state: RunLifecycleState;
   status: RunStatus;
+  tmuxAdapterIdentity?: Readonly<RunTmuxAdapterIdentity>;
   tmuxPaneAuPair?: string;
   tmuxPaneGoverness?: string;
   tmuxPaneLeft?: string;
@@ -200,11 +223,13 @@ interface RunManifestInput {
   pid: number;
   primaryAgent?: Agent;
   repoId: string;
+  resolvedConfig?: RunResolvedConfig;
   reviewerEffort?: EffortLevel;
   runId: string;
   sourceTaskSha256?: string;
   state?: RunLifecycleState;
   status?: string;
+  tmuxAdapterIdentity?: RunTmuxAdapterIdentity;
   tmuxPaneAuPair?: string;
   tmuxPaneGoverness?: string;
   tmuxPaneLeft?: string;
@@ -238,6 +263,138 @@ const effortManifestFields = (
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
+  Object.hasOwn(value, key);
+
+const PROCESS_BIRTH_ID_RE = /^(?:darwin|linux):[1-9][0-9]*$/u;
+const TMUX_ADAPTER_IDENTITY_KEYS = new Set([
+  "processBirthId",
+  "serverPid",
+  "socketPath",
+  "version",
+]);
+const RESOLVED_CONFIG_KEYS = new Set([
+  "governess",
+  "pairedMode",
+  "proofConfigured",
+  "review",
+  "reviewPlan",
+  "tmux",
+  "version",
+  "worktree",
+]);
+
+const isReviewMode = (value: unknown): value is ReviewMode =>
+  value === "claudex" || (typeof value === "string" && isAgent(value));
+
+const isPlanReviewMode = (value: unknown): value is PlanReviewMode =>
+  value === "other" ||
+  value === "none" ||
+  (typeof value === "string" && isAgent(value));
+
+const readTmuxAdapterIdentity = (
+  value: unknown
+): Readonly<RunTmuxAdapterIdentity> | undefined => {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (
+    Object.keys(value).some((key) => !TMUX_ADAPTER_IDENTITY_KEYS.has(key)) ||
+    value.version !== 1 ||
+    typeof value.socketPath !== "string" ||
+    !isAbsolute(value.socketPath) ||
+    typeof value.serverPid !== "number" ||
+    !Number.isInteger(value.serverPid) ||
+    value.serverPid <= 0 ||
+    typeof value.processBirthId !== "string" ||
+    !PROCESS_BIRTH_ID_RE.test(value.processBirthId)
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    processBirthId: value.processBirthId,
+    serverPid: value.serverPid,
+    socketPath: value.socketPath,
+    version: 1,
+  });
+};
+
+const readResolvedConfig = (
+  value: unknown
+): Readonly<RunResolvedConfig> | undefined => {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some((key) => !RESOLVED_CONFIG_KEYS.has(key)) ||
+    value.version !== 1 ||
+    typeof value.governess !== "boolean" ||
+    typeof value.pairedMode !== "boolean" ||
+    typeof value.proofConfigured !== "boolean" ||
+    typeof value.tmux !== "boolean" ||
+    typeof value.worktree !== "boolean" ||
+    (hasOwn(value, "review") && !isReviewMode(value.review)) ||
+    (hasOwn(value, "reviewPlan") && !isPlanReviewMode(value.reviewPlan))
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    governess: value.governess,
+    pairedMode: value.pairedMode,
+    proofConfigured: value.proofConfigured,
+    ...(isReviewMode(value.review) ? { review: value.review } : {}),
+    ...(isPlanReviewMode(value.reviewPlan)
+      ? { reviewPlan: value.reviewPlan }
+      : {}),
+    tmux: value.tmux,
+    version: 1,
+    worktree: value.worktree,
+  });
+};
+
+const tmuxAdapterManifestFields = (
+  value: RunTmuxAdapterIdentity | undefined
+): Pick<RunManifest, "tmuxAdapterIdentity"> => {
+  if (!value) {
+    return {};
+  }
+  const tmuxAdapterIdentity = readTmuxAdapterIdentity(value);
+  if (!tmuxAdapterIdentity) {
+    throw new Error("Invalid tmux adapter identity");
+  }
+  return { tmuxAdapterIdentity };
+};
+
+const resolvedConfigManifestFields = (
+  value: RunResolvedConfig | undefined
+): Pick<RunManifest, "resolvedConfig"> => {
+  if (!value) {
+    return {};
+  }
+  const resolvedConfig = readResolvedConfig(value);
+  if (!resolvedConfig) {
+    throw new Error("Invalid resolved run configuration");
+  }
+  return { resolvedConfig };
+};
+
+const readAdapterManifestFields = (
+  parsed: Record<string, unknown>
+): Pick<RunManifest, "resolvedConfig" | "tmuxAdapterIdentity"> => {
+  const tmuxAdapterIdentity = readTmuxAdapterIdentity(
+    parsed.tmuxAdapterIdentity
+  );
+  if (hasOwn(parsed, "tmuxAdapterIdentity") && !tmuxAdapterIdentity) {
+    throw new Error("Invalid tmux adapter identity");
+  }
+  const resolvedConfig = readResolvedConfig(parsed.resolvedConfig);
+  if (hasOwn(parsed, "resolvedConfig") && !resolvedConfig) {
+    throw new Error("Invalid resolved run configuration");
+  }
+  return {
+    ...(resolvedConfig ? { resolvedConfig } : {}),
+    ...(tmuxAdapterIdentity ? { tmuxAdapterIdentity } : {}),
+  };
+};
 
 const asString = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
@@ -846,7 +1003,7 @@ export const updateRunManifest = (
     return undefined;
   }
   writeRunManifest(manifestPath, next);
-  return next;
+  return readRunManifest(manifestPath) ?? next;
 };
 
 export const createRunManifest = (
@@ -861,6 +1018,8 @@ export const createRunManifest = (
     ...cavemanManifestFields(input),
     ...effortManifestFields(input),
     ...launchReservationManifestFields(input),
+    ...resolvedConfigManifestFields(input.resolvedConfig),
+    ...tmuxAdapterManifestFields(input.tmuxAdapterIdentity),
     ...worldModelManifestFields(input.worldModel),
     ...(input.claudeChannelServer
       ? { claudeChannelServer: input.claudeChannelServer }
@@ -919,15 +1078,20 @@ export const writeRunManifest = (
   manifest: RunManifest
 ): void => {
   ensureParentDir(manifestPath);
+  const { manifestRevision: _derivedRevision, ...persistedManifest } = manifest;
+  const bytes = Buffer.from(
+    `${JSON.stringify(persistedManifest, null, 2)}\n`,
+    "utf8"
+  );
+  if (!parseRunManifestBytes(bytes, manifestPath)) {
+    throw new Error("Invalid run manifest");
+  }
   const tempPath = join(
     dirname(manifestPath),
     `.${basename(manifestPath)}.${process.pid}.${randomUUID()}.tmp`
   );
   try {
-    writeFileSync(tempPath, `${JSON.stringify(manifest, null, 2)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-    });
+    writeFileSync(tempPath, bytes, { flag: "wx" });
     renameSync(tempPath, manifestPath);
   } catch (error) {
     rmSync(tempPath, { force: true });
@@ -1008,6 +1172,7 @@ const readOptionalRunManifestFields = (
   const governess =
     parsed.governess === true || parsed[LEGACY_MANIFEST_KEYS.enabled] === true;
   return {
+    ...readAdapterManifestFields(parsed),
     ...(cavemanMode ? { cavemanMode } : {}),
     ...effortManifestFields({ driverEffort, reviewerEffort }),
     ...(claudeChannelServer ? { claudeChannelServer } : {}),
@@ -1032,15 +1197,12 @@ const readOptionalRunManifestFields = (
   };
 };
 
-export const readRunManifest = (
+const parseRunManifestBytes = (
+  bytes: Uint8Array,
   manifestPath: string
 ): RunManifest | undefined => {
-  if (!existsSync(manifestPath)) {
-    return undefined;
-  }
-
   try {
-    const raw = readFileSync(manifestPath, "utf8");
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) {
       return undefined;
@@ -1078,7 +1240,7 @@ export const readRunManifest = (
       return undefined;
     }
 
-    return {
+    const manifest: RunManifest = {
       ...readOptionalRunManifestFields(parsed, manifestPath),
       claudeSessionId:
         firstString(parsed, ["claudeSessionId", "claude_session_id"]) ?? "",
@@ -1094,6 +1256,26 @@ export const readRunManifest = (
       status: state ? runStatusFromState(state) : "running",
       updatedAt,
     };
+    Object.defineProperty(manifest, "manifestRevision", {
+      configurable: false,
+      enumerable: false,
+      value: createHash("sha256").update(bytes).digest("hex"),
+      writable: false,
+    });
+    return manifest;
+  } catch {
+    return undefined;
+  }
+};
+
+export const readRunManifest = (
+  manifestPath: string
+): RunManifest | undefined => {
+  if (!existsSync(manifestPath)) {
+    return undefined;
+  }
+  try {
+    return parseRunManifestBytes(readFileSync(manifestPath), manifestPath);
   } catch {
     return undefined;
   }

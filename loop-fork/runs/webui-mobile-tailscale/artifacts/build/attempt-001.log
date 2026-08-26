@@ -1,0 +1,29 @@
+task_id: webui-mobile-tailscale
+dimension: build
+attempt: 001
+started_at: 2026-08-23T06:17:18Z
+command: bun run web:build
+--- output ---
+$ tsc -p tsconfig.webui.json && vite build --config vite.webui.config.ts
+src/webui/tailscale-launch.ts(1,46): error TS2307: Cannot find module 'bun' or its corresponding type declarations.
+vite.webui.config.ts(13,5): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Type 'readonly string[] | undefined' is not assignable to type 'true | string[] | undefined'.
+      Type 'readonly string[]' is not assignable to type 'true | string[] | undefined'.
+        The type 'readonly string[]' is 'readonly' and cannot be assigned to the mutable type 'string[]'.
+          Type 'readonly string[] | undefined' is not assignable to type 'true | string[] | undefined'.
+            Type 'readonly string[]' is not assignable to type 'true | string[] | undefined'.
+              The type 'readonly string[]' is 'readonly' and cannot be assigned to the mutable type 'string[]'.
+vite.webui.config.ts(20,5): error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Type 'readonly string[] | undefined' is not assignable to type 'true | string[] | undefined'.
+      Type 'readonly string[]' is not assignable to type 'true | string[] | undefined'.
+        The type 'readonly string[]' is 'readonly' and cannot be assigned to the mutable type 'string[]'.
+          Type 'readonly string[] | undefined' is not assignable to type 'true | string[] | undefined'.
+            Type 'readonly string[]' is not assignable to type 'true | string[] | undefined'.
+              The type 'readonly string[]' is 'readonly' and cannot be assigned to the mutable type 'string[]'.
+
+--- result ---
+command_exit_code: 2
+exit_code: 2
+ended_at: 2026-08-23T06:17:20Z

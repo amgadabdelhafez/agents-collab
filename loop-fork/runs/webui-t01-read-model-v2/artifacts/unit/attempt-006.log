@@ -1,0 +1,39 @@
+task_id: webui-t01-read-model-v2
+dimension: unit
+attempt: 006
+started_at: 2026-08-26T01:18:06Z
+command: env LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/control-surface
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/control-surface/sources.test.ts:
+(pass) bounded snapshots use exact bytes and reject malformed UTF-8 [5.30ms]
+(pass) filesystem capabilities discover only directories and materialize known sources [4.15ms]
+(pass) snapshots distinguish missing, oversized, malformed JSONL, and valid rows [0.44ms]
+(pass) evidence paths must remain contained by the selected run directory [0.58ms]
+(pass) filesystem capabilities reject file symlinks and traversal-shaped locators [0.76ms]
+(pass) symlinked hook evidence degrades without aborting the projection [1.36ms]
+(pass) a symlinked repository ancestor is rejected before source bytes are read [0.64ms]
+
+tests/loop/control-surface/projection.test.ts:
+(pass) freshness thresholds are inclusive and tested on both sides [0.27ms]
+(pass) canonical identity rejects path and manifest disagreement [0.51ms]
+(pass) requirements stay separate from observations and legacy absence stays unknown [0.67ms]
+(pass) a changing source retries once and a second change fails closed [0.07ms]
+(pass) public config and adapter DTOs expose only the strict allowlists [0.69ms]
+(pass) malformed producer fields fail closed and lifecycle conflicts are explicit [0.18ms]
+(pass) unknown freshness and invalid producer schemas never become healthy [0.18ms]
+
+tests/loop/control-surface/timeline.test.ts:
+(pass) timeline is deterministic, bounded, redacted, and path-free [0.52ms]
+(pass) opaque evidence references are stable and disclose no locator [0.05ms]
+
+ 16 pass
+ 0 fail
+ 86 expect() calls
+Ran 16 tests across 3 files. [114.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-26T01:18:06Z

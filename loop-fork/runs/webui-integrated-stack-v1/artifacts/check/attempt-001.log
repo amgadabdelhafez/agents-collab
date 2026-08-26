@@ -1,0 +1,357 @@
+task_id: webui-integrated-stack-v1
+dimension: check
+attempt: 001
+started_at: 2026-08-26T02:29:00Z
+command: bun run check
+--- output ---
+$ ultracite check
+runs/webui-all-active-loops-release-certification/artifacts/diff/attempt-001.json format ━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-22T18:36:51Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops-release-certification/artifacts/diff/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"git",
+    13    │ - ····"diff",
+    14    │ - ····"--check"
+    15    │ - ··]
+       11 │ + ··"command":·["git",·"diff",·"--check"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops-release-certification/artifacts/diff/eval-before-attempt-001.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-all-active-loops-release-certification",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"diff",
+     7    │ - ····"review"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"diff",·"review"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+  
+
+runs/webui-all-active-loops-release-certification/artifacts/diff/verify.json format ━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-22T18:36:51Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops-release-certification/artifacts/diff/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"git",
+    13    │ - ····"diff",
+    14    │ - ····"--check"
+    15    │ - ··]
+       11 │ + ··"command":·["git",·"diff",·"--check"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops-release-certification/artifacts/unit/eval-before-attempt-001.json format ━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-all-active-loops-release-certification",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"diff",
+     7    │ - ····"review"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"diff",·"review"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+  
+
+runs/webui-all-active-loops-release-certification/eval.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-all-active-loops-release-certification",
+     3  3 │     "status": "pass",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"diff",
+     7    │ - ····"review"
+     8    │ - ··],
+        4 │ + ··"required":·["unit",·"diff",·"review"],
+     9  5 │     "dimensions": {
+    10  6 │       "unit": {
+  
+
+runs/webui-all-active-loops/artifacts/diff/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-21T23:29:44Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/diff/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"git",
+    13    │ - ····"diff",
+    14    │ - ····"--check"
+    15    │ - ··]
+       11 │ + ··"command":·["git",·"diff",·"--check"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/diff/attempt-002.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-21T23:58:07Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/diff/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"git",
+    13    │ - ····"diff",
+    14    │ - ····"--check"
+    15    │ - ··]
+       11 │ + ··"command":·["git",·"diff",·"--check"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/diff/attempt-003.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-22T00:08:21Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/diff/attempt-003.log",
+    11    │ - ··"command":·[
+    12    │ - ····"git",
+    13    │ - ····"diff",
+    14    │ - ····"--check"
+    15    │ - ··]
+       11 │ + ··"command":·["git",·"diff",·"--check"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/diff/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-22T00:08:21Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/diff/attempt-003.log",
+    11    │ - ··"command":·[
+    12    │ - ····"git",
+    13    │ - ····"diff",
+    14    │ - ····"--check"
+    15    │ - ··]
+       11 │ + ··"command":·["git",·"diff",·"--check"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/regression/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-21T23:29:24Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/regression/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/regression/attempt-002.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-21T23:54:31Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/regression/attempt-002.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/regression/attempt-003.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-21T23:57:37Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/regression/attempt-003.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/regression/attempt-004.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-22T00:05:08Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/regression/attempt-004.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-all-active-loops/artifacts/regression/verify.json format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-22T00:05:08Z",
+    10 10 │     "artifact": "runs/webui-all-active-loops/artifacts/regression/attempt-004.log",
+    11    │ - ··"command":·[
+    12    │ - ····"bun",
+    13    │ - ····"run",
+    14    │ - ····"test:ci"
+    15    │ - ··]
+       11 │ + ··"command":·["bun",·"run",·"test:ci"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-client-boundary-hardening/artifacts/diff/attempt-001.json format ━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     9  9 │     "ended_at": "2026-08-22T18:53:13Z",
+    10 10 │     "artifact": "runs/webui-client-boundary-hardening/artifacts/diff/attempt-001.log",
+    11    │ - ··"command":·[
+    12    │ - ····"git",
+    13    │ - ····"diff",
+    14    │ - ····"--check"
+    15    │ - ··]
+       11 │ + ··"command":·["git",·"diff",·"--check"]
+    16 12 │   }
+    17 13 │   
+  
+
+runs/webui-client-boundary-hardening/artifacts/diff/eval-before-attempt-001.json format ━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-client-boundary-hardening",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"build",
+     7    │ - ····"security",
+     8    │ - ····"regression",
+     9    │ - ····"diff",
+    10    │ - ····"review"
+    11    │ - ··],
+        4 │ + ··"required":·["unit",·"build",·"security",·"regression",·"diff",·"review"],
+    12  5 │     "dimensions": {
+    13  6 │       "unit": {
+  
+
+runs/webui-client-boundary-hardening/artifacts/diff/eval-before-attempt-002.json format ━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-client-boundary-hardening",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"build",
+     7    │ - ····"security",
+     8    │ - ····"regression",
+     9    │ - ····"diff",
+    10    │ - ····"review"
+    11    │ - ··],
+        4 │ + ··"required":·["unit",·"build",·"security",·"regression",·"diff",·"review"],
+    12  5 │     "dimensions": {
+    13  6 │       "unit": {
+  
+
+runs/webui-client-boundary-hardening/artifacts/diff/eval-before-attempt-003.json format ━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-client-boundary-hardening",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"build",
+     7    │ - ····"security",
+     8    │ - ····"regression",
+     9    │ - ····"diff",
+    10    │ - ····"review"
+    11    │ - ··],
+        4 │ + ··"required":·["unit",·"build",·"security",·"regression",·"diff",·"review"],
+    12  5 │     "dimensions": {
+    13  6 │       "unit": {
+  
+
+runs/webui-client-boundary-hardening/artifacts/diff/eval-before-attempt-004.json format ━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-client-boundary-hardening",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"build",
+     7    │ - ····"security",
+     8    │ - ····"regression",
+     9    │ - ····"diff",
+    10    │ - ····"review"
+    11    │ - ··],
+        4 │ + ··"required":·["unit",·"build",·"security",·"regression",·"diff",·"review"],
+    12  5 │     "dimensions": {
+    13  6 │       "unit": {
+  
+
+runs/webui-client-boundary-hardening/artifacts/diff/eval-before-attempt-005.json format ━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     2  2 │     "task_id": "webui-client-boundary-hardening",
+     3  3 │     "status": "pending",
+     4    │ - ··"required":·[
+     5    │ - ····"unit",
+     6    │ - ····"build",
+     7    │ - ····"security",
+     8    │ - ····"regression",
+     9    │ - ····"diff",
+    10    │ - ····"review"
+    11    │ - ··],
+        4 │ + ··"required":·["unit",·"build",·"security",·"regression",·"diff",·"review"],
+    12  5 │     "dimensions": {
+    13  6 │       "unit": {
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 160.
+Checked 1206 files in 290ms. No fixes applied.
+Found 180 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+error: script "check" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-26T02:29:00Z

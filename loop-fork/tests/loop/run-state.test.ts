@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -32,6 +33,7 @@ import {
   resolveRunStorage,
   resolveStorageRoot,
   touchRunManifest,
+  updateRunManifest,
   writeRunManifest,
 } from "../../src/loop/run-state";
 
@@ -697,4 +699,133 @@ test("run ids are validated before storage paths are built", () => {
   expect(() => buildRunDir("/tmp", "repo", "foo..bar")).toThrow(
     "Invalid run id"
   );
+});
+
+test("manifest revision hashes the exact validated persisted bytes", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  const manifest = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 42,
+    repoId: "repo-abc123",
+    resolvedConfig: {
+      governess: false,
+      pairedMode: true,
+      proofConfigured: true,
+      review: "claudex",
+      reviewPlan: "other",
+      tmux: true,
+      version: 1,
+      worktree: false,
+    },
+    runId: "revision-proof",
+    tmuxAdapterIdentity: {
+      processBirthId: "darwin:1787693386000",
+      serverPid: 4242,
+      socketPath: "/private/tmp/tmux-501/default",
+      version: 1,
+    },
+  });
+
+  writeRunManifest(manifestPath, manifest);
+  const bytes = readFileSync(manifestPath);
+  const read = readRunManifest(manifestPath);
+
+  expect(read?.manifestRevision).toBe(
+    createHash("sha256").update(bytes).digest("hex")
+  );
+  expect(JSON.parse(bytes.toString("utf8"))).not.toHaveProperty(
+    "manifestRevision"
+  );
+  expect(read?.tmuxAdapterIdentity).toEqual(manifest.tmuxAdapterIdentity);
+  expect(read?.resolvedConfig).toEqual(manifest.resolvedConfig);
+  expect(Object.isFrozen(read?.resolvedConfig)).toBe(true);
+  const updated = updateRunManifest(manifestPath, (current) =>
+    current ? { ...current, updatedAt: "2026-08-25T22:00:00.000Z" } : undefined
+  );
+  expect(updated?.manifestRevision).toMatch(/^[a-f0-9]{64}$/);
+  expect(updated?.manifestRevision).not.toBe(read?.manifestRevision);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("manifest reader fails closed on invalid UTF-8 and new-field schema", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  writeFileSync(manifestPath, Buffer.from([0xc3, 0x28]));
+  expect(readRunManifest(manifestPath)).toBeUndefined();
+
+  const base = createRunManifest({
+    cwd: "/repo",
+    mode: "paired",
+    pid: 42,
+    repoId: "repo-abc123",
+    runId: "strict-schema",
+  });
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      ...base,
+      tmuxAdapterIdentity: {
+        processBirthId: "darwin:0",
+        serverPid: 0,
+        socketPath: "relative.sock",
+        version: 1,
+      },
+    })}\n`,
+    "utf8"
+  );
+  expect(readRunManifest(manifestPath)).toBeUndefined();
+
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      ...base,
+      tmuxAdapterIdentity: {
+        hiddenPayload: "not allowed",
+        processBirthId: "darwin:1787693386000",
+        serverPid: 4242,
+        socketPath: "/tmp/server.sock",
+        version: 1,
+      },
+    })}\n`,
+    "utf8"
+  );
+  expect(readRunManifest(manifestPath)).toBeUndefined();
+
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      ...base,
+      resolvedConfig: {
+        proofConfigured: false,
+        secretPath: "/tmp/private",
+        version: 1,
+      },
+    })}\n`,
+    "utf8"
+  );
+  expect(readRunManifest(manifestPath)).toBeUndefined();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("legacy manifests keep adapter identity and resolved config unknown", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      cwd: "/repo",
+      mode: "paired",
+      pid: 42,
+      repoId: "repo-abc123",
+      runId: "legacy-unknown",
+    })
+  );
+
+  const read = readRunManifest(manifestPath);
+  expect(read?.tmuxAdapterIdentity).toBeUndefined();
+  expect(read?.resolvedConfig).toBeUndefined();
+  expect(read?.manifestRevision).toMatch(/^[a-f0-9]{64}$/);
+  rmSync(dir, { recursive: true, force: true });
 });

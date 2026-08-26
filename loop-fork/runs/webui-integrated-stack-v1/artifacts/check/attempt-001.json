@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-integrated-stack-v1",
+  "dimension": "check",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-08-26T02:29:00Z",
+  "ended_at": "2026-08-26T02:29:00Z",
+  "artifact": "runs/webui-integrated-stack-v1/artifacts/check/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "check"
+  ]
+}

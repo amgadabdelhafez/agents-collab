@@ -2,8 +2,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { fetchLiveSnapshot, isRunRouteId, LiveSnapshotError } from "./api";
+import { AppearanceControl } from "./components/AppearanceControl";
 import { type FleetLifecycleFilter, FleetView } from "./components/FleetView";
 import { RunWorkspace } from "./components/RunWorkspace";
+import { useAppearanceMode } from "./theme";
 import type {
   ConnectionState,
   RunDetailDTO,
@@ -273,6 +275,7 @@ function RunUnavailableBoundary({
 }
 
 export function App() {
+  const appearance = useAppearanceMode();
   const [route, setRoute] = useState<AppRoute>(routeFromHash);
   const [search, setSearch] = useState("");
   const [repositoryFilter, setRepositoryFilter] = useState("all");
@@ -390,11 +393,23 @@ export function App() {
             </span>
           </div>
           <div className="global-actions">
+            <AppearanceControl
+              mode={appearance.mode}
+              onChange={appearance.setMode}
+            />
             <span className="global-run-count">
               {coverageSummary(coveredLoopCount, workingRunCount)}
             </span>
-            <span className="connection-pill" data-state={liveConnection.state}>
-              {liveConnection.label}
+            <span
+              aria-label={`Connection: ${liveConnection.label}`}
+              className="connection-pill"
+              data-state={liveConnection.state}
+              role="status"
+              title={liveConnection.label}
+            >
+              <span className="connection-pill-label">
+                {liveConnection.label}
+              </span>
             </span>
           </div>
         </header>

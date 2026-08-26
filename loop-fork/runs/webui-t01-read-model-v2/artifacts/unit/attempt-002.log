@@ -1,0 +1,36 @@
+task_id: webui-t01-read-model-v2
+dimension: unit
+attempt: 002
+started_at: 2026-08-25T23:21:04Z
+command: env LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/control-surface
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/control-surface/sources.test.ts:
+(pass) bounded snapshots use exact bytes and reject malformed UTF-8 [1.06ms]
+(pass) filesystem capabilities discover only directories and materialize known sources [2.13ms]
+(pass) snapshots distinguish missing, oversized, malformed JSONL, and valid rows [0.54ms]
+(pass) evidence paths must remain contained by the selected run directory [0.39ms]
+(pass) filesystem capabilities reject file symlinks and traversal-shaped locators [0.63ms]
+
+tests/loop/control-surface/projection.test.ts:
+(pass) freshness thresholds are inclusive and tested on both sides [0.24ms]
+(pass) canonical identity rejects path and manifest disagreement [0.44ms]
+(pass) requirements stay separate from observations and legacy absence stays unknown [0.36ms]
+(pass) a changing source retries once and a second change fails closed [0.04ms]
+(pass) public config and adapter DTOs expose only the strict allowlists [0.08ms]
+(pass) malformed producer fields fail closed and lifecycle conflicts are explicit [0.07ms]
+
+tests/loop/control-surface/timeline.test.ts:
+(pass) timeline is deterministic, bounded, redacted, and path-free [0.25ms]
+(pass) opaque evidence references are stable and disclose no locator [0.05ms]
+
+ 13 pass
+ 0 fail
+ 74 expect() calls
+Ran 13 tests across 3 files. [36.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-25T23:21:04Z

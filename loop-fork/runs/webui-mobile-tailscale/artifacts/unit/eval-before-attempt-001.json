@@ -1,0 +1,40 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "ui",
+    "dom",
+    "network",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    },
+    "build": {
+      "status": "pending"
+    },
+    "ui": {
+      "status": "pending"
+    },
+    "dom": {
+      "status": "pending"
+    },
+    "network": {
+      "status": "pending"
+    },
+    "regression": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+task_id: webui-t00-adapter-identity-v2
+dimension: unit
+attempt: 003
+started_at: 2026-08-25T21:34:35Z
+command: bun run test:file -- tests/loop/tmux-control.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/tmux-control.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux-control.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1 | })
+2 | {
+    ^
+SyntaxError: Export named 'captureTmuxAdapterIdentity' not found in module '/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-t00-adapter-identity-v2/loop-fork/src/loop/tmux-control.ts'.
+      at loadAndEvaluateModule (2:1)
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [21.00ms]
+error: script "test:file" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-25T21:34:35Z

@@ -2531,15 +2531,22 @@ export interface LiveDataResponse {
   readonly status: number;
 }
 
+interface LiveDataHostOptions {
+  readonly expectedHost?: string;
+  readonly expectedHosts?: readonly string[];
+}
+
 export const handleLiveDataRequest = (
   request: LiveDataRequest,
-  options: LoopRegistryLiveDataOptions & { readonly expectedHost?: string } = {}
+  options: LoopRegistryLiveDataOptions & LiveDataHostOptions = {}
 ): LiveDataResponse | undefined => {
   const path = request.url?.split("?", 1)[0];
   if (path !== LIVE_SNAPSHOT_PATH) {
     return undefined;
   }
-  const expectedHost = options.expectedHost ?? "127.0.0.1:46327";
+  const expectedHosts = options.expectedHosts ?? [
+    options.expectedHost ?? "127.0.0.1:46327",
+  ];
   const headers = {
     "Cache-Control": "no-store, max-age=0",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
@@ -2557,14 +2564,14 @@ export const handleLiveDataRequest = (
       status: 405,
     };
   }
-  if (request.host !== expectedHost) {
+  if (!(request.host && expectedHosts.includes(request.host))) {
     return {
       body: JSON.stringify({ code: "HOST_REJECTED", error: "Host rejected" }),
       headers,
       status: 403,
     };
   }
-  if (request.origin && request.origin !== `http://${expectedHost}`) {
+  if (request.origin && request.origin !== `http://${request.host}`) {
     return {
       body: JSON.stringify({
         code: "ORIGIN_REJECTED",
@@ -2612,7 +2619,7 @@ const installMiddleware = (
       ) => void
     ): void;
   },
-  options: LoopRegistryLiveDataOptions & { readonly expectedHost?: string }
+  options: LoopRegistryLiveDataOptions & LiveDataHostOptions
 ) => {
   middlewares.use((request, response, next) => {
     const result = handleLiveDataRequest(
@@ -2643,7 +2650,7 @@ const installMiddleware = (
 };
 
 export const loopRegistryLiveDataPlugin = (
-  options: LoopRegistryLiveDataOptions & { readonly expectedHost?: string } = {}
+  options: LoopRegistryLiveDataOptions & LiveDataHostOptions = {}
 ): Plugin => ({
   configurePreviewServer(server) {
     installMiddleware(server.middlewares, options);

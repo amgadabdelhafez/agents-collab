@@ -1,0 +1,19 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "scanned_at": "2026-08-23T06:50:14Z",
+  "status": "pass",
+  "threshold": 100,
+  "findings": [
+    {
+      "ts": "2026-08-23T06:50:14Z",
+      "task_id": "webui-mobile-tailscale",
+      "signal": "loc_growth",
+      "file": "src/webui/tailscale.ts",
+      "before_loc": 0,
+      "after_loc": 153,
+      "delta_loc": 153,
+      "threshold": 100,
+      "severity": "indicator"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "task_id": "webui-integrated-stack-v1",
+  "dimension": "unit",
+  "attempt": "003",
+  "status": "fail",
+  "exit_code": 2,
+  "command_exit_code": 2,
+  "started_at": "2026-08-26T02:26:45Z",
+  "ended_at": "2026-08-26T02:26:46Z",
+  "artifact": "runs/webui-integrated-stack-v1/artifacts/unit/attempt-003.log",
+  "command": [
+    "bun",
+    "test",
+    "tests/loop/run-state.test.ts",
+    "tests/loop/paired-options.test.ts",
+    "tests/loop/tmux-control.test.ts",
+    "tests/loop/tmux.test.ts",
+    "tests/loop/control-surface/projection.test.ts",
+    "tests/loop/control-surface/sources.test.ts",
+    "tests/loop/control-surface/timeline.test.ts",
+    "tests/webui/theme.test.ts",
+    "tests/webui/tailscale.test.ts",
+    "tests/webui/exact-host-guard.test.ts",
+    "tests/webui/harvto-live-data.test.ts",
+    "tests/webui/render.test.tsx"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "task_id": "webui-theme-mode",
+  "dimension": "unit",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-08-23T05:32:01Z",
+  "ended_at": "2026-08-23T05:32:02Z",
+  "artifact": "runs/webui-theme-mode/artifacts/unit/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "test:file",
+    "--",
+    "tests/webui/theme.test.ts"
+  ]
+}

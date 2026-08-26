@@ -1,0 +1,38 @@
+{
+  "task_id": "webui-integrated-stack-v1",
+  "status": "fail",
+  "required": [
+    "unit",
+    "regression",
+    "check"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-integrated-stack-v1/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "005",
+      "latest_attempt_artifact": "runs/webui-integrated-stack-v1/artifacts/unit/attempt-005.log",
+      "latest_attempt_meta": "runs/webui-integrated-stack-v1/artifacts/unit/attempt-005.json"
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/webui-integrated-stack-v1/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-integrated-stack-v1/artifacts/regression/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-integrated-stack-v1/artifacts/regression/attempt-001.json"
+    },
+    "check": {
+      "status": "fail",
+      "artifact": "runs/webui-integrated-stack-v1/artifacts/check/verify.log",
+      "reason": "command exited 1",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-integrated-stack-v1/artifacts/check/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-integrated-stack-v1/artifacts/check/attempt-001.json"
+    }
+  }
+}
