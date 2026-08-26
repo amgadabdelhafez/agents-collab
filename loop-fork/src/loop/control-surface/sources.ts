@@ -227,6 +227,7 @@ export const createFilesystemReadModelCapabilities = (
   now: () => number = Date.now
 ): ReadModelCapabilities => {
   const safeStorageRoot = resolve(storageRoot);
+  const actualStorageRoot = realpathSync(safeStorageRoot);
   const listRuns = (): RunLocator[] =>
     listDirectories(safeStorageRoot).flatMap((repoId) =>
       listDirectories(join(safeStorageRoot, repoId)).map((runId) => ({
@@ -240,6 +241,8 @@ export const createFilesystemReadModelCapabilities = (
     const observedAt = now();
     const safeSegment = (value: string): boolean =>
       SAFE_SEGMENT_RE.test(value) && value !== "." && value !== "..";
+    const repoDirectory = resolve(safeStorageRoot, locator.repoId);
+    const expectedRunDirectory = resolve(repoDirectory, locator.runId);
     if (
       !(safeSegment(locator.repoId) && safeSegment(locator.runId)) ||
       resolve(locator.storageRoot) !== safeStorageRoot ||
@@ -248,6 +251,20 @@ export const createFilesystemReadModelCapabilities = (
       relative(safeStorageRoot, resolve(locator.runDir)).startsWith("..")
     ) {
       throw new Error("Run locator is outside the configured storage root");
+    }
+    const repoStats = lstatSync(repoDirectory);
+    const runStats = lstatSync(expectedRunDirectory);
+    const actualRunDirectory = realpathSync(expectedRunDirectory);
+    if (
+      repoStats.isSymbolicLink() ||
+      runStats.isSymbolicLink() ||
+      actualRunDirectory !==
+        resolve(actualStorageRoot, locator.repoId, locator.runId) ||
+      relative(actualStorageRoot, actualRunDirectory).startsWith("..")
+    ) {
+      throw new Error(
+        "Run locator ancestors are outside the configured storage root"
+      );
     }
     const safePath = (name: string): string | undefined => {
       try {

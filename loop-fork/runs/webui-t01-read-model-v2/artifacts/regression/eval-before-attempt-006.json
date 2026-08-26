@@ -50,9 +50,9 @@
       "artifact": "runs/webui-t01-read-model-v2/artifacts/regression/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "006",
-      "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-006.log",
-      "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-006.json"
+      "latest_attempt": "005",
+      "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-005.log",
+      "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-005.json"
     }
   }
 }

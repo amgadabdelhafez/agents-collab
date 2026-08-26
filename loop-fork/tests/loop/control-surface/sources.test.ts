@@ -170,3 +170,28 @@ test("symlinked hook evidence degrades without aborting the projection", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a symlinked repository ancestor is rejected before source bytes are read", () => {
+  const root = makeRoot();
+  const externalRoot = makeRoot();
+  mkdirSync(join(externalRoot, "7"), { recursive: true });
+  try {
+    writeFileSync(
+      join(externalRoot, "7", "manifest.json"),
+      '{"repoId":"repo-a","runId":"7"}'
+    );
+    symlinkSync(externalRoot, join(root, "repo-a"));
+    const capabilities = createFilesystemReadModelCapabilities(root, () => 123);
+    expect(() =>
+      capabilities.readSources({
+        repoId: "repo-a",
+        runId: "7",
+        runDir: join(root, "repo-a", "7"),
+        storageRoot: root,
+      })
+    ).toThrow();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
+  }
+});
