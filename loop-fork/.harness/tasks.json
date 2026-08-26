@@ -606,10 +606,12 @@
     {
       "id": "webui-t01-read-model-v2",
       "mode": "planned",
-      "status": "active",
+      "status": "done",
       "created_at": "2026-08-25T23:05:48Z",
       "run_dir": "runs/webui-t01-read-model-v2",
-      "eval_status": "pass"
+      "eval_status": "pass",
+      "ended_at": "2026-08-26T01:30:33Z",
+      "spec_path": "specs/webui-t01-read-model-v2.md"
     }
   ]
 }

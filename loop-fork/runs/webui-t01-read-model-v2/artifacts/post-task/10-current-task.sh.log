@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active webui-t01-read-model-v2
+[pass] state/invariants/10-current-task.sh

@@ -6,8 +6,7 @@
     "build",
     "check",
     "diff",
-    "regression",
-    "review"
+    "regression"
   ],
   "dimensions": {
     "unit": {
@@ -54,15 +53,6 @@
       "latest_attempt": "009",
       "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-009.log",
       "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-009.json"
-    },
-    "review": {
-      "status": "pass",
-      "artifact": "runs/webui-t01-read-model-v2/artifacts/review/verify.log",
-      "reason": "command exited 0",
-      "method": "verify.sh",
-      "latest_attempt": "001",
-      "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/review/attempt-001.log",
-      "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/review/attempt-001.json"
     }
   }
 }
