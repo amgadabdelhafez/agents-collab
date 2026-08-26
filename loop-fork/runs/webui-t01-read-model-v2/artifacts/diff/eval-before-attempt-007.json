@@ -41,18 +41,18 @@
       "artifact": "runs/webui-t01-read-model-v2/artifacts/diff/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "007",
-      "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/diff/attempt-007.log",
-      "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/diff/attempt-007.json"
+      "latest_attempt": "006",
+      "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/diff/attempt-006.log",
+      "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/diff/attempt-006.json"
     },
     "regression": {
       "status": "pass",
       "artifact": "runs/webui-t01-read-model-v2/artifacts/regression/verify.log",
       "reason": "command exited 0",
       "method": "verify.sh",
-      "latest_attempt": "007",
-      "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-007.log",
-      "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-007.json"
+      "latest_attempt": "006",
+      "latest_attempt_artifact": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-006.log",
+      "latest_attempt_meta": "runs/webui-t01-read-model-v2/artifacts/regression/attempt-006.json"
     }
   }
 }

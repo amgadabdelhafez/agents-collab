@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -192,6 +194,31 @@ test("a symlinked repository ancestor is rejected before source bytes are read",
     ).toThrow();
   } finally {
     rmSync(root, { recursive: true, force: true });
+    rmSync(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test("a storage-root replacement after capability creation is rejected", () => {
+  const root = makeRoot();
+  const movedRoot = `${root}-moved`;
+  const externalRoot = makeRoot();
+  mkdirSync(join(root, "repo-a", "7"), { recursive: true });
+  mkdirSync(join(externalRoot, "repo-a", "7"), { recursive: true });
+  const capabilities = createFilesystemReadModelCapabilities(root, () => 123);
+  try {
+    renameSync(root, movedRoot);
+    symlinkSync(externalRoot, root);
+    expect(() =>
+      capabilities.readSources({
+        repoId: "repo-a",
+        runId: "7",
+        runDir: join(root, "repo-a", "7"),
+        storageRoot: root,
+      })
+    ).toThrow();
+  } finally {
+    unlinkSync(root);
+    rmSync(movedRoot, { recursive: true, force: true });
     rmSync(externalRoot, { recursive: true, force: true });
   }
 });

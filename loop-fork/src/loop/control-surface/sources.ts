@@ -180,6 +180,42 @@ const listDirectories = (path: string): string[] => {
   }
 };
 
+interface DirectoryBinding {
+  readonly actualPath: string;
+  readonly ctimeNs: bigint;
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly path: string;
+}
+
+const bindDirectory = (path: string): DirectoryBinding => {
+  const stats = lstatSync(path, { bigint: true });
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error("Evidence directory is not stable");
+  }
+  return {
+    actualPath: realpathSync(path),
+    ctimeNs: stats.ctimeNs,
+    dev: stats.dev,
+    ino: stats.ino,
+    path,
+  };
+};
+
+const assertDirectoryBinding = (binding: DirectoryBinding): void => {
+  const current = lstatSync(binding.path, { bigint: true });
+  if (
+    !current.isDirectory() ||
+    current.isSymbolicLink() ||
+    current.dev !== binding.dev ||
+    current.ino !== binding.ino ||
+    current.ctimeNs !== binding.ctimeNs ||
+    realpathSync(binding.path) !== binding.actualPath
+  ) {
+    throw new Error("Evidence directory identity changed during snapshot");
+  }
+};
+
 const readHooks = (runDir: string, observedAt: number): SourceSnapshot => {
   const directory = join(runDir, "hooks");
   let names: string[];
@@ -252,12 +288,11 @@ export const createFilesystemReadModelCapabilities = (
     ) {
       throw new Error("Run locator is outside the configured storage root");
     }
-    const repoStats = lstatSync(repoDirectory);
-    const runStats = lstatSync(expectedRunDirectory);
-    const actualRunDirectory = realpathSync(expectedRunDirectory);
+    const storageBinding = bindDirectory(safeStorageRoot);
+    const repoBinding = bindDirectory(repoDirectory);
+    const runBinding = bindDirectory(expectedRunDirectory);
+    const actualRunDirectory = runBinding.actualPath;
     if (
-      repoStats.isSymbolicLink() ||
-      runStats.isSymbolicLink() ||
       actualRunDirectory !==
         resolve(actualStorageRoot, locator.repoId, locator.runId) ||
       relative(actualStorageRoot, actualRunDirectory).startsWith("..")
@@ -306,7 +341,7 @@ export const createFilesystemReadModelCapabilities = (
             value: manifestValue?.tmuxAdapterIdentity,
           }
         : { ...manifest, kind: "adapter" };
-    return {
+    const sources: RunSourceSnapshots = {
       adapter,
       bridge: jsonl("bridge", "bridge.jsonl"),
       "governess-control": jsonl(
@@ -320,6 +355,10 @@ export const createFilesystemReadModelCapabilities = (
       usage: jsonl("usage", "utility/usage.jsonl"),
       utility: jsonl("utility", "utility/tool-events.jsonl"),
     };
+    assertDirectoryBinding(storageBinding);
+    assertDirectoryBinding(repoBinding);
+    assertDirectoryBinding(runBinding);
+    return sources;
   };
   return { listRuns, now, readSources };
 };
