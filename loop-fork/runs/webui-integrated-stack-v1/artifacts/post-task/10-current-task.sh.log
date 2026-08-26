@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active webui-integrated-stack-v1
+[pass] state/invariants/10-current-task.sh

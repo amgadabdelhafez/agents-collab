@@ -37,5 +37,7 @@ branch prevents a second-merge surprise and retains exact-SHA review ancestry.
   diff check found four whitespace diagnostics in immutable T-00 output logs.
 - Those failures changed the verification instruments, not product code or
   parent evidence. The exact failed receipts remain under this run.
+- Published `codex/webui-integrated-stack-v1` and opened replacement GitHub PR
+  `#5`: `https://github.com/amgadabdelhafez/agents-collab/pull/5`.
 
 Regression: no

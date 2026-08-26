@@ -6,7 +6,7 @@
 - [x] **T-02** Merge both certified histories and retain both registry sides.
 - [x] **T-03** Verify ancestry, registry completeness, and exact edit scope.
 - [x] **T-04** Run combined tests, scoped static checks, build, and scoped diff validation.
-- [ ] **T-05** Write eval, commit, push the feature branch, and open the replacement PR.
+- [x] **T-05** Write eval, commit, push the feature branch, and open the replacement PR.
 
 ## Task detail
 
