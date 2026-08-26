@@ -5,6 +5,7 @@ import {
   projectFleet,
   projectRun,
 } from "../../../src/loop/control-surface/projection";
+import { UnstableSourceSnapshotError } from "../../../src/loop/control-surface/sources";
 import type {
   ReadModelCapabilities,
   RunLocator,
@@ -138,6 +139,21 @@ test("a changing source retries once and a second change fails closed", () => {
   if (result.kind === "unstable") {
     expect(result.conflicts).toEqual(["source-revisions-changed"]);
   }
+});
+
+test("an atomic source-directory change retries once instead of escaping", () => {
+  const deps = makeCapabilities();
+  const stableRead = deps.readSources;
+  let reads = 0;
+  deps.readSources = (selected) => {
+    reads += 1;
+    if (reads === 1) {
+      throw new UnstableSourceSnapshotError();
+    }
+    return stableRead(selected);
+  };
+  expect(projectRun(locator, deps).kind).toBe("run");
+  expect(reads).toBe(3);
 });
 
 test("public config and adapter DTOs expose only the strict allowlists", () => {

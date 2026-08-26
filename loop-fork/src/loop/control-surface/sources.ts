@@ -188,6 +188,13 @@ interface DirectoryBinding {
   readonly path: string;
 }
 
+export class UnstableSourceSnapshotError extends Error {
+  constructor() {
+    super("Evidence directory identity changed during snapshot");
+    this.name = "UnstableSourceSnapshotError";
+  }
+}
+
 const bindDirectory = (path: string): DirectoryBinding => {
   const stats = lstatSync(path, { bigint: true });
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
@@ -212,7 +219,7 @@ const assertDirectoryBinding = (binding: DirectoryBinding): void => {
     current.ctimeNs !== binding.ctimeNs ||
     realpathSync(binding.path) !== binding.actualPath
   ) {
-    throw new Error("Evidence directory identity changed during snapshot");
+    throw new UnstableSourceSnapshotError();
   }
 };
 

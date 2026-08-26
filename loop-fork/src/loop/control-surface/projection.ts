@@ -1,4 +1,5 @@
 import { selectPublicAdapter, selectPublicConfig } from "./redaction";
+import { UnstableSourceSnapshotError } from "./sources";
 import {
   type Observation,
   type ReadModelCapabilities,
@@ -289,10 +290,16 @@ export const projectRun = (
   capabilities: ReadModelCapabilities
 ): RunProjectionResult => {
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const before = capabilities.readSources(locator);
-    const after = capabilities.readSources(locator);
-    if (revisionVector(before) === revisionVector(after)) {
-      return buildProjection(locator, after, capabilities.now());
+    try {
+      const before = capabilities.readSources(locator);
+      const after = capabilities.readSources(locator);
+      if (revisionVector(before) === revisionVector(after)) {
+        return buildProjection(locator, after, capabilities.now());
+      }
+    } catch (error) {
+      if (!(error instanceof UnstableSourceSnapshotError)) {
+        throw error;
+      }
     }
   }
   return {
