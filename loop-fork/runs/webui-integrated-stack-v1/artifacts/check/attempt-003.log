@@ -1,0 +1,13 @@
+task_id: webui-integrated-stack-v1
+dimension: check
+attempt: 003
+started_at: 2026-08-26T02:31:16Z
+command: node runs/webui-integrated-stack-v1/artifacts/run-scoped-check.mjs
+--- output ---
+Checking 37 derived code/config paths
+Checked 37 files in 67ms. No fixes applied.
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-26T02:31:16Z

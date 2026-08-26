@@ -1,0 +1,127 @@
+task_id: webui-integrated-stack-v1
+dimension: check
+attempt: 002
+started_at: 2026-08-26T02:30:35Z
+command: node runs/webui-integrated-stack-v1/artifacts/run-scoped-check.mjs
+--- output ---
+Checking 37 derived code/config paths
+runs/webui-integrated-stack-v1/artifacts/run-scoped-check.mjs:36:31 lint/performance/useTopLevelRegex ━━━━━━━━━━
+
+  × This regex literal is not defined in the top level scope. This can lead to performance issues if this function is called frequently.
+  
+    34 │     return dot >= 0 && CODE_EXTENSIONS.has(path.slice(dot));
+    35 │   })
+  > 36 │   .map((path) => path.replace(/^loop-fork\//, ""));
+       │                               ^^^^^^^^^^^^^^
+    37 │ 
+    38 │ changed.push("runs/webui-integrated-stack-v1/artifacts/verify-integration.mjs");
+  
+  i Move the regex literal outside of this scope, and place it at the top level of this module, as a constant.
+  
+
+runs/webui-integrated-stack-v1/artifacts/run-scoped-check.mjs format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    27 │ ··{·cwd:·repoRoot,·encoding:·"utf8"·},
+       │                                      -
+
+runs/webui-integrated-stack-v1/artifacts/verify-integration.mjs format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     68  68 │   assert(
+     69  69 │     [...taskCounts.values()].every((count) => count === 1),
+     70     │ - ··"task·registry·contains·a·duplicate·task·id",
+         70 │ + ··"task·registry·contains·a·duplicate·task·id"
+     71  71 │   );
+     72  72 │   
+     73  73 │   for (const [taskId, parent] of COMPONENT_TASKS) {
+     74  74 │     const parentTask = JSON.parse(readCommit(parent, TASKS_PATH)).tasks.find(
+     75     │ - ····(task)·=>·task.id·===·taskId,
+         75 │ + ····(task)·=>·task.id·===·taskId
+     76  76 │     );
+     77  77 │     const currentTask = currentTasks.find((task) => task.id === taskId);
+    ······· │ 
+     80  80 │     assert(
+     81  81 │       JSON.stringify(currentTask) === JSON.stringify(parentTask),
+     82     │ - ····`integrated·task·changed:·${taskId}`,
+         82 │ + ····`integrated·task·changed:·${taskId}`
+     83  83 │     );
+     84  84 │   }
+     85  85 │   assert(
+     86  86 │     taskCounts.get("webui-integrated-stack-v1") === 1,
+     87     │ - ··"active·integration·task·must·occur·exactly·once",
+         87 │ + ··"active·integration·task·must·occur·exactly·once"
+     88  88 │   );
+     89  89 │   
+    ······· │ 
+     97  97 │   }
+     98  98 │   const currentDebtRows = parseDebt(
+     99     │ - ··readFileSync(resolve(repoRoot,·DEBT_PATH),·"utf8"),
+         99 │ + ··readFileSync(resolve(repoRoot,·DEBT_PATH),·"utf8")
+    100 100 │   ).filter((row) => COMPONENT_TASKS.has(row.value.task_id));
+    101 101 │   const expectedDebt = multiset(expectedDebtLines);
+    ······· │ 
+    124 124 │     assert(
+    125 125 │       JSON.stringify(resolved) === JSON.stringify([...allowed].sort()),
+    126     │ - ····`${commit}·resolved·unexpected·paths:·${resolved.join(",·")}`,
+        126 │ + ····`${commit}·resolved·unexpected·paths:·${resolved.join(",·")}`
+    127 127 │     );
+    128 128 │   }
+    129 129 │   
+    130 130 │   const conflictMarker = /^(<<<<<<<|=======|>>>>>>>)/m;
+    131     │ - assert(!conflictMarker.test(currentTasksText),·"task·registry·has·conflict·markers");
+        131 │ + assert(
+        132 │ + ··!conflictMarker.test(currentTasksText),
+        133 │ + ··"task·registry·has·conflict·markers"
+        134 │ + );
+    132 135 │   assert(
+    133 136 │     !conflictMarker.test(readFileSync(resolve(repoRoot, DEBT_PATH), "utf8")),
+    134     │ - ··"debt·registry·has·conflict·markers",
+        137 │ + ··"debt·registry·has·conflict·markers"
+    135 138 │   );
+    136 139 │   
+    137 140 │   execFileSync(
+    138 141 │     "git",
+    139     │ - ··["diff",·"--check",·`${BASE}...HEAD`,·"--",·".",·":(exclude)loop-fork/runs/**"],
+        142 │ + ··[
+        143 │ + ····"diff",
+        144 │ + ····"--check",
+        145 │ + ····`${BASE}...HEAD`,
+        146 │ + ····"--",
+        147 │ + ····".",
+        148 │ + ····":(exclude)loop-fork/runs/**",
+        149 │ + ··],
+    140 150 │     {
+    141     │ - ··cwd:·repoRoot,
+    142     │ - ··stdio:·"ignore",
+    143     │ - ··},
+        151 │ + ····cwd:·repoRoot,
+        152 │ + ····stdio:·"ignore",
+        153 │ + ··}
+    144 154 │   );
+    145 155 │   
+    ······· │ 
+    158 168 │       },
+    159 169 │       null,
+    160     │ - ····2,
+    161     │ - ··),
+        170 │ + ····2
+        171 │ + ··)
+    162 172 │   );
+    163 173 │   
+  
+
+Checked 37 files in 71ms. No fixes applied.
+Found 3 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-26T02:30:35Z

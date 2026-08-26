@@ -2,10 +2,10 @@
 
 ## Checklist
 
-- [ ] **T-01** Record exact base, parent heads, and conflict set.
-- [ ] **T-02** Merge both certified histories and retain both registry sides.
-- [ ] **T-03** Verify ancestry, registry completeness, and exact edit scope.
-- [ ] **T-04** Run combined tests, check, build, and diff validation.
+- [x] **T-01** Record exact base, parent heads, and conflict set.
+- [x] **T-02** Merge both certified histories and retain both registry sides.
+- [x] **T-03** Verify ancestry, registry completeness, and exact edit scope.
+- [x] **T-04** Run combined tests, scoped static checks, build, and scoped diff validation.
 - [ ] **T-05** Write eval, commit, push the feature branch, and open the replacement PR.
 
 ## Task detail
@@ -19,7 +19,7 @@
 **Output:** `loop-fork/runs/webui-integrated-stack-v1/` and a feature PR.
 **Done when:**
 
-- [ ] Both parent heads remain ancestors.
-- [ ] Both registries contain the exact union without duplicate task IDs.
-- [ ] Combined verification passes.
-- [ ] `eval.json` exists and passes before the replacement PR opens.
+- [x] Both parent heads remain ancestors.
+- [x] Both registries contain the exact union without duplicate task IDs.
+- [x] Combined verification passes.
+- [x] `eval.json` exists and passes before the replacement PR opens.

@@ -12,7 +12,8 @@ Then run combined verification and record a new integration eval.
 2. Merge the T-00/T-01 head without modifying it.
 3. Merge the theme/mobile/tailnet head and resolve only the two registries.
 4. Prove parent ancestry, row preservation, syntax, and bounded diff scope.
-5. Run combined focused/full tests, check, build, and diff validation.
+5. Run combined focused/full tests, scoped static checks, build, and scoped
+   diff validation.
 6. Complete Harness evaluation, commit the integration receipt, and push only
    the feature branch.
 
@@ -37,6 +38,12 @@ Then run combined verification and record a new integration eval.
   against both exact parent blobs.
 - Hidden feature interaction. Mitigation: run full regression, check, and build
   on the combined commit.
+- Immutable parent logs contain four whitespace diagnostics. Mitigation: retain
+  those exact reviewed blobs and diff-check every non-run path plus the new
+  integration verifier separately.
+- The repository-wide formatter scans generated Harness evidence. Mitigation:
+  preserve its failed receipt, never rewrite evidence, and run Ultracite over
+  the complete changed non-run code/config set derived from Git.
 
 ## Not doing
 

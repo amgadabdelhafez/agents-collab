@@ -1,0 +1,30 @@
+task_id: webui-integrated-stack-v1
+dimension: unit
+attempt: 002
+started_at: 2026-08-26T02:26:27Z
+command: node runs/webui-integrated-stack-v1/artifacts/verify-integration.mjs
+--- output ---
+{
+  "status": "pass",
+  "base": "2848c91e96d1d1d57a1b0b87caea54adc6d134a6",
+  "parents": [
+    "0687932713aa59452d65a7d85e7751981c6de64d",
+    "6c9598b550354cb91fbc10887ab7549d47b8169e"
+  ],
+  "merge_resolutions": {
+    "32f2c82": [
+      "loop-fork/.harness/tasks.json"
+    ],
+    "7b5b5d0": [
+      "loop-fork/.harness/tasks.json",
+      "loop-fork/debt/register.jsonl"
+    ]
+  },
+  "component_task_rows": 4,
+  "component_debt_rows": 9
+}
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-26T02:26:27Z

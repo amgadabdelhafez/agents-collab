@@ -1,0 +1,15 @@
+{
+  "task_id": "webui-integrated-stack-v1",
+  "dimension": "check",
+  "attempt": "002",
+  "status": "fail",
+  "exit_code": 1,
+  "command_exit_code": 1,
+  "started_at": "2026-08-26T02:30:35Z",
+  "ended_at": "2026-08-26T02:30:35Z",
+  "artifact": "runs/webui-integrated-stack-v1/artifacts/check/attempt-002.log",
+  "command": [
+    "node",
+    "runs/webui-integrated-stack-v1/artifacts/run-scoped-check.mjs"
+  ]
+}

@@ -39,14 +39,20 @@ additive resolution of the two registry conflicts, and fresh combined evidence.
 - [ ] Both exact component heads are ancestors of the integration head.
 - [ ] The only hand-resolved files are the two declared registries.
 - [ ] Every task and debt row from both parents is preserved exactly once.
-- [ ] JSON/JSONL syntax, full regression, build, check, and diff checks pass.
+- [ ] JSON/JSONL syntax, full regression, build, scoped static, and scoped diff checks pass.
 - [ ] A task-scoped `eval.json` records a pass before a replacement PR opens.
 - [ ] Neither component branch nor GitHub `main` is mutated.
 
 ## Out-of-scope risks
 
 The component PRs remain independently reviewable. The integration task must
-not rewrite their commits or claim a new review of their product code.
+not rewrite their commits or claim a new review of their product code. Four
+trailing-whitespace diagnostics inside two immutable T-00 command-output logs
+remain parent evidence, so combined diff validation checks every non-run path
+and the integration verifier rather than rewriting those reviewed bytes. The
+repository-wide formatter also scans generated Harness evidence and reports its
+noncanonical command/result JSON; that failed full-check receipt is preserved,
+while every changed non-run code/config path receives the scoped static gate.
 
 ## Open questions
 

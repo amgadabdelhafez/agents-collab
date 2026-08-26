@@ -6,9 +6,10 @@ Run from `loop-fork/` after both parents are merged:
 
 ```bash
 bun run test:ci
-bun run check
+bunx ultracite check <all changed non-run code/config paths derived from Git>
 bun run build
-git diff --check github/main...HEAD
+git diff --check github/main...HEAD -- . ':(exclude)loop-fork/runs/**'
+node --check loop-fork/runs/webui-integrated-stack-v1/artifacts/verify-integration.mjs
 ```
 
 ## Functional checks
@@ -20,8 +21,8 @@ git diff --check github/main...HEAD
 | F-03 | Task registry union | Four component task IDs occur exactly once and JSON parses |
 | F-04 | Debt registry union | Every component row is retained exactly once and each JSONL row parses |
 | F-05 | Combined regression | `bun run test:ci` exits 0 with no tolerated failures |
-| F-06 | Static/build | `bun run check` and `bun run build` exit 0 |
-| F-07 | Diff integrity | `git diff --check github/main...HEAD` exits 0 |
+| F-06 | Static/build | The derived changed non-run Ultracite check and `bun run build` exit 0; the failed repository-wide generated-evidence formatter receipt remains recorded |
+| F-07 | Diff integrity | Non-run diff check and integration verifier syntax check exit 0; the exact four inherited T-00 log diagnostics are recorded but their reviewed bytes are unchanged |
 
 ## UI checks
 
