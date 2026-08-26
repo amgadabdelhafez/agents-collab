@@ -1,0 +1,15 @@
+task_id: webui-mobile-tailscale
+dimension: build
+attempt: 002
+started_at: 2026-08-23T06:17:42Z
+command: bun run web:build
+--- output ---
+$ tsc -p tsconfig.webui.json && vite build --config vite.webui.config.ts
+src/webui/tailscale-launch.ts(53,5): error TS2322: Type '{ LOOP_WEBUI_ALLOWED_HOST: string; LOOP_WEBUI_HOST: string; LOOP_WEBUI_PORT: string; NODE_ENV?: string; TZ?: string; BASE_URL: string; MODE: string; DEV: boolean; PROD: boolean; SSR: boolean; }' is not assignable to type 'Record<string, string | undefined>'.
+  Property 'DEV' is incompatible with index signature.
+    Type 'boolean' is not assignable to type 'string'.
+
+--- result ---
+command_exit_code: 2
+exit_code: 2
+ended_at: 2026-08-23T06:17:43Z

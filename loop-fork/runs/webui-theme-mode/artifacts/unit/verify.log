@@ -1,0 +1,25 @@
+task_id: webui-theme-mode
+dimension: unit
+attempt: 003
+started_at: 2026-08-23T05:43:10Z
+command: bun run test:file -- tests/webui/render.test.tsx
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/render.test.tsx
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/render.test.tsx:
+(pass) Web UI server-rendered contract > renders the labelled three-mode appearance control [4.65ms]
+(pass) Web UI server-rendered contract > renders fleet triage and the read-only run workspace [14.98ms]
+(pass) Web UI server-rendered contract > renders mixed repositories with collision-safe identities and generic live copy [4.44ms]
+(pass) Web UI server-rendered contract > renders each live connection state without claiming stale snapshots are connected [5.91ms]
+(pass) Web UI server-rendered contract > marks a retained run detail offline after live refresh fails [2.27ms]
+
+ 5 pass
+ 0 fail
+ 54 expect() calls
+Ran 5 tests across 1 file. [93.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-23T05:43:10Z

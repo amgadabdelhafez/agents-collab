@@ -1,0 +1,54 @@
+{
+  "task_id": "webui-theme-mode",
+  "status": "pending",
+  "required": [
+    "unit",
+    "build",
+    "ui",
+    "dom",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-theme-mode/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-theme-mode/artifacts/unit/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-theme-mode/artifacts/unit/attempt-003.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-theme-mode/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-theme-mode/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-theme-mode/artifacts/build/attempt-001.json"
+    },
+    "ui": {
+      "status": "pass",
+      "artifact": "runs/webui-theme-mode/artifacts/ui/browser-evidence.json",
+      "reason": "desktop Light and Dark plus exact mobile Follow system screenshots passed visual inspection",
+      "method": "Browser plugin at live localhost"
+    },
+    "dom": {
+      "status": "pass",
+      "artifact": "runs/webui-theme-mode/artifacts/ui/browser-evidence.json",
+      "reason": "mode, resolved theme, persistence, metadata, live status, and mobile containment assertions passed",
+      "method": "Browser DOM assertions"
+    },
+    "regression": {
+      "status": "pending"
+    },
+    "diff": {
+      "status": "pending"
+    },
+    "review": {
+      "status": "pending"
+    }
+  }
+}

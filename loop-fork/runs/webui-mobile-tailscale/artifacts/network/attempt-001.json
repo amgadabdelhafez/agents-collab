@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "dimension": "network",
+  "attempt": "001",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-23T06:18:38Z",
+  "ended_at": "2026-08-23T06:18:38Z",
+  "artifact": "runs/webui-mobile-tailscale/artifacts/network/attempt-001.log",
+  "command": [
+    "bash",
+    "-lc",
+    "set -euo pipefail\nlisteners=\"$(lsof -nP -iTCP:46327 -sTCP:LISTEN)\"\nprintf \"%s\\n\" \"$listeners\"\n[[ \"$listeners\" == *\"100.64.0.14:46327 (LISTEN)\"* ]]\n[[ \"$listeners\" != *\"*:46327 (LISTEN)\"* ]]\nfor url in http://100.64.0.14:46327/ http://sweetmac14.sweet.home:46327/; do\n  code=\"$(curl --noproxy \"*\" -sS -o /dev/null -w \"%{http_code}\" \"$url\")\"\n  printf \"%s -> %s\\n\" \"$url\" \"$code\"\n  [[ \"$code\" == \"200\" ]]\ndone"
+  ]
+}

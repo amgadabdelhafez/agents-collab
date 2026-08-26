@@ -1,0 +1,46 @@
+{
+  "url": "http://127.0.0.1:46327/#/",
+  "live_data": {
+    "connected": true,
+    "covered_loops": 1,
+    "working_loops": 1
+  },
+  "light": {
+    "appearance": "light",
+    "resolved_theme": "light",
+    "selected_option": "light",
+    "color_scheme": "light",
+    "theme_color": "#f4f7ef",
+    "body_background": "rgb(244, 247, 239)",
+    "surface_background": "rgba(255, 255, 255, 0.9)",
+    "persisted_after_reload": true,
+    "screenshot": "runs/webui-theme-mode/artifacts/ui/fleet-light-desktop.png"
+  },
+  "dark": {
+    "appearance": "dark",
+    "resolved_theme": "dark",
+    "selected_option": "dark",
+    "color_scheme": "dark",
+    "theme_color": "#111410",
+    "body_background": "rgb(11, 13, 11)",
+    "surface_background": "rgba(24, 28, 21, 0.88)",
+    "screenshot": "runs/webui-theme-mode/artifacts/ui/fleet-dark-desktop.png"
+  },
+  "system_mobile": {
+    "appearance": "system",
+    "resolved_theme": "dark",
+    "expected_theme_from_media_query": "dark",
+    "selected_option": "system",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "control_visible": true,
+    "control_within_viewport": true,
+    "header_width_fits": true,
+    "no_horizontal_overflow": true,
+    "screenshot": "runs/webui-theme-mode/artifacts/ui/fleet-system-mobile-390x844.png",
+    "dom": "runs/webui-theme-mode/artifacts/ui/fleet-system-mobile-390x844.dom.txt"
+  },
+  "console_errors_or_warnings": []
+}

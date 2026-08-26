@@ -1,0 +1,552 @@
+- complementary "Primary navigation":
+  - navigation "Views":
+    - button "Fleet":
+      - generic: ⌁
+      - text: Fleet
+    - button "Working":
+      - generic: ●
+      - text: Working
+    - button "Run":
+      - generic: ▦
+      - text: Run
+- banner:
+  - generic: Agents Collab
+  - generic: Harvto · run 244
+  - combobox "Appearance mode":
+    - option "Follow system" [selected]
+    - option "Light"
+    - option "Dark"
+  - 'status "Connection: Projection connected"':
+    - generic: Projection connected
+- banner:
+  - button "Fleet":
+    - generic: ←
+    - text: Fleet
+  - generic: Harvto
+  - heading "Harvto · run 244" [level=1]
+  - paragraph: Run 244 workspace
+  - generic: Read-only release
+  - generic: Working
+  - generic: Run ID
+  - strong: "244"
+  - generic: Current driver
+  - strong: Codex
+  - generic: Governess epoch
+  - strong: "1787463280193423"
+  - generic: Authority lease
+  - strong: Current
+  - generic: Data quality
+  - strong: Partial
+  - generic: Connection
+  - strong: Projection connected
+  - generic: Last observed
+  - strong: 0s ago
+  - strong: Durable Governess and hook evidence reports working; the manifest still reports submitted. Terminal session present; server birth unverified.
+  - generic: Prompts, transcripts, paths, credentials, raw identifiers, and terminal content are excluded.
+  - generic: Live Redacted · Active loop registry
+- region "Persistent run authority":
+  - generic: Run
+  - strong: "244"
+  - generic: Driver
+  - strong: Codex
+  - generic: Epoch
+  - strong: "1787463280193423"
+  - generic: Quality
+  - strong: Partial
+- navigation "Run workspace sections":
+  - button "Overview"
+  - button "Agents"
+  - button "Activity"
+  - button "Timeline"
+- main:
+  - text: Paired frontier roles
+  - heading "Agents" [level=2]
+  - paragraph: Two peer seats. Lifecycle is factual; task labels are advisory.
+  - article:
+    - generic: Frontier agent seat 1
+    - heading "Claude" [level=2]
+    - generic: Reviewer
+    - paragraph: Frontier runtime · claude-opus-5 · medium
+    - generic: Waiting Human
+    - generic: 29s ago
+    - region "Claude current task":
+      - generic: Current task
+      - generic: Advisory
+      - paragraph: Waiting for operator input in the Harvto loop
+      - generic: "Source: latest normalized hook lifecycle · observed 29s ago"
+    - generic: Context
+    - strong: Unknown
+    - generic: Utilization unavailable
+    - generic: 0 compactions
+    - generic: Tokens
+    - strong: Unknown
+    - generic: not exposed
+    - generic: Cost
+    - strong: Unknown
+    - generic: cumulative
+    - generic: Tools
+    - strong: "0"
+    - generic: in flight
+    - generic: Quota window unsupported or unknown
+    - tablist "Claude detail views":
+      - tab "Console" [selected]
+      - tab "Events"
+      - tab "Bridge"
+    - tabpanel "Console":
+      - generic: Diagnostic projection
+      - generic: Bounded and redacted. Terminal input is unavailable.
+      - code: "[Aug 22, 11:29:35 PM] Notification [task] Waiting for operator input in the Harvto loop [model] claude-opus-5 · medium [tools] 0 in flight [status] waiting-human"
+      - paragraph: This preview is assembled from redacted public fields. It is not a raw provider transcript or an interactive shell.
+  - article:
+    - generic: Frontier agent seat 2
+    - heading "Codex" [level=2]
+    - generic: Driver
+    - paragraph: Frontier runtime · gpt-5.6-sol · high
+    - generic: Working
+    - generic: 8s ago
+    - region "Codex current task":
+      - generic: Current task
+      - generic: Advisory
+      - paragraph: Working in the Harvto loop
+      - generic: "Source: latest normalized hook lifecycle · observed 8s ago"
+    - generic: Context
+    - strong: Unknown
+    - generic: Utilization unavailable
+    - generic: 1 compactions
+    - generic: Tokens
+    - strong: Unknown
+    - generic: not exposed
+    - generic: Cost
+    - strong: Unknown
+    - generic: cumulative
+    - generic: Tools
+    - strong: "0"
+    - generic: in flight
+    - generic: Quota window unsupported or unknown
+    - tablist "Codex detail views":
+      - tab "Console" [selected]
+      - tab "Events"
+      - tab "Bridge"
+    - tabpanel "Console":
+      - generic: Diagnostic projection
+      - generic: Bounded and redacted. Terminal input is unavailable.
+      - code: "[Aug 22, 11:29:56 PM] PostToolUse [task] Working in the Harvto loop [model] gpt-5.6-sol · high [tools] 0 in flight [status] working"
+      - paragraph: This preview is assembled from redacted public fields. It is not a raw provider transcript or an interactive shell.
+  - article:
+    - text: Deterministic control authority
+    - heading "Governess" [level=2]
+    - paragraph: Epoch 1787463280193423 · lease Codex holds the current persisted lease
+    - generic: Read-only release
+    - text: Durable state
+    - heading "Facts" [level=3]
+    - generic: Authoritative
+    - article:
+      - text: Derived lifecycle
+      - strong: working
+      - generic: Governess Journal
+      - generic: ·
+      - generic: run-d21e818249633668-governess-facts
+      - generic: ·
+      - generic: 5s ago
+      - generic: Current
+    - article:
+      - text: Manifest lifecycle
+      - strong: submitted
+      - generic: Manifest
+      - generic: ·
+      - generic: run-d21e818249633668-manifest
+      - generic: ·
+      - generic: 55m ago
+      - generic: Current
+    - article:
+      - text: Waiting confirmation
+      - strong: Not confirmed
+      - generic: Governess Journal
+      - generic: ·
+      - generic: run-d21e818249633668-governess-facts
+      - generic: ·
+      - generic: 5s ago
+      - generic: Current
+    - article:
+      - text: Recoveries
+      - strong: "0"
+      - generic: Governess Journal
+      - generic: ·
+      - generic: run-d21e818249633668-governess-facts
+      - generic: ·
+      - generic: 5s ago
+      - generic: Current
+    - article:
+      - text: Terminal identity
+      - strong: Terminal session present; server birth unverified
+      - generic: Adapter Probe
+      - generic: ·
+      - generic: run-244-adapter-boundary
+      - generic: ·
+      - generic: 0s ago
+      - generic: Not Applicable
+    - text: Model-assisted reading
+    - heading "Interpretation" [level=3]
+    - generic: Advisory only
+    - article:
+      - text: Progress
+      - strong: 100% confidence
+      - paragraph: The loop currently reports working.
+      - generic: derived from normalized lifecycle metadata · generated 0s ago
+    - article:
+      - text: Next
+      - strong: 100% confidence
+      - paragraph: Continue or reconcile this lane from its validated terminal workflow.
+      - generic: read-only release policy · generated 0s ago
+    - text: Policy projection
+    - heading "Policy and planned actions" [level=3]
+    - generic: No actions available
+    - article:
+      - generic: Blocked
+      - text: Read-only release
+      - heading "Browser mutations" [level=4]
+      - paragraph: This release exposes no runtime mutation endpoint.
+    - article:
+      - generic: Confirmation Bound
+      - text: Read-only release
+      - heading "Continue run" [level=4]
+      - paragraph: Operator input remains in the validated terminal workflow.
+    - text: Durable controls
+    - heading "Audit" [level=3]
+    - generic: 0 records
+    - table:
+      - rowgroup:
+        - row "Control Transport Acknowledgement Observed Record":
+          - columnheader "Control"
+          - columnheader "Transport"
+          - columnheader "Acknowledgement"
+          - columnheader "Observed"
+          - columnheader "Record"
+      - rowgroup
+  - article:
+    - text: Governess-routed execution
+    - heading "Bounded worker activity" [level=2]
+    - paragraph: Direct, Nanny, and Au Pair are execution tiers, not peer agents.
+    - generic: Read-only activity
+    - generic: Queued
+    - strong: "0"
+    - generic: Active
+    - strong: "0"
+    - generic: Completed
+    - strong: "12"
+    - generic: Escalated
+    - strong: "2"
+    - generic: Failed
+    - strong: "2"
+    - generic: Canceled
+    - strong: "0"
+    - heading "Direct" [level=3]
+    - paragraph: Bounded utility work routed directly by the durable policy.
+    - generic: Execution tier
+    - group "Direct job counts":
+      - generic: Direct job counts
+      - strong: "0"
+      - text: queued
+      - strong: "0"
+      - text: active
+      - strong: "4"
+      - text: completed
+      - strong: "0"
+      - text: escalated
+      - strong: "1"
+      - text: failed
+      - strong: "0"
+      - text: canceled
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 6m ago" [expanded]:
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 6m ago
+        - generic: −
+      - group "Bounded worker flow":
+        - generic: Bounded worker flow
+        - text: Request
+        - paragraph: Inspect task; content redacted
+        - generic: →
+        - text: Tool activity
+        - paragraph: Tool names and arguments are not exposed
+        - generic: →
+        - text: Result
+        - paragraph: "Durable worker state: completed"
+      - generic: Model calls
+      - strong: Unknown
+      - generic: Tokens
+      - strong: Unknown
+      - generic: Cost
+      - strong: Unknown
+      - generic: Finished
+      - strong: 6m ago
+      - text: Bounded context capsule
+      - paragraph: Context, request, result, and tool content are redacted at the server boundary.
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 18m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 18m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 19m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 19m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 20m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 20m ago
+        - generic: +
+    - article:
+      - button "Failed Inspect task; content redactedSelected by durable utility routing metadata 54m ago":
+        - generic: Failed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 54m ago
+        - generic: +
+    - heading "Nanny" [level=3]
+    - paragraph: Local supervisory utility work with bounded metadata.
+    - generic: Execution tier
+    - group "Nanny job counts":
+      - generic: Nanny job counts
+      - strong: "0"
+      - text: queued
+      - strong: "0"
+      - text: active
+      - strong: "6"
+      - text: completed
+      - strong: "2"
+      - text: escalated
+      - strong: "1"
+      - text: failed
+      - strong: "0"
+      - text: canceled
+    - article:
+      - button "Failed Inspect task; content redactedSelected by durable utility routing metadata 47m ago":
+        - generic: Failed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 47m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 47m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 47m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 48m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 48m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 51m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 51m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 52m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 52m ago
+        - generic: +
+    - article:
+      - button "Escalated Inspect task; content redactedSelected by durable utility routing metadata 53m ago":
+        - generic: Escalated
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 53m ago
+        - generic: +
+    - article:
+      - button "Escalated Inspect task; content redactedSelected by durable utility routing metadata 54m ago":
+        - generic: Escalated
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 54m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 54m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 54m ago
+        - generic: +
+    - heading "Au Pair" [level=3]
+    - paragraph: Optional paid helper tier; content and spend details stay redacted.
+    - generic: Execution tier
+    - group "Au Pair job counts":
+      - generic: Au Pair job counts
+      - strong: "0"
+      - text: queued
+      - strong: "0"
+      - text: active
+      - strong: "2"
+      - text: completed
+      - strong: "0"
+      - text: escalated
+      - strong: "0"
+      - text: failed
+      - strong: "0"
+      - text: canceled
+    - article:
+      - button "Completed Review task; content redactedSelected by durable utility routing metadata 7m ago":
+        - generic: Completed
+        - strong: Review task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 7m ago
+        - generic: +
+    - article:
+      - button "Completed Inspect task; content redactedSelected by durable utility routing metadata 47m ago":
+        - generic: Completed
+        - strong: Inspect task; content redacted
+        - text: Selected by durable utility routing metadata
+        - generic: 47m ago
+        - generic: +
+  - article:
+    - text: Combined durable history
+    - heading "Timeline" [level=2]
+    - paragraph: Lifecycle, agents, bridge, Governess, workers, evidence, and adapters.
+    - generic: Newest page
+    - generic: 8 of 8 events
+    - generic: Search timeline
+    - generic: ⌕
+    - searchbox "Search timeline"
+    - group "Timeline categories":
+      - generic: Timeline categories
+      - button "All" [pressed]
+      - button "Lifecycle"
+      - button "Agent"
+      - button "Bridge"
+      - button "Governess"
+      - button "Worker"
+      - button "Evidence"
+      - button "Adapter"
+    - article:
+      - generic: Adapter
+      - generic: "#1"
+      - text: Web UI
+      - time: Aug 22, 11:30:04 PM
+      - heading "Terminal session present; server birth unverified" [level=3]
+      - paragraph: The exact terminal session was checked without exposing its identity.
+      - generic: Adapter Probe
+      - generic: ·
+      - generic: timeline-adapter-boundary
+      - generic: ·
+      - generic: 0s ago
+      - generic: Current
+    - article:
+      - generic: Agent
+      - generic: "#2"
+      - text: Codex
+      - time: Aug 22, 11:29:56 PM
+      - heading "PostToolUse recorded" [level=3]
+      - paragraph: Normalized lifecycle metadata reports working.
+      - generic: Hook Journal
+      - generic: ·
+      - generic: timeline-codex-hook
+      - generic: ·
+      - generic: 8s ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Governess
+      - generic: "#3"
+      - text: Codex
+      - time: Aug 22, 11:29:56 PM
+      - heading "Newer lifecycle evidence disagrees with manifest" [level=3]
+      - paragraph: The live projection shows working; the manifest still records submitted.
+      - generic: Hook Journal
+      - generic: ·
+      - generic: timeline-lifecycle-conflict-codex
+      - generic: ·
+      - generic: 8s ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Agent
+      - generic: "#4"
+      - text: Claude
+      - time: Aug 22, 11:29:35 PM
+      - heading "Notification recorded" [level=3]
+      - paragraph: Normalized lifecycle metadata reports input-required.
+      - generic: Hook Journal
+      - generic: ·
+      - generic: timeline-claude-hook
+      - generic: ·
+      - generic: 29s ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Governess
+      - generic: "#5"
+      - text: Claude
+      - time: Aug 22, 11:29:35 PM
+      - heading "Newer lifecycle evidence disagrees with manifest" [level=3]
+      - paragraph: The live projection shows working; the manifest still records submitted.
+      - generic: Hook Journal
+      - generic: ·
+      - generic: timeline-lifecycle-conflict-claude
+      - generic: ·
+      - generic: 29s ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Bridge
+      - generic: "#6"
+      - text: Bridge
+      - time: Aug 22, 11:28:25 PM
+      - heading "Durable bridge activity observed" [level=3]
+      - paragraph: 168 journal records projected as metadata only.
+      - generic: Bridge Journal
+      - generic: ·
+      - generic: timeline-bridge
+      - generic: ·
+      - generic: 2m ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Worker
+      - generic: "#7"
+      - text: Utility router
+      - time: Aug 22, 11:24:25 PM
+      - heading "Bounded worker activity observed" [level=3]
+      - paragraph: 16 durable worker jobs are represented without task content.
+      - generic: Worker Journal
+      - generic: ·
+      - generic: timeline-workers
+      - generic: ·
+      - generic: 6m ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - article:
+      - generic: Lifecycle
+      - generic: "#8"
+      - text: Loop
+      - time: Aug 22, 10:33:52 PM
+      - heading "Harvto run created" [level=3]
+      - paragraph: Run 244 entered the durable registry.
+      - generic: Manifest
+      - generic: ·
+      - generic: timeline-created
+      - generic: ·
+      - generic: 56m ago
+      - generic: Current
+      - button "Evidence": ⌁Evidence
+    - navigation "Timeline pages":
+      - button "← Newer" [disabled]
+      - generic: Newest bounded snapshot · maximum 100 rows
+      - button "Older →" [disabled]

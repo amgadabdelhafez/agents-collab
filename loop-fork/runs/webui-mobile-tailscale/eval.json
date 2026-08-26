@@ -1,0 +1,80 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "status": "pass",
+  "required": [
+    "unit",
+    "build",
+    "ui",
+    "dom",
+    "network",
+    "regression",
+    "diff",
+    "review"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "008",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/unit/attempt-008.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/unit/attempt-008.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "006",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/build/attempt-006.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/build/attempt-006.json"
+    },
+    "ui": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/ui/browser-evidence.json",
+      "reason": "Live fleet and run views are readable at 320, 390, and 430 pixels with accessible compact status and safe bottom navigation.",
+      "method": "live-browser-responsive",
+      "signed_off_by": "codex"
+    },
+    "dom": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/ui/run-mobile-390x844.dom.txt",
+      "reason": "DOM assertions prove exact viewport containment, visible full titles, sticky mobile authority chrome, accessible connection state, and zero horizontal overflow.",
+      "method": "browser-dom-assertions",
+      "signed_off_by": "codex"
+    },
+    "network": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/network/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "003",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/network/attempt-003.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/network/attempt-003.json"
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "002",
+      "latest_attempt_artifact": "runs/webui-mobile-tailscale/artifacts/regression/attempt-002.log",
+      "latest_attempt_meta": "runs/webui-mobile-tailscale/artifacts/regression/attempt-002.json"
+    },
+    "diff": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/artifacts/diff/committed-range.log",
+      "reason": "Both exact committed ranges pass git diff --check and are bound by recorded SHA-256 hashes.",
+      "method": "committed-range-diff-check",
+      "signed_off_by": "codex"
+    },
+    "review": {
+      "status": "pass",
+      "artifact": "runs/webui-mobile-tailscale/independent-review.md",
+      "reason": "Independent zero-write reviewer returned literal PASS for the exact candidate and prior Host-guard correction.",
+      "method": "independent-exact-sha",
+      "signed_off_by": "webui_release_review"
+    }
+  }
+}

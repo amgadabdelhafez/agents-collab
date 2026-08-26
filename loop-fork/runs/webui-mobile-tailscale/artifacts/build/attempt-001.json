@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-mobile-tailscale",
+  "dimension": "build",
+  "attempt": "001",
+  "status": "fail",
+  "exit_code": 2,
+  "command_exit_code": 2,
+  "started_at": "2026-08-23T06:17:18Z",
+  "ended_at": "2026-08-23T06:17:20Z",
+  "artifact": "runs/webui-mobile-tailscale/artifacts/build/attempt-001.log",
+  "command": [
+    "bun",
+    "run",
+    "web:build"
+  ]
+}

@@ -1,0 +1,23 @@
+task_id: webui-mobile-tailscale
+dimension: unit
+attempt: 008
+started_at: 2026-08-23T06:41:51Z
+command: bun run test:file -- tests/webui/exact-host-guard.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/webui/exact-host-guard.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/webui/exact-host-guard.test.ts:
+(pass) Web UI exact Host guard > allows only an exact configured IP or MagicDNS Host [0.04ms]
+(pass) Web UI exact Host guard > rejects unrelated numeric Hosts before every route [0.04ms]
+(pass) Web UI exact Host guard > rejects missing, malformed, case-varied, and port-mismatched Hosts [0.02ms]
+
+ 3 pass
+ 0 fail
+ 11 expect() calls
+Ran 3 tests across 1 file. [18.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-23T06:41:51Z

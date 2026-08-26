@@ -1,0 +1,23 @@
+task_id: webui-mobile-tailscale
+dimension: network
+attempt: 003
+started_at: 2026-08-23T06:42:42Z
+command: bash -lc $'set -euo pipefail\nlisteners="$(lsof -nP -iTCP:46327 -sTCP:LISTEN)"\nprintf "%s\\n" "$listeners"\n[[ "$listeners" == *"100.64.0.14:46327 (LISTEN)"* ]]\n[[ "$listeners" != *"*:46327 (LISTEN)"* ]]\nbody_file="$(mktemp)"\ntrap "rm -f \\"$body_file\\"" EXIT\nfor host in 100.64.0.14 sweetmac14.sweet.home; do\n  for route in / /main.tsx /api/v1/live-snapshot?request=1; do\n    code="$(curl --noproxy "*" -sS -o "$body_file" -w "%{http_code}" "http://$host:46327$route")"\n    printf "allowed Host %s route %s -> %s\\n" "$host" "$route" "$code"\n    [[ "$code" == "200" ]]\n  done\n  rg -q "\\"source\\":\\"loop-registry-live\\"" "$body_file"\ndone\nfor route in / /main.tsx /api/v1/live-snapshot?request=1; do\n  code="$(curl --noproxy "*" -sS -H "Host: 100.64.0.15:46327" -o "$body_file" -w "%{http_code}" "http://100.64.0.14:46327$route")"\n  rg -q "\\"code\\":\\"HOST_REJECTED\\"" "$body_file"\n  printf "unrelated numeric Host route %s -> %s, exact rejection body\\n" "$route" "$code"\n  [[ "$code" == "403" ]]\ndone'
+--- output ---
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+node    36733 amgad   31u  IPv4 0xb064bda4205d6fc4      0t0  TCP 100.64.0.14:46327 (LISTEN)
+node    36769 amgad   17u  IPv4 0x67b2301d01f3fd8e      0t0  TCP 127.0.0.1:46327 (LISTEN)
+allowed Host 100.64.0.14 route / -> 200
+allowed Host 100.64.0.14 route /main.tsx -> 200
+allowed Host 100.64.0.14 route /api/v1/live-snapshot?request=1 -> 200
+allowed Host sweetmac14.sweet.home route / -> 200
+allowed Host sweetmac14.sweet.home route /main.tsx -> 200
+allowed Host sweetmac14.sweet.home route /api/v1/live-snapshot?request=1 -> 200
+unrelated numeric Host route / -> 403, exact rejection body
+unrelated numeric Host route /main.tsx -> 403, exact rejection body
+unrelated numeric Host route /api/v1/live-snapshot?request=1 -> 403, exact rejection body
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-23T06:42:43Z
