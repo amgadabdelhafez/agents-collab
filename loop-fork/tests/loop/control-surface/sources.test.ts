@@ -15,6 +15,7 @@ import {
   createFilesystemReadModelCapabilities,
   readJsonlSnapshot,
   readJsonSnapshot,
+  UnstableSourceSnapshotError,
 } from "../../../src/loop/control-surface/sources";
 
 const makeRoot = (): string => mkdtempSync(join(tmpdir(), "control-surface-"));
@@ -220,5 +221,25 @@ test("a storage-root replacement after capability creation is rejected", () => {
     unlinkSync(root);
     rmSync(movedRoot, { recursive: true, force: true });
     rmSync(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test("a disappearing run directory is reported as typed source instability", () => {
+  const root = makeRoot();
+  const runDir = join(root, "repo-a", "7");
+  mkdirSync(runDir, { recursive: true });
+  const capabilities = createFilesystemReadModelCapabilities(root, () => 123);
+  rmSync(runDir, { recursive: true, force: true });
+  try {
+    expect(() =>
+      capabilities.readSources({
+        repoId: "repo-a",
+        runId: "7",
+        runDir,
+        storageRoot: root,
+      })
+    ).toThrow(UnstableSourceSnapshotError);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

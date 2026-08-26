@@ -196,29 +196,43 @@ export class UnstableSourceSnapshotError extends Error {
 }
 
 const bindDirectory = (path: string): DirectoryBinding => {
-  const stats = lstatSync(path, { bigint: true });
-  if (!stats.isDirectory() || stats.isSymbolicLink()) {
-    throw new Error("Evidence directory is not stable");
+  try {
+    const stats = lstatSync(path, { bigint: true });
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new UnstableSourceSnapshotError();
+    }
+    return {
+      actualPath: realpathSync(path),
+      ctimeNs: stats.ctimeNs,
+      dev: stats.dev,
+      ino: stats.ino,
+      path,
+    };
+  } catch (error) {
+    if (error instanceof UnstableSourceSnapshotError) {
+      throw error;
+    }
+    throw new UnstableSourceSnapshotError();
   }
-  return {
-    actualPath: realpathSync(path),
-    ctimeNs: stats.ctimeNs,
-    dev: stats.dev,
-    ino: stats.ino,
-    path,
-  };
 };
 
 const assertDirectoryBinding = (binding: DirectoryBinding): void => {
-  const current = lstatSync(binding.path, { bigint: true });
-  if (
-    !current.isDirectory() ||
-    current.isSymbolicLink() ||
-    current.dev !== binding.dev ||
-    current.ino !== binding.ino ||
-    current.ctimeNs !== binding.ctimeNs ||
-    realpathSync(binding.path) !== binding.actualPath
-  ) {
+  try {
+    const current = lstatSync(binding.path, { bigint: true });
+    if (
+      !current.isDirectory() ||
+      current.isSymbolicLink() ||
+      current.dev !== binding.dev ||
+      current.ino !== binding.ino ||
+      current.ctimeNs !== binding.ctimeNs ||
+      realpathSync(binding.path) !== binding.actualPath
+    ) {
+      throw new UnstableSourceSnapshotError();
+    }
+  } catch (error) {
+    if (error instanceof UnstableSourceSnapshotError) {
+      throw error;
+    }
     throw new UnstableSourceSnapshotError();
   }
 };
