@@ -1,0 +1,37 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "status": "pass",
+  "required": [
+    "unit",
+    "regression"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "004",
+      "latest_attempt_artifact": "runs/webui-t00-adapter-identity-v2/artifacts/unit/attempt-004.log",
+      "latest_attempt_meta": "runs/webui-t00-adapter-identity-v2/artifacts/unit/attempt-004.json"
+    },
+    "regression": {
+      "status": "pass",
+      "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/regression/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-t00-adapter-identity-v2/artifacts/regression/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-t00-adapter-identity-v2/artifacts/regression/attempt-001.json"
+    },
+    "build": {
+      "status": "pass",
+      "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/build/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/webui-t00-adapter-identity-v2/artifacts/build/attempt-001.log",
+      "latest_attempt_meta": "runs/webui-t00-adapter-identity-v2/artifacts/build/attempt-001.json"
+    }
+  }
+}

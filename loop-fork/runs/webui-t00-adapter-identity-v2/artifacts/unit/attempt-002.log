@@ -1,0 +1,59 @@
+task_id: webui-t00-adapter-identity-v2
+dimension: unit
+attempt: 002
+started_at: 2026-08-25T21:34:34Z
+command: bun run test:file -- tests/loop/paired-options.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/paired-options.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/paired-options.test.ts:
+(pass) preparePairedRun persists resolved asymmetric launch effort [11.39ms]
+(pass) live tmux reattach rejects an effort change it cannot apply [18.94ms]
+(pass) prepared runs reject a superseded bootstrap attempt [18.61ms]
+(pass) preparePairedOptions accepts a raw session id without creating a paired manifest [23.70ms]
+(pass) paired resumes restore Caveman modes unless CLI explicitly overrides [33.73ms]
+(pass) legacy resumes apply only Caveman modes their agents can receive [226.50ms]
+(pass) preparePairedOptions writes a readable Claude bridge server for fresh runs [13.90ms]
+(pass) preparePairedOptions keeps non-tmux native policy off without global MCP config [12.74ms]
+(pass) preparePairedRun upgrades an older hashed Claude bridge server name [17.22ms]
+(pass) preparePairedOptions ignores stored session ids from a completed paired run [20.98ms]
+(pass) preparePairedRun clears stale tmux state and Codex governance outside tmux mode [17.82ms]
+(pass) preparePairedRun preserves governed Codex gates and removes stale child profiles on live tmux reattach [28.79ms]
+918 |       worktree: undefined,
+919 |     });
+920 |     const prepared = preparePairedRun(opts, process.cwd());
+921 |     const snapshot = prepared.manifest.resolvedConfig;
+922 | 
+923 |     expect(snapshot).toEqual({
+                           ^
+error: expect(received).toEqual(expected)
+
+- {
+-   "governess": false,
+-   "pairedMode": true,
+-   "proofConfigured": true,
+-   "review": "claudex",
+-   "reviewPlan": "other",
+-   "tmux": true,
+-   "version": 1,
+-   "worktree": false,
+- }
++ undefined
+
+- Expected  - 10
++ Received  + 1
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-t00-adapter-identity-v2/loop-fork/tests/loop/paired-options.test.ts:923:22)
+(fail) preparePairedRun freezes a strict redacted resolved configuration [16.72ms]
+
+ 12 pass
+ 1 fail
+ 61 expect() calls
+Ran 13 tests across 1 file. [484.00ms]
+error: script "test:file" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-25T21:34:35Z

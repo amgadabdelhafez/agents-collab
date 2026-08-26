@@ -1,0 +1,3 @@
+[run] state/invariants/10-current-task.sh
+current-task: active webui-t00-adapter-identity-v2
+[pass] state/invariants/10-current-task.sh

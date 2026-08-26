@@ -1,0 +1,39 @@
+task_id: webui-t00-adapter-identity-v2
+dimension: integration
+attempt: 001
+started_at: 2026-08-25T21:43:25Z
+command: bun runs/webui-t00-adapter-identity-v2/artifacts/tmux-smoke.ts
+--- output ---
+{
+  "firstA": {
+    "processBirthId": "darwin:1787694205000",
+    "serverPid": 64848,
+    "socketPath": "/private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/webui-t00-smoke-sgluji/a.sock",
+    "version": 1
+  },
+  "firstB": {
+    "processBirthId": "darwin:1787694205000",
+    "serverPid": 64853,
+    "socketPath": "/private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/webui-t00-smoke-sgluji/b.sock",
+    "version": 1
+  },
+  "initial": {
+    "a": "live",
+    "b": "live"
+  },
+  "reincarnatedA": {
+    "processBirthId": "darwin:1787694205000",
+    "serverPid": 64883,
+    "socketPath": "/private/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/webui-t00-smoke-sgluji/a.sock",
+    "version": 1
+  },
+  "reincarnation": {
+    "new": "live",
+    "old": "unknown"
+  }
+}
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-25T21:43:25Z

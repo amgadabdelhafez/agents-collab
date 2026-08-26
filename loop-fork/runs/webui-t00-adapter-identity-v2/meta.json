@@ -1,0 +1,12 @@
+{
+  "id": "webui-t00-adapter-identity-v2",
+  "mode": "planned",
+  "created_at": "2026-08-25T21:27:19Z",
+  "status": "done",
+  "description": "Implement formal Web UI T-00 durable tmux adapter identity and immutable redacted resolved configuration.",
+  "estimated_loc": 420,
+  "research_required": true,
+  "research_reason": "explicit",
+  "research_path": "runs/webui-t00-adapter-identity-v2/research.md",
+  "ended_at": "2026-08-25T23:04:55Z"
+}

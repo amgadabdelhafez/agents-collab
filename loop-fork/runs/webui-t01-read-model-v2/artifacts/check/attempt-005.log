@@ -1,0 +1,13 @@
+task_id: webui-t01-read-model-v2
+dimension: check
+attempt: 005
+started_at: 2026-08-25T23:30:07Z
+command: bun run check -- src/loop/control-surface tests/loop/control-surface
+--- output ---
+$ ultracite check src/loop/control-surface tests/loop/control-surface
+Checked 8 files in 7ms. No fixes applied.
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-08-25T23:30:07Z

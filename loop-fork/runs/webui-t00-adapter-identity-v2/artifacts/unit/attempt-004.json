@@ -1,0 +1,16 @@
+{
+  "task_id": "webui-t00-adapter-identity-v2",
+  "dimension": "unit",
+  "attempt": "004",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-25T21:42:52Z",
+  "ended_at": "2026-08-25T21:42:54Z",
+  "artifact": "runs/webui-t00-adapter-identity-v2/artifacts/unit/attempt-004.log",
+  "command": [
+    "bash",
+    "-lc",
+    "bun run test:file -- tests/loop/run-state.test.ts && bun run test:file -- tests/loop/paired-options.test.ts && bun run test:file -- tests/loop/tmux-control.test.ts && bun run test:file -- tests/loop/tmux.test.ts"
+  ]
+}

@@ -1,0 +1,97 @@
+task_id: webui-t00-adapter-identity-v2
+dimension: unit
+attempt: 001
+started_at: 2026-08-25T21:34:34Z
+command: bun run test:file -- tests/loop/run-state.test.ts
+--- output ---
+$ LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/run-state.test.ts
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/run-state.test.ts:
+(pass) resolveRepoId prefers git common dir and stays stable across worktrees [0.26ms]
+(pass) resolveRepoId falls back to top-level when git common dir is unavailable
+(pass) resolveStorageRoot and run path helpers build the expected layout
+(pass) resolveRunStorage resolves the same run dir for a resumed run id [0.15ms]
+(pass) resolveRunId prefers LOOP_RUN_ID over auto-incrementing storage [0.60ms]
+(pass) resolveRunId increments from the latest stored run [0.62ms]
+(pass) reserveRunStorage exclusively creates the next numeric run directory [0.49ms]
+(pass) competing processes reserve distinct numeric run directories [37.94ms]
+(pass) manifest helpers write, read, and touch run metadata [1.22ms]
+(pass) manifest reader rejects an invalid World Model binding as a whole [0.28ms]
+(pass) createRunManifest rejects an invalid source task SHA-256 [0.03ms]
+(pass) manifest reader preserves legacy manifests without launch bindings [0.20ms]
+(pass) writeRunManifest atomically replaces a complete manifest [0.36ms]
+(pass) writeRunManifest removes its temporary file when rename fails [0.37ms]
+(pass) manifest reader ignores malformed files [0.26ms]
+(pass) loadRunState resolves an existing run by run id [0.83ms]
+(pass) resolveExistingRunId returns a matching stored run id [0.66ms]
+(pass) resolveExistingRunId matches stored Claude and Codex session ids [0.44ms]
+(pass) transcript helpers append and read jsonl entries [0.25ms]
+(pass) transcript helpers parse structured status, review, and result entries [0.50ms]
+(pass) structured transcript entries round-trip without undefined optional fields [0.27ms]
+(pass) run ids are validated before storage paths are built
+729 | 
+730 |   writeRunManifest(manifestPath, manifest);
+731 |   const bytes = readFileSync(manifestPath);
+732 |   const read = readRunManifest(manifestPath);
+733 | 
+734 |   expect(read?.manifestRevision).toBe(
+                                       ^
+error: expect(received).toBe(expected)
+
+Expected: "2a906f29defe3862817fc80d894c5a6bfb3dde72687b90f94e83bb200a2e7f25"
+Received: undefined
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-t00-adapter-identity-v2/loop-fork/tests/loop/run-state.test.ts:734:34)
+(fail) manifest revision hashes the exact validated persisted bytes [0.42ms]
+767 |         version: 1,
+768 |       },
+769 |     })}\n`,
+770 |     "utf8"
+771 |   );
+772 |   expect(readRunManifest(manifestPath)).toBeUndefined();
+                                              ^
+error: expect(received).toBeUndefined()
+
+Received: {
+  claudeSessionId: "",
+  codexThreadId: "",
+  createdAt: "2026-08-25T21:34:34.339Z",
+  cwd: "/repo",
+  mode: "paired",
+  pid: 42,
+  repoId: "repo-abc123",
+  runId: "strict-schema",
+  state: "submitted",
+  status: "running",
+  updatedAt: "2026-08-25T21:34:34.339Z",
+}
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-t00-adapter-identity-v2/loop-fork/tests/loop/run-state.test.ts:772:41)
+(fail) manifest reader fails closed on invalid UTF-8 and new-field schema [0.35ms]
+802 |   );
+803 | 
+804 |   const read = readRunManifest(manifestPath);
+805 |   expect(read?.tmuxAdapterIdentity).toBeUndefined();
+806 |   expect(read?.resolvedConfig).toBeUndefined();
+807 |   expect(read?.manifestRevision).toMatch(/^[a-f0-9]{64}$/);
+                                       ^
+error: Received value must be a string: undefined
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab/.claude/worktrees/webui-t00-adapter-identity-v2/loop-fork/tests/loop/run-state.test.ts:807:34)
+(fail) legacy manifests keep adapter identity and resolved config unknown [0.22ms]
+
+3 tests failed:
+(fail) manifest revision hashes the exact validated persisted bytes [0.42ms]
+(fail) manifest reader fails closed on invalid UTF-8 and new-field schema [0.35ms]
+(fail) legacy manifests keep adapter identity and resolved config unknown [0.22ms]
+
+ 22 pass
+ 3 fail
+ 54 expect() calls
+Ran 25 tests across 1 file. [69.00ms]
+error: script "test:file" exited with code 1
+
+--- result ---
+command_exit_code: 1
+exit_code: 1
+ended_at: 2026-08-25T21:34:34Z

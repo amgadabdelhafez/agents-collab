@@ -1,0 +1,19 @@
+{
+  "task_id": "webui-t01-read-model-v2",
+  "dimension": "check",
+  "attempt": "002",
+  "status": "pass",
+  "exit_code": 0,
+  "command_exit_code": 0,
+  "started_at": "2026-08-25T23:21:05Z",
+  "ended_at": "2026-08-25T23:21:05Z",
+  "artifact": "runs/webui-t01-read-model-v2/artifacts/check/attempt-002.log",
+  "command": [
+    "bun",
+    "run",
+    "check",
+    "--",
+    "src/loop/control-surface",
+    "tests/loop/control-surface"
+  ]
+}
