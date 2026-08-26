@@ -1,0 +1,12 @@
+{
+  "task_id": "webui-integrated-stack-v1",
+  "status": "pending",
+  "required": [
+    "unit"
+  ],
+  "dimensions": {
+    "unit": {
+      "status": "pending"
+    }
+  }
+}
