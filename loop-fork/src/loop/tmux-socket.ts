@@ -18,6 +18,7 @@
  *      `File name too long`); Linux is 107.
  */
 
+import { statSync } from "node:fs";
 import { platform as osPlatform } from "node:os";
 
 // --- Brands -----------------------------------------------------------------
@@ -666,6 +667,59 @@ const shellQuote = (value: string): string =>
  * The attach command shown to a human. Socket and session are shell-escaped,
  * so a path containing spaces or metacharacters round trips as data.
  */
+/**
+ * Whether the exact bound endpoint of a target exists on disk.
+ *
+ * `unknown` is never absence. A positive `absent` grants the reservation
+ * consumer cleanup authority, so only a positive ENOENT/ENOTDIR on the exact
+ * bound path may produce it; a permission wall, a timeout, or an unexpected
+ * I/O error means we did not learn anything.
+ */
+export type TmuxEndpointState = "present" | "absent" | "unknown";
+
+/**
+ * Exported so the mapping itself is directly testable without a raw socket
+ * ever leaving this module.
+ */
+export const classifyTmuxEndpointProbeError = (
+  error: unknown
+): TmuxEndpointState => {
+  if (typeof error !== "object" || error === null) {
+    return "unknown";
+  }
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unknown";
+};
+
+/**
+ * Total, non-throwing, fail-closed endpoint classifier.
+ *
+ * The socket is read only through module-private `targetOf`, so a caller
+ * cannot obtain it; no raw socket string appears in the result. Every
+ * provenance failure — a fake target, an unbranded object, `undefined` — is
+ * caught here and classified `unknown`, because an unaddressable target must
+ * never be read as a released endpoint.
+ */
+export const readTmuxEndpointState = (
+  target: TmuxTarget | undefined
+): TmuxEndpointState => {
+  if (!target) {
+    return "unknown";
+  }
+  let socket: string;
+  try {
+    socket = targetOf(target).socket;
+  } catch {
+    return "unknown";
+  }
+  try {
+    statSync(socket);
+    return "present";
+  } catch (error) {
+    return classifyTmuxEndpointProbeError(error);
+  }
+};
+
 export const tmuxAttachCommand = (target: TmuxTarget): string => {
   const { socket, session } = targetOf(target);
   return `tmux -S ${shellQuote(socket)} attach -t ${shellQuote(session)}`;

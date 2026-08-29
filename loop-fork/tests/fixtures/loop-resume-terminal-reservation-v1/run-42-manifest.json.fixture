@@ -1,0 +1,67 @@
+{
+  "cavemanMode": "lite",
+  "driverEffort": "high",
+  "reviewerEffort": "high",
+  "claudeChannelServer": "loop-bridge-agents-collab-42",
+  "claudeCliVersion": "2.1.226 (Claude Code)",
+  "governess": true,
+  "primaryAgent": "codex",
+  "helperCavemanMode": "full",
+  "launchCharters": {
+    "claude": {
+      "bytes": 15367,
+      "path": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/42/launch-charters/claude.md",
+      "sha256": "9d68ca326618a2ac4a3ee18ffa7eb21439163437cd38aa171e56b797a1cc8f8f"
+    },
+    "codex": {
+      "bytes": 15804,
+      "path": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/42/launch-charters/codex.md",
+      "sha256": "6f3d93f469b89aa743ac7aafd94113bcd662e4c95e8e2aaced59e0253fe7be9f"
+    }
+  },
+  "launchAttemptId": "72326be9-3412-4ac6-8f34-c5889ff732a2",
+  "launchAttemptPid": 9598,
+  "launchClaimId": "72326be9-3412-4ac6-8f34-c5889ff732a2",
+  "sourceTaskSha256": "d676a046818ed9867b0a623d20afb40b31e3f795df22f727b378e57d041d6b87",
+  "worldModel": {
+    "capsuleSha256": "9c9054eb86a84ea947ea6d1b6d9ac79acde82e39c8db97c5f9b495e27ffe535a",
+    "commitSha": "78608327d590050f8cd1bbd1005ed185d090ab2c",
+    "contextPath": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/42/world-model/bootstrap-9c9054eb86a84ea947ea6d1b6d9ac79acde82e39c8db97c5f9b495e27ffe535a.json",
+    "contextSha256": "5f4aecd3a61a9b0b97baf7f475acf41c5a912b6f0cf89d80aa98b96360105958",
+    "databasePath": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/42/world-model/project-78608327d590050f8cd1bbd1005ed185d090ab2c.sqlite",
+    "entityCount": 2656,
+    "generatedAt": "2026-08-08T19:48:42.454Z",
+    "ontologyVersion": "loop-world-v1",
+    "seeds": [
+      "entity:219d4c45c4491e934ebeb7e44e6634f521d24d8d797f203e4395e3ee786c47b4",
+      "entity:9719775132da68d0cdfef1d0910359b788cbf8aab88e6713c3b865ed0b878cdf",
+      "entity:a1c2b3ee80c1b5f3db5f45de6a982733aa3579113af7cae514477788fc3858ee",
+      "entity:a1c306ab17b7a8a94fc4e8172bcddae7f1257e32d033e227c082a94ddbc3b98c"
+    ],
+    "statementCount": 8533
+  },
+  "tmuxPaneGoverness": "%2",
+  "tmuxPaneAuPair": "%3",
+  "tmuxPaneLeft": "%0",
+  "tmuxPaneRight": "%1",
+  "tmuxPaneNanny": "%4",
+  "tmuxPaneRecon": [
+    "%5"
+  ],
+  "tmuxPaneUtility": "%3",
+  "tmuxSocket": "/private/tmp/harness-d001-tmux/tmux-501/default",
+  "claudeSessionId": "0857d033-2679-4bdf-b008-acb566b52c40",
+  "codexThreadId": "019fe2eb-a9cb-7fc3-a180-13847e751ed3",
+  "createdAt": "2026-08-08T19:47:49.688Z",
+  "cwd": "/private/tmp/agents-collab-d001-handover-run1",
+  "mode": "paired",
+  "ossSessionId": "",
+  "pid": 9598,
+  "repoId": "agents-collab-fa87e8608224",
+  "runId": "42",
+  "state": "stopped",
+  "status": "stopped",
+  "updatedAt": "2026-08-18T18:30:00.000Z",
+  "workspaceReleasedAt": "2026-08-18T18:30:00.000Z",
+  "tmuxSession": "agents-collab-loop-42"
+}

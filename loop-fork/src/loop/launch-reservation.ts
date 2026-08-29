@@ -6,8 +6,11 @@ import lockfile from "proper-lockfile";
 import {
   createRunManifest,
   isActiveRunState,
+  type ReservationManifestRead,
   type RunManifest,
+  type RunOwnershipEvidence,
   type RunStorage,
+  readReservationManifest,
   readRunManifest,
   readRunManifestHandle,
   reserveRunStorage,
@@ -21,6 +24,7 @@ import {
 } from "./run-state";
 import { type TmuxLiveness, tmuxTargetLivenessAsync } from "./tmux-control";
 import {
+  readTmuxEndpointState,
   resolveTmuxSocket,
   type TmuxTarget,
   targetFromManifest,
@@ -119,12 +123,66 @@ const workspaceConflict = (
     left.branchRef && right.branchRef && left.branchRef === right.branchRef
   );
 
+const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
+
+/**
+ * The terminal-released conjunction. Every conjunct must hold positively;
+ * anything else keeps the workspace owned. Run 42 sat here forever: its tmux
+ * endpoint was gone, so liveness could only answer "unknown", and unknown was
+ * read as ownership with no way to ever release. Release is granted only on
+ * positive evidence that the endpoint is gone AND the run recorded an explicit
+ * handback AND both its pids are positively dead.
+ */
+const terminalReleaseGranted = (
+  evidence: RunOwnershipEvidence,
+  target: TmuxTarget | undefined,
+  tmux: TmuxLiveness,
+  deps: LaunchReservationDeps
+): boolean => {
+  if (!target) {
+    return false;
+  }
+  if (readTmuxEndpointState(target) !== "absent") {
+    return false;
+  }
+  if (tmux !== "unknown") {
+    return false;
+  }
+  if (
+    evidence.state.kind !== "valid" ||
+    !TERMINAL_RUN_STATES.has(evidence.state.value)
+  ) {
+    return false;
+  }
+  if (
+    evidence.status.kind === "invalid" ||
+    evidence.status.kind === "conflicting"
+  ) {
+    return false;
+  }
+  if (evidence.workspaceReleasedAt.kind !== "valid") {
+    return false;
+  }
+  if (evidence.pid.kind !== "valid" || deps.isPidAlive(evidence.pid.value)) {
+    return false;
+  }
+  const attempt = evidence.launchAttemptPid;
+  if (attempt.kind === "invalid" || attempt.kind === "conflicting") {
+    return false;
+  }
+  return !(attempt.kind === "valid" && deps.isPidAlive(attempt.value));
+};
+
 const manifestCanStillOwnWorkspace = async (
   manifest: RunManifest,
   target: TmuxTarget | undefined,
-  deps: LaunchReservationDeps
+  deps: LaunchReservationDeps,
+  evidence?: RunOwnershipEvidence
 ): Promise<boolean> => {
   const tmux = manifest.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
+  if (evidence && terminalReleaseGranted(evidence, target, tmux, deps)) {
+    return false;
+  }
   if (tmux !== "dead") {
     return true;
   }
@@ -142,10 +200,22 @@ const conflictError = (manifest: RunManifest): Error => {
 };
 
 interface StoredManifest {
-  manifest: RunManifest;
+  read: ReservationManifestRead;
   target: TmuxTarget | undefined;
 }
 
+const refusalError = (
+  refusal: Extract<ReservationManifestRead, { kind: "refuse" }>
+): Error =>
+  new Error(
+    `[loop] launch conflict: run ${refusal.runId ?? "unknown"} at ${refusal.manifestPath} still owns workspace because its ownership evidence cannot be read (${refusal.reasons.join("; ")}); repair or remove that manifest before launching another`
+  );
+
+/**
+ * Every existing manifest is retained, refusals included. Dropping a manifest
+ * we could not read is a fail-open: the reservation then allocates a run into
+ * a workspace whose owner it never established.
+ */
 const storedManifests = async (repoDir: string): Promise<StoredManifest[]> => {
   if (!existsSync(repoDir)) {
     return [];
@@ -156,11 +226,12 @@ const storedManifests = async (repoDir: string): Promise<StoredManifest[]> => {
       continue;
     }
     const manifestPath = join(repoDir, entry.name, "manifest.json");
-    const manifest = readRunManifest(manifestPath);
-    if (manifest) {
-      const handle = readRunManifestHandle(manifestPath);
+    const read = readReservationManifest(manifestPath);
+    if (read) {
+      const handle =
+        read.kind === "valid" ? readRunManifestHandle(manifestPath) : undefined;
       manifests.push({
-        manifest,
+        read,
         target: handle ? targetFromManifest(handle) : undefined,
       });
     }
@@ -177,10 +248,17 @@ const assertNoConflict = async (
   excludedRunId: string | undefined,
   deps: LaunchReservationDeps
 ): Promise<void> => {
-  for (const { manifest, target } of manifests) {
+  for (const { read, target } of manifests) {
+    if (read.kind === "refuse") {
+      if (read.runId !== undefined && read.runId === excludedRunId) {
+        continue;
+      }
+      throw refusalError(read);
+    }
+    const { evidence, manifest } = read;
     if (
       manifest.runId === excludedRunId ||
-      !(await manifestCanStillOwnWorkspace(manifest, target, deps))
+      !(await manifestCanStillOwnWorkspace(manifest, target, deps, evidence))
     ) {
       continue;
     }

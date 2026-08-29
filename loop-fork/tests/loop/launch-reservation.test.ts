@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -20,6 +22,7 @@ import {
 } from "../../src/loop/launch-reservation";
 import {
   createRunManifest,
+  readReservationManifest,
   readRunManifest,
   resolveRepoId,
   resolveRunStorage,
@@ -771,4 +774,294 @@ test("reserveRequestedLaunch conflicts without mutation when requested tmuxSessi
     rmSync(root, { force: true, recursive: true });
     rmSync(home, { force: true, recursive: true });
   }
+});
+
+// --- Terminal reservation release (loop-resume-terminal-reservation-v1) ------
+//
+// Run 42 held the workspace forever: its tmux endpoint was gone, so liveness
+// was "unknown", and unknown was read as ownership. Release now requires the
+// full positive conjunction. Every refusal below proves the exact manifest
+// bytes are unchanged and that no run directory (hence no counter step) was
+// created.
+
+const RUN_42_FIXTURE = join(
+  import.meta.dir,
+  "../fixtures/loop-resume-terminal-reservation-v1/run-42-manifest.json.fixture"
+);
+const RUN_42_BYTES = 2814;
+const RUN_42_SHA256 =
+  "5e466b4ab2c8602bda8b7aefc1d8372356a2f1ae096c2e792769ccb947093b22";
+const RUN_42_ENDPOINT = "/private/tmp/harness-d001-tmux/tmux-501/default";
+
+const run42Bytes = (): Buffer => {
+  const bytes = readFileSync(RUN_42_FIXTURE);
+  expect(bytes.byteLength).toBe(RUN_42_BYTES);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(RUN_42_SHA256);
+  return bytes;
+};
+
+const installRun42 = (
+  home: string,
+  binding: LaunchWorkspaceBinding,
+  raw?: string
+): { manifestPath: string; repoDir: string } => {
+  const repoDir = join(resolveStorageRoot(home), binding.repoId);
+  const runDir = join(repoDir, "42");
+  mkdirSync(runDir, { recursive: true });
+  const manifestPath = join(runDir, "manifest.json");
+  if (raw === undefined) {
+    writeFileSync(manifestPath, run42Bytes());
+  } else {
+    writeFileSync(manifestPath, raw);
+  }
+  return { manifestPath, repoDir };
+};
+
+const run42Mutated = (
+  mutate: (parsed: Record<string, unknown>) => void
+): string => {
+  const parsed = JSON.parse(run42Bytes().toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+  mutate(parsed);
+  return JSON.stringify(parsed, null, 2);
+};
+
+const runDirs = (repoDir: string): string[] =>
+  existsSync(repoDir)
+    ? readdirSync(repoDir)
+        .filter((entry) => !entry.startsWith("."))
+        .sort()
+    : [];
+
+const withReservationFixture = async (
+  raw: string | undefined,
+  run: (context: {
+    binding: LaunchWorkspaceBinding;
+    home: string;
+    manifestPath: string;
+    repoDir: string;
+  }) => Promise<void>
+): Promise<void> => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const { manifestPath, repoDir } = installRun42(home, binding, raw);
+    await run({ binding, home, manifestPath, repoDir });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+};
+
+const expectReservationRefused = async (
+  raw: string | undefined,
+  overrides: Record<string, unknown> = {}
+): Promise<void> => {
+  await withReservationFixture(
+    raw,
+    async ({ binding, home, manifestPath, repoDir }) => {
+      const before = readFileSync(manifestPath);
+      await expect(
+        reservePairedLaunch(makeOptions(), binding, {
+          ...reservationDeps(home),
+          tmuxLiveness: () => "unknown" as const,
+          ...overrides,
+        })
+      ).rejects.toThrow();
+      expect(readFileSync(manifestPath).equals(before)).toBe(true);
+      expect(runDirs(repoDir)).toEqual(["42"]);
+    }
+  );
+};
+
+test("the exact Run 42 manifest releases the workspace under the full terminal-released predicate", async () => {
+  expect(existsSync(RUN_42_ENDPOINT)).toBe(false);
+  await withReservationFixture(
+    undefined,
+    async ({ binding, home, manifestPath, repoDir }) => {
+      const before = readFileSync(manifestPath);
+      const claim = await reservePairedLaunch(makeOptions(), binding, {
+        ...reservationDeps(home),
+        tmuxLiveness: () => "unknown" as const,
+      });
+      expect(claim.reserved).toBe(true);
+      expect(claim.storage.runId).toBe("43");
+      expect(readFileSync(manifestPath).equals(before)).toBe(true);
+      expect(readFileSync(manifestPath).byteLength).toBe(RUN_42_BYTES);
+      expect(
+        createHash("sha256").update(readFileSync(manifestPath)).digest("hex")
+      ).toBe(RUN_42_SHA256);
+      expect(runDirs(repoDir)).toEqual(["42", "43"]);
+    }
+  );
+});
+
+test("a present endpoint blocks release even when tmux liveness is unknown", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-present-"));
+  try {
+    const socket = join(dir, "present.sock");
+    writeFileSync(socket, "");
+    await expectReservationRefused(
+      run42Mutated((parsed) => {
+        parsed.tmuxSocket = socket;
+      })
+    );
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("an unknown endpoint blocks release; unknown is never absence", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-unknown-"));
+  const walled = join(dir, "walled");
+  mkdirSync(walled);
+  try {
+    chmodSync(walled, 0o000);
+    await expectReservationRefused(
+      run42Mutated((parsed) => {
+        parsed.tmuxSocket = join(walled, "denied.sock");
+      })
+    );
+  } finally {
+    chmodSync(walled, 0o700);
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("a live tmux session blocks release", async () => {
+  await expectReservationRefused(undefined, {
+    tmuxLiveness: () => "live" as const,
+  });
+});
+
+test("a missing or unusable target blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.tmuxSocket = "relative/unusable.sock";
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.tmuxSocket = undefined;
+    })
+  );
+});
+
+test("an active or non-enumerated lifecycle state blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.state = "working";
+      parsed.status = "running";
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.state = "reviewing";
+      parsed.status = "running";
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.state = "halted-forever";
+      parsed.status = "stopped";
+    })
+  );
+});
+
+test("an absent, invalid, or conflicting release marker blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.workspaceReleasedAt = undefined;
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.workspaceReleasedAt = "2026-02-30T18:30:00Z";
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.workspace_released_at = "2026-08-19T09:00:00.000Z";
+    })
+  );
+});
+
+test("a live run PID or a live launch-attempt PID blocks release", async () => {
+  await expectReservationRefused(undefined, {
+    isPidAlive: (candidate: number) => candidate === 9598,
+  });
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.launchAttemptPid = 4242;
+    })
+  );
+});
+
+test("a malformed or mismatched PID blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.pid = "9598junk";
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.launchAttemptPid = "9598junk";
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.launch_attempt_pid = 1234;
+    })
+  );
+});
+
+test("a present-invalid state with a terminal status, or state/status disagreement, blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.state = "not-a-state";
+      parsed.status = "stopped";
+    })
+  );
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.state = "stopped";
+      parsed.status = "running";
+    })
+  );
+});
+
+test("an existing malformed or unreadable manifest refuses before any run allocation", async () => {
+  for (const raw of ["{ not json", "[]", "null", "{}"]) {
+    await expectReservationRefused(raw);
+  }
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const repoDir = join(resolveStorageRoot(home), binding.repoId);
+    const manifestPath = join(repoDir, "42", "manifest.json");
+    mkdirSync(manifestPath, { recursive: true });
+    await expect(
+      reservePairedLaunch(makeOptions(), binding, {
+        ...reservationDeps(home),
+        tmuxLiveness: () => "unknown" as const,
+      })
+    ).rejects.toThrow();
+    expect(runDirs(repoDir)).toEqual(["42"]);
+    expect(readReservationManifest(manifestPath)?.kind).toBe("refuse");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("a provenance failure in the endpoint classifier blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.tmuxSocket = `${"x".repeat(120)}/not-absolute.sock`;
+    })
+  );
 });

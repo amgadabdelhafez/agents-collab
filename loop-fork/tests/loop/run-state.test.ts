@@ -25,6 +25,7 @@ import {
   createRunStatusEntry,
   createRunTranscriptEntry,
   loadRunState,
+  readReservationManifest,
   readRunManifest,
   readRunManifestHandle,
   readRunTranscriptEntries,
@@ -916,4 +917,354 @@ test("every persisted pane field is covered by the atomic clear", () => {
     (field) => !field.endsWith("Agent")
   );
   expect(paneFields.sort()).toEqual([...TMUX_PANE_MANIFEST_FIELDS].sort());
+});
+
+// --- Reservation manifest read boundary -------------------------------------
+//
+// loop-resume-terminal-reservation-v1. Omission in `RunManifest` must never be
+// read as validity: a present-but-invalid ownership field is refusal evidence,
+// not absence. Every case below asserts the manifest bytes are unchanged.
+
+const RUN_42_FIXTURE = join(
+  import.meta.dir,
+  "../fixtures/loop-resume-terminal-reservation-v1/run-42-manifest.json.fixture"
+);
+const RUN_42_BYTES = 2814;
+const RUN_42_SHA256 =
+  "5e466b4ab2c8602bda8b7aefc1d8372356a2f1ae096c2e792769ccb947093b22";
+
+const run42Raw = (): string => {
+  const bytes = readFileSync(RUN_42_FIXTURE);
+  expect(bytes.byteLength).toBe(RUN_42_BYTES);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(RUN_42_SHA256);
+  return bytes.toString("utf8");
+};
+
+const writeManifestRaw = (raw: string): { dir: string; path: string } => {
+  const dir = makeTempDir();
+  const path = join(dir, "manifest.json");
+  writeFileSync(path, raw);
+  return { dir, path };
+};
+
+const withRawManifest = (
+  raw: string,
+  assertion: (manifestPath: string) => void
+): void => {
+  const { dir, path } = writeManifestRaw(raw);
+  try {
+    const before = readFileSync(path);
+    assertion(path);
+    expect(readFileSync(path).equals(before)).toBe(true);
+    expect(readdirSync(dir)).toEqual(["manifest.json"]);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+};
+
+const mutatedRun42 = (mutate: (parsed: Record<string, unknown>) => void) => {
+  const parsed = JSON.parse(run42Raw()) as Record<string, unknown>;
+  mutate(parsed);
+  return JSON.stringify(parsed, null, 2);
+};
+
+const expectRefusal = (manifestPath: string): readonly string[] => {
+  const read = readReservationManifest(manifestPath);
+  if (read?.kind !== "refuse") {
+    throw new Error(`expected refusal, received ${read?.kind ?? "undefined"}`);
+  }
+  expect(read.manifestPath).toBe(manifestPath);
+  expect(read.reasons.length).toBeGreaterThan(0);
+  return read.reasons;
+};
+
+test("readReservationManifest accepts the exact Run 42 manifest with full ownership evidence", () => {
+  withRawManifest(run42Raw(), (manifestPath) => {
+    const read = readReservationManifest(manifestPath);
+    if (read?.kind !== "valid") {
+      throw new Error(`expected valid, received ${read?.kind ?? "undefined"}`);
+    }
+    expect(read.manifest.runId).toBe("42");
+    expect(read.manifest.pid).toBe(9598);
+    expect(read.manifest.state).toBe("stopped");
+    expect(read.manifest.workspaceReleasedAt).toBe("2026-08-18T18:30:00.000Z");
+    expect(read.evidence.pid).toEqual({ kind: "valid", value: 9598 });
+    expect(read.evidence.launchAttemptPid).toEqual({
+      kind: "valid",
+      value: 9598,
+    });
+    expect(read.evidence.state).toEqual({ kind: "valid", value: "stopped" });
+    expect(read.evidence.status).toEqual({ kind: "valid", value: "stopped" });
+    expect(read.evidence.workspaceReleasedAt).toEqual({
+      kind: "valid",
+      value: "2026-08-18T18:30:00.000Z",
+    });
+  });
+});
+
+test("readReservationManifest returns undefined only when no manifest exists", () => {
+  const dir = makeTempDir();
+  try {
+    expect(readReservationManifest(join(dir, "manifest.json"))).toBeUndefined();
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("readReservationManifest refuses a prefix-parsed run PID such as 9598junk", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.pid = "9598junk";
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain("pid");
+    }
+  );
+});
+
+test("readReservationManifest rejects every non-canonical run PID token", () => {
+  for (const pid of [
+    "9598junk",
+    " 9598",
+    "9598 ",
+    "09598",
+    "+9598",
+    "0x2586",
+    "9598.0",
+    "9.598e3",
+    "0",
+    "-1",
+    0,
+    -1,
+    9598.5,
+    Number.MAX_SAFE_INTEGER + 2,
+    true,
+    null,
+    {},
+    [],
+  ]) {
+    withRawManifest(
+      mutatedRun42((parsed) => {
+        parsed.pid = pid as never;
+      }),
+      (manifestPath) => {
+        expectRefusal(manifestPath);
+      }
+    );
+  }
+});
+
+test("readReservationManifest accepts a canonical decimal run PID string", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.pid = "9598";
+    }),
+    (manifestPath) => {
+      const read = readReservationManifest(manifestPath);
+      expect(read?.kind).toBe("valid");
+      if (read?.kind === "valid") {
+        expect(read.evidence.pid).toEqual({ kind: "valid", value: 9598 });
+      }
+    }
+  );
+});
+
+test("readReservationManifest distinguishes absent, invalid, and conflicting launchAttemptPid", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.launchAttemptPid = undefined;
+    }),
+    (manifestPath) => {
+      const read = readReservationManifest(manifestPath);
+      expect(read?.kind).toBe("valid");
+      if (read?.kind === "valid") {
+        expect(read.evidence.launchAttemptPid).toEqual({ kind: "absent" });
+      }
+    }
+  );
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.launchAttemptPid = "9598junk";
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain(
+        "launchAttemptPid"
+      );
+    }
+  );
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.launch_attempt_pid = 4242;
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain(
+        "launchAttemptPid"
+      );
+    }
+  );
+});
+
+test("readReservationManifest refuses a present-invalid state carrying a terminal status", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.state = "definitely-not-a-state";
+      parsed.status = "stopped";
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain("state");
+    }
+  );
+});
+
+test("readReservationManifest refuses semantic state and status disagreement", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.state = "stopped";
+      parsed.status = "running";
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain("status");
+    }
+  );
+});
+
+test("readReservationManifest supplies state from a supported legacy status only when state is absent", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.state = undefined;
+      parsed.status = "done";
+    }),
+    (manifestPath) => {
+      const read = readReservationManifest(manifestPath);
+      expect(read?.kind).toBe("valid");
+      if (read?.kind === "valid") {
+        expect(read.evidence.state).toEqual({
+          kind: "valid",
+          value: "completed",
+        });
+      }
+    }
+  );
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.state = undefined;
+      parsed.status = "not-a-status";
+    }),
+    (manifestPath) => {
+      expectRefusal(manifestPath);
+    }
+  );
+});
+
+test("readReservationManifest refuses an invalid release marker and never collapses it to absence", () => {
+  for (const marker of [
+    "2026-02-30T18:30:00Z",
+    "2026-13-01T18:30:00Z",
+    "2026-08-18T25:30:00Z",
+    "2026-08-18 18:30:00Z",
+    "2026-08-18T18:30:00+02:00",
+    "2026-08-18T18:30:00",
+    "not-a-date",
+    "",
+    42,
+  ]) {
+    withRawManifest(
+      mutatedRun42((parsed) => {
+        parsed.workspaceReleasedAt = marker as never;
+      }),
+      (manifestPath) => {
+        expect(expectRefusal(manifestPath).join(" ")).toContain(
+          "workspaceReleasedAt"
+        );
+      }
+    );
+  }
+});
+
+test("readReservationManifest accepts second and millisecond release markers byte-for-byte", () => {
+  for (const marker of ["2026-08-18T18:30:00Z", "2026-08-18T18:30:00.000Z"]) {
+    withRawManifest(
+      mutatedRun42((parsed) => {
+        parsed.workspaceReleasedAt = marker;
+      }),
+      (manifestPath) => {
+        const read = readReservationManifest(manifestPath);
+        expect(read?.kind).toBe("valid");
+        if (read?.kind === "valid") {
+          expect(read.evidence.workspaceReleasedAt).toEqual({
+            kind: "valid",
+            value: marker,
+          });
+          expect(read.manifest.workspaceReleasedAt).toBe(marker);
+        }
+      }
+    );
+  }
+});
+
+test("readReservationManifest records an absent release marker as absent, not invalid", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.workspaceReleasedAt = undefined;
+    }),
+    (manifestPath) => {
+      const read = readReservationManifest(manifestPath);
+      expect(read?.kind).toBe("valid");
+      if (read?.kind === "valid") {
+        expect(read.evidence.workspaceReleasedAt).toEqual({ kind: "absent" });
+        expect(read.manifest.workspaceReleasedAt).toBeUndefined();
+      }
+    }
+  );
+});
+
+test("readReservationManifest refuses a release alias conflict across key spellings", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.workspace_released_at = "2026-08-19T09:00:00.000Z";
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain(
+        "workspaceReleasedAt"
+      );
+    }
+  );
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.workspaceReleasedAt = undefined;
+      parsed.workspace_released_at = "2026-08-18T18:30:00.000Z";
+    }),
+    (manifestPath) => {
+      const read = readReservationManifest(manifestPath);
+      expect(read?.kind).toBe("valid");
+      if (read?.kind === "valid") {
+        expect(read.evidence.workspaceReleasedAt).toEqual({
+          kind: "valid",
+          value: "2026-08-18T18:30:00.000Z",
+        });
+      }
+    }
+  );
+});
+
+test("readReservationManifest refuses malformed, non-record, and ownership-unestablishable manifests", () => {
+  for (const raw of ["{ not json", "[]", '"a string"', "null", "{}"]) {
+    withRawManifest(raw, (manifestPath) => {
+      expectRefusal(manifestPath);
+      expect(readRunManifest(manifestPath)).toBeUndefined();
+    });
+  }
+});
+
+test("readReservationManifest refuses an unreadable manifest rather than reporting absence", () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  try {
+    mkdirSync(manifestPath);
+    const read = readReservationManifest(manifestPath);
+    expect(read?.kind).toBe("refuse");
+    expect(readRunManifest(manifestPath)).toBeUndefined();
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
 });

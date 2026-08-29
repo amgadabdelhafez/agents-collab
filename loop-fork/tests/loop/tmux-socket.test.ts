@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 // Verify 5a enumerates the module's public exports to assert the socket-only
 // `tmuxArgv` and the brand symbols are absent from them. A named import cannot
@@ -7,6 +14,7 @@ import { join, relative } from "node:path";
 // biome-ignore lint/performance/noNamespaceImport: required to enumerate the public export surface
 import * as tmuxSocketModule from "../../src/loop/tmux-socket";
 import {
+  classifyTmuxEndpointProbeError,
   createManifestHandle,
   createTmuxSkipSink,
   DARWIN_SOCKET_BYTE_LIMIT,
@@ -20,6 +28,7 @@ import {
   paneArgv,
   paneTargetFromManifest,
   parseTmuxEnvSocket,
+  readTmuxEndpointState,
   requireTmuxSocket,
   resolveTmuxSocket,
   spawnParts,
@@ -615,5 +624,108 @@ describe("launch-window composers", () => {
     expect(occurrences("launchServerArgv")).toBe(5);
     expect(occurrences("launchSessionArgv")).toBe(3);
     expect(occurrences("launchAttachCommand")).toBe(2);
+  });
+});
+
+// --- Endpoint state (loop-resume-terminal-reservation-v1) -------------------
+//
+// `readTmuxEndpointState` is the fail-closed classifier the reservation
+// consumer uses instead of touching `manifest.tmuxSocket`. Unknown is never
+// absence: only a positive ENOENT/ENOTDIR on the exact bound path releases.
+describe("readTmuxEndpointState", () => {
+  const targetForSocket = (socket: string): TmuxTarget => {
+    const target = targetFromManifest(
+      createManifestHandle({
+        manifestPath: join(socket, "..", "manifest.json"),
+        manifestSha256: "b".repeat(64),
+        platform: "darwin",
+        runId: "run-endpoint",
+        session: SESSION_A,
+        socket,
+      })
+    );
+    if (!target) {
+      throw new Error("fixture target was not produced");
+    }
+    return target;
+  };
+
+  test("classifies a missing bound endpoint as absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-"));
+    try {
+      expect(
+        readTmuxEndpointState(targetForSocket(join(dir, "gone.sock")))
+      ).toBe("absent");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("classifies an existing bound endpoint as present", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-"));
+    try {
+      const socket = join(dir, "live.sock");
+      writeFileSync(socket, "");
+      expect(readTmuxEndpointState(targetForSocket(socket))).toBe("present");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("classifies a non-directory path component as absent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-"));
+    try {
+      const file = join(dir, "not-a-dir");
+      writeFileSync(file, "");
+      expect(readTmuxEndpointState(targetForSocket(join(file, "a.sock")))).toBe(
+        "absent"
+      );
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("returns unknown for an undefined or unprovenanced target and never throws", () => {
+    expect(readTmuxEndpointState(undefined)).toBe("unknown");
+    expect(readTmuxEndpointState({} as unknown as TmuxTarget)).toBe("unknown");
+    expect(
+      readTmuxEndpointState(Object.freeze({}) as unknown as TmuxTarget)
+    ).toBe("unknown");
+    expect(readTmuxEndpointState(null as unknown as TmuxTarget)).toBe(
+      "unknown"
+    );
+  });
+
+  test("never exposes the bound socket in its result", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-"));
+    try {
+      const socket = join(dir, "secret.sock");
+      writeFileSync(socket, "");
+      const state = readTmuxEndpointState(targetForSocket(socket));
+      expect(JSON.stringify(state)).not.toContain(socket);
+      expect(JSON.stringify(state)).not.toContain(dir);
+      expect(["present", "absent", "unknown"]).toContain(state);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("maps only ENOENT and ENOTDIR to absent; everything else is unknown", () => {
+    expect(classifyTmuxEndpointProbeError({ code: "ENOENT" })).toBe("absent");
+    expect(classifyTmuxEndpointProbeError({ code: "ENOTDIR" })).toBe("absent");
+    for (const code of [
+      "EACCES",
+      "EPERM",
+      "ETIMEDOUT",
+      "EIO",
+      "ELOOP",
+      "ENAMETOOLONG",
+      "EBUSY",
+      undefined,
+    ]) {
+      expect(classifyTmuxEndpointProbeError({ code })).toBe("unknown");
+    }
+    expect(classifyTmuxEndpointProbeError(new Error("boom"))).toBe("unknown");
+    expect(classifyTmuxEndpointProbeError("ENOENT")).toBe("unknown");
   });
 });

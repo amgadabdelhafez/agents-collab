@@ -135,6 +135,12 @@ export interface RunManifest {
   tmuxSocket?: string;
   updatedAt: string;
   workspaceBinding?: LaunchWorkspaceBinding;
+  /**
+   * Explicit marker that the run handed the workspace back. Retained only when
+   * it is a syntactically and semantically valid UTC instant; a rolled-over
+   * date such as `2026-02-30T18:30:00Z` is not a release.
+   */
+  workspaceReleasedAt?: string;
   worldModel?: RunWorldModelBinding;
 }
 
@@ -991,6 +997,271 @@ const optionalManifestString = <Key extends string>(
   return value ? ({ [key]: value } as Record<Key, string>) : {};
 };
 
+// --- Reservation ownership evidence -----------------------------------------
+//
+// `RunManifest` is a lossy DTO: it drops anything it cannot parse, so a
+// present-but-malformed pid and an absent pid arrive identical. Launch
+// reservation grants cleanup authority off these fields, and a positive
+// verdict off erased evidence is exactly how run 42's workspace was released
+// or held wrongly. The representation below keeps presence and validity apart
+// so the reservation consumer can refuse instead of guessing.
+
+/** Presence and validity of one ownership field, never collapsed together. */
+export type OwnershipField<T> =
+  | { readonly kind: "absent" }
+  | { readonly kind: "valid"; readonly value: T }
+  | { readonly kind: "invalid"; readonly reason: string }
+  | { readonly kind: "conflicting"; readonly reason: string };
+
+export interface RunOwnershipEvidence {
+  /** Optional. Absent is a different fact from present-and-unparseable. */
+  readonly launchAttemptPid: OwnershipField<number>;
+  /** Mandatory. A run with no canonical pid cannot establish ownership. */
+  readonly pid: OwnershipField<number>;
+  readonly state: OwnershipField<RunLifecycleState>;
+  readonly status: OwnershipField<RunStatus>;
+  readonly workspaceReleasedAt: OwnershipField<string>;
+}
+
+export type ReservationManifestRead =
+  | {
+      readonly kind: "valid";
+      readonly manifest: RunManifest;
+      readonly evidence: RunOwnershipEvidence;
+    }
+  | {
+      readonly kind: "refuse";
+      readonly manifestPath: string;
+      readonly manifestSha256?: string;
+      readonly runId?: string;
+      readonly reasons: readonly string[];
+    };
+
+const ABSENT_FIELD = { kind: "absent" } as const;
+
+const invalidField = (reason: string): OwnershipField<never> => ({
+  kind: "invalid",
+  reason,
+});
+
+const conflictingField = (reason: string): OwnershipField<never> => ({
+  kind: "conflicting",
+  reason,
+});
+
+// A full canonical positive decimal token. `Number.parseInt` accepts a prefix,
+// so it reads "9598junk" as 9598; this never does.
+const CANONICAL_PID_RE = /^[1-9][0-9]{0,14}$/u;
+
+const parseCanonicalPid = (
+  value: unknown,
+  key: string
+): OwnershipField<number> => {
+  if (value === undefined || value === null) {
+    return ABSENT_FIELD;
+  }
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0
+      ? { kind: "valid", value }
+      : invalidField(`${key} is not a positive safe integer`);
+  }
+  if (typeof value === "string") {
+    if (!CANONICAL_PID_RE.test(value)) {
+      return invalidField(`${key} is not a canonical positive decimal token`);
+    }
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0
+      ? { kind: "valid", value: parsed }
+      : invalidField(`${key} is not a positive safe integer`);
+  }
+  return invalidField(`${key} is not a number or decimal string`);
+};
+
+/**
+ * Reads one logical field across its accepted key spellings. Aliases that
+ * disagree are `conflicting`, never silently first-wins; an alias that is
+ * present but unparseable is `invalid`, never `absent`.
+ */
+const readAliasField = <T>(
+  parsed: Record<string, unknown>,
+  key: string,
+  keys: readonly string[],
+  parse: (value: unknown, key: string) => OwnershipField<T>
+): OwnershipField<T> => {
+  let resolved: OwnershipField<T> = ABSENT_FIELD;
+  for (const alias of keys) {
+    if (!(alias in parsed)) {
+      continue;
+    }
+    const field = parse(parsed[alias], key);
+    if (field.kind === "invalid" || field.kind === "conflicting") {
+      return field;
+    }
+    if (field.kind === "absent") {
+      continue;
+    }
+    if (resolved.kind === "valid" && resolved.value !== field.value) {
+      return conflictingField(`${key} aliases disagree`);
+    }
+    resolved = field;
+  }
+  return resolved;
+};
+
+// `Date.parse` accepts "2026-02-30T18:30:00Z" and rolls it to March 2, so the
+// only sound check is a component round-trip against the parsed instant.
+const UTC_INSTANT_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))?Z$/u;
+
+const parseUtcInstant = (
+  value: unknown,
+  key: string
+): OwnershipField<string> => {
+  if (value === undefined || value === null) {
+    return ABSENT_FIELD;
+  }
+  if (typeof value !== "string") {
+    return invalidField(`${key} is not a string`);
+  }
+  const match = UTC_INSTANT_RE.exec(value);
+  if (!match) {
+    return invalidField(`${key} is not a UTC instant`);
+  }
+  const [, year, month, day, hour, minute, second, millisecond] = match;
+  const parts = [year, month, day, hour, minute, second].map(Number);
+  const millis = millisecond === undefined ? 0 : Number(millisecond);
+  const stamp = Date.UTC(
+    parts[0] as number,
+    (parts[1] as number) - 1,
+    parts[2] as number,
+    parts[3] as number,
+    parts[4] as number,
+    parts[5] as number,
+    millis
+  );
+  const roundTrip = new Date(stamp);
+  const sameCalendar =
+    roundTrip.getUTCFullYear() === parts[0] &&
+    roundTrip.getUTCMonth() + 1 === parts[1] &&
+    roundTrip.getUTCDate() === parts[2] &&
+    roundTrip.getUTCHours() === parts[3] &&
+    roundTrip.getUTCMinutes() === parts[4] &&
+    roundTrip.getUTCSeconds() === parts[5] &&
+    roundTrip.getUTCMilliseconds() === millis;
+  return sameCalendar
+    ? { kind: "valid", value }
+    : invalidField(`${key} does not round-trip as a calendar date`);
+};
+
+const WORKSPACE_RELEASED_AT_KEYS = [
+  "workspaceReleasedAt",
+  "workspace_released_at",
+] as const;
+
+const readWorkspaceReleasedAt = (
+  parsed: Record<string, unknown>
+): OwnershipField<string> =>
+  readAliasField(
+    parsed,
+    "workspaceReleasedAt",
+    WORKSPACE_RELEASED_AT_KEYS,
+    parseUtcInstant
+  );
+
+const isRunStatus = (value: string): value is RunStatus =>
+  value === "running" ||
+  value === "done" ||
+  value === "failed" ||
+  value === "stopped";
+
+const parseStatusField = (
+  value: unknown,
+  key: string
+): OwnershipField<RunStatus> => {
+  if (value === undefined || value === null) {
+    return ABSENT_FIELD;
+  }
+  if (typeof value !== "string") {
+    return invalidField(`${key} is not a string`);
+  }
+  if (isRunStatus(value)) {
+    return { kind: "valid", value };
+  }
+  // The only legacy spelling the lifecycle mapping already supports.
+  if (value === "active") {
+    return { kind: "valid", value: "running" };
+  }
+  return invalidField(`${key} is not an enumerated run status`);
+};
+
+const parseStateField = (
+  value: unknown,
+  key: string
+): OwnershipField<RunLifecycleState> => {
+  if (value === undefined || value === null) {
+    return ABSENT_FIELD;
+  }
+  if (typeof value !== "string") {
+    return invalidField(`${key} is not a string`);
+  }
+  return isRunLifecycleState(value)
+    ? { kind: "valid", value }
+    : invalidField(`${key} is not an enumerated lifecycle state`);
+};
+
+interface LifecycleEvidence {
+  readonly state: OwnershipField<RunLifecycleState>;
+  readonly status: OwnershipField<RunStatus>;
+}
+
+/**
+ * A present `state` is authoritative and never falls back to `status`. Only an
+ * absent `state` may be supplied by the supported legacy status mapping, and
+ * when both are present each must be valid and semantically consistent.
+ */
+const readLifecycleEvidence = (
+  parsed: Record<string, unknown>
+): LifecycleEvidence => {
+  const state = readAliasField(parsed, "state", ["state"], parseStateField);
+  const status = readAliasField(parsed, "status", ["status"], parseStatusField);
+  if (state.kind === "invalid" || state.kind === "conflicting") {
+    return { state, status };
+  }
+  if (status.kind === "invalid" || status.kind === "conflicting") {
+    return { state, status };
+  }
+  if (state.kind === "valid" && status.kind === "valid") {
+    return runStatusFromState(state.value) === status.value
+      ? { state, status }
+      : {
+          state,
+          status: invalidField("status disagrees with state"),
+        };
+  }
+  if (state.kind === "absent" && status.kind === "valid") {
+    const mapped = parseRunLifecycleState(undefined, status.value);
+    return mapped === undefined
+      ? {
+          state: invalidField("state is absent and status maps to no state"),
+          status,
+        }
+      : { state: { kind: "valid", value: mapped }, status };
+  }
+  return { state, status };
+};
+
+const fieldRefusal = <T>(field: OwnershipField<T>): string | undefined =>
+  field.kind === "invalid" || field.kind === "conflicting"
+    ? field.reason
+    : undefined;
+
+const optionalWorkspaceReleasedAt = (
+  parsed: Record<string, unknown>
+): Pick<RunManifest, "workspaceReleasedAt"> | Record<string, never> => {
+  const field = readWorkspaceReleasedAt(parsed);
+  return field.kind === "valid" ? { workspaceReleasedAt: field.value } : {};
+};
+
 const readOptionalRunManifestFields = (
   parsed: Record<string, unknown>,
   manifestPath: string
@@ -1093,6 +1364,7 @@ const readOptionalRunManifestFields = (
     ...(tmuxPaneUtility ? { tmuxPaneUtility } : {}),
     ...(tmuxSession ? { tmuxSession } : {}),
     ...(tmuxSocket ? { tmuxSocket } : {}),
+    ...optionalWorkspaceReleasedAt(parsed),
   };
 };
 
@@ -1163,6 +1435,97 @@ export const readRunManifest = (
   } catch {
     return undefined;
   }
+};
+
+/**
+ * Fail-closed reservation read. Unlike `readRunManifest`, which is a lossy DTO
+ * reader, this never answers "absent" for a manifest that exists: a malformed,
+ * non-record, unreadable, or ownership-unestablishable file is a refusal
+ * sentinel that the caller must carry, because skipping it is a fail-open.
+ *
+ * Returns `undefined` only when no manifest exists at `manifestPath`.
+ */
+export const readReservationManifest = (
+  manifestPath: string
+): ReservationManifestRead | undefined => {
+  if (!existsSync(manifestPath)) {
+    return undefined;
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(manifestPath, "utf8");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      kind: "refuse",
+      manifestPath,
+      reasons: [`manifest is unreadable: ${detail}`],
+    };
+  }
+  const manifestSha256 = createHash("sha256").update(raw).digest("hex");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      kind: "refuse",
+      manifestPath,
+      manifestSha256,
+      reasons: [`manifest is not valid JSON: ${detail}`],
+    };
+  }
+  if (!isRecord(parsed)) {
+    return {
+      kind: "refuse",
+      manifestPath,
+      manifestSha256,
+      reasons: ["manifest is not a JSON record"],
+    };
+  }
+  const runId = firstString(parsed, ["runId", "run_id"]);
+  const pid = readAliasField(parsed, "pid", ["pid"], parseCanonicalPid);
+  const launchAttemptPid = readAliasField(
+    parsed,
+    "launchAttemptPid",
+    ["launchAttemptPid", "launch_attempt_pid"],
+    parseCanonicalPid
+  );
+  const { state, status } = readLifecycleEvidence(parsed);
+  const workspaceReleasedAt = readWorkspaceReleasedAt(parsed);
+  const reasons = [
+    fieldRefusal(pid),
+    fieldRefusal(launchAttemptPid),
+    fieldRefusal(state),
+    fieldRefusal(status),
+    fieldRefusal(workspaceReleasedAt),
+    pid.kind === "absent" ? "pid is absent" : undefined,
+    state.kind === "absent" ? "state is absent" : undefined,
+  ].filter((reason): reason is string => reason !== undefined);
+  if (reasons.length > 0) {
+    return {
+      kind: "refuse",
+      manifestPath,
+      manifestSha256,
+      reasons,
+      ...(runId ? { runId } : {}),
+    };
+  }
+  const manifest = readRunManifest(manifestPath);
+  if (!manifest) {
+    return {
+      kind: "refuse",
+      manifestPath,
+      manifestSha256,
+      reasons: ["manifest ownership could not be established"],
+      ...(runId ? { runId } : {}),
+    };
+  }
+  return {
+    kind: "valid",
+    evidence: { launchAttemptPid, pid, state, status, workspaceReleasedAt },
+    manifest,
+  };
 };
 
 /**
