@@ -53,3 +53,25 @@ allowlist and both callers of the affected paths — were checked directly and a
 unaffected (`41 pass, 0 fail` and `34 pass, 0 fail`). The three-argument legacy
 call at `governess-exit.test.ts:1313` still receives the prior verdict because
 it supplies no ownership evidence.
+
+## Presence-collapse repair — RED first again
+
+Six regression cases were written and run before the source fix. Against
+`eb6841adb5a026470f464feb548b927e52da40c3`:
+
+- `tests/loop/run-state.test.ts` reported `48 pass, 2 fail`, both new cases
+  failing: `readReservationManifest treats an explicit null as invalid-present,
+  never absent` and `readReservationManifest refuses a null alias even when the
+  other spelling is valid`.
+- `tests/loop/launch-reservation.test.ts` reported `33 pass, 3 fail`:
+  `a null launchAttemptPid blocks release`, `a null release alias blocks release
+  even beside a valid snake_case alias`, and `a null state blocks release even
+  beside a terminal status`.
+
+Recorded rather than rounded up: the sixth case, `a null workspaceReleasedAt
+blocks release`, **already passed** against `eb6841ad`. A null marker classified
+`absent` also fails conjunct 5, so that path reached the correct verdict by the
+wrong route. It is kept as a regression guard, and its prior passing state is
+stated here instead of being presented as something the fix repaired.
+
+After the repair: `50 pass, 0 fail` and `36 pass, 0 fail` respectively.

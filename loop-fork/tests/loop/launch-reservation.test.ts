@@ -1092,3 +1092,40 @@ test("evidence-backed terminal manifest with dead liveness blocks when the conju
     tmuxLiveness: () => "dead" as const,
   });
 });
+
+// An explicit null is present-and-unusable, not absent. Each case refuses
+// before any write: manifest bytes unchanged, no new run directory, no counter
+// step.
+test("a null launchAttemptPid blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.launchAttemptPid = null;
+    })
+  );
+});
+
+test("a null workspaceReleasedAt blocks release", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.workspaceReleasedAt = null;
+    })
+  );
+});
+
+test("a null release alias blocks release even beside a valid snake_case alias", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.workspaceReleasedAt = null;
+      parsed.workspace_released_at = "2026-08-18T18:30:00.000Z";
+    })
+  );
+});
+
+test("a null state blocks release even beside a terminal status", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.state = null;
+      parsed.status = "stopped";
+    })
+  );
+});

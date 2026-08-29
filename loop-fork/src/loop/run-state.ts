@@ -1049,6 +1049,31 @@ const conflictingField = (reason: string): OwnershipField<never> => ({
   reason,
 });
 
+/**
+ * Presence, decided once for every ownership parser.
+ *
+ * `readAliasField` calls a parser only when the key is PRESENT, so `undefined`
+ * here means non-presence. An explicit `null` is present and unusable, and
+ * folding it into `absent` is the presence-collapse this whole boundary exists
+ * to prevent: a null release marker would read as "no marker recorded" rather
+ * than "marker recorded and untrustworthy", and the reservation would then
+ * evaluate the conjunction against evidence it never actually had.
+ *
+ * Returns the settled field, or `undefined` when the caller must keep parsing.
+ */
+const presenceOf = <T>(
+  value: unknown,
+  key: string
+): OwnershipField<T> | undefined => {
+  if (value === undefined) {
+    return ABSENT_FIELD;
+  }
+  if (value === null) {
+    return invalidField(`${key} is present but null`);
+  }
+  return;
+};
+
 // A full canonical positive decimal token. `Number.parseInt` accepts a prefix,
 // so it reads "9598junk" as 9598; this never does.
 const CANONICAL_PID_RE = /^[1-9][0-9]{0,14}$/u;
@@ -1057,8 +1082,9 @@ const parseCanonicalPid = (
   value: unknown,
   key: string
 ): OwnershipField<number> => {
-  if (value === undefined || value === null) {
-    return ABSENT_FIELD;
+  const presence = presenceOf<number>(value, key);
+  if (presence) {
+    return presence;
   }
   if (typeof value === "number") {
     return Number.isSafeInteger(value) && value > 0
@@ -1117,8 +1143,9 @@ const parseUtcInstant = (
   value: unknown,
   key: string
 ): OwnershipField<string> => {
-  if (value === undefined || value === null) {
-    return ABSENT_FIELD;
+  const presence = presenceOf<string>(value, key);
+  if (presence) {
+    return presence;
   }
   if (typeof value !== "string") {
     return invalidField(`${key} is not a string`);
@@ -1178,8 +1205,9 @@ const parseStatusField = (
   value: unknown,
   key: string
 ): OwnershipField<RunStatus> => {
-  if (value === undefined || value === null) {
-    return ABSENT_FIELD;
+  const presence = presenceOf<RunStatus>(value, key);
+  if (presence) {
+    return presence;
   }
   if (typeof value !== "string") {
     return invalidField(`${key} is not a string`);
@@ -1198,8 +1226,9 @@ const parseStateField = (
   value: unknown,
   key: string
 ): OwnershipField<RunLifecycleState> => {
-  if (value === undefined || value === null) {
-    return ABSENT_FIELD;
+  const presence = presenceOf<RunLifecycleState>(value, key);
+  if (presence) {
+    return presence;
   }
   if (typeof value !== "string") {
     return invalidField(`${key} is not a string`);

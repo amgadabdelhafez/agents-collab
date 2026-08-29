@@ -1268,3 +1268,51 @@ test("readReservationManifest refuses an unreadable manifest rather than reporti
     rmSync(dir, { force: true, recursive: true });
   }
 });
+
+// `readAliasField` only invokes a parser when the key is PRESENT, so a parser
+// seeing `undefined` is seeing non-presence. An explicit `null` is present and
+// unusable; folding it into `absent` is the exact presence-collapse this
+// boundary exists to prevent, and it lets a null release marker read as "no
+// marker" rather than "marker we cannot trust".
+test("readReservationManifest treats an explicit null as invalid-present, never absent", () => {
+  for (const key of [
+    "launchAttemptPid",
+    "workspaceReleasedAt",
+    "state",
+    "pid",
+  ]) {
+    withRawManifest(
+      mutatedRun42((parsed) => {
+        parsed[key] = null;
+      }),
+      (manifestPath) => {
+        expect(expectRefusal(manifestPath).join(" ")).toContain(key);
+      }
+    );
+  }
+});
+
+test("readReservationManifest refuses a null alias even when the other spelling is valid", () => {
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.workspaceReleasedAt = null;
+      parsed.workspace_released_at = "2026-08-18T18:30:00.000Z";
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain(
+        "workspaceReleasedAt"
+      );
+    }
+  );
+  withRawManifest(
+    mutatedRun42((parsed) => {
+      parsed.launchAttemptPid = null;
+      parsed.launch_attempt_pid = 9598;
+    }),
+    (manifestPath) => {
+      expect(expectRefusal(manifestPath).join(" ")).toContain(
+        "launchAttemptPid"
+      );
+    }
+  );
+});
