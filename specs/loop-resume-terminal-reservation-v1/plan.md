@@ -98,9 +98,22 @@ the expansion, and it is the minimum that preserves the opaque-target invariant.
    commands. Passing counts alone are insufficient, and omitting or marking any
    of the seven "not applicable" is a gate failure.
 8. Commit one frozen candidate. A different agent performs a zero-write review
-   against that exact SHA and the parent integration SHA.
-9. Only after PASS and fresh install authority, build and install locally,
-   record the installed SHA-256, and retry the explicit `--tmux` certification.
+   against that exact SHA and the parent integration SHA. Product implementation
+   **stops** at that frozen, independently accepted exact SHA. Under contract,
+   implementation, test, and review authority there is **no merge, no rebase, no
+   push, and no live tmux operation of any kind** — no tmux session or server
+   create, attach, detach, kill, `send-keys`, socket bind, socket probe, or any
+   other live tmux interaction.
+9. **Not authorized by this plan; recorded as required and not yet held.** Three
+   separate, strictly sequential authorities follow the freeze. First, a literal
+   `PASS` from the independent zero-write exact-SHA review; `PASS` alone
+   authorizes nothing further. Second, **fresh exact-candidate installation
+   authority obtained after `PASS`**, naming that exact SHA, before any build,
+   install, or installed-SHA-256 recording. Third, a **separate, fresh, explicit
+   tmux authority obtained after installation** before any live tmux operation,
+   including the explicit `--tmux` certification. Installation authority **never**
+   implies tmux launch authority; there is **no automatic flow** from install to
+   `--tmux`. This plan asserts none of these authorities already exists.
 
 ## Endpoint-state seam
 

@@ -89,8 +89,18 @@ predicated on `target === undefined` for Run 42 is refuted by the artifact.
   the failure set for any of the seven is a gate failure.
 - One immutable candidate receives a separate literal zero-write exact-SHA
   review.
-- After explicit install authority, the successor binary hash is recorded and
-  an explicit `--tmux` launch succeeds without editing Run 42.
+- Under contract, implementation, test, and review authority there is no merge,
+  no rebase, no push, and no live tmux operation of any kind. Product
+  implementation stops at a frozen, independently accepted exact SHA.
+- Three separate, strictly sequential later authorities are **required and not
+  yet held**, and this spec asserts none of them already exists: a literal
+  `PASS` from an independent zero-write exact-SHA review; then **fresh
+  exact-candidate installation authority obtained after `PASS`**, under which
+  the successor binary hash is recorded; then a **separate, fresh, explicit tmux
+  authority obtained after installation**, under which an explicit `--tmux`
+  launch succeeds without editing Run 42. Installation authority never implies
+  tmux launch authority, and there is no automatic flow from install to
+  `--tmux`.
 
 ## Non-goals
 

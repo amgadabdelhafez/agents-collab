@@ -35,6 +35,16 @@
 - No dependency install. Any ignored read-only `node_modules` symlink used to
   make gates runnable requires repository-supported byte and lockfile
   compatibility proof, and must be removed at closure.
+- **No merge, no rebase, and no push**, under contract, implementation, test, or
+  review authority. None of those authorities ever authorizes integrating this
+  branch anywhere.
+- **No live tmux operation of any kind**, under contract, implementation, test,
+  or review authority. This forbids tmux session or server create, attach,
+  detach, kill, `send-keys`, socket bind, socket probe, and every other live
+  tmux interaction. Endpoint-state work is contracted against fixtures and
+  synthetic paths only.
+- Product implementation stops at a **frozen, independently accepted exact
+  SHA**. No work past that freeze is authorized by this contract.
 
 ## Fixture provenance
 
@@ -200,9 +210,23 @@ tolerated failure or baseline allowance.
 - Freeze and report exact candidate and parent SHAs.
 - A separate reviewer returns literal `PASS` or `REFUSE` for the exact SHA and
   performs zero writes.
-- Before installation, remeasure the built committed blob and obtain fresh
-  install authority.
-- After installation, record `shasum -a 256 /Users/amgad/.local/bin/loop` and
-  `loop --version`, then rerun the exact explicit `--tmux` launch that Run 42
-  blocked. Success requires tmux session existence, both agent identities,
-  initial hook progression, and bridge liveness.
+- The three authorities below are **separate and strictly sequential**. Each is
+  **required and not yet held**. This contract does not assert that any of them
+  already exists, and grants none of them.
+- **Authority 1, acceptance.** A literal `PASS` from an independent zero-write
+  exact-SHA review of the frozen candidate. `PASS` alone authorizes nothing
+  further.
+- **Authority 2, installation.** Installation requires **fresh exact-candidate
+  installation authority obtained after `PASS`**, naming that exact SHA. Before
+  installation, remeasure the built committed blob and obtain that fresh
+  authority. `PASS` never implies installation authority. If installation
+  authority is granted, record `shasum -a 256 /Users/amgad/.local/bin/loop` and
+  `loop --version`. Installation ends there.
+- **Authority 3, live tmux lifecycle certification.** Any live tmux operation,
+  including the explicit `--tmux` launch that Run 42 blocked, requires a
+  **separate, fresh, explicit tmux authority obtained after installation**.
+  Installation authority **never** implies tmux launch authority, and there is
+  **no automatic flow** from install to `--tmux`. Only if that separate tmux
+  authority is granted may the exact explicit `--tmux` launch be rerun; success
+  would then require tmux session existence, both agent identities, initial hook
+  progression, and bridge liveness.
