@@ -79,9 +79,14 @@ predicated on `target === undefined` for Run 42 is refuted by the artifact.
 - The exact Run 42 fixture no longer blocks a fresh launch reservation.
 - Every negative control remains a conflict, leaves its manifest bytes
   unchanged, and creates no new run.
-- Exactly three focused single-file tests, the full named test suite, static
-  check, build, and `git diff --check` pass, each applicable test gate reporting
-  an explicit empty named failure set. Passing counts alone are insufficient.
+- All seven named commands pass: the three focused single-file tests
+  (`bun run test:file -- tests/loop/run-state.test.ts`,
+  `bun run test:file -- tests/loop/launch-reservation.test.ts`,
+  `bun run test:file -- tests/loop/tmux-socket.test.ts`), `bun run test:ci`,
+  `bun run check`, `bun run build`, and `git diff --check`. Each one of these
+  seven, with no exception for the non-test commands, reports its own explicit
+  empty named failure set. Passing counts alone are insufficient, and omitting
+  the failure set for any of the seven is a gate failure.
 - One immutable candidate receives a separate literal zero-write exact-SHA
   review.
 - After explicit install authority, the successor binary hash is recorded and

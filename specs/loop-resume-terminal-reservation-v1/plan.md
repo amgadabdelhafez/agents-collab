@@ -91,8 +91,12 @@ the expansion, and it is the minimum that preserves the opaque-target invariant.
    git diff --check
    ```
 
-   Record exact command, exit status, and an explicit empty named failure set for
-   each applicable test gate, under `runs/loop-resume-terminal-reservation-v1/`.
+   Record, under `runs/loop-resume-terminal-reservation-v1/`, the exact command,
+   its exit status, and its **own explicit empty named failure set** for each of
+   all seven commands above without exception — `bun run check`, `bun run build`,
+   and `git diff --check` included on identical terms with the four test
+   commands. Passing counts alone are insufficient, and omitting or marking any
+   of the seven "not applicable" is a gate failure.
 8. Commit one frozen candidate. A different agent performs a zero-write review
    against that exact SHA and the parent integration SHA.
 9. Only after PASS and fresh install authority, build and install locally,

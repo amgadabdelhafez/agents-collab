@@ -13,7 +13,9 @@
   - `loop-fork/tests/loop/launch-reservation.test.ts`
   - `loop-fork/tests/loop/tmux-socket.test.ts`
   - `runs/loop-resume-terminal-reservation-v1/**`
-  - `specs/loop-resume-terminal-reservation-v1/**`
+  - `specs/loop-resume-terminal-reservation-v1/spec.md`
+  - `specs/loop-resume-terminal-reservation-v1/plan.md`
+  - `specs/loop-resume-terminal-reservation-v1/verify.md`
   - `loop-fork/.harness/tasks.json` — lifecycle index, modifying **only** the
     task `loop-resume-terminal-reservation-v1`
   - `loop-fork/.harness/current-task` — ephemeral while the task is active, and
@@ -172,9 +174,26 @@ bun run build
 git diff --check
 ```
 
-Every applicable test gate must report an **explicit empty named failure set**.
-Passing counts alone are insufficient. No tolerated failure or baseline
-allowance.
+Every one of the seven commands above has its **own explicit empty named
+failure set**. This requirement is not limited to test gates; it applies with no
+exception to each of:
+
+1. `bun run test:file -- tests/loop/run-state.test.ts`
+2. `bun run test:file -- tests/loop/launch-reservation.test.ts`
+3. `bun run test:file -- tests/loop/tmux-socket.test.ts`
+4. `bun run test:ci`
+5. `bun run check`
+6. `bun run build`
+7. `git diff --check`
+
+For each of these seven commands separately, the record must state the exact
+command, its exit status, and an explicitly empty named failure set — for
+`bun run check`, `bun run build`, and `git diff --check` exactly as much as for
+the four test commands. A named failure set is the enumerated names of failing
+tests, diagnostics, or offending paths; empty means that enumeration is stated
+and contains zero entries. Passing counts alone are insufficient. Silence,
+omission, or "not applicable" for any of the seven is a gate failure. No
+tolerated failure or baseline allowance.
 
 ## Review and runtime certification
 
