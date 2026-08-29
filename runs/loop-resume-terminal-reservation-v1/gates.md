@@ -1,65 +1,52 @@
-# Gate record — loop-resume-terminal-reservation-v1 (Run 130 implementation)
+# Gate record — loop-resume-terminal-reservation-v1 (Run 130, corrected successor)
 
 Worktree: `.codex/worktrees/loop-terminal-reservation-v139-repair`
 Branch: `codex/loop-terminal-reservation-v139-repair`
-Parent (contract) SHA: `b0b113394c52bd27d1db7261e16e7c3a9e6a1203`
+Parent SHA: `d7d6e03f252fbf3efe35519495a80ffbcf78a726` (unfrozen by the paired
+Codex `REFUSE` recorded at `2026-08-29T20:01:07.645Z`)
+Contract SHA: `b0b113394c52bd27d1db7261e16e7c3a9e6a1203` (cold plan review `PASS`)
 Base integration SHA: `62e8103d9181bad85012830f8170cca8e21fd0d6`
 
-All seven named commands were run. Each entry records the exact command, its
-exit status, and its own explicit named failure set. A passing count alone is
-not accepted as evidence, and no command is marked "not applicable".
+All seven named commands were run against this tree. Each entry records the
+exact command, its exit status, and its own explicit named failure set. A
+passing count alone is not accepted as evidence, and no command is marked "not
+applicable".
 
 ## 1. `bun run test:file -- tests/loop/run-state.test.ts`
 - exit status: `0`
-- result: `48 pass, 0 fail, 384 expect() calls`
+- result: `48 pass, 0 fail`
 - named failure set: **{} (explicitly empty)**
 
 ## 2. `bun run test:file -- tests/loop/launch-reservation.test.ts`
 - exit status: `0`
-- result: `30 pass, 0 fail, 179 expect() calls`
+- result: `32 pass, 0 fail`
 - named failure set: **{} (explicitly empty)**
 
 ## 3. `bun run test:file -- tests/loop/tmux-socket.test.ts`
 - exit status: `0`
-- result: `51 pass, 0 fail, 137 expect() calls`
+- result: `51 pass, 0 fail`
 - named failure set: **{} (explicitly empty)**
 
 ## 4. `bun run test:ci`
-- exit status: `1`
-- result: 82 test files executed, `1778 pass`, `1 fail`
-- named failure set: **NOT empty.** Exactly one named test:
-  - `tests/release-packaging.test.ts` ›
-    `root release workflow packages the full-repository Loop layout`
-  - decisive line: `expect(pkg.version).toBe("1.0.35");` →
-    `Expected: "1.0.35"  Received: "1.0.38"`
-- inheritance proof (this is not a regression introduced by the candidate):
-  - `git show "62e8103d9181bad85012830f8170cca8e21fd0d6:loop-fork/package.json"`
-    → `"version": "1.0.38"`
-  - `git show "62e8103d9181bad85012830f8170cca8e21fd0d6:loop-fork/tests/release-packaging.test.ts"`
-    line 16 → `expect(pkg.version).toBe("1.0.35");`
-  - identical at `b0b11339`.
-  - `git diff --name-only HEAD -- loop-fork/package.json .github/workflows/release.yml loop-fork/tests/release-packaging.test.ts`
-    → 0 lines. The failing test reads only `package.json` and
-    `.github/workflows/release.yml`; the candidate touches neither.
-  - both implicated paths are **outside** the write allowlist in
-    `specs/loop-resume-terminal-reservation-v1/verify.md`, so the writer cannot
-    close this failure under the current authority.
-- `test:ci` stops at the first failing file, so the two files sorting after it
-  were run separately and are recorded here rather than assumed:
-  - `tests/test-certification.test.ts` → `1 pass, 0 fail`
-  - `tests/worktree-reaper.test.ts` → `8 pass, 0 fail`
+- exit status: `0`
+- result: 84 test files executed, `1790 pass`, `0 fail`
+- named failure set: **{} (explicitly empty)**
+- 84 files is the whole suite. The previous run stopped at 82 because
+  `test:ci` exits on the first failing file; with the failure closed, the two
+  files that sort after it (`tests/test-certification.test.ts`,
+  `tests/worktree-reaper.test.ts`) now run inside the gate itself rather than
+  being recorded separately.
 
 ## 5. `bun run check`
 - exit status: `0`
-- result: `Checked 845 files in 232ms. No fixes applied.`
+- result: `Checked 845 files in 226ms. No fixes applied.`
 - named failure set: **{} (explicitly empty)**
 
 ## 6. `bun run build`
 - exit status: `0`
 - result: `bundle 3054 modules`, `compile loop`
 - named failure set: **{} (explicitly empty)**
-- the compiled `loop` binary was removed after the gate; it is not committed and
-  no installation was performed.
+- the compiled `loop` binary was deleted after the gate. Nothing was installed.
 
 ## 7. `git diff --check`
 - exit status: `0`
@@ -68,8 +55,18 @@ not accepted as evidence, and no command is marked "not applicable".
 
 ## Gate verdict
 
-Six of the seven commands have an explicitly empty named failure set. `test:ci`
-does not. Its failure set is exactly one named, provably inherited test whose
-two implicated files are outside this candidate's write authority.
-`verify.md` states "No tolerated failure or baseline allowance", so the writer
-does **not** self-authorize this exception; it is recorded here and escalated.
+Seven of seven commands exit `0` with an explicitly empty named failure set.
+There is no tolerated failure and no baseline allowance.
+
+## What closed the previously non-empty set
+
+`tests/release-packaging.test.ts` › `root release workflow packages the
+full-repository Loop layout` asserted `expect(pkg.version).toBe("1.0.35")` while
+`loop-fork/package.json` reads `1.0.38`. Provenance, established read-only:
+`bf2246f3 2026-08-08 chore: release loop v1.0.38` moved the version, the
+assertion has been pinned since `78608327 2026-08-08 chore: release loop
+v1.0.35`, and `git merge-base --is-ancestor` reports both as ancestors of the
+base integration SHA. Under the supervisor's explicit one-line scope expansion
+the assertion now reads `"1.0.38"`. `git diff --numstat` on that path is exactly
+`1 1`; `package.json`, `.github/workflows/release.yml`, dependencies, the
+lockfile, and every other test are untouched.

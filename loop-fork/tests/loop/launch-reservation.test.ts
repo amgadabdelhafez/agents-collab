@@ -200,7 +200,11 @@ test("lock heartbeat survives a reservation scan longer than the stale window", 
   }
 }, 10_000);
 
-test("same branch or same root conflicts while terminal dead ownership permits", async () => {
+// Terminal-plus-dead-tmux used to be enough to release. Under the
+// evidence-backed predicate it is not: with no tmuxSession there is no branded
+// target and no recorded handback, so conjuncts 1 and 5 fail and the workspace
+// stays owned.
+test("same branch or same root conflicts, and terminal dead ownership alone no longer releases", async () => {
   const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
   const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
   try {
@@ -244,12 +248,16 @@ test("same branch or same root conflicts while terminal dead ownership permits",
         workspaceBinding: binding,
       })
     );
-    const allowed = await reservePairedLaunch(
-      makeOptions(),
-      binding,
-      reservationDeps(home)
-    );
-    expect(allowed.storage.runId).toBe("2");
+    const before = readFileSync(storage.manifestPath);
+    await expect(
+      reservePairedLaunch(makeOptions(), binding, reservationDeps(home))
+    ).rejects.toThrow("launch conflict: run 1");
+    expect(readFileSync(storage.manifestPath).equals(before)).toBe(true);
+    expect(
+      readdirSync(join(resolveStorageRoot(home), binding.repoId))
+        .filter((entry) => !entry.startsWith("."))
+        .sort()
+    ).toEqual(["1"]);
   } finally {
     rmSync(root, { force: true, recursive: true });
     rmSync(home, { force: true, recursive: true });
@@ -1064,4 +1072,23 @@ test("a provenance failure in the endpoint classifier blocks release", async () 
       parsed.tmuxSocket = `${"x".repeat(120)}/not-absolute.sock`;
     })
   );
+});
+
+// An evidence-backed scan must never fall through to the legacy dead-tmux
+// release. Once ownership evidence exists, the full conjunction is the only
+// route to release; a conjunct that merely fails must not hand the verdict
+// back to the older, weaker rule.
+test("evidence-backed terminal manifest without tmuxSession and without a release marker blocks", async () => {
+  await expectReservationRefused(
+    run42Mutated((parsed) => {
+      parsed.tmuxSession = undefined;
+      parsed.workspaceReleasedAt = undefined;
+    })
+  );
+});
+
+test("evidence-backed terminal manifest with dead liveness blocks when the conjunction fails", async () => {
+  await expectReservationRefused(undefined, {
+    tmuxLiveness: () => "dead" as const,
+  });
 });

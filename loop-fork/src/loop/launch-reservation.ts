@@ -180,9 +180,13 @@ const manifestCanStillOwnWorkspace = async (
   evidence?: RunOwnershipEvidence
 ): Promise<boolean> => {
   const tmux = manifest.tmuxSession ? await deps.tmuxLiveness(target) : "dead";
-  if (evidence && terminalReleaseGranted(evidence, target, tmux, deps)) {
-    return false;
+  if (evidence) {
+    // Evidence-backed scan. The conjunction is the ONLY route to release: a
+    // failed conjunct must not fall through to the older dead-tmux rule, which
+    // would release a terminal run that never recorded an explicit handback.
+    return !terminalReleaseGranted(evidence, target, tmux, deps);
   }
+  // Legacy callers that supply no ownership evidence keep the prior verdict.
   if (tmux !== "dead") {
     return true;
   }
