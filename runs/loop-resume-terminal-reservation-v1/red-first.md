@@ -75,3 +75,23 @@ wrong route. It is kept as a regression guard, and its prior passing state is
 stated here instead of being presented as something the fix repaired.
 
 After the repair: `50 pass, 0 fail` and `36 pass, 0 fail` respectively.
+
+## Shared-socket runtime-absence repair — RED first, reported precisely
+
+Five cases were written and run before the source change. Against
+`9347139344d055a0ca938f1750b679a83f67f31b`,
+`tests/loop/launch-reservation.test.ts` reported `40 pass, 1 fail`.
+
+Exactly **one** failed: `exact Run 61 releases on a live shared socket when the
+exact session is positively dead`. The four negative controls — present +
+unknown, present + live, unknown endpoint + dead, absent endpoint + dead — all
+**already passed** against the parent, and that is stated here rather than
+presented as work the change repaired. They are guard rails: their job is to
+prove the new disjunction did not widen release past its two accepted branches,
+and they must keep passing, which they do (`41 pass, 0 fail` afterwards).
+
+The positive case asserts `existsSync("/private/tmp/tmux-501/default")` before
+anything else, so the shared-socket premise is checked on the host rather than
+assumed. No live tmux was created, contacted, or probed: endpoint states come
+from a real temp file (present), a nonexistent path (absent), and a `chmod 000`
+directory (unknown).

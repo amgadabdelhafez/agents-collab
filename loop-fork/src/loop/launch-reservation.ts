@@ -26,6 +26,7 @@ import { type TmuxLiveness, tmuxTargetLivenessAsync } from "./tmux-control";
 import {
   readTmuxEndpointState,
   resolveTmuxSocket,
+  type TmuxEndpointState,
   type TmuxTarget,
   targetFromManifest,
 } from "./tmux-socket";
@@ -126,6 +127,34 @@ const workspaceConflict = (
 const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
 
 /**
+ * Is the run's tmux runtime positively gone?
+ *
+ * Endpoint absence was only ever a PROXY for "the server that owned this
+ * session is gone", and run 42 made the proxy look exact because its socket
+ * file happened to be gone too. Run 61 breaks it: the session
+ * `agents-collab-loop-61` is positively absent, but its socket is the shared
+ * default that other live sessions still hold, so the endpoint is present
+ * forever and the run could never be released.
+ *
+ * Two branches, and only two, are positive proof:
+ *   - the endpoint is gone AND liveness cannot be established through it; or
+ *   - the endpoint is reachable AND the exact branded target answers `dead`,
+ *     which is the stronger fact the proxy was standing in for.
+ *
+ * Everything else blocks. `unknown` endpoint is never absence. `live` tmux is
+ * never absence. `present` + `unknown` means a reachable socket that will not
+ * answer about this session, so we learned nothing. `absent` + `live`/`dead`
+ * blocks because with no socket the verdict cannot have been obtained through
+ * the bound endpoint, so it is not evidence about this run.
+ */
+const runtimeAbsent = (
+  endpoint: TmuxEndpointState,
+  tmux: TmuxLiveness
+): boolean =>
+  (endpoint === "absent" && tmux === "unknown") ||
+  (endpoint === "present" && tmux === "dead");
+
+/**
  * The terminal-released conjunction. Every conjunct must hold positively;
  * anything else keeps the workspace owned. Run 42 sat here forever: its tmux
  * endpoint was gone, so liveness could only answer "unknown", and unknown was
@@ -140,12 +169,6 @@ const terminalReleaseGranted = (
   deps: LaunchReservationDeps
 ): boolean => {
   if (!target) {
-    return false;
-  }
-  if (readTmuxEndpointState(target) !== "absent") {
-    return false;
-  }
-  if (tmux !== "unknown") {
     return false;
   }
   if (
@@ -170,7 +193,12 @@ const terminalReleaseGranted = (
   if (attempt.kind === "invalid" || attempt.kind === "conflicting") {
     return false;
   }
-  return !(attempt.kind === "valid" && deps.isPidAlive(attempt.value));
+  if (attempt.kind === "valid" && deps.isPidAlive(attempt.value)) {
+    return false;
+  }
+  // Runtime absence is the last conjunct, evaluated only once every ownership
+  // fact above has been established positively.
+  return runtimeAbsent(readTmuxEndpointState(target), tmux);
 };
 
 const manifestCanStillOwnWorkspace = async (

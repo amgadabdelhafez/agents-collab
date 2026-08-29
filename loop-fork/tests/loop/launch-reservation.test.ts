@@ -1129,3 +1129,153 @@ test("a null state blocks release even beside a terminal status", async () => {
     })
   );
 });
+
+// --- Shared-socket runtime absence (exact legacy Run 61) --------------------
+//
+// Run 42's socket file was itself gone, so "endpoint absent" happened to
+// coincide with "runtime gone". Run 61 falsifies that generalisation: its
+// session is positively gone, but its socket is the SHARED default that other
+// live sessions still hold, so the endpoint is present forever. Endpoint
+// absence was only ever a proxy; a positively dead verdict on the exact branded
+// target is the stronger fact.
+
+const RUN_61_FIXTURE = join(
+  import.meta.dir,
+  "../fixtures/loop-resume-terminal-reservation-v1/run-61-manifest.json.fixture"
+);
+const RUN_61_BYTES = 2636;
+const RUN_61_SHA256 =
+  "8222eaada187aae0a18e0bb3f68884c5b7402aac8df1e28f792e6dc5bba20569";
+const RUN_61_SHARED_ENDPOINT = "/private/tmp/tmux-501/default";
+
+const run61Bytes = (): Buffer => {
+  const bytes = readFileSync(RUN_61_FIXTURE);
+  expect(bytes.byteLength).toBe(RUN_61_BYTES);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(RUN_61_SHA256);
+  return bytes;
+};
+
+const run61Mutated = (
+  mutate: (parsed: Record<string, unknown>) => void
+): string => {
+  const parsed = JSON.parse(run61Bytes().toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+  mutate(parsed);
+  return JSON.stringify(parsed, null, 2);
+};
+
+const withRun61Fixture = async (
+  raw: string | undefined,
+  run: (context: {
+    binding: LaunchWorkspaceBinding;
+    home: string;
+    manifestPath: string;
+    repoDir: string;
+  }) => Promise<void>
+): Promise<void> => {
+  const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));
+  try {
+    const binding = makeBinding(root);
+    const repoDir = join(resolveStorageRoot(home), binding.repoId);
+    mkdirSync(join(repoDir, "61"), { recursive: true });
+    const manifestPath = join(repoDir, "61", "manifest.json");
+    if (raw === undefined) {
+      writeFileSync(manifestPath, run61Bytes());
+    } else {
+      writeFileSync(manifestPath, raw);
+    }
+    await run({ binding, home, manifestPath, repoDir });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+};
+
+const expectRun61Refused = async (
+  raw: string | undefined,
+  overrides: Record<string, unknown>
+): Promise<void> => {
+  await withRun61Fixture(
+    raw,
+    async ({ binding, home, manifestPath, repoDir }) => {
+      const before = readFileSync(manifestPath);
+      await expect(
+        reservePairedLaunch(makeOptions(), binding, {
+          ...reservationDeps(home),
+          ...overrides,
+        })
+      ).rejects.toThrow();
+      expect(readFileSync(manifestPath).equals(before)).toBe(true);
+      expect(runDirs(repoDir)).toEqual(["61"]);
+    }
+  );
+};
+
+test("exact Run 61 releases on a live shared socket when the exact session is positively dead", async () => {
+  // Precondition, asserted rather than assumed: the bound endpoint really is a
+  // live shared socket on this host, which is the whole point of the case.
+  expect(existsSync(RUN_61_SHARED_ENDPOINT)).toBe(true);
+  await withRun61Fixture(
+    undefined,
+    async ({ binding, home, manifestPath, repoDir }) => {
+      const before = readFileSync(manifestPath);
+      const claim = await reservePairedLaunch(makeOptions(), binding, {
+        ...reservationDeps(home),
+        tmuxLiveness: () => "dead" as const,
+      });
+      expect(claim.reserved).toBe(true);
+      expect(claim.storage.runId).toBe("62");
+      expect(readFileSync(manifestPath).equals(before)).toBe(true);
+      expect(readFileSync(manifestPath).byteLength).toBe(RUN_61_BYTES);
+      expect(
+        createHash("sha256").update(readFileSync(manifestPath)).digest("hex")
+      ).toBe(RUN_61_SHA256);
+      expect(runDirs(repoDir)).toEqual(["61", "62"]);
+    }
+  );
+});
+
+test("a present endpoint with unknown liveness blocks: we learned nothing about the session", async () => {
+  await expectRun61Refused(undefined, {
+    tmuxLiveness: () => "unknown" as const,
+  });
+});
+
+test("a present endpoint with live tmux blocks", async () => {
+  await expectRun61Refused(undefined, { tmuxLiveness: () => "live" as const });
+});
+
+test("an unknown endpoint blocks even when liveness reports dead", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-walled-"));
+  const walled = join(dir, "walled");
+  mkdirSync(walled);
+  try {
+    chmodSync(walled, 0o000);
+    await expectRun61Refused(
+      run61Mutated((parsed) => {
+        parsed.tmuxSocket = join(walled, "denied.sock");
+      }),
+      { tmuxLiveness: () => "dead" as const }
+    );
+  } finally {
+    chmodSync(walled, 0o700);
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("an absent endpoint with a dead verdict blocks: the verdict cannot have come from the bound endpoint", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "loop-endpoint-gone-"));
+  try {
+    await expectRun61Refused(
+      run61Mutated((parsed) => {
+        parsed.tmuxSocket = join(dir, "gone.sock");
+      }),
+      { tmuxLiveness: () => "dead" as const }
+    );
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});

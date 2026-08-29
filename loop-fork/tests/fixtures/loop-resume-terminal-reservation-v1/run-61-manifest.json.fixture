@@ -1,0 +1,64 @@
+{
+  "cavemanMode": "lite",
+  "driverEffort": "xhigh",
+  "reviewerEffort": "high",
+  "claudeChannelServer": "loop-bridge-agents-collab-61",
+  "governess": true,
+  "primaryAgent": "codex",
+  "helperCavemanMode": "full",
+  "launchCharters": {
+    "claude": {
+      "bytes": 14659,
+      "path": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/61/launch-charters/claude.md",
+      "sha256": "a64789430b4691af9e73b77484541ddfaf3f377b4738e62a9d0b73db4aa4e97b"
+    },
+    "codex": {
+      "bytes": 15525,
+      "path": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/61/launch-charters/codex.md",
+      "sha256": "aaba8f47be4eead4ae9af6a42101e35c5b2b09cd946a7dbedca4faea6b9cb4db"
+    }
+  },
+  "launchClaimId": "6a0a81e1-135a-48eb-bb26-0eac9bf28a3b",
+  "workspaceReleasedAt": "2026-08-18T18:27:00.000Z",
+  "worldModel": {
+    "capsuleSha256": "f817c4aa2100c0909b87007d089792389a8dac8f1aace4b6a806f68556d54cec",
+    "commitSha": "6cdb9ad60e7c2b18926a70e25debf877302bc014",
+    "contextPath": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/61/world-model/bootstrap-f817c4aa2100c0909b87007d089792389a8dac8f1aace4b6a806f68556d54cec.json",
+    "contextSha256": "d89360916c0fb1ca1609b04cf12b06ae2eb201424cb168f52f23003a314f2773",
+    "databasePath": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/61/world-model/project-6cdb9ad60e7c2b18926a70e25debf877302bc014.sqlite",
+    "entityCount": 2720,
+    "generatedAt": "2026-08-13T20:01:21.971Z",
+    "ontologyVersion": "loop-world-v1",
+    "seeds": [
+      "entity:035efe1fa188188035cf4980351f80214db03d5d7d1cbc1337e99aa1437d8d24",
+      "entity:424503f134c7caed1e88d6d2694ff73a9401b60936a0002a6953e58a13f58f5b",
+      "entity:5cd3bc2c37b735e7e2bab2f33d7a022553982af8363f70cd48a6553b1b00cdd7",
+      "entity:acf722fdb0f94f1ebb790e8a2b34d89af34c26615dbc7deaa0c440a62fdc58d8"
+    ],
+    "statementCount": 8681
+  },
+  "tmuxPaneGoverness": "%2",
+  "tmuxPaneAuPair": "%3",
+  "tmuxPaneLeft": "%0",
+  "tmuxPaneLeftAgent": "claude",
+  "tmuxPaneRight": "%1",
+  "tmuxPaneRightAgent": "codex",
+  "tmuxPaneNanny": "%4",
+  "tmuxPaneRecon": [
+    "%5"
+  ],
+  "tmuxPaneUtility": "%3",
+  "tmuxSession": "agents-collab-loop-61",
+  "tmuxSocket": "/private/tmp/tmux-501/default",
+  "claudeSessionId": "e09a820f-4238-47eb-9137-ace5829fabfb",
+  "codexThreadId": "019ffcb7-0cb4-7a10-9c12-9ad556180b8a",
+  "createdAt": "2026-08-13T20:00:56.245Z",
+  "cwd": "/Users/amgad/dev_projects/agents-collab-harvto-supervisor-defects",
+  "mode": "paired",
+  "pid": 38844,
+  "repoId": "agents-collab-fa87e8608224",
+  "runId": "61",
+  "state": "stopped",
+  "status": "stopped",
+  "updatedAt": "2026-08-18T18:27:00.000Z"
+}
