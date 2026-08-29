@@ -5,6 +5,13 @@
 Already authorized: `loop-fork/src/loop/run-state.ts`,
 `loop-fork/src/loop/launch-reservation.ts` and their tests.
 
+Harness write authority is exact and exhaustive: `loop-fork/.harness/tasks.json`
+(only the task `loop-resume-terminal-reservation-v1`), the ephemeral
+`loop-fork/.harness/current-task` (required absent at closure), and
+`loop-fork/.harness/evidence/loop-resume-terminal-reservation-v1/**`. No
+`current-run`, and no other `.harness` path, task, hook, config, debt, or
+evidence subtree is writable.
+
 Proposed bounded expansion, exactly two further paths:
 
 - `loop-fork/src/loop/tmux-socket.ts`
@@ -34,36 +41,81 @@ the expansion, and it is the minimum that preserves the opaque-target invariant.
    Validation performs calendar component round-trip verification, because
    `Date.parse` accepts `2026-02-30T18:30:00Z` and rolls it to March 2. Both the
    seconds and millisecond forms are accepted and stored byte-for-byte.
-3. Add a provenance-safe endpoint-state seam in `tmux-socket.ts`. It derives the
-   socket only through module-private `targetOf(target)`, exposes no raw socket
-   string in its result or its errors, and classifies the exact bound endpoint
-   as `present`, `absent`, or `unknown`.
-4. Add the terminal-release predicate beside launch reservation. It consumes the
+3. Add a reservation-specific fail-closed read boundary in `run-state.ts`. Do not
+   overload omission in `RunManifest` as validity. Contract an equivalent
+   discriminated representation: `OwnershipField<T>` is `absent`, `valid(value)`,
+   `invalid(reason)`, or `conflicting(reason)`; `ReservationManifestRead` is
+   `valid(manifest + RunOwnershipEvidence)` or `refuse(manifestPath, optional
+   manifestSha256/runId, readonly reasons)`; `RunOwnershipEvidence` separately
+   preserves presence and validity for the mandatory run PID, the optional
+   `launchAttemptPid`, `state`, `status`, and the `workspaceReleasedAt` aliases.
+   Invalid-present or conflicting never normalizes to absent. An existing
+   malformed-JSON, non-record, unreadable, or ownership-unestablishable manifest
+   yields `refuse`, never `undefined`. PID parsing never uses prefix `parseInt`
+   (`run-state.ts:327` today): accept only a positive safe JSON integer, or, only
+   if legacy decimal strings remain supported, a full canonical lossless
+   positive-decimal token; reject `9598junk`, fractional, zero or negative,
+   overflow, whitespace, prefix or suffix, and alias disagreement.
+   `launchAttemptPid` absent differs from present-invalid, and present-invalid or
+   conflicting refuses. Present `state` must be enumerated and never falls back to
+   `status` when invalid; absent `state` may be supplied only by an explicitly
+   supported legacy `status` mapping; if both exist, each must be valid and
+   semantically consistent or it refuses. Release aliases preserve
+   absent/valid/invalid/conflicting, and invalid or disagreement refuses and
+   cannot collapse to absence. `storedManifests` and reservation scanning consume
+   `ReservationManifestRead` and retain a refusal sentinel for every existing
+   unreadable or invalid-present manifest; `assertNoConflict` refuses before any
+   counter increment or run allocation/write; never continue merely because
+   canonical `readRunManifest` returns `undefined`. General non-reservation
+   readers may keep existing DTO behavior.
+4. Add a provenance-safe endpoint-state seam in `tmux-socket.ts`. It is total and
+   non-throwing, derives the socket only through module-private
+   `targetOf(target)`, exposes no raw socket string in its result or messages,
+   catches every provenance failure and returns `unknown`, and classifies the
+   exact bound endpoint as `present`, `absent`, or `unknown`.
+5. Add the terminal-release predicate beside launch reservation. It consumes the
    endpoint state; it never touches `manifest.tmuxSocket` directly and never
    calls `existsSync` on a manifest string.
-5. Add direct negative controls for every refusal in the matrix below. Assert
+6. Add direct negative controls for every refusal in the matrix below. Assert
    manifest byte preservation and no new run directory on every refused case.
-6. Run the focused gates as two separate supported single-file commands, then
-   the full suite, static check, build, and diff check. Record exact command,
-   exit status, and named failure set under
-   `runs/loop-resume-terminal-reservation-v1/`.
-7. Commit one frozen candidate. A different agent performs a zero-write review
+7. Run the focused gates as exactly **three** separate supported single-file
+   commands, then the full suite, static check, build, and diff check:
+
+   ```bash
+   bun run test:file -- tests/loop/run-state.test.ts
+   bun run test:file -- tests/loop/launch-reservation.test.ts
+   bun run test:file -- tests/loop/tmux-socket.test.ts
+   bun run test:ci
+   bun run check
+   bun run build
+   git diff --check
+   ```
+
+   Record exact command, exit status, and an explicit empty named failure set for
+   each applicable test gate, under `runs/loop-resume-terminal-reservation-v1/`.
+8. Commit one frozen candidate. A different agent performs a zero-write review
    against that exact SHA and the parent integration SHA.
-8. Only after PASS and fresh install authority, build and install locally,
+9. Only after PASS and fresh install authority, build and install locally,
    record the installed SHA-256, and retry the explicit `--tmux` certification.
 
 ## Endpoint-state seam
 
 Signature lives in `loop-fork/src/loop/tmux-socket.ts`.
 
-- Input is a branded `TmuxTarget`. A non-provenanced object raises
-  `TmuxTargetProvenanceError`, exactly as the existing API does.
+`readTmuxEndpointState(target)` is a **total, non-throwing, fail-closed**
+classifier for the reservation consumer. It never throws for any input.
+
+- Input is nominally a branded `TmuxTarget`. Every provenance failure,
+  `TmuxTargetProvenanceError` included, is caught internally and classified
+  `unknown`. A fake or unprovenanced input returns `unknown` and never releases.
 - The socket is obtained only from module-private `targetOf(target)`.
-- No raw socket string is returned or embedded in any error message.
+- It exposes no raw socket: no raw socket string is returned or embedded in any
+  message.
 - Classification of the exact bound path:
   - `absent` — only on positive `ENOENT` or `ENOTDIR` for that exact path.
   - `present` — successful stat or probe.
-  - `unknown` — `EACCES`, `EPERM`, timeout, unexpected I/O, or provenance error.
+  - `unknown` — `EACCES`, `EPERM`, timeout, unexpected I/O, or any provenance
+    failure.
 
 Unknown is never absence. This is the same invariant `tmux-control.ts` already
 states for liveness: an unaddressable target is `"unknown"`, never `"dead"`,
@@ -79,8 +131,9 @@ Release the reservation only when **all** hold:
 4. state exactly `completed`, `failed`, or `stopped` (enumerated allowlist, not
    `!isActiveRunState(...)`);
 5. `workspaceReleasedAt` valid and unambiguous;
-6. manifest run PID and any present `launchAttemptPid` are positive integers and
-   positively dead.
+6. the reservation read returned `valid(...)`, not `refuse(...)`; and
+7. manifest run PID and any present `launchAttemptPid` are canonical positive
+   integers and positively dead.
 
 ## Refusal matrix
 
@@ -93,7 +146,13 @@ Every one of these owns or refuses:
 - live tmux;
 - active or non-enumerated state;
 - release marker absent, invalid, or conflicting across key spellings;
-- run PID or `launchAttemptPid` malformed or alive.
+- run PID or `launchAttemptPid` malformed or alive;
+- run PID string `9598junk`, or any non-canonical PID token;
+- malformed-present `launchAttemptPid`;
+- present-invalid `state` accompanied by a terminal-looking `status`;
+- `state` and `status` semantic disagreement;
+- release alias conflict;
+- existing malformed or unreadable manifest.
 
 Exact Run 42 is the sole positive legacy fixture. Every refusal proves manifest
 bytes unchanged and no new run created.

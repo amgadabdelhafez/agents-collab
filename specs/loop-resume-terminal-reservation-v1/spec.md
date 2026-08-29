@@ -47,11 +47,25 @@ predicated on `target === undefined` for Run 42 is refuted by the artifact.
 2. Classify the **bound tmux endpoint** of a defined provenance-valid branded
    target as present, absent, or unknown, and exclude reservation ownership only
    when that endpoint is positively absent. Absence of a socket file is never
-   inferred from an unbranded manifest string.
+   inferred from an unbranded manifest string. The classifier
+   `readTmuxEndpointState(target)` is total, non-throwing, and fail-closed: it
+   derives the endpoint only through module-private `targetOf`, exposes no raw
+   socket, and catches `TmuxTargetProvenanceError` and every provenance failure
+   and returns unknown. A fake or unprovenanced input returns unknown and never
+   releases.
 3. Continue to fail closed for active or non-enumerated state, missing or
    invalid release proof, a surviving run PID, a surviving launch-attempt PID,
    live tmux, an endpoint that is present, and an endpoint whose state is
    unknown.
+3a. Add a reservation-specific fail-closed **read boundary** so that ownership
+   evidence is never destroyed before the reservation authority sees it.
+   Omission in `RunManifest` must not be overloaded as validity. Presence and
+   validity are preserved separately for the mandatory run PID, the optional
+   `launchAttemptPid`, `state`, `status`, and the `workspaceReleasedAt` aliases;
+   invalid-present or conflicting never normalizes to absent. PID parsing never
+   uses prefix `parseInt`. An existing malformed, non-record, unreadable, or
+   ownership-unestablishable manifest refuses rather than being dropped, and
+   refusal happens before any counter increment or run allocation/write.
 4. Add an exact Run 42 regression fixture and direct positive and negative
    predicate tests. Assert every required fixture exists before comparing or
    aggregating results; a missing fixture fails and never skips.
@@ -65,8 +79,9 @@ predicated on `target === undefined` for Run 42 is refuted by the artifact.
 - The exact Run 42 fixture no longer blocks a fresh launch reservation.
 - Every negative control remains a conflict, leaves its manifest bytes
   unchanged, and creates no new run.
-- Focused tests, the full named test suite, static check, build, and
-  `git diff --check` pass with an empty unexpected-failure set.
+- Exactly three focused single-file tests, the full named test suite, static
+  check, build, and `git diff --check` pass, each applicable test gate reporting
+  an explicit empty named failure set. Passing counts alone are insufficient.
 - One immutable candidate receives a separate literal zero-write exact-SHA
   review.
 - After explicit install authority, the successor binary hash is recorded and

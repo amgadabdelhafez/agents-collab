@@ -14,7 +14,16 @@
   - `loop-fork/tests/loop/tmux-socket.test.ts`
   - `runs/loop-resume-terminal-reservation-v1/**`
   - `specs/loop-resume-terminal-reservation-v1/**`
-  - `loop-fork/.harness/**` (task lifecycle contract and task-scoped evidence)
+  - `loop-fork/.harness/tasks.json` — lifecycle index, modifying **only** the
+    task `loop-resume-terminal-reservation-v1`
+  - `loop-fork/.harness/current-task` — ephemeral while the task is active, and
+    **required absent at closure**
+  - `loop-fork/.harness/evidence/loop-resume-terminal-reservation-v1/**`
+- Harness write authority is exact and exhaustive. No `current-run`, and no other
+  `.harness` path, task, hook, config, debt, or evidence subtree is writable.
+  Explicitly not writable: `loop-fork/.harness/config.json`,
+  `loop-fork/.harness/README.md`, `loop-fork/.harness/hooks/**`, any other task
+  entry in `tasks.json`, and any other evidence subtree.
 - `loop-fork/src/loop/tmux-socket.ts` and `loop-fork/tests/loop/tmux-socket.test.ts`
   are a bounded expansion, justified in `plan.md`: the bound socket is reachable
   only through module-private `targetOf` (`src/loop/tmux-socket.ts:436`), so the
@@ -63,14 +72,79 @@ forbidden, because a skip here is a fail-open. Run 42 is never edited.
 
 ## Endpoint-state cases
 
+`readTmuxEndpointState(target)` is a **total, non-throwing, fail-closed**
+classifier for the reservation consumer. It has exactly one outcome per input.
+
 - Derives the socket only through module-private `targetOf`; no raw socket
-  string appears in any return value or error message.
+  string appears in any return value or message. It exposes no raw socket.
 - `ENOENT` and `ENOTDIR` for the exact bound path, and only those, yield
   `absent`.
 - Successful stat or probe yields `present`.
-- `EACCES`, `EPERM`, timeout, unexpected I/O, and provenance error yield
-  `unknown`.
-- A non-provenanced object raises `TmuxTargetProvenanceError`.
+- `EACCES`, `EPERM`, timeout, and unexpected I/O yield `unknown`.
+- Every provenance failure, `TmuxTargetProvenanceError` included, is caught
+  internally and yields `unknown`. The classifier never throws for any input.
+- Direct case: a fake or unprovenanced input returns `unknown` and never
+  releases the reservation.
+
+Unknown is never absence.
+
+## Reservation manifest read boundary cases
+
+The reservation consumer must not treat omission in `RunManifest` as validity.
+An equivalent discriminated representation is required in
+`loop-fork/src/loop/run-state.ts`:
+
+- `OwnershipField<T>` is `absent`, `valid(value)`, `invalid(reason)`, or
+  `conflicting(reason)`.
+- `ReservationManifestRead` is `valid(manifest + RunOwnershipEvidence)` or
+  `refuse(manifestPath, optional manifestSha256/runId, readonly reasons)`.
+- `RunOwnershipEvidence` separately preserves presence **and** validity for the
+  mandatory run PID, the optional `launchAttemptPid`, `state`, `status`, and the
+  `workspaceReleasedAt` aliases. Invalid-present or conflicting never normalizes
+  to absent.
+- An existing malformed-JSON, non-record, unreadable, or ownership-unestablishable
+  manifest yields `refuse`, never `undefined`.
+
+Strict ownership evidence rules:
+
+- PID parsing never uses prefix `parseInt`. Accept only a positive safe JSON
+  integer, or — only if legacy decimal strings remain supported — a full
+  canonical lossless positive-decimal token. Reject `9598junk`, fractional,
+  zero or negative, overflow, whitespace, prefix or suffix, and alias
+  disagreement.
+- `launchAttemptPid` absent differs from present-invalid. Present-invalid or
+  conflicting refuses.
+- Present `state` must be enumerated and never falls back to `status` when
+  invalid. If `state` is absent, only an explicitly supported legacy `status`
+  mapping may supply it. If both exist, each must be valid and semantically
+  consistent, or it refuses.
+- Release aliases preserve absent, valid, invalid, and conflicting. Invalid or
+  disagreement refuses and cannot collapse to absence.
+
+Consumption:
+
+- `storedManifests` and reservation scanning consume `ReservationManifestRead`
+  and retain a refusal sentinel for every existing unreadable or invalid-present
+  manifest.
+- `assertNoConflict` refuses **before** any counter increment or run
+  allocation/write.
+- Never continue merely because canonical `readRunManifest` returns `undefined`.
+- General non-reservation readers may keep existing DTO behavior.
+
+Direct contract cases, inside the already authorized
+`loop-fork/tests/loop/run-state.test.ts` and
+`loop-fork/tests/loop/launch-reservation.test.ts`:
+
+1. Run PID string `9598junk`.
+2. Malformed-present `launchAttemptPid`.
+3. Present-invalid `state` plus a terminal-looking `status`.
+4. `state` and `status` semantic disagreement.
+5. Release alias conflict.
+6. Existing malformed or unreadable manifest.
+
+Each of the six refuses, preserves exact manifest bytes, and creates no run
+directory and no counter change. The raw valid Run 42 positive fixture and every
+refusal case in **Required cases** above are retained alongside these.
 
 ## Release validator cases
 
@@ -84,9 +158,9 @@ forbidden, because a skip here is a fail-open. Run 42 is never edited.
 
 ## Gates
 
-Focused gates are two separate supported single-file commands. The repository
-refuses direct multi-file `bun test` at `loop-fork/tests/setup.ts:5-7`, so a
-literal multi-file command is not a runnable contract.
+Focused gates are exactly **three** separate supported single-file commands. The
+repository refuses direct multi-file `bun test` at `loop-fork/tests/setup.ts:5-7`,
+so a literal multi-file command is not a runnable contract.
 
 ```bash
 bun run test:file -- tests/loop/run-state.test.ts
@@ -98,8 +172,9 @@ bun run build
 git diff --check
 ```
 
-Every gate must report an explicitly empty named failure set. Passing counts
-alone are insufficient. No tolerated failure or baseline allowance.
+Every applicable test gate must report an **explicit empty named failure set**.
+Passing counts alone are insufficient. No tolerated failure or baseline
+allowance.
 
 ## Review and runtime certification
 
