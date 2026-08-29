@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ClaudeKickoffVisibilityError } from "../../src/loop/claude-kickoff";
 import { tmuxInternals } from "../../src/loop/tmux";
 
 // Launcher-level regressions for the harvto run-147 defect. Every case is
@@ -21,6 +22,18 @@ const CAPTURED_KICKOFF_BODY = "[Pasted text #1 +6 lines]";
 
 const PANE = "%0";
 const RUN_DIR = "/run/147";
+
+const paneSnapshot = (input: {
+  activeClients?: number;
+  pipeOpen?: boolean;
+  text: string;
+}) => ({
+  activeClients: input.activeClients ?? 0,
+  cursor: { x: 2, y: 46 },
+  pipeOpen: input.pipeOpen ?? false,
+  text: input.text,
+  windowActivity: 1,
+});
 
 interface Harness {
   deps: Parameters<typeof tmuxInternals.confirmClaudeKickoff>[0];
@@ -48,15 +61,15 @@ const makeHarness = (options: {
   let recovered = false;
   let captures = 0;
   const deps = {
-    capturePane: () => {
+    capturePaneSnapshot: () => {
       const scripted = options.paneTextByCapture;
       if (scripted && scripted.length > 0) {
         const value = scripted[Math.min(captures, scripted.length - 1)] ?? "";
         captures += 1;
-        return value;
+        return paneSnapshot({ text: value });
       }
       captures += 1;
-      return options.paneText ?? "";
+      return paneSnapshot({ text: options.paneText ?? "" });
     },
     claudeCliVersion: () => options.cliVersion ?? "2.1.223 (Claude Code)",
     log: (line: string) => {
@@ -135,21 +148,6 @@ describe("launcher kickoff confirmation", () => {
       tmuxInternals.confirmClaudeKickoff(harness.deps, RUN_DIR, {
         baseline: baselineFrom(RUN_147_HOOKS),
         expectedComposerBody: CAPTURED_KICKOFF_BODY,
-        pane: PANE,
-      })
-    ).rejects.toThrow(tmuxInternals.ClaudeKickoffUnconfirmedError);
-    expect(harness.sentKeys).toEqual([]);
-  });
-
-  test("refuses recovery when the launcher never captured its own paste", async () => {
-    const harness = makeHarness({
-      hooksByRead: [RUN_147_HOOKS],
-      paneText: STRANDED_PANE,
-    });
-    await expect(
-      tmuxInternals.confirmClaudeKickoff(harness.deps, RUN_DIR, {
-        baseline: baselineFrom(RUN_147_HOOKS),
-        expectedComposerBody: undefined,
         pane: PANE,
       })
     ).rejects.toThrow(tmuxInternals.ClaudeKickoffUnconfirmedError);
@@ -319,38 +317,170 @@ describe("launcher kickoff confirmation", () => {
     });
     expect(harness.sentKeys).toEqual([{ keys: ["Enter"], pane: PANE }]);
   });
+
+  test.each([
+    ["attached", { activeClients: 1 }],
+    ["piped", { pipeOpen: true }],
+  ] as const)("refuses optional recovery after a post-initial %s transition", async (_label, transition) => {
+    let captures = 0;
+    const recoveryKeys: string[][] = [];
+    const error = await tmuxInternals
+      .confirmClaudeKickoff(
+        {
+          capturePaneSnapshot: () => {
+            captures += 1;
+            return paneSnapshot({
+              text: `❯ ${CAPTURED_KICKOFF_BODY}`,
+              ...(captures > tmuxInternals.CLAUDE_KICKOFF_CONFIRM_MAX_POLLS
+                ? transition
+                : {}),
+            });
+          },
+          claudeCliVersion: () => "2.1.247 (Claude Code)",
+          log: () => undefined,
+          readClaudeTranscriptVersion: () => "",
+          readTextFile: () => "",
+          sendKeys: (_pane, keys) => {
+            recoveryKeys.push(keys);
+          },
+          sleep: async () => undefined,
+        },
+        RUN_DIR,
+        {
+          baseline: {
+            hookSequence: 0,
+            sawUserPromptSubmit: false,
+            transcriptVersion: "",
+          },
+          expectedComposerBody: CAPTURED_KICKOFF_BODY,
+          pane: PANE,
+        }
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(tmuxInternals.ClaudeKickoffUnconfirmedError);
+    expect((error as Error).message).toContain(
+      "direct-submit recovery refused"
+    );
+    expect(captures).toBe(tmuxInternals.CLAUDE_KICKOFF_CONFIRM_MAX_POLLS + 1);
+    expect(recoveryKeys).toEqual([]);
+  });
 });
 
-describe("launcher composer ownership capture", () => {
-  test("captures the launcher's own paste as the expected composer body", () => {
-    expect(
-      tmuxInternals.captureLauncherComposerBody(
-        { capturePane: () => STRANDED_PANE },
-        PANE
-      )
-    ).toBe(CAPTURED_KICKOFF_BODY);
-  });
-
-  test("records no owner when the paste never landed", () => {
-    expect(
-      tmuxInternals.captureLauncherComposerBody(
-        { capturePane: () => "❯ " },
-        PANE
-      )
-    ).toBeUndefined();
-  });
-
-  test("records no owner when the pane cannot be captured", () => {
-    expect(
-      tmuxInternals.captureLauncherComposerBody(
-        {
-          capturePane: () => {
-            throw new Error("pane gone");
-          },
+describe("launcher composer visibility and submission", () => {
+  test("delays Enter until the exact owned paste is visible", async () => {
+    const submitted: string[] = [];
+    const submitCountsAtCapture: number[] = [];
+    const captures = [
+      paneSnapshot({ text: "❯ " }),
+      paneSnapshot({ text: `❯ ${CAPTURED_KICKOFF_BODY}` }),
+    ];
+    const sleeps: number[] = [];
+    const body = await tmuxInternals.submitVisibleClaudeKickoff({
+      deps: {
+        capturePaneSnapshot: () => {
+          submitCountsAtCapture.push(submitted.length);
+          return captures.shift();
         },
-        PANE
-      )
-    ).toBeUndefined();
+        sleep: (ms) => {
+          sleeps.push(ms);
+          return Promise.resolve();
+        },
+      },
+      emptyBeforePaste: true,
+      pane: PANE,
+      submit: () => {
+        submitted.push("Enter");
+      },
+    });
+    expect(body).toBe(CAPTURED_KICKOFF_BODY);
+    expect(submitCountsAtCapture).toEqual([0, 0]);
+    expect(sleeps).toEqual([50]);
+    expect(submitted).toEqual(["Enter"]);
+  });
+
+  test("submits exactly once when visibility is immediate", async () => {
+    const submitted: string[] = [];
+    await tmuxInternals.submitVisibleClaudeKickoff({
+      deps: {
+        capturePaneSnapshot: () =>
+          paneSnapshot({ text: `❯ ${CAPTURED_KICKOFF_BODY}` }),
+        sleep: async () => undefined,
+      },
+      emptyBeforePaste: true,
+      pane: PANE,
+      submit: () => {
+        submitted.push("Enter");
+      },
+    });
+    expect(submitted).toEqual(["Enter"]);
+  });
+
+  test("submits zero Enter on unsafe or timed-out visibility", async () => {
+    const cases = [
+      { failure: "timeout", snapshot: () => paneSnapshot({ text: "❯ " }) },
+      { failure: "indeterminate", snapshot: () => undefined },
+      {
+        failure: "foreign",
+        snapshot: () => paneSnapshot({ text: "❯ human draft" }),
+      },
+      {
+        failure: "attached",
+        snapshot: () =>
+          paneSnapshot({
+            activeClients: 1,
+            text: `❯ ${CAPTURED_KICKOFF_BODY}`,
+          }),
+      },
+      {
+        failure: "piped",
+        snapshot: () =>
+          paneSnapshot({ pipeOpen: true, text: `❯ ${CAPTURED_KICKOFF_BODY}` }),
+      },
+    ] as const;
+    for (const current of cases) {
+      const submitted: string[] = [];
+      const error = await tmuxInternals
+        .submitVisibleClaudeKickoff({
+          deps: {
+            capturePaneSnapshot: current.snapshot,
+            sleep: async () => undefined,
+          },
+          emptyBeforePaste: true,
+          pane: PANE,
+          submit: () => {
+            submitted.push("Enter");
+          },
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ClaudeKickoffVisibilityError);
+      expect((error as ClaudeKickoffVisibilityError).failure).toBe(
+        current.failure
+      );
+      expect(submitted).toEqual([]);
+    }
+  });
+
+  test("requires positive empty-before-paste proof", async () => {
+    const submitted: string[] = [];
+    const error = await tmuxInternals
+      .submitVisibleClaudeKickoff({
+        deps: {
+          capturePaneSnapshot: () =>
+            paneSnapshot({ text: `❯ ${CAPTURED_KICKOFF_BODY}` }),
+          sleep: async () => undefined,
+        },
+        emptyBeforePaste: false,
+        pane: PANE,
+        submit: () => {
+          submitted.push("Enter");
+        },
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ClaudeKickoffVisibilityError);
+    expect((error as ClaudeKickoffVisibilityError).failure).toBe(
+      "not-empty-before-paste"
+    );
+    expect(submitted).toEqual([]);
   });
 });
 

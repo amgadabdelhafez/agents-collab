@@ -34,12 +34,13 @@ import {
   type ClaudeCliVersion,
   type ClaudeKickoffComposerState,
   type ClaudeKickoffEvidence,
+  ClaudeKickoffVisibilityError,
   classifyKickoffComposer,
   kickoffTurnStarted,
   parseClaudeCliVersion,
   parseClaudeHookEvidence,
-  readComposerBody,
   resolveKickoffCapability,
+  waitForLauncherComposerBody,
 } from "./claude-kickoff";
 import {
   getCodexAppServerPid,
@@ -1299,6 +1300,19 @@ class ClaudeStartupInputRequiredError extends Error {
 class ClaudeComposerRecoveryError extends ClaudeStartupInputRequiredError {
   constructor(name: string, pane: string, message: string) {
     super(name, pane, message, "unsent Claude composer recovery");
+  }
+}
+
+class ClaudeKickoffVisibilityInputRequiredError extends ClaudeComposerRecoveryError {
+  readonly failure: ClaudeKickoffVisibilityError["failure"];
+
+  constructor(pane: string, error: ClaudeKickoffVisibilityError) {
+    super(
+      "ClaudeKickoffVisibilityInputRequiredError",
+      pane,
+      `Claude pane "${pane}" could not prove launcher-owned kickoff visibility (${error.failure}); refused to mutate or submit its composer.`
+    );
+    this.failure = error.failure;
   }
 }
 
@@ -2818,13 +2832,13 @@ const unblockClaudePane = async (
 
 interface PendingKickoffConfirmation {
   baseline: ClaudeKickoffEvidence;
-  expectedComposerBody: string | undefined;
+  expectedComposerBody: string;
   pane: string;
 }
 
 type KickoffGuardDeps = Pick<
   TmuxDeps,
-  | "capturePane"
+  | "capturePaneSnapshot"
   | "claudeCliVersion"
   | "log"
   | "readClaudeTranscriptVersion"
@@ -2849,20 +2863,6 @@ const readClaudeKickoffEvidence = (
   };
 };
 
-const captureLauncherComposerBody = (
-  deps: Pick<TmuxDeps, "capturePane">,
-  pane: string
-): string | undefined => {
-  try {
-    const body = readComposerBody(deps.capturePane(pane, true));
-    // An empty composer here means the paste never landed, so there is nothing
-    // we could later claim as ours. Refuse rather than record a false owner.
-    return body === undefined || body === "" ? undefined : body;
-  } catch {
-    return undefined;
-  }
-};
-
 // One fresh decision snapshot: the composer capture and the evidence read are
 // sequential, not atomic, so this is not a consistent point-in-time view of the
 // pane and the filesystem. What it does guarantee is that both facts are read
@@ -2874,13 +2874,23 @@ const readKickoffSnapshot = (
   deps: KickoffGuardDeps,
   runDir: string,
   pending: PendingKickoffConfirmation
-): { composer: ClaudeKickoffComposerState; started: boolean } => {
+): {
+  composer: ClaudeKickoffComposerState;
+  recoverySafe: boolean;
+  started: boolean;
+} => {
+  const paneSnapshot = safeCapturePaneSnapshot(deps, pending.pane);
   const composer = classifyKickoffComposer({
     expectedComposerBody: pending.expectedComposerBody,
-    paneText: safeCapturePane(deps, pending.pane),
+    paneText: paneSnapshot?.text,
   });
   return {
     composer,
+    recoverySafe:
+      paneSnapshot !== undefined &&
+      paneSnapshot.activeClients === 0 &&
+      paneSnapshot.pipeOpen === false &&
+      composer === "kickoff-owned",
     started: kickoffTurnStarted(
       pending.baseline,
       readClaudeKickoffEvidence(deps, runDir),
@@ -2941,7 +2951,7 @@ const confirmClaudeKickoff = async (
     // "ours". Both facts must come from the same read.
     const snapshot = readKickoffSnapshot(deps, runDir, pending);
     composerState = snapshot.composer;
-    if (composerState === "kickoff-owned" && !snapshot.started) {
+    if (snapshot.recoverySafe && !snapshot.started) {
       recoveryAttempted = true;
       deps.log(
         `[loop] Claude pane "${pane}" kickoff was not confirmed; re-sending Enter once for the launcher-owned composer.`
@@ -2972,15 +2982,42 @@ const confirmClaudeKickoff = async (
   });
 };
 
-const safeCapturePane = (
-  deps: Pick<TmuxDeps, "capturePane">,
+const safeCapturePaneSnapshot = (
+  deps: Pick<TmuxDeps, "capturePaneSnapshot">,
   pane: string
-): string | undefined => {
+): PaneSnapshot | undefined => {
   try {
-    return deps.capturePane(pane, true);
+    return deps.capturePaneSnapshot(pane);
   } catch {
     return undefined;
   }
+};
+
+const submitVisibleClaudeKickoff = async (input: {
+  deps: Pick<TmuxDeps, "capturePaneSnapshot" | "sleep">;
+  emptyBeforePaste: boolean;
+  pane: string;
+  submit: () => void;
+}): Promise<string> => {
+  if (!input.emptyBeforePaste) {
+    throw new ClaudeKickoffVisibilityError("not-empty-before-paste");
+  }
+  const expectedComposerBody = await waitForLauncherComposerBody({
+    capture: () => {
+      const snapshot = safeCapturePaneSnapshot(input.deps, input.pane);
+      return snapshot
+        ? {
+            activeClients: snapshot.activeClients,
+            paneText: snapshot.text,
+            pipeOpen: snapshot.pipeOpen,
+          }
+        : undefined;
+    },
+    emptyBeforePaste: true,
+    sleep: input.deps.sleep,
+  });
+  input.submit();
+  return expectedComposerBody;
 };
 
 const createPairedPaneLayout = async (input: {
@@ -3050,34 +3087,36 @@ const createPairedPaneLayout = async (input: {
     }
     throw error;
   }
-  // Submission stays synchronous and keeps its original order and timing for
-  // both panes. Only the Claude turn-start confirmation is awaited afterwards,
-  // so a slow Claude confirmation can never delay the peer pane's kickoff.
-  const submitLaunchBootstrap = (
+  const beginLaunchBootstrap = (
     pane: string,
     agent: Agent,
     promptPath: string | undefined
-  ): PendingKickoffConfirmation | undefined => {
+  ): (() => Promise<PendingKickoffConfirmation>) | undefined => {
     if (!promptPath) {
       return undefined;
     }
     const guarded = agent === "claude";
-    // Baseline must be read before any mutation, or a hook line that was
-    // already on disk would read as confirmation of our own kickoff.
     const baseline = guarded
       ? readClaudeKickoffEvidence(input.deps, input.runDir)
       : undefined;
-    // Ownership chain step 1: positively verify the composer is empty before we
-    // paste. unblockClaudePane only returns at ready-empty, but asserting it
-    // here makes the precondition enforced rather than implied. If it is not
-    // provably empty we still paste and submit as before, and simply decline to
-    // claim ownership, which costs the recovery keystroke and nothing else.
-    const emptyBeforePaste =
-      guarded &&
-      classifyKickoffComposer({
-        expectedComposerBody: undefined,
-        paneText: safeCapturePane(input.deps, pane),
-      }) === "empty";
+    const beforePaste = guarded
+      ? safeCapturePaneSnapshot(input.deps, pane)
+      : undefined;
+    const emptyBeforePaste = Boolean(
+      beforePaste &&
+        beforePaste.activeClients === 0 &&
+        !beforePaste.pipeOpen &&
+        classifyKickoffComposer({
+          expectedComposerBody: undefined,
+          paneText: beforePaste.text,
+        }) === "empty"
+    );
+    if (guarded && !emptyBeforePaste) {
+      throw new ClaudeKickoffVisibilityInputRequiredError(
+        pane,
+        new ClaudeKickoffVisibilityError("not-empty-before-paste")
+      );
+    }
     const buffer = `${sanitizeBase(input.session)}-${agent}-launch`;
     runTmuxCommand(
       input.deps,
@@ -3089,33 +3128,58 @@ const createPairedPaneLayout = async (input: {
       ["tmux", "paste-buffer", "-d", "-p", "-b", buffer, "-t", pane],
       `Failed to paste ${agent} launch prompt`
     );
-    // Ownership chain step 2: the composer was provably empty a moment ago, so
-    // whatever it holds now is the bytes we just pasted. Capturing it here,
-    // before our own Enter, is the only thing that later licenses a recovery
-    // keystroke. No empty precondition means no capture and no recovery.
-    const expectedComposerBody = emptyBeforePaste
-      ? captureLauncherComposerBody(input.deps, pane)
-      : undefined;
-    runTmuxCommand(
-      input.deps,
-      ["tmux", "send-keys", "-t", pane, "Enter"],
-      `Failed to submit ${agent} launch prompt`
-    );
     if (!(guarded && baseline)) {
+      runTmuxCommand(
+        input.deps,
+        ["tmux", "send-keys", "-t", pane, "Enter"],
+        `Failed to submit ${agent} launch prompt`
+      );
       return undefined;
     }
-    return { baseline, expectedComposerBody, pane };
+    return async () => {
+      try {
+        const expectedComposerBody = await submitVisibleClaudeKickoff({
+          deps: input.deps,
+          emptyBeforePaste,
+          pane,
+          submit: () => {
+            runTmuxCommand(
+              input.deps,
+              ["tmux", "send-keys", "-t", pane, "Enter"],
+              `Failed to submit ${agent} launch prompt`
+            );
+          },
+        });
+        return { baseline, expectedComposerBody, pane };
+      } catch (error) {
+        if (error instanceof ClaudeKickoffVisibilityError) {
+          throw new ClaudeKickoffVisibilityInputRequiredError(pane, error);
+        }
+        throw error;
+      }
+    };
   };
-  const pending = [
-    submitLaunchBootstrap(left, input.paneAgents.left, input.leftPromptPath),
-    submitLaunchBootstrap(
-      rightBeforeUtility,
-      input.paneAgents.right,
-      input.rightPromptPath
-    ),
-  ].filter((entry): entry is PendingKickoffConfirmation => entry !== undefined);
-  for (const entry of pending) {
-    await confirmClaudeKickoff(input.deps, input.runDir, entry);
+  try {
+    const pendingStarts = [
+      beginLaunchBootstrap(left, input.paneAgents.left, input.leftPromptPath),
+      beginLaunchBootstrap(
+        rightBeforeUtility,
+        input.paneAgents.right,
+        input.rightPromptPath
+      ),
+    ].filter(
+      (entry): entry is () => Promise<PendingKickoffConfirmation> =>
+        entry !== undefined
+    );
+    const pending = await Promise.all(pendingStarts.map((start) => start()));
+    for (const entry of pending) {
+      await confirmClaudeKickoff(input.deps, input.runDir, entry);
+    }
+  } catch (error) {
+    if (error instanceof ClaudeStartupInputRequiredError) {
+      error.paneTargets = { left, right: rightBeforeUtility };
+    }
+    throw error;
   }
   return {
     governess: input.governess ? `${input.session}:0.2` : undefined,
@@ -4130,7 +4194,6 @@ export const runInTmux = async (
 
 export const tmuxInternals = {
   buildClaudeCommand,
-  captureLauncherComposerBody,
   ClaudeKickoffUnconfirmedError,
   CLAUDE_KICKOFF_CONFIRM_MAX_POLLS,
   CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS,
@@ -4138,6 +4201,7 @@ export const tmuxInternals = {
   CLAUDE_KICKOFF_RECOVERY_MAX_POLLS,
   confirmClaudeKickoff,
   readClaudeKickoffEvidence,
+  submitVisibleClaudeKickoff,
   buildClaudeChannelServerConfig,
   buildClaudeChannelServerName: claudeChannelServerName,
   buildCodexCommand,

@@ -43,13 +43,32 @@ const KICKOFF_HOOKS_AFTER = `${KICKOFF_HOOKS_BEFORE}{"agent":"claude","event":"U
 // turn, because the launcher now refuses to report a run as started without
 // that evidence. This is the healthy case: the first read is the pre-paste
 // baseline, and every later read shows the UserPromptSubmit the kickoff caused.
-const healthyClaudeKickoffDeps = (): {
-  claudeCliVersion: () => string;
-  readClaudeTranscriptVersion: () => string;
-  readTextFile: () => string;
-} => {
+const healthyClaudeKickoffDeps = (readPane: () => string = () => "❯ ") => {
+  let emptyComposerSnapshots = 0;
   let reads = 0;
   return {
+    capturePaneSnapshot: () => {
+      if (emptyComposerSnapshots >= 2) {
+        return {
+          activeClients: 0,
+          cursor: { x: 31, y: 0 },
+          pipeOpen: false,
+          text: "❯ [Pasted text #1 +6 lines]",
+          windowActivity: emptyComposerSnapshots,
+        };
+      }
+      const paneText = readPane();
+      if (paneText.trim() === "❯") {
+        emptyComposerSnapshots += 1;
+      }
+      return {
+        activeClients: 0,
+        cursor: { x: 2, y: Math.max(0, paneText.split(/\r?\n/).length - 1) },
+        pipeOpen: false,
+        text: paneText,
+        windowActivity: emptyComposerSnapshots,
+      };
+    },
     claudeCliVersion: () => "2.1.223 (Claude Code)",
     readClaudeTranscriptVersion: () => "",
     readTextFile: () => {
@@ -1046,6 +1065,7 @@ test("runInTmux writes paired session refs before starting governess", async () 
     const delegated = await runInTmux(
       ["--tmux", "--proof", "verify with tests", "--governess"],
       {
+        ...healthyClaudeKickoffDeps(),
         capturePane: () => "❯ ",
         cwd: repoDir,
         env: {
@@ -1059,7 +1079,6 @@ test("runInTmux writes paired session refs before starting governess", async () 
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
-        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -2008,7 +2027,6 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
           logs.push(message);
         },
         makeClaudeSessionId: () => "claude-session-1",
-        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -2114,7 +2132,6 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
         launchArgv: ["bun", "/repo/src/cli.ts"],
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
-        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -2642,6 +2659,7 @@ test("runInTmux replays the captured Claude pre-connect warning before bootstrap
   await runInTmux(
     ["--tmux", "--proof", "verify with tests"],
     {
+      ...healthyClaudeKickoffDeps(currentFrame),
       // Keep the text-only override so this exact test can run against the
       // pre-fix implementation as executable red-before evidence.
       capturePane: currentFrame,
@@ -2651,7 +2669,9 @@ test("runInTmux replays the captured Claude pre-connect warning before bootstrap
           activeClients: frame.activeClients,
           cursor: frame.cursor,
           pipeOpen: frame.panePipe !== 0,
-          text: currentFrame(),
+          text: bootstrapStarted
+            ? "❯ [Pasted text #1 +6 lines]"
+            : currentFrame(),
           windowActivity: frame.windowActivity,
         };
       },
@@ -2665,7 +2685,6 @@ test("runInTmux replays the captured Claude pre-connect warning before bootstrap
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
       nowMs: () => (readyBefore.windowActivity + 2) * 1000,
-      ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -2837,7 +2856,6 @@ test("runInTmux preserves the live workspace when a post-End draft capture fails
         log: (): void => undefined,
         makeClaudeSessionId: () => "claude-session-1",
         nowMs: () => (draftAfter.windowActivity + 2) * 1000,
-        ...healthyClaudeKickoffDeps(),
         preparePairedRun: (nextOpts) => {
           nextOpts.codexMcpConfigArgs = [
             "-c",
@@ -3193,7 +3211,15 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
-      ...healthyClaudeKickoffDeps(),
+      ...healthyClaudeKickoffDeps(() => {
+        if (startupStage === "dev") {
+          return syntheticDevChannelsPrompt;
+        }
+        if (startupStage === "bypass-exit") {
+          return bypassExitPrompt;
+        }
+        return startupStage === "bypass-accept" ? bypassAcceptPrompt : "❯ ";
+      }),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3307,7 +3333,9 @@ test("runInTmux confirms wrapped Claude dev-channel prompts", async () => {
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
-      ...healthyClaudeKickoffDeps(),
+      ...healthyClaudeKickoffDeps(() =>
+        devChannelConfirmed ? "❯ " : syntheticDevChannelsPrompt
+      ),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3723,24 +3751,24 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
     transcriptPath: "/repo/.loop/runs/1/transcript.jsonl",
   };
 
+  const currentDelayedFrame = (): string => {
+    pollCount += 1;
+    if (calls.some((args) => args[1] === "load-buffer")) {
+      throw new Error("bootstrap transport started before Claude was ready");
+    }
+    if (pollCount < 5) {
+      return "Permission deny rule: stable startup warning";
+    }
+    if (!delayedDevChannelConfirmed) {
+      return `❯\n\n${syntheticDevChannelsPrompt}`;
+    }
+    return "❯ ";
+  };
+
   await runInTmux(
     ["--tmux", "--proof", "verify with tests"],
     {
-      capturePane: () => {
-        pollCount += 1;
-        if (calls.some((args) => args[1] === "load-buffer")) {
-          throw new Error(
-            "bootstrap transport started before Claude was ready"
-          );
-        }
-        if (pollCount < 5) {
-          return "Permission deny rule: stable startup warning";
-        }
-        if (!delayedDevChannelConfirmed) {
-          return `❯\n\n${syntheticDevChannelsPrompt}`;
-        }
-        return "❯ ";
-      },
+      capturePane: currentDelayedFrame,
       cwd: "/repo",
       env: {},
       findBinary: () => true,
@@ -3750,7 +3778,7 @@ test("runInTmux catches a delayed Claude dev-channel prompt", async () => {
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
-      ...healthyClaudeKickoffDeps(),
+      ...healthyClaudeKickoffDeps(currentDelayedFrame),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3848,7 +3876,12 @@ test("runInTmux confirms the current Claude bypass prompt wording", async () => 
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
-      ...healthyClaudeKickoffDeps(),
+      ...healthyClaudeKickoffDeps(() => {
+        if (stage === "exit") {
+          return bypassExitPrompt;
+        }
+        return stage === "accept" ? bypassAcceptPrompt : "❯ ";
+      }),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -3934,7 +3967,13 @@ test("runInTmux still confirms Claude trust prompts in paired mode", async () =>
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
-      ...healthyClaudeKickoffDeps(),
+      ...healthyClaudeKickoffDeps(() => {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return "Is this a project you created or one you trust?";
+        }
+        return "❯ ";
+      }),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",
@@ -4014,7 +4053,16 @@ test("runInTmux still catches a delayed Claude trust prompt", async () => {
       launchArgv: ["bun", "/repo/src/cli.ts"],
       log: (): void => undefined,
       makeClaudeSessionId: () => "claude-session-1",
-      ...healthyClaudeKickoffDeps(),
+      ...healthyClaudeKickoffDeps(() => {
+        pollCount += 1;
+        if (pollCount < 4) {
+          return "Permission deny rule: stable startup warning";
+        }
+        if (pollCount === 4) {
+          return "Is this a project you created or one you trust?";
+        }
+        return "❯ ";
+      }),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = [
           "-c",

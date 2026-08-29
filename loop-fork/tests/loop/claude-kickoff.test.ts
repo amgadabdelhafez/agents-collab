@@ -3,12 +3,16 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CLAUDE_KICKOFF_VISIBILITY_MAX_WAIT_MS,
+  CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS,
+  ClaudeKickoffVisibilityError,
   classifyKickoffComposer,
   kickoffTurnStarted,
   parseClaudeCliVersion,
   parseClaudeHookEvidence,
   readComposerBody,
   resolveKickoffCapability,
+  waitForLauncherComposerBody,
 } from "../../src/loop/claude-kickoff";
 
 // Producer fixture captured from real Claude Code 2.1.223 plus the preserved
@@ -352,5 +356,125 @@ describe("producer fixture provenance", () => {
         `${artifact.file}:${artifact.sha256}`
       );
     }
+  });
+});
+
+const visibilitySnapshot = (
+  paneText: string | undefined,
+  input: { activeClients?: number; pipeOpen?: boolean } = {}
+) => ({
+  activeClients: input.activeClients ?? 0,
+  paneText,
+  pipeOpen: input.pipeOpen ?? false,
+});
+
+describe("launcher paste visibility", () => {
+  test("returns an immediately visible launcher paste without sleeping", async () => {
+    const sleeps: number[] = [];
+    const body = await waitForLauncherComposerBody({
+      capture: () => visibilitySnapshot("❯ [Pasted text #1 +6 lines]"),
+      emptyBeforePaste: true,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    expect(body).toBe("[Pasted text #1 +6 lines]");
+    expect(sleeps).toEqual([]);
+  });
+
+  test("waits for delayed paste ingestion before allowing Enter", async () => {
+    const captures = ["❯ ", "❯ [Pasted text #1 +6 lines]"];
+    const sleeps: number[] = [];
+    const body = await waitForLauncherComposerBody({
+      capture: () => visibilitySnapshot(captures.shift()),
+      emptyBeforePaste: true,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    expect(body).toBe("[Pasted text #1 +6 lines]");
+    expect(sleeps).toEqual([CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS]);
+    expect(CLAUDE_KICKOFF_VISIBILITY_MAX_WAIT_MS).toBe(500);
+  });
+
+  test("normalizes generic tmux styling without hiding ownership", async () => {
+    const styled =
+      "\u001b[38;5;111m❯\u001b[0m \u001b[1m[Pasted text #1 +6 lines]\u001b[0m";
+    expect(
+      classifyKickoffComposer({
+        expectedComposerBody: "[Pasted text #1 +6 lines]",
+        paneText: styled,
+      })
+    ).toBe("kickoff-owned");
+    await expect(
+      waitForLauncherComposerBody({
+        capture: () => visibilitySnapshot(styled),
+        emptyBeforePaste: true,
+        sleep: async () => undefined,
+      })
+    ).resolves.toBe("[Pasted text #1 +6 lines]");
+  });
+
+  test("fails closed on attached, piped, foreign, and unreadable panes", async () => {
+    const cases = [
+      [
+        "attached",
+        visibilitySnapshot("❯ [Pasted text #1 +6 lines]", {
+          activeClients: 1,
+        }),
+      ],
+      [
+        "piped",
+        visibilitySnapshot("❯ [Pasted text #1 +6 lines]", {
+          pipeOpen: true,
+        }),
+      ],
+      ["foreign", visibilitySnapshot("❯ human draft")],
+      ["indeterminate", undefined],
+    ] as const;
+    for (const [expectedFailure, current] of cases) {
+      const error = await waitForLauncherComposerBody({
+        capture: () => current,
+        emptyBeforePaste: true,
+        sleep: async () => undefined,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ClaudeKickoffVisibilityError);
+      expect((error as ClaudeKickoffVisibilityError).failure).toBe(
+        expectedFailure
+      );
+    }
+  });
+
+  test("does not accept a non-empty pre-paste composer", async () => {
+    const invalid = {
+      capture: () => visibilitySnapshot("❯ [Pasted text #1 +6 lines]"),
+      emptyBeforePaste: false,
+      sleep: async () => undefined,
+    } as unknown as Parameters<typeof waitForLauncherComposerBody>[0];
+    const error = await waitForLauncherComposerBody(invalid).catch(
+      (caught: unknown) => caught
+    );
+    expect(error).toBeInstanceOf(ClaudeKickoffVisibilityError);
+    expect((error as ClaudeKickoffVisibilityError).failure).toBe(
+      "not-empty-before-paste"
+    );
+  });
+
+  test("times out at 500ms while the composer remains empty", async () => {
+    const sleeps: number[] = [];
+    const error = await waitForLauncherComposerBody({
+      capture: () => visibilitySnapshot("❯ "),
+      emptyBeforePaste: true,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ClaudeKickoffVisibilityError);
+    expect((error as ClaudeKickoffVisibilityError).failure).toBe("timeout");
+    expect(sleeps).toHaveLength(10);
+    expect(sleeps.every((ms) => ms === 50)).toBe(true);
   });
 });

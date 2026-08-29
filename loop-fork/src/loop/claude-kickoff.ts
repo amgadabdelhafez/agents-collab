@@ -8,6 +8,9 @@
 // captured producer bytes directly. See
 // specs/claude-kickoff-submit-guard/spec.md.
 
+export const CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS = 50;
+export const CLAUDE_KICKOFF_VISIBILITY_MAX_WAIT_MS = 500;
+
 export interface ClaudeKickoffEvidence {
   hookSequence: number;
   sawUserPromptSubmit: boolean;
@@ -30,11 +33,45 @@ export interface ClaudeKickoffCapability {
   recoveryAllowed: boolean;
 }
 
+export interface ClaudeKickoffVisibilitySnapshot {
+  activeClients: number;
+  paneText: string | undefined;
+  pipeOpen: boolean;
+}
+
 export type ClaudeKickoffComposerState =
   | "empty"
   | "kickoff-owned"
   | "foreign"
   | "indeterminate";
+
+export type ClaudeKickoffVisibilityFailure =
+  | "attached"
+  | "foreign"
+  | "indeterminate"
+  | "not-empty-before-paste"
+  | "piped"
+  | "timeout";
+
+export class ClaudeKickoffVisibilityError extends Error {
+  readonly failure: ClaudeKickoffVisibilityFailure;
+
+  constructor(failure: ClaudeKickoffVisibilityFailure) {
+    const details: Record<ClaudeKickoffVisibilityFailure, string> = {
+      attached: "a tmux client attached while the launcher paste was pending",
+      foreign: "the composer contained text that was not the launcher paste",
+      indeterminate: "the Claude composer could not be classified",
+      "not-empty-before-paste":
+        "the Claude composer was not positively empty before paste",
+      piped:
+        "the pane gained an external pipe while the launcher paste was pending",
+      timeout: `the launcher paste did not become visible within ${CLAUDE_KICKOFF_VISIBILITY_MAX_WAIT_MS}ms`,
+    };
+    super(`Claude kickoff visibility failed closed: ${details[failure]}.`);
+    this.name = "ClaudeKickoffVisibilityError";
+    this.failure = failure;
+  }
+}
 
 // Exactly the events `hooks/emit.ts::lifecycleState` maps to `working`.
 // `Notification` and `Stop` are excluded deliberately: that same function maps
@@ -165,6 +202,11 @@ const COMPOSER_PROMPT_MARKER = "❯";
 // `unblockClaudePane` is the authority when a pane snapshot is available; this
 // classifier only decides whether a keystroke would submit somebody's text.
 const COMPOSER_PLACEHOLDER_RE = /^Try ".*"$/;
+const CLAUDE_PASTED_BODY_RE = /^\[Pasted text #\d+(?: \+\d+ lines)?\]$/;
+// `tmux capture-pane -e` preserves generic CSI/SGR styling bytes. Strip them
+// before classifying the composer so styling cannot hide foreign text.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: parses tmux -e ANSI escapes
+const ANSI_SEQUENCE_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
 export const readComposerBody = (
   paneText: string | undefined
@@ -174,7 +216,9 @@ export const readComposerBody = (
   }
   const lines = paneText.split("\n");
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const candidate = (lines[index] ?? "").trimStart();
+    const candidate = (lines[index] ?? "")
+      .replace(ANSI_SEQUENCE_RE, "")
+      .trimStart();
     if (candidate.startsWith(COMPOSER_PROMPT_MARKER)) {
       return candidate.slice(COMPOSER_PROMPT_MARKER.length).trim();
     }
@@ -205,4 +249,56 @@ export const classifyKickoffComposer = (input: {
     return "indeterminate";
   }
   return body === input.expectedComposerBody ? "kickoff-owned" : "foreign";
+};
+
+const visibilityFailure = (
+  snapshot: ClaudeKickoffVisibilitySnapshot | undefined
+): ClaudeKickoffVisibilityFailure | undefined => {
+  if (
+    snapshot === undefined ||
+    readComposerBody(snapshot.paneText) === undefined
+  ) {
+    return "indeterminate";
+  }
+  if (snapshot.activeClients !== 0) {
+    return "attached";
+  }
+  if (snapshot.pipeOpen) {
+    return "piped";
+  }
+  const body = readComposerBody(snapshot.paneText);
+  if (body && !CLAUDE_PASTED_BODY_RE.test(body)) {
+    return "foreign";
+  }
+  return undefined;
+};
+
+export const waitForLauncherComposerBody = async (input: {
+  capture: () => ClaudeKickoffVisibilitySnapshot | undefined;
+  emptyBeforePaste: true;
+  sleep: (ms: number) => Promise<void>;
+}): Promise<string> => {
+  if (input.emptyBeforePaste !== true) {
+    throw new ClaudeKickoffVisibilityError("not-empty-before-paste");
+  }
+
+  const waits = Math.floor(
+    CLAUDE_KICKOFF_VISIBILITY_MAX_WAIT_MS /
+      CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS
+  );
+  for (let attempt = 0; attempt <= waits; attempt += 1) {
+    const snapshot = input.capture();
+    const failure = visibilityFailure(snapshot);
+    if (failure) {
+      throw new ClaudeKickoffVisibilityError(failure);
+    }
+    const body = readComposerBody(snapshot?.paneText);
+    if (body) {
+      return body;
+    }
+    if (attempt < waits) {
+      await input.sleep(CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS);
+    }
+  }
+  throw new ClaudeKickoffVisibilityError("timeout");
 };
