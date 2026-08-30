@@ -1,0 +1,8 @@
+{
+  "task_id": "ORCH-CONTROL-SURFACE-002",
+  "verdict": "pending",
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  }
+}
