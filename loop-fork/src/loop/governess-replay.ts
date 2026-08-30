@@ -126,6 +126,22 @@ const parseCyclePayload = (
   }
 };
 
+const pendingControlIssue = (
+  record: GovernessControlRecord
+): GovernessReplayIssue | undefined => {
+  let message: string | undefined;
+  if (record.phase === "prepared" || record.phase === "dispatched") {
+    message = `control has no delivery acknowledgement (latest phase: ${record.phase})`;
+  } else if (record.phase === "accepted") {
+    message = "control transport accepted but target consumption is unproven";
+  } else if (record.phase === "acknowledged") {
+    message = "control was consumed but has no terminal completion evidence";
+  }
+  return message
+    ? { controlId: record.controlId, message, severity: "error" }
+    : undefined;
+};
+
 const inspectJournalStructure = (
   records: GovernessControlRecord[]
 ): { issues: GovernessReplayIssue[]; latestEpoch: number } => {
@@ -164,12 +180,9 @@ const inspectJournalStructure = (
     }
   }
   for (const record of latestByControl.values()) {
-    if (record.phase === "prepared" || record.phase === "dispatched") {
-      issues.push({
-        controlId: record.controlId,
-        message: `control has no delivery acknowledgement (latest phase: ${record.phase})`,
-        severity: "error",
-      });
+    const issue = pendingControlIssue(record);
+    if (issue) {
+      issues.push(issue);
     }
   }
   return { issues, latestEpoch };

@@ -304,6 +304,61 @@ test("journaled controls reconcile from post-dispatch agent evidence", () => {
   });
 });
 
+test("accepted transport without target consumption times out by name", () => {
+  const journalFile = join(tempDir(), "control.jsonl");
+  const prepared = prepareGovernessControl(journalFile, {
+    action: "send-control",
+    agent: "claude",
+    at: "2026-07-25T00:00:00.000Z",
+    epoch: 4,
+    idempotencyKey: "4:send:claude:stalled",
+    payload: "review exact candidate",
+    policyClass: "safe-automatic",
+  });
+  transitionGovernessControl(
+    journalFile,
+    prepared.controlId,
+    "dispatched",
+    "2026-07-25T00:00:01.000Z"
+  );
+  transitionGovernessControl(
+    journalFile,
+    prepared.controlId,
+    "accepted",
+    "2026-07-25T00:00:02.000Z"
+  );
+  expect(
+    replayGovernessJournal(readGovernessJournal(journalFile))
+  ).toMatchObject({
+    issues: [
+      {
+        controlId: prepared.controlId,
+        message:
+          "control transport accepted but target consumption is unproven",
+      },
+    ],
+    ok: false,
+  });
+  const decisions = decideGovernessControlReconciliation(
+    readGovernessJournal(journalFile),
+    { claude: [] },
+    "2026-07-25T00:02:01.000Z"
+  );
+  expect(decisions).toEqual([
+    {
+      at: "2026-07-25T00:02:01.000Z",
+      controlId: prepared.controlId,
+      evidence: `consumption-timeout:claude:${prepared.controlId}`,
+      phase: "failed",
+    },
+  ]);
+  applyGovernessControlReconciliation(journalFile, decisions);
+  expect(readGovernessJournal(journalFile).at(-1)).toMatchObject({
+    evidence: `consumption-timeout:claude:${prepared.controlId}`,
+    phase: "failed",
+  });
+});
+
 test("behavioral cycle snapshots retain only transition evidence", () => {
   const journalFile = join(tempDir(), "control.jsonl");
   const prepared = prepareGovernessControl(journalFile, {

@@ -617,8 +617,10 @@ export interface GovernessControlReconciliation {
   at: string;
   controlId: string;
   evidence: string;
-  phase: "acknowledged" | "completed";
+  phase: "acknowledged" | "completed" | "failed";
 }
+
+export const GOVERNESS_CONTROL_CONSUMPTION_TIMEOUT_MS = 120_000;
 
 // Pure reconciliation: provider-authored hook evidence after dispatch is the
 // acknowledgement. A Stop event is terminal evidence. We deliberately do not
@@ -626,7 +628,8 @@ export interface GovernessControlReconciliation {
 // safer left pending than duplicated into a shared composer.
 export const decideGovernessControlReconciliation = (
   records: GovernessControlRecord[],
-  hooksByAgent: Partial<Record<Agent, HookEvent[]>>
+  hooksByAgent: Partial<Record<Agent, HookEvent[]>>,
+  nowIso?: string
 ): GovernessControlReconciliation[] => {
   const decisions: GovernessControlReconciliation[] = [];
   const usedEvidence = new Set<string>();
@@ -678,6 +681,20 @@ export const decideGovernessControlReconciliation = (
         controlId: record.controlId,
         evidence: governessHookEventReference(acknowledged),
         phase: "acknowledged",
+      });
+      continue;
+    }
+    const now = nowIso ? Date.parse(nowIso) : Number.NaN;
+    if (
+      record.phase === "accepted" &&
+      Number.isFinite(now) &&
+      now - sentAt >= GOVERNESS_CONTROL_CONSUMPTION_TIMEOUT_MS
+    ) {
+      decisions.push({
+        at: nowIso ?? record.at,
+        controlId: record.controlId,
+        evidence: `consumption-timeout:${record.agent}:${record.controlId}`,
+        phase: "failed",
       });
     }
   }

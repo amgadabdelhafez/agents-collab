@@ -35,7 +35,8 @@ export const decideGovernessCycle = (
   }
   for (const transition of decideGovernessControlReconciliation(
     snapshot.controls,
-    snapshot.hooks
+    snapshot.hooks,
+    snapshot.at
   )) {
     decisions.push({ kind: "transition-control", ...transition });
   }

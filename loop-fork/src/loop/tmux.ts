@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -64,12 +65,15 @@ import {
   DEFAULT_CODEX_CONFIG_VALUES,
 } from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
-import { GOVERNESS_SUBCOMMAND } from "./governess";
 import {
   GOVERNESS_DEAD_PANE_BORDER_FORMAT,
   GOVERNESS_PANE_DIED_SUBCOMMAND,
   GOVERNESS_REMAIN_ON_EXIT_FORMAT,
 } from "./governess-pane-liveness";
+import {
+  GOVERNESS_SECURE_SUBCOMMAND,
+  writeGovernessEnvironmentFile,
+} from "./governess-secure-env";
 import {
   buildClaudeHookSettings,
   buildCodexHooksJson,
@@ -1684,33 +1688,45 @@ const startGovernessPane = (
   opts: Options,
   session: string,
   runId: string,
+  runDir: string,
   paneTarget: string
 ): string => {
+  const environmentPath = join(runDir, `governess-env-${randomUUID()}.json`);
+  writeGovernessEnvironmentFile(
+    environmentPath,
+    governessEnv(opts, deps.env, deps.cwd)
+  );
   const command = buildShellCommand([
-    "env",
-    ...governessEnv(opts, deps.env, deps.cwd),
     ...deps.launchArgv,
-    GOVERNESS_SUBCOMMAND,
+    GOVERNESS_SECURE_SUBCOMMAND,
     runId,
+    environmentPath,
   ]);
-  const result = runTmuxCommand(deps, [
-    "tmux",
-    "split-window",
-    "-v",
-    "-f",
-    "-P",
-    "-F",
-    "#{pane_id}",
-    "-k",
-    "-l",
-    opts.governessHeight,
-    "-t",
-    `${session}:0`,
-    "-c",
-    deps.cwd,
-    command,
-  ]);
-  return stablePaneTarget(result, paneTarget);
+  try {
+    const result = runTmuxCommand(deps, [
+      "tmux",
+      "split-window",
+      "-v",
+      "-f",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-k",
+      "-l",
+      opts.governessHeight,
+      "-t",
+      `${session}:0`,
+      "-c",
+      deps.cwd,
+      command,
+    ]);
+    return stablePaneTarget(result, paneTarget);
+  } catch (error) {
+    // The child consumes and unlinks the file before starting Governess. If
+    // tmux never creates that child, the launcher still owns cleanup.
+    rmSync(environmentPath, { force: true });
+    throw error;
+  }
 };
 
 const armGovernessPaneLiveness = (
@@ -3195,7 +3211,8 @@ const startPairedControlPanes = (
   session: string,
   runId: string,
   runDir: string,
-  paneTargets: PairedPaneTargets
+  paneTargets: PairedPaneTargets,
+  onGovernessStarted: (paneTargets: PairedPaneTargets) => void
 ): PairedPaneTargets => {
   let governess = paneTargets.governess;
   if (paneTargets.governess) {
@@ -3204,8 +3221,15 @@ const startPairedControlPanes = (
       opts,
       session,
       runId,
+      runDir,
       paneTargets.governess
     );
+    const governessTargets = { ...paneTargets, governess };
+    // Persist the real pane identity and arm its death hook before starting
+    // optional helpers. Otherwise an early Governess exit can fall between
+    // split-window and the final control-layout write, leaving live utility
+    // panes with no durable dispatcher or recovery hook.
+    onGovernessStarted(governessTargets);
   }
   const auPair =
     governess && utilityPaneEnabled(deps.env)
@@ -3610,7 +3634,30 @@ const startPairedSession = async (
       session,
       storage.runId,
       storage.runDir,
-      paneTargets
+      paneTargets,
+      (governessPaneTargets) => {
+        updatePairedManifest(
+          deps,
+          storage,
+          manifest,
+          claudeSessionId,
+          codexAppServerPid,
+          codexRemoteUrl,
+          codexThreadId,
+          session,
+          paneAgents,
+          primaryAgent,
+          governessPaneTargets
+        );
+        if (governessPaneTargets.governess) {
+          armGovernessPaneLiveness(
+            deps,
+            session,
+            storage.runDir,
+            governessPaneTargets.governess
+          );
+        }
+      }
     );
     if (
       livePaneTargets.governess !== paneTargets.governess ||
@@ -3631,18 +3678,6 @@ const startPairedSession = async (
         paneAgents,
         primaryAgent,
         livePaneTargets
-      );
-    }
-    if (livePaneTargets.governess) {
-      // Arm only after the complete control layout and its stable pane targets
-      // are durable. `split-window -k` retains an earlier Governess exit, and
-      // the immediate hook run reconciles it without racing startup-failure
-      // cleanup for later control-pane creation.
-      armGovernessPaneLiveness(
-        deps,
-        session,
-        storage.runDir,
-        livePaneTargets.governess
       );
     }
     const primaryPane =

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -1248,17 +1249,18 @@ test("runInTmux writes paired session refs before starting governess", async () 
       events.lastIndexOf("spawn-governess:codex-thread-1:%41:%43")
     );
     expect(
-      events.some((event) => event.includes("'LOOP_GOVERNESS_LLM_TRACE=1'"))
+      events.every((event) => !event.includes("LOOP_GOVERNESS_LLM_TRACE=1"))
     ).toBe(true);
     expect(
-      events.some((event) => event.includes("'LOOP_GOVERNESS_AGENT_RENAME=1'"))
+      events.every((event) => !event.includes("LOOP_GOVERNESS_AGENT_RENAME=1"))
     ).toBe(true);
     expect(
       calls
         .filter(
           (args) =>
             args[0] === "tmux" &&
-            (args[1] === "new-session" || args[1] === "split-window")
+            (args[1] === "new-session" || args[1] === "split-window") &&
+            args.at(-1)?.includes("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
         )
         .every((args) =>
           args.at(-1)?.includes("'CLAUDE_CONFIG_DIR=/tmp/loop-claude'")
@@ -1296,14 +1298,31 @@ test("runInTmux writes paired session refs before starting governess", async () 
       expect(unsetAt).toBeLessThan(firstAssignmentAt);
     }
     expect(
-      events.some((event) =>
-        event.includes("'USAGE_TRACKER_URL=http://tracker.local'")
+      events.every(
+        (event) => !event.includes("USAGE_TRACKER_URL=http://tracker.local")
       )
     ).toBe(true);
+    expect(events.every((event) => !event.includes("dotenv-secret"))).toBe(
+      true
+    );
+    const environmentFiles = readdirSync(runDir).filter((name) =>
+      name.startsWith("governess-env-")
+    );
+    expect(environmentFiles).toHaveLength(1);
+    const environmentPath = join(runDir, environmentFiles[0] ?? "");
+    expect(statSync(environmentPath).mode % 0o1000).toBe(0o600);
+    const governessEnvironment = JSON.parse(
+      readFileSync(environmentPath, "utf8")
+    ) as Record<string, string>;
+    expect(governessEnvironment).toMatchObject({
+      CLAUDE_CONFIG_DIR: "/tmp/loop-claude",
+      LOOP_GOVERNESS_AGENT_RENAME: "1",
+      LOOP_GOVERNESS_LLM_TRACE: "1",
+      USAGE_TRACKER_SECRET: "dotenv-secret",
+      USAGE_TRACKER_URL: "http://tracker.local",
+    });
     expect(
-      events.some((event) =>
-        event.includes("'USAGE_TRACKER_SECRET=dotenv-secret'")
-      )
+      calls.some((args) => args.at(-1)?.includes("__governess-secure"))
     ).toBe(true);
     expect(
       events.indexOf("manifest:codex-thread-1:%41:repo-loop-1:0.2")

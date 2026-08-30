@@ -27,6 +27,10 @@ import {
   parseGovernessPaneDiedArgs,
 } from "./loop/governess-pane-liveness";
 import { runGovernessUtilityCommand } from "./loop/governess-replay";
+import {
+  consumeGovernessEnvironmentFile,
+  GOVERNESS_SECURE_SUBCOMMAND,
+} from "./loop/governess-secure-env";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { PairedLaunchClaim } from "./loop/launch-reservation";
 import {
@@ -209,6 +213,25 @@ const runMemoryPromoteSubcommand = (argv: string[]): boolean => {
   return true;
 };
 
+const runSecureGovernessSubcommand = async (
+  argv: string[]
+): Promise<boolean> => {
+  if (argv[0] !== GOVERNESS_SECURE_SUBCOMMAND) {
+    return false;
+  }
+  const [runId, environmentPath] = argv.slice(1);
+  if (!(runId && environmentPath)) {
+    throw new Error(
+      "Usage: loop __governess-secure <run-id> <environment-path>"
+    );
+  }
+  Object.assign(process.env, consumeGovernessEnvironmentFile(environmentPath));
+  await runGoverness(
+    resolveGovernessConfig(runId, withLegacyGovernessEnv(process.env))
+  );
+  return true;
+};
+
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
   if (runMemoryPromoteSubcommand(argv)) {
@@ -268,6 +291,9 @@ const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
     await runHookEmit(source, hookFile, {
       nativeChildContext: context === "native-child",
     });
+    return true;
+  }
+  if (await runSecureGovernessSubcommand(argv)) {
     return true;
   }
   if (
