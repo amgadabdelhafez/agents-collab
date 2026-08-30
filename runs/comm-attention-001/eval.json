@@ -1,0 +1,15 @@
+{
+  "task_id": "COMM-ATTENTION-001",
+  "feature": "supervisor-message-board-attention",
+  "timestamp": "2026-08-30T06:36:00Z",
+  "identity": {
+    "base_commit": "a991809ac8153aeeb03352f677a752bbb98e17e0",
+    "branch": "codex/comm-attention-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/comm-attention-001"
+  },
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  },
+  "verdict": "pending-implementation"
+}
