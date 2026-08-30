@@ -23,17 +23,17 @@ immutable durable message category.
 
 ## Acceptance criteria
 
-- [ ] The projector can read only the nominal durable thread-store class and
+- [x] The projector can read only the nominal durable thread-store class and
       malformed journal bytes fail before projection.
-- [ ] Exactly `question`, `conflict`, `failure`, and `authority-decision` are
+- [x] Exactly `question`, `conflict`, `failure`, and `authority-decision` are
       included; `informational` is excluded in every phase/action state.
-- [ ] A selected item remains visible after acknowledgement because category,
+- [x] A selected item remains visible after acknowledgement because category,
       not action state, defines Attention membership.
-- [ ] Lifecycle updates replace rather than duplicate a workflow item, while
+- [x] Lifecycle updates replace rather than duplicate a workflow item, while
       current phase/action and immutable category remain truthful.
-- [ ] Items sort by received time descending then workflow ID and restart plus
+- [x] Items sort by received time descending then workflow ID and restart plus
       repeated reads are byte-identical.
-- [ ] Output is defensive and contains no body, transcript, credential, local
+- [x] Output is defensive and contains no body, transcript, credential, local
       path, artifact content, manifest claim, or engine-specific type.
 - [ ] Focused/full/static/build/diff gates pass and an independent exact-SHA
       zero-write reviewer returns PASS.
