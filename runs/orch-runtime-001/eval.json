@@ -1,0 +1,8 @@
+{
+  "task_id": "ORCH-RUNTIME-001",
+  "verdict": "pending",
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  }
+}
