@@ -8,8 +8,26 @@
     "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/comm-attention-001"
   },
   "checks": {
-    "functional": { "passed": 0, "failed": 0, "details": [] },
-    "regression": { "passed": 0, "failed": 0, "details": [] }
+    "functional": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "strict deterministic board ingestion and defensive snapshots",
+        "malformed, body-bearing, path-bearing, and contradictory projections refused",
+        "Attention membership exactly follows canonical actionRequired",
+        "governed cross-supervisor bridge delivery, claim, and acknowledgement"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci",
+        "bun run check",
+        "bun run build",
+        "git diff --check"
+      ]
+    }
   },
-  "verdict": "pending-implementation"
+  "verdict": "pending-independent-review"
 }

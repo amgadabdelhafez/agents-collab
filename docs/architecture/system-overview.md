@@ -30,7 +30,7 @@ Supervisor message intake ──► engine-neutral WorkflowPort
                    ┌──────────────┴──────────────┐
                    ▼                             ▼
           delivery activity port       safe status projection
-            (bridge adapter next)       (Attention/message board next)
+            existing bridge JSONL       board + Attention read model
 
 Claude Agent ──PreToolUse──► Governess native lease
 Codex spawn_agent ──PreToolUse/config──► denied (sandbox inheritance)
@@ -63,6 +63,7 @@ or claim authority.
 | Native fallback | One leased read-only provider child for bounded exploration or independent review after settled utility evidence | Worker pool, edits, shell mutation, MCP/web access, descendants, authority, or final review |
 | Workflow port | Engine-neutral start, signal, query, cancel, inspect, identity, command idempotency, and history semantics | Temporal/DBOS SDK types, transport, UI, or provider selection |
 | SupervisorMessage workflow | Deterministic message lifecycle, delivery policy, claim authority, retry/escalation/dead-letter state, and safe projection | Engine hosting, bridge delivery implementation, or copying message bodies into read models |
+| SupervisorMessage read model | Strict body-free board and Attention snapshots derived from canonical workflow projections | Workflow mutation, route or claim authority, message bodies, or independent lifecycle state |
 
 ## Architecture invariants
 
@@ -151,6 +152,10 @@ or claim authority.
 - Attention OS and message-board projections allowlist lifecycle metadata and
   content-addressed artifact references. They never contain message bodies or
   local filesystem paths.
+- The communication board and Attention view share one workflow-ID-keyed read
+  model. Strict ingestion rejects extra fields and phase/action conflicts;
+  Attention membership is exactly `actionRequired != none`. Reads are defensive
+  copies and do not mutate workflow or bridge state.
 
 ## Key data flows
 
@@ -210,6 +215,11 @@ or claim authority.
    completes all six cases; DBOS matches the first five and then records a
    distinct-version recovery refusal. The signed engine decision selects
    Temporal while preserving the engine-neutral port and DBOS evidence.
+10. **Supervisor message projection:** a successful governed operation upserts
+    the returned canonical projection into one read model. The board exposes all
+    known items; Attention exposes only action-required items. The integration
+    proof routes directly from one supervisor to another through the existing
+    bridge, then claims and acknowledges without a human relay operation.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.

@@ -51,8 +51,8 @@ Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
   consumes: settled utility evidence, current Governess epoch, provider lifecycle events
 
 [Workflow orchestration]
-  owns: workflow-port.ts, in-memory-workflow-port.ts, supervisor-message-workflow.ts, supervisor-message-coordinator.ts, supervisor-message-governance.ts, bridge-supervisor-message-delivery.ts, temporal-workflow.ts, temporal-workflow-port.ts, temporal-replay-runtime.ts, dbos-workflow.ts, dbos-workflow-port.ts, dbos-replay-runtime.ts
-  exposes: engine-neutral start/signal/query/cancel/inspect and SupervisorMessage lifecycle/projection
+  owns: workflow-port.ts, in-memory-workflow-port.ts, supervisor-message-workflow.ts, supervisor-message-coordinator.ts, supervisor-message-governance.ts, bridge-supervisor-message-delivery.ts, supervisor-message-read-model.ts, temporal-workflow.ts, temporal-workflow-port.ts, temporal-replay-runtime.ts, dbos-workflow.ts, dbos-workflow-port.ts, dbos-replay-runtime.ts
+  exposes: engine-neutral start/signal/query/cancel/inspect, SupervisorMessage lifecycle, governed bridge delivery, and body-free board/Attention projections
   consumes: injected delivery activity, exact Temporal SDK 1.23.0, and exact DBOS SDK 4.27.6 for comparison evidence
   selected engine: Temporal for SupervisorMessage; DBOS comparison-only
 ```
@@ -89,7 +89,9 @@ optional bridge supervisor ──messages/route request──► bridge
 supervisor intake ──► WorkflowPort ──► SupervisorMessage state machine
                                           │
                                           ├─► injected idempotent delivery activity
-                                          └─► Attention/message-board-safe projection
+                                          └─► strict board read model
+                                                   ├─► all message-board items
+                                                   └─► action-required Attention items
 ```
 
 ## Cross-cutting concerns
@@ -107,6 +109,7 @@ supervisor intake ──► WorkflowPort ──► SupervisorMessage state machi
 | Visibility | Governess and optional utility pane | pane output; never a control dependency |
 | Workflow identity | WorkflowPort adapter | stable workflow ID, request IDs, immutable inspection history |
 | Supervisor message policy | SupervisorMessage workflow | deterministic events, projection, and focused replay tests |
+| Supervisor message visibility | Shared read model | strict board/Attention snapshots and cross-supervisor bridge proof |
 
 ## Blast-radius guide
 
@@ -125,3 +128,4 @@ supervisor intake ──► WorkflowPort ──► SupervisorMessage state machi
 | Replay fixture or digest | Reference, Temporal, and DBOS replay runtimes plus selection evidence | All engines execute identical inert steps and must match exact normalized observations |
 | Engine selection | Temporal adapter and ORCH-SELECT-001 decision | Production topology, identity, credentials, recovery, observability, and deploy authority remain separate gates |
 | Governed SupervisorMessage | Authority decision port, trusted supervisor route directory, existing bridge dispatcher, body-free receipt sink | No caller-supplied route paths; authorization must precede workflow or bridge mutation |
+| SupervisorMessage read model | Canonical workflow projection and stable workflow ID | Reject extra fields and phase/action conflicts; never copy body, transcript, credential, or local path material |

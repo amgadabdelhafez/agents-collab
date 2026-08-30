@@ -26,18 +26,18 @@ and existing bridge queue.
 
 ## Acceptance criteria
 
-- [ ] Board items are derived only from the canonical body-free workflow
+- [x] Board items are derived only from the canonical body-free workflow
       projection plus the stable workflow ID.
-- [ ] Board state upserts by workflow ID, rejects malformed projections, and
+- [x] Board state upserts by workflow ID, rejects malformed projections, and
       orders deterministically without duplicating a message.
-- [ ] Attention state contains exactly board items whose canonical
+- [x] Attention state contains exactly board items whose canonical
       `actionRequired` is not `none`; it does not invent priority or authority.
-- [ ] Both projections preserve only stable identities, lifecycle timestamps,
+- [x] Both projections preserve only stable identities, lifecycle timestamps,
       action, phase, delivery attempt count, and content-addressed artifact
       references. They contain no body, transcript, credential, or local path.
-- [ ] Read-model reads return defensive snapshots and cannot mutate canonical
+- [x] Read-model reads return defensive snapshots and cannot mutate canonical
       workflow state or subsequent projections.
-- [ ] One cross-supervisor proof uses the governed service and existing bridge
+- [x] One cross-supervisor proof uses the governed service and existing bridge
       queue to receive, deliver, claim, and acknowledge a message. It proves one
       pending bridge row, exact destination, deterministic board transitions,
       Attention removal after acknowledgement, and no human relay operation.
