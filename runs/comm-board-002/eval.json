@@ -1,0 +1,15 @@
+{
+  "task_id": "COMM-BOARD-002",
+  "feature": "durable-supervisor-artifact-references",
+  "timestamp": "2026-08-30T07:39:00Z",
+  "identity": {
+    "base_commit": "31461b749b7d50eb17efe2c07de10b9c08cfff65",
+    "branch": "codex/comm-board-002",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/comm-board-002"
+  },
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  },
+  "verdict": "pending-implementation"
+}
