@@ -198,6 +198,22 @@ const readClaudeTranscriptVersion = (runDir: string): string | undefined =>
   readClaudeSubmissionVersion(runDir);
 
 export const bridgeRuntimeCommandDeps = {
+  commandForPid: (pid: number): string | undefined => {
+    const result = spawnSync(
+      ["ps", "-ww", "-p", String(pid), "-o", "command="],
+      {
+        killSignal: "SIGKILL",
+        stderr: "ignore",
+        stdout: "pipe",
+        timeout: 750,
+      }
+    );
+    if (result.signalCode || result.exitCode !== 0) {
+      return undefined;
+    }
+    const command = decodeOutput(result.stdout).trim();
+    return command || undefined;
+  },
   createWorkerWakeSession: (runDir: string) =>
     createBridgeWorkerWakeSession(runDir),
   readClaudeTranscriptVersion,
@@ -268,6 +284,16 @@ const isProcessAlive = (pid: number): boolean => {
   } catch {
     return false;
   }
+};
+
+const isBridgeWorkerProcess = (pid: number, runDir: string): boolean => {
+  if (!isProcessAlive(pid)) {
+    return false;
+  }
+  const command = bridgeRuntimeCommandDeps.commandForPid(pid);
+  return Boolean(
+    command?.includes(BRIDGE_WORKER_SUBCOMMAND) && command.includes(runDir)
+  );
 };
 
 const wait = async (ms: number): Promise<void> => {
@@ -840,6 +866,12 @@ const claudeComposerText = (output: string): string | undefined => {
 export const isClaudePaneReady = (output: string): boolean =>
   claudeComposerText(output) === "";
 
+const CLAUDE_VISIBLE_ACTIVE_RE =
+  /(?:Working…|esc to interrupt|ctrl-c to interrupt|Running tool)/iu;
+
+const isProviderNeutralClaudeIdle = (output: string): boolean =>
+  isClaudePaneReady(output) && !CLAUDE_VISIBLE_ACTIVE_RE.test(output);
+
 export const isClaudeTurnActive = (runDir: string): boolean => {
   try {
     const latest = readFileSync(join(runDir, "hooks", "claude.jsonl"), "utf8")
@@ -920,9 +952,7 @@ const waitForClaudePane = async (
   pane: string,
   attempts = GENERIC_TMUX_READY_POLLS
 ): Promise<boolean> => {
-  if (isClaudeTurnActive(runDir)) {
-    return false;
-  }
+  let previousIdleCapture: string | undefined;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const output = capturePane(pane, true);
     if (output === undefined) {
@@ -930,6 +960,18 @@ const waitForClaudePane = async (
     }
     if (!isClaudeTurnActive(runDir) && isClaudePaneReady(output)) {
       return true;
+    }
+    // Claude-compatible providers do not all emit a terminal Stop hook. An
+    // exact empty prompt that is unchanged across two bounded captures is the
+    // provider-neutral quiescence proof. Visible working chrome remains a
+    // hard refusal even if a prompt glyph happens to be present.
+    if (isProviderNeutralClaudeIdle(output)) {
+      if (previousIdleCapture === output) {
+        return true;
+      }
+      previousIdleCapture = output;
+    } else {
+      previousIdleCapture = undefined;
     }
     await wait(CODEX_TMUX_READY_DELAY_MS);
   }
@@ -1132,7 +1174,7 @@ export const ensureBridgeWorker = (runDir: string): boolean => {
     return false;
   }
   const currentPid = readBridgeWorkerPid(runDir);
-  if (currentPid && isProcessAlive(currentPid)) {
+  if (currentPid && isBridgeWorkerProcess(currentPid, runDir)) {
     return true;
   }
   clearBridgeWorkerPid(runDir);
@@ -1392,6 +1434,9 @@ export const notifyTmuxBridgeInbox = async (
     if (!resolved) {
       return false;
     }
+    // Re-check the ledger after the bounded readiness wait. The target may
+    // consume its inbox while the worker is proving a safe composer; never
+    // type a stale nudge after that authoritative acknowledgement.
     if (!(await waitForBridgePaneReady(runDir, resolved.pane, target))) {
       return false;
     }
@@ -1406,7 +1451,7 @@ export const notifyTmuxBridgeInbox = async (
       resolved.pane,
       target,
       buildTmuxBridgeNudge(stillPending.length),
-      readyAttempts ?? 1
+      readyAttempts
     );
     if (!notified) {
       return false;

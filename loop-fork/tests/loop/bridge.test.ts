@@ -2132,6 +2132,67 @@ test("Claude delivery does not inject into an active turn with an empty composer
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Claude bridge nudge uses stable empty composer when provider emits no Stop hook", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (args[0] === "tmux" && args[1] === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (args[0] === "tmux" && args[1] === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nGLM 5.2 · OpenRouter", "utf8"),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptRead = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptRead++ === 0 ? "before-nudge" : "after-nudge"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(join(runDir, "hooks"), { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify(IDLE_CLAUDE_MANIFEST)}\n`
+  );
+  writeFileSync(
+    join(runDir, "hooks", "claude.jsonl"),
+    `${JSON.stringify({
+      agent: "claude",
+      event: "PostToolUse",
+      state: "working",
+      ts: "2026-03-23T10:01:00.000Z",
+    })}\n`
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:01.000Z",
+    id: "msg-provider-neutral-idle",
+    kind: "message",
+    message: "Review packet is waiting in the ledger.",
+    source: "codex",
+    target: "claude",
+  });
+
+  expect(await bridge.notifyTmuxBridgeInbox(runDir, "claude", 100_000)).toBe(
+    true
+  );
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) => args[0] === "tmux" && args.at(-1) === "Enter"
+    )
+  ).toHaveLength(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
+  rmSync(root, { force: true, recursive: true });
+});
+
 const IDLE_CLAUDE_MANIFEST = {
   createdAt: "2026-03-23T10:00:00.000Z",
   cwd: "/repo",
@@ -4515,6 +4576,10 @@ test("ensureBridgeWorker launches one app-server worker per active run", async (
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
+  bridge.bridgeRuntimeCommandDeps.commandForPid = mock(
+    () =>
+      `/opt/bun src/loop/main.ts ${bridge.BRIDGE_WORKER_SUBCOMMAND} ${runDir}`
+  );
   writeFileSync(
     join(runDir, "manifest.json"),
     `${JSON.stringify({
@@ -4548,6 +4613,42 @@ test("ensureBridgeWorker launches one app-server worker per active run", async (
     stdout: "ignore",
   });
 
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("ensureBridgeWorker replaces a reused pid that is not the run worker", async () => {
+  const bridge = await loadBridge();
+  const spawn = mock(() => ({ pid: 78_787, unref: mock(() => undefined) }));
+  bridge.bridgeRuntimeCommandDeps.spawn = spawn;
+  bridge.bridgeRuntimeCommandDeps.commandForPid = mock(
+    () => "/usr/libexec/unrelated-service"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, "bridge-worker.json"), '{"pid":45568}\n');
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-1",
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`
+  );
+
+  expect(bridge.ensureBridgeWorker(runDir)).toBe(true);
+  expect(spawn).toHaveBeenCalledTimes(1);
+  expect(
+    JSON.parse(readFileSync(join(runDir, "bridge-worker.json"), "utf8"))
+  ).toEqual({ pid: 78_787 });
   rmSync(root, { recursive: true, force: true });
 });
 
