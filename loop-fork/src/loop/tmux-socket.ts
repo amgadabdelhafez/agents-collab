@@ -497,6 +497,21 @@ export const paneTargetFromManifest = (
   return makePaneTarget(socket, session, value);
 };
 
+/**
+ * Provenance-safe compatibility for manifests that persisted agent roles but
+ * predate explicit pane ids. Only the two historical primary pane positions
+ * are accepted, and both socket and session still come from the exact handle.
+ */
+export const legacyPrimaryPaneTargetFromManifest = (
+  handle: ManifestHandle,
+  paneId: "0.0" | "0.1"
+): OwnedPaneTarget | undefined => {
+  const { socket, session } = contentsOf(handle);
+  return socket && session
+    ? makePaneTarget(socket, session, `${session}:${paneId}`)
+    : undefined;
+};
+
 const makePaneTarget = (
   socket: TmuxSocket,
   session: string,

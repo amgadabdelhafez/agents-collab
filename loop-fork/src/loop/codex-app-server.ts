@@ -1425,10 +1425,24 @@ const readOrResumeCodexThread = async (
       threadId,
     });
   } catch {
-    return client.sendRequest(METHOD_THREAD_RESUME, {
-      excludeTurns: false,
-      threadId,
-    });
+    try {
+      return await client.sendRequest(METHOD_THREAD_RESUME, {
+        excludeTurns: false,
+        threadId,
+      });
+    } catch (error) {
+      if (!toError(error).message.includes("list_turns is not supported")) {
+        throw error;
+      }
+      // Older app-server builds can resume the persisted thread but cannot
+      // enumerate its turns. Delivery does not need historical turns: resume
+      // the exact thread without them, then let turn/start provide the
+      // authoritative busy-or-accepted result.
+      return client.sendRequest(METHOD_THREAD_RESUME, {
+        excludeTurns: true,
+        threadId,
+      });
+    }
   }
 };
 

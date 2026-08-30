@@ -520,6 +520,56 @@ test("injectCodexMessage resumes an evicted persisted thread before delivery", a
   });
 });
 
+test("injectCodexMessage resumes without turns when list_turns is unsupported", async () => {
+  const appServer = await getModule();
+  currentHandler = (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/read") {
+      write({ id: request.id, error: { message: "thread not loaded" } });
+      return;
+    }
+    if (request.method === "thread/resume") {
+      const params = request.params as { excludeTurns?: boolean };
+      if (!params.excludeTurns) {
+        write({
+          id: request.id,
+          error: { message: "list_turns is not supported yet" },
+        });
+        return;
+      }
+      write({ id: request.id, result: { thread: {} } });
+      return;
+    }
+    if (request.method === "turn/start") {
+      write({ id: request.id, result: { turn: { id: "turn-fallback" } } });
+    }
+  };
+
+  await expect(
+    appServer.injectCodexMessage(
+      "ws://127.0.0.1:4500",
+      "thread-legacy",
+      "Drain the durable bridge inbox."
+    )
+  ).resolves.toBe(true);
+  const frames = wsWrites.map((line) => JSON.parse(line) as RequestFrame);
+  expect(frames.map((frame) => frame.method)).toEqual([
+    "initialize",
+    "initialized",
+    "thread/read",
+    "thread/resume",
+    "thread/resume",
+    "turn/start",
+  ]);
+  expect(frames[4]?.params).toEqual({
+    excludeTurns: true,
+    threadId: "thread-legacy",
+  });
+});
+
 test("injectCodexMessage fails closed when an evicted thread cannot resume", async () => {
   const appServer = await getModule();
   currentHandler = (request, write) => {

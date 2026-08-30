@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { consumeBridgeInbox } from "./bridge-dispatch";
 import { isBridgeDeliveryClaimed } from "./bridge-runtime";
 import {
@@ -13,6 +14,7 @@ import {
   type NativeFallbackSnapshot,
   readNativeFallbackRequests,
 } from "./native-subagent";
+import { readRunManifest } from "./run-state";
 import {
   createUtilityRouteRequest,
   MAX_UTILITY_CONTEXT_REFS,
@@ -1028,6 +1030,12 @@ const routeTask = (
   ) {
     throw new UtilityBridgeInputError(
       "main agents cannot override the route_task requester"
+    );
+  }
+  const manifest = readRunManifest(join(runDir, "manifest.json"));
+  if (kind === "edit" && manifest?.primaryAgent === "codex") {
+    throw new UtilityBridgeInputError(
+      "utility edit routing is disabled because this run binds Codex as the sole writer; keep the edit with the primary Codex driver"
     );
   }
   const request = createUtilityRouteRequest({

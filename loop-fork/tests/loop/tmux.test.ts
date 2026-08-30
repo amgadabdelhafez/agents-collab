@@ -6458,6 +6458,32 @@ test("tmux internals launch Claude in bypass mode", () => {
   );
 });
 
+test("Claude reviewer command mechanically denies filesystem and shell tools", () => {
+  const reviewer = tmuxInternals.buildClaudeCommand(
+    "claude-review-session",
+    "z-ai/glm-5.2",
+    "loop-bridge-review",
+    false,
+    undefined,
+    undefined,
+    "/run/claude-review-mcp.json",
+    "off",
+    "low",
+    true
+  );
+  const deniedIndex = reviewer.indexOf("--disallowedTools");
+  expect(deniedIndex).toBeGreaterThan(-1);
+  expect(reviewer.slice(deniedIndex + 1, deniedIndex + 7)).toEqual([
+    "Bash",
+    "Edit",
+    "Write",
+    "Agent",
+    "Task",
+    "TeamCreate",
+  ]);
+  expect(reviewer).toContain("--dangerously-skip-permissions");
+});
+
 test("tmux internals build run names", () => {
   expect(tmuxInternals.buildRunName("repo", 3)).toBe("repo-loop-3");
 });

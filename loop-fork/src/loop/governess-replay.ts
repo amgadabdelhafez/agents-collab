@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "bun";
-import { readBridgeQueueHealth } from "./bridge-store";
+import { hasBridgeDeliveryRoute } from "./bridge-runtime";
+import {
+  readBridgeQueueHealth,
+  readPendingBridgeMessages,
+} from "./bridge-store";
 import { recoverGovernessControlPlane } from "./governess-control-plane-recovery";
 import {
   decideGovernessCycle,
@@ -384,6 +388,14 @@ export const governessDoctor = (
             )
         )
       : true;
+  const pendingAgentTargets = readPendingBridgeMessages(storage.runDir)
+    .map((message) => message.target)
+    .filter((agent): agent is Agent => agent !== "supervisor");
+  const bridgeTransportReady =
+    existsSync(join(storage.runDir, "bridge.jsonl")) &&
+    pendingAgentTargets.every((agent) =>
+      hasBridgeDeliveryRoute(storage.runDir, agent)
+    );
   const checks = {
     adapter: lifecycleReady,
     epoch: epoch > 0,
@@ -397,7 +409,7 @@ export const governessDoctor = (
       session && sessionLiveness === "live" && sessionReady === true
     ),
     state: existsSync(stateFile) && state !== undefined,
-    transport: existsSync(join(storage.runDir, "bridge.jsonl")),
+    transport: bridgeTransportReady,
   };
   return {
     checks,

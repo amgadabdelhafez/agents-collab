@@ -747,7 +747,8 @@ const buildClaudeCommand = (
   settingsPath?: string,
   mcpConfigPath?: string,
   nativeSubagentMode: NativeSubagentMode = "off",
-  effort: EffortLevel = DEFAULT_CLAUDE_DRIVER_EFFORT
+  effort: EffortLevel = DEFAULT_CLAUDE_DRIVER_EFFORT,
+  reviewerOnly = false
 ): string[] => {
   const args = [
     "claude",
@@ -763,6 +764,17 @@ const buildClaudeCommand = (
     "--dangerously-load-development-channels",
     `server:${channelServer}`,
     "--dangerously-skip-permissions",
+    ...(reviewerOnly
+      ? [
+          "--disallowedTools",
+          "Bash",
+          "Edit",
+          "Write",
+          "Agent",
+          "Task",
+          "TeamCreate",
+        ]
+      : []),
     ...claudeNativeSubagentArgs(nativeSubagentMode),
   ];
   if (settingsPath) {
@@ -2151,7 +2163,8 @@ const buildPairedAgentCommand = ({
       claudeSettingsPath,
       claudeMcpConfigPath,
       nativeSubagentMode,
-      effort
+      effort,
+      agent !== opts.agent
     );
   }
   if (agent === "codex") {

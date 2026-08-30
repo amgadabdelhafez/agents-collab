@@ -20,6 +20,23 @@ import { transitionUtilityJob } from "../../src/loop/utility-store";
 
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/;
 
+const tmuxCommand = (args: readonly string[]): string | undefined => {
+  if (args[0] !== "tmux") {
+    return undefined;
+  }
+  return args[1] === "-S" ? args[3] : args[1];
+};
+
+const tmuxLiteralText = (args: readonly string[]): string | undefined => {
+  if (tmuxCommand(args) !== "send-keys") {
+    return undefined;
+  }
+  const literalIndex = args.indexOf("-l");
+  return literalIndex >= 0 && args[literalIndex + 1] === "--"
+    ? args[literalIndex + 2]
+    : undefined;
+};
+
 const loadBridge = (
   overrides: {
     injectCodexMessage?: (...args: string[]) => Promise<boolean>;
@@ -1363,6 +1380,57 @@ test("route_task gives edit-specific recovery guidance", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Codex-primary runs refuse utility edit writers before queueing", async () => {
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-08-30T08:44:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      primaryAgent: "codex",
+      repoId: "repo-123",
+      runId: "1",
+      state: "working",
+      status: "running",
+      updatedAt: "2026-08-30T08:44:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+
+  const result = await runBridgeProcess(
+    runDir,
+    "codex",
+    encodeFrame({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: {
+          acceptance_criteria: ["change only the two exact files"],
+          kind: "edit",
+          objective: "Update the current task plan and status",
+          read_scope: ["PLAN.md", "STATUS.md"],
+          required_capabilities: ["inspect", "scoped-edit"],
+          work_shape: "separable",
+          write_scope: ["PLAN.md", "STATUS.md"],
+        },
+        name: "route_task",
+      },
+    })
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain(
+    "utility edit routing is disabled because this run binds Codex as the sole writer"
+  );
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("route_task rejects an unprofiled command with exact recovery guidance", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
@@ -1732,10 +1800,10 @@ test("external supervisor cannot apply a utility patch", async () => {
 
 test("Codex-to-Claude dispatch nudges the pane without resolving delivery", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -1789,7 +1857,15 @@ test("Codex-to-Claude dispatch nudges the pane without resolving delivery", asyn
   expect(result.status).toBe("queued");
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(spawnSync.mock.calls).toContainEqual([
-    ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "Enter"],
+    [
+      "tmux",
+      "-S",
+      "/tmp/loop-bridge-test.sock",
+      "send-keys",
+      "-t",
+      "repo-loop-8:0.0",
+      "Enter",
+    ],
     {
       killSignal: "SIGKILL",
       stderr: "ignore",
@@ -1808,10 +1884,10 @@ test("Codex-to-Claude dispatch nudges the pane without resolving delivery", asyn
 
 test("tmux inbox emits one doorbell while messages remain pending", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -1874,26 +1950,16 @@ test("tmux inbox emits one doorbell while messages remain pending", async () => 
 });
 
 test("large Claude bridge bodies stay in the ledger while the pane gets a bounded nudge", async () => {
-  const events: string[] = [];
   let loadedText = "";
-  let pasteCaptureCalls = 0;
-  let pasted = false;
   let submitted = false;
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       let pane = "❯\n\nOpus 5 · bypass permissions on";
       if (submitted) {
         pane = "⏺ Working… (1s · esc to interrupt)\n\nOpus 5";
-      } else if (pasted) {
-        pasteCaptureCalls += 1;
-        events.push(`capture:${pasteCaptureCalls}`);
-        if (pasteCaptureCalls >= 3) {
-          pane = "❯ [Pasted text #1]\n\nOpus 5 · bypass permissions on";
-          events.push("ready");
-        }
       }
       return {
         exitCode: 0,
@@ -1901,18 +1967,9 @@ test("large Claude bridge bodies stay in the ledger while the pane gets a bounde
         stdout: Buffer.from(pane, "utf8"),
       };
     }
-    if (args[0] === "tmux" && args[1] === "load-buffer") {
-      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
-    }
-    if (args[0] === "tmux" && args[1] === "paste-buffer") {
-      pasted = true;
-      events.push("paste");
-    }
-    if (args[0] === "tmux" && args[1] === "send-keys") {
+    if (tmuxCommand(args) === "send-keys") {
+      loadedText = tmuxLiteralText(args) ?? loadedText;
       submitted = args.at(-1) === "Enter";
-      if (submitted) {
-        events.push("enter");
-      }
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -1960,13 +2017,11 @@ test("large Claude bridge bodies stay in the ledger while the pane gets a bounde
     "Bridge: 1 message waiting. Call receive_messages now."
   );
   expect(loadedText).not.toContain("Review this exact evidence");
-  expect(events.indexOf("paste")).toBeLessThan(events.indexOf("enter"));
-  expect(events).not.toContain("ready");
   expect(
     spawnSync.mock.calls.filter(
-      ([[, command, , , key]]) => command === "send-keys" && key === "-l"
+      ([args]) => tmuxLiteralText(args) === loadedText
     )
-  ).toHaveLength(0);
+  ).toHaveLength(1);
   expect(
     readdirSync(runDir).filter((name) => name.startsWith(".bridge-paste-"))
   ).toEqual([]);
@@ -1983,10 +2038,10 @@ test("large Claude bridge bodies stay in the ledger while the pane gets a bounde
 test("Claude delivery retries a stranded composer with space then Enter", async () => {
   let captureCalls = 0;
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       captureCalls += 1;
       const pane =
         captureCalls <= 2 || captureCalls >= 4
@@ -2046,7 +2101,17 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
     )
   ).toHaveLength(2);
   expect(spawnSync.mock.calls).toContainEqual([
-    ["tmux", "send-keys", "-t", "repo-loop-8:0.0", "-l", "--", " "],
+    [
+      "tmux",
+      "-S",
+      "/tmp/loop-bridge-test.sock",
+      "send-keys",
+      "-t",
+      "repo-loop-8:0.0",
+      "-l",
+      "--",
+      " ",
+    ],
     {
       killSignal: "SIGKILL",
       stderr: "ignore",
@@ -2064,10 +2129,10 @@ test("Claude delivery retries a stranded composer with space then Enter", async 
 
 test("Claude delivery does not inject into an active turn with an empty composer", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -2122,9 +2187,7 @@ test("Claude delivery does not inject into an active turn with an empty composer
 
   expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
   expect(
-    spawnSync.mock.calls.filter(
-      ([args]) => args[0] === "tmux" && args[1] === "send-keys"
-    )
+    spawnSync.mock.calls.filter(([args]) => tmuxCommand(args) === "send-keys")
   ).toHaveLength(0);
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(bridge.readPendingBridgeMessages(runDir)[0]).toMatchObject(message);
@@ -2134,10 +2197,10 @@ test("Claude delivery does not inject into an active turn with an empty composer
 
 test("Claude bridge nudge uses stable empty composer when provider emits no Stop hook", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -2232,7 +2295,7 @@ test("Claude delivery injects over a dim type-ahead suggestion", async () => {
   const ghostPane =
     "\u001B[39m❯ \u001B[2mwait for codex's verdict\u001B[0m\n\nOpus 5 | ctx: 59%";
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -2281,7 +2344,7 @@ test("Claude delivery injects over a 2.1.221 suggestion-color ghost", async () =
   const ghostPane =
     "\u001B[39m❯ \u001B[94mwait for codex's verdict\u001B[39m\n\nOpus 5 | ctx: 59%";
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -2346,7 +2409,7 @@ test("Claude delivery holds no claim while the pane is not ready", async () => {
   );
   const claimSeenDuringWait: boolean[] = [];
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       claimSeenDuringWait.push(existsSync(claimPath));
       return {
         exitCode: 0,
@@ -2363,9 +2426,7 @@ test("Claude delivery holds no claim while the pane is not ready", async () => {
   expect(claimSeenDuringWait.length).toBeGreaterThan(0);
   expect(claimSeenDuringWait.every((seen) => !seen)).toBe(true);
   expect(
-    spawnSync.mock.calls.filter(
-      ([args]) => args[0] === "tmux" && args[1] === "send-keys"
-    )
+    spawnSync.mock.calls.filter(([args]) => tmuxCommand(args) === "send-keys")
   ).toHaveLength(0);
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
 
@@ -2387,7 +2448,7 @@ test("Claude delivery aborts without typing when the message is consumed mid-wai
   };
   let consumed = false;
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       if (!consumed) {
         consumed = true;
         bridge.consumeBridgeInbox(runDir, "claude", "polled during wait");
@@ -2405,9 +2466,7 @@ test("Claude delivery aborts without typing when the message is consumed mid-wai
 
   expect(await bridge.deliverTmuxBridgeMessage(runDir, message)).toBe(false);
   expect(
-    spawnSync.mock.calls.filter(
-      ([args]) => args[0] === "tmux" && args[1] === "send-keys"
-    )
+    spawnSync.mock.calls.filter(([args]) => tmuxCommand(args) === "send-keys")
   ).toHaveLength(0);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
 
@@ -2440,10 +2499,10 @@ test("Claude submission evidence advances when the hook journal advances", async
 test("Claude delivery confirms when submission evidence advances into an active pane", async () => {
   let captureCalls = 0;
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       captureCalls += 1;
       return {
         exitCode: 0,
@@ -2514,10 +2573,10 @@ test("Claude delivery confirms when submission evidence advances into an active 
 test("unconfirmed Claude delivery remains pending after one retry", async () => {
   let captureCalls = 0;
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       captureCalls += 1;
       return {
         exitCode: 0,
@@ -2584,10 +2643,10 @@ test("unconfirmed Claude delivery remains pending after one retry", async () => 
 test("a post-injection human draft is never submitted by fallback", async () => {
   let captureCalls = 0;
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       captureCalls += 1;
       return {
         exitCode: 0,
@@ -2647,8 +2706,7 @@ test("a post-injection human draft is never submitted by fallback", async () => 
   ).toHaveLength(1);
   expect(
     spawnSync.mock.calls.filter(
-      ([args]) =>
-        args[0] === "tmux" && args[1] === "send-keys" && args.at(-1) === " "
+      ([args]) => tmuxCommand(args) === "send-keys" && args.at(-1) === " "
     )
   ).toHaveLength(0);
   expect(bridge.readPendingBridgeMessages(runDir)).toEqual([
@@ -2659,10 +2717,10 @@ test("a post-injection human draft is never submitted by fallback", async () => 
 
 test("immediate Claude notification and worker drain nudge once without delivery", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -2719,8 +2777,7 @@ test("immediate Claude notification and worker drain nudge once without delivery
   expect(typeof workerDelivered).toBe("boolean");
   expect(
     spawnSync.mock.calls.filter(
-      ([args]) =>
-        args[0] === "tmux" && args[1] === "send-keys" && args.at(-1) === "Enter"
+      ([args]) => tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter"
     )
   ).toHaveLength(1);
   expect(
@@ -3695,7 +3752,7 @@ test("concurrent Codex delivery attempts share one app-server claim", async () =
 test("bridge sends Codex through app-server even when tmux is live", async () => {
   const injectCodexMessage = mock(async () => true);
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0 };
     }
     return { exitCode: 1 };
@@ -3755,7 +3812,7 @@ test("bridge sends Codex through app-server even when tmux is live", async () =>
 test("direct Codex delivery does not probe or rewrite stored tmux state", async () => {
   const injectCodexMessage = mock(async () => true);
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 1 };
     }
     if (args[0] === "claude" && args[1] === "mcp" && args[2] === "remove") {
@@ -3816,10 +3873,10 @@ test("direct Codex delivery does not probe or rewrite stored tmux state", async 
 test("bridge drains codex messages through the persisted stable pane target", async () => {
   let loadedText = "";
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -3829,11 +3886,11 @@ test("bridge drains codex messages through the persisted stable pane target", as
         ),
       };
     }
-    if (args[0] === "tmux" && args[1] === "send-keys") {
-      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    if (tmuxLiteralText(args) !== undefined) {
+      loadedText = tmuxLiteralText(args) ?? "";
     }
-    if (args[0] === "tmux" && args[1] === "load-buffer") {
-      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
+    if (tmuxCommand(args) === "send-keys") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -3877,13 +3934,20 @@ test("bridge drains codex messages through the persisted stable pane target", as
     "Bridge: 1 message waiting. Call receive_messages now."
   );
   expect(
-    spawnSync.mock.calls.filter(([[, command]]) => command === "load-buffer")
-  ).toHaveLength(1);
-  expect(
-    spawnSync.mock.calls.filter(([[, command]]) => command === "paste-buffer")
+    spawnSync.mock.calls.filter(
+      ([args]) => tmuxLiteralText(args) === loadedText
+    )
   ).toHaveLength(1);
   expect(spawnSync.mock.calls).toContainEqual([
-    ["tmux", "send-keys", "-t", "%41", "Enter"],
+    [
+      "tmux",
+      "-S",
+      "/tmp/loop-bridge-test.sock",
+      "send-keys",
+      "-t",
+      "%41",
+      "Enter",
+    ],
     {
       killSignal: "SIGKILL",
       stderr: "ignore",
@@ -3896,7 +3960,7 @@ test("bridge drains codex messages through the persisted stable pane target", as
 
 test("bridge does not fall back positionally when persisted pane roles are missing", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     throw new Error(`incomplete topology must not invoke ${args.join(" ")}`);
@@ -3943,21 +4007,21 @@ test("bridge does not fall back positionally when persisted pane roles are missi
 test("bridge drains pending oss tmux messages through the stored pane routing", async () => {
   let loadedText = "";
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from("standing by for Codex review request", "utf8"),
       };
     }
-    if (args[0] === "tmux" && args[1] === "send-keys") {
-      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    if (tmuxLiteralText(args) !== undefined) {
+      loadedText = tmuxLiteralText(args) ?? "";
     }
-    if (args[0] === "tmux" && args[1] === "load-buffer") {
-      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
+    if (tmuxCommand(args) === "send-keys") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -4002,15 +4066,13 @@ test("bridge drains pending oss tmux messages through the stored pane routing", 
     "Bridge: 1 message waiting. Call receive_messages now."
   );
   expect(
-    spawnSync.mock.calls.filter(([[, command]]) => command === "load-buffer")
-  ).toHaveLength(1);
-  expect(
-    spawnSync.mock.calls.filter(([[, command]]) => command === "paste-buffer")
+    spawnSync.mock.calls.filter(
+      ([args]) => tmuxLiteralText(args) === loadedText
+    )
   ).toHaveLength(1);
   expect(
     spawnSync.mock.calls.filter(
-      ([[, command, , , key]]) =>
-        command === "send-keys" && (key === "-l" || key === "C-j")
+      ([args]) => tmuxCommand(args) === "send-keys" && args.at(-1) === "C-j"
     )
   ).toHaveLength(0);
 
@@ -4020,18 +4082,18 @@ test("bridge drains pending oss tmux messages through the stored pane routing", 
 test("bridge drains pending Claude messages through the visible tmux pane", async () => {
   let loadedText = "";
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from("❯\n\nOpus 5 · bypass permissions on", "utf8"),
       };
     }
-    if (args[0] === "tmux" && args[1] === "load-buffer") {
-      loadedText = readFileSync(args.at(-1) ?? "", "utf8");
+    if (tmuxLiteralText(args) !== undefined) {
+      loadedText = tmuxLiteralText(args) ?? "";
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -4510,7 +4572,7 @@ test("runBridgeWorker delivers Codex without probing stale tmux state", async ()
     return true;
   });
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 1, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     if (args[0] === "claude" && args[1] === "mcp" && args[2] === "remove") {
@@ -4762,10 +4824,10 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
   let runDir = "";
   const injectCodexMessage = mock(() => false);
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -5074,10 +5136,10 @@ test("runBridgeWorker injects Codex directly and only nudges Claude", async () =
   let runDir = "";
   const injectCodexMessage = mock(() => true);
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -5230,7 +5292,7 @@ test("bridge MCP delivers pending codex messages to Claude as channel notificati
 
 test("Claude channel flush leaves live tmux messages pending for visible delivery", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -5286,7 +5348,7 @@ test("Claude channel flush leaves live tmux messages pending for visible deliver
 
 test("Claude channel stays active when the live tmux pair has no Claude pane", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -5938,17 +6000,17 @@ test("bridge pending count includes oss messages", async () => {
 
 test("bridge drains pending oss tmux messages through stored pane routing", async () => {
   const spawnSync = mock((args: string[]) => {
-    if (args[0] === "tmux" && args[1] === "has-session") {
+    if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
-    if (args[0] === "tmux" && args[1] === "capture-pane") {
+    if (tmuxCommand(args) === "capture-pane") {
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from("waiting for input", "utf8"),
       };
     }
-    if (args[0] === "tmux" && args[1] === "send-keys") {
+    if (tmuxCommand(args) === "send-keys") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
