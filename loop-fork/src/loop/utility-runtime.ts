@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
+  constants,
+  fstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   rmSync,
   statSync,
@@ -13,6 +18,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { spawn } from "bun";
 import { dispatchBridgeMessage } from "./bridge-dispatch";
+import { readBridgeEvents } from "./bridge-store";
 import {
   cavemanHelperReinforcement,
   DEFAULT_HELPER_CAVEMAN_MODE,
@@ -34,6 +40,7 @@ import {
 } from "./pi-runtime";
 import { DETACH_CHILD_PROCESS } from "./process";
 import {
+  createUtilityRouteRequest,
   routeUtilityRequest,
   type UtilityCheckResult,
   type UtilityCompactResult,
@@ -74,6 +81,7 @@ import {
 import { utilityInferenceCircuitOpen } from "./utility-readiness";
 import {
   activateUtilityEpoch,
+  appendUtilityRouteRequest,
   claimUtilityJob,
   readPendingRouteRequests,
   readUtilityJob,
@@ -2680,7 +2688,7 @@ export const applyUtilityJobPatch = async (
     job.result?.status !== "completed" ||
     job.request.kind !== "edit"
   ) {
-    throw new Error("guarded patch apply requires a completed Au Pair edit");
+    throw new Error("guarded patch apply requires a completed guarded edit");
   }
   const expected = expectedPatchSha256.trim().toLowerCase();
   if (!SHA256_HEX_RE.test(expected)) {
@@ -2694,14 +2702,14 @@ export const applyUtilityJobPatch = async (
   );
   if (artifacts.length !== 1) {
     throw new Error(
-      "expected patch artifact is missing or ambiguous for this Au Pair job"
+      "expected patch artifact is missing or ambiguous for this guarded edit job"
     );
   }
   const patchPath = artifacts[0]?.path;
   const manifestPath = artifacts[0]?.manifestPath;
   const manifestSha256 = artifacts[0]?.manifestSha256;
   if (!(patchPath && manifestPath && manifestSha256)) {
-    throw new Error("Au Pair patch or manifest integrity metadata is missing");
+    throw new Error("guarded patch or manifest integrity metadata is missing");
   }
   const repoRoot = repoRootForRun(runDir);
   const workspace = job.decision?.workspace
@@ -2736,6 +2744,192 @@ export const applyUtilityJobPatch = async (
     recordUtilityPatchApplication(runDir, jobId, result.application);
   }
   return result;
+};
+
+const REVIEWED_PATCH_MAX_BYTES = 256 * 1024;
+const REVIEWED_PATCH_SHA256_RE = /^[0-9a-f]{64}$/u;
+const REVIEW_PASS_RE = /^PASS(?:\b|\s|:)/u;
+
+export interface ReviewedPatchImportInput {
+  expectedPatchSha256: string;
+  patchPath: string;
+  reviewDecisionId: string;
+  writeScope: string[];
+}
+
+const readReviewedPatch = (path: string): string => {
+  let descriptor: number | undefined;
+  try {
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags require bitwise composition.
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile()) {
+      throw new Error("reviewed patch path must be a regular non-symlink file");
+    }
+    if (stat.size > REVIEWED_PATCH_MAX_BYTES) {
+      throw new Error("reviewed patch exceeds the guarded apply byte limit");
+    }
+    if (stat.uid !== process.getuid?.()) {
+      throw new Error("reviewed patch must be owned by the current user");
+    }
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks require bitwise inspection.
+    if ((stat.mode & 0o022) !== 0) {
+      throw new Error("reviewed patch must not be group- or world-writable");
+    }
+    return readFileSync(descriptor, "utf8");
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+};
+
+export const importReviewedPatch = async (
+  runDir: string,
+  input: ReviewedPatchImportInput,
+  requester: Agent
+): Promise<{ patchSha256: string; taskId: string }> => {
+  const expected = input.expectedPatchSha256.trim().toLowerCase();
+  if (!REVIEWED_PATCH_SHA256_RE.test(expected)) {
+    throw new Error("expected_patch_sha256 must be a SHA-256 hex digest");
+  }
+  const manifest = JSON.parse(
+    readFileSync(join(runDir, "manifest.json"), "utf8")
+  ) as { primaryAgent?: unknown };
+  if (manifest.primaryAgent !== requester) {
+    throw new Error(
+      "reviewed patch import is restricted to the run primary agent"
+    );
+  }
+  const events = readBridgeEvents(runDir);
+  const decision = events.find(
+    (event) =>
+      event.kind === "message" &&
+      event.id === input.reviewDecisionId &&
+      event.target === requester &&
+      event.source !== requester &&
+      event.source !== "supervisor" &&
+      event.source !== "utility" &&
+      event.type === "decision"
+  );
+  const decisionDelivered = events.some(
+    (event) =>
+      event.id === input.reviewDecisionId &&
+      event.kind === "delivered" &&
+      event.source === decision?.source &&
+      event.target === requester
+  );
+  if (
+    !(
+      decision &&
+      decisionDelivered &&
+      REVIEW_PASS_RE.test(decision.message.trim()) &&
+      decision.artifactRefs?.some(
+        (reference) =>
+          reference === expected || reference === `sha256:${expected}`
+      )
+    )
+  ) {
+    throw new Error(
+      "reviewed patch import requires a delivered peer PASS decision bound to the patch SHA-256"
+    );
+  }
+  if (!(isAbsolute(input.patchPath) && input.patchPath.endsWith(".patch"))) {
+    throw new Error("reviewed patch path must be an absolute .patch file");
+  }
+  const patch = readReviewedPatch(input.patchPath);
+  if (Buffer.byteLength(patch, "utf8") > REVIEWED_PATCH_MAX_BYTES) {
+    throw new Error("reviewed patch exceeds the guarded apply byte limit");
+  }
+  const patchSha256 = createHash("sha256").update(patch).digest("hex");
+  if (patchSha256 !== expected) {
+    throw new Error("reviewed patch hash does not match expected_patch_sha256");
+  }
+  const writeScope = [...new Set(input.writeScope.map((path) => path.trim()))]
+    .filter(Boolean)
+    .sort();
+  if (writeScope.length === 0) {
+    throw new Error("reviewed patch write_scope cannot be empty");
+  }
+  const decisionDigest = createHash("sha256")
+    .update(input.reviewDecisionId)
+    .digest("hex");
+  const taskId = `reviewed-${decisionDigest.slice(0, 12)}-${expected.slice(0, 12)}`;
+  const existing = readUtilityJob(runDir, taskId);
+  if (existing) {
+    const artifact = existing.result?.artifactRefs.find(
+      (reference) => reference.kind === "diff"
+    );
+    if (
+      existing.state !== "completed" ||
+      existing.request.requester !== requester ||
+      JSON.stringify([...existing.request.writeScope].sort()) !==
+        JSON.stringify(writeScope) ||
+      artifact?.sha256?.toLowerCase() !== expected
+    ) {
+      throw new Error("reviewed patch import id is already bound differently");
+    }
+    return { patchSha256: expected, taskId };
+  }
+  const repoRoot = repoRootForRun(runDir);
+  const broker = await createUtilityToolBroker({
+    allowedTools: ["propose_patch"],
+    artifactDir: artifactDirForJob(repoRoot, runDir, taskId),
+    commandAllowlist: [],
+    exactWriteScopes: true,
+    limits: { maxPatchBytes: REVIEWED_PATCH_MAX_BYTES },
+    readScopes: writeScope,
+    repoRoot,
+    writeScopes: writeScope,
+  });
+  const proposal = await broker.execute({
+    arguments: {
+      patch,
+      summary: `Imported reviewed patch ${expected} from decision ${input.reviewDecisionId}`,
+    },
+    name: "propose_patch",
+  });
+  if (!(proposal.ok && proposal.artifact)) {
+    throw new Error(
+      proposal.error?.message ?? "reviewed patch failed guarded import"
+    );
+  }
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: [
+      `Apply only reviewed patch ${expected}`,
+      `Preserve peer review decision ${input.reviewDecisionId}`,
+    ],
+    authority: {},
+    id: taskId,
+    kind: "edit",
+    objective: "Import one independently reviewed primary-agent patch",
+    readScope: writeScope,
+    requester,
+    requiredCapabilities: ["inspect", "scoped-edit"],
+    risk: "low",
+    workShape: "separable",
+    writeScope,
+  });
+  appendUtilityRouteRequest(runDir, request);
+  transitionUtilityJob(runDir, taskId, "routed-driver");
+  const result: UtilityCompactResult = {
+    artifactRefs: [
+      {
+        kind: "diff",
+        manifestPath: proposal.artifact.manifestPath,
+        manifestSha256: proposal.artifact.manifestSha256,
+        path: proposal.artifact.path,
+        sha256: proposal.artifact.sha256,
+      },
+    ],
+    checks: [],
+    filesChanged: [],
+    paneSummary: `Validated reviewed patch ${expected}`,
+    status: "completed",
+    summary: `Validated reviewed patch ${expected}; peer decision ${input.reviewDecisionId}`,
+  };
+  transitionUtilityJob(runDir, taskId, "completed", { result });
+  return { patchSha256, taskId };
 };
 
 export const utilityJobStatus = (runDir: string, jobId: string) =>

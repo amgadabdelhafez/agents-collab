@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -13,7 +14,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { serve } from "bun";
-import { readBridgeEvents } from "../../src/loop/bridge-store";
+import {
+  appendBridgeEvent,
+  readBridgeEvents,
+} from "../../src/loop/bridge-store";
 import {
   appendDelegationEvent,
   makeDelegationEvent,
@@ -25,6 +29,7 @@ import {
   applyUtilityJobPatch,
   buildUtilityWorkerEnvironment,
   createUtilityReadPlanBroker,
+  importReviewedPatch,
   processPendingUtilityRoutes,
   renderUtilityPane,
   resolveUtilityRuntimeConfig,
@@ -178,6 +183,135 @@ const jsonlRecords = (path: string): Record<string, unknown>[] =>
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+test("primary agent imports one peer-reviewed patch into guarded apply", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-reviewed-patch-"));
+  const runDir = join(repoRoot, ".loop", "runs", "reviewed-patch");
+  const sourcePath = join(repoRoot, "src", "sample.ts");
+  const externalPatch = `${repoRoot}.patch`;
+  try {
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(sourcePath, "export const n = 1;\n");
+    writeFileSync(
+      join(runDir, "manifest.json"),
+      JSON.stringify({ cwd: repoRoot, primaryAgent: "codex" })
+    );
+    const patch = [
+      "diff --git a/src/sample.ts b/src/sample.ts",
+      "--- a/src/sample.ts",
+      "+++ b/src/sample.ts",
+      "@@ -1 +1 @@",
+      "-export const n = 1;",
+      "+export const n = 2;",
+      "",
+    ].join("\n");
+    writeFileSync(externalPatch, patch, { mode: 0o600 });
+    const patchSha256 = createHash("sha256").update(patch).digest("hex");
+    appendBridgeEvent(runDir, {
+      artifactRefs: [`sha256:${patchSha256}`],
+      at: "2026-08-30T09:00:00.000Z",
+      id: "review-decision-1",
+      kind: "message",
+      message: `PASS reviewed patch ${patchSha256}`,
+      source: "claude",
+      target: "codex",
+      type: "decision",
+    });
+    appendBridgeEvent(runDir, {
+      at: "2026-08-30T09:00:01.000Z",
+      id: "review-decision-1",
+      kind: "delivered",
+      source: "claude",
+      target: "codex",
+    });
+
+    const imported = await importReviewedPatch(
+      runDir,
+      {
+        expectedPatchSha256: patchSha256,
+        patchPath: externalPatch,
+        reviewDecisionId: "review-decision-1",
+        writeScope: ["src/sample.ts"],
+      },
+      "codex"
+    );
+    const job = readUtilityJob(runDir, imported.taskId);
+    expect(job?.state).toBe("completed");
+    expect(job?.result?.artifactRefs).toHaveLength(1);
+    expect(job?.result?.artifactRefs[0]?.sha256).toBe(patchSha256);
+
+    const applied = await applyUtilityJobPatch(
+      runDir,
+      imported.taskId,
+      patchSha256,
+      "codex"
+    );
+    expect(applied.status).toBe("applied");
+    expect(readFileSync(sourcePath, "utf8")).toBe("export const n = 2;\n");
+  } finally {
+    rmSync(repoRoot, { force: true, recursive: true });
+    rmSync(externalPatch, { force: true });
+  }
+});
+
+test("reviewed patch import refuses an undelivered decision before creating state", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-unreviewed-patch-"));
+  const runDir = join(repoRoot, ".loop", "runs", "unreviewed-patch");
+  const sourcePath = join(repoRoot, "src", "sample.ts");
+  const externalPatch = `${repoRoot}.patch`;
+  try {
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(sourcePath, "export const n = 1;\n");
+    writeFileSync(
+      join(runDir, "manifest.json"),
+      JSON.stringify({ cwd: repoRoot, primaryAgent: "codex" })
+    );
+    const patch = [
+      "diff --git a/src/sample.ts b/src/sample.ts",
+      "--- a/src/sample.ts",
+      "+++ b/src/sample.ts",
+      "@@ -1 +1 @@",
+      "-export const n = 1;",
+      "+export const n = 2;",
+      "",
+    ].join("\n");
+    writeFileSync(externalPatch, patch, { mode: 0o600 });
+    const patchSha256 = createHash("sha256").update(patch).digest("hex");
+    appendBridgeEvent(runDir, {
+      artifactRefs: [`sha256:${patchSha256}`],
+      at: "2026-08-30T09:00:00.000Z",
+      id: "undelivered-review",
+      kind: "message",
+      message: `PASS reviewed patch ${patchSha256}`,
+      source: "claude",
+      target: "codex",
+      type: "decision",
+    });
+
+    await expect(
+      importReviewedPatch(
+        runDir,
+        {
+          expectedPatchSha256: patchSha256,
+          patchPath: externalPatch,
+          reviewDecisionId: "undelivered-review",
+          writeScope: ["src/sample.ts"],
+        },
+        "codex"
+      )
+    ).rejects.toThrow("requires a delivered peer PASS decision");
+    expect(readUtilityJob(runDir, "reviewed-anything")).toBeUndefined();
+    expect(existsSync(join(repoRoot, ".loop", "utility-artifacts"))).toBe(
+      false
+    );
+    expect(readFileSync(sourcePath, "utf8")).toBe("export const n = 1;\n");
+  } finally {
+    rmSync(repoRoot, { force: true, recursive: true });
+    rmSync(externalPatch, { force: true });
+  }
+});
 
 test("OpenRouter GLM is the default but remains disabled without a credential", () => {
   const config = resolveUtilityRuntimeConfig({

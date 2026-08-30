@@ -3187,12 +3187,13 @@ test("bridge MCP handles standard empty-list and ping requests through the Claud
       }),
     ])
   );
-  expect(tools).toHaveLength(9);
+  expect(tools).toHaveLength(10);
   expect(tools.map((tool) => tool.name)).toEqual(
     expect.arrayContaining([
       "route_task",
       "task_status",
       "get_task_result",
+      "import_reviewed_patch",
       "apply_task_patch",
       "request_native_fallback",
       "native_fallback_status",
@@ -3253,7 +3254,7 @@ test("bridge MCP advertises only the Codex-visible bridge tools", async () => {
   expect(result.stderr).toBe("");
   expect(result.stdout).not.toContain('"claude/channel":{}');
   const tools = listedTools(result.stdout);
-  expect(tools).toHaveLength(9);
+  expect(tools).toHaveLength(10);
   expect(tools).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -5694,6 +5695,8 @@ test("bridge config helper builds the bridge MCP entry point for Codex", async (
     'mcp_servers.loop-bridge.tools.task_status.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.get_task_result.approval_mode="approve"',
+    "-c",
+    'mcp_servers.loop-bridge.tools.import_reviewed_patch.approval_mode="approve"',
     "-c",
     'mcp_servers.loop-bridge.tools.apply_task_patch.approval_mode="approve"',
     "-c",

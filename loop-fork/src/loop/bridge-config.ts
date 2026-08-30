@@ -10,6 +10,7 @@ const CODEX_AUTO_APPROVED_BRIDGE_TOOLS = [
   "route_task",
   "task_status",
   "get_task_result",
+  "import_reviewed_patch",
   "apply_task_patch",
   "request_native_fallback",
   "native_fallback_status",

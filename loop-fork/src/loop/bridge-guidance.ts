@@ -6,6 +6,7 @@ export type BridgeTool =
   | "apply_task_patch"
   | "bridge_status"
   | "get_task_result"
+  | "import_reviewed_patch"
   | "native_fallback_status"
   | "receive_messages"
   | "request_native_fallback"

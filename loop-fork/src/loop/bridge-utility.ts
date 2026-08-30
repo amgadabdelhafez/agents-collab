@@ -37,7 +37,7 @@ import {
   isUtilityContextRefPath,
   normalizeUtilityPolicyPath,
 } from "./utility-path-policy";
-import { applyUtilityJobPatch } from "./utility-runtime";
+import { applyUtilityJobPatch, importReviewedPatch } from "./utility-runtime";
 
 type UtilityBridgeSource = Agent | "supervisor";
 
@@ -47,6 +47,7 @@ export const UTILITY_BRIDGE_TOOL_NAMES = [
   "route_task",
   "task_status",
   "get_task_result",
+  "import_reviewed_patch",
   "apply_task_patch",
   "request_native_fallback",
   "native_fallback_status",
@@ -288,7 +289,39 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Apply one completed Au Pair edit after revalidating its patch hash, scope, and byte preimages; full agents only.",
+      "Import one exact primary-agent patch only after a delivered peer PASS decision binds its SHA-256. The import re-derives scope, preimages, parseability, and applicability and returns a task_id for apply_task_patch.",
+    inputSchema: {
+      additionalProperties: false,
+      properties: {
+        expected_patch_sha256: {
+          maxLength: 64,
+          minLength: 64,
+          pattern: "^[0-9a-fA-F]{64}$",
+          type: "string",
+        },
+        patch_path: { minLength: 1, type: "string" },
+        review_decision_id: { minLength: 1, type: "string" },
+        write_scope: {
+          items: { minLength: 1, type: "string" },
+          maxItems: 16,
+          minItems: 1,
+          type: "array",
+        },
+      },
+      required: [
+        "patch_path",
+        "expected_patch_sha256",
+        "review_decision_id",
+        "write_scope",
+      ],
+      type: "object",
+    },
+    name: "import_reviewed_patch",
+  },
+  {
+    annotations: ROUTE_TASK_ANNOTATIONS,
+    description:
+      "Apply one completed guarded edit after revalidating its patch hash, scope, and byte preimages; full agents only.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -1089,7 +1122,59 @@ const routeTask = (
   };
 };
 
-export const callUtilityBridgeTool = async (
+const applyTaskPatchBridge = async (
+  runDir: string,
+  source: UtilityBridgeSource,
+  args: Record<string, unknown>
+): Promise<unknown> => {
+  if (source === "supervisor") {
+    throw new UtilityBridgeInputError(
+      "apply_task_patch is restricted to a full in-loop agent"
+    );
+  }
+  try {
+    return await applyUtilityJobPatch(
+      runDir,
+      taskId(args),
+      requiredString(args, "expected_patch_sha256"),
+      source
+    );
+  } catch (error) {
+    throw new UtilityBridgeInputError(
+      error instanceof Error ? error.message : "guarded patch apply failed"
+    );
+  }
+};
+
+const importReviewedPatchBridge = async (
+  runDir: string,
+  source: UtilityBridgeSource,
+  args: Record<string, unknown>
+): Promise<unknown> => {
+  if (source === "supervisor") {
+    throw new UtilityBridgeInputError(
+      "import_reviewed_patch is restricted to the run primary agent"
+    );
+  }
+  try {
+    return await importReviewedPatch(
+      runDir,
+      {
+        expectedPatchSha256: requiredString(args, "expected_patch_sha256"),
+        patchPath: requiredString(args, "patch_path"),
+        reviewDecisionId: requiredString(args, "review_decision_id"),
+        writeScope: stringArray(args, "write_scope"),
+      },
+      source
+    );
+  } catch (error) {
+    throw new UtilityBridgeInputError(
+      error instanceof Error ? error.message : "reviewed patch import failed"
+    );
+  }
+};
+
+export const callUtilityBridgeTool = (
   name: UtilityBridgeToolName,
   runDir: string,
   source: UtilityBridgeSource,
@@ -1105,23 +1190,10 @@ export const callUtilityBridgeTool = async (
     return nativeFallbackStatus(runDir, source, args);
   }
   if (name === "apply_task_patch") {
-    if (source === "supervisor") {
-      throw new UtilityBridgeInputError(
-        "apply_task_patch is restricted to a full in-loop agent"
-      );
-    }
-    try {
-      return await applyUtilityJobPatch(
-        runDir,
-        taskId(args),
-        requiredString(args, "expected_patch_sha256"),
-        source
-      );
-    } catch (error) {
-      throw new UtilityBridgeInputError(
-        error instanceof Error ? error.message : "guarded patch apply failed"
-      );
-    }
+    return applyTaskPatchBridge(runDir, source, args);
+  }
+  if (name === "import_reviewed_patch") {
+    return importReviewedPatchBridge(runDir, source, args);
   }
   const job = readUtilityJob(runDir, taskId(args));
   if (!job) {
