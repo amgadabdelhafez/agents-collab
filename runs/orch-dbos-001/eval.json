@@ -1,0 +1,33 @@
+{
+  "task_id": "ORCH-DBOS-001",
+  "feature": "dbos-workflow-port-adapter",
+  "timestamp": "2026-08-30T05:41:00Z",
+  "identity": {
+    "base_commit": "ebdd8707a3192315ff28d96eea2ba2d5ef7cd47e",
+    "branch": "codex/orch-dbos-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/orch-dbos-001"
+  },
+  "checks": {
+    "functional": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "first five frozen fixtures matched exact digests on DBOS 4.27.6 plus PostgreSQL 17",
+        "real same-version process-loss recovery passed",
+        "distinct-version recovery refusal preserved v1 workflow as PENDING and timed out exact v2 command"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci",
+        "bun run check",
+        "bun run build",
+        "git diff --check"
+      ]
+    }
+  },
+  "verdict": "pending-independent-review",
+  "notes": "Comparison evidence supports Temporal selection because DBOS does not recover the frozen pending v1 workflow under the named v2 application version."
+}

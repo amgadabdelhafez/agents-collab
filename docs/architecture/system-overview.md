@@ -126,6 +126,11 @@ or claim authority.
   and persists command receipts inside workflow state. Its local conformance
   runtime uses an ephemeral in-memory Temporal server; it is test evidence, not
   production infrastructure or an engine-selection decision.
+- The DBOS comparison adapter runs the same canonical workflow on DBOS 4.27.6
+  backed by isolated PostgreSQL. A real same-version worker-process loss
+  recovers, but a pending workflow bound to the v1 application version remains
+  pending and is not recovered by the named v2 worker. The engine selection is
+  recorded separately; this adapter does not route live traffic.
 - `SupervisorMessage` uses its workflow ID as the stable deduplication boundary.
   Delivery activities receive a deterministic attempt idempotency key. Only the
   intended supervisor may claim, and only the current claimant may acknowledge.
@@ -192,8 +197,10 @@ or claim authority.
    activity. Delivery results, claims, acknowledgements, ticks, retries, and
    cancellation become idempotent workflow commands with immutable inspection
    history. The in-memory adapter is the executable reference oracle, and the
-   accepted frozen corpus is now exercised unchanged by the Temporal adapter.
-   Engine selection remains deferred until DBOS runs that same corpus.
+   accepted frozen corpus is exercised unchanged by both adapters. Temporal
+   completes all six cases; DBOS matches the first five and then records a
+   distinct-version recovery refusal. Engine selection remains a separate
+   signed decision.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.

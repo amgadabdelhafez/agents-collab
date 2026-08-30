@@ -51,9 +51,9 @@ Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
   consumes: settled utility evidence, current Governess epoch, provider lifecycle events
 
 [Workflow orchestration]
-  owns: workflow-port.ts, in-memory-workflow-port.ts, supervisor-message-workflow.ts, supervisor-message-coordinator.ts, temporal-workflow.ts, temporal-workflow-port.ts, temporal-replay-runtime.ts
+  owns: workflow-port.ts, in-memory-workflow-port.ts, supervisor-message-workflow.ts, supervisor-message-coordinator.ts, temporal-workflow.ts, temporal-workflow-port.ts, temporal-replay-runtime.ts, dbos-workflow.ts, dbos-workflow-port.ts, dbos-replay-runtime.ts
   exposes: engine-neutral start/signal/query/cancel/inspect and SupervisorMessage lifecycle/projection
-  consumes: injected delivery activity and exact Temporal SDK 1.23.0; DBOS remains a future consumer of the canonical contract
+  consumes: injected delivery activity, exact Temporal SDK 1.23.0, and exact DBOS SDK 4.27.6 for comparison evidence
 ```
 
 ## Dependency graph
@@ -119,6 +119,6 @@ supervisor intake ──► WorkflowPort ──► SupervisorMessage state machi
 | Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
 | Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption; Claude gates the read-only fallback while Codex native spawn fails closed |
-| WorkflowPort contract | Reference adapter, SupervisorMessage workflow, Temporal adapter, future DBOS adapter, fixture corpus | All engines must preserve identity, idempotency, status, and history semantics |
+| WorkflowPort contract | Reference adapter, SupervisorMessage workflow, Temporal adapter, DBOS comparison adapter, fixture corpus | All engines must preserve identity, idempotency, status, and history semantics; DBOS distinct-version recovery is a recorded incompatibility |
 | SupervisorMessage state | Delivery activity, claim authority, Attention/message-board projection | Body and path redaction plus retry/escalation policy span every consumer |
 | Replay fixture or digest | Reference, Temporal, and DBOS replay runtimes plus selection evidence | All engines execute identical inert steps and must match exact normalized observations |
