@@ -1,0 +1,15 @@
+{
+  "task_id": "KNOW-ARTIFACT-001",
+  "feature": "kb-artifact-reference-read-model",
+  "timestamp": "2026-08-30T06:56:00Z",
+  "identity": {
+    "base_commit": "160c09a5b3e956d3a37bf40989ef5f56a43d49bb",
+    "branch": "codex/kb-artifact-read-model-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/kb-artifact-read-model-001"
+  },
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  },
+  "verdict": "pending-implementation"
+}
