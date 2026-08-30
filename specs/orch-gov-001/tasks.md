@@ -4,4 +4,4 @@
 - [x] **G-02 Service**: authorize all governed coordinator operations.
 - [x] **G-03 Bridge adapter**: exact idempotent existing-bridge delivery.
 - [x] **G-04 Tests**: allow/refuse/mapping/deduplication/redaction coverage.
-- [ ] **G-05 Verification**: focused/full/static gates and independent review.
+- [x] **G-05 Verification**: focused/full/static gates and independent review.
