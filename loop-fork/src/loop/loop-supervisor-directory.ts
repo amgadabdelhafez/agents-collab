@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isAgent } from "./agents";
 import type {
   SupervisorBridgeDirectory,
   SupervisorBridgeRoute,
@@ -59,6 +60,15 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
     if (realpathSync(join(runDir, "manifest.json")) !== manifestPath) {
       throw new Error("supervisor run manifest identity changed");
     }
-    return { runDir, target: "supervisor" };
+    const target = isAgent(manifest.primaryAgent)
+      ? manifest.primaryAgent
+      : undefined;
+    const declaredAgents = new Set(
+      [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent].filter(isAgent)
+    );
+    if (!(target && declaredAgents.has(target))) {
+      return undefined;
+    }
+    return { runDir, target };
   }
 }

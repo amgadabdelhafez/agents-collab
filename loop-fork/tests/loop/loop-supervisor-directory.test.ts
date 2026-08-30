@@ -19,9 +19,14 @@ test("manifest-backed supervisor routes resolve only active exact runs", () => {
         cwd: root,
         mode: "paired",
         pid: process.pid,
+        primaryAgent: "codex",
         repoId: "repo-1",
         runId: "1",
         state: "working",
+        tmuxPaneLeft: "%1",
+        tmuxPaneLeftAgent: "claude",
+        tmuxPaneRight: "%2",
+        tmuxPaneRightAgent: "codex",
       },
       "2026-08-30T10:00:00.000Z"
     );
@@ -31,7 +36,7 @@ test("manifest-backed supervisor routes resolve only active exact runs", () => {
     ]);
     expect(directory.resolve("supervisor:harness")).toEqual({
       runDir,
-      target: "supervisor",
+      target: "codex",
     });
     expect(directory.resolve("supervisor:unknown")).toBeUndefined();
     writeRunManifest(

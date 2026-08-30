@@ -15,8 +15,9 @@ dependency graph says it is ready.
    and task-graph runtime. It refuses startup when routes, identity, authority,
    Temporal connection, or state paths are ambiguous.
 2. Trusted supervisor routes are derived from exact Loop manifests and declared
-   bridge topology. A message can never supply a run directory, socket, pane, or
-   bridge target.
+   bridge topology. Delivery targets the manifest-declared driver, never the
+   reviewer or an unconsumed external-supervisor inbox. A message can never
+   supply a run directory, socket, pane, or bridge target.
 3. Supervisor operations are deny-by-default and every decision emits the
    existing body-free governance receipt.
 4. Harness graph input is explicit and canonical. Nodes declare dependencies,
@@ -27,8 +28,10 @@ dependency graph says it is ready.
    Attention, knowledge, and task-graph endpoints. No credential is persisted,
    logged, placed in argv, or returned by health.
 6. A focused integration proves one supervisor-to-supervisor delivery through a
-   real run bridge, durable claim and acknowledgement, and a two-node Harness
-   DAG whose dependent node cannot be claimed early.
+   real run bridge. App-server acceptance is not consumption: the driver must
+   pull the exact durable body with `receive_messages` before the workflow may
+   claim and acknowledge it. The same proof includes a two-node Harness DAG
+   whose dependent node cannot be claimed early.
 
 ## Non-goals
 
@@ -36,4 +39,3 @@ dependency graph says it is ready.
 - Type into agent composers or preserve the legacy `sup-courier` behavior.
 - Restart, kill, or mutate existing product Loops during implementation.
 - Merge, push, or deploy production infrastructure.
-

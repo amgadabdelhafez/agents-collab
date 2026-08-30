@@ -7,6 +7,7 @@
 4. Expose the Temporal worker as a dedicated source-run service entrypoint so
    Temporal's bundler dependencies are not pulled into every compiled Loop CLI.
 5. Prove delivery, claim/ack, restart durability, dependency refusal/readiness,
-   health redaction, and fail-closed startup.
+   health redaction, fail-closed startup, and a pull-consumption boundary that
+   cannot mistake app-server acceptance for acknowledgement.
 6. Run focused tests, the full named suite, static/build/diff gates, freeze one
    exact candidate, and obtain independent zero-write review before activation.

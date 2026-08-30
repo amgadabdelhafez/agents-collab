@@ -1525,7 +1525,15 @@ export const drainCodexAppServerMessages = (
   if (!status.hasCodexRemote) {
     return Promise.resolve(false);
   }
-  const message = readNextPendingBridgeMessageForTarget(runDir, "codex");
+  const message = readPendingBridgeMessages(runDir).find(
+    (entry) =>
+      entry.target === "codex" &&
+      !(
+        entry.source === "supervisor" &&
+        entry.type === "work_request" &&
+        entry.taskId?.startsWith("supervisor-message:")
+      )
+  );
   if (!message) {
     return Promise.resolve(false);
   }

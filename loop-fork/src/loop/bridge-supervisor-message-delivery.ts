@@ -1,4 +1,5 @@
 import { type DeliveryResult, dispatchBridgeMessage } from "./bridge-dispatch";
+import { ensureBridgeWorker, hasBridgeDeliveryRoute } from "./bridge-runtime";
 import type { BridgeTarget } from "./bridge-store";
 import type {
   SupervisorMessageDeliveryOutcome,
@@ -45,6 +46,7 @@ const defaultDispatch: SupervisorBridgeDispatch = (route, request, now) =>
       dedupeKey: request.idempotencyKey,
       now,
       subject: request.messageId,
+      taskId: request.workflowId,
       threadId: request.threadId,
       type: "work_request",
     }
@@ -78,9 +80,19 @@ export class BridgeSupervisorMessageDeliveryPort
       switch (result.status) {
         case "accepted":
         case "delivered":
-        case "duplicate":
-        case "queued":
           return { status: "accepted" };
+        case "duplicate":
+        case "queued": {
+          const routeReady =
+            hasBridgeDeliveryRoute(route.runDir, route.target) &&
+            ensureBridgeWorker(route.runDir);
+          return routeReady
+            ? { status: "accepted" }
+            : {
+                reason: `bridge route for ${request.target} is unavailable`,
+                status: "transient-failure",
+              };
+        }
         case "dead-letter":
         case "expired":
           return {

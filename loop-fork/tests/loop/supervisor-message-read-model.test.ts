@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dispatchBridgeMessage } from "../../src/loop/bridge-dispatch";
 import { readPendingBridgeMessages } from "../../src/loop/bridge-store";
 import { BridgeSupervisorMessageDeliveryPort } from "../../src/loop/bridge-supervisor-message-delivery";
 import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
@@ -148,6 +149,26 @@ describe("SupervisorMessage board and Attention read model", () => {
           supervisorId === "supervisor:harness"
             ? { runDir: harnessRunDir, target: "supervisor" }
             : undefined,
+      },
+      dispatch: async (route, request, now) => {
+        const result = await dispatchBridgeMessage(
+          route.runDir,
+          "supervisor",
+          route.target,
+          request.body,
+          undefined,
+          undefined,
+          {
+            artifactRefs: request.artifactRefs,
+            dedupeKey: request.idempotencyKey,
+            now,
+            subject: request.messageId,
+            taskId: request.workflowId,
+            threadId: request.threadId,
+            type: "work_request",
+          }
+        );
+        return { ...result, status: "accepted" };
       },
       now: () => AT,
     });

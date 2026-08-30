@@ -97,6 +97,7 @@ export interface SupervisorMessageDeliveryRequest extends JsonObject {
   messageId: string;
   target: string;
   threadId: string;
+  workflowId: string;
 }
 
 const SUPERVISOR_ID_RE = /^supervisor:[a-z0-9][a-z0-9._-]{0,127}$/;
@@ -350,6 +351,7 @@ const deliveryRequestOf = (
   messageId: state.messageId,
   target: state.to,
   threadId: state.threadId,
+  workflowId,
 });
 
 const deliveryFailed = (

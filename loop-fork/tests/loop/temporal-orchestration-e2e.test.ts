@@ -3,6 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
+import {
+  consumeBridgeInbox,
+  dispatchBridgeMessage,
+} from "../../src/loop/bridge-dispatch";
+import { readPendingBridgeMessages } from "../../src/loop/bridge-store";
+import { BridgeSupervisorMessageDeliveryPort } from "../../src/loop/bridge-supervisor-message-delivery";
+import { SupervisorBridgeConsumptionReconciler } from "../../src/loop/supervisor-bridge-consumption";
 import type { SupervisorMessageDeliveryRequest } from "../../src/loop/supervisor-message-workflow";
 import { JsonlSupervisorThreadStore } from "../../src/loop/supervisor-thread-store";
 import { TemporalSupervisorRuntimeHost } from "../../src/loop/temporal-supervisor-runtime";
@@ -27,8 +34,15 @@ test("real Temporal control surface completes cross-supervisor delivery and a de
   const environment = await TestWorkflowEnvironment.createLocal();
   const deliveries: SupervisorMessageDeliveryRequest[] = [];
   const governanceReceipts: unknown[] = [];
+  const harnessRunDir = join(root, "harness-run");
   let host: TemporalSupervisorRuntimeHost | undefined;
   try {
+    const directory = {
+      resolve: (supervisorId: string) =>
+        supervisorId === "supervisor:harness"
+          ? { runDir: harnessRunDir, target: "codex" as const }
+          : undefined,
+    };
     host = await TemporalSupervisorRuntimeHost.create({
       authority: {
         decide: (request) => ({
@@ -44,12 +58,31 @@ test("real Temporal control surface completes cross-supervisor delivery and a de
         }),
       },
       buildId: "orchestration-e2e.v1",
-      delivery: {
-        deliver: (request) => {
+      delivery: new BridgeSupervisorMessageDeliveryPort({
+        directory,
+        dispatch: async (route, request, now) => {
           deliveries.push(structuredClone(request));
-          return Promise.resolve({ status: "accepted" });
+          const result = await dispatchBridgeMessage(
+            route.runDir,
+            "supervisor",
+            route.target,
+            request.body,
+            undefined,
+            undefined,
+            {
+              artifactRefs: request.artifactRefs,
+              dedupeKey: request.idempotencyKey,
+              now,
+              subject: request.messageId,
+              taskId: request.workflowId,
+              threadId: request.threadId,
+              type: "work_request",
+            }
+          );
+          return { ...result, status: "accepted" };
         },
-      },
+        now: () => "2026-08-30T09:00:00.000Z",
+      }),
       identity: "orchestration-e2e@test",
       namespace: environment.namespace,
       nativeConnection: environment.nativeConnection,
@@ -128,21 +161,28 @@ test("real Temporal control surface completes cross-supervisor delivery and a de
     expect(deliveries[0]).toMatchObject({
       idempotencyKey: `${received.workflowId}:delivery:1`,
       target: "supervisor:harness",
+      workflowId: received.workflowId,
     });
-    await parseData(
-      await post(
-        "/api/v1/supervisor-messages/claim",
-        { requestId: "staged-claim-1", workflowId: received.workflowId },
-        "harness"
-      )
-    );
-    await parseData(
-      await post(
-        "/api/v1/supervisor-messages/acknowledge",
-        { requestId: "staged-ack-1", workflowId: received.workflowId },
-        "harness"
-      )
-    );
+    expect(readPendingBridgeMessages(harnessRunDir)).toEqual([
+      expect.objectContaining({
+        source: "supervisor",
+        target: "codex",
+        taskId: received.workflowId,
+      }),
+    ]);
+    consumeBridgeInbox(harnessRunDir, "codex", "read via receive_messages");
+    const reconciler = new SupervisorBridgeConsumptionReconciler({
+      bindings: [
+        { principal: "principal:harness", supervisorId: "supervisor:harness" },
+      ],
+      directory,
+      runtime: host.runtime,
+    });
+    expect(await reconciler.reconcile()).toEqual({
+      acknowledged: 1,
+      claimed: 1,
+      inspected: 1,
+    });
     const threads = await parseData<{
       revision: number;
       threads: Array<{ messages: Array<{ item: { phase: string } }> }>;

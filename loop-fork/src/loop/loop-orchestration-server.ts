@@ -13,6 +13,7 @@ import { NativeConnection } from "@temporalio/worker";
 import { serve } from "bun";
 import { BridgeSupervisorMessageDeliveryPort } from "./bridge-supervisor-message-delivery";
 import { LoopSupervisorDirectory } from "./loop-supervisor-directory";
+import { SupervisorBridgeConsumptionReconciler } from "./supervisor-bridge-consumption";
 import {
   JsonlSupervisorMessageReceiptPort,
   type SupervisorMessageAuthorityPort,
@@ -275,6 +276,9 @@ export const runLoopOrchestrationServer = async (
     address: config.address,
   });
   let host: TemporalSupervisorRuntimeHost | undefined;
+  let reconcileTimer: ReturnType<typeof setInterval> | undefined;
+  let reconciliationHealthy = false;
+  let reconciliationRunning = false;
   try {
     host = await TemporalSupervisorRuntimeHost.create({
       authority: authority(config),
@@ -300,6 +304,37 @@ export const runLoopOrchestrationServer = async (
         ),
       },
     });
+    const reconciler = new SupervisorBridgeConsumptionReconciler({
+      bindings: config.supervisors,
+      directory,
+      runtime: host.runtime,
+    });
+    const reconcile = async () => {
+      if (reconciliationRunning) {
+        return;
+      }
+      reconciliationRunning = true;
+      try {
+        await reconciler.reconcile();
+        reconciliationHealthy = true;
+      } catch (error) {
+        reconciliationHealthy = false;
+        console.error(
+          `orchestration bridge reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      } finally {
+        reconciliationRunning = false;
+      }
+    };
+    await reconcile();
+    reconcileTimer = setInterval(() => {
+      reconcile().catch((error) => {
+        reconciliationHealthy = false;
+        console.error(
+          `orchestration bridge reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      });
+    }, 250);
     const handler = host.httpHandler(authenticator(config, env));
     const server = serve({
       fetch: (request) => {
@@ -307,7 +342,10 @@ export const runLoopOrchestrationServer = async (
         if (request.method === "GET" && url.pathname === "/healthz") {
           return Response.json({
             schema: "loop-orchestration-health.v1",
-            state: host?.workerState() === "RUNNING" ? "ready" : "unavailable",
+            state:
+              host?.workerState() === "RUNNING" && reconciliationHealthy
+                ? "ready"
+                : "unavailable",
           });
         }
         return handler(request);
@@ -324,6 +362,9 @@ export const runLoopOrchestrationServer = async (
       process.once("SIGTERM", stop);
     });
   } finally {
+    if (reconcileTimer) {
+      clearInterval(reconcileTimer);
+    }
     await host?.close();
     await nativeConnection.close();
     await connection.close();

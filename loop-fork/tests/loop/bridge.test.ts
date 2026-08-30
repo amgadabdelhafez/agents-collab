@@ -3694,6 +3694,47 @@ test("bridge delivers Claude replies directly to Codex when app-server state is 
   rmSync(root, { recursive: true, force: true });
 });
 
+test("SupervisorMessage work stays pull-only until Codex drains its bridge inbox", async () => {
+  const injectCodexMessage = mock(async () => true);
+  const bridge = await loadBridge({ injectCodexMessage });
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      codexRemoteUrl: "ws://127.0.0.1:4500",
+      codexThreadId: "codex-thread-1",
+      createdAt: "2026-08-30T09:45:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "7",
+      state: "working",
+      status: "running",
+      updatedAt: "2026-08-30T09:45:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.appendBridgeMessage(
+    runDir,
+    "supervisor",
+    "codex",
+    "Claim this governed SupervisorMessage",
+    {
+      taskId: `supervisor-message:${"a".repeat(64)}`,
+      type: "work_request",
+    }
+  );
+
+  expect(await bridge.drainCodexAppServerMessages(runDir)).toBe(false);
+  expect(injectCodexMessage).not.toHaveBeenCalled();
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("concurrent Codex delivery attempts share one app-server claim", async () => {
   let releaseInjection = () => undefined;
   const injectionGate = new Promise<void>((resolve) => {

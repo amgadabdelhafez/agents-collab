@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dispatchBridgeMessage } from "../../src/loop/bridge-dispatch";
 import { readPendingBridgeMessages } from "../../src/loop/bridge-store";
 import {
   BridgeSupervisorMessageDeliveryPort,
@@ -68,6 +69,26 @@ const setup = (decision: SupervisorMessageAuthorityDecision) => {
         supervisorId === "supervisor:target"
           ? { runDir, target: "supervisor" }
           : undefined,
+    },
+    dispatch: async (route, request, now) => {
+      const result = await dispatchBridgeMessage(
+        route.runDir,
+        "supervisor",
+        route.target,
+        request.body,
+        undefined,
+        undefined,
+        {
+          artifactRefs: request.artifactRefs,
+          dedupeKey: request.idempotencyKey,
+          now,
+          subject: request.messageId,
+          taskId: request.workflowId,
+          threadId: request.threadId,
+          type: "work_request",
+        }
+      );
+      return { ...result, status: "accepted" };
     },
     now: () => AT,
   });
@@ -249,6 +270,7 @@ describe("governed SupervisorMessage delivery", () => {
       messageId: "message-governed-1",
       target: "supervisor:target",
       threadId: "thread-governed-1",
+      workflowId: `supervisor-message:${"f".repeat(64)}`,
     };
     expect(await harness.delivery.deliver(request)).toEqual({
       status: "accepted",
