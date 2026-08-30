@@ -676,21 +676,45 @@ export const enqueueBridgeMessage = (
     );
   }
   appendBridgeEvent(runDir, entry);
-  appendRunTranscriptEntry(buildTranscriptPath(runDir), {
-    at: entry.at,
-    from: source,
-    message,
-    to: target,
-  });
+  try {
+    appendRunTranscriptEntry(buildTranscriptPath(runDir), {
+      at: entry.at,
+      from: source,
+      message,
+      to: target,
+    });
+  } catch {
+    // bridge.jsonl is the durable delivery authority. A failure in the
+    // compatibility transcript mirror must not hide an already-enqueued body
+    // from its caller and trigger a differently keyed workflow retry.
+    try {
+      appendBridgeEvent(runDir, {
+        at: entry.at,
+        id: entry.id,
+        kind: "delivery-failed",
+        reason: "transcript mirror unavailable after durable bridge enqueue",
+        signature: eventSignature(entry),
+        source: entry.source,
+        target: entry.target,
+      });
+    } catch {
+      // The authoritative message append already succeeded. Preserve queued
+      // success even if the optional diagnostic append also becomes unavailable.
+    }
+  }
   if (entry.expiresAt && Date.parse(entry.expiresAt) <= nowMs) {
-    appendBridgeResolution(
-      runDir,
-      entry,
-      "expired",
-      `expired at ${entry.expiresAt}`,
-      entry.at
-    );
-    return { entry, reason: "message already expired", status: "expired" };
+    try {
+      appendBridgeResolution(
+        runDir,
+        entry,
+        "expired",
+        `expired at ${entry.expiresAt}`,
+        entry.at
+      );
+      return { entry, reason: "message already expired", status: "expired" };
+    } catch {
+      return { entry, status: "queued" };
+    }
   }
   const targetPending = pending.filter(
     (candidate) => candidate.target === target && candidate.id !== duplicate?.id
@@ -699,8 +723,12 @@ export const enqueueBridgeMessage = (
     options.maxOutstanding ?? DEFAULT_BRIDGE_MAX_OUTSTANDING;
   if (targetPending.length >= maxOutstanding) {
     const reason = `target queue limit ${maxOutstanding} reached`;
-    appendBridgeResolution(runDir, entry, "dead-letter", reason, entry.at);
-    return { entry, reason, status: "dead-letter" };
+    try {
+      appendBridgeResolution(runDir, entry, "dead-letter", reason, entry.at);
+      return { entry, reason, status: "dead-letter" };
+    } catch {
+      return { entry, status: "queued" };
+    }
   }
   return { entry, status: "queued" };
 };

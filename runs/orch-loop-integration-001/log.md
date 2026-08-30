@@ -32,3 +32,18 @@
   6/0, and real Temporal end-to-end 1/0 with 25 assertions.
 - One corrected full `bun run test:ci`, `bun run check`, `bun run build`, and
   `git diff --check` all passed with empty named failure sets.
+- Independent review of `50d20263523c4bd49dcd7177d2f05866ef5d68a9`
+  returned literal REFUSE at a deeper partial-enqueue boundary: a successful
+  bridge append followed by a failed compatibility transcript append could
+  throw and schedule a differently keyed retry. That candidate is superseded.
+- The bridge journal remains the durable delivery authority. Transcript-mirror
+  failure now records a best-effort body-free diagnostic but returns the
+  successful queued result, so the workflow cannot hide the first body or
+  schedule a second delivery attempt.
+- The same post-append rule covers expiration and queue-limit resolutions: if
+  their secondary resolution append fails after the message is durable, the
+  enqueue remains truthfully queued instead of surfacing a retryable exception.
+- Final successor gates passed with empty named failure sets: governed delivery
+  7/0 including the exact EISDIR partial-enqueue reproduction, bridge 112/0,
+  real Temporal end-to-end 1/0 with 25 assertions, one full `bun run test:ci`,
+  `bun run check`, `bun run build`, and `git diff --check`.

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dispatchBridgeMessage } from "../../src/loop/bridge-dispatch";
-import { readPendingBridgeMessages } from "../../src/loop/bridge-store";
+import {
+  readBridgeEvents,
+  readPendingBridgeMessages,
+} from "../../src/loop/bridge-store";
 import {
   BridgeSupervisorMessageDeliveryPort,
   type SupervisorBridgeDispatch,
@@ -367,6 +370,60 @@ describe("governed SupervisorMessage delivery", () => {
       dedupeKey: "workflow:delivery:2",
       message: BODY,
       target: "codex",
+    });
+  });
+
+  test("keeps a durable enqueue accepted when the transcript mirror fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "supervisor-transcript-failure-"));
+    tempRoots.push(root);
+    const runDir = join(root, "target-run");
+    mkdirSync(join(runDir, "transcript.jsonl"), { recursive: true });
+    const request: SupervisorMessageDeliveryRequest = {
+      artifactRefs: [ARTIFACT_REF],
+      body: BODY,
+      idempotencyKey: "workflow:delivery:1",
+      messageId: "message-transcript-failure-1",
+      target: "supervisor:target",
+      threadId: "thread-transcript-failure-1",
+      workflowId: `supervisor-message:${"d".repeat(64)}`,
+    };
+    const delivery = new BridgeSupervisorMessageDeliveryPort({
+      directory: {
+        resolve: () => ({ runDir, target: "codex" }),
+      },
+      dispatch: (route, next, now) =>
+        dispatchBridgeMessage(
+          route.runDir,
+          "supervisor",
+          route.target,
+          next.body,
+          undefined,
+          undefined,
+          {
+            artifactRefs: next.artifactRefs,
+            dedupeKey: next.idempotencyKey,
+            now,
+            subject: next.messageId,
+            taskId: next.workflowId,
+            threadId: next.threadId,
+            type: "work_request",
+          }
+        ),
+      now: () => AT,
+      routeReady: () => true,
+    });
+
+    expect(await delivery.deliver(request)).toEqual({ status: "accepted" });
+    expect(readPendingBridgeMessages(runDir)).toHaveLength(1);
+    expect(readPendingBridgeMessages(runDir)[0]).toMatchObject({
+      dedupeKey: "workflow:delivery:1",
+      message: BODY,
+      target: "codex",
+    });
+    expect(readBridgeEvents(runDir).at(-1)).toMatchObject({
+      id: readPendingBridgeMessages(runDir)[0]?.id,
+      kind: "delivery-failed",
+      reason: "transcript mirror unavailable after durable bridge enqueue",
     });
   });
 });
