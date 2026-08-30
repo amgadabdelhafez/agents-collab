@@ -9,4 +9,3 @@
 - `bun run build`
 - `git diff --check`
 - Every named failure set is empty.
-

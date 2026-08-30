@@ -20,4 +20,3 @@ worker without relying on `TEMPORAL_DEBUG`, a source checkout, or a build-time
 
 - Change workflow semantics, routing, authority, task DAGs, or projections.
 - Install a binary or restart any live Loop.
-
