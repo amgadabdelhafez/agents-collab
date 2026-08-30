@@ -4,4 +4,4 @@
 - [x] Implement deterministic DAG workflow transitions and projection.
 - [x] Register the definition in Temporal dispatch.
 - [x] Add focused reference and real Temporal tests.
-- [ ] Run independent exact-SHA review after completed full gates.
+- [x] Run independent exact-SHA review after completed full gates.

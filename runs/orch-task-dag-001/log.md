@@ -8,3 +8,6 @@
 - Existing Temporal WorkflowPort replay regression: 3 passed, 0 failed.
 - Full `bun run test:ci`: PASS with an empty named failure set.
 - `bun run check`, `bun run build`, and `git diff --check`: PASS.
+- Exact candidate `c8df153df5c0f8a3de3430dc5d4eb9ebf32329b9` received a
+  fresh independent literal `REVIEW_VERDICT=PASS` with
+  `REVIEWER_PROJECT_TREE_WRITES=0`.
