@@ -7,5 +7,5 @@
 - [x] **T-04 Runtime**: ephemeral server, worker restart, build-identity upgrade,
       deterministic delivery and teardown.
 - [x] **T-05 Conformance**: unchanged frozen replay corpus and aggregate digest.
-- [ ] **T-06 Verification**: focused/full/static gates, exact candidate, and
+- [x] **T-06 Verification**: focused/full/static gates, exact candidate, and
       independent zero-write review.

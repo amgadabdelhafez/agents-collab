@@ -23,3 +23,9 @@
   `git diff --check`, and the repository-certified full `bun run test:ci`
   completed with empty named failure sets. The Temporal worker emitted only the
   SDK's Bun-version deprecation warning; no resource or test failure remained.
+- 2026-08-30T04:25:00Z: Froze exact candidate
+  `d143fad1bb3d7c61f4f461cf8f33df4d32513f23`. A separate Claude CLI reviewer
+  routed through OpenRouter `z-ai/glm-5.2` at low effort returned literal PASS
+  after independent committed-object inspection and made zero project-tree
+  writes. ORCH-TEMPORAL-001 is accepted; engine selection remains pending the
+  same frozen corpus on DBOS.

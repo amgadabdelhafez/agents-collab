@@ -29,5 +29,5 @@
     }
   },
   "verdict": "pass",
-  "notes": "Implementation gates passed; exact-SHA independent zero-write review remains required before closure."
+  "notes": "Candidate d143fad1bb3d7c61f4f461cf8f33df4d32513f23 passed independent zero-write OpenRouter z-ai/glm-5.2 exact-SHA review."
 }
