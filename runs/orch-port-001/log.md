@@ -25,3 +25,7 @@
   cancel-after-completed/failed refusal coverage. Focused suites PASS 13/0.
 - 2026-08-30T03:48:00Z: One post-repair `bun run test:ci` PASSed 1548/0 with
   exit 0 and an empty named failure set. Check, build, and diff check PASS.
+- 2026-08-30T03:57:55Z: A fresh independent Claude CLI/OpenRouter GLM 5.2
+  zero-project-write review PASSed exact candidate
+  `955de40dc75552f49c9f39d75aeaa3036c30c34e`. The verdict and the re-derived
+  attempt-001 corrections are preserved in `review-attempt-002.md`.
