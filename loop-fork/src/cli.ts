@@ -48,6 +48,7 @@ import {
   MEMORY_PROMOTE_SUBCOMMAND,
   promoteMemoryCheckpoint,
 } from "./loop/memory-checkpoint";
+import { runOrchestrationCommand } from "./loop/orchestration-command";
 import {
   RECON_PANE_SUBCOMMAND,
   type ReconPaneIndex,
@@ -406,6 +407,7 @@ const runStoppedRunReconcileCommand = async (
 };
 
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
+  (await runOrchestrationCommand(argv)) ||
   (await runStoppedRunReconcileCommand(argv)) ||
   (await runSecureAgentSubcommand(argv)) ||
   runWorldCommand(argv) ||
