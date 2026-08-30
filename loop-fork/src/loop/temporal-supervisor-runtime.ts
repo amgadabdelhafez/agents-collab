@@ -6,8 +6,13 @@ import {
   type SupervisorMessageAuthorityPort,
   type SupervisorMessageGovernanceReceiptPort,
 } from "./supervisor-message-governance";
+import {
+  createSupervisorOrchestrationHttpHandler,
+  type SupervisorControlSurfaceAuthenticator,
+} from "./supervisor-orchestration-http";
 import { SupervisorOrchestrationRuntime } from "./supervisor-orchestration-runtime";
 import type { JsonlSupervisorThreadStore } from "./supervisor-thread-store";
+import { TaskGraphRuntime } from "./task-graph-runtime";
 import { TemporalWorkflowPort } from "./temporal-workflow-port";
 
 export interface TemporalSupervisorRuntimeOptions {
@@ -42,16 +47,19 @@ const requireWorkflowPath = (value: string): string => {
 
 export class TemporalSupervisorRuntimeHost {
   readonly runtime: SupervisorOrchestrationRuntime;
+  readonly tasks: TaskGraphRuntime;
   readonly #worker: Worker;
   readonly #workerRun: Promise<void>;
   #closed = false;
 
   private constructor(
     runtime: SupervisorOrchestrationRuntime,
+    tasks: TaskGraphRuntime,
     worker: Worker,
     workerRun: Promise<void>
   ) {
     this.runtime = runtime;
+    this.tasks = tasks;
     this.#worker = worker;
     this.#workerRun = workerRun;
   }
@@ -77,6 +85,7 @@ export class TemporalSupervisorRuntimeHost {
       governed,
       store: options.store,
     });
+    const tasks = new TaskGraphRuntime({ workflows });
     const worker = await Worker.create({
       buildId: requireRuntimeName(options.buildId, "buildId"),
       connection: options.nativeConnection as NativeConnection,
@@ -89,7 +98,12 @@ export class TemporalSupervisorRuntimeHost {
     try {
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if (worker.getState() === "RUNNING") {
-          return new TemporalSupervisorRuntimeHost(runtime, worker, workerRun);
+          return new TemporalSupervisorRuntimeHost(
+            runtime,
+            tasks,
+            worker,
+            workerRun
+          );
         }
         await Promise.race([
           workerRun.then(() => {
@@ -121,5 +135,15 @@ export class TemporalSupervisorRuntimeHost {
 
   workerState(): string {
     return this.#worker.getState();
+  }
+
+  httpHandler(
+    authenticator: SupervisorControlSurfaceAuthenticator
+  ): (request: Request) => Promise<Response> {
+    return createSupervisorOrchestrationHttpHandler({
+      authenticator,
+      messages: this.runtime,
+      tasks: this.tasks,
+    });
   }
 }
