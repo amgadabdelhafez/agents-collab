@@ -95,6 +95,7 @@ const LINE_SPLIT_RE = /\r?\n/;
 const GENERIC_TMUX_READY_POLLS = 12;
 const CLAUDE_DELIVERY_CONFIRM_POLLS = 8;
 const CODEX_DELIVERY_CONFIRM_POLLS = 8;
+const CODEX_DOORBELL_SUBMIT_SUFFIX = " [submit]";
 const MAX_TMUX_BRIDGE_NUDGE_BYTES = 128;
 const TUI_PASTE_MARKER_RE = /\[Pasted (?:Content|text)\b[^\]]*\]/i;
 const CLAUDE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
@@ -951,6 +952,60 @@ const confirmCodexSubmission = async (
   return sawStrandedComposer ? "stranded" : "unknown";
 };
 
+const waitForExactCodexComposer = async (
+  runDir: string,
+  pane: string,
+  expectedComposerText: string,
+  permittedWaitingText: (composer: string) => boolean
+): Promise<boolean> => {
+  const expected = normalizeComposerText(expectedComposerText);
+  for (let attempt = 0; attempt < CODEX_DELIVERY_CONFIRM_POLLS; attempt += 1) {
+    const output = capturePane(runDir, pane, true);
+    if (output === undefined || CODEX_VISIBLE_ACTIVE_RE.test(output)) {
+      return false;
+    }
+    const composer = codexComposerText(output);
+    if (composer === expected) {
+      return true;
+    }
+    if (composer === undefined || !permittedWaitingText(composer)) {
+      return false;
+    }
+    await wait(CODEX_TMUX_READY_DELAY_MS);
+  }
+  return false;
+};
+
+const submitVisibleCodexRecovery = async (
+  runDir: string,
+  pane: string,
+  message: string,
+  submissionVersion: string | undefined
+): Promise<boolean> => {
+  const original = normalizeComposerText(message);
+  const augmented = `${message}${CODEX_DOORBELL_SUBMIT_SUFFIX}`;
+  if (!sendPaneText(runDir, pane, CODEX_DOORBELL_SUBMIT_SUFFIX)) {
+    return false;
+  }
+  const suffixVisible = await waitForExactCodexComposer(
+    runDir,
+    pane,
+    augmented,
+    (composer) => composer === original
+  );
+  if (!(suffixVisible && sendPaneKeys(runDir, pane, ["Enter"]))) {
+    return false;
+  }
+  return (
+    (await confirmCodexSubmission(
+      runDir,
+      pane,
+      submissionVersion,
+      augmented
+    )) === "confirmed"
+  );
+};
+
 const claudeComposerText = (output: string): string | undefined => {
   const prompt = output
     .split(LINE_SPLIT_RE)
@@ -1115,16 +1170,19 @@ const submitCodexDoorbell = async (
   submissionVersion: string | undefined,
   alreadyPresent: boolean
 ): Promise<boolean> => {
-  if (!(alreadyPresent || sendPaneText(runDir, pane, message))) {
-    return false;
-  }
-  if (alreadyPresent && !sendPaneText(runDir, pane, " ")) {
-    return false;
-  }
   if (alreadyPresent) {
-    await wait(100);
+    return submitVisibleCodexRecovery(runDir, pane, message, submissionVersion);
   }
-  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
+  if (!sendPaneText(runDir, pane, message)) {
+    return false;
+  }
+  const messageVisible = await waitForExactCodexComposer(
+    runDir,
+    pane,
+    message,
+    (composer) => composer === "" || CODEX_EMPTY_COMPOSER_RE.test(composer)
+  );
+  if (!(messageVisible && sendPaneKeys(runDir, pane, ["Enter"]))) {
     return false;
   }
   const confirmation = await confirmCodexSubmission(
@@ -1136,21 +1194,10 @@ const submitCodexDoorbell = async (
   if (confirmation === "confirmed") {
     return true;
   }
-  if (
-    alreadyPresent ||
-    confirmation !== "stranded" ||
-    !sendPaneText(runDir, pane, " ")
-  ) {
+  if (confirmation !== "stranded") {
     return false;
   }
-  await wait(100);
-  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
-    return false;
-  }
-  return (
-    (await confirmCodexSubmission(runDir, pane, submissionVersion, message)) ===
-    "confirmed"
-  );
+  return submitVisibleCodexRecovery(runDir, pane, message, submissionVersion);
 };
 
 const submitClaudeDoorbell = async (

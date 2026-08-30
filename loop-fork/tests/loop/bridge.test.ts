@@ -558,22 +558,19 @@ test("readBridgeRuntimeStatus socket-qualifies manifest targets and distinguishe
 });
 
 test("Codex delivery resubmits only the exact stranded bridge doorbell", async () => {
+  const nudge = "Bridge: 1 message waiting. Call receive_messages now.";
   let enterCount = 0;
-  let loadedText = "";
+  let composer = "Use /skills to list available skills";
+  const loadedText: string[] = [];
   const spawnSync = mock((args: string[]) => {
     if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     if (tmuxCommand(args) === "capture-pane") {
-      let pane =
-        "◦ Working (1s • esc to interrupt)\n\n  gpt-5.6-sol low · ~/repo\n";
-      if (enterCount === 0) {
-        pane =
-          "› Use /skills to list available skills\n\n  gpt-5.6-sol low · ~/repo\n";
-      } else if (enterCount === 1) {
-        pane =
-          "› Bridge: 1 message waiting. Call receive_messages now.\n\n  gpt-5.6-sol low · ~/repo\n";
-      }
+      const pane =
+        enterCount >= 2
+          ? "◦ Working (1s • esc to interrupt)\n\n  gpt-5.6-sol low · ~/repo\n"
+          : `› ${composer}\n\n  gpt-5.6-sol low · ~/repo\n`;
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -582,7 +579,12 @@ test("Codex delivery resubmits only the exact stranded bridge doorbell", async (
     }
     const literal = tmuxLiteralText(args);
     if (literal !== undefined) {
-      loadedText = literal;
+      loadedText.push(literal);
+      if (literal === nudge) {
+        composer = nudge;
+      } else if (literal === " [submit]") {
+        composer = `${nudge} [submit]`;
+      }
     }
     if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
       enterCount += 1;
@@ -626,7 +628,7 @@ test("Codex delivery resubmits only the exact stranded bridge doorbell", async (
   });
 
   expect(await bridge.drainCodexTmuxMessages(runDir)).toBe(true);
-  expect(loadedText).toBe(" ");
+  expect(loadedText).toEqual([nudge, " [submit]"]);
   expect(enterCount).toBe(2);
   expect(
     bridge.bridgeInternals
@@ -639,21 +641,29 @@ test("Codex delivery resubmits only the exact stranded bridge doorbell", async (
 
 test("Codex delivery never submits a foreign composer after injection", async () => {
   let enterCount = 0;
+  let messageLoaded = false;
   const spawnSync = mock((args: string[]) => {
     if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     if (tmuxCommand(args) === "capture-pane") {
+      let pane =
+        "› Use /skills to list available skills\n\n  gpt-5.6-sol low · ~/repo\n";
+      if (messageLoaded && enterCount === 0) {
+        pane =
+          "› Bridge: 1 message waiting. Call receive_messages now.\n\n  gpt-5.6-sol low · ~/repo\n";
+      } else if (messageLoaded) {
+        pane =
+          "› human draft entered concurrently\n\n  gpt-5.6-sol low · ~/repo\n";
+      }
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
-        stdout: Buffer.from(
-          enterCount === 0
-            ? "› Use /skills to list available skills\n\n  gpt-5.6-sol low · ~/repo\n"
-            : "› human draft entered concurrently\n\n  gpt-5.6-sol low · ~/repo\n",
-          "utf8"
-        ),
+        stdout: Buffer.from(pane, "utf8"),
       };
+    }
+    if (tmuxLiteralText(args) !== undefined) {
+      messageLoaded = true;
     }
     if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
       enterCount += 1;
@@ -701,7 +711,8 @@ test("Codex delivery never submits a foreign composer after injection", async ()
   expect(
     spawnSync.mock.calls.filter(
       ([args]) =>
-        tmuxCommand(args) === "send-keys" && tmuxLiteralText(args) === " "
+        tmuxCommand(args) === "send-keys" &&
+        tmuxLiteralText(args) === " [submit]"
     )
   ).toHaveLength(0);
   expect(
@@ -780,6 +791,7 @@ test("Codex delivery refuses a foreign composer before initial injection", async
 
 test("an unresolved Codex notification retries only after the bounded interval", async () => {
   const nudge = "Bridge: 1 message waiting. Call receive_messages now.";
+  let composer = nudge;
   let submissionVersionReads = 0;
   const spawnSync = mock((args: string[]) => {
     if (tmuxCommand(args) === "has-session") {
@@ -790,10 +802,13 @@ test("an unresolved Codex notification retries only after the bounded interval",
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          `› ${nudge}\n\n  gpt-5.6-sol low · ~/repo\n`,
+          `› ${composer}\n\n  gpt-5.6-sol low · ~/repo\n`,
           "utf8"
         ),
       };
+    }
+    if (tmuxLiteralText(args) === " [submit]") {
+      composer = `${nudge} [submit]`;
     }
     return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
   });
@@ -867,13 +882,15 @@ test("an unresolved Codex notification retries only after the bounded interval",
 test("an unconfirmed Codex recovery keeps the retry claim for the bounded interval", async () => {
   const nudge = "Bridge: 1 message waiting. Call receive_messages now.";
   let enterCount = 0;
+  let messageLoaded = false;
   const spawnSync = mock((args: string[]) => {
     if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     if (tmuxCommand(args) === "capture-pane") {
-      const composer =
-        enterCount === 0 ? "Use /skills to list available skills" : nudge;
+      const composer = messageLoaded
+        ? nudge
+        : "Use /skills to list available skills";
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
@@ -882,6 +899,10 @@ test("an unconfirmed Codex recovery keeps the retry claim for the bounded interv
           "utf8"
         ),
       };
+    }
+    const literal = tmuxLiteralText(args);
+    if (literal === nudge) {
+      messageLoaded = true;
     }
     if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
       enterCount += 1;
@@ -928,11 +949,11 @@ test("an unconfirmed Codex recovery keeps the retry claim for the bounded interv
   expect(await bridge.notifyTmuxBridgeInbox(runDir, "codex", nowMs)).toBe(
     false
   );
-  expect(enterCount).toBe(2);
+  expect(enterCount).toBe(1);
   expect(await bridge.notifyTmuxBridgeInbox(runDir, "codex", nowMs + 1)).toBe(
     false
   );
-  expect(enterCount).toBe(2);
+  expect(enterCount).toBe(1);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
@@ -4304,11 +4325,12 @@ test("bridge drains codex messages through the persisted stable pane target", as
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     if (tmuxCommand(args) === "capture-pane") {
+      const composer = loadedText || "Use /skills to list available skills";
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          "› Use /skills to list available skills\n\n  gpt-5.6-sol xhigh · ~/repo\n",
+          `› ${composer}\n\n  gpt-5.6-sol xhigh · ~/repo\n`,
           "utf8"
         ),
       };
@@ -5253,20 +5275,25 @@ test("runBridgeWorker retries queued codex app-server messages", async () => {
 
 test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async () => {
   let runDir = "";
+  let loadedText = "";
   const injectCodexMessage = mock(() => false);
   const spawnSync = mock((args: string[]) => {
     if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     if (tmuxCommand(args) === "capture-pane") {
+      const composer = loadedText || "Use /skills to list available skills";
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
-          "\u203a Use /skills to list available skills\n\n  gpt-5.6-sol xhigh \u00b7 ~/repo\n",
+          `\u203a ${composer}\n\n  gpt-5.6-sol xhigh \u00b7 ~/repo\n`,
           "utf8"
         ),
       };
+    }
+    if (tmuxLiteralText(args) !== undefined) {
+      loadedText = tmuxLiteralText(args) ?? "";
     }
     if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
       const manifestPath = join(runDir, "manifest.json");
