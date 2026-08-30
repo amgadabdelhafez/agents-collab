@@ -68,3 +68,20 @@ test("Governess environment refuses multiply linked secret inodes", () => {
     rmSync(root, { force: true, recursive: true });
   }
 });
+
+test("Governess environment requires exact mode 0600", () => {
+  const root = mkdtempSync(join(tmpdir(), "governess-env-mode-"));
+  try {
+    for (const mode of [0o400, 0o700]) {
+      const path = join(root, `environment-${mode.toString(8)}.json`);
+      writeGovernessEnvironmentFile(path, ["SECRET=value"]);
+      chmodSync(path, mode);
+      expect(() => consumeGovernessEnvironmentFile(path)).toThrow(
+        "not private and owned"
+      );
+      expect(existsSync(path)).toBe(true);
+    }
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});

@@ -47,7 +47,7 @@ export const consumeGovernessEnvironmentFile = (
     pathStat.uid !== process.getuid?.() ||
     pathStat.nlink !== 1 ||
     // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks require bitwise inspection.
-    (pathStat.mode & 0o077) !== 0
+    (pathStat.mode & 0o777) !== 0o600
   ) {
     throw new Error("Governess environment file is not private and owned");
   }
@@ -61,11 +61,10 @@ export const consumeGovernessEnvironmentFile = (
       !stat.isFile() ||
       stat.size > MAX_ENV_FILE_BYTES ||
       stat.uid !== pathStat.uid ||
+      stat.mode !== pathStat.mode ||
       stat.nlink !== 1 ||
       stat.dev !== pathStat.dev ||
-      stat.ino !== pathStat.ino ||
-      // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks require bitwise inspection.
-      (stat.mode & 0o077) !== 0
+      stat.ino !== pathStat.ino
     ) {
       throw new Error("Governess environment file is invalid");
     }
@@ -74,6 +73,8 @@ export const consumeGovernessEnvironmentFile = (
     if (
       unlinkTarget.dev !== stat.dev ||
       unlinkTarget.ino !== stat.ino ||
+      unlinkTarget.uid !== stat.uid ||
+      unlinkTarget.mode !== stat.mode ||
       unlinkTarget.nlink !== 1
     ) {
       throw new Error("Governess environment file identity changed");
@@ -83,6 +84,8 @@ export const consumeGovernessEnvironmentFile = (
     if (
       unlinked.dev !== stat.dev ||
       unlinked.ino !== stat.ino ||
+      unlinked.uid !== stat.uid ||
+      unlinked.mode !== stat.mode ||
       unlinked.nlink !== 0
     ) {
       throw new Error("Governess environment file was not consumed once");
