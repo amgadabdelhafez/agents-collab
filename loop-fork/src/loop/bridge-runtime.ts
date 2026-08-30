@@ -77,6 +77,7 @@ const BRIDGE_NOTIFICATION_CLAIM_DIR = "bridge-notification-claims";
 // long enough that another worker cannot duplicate the same Codex turn.
 const BRIDGE_DELIVERY_CLAIM_STALE_MS = 60_000;
 const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = 15_000;
+const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const BRIDGE_WORKER_PENDING_RETRY_MS = 5000;
 export const BRIDGE_VERSION_PROBE_INTERVAL_MS = 250;
@@ -93,9 +94,14 @@ const CLAUDE_TMUX_PROMPT_PREFIX = "❯";
 const LINE_SPLIT_RE = /\r?\n/;
 const GENERIC_TMUX_READY_POLLS = 12;
 const CLAUDE_DELIVERY_CONFIRM_POLLS = 8;
+const CODEX_DELIVERY_CONFIRM_POLLS = 8;
 const MAX_TMUX_BRIDGE_NUDGE_BYTES = 128;
 const TUI_PASTE_MARKER_RE = /\[Pasted (?:Content|text)\b[^\]]*\]/i;
 const CLAUDE_SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const CODEX_VISIBLE_ACTIVE_RE =
+  /(?:Working \(|esc to interrupt|Running tool)/iu;
+const CODEX_EMPTY_COMPOSER_RE =
+  /^(?:Ask Codex to do anything|Use \/skills to list available skills)$/u;
 
 const containedRegularFile = (
   root: string,
@@ -202,6 +208,9 @@ export const readClaudeSubmissionVersion = (
 const readClaudeTranscriptVersion = (runDir: string): string | undefined =>
   readClaudeSubmissionVersion(runDir);
 
+const readCodexSubmissionVersion = (runDir: string): string | undefined =>
+  fileVersion(join(runDir, "hooks", "codex.jsonl"));
+
 export const bridgeRuntimeCommandDeps = {
   commandForPid: (pid: number): string | undefined => {
     const result = spawnSync(
@@ -221,6 +230,7 @@ export const bridgeRuntimeCommandDeps = {
   },
   createWorkerWakeSession: (runDir: string) =>
     createBridgeWorkerWakeSession(runDir),
+  readCodexSubmissionVersion,
   readClaudeTranscriptVersion,
   spawn,
   spawnSync,
@@ -873,6 +883,74 @@ const waitForCodexPane = async (
   return false;
 };
 
+type CodexSubmissionState =
+  | "confirmed"
+  | "foreign-draft"
+  | "stranded"
+  | "unknown";
+
+const normalizeComposerText = (value: string): string =>
+  value.replace(/\s+/gu, " ").trim();
+
+const codexComposerText = (output: string): string | undefined => {
+  const lines = output.split(LINE_SPLIT_RE).slice(-CODEX_TMUX_READY_TAIL_LINES);
+  const promptIndex = lines.findLastIndex((line) =>
+    line.trimStart().startsWith(CODEX_TMUX_PROMPT_PREFIX)
+  );
+  if (promptIndex < 0) {
+    return undefined;
+  }
+  const first = lines[promptIndex]
+    ?.trimStart()
+    .slice(CODEX_TMUX_PROMPT_PREFIX.length);
+  if (first === undefined) {
+    return undefined;
+  }
+  const parts = [first];
+  for (const line of lines.slice(promptIndex + 1)) {
+    if (!line.trim() || line.includes(CODEX_TMUX_FOOTER_SEPARATOR)) {
+      break;
+    }
+    parts.push(line.trim());
+  }
+  return normalizeComposerText(parts.join(" "));
+};
+
+const confirmCodexSubmission = async (
+  runDir: string,
+  pane: string,
+  previousSubmissionVersion: string | undefined,
+  expectedComposerText: string
+): Promise<CodexSubmissionState> => {
+  let sawStrandedComposer = false;
+  const expected = normalizeComposerText(expectedComposerText);
+  for (let attempt = 0; attempt < CODEX_DELIVERY_CONFIRM_POLLS; attempt += 1) {
+    const output = capturePane(runDir, pane, true);
+    if (output === undefined) {
+      return "unknown";
+    }
+    const submissionVersion =
+      bridgeRuntimeCommandDeps.readCodexSubmissionVersion(runDir);
+    if (
+      submissionVersion !== undefined &&
+      submissionVersion !== previousSubmissionVersion
+    ) {
+      return "confirmed";
+    }
+    if (CODEX_VISIBLE_ACTIVE_RE.test(output)) {
+      return "confirmed";
+    }
+    const composer = codexComposerText(output);
+    if (composer === expected || TUI_PASTE_MARKER_RE.test(composer ?? "")) {
+      sawStrandedComposer = true;
+    } else if (composer && !CODEX_EMPTY_COMPOSER_RE.test(composer)) {
+      return "foreign-draft";
+    }
+    await wait(CODEX_TMUX_READY_DELAY_MS);
+  }
+  return sawStrandedComposer ? "stranded" : "unknown";
+};
+
 const claudeComposerText = (output: string): string | undefined => {
   const prompt = output
     .split(LINE_SPLIT_RE)
@@ -1030,6 +1108,90 @@ const waitForBridgePaneReady = (
   return waitForInteractivePane(runDir, pane, attempts);
 };
 
+const submitCodexDoorbell = async (
+  runDir: string,
+  pane: string,
+  message: string,
+  submissionVersion: string | undefined,
+  alreadyPresent: boolean
+): Promise<boolean> => {
+  if (!(alreadyPresent || sendPaneText(runDir, pane, message))) {
+    return false;
+  }
+  if (alreadyPresent && !sendPaneText(runDir, pane, " ")) {
+    return false;
+  }
+  if (alreadyPresent) {
+    await wait(100);
+  }
+  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
+    return false;
+  }
+  const confirmation = await confirmCodexSubmission(
+    runDir,
+    pane,
+    submissionVersion,
+    message
+  );
+  if (confirmation === "confirmed") {
+    return true;
+  }
+  if (
+    alreadyPresent ||
+    confirmation !== "stranded" ||
+    !sendPaneText(runDir, pane, " ")
+  ) {
+    return false;
+  }
+  await wait(100);
+  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
+    return false;
+  }
+  return (
+    (await confirmCodexSubmission(runDir, pane, submissionVersion, message)) ===
+    "confirmed"
+  );
+};
+
+const submitClaudeDoorbell = async (
+  runDir: string,
+  pane: string,
+  message: string,
+  transcriptVersion: string | undefined
+): Promise<boolean> => {
+  if (!sendPaneText(runDir, pane, message)) {
+    return false;
+  }
+  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
+    return false;
+  }
+  const expectedComposerText = message.split("\n")[0]?.trim() ?? "";
+  const confirmation = await confirmClaudeSubmission(
+    runDir,
+    pane,
+    transcriptVersion,
+    expectedComposerText
+  );
+  if (confirmation === "confirmed") {
+    return true;
+  }
+  if (confirmation !== "stranded" || !sendPaneText(runDir, pane, " ")) {
+    return false;
+  }
+  await wait(100);
+  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
+    return false;
+  }
+  return (
+    (await confirmClaudeSubmission(
+      runDir,
+      pane,
+      transcriptVersion,
+      expectedComposerText
+    )) === "confirmed"
+  );
+};
+
 const injectTmuxMessage = async (
   runDir: string,
   pane: string,
@@ -1053,40 +1215,33 @@ const injectTmuxMessage = async (
     target === "claude"
       ? bridgeRuntimeCommandDeps.readClaudeTranscriptVersion(runDir)
       : undefined;
-  const expectedClaudeComposerText = message.split("\n")[0]?.trim() ?? "";
-  if (!sendPaneText(runDir, pane, message)) {
-    return false;
-  }
-  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
-    return false;
-  }
-  if (target !== "claude") {
-    return true;
-  }
-  const firstConfirmation = await confirmClaudeSubmission(
-    runDir,
-    pane,
-    transcriptVersion,
-    expectedClaudeComposerText
-  );
-  if (firstConfirmation === "confirmed") {
-    return true;
-  }
-  if (firstConfirmation !== "stranded" || !sendPaneText(runDir, pane, " ")) {
-    return false;
-  }
-  await wait(100);
-  if (!sendPaneKeys(runDir, pane, ["Enter"])) {
-    return false;
-  }
-  return (
-    (await confirmClaudeSubmission(
+  const codexSubmissionVersion =
+    target === "codex"
+      ? bridgeRuntimeCommandDeps.readCodexSubmissionVersion(runDir)
+      : undefined;
+  if (target === "codex") {
+    const existing = capturePane(runDir, pane, true);
+    const alreadyPresent =
+      existing !== undefined &&
+      codexComposerText(existing) === normalizeComposerText(message);
+    return submitCodexDoorbell(
       runDir,
       pane,
-      transcriptVersion,
-      expectedClaudeComposerText
-    )) === "confirmed"
-  );
+      message,
+      codexSubmissionVersion,
+      alreadyPresent
+    );
+  }
+  if (target !== "claude") {
+    if (!sendPaneText(runDir, pane, message)) {
+      return false;
+    }
+    if (!sendPaneKeys(runDir, pane, ["Enter"])) {
+      return false;
+    }
+    return true;
+  }
+  return submitClaudeDoorbell(runDir, pane, message, transcriptVersion);
 };
 
 export interface BridgeRuntimeStatus extends BridgeStatus {
@@ -1445,9 +1600,13 @@ export const notifyTmuxBridgeInbox = async (
   // The terminal text is a doorbell for the inbox, not a notification for
   // each message. Once any pending message has raised the doorbell, coalesce
   // later messages behind it until receive_messages drains the inbox.
-  const due = pending.every(
-    (entry) => lastBridgeNotificationAt(runDir, entry.id) === undefined
-  );
+  const due = pending.every((entry) => {
+    const notifiedAt = lastBridgeNotificationAt(runDir, entry.id);
+    return (
+      notifiedAt === undefined ||
+      nowMs - notifiedAt >= BRIDGE_NOTIFICATION_RETRY_MS
+    );
+  });
   if (!due) {
     return false;
   }

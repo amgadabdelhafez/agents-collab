@@ -557,6 +557,247 @@ test("readBridgeRuntimeStatus socket-qualifies manifest targets and distinguishe
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Codex delivery resubmits only the exact stranded bridge doorbell", async () => {
+  let enterCount = 0;
+  let loadedText = "";
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (tmuxCommand(args) === "capture-pane") {
+      let pane =
+        "◦ Working (1s • esc to interrupt)\n\n  gpt-5.6-sol low · ~/repo\n";
+      if (enterCount === 0) {
+        pane =
+          "› Use /skills to list available skills\n\n  gpt-5.6-sol low · ~/repo\n";
+      } else if (enterCount === 1) {
+        pane =
+          "› Bridge: 1 message waiting. Call receive_messages now.\n\n  gpt-5.6-sol low · ~/repo\n";
+      }
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(pane, "utf8"),
+      };
+    }
+    const literal = tmuxLiteralText(args);
+    if (literal !== undefined) {
+      loadedText = literal;
+    }
+    if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
+      enterCount += 1;
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(
+    () => "unchanged"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-codex-stranded",
+    kind: "message",
+    message: "Body remains only in the ledger.",
+    source: "supervisor",
+    target: "codex",
+  });
+
+  expect(await bridge.drainCodexTmuxMessages(runDir)).toBe(true);
+  expect(loadedText).toBe(" ");
+  expect(enterCount).toBe(2);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(1);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("Codex delivery never submits a foreign composer after injection", async () => {
+  let enterCount = 0;
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          enterCount === 0
+            ? "› Use /skills to list available skills\n\n  gpt-5.6-sol low · ~/repo\n"
+            : "› human draft entered concurrently\n\n  gpt-5.6-sol low · ~/repo\n",
+          "utf8"
+        ),
+      };
+    }
+    if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
+      enterCount += 1;
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(
+    () => "unchanged"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-codex-foreign",
+    kind: "message",
+    message: "Keep this body in the ledger.",
+    source: "supervisor",
+    target: "codex",
+  });
+
+  expect(await bridge.drainCodexTmuxMessages(runDir)).toBe(false);
+  expect(enterCount).toBe(1);
+  expect(
+    spawnSync.mock.calls.filter(
+      ([args]) =>
+        tmuxCommand(args) === "send-keys" && tmuxLiteralText(args) === " "
+    )
+  ).toHaveLength(0);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(0);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("an unresolved Codex notification retries only after the bounded interval", async () => {
+  const nudge = "Bridge: 1 message waiting. Call receive_messages now.";
+  let submissionVersionReads = 0;
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          `› ${nudge}\n\n  gpt-5.6-sol low · ~/repo\n`,
+          "utf8"
+        ),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(() =>
+    submissionVersionReads++ === 0 ? "before" : "after"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const message = {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-codex-bounded-retry",
+    kind: "message" as const,
+    message: "Body remains only in the ledger.",
+    source: "supervisor" as const,
+    target: "codex" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+  bridge.markBridgeMessageNotified(
+    runDir,
+    message,
+    "nudged codex tmux inbox",
+    "2026-03-23T10:01:00.000Z"
+  );
+
+  expect(
+    await bridge.notifyTmuxBridgeInbox(
+      runDir,
+      "codex",
+      Date.parse("2026-03-23T10:01:29.999Z")
+    )
+  ).toBe(false);
+  expect(spawnSync).not.toHaveBeenCalled();
+  expect(
+    await bridge.notifyTmuxBridgeInbox(
+      runDir,
+      "codex",
+      Date.parse("2026-03-23T10:01:30.000Z")
+    )
+  ).toBe(true);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(2);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("tmux timeout preserves bridge routing as unknown without socket-blind fallback delivery", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args.includes("has-session")) {
@@ -3938,6 +4179,10 @@ test("bridge drains codex messages through the persisted stable pane target", as
   });
   const bridge = await loadBridge();
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let submissionVersionReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(() =>
+    submissionVersionReads++ === 0 ? "before" : "after"
+  );
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
@@ -4896,6 +5141,10 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
   });
   const bridge = await loadBridge({ injectCodexMessage });
   bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let submissionVersionReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(() =>
+    submissionVersionReads++ === 0 ? "before" : "after"
+  );
   bridge.bridgeRuntimeCommandDeps.waitForWorkerWake = mock(() =>
     Promise.resolve({ reason: "settle", version: "test" })
   );
