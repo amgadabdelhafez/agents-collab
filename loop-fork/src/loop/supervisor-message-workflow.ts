@@ -242,7 +242,9 @@ const parseArtifactRefs = (value: unknown): string[] => {
   return [...new Set(value)];
 };
 
-const parseInput = (input: JsonObject): SupervisorMessageInput => {
+export const parseSupervisorMessageInput = (
+  input: JsonObject
+): SupervisorMessageInput => {
   const body = requireString(input, "body");
   if (utf8ByteLength(body) > MAX_BODY_BYTES) {
     throw new WorkflowError(
@@ -553,7 +555,7 @@ export const supervisorMessageWorkflowDefinition: WorkflowDefinition = {
   },
 
   start(input, context) {
-    const message = parseInput(input);
+    const message = parseSupervisorMessageInput(input);
     const state: SupervisorMessageState = {
       acknowledgedAt: null,
       artifactRefs: message.artifactRefs,

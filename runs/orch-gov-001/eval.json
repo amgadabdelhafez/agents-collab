@@ -1,0 +1,35 @@
+{
+  "task_id": "ORCH-GOV-001",
+  "feature": "governed-supervisor-message-delivery",
+  "timestamp": "2026-08-30T06:27:00Z",
+  "identity": {
+    "base_commit": "d051af1c07a621094803de22e20dad0aec903ab7",
+    "branch": "codex/orch-gov-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/orch-gov-001"
+  },
+  "checks": {
+    "functional": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "authorized receive, bridge enqueue, claim, and acknowledgement",
+        "denied intake and denied claim make no unauthorized mutation",
+        "malformed intake emits body-free validation refusal before authority",
+        "duplicate activity delivery creates one pending bridge message",
+        "unresolved and terminal bridge outcomes map fail-closed"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci",
+        "bun run check",
+        "bun run build",
+        "git diff --check"
+      ]
+    }
+  },
+  "verdict": "pending-independent-review",
+  "notes": "No live routing, deployment, credentials, or external mutation in this slice."
+}

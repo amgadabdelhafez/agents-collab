@@ -135,6 +135,11 @@ or claim authority.
   implementation because it completed the unchanged six-case corpus including
   the named application-version upgrade. DBOS remains comparison evidence, not
   a live fallback. Production deployment remains separately gated.
+- The governed application layer authorizes receive, claim, acknowledge, tick,
+  and cancel before mutation. A trusted directory resolves supervisor identity
+  to a run-owned bridge route; the existing bridge JSONL remains the only
+  delivery queue. Body-free governance receipts are separate audit evidence,
+  not workflow or message state.
 - `SupervisorMessage` uses its workflow ID as the stable deduplication boundary.
   Delivery activities receive a deterministic attempt idempotency key. Only the
   intended supervisor may claim, and only the current claimant may acknowledge.
