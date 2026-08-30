@@ -1,0 +1,15 @@
+{
+  "task_id": "COMM-ATTN-001",
+  "feature": "selective-durable-supervisor-attention",
+  "timestamp": "2026-08-30T05:55:00Z",
+  "identity": {
+    "base_commit": "4311a24be2d30e78fb46b5c5844a3a78bc108ff6",
+    "branch": "codex/comm-attn-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/comm-attn-001"
+  },
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  },
+  "verdict": "pending-implementation"
+}
