@@ -879,6 +879,104 @@ test("an unresolved Codex notification retries only after the bounded interval",
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Codex recovery submits the exact previously notified doorbell after the pending count grows", async () => {
+  const priorNudge = "Bridge: 2 messages waiting. Call receive_messages now.";
+  let composer = priorNudge;
+  let enterCount = 0;
+  const literalText: string[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          enterCount > 0
+            ? "◦ Working (1s • esc to interrupt)\n\n  gpt-5.6-sol low · ~/repo\n"
+            : `› ${composer}\n\n  gpt-5.6-sol low · ~/repo\n`,
+          "utf8"
+        ),
+      };
+    }
+    const literal = tmuxLiteralText(args);
+    if (literal !== undefined) {
+      literalText.push(literal);
+      if (literal === " [submit]") {
+        composer = `${priorNudge} [submit]`;
+      }
+    }
+    if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
+      enterCount += 1;
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(
+    () => "unchanged"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const messages = ["prior-a", "prior-b", "new-c"].map((id) => ({
+    at: "2026-03-23T10:00:00.000Z",
+    id,
+    kind: "message" as const,
+    message: "Body remains only in the ledger.",
+    source: "supervisor" as const,
+    target: "codex" as const,
+  }));
+  for (const message of messages) {
+    bridge.bridgeInternals.appendBridgeEvent(runDir, message);
+  }
+  for (const message of messages.slice(0, 2)) {
+    bridge.markBridgeMessageNotified(
+      runDir,
+      message,
+      "nudged codex tmux inbox",
+      "2026-03-23T10:00:00.000Z"
+    );
+  }
+
+  expect(
+    await bridge.notifyTmuxBridgeInbox(
+      runDir,
+      "codex",
+      Date.parse("2026-03-23T10:00:31.000Z")
+    )
+  ).toBe(true);
+  expect(literalText).toEqual([" [submit]"]);
+  expect(enterCount).toBe(1);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(5);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(3);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("an unconfirmed Codex recovery keeps the retry claim for the bounded interval", async () => {
   const nudge = "Bridge: 1 message waiting. Call receive_messages now.";
   let enterCount = 0;

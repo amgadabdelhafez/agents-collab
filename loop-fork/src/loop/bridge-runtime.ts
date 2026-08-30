@@ -37,6 +37,7 @@ import {
   lastBridgeNotificationAt,
   markBridgeMessageDeliveryFailed,
   markBridgeMessageNotified,
+  readBridgeEvents,
   readBridgeInbox,
   readBridgeStatus,
   readPendingBridgeMessages,
@@ -1200,6 +1201,43 @@ const submitCodexDoorbell = async (
   return submitVisibleCodexRecovery(runDir, pane, message, submissionVersion);
 };
 
+const submitOwnedCodexDoorbell = (
+  runDir: string,
+  pane: string,
+  message: string,
+  submissionVersion: string | undefined,
+  previousOwnedDoorbell?: string
+): Promise<boolean> => {
+  const existing = capturePane(runDir, pane, true);
+  const existingComposer =
+    existing === undefined ? undefined : codexComposerText(existing);
+  if (existingComposer === undefined) {
+    return Promise.resolve(false);
+  }
+  const currentDoorbell = normalizeComposerText(message);
+  const priorDoorbell = previousOwnedDoorbell
+    ? normalizeComposerText(previousOwnedDoorbell)
+    : undefined;
+  let ownedDoorbell: string | undefined;
+  if (existingComposer === currentDoorbell) {
+    ownedDoorbell = message;
+  } else if (priorDoorbell && existingComposer === priorDoorbell) {
+    ownedDoorbell = previousOwnedDoorbell;
+  }
+  const emptyComposer =
+    existingComposer === "" || CODEX_EMPTY_COMPOSER_RE.test(existingComposer);
+  if (!(ownedDoorbell || emptyComposer)) {
+    return Promise.resolve(false);
+  }
+  return submitCodexDoorbell(
+    runDir,
+    pane,
+    ownedDoorbell ?? message,
+    submissionVersion,
+    ownedDoorbell !== undefined
+  );
+};
+
 const submitClaudeDoorbell = async (
   runDir: string,
   pane: string,
@@ -1244,7 +1282,8 @@ const injectTmuxMessage = async (
   pane: string,
   target: BridgeMessage["target"],
   message: string,
-  readyAttempts?: number
+  readyAttempts?: number,
+  previousOwnedDoorbell?: string
 ): Promise<boolean> => {
   const ready = await waitForBridgePaneReady(
     runDir,
@@ -1267,24 +1306,12 @@ const injectTmuxMessage = async (
       ? bridgeRuntimeCommandDeps.readCodexSubmissionVersion(runDir)
       : undefined;
   if (target === "codex") {
-    const existing = capturePane(runDir, pane, true);
-    const existingComposer =
-      existing === undefined ? undefined : codexComposerText(existing);
-    if (existingComposer === undefined) {
-      return false;
-    }
-    const alreadyPresent = existingComposer === normalizeComposerText(message);
-    const emptyComposer =
-      existingComposer === "" || CODEX_EMPTY_COMPOSER_RE.test(existingComposer);
-    if (!(alreadyPresent || emptyComposer)) {
-      return false;
-    }
-    return submitCodexDoorbell(
+    return submitOwnedCodexDoorbell(
       runDir,
       pane,
       message,
       codexSubmissionVersion,
-      alreadyPresent
+      previousOwnedDoorbell
     );
   }
   if (target !== "claude") {
@@ -1366,6 +1393,39 @@ const tmuxPaneForTarget = (
 
 export const buildTmuxBridgeNudge = (pending: number): string =>
   `Bridge: ${pending} ${pending === 1 ? "message" : "messages"} waiting. Call receive_messages now.`;
+
+const lastNotifiedDoorbell = (
+  runDir: string,
+  target: BridgeMessage["target"],
+  pending: readonly BridgeMessage[]
+): string | undefined => {
+  const pendingIds = new Set(
+    pending.filter((entry) => entry.target === target).map((entry) => entry.id)
+  );
+  const latestById = new Map<string, number>();
+  for (const event of readBridgeEvents(runDir)) {
+    if (
+      event.kind !== "notified" ||
+      event.target !== target ||
+      !pendingIds.has(event.id)
+    ) {
+      continue;
+    }
+    const at = Date.parse(event.at);
+    const previous = latestById.get(event.id);
+    if (Number.isFinite(at) && (previous === undefined || at > previous)) {
+      latestById.set(event.id, at);
+    }
+  }
+  if (latestById.size === 0) {
+    return undefined;
+  }
+  const latest = Math.max(...latestById.values());
+  const priorCount = [...latestById.values()].filter(
+    (notifiedAt) => notifiedAt === latest
+  ).length;
+  return priorCount > 0 ? buildTmuxBridgeNudge(priorCount) : undefined;
+};
 
 export const readBridgeRuntimeStatus = (
   runDir: string
@@ -1696,7 +1756,8 @@ export const notifyTmuxBridgeInbox = async (
       resolved.pane,
       target,
       buildTmuxBridgeNudge(stillPending.length),
-      readyAttempts
+      readyAttempts,
+      lastNotifiedDoorbell(runDir, target, stillPending)
     );
     if (!notified) {
       return false;
