@@ -1,0 +1,15 @@
+{
+  "task_id": "COMM-BOARD-001",
+  "feature": "durable-supervisor-threads",
+  "timestamp": "2026-08-30T07:18:00Z",
+  "identity": {
+    "base_commit": "3551e087802762505de7678df4f9b845ed3ea676",
+    "branch": "codex/comm-board-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/comm-board-001"
+  },
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  },
+  "verdict": "pending-implementation"
+}
