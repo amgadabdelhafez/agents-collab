@@ -23,16 +23,16 @@ message category.
 
 ## Acceptance criteria
 
-- [ ] The artifact view can be produced only through a fresh read of the exact
+- [x] The artifact view can be produced only through a fresh read of the exact
       durable thread-store class; malformed journal bytes fail before projection.
-- [ ] Only the store-validated content-addressed artifact URIs are grouped.
-- [ ] Lifecycle updates replace the prior workflow state and cannot duplicate an
+- [x] Only the store-validated content-addressed artifact URIs are grouped.
+- [x] Lifecycle updates replace the prior workflow state and cannot duplicate an
       artifact backlink or change immutable references.
-- [ ] Backlinks contain only workflow/message/thread/from/to/received-at,
+- [x] Backlinks contain only workflow/message/thread/from/to/received-at,
       current phase/action, and immutable message category.
-- [ ] Artifacts sort by URI; backlinks sort by received time and workflow ID;
+- [x] Artifacts sort by URI; backlinks sort by received time and workflow ID;
       restart and repeated reads are byte-identical.
-- [ ] Output is defensive and contains no body, transcript, credential, local
+- [x] Output is defensive and contains no body, transcript, credential, local
       path, artifact content, manifest claim, or engine-specific type.
 - [ ] Focused/full/static/build/diff gates pass and an independent exact-SHA
       zero-write reviewer returns PASS.
