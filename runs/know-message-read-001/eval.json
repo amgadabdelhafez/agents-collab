@@ -1,15 +1,33 @@
 {
   "task_id": "KNOW-MESSAGE-READ-001",
   "feature": "durable-knowledge-artifact-read-model",
-  "timestamp": "2026-08-30T06:03:00Z",
+  "timestamp": "2026-08-30T06:05:55Z",
   "identity": {
     "base_commit": "14b36203f5f562519606d2dba98e0904d30faceb",
     "branch": "codex/know-message-read-001",
     "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/know-message-read-001"
   },
   "checks": {
-    "functional": { "passed": 0, "failed": 0, "details": [] },
-    "regression": { "passed": 0, "failed": 0, "details": [] }
+    "functional": {
+      "passed": 7,
+      "failed": 0,
+      "details": [
+        "durable restart and latest lifecycle identity",
+        "defensive body transcript and local-path-free output",
+        "corrupt durable journal refusal",
+        "four compatibility-only strict projection regressions"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci PASS with empty named failure set",
+        "bun run check PASS",
+        "bun run build PASS",
+        "git diff --check PASS"
+      ]
+    }
   },
-  "verdict": "pending-implementation"
+  "verdict": "candidate-ready-for-independent-review"
 }

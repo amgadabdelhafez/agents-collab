@@ -22,17 +22,17 @@ and emits deterministic content-addressed references with safe backlinks.
 
 ## Acceptance criteria
 
-- [ ] The final knowledge reader accepts only the nominal durable store and a
+- [x] The final knowledge reader accepts only the nominal durable store and a
       malformed journal fails before any knowledge projection.
-- [ ] It reuses the accepted durable artifact-reference projection rather than
+- [x] It reuses the accepted durable artifact-reference projection rather than
       parsing or validating a second message-board representation.
-- [ ] Lifecycle updates replace rather than duplicate backlinks; restart and
+- [x] Lifecycle updates replace rather than duplicate backlinks; restart and
       repeated reads are byte-identical and deterministically ordered.
-- [ ] Output contains only content-addressed artifact refs, counts, and safe
+- [x] Output contains only content-addressed artifact refs, counts, and safe
       message/thread/workflow/category/lifecycle backlinks.
-- [ ] Output contains no body, transcript, credential, local path, artifact
+- [x] Output contains no body, transcript, credential, local path, artifact
       content, knowledge-promotion claim, manifest claim, or engine type.
-- [ ] The earlier in-memory projector remains compatibility-only and is not the
+- [x] The earlier in-memory projector remains compatibility-only and is not the
       authoritative final read path.
 - [ ] Focused/full/static/build/diff gates pass and an independent exact-SHA
       zero-write reviewer returns PASS.

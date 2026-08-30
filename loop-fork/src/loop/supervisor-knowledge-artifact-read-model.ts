@@ -4,6 +4,11 @@ import type {
   SupervisorMessageBoardProjection,
 } from "./supervisor-message-read-model";
 import type { SupervisorMessagePhase } from "./supervisor-message-workflow";
+import { readSupervisorThreadArtifacts } from "./supervisor-thread-artifact-read-model";
+import type {
+  JsonlSupervisorThreadStore,
+  SupervisorThreadMessageKind,
+} from "./supervisor-thread-store";
 
 export interface SupervisorKnowledgeArtifactBacklink {
   actionRequired: SupervisorMessageAction;
@@ -26,6 +31,24 @@ export interface SupervisorKnowledgeArtifactEntry {
 export interface SupervisorKnowledgeArtifactProjection {
   artifacts: SupervisorKnowledgeArtifactEntry[];
   schema: "supervisor-knowledge-artifacts.v1";
+  sourceRevision: number;
+}
+
+export interface DurableSupervisorKnowledgeArtifactBacklink
+  extends SupervisorKnowledgeArtifactBacklink {
+  messageKind: SupervisorThreadMessageKind;
+}
+
+export interface DurableSupervisorKnowledgeArtifactEntry {
+  artifactRef: string;
+  backlinks: DurableSupervisorKnowledgeArtifactBacklink[];
+  referenceCount: number;
+  schema: "supervisor-knowledge-artifact.v2";
+}
+
+export interface DurableSupervisorKnowledgeArtifactProjection {
+  artifacts: DurableSupervisorKnowledgeArtifactEntry[];
+  schema: "supervisor-knowledge-artifacts.v2";
   sourceRevision: number;
 }
 
@@ -230,6 +253,7 @@ const compareBacklinks = (
   right.receivedAt.localeCompare(left.receivedAt) ||
   left.workflowId.localeCompare(right.workflowId);
 
+/** @deprecated Compatibility-only projection for pre-durable in-memory boards. */
 export const projectSupervisorKnowledgeArtifacts = (
   boardValue: unknown
 ): SupervisorKnowledgeArtifactProjection => {
@@ -263,5 +287,21 @@ export const projectSupervisorKnowledgeArtifacts = (
       })),
     schema: "supervisor-knowledge-artifacts.v1",
     sourceRevision: board.revision,
+  };
+};
+
+export const readSupervisorKnowledgeArtifacts = (
+  store: JsonlSupervisorThreadStore
+): DurableSupervisorKnowledgeArtifactProjection => {
+  const durableArtifacts = readSupervisorThreadArtifacts(store);
+  return {
+    artifacts: durableArtifacts.artifacts.map((artifact) => ({
+      artifactRef: artifact.artifactRef,
+      backlinks: artifact.backlinks.map((backlink) => ({ ...backlink })),
+      referenceCount: artifact.referenceCount,
+      schema: "supervisor-knowledge-artifact.v2",
+    })),
+    schema: "supervisor-knowledge-artifacts.v2",
+    sourceRevision: durableArtifacts.sourceRevision,
   };
 };
