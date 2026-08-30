@@ -265,6 +265,43 @@ test("same branch or same root conflicts, and terminal dead ownership alone no l
   }
 });
 
+test("an explicit abandoned-never-bound release cannot self-conflict with the next launch", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-never-bound-root-"));
+  const home = mkdtempSync(join(tmpdir(), "loop-never-bound-home-"));
+  try {
+    const binding = makeBinding(root);
+    const storage = resolveRunStorage("1", binding.root, home);
+    writeRunManifest(storage.manifestPath, {
+      ...createRunManifest({
+        cwd: root,
+        mode: "paired",
+        pid: 999,
+        repoId: storage.repoId,
+        runId: "1",
+        state: "failed",
+        tmuxSocket: "/tmp/fresh.sock",
+        workspaceBinding: binding,
+      }),
+      workspaceReleasedAt: "2026-08-30T08:32:08.484Z",
+      workspaceReleaseKind: "abandoned-never-bound",
+    });
+
+    const claim = await reservePairedLaunch(
+      makeOptions(),
+      binding,
+      reservationDeps(home)
+    );
+
+    expect(claim.storage.runId).toBe("2");
+    expect(readRunManifest(storage.manifestPath)).toMatchObject({
+      workspaceReleaseKind: "abandoned-never-bound",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test("active legacy and unknown topology fail closed without mutation", async () => {
   const root = mkdtempSync(join(tmpdir(), "loop-launch-root-"));
   const home = mkdtempSync(join(tmpdir(), "loop-launch-home-"));

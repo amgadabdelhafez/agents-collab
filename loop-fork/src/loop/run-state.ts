@@ -235,6 +235,7 @@ interface RunManifestInput {
   tmuxSocket?: string;
   updatedAt?: string;
   workspaceBinding?: LaunchWorkspaceBinding;
+  workspaceReleaseKind?: "abandoned-never-bound";
   worldModel?: RunWorldModelBinding;
 }
 
@@ -1452,6 +1453,13 @@ const optionalWorkspaceReleasedAt = (
   return field.kind === "valid" ? { workspaceReleasedAt: field.value } : {};
 };
 
+const optionalWorkspaceReleaseKind = (
+  parsed: Record<string, unknown>
+): Pick<RunManifest, "workspaceReleaseKind"> | Record<string, never> =>
+  parsed.workspaceReleaseKind === "abandoned-never-bound"
+    ? { workspaceReleaseKind: "abandoned-never-bound" }
+    : {};
+
 const readOptionalRunManifestFields = (
   parsed: Record<string, unknown>,
   manifestPath: string
@@ -1555,6 +1563,7 @@ const readOptionalRunManifestFields = (
     ...(tmuxSession ? { tmuxSession } : {}),
     ...(tmuxSocket ? { tmuxSocket } : {}),
     ...optionalWorkspaceReleasedAt(parsed),
+    ...optionalWorkspaceReleaseKind(parsed),
   };
 };
 

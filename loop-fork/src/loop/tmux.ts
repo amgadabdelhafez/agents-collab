@@ -98,7 +98,9 @@ import {
   type RunManifest,
   type RunStorage,
   type RunWorldModelBinding,
+  readRunManifest,
   resolveExistingRunId,
+  resolveRunStorage,
   setRunManifestState,
   touchRunManifest,
   updateRunManifest,
@@ -122,6 +124,7 @@ import {
   launchSessionArgv,
   resolveTmuxSocket,
   type TmuxSocket,
+  validateTmuxSocket,
 } from "./tmux-socket";
 import type { Agent, EffortLevel, Options, RunLifecycleState } from "./types";
 import {
@@ -3883,13 +3886,15 @@ const createLaunchCommandSpawner =
   (args: string[]): SpawnResult =>
     runCommand(qualifyLaunchTmuxCommand(args, launchSocket));
 
-const defaultDeps = (): TmuxDeps => {
+const defaultDeps = (persistedSocket?: TmuxSocket): TmuxDeps => {
   // Resolve once. Every production tmux command in this dependency set must
   // address that exact server, even when other paired Loops share it and even
   // if ambient TMUX variables change while startup is in flight.
-  const launchSocket = resolveTmuxSocket(process.env, {
-    uid: process.getuid?.() ?? 0,
-  }).socket;
+  const launchSocket =
+    persistedSocket ??
+    resolveTmuxSocket(process.env, {
+      uid: process.getuid?.() ?? 0,
+    }).socket;
   const spawnLaunchCommand = createLaunchCommandSpawner(
     launchSocket,
     (qualifiedArgs: string[]): SpawnResult => {
@@ -4103,6 +4108,21 @@ const defaultDeps = (): TmuxDeps => {
   };
 };
 
+const persistedPairedLaunchSocket = (
+  launch: PairedTmuxLaunch | undefined,
+  cwd: string,
+  home = process.env.HOME ?? ""
+): TmuxSocket | undefined => {
+  const runId = launch?.opts.reservedRunId;
+  if (!runId) {
+    return undefined;
+  }
+  const manifest = readRunManifest(
+    resolveRunStorage(runId, cwd, home).manifestPath
+  );
+  return validateTmuxSocket(manifest?.tmuxSocket).socket;
+};
+
 const findSession = (
   argv: string[],
   deps: TmuxDeps,
@@ -4151,9 +4171,11 @@ const attachSessionIfInteractive = (
       );
       return false;
     }
-    throw error instanceof Error
-      ? error
-      : new Error(`Failed to attach to tmux session "${session}".`);
+    const detail = error instanceof Error ? error.message : String(error);
+    deps.log(
+      `[loop] tmux session "${session}" is live but this terminal could not attach (${detail}); preserving the owned run for manual attach.`
+    );
+    return true;
   }
 };
 
@@ -4166,7 +4188,11 @@ export const runInTmux = async (
     return false;
   }
 
-  const deps = { ...defaultDeps(), ...overrides };
+  const persistedSocket = persistedPairedLaunchSocket(
+    launch,
+    overrides.cwd ?? process.cwd()
+  );
+  const deps = { ...defaultDeps(persistedSocket), ...overrides };
   if (overrides.capturePane && !overrides.capturePaneSnapshot) {
     // Unit tests and embedders that provide a pane capture do not get to mix
     // that synthetic text with cursor data from the user's real tmux server.
@@ -4190,7 +4216,7 @@ export const runInTmux = async (
     Boolean(launch?.opts.pairedMode);
   deps.log(tmuxStartupMessage(pairedLaunch));
 
-  const launchSocket = deps.resolveLaunchSocket();
+  const launchSocket = persistedSocket ?? deps.resolveLaunchSocket();
 
   const startedPairedSession =
     pairedLaunch && launch ? await startPairedSession(deps, launch) : undefined;
@@ -4331,6 +4357,7 @@ export const tmuxInternals = {
   isConfirmedMissingTmuxSession,
   isClaudeInputReady,
   parseTmuxPaneSnapshot,
+  persistedPairedLaunchSocket,
   probeClaudeSuggestedComposer,
   quoteShellArg,
   qualifyLaunchTmuxCommand,

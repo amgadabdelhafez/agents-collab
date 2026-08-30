@@ -40,6 +40,7 @@ interface RunProcessCleanupDeps {
   commandForPid: (pid: number) => string | undefined;
   listeningPids: (port: number) => number[];
   listTmuxSessions: () => ReadonlySet<string> | undefined;
+  now: () => string;
   pidAlive: (pid: number) => boolean;
   signal: (pid: number, signal: NodeJS.Signals) => void;
   updateManifest: typeof updateRunManifest;
@@ -121,6 +122,7 @@ const cleanupDeps: RunProcessCleanupDeps = {
   commandForPid: defaultCommandForPid,
   listTmuxSessions: defaultListTmuxSessions,
   listeningPids: defaultListeningPids,
+  now: () => new Date().toISOString(),
   pidAlive: defaultPidAlive,
   signal: (pid, signal) => process.kill(pid, signal),
   updateManifest: updateRunManifest,
@@ -291,9 +293,22 @@ const runIsProvablyAbandoned = (
   deps: RunProcessCleanupDeps
 ): boolean => {
   if (isActiveRunState(manifest.state) && !manifest.tmuxSession) {
-    // Detached workspaces outlive their launcher PID. An active manifest with
-    // missing topology is corrupt/unknown and must be preserved for repair.
-    return false;
+    const hasPaneIdentity = Boolean(
+      manifest.tmuxPaneLeft ||
+        manifest.tmuxPaneRight ||
+        manifest.tmuxPaneGoverness ||
+        manifest.tmuxPaneAuPair ||
+        manifest.tmuxPaneNanny ||
+        manifest.tmuxPaneRecon?.length
+    );
+    // A partially created session whose identity was lost is ambiguous and
+    // remains owned. A never-bound launch has no pane identity; both recorded
+    // launch processes being dead is then positive abandonment evidence.
+    return !(
+      hasPaneIdentity ||
+      deps.pidAlive(manifest.pid) ||
+      (manifest.launchAttemptPid && deps.pidAlive(manifest.launchAttemptPid))
+    );
   }
   if (
     manifest.tmuxSession &&
@@ -329,14 +344,9 @@ const cleanupAbandonedRun = (input: {
       current ? setRunManifestState(current, "failed") : undefined
     );
   }
-  if (!hasProcessEvidence) {
-    return { killed: [], skipped: [] };
-  }
-  const cleanup = cleanupRunOwnedProcessesWithDeps(
-    input.runDir,
-    input.manifest,
-    input.deps
-  );
+  const cleanup = hasProcessEvidence
+    ? cleanupRunOwnedProcessesWithDeps(input.runDir, input.manifest, input.deps)
+    : { killed: [], skipped: [] };
   const retainAppServerOwnership = cleanup.skipped.some(
     (entry) =>
       entry.pid === input.manifest.codexAppServerPid &&
@@ -353,7 +363,21 @@ const cleanupAbandonedRun = (input: {
           codexAppServerPid: undefined,
           codexRemoteUrl: undefined,
         };
-    return withoutSettledOwnership;
+    const cleanupMayRelease = !cleanup.skipped.some((entry) =>
+      entry.reason.startsWith("signal-failed:")
+    );
+    if (!(cleanupMayRelease && !withoutSettledOwnership.workspaceReleasedAt)) {
+      return withoutSettledOwnership;
+    }
+    const releasedAt = input.deps.now();
+    return {
+      ...withoutSettledOwnership,
+      updatedAt: releasedAt,
+      workspaceReleasedAt: releasedAt,
+      ...(withoutSettledOwnership.tmuxSession
+        ? {}
+        : { workspaceReleaseKind: "abandoned-never-bound" as const }),
+    };
   });
   return cleanup;
 };

@@ -335,6 +335,51 @@ test("startup GC preserves an active detached run with missing tmux ownership", 
   }
 });
 
+test("startup GC explicitly releases a dead launch that never bound tmux panes", () => {
+  const root = makeRunDir();
+  const storageRoot = join(root, "runs");
+  const repoId = "repo-current";
+  const runDir = join(storageRoot, repoId, "1");
+  const manifestPath = join(runDir, "manifest.json");
+  mkdirSync(runDir, { recursive: true });
+  writeRunManifest(
+    manifestPath,
+    createRunManifest({
+      cwd: "/repo",
+      launchAttemptPid: 4406,
+      mode: "paired",
+      pid: 4405,
+      repoId,
+      runId: "1",
+      state: "submitted",
+      tmuxSocket: "/tmp/fresh.sock",
+    })
+  );
+
+  try {
+    const result = gcAbandonedRunProcesses({
+      deps: {
+        listTmuxSessions: () => new Set(),
+        now: () => "2026-08-30T08:32:08.484Z",
+        pidAlive: () => false,
+      },
+      log: () => undefined,
+      repoId,
+      storageRoot,
+    });
+
+    expect(result).toMatchObject({ cleaned: 1, killed: [], skipped: [] });
+    expect(readRunManifest(manifestPath)).toMatchObject({
+      state: "failed",
+      status: "failed",
+      workspaceReleasedAt: "2026-08-30T08:32:08.484Z",
+      workspaceReleaseKind: "abandoned-never-bound",
+    });
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test("startup GC never signals stale-run processes that fail ownership proof", () => {
   const root = makeRunDir();
   const storageRoot = join(root, "runs");

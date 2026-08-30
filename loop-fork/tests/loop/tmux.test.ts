@@ -93,6 +93,34 @@ test("paired production tmux command qualification rejects every foreign socket"
   expect(observed).toHaveLength(1);
 });
 
+test("paired resume binds launch commands to the persisted socket, not ambient tmux", () => {
+  const root = makeTempRunDir();
+  const home = makeTempRunDir();
+  const storage = resolveRunStorage("1", root, home);
+  writeRunManifest(
+    storage.manifestPath,
+    createRunManifest({
+      cwd: root,
+      mode: "paired",
+      pid: 1234,
+      repoId: storage.repoId,
+      runId: "1",
+      state: "submitted",
+      tmuxSocket: "/private/tmp/manifest-bound/tmux.sock",
+    })
+  );
+  const opts = makePairedOptions({ reservedRunId: "1" });
+
+  try {
+    expect(
+      tmuxInternals.persistedPairedLaunchSocket({ opts }, root, home)
+    ).toBe("/private/tmp/manifest-bound/tmux.sock");
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 const KICKOFF_HOOKS_BEFORE =
   '{"agent":"claude","event":"SessionStart","state":"starting","sequence":1}\n';
 const KICKOFF_HOOKS_AFTER = `${KICKOFF_HOOKS_BEFORE}{"agent":"claude","event":"UserPromptSubmit","state":"working","sequence":2}\n`;
@@ -5912,7 +5940,8 @@ test("runInTmux preserves the active manifest when attach-path liveness is unkno
   expect(manifest).toMatchObject({ state: "working", status: "running" });
 });
 
-test("runInTmux trusts a fresh live probe over a stale attach no-session error", async () => {
+test("runInTmux preserves a freshly live session when the local terminal cannot attach", async () => {
+  const logs: string[] = [];
   let manifest = createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -5943,7 +5972,9 @@ test("runInTmux trusts a fresh live probe over a stale attach no-session error",
         env: {},
         findBinary: () => true,
         isInteractive: () => true,
-        log: (): void => undefined,
+        log: (line): void => {
+          logs.push(line);
+        },
         ...healthyClaudeKickoffDeps(),
         preparePairedRun: () => ({ manifest, storage }),
         spawn: () => ({ exitCode: 0, stderr: "" }),
@@ -5957,9 +5988,12 @@ test("runInTmux trusts a fresh live probe over a stale attach no-session error",
         task: "Resume feature",
       }
     )
-  ).rejects.toThrow("no server running on stale socket");
+  ).resolves.toBe(true);
 
   expect(manifest).toMatchObject({ state: "working", status: "running" });
+  expect(logs).toContain(
+    '[loop] tmux session "repo-loop-1" is live but this terminal could not attach (no server running on stale socket); preserving the owned run for manual attach.'
+  );
 });
 
 test("runInTmux rejects a failed pre-handoff window setup and terminalizes the manifest", async () => {

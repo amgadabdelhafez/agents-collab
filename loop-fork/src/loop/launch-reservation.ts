@@ -211,14 +211,12 @@ export const runtimeAbsent = (
  * process. A live but positively post-release reused PID is not ownership.
  */
 const terminalReleaseGranted = (
+  manifest: RunManifest,
   evidence: RunOwnershipEvidence,
   target: TmuxTarget | undefined,
   tmux: TmuxLiveness,
   deps: LaunchReservationDeps
 ): boolean => {
-  if (!target) {
-    return false;
-  }
   if (
     evidence.state.kind !== "valid" ||
     !TERMINAL_RUN_STATES.has(evidence.state.value)
@@ -254,6 +252,18 @@ const terminalReleaseGranted = (
   ) {
     return false;
   }
+  if (!target) {
+    return (
+      manifest.workspaceReleaseKind === "abandoned-never-bound" &&
+      !manifest.tmuxSession &&
+      !manifest.tmuxPaneLeft &&
+      !manifest.tmuxPaneRight &&
+      !manifest.tmuxPaneGoverness &&
+      !manifest.tmuxPaneAuPair &&
+      !manifest.tmuxPaneNanny &&
+      !manifest.tmuxPaneRecon?.length
+    );
+  }
   // Runtime absence is the last conjunct, evaluated only once every ownership
   // fact above has been established positively.
   return runtimeAbsent(readTmuxEndpointState(target), tmux);
@@ -270,7 +280,7 @@ const manifestCanStillOwnWorkspace = async (
     // Evidence-backed scan. The conjunction is the ONLY route to release: a
     // failed conjunct must not fall through to the older dead-tmux rule, which
     // would release a terminal run that never recorded an explicit handback.
-    return !terminalReleaseGranted(evidence, target, tmux, deps);
+    return !terminalReleaseGranted(manifest, evidence, target, tmux, deps);
   }
   // Legacy callers that supply no ownership evidence keep the prior verdict.
   if (tmux !== "dead") {
