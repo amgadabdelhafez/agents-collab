@@ -66,11 +66,30 @@ test("paired production tmux command qualification rejects every foreign socket"
     ["tmux", "-L", "foreign", "kill-server"],
     ["tmux", "-S=/tmp/foreign.sock", "kill-server"],
     ["tmux", "-S", "/tmp/loop-bound.sock", "-L=foreign", "kill-server"],
+    ["tmux", "kill-server", "-S", "/tmp/foreign.sock"],
+    ["tmux", "kill-server", "-L=foreign"],
   ]) {
     expect(() => tmuxInternals.qualifyLaunchTmuxCommand(argv, socket)).toThrow(
       "attempted to override the bound socket"
     );
   }
+
+  const observed: string[][] = [];
+  const productionSpawner = tmuxInternals.createLaunchCommandSpawner(
+    socket,
+    (argv) => {
+      observed.push(argv);
+      return { exitCode: 0, stderr: "", stdout: "" };
+    }
+  );
+  productionSpawner(["tmux", "capture-pane", "-p", "-t", "%22"]);
+  expect(observed).toEqual([
+    ["tmux", "-S", "/tmp/loop-bound.sock", "capture-pane", "-p", "-t", "%22"],
+  ]);
+  expect(() =>
+    productionSpawner(["tmux", "capture-pane", "-S=/tmp/foreign.sock"])
+  ).toThrow("attempted to override the bound socket");
+  expect(observed).toHaveLength(1);
 });
 
 const KICKOFF_HOOKS_BEFORE =

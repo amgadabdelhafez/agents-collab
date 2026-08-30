@@ -13,6 +13,11 @@
 - Bounded repair rejects foreign `-S`/`-L` overrides in the production spawn
   seam, rejects foreign attach sockets, restores exact-source qualification,
   and directly tests the production qualifier.
+- Candidate `6ed5b84608ff53b26c3ee5efbd052ac33abe36d0` also received a
+  literal zero-write REFUSE. `review-002.md` preserves it. The successor scans
+  every tmux argv position for overrides, directly exercises the production
+  command-spawner seam with an injected runner, and carries one resolved socket
+  in the paired launch context through attach guidance.
 - Focused gates after repair: tmux-socket 52/0; tmux 107/0.
 - Full gates: `bun run test:ci`, `bun run check`, `bun run build`, and
   `git diff --check` PASS; named failure set empty.

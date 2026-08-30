@@ -3811,11 +3811,11 @@ const qualifyLaunchTmuxCommand = (
     return args;
   }
   const socketFlag = args[1];
-  if (socketFlag === "-L" || socketFlag?.startsWith("-L=")) {
-    throw new Error(
-      "tmux launch command attempted to override the bound socket"
-    );
-  }
+  const rejectsSocketOverride = (arg: string): boolean =>
+    arg === "-S" ||
+    arg === "-L" ||
+    arg.startsWith("-S=") ||
+    arg.startsWith("-L=");
   if (socketFlag === "-S") {
     if (args[2] !== launchSocket) {
       throw new Error(
@@ -3823,12 +3823,7 @@ const qualifyLaunchTmuxCommand = (
       );
     }
     for (const arg of args.slice(3)) {
-      if (
-        arg === "-S" ||
-        arg === "-L" ||
-        arg.startsWith("-S=") ||
-        arg.startsWith("-L=")
-      ) {
+      if (rejectsSocketOverride(arg)) {
         throw new Error(
           "tmux launch command attempted to override the bound socket"
         );
@@ -3836,13 +3831,21 @@ const qualifyLaunchTmuxCommand = (
     }
     return args;
   }
-  if (socketFlag?.startsWith("-S=")) {
+  if (args.slice(1).some(rejectsSocketOverride)) {
     throw new Error(
       "tmux launch command attempted to override the bound socket"
     );
   }
   return launchCommandArgv(launchSocket, args.slice(1));
 };
+
+const createLaunchCommandSpawner =
+  (
+    launchSocket: TmuxSocket,
+    runCommand: (args: string[]) => SpawnResult
+  ): ((args: string[]) => SpawnResult) =>
+  (args: string[]): SpawnResult =>
+    runCommand(qualifyLaunchTmuxCommand(args, launchSocket));
 
 const defaultDeps = (): TmuxDeps => {
   // Resolve once. Every production tmux command in this dependency set must
@@ -3851,6 +3854,27 @@ const defaultDeps = (): TmuxDeps => {
   const launchSocket = resolveTmuxSocket(process.env, {
     uid: process.getuid?.() ?? 0,
   }).socket;
+  const spawnLaunchCommand = createLaunchCommandSpawner(
+    launchSocket,
+    (qualifiedArgs: string[]): SpawnResult => {
+      const result = spawnSync(
+        qualifiedArgs,
+        qualifiedArgs[0] === "tmux"
+          ? boundedTmuxOptions({ stderr: "pipe", stdout: "pipe" })
+          : { stderr: "pipe", stdout: "pipe" }
+      );
+      const timedOut =
+        qualifiedArgs[0] === "tmux" && tmuxCommandTimedOut(result);
+      return {
+        exitCode: timedOut ? 124 : result.exitCode,
+        stderr: timedOut
+          ? `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms`
+          : decode(result.stderr),
+        stdout: decode(result.stdout),
+        ...(timedOut ? { timedOut: true } : {}),
+      };
+    }
+  );
   return {
     attach: (session: string, requestedSocket?: TmuxSocket) => {
       if (requestedSocket && requestedSocket !== launchSocket) {
@@ -4038,25 +4062,7 @@ const defaultDeps = (): TmuxDeps => {
     closePersistentCodexSession,
     releasePersistentCodexSession,
     startPersistentAgentSession,
-    spawn: (args: string[]) => {
-      const qualifiedArgs = qualifyLaunchTmuxCommand(args, launchSocket);
-      const result = spawnSync(
-        qualifiedArgs,
-        qualifiedArgs[0] === "tmux"
-          ? boundedTmuxOptions({ stderr: "pipe", stdout: "pipe" })
-          : { stderr: "pipe", stdout: "pipe" }
-      );
-      const timedOut =
-        qualifiedArgs[0] === "tmux" && tmuxCommandTimedOut(result);
-      return {
-        exitCode: timedOut ? 124 : result.exitCode,
-        stderr: timedOut
-          ? `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms`
-          : decode(result.stderr),
-        stdout: decode(result.stdout),
-        ...(timedOut ? { timedOut: true } : {}),
-      };
-    },
+    spawn: spawnLaunchCommand,
     updateRunManifest,
   };
 };
@@ -4148,6 +4154,8 @@ export const runInTmux = async (
     Boolean(launch?.opts.pairedMode);
   deps.log(tmuxStartupMessage(pairedLaunch));
 
+  const launchSocket = deps.resolveLaunchSocket();
+
   const startedPairedSession =
     pairedLaunch && launch ? await startPairedSession(deps, launch) : undefined;
   const launchContext = startedPairedSession
@@ -4155,8 +4163,9 @@ export const runInTmux = async (
         kind: "paired" as const,
         manifestPath: startedPairedSession.manifestPath,
         session: startedPairedSession.session,
+        socket: launchSocket,
       }
-    : { kind: "non-paired" as const, socket: deps.resolveLaunchSocket() };
+    : { kind: "non-paired" as const, socket: launchSocket };
   const session =
     launchContext.kind === "paired"
       ? launchContext.session
@@ -4224,12 +4233,7 @@ export const runInTmux = async (
       `[loop] run manifest ${JSON.stringify(launchContext.manifestPath)}`
     );
   }
-  const attachCommand = launchAttachCommand(
-    launchContext.kind === "paired"
-      ? deps.resolveLaunchSocket()
-      : launchContext.socket,
-    session
-  );
+  const attachCommand = launchAttachCommand(launchContext.socket, session);
   deps.log(`[loop] attach with: ${attachCommand}`);
   let handedOff: boolean;
   try {
@@ -4262,6 +4266,7 @@ export const runInTmux = async (
 
 export const tmuxInternals = {
   buildClaudeCommand,
+  createLaunchCommandSpawner,
   ClaudeKickoffUnconfirmedError,
   CLAUDE_KICKOFF_CONFIRM_MAX_POLLS,
   CLAUDE_KICKOFF_CONFIRM_POLL_DELAY_MS,
