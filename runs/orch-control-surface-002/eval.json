@@ -1,8 +1,24 @@
 {
   "task_id": "ORCH-CONTROL-SURFACE-002",
-  "verdict": "pending",
+  "verdict": "pass",
   "checks": {
-    "functional": { "passed": 0, "failed": 0, "details": [] },
-    "regression": { "passed": 0, "failed": 0, "details": [] }
+    "functional": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "TaskGraphRuntime focused test: 1 passed, 0 failed",
+        "Authenticated orchestration HTTP focused tests: 3 passed, 0 failed"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci: PASS, empty named failure set",
+        "bun run check: PASS",
+        "bun run build: PASS",
+        "git diff --check: PASS"
+      ]
+    }
   }
 }
