@@ -8,14 +8,15 @@
     "build": { "status": "pass" },
     "diff_check": { "status": "pass" },
     "independent_review": {
-      "status": "fail",
-      "attempt": 2,
-      "candidate": "6ed5b84608ff53b26c3ee5efbd052ac33abe36d0",
-      "failed": [
-        "late-position socket overrides were not rejected before qualification",
-        "the production command-spawner seam lacked a direct injected test",
-        "paired attach guidance re-resolved rather than carried the launch-context socket"
-      ]
+      "status": "pass",
+      "attempt": 3,
+      "candidate": "7314c7f5dd8647d007411f68fe8140bd5662ff40",
+      "failed": []
+    },
+    "installed_binary": {
+      "status": "pass",
+      "version": "v1.0.38",
+      "sha256": "a3bfdf6622f758c58daac981903e8f0a59535df80f7e7c23c3cbef6872d8a97c"
     }
   }
 }

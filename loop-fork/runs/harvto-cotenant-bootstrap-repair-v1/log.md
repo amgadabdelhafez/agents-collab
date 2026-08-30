@@ -22,3 +22,9 @@
 - Full gates: `bun run test:ci`, `bun run check`, `bun run build`, and
   `git diff --check` PASS; named failure set empty.
 - Harvto Run 1 was not read, edited, resumed, released, or retried by this task.
+- Exact candidate `7314c7f5dd8647d007411f68fe8140bd5662ff40`
+  received a literal zero-write independent PASS.
+- Installed `/Users/amgad/.local/bin/loop` remains version `v1.0.38` with
+  SHA-256 `a3bfdf6622f758c58daac981903e8f0a59535df80f7e7c23c3cbef6872d8a97c`.
+- The supported same-run recovery command and exact hash were delivered to the
+  dedicated Harvto Loop Supervisor task.
