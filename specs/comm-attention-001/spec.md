@@ -41,7 +41,7 @@ and existing bridge queue.
       queue to receive, deliver, claim, and acknowledge a message. It proves one
       pending bridge row, exact destination, deterministic board transitions,
       Attention removal after acknowledgement, and no human relay operation.
-- [ ] Focused, full, static, build, and diff gates pass with empty named failure
+- [x] Focused, full, static, build, and diff gates pass with empty named failure
       sets, followed by independent exact-SHA zero-write review.
 
 ## Exit condition

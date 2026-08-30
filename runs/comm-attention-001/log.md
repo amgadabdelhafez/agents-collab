@@ -18,3 +18,9 @@
   placement findings. They were hoisted without behavioral change; the focused
   4/0 test, exact-config check, build, and `git diff --check` then PASSed. The
   byte-compatible temporary dependency symlink was removed after each gate.
+- 2026-08-30T06:54:00Z: Independent Claude Code harness review through
+  OpenRouter `z-ai/glm-5.2` returned literal PASS for frozen exact candidate
+  `da30beb56d7b9a47127e36fea2f76220b7a3bac8` against accepted base
+  `a991809ac8153aeeb03352f677a752bbb98e17e0`. The reviewer read committed
+  objects only, ran no tests or services, and attested
+  `reviewer_project_tree_writes=0`.
