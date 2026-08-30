@@ -34,7 +34,7 @@ and emits deterministic content-addressed references with safe backlinks.
       content, knowledge-promotion claim, manifest claim, or engine type.
 - [x] The earlier in-memory projector remains compatibility-only and is not the
       authoritative final read path.
-- [ ] Focused/full/static/build/diff gates pass and an independent exact-SHA
+- [x] Focused/full/static/build/diff gates pass and an independent exact-SHA
       zero-write reviewer returns PASS.
 
 ## Exit condition
