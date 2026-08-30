@@ -712,6 +712,72 @@ test("Codex delivery never submits a foreign composer after injection", async ()
   rmSync(root, { recursive: true, force: true });
 });
 
+test("Codex delivery refuses a foreign composer before initial injection", async () => {
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          "› human draft entered before delivery\n\n  gpt-5.6-sol low · ~/repo\n",
+          "utf8"
+        ),
+      };
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(
+    () => "unchanged"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-codex-initial-foreign",
+    kind: "message",
+    message: "Body remains only in the ledger.",
+    source: "supervisor",
+    target: "codex",
+  });
+
+  expect(await bridge.drainCodexTmuxMessages(runDir)).toBe(false);
+  expect(
+    spawnSync.mock.calls.filter(([args]) => tmuxCommand(args) === "send-keys")
+  ).toHaveLength(0);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("an unresolved Codex notification retries only after the bounded interval", async () => {
   const nudge = "Bridge: 1 message waiting. Call receive_messages now.";
   let submissionVersionReads = 0;

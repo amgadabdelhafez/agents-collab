@@ -1221,9 +1221,17 @@ const injectTmuxMessage = async (
       : undefined;
   if (target === "codex") {
     const existing = capturePane(runDir, pane, true);
-    const alreadyPresent =
-      existing !== undefined &&
-      codexComposerText(existing) === normalizeComposerText(message);
+    const existingComposer =
+      existing === undefined ? undefined : codexComposerText(existing);
+    if (existingComposer === undefined) {
+      return false;
+    }
+    const alreadyPresent = existingComposer === normalizeComposerText(message);
+    const emptyComposer =
+      existingComposer === "" || CODEX_EMPTY_COMPOSER_RE.test(existingComposer);
+    if (!(alreadyPresent || emptyComposer)) {
+      return false;
+    }
     return submitCodexDoorbell(
       runDir,
       pane,
