@@ -4837,11 +4837,7 @@ test("runBridgeWorker nudges idle Codex when app-server delivery refuses", async
         ),
       };
     }
-    if (
-      args[0] === "tmux" &&
-      args[1] === "send-keys" &&
-      args.at(-1) === "Enter"
-    ) {
+    if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
       const manifestPath = join(runDir, "manifest.json");
       const manifest = readRunManifest(manifestPath);
       writeFileSync(
@@ -5147,10 +5143,8 @@ test("runBridgeWorker injects Codex directly and only nudges Claude", async () =
       };
     }
     if (
-      args[0] === "tmux" &&
-      args[1] === "send-keys" &&
-      args[2] === "-t" &&
-      args[3] === "repo-loop-8:0.0" &&
+      tmuxCommand(args) === "send-keys" &&
+      args.includes("repo-loop-8:0.0") &&
       args.at(-1) === "Enter"
     ) {
       const manifestPath = join(runDir, "manifest.json");
