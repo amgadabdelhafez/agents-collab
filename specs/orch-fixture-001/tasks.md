@@ -10,5 +10,5 @@
       workflow state with deterministic clock and delivery recording.
 - [x] **T-05 Fail-closed tests**: deterministic double replay plus state-loss,
       duplicate-delivery, terminal-state, and expectation mismatch refusals.
-- [ ] **T-06 Verification**: focused/full/static gates, exact candidate, and
+- [x] **T-06 Verification**: focused/full/static gates, exact candidate, and
       independent zero-write review.

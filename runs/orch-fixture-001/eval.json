@@ -1,7 +1,7 @@
 {
   "task_id": "ORCH-FIXTURE-001",
   "feature": "deterministic-workflow-replay-corpus",
-  "timestamp": "2026-08-30T04:05:45Z",
+  "timestamp": "2026-08-30T04:09:39Z",
   "identity": {
     "base_commit": "3b40b16ea11ef298a42aa5f7e2830e9fc10afeaf",
     "branch": "codex/orch-fixture-001",
@@ -32,6 +32,14 @@
     "aggregate": "5f1bd79af5217d60339a50996d6f3bc04c6f745e9a0c2a832d09cfe0caf8abdd",
     "case_count": 6
   },
+  "review": {
+    "candidate": "45caf7cf856ccfb131648cd13856109a63feb84d",
+    "reviewer_harness": "claude-cli",
+    "provider_model": "openrouter/z-ai/glm-5.2",
+    "project_tree_writes": 0,
+    "verdict": "pass",
+    "artifact": "runs/orch-fixture-001/review-attempt-001.md"
+  },
   "verdict": "pass",
-  "notes": "Implementation and local gates pass. Exact candidate and independent zero-write review remain pending."
+  "notes": "Exact candidate passed independent zero-write review. The corpus and frozen digests are ready for the Temporal and DBOS adapters."
 }
