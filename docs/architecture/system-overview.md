@@ -64,6 +64,7 @@ or claim authority.
 | Workflow port | Engine-neutral start, signal, query, cancel, inspect, identity, command idempotency, and history semantics | Temporal/DBOS SDK types, transport, UI, or provider selection |
 | SupervisorMessage workflow | Deterministic message lifecycle, delivery policy, claim authority, retry/escalation/dead-letter state, and safe projection | Engine hosting, bridge delivery implementation, or copying message bodies into read models |
 | SupervisorMessage read model | Strict body-free board and Attention snapshots derived from canonical workflow projections | Workflow mutation, route or claim authority, message bodies, or independent lifecycle state |
+| Supervisor thread store | Append-only fsync-backed thread events and deterministic restart reconstruction | Workflow/bridge authority, body storage, category inference, or artifact content |
 | KB artifact-reference read model | Deterministic content-addressed artifact index with safe message backlinks | Artifact retrieval, content interpretation, knowledge promotion, or authority over manifests |
 
 ## Architecture invariants
@@ -157,6 +158,10 @@ or claim authority.
   model. Strict ingestion rejects extra fields and phase/action conflicts;
   Attention membership is exactly `actionRequired != none`. Reads are defensive
   copies and do not mutate workflow or bridge state.
+- `COMM-BOARD-001` persists exact board items as bounded fsync-backed JSONL
+  events. Event IDs are idempotent, message/thread/category identity is
+  immutable, malformed or truncated journals fail closed, and a fresh process
+  reconstructs the same deterministic supervisor threads.
 - The KB artifact-reference projection consumes the exact board schema and
   groups only `artifact://sha256/<digest>` references. It exposes deterministic
   body-free message backlinks; it never dereferences content or invents
@@ -229,6 +234,11 @@ or claim authority.
     again at the knowledge boundary, then content-addressed references are
     grouped with stable lifecycle backlinks. The result is a rebuildable read
     model and has no artifact-content or workflow mutation path.
+12. **Durable supervisor threads:** each governed board update is classified by
+    an explicit non-prose category and appended with a stable request ID and
+    observation time. The append is durable before success; replay returns the
+    existing revision and restart reconstructs the latest workflow item in each
+    thread.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.

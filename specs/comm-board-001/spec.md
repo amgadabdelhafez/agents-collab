@@ -24,20 +24,20 @@ rebuild the same deterministic thread projection from the journal.
 
 ## Acceptance criteria
 
-- [ ] The store accepts only exact canonical board items and one category from
+- [x] The store accepts only exact canonical board items and one category from
       `question`, `conflict`, `failure`, `authority-decision`, or
       `informational`.
-- [ ] Each append is one bounded JSONL record written through an owned file
+- [x] Each append is one bounded JSONL record written through an owned file
       descriptor and fsynced before success is returned.
-- [ ] Event IDs are idempotent. Exact replay returns replayed; same ID with
+- [x] Event IDs are idempotent. Exact replay returns replayed; same ID with
       different content fails closed and appends nothing.
-- [ ] A workflow may update lifecycle state, but its category, message, thread,
+- [x] A workflow may update lifecycle state, but its category, message, thread,
       source, destination, received time, and artifact references are immutable.
-- [ ] Missing journal means an empty board. Malformed, truncated, extra-field,
+- [x] Missing journal means an empty board. Malformed, truncated, extra-field,
       or internally conflicting journal data fails closed rather than skipping.
-- [ ] A fresh store instance rebuilds byte-identical threads, participants,
+- [x] A fresh store instance rebuilds byte-identical threads, participants,
       message order, latest workflow states, updated times, and revision.
-- [ ] Public thread projections contain no body, transcript, credential, local
+- [x] Public thread projections contain no body, transcript, credential, local
       path, artifact content, or engine-specific types.
 - [ ] Focused/full/static/build/diff gates pass and an independent exact-SHA
       zero-write reviewer returns PASS.

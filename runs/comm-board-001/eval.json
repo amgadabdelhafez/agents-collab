@@ -8,8 +8,27 @@
     "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/comm-board-001"
   },
   "checks": {
-    "functional": { "passed": 0, "failed": 0, "details": [] },
-    "regression": { "passed": 0, "failed": 0, "details": [] }
+    "functional": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "fsync-backed journal reconstructs deterministic threads after restart",
+        "event replay and request-ID collision behavior",
+        "immutable workflow/thread/category identity refusal",
+        "malformed, truncated, duplicate, and extra-field journal refusal",
+        "empty missing journal and defensive body-free snapshots"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci",
+        "bun run check",
+        "bun run build",
+        "git diff --check"
+      ]
+    }
   },
-  "verdict": "pending-implementation"
+  "verdict": "pending-independent-review"
 }

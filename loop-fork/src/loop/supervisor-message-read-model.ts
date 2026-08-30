@@ -71,6 +71,8 @@ const PROJECTION_KEYS = [
   "to",
 ] as const;
 
+const BOARD_ITEM_KEYS = [...PROJECTION_KEYS, "workflowId"] as const;
+
 const ACTION_FOR_PHASE: Readonly<
   Record<SupervisorMessagePhase, SupervisorMessageAction>
 > = {
@@ -94,6 +96,18 @@ const WORKFLOW_ID_RE = /^supervisor-message:[a-f0-9]{64}$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasExactKeys = (
+  value: Record<string, unknown>,
+  expectedValue: readonly string[]
+): boolean => {
+  const keys = Object.keys(value).sort();
+  const expected = [...expectedValue].sort();
+  return (
+    keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index])
+  );
+};
 
 const requireString = (
   value: unknown,
@@ -127,12 +141,7 @@ const requireProjection = (value: unknown): SupervisorMessageProjection => {
   if (!isRecord(value)) {
     throw new SupervisorMessageReadModelError("projection must be an object");
   }
-  const keys = Object.keys(value).sort();
-  const expected = [...PROJECTION_KEYS].sort();
-  if (
-    keys.length !== expected.length ||
-    keys.some((key, index) => key !== expected[index])
-  ) {
+  if (!hasExactKeys(value, PROJECTION_KEYS)) {
     throw new SupervisorMessageReadModelError(
       "projection fields do not match the canonical schema"
     );
@@ -200,6 +209,48 @@ const requireProjection = (value: unknown): SupervisorMessageProjection => {
     schema: "supervisor-message-status.v1",
     threadId: requireString(value.threadId, "threadId", STABLE_ID_RE),
     to: requireString(value.to, "to", SUPERVISOR_ID_RE),
+  };
+};
+
+export const parseSupervisorMessageBoardItem = (
+  value: unknown
+): SupervisorMessageBoardItem => {
+  if (!(isRecord(value) && hasExactKeys(value, BOARD_ITEM_KEYS))) {
+    throw new SupervisorMessageReadModelError(
+      "board item fields do not match the canonical schema"
+    );
+  }
+  if (value.schema !== "supervisor-message-board-item.v1") {
+    throw new SupervisorMessageReadModelError("board item schema is invalid");
+  }
+  const workflowId = requireString(
+    value.workflowId,
+    "workflowId",
+    WORKFLOW_ID_RE
+  );
+  const projection = requireProjection({
+    acknowledgedAt: value.acknowledgedAt,
+    actionRequired: value.actionRequired,
+    artifactRefs: value.artifactRefs,
+    claimedAt: value.claimedAt,
+    claimedBy: value.claimedBy,
+    deadLetteredAt: value.deadLetteredAt,
+    deliveredAt: value.deliveredAt,
+    deliveryAttempts: value.deliveryAttempts,
+    escalatedAt: value.escalatedAt,
+    from: value.from,
+    messageId: value.messageId,
+    nextRetryAt: value.nextRetryAt,
+    phase: value.phase,
+    receivedAt: value.receivedAt,
+    schema: "supervisor-message-status.v1",
+    threadId: value.threadId,
+    to: value.to,
+  });
+  return {
+    ...projection,
+    schema: "supervisor-message-board-item.v1",
+    workflowId,
   };
 };
 

@@ -51,8 +51,8 @@ Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
   consumes: settled utility evidence, current Governess epoch, provider lifecycle events
 
 [Workflow orchestration]
-  owns: workflow-port.ts, in-memory-workflow-port.ts, supervisor-message-workflow.ts, supervisor-message-coordinator.ts, supervisor-message-governance.ts, bridge-supervisor-message-delivery.ts, supervisor-message-read-model.ts, supervisor-knowledge-artifact-read-model.ts, temporal-workflow.ts, temporal-workflow-port.ts, temporal-replay-runtime.ts, dbos-workflow.ts, dbos-workflow-port.ts, dbos-replay-runtime.ts
-  exposes: engine-neutral start/signal/query/cancel/inspect, SupervisorMessage lifecycle, governed bridge delivery, body-free board/Attention projections, and content-addressed KB backlinks
+  owns: workflow-port.ts, in-memory-workflow-port.ts, supervisor-message-workflow.ts, supervisor-message-coordinator.ts, supervisor-message-governance.ts, bridge-supervisor-message-delivery.ts, supervisor-message-read-model.ts, supervisor-thread-store.ts, supervisor-knowledge-artifact-read-model.ts, temporal-workflow.ts, temporal-workflow-port.ts, temporal-replay-runtime.ts, dbos-workflow.ts, dbos-workflow-port.ts, dbos-replay-runtime.ts
+  exposes: engine-neutral start/signal/query/cancel/inspect, SupervisorMessage lifecycle, governed bridge delivery, durable supervisor threads, body-free board/Attention projections, and content-addressed KB backlinks
   consumes: injected delivery activity, exact Temporal SDK 1.23.0, and exact DBOS SDK 4.27.6 for comparison evidence
   selected engine: Temporal for SupervisorMessage; DBOS comparison-only
 ```
@@ -90,6 +90,8 @@ supervisor intake ──► WorkflowPort ──► SupervisorMessage state machi
                                           │
                                           ├─► injected idempotent delivery activity
                                           └─► strict board read model
+                                                   ├─► fsync thread journal
+                                                   │      └─► durable thread board
                                                    ├─► all message-board items
                                                    ├─► action-required Attention items
                                                    └─► content-addressed KB backlinks
@@ -111,6 +113,7 @@ supervisor intake ──► WorkflowPort ──► SupervisorMessage state machi
 | Workflow identity | WorkflowPort adapter | stable workflow ID, request IDs, immutable inspection history |
 | Supervisor message policy | SupervisorMessage workflow | deterministic events, projection, and focused replay tests |
 | Supervisor message visibility | Shared read model | strict board/Attention snapshots and cross-supervisor bridge proof |
+| Durable supervisor threads | JSONL thread store | fsync-backed events, immutable identity, exact replay, restart reconstruction |
 | Knowledge artifact visibility | KB artifact-reference projector | strict content-addressed grouping and body-free message backlinks |
 
 ## Blast-radius guide
@@ -131,4 +134,5 @@ supervisor intake ──► WorkflowPort ──► SupervisorMessage state machi
 | Engine selection | Temporal adapter and ORCH-SELECT-001 decision | Production topology, identity, credentials, recovery, observability, and deploy authority remain separate gates |
 | Governed SupervisorMessage | Authority decision port, trusted supervisor route directory, existing bridge dispatcher, body-free receipt sink | No caller-supplied route paths; authorization must precede workflow or bridge mutation |
 | SupervisorMessage read model | Canonical workflow projection and stable workflow ID | Reject extra fields and phase/action conflicts; never copy body, transcript, credential, or local path material |
+| Supervisor thread store | Canonical board item, explicit category, request ID, observation time | Exact replay only; immutable message/thread identity; corrupt journal fails closed |
 | KB artifact-reference read model | Exact board projection | Reject malformed board/items/references and never dereference artifact content or invent manifest facts |
