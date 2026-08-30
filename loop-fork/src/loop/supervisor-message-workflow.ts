@@ -110,6 +110,30 @@ const MAX_POLICY_MS = 30 * 24 * 60 * 60 * 1000;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const utf8ByteLength = (value: string): number => {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x7f) {
+      bytes += 1;
+    } else if (code <= 0x7_ff) {
+      bytes += 2;
+    } else if (
+      code >= 0xd8_00 &&
+      code <= 0xdb_ff &&
+      index + 1 < value.length &&
+      value.charCodeAt(index + 1) >= 0xdc_00 &&
+      value.charCodeAt(index + 1) <= 0xdf_ff
+    ) {
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+};
+
 const requireString = (
   record: Record<string, unknown>,
   field: string,
@@ -220,7 +244,7 @@ const parseArtifactRefs = (value: unknown): string[] => {
 
 const parseInput = (input: JsonObject): SupervisorMessageInput => {
   const body = requireString(input, "body");
-  if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) {
+  if (utf8ByteLength(body) > MAX_BODY_BYTES) {
     throw new WorkflowError(
       "invalid-command",
       `SupervisorMessage body exceeds ${MAX_BODY_BYTES} bytes`

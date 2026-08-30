@@ -34,6 +34,10 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1",
     "@earendil-works/pi-coding-agent": "0.82.1",
+    "@temporalio/client": "1.23.0",
+    "@temporalio/testing": "1.23.0",
+    "@temporalio/worker": "1.23.0",
+    "@temporalio/workflow": "1.23.0",
     "caveman-installer": "github:JuliusBrussee/caveman#0d95a81d35a9f2d123a5e9430d1cfc43d55f1bb0",
     "proper-lockfile": "4.1.2"
   }

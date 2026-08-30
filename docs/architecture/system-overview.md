@@ -122,6 +122,10 @@ or claim authority.
 - Canonical workflow commands and state are JSON-safe and engine-neutral.
   Temporal and DBOS adapters must implement the same `WorkflowPort`; neither
   engine's SDK types may enter canonical workflow or Harness contracts.
+- The Temporal adapter runs the canonical workflow on a real Temporal worker
+  and persists command receipts inside workflow state. Its local conformance
+  runtime uses an ephemeral in-memory Temporal server; it is test evidence, not
+  production infrastructure or an engine-selection decision.
 - `SupervisorMessage` uses its workflow ID as the stable deduplication boundary.
   Delivery activities receive a deterministic attempt idempotency key. Only the
   intended supervisor may claim, and only the current claimant may acknowledge.
@@ -187,9 +191,9 @@ or claim authority.
    duplicate starts reuse it, and a new workflow invokes one abstract delivery
    activity. Delivery results, claims, acknowledgements, ticks, retries, and
    cancellation become idempotent workflow commands with immutable inspection
-   history. The current in-memory adapter is the executable reference oracle;
-   `ORCH-FIXTURE-001` will replay the same contract before Temporal and DBOS
-   adapters are admitted.
+   history. The in-memory adapter is the executable reference oracle, and the
+   accepted frozen corpus is now exercised unchanged by the Temporal adapter.
+   Engine selection remains deferred until DBOS runs that same corpus.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.

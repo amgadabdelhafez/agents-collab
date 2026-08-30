@@ -1,0 +1,33 @@
+{
+  "task_id": "ORCH-TEMPORAL-001",
+  "feature": "temporal-workflow-port-adapter",
+  "timestamp": "2026-08-30T04:21:02Z",
+  "identity": {
+    "base_commit": "aa6bff5c11d478ff8d15aee702c6903aa7e7fab4",
+    "branch": "codex/orch-temporal-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/orch-temporal-001"
+  },
+  "checks": {
+    "functional": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "unchanged six-case corpus ran twice on fresh real Temporal test servers",
+        "aggregate digest 5f1bd79af5217d60339a50996d6f3bc04c6f745e9a0c2a832d09cfe0caf8abdd matched",
+        "canonical modules contain no Temporal or DBOS imports and dependencies are exact-pinned"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "repository-certified bun run test:ci passed every test file with zero failures",
+        "bun run check passed",
+        "compiled bun run build passed",
+        "git diff --check passed"
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "Implementation gates passed; exact-SHA independent zero-write review remains required before closure."
+}
