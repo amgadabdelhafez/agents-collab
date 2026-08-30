@@ -1,6 +1,6 @@
 {
   "task_id": "ORCH-RUNTIME-001",
-  "verdict": "candidate",
+  "verdict": "pass",
   "checks": {
     "functional": {
       "passed": 5,
