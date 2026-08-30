@@ -303,6 +303,7 @@ export const runLoopOrchestrationServer = async (
           "utf8"
         ),
       },
+      workflowExecution: "in-process",
     });
     const reconciler = new SupervisorBridgeConsumptionReconciler({
       bindings: config.supervisors,

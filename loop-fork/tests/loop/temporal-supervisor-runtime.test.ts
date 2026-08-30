@@ -6,6 +6,33 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { JsonlSupervisorThreadStore } from "../../src/loop/supervisor-thread-store";
 import { TemporalSupervisorRuntimeHost } from "../../src/loop/temporal-supervisor-runtime";
 
+test("Temporal host rejects an unknown workflow execution mode before startup", async () => {
+  await expect(
+    TemporalSupervisorRuntimeHost.create({
+      authority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:temporal-test",
+          reasonCode: "allowed",
+        }),
+      },
+      buildId: "supervisor-runtime.v1",
+      delivery: {
+        deliver: () => Promise.resolve({ status: "accepted" }),
+      },
+      identity: "supervisor-runtime@test",
+      namespace: "default",
+      nativeConnection: {},
+      receipts: { record: () => undefined },
+      store: {} as JsonlSupervisorThreadStore,
+      taskQueue: "supervisor-runtime-invalid",
+      workflowBundle: { code: "invalid-but-unread" },
+      workflowClient: {},
+      workflowExecution: "unknown" as "threaded",
+    })
+  ).rejects.toThrow("workflowExecution is invalid");
+});
+
 test("real Temporal host completes governed delivery and closes once", async () => {
   const root = mkdtempSync(join(tmpdir(), "temporal-supervisor-runtime-"));
   const environment = await TestWorkflowEnvironment.createLocal();
@@ -30,6 +57,7 @@ test("real Temporal host completes governed delivery and closes once", async () 
       store: new JsonlSupervisorThreadStore(join(root, "threads.jsonl")),
       taskQueue: `supervisor-runtime-${process.pid}`,
       workflowClient: environment.client.workflow,
+      workflowExecution: "in-process",
       workflowsPath: new URL(
         "../../src/loop/temporal-workflow.ts",
         import.meta.url

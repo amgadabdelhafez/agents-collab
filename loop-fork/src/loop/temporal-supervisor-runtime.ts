@@ -27,6 +27,7 @@ export interface TemporalSupervisorRuntimeOptions {
   taskQueue: string;
   workflowBundle?: { code: string };
   workflowClient: unknown;
+  workflowExecution?: "in-process" | "threaded";
   workflowsPath?: string;
 }
 
@@ -108,9 +109,17 @@ export class TemporalSupervisorRuntimeHost {
       store: options.store,
     });
     const tasks = new TaskGraphRuntime({ workflows });
+    const workflowExecution = options.workflowExecution ?? "threaded";
+    if (
+      workflowExecution !== "in-process" &&
+      workflowExecution !== "threaded"
+    ) {
+      throw new Error("Temporal supervisor workflowExecution is invalid");
+    }
     const worker = await Worker.create({
       buildId: requireRuntimeName(options.buildId, "buildId"),
       connection: options.nativeConnection as NativeConnection,
+      debugMode: workflowExecution === "in-process",
       identity: requireRuntimeName(options.identity, "identity"),
       namespace: requireRuntimeName(options.namespace, "namespace"),
       taskQueue,
