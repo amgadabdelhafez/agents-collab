@@ -864,6 +864,84 @@ test("an unresolved Codex notification retries only after the bounded interval",
   rmSync(root, { recursive: true, force: true });
 });
 
+test("an unconfirmed Codex recovery keeps the retry claim for the bounded interval", async () => {
+  const nudge = "Bridge: 1 message waiting. Call receive_messages now.";
+  let enterCount = 0;
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (tmuxCommand(args) === "capture-pane") {
+      const composer =
+        enterCount === 0 ? "Use /skills to list available skills" : nudge;
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from(
+          `› ${composer}\n\n  gpt-5.6-sol low · ~/repo\n`,
+          "utf8"
+        ),
+      };
+    }
+    if (tmuxCommand(args) === "send-keys" && args.at(-1) === "Enter") {
+      enterCount += 1;
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  bridge.bridgeRuntimeCommandDeps.readCodexSubmissionVersion = mock(
+    () => "unchanged"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneRight: "%41",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-codex-unconfirmed-claim",
+    kind: "message",
+    message: "Body remains only in the ledger.",
+    source: "supervisor",
+    target: "codex",
+  });
+
+  const nowMs = Date.parse("2026-03-23T10:01:00.000Z");
+  expect(await bridge.notifyTmuxBridgeInbox(runDir, "codex", nowMs)).toBe(
+    false
+  );
+  expect(enterCount).toBe(2);
+  expect(await bridge.notifyTmuxBridgeInbox(runDir, "codex", nowMs + 1)).toBe(
+    false
+  );
+  expect(enterCount).toBe(2);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event) => event.kind === "notified")
+  ).toHaveLength(0);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("tmux timeout preserves bridge routing as unknown without socket-blind fallback delivery", async () => {
   const spawnSync = mock((args: string[]) => {
     if (args[0] === "tmux" && args.includes("has-session")) {

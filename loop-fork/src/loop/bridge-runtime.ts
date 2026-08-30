@@ -76,8 +76,8 @@ const BRIDGE_NOTIFICATION_CLAIM_DIR = "bridge-notification-claims";
 // App-server acceptance can outlive a normal bridge-worker tick. Keep a claim
 // long enough that another worker cannot duplicate the same Codex turn.
 const BRIDGE_DELIVERY_CLAIM_STALE_MS = 60_000;
-const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = 15_000;
 const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
+const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = BRIDGE_NOTIFICATION_RETRY_MS;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const BRIDGE_WORKER_PENDING_RETRY_MS = 5000;
 export const BRIDGE_VERSION_PROBE_INTERVAL_MS = 250;
@@ -1622,6 +1622,7 @@ export const notifyTmuxBridgeInbox = async (
   if (!claim) {
     return false;
   }
+  let retainUnconfirmedClaim = false;
   try {
     const resolved = resolveTmuxBridgeDelivery(runDir, target, pending.length);
     if (!resolved) {
@@ -1639,6 +1640,10 @@ export const notifyTmuxBridgeInbox = async (
     if (stillPending.length === 0) {
       return false;
     }
+    // Once an injection is attempted, retain the target claim through the
+    // bounded retry interval unless submission is positively confirmed. This
+    // prevents an immediate worker cycle from repeating the guarded recovery.
+    retainUnconfirmedClaim = true;
     const notified = await injectTmuxMessage(
       runDir,
       resolved.pane,
@@ -1649,6 +1654,7 @@ export const notifyTmuxBridgeInbox = async (
     if (!notified) {
       return false;
     }
+    retainUnconfirmedClaim = false;
     const at = new Date(nowMs).toISOString();
     for (const entry of stillPending) {
       markBridgeMessageNotified(
@@ -1660,7 +1666,9 @@ export const notifyTmuxBridgeInbox = async (
     }
     return true;
   } finally {
-    releaseDeliveryClaim(claim);
+    if (!retainUnconfirmedClaim) {
+      releaseDeliveryClaim(claim);
+    }
   }
 };
 
