@@ -7,6 +7,8 @@ import {
   readdir,
   readFile,
   realpath,
+  rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import {
@@ -184,6 +186,11 @@ export interface PatchProposalManifest {
   patchPath: string;
   preimages: PatchPreimage[];
   summary?: string;
+  validation?: {
+    engine: "git-apply-check-v1";
+    patchSha256: string;
+    targets: string[];
+  };
 }
 
 export interface GuardedPatchApplyInput {
@@ -1477,6 +1484,17 @@ export class UtilityToolBroker {
         "Patch targets do not match the proposal manifest"
       );
     }
+    if (
+      manifest.validation &&
+      (manifest.validation.patchSha256 !== patchSha256 ||
+        JSON.stringify(manifest.validation.targets) !==
+          JSON.stringify(targetPaths))
+    ) {
+      throw new ToolPolicyError(
+        "patch_drift",
+        "Patch validation evidence does not match the selected artifact"
+      );
+    }
 
     if (input.existingApplication) {
       const existing = input.existingApplication;
@@ -1572,7 +1590,7 @@ export class UtilityToolBroker {
     }
     exactKeys(
       parsed,
-      new Set(["createdAt", "patchPath", "preimages", "summary"]),
+      new Set(["createdAt", "patchPath", "preimages", "summary", "validation"]),
       "patch proposal manifest"
     );
     if (
@@ -1583,6 +1601,27 @@ export class UtilityToolBroker {
       throw new ToolPolicyError(
         "patch_denied",
         "Patch proposal manifest fields are invalid"
+      );
+    }
+    if (parsed.validation !== undefined) {
+      const validation = parsed.validation;
+      if (
+        !isRecord(validation) ||
+        validation.engine !== "git-apply-check-v1" ||
+        typeof validation.patchSha256 !== "string" ||
+        !SHA256_HEX_RE.test(validation.patchSha256) ||
+        !Array.isArray(validation.targets) ||
+        validation.targets.some((target) => typeof target !== "string")
+      ) {
+        throw new ToolPolicyError(
+          "patch_denied",
+          "Patch proposal validation evidence is invalid"
+        );
+      }
+      exactKeys(
+        validation,
+        new Set(["engine", "patchSha256", "targets"]),
+        "patch proposal validation"
       );
     }
     return parsed as unknown as PatchProposalManifest;
@@ -1674,12 +1713,14 @@ export class UtilityToolBroker {
 
   private async runGitApply(
     patchPath: string,
-    checkOnly: boolean
+    checkOnly: boolean,
+    noIndex = false
   ): Promise<void> {
     const result = await this.runCommand({
       argv: [
         "git",
         "apply",
+        ...(noIndex ? ["--no-index"] : []),
         ...(checkOnly ? ["--check"] : []),
         "--whitespace=nowarn",
         "--",
@@ -3133,25 +3174,49 @@ export class UtilityToolBroker {
     }
     const id = this.id().replace(/[^A-Za-z0-9_-]/g, "-");
     const patchPath = resolve(canonicalArtifactDir, `${id}.patch`);
+    const candidatePatchPath = resolve(canonicalArtifactDir, `${id}.candidate`);
     const manifestPath = resolve(canonicalArtifactDir, `${id}.json`);
+    const patchSha256 = hash(patch);
     const manifest: PatchProposalManifest = {
       createdAt: new Date(this.now()).toISOString(),
       patchPath,
       preimages,
       ...(summary === undefined ? {} : { summary }),
+      validation: {
+        engine: "git-apply-check-v1",
+        patchSha256,
+        targets: [...targets].sort(),
+      },
     };
     const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
-    await writeFile(patchPath, patch, { encoding: "utf8", flag: "wx" });
+    await writeFile(candidatePatchPath, patch, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    try {
+      await this.runGitApply(
+        relative(this.repoRoot, candidatePatchPath),
+        true,
+        true
+      );
+      await this.assertImagesMatch(preimages, "preimage");
+      await rename(candidatePatchPath, patchPath);
+    } catch (error) {
+      await rm(candidatePatchPath, { force: true });
+      throw error;
+    }
     await writeFile(manifestPath, manifestText, {
       encoding: "utf8",
       flag: "wx",
+      mode: 0o600,
     });
     return {
       artifact: {
         manifestPath,
         manifestSha256: hash(manifestText),
         path: patchPath,
-        sha256: hash(patch),
+        sha256: patchSha256,
       },
       data: { preimages, summary, targets },
     };

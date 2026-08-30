@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -1664,6 +1665,15 @@ test("stores a validated patch proposal without modifying the source", async () 
     );
     expect(await readFile(result.artifact?.path ?? "", "utf8")).toBe(patch);
     expect(result.data).toMatchObject({ targets: ["src/hello.ts"] });
+    expect(
+      JSON.parse(await readFile(result.artifact?.manifestPath ?? "", "utf8"))
+    ).toMatchObject({
+      validation: {
+        engine: "git-apply-check-v1",
+        patchSha256: result.artifact?.sha256,
+        targets: ["src/hello.ts"],
+      },
+    });
 
     const dependency = await broker.execute({
       arguments: {
@@ -1673,6 +1683,35 @@ test("stores a validated patch proposal without modifying the source", async () 
       name: "propose_patch",
     });
     expect(dependency.error?.code).toBe("scope_denied");
+  });
+});
+
+test("refuses a corrupt patch before recording an artifact or manifest", async () => {
+  await withRepo(async (root) => {
+    const broker = await brokerFor(root);
+    const corruptPatch = [
+      "diff --git a/src/hello.ts b/src/hello.ts",
+      "--- a/src/hello.ts",
+      "+++ b/src/hello.ts",
+      "@@ -1,2 +1,2 @@",
+      "-export const hello = 'world';",
+      "+export const hello = 'utility';",
+      "",
+    ].join("\n");
+
+    const result = await broker.execute({
+      arguments: { patch: corruptPatch },
+      name: "propose_patch",
+    });
+
+    expect(result).toMatchObject({
+      error: { code: "patch_conflict" },
+      ok: false,
+    });
+    expect(await readdir(join(root, ".utility-artifacts"))).toEqual([]);
+    expect(await readFile(join(root, "src", "hello.ts"), "utf8")).toBe(
+      "export const hello = 'world';\n"
+    );
   });
 });
 
