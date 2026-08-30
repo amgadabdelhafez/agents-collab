@@ -75,7 +75,7 @@ export interface GovernedWorkflowCommand {
   workflowId: string;
 }
 
-const SAFE_REFERENCE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,511}$/;
+const SAFE_REFERENCE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
 
 const requireReference = (value: string, field: string): string => {
   if (!SAFE_REFERENCE_RE.test(value)) {

@@ -75,13 +75,24 @@ export class BridgeSupervisorMessageDeliveryPort
     }
     try {
       const result = await this.#dispatch(route, request, this.#now());
-      if (result.status === "dead-letter" || result.status === "expired") {
-        return {
-          reason: result.reason ?? `bridge ${result.status}`,
-          status: "permanent-failure",
-        };
+      switch (result.status) {
+        case "accepted":
+        case "delivered":
+        case "duplicate":
+        case "queued":
+          return { status: "accepted" };
+        case "dead-letter":
+        case "expired":
+          return {
+            reason: result.reason ?? `bridge ${result.status}`,
+            status: "permanent-failure",
+          };
+        default:
+          return {
+            reason: "unsupported bridge delivery status",
+            status: "transient-failure",
+          };
       }
-      return { status: "accepted" };
     } catch (error) {
       return {
         reason:

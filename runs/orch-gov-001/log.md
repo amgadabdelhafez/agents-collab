@@ -19,3 +19,8 @@
   DBOS closure. One ignored temporary `node_modules` symlink to that existing
   dependency tree was used for gates and positively removed afterward. No
   dependency was installed or changed.
+- 2026-08-30T06:31:00Z: Pre-review self-inspection rejected slash-bearing
+  governance references and made every bridge status mapping explicit with an
+  unknown-status transient refusal. Reran focused 5/0, full `test:ci`, check,
+  build, and diff gates successfully on the hardened bytes. Package/lock hashes
+  remained unchanged and the temporary dependency symlink was removed.
