@@ -2041,7 +2041,10 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
       false,
       undefined,
       undefined,
-      join(storage.runDir, "claude-mcp.json")
+      join(storage.runDir, "claude-mcp.json"),
+      "off",
+      "medium",
+      true
     ),
   ]);
   expect(calls[1]).toEqual([
@@ -4302,7 +4305,10 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
       true,
       undefined,
       undefined,
-      join(storage.runDir, "claude-mcp.json")
+      join(storage.runDir, "claude-mcp.json"),
+      "off",
+      "medium",
+      true
     ),
   ]);
   const codexCommand = tmuxInternals.buildShellCommand([

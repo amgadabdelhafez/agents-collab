@@ -1,4 +1,10 @@
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type {
@@ -1181,6 +1187,12 @@ const consolidateEditArtifacts = async (input: {
       result.error?.message ??
         "worker multi-file edit could not produce one guarded patch artifact"
     );
+  }
+  for (const artifact of patchArtifacts) {
+    rmSync(artifact.path, { force: true });
+    if (artifact.manifestPath) {
+      rmSync(artifact.manifestPath, { force: true });
+    }
   }
   return [
     ...input.artifacts.filter((artifact) => !artifact.path.endsWith(".patch")),
@@ -2538,6 +2550,13 @@ export const runUtilityWorker = async (
             toolEventFile: join(runDir, "utility", "tool-events.jsonl"),
           })
         : conversation.artifacts;
+    const authoritativePatch =
+      executionRequest.kind === "edit"
+        ? resultArtifacts.find((artifact) => artifact.path.endsWith(".patch"))
+        : undefined;
+    const resultSummary = authoritativePatch
+      ? `Validated patch ${authoritativePatch.sha256} at ${authoritativePatch.path}`
+      : conversation.summary.slice(0, 4000);
     const result: UtilityCompactResult = {
       artifactRefs: resultArtifacts.map((artifact) => ({
         kind: artifact.path.endsWith(".patch") ? "diff" : "report",
@@ -2549,9 +2568,9 @@ export const runUtilityWorker = async (
       checks: conversation.checks,
       context,
       filesChanged: [],
-      paneSummary: conversation.summary.slice(0, 1000),
+      paneSummary: resultSummary.slice(0, 1000),
       status: "completed",
-      summary: conversation.summary.slice(0, 4000),
+      summary: resultSummary,
     };
     appendJsonl(usageFile, {
       at: new Date().toISOString(),

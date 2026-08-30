@@ -5,12 +5,13 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { serve } from "bun";
 import { readBridgeEvents } from "../../src/loop/bridge-store";
 import {
@@ -3025,6 +3026,16 @@ test("worker consolidates multiple file proposals into one guarded patch", async
     const artifacts = completed?.result?.artifactRefs ?? [];
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0]?.kind).toBe("diff");
+    expect(completed?.result?.summary).toBe(
+      `Validated patch ${artifacts[0]?.sha256} at ${artifacts[0]?.path}`
+    );
+    expect(readdirSync(dirname(artifacts[0]?.path ?? ""))).toEqual(
+      expect.arrayContaining([
+        artifacts[0]?.path.split("/").at(-1),
+        artifacts[0]?.manifestPath?.split("/").at(-1),
+      ])
+    );
+    expect(readdirSync(dirname(artifacts[0]?.path ?? ""))).toHaveLength(2);
     const aggregate = readFileSync(artifacts[0]?.path ?? "", "utf8");
     expect(aggregate).toContain("+++ b/src/one.ts");
     expect(aggregate).toContain("+++ b/src/two.ts");
