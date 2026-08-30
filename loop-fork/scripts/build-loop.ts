@@ -1,7 +1,7 @@
+import { dirname, join } from "node:path";
 import { type BunPlugin, build, file } from "bun";
+import { prepareTemporalWorkerForCompiledBundle } from "./temporal-worker-compile";
 
-const interceptorMarker =
-  "exports.defaultWorkflowInterceptorModules = [require.resolve('../workflow-log-interceptor')];";
 const TEMPORAL_BUNDLER_PATH_RE =
   /@temporalio\/worker\/lib\/workflow\/bundler\.js$/;
 
@@ -10,16 +10,15 @@ const temporalPrebuiltBundlePlugin: BunPlugin = {
   setup(build) {
     build.onLoad({ filter: TEMPORAL_BUNDLER_PATH_RE }, async ({ path }) => {
       const source = await file(path).text();
-      const occurrences = source.split(interceptorMarker).length - 1;
-      if (occurrences !== 1) {
-        throw new Error(
-          `Temporal worker interceptor marker count is ${occurrences}; refusing an unverified compile transform`
-        );
-      }
+      const interceptorPath = join(
+        dirname(dirname(path)),
+        "workflow-log-interceptor.js"
+      );
+      const interceptorSource = await file(interceptorPath).text();
       return {
-        contents: source.replace(
-          interceptorMarker,
-          "exports.defaultWorkflowInterceptorModules = [];"
+        contents: prepareTemporalWorkerForCompiledBundle(
+          source,
+          interceptorSource
         ),
         loader: "js",
       };
