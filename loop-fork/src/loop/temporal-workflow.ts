@@ -5,9 +5,11 @@ import {
   setHandler,
 } from "@temporalio/workflow";
 import { supervisorMessageWorkflowDefinition } from "./supervisor-message-workflow";
+import { taskGraphWorkflowDefinition } from "./task-graph-workflow";
 import type {
   JsonObject,
   WorkflowCommandReceipt,
+  WorkflowDefinition,
   WorkflowErrorCode,
   WorkflowEvent,
   WorkflowExecutionStatus,
@@ -79,6 +81,12 @@ const clone = <T>(value: T): T =>
 const receiptKey = (kind: "cancel" | "signal", requestId: string): string =>
   `${kind}:${requestId}`;
 
+const WORKFLOW_DEFINITIONS = new Map<string, WorkflowDefinition>(
+  [supervisorMessageWorkflowDefinition, taskGraphWorkflowDefinition].map(
+    (definition) => [definition.type, definition]
+  )
+);
+
 const errorOf = (error: unknown): TemporalWorkflowCommandError => {
   if (error instanceof WorkflowError) {
     return { code: error.code, message: error.message };
@@ -97,6 +105,7 @@ interface AppliedTemporalCommand {
 }
 
 const applyCommand = (
+  definition: WorkflowDefinition,
   state: JsonObject,
   status: WorkflowExecutionStatus,
   workflowId: string,
@@ -129,7 +138,7 @@ const applyCommand = (
     const nextRevision = revision + 1;
     const transition =
       command.kind === "signal"
-        ? supervisorMessageWorkflowDefinition.signal(
+        ? definition.signal(
             clone(state),
             command.name,
             clone(command.payload),
@@ -140,16 +149,12 @@ const applyCommand = (
               workflowId,
             }
           )
-        : supervisorMessageWorkflowDefinition.cancel(
-            clone(state),
-            command.reason,
-            {
-              at: command.at,
-              nextRevision,
-              requestId: command.requestId,
-              workflowId,
-            }
-          );
+        : definition.cancel(clone(state), command.reason, {
+            at: command.at,
+            nextRevision,
+            requestId: command.requestId,
+            workflowId,
+          });
     const nextStatus =
       transition.status ?? (command.kind === "cancel" ? "canceled" : status);
     return {
@@ -185,13 +190,14 @@ const applyCommand = (
 export async function temporalWorkflow(
   input: TemporalWorkflowStartInput
 ): Promise<never> {
-  if (input.workflowType !== supervisorMessageWorkflowDefinition.type) {
+  const definition = WORKFLOW_DEFINITIONS.get(input.workflowType);
+  if (!definition) {
     throw new WorkflowError(
       "unknown-workflow-type",
       `unknown workflow type ${input.workflowType}`
     );
   }
-  const started = supervisorMessageWorkflowDefinition.start(input.input, {
+  const started = definition.start(input.input, {
     at: input.at,
     nextRevision: 1,
     requestId: input.requestId,
@@ -243,11 +249,7 @@ export async function temporalWorkflow(
     revision,
     status,
     value: clone(
-      supervisorMessageWorkflowDefinition.query(
-        clone(state),
-        name,
-        args ? clone(args) : undefined
-      )
+      definition.query(clone(state), name, args ? clone(args) : undefined)
     ),
     workflowId: input.workflowId,
   }));
@@ -257,6 +259,7 @@ export async function temporalWorkflow(
       return;
     }
     const applied = applyCommand(
+      definition,
       state,
       status,
       input.workflowId,
