@@ -39,7 +39,7 @@ metadata.
       artifact content, or engine-specific type.
 - [x] The projector makes no workflow, bridge, board, artifact, or filesystem
       mutation and returned data cannot mutate its input.
-- [ ] Focused, full, static, build, and diff gates pass with empty named failure
+- [x] Focused, full, static, build, and diff gates pass with empty named failure
       sets, followed by independent exact-SHA zero-write review.
 
 ## Exit condition
