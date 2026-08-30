@@ -1,7 +1,7 @@
 {
   "task_id": "COMM-ATTN-001",
   "feature": "selective-durable-supervisor-attention",
-  "timestamp": "2026-08-30T05:58:35Z",
+  "timestamp": "2026-08-30T06:01:35Z",
   "identity": {
     "base_commit": "4311a24be2d30e78fb46b5c5844a3a78bc108ff6",
     "branch": "codex/comm-attn-001",
@@ -29,5 +29,5 @@
       ]
     }
   },
-  "verdict": "candidate-ready-for-independent-review"
+  "verdict": "pass"
 }

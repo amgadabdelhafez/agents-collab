@@ -35,7 +35,7 @@ immutable durable message category.
       repeated reads are byte-identical.
 - [x] Output is defensive and contains no body, transcript, credential, local
       path, artifact content, manifest claim, or engine-specific type.
-- [ ] Focused/full/static/build/diff gates pass and an independent exact-SHA
+- [x] Focused/full/static/build/diff gates pass and an independent exact-SHA
       zero-write reviewer returns PASS.
 
 ## Exit condition
