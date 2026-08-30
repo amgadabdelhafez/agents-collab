@@ -29,6 +29,7 @@ import {
   readRunManifest,
   readRunManifestHandle,
   readRunTranscriptEntries,
+  reconcileLegacyStoppedRun,
   reserveRunStorage,
   resolveExistingRunId,
   resolveRepoId,
@@ -50,6 +51,115 @@ const makeTempDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-run-state-"));
 const LOOP_REPO_ID_RE = /^loop-[a-f0-9]{12}$/;
 const REPO_ID_RE = /^repo-[a-f0-9]{12}$/;
+
+const writeLegacyStoppedFixture = (manifestPath: string) => {
+  const manifest = createRunManifest(
+    {
+      cwd: "/synthetic/repo",
+      launchAttemptPid: 999_998,
+      mode: "paired",
+      pid: 999_999,
+      repoId: "synthetic-repo",
+      runId: "22",
+      state: "stopped",
+      tmuxSession: "synthetic-loop-22",
+      tmuxSocket: "/synthetic/tmux.sock",
+      workspaceBinding: {
+        branchRef: "refs/heads/synthetic",
+        repoId: "synthetic-repo",
+        root: "/synthetic/repo",
+      },
+    },
+    "2026-08-29T18:00:00.000Z"
+  );
+  writeRunManifest(manifestPath, manifest);
+  return manifest;
+};
+
+test("legacy stopped-run reconciliation adds release proof once", async () => {
+  const dir = makeTempDir();
+  const manifestPath = join(dir, "manifest.json");
+  writeLegacyStoppedFixture(manifestPath);
+  const deps = {
+    now: () => "2026-08-29T19:00:00.000Z",
+    pidCanStillOwnRun: () => false,
+    runtimeAbsent: async () => true,
+  };
+
+  expect(await reconcileLegacyStoppedRun(manifestPath, "22", deps)).toEqual({
+    runId: "22",
+    status: "changed",
+    workspaceReleasedAt: "2026-08-29T19:00:00.000Z",
+  });
+  expect(readRunManifest(manifestPath)).toMatchObject({
+    state: "stopped",
+    status: "stopped",
+    workspaceReleasedAt: "2026-08-29T19:00:00.000Z",
+  });
+  expect(await reconcileLegacyStoppedRun(manifestPath, "22", deps)).toEqual({
+    runId: "22",
+    status: "already-released",
+    workspaceReleasedAt: "2026-08-29T19:00:00.000Z",
+  });
+});
+
+test("legacy stopped-run reconciliation refuses uncertain ownership without writes", async () => {
+  const cases = [
+    { name: "live pid", pidOwns: true, runtimeGone: true },
+    { name: "live or unknown tmux", pidOwns: false, runtimeGone: false },
+  ];
+  for (const item of cases) {
+    const dir = makeTempDir();
+    const manifestPath = join(dir, "manifest.json");
+    writeLegacyStoppedFixture(manifestPath);
+    const before = readFileSync(manifestPath);
+    const result = await reconcileLegacyStoppedRun(manifestPath, "22", {
+      now: () => "2026-08-29T19:00:00.000Z",
+      pidCanStillOwnRun: () => item.pidOwns,
+      runtimeAbsent: async () => item.runtimeGone,
+    });
+    expect(result.status, item.name).toBe("refused");
+    expect(readFileSync(manifestPath), item.name).toEqual(before);
+  }
+});
+
+test("legacy stopped-run reconciliation refuses malformed and concurrent rebound bytes", async () => {
+  const malformedDir = makeTempDir();
+  const malformedPath = join(malformedDir, "manifest.json");
+  writeFileSync(malformedPath, "{not-json", "utf8");
+  const malformedBefore = readFileSync(malformedPath);
+  const deps = {
+    now: () => "2026-08-29T19:00:00.000Z",
+    pidCanStillOwnRun: () => false,
+    runtimeAbsent: async () => true,
+  };
+  expect(
+    (await reconcileLegacyStoppedRun(malformedPath, "22", deps)).status
+  ).toBe("refused");
+  expect(readFileSync(malformedPath)).toEqual(malformedBefore);
+
+  const reboundDir = makeTempDir();
+  const reboundPath = join(reboundDir, "manifest.json");
+  const original = writeLegacyStoppedFixture(reboundPath);
+  const result = await reconcileLegacyStoppedRun(reboundPath, "22", {
+    ...deps,
+    runtimeAbsent: () => {
+      writeRunManifest(reboundPath, {
+        ...original,
+        tmuxSession: "replacement-loop-22",
+        updatedAt: "2026-08-29T18:30:00.000Z",
+      });
+      return Promise.resolve(true);
+    },
+  });
+  expect(result).toEqual({
+    reason: "manifest-changed-concurrently",
+    runId: "22",
+    status: "refused",
+  });
+  expect(readRunManifest(reboundPath)?.tmuxSession).toBe("replacement-loop-22");
+  expect(readRunManifest(reboundPath)?.workspaceReleasedAt).toBeUndefined();
+});
 
 test("resolveRepoId prefers git common dir and stays stable across worktrees", () => {
   const calls: string[] = [];

@@ -888,6 +888,167 @@ export const updateRunManifest = (
   return next;
 };
 
+export type StoppedRunReconcileResult =
+  | { runId: string; status: "changed"; workspaceReleasedAt: string }
+  | { runId: string; status: "already-released"; workspaceReleasedAt: string }
+  | { runId: string; status: "refused"; reason: string };
+
+interface StoppedRunReconcileDeps {
+  now: () => string;
+  pidCanStillOwnRun: (pid: number, stoppedAt: string) => boolean;
+  runtimeAbsent: (manifestPath: string) => Promise<boolean>;
+}
+
+const sameWorkspaceIdentity = (
+  current: RunManifest,
+  expected: RunManifest
+): boolean =>
+  current.runId === expected.runId &&
+  current.repoId === expected.repoId &&
+  current.cwd === expected.cwd &&
+  JSON.stringify(current.workspaceBinding) ===
+    JSON.stringify(expected.workspaceBinding) &&
+  current.tmuxSession === expected.tmuxSession &&
+  current.tmuxSocket === expected.tmuxSocket &&
+  current.pid === expected.pid &&
+  current.launchAttemptPid === expected.launchAttemptPid &&
+  current.state === expected.state &&
+  current.status === expected.status &&
+  current.updatedAt === expected.updatedAt;
+
+/**
+ * Adds release proof to one legacy stopped manifest only after every ownership
+ * fact is positive. Runtime checks are injected so this producer never signals
+ * a process or addresses tmux on its own.
+ */
+export const reconcileLegacyStoppedRun = async (
+  manifestPath: string,
+  expectedRunId: string,
+  deps: StoppedRunReconcileDeps
+): Promise<StoppedRunReconcileResult> => {
+  const read = readReservationManifest(manifestPath);
+  if (!read) {
+    return {
+      reason: "manifest-not-found",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  if (read.kind === "refuse") {
+    return {
+      reason: `invalid-ownership-evidence: ${read.reasons.join("; ")}`,
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  const { evidence, manifest } = read;
+  if (manifest.runId !== expectedRunId) {
+    return {
+      reason: "run-identity-mismatch",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  if (evidence.workspaceReleasedAt.kind === "valid") {
+    return {
+      runId: expectedRunId,
+      status: "already-released",
+      workspaceReleasedAt: evidence.workspaceReleasedAt.value,
+    };
+  }
+  if (evidence.workspaceReleasedAt.kind !== "absent") {
+    return {
+      reason: "invalid-release-evidence",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  if (
+    evidence.state.kind !== "valid" ||
+    evidence.state.value !== "stopped" ||
+    evidence.status.kind !== "valid" ||
+    evidence.status.value !== "stopped"
+  ) {
+    return {
+      reason: "run-is-not-stopped",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  if (
+    !(manifest.workspaceBinding && manifest.tmuxSession && manifest.tmuxSocket)
+  ) {
+    return {
+      reason: "missing-runtime-identity",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  if (
+    evidence.pid.kind !== "valid" ||
+    deps.pidCanStillOwnRun(evidence.pid.value, manifest.updatedAt)
+  ) {
+    return {
+      reason: "run-process-may-be-live",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  const attempt = evidence.launchAttemptPid;
+  if (
+    attempt.kind === "invalid" ||
+    attempt.kind === "conflicting" ||
+    (attempt.kind === "valid" &&
+      deps.pidCanStillOwnRun(attempt.value, manifest.updatedAt))
+  ) {
+    return {
+      reason: "launch-process-may-be-live",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  if (!(await deps.runtimeAbsent(manifestPath))) {
+    return {
+      reason: "tmux-runtime-not-absent",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  const releasedAt = deps.now();
+  let changed = false;
+  const next = updateRunManifest(manifestPath, (current) => {
+    if (
+      !(
+        current &&
+        sameWorkspaceIdentity(current, manifest) &&
+        !current.workspaceReleasedAt
+      )
+    ) {
+      return undefined;
+    }
+    changed = true;
+    return {
+      ...current,
+      state: "stopped",
+      status: "stopped",
+      updatedAt: releasedAt,
+      workspaceReleasedAt: releasedAt,
+    };
+  });
+  if (!(changed && next?.workspaceReleasedAt === releasedAt)) {
+    return {
+      reason: "manifest-changed-concurrently",
+      runId: expectedRunId,
+      status: "refused",
+    };
+  }
+  return {
+    runId: expectedRunId,
+    status: "changed",
+    workspaceReleasedAt: releasedAt,
+  };
+};
+
 const sessionManifestFields = (
   input: RunManifestInput
 ): Pick<RunManifest, "claudeSessionId" | "codexThreadId" | "ossSessionId"> => ({

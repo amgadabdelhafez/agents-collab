@@ -1,7 +1,14 @@
-import { afterEach, expect, mock, test } from "bun:test";
-import { resolve } from "node:path";
+import { afterEach, expect, mock, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { ImmediateInfoRequest } from "../src/loop/args";
 import type { PairedLaunchClaim } from "../src/loop/launch-reservation";
+import {
+  createRunManifest,
+  resolveRunStorage,
+  writeRunManifest,
+} from "../src/loop/run-state";
 import type { LaunchWorkspaceBinding, Options } from "../src/loop/types";
 
 const makeOptions = (): Options => ({
@@ -1011,4 +1018,80 @@ test("runCli rejects malformed pane-death helper args before startup maintenance
   expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
   expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
   expect(applyStagedMock).not.toHaveBeenCalled();
+});
+
+test("runCli rejects malformed stopped-run reconciliation before startup maintenance", async () => {
+  const {
+    applyStagedMock,
+    gcAbandonedRunProcessesMock,
+    gcStaleBridgeProcessesMock,
+    gcStaleClaudeBridgeRegistrationsMock,
+    parseArgsMock,
+    runCli,
+  } = await loadRunCli();
+
+  await expect(runCli(["reconcile", "stopped-run", "../22"])).rejects.toThrow(
+    "Usage: loop reconcile stopped-run <run-id>"
+  );
+
+  expect(parseArgsMock).not.toHaveBeenCalled();
+  expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
+  expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
+  expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
+  expect(applyStagedMock).not.toHaveBeenCalled();
+});
+
+test("runCli reconciles one synthetic stopped run before startup maintenance", async () => {
+  const priorHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "loop-reconcile-cli-"));
+  process.env.HOME = home;
+  try {
+    const storage = resolveRunStorage("22");
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest({
+        cwd: process.cwd(),
+        mode: "paired",
+        pid: 999_999,
+        repoId: storage.repoId,
+        runId: "22",
+        state: "stopped",
+        tmuxSession: "synthetic-loop-22",
+        tmuxSocket: join(home, "missing-tmux.sock"),
+        workspaceBinding: {
+          branchRef: "refs/heads/synthetic",
+          repoId: storage.repoId,
+          root: process.cwd(),
+        },
+      })
+    );
+    const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    const {
+      applyStagedMock,
+      gcAbandonedRunProcessesMock,
+      gcStaleBridgeProcessesMock,
+      gcStaleClaudeBridgeRegistrationsMock,
+      parseArgsMock,
+      runCli,
+    } = await loadRunCli();
+
+    await runCli(["reconcile", "stopped-run", "22"]);
+
+    expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toMatchObject({
+      runId: "22",
+      status: "changed",
+    });
+    expect(parseArgsMock).not.toHaveBeenCalled();
+    expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
+    expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();
+    expect(gcStaleClaudeBridgeRegistrationsMock).not.toHaveBeenCalled();
+    expect(applyStagedMock).not.toHaveBeenCalled();
+  } finally {
+    if (priorHome === undefined) {
+      process.env.HOME = undefined;
+    } else {
+      process.env.HOME = priorHome;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
 });

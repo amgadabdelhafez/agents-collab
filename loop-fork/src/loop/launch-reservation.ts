@@ -98,6 +98,11 @@ const defaultPidStartedAt = (pid: number): number | undefined => {
   return Number.isFinite(value) ? value : undefined;
 };
 
+export const defaultPidOwnershipDeps = {
+  isPidAlive: defaultPidLiveness,
+  pidStartedAt: defaultPidStartedAt,
+};
+
 const defaultDeps = (): LaunchReservationDeps => ({
   env: process.env,
   home: process.env.HOME ?? "",
@@ -151,10 +156,10 @@ const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
  * release timestamp is positively unrelated to the released run. Missing or
  * ambiguous start evidence remains fail-closed.
  */
-const pidCanStillOwnRun = (
+export const pidCanStillOwnRun = (
   pid: number,
   releasedAt: string,
-  deps: LaunchReservationDeps
+  deps: Pick<LaunchReservationDeps, "isPidAlive" | "pidStartedAt">
 ): boolean => {
   if (!deps.isPidAlive(pid)) {
     return false;
@@ -189,7 +194,7 @@ const pidCanStillOwnRun = (
  * blocks because with no socket the verdict cannot have been obtained through
  * the bound endpoint, so it is not evidence about this run.
  */
-const runtimeAbsent = (
+export const runtimeAbsent = (
   endpoint: TmuxEndpointState,
   tmux: TmuxLiveness
 ): boolean =>

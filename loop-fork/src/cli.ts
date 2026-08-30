@@ -30,6 +30,11 @@ import { runGovernessUtilityCommand } from "./loop/governess-replay";
 import { HOOK_EMIT_SUBCOMMAND, runHookEmit } from "./loop/hooks/emit";
 import type { PairedLaunchClaim } from "./loop/launch-reservation";
 import {
+  defaultPidOwnershipDeps,
+  pidCanStillOwnRun,
+  runtimeAbsent,
+} from "./loop/launch-reservation";
+import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
 } from "./loop/legacy-governess-compat";
@@ -42,6 +47,13 @@ import {
   type ReconPaneIndex,
   runReconPane,
 } from "./loop/recon-pane";
+import {
+  readRunManifestHandle,
+  reconcileLegacyStoppedRun,
+  resolveRunStorage,
+} from "./loop/run-state";
+import { tmuxTargetLiveness } from "./loop/tmux-control";
+import { readTmuxEndpointState, targetFromManifest } from "./loop/tmux-socket";
 import type { Agent, Options } from "./loop/types";
 import { updateDeps } from "./loop/update-deps";
 import {
@@ -67,6 +79,7 @@ const INTERACTIVE_TMUX_ERROR =
 const PAIRED_TMUX_HANDOFF_ERROR =
   "[loop] paired tmux launch did not hand off; not continuing in the foreground.";
 const MARKDOWN_PATH_RE = /\.md$/iu;
+const CANONICAL_POSITIVE_RUN_ID_RE = /^[1-9]\d*$/u;
 
 const isPromptlessPairedTmuxLaunch = (opts: Options): boolean =>
   Boolean(
@@ -284,7 +297,45 @@ const runImmediateInfoCommand = (argv: string[]): boolean => {
   return true;
 };
 
+const runStoppedRunReconcileCommand = async (
+  argv: string[]
+): Promise<boolean> => {
+  if (argv[0] !== "reconcile") {
+    return false;
+  }
+  const [kind, runId, ...extra] = argv.slice(1);
+  if (
+    kind !== "stopped-run" ||
+    !runId ||
+    extra.length > 0 ||
+    !CANONICAL_POSITIVE_RUN_ID_RE.test(runId)
+  ) {
+    throw new Error("Usage: loop reconcile stopped-run <run-id>");
+  }
+  const storage = resolveRunStorage(runId);
+  const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {
+    now: () => new Date().toISOString(),
+    pidCanStillOwnRun: (pid, stoppedAt) =>
+      pidCanStillOwnRun(pid, stoppedAt, {
+        ...defaultPidOwnershipDeps,
+      }),
+    runtimeAbsent: async (manifestPath) => {
+      const handle = readRunManifestHandle(manifestPath);
+      const target = handle ? targetFromManifest(handle) : undefined;
+      const endpoint = readTmuxEndpointState(target);
+      const tmux = await Promise.resolve(tmuxTargetLiveness(target));
+      return runtimeAbsent(endpoint, tmux);
+    },
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  if (result.status === "refused") {
+    throw new Error(`stopped-run reconciliation refused: ${result.reason}`);
+  }
+  return true;
+};
+
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
+  (await runStoppedRunReconcileCommand(argv)) ||
   runWorldCommand(argv) ||
   runImmediateInfoCommand(argv) ||
   runGovernessUtilityCommand(argv) ||
