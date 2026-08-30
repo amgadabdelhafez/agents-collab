@@ -32,6 +32,7 @@ import {
 import { formatBridgeDeliveryMessage } from "./bridge-message-format";
 import {
   type BridgeMessage,
+  type BridgeNotification,
   type BridgeStatus,
   bridgePath,
   lastBridgeNotificationAt,
@@ -1399,32 +1400,56 @@ const lastNotifiedDoorbell = (
   target: BridgeMessage["target"],
   pending: readonly BridgeMessage[]
 ): string | undefined => {
-  const pendingIds = new Set(
-    pending.filter((entry) => entry.target === target).map((entry) => entry.id)
+  const pendingById = new Map(
+    pending
+      .filter((entry) => entry.target === target)
+      .map((entry) => [entry.id, entry] as const)
   );
-  const latestById = new Map<string, number>();
-  for (const event of readBridgeEvents(runDir)) {
-    if (
-      event.kind !== "notified" ||
-      event.target !== target ||
-      !pendingIds.has(event.id)
-    ) {
+  const events = readBridgeEvents(runDir);
+  let latestBatch: { at: number; count: number } | undefined;
+  for (let index = 0; index < events.length; ) {
+    const first = events[index];
+    if (first?.kind !== "notified") {
+      index += 1;
       continue;
     }
-    const at = Date.parse(event.at);
-    const previous = latestById.get(event.id);
-    if (Number.isFinite(at) && (previous === undefined || at > previous)) {
-      latestById.set(event.id, at);
+    const batchAt = first.at;
+    const batch: BridgeNotification[] = [];
+    while (index < events.length) {
+      const event = events[index];
+      if (event?.kind !== "notified" || event.at !== batchAt) {
+        break;
+      }
+      batch.push(event);
+      index += 1;
+    }
+    const ids = new Set<string>();
+    const valid = batch.every((event) => {
+      const message = pendingById.get(event?.id ?? "");
+      if (
+        !message ||
+        event?.target !== target ||
+        event.source !== message.source ||
+        event.signature !== message.signature ||
+        event.reason !== `nudged ${target} tmux inbox` ||
+        ids.has(event.id)
+      ) {
+        return false;
+      }
+      ids.add(event.id);
+      return true;
+    });
+    const at = Date.parse(batchAt);
+    if (
+      valid &&
+      batch.length > 0 &&
+      Number.isFinite(at) &&
+      (!latestBatch || at > latestBatch.at)
+    ) {
+      latestBatch = { at, count: batch.length };
     }
   }
-  if (latestById.size === 0) {
-    return undefined;
-  }
-  const latest = Math.max(...latestById.values());
-  const priorCount = [...latestById.values()].filter(
-    (notifiedAt) => notifiedAt === latest
-  ).length;
-  return priorCount > 0 ? buildTmuxBridgeNudge(priorCount) : undefined;
+  return latestBatch ? buildTmuxBridgeNudge(latestBatch.count) : undefined;
 };
 
 export const readBridgeRuntimeStatus = (
