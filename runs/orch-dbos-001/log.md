@@ -25,3 +25,7 @@
 - 2026-08-30T05:41:00Z: Full `bun run test:ci`, `bun run check`, `bun run build`,
   and `git diff --check` PASS with an empty named failure set. No PostgreSQL
   comparison container remained running after the gates.
+- 2026-08-30T05:49:00Z: Independent Claude CLI/OpenRouter `z-ai/glm-5.2`
+  low-effort exact-SHA review of candidate `3d79a0f7` returned literal PASS
+  with `reviewer_project_tree_writes=0`. Comparison closure is accepted; engine
+  selection remains the next isolated slice.
