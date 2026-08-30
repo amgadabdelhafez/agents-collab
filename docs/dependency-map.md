@@ -49,6 +49,11 @@ Last updated: <!-- 2026-07-29 by refresh-dependency-map.sh -->
   owns: native-subagent.ts, loop-scoped provider profiles, provider hooks
   exposes: one short-lived Claude read-only lease, Codex fail-closed disablement, or strict zero-native mode
   consumes: settled utility evidence, current Governess epoch, provider lifecycle events
+
+[Workflow orchestration]
+  owns: workflow-port.ts, in-memory-workflow-port.ts, supervisor-message-workflow.ts, supervisor-message-coordinator.ts
+  exposes: engine-neutral start/signal/query/cancel/inspect and SupervisorMessage lifecycle/projection
+  consumes: injected delivery activity only; Temporal and DBOS adapters are future consumers of this contract
 ```
 
 ## Dependency graph
@@ -79,6 +84,11 @@ Codex spawn_agent ──config + PreToolUse──► denied (0.145 sandbox inher
 
 Nanny pane / Au Pair pane ──read only──► filtered utility store view
 optional bridge supervisor ──messages/route request──► bridge
+
+supervisor intake ──► WorkflowPort ──► SupervisorMessage state machine
+                                          │
+                                          ├─► injected idempotent delivery activity
+                                          └─► Attention/message-board-safe projection
 ```
 
 ## Cross-cutting concerns
@@ -94,6 +104,8 @@ optional bridge supervisor ──messages/route request──► bridge
 | Native fallback | Governess lease store and provider hooks | `native-subagents/events.jsonl`, hook journals, Governess board |
 | Large outputs | Tool broker | patch/report artifacts referenced by result |
 | Visibility | Governess and optional utility pane | pane output; never a control dependency |
+| Workflow identity | WorkflowPort adapter | stable workflow ID, request IDs, immutable inspection history |
+| Supervisor message policy | SupervisorMessage workflow | deterministic events, projection, and focused replay tests |
 
 ## Blast-radius guide
 
@@ -107,3 +119,5 @@ optional bridge supervisor ──messages/route request──► bridge
 | Pi runtime/provider adapter | No-builtins tests, retry/redaction/usage tests, fake and live canaries | External I/O must remain bounded and observable |
 | Tmux layout | Pane identity, manifest assumptions, tmux tests | Existing code still has positional pane assumptions |
 | Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption; Claude gates the read-only fallback while Codex native spawn fails closed |
+| WorkflowPort contract | Reference adapter, SupervisorMessage workflow, future Temporal/DBOS adapters, fixture corpus | All engines must preserve identity, idempotency, status, and history semantics |
+| SupervisorMessage state | Delivery activity, claim authority, Attention/message-board projection | Body and path redaction plus retry/escalation policy span every consumer |

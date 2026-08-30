@@ -1,0 +1,45 @@
+{
+  "task_id": "ORCH-PORT-001",
+  "feature": "engine-neutral-workflow-port-supervisor-message",
+  "timestamp": "2026-08-30T03:41:00Z",
+  "identity": {
+    "base_commit": "0f69b9a99f9163bf9f83075530e26aed21258463",
+    "branch": "codex/orch-port-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/orch-port-001"
+  },
+  "checks": {
+    "functional": {
+      "passed": 9,
+      "failed": 0,
+      "details": [
+        "WorkflowPort focused suite: 3 passed, 0 failed",
+        "SupervisorMessage focused suite: 6 passed, 0 failed"
+      ]
+    },
+    "ui": {
+      "passed": 0,
+      "failed": 0,
+      "screenshots": []
+    },
+    "performance": {
+      "passed": 0,
+      "failed": 0,
+      "details": [
+        "No external performance claim; reference commands are synchronous except injected delivery"
+      ]
+    },
+    "regression": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "bun run test:ci: PASS, exit 0, empty named failure set",
+        "bun run check: PASS",
+        "bun run build: PASS",
+        "git diff --check: PASS",
+        "Temporal/DBOS import scan: no matches"
+      ]
+    }
+  },
+  "verdict": "pass",
+  "notes": "Synthetic reference adapter only. Temporal and DBOS conformance remain for ORCH-FIXTURE-001 onward."
+}

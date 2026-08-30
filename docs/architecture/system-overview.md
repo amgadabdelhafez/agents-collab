@@ -19,6 +19,19 @@ loop CLI / tmux launcher
                                       ├─ Nanny ──Pi──► local Qwen + broker
                                       └─ Au Pair ─Pi──► OpenRouter GLM + broker
 
+Supervisor message intake ──► engine-neutral WorkflowPort
+                                  │
+                                  ▼
+                         SupervisorMessage workflow
+                         receive / dedupe / persist / route
+                         claim / acknowledge / retry
+                         escalate / dead-letter / cancel
+                                  │
+                   ┌──────────────┴──────────────┐
+                   ▼                             ▼
+          delivery activity port       safe status projection
+            (bridge adapter next)       (Attention/message board next)
+
 Claude Agent ──PreToolUse──► Governess native lease
 Codex spawn_agent ──PreToolUse/config──► denied (sandbox inheritance)
                                                   ├─ strict: denied
@@ -48,6 +61,8 @@ or claim authority.
 | Memory checkpoint | Bounded pre-boundary continuity with exact run/session/source provenance | Raw transcripts, hidden reasoning, secrets, or operational authority |
 | Curated memory | Explicit allowlisted Markdown promotion with a JSON provenance sidecar | Automatic learning, unresolved hypotheses, or release/route authority |
 | Native fallback | One leased read-only provider child for bounded exploration or independent review after settled utility evidence | Worker pool, edits, shell mutation, MCP/web access, descendants, authority, or final review |
+| Workflow port | Engine-neutral start, signal, query, cancel, inspect, identity, command idempotency, and history semantics | Temporal/DBOS SDK types, transport, UI, or provider selection |
+| SupervisorMessage workflow | Deterministic message lifecycle, delivery policy, claim authority, retry/escalation/dead-letter state, and safe projection | Engine hosting, bridge delivery implementation, or copying message bodies into read models |
 
 ## Architecture invariants
 
@@ -104,6 +119,15 @@ or claim authority.
 - Memory promotion is an explicit curated command. Pickbrain, Witchcraft, and
   any future local retrieval service consume its Markdown as a rebuildable
   projection and cannot mutate runtime truth.
+- Canonical workflow commands and state are JSON-safe and engine-neutral.
+  Temporal and DBOS adapters must implement the same `WorkflowPort`; neither
+  engine's SDK types may enter canonical workflow or Harness contracts.
+- `SupervisorMessage` uses its workflow ID as the stable deduplication boundary.
+  Delivery activities receive a deterministic attempt idempotency key. Only the
+  intended supervisor may claim, and only the current claimant may acknowledge.
+- Attention OS and message-board projections allowlist lifecycle metadata and
+  content-addressed artifact references. They never contain message bodies or
+  local filesystem paths.
 
 ## Key data flows
 
@@ -154,6 +178,13 @@ or claim authority.
    run at once. The next exact fallback-profile spawn consumes it, lifecycle
    hooks bind/close it, and every other fleet or child mutation attempt is
    denied, including `TeamCreate`.
+9. **Supervisor message orchestration:** intake starts one stable workflow,
+   duplicate starts reuse it, and a new workflow invokes one abstract delivery
+   activity. Delivery results, claims, acknowledgements, ticks, retries, and
+   cancellation become idempotent workflow commands with immutable inspection
+   history. The current in-memory adapter is the executable reference oracle;
+   `ORCH-FIXTURE-001` will replay the same contract before Temporal and DBOS
+   adapters are admitted.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.
