@@ -3,4 +3,4 @@
 - [x] **S-01 Evidence**: bind four exact accepted closure commits.
 - [x] **S-02 Decision**: record Temporal selection and DBOS disposition.
 - [x] **S-03 Boundaries**: record reversal and production-release gates.
-- [ ] **S-04 Verification**: static/diff checks and independent review.
+- [x] **S-04 Verification**: static/diff checks and independent review.

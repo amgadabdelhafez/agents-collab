@@ -14,3 +14,7 @@
   is `83e80bca48beffc5df8d8e601b41e14c38718685f6eaddaf6354019183b9611e`;
   lockfile SHA-256 is
   `f5872a012feb22e9ea365d9218e97cd5463bb4a7286d41a3785e30fdd6de8ba9`.
+- 2026-08-30T06:05:00Z: Candidate `8fe51006` received independent Claude
+  CLI/OpenRouter `z-ai/glm-5.2` low-effort exact-SHA PASS with
+  `reviewer_project_tree_writes=0`. The earlier `4e9b8784` commit is superseded
+  formatting evidence and was never submitted as the review candidate.

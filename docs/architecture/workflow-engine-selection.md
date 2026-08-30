@@ -1,8 +1,10 @@
 # Workflow engine selection for SupervisorMessage
 
-Status: accepted candidate pending independent review
+Status: accepted
 
 Decision ID: ORCH-SELECT-001
+
+Accepted candidate: `8fe51006af0a9898a47b4f20f44e587be3af5249`
 
 Date: 2026-08-30
 

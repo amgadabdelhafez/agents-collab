@@ -39,7 +39,7 @@ engine-neutral port, and state the consequences and reversal boundary.
       workflow rewrites.
 - [x] State production gates separately: deployment topology, scoped identity,
       credentials, backup/recovery, observability, and fresh deploy authority.
-- [ ] Independent zero-write review confirms that the decision does not outrun
+- [x] Independent zero-write review confirms that the decision does not outrun
       the accepted evidence.
 
 ## Exit condition
