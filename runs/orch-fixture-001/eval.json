@@ -1,0 +1,37 @@
+{
+  "task_id": "ORCH-FIXTURE-001",
+  "feature": "deterministic-workflow-replay-corpus",
+  "timestamp": "2026-08-30T04:05:45Z",
+  "identity": {
+    "base_commit": "3b40b16ea11ef298a42aa5f7e2830e9fc10afeaf",
+    "branch": "codex/orch-fixture-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/orch-fixture-001"
+  },
+  "checks": {
+    "functional": {
+      "passed": 7,
+      "failed": 0,
+      "details": [
+        "Six-case corpus double replay: identical per-case and aggregate digests",
+        "State-loss, duplicate-delivery, terminal-status, and expectation-mismatch controls refuse"
+      ]
+    },
+    "regression": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "bun run test:ci: exit 0, empty named failure set, bounded total 1555 passed and 0 failed",
+        "bun run check: PASS",
+        "bun run build: PASS",
+        "git diff --check: PASS",
+        "Temporal/DBOS import scan: no matches"
+      ]
+    }
+  },
+  "digests": {
+    "aggregate": "5f1bd79af5217d60339a50996d6f3bc04c6f745e9a0c2a832d09cfe0caf8abdd",
+    "case_count": 6
+  },
+  "verdict": "pass",
+  "notes": "Implementation and local gates pass. Exact candidate and independent zero-write review remain pending."
+}

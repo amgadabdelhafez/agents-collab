@@ -125,6 +125,11 @@ or claim authority.
 - `SupervisorMessage` uses its workflow ID as the stable deduplication boundary.
   Delivery activities receive a deterministic attempt idempotency key. Only the
   intended supervisor may claim, and only the current claimant may acknowledge.
+- The `SupervisorMessage` replay corpus is inert JSON-safe data executed by one
+  engine-neutral runner. Restart and upgrade boundaries rebuild disposable
+  coordinators while workflow durability remains the adapter's responsibility.
+  Every engine must match the frozen per-case and aggregate structural digests;
+  a green engine-specific suite is not substitute evidence.
 - Attention OS and message-board projections allowlist lifecycle metadata and
   content-addressed artifact references. They never contain message bodies or
   local filesystem paths.

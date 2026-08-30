@@ -121,3 +121,4 @@ supervisor intake ──► WorkflowPort ──► SupervisorMessage state machi
 | Hook or Codex proxy | Delegation classifier, telemetry, bridge prompts, native lease/profile tests | Claude and Codex enforce utility adoption; Claude gates the read-only fallback while Codex native spawn fails closed |
 | WorkflowPort contract | Reference adapter, SupervisorMessage workflow, future Temporal/DBOS adapters, fixture corpus | All engines must preserve identity, idempotency, status, and history semantics |
 | SupervisorMessage state | Delivery activity, claim authority, Attention/message-board projection | Body and path redaction plus retry/escalation policy span every consumer |
+| Replay fixture or digest | Reference, Temporal, and DBOS replay runtimes plus selection evidence | All engines execute identical inert steps and must match exact normalized observations |
