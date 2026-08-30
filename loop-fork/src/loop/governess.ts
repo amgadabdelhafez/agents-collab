@@ -4662,9 +4662,6 @@ const notifyHandoverAgents = async (
       deps.saveState(config.stateFile, runState);
       continue;
     }
-    if (!directInputIsSafe(deps, info)) {
-      continue;
-    }
     if (record && config.journalFile) {
       transitionGovernessControl(
         config.journalFile,

@@ -372,7 +372,8 @@ test("handover waits for a busy agent, notifies each once, and launches after bo
       codex: "idle",
     })
   ).toEqual({ status: "waiting" });
-  expect(state.exitControl.notified).toEqual({ codex: true });
+  expect(state.exitControl.notified).toEqual({ claude: true, codex: true });
+  expect(bridged).toEqual(["codex", "claude"]);
   expect(direct).toHaveLength(0);
 
   claudeTurnEnded = true;
@@ -401,7 +402,7 @@ test("handover waits for a busy agent, notifies each once, and launches after bo
   expect(launched).toBe(1);
 });
 
-test("handover never injects over a notification or permission prompt", async () => {
+test("handover routes durably without injecting over a notification or permission prompt", async () => {
   const config = handoverConfig();
   const state = freshRunState();
   state.exitControl = {
@@ -409,6 +410,7 @@ test("handover never injects over a notification or permission prompt", async ()
     notified: {},
   };
   const direct: string[] = [];
+  const bridged: string[] = [];
   const deps = {
     ...defaultGovernessDeps(),
     appendLog: () => undefined,
@@ -427,6 +429,10 @@ test("handover never injects over a notification or permission prompt", async ()
       },
     ],
     saveState: () => undefined,
+    sendBridge: (_runDir: string, _source: string, target: string) => {
+      bridged.push(target);
+      return Promise.resolve("accepted" as const);
+    },
     sendText: (_pane: string, text: string) => direct.push(text),
   };
 
@@ -436,11 +442,45 @@ test("handover never injects over a notification or permission prompt", async ()
       codex: "idle",
     })
   ).toEqual({ status: "waiting" });
-  expect(state.exitControl.notified).toEqual({});
+  expect(state.exitControl.notified).toEqual({ claude: true, codex: true });
+  expect(bridged).toEqual(["claude", "codex"]);
   expect(direct).toEqual([]);
 });
 
-test("handover treats a dim idle suggestion as an empty composer", async () => {
+test("handover dispatches through the durable bridge when a provider emits no Stop hook", async () => {
+  const config = handoverConfig();
+  const state = freshRunState();
+  state.exitControl = { mode: "handover", notified: {} };
+  const bridged: string[] = [];
+  const direct: string[] = [];
+  const deps = {
+    ...defaultGovernessDeps(),
+    appendLog: () => undefined,
+    capturePane: () => "❯\nprovider waiting for peer",
+    fenceCurrent: () => true,
+    now: () => 0,
+    paneCommand: () => "0:claude",
+    readHooks: () => [],
+    saveState: () => undefined,
+    sendBridge: (_runDir: string, _source: string, target: string) => {
+      bridged.push(target);
+      return Promise.resolve("accepted" as const);
+    },
+    sendText: (_pane: string, text: string) => direct.push(text),
+  };
+
+  expect(
+    await advanceHandoverControl(config, deps, state, {
+      claude: "waiting-peer",
+      codex: "working",
+    })
+  ).toEqual({ status: "waiting" });
+  expect(state.exitControl.notified).toEqual({ claude: true });
+  expect(bridged).toEqual(["claude"]);
+  expect(direct).toEqual([]);
+});
+
+test("handover routes a control without touching a dim idle suggestion", async () => {
   const config = handoverConfig();
   const state = freshRunState();
   state.exitControl = { mode: "handover", notified: {} };
@@ -472,7 +512,7 @@ test("handover treats a dim idle suggestion as an empty composer", async () => {
       codex: "idle",
     })
   ).toEqual({ status: "waiting" });
-  expect(styledCaptures).toEqual([true]);
+  expect(styledCaptures).toEqual([]);
   expect(state.exitControl.notified).toEqual({ codex: true });
   expect(bridged).toEqual(["codex"]);
 });
@@ -568,7 +608,7 @@ test("handover exits Claude after its exact generic idle notification", async ()
   });
 });
 
-test("handover still blocks a non-dim composer draft", async () => {
+test("handover routes durably without touching a non-dim composer draft", async () => {
   const config = handoverConfig();
   const state = freshRunState();
   state.exitControl = { mode: "handover", notified: {} };
@@ -595,8 +635,8 @@ test("handover still blocks a non-dim composer draft", async () => {
       codex: "idle",
     })
   ).toEqual({ status: "waiting" });
-  expect(state.exitControl.notified).toEqual({});
-  expect(bridged).toEqual([]);
+  expect(state.exitControl.notified).toEqual({ codex: true });
+  expect(bridged).toEqual(["codex"]);
 });
 
 test("valid ready bundles close each drained TUI exactly once before launch", async () => {

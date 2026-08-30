@@ -3644,6 +3644,7 @@ const startPairedSession = async (
           codexAppServerPid,
           codexRemoteUrl,
           codexThreadId,
+          ossSessionId,
           session,
           paneAgents,
           primaryAgent,
