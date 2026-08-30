@@ -3803,6 +3803,47 @@ const startAutoSession = (
   return "";
 };
 
+const qualifyLaunchTmuxCommand = (
+  args: string[],
+  launchSocket: TmuxSocket
+): string[] => {
+  if (args[0] !== "tmux") {
+    return args;
+  }
+  const socketFlag = args[1];
+  if (socketFlag === "-L" || socketFlag?.startsWith("-L=")) {
+    throw new Error(
+      "tmux launch command attempted to override the bound socket"
+    );
+  }
+  if (socketFlag === "-S") {
+    if (args[2] !== launchSocket) {
+      throw new Error(
+        "tmux launch command attempted to override the bound socket"
+      );
+    }
+    for (const arg of args.slice(3)) {
+      if (
+        arg === "-S" ||
+        arg === "-L" ||
+        arg.startsWith("-S=") ||
+        arg.startsWith("-L=")
+      ) {
+        throw new Error(
+          "tmux launch command attempted to override the bound socket"
+        );
+      }
+    }
+    return args;
+  }
+  if (socketFlag?.startsWith("-S=")) {
+    throw new Error(
+      "tmux launch command attempted to override the bound socket"
+    );
+  }
+  return launchCommandArgv(launchSocket, args.slice(1));
+};
+
 const defaultDeps = (): TmuxDeps => {
   // Resolve once. Every production tmux command in this dependency set must
   // address that exact server, even when other paired Loops share it and even
@@ -3810,18 +3851,21 @@ const defaultDeps = (): TmuxDeps => {
   const launchSocket = resolveTmuxSocket(process.env, {
     uid: process.getuid?.() ?? 0,
   }).socket;
-  const qualifyTmuxCommand = (args: string[]): string[] =>
-    args[0] === "tmux" && args[1] !== "-S" && args[1] !== "-L"
-      ? launchCommandArgv(launchSocket, args.slice(1))
-      : args;
   return {
     attach: (session: string, requestedSocket?: TmuxSocket) => {
-      const socket = requestedSocket ?? launchSocket;
-      const result = spawnSync(launchServerArgv(socket, "attach", session), {
-        stderr: "inherit",
-        stdin: "inherit",
-        stdout: "inherit",
-      });
+      if (requestedSocket && requestedSocket !== launchSocket) {
+        throw new Error(
+          "tmux attach attempted to override the launch-bound socket"
+        );
+      }
+      const result = spawnSync(
+        launchServerArgv(launchSocket, "attach", session),
+        {
+          stderr: "inherit",
+          stdin: "inherit",
+          stdout: "inherit",
+        }
+      );
       if (result.exitCode !== 0) {
         throw new Error(`Failed to attach to tmux session "${session}".`);
       }
@@ -3995,7 +4039,7 @@ const defaultDeps = (): TmuxDeps => {
     releasePersistentCodexSession,
     startPersistentAgentSession,
     spawn: (args: string[]) => {
-      const qualifiedArgs = qualifyTmuxCommand(args);
+      const qualifiedArgs = qualifyLaunchTmuxCommand(args, launchSocket);
       const result = spawnSync(
         qualifiedArgs,
         qualifiedArgs[0] === "tmux"
@@ -4180,10 +4224,12 @@ export const runInTmux = async (
       `[loop] run manifest ${JSON.stringify(launchContext.manifestPath)}`
     );
   }
-  const attachCommand =
+  const attachCommand = launchAttachCommand(
     launchContext.kind === "paired"
-      ? `tmux attach -t ${session}`
-      : launchAttachCommand(launchContext.socket, session);
+      ? deps.resolveLaunchSocket()
+      : launchContext.socket,
+    session
+  );
   deps.log(`[loop] attach with: ${attachCommand}`);
   let handedOff: boolean;
   try {
@@ -4246,6 +4292,7 @@ export const tmuxInternals = {
   parseTmuxPaneSnapshot,
   probeClaudeSuggestedComposer,
   quoteShellArg,
+  qualifyLaunchTmuxCommand,
   restoreClaudeDraftCursor,
   sanitizeBase,
   stripTmuxFlag,

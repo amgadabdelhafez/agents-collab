@@ -2,11 +2,20 @@
   "task": "harvto-cotenant-bootstrap-repair-v1",
   "dimensions": {
     "focused_tmux_socket": { "status": "pass", "passed": 52, "failed": [] },
-    "focused_tmux": { "status": "pass", "passed": 106, "failed": [] },
+    "focused_tmux": { "status": "pass", "passed": 107, "failed": [] },
     "full_test_ci": { "status": "pass", "failed": [] },
     "check": { "status": "pass" },
     "build": { "status": "pass" },
     "diff_check": { "status": "pass" },
-    "independent_review": { "status": "pending" }
+    "independent_review": {
+      "status": "fail",
+      "attempt": 1,
+      "candidate": "f70fda7801e40b94eefa55a765c51e594dee0ef7",
+      "failed": [
+        "foreign socket overrides were not fail-closed at the production spawn and attach seams",
+        "the static socket qualification assertion was weakened",
+        "the production qualifier lacked a direct discriminating test"
+      ]
+    }
   }
 }

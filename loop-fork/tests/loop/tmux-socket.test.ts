@@ -609,7 +609,7 @@ describe("launch-window composers", () => {
       tmuxSource.match(new RegExp(`\\b${name}\\b`, "g"))?.length ?? 0;
     const serverCalls = tmuxSource.match(/launchServerArgv\(/g) ?? [];
     const qualifiedServerCalls =
-      tmuxSource.match(/launchServerArgv\(\s*(?:launchSocket|socket)\b/g) ?? [];
+      tmuxSource.match(/launchServerArgv\(\s*launchSocket\b/g) ?? [];
 
     expect(
       tmuxSource.slice(requestedStart, autoStart).match(/launchServerArgv\(/g)

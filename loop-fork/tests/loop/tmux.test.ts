@@ -29,11 +29,49 @@ import {
   TMUX_MISSING_ERROR,
   tmuxInternals,
 } from "../../src/loop/tmux";
+import { resolveTmuxSocket } from "../../src/loop/tmux-socket";
 import type { Options } from "../../src/loop/types";
 
 const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
 const makeTempRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-tmux-run-"));
+
+test("paired production tmux command qualification rejects every foreign socket", () => {
+  const socket = resolveTmuxSocket(
+    { LOOP_TMUX_SOCKET: "/tmp/loop-bound.sock" },
+    { uid: 501 }
+  ).socket;
+  expect(
+    tmuxInternals.qualifyLaunchTmuxCommand(
+      ["tmux", "capture-pane", "-p", "-t", "%22"],
+      socket
+    )
+  ).toEqual([
+    "tmux",
+    "-S",
+    "/tmp/loop-bound.sock",
+    "capture-pane",
+    "-p",
+    "-t",
+    "%22",
+  ]);
+  expect(
+    tmuxInternals.qualifyLaunchTmuxCommand(
+      ["tmux", "-S", "/tmp/loop-bound.sock", "has-session", "-t", "run"],
+      socket
+    )
+  ).toEqual(["tmux", "-S", "/tmp/loop-bound.sock", "has-session", "-t", "run"]);
+  for (const argv of [
+    ["tmux", "-S", "/tmp/foreign.sock", "kill-session", "-t", "run"],
+    ["tmux", "-L", "foreign", "kill-server"],
+    ["tmux", "-S=/tmp/foreign.sock", "kill-server"],
+    ["tmux", "-S", "/tmp/loop-bound.sock", "-L=foreign", "kill-server"],
+  ]) {
+    expect(() => tmuxInternals.qualifyLaunchTmuxCommand(argv, socket)).toThrow(
+      "attempted to override the bound socket"
+    );
+  }
+});
 
 const KICKOFF_HOOKS_BEFORE =
   '{"agent":"claude","event":"SessionStart","state":"starting","sequence":1}\n';
@@ -791,7 +829,9 @@ test("runInTmux paired launch emits the exact run manifest path contract line", 
   expect(typed).toEqual([]);
   expect(logs[0]).toBe("[loop] starting paired tmux workspace...");
   expect(logs).toContain('[loop] started tmux session "repo-loop-1"');
-  expect(logs).toContain("[loop] attach with: tmux attach -t repo-loop-1");
+  expect(logs).toContain(
+    "[loop] attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'"
+  );
   expect(manifest.claudeSessionId).toBe("claude-session-1");
   expect(manifest.codexRemoteUrl).toBe(codexRemoteUrl);
   expect(manifest.codexThreadId).toBe("codex-thread-1");
