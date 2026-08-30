@@ -45,6 +45,7 @@ export const consumeGovernessEnvironmentFile = (
     !pathStat.isFile() ||
     pathStat.isSymbolicLink() ||
     pathStat.uid !== process.getuid?.() ||
+    pathStat.nlink !== 1 ||
     // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks require bitwise inspection.
     (pathStat.mode & 0o077) !== 0
   ) {
@@ -56,16 +57,41 @@ export const consumeGovernessEnvironmentFile = (
     // biome-ignore lint/suspicious/noBitwiseOperators: POSIX open flags require bitwise composition.
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = fstatSync(descriptor);
-    if (!(stat.isFile() && stat.size <= MAX_ENV_FILE_BYTES)) {
+    if (
+      !stat.isFile() ||
+      stat.size > MAX_ENV_FILE_BYTES ||
+      stat.uid !== pathStat.uid ||
+      stat.nlink !== 1 ||
+      stat.dev !== pathStat.dev ||
+      stat.ino !== pathStat.ino ||
+      // biome-ignore lint/suspicious/noBitwiseOperators: POSIX permission masks require bitwise inspection.
+      (stat.mode & 0o077) !== 0
+    ) {
       throw new Error("Governess environment file is invalid");
     }
     content = readFileSync(descriptor, "utf8");
+    const unlinkTarget = lstatSync(path);
+    if (
+      unlinkTarget.dev !== stat.dev ||
+      unlinkTarget.ino !== stat.ino ||
+      unlinkTarget.nlink !== 1
+    ) {
+      throw new Error("Governess environment file identity changed");
+    }
+    unlinkSync(path);
+    const unlinked = fstatSync(descriptor);
+    if (
+      unlinked.dev !== stat.dev ||
+      unlinked.ino !== stat.ino ||
+      unlinked.nlink !== 0
+    ) {
+      throw new Error("Governess environment file was not consumed once");
+    }
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor);
     }
   }
-  unlinkSync(path);
   const parsed: unknown = JSON.parse(content);
   if (!(parsed && typeof parsed === "object" && !Array.isArray(parsed))) {
     throw new Error("Governess environment payload is invalid");

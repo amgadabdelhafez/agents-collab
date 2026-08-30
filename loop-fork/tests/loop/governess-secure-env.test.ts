@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdtempSync,
   rmSync,
   symlinkSync,
@@ -46,6 +47,23 @@ test("Governess environment refuses permissive files and symlinks", () => {
     expect(() => consumeGovernessEnvironmentFile(link)).toThrow(
       "not private and owned"
     );
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test("Governess environment refuses multiply linked secret inodes", () => {
+  const root = mkdtempSync(join(tmpdir(), "governess-env-linked-"));
+  const path = join(root, "environment.json");
+  const alias = join(root, "environment-alias.json");
+  try {
+    writeGovernessEnvironmentFile(path, ["SECRET=value"]);
+    linkSync(path, alias);
+    expect(() => consumeGovernessEnvironmentFile(path)).toThrow(
+      "not private and owned"
+    );
+    expect(existsSync(path)).toBe(true);
+    expect(existsSync(alias)).toBe(true);
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
