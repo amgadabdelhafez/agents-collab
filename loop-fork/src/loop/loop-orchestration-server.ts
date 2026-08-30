@@ -24,6 +24,7 @@ import type {
 } from "./supervisor-orchestration-http";
 import { JsonlSupervisorThreadStore } from "./supervisor-thread-store";
 import { TemporalSupervisorRuntimeHost } from "./temporal-supervisor-runtime";
+import { temporalWorkflowBundleBase64 } from "./temporal-workflow-bundle.generated";
 
 const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
 const HOST_RE = /^(?:127\.0\.0\.1|::1|localhost)$/;
@@ -293,8 +294,11 @@ export const runLoopOrchestrationServer = async (
         connection,
         namespace: config.namespace,
       }),
-      workflowsPath: new URL("./temporal-workflow.ts", import.meta.url)
-        .pathname,
+      workflowBundle: {
+        code: Buffer.from(temporalWorkflowBundleBase64, "base64").toString(
+          "utf8"
+        ),
+      },
     });
     const handler = host.httpHandler(authenticator(config, env));
     const server = serve({

@@ -25,8 +25,9 @@ export interface TemporalSupervisorRuntimeOptions {
   receipts: SupervisorMessageGovernanceReceiptPort;
   store: JsonlSupervisorThreadStore;
   taskQueue: string;
+  workflowBundle?: { code: string };
   workflowClient: unknown;
-  workflowsPath: string;
+  workflowsPath?: string;
 }
 
 const SAFE_RUNTIME_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
@@ -43,6 +44,27 @@ const requireWorkflowPath = (value: string): string => {
     throw new Error("Temporal supervisor workflowsPath is invalid");
   }
   return value;
+};
+
+const requireWorkflowSource = (
+  options: Pick<
+    TemporalSupervisorRuntimeOptions,
+    "workflowBundle" | "workflowsPath"
+  >
+): { workflowBundle: { code: string } } | { workflowsPath: string } => {
+  if (options.workflowBundle && options.workflowsPath) {
+    throw new Error("Temporal supervisor workflow source is ambiguous");
+  }
+  if (options.workflowBundle) {
+    if (!options.workflowBundle.code) {
+      throw new Error("Temporal supervisor workflowBundle is invalid");
+    }
+    return { workflowBundle: options.workflowBundle };
+  }
+  if (options.workflowsPath) {
+    return { workflowsPath: requireWorkflowPath(options.workflowsPath) };
+  }
+  throw new Error("Temporal supervisor workflow source is missing");
 };
 
 export class TemporalSupervisorRuntimeHost {
@@ -68,7 +90,7 @@ export class TemporalSupervisorRuntimeHost {
     options: TemporalSupervisorRuntimeOptions
   ): Promise<TemporalSupervisorRuntimeHost> {
     const taskQueue = requireRuntimeName(options.taskQueue, "taskQueue");
-    const workflowsPath = requireWorkflowPath(options.workflowsPath);
+    const workflowSource = requireWorkflowSource(options);
     const workflows = new TemporalWorkflowPort(options.workflowClient, {
       taskQueue,
     });
@@ -92,7 +114,7 @@ export class TemporalSupervisorRuntimeHost {
       identity: requireRuntimeName(options.identity, "identity"),
       namespace: requireRuntimeName(options.namespace, "namespace"),
       taskQueue,
-      workflowsPath,
+      ...workflowSource,
     });
     const workerRun = worker.run();
     try {

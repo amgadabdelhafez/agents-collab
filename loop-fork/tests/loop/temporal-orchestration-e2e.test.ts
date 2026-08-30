@@ -6,6 +6,7 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import type { SupervisorMessageDeliveryRequest } from "../../src/loop/supervisor-message-workflow";
 import { JsonlSupervisorThreadStore } from "../../src/loop/supervisor-thread-store";
 import { TemporalSupervisorRuntimeHost } from "../../src/loop/temporal-supervisor-runtime";
+import { temporalWorkflowBundleBase64 } from "../../src/loop/temporal-workflow-bundle.generated";
 
 const artifact = (digit: string): string =>
   `artifact://sha256/${digit.repeat(64)}`;
@@ -60,10 +61,11 @@ test("real Temporal control surface completes cross-supervisor delivery and a de
       store: new JsonlSupervisorThreadStore(join(root, "threads.jsonl")),
       taskQueue: `orchestration-e2e-${process.pid}`,
       workflowClient: environment.client.workflow,
-      workflowsPath: new URL(
-        "../../src/loop/temporal-workflow.ts",
-        import.meta.url
-      ).pathname,
+      workflowBundle: {
+        code: Buffer.from(temporalWorkflowBundleBase64, "base64").toString(
+          "utf8"
+        ),
+      },
     });
     const handler = host.httpHandler({
       authenticate: (request) => {
