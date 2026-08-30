@@ -1,8 +1,24 @@
 {
   "task_id": "ORCH-RUNTIME-001",
-  "verdict": "pending",
+  "verdict": "candidate",
   "checks": {
-    "functional": { "passed": 0, "failed": 0, "details": [] },
-    "regression": { "passed": 0, "failed": 0, "details": [] }
+    "functional": {
+      "passed": 5,
+      "failed": 0,
+      "details": [
+        "governed in-memory runtime 4/0",
+        "real ephemeral Temporal runtime 1/0"
+      ]
+    },
+    "regression": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "bun run test:ci 1595/0",
+        "bun run check PASS",
+        "bun run build PASS",
+        "git diff --check PASS"
+      ]
+    }
   }
 }
