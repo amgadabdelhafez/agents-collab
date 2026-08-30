@@ -1157,7 +1157,14 @@ test("runInTmux writes paired session refs before starting governess", async () 
         capturePane: () => "❯ ",
         cwd: repoDir,
         env: {
+          ANTHROPIC_API_KEY: "",
+          ANTHROPIC_AUTH_TOKEN: "openrouter-test-secret",
+          ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: "z-ai/glm-5.2",
+          ANTHROPIC_DEFAULT_OPUS_MODEL: "z-ai/glm-5.2",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "z-ai/glm-5.2",
           CLAUDE_CONFIG_DIR: "/tmp/loop-claude",
+          LOOP_OSS_RELEASE_AUTHORITY: "1",
           LOOP_GOVERNESS_AGENT_RENAME: "1",
         },
         findBinary: () => true,
@@ -1333,6 +1340,24 @@ test("runInTmux writes paired session refs before starting governess", async () 
     expect(events.every((event) => !event.includes("dotenv-secret"))).toBe(
       true
     );
+    expect(JSON.stringify(calls)).not.toContain("openrouter-test-secret");
+    expect(JSON.stringify(calls)).not.toContain("ANTHROPIC_AUTH_TOKEN=");
+    const agentEnvironmentFiles = readdirSync(runDir).filter((name) =>
+      name.startsWith("agent-env-claude-")
+    );
+    expect(agentEnvironmentFiles).toHaveLength(1);
+    const agentEnvironment = JSON.parse(
+      readFileSync(join(runDir, agentEnvironmentFiles[0] ?? ""), "utf8")
+    ) as Record<string, string>;
+    expect(agentEnvironment).toEqual({
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "openrouter-test-secret",
+      ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "z-ai/glm-5.2",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "z-ai/glm-5.2",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "z-ai/glm-5.2",
+      LOOP_OSS_RELEASE_AUTHORITY: "1",
+    });
     const environmentFiles = readdirSync(runDir).filter((name) =>
       name.startsWith("governess-env-")
     );

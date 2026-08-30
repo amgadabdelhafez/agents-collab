@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 
 export const GOVERNESS_SECURE_SUBCOMMAND = "__governess-secure";
+export const AGENT_SECURE_SUBCOMMAND = "__agent-secure";
 
 const ENV_KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 const MAX_ENV_FILE_BYTES = 64 * 1024;

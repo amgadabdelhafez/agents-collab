@@ -71,6 +71,7 @@ import {
   GOVERNESS_REMAIN_ON_EXIT_FORMAT,
 } from "./governess-pane-liveness";
 import {
+  AGENT_SECURE_SUBCOMMAND,
   GOVERNESS_SECURE_SUBCOMMAND,
   writeGovernessEnvironmentFile,
 } from "./governess-secure-env";
@@ -1535,6 +1536,55 @@ const prepareGovernessHooks = (
 const passEnv = (env: NodeJS.ProcessEnv, key: string): string[] => {
   const value = env[key];
   return value ? [`${key}=${value}`] : [];
+};
+
+const CLAUDE_GATEWAY_ENV_KEYS = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+  "LOOP_OSS_RELEASE_AUTHORITY",
+] as const;
+
+const claudeGatewayEnvironment = (env: NodeJS.ProcessEnv): string[] =>
+  CLAUDE_GATEWAY_ENV_KEYS.flatMap((key) =>
+    Object.hasOwn(env, key) && typeof env[key] === "string"
+      ? [`${key}=${env[key]}`]
+      : []
+  );
+
+const securePairedAgentCommand = (input: {
+  agent: Agent;
+  command: string[];
+  env: NodeJS.ProcessEnv;
+  launchArgv: string[];
+  runDir: string;
+}): { command: string[]; environmentPath?: string } => {
+  if (input.agent !== "claude") {
+    return { command: input.command };
+  }
+  const environment = claudeGatewayEnvironment(input.env);
+  if (environment.length === 0) {
+    return { command: input.command };
+  }
+  const environmentPath = join(
+    input.runDir,
+    `agent-env-claude-${randomUUID()}.json`
+  );
+  writeGovernessEnvironmentFile(environmentPath, environment);
+  return {
+    command: [
+      ...input.launchArgv,
+      AGENT_SECURE_SUBCOMMAND,
+      environmentPath,
+      ...input.command,
+    ],
+    environmentPath,
+  };
 };
 
 const envDisabled = (value: string | undefined): boolean => {
@@ -3581,10 +3631,9 @@ const startPairedSession = async (
             : current
         ) ?? manifest;
     }
-    const leftCommand = buildShellCommand([
-      "env",
-      ...env,
-      ...buildPairedAgentCommand({
+    const leftAgent = securePairedAgentCommand({
+      agent: paneAgents.left,
+      command: buildPairedAgentCommand({
         agent: paneAgents.left,
         claudeChannelServer,
         claudeMcpConfigPath,
@@ -3596,11 +3645,13 @@ const startPairedSession = async (
         nativeSubagentMode,
         opts: launch.opts,
       }),
-    ]);
-    const rightCommand = buildShellCommand([
-      "env",
-      ...env,
-      ...buildPairedAgentCommand({
+      env: deps.env,
+      launchArgv: deps.launchArgv,
+      runDir: storage.runDir,
+    });
+    const rightAgent = securePairedAgentCommand({
+      agent: paneAgents.right,
+      command: buildPairedAgentCommand({
         agent: paneAgents.right,
         claudeChannelServer,
         claudeMcpConfigPath,
@@ -3612,24 +3663,50 @@ const startPairedSession = async (
         nativeSubagentMode,
         opts: launch.opts,
       }),
+      env: deps.env,
+      launchArgv: deps.launchArgv,
+      runDir: storage.runDir,
+    });
+    const leftCommand = buildShellCommand([
+      "env",
+      ...env,
+      ...leftAgent.command,
+    ]);
+    const rightCommand = buildShellCommand([
+      "env",
+      ...env,
+      ...rightAgent.command,
     ]);
 
     const ossSessionId =
       launch.opts.pairedSessionIds?.oss || manifest.ossSessionId || "";
-    const paneTargets = await createPairedPaneLayout({
-      deps,
-      governess: Boolean(launch.opts.governess),
-      leftCommand,
-      leftPromptPath,
-      onSessionCreated: () => {
-        ownedTmuxSession = true;
-      },
-      paneAgents,
-      rightCommand,
-      rightPromptPath,
-      runDir: storage.runDir,
-      session,
-    });
+    let paneTargets: PairedPaneTargets;
+    try {
+      paneTargets = await createPairedPaneLayout({
+        deps,
+        governess: Boolean(launch.opts.governess),
+        leftCommand,
+        leftPromptPath,
+        onSessionCreated: () => {
+          ownedTmuxSession = true;
+        },
+        paneAgents,
+        rightCommand,
+        rightPromptPath,
+        runDir: storage.runDir,
+        session,
+      });
+    } catch (error) {
+      for (const path of [
+        leftAgent.environmentPath,
+        rightAgent.environmentPath,
+      ]) {
+        if (path) {
+          rmSync(path, { force: true });
+        }
+      }
+      throw error;
+    }
     updatePairedManifest(
       deps,
       storage,

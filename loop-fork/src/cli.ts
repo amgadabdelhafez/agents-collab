@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawn as spawnChild } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { isAgent } from "./loop/agents";
@@ -28,6 +29,7 @@ import {
 } from "./loop/governess-pane-liveness";
 import { runGovernessUtilityCommand } from "./loop/governess-replay";
 import {
+  AGENT_SECURE_SUBCOMMAND,
   consumeGovernessEnvironmentFile,
   GOVERNESS_SECURE_SUBCOMMAND,
 } from "./loop/governess-secure-env";
@@ -232,6 +234,49 @@ const runSecureGovernessSubcommand = async (
   return true;
 };
 
+const runSecureAgentSubcommand = async (argv: string[]): Promise<boolean> => {
+  if (argv[0] !== AGENT_SECURE_SUBCOMMAND) {
+    return false;
+  }
+  const [environmentPath, command, ...args] = argv.slice(1);
+  if (!(environmentPath && command)) {
+    throw new Error(
+      "Usage: loop __agent-secure <environment-path> <command> [args...]"
+    );
+  }
+  const child = spawnChild(command, args, {
+    env: {
+      ...process.env,
+      ...consumeGovernessEnvironmentFile(environmentPath),
+    },
+    stdio: "inherit",
+  });
+  const forward = (signal: NodeJS.Signals): void => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill(signal);
+    }
+  };
+  const onInterrupt = (): void => forward("SIGINT");
+  const onTerminate = (): void => forward("SIGTERM");
+  process.on("SIGINT", onInterrupt);
+  process.on("SIGTERM", onTerminate);
+  try {
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        resolve(code ?? (signal ? 128 : 1));
+      });
+    });
+    if (exitCode !== 0) {
+      process.exitCode = exitCode;
+    }
+  } finally {
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
+  }
+  return true;
+};
+
 // Dispatch the hidden `__*` helper subcommands. Returns true when handled.
 const runHiddenSubcommand = async (argv: string[]): Promise<boolean> => {
   if (runMemoryPromoteSubcommand(argv)) {
@@ -362,6 +407,7 @@ const runStoppedRunReconcileCommand = async (
 
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
   (await runStoppedRunReconcileCommand(argv)) ||
+  (await runSecureAgentSubcommand(argv)) ||
   runWorldCommand(argv) ||
   runImmediateInfoCommand(argv) ||
   runGovernessUtilityCommand(argv) ||
