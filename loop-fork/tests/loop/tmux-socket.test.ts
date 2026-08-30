@@ -20,6 +20,7 @@ import {
   DARWIN_SOCKET_BYTE_LIMIT,
   LINUX_SOCKET_BYTE_LIMIT,
   launchAttachCommand,
+  launchCommandArgv,
   launchServerArgv,
   launchSessionArgv,
   type ManifestHandle,
@@ -567,6 +568,7 @@ describe("launch-window composers", () => {
     const exported = Object.keys(tmuxSocketModule);
     expect(exported).toContain("launchSessionArgv");
     expect(exported).toContain("launchAttachCommand");
+    expect(exported).toContain("launchCommandArgv");
     expect(Array.isArray(launchSessionArgv(socket, "s"))).toBe(true);
     expect(typeof launchAttachCommand(socket, "s")).toBe("string");
   });
@@ -576,6 +578,7 @@ describe("launch-window composers", () => {
     const srcRoot = join(import.meta.dir, "..", "..", "src");
     const composerNames = [
       "launchAttachCommand",
+      "launchCommandArgv",
       "launchServerArgv",
       "launchSessionArgv",
     ] as const;
@@ -606,7 +609,7 @@ describe("launch-window composers", () => {
       tmuxSource.match(new RegExp(`\\b${name}\\b`, "g"))?.length ?? 0;
     const serverCalls = tmuxSource.match(/launchServerArgv\(/g) ?? [];
     const qualifiedServerCalls =
-      tmuxSource.match(/launchServerArgv\(\s*launchSocket\b/g) ?? [];
+      tmuxSource.match(/launchServerArgv\(\s*(?:launchSocket|socket)\b/g) ?? [];
 
     expect(
       tmuxSource.slice(requestedStart, autoStart).match(/launchServerArgv\(/g)
@@ -624,6 +627,16 @@ describe("launch-window composers", () => {
     expect(occurrences("launchServerArgv")).toBe(5);
     expect(occurrences("launchSessionArgv")).toBe(3);
     expect(occurrences("launchAttachCommand")).toBe(2);
+    expect(occurrences("launchCommandArgv")).toBeGreaterThan(4);
+  });
+
+  test("launch command composition binds arbitrary startup operations to one socket", () => {
+    expect(
+      launchCommandArgv(socket, ["capture-pane", "-p", "-t", "%22"])
+    ).toEqual(["tmux", "-S", SOCKET_A, "capture-pane", "-p", "-t", "%22"]);
+    expect(() =>
+      launchCommandArgv(socket, ["capture-pane", "-S", "/tmp/other.sock"])
+    ).toThrow("may not override the resolved socket");
   });
 });
 

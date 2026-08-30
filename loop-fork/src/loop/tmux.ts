@@ -113,6 +113,7 @@ import {
 } from "./tmux-control";
 import {
   launchAttachCommand,
+  launchCommandArgv,
   launchServerArgv,
   launchSessionArgv,
   resolveTmuxSocket,
@@ -3327,7 +3328,6 @@ const startPairedSession = async (
     if (terminalizationResult) {
       return terminalizationResult;
     }
-    await cleanupOwnedPersistentTransport();
     cleanupFailedPairedSessionStart(
       deps,
       session,
@@ -3335,6 +3335,7 @@ const startPairedSession = async (
       claudeChannelServer,
       storage.runId
     );
+    await cleanupOwnedPersistentTransport();
     try {
       const updated = deps.updateRunManifest(
         storage.manifestPath,
@@ -3802,198 +3803,219 @@ const startAutoSession = (
   return "";
 };
 
-const defaultDeps = (): TmuxDeps => ({
-  attach: (session: string, launchSocket?: TmuxSocket) => {
-    const result = spawnSync(
-      launchSocket
-        ? launchServerArgv(launchSocket, "attach", session)
-        : ["tmux", "attach", "-t", session],
-      {
+const defaultDeps = (): TmuxDeps => {
+  // Resolve once. Every production tmux command in this dependency set must
+  // address that exact server, even when other paired Loops share it and even
+  // if ambient TMUX variables change while startup is in flight.
+  const launchSocket = resolveTmuxSocket(process.env, {
+    uid: process.getuid?.() ?? 0,
+  }).socket;
+  const qualifyTmuxCommand = (args: string[]): string[] =>
+    args[0] === "tmux" && args[1] !== "-S" && args[1] !== "-L"
+      ? launchCommandArgv(launchSocket, args.slice(1))
+      : args;
+  return {
+    attach: (session: string, requestedSocket?: TmuxSocket) => {
+      const socket = requestedSocket ?? launchSocket;
+      const result = spawnSync(launchServerArgv(socket, "attach", session), {
         stderr: "inherit",
         stdin: "inherit",
         stdout: "inherit",
+      });
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to attach to tmux session "${session}".`);
       }
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to attach to tmux session "${session}".`);
-    }
-  },
-  capturePane: (pane: string, styled = false) => {
-    const result = spawnSync(
-      ["tmux", "capture-pane", "-p", ...(styled ? ["-e"] : []), "-t", pane],
-      boundedTmuxOptions({
+    },
+    capturePane: (pane: string, styled = false) => {
+      const result = spawnSync(
+        launchCommandArgv(launchSocket, [
+          "capture-pane",
+          "-p",
+          ...(styled ? ["-e"] : []),
+          "-t",
+          pane,
+        ]),
+        boundedTmuxOptions({
+          stderr: "ignore",
+          stdout: "pipe",
+        })
+      );
+      if (tmuxCommandTimedOut(result)) {
+        throw new Error(
+          `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane "${pane}"`
+        );
+      }
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to capture tmux pane "${pane}".`);
+      }
+      return decode(result.stdout);
+    },
+    capturePaneSnapshot: (pane: string) => {
+      const result = spawnSync(
+        launchCommandArgv(launchSocket, [
+          "capture-pane",
+          "-p",
+          "-e",
+          "-t",
+          pane,
+          ";",
+          "display-message",
+          "-p",
+          "-t",
+          pane,
+          `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
+        ]),
+        boundedTmuxOptions({
+          stderr: "ignore",
+          stdout: "pipe",
+        })
+      );
+      if (tmuxCommandTimedOut(result)) {
+        throw new Error(
+          `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane state for "${pane}"`
+        );
+      }
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to capture tmux pane state for "${pane}".`);
+      }
+      return parseTmuxPaneSnapshot(decode(result.stdout));
+    },
+    claudeCliVersion: () => {
+      const result = spawnSync(["claude", "--version"], {
         stderr: "ignore",
         stdout: "pipe",
-      })
-    );
-    if (tmuxCommandTimedOut(result)) {
-      throw new Error(
-        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane "${pane}"`
-      );
-    }
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to capture tmux pane "${pane}".`);
-    }
-    return decode(result.stdout);
-  },
-  capturePaneSnapshot: (pane: string) => {
-    const result = spawnSync(
-      [
-        "tmux",
-        "capture-pane",
-        "-p",
-        "-e",
-        "-t",
-        pane,
-        ";",
-        "display-message",
-        "-p",
-        "-t",
-        pane,
-        `${TMUX_PANE_SNAPSHOT_MARKER} #{cursor_x} #{cursor_y} #{window_activity} #{window_active_clients} #{pane_pipe}`,
-      ],
-      boundedTmuxOptions({
-        stderr: "ignore",
-        stdout: "pipe",
-      })
-    );
-    if (tmuxCommandTimedOut(result)) {
-      throw new Error(
-        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while capturing pane state for "${pane}"`
-      );
-    }
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to capture tmux pane state for "${pane}".`);
-    }
-    return parseTmuxPaneSnapshot(decode(result.stdout));
-  },
-  claudeCliVersion: () => {
-    const result = spawnSync(["claude", "--version"], {
-      stderr: "ignore",
-      stdout: "pipe",
-    });
-    if (result.exitCode !== 0) {
-      return undefined;
-    }
-    const banner = decode(result.stdout).trim();
-    return banner === "" ? undefined : banner;
-  },
-  cwd: process.cwd(),
-  env: process.env,
-  findBinary: (cmd: string) => commandExists(cmd),
-  getCodexAppServerPid,
-  getCodexAppServerUrl,
-  getLastCodexThreadId,
-  getTerminalSize: () => {
-    const columns = process.stdout.columns;
-    const rows = process.stdout.rows;
-    if (!(isTerminalDimension(columns) && isTerminalDimension(rows))) {
-      return undefined;
-    }
-    return { columns, rows };
-  },
-  isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
-  launchArgv: buildLaunchArgv(),
-  log: (line: string) => {
-    console.log(line);
-  },
-  makeClaudeSessionId: () => randomUUID(),
-  nowMs: () => Date.now(),
-  preparePairedRun,
-  // Claude's own project transcript only. readClaudeSubmissionVersion also
-  // folds in the hook journal's size:mtime, which would flip on any hook write
-  // including a non-progress one, so it is not used as independent evidence.
-  readClaudeTranscriptVersion: (runDir: string) =>
-    readClaudeTranscriptVersionFromProjects(
-      runDir,
-      join(homedir(), ".claude", "projects")
-    ) ?? "",
-  readTextFile: (path: string) => {
-    try {
-      return readFileSync(path, "utf8");
-    } catch {
-      return undefined;
-    }
-  },
-  resolveLaunchSocket: () =>
-    resolveTmuxSocket(process.env, { uid: process.getuid?.() ?? 0 }).socket,
-  runGit: (cwd: string, args: string[]) => runGit(cwd, args),
-  sendKeys: (pane: string, keys: string[]) => {
-    const result = spawnSync(
-      ["tmux", "send-keys", "-t", pane, ...keys],
-      boundedTmuxOptions({ stderr: "ignore" })
-    );
-    if (tmuxCommandTimedOut(result)) {
-      throw new Error(
-        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while sending pane keys`
-      );
-    }
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to send keys to tmux pane "${pane}".`);
-    }
-  },
-  sendText: (pane: string, text: string) => {
-    const result = spawnSync(
-      ["tmux", "send-keys", "-t", pane, "-l", "--", text],
-      boundedTmuxOptions({
-        stderr: "ignore",
-      })
-    );
-    if (tmuxCommandTimedOut(result)) {
-      throw new Error(
-        `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while sending pane text`
-      );
-    }
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to send text to tmux pane "${pane}".`);
-    }
-  },
-  sleep: (ms: number) =>
-    new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    }),
-  startCodexProxy: async (
-    runDir: string,
-    remoteUrl: string,
-    threadId: string
-  ) => {
-    const port = await findCodexTmuxProxyPort();
-    spawnDetachedProcess(
-      [
-        ...buildLaunchArgv(),
-        CODEX_TMUX_PROXY_SUBCOMMAND,
+      });
+      if (result.exitCode !== 0) {
+        return undefined;
+      }
+      const banner = decode(result.stdout).trim();
+      return banner === "" ? undefined : banner;
+    },
+    cwd: process.cwd(),
+    env: process.env,
+    findBinary: (cmd: string) => commandExists(cmd),
+    getCodexAppServerPid,
+    getCodexAppServerUrl,
+    getLastCodexThreadId,
+    getTerminalSize: () => {
+      const columns = process.stdout.columns;
+      const rows = process.stdout.rows;
+      if (!(isTerminalDimension(columns) && isTerminalDimension(rows))) {
+        return undefined;
+      }
+      return { columns, rows };
+    },
+    isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    launchArgv: buildLaunchArgv(),
+    log: (line: string) => {
+      console.log(line);
+    },
+    makeClaudeSessionId: () => randomUUID(),
+    nowMs: () => Date.now(),
+    preparePairedRun,
+    // Claude's own project transcript only. readClaudeSubmissionVersion also
+    // folds in the hook journal's size:mtime, which would flip on any hook write
+    // including a non-progress one, so it is not used as independent evidence.
+    readClaudeTranscriptVersion: (runDir: string) =>
+      readClaudeTranscriptVersionFromProjects(
         runDir,
-        remoteUrl,
-        threadId,
-        String(port),
-      ],
-      process.env
-    );
-    return waitForCodexTmuxProxy(port);
-  },
-  stopCodexProxy: stopCodexTmuxProxy,
-  closePersistentCodexSession,
-  releasePersistentCodexSession,
-  startPersistentAgentSession,
-  spawn: (args: string[]) => {
-    const result = spawnSync(
-      args,
-      args[0] === "tmux"
-        ? boundedTmuxOptions({ stderr: "pipe", stdout: "pipe" })
-        : { stderr: "pipe", stdout: "pipe" }
-    );
-    const timedOut = args[0] === "tmux" && tmuxCommandTimedOut(result);
-    return {
-      exitCode: timedOut ? 124 : result.exitCode,
-      stderr: timedOut
-        ? `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms`
-        : decode(result.stderr),
-      stdout: decode(result.stdout),
-      ...(timedOut ? { timedOut: true } : {}),
-    };
-  },
-  updateRunManifest,
-});
+        join(homedir(), ".claude", "projects")
+      ) ?? "",
+    readTextFile: (path: string) => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+    resolveLaunchSocket: () => launchSocket,
+    runGit: (cwd: string, args: string[]) => runGit(cwd, args),
+    sendKeys: (pane: string, keys: string[]) => {
+      const result = spawnSync(
+        launchCommandArgv(launchSocket, ["send-keys", "-t", pane, ...keys]),
+        boundedTmuxOptions({ stderr: "ignore" })
+      );
+      if (tmuxCommandTimedOut(result)) {
+        throw new Error(
+          `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while sending pane keys`
+        );
+      }
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to send keys to tmux pane "${pane}".`);
+      }
+    },
+    sendText: (pane: string, text: string) => {
+      const result = spawnSync(
+        launchCommandArgv(launchSocket, [
+          "send-keys",
+          "-t",
+          pane,
+          "-l",
+          "--",
+          text,
+        ]),
+        boundedTmuxOptions({
+          stderr: "ignore",
+        })
+      );
+      if (tmuxCommandTimedOut(result)) {
+        throw new Error(
+          `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms while sending pane text`
+        );
+      }
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to send text to tmux pane "${pane}".`);
+      }
+    },
+    sleep: (ms: number) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms);
+      }),
+    startCodexProxy: async (
+      runDir: string,
+      remoteUrl: string,
+      threadId: string
+    ) => {
+      const port = await findCodexTmuxProxyPort();
+      spawnDetachedProcess(
+        [
+          ...buildLaunchArgv(),
+          CODEX_TMUX_PROXY_SUBCOMMAND,
+          runDir,
+          remoteUrl,
+          threadId,
+          String(port),
+        ],
+        process.env
+      );
+      return waitForCodexTmuxProxy(port);
+    },
+    stopCodexProxy: stopCodexTmuxProxy,
+    closePersistentCodexSession,
+    releasePersistentCodexSession,
+    startPersistentAgentSession,
+    spawn: (args: string[]) => {
+      const qualifiedArgs = qualifyTmuxCommand(args);
+      const result = spawnSync(
+        qualifiedArgs,
+        qualifiedArgs[0] === "tmux"
+          ? boundedTmuxOptions({ stderr: "pipe", stdout: "pipe" })
+          : { stderr: "pipe", stdout: "pipe" }
+      );
+      const timedOut =
+        qualifiedArgs[0] === "tmux" && tmuxCommandTimedOut(result);
+      return {
+        exitCode: timedOut ? 124 : result.exitCode,
+        stderr: timedOut
+          ? `tmux control command timed out after ${TMUX_CONTROL_TIMEOUT_MS}ms`
+          : decode(result.stderr),
+        stdout: decode(result.stdout),
+        ...(timedOut ? { timedOut: true } : {}),
+      };
+    },
+    updateRunManifest,
+  };
+};
 
 const findSession = (
   argv: string[],

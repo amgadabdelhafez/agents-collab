@@ -557,6 +557,30 @@ const tmuxArgv = (socket: TmuxSocket, args: readonly string[]): string[] => [
   ...args,
 ];
 
+/**
+ * Qualifies a launch-time tmux command with the socket resolved once for that
+ * launch. This is intentionally not a post-launch inspection API: persisted
+ * runs must still be addressed through a provenance-bound TmuxTarget.
+ */
+export const launchCommandArgv = (
+  socket: TmuxSocket,
+  args: readonly string[]
+): string[] => {
+  for (const arg of args) {
+    if (
+      arg === "-S" ||
+      arg === "-L" ||
+      arg.startsWith("-S=") ||
+      arg.startsWith("-L=")
+    ) {
+      throw new TmuxTargetProvenanceError(
+        `launch args may not override the resolved socket with ${arg}`
+      );
+    }
+  }
+  return tmuxArgv(socket, args);
+};
+
 /** Server-scoped commands: `start-server`, `list-sessions`, `kill-server`. */
 export const serverArgv = (
   target: TmuxTarget,

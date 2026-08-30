@@ -2091,6 +2091,7 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
 
 test("runInTmux still terminalizes an unexpected Claude readiness probe failure", async () => {
   const calls: string[][] = [];
+  const cleanupEvents: string[] = [];
   let closed = 0;
   let released = 0;
   let sessionStarted = false;
@@ -2119,6 +2120,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
           throw new Error("synthetic capture failure");
         },
         closePersistentCodexSession: () => {
+          cleanupEvents.push("close-transport");
           closed += 1;
           return Promise.resolve();
         },
@@ -2147,6 +2149,11 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
         sleep: () => Promise.resolve(),
         startCodexProxy: () => Promise.resolve("ws://127.0.0.1:4600/"),
         startPersistentAgentSession: () => Promise.resolve(undefined),
+        stopCodexProxy: () => {
+          expect(sessionStarted).toBe(false);
+          cleanupEvents.push("stop-proxy");
+          return Promise.resolve();
+        },
         spawn: (args: string[]) => {
           calls.push(args);
           if (args[0] === "tmux" && args[1] === "has-session") {
@@ -2158,6 +2165,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
             sessionStarted = true;
           }
           if (args[0] === "tmux" && args[1] === "kill-session") {
+            cleanupEvents.push("kill-owned-session");
             sessionStarted = false;
           }
           return { exitCode: 0, stderr: "" };
@@ -2173,6 +2181,11 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
 
   expect(closed).toBe(1);
   expect(released).toBe(0);
+  expect(cleanupEvents).toEqual([
+    "kill-owned-session",
+    "stop-proxy",
+    "close-transport",
+  ]);
   expect(
     calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")
   ).toBe(true);
