@@ -54,9 +54,12 @@ predicated on `target === undefined` for Run 42 is refuted by the artifact.
    and returns unknown. A fake or unprovenanced input returns unknown and never
    releases.
 3. Continue to fail closed for active or non-enumerated state, missing or
-   invalid release proof, a surviving run PID, a surviving launch-attempt PID,
-   live tmux, an endpoint that is present, and an endpoint whose state is
-   unknown.
+   invalid release proof, live tmux, an endpoint that is present, and an
+   endpoint whose state is unknown. A live numeric run or launch-attempt PID
+   blocks unless its independently observed process start time is strictly
+   later than the valid workspace release timestamp, which positively proves
+   PID reuse by an unrelated process. Missing, unreadable, equal, or
+   pre-release process-start evidence remains ownership and blocks.
 3a. Add a reservation-specific fail-closed **read boundary** so that ownership
    evidence is never destroyed before the reservation authority sees it.
    Omission in `RunManifest` must not be overloaded as validity. Presence and
@@ -77,6 +80,9 @@ predicated on `target === undefined` for Run 42 is refuted by the artifact.
 ## Acceptance
 
 - The exact Run 42 fixture no longer blocks a fresh launch reservation.
+- A terminal released Run 92-shaped fixture whose old numeric PID is now held
+  by a process started strictly after release no longer blocks, without
+  signaling that process or editing the old manifest.
 - Every negative control remains a conflict, leaves its manifest bytes
   unchanged, and creates no new run.
 - All seven named commands pass: the three focused single-file tests

@@ -68,8 +68,10 @@ forbidden, because a skip here is a fail-open. Run 42 is never edited.
 4. Terminal with invalid release marker: refuses. Includes
    `2026-02-30T18:30:00Z`, which `Date.parse` rolls over to March 2 and which
    strict calendar component round-trip validation must reject.
-5. Terminal released with live run PID: refuses.
-6. Terminal released with live launch-attempt PID: refuses.
+5. Terminal released with a live run PID whose process start is pre-release,
+   equal to release, or unreadable: refuses.
+6. Terminal released with a live launch-attempt PID whose process start is
+   pre-release, equal to release, or unreadable: refuses.
 7. Terminal released with live tmux: refuses.
 8. Terminal released, endpoint **present**, liveness unknown: refuses.
 9. Terminal released, endpoint **unknown** (`EACCES`, `EPERM`, timeout,
@@ -81,6 +83,10 @@ forbidden, because a skip here is a fail-open. Run 42 is never edited.
     `workspace_released_at`: refuses.
 13. Every refused case preserves manifest bytes exactly and creates no new run
     directory. Asserted per case, not once in aggregate.
+14. Terminal released with a live numeric PID whose independently observed
+    process start is strictly post-release: succeeds because the PID was
+    positively reused. The old manifest remains byte-identical and the process
+    is never signaled.
 
 ## Endpoint-state cases
 

@@ -79,6 +79,7 @@ const reservationDeps = (home: string, pid = 4242) => ({
   >,
   home,
   isPidAlive: (candidate: number) => candidate === pid,
+  pidStartedAt: () => undefined,
   makeClaimId: claimIds(),
   pid,
   sleep: async () => undefined,
@@ -1006,6 +1007,44 @@ test("a live run PID or a live launch-attempt PID blocks release", async () => {
       parsed.launchAttemptPid = 4242;
     })
   );
+});
+
+test("a terminal released run does not own a later process that reused its PID", async () => {
+  await withReservationFixture(
+    run42Mutated((parsed) => {
+      parsed.pid = 45_568;
+      parsed.launchAttemptPid = 45_568;
+      parsed.workspaceReleasedAt = "2026-08-18T18:27:00.000Z";
+    }),
+    async ({ binding, home, manifestPath, repoDir }) => {
+      const before = readFileSync(manifestPath);
+      const claim = await reservePairedLaunch(makeOptions(), binding, {
+        ...reservationDeps(home),
+        isPidAlive: (candidate: number) => candidate === 45_568,
+        pidStartedAt: (candidate: number) =>
+          candidate === 45_568
+            ? Date.parse("2026-08-29T17:47:22.000Z")
+            : undefined,
+        tmuxLiveness: () => "unknown" as const,
+      });
+      expect(claim.reserved).toBe(true);
+      expect(claim.storage.runId).toBe("43");
+      expect(readFileSync(manifestPath).equals(before)).toBe(true);
+      expect(runDirs(repoDir)).toEqual(["42", "43"]);
+    }
+  );
+});
+
+test("a live PID with pre-release or unreadable start identity remains ownership", async () => {
+  await expectReservationRefused(undefined, {
+    isPidAlive: (candidate: number) => candidate === 9598,
+    pidStartedAt: (candidate: number) =>
+      candidate === 9598 ? Date.parse("2026-08-18T18:29:59.000Z") : undefined,
+  });
+  await expectReservationRefused(undefined, {
+    isPidAlive: (candidate: number) => candidate === 9598,
+    pidStartedAt: () => undefined,
+  });
 });
 
 test("a malformed or mismatched PID blocks release", async () => {

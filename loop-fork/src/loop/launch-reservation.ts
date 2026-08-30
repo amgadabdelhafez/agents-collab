@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -47,6 +48,7 @@ interface LaunchReservationDeps {
   makeClaimId: () => string;
   now: () => string;
   pid: number;
+  pidStartedAt: (pid: number) => number | undefined;
   /**
    * Injected so a test can count invocations and prove the resume path never
    * consults it. Post-launch paths must read the persisted manifest target, so
@@ -81,10 +83,26 @@ const defaultPidLiveness = (pid: number): boolean => {
   }
 };
 
+const defaultPidStartedAt = (pid: number): number | undefined => {
+  if (!(Number.isSafeInteger(pid) && pid > 0)) {
+    return undefined;
+  }
+  const result = spawnSync("/bin/ps", ["-p", String(pid), "-o", "lstart="], {
+    encoding: "utf8",
+    timeout: 1000,
+  });
+  if (result.status !== 0 || result.error) {
+    return undefined;
+  }
+  const value = Date.parse(result.stdout.trim());
+  return Number.isFinite(value) ? value : undefined;
+};
+
 const defaultDeps = (): LaunchReservationDeps => ({
   env: process.env,
   home: process.env.HOME ?? "",
   isPidAlive: defaultPidLiveness,
+  pidStartedAt: defaultPidStartedAt,
   makeClaimId: randomUUID,
   now: () => new Date().toISOString(),
   pid: process.pid,
@@ -127,6 +145,30 @@ const workspaceConflict = (
 const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
 
 /**
+ * A live numeric PID is ownership evidence only when it can still be the
+ * process recorded before workspace handback. PID values are reusable. A
+ * process whose independently observed start time is strictly after the valid
+ * release timestamp is positively unrelated to the released run. Missing or
+ * ambiguous start evidence remains fail-closed.
+ */
+const pidCanStillOwnRun = (
+  pid: number,
+  releasedAt: string,
+  deps: LaunchReservationDeps
+): boolean => {
+  if (!deps.isPidAlive(pid)) {
+    return false;
+  }
+  const startedAt = deps.pidStartedAt(pid);
+  const releasedAtMs = Date.parse(releasedAt);
+  return (
+    startedAt === undefined ||
+    !Number.isFinite(releasedAtMs) ||
+    startedAt <= releasedAtMs
+  );
+};
+
+/**
  * Is the run's tmux runtime positively gone?
  *
  * Endpoint absence was only ever a PROXY for "the server that owned this
@@ -160,7 +202,8 @@ const runtimeAbsent = (
  * endpoint was gone, so liveness could only answer "unknown", and unknown was
  * read as ownership with no way to ever release. Release is granted only on
  * positive evidence that the endpoint is gone AND the run recorded an explicit
- * handback AND both its pids are positively dead.
+ * handback AND neither recorded PID can still identify the pre-handback
+ * process. A live but positively post-release reused PID is not ownership.
  */
 const terminalReleaseGranted = (
   evidence: RunOwnershipEvidence,
@@ -186,14 +229,24 @@ const terminalReleaseGranted = (
   if (evidence.workspaceReleasedAt.kind !== "valid") {
     return false;
   }
-  if (evidence.pid.kind !== "valid" || deps.isPidAlive(evidence.pid.value)) {
+  if (
+    evidence.pid.kind !== "valid" ||
+    pidCanStillOwnRun(
+      evidence.pid.value,
+      evidence.workspaceReleasedAt.value,
+      deps
+    )
+  ) {
     return false;
   }
   const attempt = evidence.launchAttemptPid;
   if (attempt.kind === "invalid" || attempt.kind === "conflicting") {
     return false;
   }
-  if (attempt.kind === "valid" && deps.isPidAlive(attempt.value)) {
+  if (
+    attempt.kind === "valid" &&
+    pidCanStillOwnRun(attempt.value, evidence.workspaceReleasedAt.value, deps)
+  ) {
     return false;
   }
   // Runtime absence is the last conjunct, evaluated only once every ownership
