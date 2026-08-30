@@ -131,6 +131,10 @@ or claim authority.
   recovers, but a pending workflow bound to the v1 application version remains
   pending and is not recovered by the named v2 worker. The engine selection is
   recorded separately; this adapter does not route live traffic.
+- `ORCH-SELECT-001` selects Temporal for the durable `SupervisorMessage`
+  implementation because it completed the unchanged six-case corpus including
+  the named application-version upgrade. DBOS remains comparison evidence, not
+  a live fallback. Production deployment remains separately gated.
 - `SupervisorMessage` uses its workflow ID as the stable deduplication boundary.
   Delivery activities receive a deterministic attempt idempotency key. Only the
   intended supervisor may claim, and only the current claimant may acknowledge.
@@ -199,8 +203,8 @@ or claim authority.
    history. The in-memory adapter is the executable reference oracle, and the
    accepted frozen corpus is exercised unchanged by both adapters. Temporal
    completes all six cases; DBOS matches the first five and then records a
-   distinct-version recovery refusal. Engine selection remains a separate
-   signed decision.
+   distinct-version recovery refusal. The signed engine decision selects
+   Temporal while preserving the engine-neutral port and DBOS evidence.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.

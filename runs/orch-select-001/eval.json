@@ -1,0 +1,33 @@
+{
+  "task_id": "ORCH-SELECT-001",
+  "feature": "workflow-engine-selection",
+  "timestamp": "2026-08-30T05:58:00Z",
+  "identity": {
+    "base_commit": "852e485af7b926de64d6e5f83bf5766323a7977f",
+    "branch": "codex/orch-select-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/orch-select-001"
+  },
+  "checks": {
+    "evidence": {
+      "passed": 4,
+      "failed": 0,
+      "details": [
+        "ORCH-PORT closure 3b40b16ea11ef298a42aa5f7e2830e9fc10afeaf",
+        "ORCH-FIXTURE closure aa6bff5c11d478ff8d15aee702c6903aa7e7fab4",
+        "ORCH-TEMPORAL closure ebdd8707a3192315ff28d96eea2ba2d5ef7cd47e",
+        "ORCH-DBOS closure 852e485af7b926de64d6e5f83bf5766323a7977f"
+      ]
+    },
+    "static": {
+      "passed": 3,
+      "failed": 0,
+      "details": [
+        "bun run check",
+        "git diff --check",
+        "no source, test, fixture, dependency, or lockfile delta"
+      ]
+    }
+  },
+  "verdict": "pending-independent-review",
+  "notes": "Decision-only slice; no runtime, dependency, or external mutation."
+}
