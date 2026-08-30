@@ -896,7 +896,10 @@ const normalizeComposerText = (value: string): string =>
   value.replace(/\s+/gu, " ").trim();
 
 const codexComposerText = (output: string): string | undefined => {
-  const lines = output.split(LINE_SPLIT_RE).slice(-CODEX_TMUX_READY_TAIL_LINES);
+  const lines = output
+    .replace(ANSI_ESCAPE_RE, "")
+    .split(LINE_SPLIT_RE)
+    .slice(-CODEX_TMUX_READY_TAIL_LINES);
   const promptIndex = lines.findLastIndex((line) =>
     line.trimStart().startsWith(CODEX_TMUX_PROMPT_PREFIX)
   );

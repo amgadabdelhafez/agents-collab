@@ -889,13 +889,17 @@ test("Codex recovery submits the exact previously notified doorbell after the pe
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
     }
     if (tmuxCommand(args) === "capture-pane") {
+      const styled = args.includes("-e");
+      const visibleComposer = styled
+        ? `\u001b[39m${composer}\u001b[0m`
+        : composer;
       return {
         exitCode: 0,
         stderr: Buffer.alloc(0),
         stdout: Buffer.from(
           enterCount > 0
             ? "◦ Working (1s • esc to interrupt)\n\n  gpt-5.6-sol low · ~/repo\n"
-            : `› ${composer}\n\n  gpt-5.6-sol low · ~/repo\n`,
+            : `› ${visibleComposer}\n\n  gpt-5.6-sol low · ~/repo\n`,
           "utf8"
         ),
       };
