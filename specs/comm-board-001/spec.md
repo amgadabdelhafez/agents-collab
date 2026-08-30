@@ -39,7 +39,7 @@ rebuild the same deterministic thread projection from the journal.
       message order, latest workflow states, updated times, and revision.
 - [x] Public thread projections contain no body, transcript, credential, local
       path, artifact content, or engine-specific types.
-- [ ] Focused/full/static/build/diff gates pass and an independent exact-SHA
+- [x] Focused/full/static/build/diff gates pass and an independent exact-SHA
       zero-write reviewer returns PASS.
 
 ## Exit condition

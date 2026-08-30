@@ -4,4 +4,4 @@
 - [x] **CB1-02 Journal**: fsync-backed strict append/read/idempotency.
 - [x] **CB1-03 Projection**: deterministic durable supervisor threads.
 - [x] **CB1-04 Tests**: restart, replay, corruption, identity, and redaction.
-- [ ] **CB1-05 Verification**: focused/full/static gates and review.
+- [x] **CB1-05 Verification**: focused/full/static gates and review.

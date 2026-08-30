@@ -30,5 +30,12 @@
       ]
     }
   },
-  "verdict": "pending-independent-review"
+  "review": {
+    "candidate_commit": "0e4f8c934a1a6d78cb10bf413842f7b613286058",
+    "provider": "openrouter",
+    "model": "z-ai/glm-5.2",
+    "result": "PASS",
+    "reviewer_project_tree_writes": 0
+  },
+  "verdict": "pass"
 }

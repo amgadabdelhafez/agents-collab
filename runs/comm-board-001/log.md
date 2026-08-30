@@ -18,3 +18,9 @@
   and `git diff --check` PASSed with empty named failure sets. Static findings
   were cleared before the full run. The byte-compatible temporary dependency
   symlink was removed after every gate.
+- 2026-08-30T07:37:00Z: Independent Claude Code harness review through
+  OpenRouter `z-ai/glm-5.2` returned literal PASS for frozen exact candidate
+  `0e4f8c934a1a6d78cb10bf413842f7b613286058` against accepted base
+  `3551e087802762505de7678df4f9b845ed3ea676`. The reviewer read committed
+  objects only, ran no tests or services, and attested
+  `reviewer_project_tree_writes=0`.
