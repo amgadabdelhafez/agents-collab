@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "bun";
 import { readBridgeQueueHealth } from "./bridge-store";
+import { recoverGovernessControlPlane } from "./governess-control-plane-recovery";
 import {
   decideGovernessCycle,
   type GovernessCycleDecision,
@@ -424,11 +425,20 @@ export const runGovernessUtilityCommand = (
   const runId = argv[2];
   if (
     !runId ||
-    (command !== "doctor" && command !== "replay" && command !== "explain")
+    (command !== "doctor" &&
+      command !== "replay" &&
+      command !== "explain" &&
+      command !== "recover-control-plane")
   ) {
     throw new Error(
-      "Usage: loop governess <doctor|replay|explain> <run-id> [control-id]"
+      "Usage: loop governess <doctor|replay|explain|recover-control-plane> <run-id> [control-id]"
     );
+  }
+  if (command === "recover-control-plane") {
+    process.stdout.write(
+      `${JSON.stringify(recoverGovernessControlPlane(runId, cwd, home), null, 2)}\n`
+    );
+    return true;
   }
   if (command === "doctor") {
     process.stdout.write(
