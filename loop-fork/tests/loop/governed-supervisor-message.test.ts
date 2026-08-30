@@ -308,4 +308,65 @@ describe("governed SupervisorMessage delivery", () => {
       status: "permanent-failure",
     });
   });
+
+  test("does not enqueue before route readiness and retries with one durable body", async () => {
+    const root = mkdtempSync(join(tmpdir(), "supervisor-route-retry-"));
+    tempRoots.push(root);
+    const runDir = join(root, "target-run");
+    let ready = false;
+    const request: SupervisorMessageDeliveryRequest = {
+      artifactRefs: [ARTIFACT_REF],
+      body: BODY,
+      idempotencyKey: "workflow:delivery:1",
+      messageId: "message-route-retry-1",
+      target: "supervisor:target",
+      threadId: "thread-route-retry-1",
+      workflowId: `supervisor-message:${"e".repeat(64)}`,
+    };
+    const delivery = new BridgeSupervisorMessageDeliveryPort({
+      directory: {
+        resolve: () => ({ runDir, target: "codex" }),
+      },
+      dispatch: (route, next, now) =>
+        dispatchBridgeMessage(
+          route.runDir,
+          "supervisor",
+          route.target,
+          next.body,
+          undefined,
+          undefined,
+          {
+            artifactRefs: next.artifactRefs,
+            dedupeKey: next.idempotencyKey,
+            now,
+            subject: next.messageId,
+            taskId: next.workflowId,
+            threadId: next.threadId,
+            type: "work_request",
+          }
+        ),
+      now: () => AT,
+      routeReady: () => ready,
+    });
+
+    expect(await delivery.deliver(request)).toEqual({
+      reason: "bridge route for supervisor:target is unavailable",
+      status: "transient-failure",
+    });
+    expect(readPendingBridgeMessages(runDir)).toEqual([]);
+
+    ready = true;
+    expect(
+      await delivery.deliver({
+        ...request,
+        idempotencyKey: "workflow:delivery:2",
+      })
+    ).toEqual({ status: "accepted" });
+    expect(readPendingBridgeMessages(runDir)).toHaveLength(1);
+    expect(readPendingBridgeMessages(runDir)[0]).toMatchObject({
+      dedupeKey: "workflow:delivery:2",
+      message: BODY,
+      target: "codex",
+    });
+  });
 });

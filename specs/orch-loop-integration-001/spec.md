@@ -17,7 +17,9 @@ dependency graph says it is ready.
 2. Trusted supervisor routes are derived from exact Loop manifests and declared
    bridge topology. Delivery targets the manifest-declared driver, never the
    reviewer or an unconsumed external-supervisor inbox. A message can never
-   supply a run directory, socket, pane, or bridge target.
+   supply a run directory, socket, pane, or bridge target. Route and worker
+   readiness are proven before a durable body is appended, so a transient
+   outage followed by workflow retry cannot create two deliverable copies.
 3. Supervisor operations are deny-by-default and every decision emits the
    existing body-free governance receipt.
 4. Harness graph input is explicit and canonical. Nodes declare dependencies,

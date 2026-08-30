@@ -3,10 +3,11 @@
   "verdict": "pass",
   "checks": {
     "functional": {
-      "passed": 3,
+      "passed": 4,
       "failed": 0,
       "details": [
         "Manifest-bound driver delivery and pull-only consumption: PASS",
+        "Route readiness before durable append and singular recovered retry: PASS",
         "Automatic governed claim and acknowledgement: PASS",
         "Real Temporal cross-supervisor message plus dependent DAG: PASS"
       ]

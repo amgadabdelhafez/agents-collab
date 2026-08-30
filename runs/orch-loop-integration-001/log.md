@@ -20,3 +20,15 @@
 - The separately reported AI-CUR inspect-route `tool-not-enforceable` outcome is
   retained as a secondary routing observability/decomposition defect. It
   created no utility task or mutation and does not weaken this release gate.
+- Independent review of `e6c5b1eacb663ff33c21baf733c67e3713feea8c`
+  returned literal REFUSE: the production adapter appended before checking
+  route readiness, so a transient first attempt could remain pending while a
+  retry with a new key appended a second body. That candidate is superseded.
+- The bounded successor proves route and worker readiness before append. Its
+  direct outage/recovery regression proves the failed attempt creates zero
+  bridge entries and the recovered retry creates exactly one durable body.
+- Corrected focused gates passed: route discovery 2/0, Harness DAG 2/0,
+  orchestration server 2/0, consumption reconciliation 1/0, governed delivery
+  6/0, and real Temporal end-to-end 1/0 with 25 assertions.
+- One corrected full `bun run test:ci`, `bun run check`, `bun run build`, and
+  `git diff --check` all passed with empty named failure sets.

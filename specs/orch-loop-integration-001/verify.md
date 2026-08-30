@@ -4,6 +4,7 @@
 - `bun run test:file -- tests/loop/harness-task-graph-adapter.test.ts`
 - `bun run test:file -- tests/loop/loop-orchestration-server.test.ts`
 - `bun run test:file -- tests/loop/supervisor-bridge-consumption.test.ts`
+- `bun run test:file -- tests/loop/governed-supervisor-message.test.ts`
 - `bun run test:file -- tests/loop/temporal-orchestration-e2e.test.ts`
 - `bun run test:ci`
 - `bun run check`

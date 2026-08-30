@@ -27,10 +27,15 @@ export type SupervisorBridgeDispatch = (
   now: string
 ) => Promise<DeliveryResult>;
 
+export type SupervisorBridgeRouteReadiness = (
+  route: SupervisorBridgeRoute
+) => Promise<boolean> | boolean;
+
 export interface BridgeSupervisorMessageDeliveryOptions {
   directory: SupervisorBridgeDirectory;
   dispatch?: SupervisorBridgeDispatch;
   now?: () => string;
+  routeReady?: SupervisorBridgeRouteReadiness;
 }
 
 const defaultDispatch: SupervisorBridgeDispatch = (route, request, now) =>
@@ -52,17 +57,24 @@ const defaultDispatch: SupervisorBridgeDispatch = (route, request, now) =>
     }
   );
 
+const defaultRouteReady: SupervisorBridgeRouteReadiness = (route) =>
+  hasBridgeDeliveryRoute(route.runDir, route.target) &&
+  ensureBridgeWorker(route.runDir);
+
 export class BridgeSupervisorMessageDeliveryPort
   implements SupervisorMessageDeliveryPort
 {
   readonly #directory: SupervisorBridgeDirectory;
   readonly #dispatch: SupervisorBridgeDispatch;
   readonly #now: () => string;
+  readonly #routeReady: SupervisorBridgeRouteReadiness;
 
   constructor(options: BridgeSupervisorMessageDeliveryOptions) {
     this.#directory = options.directory;
     this.#dispatch = options.dispatch ?? defaultDispatch;
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#routeReady =
+      options.routeReady ?? (options.dispatch ? () => true : defaultRouteReady);
   }
 
   async deliver(
@@ -76,23 +88,19 @@ export class BridgeSupervisorMessageDeliveryPort
       };
     }
     try {
+      if (!(await this.#routeReady(route))) {
+        return {
+          reason: `bridge route for ${request.target} is unavailable`,
+          status: "transient-failure",
+        };
+      }
       const result = await this.#dispatch(route, request, this.#now());
       switch (result.status) {
         case "accepted":
         case "delivered":
-          return { status: "accepted" };
         case "duplicate":
-        case "queued": {
-          const routeReady =
-            hasBridgeDeliveryRoute(route.runDir, route.target) &&
-            ensureBridgeWorker(route.runDir);
-          return routeReady
-            ? { status: "accepted" }
-            : {
-                reason: `bridge route for ${request.target} is unavailable`,
-                status: "transient-failure",
-              };
-        }
+        case "queued":
+          return { status: "accepted" };
         case "dead-letter":
         case "expired":
           return {
