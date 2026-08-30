@@ -1,7 +1,7 @@
 {
   "task_id": "ORCH-PORT-001",
   "feature": "engine-neutral-workflow-port-supervisor-message",
-  "timestamp": "2026-08-30T03:41:00Z",
+  "timestamp": "2026-08-30T03:48:00Z",
   "identity": {
     "base_commit": "0f69b9a99f9163bf9f83075530e26aed21258463",
     "branch": "codex/orch-port-001",
@@ -9,11 +9,11 @@
   },
   "checks": {
     "functional": {
-      "passed": 9,
+      "passed": 13,
       "failed": 0,
       "details": [
-        "WorkflowPort focused suite: 3 passed, 0 failed",
-        "SupervisorMessage focused suite: 6 passed, 0 failed"
+        "WorkflowPort focused suite: 4 passed, 0 failed",
+        "SupervisorMessage focused suite: 9 passed, 0 failed"
       ]
     },
     "ui": {
@@ -32,7 +32,7 @@
       "passed": 5,
       "failed": 0,
       "details": [
-        "bun run test:ci: PASS, exit 0, empty named failure set",
+        "Post-repair bun run test:ci: 1548 passed, 0 failed, exit 0, empty named failure set",
         "bun run check: PASS",
         "bun run build: PASS",
         "git diff --check: PASS",
@@ -41,5 +41,5 @@
     }
   },
   "verdict": "pass",
-  "notes": "Synthetic reference adapter only. Temporal and DBOS conformance remain for ORCH-FIXTURE-001 onward."
+  "notes": "Attempt 001 REFUSE is preserved. The successor fixes no-op revision/history divergence, timer-driven retry wakeup, and direct terminal-cancel coverage. Synthetic reference adapter only; Temporal and DBOS conformance remain for ORCH-FIXTURE-001 onward."
 }

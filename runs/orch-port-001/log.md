@@ -17,3 +17,11 @@
   `git diff --check` PASS.
 - 2026-08-30T03:41:00Z: One complete `bun run test:ci` PASSed with exit 0 and an
   empty named failure set.
+- 2026-08-30T03:44:00Z: Independent Claude CLI/OpenRouter GLM 5.2 zero-write
+  review REFUSED exact candidate `bb4fdfcc7397f57ec8945ee7a919255778583db6`.
+  The verdict is preserved in `review-attempt-001.md`.
+- 2026-08-30T03:47:00Z: Corrected no-op command semantics so fresh timer polls
+  preserve revision/history, added timer-driven retry wakeup, and added direct
+  cancel-after-completed/failed refusal coverage. Focused suites PASS 13/0.
+- 2026-08-30T03:48:00Z: One post-repair `bun run test:ci` PASSed 1548/0 with
+  exit 0 and an empty named failure set. Check, build, and diff check PASS.

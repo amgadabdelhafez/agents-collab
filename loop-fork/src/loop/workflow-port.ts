@@ -124,6 +124,7 @@ export interface WorkflowStartResult {
 }
 
 export interface WorkflowTransitionResult {
+  changed?: boolean;
   result?: JsonValue;
   state: JsonObject;
   status?: WorkflowExecutionStatus;

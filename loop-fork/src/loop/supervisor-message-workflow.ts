@@ -365,6 +365,20 @@ const clockTick = (
   context: WorkflowTransitionContext
 ): WorkflowTransitionResult => {
   if (
+    state.phase === "retry-scheduled" &&
+    state.nextRetryAt !== null &&
+    atMs(context.at) >= atMs(state.nextRetryAt)
+  ) {
+    const next: SupervisorMessageState = {
+      ...state,
+      deliveryStatus: "pending",
+      events: appendEvent(state, "retry-due", context.at),
+      nextRetryAt: null,
+      phase: "routed",
+    };
+    return { result: { action: "deliver" }, state: next };
+  }
+  if (
     state.phase === "routed" &&
     state.deliveredAt !== null &&
     atMs(context.at) >= atMs(state.claimBy)
@@ -391,7 +405,7 @@ const clockTick = (
     };
     return { state: next, status: "failed" };
   }
-  return { result: { changed: false }, state };
+  return { changed: false, result: { changed: false }, state };
 };
 
 export const supervisorMessageWorkflowDefinition: WorkflowDefinition = {

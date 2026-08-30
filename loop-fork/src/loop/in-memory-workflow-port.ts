@@ -160,6 +160,19 @@ export class InMemoryWorkflowPort implements WorkflowPort {
       clone(command.payload),
       { at, nextRevision, requestId, workflowId: workflow.workflowId }
     );
+    if (transition.changed === false) {
+      const receipt: WorkflowCommandReceipt = {
+        replayed: false,
+        ...(transition.result === undefined
+          ? {}
+          : { result: clone(transition.result) }),
+        revision: workflow.revision,
+        status: workflow.status,
+        workflowId: workflow.workflowId,
+      };
+      workflow.commandReceipts.set(key, clone(receipt));
+      return receipt;
+    }
     const receipt = this.#commit(
       workflow,
       transition.state,

@@ -155,6 +155,24 @@ describe("SupervisorMessage workflow", () => {
     ]);
   });
 
+  test("a due clock tick wakes and delivers a scheduled retry", async () => {
+    const state = harness([
+      { reason: "temporarily offline", status: "transient-failure" },
+      { status: "accepted" },
+    ]);
+    const received = await state.coordinator.receive(input(), "receive-1");
+    state.setNow("2026-08-30T03:40:00.500Z");
+    const retried = await state.coordinator.tick(
+      received.workflowId,
+      "timer-retry-1"
+    );
+    expect(retried).toMatchObject({
+      deliveryAttempts: 2,
+      phase: "routed",
+    });
+    expect(state.deliveries).toHaveLength(2);
+  });
+
   test("dead-letters after delivery policy exhaustion", async () => {
     const state = harness([
       { reason: "offline-1", status: "transient-failure" },
@@ -217,6 +235,19 @@ describe("SupervisorMessage workflow", () => {
     });
   });
 
+  test("fresh no-op ticks do not change revision or history", async () => {
+    const state = harness();
+    const received = await state.coordinator.receive(input(), "receive-1");
+    const before = await state.port.inspect(received.workflowId);
+    state.setNow("2026-08-30T03:40:00.100Z");
+    await state.coordinator.tick(received.workflowId, "early-tick-1");
+    state.setNow("2026-08-30T03:40:00.200Z");
+    await state.coordinator.tick(received.workflowId, "early-tick-2");
+    const after = await state.port.inspect(received.workflowId);
+    expect(after.revision).toBe(before.revision);
+    expect(after.history).toEqual(before.history);
+  });
+
   test("refuses foreign claims and invalid timestamps or artifact paths", async () => {
     const state = harness();
     const received = await state.coordinator.receive(input(), "receive-1");
@@ -266,5 +297,39 @@ describe("SupervisorMessage workflow", () => {
     expect(
       (await state.port.inspect(received.workflowId)).history.at(-1)?.kind
     ).toBe("canceled");
+  });
+
+  test("refuses cancellation after completed and failed terminal states", async () => {
+    const completed = harness();
+    const received = await completed.coordinator.receive(input(), "receive-1");
+    await completed.coordinator.claim(
+      received.workflowId,
+      "supervisor:harness",
+      "claim-1"
+    );
+    await completed.coordinator.acknowledge(
+      received.workflowId,
+      "supervisor:harness",
+      "ack-1"
+    );
+    await expect(
+      completed.coordinator.cancel(
+        received.workflowId,
+        "too late",
+        "cancel-completed"
+      )
+    ).rejects.toMatchObject({ code: "invalid-state" });
+
+    const failed = harness([
+      { reason: "permanent refusal", status: "permanent-failure" },
+    ]);
+    const dead = await failed.coordinator.receive(
+      input({ dedupeKey: "dead-letter-cancel-test" }),
+      "receive-dead"
+    );
+    expect(dead.projection.phase).toBe("dead-lettered");
+    await expect(
+      failed.coordinator.cancel(dead.workflowId, "too late", "cancel-failed")
+    ).rejects.toMatchObject({ code: "invalid-state" });
   });
 });

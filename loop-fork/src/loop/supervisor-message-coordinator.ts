@@ -83,12 +83,20 @@ export class SupervisorMessageCoordinator {
     workflowId: string,
     requestId: string
   ): Promise<SupervisorMessageProjection> {
-    await this.#workflows.signal({
+    const receipt = await this.#workflows.signal({
       name: "clock_tick",
       payload: {},
       requestId,
       workflowId,
     });
+    if (
+      receipt.result &&
+      typeof receipt.result === "object" &&
+      !Array.isArray(receipt.result) &&
+      receipt.result.action === "deliver"
+    ) {
+      await this.#deliver(workflowId, `${requestId}:delivery`);
+    }
     return this.status(workflowId);
   }
 

@@ -38,6 +38,25 @@ const counterDefinition: WorkflowDefinition = {
   type: "counter.v1",
 };
 
+const noOpDefinition: WorkflowDefinition = {
+  cancel(state) {
+    return { state, status: "canceled" };
+  },
+  query(state) {
+    return state;
+  },
+  signal(state, name) {
+    if (name !== "poll") {
+      throw new WorkflowError("unknown-signal", `unknown signal ${name}`);
+    }
+    return { changed: false, result: { changed: false }, state };
+  },
+  start() {
+    return { state: { stable: true } };
+  },
+  type: "no-op.v1",
+};
+
 const clock = () => {
   let sequence = 0;
   return () => `2026-08-30T03:40:0${sequence++}.000Z`;
@@ -156,5 +175,37 @@ describe("InMemoryWorkflowPort", () => {
         workflowType: "missing.v1",
       })
     ).toThrow("already exists");
+  });
+
+  test("fresh-request no-op signals preserve revision and history", async () => {
+    const port = new InMemoryWorkflowPort({
+      definitions: [noOpDefinition],
+      now: clock(),
+    });
+    await port.start({
+      input: {},
+      requestId: "start",
+      workflowId: "stable",
+      workflowType: "no-op.v1",
+    });
+    const first = await port.signal({
+      name: "poll",
+      payload: {},
+      requestId: "poll-1",
+      workflowId: "stable",
+    });
+    const second = await port.signal({
+      name: "poll",
+      payload: {},
+      requestId: "poll-2",
+      workflowId: "stable",
+    });
+    expect(first).toMatchObject({
+      replayed: false,
+      result: { changed: false },
+      revision: 1,
+    });
+    expect(second.revision).toBe(1);
+    expect((await port.inspect("stable")).history).toHaveLength(1);
   });
 });
