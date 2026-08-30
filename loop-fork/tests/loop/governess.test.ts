@@ -23,6 +23,7 @@ import {
   freshRunState,
   type GovernessConfig,
   type GovernessDeps,
+  type GovernessRunState,
   governessFrameDelta,
   governessInitialFrame,
   governessPaneIdentityTmuxCommands,
@@ -2866,6 +2867,39 @@ test("runGoverness applies pane identity once on startup", async () => {
     spies.paneLabels.every(([pane]) => pane !== "harvto-loop-34:0.2")
   ).toBe(true);
   expect(closed).toBe(true);
+});
+
+test("runGoverness persists the configured driver role before acquiring its lease", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const saved: GovernessRunState[] = [];
+  const keys = ["x", "e"];
+  deps.loadState = () => ({ ...freshRunState(), roles: {} });
+  deps.saveState = (_path, state) => {
+    saved.push(structuredClone(state));
+  };
+  deps.openKeyInput = () => ({
+    close: () => undefined,
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+
+  await runGoverness(
+    baseConfig({
+      agents: [
+        { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.0" },
+        { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.1" },
+      ],
+      initialDriver: "codex",
+    }),
+    deps
+  );
+
+  expect(saved[0]?.roles).toMatchObject({
+    currentDriver: "codex",
+    initialDriver: "codex",
+  });
+  expect(saved[0]?.driverLease?.holder).toBe("codex");
 });
 
 test("runGoverness renders a degraded tick without recovery when tmux capture is unknown", async () => {

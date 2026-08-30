@@ -7098,6 +7098,12 @@ export const runGoverness = async (
 ): Promise<void> => {
   const states = new Map<Agent, AgentLivenessState>();
   let runState = deps.loadState(config.stateFile) ?? freshRunState();
+  const configuredInitialDriver =
+    config.initialDriver ?? config.agents[0]?.agent;
+  if (configuredInitialDriver) {
+    runState.roles.initialDriver ??= configuredInitialDriver;
+    runState.roles.currentDriver ??= configuredInitialDriver;
+  }
   if (config.journalFile) {
     ensureGovernessJournal(config.journalFile);
     // Parse before acquiring an epoch. A malformed journal is a hard stop: the
