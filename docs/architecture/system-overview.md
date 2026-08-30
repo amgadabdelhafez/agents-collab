@@ -64,6 +64,7 @@ or claim authority.
 | Workflow port | Engine-neutral start, signal, query, cancel, inspect, identity, command idempotency, and history semantics | Temporal/DBOS SDK types, transport, UI, or provider selection |
 | SupervisorMessage workflow | Deterministic message lifecycle, delivery policy, claim authority, retry/escalation/dead-letter state, and safe projection | Engine hosting, bridge delivery implementation, or copying message bodies into read models |
 | SupervisorMessage read model | Strict body-free board and Attention snapshots derived from canonical workflow projections | Workflow mutation, route or claim authority, message bodies, or independent lifecycle state |
+| KB artifact-reference read model | Deterministic content-addressed artifact index with safe message backlinks | Artifact retrieval, content interpretation, knowledge promotion, or authority over manifests |
 
 ## Architecture invariants
 
@@ -156,6 +157,10 @@ or claim authority.
   model. Strict ingestion rejects extra fields and phase/action conflicts;
   Attention membership is exactly `actionRequired != none`. Reads are defensive
   copies and do not mutate workflow or bridge state.
+- The KB artifact-reference projection consumes the exact board schema and
+  groups only `artifact://sha256/<digest>` references. It exposes deterministic
+  body-free message backlinks; it never dereferences content or invents
+  manifest, sensitivity, taint, provenance, or knowledge-approval facts.
 
 ## Key data flows
 
@@ -220,6 +225,10 @@ or claim authority.
     known items; Attention exposes only action-required items. The integration
     proof routes directly from one supervisor to another through the existing
     bridge, then claims and acknowledges without a human relay operation.
+11. **Knowledge artifact projection:** the exact board snapshot is validated
+    again at the knowledge boundary, then content-addressed references are
+    grouped with stable lifecycle backlinks. The result is a rebuildable read
+    model and has no artifact-content or workflow mutation path.
 
 See `specs/lower-agent-router/` and `specs/lower-agent-adoption/` for the feature
 contracts and promotion gates.

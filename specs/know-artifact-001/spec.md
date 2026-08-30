@@ -26,18 +26,18 @@ metadata.
 
 ## Acceptance criteria
 
-- [ ] Input must be the exact `supervisor-message-board.v1` field shape and
+- [x] Input must be the exact `supervisor-message-board.v1` field shape and
       every nested board item must have its exact canonical field shape.
-- [ ] Only `artifact://sha256/<64 lowercase hex>` references are indexed.
+- [x] Only `artifact://sha256/<64 lowercase hex>` references are indexed.
       Missing, malformed, duplicate, local-path, and arbitrary-URL references
       fail closed.
-- [ ] Each artifact entry has deterministic, deduplicated backlinks containing
+- [x] Each artifact entry has deterministic, deduplicated backlinks containing
       only workflow/message/thread/from/to/phase/action/received-at metadata.
-- [ ] Artifact entries sort by artifact URI; backlinks sort by received time and
+- [x] Artifact entries sort by artifact URI; backlinks sort by received time and
       stable workflow ID. Repeated projection produces byte-identical output.
-- [ ] The output contains no body, transcript, credential, local path, mutable
+- [x] The output contains no body, transcript, credential, local path, mutable
       artifact content, or engine-specific type.
-- [ ] The projector makes no workflow, bridge, board, artifact, or filesystem
+- [x] The projector makes no workflow, bridge, board, artifact, or filesystem
       mutation and returned data cannot mutate its input.
 - [ ] Focused, full, static, build, and diff gates pass with empty named failure
       sets, followed by independent exact-SHA zero-write review.
