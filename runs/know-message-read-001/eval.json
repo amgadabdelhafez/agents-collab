@@ -1,0 +1,15 @@
+{
+  "task_id": "KNOW-MESSAGE-READ-001",
+  "feature": "durable-knowledge-artifact-read-model",
+  "timestamp": "2026-08-30T06:03:00Z",
+  "identity": {
+    "base_commit": "14b36203f5f562519606d2dba98e0904d30faceb",
+    "branch": "codex/know-message-read-001",
+    "worktree": "/Users/amgad/dev_projects/agents-collab/.codex/worktrees/know-message-read-001"
+  },
+  "checks": {
+    "functional": { "passed": 0, "failed": 0, "details": [] },
+    "regression": { "passed": 0, "failed": 0, "details": [] }
+  },
+  "verdict": "pending-implementation"
+}
