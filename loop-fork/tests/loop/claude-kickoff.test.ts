@@ -383,6 +383,76 @@ describe("launcher paste visibility", () => {
     expect(sleeps).toEqual([]);
   });
 
+  test("retries a transient foreign body until the paste collapses", async () => {
+    // Claude Code 2.1.260 renders the raw first line of a paste before
+    // collapsing it to "[Pasted text #N]". That intermediate frame does not
+    // match the paste marker, so classifying it as foreign on the first poll
+    // aborts every paired launch. It is transient and must be retried.
+    const captures = [
+      "\u276f Add a preflight check that compares loop's OpenRouter key file",
+      "\u276f [Pasted text #1 +4 lines]",
+    ];
+    const sleeps: number[] = [];
+    const body = await waitForLauncherComposerBody({
+      capture: () => visibilitySnapshot(captures.shift()),
+      emptyBeforePaste: true,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    expect(body).toBe("[Pasted text #1 +4 lines]");
+    expect(sleeps).toEqual([CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS]);
+  });
+
+  test("still refuses a foreign body that persists for the whole window", async () => {
+    // The safety property is preserved: genuinely foreign text never earns an
+    // Enter, it just takes the full window to conclude that.
+    await expect(
+      waitForLauncherComposerBody({
+        capture: () => visibilitySnapshot("\u276f something a human typed"),
+        emptyBeforePaste: true,
+        sleep: () => Promise.resolve(),
+      })
+    ).rejects.toThrow(/not the launcher paste/);
+  });
+
+  test("refuses an attached or piped pane immediately, without retrying", async () => {
+    // These are structural, not transient: a human is watching, or a pipe is
+    // open. Retrying them would only delay a refusal that cannot change.
+    const attachedSleeps: number[] = [];
+    await expect(
+      waitForLauncherComposerBody({
+        capture: () =>
+          visibilitySnapshot("\u276f [Pasted text #1 +4 lines]", {
+            activeClients: 1,
+          }),
+        emptyBeforePaste: true,
+        sleep: (ms) => {
+          attachedSleeps.push(ms);
+          return Promise.resolve();
+        },
+      })
+    ).rejects.toThrow(/a tmux client attached/);
+    expect(attachedSleeps).toEqual([]);
+
+    const pipedSleeps: number[] = [];
+    await expect(
+      waitForLauncherComposerBody({
+        capture: () =>
+          visibilitySnapshot("\u276f [Pasted text #1 +4 lines]", {
+            pipeOpen: true,
+          }),
+        emptyBeforePaste: true,
+        sleep: (ms) => {
+          pipedSleeps.push(ms);
+          return Promise.resolve();
+        },
+      })
+    ).rejects.toThrow(/external pipe/);
+    expect(pipedSleeps).toEqual([]);
+  });
+
   test("waits for delayed paste ingestion before allowing Enter", async () => {
     const captures = ["❯ ", "❯ [Pasted text #1 +6 lines]"];
     const sleeps: number[] = [];
