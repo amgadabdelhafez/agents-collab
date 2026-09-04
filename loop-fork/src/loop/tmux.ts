@@ -82,7 +82,12 @@ import {
   type NativeSubagentMode,
   resolveNativeSubagentMode,
 } from "./native-subagent";
-import { buildOssRunArgs, OSS_COMMAND, ossConfigEnv } from "./oss-adapter";
+import {
+  buildOssPaneArgs,
+  buildOssRunArgs,
+  OSS_COMMAND,
+  ossConfigEnv,
+} from "./oss-adapter";
 import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
@@ -844,7 +849,14 @@ const buildOssCommand = (
   title?: string
 ): string[] => [
   OSS_COMMAND,
-  ...buildOssRunArgs({ model, prompt, sessionId: resumeId, title }),
+  // With no prompt this command backs a tmux pane that loop pastes into later,
+  // so it must be the long-lived TUI. `opencode run` exits as soon as it has no
+  // message to process and takes the pane with it, which surfaced as
+  // "Failed to paste oss launch prompt: can't find pane: %1". With a prompt it
+  // is a headless one-shot and stays `run`.
+  ...(prompt === undefined
+    ? buildOssPaneArgs({ model, sessionId: resumeId })
+    : buildOssRunArgs({ model, prompt, sessionId: resumeId, title })),
 ];
 
 const parseToken = (argv: string[], flag: string): string | undefined => {

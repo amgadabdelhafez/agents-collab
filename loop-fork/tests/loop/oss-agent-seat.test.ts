@@ -26,6 +26,7 @@ import {
 } from "../../src/loop/constants";
 import { resolveGovernessConfig } from "../../src/loop/governess";
 import {
+  buildOssPaneArgs,
   buildOssRunArgs,
   buildOssRunConfig,
   ensureOssConfig,
@@ -682,4 +683,39 @@ test("release authority is a property of policy, never of seat occupancy", () =>
         .ossReleaseAuthority
     ).toBe(false);
   }
+});
+
+// A tmux pane is a long-lived interactive surface: loop pastes the slice prompt
+// into it AFTER the pane exists. `opencode run` is a one-shot headless
+// invocation, so with no message argument it completes immediately and the pane
+// dies before the paste, which surfaced as
+// "Failed to paste oss launch prompt: can't find pane: %1".
+test("the OSS pane command starts the TUI when no prompt is supplied", () => {
+  const args = buildOssPaneArgs({
+    model: "openrouter/z-ai/glm-5.2",
+  });
+  expect(args).not.toContain("run");
+  expect(args).toEqual(["--model", "openrouter/z-ai/glm-5.2"]);
+});
+
+test("the OSS pane command resumes a session when one is supplied", () => {
+  const args = buildOssPaneArgs({
+    model: "openrouter/z-ai/glm-5.2",
+    sessionId: "ses_abc",
+  });
+  expect(args).toEqual([
+    "--model",
+    "openrouter/z-ai/glm-5.2",
+    "--session",
+    "ses_abc",
+  ]);
+});
+
+test("headless runs still use `run` with the prompt as an argument", () => {
+  const args = buildOssRunArgs({
+    model: "openrouter/z-ai/glm-5.2",
+    prompt: "do the thing",
+  });
+  expect(args[0]).toBe("run");
+  expect(args).toContain("do the thing");
 });
