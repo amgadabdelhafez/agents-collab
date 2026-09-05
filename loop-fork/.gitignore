@@ -1,5 +1,8 @@
 /loop
 node_modules
-PLAN.md
+# Anchored: an unanchored 'PLAN.md' also matches nested lowercase
+# runs/<task>/plan.md when core.ignorecase is true (macOS default), which
+# silently discarded every task plan. Only the repo-root scratch file is meant.
+/PLAN.md
 .DS_Store
 agents/coordination.jsonl
