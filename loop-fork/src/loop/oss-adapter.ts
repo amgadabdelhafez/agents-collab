@@ -21,6 +21,8 @@ import { buildLaunchArgv } from "./launch";
 //   project configuration, not unrelated user configuration.
 export const OSS_COMMAND = "opencode";
 export const OSS_CONFIG_DIR_ENV = "OPENCODE_CONFIG_DIR";
+// The paired Codex seat run-scoped home, denied to this seat.
+const CODEX_HOME_DIR_NAME = "codex-home";
 export const OSS_CONFIG_DIR_NAME = "oss-config";
 export const OSS_CONFIG_FILE_NAME = "opencode.json";
 export const OSS_KEY_FILE_ENV = "LOOP_OSS_API_KEY_FILE";
@@ -40,17 +42,41 @@ const SESSION_ID_KEYS = ["sessionID", "sessionId", "session_id"] as const;
 export interface OssPermissionPolicy {
   bash: string;
   edit: string;
+  external_directory: Record<string, string>;
   webfetch: string;
 }
 
 // Explicit, written-down policy. A full agent seat needs edit and bash to do
 // real work; outbound fetch stays denied so the seat cannot quietly reach the
 // network outside its declared provider.
-export const OSS_PERMISSION_POLICY: OssPermissionPolicy = {
+export const OSS_PERMISSION_POLICY_BASE = {
   bash: "allow",
   edit: "allow",
   webfetch: "deny",
-};
+} as const;
+
+// Everything the seat needs that is NOT under its cwd lives in the run dir:
+// its own launch charter, the bridge artifacts, its config. OpenCode gates
+// every path outside the working directory behind `external_directory`, which
+// defaults to ask - so without this the seat's FIRST act, reading
+// `<runDir>/launch-charters/oss.md`, opens a TUI permission dialog only a
+// human can answer. A seat blocked there has no session and emits no hook
+// events, so neither the Governess nor the seat-signals reader can see it:
+// the run simply sits (observed on harness-engineering run 21, 2026-09-06).
+//
+// Rules match with `*` = any run of characters and the LAST match wins, so the
+// catch-all comes first and the narrowing deny last; key insertion order is
+// the serialized order, which is what makes that ordering real. codex-home is
+// the paired Codex seat's own configuration, which this seat has no business
+// reading and is where Codex credentials would land if that ever changes.
+export const ossPermissionPolicy = (runDir: string): OssPermissionPolicy => ({
+  ...OSS_PERMISSION_POLICY_BASE,
+  external_directory: {
+    "*": "ask",
+    [`${runDir}/**`]: "allow",
+    [`${join(runDir, CODEX_HOME_DIR_NAME)}/**`]: "deny",
+  },
+});
 
 interface OssMcpServerConfig {
   command: string[];
@@ -83,7 +109,7 @@ export const buildOssRunConfig = (
   mcp: {
     [BRIDGE_SERVER]: buildOssBridgeServerConfig(runDir, launchArgv),
   },
-  permission: { ...OSS_PERMISSION_POLICY },
+  permission: ossPermissionPolicy(runDir),
 });
 
 export const ossConfigDirPath = (runDir: string): string =>
