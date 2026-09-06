@@ -26,7 +26,11 @@ import {
   LOOP_VERSION,
   VALUE_FLAGS,
 } from "./constants";
-import { DEFAULT_LAUNCH_EFFORT, parseEffortLevel } from "./effort";
+import {
+  DEFAULT_DRIVER_EFFORT,
+  DEFAULT_REVIEWER_EFFORT,
+  parseEffortLevel,
+} from "./effort";
 import {
   normalizeLegacyGovernessArgs,
   withLegacyGovernessEnv,
@@ -140,10 +144,10 @@ const effortEnvironment = (
     : undefined;
   const driverEffort = driverRaw
     ? parseEffortLevel(driverRaw, "LOOP_DRIVER_EFFORT")
-    : (globalEffort ?? DEFAULT_LAUNCH_EFFORT);
+    : (globalEffort ?? DEFAULT_DRIVER_EFFORT);
   const reviewerEffort = reviewerRaw
     ? parseEffortLevel(reviewerRaw, "LOOP_REVIEWER_EFFORT")
-    : (globalEffort ?? DEFAULT_LAUNCH_EFFORT);
+    : (globalEffort ?? DEFAULT_REVIEWER_EFFORT);
   let driverEffortSource: NonNullable<Options["driverEffortSource"]> =
     "default";
   if (globalRaw) {

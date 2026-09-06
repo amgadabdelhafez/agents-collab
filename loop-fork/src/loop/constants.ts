@@ -1,6 +1,10 @@
 import pkg from "../../package.json";
 import { DEFAULT_CAVEMAN_MODE, DEFAULT_HELPER_CAVEMAN_MODE } from "./caveman";
-import { DEFAULT_LAUNCH_EFFORT } from "./effort";
+import {
+  DEFAULT_DRIVER_EFFORT,
+  DEFAULT_LAUNCH_EFFORT,
+  DEFAULT_REVIEWER_EFFORT,
+} from "./effort";
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
@@ -53,7 +57,7 @@ Options:
   --codex-only                             Use Codex for work, review, and plan review
   --oss-only                               Use the OpenCode-backed OSS seat for work, review, and plan review
   --pair-with, --reviewer <agent>          Pair the worker with a specific peer in paired mode
-  --effort <low|medium|high|xhigh|max>      Set driver and reviewer effort (default: ${DEFAULT_LAUNCH_EFFORT})
+  --effort <low|medium|high|xhigh|max>      Set driver and reviewer effort (defaults: driver ${DEFAULT_DRIVER_EFFORT}, reviewer ${DEFAULT_REVIEWER_EFFORT})
   --effort-driver <level>                  Set only the primary driver effort
   --effort-reviewer <level>                Set only the paired reviewer effort
   -p, --prompt <text|.md file>             Prompt text or path to a .md prompt file

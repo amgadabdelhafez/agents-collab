@@ -10,7 +10,10 @@ import {
   DEFAULT_MAX_ITERATIONS,
   LOOP_VERSION,
 } from "../../src/loop/constants";
-import { DEFAULT_LAUNCH_EFFORT } from "../../src/loop/effort";
+import {
+  DEFAULT_DRIVER_EFFORT,
+  DEFAULT_REVIEWER_EFFORT,
+} from "../../src/loop/effort";
 
 const ORIGINAL_LOOP_CODEX_MODEL = process.env.LOOP_CODEX_MODEL;
 const ORIGINAL_LOOP_CAVEMAN_MODE = process.env.LOOP_CAVEMAN_MODE;
@@ -137,9 +140,9 @@ test("parseArgs returns expected defaults when proof is omitted", () => {
   expect(opts.governess).toBe(true);
   expect(opts.cavemanMode).toBe(DEFAULT_CAVEMAN_MODE);
   expect(opts.helperCavemanMode).toBe(DEFAULT_HELPER_CAVEMAN_MODE);
-  expect(opts.driverEffort).toBe(DEFAULT_LAUNCH_EFFORT);
+  expect(opts.driverEffort).toBe(DEFAULT_DRIVER_EFFORT);
   expect(opts.driverEffortSource).toBe("default");
-  expect(opts.reviewerEffort).toBe(DEFAULT_LAUNCH_EFFORT);
+  expect(opts.reviewerEffort).toBe(DEFAULT_REVIEWER_EFFORT);
   expect(opts.reviewerEffortSource).toBe("default");
   expect(opts.promptInput).toBeUndefined();
   expect(opts.review).toBe("claudex");
@@ -677,4 +680,20 @@ test("parseArgs accepts oss as --review-plan value", () => {
   const opts = parseArgs(["--review-plan", "oss", "--proof", "verify"]);
 
   expect(opts.reviewPlan).toBe("oss");
+});
+
+test("the seats default to opposite efforts: driver low, reviewer high", () => {
+  const opts = parseArgs([], {});
+  expect(opts.driverEffort).toBe("low");
+  expect(opts.reviewerEffort).toBe("high");
+  expect(opts.driverEffortSource).toBe("default");
+  expect(opts.reviewerEffortSource).toBe("default");
+
+  // --effort still sets both, and either role can still be pinned alone.
+  const both = parseArgs(["--effort", "max"], {});
+  expect(both.driverEffort).toBe("max");
+  expect(both.reviewerEffort).toBe("max");
+  const pinned = parseArgs(["--effort-driver", "xhigh"], {});
+  expect(pinned.driverEffort).toBe("xhigh");
+  expect(pinned.reviewerEffort).toBe("high");
 });
