@@ -41,6 +41,15 @@ const CONTEXT_WINDOW: Record<string, number> = {
 };
 
 const DEFAULT_WINDOW = 200_000;
+
+// The loop's own window table, exposed so seat-signals can report it beside
+// the seat's and the catalog's number (parity, not authority).
+export const tableContextWindow = (model: string): number | undefined => {
+  const key = Object.keys(CONTEXT_WINDOW).find(
+    (candidate) => model === candidate || model.startsWith(candidate)
+  );
+  return key ? CONTEXT_WINDOW[key] : undefined;
+};
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 3_600_000;
 const MAX_CONTEXT_SAMPLES = 12;

@@ -142,6 +142,12 @@ import {
   updateRunManifest,
 } from "./run-state";
 import {
+  readSeatSignalsForRef,
+  SEAT_SIGNALS_KIND,
+  type SeatSignals,
+  seatSignalsParity,
+} from "./seat-signals";
+import {
   evaluateSessionPressure,
   highestSessionPressure,
   pressureAtOrAboveHandoff,
@@ -389,6 +395,13 @@ export interface GovernessDeps {
   readPaneCommands?: (
     panes: GovernessAgentInfo[]
   ) => Partial<Record<Agent, string>>;
+  // Observe-mode seat signals (gov-1): the seat's own numbers, appended to the
+  // log beside the pane-derived usage. Optional so existing fakes need nothing.
+  readSeatSignals?: (
+    agent: Agent,
+    sessionRef?: string,
+    codexHome?: string
+  ) => SeatSignals;
   readUsage: (
     agent: Agent,
     sessionRef?: string,
@@ -3582,6 +3595,25 @@ const processAgent = async (
 ): Promise<AgentTickResult> => {
   const events = deps.readHooks(info.hookFile);
   const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
+  if (deps.readSeatSignals) {
+    // Parity row only; no control decision reads it (gov-2 does, later).
+    try {
+      const signals = deps.readSeatSignals(
+        info.agent,
+        info.sessionRef,
+        info.codexHome
+      );
+      deps.appendLog(config.logFile, {
+        agent: info.agent,
+        kind: SEAT_SIGNALS_KIND,
+        parity: seatSignalsParity(signals, usage),
+        signals,
+        ts: new Date(deps.now()).toISOString(),
+      });
+    } catch {
+      // A signal reader must never take the tick down.
+    }
+  }
   applyUsageLimits(usage, info.agent, ctx.usageLimits);
   // Prefer the agent's own live remaining-context %, shown in its pane statusline.
   const paneCtxRemainingPct = parsePaneCtxRemainingPct(paneText);
@@ -6694,6 +6726,10 @@ export const defaultGovernessDeps = (
     readHumanMessages(agent, sessionRef, codexHome),
   readLocalLlmRuntime: (input) => readLocalLlmRuntime(input),
   readPaneCommands: (panes) => readPaneCommandsFromTmux(panes),
+  readSeatSignals: (agent, sessionRef, codexHome) =>
+    readSeatSignalsForRef(agent, sessionRef, codexHome, {
+      routingLogPath: process.env.LOOP_SWITCHYARD_ROUTING_LOG,
+    }),
   readUsage: (agent, sessionRef, codexHome) =>
     readAgentUsage(agent, sessionRef, codexHome),
   readUsageLimits: (config) =>

@@ -25,6 +25,7 @@ import { decideGovernessPolicy } from "./governess-policy";
 import { driverLeaseIsCurrent } from "./governess-runtime";
 import { migrateLegacyGovernessState } from "./legacy-governess-compat";
 import { loadRunState, readRunManifestHandle } from "./run-state";
+import { collectSeatSignals, type SeatSignals } from "./seat-signals";
 import {
   boundedTmuxOptions,
   type TmuxLiveness,
@@ -425,6 +426,33 @@ export const governessDoctor = (
   };
 };
 
+// gov-1: the seats' own numbers for a run, read-only.
+export const governessSignals = (
+  runId: string,
+  cwd?: string,
+  home?: string
+): { agents: SeatSignals[]; runDir: string } => {
+  const { manifest, storage } = loadRunState(runId, cwd, home);
+  const agents: Agent[] = [];
+  if (manifest?.claudeSessionId) {
+    agents.push("claude");
+  }
+  if (manifest?.codexThreadId) {
+    agents.push("codex");
+  }
+  if (manifest?.ossSessionId) {
+    agents.push("oss");
+  }
+  const routingLogPath = process.env.LOOP_SWITCHYARD_ROUTING_LOG;
+  return {
+    agents: collectSeatSignals(agents, manifest, {
+      codexHome: join(storage.runDir, "codex-home"),
+      routingLogPath,
+    }),
+    runDir: storage.runDir,
+  };
+};
+
 export const runGovernessUtilityCommand = (
   argv: string[],
   cwd?: string,
@@ -440,11 +468,18 @@ export const runGovernessUtilityCommand = (
     (command !== "doctor" &&
       command !== "replay" &&
       command !== "explain" &&
+      command !== "signals" &&
       command !== "recover-control-plane")
   ) {
     throw new Error(
-      "Usage: loop governess <doctor|replay|explain|recover-control-plane> <run-id> [control-id]"
+      "Usage: loop governess <doctor|replay|explain|signals|recover-control-plane> <run-id> [control-id]"
     );
+  }
+  if (command === "signals") {
+    process.stdout.write(
+      `${JSON.stringify(governessSignals(runId, cwd, home), null, 2)}\n`
+    );
+    return true;
   }
   if (command === "recover-control-plane") {
     process.stdout.write(
