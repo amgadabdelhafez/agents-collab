@@ -26,8 +26,14 @@ const temporalPrebuiltBundlePlugin: BunPlugin = {
   },
 };
 
+// LOOP_BUILD_TARGET (for example bun-linux-x64) and LOOP_BUILD_OUTFILE let the
+// same script cross-compile the sandbox image binary; defaults are unchanged.
+const compileTarget = process.env.LOOP_BUILD_TARGET;
 const result = await build({
-  compile: { outfile: "loop" },
+  compile: {
+    outfile: process.env.LOOP_BUILD_OUTFILE ?? "loop",
+    ...(compileTarget ? { target: compileTarget } : {}),
+  },
   entrypoints: ["src/cli.ts"],
   external: ["loader-utils", "@swc/wasm"],
   plugins: [temporalPrebuiltBundlePlugin],
