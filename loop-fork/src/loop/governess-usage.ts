@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_CONTEXT_WINDOW, resolveContextWindow } from "./model-catalog";
 import type { Agent, AgentUsage, UsageDataConfidence } from "./types";
 
 // USD per 1,000,000 tokens. Claude rates from the platform pricing table;
@@ -30,26 +31,6 @@ const PRICING: Record<string, Price> = {
   "gpt-5.5": { cacheRead: 0.5, cacheWrite: 5, input: 5, output: 30 },
 };
 
-const CONTEXT_WINDOW: Record<string, number> = {
-  "claude-opus-4-8": 1_000_000,
-  "claude-opus-4-7": 1_000_000,
-  "claude-opus-4-6": 1_000_000,
-  "claude-sonnet-4-6": 1_000_000,
-  "claude-haiku-4-5": 200_000,
-  "claude-fable-5": 1_000_000,
-  "gpt-5.5": 1_050_000,
-};
-
-const DEFAULT_WINDOW = 200_000;
-
-// The loop's own window table, exposed so seat-signals can report it beside
-// the seat's and the catalog's number (parity, not authority).
-export const tableContextWindow = (model: string): number | undefined => {
-  const key = Object.keys(CONTEXT_WINDOW).find(
-    (candidate) => model === candidate || model.startsWith(candidate)
-  );
-  return key ? CONTEXT_WINDOW[key] : undefined;
-};
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 3_600_000;
 const MAX_CONTEXT_SAMPLES = 12;
@@ -98,7 +79,7 @@ const emptyUsage = (
   compactions: 0,
   contextTokens: 0,
   contextRateTokensPerMinute: 0,
-  contextWindow: DEFAULT_WINDOW,
+  contextWindow: DEFAULT_CONTEXT_WINDOW,
   costRateUsdPerHour: 0,
   costUsd: 0,
   dataConfidence,
@@ -660,13 +641,11 @@ const priceKey = (model?: string): string | undefined => {
 export const applyPricing = (usage: AgentUsage): AgentUsage => {
   const key = priceKey(usage.model);
   const price = key ? PRICING[key] : undefined;
-  const tableWindow = key
-    ? (CONTEXT_WINDOW[key] ?? DEFAULT_WINDOW)
-    : DEFAULT_WINDOW;
-  const window =
-    usage.contextWindow > 0 && usage.contextWindow !== DEFAULT_WINDOW
-      ? usage.contextWindow
-      : tableWindow;
+  // The window is resolved, not remembered: what the transcript reported, then
+  // pi-ai's catalog, then the fallback table. A model the table never heard of
+  // (claude-opus-5) used to land on the 200k default and take every threshold
+  // derived from it down with it.
+  const window = resolveContextWindow(usage.model, usage.contextWindow).chosen;
   const costUsd = price
     ? (usage.inputTokens * price.input +
         usage.outputTokens * price.output +

@@ -30,22 +30,50 @@ const usage = (overrides: Partial<AgentUsage> = {}): AgentUsage => ({
 
 describe("session pressure profiles", () => {
   test("selects model-specific thresholds instead of one global turn count", () => {
+    // Derived from each model's real window, so the maintained profiles land
+    // within a rounding step of the absolutes they were tuned with.
     expect(sessionPressureProfile("codex", "gpt-5.6-sol")).toMatchObject({
-      contextHandoffTokens: 185_000,
+      contextHandoffTokens: 184_960,
       turnHandoff: 18,
     });
     expect(sessionPressureProfile("codex", "gpt-5.5")).toMatchObject({
-      contextHandoffTokens: 225_000,
+      contextHandoffTokens: 225_760,
       turnHandoff: 96,
     });
+    expect(sessionPressureProfile("claude", "Claude Opus 4.8")).toMatchObject({
+      turnHandoff: 95,
+    });
+  });
+
+  test("a model with no resolvable window keeps its tuned absolute", () => {
+    // "Codex Spark" is not a catalog id. Multiplying the 200k default by the
+    // share would invent a threshold; the absolute stands instead.
     expect(sessionPressureProfile("codex", "Codex Spark")).toMatchObject({
       contextHandoffTokens: 105_000,
       turnHandoff: 11,
     });
-    expect(sessionPressureProfile("claude", "Claude Opus 4.8")).toMatchObject({
-      contextHandoffTokens: 230_000,
-      turnHandoff: 95,
-    });
+  });
+
+  test("a 1M-window Claude seat hands off at its share of 1M, not at 230k (H7)", () => {
+    // The absolute predates 1,000,000-token windows: every Claude seat was
+    // handing off at 23% of its context. harness-engineering run 21 was
+    // driven into a handover at 205,736 tokens on 2026-09-06.
+    for (const model of [
+      "claude-opus-5",
+      "claude-opus-4.8",
+      "claude-fable-5",
+    ]) {
+      const profile = sessionPressureProfile("claude", model);
+      expect(profile.contextHandoffTokens).toBe(750_000);
+      expect(profile.contextHandoffTokens).not.toBe(230_000);
+    }
+  });
+
+  test("an explicit window from the seat beats the catalog", () => {
+    expect(
+      sessionPressureProfile("claude", "claude-opus-5", 400_000)
+        .contextHandoffTokens
+    ).toBe(300_000);
   });
 });
 
@@ -56,7 +84,7 @@ describe("evaluateSessionPressure", () => {
       usage({ contextTokens: 138_750, messages: 1, model: "gpt-5.6-sol" })
     );
     expect(prepare).toMatchObject({
-      contextPrepareTokens: 138_750,
+      contextPrepareTokens: 138_720,
       phase: "prepare",
       reasonCode: "context-prepare",
     });
@@ -162,4 +190,36 @@ test("context handoff mode defaults to enforce with explicit observe and off", (
   expect(
     sessionPressureModeFromEnv({ LOOP_GOVERNESS_CONTEXT_HANDOFF: "invalid" })
   ).toBe("enforce");
+});
+
+describe("H7: the run 21 numbers", () => {
+  test("205,736 tokens on a 1M seat is healthy, not a handoff", () => {
+    const decision = evaluateSessionPressure(
+      "claude",
+      usage({
+        contextTokens: 205_736,
+        contextWindow: 1_000_000,
+        messages: 40,
+        model: "claude-opus-5",
+      })
+    );
+    expect(decision.phase).toBe("healthy");
+    expect(decision.reasonCode).toBe("below-thresholds");
+    expect(decision.contextHandoffTokens).toBe(750_000);
+    expect(decision.contextUsedPct).toBe(27);
+  });
+
+  test("the same seat still hands off once it is genuinely deep", () => {
+    const decision = evaluateSessionPressure(
+      "claude",
+      usage({
+        contextTokens: 800_000,
+        contextWindow: 1_000_000,
+        messages: 40,
+        model: "claude-opus-5",
+      })
+    );
+    expect(decision.phase).toBe("handoff");
+    expect(decision.reasonCode).toBe("context-handoff");
+  });
 });

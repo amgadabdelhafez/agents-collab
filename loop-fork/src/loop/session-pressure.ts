@@ -1,3 +1,4 @@
+import { resolveContextWindow } from "./model-catalog";
 import type { Agent, AgentUsage } from "./types";
 
 export type SessionPressureMode = "enforce" | "observe" | "off";
@@ -16,6 +17,12 @@ export type SessionPressureReasonCode =
   | "turn-prepare";
 
 export interface SessionPressureProfile {
+  // Share of the model's real context window at which the seat hands off.
+  // A fixed token count cannot follow a model whose window changes: the
+  // Claude profiles below were written against ~200k windows and were still
+  // firing at 230,000 on 1,000,000-token seats, a fifth of the way in.
+  contextHandoffShare: number;
+  // Absolute fallback, used only when the model's window is unknown.
   contextHandoffTokens: number;
   id: string;
   turnHandoff: number;
@@ -46,41 +53,57 @@ export type SessionPressureByAgent = Partial<
 
 const GPT_56_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 185_000,
+  // 185,000 of a 272,000 window
+  contextHandoffShare: 0.68,
   id: "gpt-5.6-sol",
   turnHandoff: 18,
 };
 const GPT_55_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 225_000,
+  // 225,000 of a 272,000 window
+  contextHandoffShare: 0.83,
   id: "gpt-5.5",
   turnHandoff: 96,
 };
 const GPT_54_MINI_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 225_000,
+  // 225,000 of a 400,000 window
+  contextHandoffShare: 0.56,
   id: "gpt-5.4-mini",
   turnHandoff: 73,
 };
 const CODEX_SPARK_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 105_000,
+  // 105,000 of a 128,000 window
+  contextHandoffShare: 0.82,
   id: "codex-spark",
   turnHandoff: 11,
 };
 const CODEX_DEFAULT_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 185_000,
+  // the default codex model's share
+  contextHandoffShare: 0.68,
   id: "codex-default",
   turnHandoff: 40,
 };
 const CLAUDE_OPUS_48_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 230_000,
+  // was 230,000 of 1,000,000 (23%): stale, see below
+  contextHandoffShare: 0.75,
   id: "claude-opus-4.8",
   turnHandoff: 95,
 };
 const CLAUDE_OPUS_5_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 230_000,
+  // was 230,000 of 1,000,000 (23%): stale, see below
+  contextHandoffShare: 0.75,
   id: "claude-opus-5",
   turnHandoff: 90,
 };
 const CLAUDE_DEFAULT_PROFILE: SessionPressureProfile = {
   contextHandoffTokens: 230_000,
+  // was 230,000 of 1,000,000 (23%): stale, see below
+  contextHandoffShare: 0.75,
   id: "claude-default",
   turnHandoff: 90,
 };
@@ -88,10 +111,33 @@ const CLAUDE_DEFAULT_PROFILE: SessionPressureProfile = {
 const normalizedModel = (model: string | undefined): string =>
   model?.trim().toLowerCase() ?? "";
 
+// The Claude shares are the one judgement call here. Their absolutes predate
+// 1,000,000-token windows and are demonstrably stale (23%); 0.75 sits inside
+// the band the maintained profiles occupy (0.56-0.83). It is a threshold
+// change, visible in every decision's contextHandoffTokens and
+// contextUsedPct, and reversible by editing one number.
 export const sessionPressureProfile = (
   agent: Agent,
-  model?: string
+  model?: string,
+  contextWindow?: number
 ): SessionPressureProfile => {
+  const base = baseProfile(agent, model);
+  // Derive from the window only when something actually reported one. Falling
+  // back to the 200k default and multiplying it would turn a guess into a
+  // threshold: "Codex Spark" is not a catalog id, and 200,000 x 0.82 is not
+  // that model's handoff. No real window means the tuned absolute stands.
+  const resolution = resolveContextWindow(model, contextWindow);
+  return resolution.source === "default"
+    ? base
+    : {
+        ...base,
+        contextHandoffTokens: Math.round(
+          resolution.chosen * base.contextHandoffShare
+        ),
+      };
+};
+
+const baseProfile = (agent: Agent, model?: string): SessionPressureProfile => {
   const normalized = normalizedModel(model);
   if (agent === "codex") {
     if (normalized.includes("spark")) {
@@ -178,7 +224,11 @@ export const evaluateSessionPressure = (
   agent: Agent,
   usage: AgentUsage
 ): SessionPressureDecision => {
-  const profile = sessionPressureProfile(agent, usage.model);
+  const profile = sessionPressureProfile(
+    agent,
+    usage.model,
+    usage.contextWindow
+  );
   const contextTokens = measuredContext(usage);
   const assistantTurns = Math.max(0, Math.round(usage.messages));
   const effectiveCompactions =

@@ -3,16 +3,18 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tableContextWindow } from "../../src/loop/governess-usage";
-import type { RunManifest } from "../../src/loop/run-state";
 import {
   catalogContextWindow,
-  collectSeatSignals,
   DEFAULT_CONTEXT_WINDOW,
+  resolveContextWindow,
+  tableContextWindow,
+} from "../../src/loop/model-catalog";
+import type { RunManifest } from "../../src/loop/run-state";
+import {
+  collectSeatSignals,
   readOpenCodeSessionSignals,
   readRoutingLog,
   readSeatSignals,
-  resolveContextWindow,
   seatSignalsParity,
   totalCostFromStats,
 } from "../../src/loop/seat-signals";
@@ -58,10 +60,11 @@ describe("context window resolution", () => {
       chosen: 400_000,
       source: "catalog",
     });
+    // A model the catalog cannot answer falls to the fallback table.
     expect(
-      resolveContextWindow("gpt-5.5", undefined, () => undefined)
+      resolveContextWindow("claude-fable-5", undefined, () => undefined)
     ).toMatchObject({
-      chosen: tableContextWindow("gpt-5.5"),
+      chosen: tableContextWindow("claude-fable-5"),
       source: "table",
     });
     expect(
@@ -84,11 +87,23 @@ describe("context window resolution", () => {
     expect(catalogContextWindow("no-such-model-xyz")).toBeUndefined();
   });
 
-  test("the loop's table and the catalog disagree on gpt-5.5, and the resolution says which it used", () => {
+  test("a model the fallback table got wrong is answered by the catalog", () => {
+    // The table used to claim 1,050,000 for gpt-5.5 (that is gpt-5.5-pro's
+    // window). The entry is gone; the catalog answers, and says so.
     const resolved = resolveContextWindow("gpt-5.5", undefined);
-    expect(resolved.table).toBe(1_050_000);
+    expect(resolved.table).toBeUndefined();
     expect(resolved.catalog).toBe(272_000);
+    expect(resolved.chosen).toBe(272_000);
     expect(resolved.source).toBe("catalog");
+  });
+
+  test("claude-opus-5, absent from the table, resolves to its real window (H7)", () => {
+    const resolved = resolveContextWindow("claude-opus-5", undefined);
+    expect(resolved.table).toBeUndefined();
+    expect(resolved.chosen).toBe(1_000_000);
+    expect(resolved.source).toBe("catalog");
+    // What it used to be, and what forced handovers at a fifth of the window.
+    expect(DEFAULT_CONTEXT_WINDOW).toBe(200_000);
   });
 });
 

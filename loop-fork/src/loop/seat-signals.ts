@@ -22,30 +22,19 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getModels as getCatalogModels } from "@earendil-works/pi-ai/compat";
+import { applyPricing, readAgentUsage } from "./governess-usage";
 import {
-  applyPricing,
-  readAgentUsage,
-  tableContextWindow,
-} from "./governess-usage";
+  type ContextWindowResolution,
+  resolveContextWindow,
+} from "./model-catalog";
 import type { RunManifest } from "./run-state";
 import type { Agent, AgentUsage } from "./types";
 
-export const DEFAULT_CONTEXT_WINDOW = 200_000;
-const TRAILING_SLASH_RE = /\/$/;
 export const SEAT_SIGNALS_KIND = "seat-signals";
+const TRAILING_SLASH_RE = /\/$/;
 
-export type WindowSource = "transcript" | "catalog" | "table" | "default";
 export type SignalSource = "transcript" | "opencode-db" | "none";
 export type CostSource = "switchyard-stats" | "none";
-
-export interface ContextWindowResolution {
-  catalog?: number;
-  chosen: number;
-  source: WindowSource;
-  table?: number;
-  transcript?: number;
-}
 
 export interface RoutedTokens {
   cacheCreationTokens: number;
@@ -89,91 +78,6 @@ export interface SeatSignalsParity {
   window?: ContextWindowResolution;
   windowAgrees?: boolean;
 }
-
-type CatalogLookup = (model: string) => number | undefined;
-
-const CATALOG_PROVIDERS = ["anthropic", "openai", "openrouter"] as const;
-
-let catalogCache: Map<string, number> | undefined;
-
-// pi-ai ships a built-in model catalog with context windows; the loop already
-// depends on pi-ai, so this is a data source we own no copy of.
-const loadCatalog = (): Map<string, number> => {
-  if (catalogCache) {
-    return catalogCache;
-  }
-  const map = new Map<string, number>();
-  for (const provider of CATALOG_PROVIDERS) {
-    let models: readonly { contextWindow?: number; id: string }[] = [];
-    try {
-      models = getCatalogModels(provider) ?? [];
-    } catch {
-      // A provider whose catalog throws yields nothing; the resolver says so.
-    }
-    for (const model of models) {
-      if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
-        map.set(model.id, model.contextWindow);
-        // OpenRouter ids carry a vendor prefix; index the bare id too.
-        const bare = model.id.includes("/")
-          ? model.id.slice(model.id.indexOf("/") + 1)
-          : model.id;
-        if (!map.has(bare)) {
-          map.set(bare, model.contextWindow);
-        }
-      }
-    }
-  }
-  catalogCache = map;
-  return map;
-};
-
-export const catalogContextWindow: CatalogLookup = (model) => {
-  const catalog = loadCatalog();
-  const normalized = model.trim();
-  if (catalog.has(normalized)) {
-    return catalog.get(normalized);
-  }
-  // Date-suffixed or dotted variants: claude-opus-4-6-20260101, claude-opus-4.6
-  const dashed = normalized.replace(/\./g, "-");
-  if (catalog.has(dashed)) {
-    return catalog.get(dashed);
-  }
-  const prefix = [...catalog.keys()].find(
-    (id) => normalized.startsWith(`${id}-`) || dashed.startsWith(`${id}-`)
-  );
-  return prefix ? catalog.get(prefix) : undefined;
-};
-
-export const resolveContextWindow = (
-  model: string | undefined,
-  transcriptWindow: number | undefined,
-  lookup: CatalogLookup = catalogContextWindow
-): ContextWindowResolution => {
-  const transcript =
-    transcriptWindow &&
-    transcriptWindow > 0 &&
-    transcriptWindow !== DEFAULT_CONTEXT_WINDOW
-      ? transcriptWindow
-      : undefined;
-  const catalog = model ? lookup(model) : undefined;
-  const table = model ? tableContextWindow(model) : undefined;
-  if (transcript) {
-    return {
-      catalog,
-      chosen: transcript,
-      source: "transcript",
-      table,
-      transcript,
-    };
-  }
-  if (catalog) {
-    return { catalog, chosen: catalog, source: "catalog", table };
-  }
-  if (table) {
-    return { catalog, chosen: table, source: "table", table };
-  }
-  return { catalog, chosen: DEFAULT_CONTEXT_WINDOW, source: "default", table };
-};
 
 const zeroRouted = (): RoutedTokens => ({
   cacheCreationTokens: 0,
