@@ -204,6 +204,26 @@ export const buildOssRunArgs = ({
   return args;
 };
 
+// A tmux pane is a long-lived interactive surface: loop pastes the slice prompt
+// into it after the pane exists. `opencode run` is a one-shot headless
+// invocation that completes as soon as it has no message left to process, so
+// using it for a pane meant the pane exited before the paste and loop failed
+// with "can't find pane". The pane therefore starts the TUI, which stays alive
+// and accepts the pasted prompt like the Claude and Codex seats do.
+export const buildOssPaneArgs = ({
+  model,
+  sessionId,
+}: {
+  model: string;
+  sessionId?: string;
+}): string[] => {
+  const args = ["--model", model];
+  if (sessionId) {
+    args.push("--session", sessionId);
+  }
+  return args;
+};
+
 export const ossSessionTitle = (runId: string): string => `loop-${runId}`;
 
 // OpenCode assigns the session id itself and rejects an unknown --session, so
