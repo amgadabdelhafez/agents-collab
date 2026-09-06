@@ -9,7 +9,7 @@
 //      the history event set, signal payloads included.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,8 @@ import {
   emptyGovernessControlState,
   type GovernessControlRecord,
 } from "../../src/loop/governess-journal-core";
+import { runGovernessUtilityCommand } from "../../src/loop/governess-replay";
+import { loadRunState } from "../../src/loop/run-state";
 import { temporalWorkflowBundleBase64 } from "../../src/loop/temporal-workflow-bundle.generated";
 import { TemporalWorkflowPort } from "../../src/loop/temporal-workflow-port";
 import type { JsonObject } from "../../src/loop/workflow-port";
@@ -352,6 +354,59 @@ describe("gov-6 governess beat workflow", () => {
     const source = await readFile("src/loop/governess-journal-core.ts", "utf8");
     expect(source).not.toContain('from "node:');
     expect(source).not.toContain("@temporalio/");
+  });
+});
+
+describe("loop governess history", () => {
+  test("prints the read model for a run, hash-only for effectful controls", () => {
+    const home = mkdtempSync(join(tmpdir(), "gov6-cli-"));
+    const state = loadRunState("gov6-history-test", process.cwd(), home);
+    mkdirSync(state.storage.runDir, { recursive: true });
+    copyFileSync(GOLDEN, join(state.storage.runDir, "governess-control.jsonl"));
+
+    const chunks: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string) => {
+      chunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      runGovernessUtilityCommand(
+        ["governess", "history", "gov6-history-test"],
+        process.cwd(),
+        home
+      );
+    } finally {
+      process.stdout.write = original;
+    }
+
+    const printed = JSON.parse(chunks.join("")) as {
+      records: GovernessControlRecord[];
+      workflowId: string;
+      workflowType: string;
+    };
+    const golden = readFileSync(GOLDEN, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as GovernessControlRecord);
+
+    expect(printed.workflowType).toBe(GOVERNESS_BEAT_WORKFLOW_TYPE);
+    expect(printed.workflowId).toBe(
+      governessBeatWorkflowId("gov6-history-test")
+    );
+    expect(printed.records).toHaveLength(golden.length);
+    // Ordered by sequence, and the audit contract holds through the CLI too.
+    expect(printed.records.map((record) => record.sequence)).toEqual(
+      golden.map((record) => record.sequence)
+    );
+    expect(JSON.stringify(printed)).not.toContain(
+      GOVERNESS_FIXTURE_PROMPT_BODY
+    );
+    for (const record of printed.records) {
+      if (record.action !== "observe-runtime") {
+        expect(record.payload).toBeUndefined();
+      }
+    }
   });
 });
 
