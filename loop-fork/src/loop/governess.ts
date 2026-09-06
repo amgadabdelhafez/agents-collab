@@ -3596,7 +3596,6 @@ const processAgent = async (
   const events = deps.readHooks(info.hookFile);
   const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
   if (deps.readSeatSignals) {
-    // Parity row only; no control decision reads it (gov-2 does, later).
     try {
       const signals = deps.readSeatSignals(
         info.agent,
@@ -3610,6 +3609,30 @@ const processAgent = async (
         signals,
         ts: new Date(deps.now()).toISOString(),
       });
+      // readUsage only knows Claude transcripts and Codex rollouts, so the OSS
+      // seat's whole row rendered as dashes: no model, no context, no cost,
+      // while the seat was running and OpenCode had every message. Where the
+      // seat reports itself and readUsage has nothing, the seat wins - it is
+      // the only source that exists for that row.
+      if (usage.dataConfidence !== "exact" && signals.source !== "none") {
+        usage.model ??= signals.model;
+        if (signals.contextTokens !== undefined) {
+          usage.contextTokens = signals.contextTokens;
+        }
+        if (signals.window) {
+          usage.contextWindow = signals.window.chosen;
+        }
+        if (signals.costUsd !== undefined) {
+          usage.costUsd = signals.costUsd;
+        }
+        if (signals.messages !== undefined) {
+          usage.messages = signals.messages;
+        }
+        if (signals.compactions !== undefined) {
+          usage.compactions = signals.compactions;
+        }
+        usage.dataConfidence = "exact";
+      }
     } catch {
       // A signal reader must never take the tick down.
     }
@@ -6728,6 +6751,7 @@ export const defaultGovernessDeps = (
   readPaneCommands: (panes) => readPaneCommandsFromTmux(panes),
   readSeatSignals: (agent, sessionRef, codexHome) =>
     readSeatSignalsForRef(agent, sessionRef, codexHome, {
+      cwd: process.cwd(),
       routingLogPath: process.env.LOOP_SWITCHYARD_ROUTING_LOG,
     }),
   readUsage: (agent, sessionRef, codexHome) =>

@@ -219,6 +219,10 @@ interface RunManifestInput {
   repoId: string;
   reviewerEffort?: EffortLevel;
   runId: string;
+  // What each seat was launched with, so a finished run's evidence names the
+  // models that produced it. The Governess records what it OBSERVES in the
+  // seat-signals rows; this is the request, and the two can differ.
+  seatModels?: Partial<Record<Agent, string>>;
   sourceTaskSha256?: string;
   state?: RunLifecycleState;
   status?: string;

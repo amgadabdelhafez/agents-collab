@@ -176,6 +176,7 @@ export const defaultOpenCodeDbPath = (home = homedir()): string =>
 interface OpenCodeMessageData {
   cost?: number;
   modelID?: string;
+  providerID?: string;
   role?: string;
   tokens?: {
     cache?: { read?: number; write?: number };
@@ -208,7 +209,12 @@ const foldOpenCodeMessage = (acc: OpenCodeFold, data: string): void => {
     acc.costUsd += parsed.cost;
   }
   if (parsed.modelID) {
-    acc.model = parsed.modelID;
+    // Provider-qualified, so the recorded identity reads the way the seat was
+    // launched (openrouter/z-ai/glm-5.2) rather than a bare id that could be
+    // served by any provider.
+    acc.model = parsed.providerID
+      ? `${parsed.providerID}/${parsed.modelID}`
+      : parsed.modelID;
   }
   const t = parsed.tokens;
   if (!t) {
@@ -228,6 +234,37 @@ const foldOpenCodeMessage = (acc: OpenCodeFold, data: string): void => {
 // wrote, with per-message tokens and provider-reported cost. The last
 // assistant message's input + cache read + cache write is the context the
 // seat is carrying now.
+// OpenCode names a session from its first turn's content ("Charter file
+// verification and execution") and rewrites it later, so matching a title the
+// loop chose ("loop-22") finds nothing: the seat is running, its rows are in
+// the store, and the handle to them is lost. The session's DIRECTORY is set at
+// creation and never changes, so the newest session for the run's cwd is the
+// seat's own. Identity comes from the session row; the model, tokens and cost
+// come from its message rows, which is where OpenCode actually writes them
+// (the session row's own model/cost columns stay null).
+export const resolveOpenCodeSessionId = (
+  dbPath: string,
+  directory: string
+): string | undefined => {
+  if (!existsSync(dbPath)) {
+    return undefined;
+  }
+  let db: Database | undefined;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const row = db
+      .query(
+        "SELECT id FROM session WHERE directory = ? ORDER BY time_updated DESC LIMIT 1"
+      )
+      .get(directory) as { id?: string } | null;
+    return typeof row?.id === "string" && row.id ? row.id : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    db?.close();
+  }
+};
+
 export const readOpenCodeSessionSignals = (
   dbPath: string,
   sessionId: string
@@ -334,6 +371,8 @@ export const totalCostFromStats = (payload: unknown): number => {
 
 export interface SeatSignalInputs {
   codexHome?: string;
+  // The directory the seat runs in, used to find its OpenCode session.
+  cwd?: string;
   openCodeDbPath?: string;
   readUsage?: (
     agent: Agent,
@@ -385,19 +424,23 @@ export const readSeatSignals = (
   if (routed) {
     base.routed = routed;
   }
-  if (!sessionRef) {
-    return base;
-  }
   if (agent === "oss") {
-    const oc = readOpenCodeSessionSignals(
-      inputs.openCodeDbPath ?? defaultOpenCodeDbPath(),
-      sessionRef
-    );
+    const dbPath = inputs.openCodeDbPath ?? defaultOpenCodeDbPath();
+    // A manifest session id is authoritative; without one, find the seat's own
+    // session by the directory it runs in.
+    const resolved =
+      sessionRef ??
+      (inputs.cwd ? resolveOpenCodeSessionId(dbPath, inputs.cwd) : undefined);
+    if (!resolved) {
+      return base;
+    }
+    const oc = readOpenCodeSessionSignals(dbPath, resolved);
     if (!oc.found) {
       return base;
     }
     return {
       ...base,
+      sessionRef: resolved,
       compactions: oc.compactions,
       contextTokens: oc.contextTokens,
       messages: oc.messages,
@@ -409,6 +452,9 @@ export const readSeatSignals = (
         : {}),
       window: resolveContextWindow(oc.model, undefined, inputs.windowLookup),
     };
+  }
+  if (!sessionRef) {
+    return base;
   }
   const usage = readUsage(agent, sessionRef, inputs.codexHome);
   if (usage.dataConfidence === "missing" || usage.dataConfidence === "error") {

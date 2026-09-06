@@ -318,6 +318,10 @@ export const resolvePreparedRunState = (
     repoId: storage.repoId,
     reviewerEffort: opts.reviewerEffort,
     runId: storage.runId,
+    seatModels: {
+      ...(opts.codexModel ? { codex: opts.codexModel } : {}),
+      ...(opts.ossModel ? { oss: opts.ossModel } : {}),
+    },
     state: "submitted",
   });
   writeRunManifest(storage.manifestPath, manifest);

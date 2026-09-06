@@ -15,6 +15,7 @@ import {
   readOpenCodeSessionSignals,
   readRoutingLog,
   readSeatSignals,
+  resolveOpenCodeSessionId,
   seatSignalsParity,
   totalCostFromStats,
 } from "../../src/loop/seat-signals";
@@ -320,5 +321,92 @@ describe("seat signals and parity", () => {
         other: "x",
       })
     ).toBeCloseTo(1.75, 6);
+  });
+});
+
+describe("finding the OSS seat's session without a title", () => {
+  const seed = (dir: string) => {
+    const root = mkdtempSync(join(tmpdir(), "seat-signals-resolve-"));
+    const dbPath = join(root, "opencode.db");
+    const db = new Database(dbPath);
+    db.run(
+      "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, slug TEXT, directory TEXT NOT NULL, title TEXT NOT NULL, version TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, model TEXT, cost REAL DEFAULT 0)"
+    );
+    db.run(
+      "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)"
+    );
+    const session = db.prepare(
+      "INSERT INTO session (id, directory, title, time_created, time_updated) VALUES (?, ?, ?, ?, ?)"
+    );
+    // OpenCode titles a session from its content, never "loop-<n>", and the
+    // newest session for the directory is the seat's own.
+    session.run("ses_old", dir, "Oss agent charter verification", 1, 100);
+    session.run(
+      "ses_new",
+      dir,
+      "Charter file verification and execution",
+      2,
+      200
+    );
+    session.run("ses_other", "/somewhere/else", "loop-22", 3, 300);
+    db.prepare("INSERT INTO message VALUES (?, ?, ?, ?, ?)").run(
+      "m1",
+      "ses_new",
+      1,
+      1,
+      JSON.stringify({
+        cost: 0.0062,
+        modelID: "z-ai/glm-5.2",
+        providerID: "openrouter",
+        role: "assistant",
+        tokens: { cache: { read: 30_784, write: 0 }, input: 118, output: 50 },
+      })
+    );
+    db.close();
+    return dbPath;
+  };
+
+  test("resolves the newest session for the run's directory", () => {
+    const dbPath = seed("/repo");
+    expect(resolveOpenCodeSessionId(dbPath, "/repo")).toBe("ses_new");
+    expect(resolveOpenCodeSessionId(dbPath, "/unknown")).toBeUndefined();
+    expect(
+      resolveOpenCodeSessionId(join(dbPath, "nope"), "/repo")
+    ).toBeUndefined();
+  });
+
+  test("a seat with no manifest session id still reports itself (run 22)", () => {
+    const dbPath = seed("/repo");
+    const signals = readSeatSignals("oss", manifest(), {
+      cwd: "/repo",
+      openCodeDbPath: dbPath,
+    });
+    expect(signals.source).toBe("opencode-db");
+    expect(signals.sessionRef).toBe("ses_new");
+    // The model reads the way the seat is launched, provider included.
+    expect(signals.model).toBe("openrouter/z-ai/glm-5.2");
+    expect(signals.contextTokens).toBe(30_902);
+    expect(signals.costUsd).toBeCloseTo(0.0062, 6);
+  });
+
+  test("a manifest session id still wins over the directory lookup", () => {
+    const dbPath = seed("/repo");
+    const signals = readSeatSignals(
+      "oss",
+      manifest({ ossSessionId: "ses_old" }),
+      { cwd: "/repo", openCodeDbPath: dbPath }
+    );
+    expect(signals.sessionRef).toBe("ses_old");
+  });
+
+  test("no session anywhere for the directory reports none, not zeros", () => {
+    const dbPath = seed("/repo");
+    const signals = readSeatSignals("oss", manifest(), {
+      cwd: "/nothing-here",
+      openCodeDbPath: dbPath,
+    });
+    expect(signals.source).toBe("none");
+    expect(signals.model).toBeUndefined();
+    expect(signals.contextTokens).toBeUndefined();
   });
 });
