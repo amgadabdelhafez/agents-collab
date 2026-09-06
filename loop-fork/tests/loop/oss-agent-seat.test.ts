@@ -34,6 +34,7 @@ import {
   OSS_CONFIG_FILE_NAME,
   ossConfigEnv,
   ossConfigFilePath,
+  ossPermissionPolicy,
   ossSessionTitle,
   parseOssSessionId,
   parseOssSessionListing,
@@ -296,11 +297,24 @@ test("generated OpenCode config is run-scoped, bridge-only, and source oss", () 
     expect(server.command).toContain(runDir);
 
     // Explicit permission policy, written down rather than implied.
-    expect(config.permission).toEqual({
-      bash: "allow",
-      edit: "allow",
-      webfetch: "deny",
+    expect(config.permission.bash).toBe("allow");
+    expect(config.permission.edit).toBe("allow");
+    expect(config.permission.webfetch).toBe("deny");
+    // The seat's charter, bridge artifacts and config live in the run dir,
+    // outside its cwd; without this the seat blocks on OpenCode's
+    // external_directory prompt before its first turn.
+    expect(config.permission.external_directory).toEqual({
+      "*": "ask",
+      [`${runDir}/**`]: "allow",
+      [`${join(runDir, "codex-home")}/**`]: "deny",
     });
+    // Last match wins, so the order in the serialized file is the policy:
+    // catch-all, then the run dir, then the narrower deny.
+    expect(Object.keys(config.permission.external_directory)).toEqual([
+      "*",
+      `${runDir}/**`,
+      `${join(runDir, "codex-home")}/**`,
+    ]);
 
     // The isolation lever is the run-scoped config directory itself.
     expect(ossConfigEnv(configDir)).toEqual({
@@ -718,4 +732,64 @@ test("headless runs still use `run` with the prompt as an argument", () => {
   });
   expect(args[0]).toBe("run");
   expect(args).toContain("do the thing");
+});
+
+const SPECIAL_CHARACTER_RE = /[.+^${}()|[\]\\]/g;
+
+// OpenCode's matcher: `*` is any run of characters, `?` is one, everything
+// else is literal, and the LAST matching rule wins (docs/permissions).
+const resolveExternalDirectory = (
+  policy: Record<string, string>,
+  path: string
+): string => {
+  let verdict = "ask";
+  for (const [pattern, action] of Object.entries(policy)) {
+    const expression = pattern
+      .split("")
+      .map((character) => {
+        if (character === "*") {
+          return ".*";
+        }
+        if (character === "?") {
+          return ".";
+        }
+        return character.replace(SPECIAL_CHARACTER_RE, "\\$&");
+      })
+      .join("");
+    if (new RegExp(`^${expression}$`).test(path)) {
+      verdict = action;
+    }
+  }
+  return verdict;
+};
+
+test("the OSS seat may read its own charter, but not the Codex seat's home", () => {
+  const runDir = "/Users/x/.loop/runs/harness-engineering-e1cec1147789/21";
+  const policy = ossPermissionPolicy(runDir).external_directory;
+
+  // The exact read that stalled harness-engineering run 21 on a TUI prompt.
+  expect(
+    resolveExternalDirectory(policy, `${runDir}/launch-charters/oss.md`)
+  ).toBe("allow");
+  // Bridge artifacts and the seat's own config, same run dir.
+  expect(resolveExternalDirectory(policy, `${runDir}/bridge.jsonl`)).toBe(
+    "allow"
+  );
+  expect(
+    resolveExternalDirectory(policy, `${runDir}/oss-config/opencode.json`)
+  ).toBe("allow");
+
+  // The paired Codex seat's home stays closed even though it is in the run dir.
+  expect(
+    resolveExternalDirectory(policy, `${runDir}/codex-home/config.toml`)
+  ).toBe("deny");
+
+  // Everything else outside the workspace still asks: this widens one run dir,
+  // not the filesystem.
+  expect(resolveExternalDirectory(policy, "/Users/x/.ssh/id_ed25519")).toBe(
+    "ask"
+  );
+  expect(
+    resolveExternalDirectory(policy, "/Users/x/.loop/runs/other-repo/3/x.md")
+  ).toBe("ask");
 });
