@@ -6,6 +6,10 @@ import {
   readBridgeQueueHealth,
   readPendingBridgeMessages,
 } from "./bridge-store";
+import {
+  GOVERNESS_BEAT_WORKFLOW_TYPE,
+  governessBeatWorkflowId,
+} from "./governess-beat-workflow";
 import { recoverGovernessControlPlane } from "./governess-control-plane-recovery";
 import {
   decideGovernessCycle,
@@ -18,6 +22,7 @@ import {
 } from "./governess-handoff";
 import {
   type GovernessControlRecord,
+  governessJournalFromHistory,
   inspectGovernessJournalStorage,
   readGovernessJournal,
 } from "./governess-journal";
@@ -49,6 +54,17 @@ export interface GovernessReplayReport {
   ok: boolean;
 }
 
+/**
+ * RETIRED (gov-6).
+ *
+ * Replaced by Temporal replay of the governess-beat.v1 workflow: history is the
+ * event log, so replaying it is the Temporal runtime's job rather than this
+ * hand-rolled structural/behavioural pass. Deletion is deferred to the gov-7
+ * cutover, which moves the surviving utility commands in this file
+ * (doctor / explain / signals / recover-control-plane, wired from src/cli.ts)
+ * off the JSONL journal. Those commands are demonstrably live, so this file
+ * stays; only this entry point is retired.
+ */
 export const replayGovernessJournal = (
   records: GovernessControlRecord[]
 ): GovernessReplayReport => {
@@ -468,12 +484,35 @@ export const runGovernessUtilityCommand = (
     (command !== "doctor" &&
       command !== "replay" &&
       command !== "explain" &&
+      command !== "history" &&
       command !== "signals" &&
       command !== "recover-control-plane")
   ) {
     throw new Error(
-      "Usage: loop governess <doctor|replay|explain|signals|recover-control-plane> <run-id> [control-id]"
+      "Usage: loop governess <doctor|replay|explain|history|signals|recover-control-plane> <run-id> [control-id]"
     );
+  }
+  if (command === "history") {
+    // gov-6 read model: the journal projected out of the beat workflow's
+    // ordered decision log. Reads the JSONL projection until gov-7 cuts the
+    // source over to live Temporal history.
+    const { storage } = loadRunState(runId, cwd, home);
+    const records = governessJournalFromHistory(
+      readGovernessJournal(join(storage.runDir, "governess-control.jsonl"))
+    );
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          records,
+          runId,
+          workflowId: governessBeatWorkflowId(runId),
+          workflowType: GOVERNESS_BEAT_WORKFLOW_TYPE,
+        },
+        null,
+        2
+      )}\n`
+    );
+    return true;
   }
   if (command === "signals") {
     process.stdout.write(

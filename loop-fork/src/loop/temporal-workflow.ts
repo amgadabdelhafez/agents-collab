@@ -4,6 +4,7 @@ import {
   defineSignal,
   setHandler,
 } from "@temporalio/workflow";
+import { governessBeatWorkflowDefinition } from "./governess-beat-workflow";
 import { supervisorMessageWorkflowDefinition } from "./supervisor-message-workflow";
 import { taskGraphWorkflowDefinition } from "./task-graph-workflow";
 import type {
@@ -82,9 +83,11 @@ const receiptKey = (kind: "cancel" | "signal", requestId: string): string =>
   `${kind}:${requestId}`;
 
 const WORKFLOW_DEFINITIONS = new Map<string, WorkflowDefinition>(
-  [supervisorMessageWorkflowDefinition, taskGraphWorkflowDefinition].map(
-    (definition) => [definition.type, definition]
-  )
+  [
+    governessBeatWorkflowDefinition,
+    supervisorMessageWorkflowDefinition,
+    taskGraphWorkflowDefinition,
+  ].map((definition) => [definition.type, definition])
 );
 
 const errorOf = (error: unknown): TemporalWorkflowCommandError => {
