@@ -286,19 +286,36 @@ export const waitForLauncherComposerBody = async (input: {
     CLAUDE_KICKOFF_VISIBILITY_MAX_WAIT_MS /
       CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS
   );
+  // `foreign` is the one failure that is routinely TRANSIENT: Claude Code
+  // renders the raw first line of a paste for a frame or two before collapsing
+  // it to "[Pasted text #N +M lines]", and that intermediate frame does not
+  // match the paste marker. Throwing on the first poll aborted every paired
+  // launch on Claude Code 2.1.260. The other failures are structural -- a
+  // client attached, a pipe opened, the composer unclassifiable -- and cannot
+  // become true by waiting, so they still fail closed immediately.
+  //
+  // The safety property is unchanged: text that is genuinely not ours never
+  // earns an Enter. A persistent `foreign` is still reported as `foreign`; it
+  // simply takes the full window to conclude that.
+  let lastTransientFailure: ClaudeKickoffVisibilityFailure | undefined;
   for (let attempt = 0; attempt <= waits; attempt += 1) {
     const snapshot = input.capture();
     const failure = visibilityFailure(snapshot);
-    if (failure) {
+    if (failure !== undefined && failure !== "foreign") {
       throw new ClaudeKickoffVisibilityError(failure);
     }
-    const body = readComposerBody(snapshot?.paneText);
-    if (body) {
-      return body;
+    if (failure === undefined) {
+      lastTransientFailure = undefined;
+      const body = readComposerBody(snapshot?.paneText);
+      if (body) {
+        return body;
+      }
+    } else {
+      lastTransientFailure = failure;
     }
     if (attempt < waits) {
       await input.sleep(CLAUDE_KICKOFF_VISIBILITY_POLL_DELAY_MS);
     }
   }
-  throw new ClaudeKickoffVisibilityError("timeout");
+  throw new ClaudeKickoffVisibilityError(lastTransientFailure ?? "timeout");
 };
