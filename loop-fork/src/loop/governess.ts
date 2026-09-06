@@ -130,6 +130,12 @@ import {
   resolveNativeSubagentMode,
 } from "./native-subagent";
 import {
+  findOpenRouterKey,
+  type OpenRouterCredit,
+  openRouterAgentLimit,
+  readOpenRouterCredit,
+} from "./openrouter-usage";
+import {
   cleanupRunOwnedProcesses,
   type RunProcessCleanupResult,
 } from "./run-process-cleanup";
@@ -392,6 +398,7 @@ export interface GovernessDeps {
     codexHome?: string
   ) => string[];
   readLocalLlmRuntime: (input: LocalLlmRuntimeInput) => LocalLlmRuntime;
+  readOpenRouterCredit: () => Promise<OpenRouterCredit | undefined>;
   readPaneCommands?: (
     panes: GovernessAgentInfo[]
   ) => Partial<Record<Agent, string>>;
@@ -1141,8 +1148,18 @@ const fmtClock = (nowMs: number): string => {
 
 const CLAUDE_PREFIX_RE = /^claude-/;
 const SHORT_MODEL_WIDTH = 12;
-const shortModel = (model?: string): string =>
-  model ? model.replace(CLAUDE_PREFIX_RE, "").slice(0, SHORT_MODEL_WIDTH) : "—";
+// A provider-qualified id (openrouter/z-ai/glm-5.2) is longer than the column,
+// so slicing it alone yielded "openrouter/z": the vendor, never the model. The
+// identity a reader needs is the last segment, the same part shortLocalModel
+// already keeps for helper rows.
+const MODEL_VENDOR_PREFIX_RE = /^.*\//;
+export const shortModel = (model?: string): string =>
+  model
+    ? model
+        .replace(MODEL_VENDOR_PREFIX_RE, "")
+        .replace(CLAUDE_PREFIX_RE, "")
+        .slice(0, SHORT_MODEL_WIDTH)
+    : "—";
 const LOCAL_MODEL_PREFIX_RE = /^[^/]+\//;
 const shortLocalModel = (model: string): string =>
   model.replace(LOCAL_MODEL_PREFIX_RE, "");
@@ -3631,6 +3648,21 @@ const processAgent = async (
         if (signals.compactions !== undefined) {
           usage.compactions = signals.compactions;
         }
+        // The token columns (TOTAL/INPUT/CACHE/OUTPUT) and the cost rate read
+        // from these fields, so filling model and context alone still left the
+        // rest of the OSS row as dashes while OpenCode held every number.
+        if (signals.inputTokens !== undefined) {
+          usage.inputTokens = signals.inputTokens;
+        }
+        if (signals.outputTokens !== undefined) {
+          usage.outputTokens = signals.outputTokens;
+        }
+        if (signals.cacheReadTokens !== undefined) {
+          usage.cacheReadTokens = signals.cacheReadTokens;
+        }
+        if (signals.cacheCreateTokens !== undefined) {
+          usage.cacheCreateTokens = signals.cacheCreateTokens;
+        }
         usage.dataConfidence = "exact";
       }
     } catch {
@@ -5939,6 +5971,15 @@ export const governessTick = async (
   const rows: AgentRow[] = [];
   const summaryCtxs: SummaryAgentContext[] = [];
   const usageLimits = await deps.readUsageLimits(config).catch(() => undefined);
+  // usage-tracker knows Claude and Codex quotas only, so an OpenRouter-backed
+  // seat had no LIMITS/RESET at all. Merge its credit in as the account window.
+  const ossCredit = config.agents.some((info) => info.agent === "oss")
+    ? await deps.readOpenRouterCredit().catch(() => undefined)
+    : undefined;
+  const ossLimit = openRouterAgentLimit(ossCredit);
+  const mergedUsageLimits: UsageLimitSnapshot | undefined = ossLimit
+    ? { ...(usageLimits ?? {}), oss: ossLimit }
+    : usageLimits;
 
   const paneTexts = new Map<Agent, string>();
   let paneCommands: Partial<Record<Agent, string>> = {};
@@ -6008,7 +6049,7 @@ export const governessTick = async (
       nowMs,
       recoveries,
       tick: runState.tick,
-      usageLimits,
+      usageLimits: mergedUsageLimits,
     };
     const result = tmuxControlAvailable
       ? await processAgent(
@@ -6756,6 +6797,7 @@ export const defaultGovernessDeps = (
     }),
   readUsage: (agent, sessionRef, codexHome) =>
     readAgentUsage(agent, sessionRef, codexHome),
+  readOpenRouterCredit: () => readOpenRouterCredit(findOpenRouterKey()),
   readUsageLimits: (config) =>
     readUsageLimits({
       secret: config.usageTrackerSecret,

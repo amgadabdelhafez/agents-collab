@@ -83,21 +83,48 @@ const loadCatalog = (): Map<string, number> => {
   return map;
 };
 
+// A seat reports itself provider-qualified (openrouter/z-ai/glm-5.2) while the
+// catalog is indexed by the id the provider serves (z-ai/glm-5.2) and its bare
+// tail (glm-5.2). Looking up only the qualified form missed every routed seat
+// and silently returned the 200k default: on 2026-09-06 an OSS seat with a
+// 1,048,576 window was governed as if it had 200,000. So try the id as given,
+// then peel one leading segment at a time.
+const catalogCandidates = (model: string): string[] => {
+  const seen: string[] = [];
+  const push = (value: string): void => {
+    const trimmed = value.trim();
+    if (trimmed && !seen.includes(trimmed)) {
+      seen.push(trimmed);
+    }
+  };
+  let rest = model.trim();
+  push(rest);
+  while (rest.includes("/")) {
+    rest = rest.slice(rest.indexOf("/") + 1);
+    push(rest);
+  }
+  return seen;
+};
+
 export const catalogContextWindow: CatalogLookup = (model) => {
   const catalog = loadCatalog();
-  const normalized = model.trim();
-  if (catalog.has(normalized)) {
-    return catalog.get(normalized);
+  for (const candidate of catalogCandidates(model)) {
+    if (catalog.has(candidate)) {
+      return catalog.get(candidate);
+    }
+    // Date-suffixed or dotted variants: claude-opus-4-6-20260101, claude-opus-4.6
+    const dashed = candidate.replace(/\./g, "-");
+    if (catalog.has(dashed)) {
+      return catalog.get(dashed);
+    }
+    const prefix = [...catalog.keys()].find(
+      (id) => candidate.startsWith(`${id}-`) || dashed.startsWith(`${id}-`)
+    );
+    if (prefix) {
+      return catalog.get(prefix);
+    }
   }
-  // Date-suffixed or dotted variants: claude-opus-4-6-20260101, claude-opus-4.6
-  const dashed = normalized.replace(/\./g, "-");
-  if (catalog.has(dashed)) {
-    return catalog.get(dashed);
-  }
-  const prefix = [...catalog.keys()].find(
-    (id) => normalized.startsWith(`${id}-`) || dashed.startsWith(`${id}-`)
-  );
-  return prefix ? catalog.get(prefix) : undefined;
+  return undefined;
 };
 
 export const resolveContextWindow = (

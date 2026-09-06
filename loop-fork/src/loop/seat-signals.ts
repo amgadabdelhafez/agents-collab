@@ -56,12 +56,17 @@ export interface RoutingLogSummary {
 
 export interface SeatSignals {
   agent: Agent;
+  cacheCreateTokens?: number;
+  cacheReadTokens?: number;
   compactions?: number;
   contextTokens?: number;
   costSource: CostSource;
   costUsd?: number;
+  inputTokens?: number;
   messages?: number;
   model?: string;
+  outputTokens?: number;
+  reasoningTokens?: number;
   routed?: RoutingLogSummary;
   sessionRef?: string;
   source: SignalSource;
@@ -187,11 +192,16 @@ interface OpenCodeMessageData {
 }
 
 interface OpenCodeFold {
+  cacheCreateTokens: number;
+  cacheReadTokens: number;
   compactions: number;
   contextTokens: number;
   costUsd: number;
+  inputTokens: number;
   messages: number;
   model?: string;
+  outputTokens: number;
+  reasoningTokens: number;
 }
 
 const foldOpenCodeMessage = (acc: OpenCodeFold, data: string): void => {
@@ -220,6 +230,13 @@ const foldOpenCodeMessage = (acc: OpenCodeFold, data: string): void => {
   if (!t) {
     return;
   }
+  // Context is the LAST assistant message's carried tokens; the breakdown is a
+  // running total across the session, the same way a transcript reader counts.
+  acc.inputTokens += t.input ?? 0;
+  acc.outputTokens += t.output ?? 0;
+  acc.reasoningTokens += t.reasoning ?? 0;
+  acc.cacheReadTokens += t.cache?.read ?? 0;
+  acc.cacheCreateTokens += t.cache?.write ?? 0;
   const context = (t.input ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0);
   if (context > 0) {
     // The context halving in one step is a compaction, not a short turn.
@@ -268,11 +285,30 @@ export const resolveOpenCodeSessionId = (
 export const readOpenCodeSessionSignals = (
   dbPath: string,
   sessionId: string
-): Pick<SeatSignals, "compactions" | "contextTokens" | "messages" | "model"> & {
+): Pick<
+  SeatSignals,
+  | "cacheCreateTokens"
+  | "cacheReadTokens"
+  | "compactions"
+  | "contextTokens"
+  | "inputTokens"
+  | "messages"
+  | "model"
+  | "outputTokens"
+  | "reasoningTokens"
+> & {
   costUsd: number;
   found: boolean;
 } => {
-  const empty = { costUsd: 0, found: false };
+  const empty = {
+    cacheCreateTokens: 0,
+    cacheReadTokens: 0,
+    costUsd: 0,
+    found: false,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+  };
   if (!existsSync(dbPath)) {
     return empty;
   }
@@ -288,10 +324,15 @@ export const readOpenCodeSessionSignals = (
       return empty;
     }
     const acc: OpenCodeFold = {
+      cacheCreateTokens: 0,
+      cacheReadTokens: 0,
       compactions: 0,
       contextTokens: 0,
       costUsd: 0,
+      inputTokens: 0,
       messages: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
     };
     for (const { data } of rows) {
       foldOpenCodeMessage(acc, data);
@@ -441,10 +482,15 @@ export const readSeatSignals = (
     return {
       ...base,
       sessionRef: resolved,
+      cacheCreateTokens: oc.cacheCreateTokens,
+      cacheReadTokens: oc.cacheReadTokens,
       compactions: oc.compactions,
       contextTokens: oc.contextTokens,
+      inputTokens: oc.inputTokens,
       messages: oc.messages,
       model: oc.model,
+      outputTokens: oc.outputTokens,
+      reasoningTokens: oc.reasoningTokens,
       source: "opencode-db",
       // OpenCode's per-message cost is provider-reported, not a table.
       ...(oc.costUsd > 0
