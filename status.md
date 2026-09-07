@@ -1,33 +1,26 @@
-# HANDOFF — gov-6 is complete and reviewed, NOTHING PUSHED
+# HANDOFF — gov-6 complete, reviewed, and open as a draft PR
 
-**Status: done locally, awaiting the owner's decision on where to push.**
+**Draft PR: https://git.home.lab/amgad/agents-collab/pulls/1** (Forgejo, `origin`)
 
-Claude implemented gov-6, Oss reviewed it and returned PASS. Nothing has been
-pushed to any remote and no PR exists, by supervisor decision: pushing to
-`agents-collab` and opening a PR others will see is the owner's call. The work is
-safe on a local branch; nothing is lost by waiting.
+- base `codex/seat-model-identity` (`80823678`), head `codex/gov-6-journal-to-temporal`
+- draft: true (Forgejo marks drafts by the `WIP:` title prefix, not an API flag)
+- scope verified: **4 commits, 17 changed files** — only gov-6, not the 138-commit stack
+- Oss reviewed: PASS
+- **`github` remote deliberately untouched**: 0 gov-6 refs. Nothing was pushed there.
 
-## What the owner needs to decide (one question)
+## Correction to an earlier version of this handoff
 
-The gov-6 base commit `808236782bf83f10d36efae3b46c929680119a6a` is **not on the
-`github` remote**. The gov-1/gov-2 lineage it sits on exists only locally (the
-`origin` ref in this worktree is stale and no longer a configured remote). So a
-PR needs a target, and there are two live options:
+An earlier revision said the base commit "isn't on the github remote" and asked
+the owner to choose a PR base. That framing was wrong because it was scoped to the
+wrong remote. This repo has two: `origin` is the private Forgejo at
+`192.168.1.18:3100` (canonical), and `github` is a secondary mirror that still
+carries a `legacy/github-main-2026-07-06` branch. `origin` already had
+`refs/heads/codex/seat-model-identity` at exactly `808236782bf83f10d36efae3b46c929680119a6a`,
+so there was never a base problem and nothing extra needed pushing.
 
-1. **Push `codex/seat-model-identity` (which contains the base commit) to
-   `github`, then open the draft PR with that as the base.** The PR diff is then
-   only the 3 gov-6 commits / 17 files below, which is reviewable. Costs one
-   extra branch on the shared repo.
-2. **Push my branch only and stop**, leaving the base choice for later.
-
-Targeting `github/main` was considered and ruled out on the merits: the branch is
-137 commits ahead of `github/main`, so the PR would show gov-1, gov-2 and OSS
-work as if it were this slice. Rebasing onto main is forbidden by the charter
-(main is 134 commits behind the base; rebasing would drop gov-1 and gov-2).
-
-Note that pushing the gov-6 branch at all publishes the same 137 ancestor commits
-either way, because they are its ancestors. Option 1 does not disclose more than
-option 2; it only adds a second branch ref.
+The root cause of the bad report was mine: I ran `git remote -v | head -2`, which
+truncated the remote list to `github` alone, and then reasoned from that truncated
+view. Do not truncate the output of a command whose whole purpose is enumeration.
 
 ## Branch and commits
 
@@ -151,9 +144,9 @@ Branch `codex/gov-6-journal-to-temporal`, base `80823678`. Work in `loop-fork/`.
 
 1. DONE — Oss implementation review returned PASS (message
    `60aa924c-9d17-431f-8a5d-3cc044b2ce7d`), all three deviations approved.
-2. BLOCKED ON OWNER — pushing and opening the draft PR. See the HANDOFF section
-   at the top of this file for the single question that needs answering. Nothing
-   has been pushed.
+2. DONE — branch pushed to `origin` (Forgejo) and draft PR #1 opened against
+   `codex/seat-model-identity`. `github` was not pushed to. See the HANDOFF at
+   the top of this file.
 3. gov-7 (cutover) inherits: delete the retired files, move the surviving
    governess utility commands off the JSONL journal, point
    `loop governess history` at live Temporal history instead of the JSONL
