@@ -97,7 +97,11 @@ import {
   labelPanes,
   summarizeSession,
 } from "./governess-llm";
-import { type EscalationEvent, sendNtfy } from "./governess-notify";
+import {
+  appendEscalation,
+  type EscalationEvent,
+  sendNtfy,
+} from "./governess-notify";
 import { GOVERNESS_DEAD_PANE_BORDER_FORMAT } from "./governess-pane-liveness";
 import {
   decideGovernessPolicy,
@@ -266,6 +270,9 @@ export interface GovernessConfig {
   epoch?: number;
   // How long an agent may sit waiting-for-human before we escalate.
   escalateIdleMs: number;
+  // Where every escalation is appended regardless of transport. Unlike ntfy
+  // this needs no configuration, so escalation is never silently off.
+  escalationFile?: string;
   helperCavemanMode?: CavemanMode;
   idleMs: number;
   initialDriver?: Agent;
@@ -385,7 +392,12 @@ export interface GovernessDeps {
   ) => Promise<ReplacementLaunchResult> | ReplacementLaunchResult;
   loadState: (stateFile?: string) => GovernessRunState | undefined;
   markRunStopped?: (config: GovernessConfig, reason: string) => void;
-  notify: (ntfyUrl: string | undefined, event: EscalationEvent) => void;
+  notify: (
+    ntfyUrl: string | undefined,
+    event: EscalationEvent,
+    escalationFile?: string,
+    nowIso?: string
+  ) => void;
   now: () => number;
   openKeyInput?: () => KeyInput | undefined;
   paneCommand?: (pane: string) => string | undefined;
@@ -398,7 +410,9 @@ export interface GovernessDeps {
     codexHome?: string
   ) => string[];
   readLocalLlmRuntime: (input: LocalLlmRuntimeInput) => LocalLlmRuntime;
-  readOpenRouterCredit: () => Promise<OpenRouterCredit | undefined>;
+  // Optional so a deps fixture that omits it cannot crash a tick; an absent
+  // reader simply means no OpenRouter limits, never a thrown control loop.
+  readOpenRouterCredit?: () => Promise<OpenRouterCredit | undefined>;
   readPaneCommands?: (
     panes: GovernessAgentInfo[]
   ) => Partial<Record<Agent, string>>;
@@ -457,6 +471,9 @@ export interface NotifiedState {
   budget100: boolean;
   ladder: Record<string, boolean>;
   limitHandoff: Record<string, string>;
+  // Per-seat waiting-human latch. `waitingForYou` covers only the both-idle
+  // case; a single seat blocked beside a working peer needs its own.
+  waitingAgent: Record<string, boolean>;
   waitingForYou: boolean;
 }
 
@@ -516,6 +533,17 @@ export interface GovernessRunState {
   paneTitles: Record<string, string>;
   recoveries: number;
   roles: RoleState;
+  // The judge's last verdict per seat, the pane it was judged from, and when
+  // that state began. Rows are rebuilt every tick and carry no verdict of
+  // their own, so without this a seat blocked on a modal falls back to the
+  // "thinking" guess on any tick the judge is skipped, and nothing can time
+  // how long it has been blocked.
+  seatVerdict: Partial<
+    Record<
+      Agent,
+      { paneHash: string; since: number; verdict: GovernessVerdict }
+    >
+  >;
   sessionPressure: SessionPressureByAgent;
   sessionPressurePrepared: Partial<Record<Agent, boolean>>;
   stats: SessionStats;
@@ -533,6 +561,7 @@ const freshNotified = (): NotifiedState => ({
   budget80: false,
   ladder: {},
   limitHandoff: {},
+  waitingAgent: {},
   waitingForYou: false,
 });
 
@@ -757,6 +786,7 @@ export const freshRunState = (): GovernessRunState => ({
   notified: freshNotified(),
   paneLabels: {},
   paneLabelTick: -1,
+  seatVerdict: {},
   paneRenames: {},
   paneTitles: {},
   recoveries: 0,
@@ -3319,6 +3349,7 @@ interface AgentTickContext {
   nowIso: string;
   nowMs: number;
   recoveries: number;
+  runState: GovernessRunState;
   tick: number;
   usageLimits?: UsageLimitSnapshot;
 }
@@ -3747,6 +3778,13 @@ const processAgent = async (
   // idle agent as working/waiting-human, and don't run recovery on it. The judge
   // only runs for a suspect whose turn never ended (frozen mid-work).
   if (row.verdict?.state === "limited" || !liveness.suspect || turnEnded) {
+    // The judge is skipped, but a verdict already made against THIS pane is
+    // still the truth about it. Without this the row falls back to the
+    // thinking/idle guess and a seat blocked on a modal reads as working.
+    const remembered = ctx.runState.seatVerdict[info.agent];
+    if (!row.verdict && remembered && remembered.paneHash === paneHash) {
+      row.verdict = remembered.verdict;
+    }
     return {
       ...base,
       history: ctx.history.filter((entry) => entry.agent !== info.agent),
@@ -3764,6 +3802,15 @@ const processAgent = async (
   const { outcome } = judged;
   const llmUsage = judged.usage;
   row.verdict = "verdict" in outcome ? outcome.verdict : outcome.fallback;
+  const previous = ctx.runState.seatVerdict[info.agent];
+  ctx.runState.seatVerdict[info.agent] = {
+    paneHash,
+    since:
+      previous && previous.verdict.state === row.verdict.state
+        ? previous.since
+        : ctx.nowMs,
+    verdict: row.verdict,
+  };
   if ("reason" in outcome && outcome.reason === "unreachable") {
     return {
       ...base,
@@ -5847,11 +5894,12 @@ const handleRoleTransitions = async (
 
 // Decide what (if anything) to escalate this tick, deduped via runState.notified
 // so each condition alerts once per episode rather than every tick.
-const collectEscalations = (
+export const collectEscalations = (
   runState: GovernessRunState,
   waiting: WaitingForYou,
   totalCost: number,
-  config: GovernessConfig
+  config: GovernessConfig,
+  nowMs: number
 ): EscalationEvent[] => {
   const events: EscalationEvent[] = [];
   const { notified } = runState;
@@ -5869,7 +5917,36 @@ const collectEscalations = (
       title: "The session is waiting for you",
     });
   }
+  // A single seat blocked on a modal while its peer works: the both-idle test
+  // above never sees it, and the recovery ladder below never sees it either,
+  // because `waiting-human` is judged "not recoverable" and records no
+  // attempt, so `used` stays 0 forever. On run 36 that combination swallowed
+  // 355 waiting-human verdicts across 2h39m. This is the case that escalates.
   for (const info of config.agents) {
+    const seat = runState.seatVerdict[info.agent];
+    const blockedMs =
+      seat && seat.verdict.state === "waiting-human"
+        ? Math.max(0, nowMs - seat.since)
+        : 0;
+    if (blockedMs >= config.escalateIdleMs) {
+      if (!notified.waitingAgent[info.agent]) {
+        notified.waitingAgent[info.agent] = true;
+        const asked = seat?.verdict.suggestedAction
+          ? ` It suggests: ${seat.verdict.suggestedAction}`
+          : "";
+        events.push({
+          agent: info.agent,
+          kind: "waiting-human",
+          message: `${info.agent} has been blocked on you for ${fmtDuration(blockedMs)} (run ${config.runId}). Its pane is waiting on an answer.${asked}`,
+          priority: "high",
+          title: `${info.agent} is blocked on you`,
+        });
+      }
+    } else {
+      // Reset the latch the moment the seat is no longer blocked, so the next
+      // block escalates again instead of being swallowed as already-notified.
+      notified.waitingAgent[info.agent] = false;
+    }
     const used = runState.history.filter(
       (entry) => entry.agent === info.agent
     ).length;
@@ -5973,9 +6050,11 @@ export const governessTick = async (
   const usageLimits = await deps.readUsageLimits(config).catch(() => undefined);
   // usage-tracker knows Claude and Codex quotas only, so an OpenRouter-backed
   // seat had no LIMITS/RESET at all. Merge its credit in as the account window.
-  const ossCredit = config.agents.some((info) => info.agent === "oss")
-    ? await deps.readOpenRouterCredit().catch(() => undefined)
-    : undefined;
+  const ossCredit =
+    deps.readOpenRouterCredit &&
+    config.agents.some((info) => info.agent === "oss")
+      ? await deps.readOpenRouterCredit().catch(() => undefined)
+      : undefined;
   const ossLimit = openRouterAgentLimit(ossCredit);
   const mergedUsageLimits: UsageLimitSnapshot | undefined = ossLimit
     ? { ...(usageLimits ?? {}), oss: ossLimit }
@@ -6048,6 +6127,7 @@ export const governessTick = async (
       nowIso,
       nowMs,
       recoveries,
+      runState,
       tick: runState.tick,
       usageLimits: mergedUsageLimits,
     };
@@ -6118,9 +6198,10 @@ export const governessTick = async (
       runState,
       waitingForYou,
       totalCost,
-      config
+      config,
+      nowMs
     )) {
-      deps.notify(config.ntfyUrl, event);
+      deps.notify(config.ntfyUrl, event, config.escalationFile, nowIso);
     }
   }
 
@@ -6743,7 +6824,10 @@ export const defaultGovernessDeps = (
   killSession: (session) => {
     runBoundedTmux(["kill-session", "-t", session]);
   },
-  notify: (ntfyUrl, event) => sendNtfy(ntfyUrl, event),
+  notify: (ntfyUrl, event, escalationFile, nowIso) => {
+    appendEscalation(escalationFile, event, nowIso ?? new Date().toISOString());
+    sendNtfy(ntfyUrl, event);
+  },
   now: () => Date.now(),
   openKeyInput: () => openRawKeyInput(),
   paneCommand: (pane) => {
@@ -7125,6 +7209,7 @@ export const resolveGovernessConfig = (
       ? manifest.primaryAgent
       : undefined,
     helperCavemanMode: manifest?.helperCavemanMode,
+    escalationFile: join(storage.runDir, "escalations.jsonl"),
     journalFile: join(storage.runDir, "governess-control.jsonl"),
     logFile: join(storage.runDir, "governess.jsonl"),
     llmDecodeConcurrency: envPositiveInt(
@@ -7196,6 +7281,15 @@ export const runGoverness = async (
   deps: GovernessDeps = defaultGovernessDeps()
 ): Promise<void> => {
   const states = new Map<Agent, AgentLivenessState>();
+  // Say which transports are armed. Escalation used to be off whenever
+  // LOOP_GOVERNESS_NTFY was unset, and nothing said so, which is how a blocked
+  // seat went unreported for 2h39m on run 36.
+  deps.appendLog(config.logFile, {
+    at: new Date().toISOString(),
+    escalationFile: config.escalationFile ?? null,
+    event: "escalation-transports",
+    ntfy: config.ntfyUrl ? "configured" : "unset",
+  });
   let runState = deps.loadState(config.stateFile) ?? freshRunState();
   const configuredInitialDriver =
     config.initialDriver ?? config.agents[0]?.agent;

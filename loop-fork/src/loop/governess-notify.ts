@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import type { Agent } from "./types";
 
 // A single thing the governess wants to reach the human about. Kept small and
@@ -16,6 +17,29 @@ const TAGS: Record<EscalationEvent["kind"], string> = {
   "waiting-human": "hourglass",
   "recovery-exhausted": "warning",
   budget: "moneybag",
+};
+
+// The always-on transport. ntfy is opt-in through LOOP_GOVERNESS_NTFY, and
+// when that is unset sendNtfy returns on its first line, so escalation is off
+// by default and silently so. On run 36 that meant nothing reached a human for
+// 2h39m. Every escalation is therefore also appended here, in the run dir,
+// where a supervisor can read it without any configuration at all.
+export const appendEscalation = (
+  escalationFile: string | undefined,
+  event: EscalationEvent,
+  nowIso: string
+): void => {
+  if (!escalationFile) {
+    return;
+  }
+  try {
+    appendFileSync(
+      escalationFile,
+      `${JSON.stringify({ ...event, at: nowIso })}\n`
+    );
+  } catch {
+    // A full or unwritable disk must not break the control loop.
+  }
 };
 
 // Push an escalation to an ntfy topic URL (e.g. https://ntfy.sh/my-topic, or a
