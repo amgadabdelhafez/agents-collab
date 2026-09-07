@@ -68,6 +68,7 @@ Options:
   --codex-reviewer-model <model>           Override codex review model
   --oss-model <provider/model>             Override the OSS seat model (default: ${DEFAULT_OSS_MODEL})
   --oss-reviewer-model <provider/model>    Override the OSS seat review model
+  --claude-model <model>                   Override the claude driver model (default: opus)
   --claude-reviewer-model <model>          Override claude review model
   --caveman <off|lite|full|ultra>          Main-agent output compression (default: ${DEFAULT_CAVEMAN_MODE})
   --helper-caveman <off|lite|full|ultra>   Nanny/Au Pair output compression (default: ${DEFAULT_HELPER_CAVEMAN_MODE})
@@ -157,6 +158,7 @@ export const VALUE_FLAGS: Record<string, ValueFlag> = {
   "--effort-reviewer": "reviewerEffort",
   "--codex-model": "codexModel",
   "--codex-reviewer-model": "codexReviewerModel",
+  "--claude-model": "claudeModel",
   "--claude-reviewer-model": "claudeReviewerModel",
   "--oss-model": "ossModel",
   "--oss-reviewer-model": "ossReviewerModel",

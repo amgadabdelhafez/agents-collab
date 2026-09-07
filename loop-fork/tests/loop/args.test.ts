@@ -476,6 +476,22 @@ test("parseArgs accepts --codex-only with both --codex-model flag forms", () => 
   expect(equals.codexModel).toBe("custom-equals");
 });
 
+test("parseArgs accepts --claude-model in both forms and it drives only the driver seat", () => {
+  const spaced = parseArgs([
+    "--claude-model",
+    "claude-fable-5-1",
+    "--proof",
+    "v",
+  ]);
+  const equals = parseArgs(["--claude-model=claude-fable-5-1", "--proof", "v"]);
+  expect(spaced.claudeModel).toBe("claude-fable-5-1");
+  expect(equals.claudeModel).toBe("claude-fable-5-1");
+  expect(spaced.claudeReviewerModel).toBeUndefined();
+  expect(() => parseArgs(["--claude-model", "", "--proof", "v"])).toThrow(
+    /--claude-model/
+  );
+});
+
 test("parseArgs accepts both reviewer-model flag forms", () => {
   const spaced = parseArgs([
     "--codex-reviewer-model",

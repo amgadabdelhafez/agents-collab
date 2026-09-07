@@ -689,7 +689,7 @@ const writeLaunchCharter = (
   return { bootstrapPath, charter };
 };
 
-const resolveTmuxModel = (agent: Agent, opts: Options): string => {
+export const resolveTmuxModel = (agent: Agent, opts: Options): string => {
   const isPrimary = agent === opts.agent;
   if (agent === "codex") {
     return isPrimary
@@ -698,7 +698,7 @@ const resolveTmuxModel = (agent: Agent, opts: Options): string => {
   }
   if (agent === "claude") {
     return isPrimary
-      ? DEFAULT_CLAUDE_MODEL
+      ? (opts.claudeModel ?? DEFAULT_CLAUDE_MODEL)
       : (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL);
   }
   return isPrimary ? opts.ossModel : (opts.ossReviewerModel ?? opts.ossModel);

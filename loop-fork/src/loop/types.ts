@@ -49,6 +49,7 @@ export type ValueFlag =
   | "reviewerEffort"
   | "codexModel"
   | "codexReviewerModel"
+  | "claudeModel"
   | "claudeReviewerModel"
   | "ossModel"
   | "ossReviewerModel"
@@ -346,6 +347,7 @@ export interface Options {
   cavemanMode: CavemanMode;
   cavemanModeSource: CavemanModeSource;
   claudeMcpConfigPath?: string;
+  claudeModel?: string;
   claudePersistentSession?: boolean;
   claudeReviewerModel?: string;
   codexHome?: string;

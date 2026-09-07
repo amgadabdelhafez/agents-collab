@@ -201,7 +201,7 @@ export const buildCommand = (
   };
 };
 
-const resolveModel = (
+export const resolveModel = (
   agent: Agent,
   opts: Options,
   kind: AgentRunKind
@@ -219,7 +219,7 @@ const resolveModel = (
   if (agent === "claude") {
     return kind === "review"
       ? (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL)
-      : DEFAULT_CLAUDE_MODEL;
+      : (opts.claudeModel ?? DEFAULT_CLAUDE_MODEL);
   }
 
   const exhaustive: never = agent;

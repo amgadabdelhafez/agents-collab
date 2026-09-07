@@ -246,6 +246,12 @@ const applyValueFlag = (
         "Invalid --codex-reviewer-model value: cannot be empty"
       );
       return;
+    case "claudeModel":
+      opts.claudeModel = requireTrimmedValue(
+        value,
+        "Invalid --claude-model value: cannot be empty"
+      );
+      return;
     case "claudeReviewerModel":
       opts.claudeReviewerModel = requireTrimmedValue(
         value,
@@ -537,6 +543,10 @@ const parseModelArg = (
     );
     return index + 1;
   }
+  if (arg.startsWith("--claude-model=")) {
+    applyValueFlag("claudeModel", arg.slice("--claude-model=".length), opts);
+    return index + 1;
+  }
   if (arg.startsWith("--claude-reviewer-model=")) {
     applyValueFlag(
       "claudeReviewerModel",
@@ -560,6 +570,7 @@ const parseModelArg = (
   if (
     arg === "--codex-model" ||
     arg === "--codex-reviewer-model" ||
+    arg === "--claude-model" ||
     arg === "--claude-reviewer-model" ||
     arg === "--oss-model" ||
     arg === "--oss-reviewer-model"
