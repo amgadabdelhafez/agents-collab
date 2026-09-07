@@ -1,3 +1,97 @@
+# HANDOFF — gov-6 is complete and reviewed, NOTHING PUSHED
+
+**Status: done locally, awaiting the owner's decision on where to push.**
+
+Claude implemented gov-6, Oss reviewed it and returned PASS. Nothing has been
+pushed to any remote and no PR exists, by supervisor decision: pushing to
+`agents-collab` and opening a PR others will see is the owner's call. The work is
+safe on a local branch; nothing is lost by waiting.
+
+## What the owner needs to decide (one question)
+
+The gov-6 base commit `808236782bf83f10d36efae3b46c929680119a6a` is **not on the
+`github` remote**. The gov-1/gov-2 lineage it sits on exists only locally (the
+`origin` ref in this worktree is stale and no longer a configured remote). So a
+PR needs a target, and there are two live options:
+
+1. **Push `codex/seat-model-identity` (which contains the base commit) to
+   `github`, then open the draft PR with that as the base.** The PR diff is then
+   only the 3 gov-6 commits / 17 files below, which is reviewable. Costs one
+   extra branch on the shared repo.
+2. **Push my branch only and stop**, leaving the base choice for later.
+
+Targeting `github/main` was considered and ruled out on the merits: the branch is
+137 commits ahead of `github/main`, so the PR would show gov-1, gov-2 and OSS
+work as if it were this slice. Rebasing onto main is forbidden by the charter
+(main is 134 commits behind the base; rebasing would drop gov-1 and gov-2).
+
+Note that pushing the gov-6 branch at all publishes the same 137 ancestor commits
+either way, because they are its ancestors. Option 1 does not disclose more than
+option 2; it only adds a second branch ref.
+
+## Branch and commits
+
+Branch: `codex/gov-6-journal-to-temporal`
+Base:   `808236782bf83f10d36efae3b46c929680119a6a`
+
+| SHA | subject |
+|---|---|
+| `5a9f4af726234517924c27c79dd7f70f3d3ccece` | governess: make the journal a read model over Temporal history (gov-6) |
+| `7b84d478b8244158ab2913c8183c70a31e264381` | status: keep the pre-gov-6 handoff history instead of overwriting it |
+| `d0d9664e604c02f3cbdb25fa092e6c2486e50aed` | governess: cover the `loop governess history` CLI surface (gov-6) |
+
+## The 17 changed files
+
+- `PLAN.md`
+- `loop-fork/docs/RUNBOOK-LOOP.md`
+- `loop-fork/src/loop/dbos-replay-runtime.ts`
+- `loop-fork/src/loop/dbos-replay-worker.ts`
+- `loop-fork/src/loop/dbos-workflow.ts`
+- `loop-fork/src/loop/governess-beat-workflow.ts`
+- `loop-fork/src/loop/governess-journal-core.ts`
+- `loop-fork/src/loop/governess-journal.ts`
+- `loop-fork/src/loop/governess-replay.ts`
+- `loop-fork/src/loop/loop-orchestration-server.ts`
+- `loop-fork/src/loop/temporal-workflow-bundle.generated.ts`
+- `loop-fork/src/loop/temporal-workflow.ts`
+- `loop-fork/tests/fixtures/governess/beat-journal.golden.jsonl`
+- `loop-fork/tests/loop/dbos-workflow-port.test.ts`
+- `loop-fork/tests/loop/governess-beat-fixture.ts`
+- `loop-fork/tests/loop/governess-beat-workflow.test.ts`
+- `status.md`
+
+## Verification standing behind this
+
+- `bun run check`: clean, 916 files.
+- `bun run test:ci` (`env -u TMUX -u TMUX_PANE`): 112 files / 1960 pass / 0 fail /
+  0 skipped, real exit 0.
+- Oss independently re-derived both gates, the golden `payloadHash` values, and
+  the retired files' contents, and returned PASS (bridge message
+  `60aa924c-9d17-431f-8a5d-3cc044b2ce7d`). All three deviations approved.
+- Every named check was mutation-tested to confirm it fails on regression; the
+  table is in `PLAN.md`.
+
+## For whoever writes the PR body
+
+State explicitly that `loop governess history <runId>` reads the JSONL
+projection, not live Temporal history. That is correct for this slice — the
+cutover is gov-7, per the charter's non-goals — but a reviewer would otherwise
+expect end-to-end Temporal history reads. (Raised by Oss.)
+
+Also note that commit `d0d9664e` landed after the review request was sent; Oss's
+verification was performed at HEAD and its reported totals (1960 pass) include
+it, so the PASS covers all three commits.
+
+## One reconciled discrepancy, for the record
+
+Oss reported the retired files at 334/111/314 lines against my 326/103/306. Both
+are right: mine counted the original bodies before the 8-line RETIRED marker was
+prepended, Oss counted after. 326+8=334, 103+8=111, 306+8=314. No code was lost —
+that was the specific failure mode I was guarding against after rejecting the
+unsafe helper patch.
+
+---
+
 # status — gov-6: governess journal becomes a read model over Temporal history
 
 Branch `codex/gov-6-journal-to-temporal`, base `80823678`. Work in `loop-fork/`.
@@ -55,8 +149,11 @@ Branch `codex/gov-6-journal-to-temporal`, base `80823678`. Work in `loop-fork/`.
 
 ## Open items / next steps
 
-1. Ask Oss for implementation review (design was already approved).
-2. After review passes, open the draft PR against this branch.
+1. DONE — Oss implementation review returned PASS (message
+   `60aa924c-9d17-431f-8a5d-3cc044b2ce7d`), all three deviations approved.
+2. BLOCKED ON OWNER — pushing and opening the draft PR. See the HANDOFF section
+   at the top of this file for the single question that needs answering. Nothing
+   has been pushed.
 3. gov-7 (cutover) inherits: delete the retired files, move the surviving
    governess utility commands off the JSONL journal, point
    `loop governess history` at live Temporal history instead of the JSONL
