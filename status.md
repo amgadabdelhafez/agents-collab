@@ -1,4 +1,62 @@
-# status — D-007 mid-run delivery accountability
+# status — Governess helper-tier environment passthrough
+
+## Run 37 (2026-09-10) — fresh-loop handover prepared
+
+Charter SHA-256 matches. Git HEAD, branch, worktree, manifest, and hook journal
+match run assignment. World Model file and capsule hashes match, but required
+top-level repository commit field is absent, so indexed context is not used as
+authority.
+
+Source-derived inventory contains 37 helper-tier names: 35 safe passthroughs
+and two denied raw secrets, `LOOP_AU_PAIR_API_KEY` and
+`LOOP_UTILITY_API_KEY`. Existing Governess environment composition is an
+additive `passEnv()` list in `loop-fork/src/loop/tmux.ts`; existing launch test
+already reads the persisted JSON file in `loop-fork/tests/loop/tmux.test.ts`.
+
+Two bounded inspection packets returned `utility-unavailable` because
+`LOOP_NANNY_ENABLED=0`; native inspection supplied the same evidence. Edit
+routing then refused because this run binds Codex as sole writer.
+
+Implementation adds all 35 safe names to `governessEnv()` and explicitly denies
+the two raw API key names. Three tests cover representative presence/absence,
+raw-secret exclusion with key-file passthrough, and recursive source-derived
+coverage bound to actual output. Mutation removing the passthrough fails both
+required checks; output is in the run artifact.
+
+Proof against final bytes: certified tmux suite 112/0 with 585 expectations;
+`bun run check` passes
+918 files; diff check and whitespace numstat equality pass. Full CI passes when
+reads of only host-local `/Users/amgad/.usage-tracker/pricing-catalog.json` are
+denied. Plain CI fails one unchanged non-hermetic pricing assertion because that
+cache overrides bundled values. Repository verify passes lint, then stops on
+pre-existing whole-tree TypeScript errors outside touched files.
+
+Final sandbox-isolated `bun run test:ci` rerun after the last assertion change
+exited 0; every test file was green and tmux remained 112/0. No user cache file
+was changed. `bun install --frozen-lockfile --ignore-scripts` populated ignored
+`loop-fork/node_modules`; no tracked dependency file changed.
+
+Uncommitted scope to preserve:
+
+- `loop-fork/src/loop/tmux.ts`
+- `loop-fork/tests/loop/tmux.test.ts`
+- `specs/governess-helper-env-passthrough/{spec,plan,tasks,verify}.md`
+- `runs/governess-helper-env-passthrough/{mutation,task-log,decisions}.md`
+- `PLAN.md`
+- `status.md`
+
+Claude review request `bae96bde-42ea-43f8-8d2d-1a0e137785e9`, update
+`ab9a982e-4c6a-4822-9c6b-112234f45a6d`, and nudge
+`d7fed3e2-535e-48cc-8dad-99597bd9bff3` remain pending delivery. Governess
+handover decision `c2695271-f42d-49f0-b0b4-0caddde03b9f` requires stopping
+after this record. Next bounded action: pull bridge messages immediately, obtain
+Claude PASS/REVISE on final bytes, resolve only concrete findings, finalize
+`eval.json`, then stage explicit paths, commit, push, and open draft PR. Do not
+start another broad slice.
+
+---
+
+# Prior session history — D-007 mid-run delivery accountability
 
 ## Run 46 (2026-08-08) — patch corrected after peer REVISE
 

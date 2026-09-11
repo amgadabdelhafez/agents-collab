@@ -37,6 +37,25 @@ const makeTempHome = (): string => mkdtempSync(join(tmpdir(), "loop-tmux-"));
 const makeTempRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-tmux-run-"));
 
+const helperTierEnvNamesReadBySource = (directory: string): Set<string> => {
+  const names = new Set<string>();
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      for (const name of helperTierEnvNamesReadBySource(path)) {
+        names.add(name);
+      }
+    } else if (entry.isFile() && path.endsWith(".ts")) {
+      for (const match of readFileSync(path, "utf8").matchAll(
+        /\bLOOP_(?:AU_PAIR|UTILITY|NANNY|RECON)_[A-Z0-9_]+\b/g
+      )) {
+        names.add(match[0]);
+      }
+    }
+  }
+  return names;
+};
+
 test("paired production tmux command qualification rejects every foreign socket", () => {
   const socket = resolveTmuxSocket(
     { LOOP_TMUX_SOCKET: "/tmp/loop-bound.sock" },
@@ -263,6 +282,97 @@ const makePairedOptions = (overrides: Partial<Options> = {}): Options => ({
   proof: "verify with tests",
   review: "claudex",
   ...overrides,
+});
+
+test("governess env passes provided helper-tier settings and omits absent settings", () => {
+  const environment = tmuxInternals.governessEnv(
+    makePairedOptions(),
+    {
+      LOOP_AU_PAIR_MODEL: "openai/gpt-5-mini",
+      LOOP_AU_PAIR_URL: "http://switchyard.test/v1",
+      LOOP_NANNY_URL: "http://nanny.test/v1",
+      LOOP_UTILITY_ALLOWED_TIERS: "nanny,au-pair",
+    },
+    "/repo"
+  );
+
+  expect(environment).toContain("LOOP_AU_PAIR_URL=http://switchyard.test/v1");
+  expect(environment).toContain("LOOP_AU_PAIR_MODEL=openai/gpt-5-mini");
+  expect(environment).toContain("LOOP_NANNY_URL=http://nanny.test/v1");
+  expect(environment).toContain("LOOP_UTILITY_ALLOWED_TIERS=nanny,au-pair");
+  expect(
+    environment.some((entry) => entry.startsWith("LOOP_NANNY_MODEL="))
+  ).toBe(false);
+  expect(
+    environment.some((entry) => entry.startsWith("LOOP_UTILITY_MODEL="))
+  ).toBe(false);
+
+  const absentEnvironment = tmuxInternals.governessEnv(
+    makePairedOptions(),
+    {},
+    "/repo"
+  );
+  for (const key of [
+    "LOOP_AU_PAIR_URL",
+    "LOOP_AU_PAIR_MODEL",
+    "LOOP_NANNY_URL",
+    "LOOP_UTILITY_ALLOWED_TIERS",
+  ]) {
+    expect(absentEnvironment.some((entry) => entry.startsWith(`${key}=`))).toBe(
+      false
+    );
+  }
+});
+
+test("governess env never persists raw helper-tier API keys", () => {
+  const environment = tmuxInternals.governessEnv(
+    makePairedOptions(),
+    {
+      LOOP_AU_PAIR_API_KEY: "au-pair-raw-secret",
+      LOOP_AU_PAIR_API_KEY_FILE: "/run/secrets/au-pair",
+      LOOP_UTILITY_API_KEY: "utility-raw-secret",
+      LOOP_UTILITY_API_KEY_FILE: "/run/secrets/utility",
+    },
+    "/repo"
+  );
+
+  expect(environment).toContain(
+    "LOOP_AU_PAIR_API_KEY_FILE=/run/secrets/au-pair"
+  );
+  expect(environment).toContain(
+    "LOOP_UTILITY_API_KEY_FILE=/run/secrets/utility"
+  );
+  expect(JSON.stringify(environment)).not.toContain("au-pair-raw-secret");
+  expect(JSON.stringify(environment)).not.toContain("utility-raw-secret");
+  expect(
+    environment.some((entry) => entry.startsWith("LOOP_AU_PAIR_API_KEY="))
+  ).toBe(false);
+  expect(
+    environment.some((entry) => entry.startsWith("LOOP_UTILITY_API_KEY="))
+  ).toBe(false);
+});
+
+test("governess helper env policy covers every helper-tier variable read by source", () => {
+  const sourceNames = helperTierEnvNamesReadBySource(
+    join(import.meta.dir, "..", "..", "src")
+  );
+  const governedNames = new Set([
+    ...tmuxInternals.governessHelperEnvKeys,
+    ...tmuxInternals.governessHelperEnvSecretDenylist,
+  ]);
+
+  expect([...governedNames].sort()).toEqual([...sourceNames].sort());
+
+  const allHelperInputs = Object.fromEntries(
+    [...sourceNames].map((name) => [name, `value-for-${name}`])
+  );
+  const passedHelperNames = tmuxInternals
+    .governessEnv(makePairedOptions(), allHelperInputs, "/repo")
+    .map((entry) => entry.slice(0, entry.indexOf("=")))
+    .filter((name) => sourceNames.has(name));
+  expect(passedHelperNames.sort()).toEqual(
+    [...tmuxInternals.governessHelperEnvKeys].sort()
+  );
 });
 
 const withTempHomeRunManifest = async (

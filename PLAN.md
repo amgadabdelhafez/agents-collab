@@ -1,4 +1,32 @@
-# PLAN — D-007 mid-run delivery accountability
+# PLAN — Governess helper-tier environment passthrough
+
+## Run 37 (2026-09-10) — fresh-loop handover prepared
+
+Implement `specs/governess-helper-env-passthrough/`: derive all
+`LOOP_(AU_PAIR|UTILITY|NANNY|RECON)_*` names read under `loop-fork/src/`, pass
+all non-secret names through `governessEnv()`, and explicitly deny raw Au Pair
+and utility API keys. Add direct behavior, secret-exclusion, and source-derived
+coverage tests in `tmux.test.ts`.
+
+Verification: named mutation failures; single-file certified tmux suite;
+`bun run check`; `bun run test:ci`; equal normal and ignore-all-space numstats;
+repository verify; independent Claude review; eval; explicit-path commit; draft
+PR. No binary build/install, Switchyard change, or `routes.toml` change.
+
+Current atomic source/test change and local proof are complete. Governess ordered
+fresh-loop handover before peer review completed. Preserve all uncommitted paths
+listed in `status.md`. Next loop must pull bridge first, obtain Claude
+PASS/REVISE on final bytes, resolve only concrete findings, write passing eval,
+then stage explicit paths, commit, push, and open draft PR. Do not start another
+feature slice.
+
+World Model file and capsule hashes match, but top-level repository commit field
+is absent. It is not used as authority. Git HEAD and run manifest both bind
+`f4465102c5d67a4db8c23a77e2e0bf73e24f37aa` and the expected worktree/branch.
+
+---
+
+# Prior session history — D-007 mid-run delivery accountability
 
 ## Run 46 (2026-08-08) — bounded shipping-first cycle
 
