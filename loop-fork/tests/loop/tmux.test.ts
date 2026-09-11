@@ -1190,6 +1190,20 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
     "claude",
     "codex",
   ]);
+  const reviewerCharter = manifest.launchCharters?.claude;
+  const reviewerKickoff = loadedPrompts.find((prompt) =>
+    prompt.path.endsWith("claude-bootstrap.txt")
+  )?.content;
+  expect(reviewerCharter?.sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(reviewerKickoff).toContain(
+    `Expected SHA-256: ${reviewerCharter?.sha256}`
+  );
+  expect(reviewerKickoff).toContain(`shasum -a 256 '${reviewerCharter?.path}'`);
+  expect(reviewerKickoff).toContain("your own shell tool");
+  expect(reviewerKickoff).not.toMatch(
+    /\b(ask|have|get|request)\b[^.\n]*\b(human|user|operator|supervisor)\b/i
+  );
+  expect(reviewerKickoff).not.toMatch(/^\s*!\s*shasum/m);
   for (const binding of Object.values(manifest.launchCharters ?? {})) {
     expect(binding).toBeDefined();
     const content = readFileSync(binding?.path ?? "", "utf8");

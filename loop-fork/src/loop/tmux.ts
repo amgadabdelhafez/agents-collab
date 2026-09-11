@@ -650,7 +650,9 @@ const buildLaunchBootstrap = (
     `Loop bootstrap: you are the ${capitalize(agent)} agent for this run.`,
     `Your complete charter is stored at: ${charter.path}`,
     `Expected SHA-256: ${charter.sha256}`,
-    "Before doing any work, read the charter file as bytes and verify its SHA-256 matches exactly.",
+    "Before doing any work, verify the charter yourself with your own shell tool:",
+    `shasum -a 256 '${charter.path}'`,
+    "Compare the first field with the expected SHA-256 exactly. This check is yours alone; it never needs a person to type a command in your pane, so never wait on one.",
     "If the file is missing or the hash differs, fail closed: report the mismatch and do not proceed.",
     "After verification, read the complete charter and follow it as the authoritative run instructions.",
   ].join("\n");
