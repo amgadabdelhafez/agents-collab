@@ -11,7 +11,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import type {
   AgentSessionEvent,
   ToolDefinition,
@@ -1546,7 +1546,8 @@ const runLegacyUtilityConversation = async (input: {
 
 const providerSpecForTier = (
   config: UtilityRuntimeConfig,
-  tierId: UtilityExecutionTierId
+  tierId: UtilityExecutionTierId,
+  taskId?: string
 ): PiProviderSpec =>
   tierId === UTILITY_NANNY_TIER
     ? {
@@ -1559,6 +1560,7 @@ const providerSpecForTier = (
         endpoint: config.endpoint,
         model: config.model,
         provider: "au-pair",
+        ...(taskId ? { taskId } : {}),
         ...(openRouterProvider(config)?.sort
           ? { providerSort: openRouterProvider(config)?.sort }
           : {}),
@@ -1876,6 +1878,7 @@ const runPiUtilityConversation = async (input: {
   config: UtilityRuntimeConfig;
   cwd: string;
   jobId: string;
+  loopRunId: string;
   onProgress: (progress: UtilityConversationProgress) => void;
   request: UtilityRouteRequest;
   tierId: UtilityExecutionTierId;
@@ -1946,7 +1949,7 @@ const runPiUtilityConversation = async (input: {
   });
   const created = await createEphemeralPiAgent({
     cwd: input.cwd,
-    provider: providerSpecForTier(input.config, input.tierId),
+    provider: providerSpecForTier(input.config, input.tierId, input.loopRunId),
     systemPrompt: utilitySystemPrompt(
       utilityRoleName(input.tierId),
       input.config.helperCavemanMode
@@ -2095,6 +2098,7 @@ const runUtilityConversation = (input: {
   config: UtilityRuntimeConfig;
   cwd: string;
   jobId: string;
+  loopRunId: string;
   onProgress: (progress: UtilityConversationProgress) => void;
   request: UtilityRouteRequest;
   tierId: UtilityExecutionTierId;
@@ -2492,6 +2496,7 @@ export const runUtilityWorker = async (
       config: workerConfig,
       cwd: executionRoot,
       jobId,
+      loopRunId: basename(runDir),
       onProgress: (next) => {
         progress = next;
       },

@@ -1,4 +1,42 @@
-# PLAN — Governess helper-tier environment passthrough
+# PLAN — Switchyard routed task attribution
+
+## Run 38 (2026-09-12)
+
+Implement `specs/switchyard-cost-attribution/` only in `loop-fork/`. Add optional
+request task identity to `PiProviderSpec`, send `x-switchyard-intake-task` only through
+loopback gateway models, and bind utility Au Pair calls to their owning Loop run ID.
+Direct OpenRouter must remain header-free.
+
+Verify both branch tests plus mutations in both directions, each touched test file in
+single-file certification mode, `bun run check`, and `bun run test:ci` with 116 files.
+Then obtain Claude PASS, write eval, stage explicit paths, commit with attribution answer,
+push current branch, and open a draft PR. No Switchyard, harness-engineering, binary
+build/install, rate-table, or usage-scraper changes.
+
+Peer review corrected initial identity choice: utility `jobId` is not one of the charter's
+allowed task-header identities. Final design threads `basename(runDir)`, the Loop run ID,
+into the Pi conversation. Utility packet identity remains available in Loop records but is
+not sent to Switchyard.
+
+### Fresh-loop handover
+
+Governess ordered preparation before final peer verdict. Preserve all uncommitted paths
+listed in `status.md`. Claude's first verdict `47ec1e9e-28ca-4c44-a471-e96e72170556`
+was REVISE; both blockers and requested predicate negatives are fixed and re-proven.
+Updated review request `e5f21dc0-a2c4-4abc-878f-c4a47524e8df` received Claude PASS
+`3ad34517-c41f-4310-8d07-3620f1105705`. Eval is recorded; source/test bytes are unchanged
+since final verification and review. Remaining work: stage explicit
+paths, commit with required Model.headers justification and timestamp-window answer, push
+current branch, and create draft PR. Do not build/install Loop or run root verify script,
+because this run charter explicitly reserves binary build/install for supervisor.
+
+Record reviewer follow-ups without expanding this slice: run IDs collide across repos;
+the utility-runtime IPv6 classifier remains pre-existing debt; negative HTTP assertions
+could pin request counts; and run-ID threading lacks a dedicated integration assertion.
+
+---
+
+# Prior session history — Governess helper-tier environment passthrough
 
 ## Run 37 (2026-09-10) — fresh-loop handover prepared
 

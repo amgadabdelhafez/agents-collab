@@ -37,20 +37,30 @@ const sse = (parts: string[]): Response =>
   });
 
 const fakeProvider = (
-  responder: (body: Record<string, unknown>, call: number) => Response
-): { endpoint: string; requests: Record<string, unknown>[] } => {
+  responder: (body: Record<string, unknown>, call: number) => Response,
+  hostname = "127.0.0.1"
+): {
+  endpoint: string;
+  requestHeaders: Record<string, string>[];
+  requests: Record<string, unknown>[];
+} => {
+  const requestHeaders: Record<string, string>[] = [];
   const requests: Record<string, unknown>[] = [];
   const server = serve({
     fetch: async (request) => {
       const body = (await request.json()) as Record<string, unknown>;
+      requestHeaders.push(Object.fromEntries(request.headers.entries()));
       requests.push(body);
       return responder(body, requests.length);
     },
+    hostname,
     port: 0,
   });
   servers.push(server);
+  const endpointHost = hostname.includes(":") ? `[${hostname}]` : hostname;
   return {
-    endpoint: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+    endpoint: `http://${endpointHost}:${server.port}/v1/chat/completions`,
+    requestHeaders,
     requests,
   };
 };
@@ -78,6 +88,7 @@ describe("shared Pi runtime", () => {
       model: "z-ai/glm-5.2",
       provider: "au-pair",
       providerSort: "exacto",
+      taskId: "must-not-reach-openrouter",
     });
     expect(runtime.providerId).toBe("openrouter");
     expect(runtime.model).toMatchObject({
@@ -89,6 +100,60 @@ describe("shared Pi runtime", () => {
       (runtime.model.compat as { openRouterRouting?: { sort?: string } })
         .openRouterRouting?.sort
     ).toBe("exacto");
+    expect(runtime.model.headers?.["x-switchyard-intake-task"]).toBeUndefined();
+  });
+
+  test("scopes the task header to loopback Au Pair gateways", async () => {
+    const response = () =>
+      sse([
+        chunk({ role: "assistant" }),
+        chunk({ content: "OK" }),
+        chunk({}, "stop", {
+          completion_tokens: 1,
+          prompt_tokens: 1,
+          total_tokens: 2,
+        }),
+      ]);
+    const ipv6Gateway = fakeProvider(response, "::1");
+    const remoteGateway = fakeProvider(response, "0.0.0.0");
+    const nanny = fakeProvider(response);
+
+    for (const provider of [
+      {
+        endpoint: ipv6Gateway.endpoint,
+        provider: "au-pair" as const,
+        taskId: "loop-run-42",
+      },
+      {
+        endpoint: remoteGateway.endpoint,
+        provider: "au-pair" as const,
+        taskId: "must-not-reach-remote",
+      },
+      {
+        endpoint: nanny.endpoint,
+        provider: "nanny" as const,
+        taskId: "must-not-reach-nanny",
+      },
+    ]) {
+      await completePiText({
+        maxTokens: 10,
+        provider: { ...provider, model: "fake-model" },
+        systemPrompt: "Return OK.",
+        temperature: 0,
+        timeoutMs: 5000,
+        userPrompt: "Confirm.",
+      });
+    }
+
+    expect(ipv6Gateway.requestHeaders[0]?.["x-switchyard-intake-task"]).toBe(
+      "loop-run-42"
+    );
+    expect(
+      remoteGateway.requestHeaders[0]?.["x-switchyard-intake-task"]
+    ).toBeUndefined();
+    expect(
+      nanny.requestHeaders[0]?.["x-switchyard-intake-task"]
+    ).toBeUndefined();
   });
 
   test("runs a no-tools Nanny completion with normalized usage", async () => {
@@ -152,6 +217,7 @@ describe("shared Pi runtime", () => {
         endpoint: provider.endpoint,
         model: "fake-glm",
         provider: "au-pair",
+        taskId: "utility-task-123",
       },
       systemPrompt: "Return a marker.",
       temperature: 0,
@@ -165,6 +231,9 @@ describe("shared Pi runtime", () => {
       usage: { totalTokens: 10 },
     });
     expect(provider.requests).toHaveLength(1);
+    expect(provider.requestHeaders[0]?.["x-switchyard-intake-task"]).toBe(
+      "utility-task-123"
+    );
     expect(provider.requests[0]).not.toHaveProperty("chat_template_kwargs");
   });
 

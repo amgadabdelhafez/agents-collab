@@ -27,6 +27,7 @@ export interface PiProviderSpec {
   model: string;
   provider: "nanny" | "au-pair";
   providerSort?: "price" | "throughput" | "latency" | "exacto";
+  taskId?: string;
 }
 
 export interface PiUsage {
@@ -60,6 +61,20 @@ const normalizedBaseUrl = (endpoint: string): string => {
 
 const isOpenRouter = (endpoint: string): boolean =>
   normalizedBaseUrl(endpoint) === OPENROUTER_BASE_URL;
+
+const isLoopbackEndpoint = (endpoint: string): boolean => {
+  try {
+    const host = new URL(endpoint).hostname;
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "[::1]"
+    );
+  } catch {
+    return false;
+  }
+};
 
 export const normalizePiUsage = (usage: Usage): PiUsage => ({
   cachedInputTokens: usage.cacheRead,
@@ -160,6 +175,13 @@ export const createPiSessionRuntime = async (
           spec.maxTokens ??
           (spec.provider === "nanny" ? NANNY_MAX_TOKENS : 32_768),
         name: spec.model,
+        ...(spec.provider === "au-pair" &&
+        spec.taskId &&
+        isLoopbackEndpoint(spec.endpoint)
+          ? {
+              headers: { "x-switchyard-intake-task": spec.taskId },
+            }
+          : {}),
         // Pi only emits qwen-chat-template controls for reasoning-capable
         // models. Nanny sessions select `off` below, which makes the actual
         // request carry chat_template_kwargs.enable_thinking=false instead of

@@ -1,0 +1,39 @@
+{
+  "task_id": "switchyard-cost-attribution",
+  "feature": "switchyard-cost-attribution",
+  "timestamp": "2026-09-12T19:24:00Z",
+  "evaluator": "claude-peer-review-with-codex-executed-proofs",
+  "verdict": "pass",
+  "scope": "Loop Pi gateway request header; not end-to-end harness spend attribution",
+  "baseline_failures": [],
+  "base_commit": "d054b24c30f18061a4350661c625dba35d7ff12e",
+  "peer_review": {
+    "reviewer": "claude",
+    "decision_id": "3ad34517-c41f-4310-8d07-3620f1105705",
+    "verdict": "pass",
+    "independently_reran_checks": false
+  },
+  "source_sha256": {
+    "loop-fork/src/loop/pi-runtime.ts": "d25b37976b8c1dae1f751d9780132df9db6f9eb022384c7f04aefa0b1ef15577",
+    "loop-fork/src/loop/utility-runtime.ts": "999d540073a2437b433df051a5d7955bf363664b3fb6d3e21a194fa4ce212525",
+    "loop-fork/tests/loop/pi-runtime.test.ts": "9c618a584f1451fa9fb39fbbcefbbc8e76f5c23f9b6e88705a51b813b3495a4c"
+  },
+  "checks": {
+    "focused_certified_test": { "status": "pass", "passed": 6, "failed": 0, "expectations": 24 },
+    "gateway_drop_mutation": { "status": "pass", "expected_failures": 2 },
+    "direct_openrouter_leak_mutation": { "status": "pass", "expected_failures": 1 },
+    "mutations_restored": true,
+    "bun_run_check": { "status": "pass", "files": 918, "exit_code": 0 },
+    "bun_run_test_ci": { "status": "pass", "test_files": 116, "exit_code": 0, "failed": 0 },
+    "diff_check": { "status": "pass", "exit_code": 0 },
+    "live_log": { "rows": 14, "cost_fields": 0, "populated_task_identifiers": 0 },
+    "root_verify": "not run: charter reserves binary build/install for supervisor"
+  },
+  "known_limitations": [
+    "Bare Loop run IDs can collide across repositories; global ingest needs repository/task binding.",
+    "Pre-existing utility-runtime IPv6 endpoint classification can block production routing before Pi.",
+    "Static gateway pricing remains zero; this slice does not repair Loop usage cost.",
+    "No dedicated integration assertion pins run-ID threading; direct OpenRouter absence is model-level.",
+    "Supervisor must independently verify, merge, build, and install."
+  ]
+}
