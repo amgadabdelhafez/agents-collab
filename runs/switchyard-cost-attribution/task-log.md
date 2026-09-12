@@ -19,3 +19,10 @@
   null and tier empty throughout; fallback_reason is optional in these rows.
 - Corrected stale jobId wording in verification specification and direct-leak mutation
   count; no source/test changes after PASS.
+- Committed `f56ba34d571a125b79176ed375c580c7b79f8692` with explicit paths and all charter
+  commit-message answers; pushed `origin/claude/switchyard-intake-task-header`.
+- Submitted via Forgejo AGit with `WIP:` title; server returned PR #2 at
+  https://git.home.lab/amgad/agents-collab/pulls/2. Git readback confirmed branch and PR
+  head equal the implementation commit; remote main remains the original base.
+- Supervisor handover `c7a98043-8a29-4a88-b700-ad7dc0e1c683` requests independent proof
+  and draft-state confirmation before merge/build/install.

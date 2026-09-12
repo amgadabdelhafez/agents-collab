@@ -5,4 +5,4 @@
 - [x] Add both branch tests.
 - [x] Capture mutation and verification evidence.
 - [x] Obtain peer PASS and create eval.
-- [ ] Commit, push, and open draft PR.
+- [x] Commit, push, and submit WIP PR #2 (supervisor to confirm private draft-state readback).

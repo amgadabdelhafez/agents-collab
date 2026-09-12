@@ -1,8 +1,8 @@
 # status — Switchyard routed task attribution
 
-## Run 38 (2026-09-12) — active
+## Run 38 (2026-09-12) — implementation delivered
 
-Charter hash matches. HEAD and `origin/main` both equal
+Charter hash matches. Starting HEAD and `origin/main` both equaled
 `d054b24c30f18061a4350661c625dba35d7ff12e`; branch is
 `claude/switchyard-intake-task-header`. World Model file and capsule hashes match.
 Bootstrap lacks its own repository-commit field, so indexed context is not authority;
@@ -22,21 +22,24 @@ Claude review request `79ae8d84-2d92-49e1-ad2e-da66d0245a43` returned REVISE on 
 and IPv6 handling. Both are fixed: task header uses Loop run ID, `[::1]` is covered, and
 actual HTTP tests now cover IPv6 gateway presence plus non-loopback Au Pair and loopback
 Nanny absence. Revised mutations fail as intended and full proof passed. Claude final PASS
-`3ad34517-c41f-4310-8d07-3620f1105705` is received and eval is recorded. Next: stage
-explicit paths, commit, push, and open draft PR.
+`3ad34517-c41f-4310-8d07-3620f1105705` is received and eval is recorded. Implementation
+commit `f56ba34d571a125b79176ed375c580c7b79f8692` is pushed. WIP PR:
+https://git.home.lab/amgad/agents-collab/pulls/2.
 
 ### Fresh-loop handover ordered by Governess
 
-Current branch remains `claude/switchyard-intake-task-header`; HEAD remains base commit
-`d054b24c30f18061a4350661c625dba35d7ff12e`. Nothing is staged, committed, or pushed.
+Current branch remains `claude/switchyard-intake-task-header`. Remote branch and PR head
+both matched implementation commit `f56ba34d571a125b79176ed375c580c7b79f8692` at delivery;
+remote main remains `d054b24c30f18061a4350661c625dba35d7ff12e`. A documentation-only
+delivery record follows the implementation commit.
 
-Uncommitted scope to preserve:
+Committed task scope:
 
 - `loop-fork/src/loop/pi-runtime.ts`
 - `loop-fork/src/loop/utility-runtime.ts`
 - `loop-fork/tests/loop/pi-runtime.test.ts`
 - `specs/switchyard-cost-attribution/{spec,plan,tasks,verify}.md`
-- `runs/switchyard-cost-attribution/{task-log,decisions,mutation}.md`
+- `runs/switchyard-cost-attribution/{task-log,decisions,mutation}.md` and `eval.json`
 - `PLAN.md`
 - `status.md`
 
@@ -63,7 +66,10 @@ files and exits 0; `git diff --check` exits 0. Updated Claude review request
 `3ad34517-c41f-4310-8d07-3620f1105705`. Claude inspected code but did not rerun checks;
 the supervisor should independently verify before merge. Eval records that distinction.
 
-Next bounded action: commit the explicit task scope, push to origin, and create a draft PR.
+Next bounded action belongs to supervisor: independently verify, confirm WIP/draft state,
+then merge/build/install. AGit submission used a `WIP:` title; anonymous API readback is
+unavailable for this private repository. Supervisor handover is
+`c7a98043-8a29-4a88-b700-ad7dc0e1c683`.
 
 Reviewer follow-ups retained without source changes: run IDs are per-repo and can collide
 in the global log; the pre-existing utility-runtime IPv6 predicate can prevent routing to
