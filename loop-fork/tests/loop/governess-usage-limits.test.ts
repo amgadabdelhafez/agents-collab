@@ -213,6 +213,9 @@ test("current Claude and Codex models use catalog replacement-value pricing", as
   const result = await readUsageTrackerLimits(
     {
       configPath: noConfig,
+      // Pin the cache path so a host-local ~/.usage-tracker catalog cannot
+      // override the bundled prices this test asserts.
+      pricingCatalogPath: noConfig,
       secret: "secret",
       url: "http://tracker.local",
     },
@@ -230,6 +233,7 @@ test("current Claude and Codex models use catalog replacement-value pricing", as
   if (!pricing) {
     throw new Error("expected pricing snapshot");
   }
+  expect(pricing.source).toBe("governess-bundled");
 
   const claude = usage("claude-opus-5");
   claude.cacheCreateTokens = 1_000_000;
