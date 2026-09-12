@@ -2,9 +2,11 @@
 
 ## Problem
 
-Switchyard routing rows contain token counts but no cost field, and current rows leave
-`task` empty because Loop does not send `x-switchyard-intake-task`. Timestamp windows
-cannot reliably attribute concurrent routed calls to one task.
+The live log inspected on 2026-09-12 contains 14 rows with token counts but no cost
+field. `task`, `trial_id`, and `session_id` are null throughout, `tier` is an empty
+string, and `fallback_reason` is absent in some rows. Loop does not yet send
+`x-switchyard-intake-task`; timestamp windows cannot reliably attribute concurrent
+routed calls to one task.
 
 ## Scope
 

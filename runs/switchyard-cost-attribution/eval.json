@@ -26,7 +26,16 @@
     "bun_run_check": { "status": "pass", "files": 918, "exit_code": 0 },
     "bun_run_test_ci": { "status": "pass", "test_files": 116, "exit_code": 0, "failed": 0 },
     "diff_check": { "status": "pass", "exit_code": 0 },
-    "live_log": { "rows": 14, "cost_fields": 0, "populated_task_identifiers": 0 },
+    "live_log": {
+      "rows": 14,
+      "cost_fields": 0,
+      "populated_task_identifiers": 0,
+      "task": null,
+      "trial_id": null,
+      "session_id": null,
+      "tier": "",
+      "fallback_reason_present_in_every_row": false
+    },
     "root_verify": "not run: charter reserves binary build/install for supervisor"
   },
   "known_limitations": [
