@@ -23,6 +23,15 @@ writer. Next: preserve concrete commit/proofs, obtain independent Claude PASS,
 resolve findings, then mark eval passing and create draft PR. Supervisor owns
 merge/build/install. Never treat blocked review as approval.
 
+Implementation commit `95644c6ca573eb7370a4d96c1b2e2b15da35ed98` is pushed to
+`origin/claude/gov3-cost-from-routing-log`. Remote verification confirms main
+remains `dde602157cd42c67e2047db7c531836ed61df714`. Exact-source review request
+`3722d10b-f3ce-4e1d-97c5-ffeb6e5dc099` is pending with Claude; supervisor
+handover `0e6d9c11-df58-4369-8c3b-e8c6792247ab` names the capability blocker.
+No draft PR exists. All requested implementation/proof is preserved; only
+independent review, any resulting fixes, passing eval and draft PR remain.
+This documentation-only handoff does not change the certified source/test bytes.
+
 ---
 
 # status — Switchyard routed task attribution
