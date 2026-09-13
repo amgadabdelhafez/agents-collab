@@ -1,4 +1,89 @@
-# status — Governess helper-tier environment passthrough
+# status — Switchyard routed task attribution
+
+## Run 38 (2026-09-12) — implementation delivered
+
+Charter hash matches. Starting HEAD and `origin/main` both equaled
+`d054b24c30f18061a4350661c625dba35d7ff12e`; branch is
+`claude/switchyard-intake-task-header`. World Model file and capsule hashes match.
+Bootstrap lacks its own repository-commit field, so indexed context is not authority;
+run manifest binds the same commit, repo, worktree, and branch.
+
+Measured-truth design accepted: cost is absent from Switchyard rows, so this half only
+supplies request identity. Peer review rejected utility `jobId` because the charter allows
+only harness task ID or Loop run ID. Final code threads `basename(runDir)` as Loop run ID
+into Pi provider construction. Planned code scope is `pi-runtime.ts`,
+`utility-runtime.ts`, and `pi-runtime.test.ts`. Two required inspection packets settled
+`utility-unavailable` because `LOOP_NANNY_ENABLED=0`; native inspection continued.
+
+Implementation is complete. Final Pi runtime tests pass 6/0 with 24 expectations.
+Both required mutations fail in the intended direction and are reverted. `bun run check`
+passes 918 files; `bun run test:ci` pre-counted 116 files and exited 0; diff check passes.
+Claude review request `79ae8d84-2d92-49e1-ad2e-da66d0245a43` returned REVISE on identity
+and IPv6 handling. Both are fixed: task header uses Loop run ID, `[::1]` is covered, and
+actual HTTP tests now cover IPv6 gateway presence plus non-loopback Au Pair and loopback
+Nanny absence. Revised mutations fail as intended and full proof passed. Claude final PASS
+`3ad34517-c41f-4310-8d07-3620f1105705` is received and eval is recorded. Implementation
+commit `f56ba34d571a125b79176ed375c580c7b79f8692` is pushed. WIP PR:
+https://git.home.lab/amgad/agents-collab/pulls/2.
+
+### Fresh-loop handover ordered by Governess
+
+Current branch remains `claude/switchyard-intake-task-header`. Remote branch and PR head
+both matched implementation commit `f56ba34d571a125b79176ed375c580c7b79f8692` at delivery;
+remote main remains `d054b24c30f18061a4350661c625dba35d7ff12e`. A documentation-only
+delivery record follows the implementation commit.
+
+Committed task scope:
+
+- `loop-fork/src/loop/pi-runtime.ts`
+- `loop-fork/src/loop/utility-runtime.ts`
+- `loop-fork/tests/loop/pi-runtime.test.ts`
+- `specs/switchyard-cost-attribution/{spec,plan,tasks,verify}.md`
+- `runs/switchyard-cost-attribution/{task-log,decisions,mutation}.md` and `eval.json`
+- `PLAN.md`
+- `status.md`
+
+Resolved first-review findings:
+
+- B1: `input.jobId` is no longer sent. `runUtilityWorker` derives Loop run ID with
+  `basename(runDir)`, threads it through Pi conversation input, and passes it as
+  `PiProviderSpec.taskId` only for Au Pair.
+- B2: loopback recognition accepts both `::1` and `[::1]`; actual Bun IPv6 request test
+  proves header delivery.
+- N1: direct OpenRouter branch has no provider-header assignment; it returns catalog model
+  unchanged or with only `compat.openRouterRouting` overridden. Test pins model header
+  absence.
+- N2: actual HTTP negatives cover non-loopback custom Au Pair (`0.0.0.0`) and loopback
+  Nanny with task ID.
+- N3: decision record and planned commit message answer no, timestamp windows cannot
+  reliably attribute concurrent rows whose task/trial/session/tier are all empty.
+
+Final proof after fixes: focused certified `pi-runtime.test.ts` 6 pass, 0 fail, 24
+expectations; gateway-drop mutation 4 pass/2 fail; direct-leak mutation 5 pass/1 fail;
+mutations reverted; `bun run check` passes 918 files; `bun run test:ci` pre-counts 116
+files and exits 0; `git diff --check` exits 0. Updated Claude review request
+`e5f21dc0-a2c4-4abc-878f-c4a47524e8df` received PASS
+`3ad34517-c41f-4310-8d07-3620f1105705`. Claude inspected code but did not rerun checks;
+the supervisor should independently verify before merge. Eval records that distinction.
+
+Next bounded action belongs to supervisor: independently verify, confirm WIP/draft state,
+then merge/build/install. AGit submission used a `WIP:` title; anonymous API readback is
+unavailable for this private repository. Supervisor handover is
+`c7a98043-8a29-4a88-b700-ad7dc0e1c683`.
+
+Reviewer follow-ups retained without source changes: run IDs are per-repo and can collide
+in the global log; the pre-existing utility-runtime IPv6 predicate can prevent routing to
+the tested Pi IPv6 path; negative HTTP assertions lack explicit request-count assertions;
+and no dedicated integration test pins Loop run ID threading. No static cost rates were
+added, so Loop's Pi usage cost stays zero. These are not part of this bounded header PASS.
+
+Independently inspected the live log after review: 14 rows; task/trial_id/session_id null
+and tier empty throughout; no cost field; fallback_reason is absent in some rows. No
+timestamp-only join can uniquely identify the owning task from these fields.
+
+---
+
+# Prior session history — Governess helper-tier environment passthrough
 
 ## Run 37 (2026-09-10) — fresh-loop handover prepared
 
