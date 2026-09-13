@@ -1,0 +1,17 @@
+task_id: gov-3-cost-from-routing-log
+dimension: unit
+attempt: 001
+started_at: 2026-09-13T01:55:53Z
+command: env LOOP_TEST_CERTIFICATION_MODE=single-file bun test tests/loop/governess-usage.test.ts
+--- output ---
+bun test v1.3.13-canary.1 (903015a2)
+
+ 31 pass
+ 0 fail
+ 158 expect() calls
+Ran 31 tests across 1 file. [719.00ms]
+
+--- result ---
+command_exit_code: 0
+exit_code: 0
+ended_at: 2026-09-13T01:55:54Z

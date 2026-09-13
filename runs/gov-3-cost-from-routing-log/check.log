@@ -1,0 +1,7 @@
+$ ultracite check
+Checked 923 files in 331ms. No fixes applied.
+
+Final check after Harness evidence formatting:
+$ ultracite check
+Checked 926 files in 400ms. No fixes applied.
+exit 0

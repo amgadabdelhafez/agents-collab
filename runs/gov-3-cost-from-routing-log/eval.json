@@ -1,0 +1,53 @@
+{
+  "task_id": "gov-3-cost-from-routing-log",
+  "status": "blocked",
+  "reason": "Independent Claude review unavailable: reviewer seat cannot run its required charter SHA-256 check without a shell tool. No PR opened.",
+  "base_commit": "dde602157cd42c67e2047db7c531836ed61df714",
+  "checks": {
+    "derivation_known_usd": "pass",
+    "unknown_model_closed": "pass",
+    "unattributed_excluded": "pass",
+    "subscription_source_preserved": "pass",
+    "price_cache_closed": "pass",
+    "cli_cost_sources": "pass",
+    "mutation": "pass: broken 0 pass/1 fail, restored 1 pass/0 fail",
+    "real_run": "pass: run38 unknown routed and total, 14 exclusions, sourced subscription subtotal",
+    "focused": {
+      "pass": 31,
+      "fail": 0,
+      "files": 1
+    },
+    "check": "pass, 926 files after Harness artifacts",
+    "test_ci": {
+      "pass": 1993,
+      "fail": 0,
+      "expected_files": 116,
+      "completed_files": 116
+    },
+    "typecheck": "baseline errors unchanged, logs byte-identical; not clean"
+  },
+  "peer_review": {
+    "status": "blocked",
+    "reviewer": "claude",
+    "verdict": null,
+    "bridge_messages": [
+      "bf5da315-d00a-4a51-99a1-4c3f899623a7",
+      "b9e8a2e8-9703-466a-afca-05ae4be5f3da"
+    ]
+  },
+  "baseline_failures": [
+    {
+      "check": "extra-typecheck",
+      "reason": "12 pre-existing errors reproduced identically on clean dde60215 archive and current sources",
+      "artifacts": [
+        "typecheck-base.log",
+        "typecheck-current.log"
+      ]
+    }
+  ],
+  "ui": {
+    "screenshots_required": false,
+    "reason": "CLI only"
+  },
+  "build_install": "not run: prohibited by charter"
+}

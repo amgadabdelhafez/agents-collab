@@ -1,0 +1,73 @@
+# Real run proof
+
+Source invocation (no binary build/install): `cd loop-fork && bun run src/cli.ts governess cost 38`. Exit 1 is intentional incomplete evidence. Run directory is existing machine run `/Users/amgad/.loop/runs/agents-collab-fa87e8608224/38`. No live log or manifest was changed.
+
+```text
+Run 38: unknown (incomplete); known subtotal $16.10185400 [source: sum of labelled routed derivation and subscription estimates; not an invoice]
+Run directory: /Users/amgad/.loop/runs/agents-collab-fa87e8608224/38
+Task 38: unknown; known subtotal $16.10185400 [source: sum of labelled routed derivation and subscription estimates; not an invoice; identity: x-switchyard-intake-task = Loop run ID; utility-job breakdown unavailable]
+Routed: unknown; matched subtotal unknown [source: /Users/amgad/.config/loop/switchyard/routing.jsonl; method: derived-current-public-standard-rates; prompt * promptRate + completion * completionRate; not provider-billed USD]
+Routing rows: matched=0, unattributed excluded=14, other task excluded=0 [source: /Users/amgad/.config/loop/switchyard/routing.jsonl; whole-log counts, unowned rows never charged]
+Routed unavailable: No attributable routing rows; missing task headers cannot establish zero spend or ownership.
+claude: unknown [source: /Users/amgad/.usage-tracker/pricing-catalog.json; method: unpriced; tokens=3324451, token source: Claude Code session transcript via readAgentUsage; session=f3c48c39-24c5-416b-9e49-bf84853487cc; model=claude-opus-5] Subscription transcript or pricing coverage unavailable; not zero spend.
+codex: $16.10185400 [source: /Users/amgad/.usage-tracker/pricing-catalog.json; method: credit-estimate; tokens=11456699, token source: Codex rollout via readAgentUsage (run-scoped home, existing transcript fallback); session=01a09700-893b-7b31-861c-e66962b4e64a; model=gpt-6-astra]
+```
+
+JSON invocation adds `--json`, also exits 1:
+
+```json
+{
+  "runId": "38",
+  "runDir": "/Users/amgad/.loop/runs/agents-collab-fa87e8608224/38",
+  "status": "incomplete",
+  "costUsd": null,
+  "knownSubtotalUsd": 16.101854,
+  "source": "sum of labelled routed derivation and subscription estimates; not an invoice",
+  "tasks": [
+    {
+      "task": "38",
+      "identitySource": "x-switchyard-intake-task = Loop run ID; utility-job breakdown unavailable",
+      "costUsd": null,
+      "knownSubtotalUsd": 16.101854,
+      "source": "sum of labelled routed derivation and subscription estimates; not an invoice",
+      "routed": {
+        "costUsd": null,
+        "knownSubtotalUsd": null,
+        "method": "derived-current-public-standard-rates; prompt * promptRate + completion * completionRate; not provider-billed USD",
+        "source": "/Users/amgad/.config/loop/switchyard/routing.jsonl",
+        "matchedRows": 0,
+        "otherTaskRows": 0,
+        "unattributedRows": 14,
+        "countsSource": "/Users/amgad/.config/loop/switchyard/routing.jsonl; whole-log counts, unowned rows never charged",
+        "models": [],
+        "priceCache": null,
+        "reason": "No attributable routing rows; missing task headers cannot establish zero spend or ownership."
+      },
+      "subscriptions": [
+        {
+          "agent": "claude",
+          "costUsd": null,
+          "method": "unpriced",
+          "source": "/Users/amgad/.usage-tracker/pricing-catalog.json",
+          "tokenSource": "Claude Code session transcript via readAgentUsage",
+          "sessionRef": "f3c48c39-24c5-416b-9e49-bf84853487cc",
+          "model": "claude-opus-5",
+          "totalTokens": 3324451,
+          "reason": "Subscription transcript or pricing coverage unavailable; not zero spend."
+        },
+        {
+          "agent": "codex",
+          "costUsd": 16.101854,
+          "method": "credit-estimate",
+          "source": "/Users/amgad/.usage-tracker/pricing-catalog.json",
+          "tokenSource": "Codex rollout via readAgentUsage (run-scoped home, existing transcript fallback)",
+          "sessionRef": "01a09700-893b-7b31-861c-e66962b4e64a",
+          "model": "gpt-6-astra",
+          "totalTokens": 11456699,
+          "reason": null
+        }
+      ]
+    }
+  ]
+}
+```

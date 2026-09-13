@@ -1,0 +1,16 @@
+src/loop/bridge-utility.ts(1184,5): error TS2739: Type '{ state: string; taskId: string; }' is missing the following properties from type 'Promise<unknown>': then, catch, finally, [Symbol.toStringTag]
+src/loop/bridge-utility.ts(1187,5): error TS2739: Type '{ requestId: string; state: string; }' is missing the following properties from type 'Promise<unknown>': then, catch, finally, [Symbol.toStringTag]
+src/loop/bridge-utility.ts(1190,5): error TS2739: Type '{}' is missing the following properties from type 'Promise<unknown>': then, catch, finally, [Symbol.toStringTag]
+src/loop/bridge-utility.ts(1204,7): error TS2353: Object literal may only specify known properties, and 'decision' does not exist in type 'Promise<unknown>'.
+src/loop/bridge-utility.ts(1229,5): error TS2353: Object literal may only specify known properties, and 'application' does not exist in type 'Promise<unknown>'.
+src/loop/governess.ts(6438,5): error TS2741: Property 'seatVerdict' is missing in type '{ waitingAsk: string; waitingConfirmed: boolean; tmuxControl?: GovernessTmuxControlState; exitControl: ExitControlState; governessEpoch: number; ... 21 more ...; bothIdleSince: number; }' but required in type 'GovernessRunState'.
+src/loop/launch-reservation.ts(257,16): error TS2551: Property 'workspaceReleaseKind' does not exist on type 'RunManifest'. Did you mean 'workspaceReleasedAt'?
+src/loop/run-state.ts(1462,22): error TS2344: Type '"workspaceReleaseKind"' does not satisfy the constraint 'keyof RunManifest'.
+src/loop/seat-signals.ts(426,18): error TS2304: Cannot find name 'CatalogLookup'.
+src/loop/supervisor-orchestration-http.ts(222,9): error TS2322: Type 'Record<string, unknown>' is not assignable to type 'JsonObject'.
+  'string' index signatures are incompatible.
+    Type 'unknown' is not assignable to type 'JsonValue'.
+src/loop/utility-runtime.ts(2831,36): error TS2339: Property 'message' does not exist on type 'BridgeEvent'.
+  Property 'message' does not exist on type 'BridgeNotification'.
+src/loop/utility-runtime.ts(2832,16): error TS2339: Property 'artifactRefs' does not exist on type 'BridgeEvent'.
+  Property 'artifactRefs' does not exist on type 'BridgeAck'.
