@@ -644,8 +644,35 @@ const foldUnconsumedHooks = (
       // Without hook evidence the recorded episode stands unchanged.
       fallback: { alive: true, evidence: "", state: episode.state },
       hooks,
+      openAskSequences: openPublicAskSequences(runDir, agent, episode.epoch),
     }) ?? episode
   );
+};
+
+/**
+ * Sequences of the agent's open public asks in one epoch. The Governess holds
+ * an ask's episode while the agent polls for its answer; an unreadable
+ * journal holds nothing.
+ */
+export const openPublicAskSequences = (
+  runDir: string,
+  agent: Agent,
+  epoch: number
+): ReadonlySet<number> => {
+  try {
+    return new Set(
+      readPublicAskRecords(runDir)
+        .filter(
+          (record) =>
+            record.state === "open" &&
+            record.binding.agent === agent &&
+            record.binding.epoch === epoch
+        )
+        .map((record) => record.binding.sequence)
+    );
+  } catch {
+    return new Set();
+  }
 };
 
 const validateInput = (input: PublicAskPublishInput): void => {

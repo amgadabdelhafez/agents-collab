@@ -757,6 +757,83 @@ test("episode sequence depends on the hook stream, not on tick timing", () => {
   expect(lifecycleEventFromEvidence(oneTick, input(stream))).toBe(oneTick);
 });
 
+test("an open public ask holds its episode while the agent polls for the answer", () => {
+  const hook = (event: string, sequence: number) => ({
+    agent: "claude" as const,
+    event,
+    eventId: `${event}-${sequence}`,
+    sequence,
+    source: "agent-hook" as const,
+    ts: `2026-07-25T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+  });
+  const fallback = {
+    alive: true,
+    evidence: "0:claude",
+    state: "input-required" as const,
+  };
+  const at = "2026-07-25T00:01:00.000Z";
+  const idle = lifecycleEventFromEvidence(undefined, {
+    agent: "claude",
+    at,
+    epoch: 7,
+    fallback,
+    hooks: [hook("Stop", 1)],
+  });
+  expect(idle).toMatchObject({ sequence: 1, sourceSequence: 1 });
+  const polls = [
+    hook("Stop", 1),
+    hook("UserPromptSubmit", 2),
+    hook("PreToolUse", 3),
+    hook("Stop", 4),
+    hook("UserPromptSubmit", 5),
+    hook("Stop", 6),
+  ];
+  const held = lifecycleEventFromEvidence(idle, {
+    agent: "claude",
+    at,
+    epoch: 7,
+    fallback,
+    hooks: polls,
+    openAskSequences: new Set([1]),
+  });
+  expect(held).toMatchObject({
+    sequence: 1,
+    sourceSequence: 5,
+    state: "input-required",
+  });
+  // Once the ask resolves, only new turns open episodes.
+  const afterAnswer = lifecycleEventFromEvidence(held, {
+    agent: "claude",
+    at,
+    epoch: 7,
+    fallback,
+    hooks: [...polls, hook("UserPromptSubmit", 7)],
+    openAskSequences: new Set(),
+  });
+  expect(afterAnswer).toMatchObject({ sequence: 2, state: "working" });
+  // An ask bound to another episode holds nothing, and failure always moves.
+  expect(
+    lifecycleEventFromEvidence(idle, {
+      agent: "claude",
+      at,
+      epoch: 7,
+      fallback,
+      hooks: polls,
+      openAskSequences: new Set([9]),
+    })
+  ).toMatchObject({ sequence: 5 });
+  expect(
+    lifecycleEventFromEvidence(idle, {
+      agent: "claude",
+      at,
+      epoch: 7,
+      fallback,
+      hooks: [hook("Stop", 1), { ...hook("PostToolUse", 2), error: true }],
+      openAskSequences: new Set([1]),
+    })
+  ).toMatchObject({ sequence: 2, state: "failed" });
+});
+
 test("repeated evidence for the same state keeps the episode, so asks and ids stay current", () => {
   const hook = (
     event: string,

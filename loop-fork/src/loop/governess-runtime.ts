@@ -143,6 +143,8 @@ export const lifecycleEventFromEvidence = (
     epoch: number;
     fallback: GovernessRuntimeObservation;
     hooks: HookEvent[];
+    // Sequences of this agent's open public asks in this epoch.
+    openAskSequences?: ReadonlySet<number>;
   }
 ): GovernessLifecycleEvent | undefined => {
   const hooked = input.hooks.filter((event) => hookState(event) !== undefined);
@@ -178,6 +180,7 @@ const lifecycleEventFromHook = (
     at: string;
     epoch: number;
     fallback: GovernessRuntimeObservation;
+    openAskSequences?: ReadonlySet<number>;
   },
   hook: HookEvent | undefined
 ): GovernessLifecycleEvent | undefined => {
@@ -197,6 +200,21 @@ const lifecycleEventFromHook = (
   // stopped, so no answer could ever be routed.
   if (previous?.epoch === input.epoch && previous.state === state) {
     return previous;
+  }
+  // An agent waiting on its own open public ask polls for the answer, and each
+  // poll is a working turn ending in Stop. Those turns are part of waiting, so
+  // they keep the ask's episode (consuming the hooks) until the ask resolves
+  // or the agent reaches any state other than working or input-required.
+  if (
+    previous?.epoch === input.epoch &&
+    previous.state === "input-required" &&
+    (state === "working" || state === "input-required") &&
+    input.openAskSequences?.has(previous.sequence)
+  ) {
+    return sourceSequence !== undefined &&
+      sourceSequence > (previous.sourceSequence ?? 0)
+      ? { ...previous, sourceSequence }
+      : previous;
   }
   return nextLifecycleEvent(previous, {
     agent: input.agent,

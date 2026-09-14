@@ -77,6 +77,7 @@ import {
   readGovernessHandoffManifest,
   writeGovernessHandoffManifest,
 } from "./governess-handoff";
+import { processPendingInteractionActions } from "./governess-interaction-intake";
 import {
   recordGovernessObservation as appendGovernessObservation,
   ensureGovernessJournal,
@@ -115,15 +116,13 @@ import {
   type GovernessRuntimeAdapter,
   lifecycleEventFromEvidence,
 } from "./governess-runtime";
-import {
-  processPendingInteractionActions,
-} from "./governess-interaction-intake";
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
   applyUsageTrackerPricing,
   createStableUsageLimitReader,
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
+import { openPublicAskSequences } from "./human-interaction-ask";
 import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
@@ -7519,6 +7518,15 @@ export const runGoverness = async (
             epoch: acquiredEpoch,
             fallback: observation,
             hooks,
+            ...(config.runDir
+              ? {
+                  openAskSequences: openPublicAskSequences(
+                    config.runDir,
+                    info.agent,
+                    acquiredEpoch
+                  ),
+                }
+              : {}),
           });
           if (event) {
             runState.lifecycleEvents[info.agent] = event;
