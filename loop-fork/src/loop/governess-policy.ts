@@ -9,6 +9,7 @@ export type GovernessAction =
   | "render"
   | "summarize"
   | "label-pane"
+  | "deliver-human-decision"
   | "send-control"
   | "answer-prompt"
   | "nudge"
@@ -52,6 +53,7 @@ const FORBIDDEN_ACTIONS = new Set<GovernessAction>([
 ]);
 
 const CONFIRMED_ACTIONS = new Set<GovernessAction>([
+  "deliver-human-decision",
   "restart-agent",
   "handover-loop",
   "teardown-loop",

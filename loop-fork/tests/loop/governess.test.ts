@@ -396,7 +396,7 @@ interface Spies {
   bridgeMessages: {
     message: string;
     runDir: string;
-    source: Agent;
+    source: Agent | "supervisor";
     status: BridgeSendStatus;
     target: Agent;
   }[];

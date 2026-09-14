@@ -14,7 +14,7 @@ import {
   pendingTeardowns,
   processPendingTeardowns,
   teardownRequestId,
-} from "../../src/loop/governess-teardown-intake";
+} from "../../src/loop/governess-interaction-intake";
 
 const KEY = "a".repeat(64);
 const AT = "2026-09-14T02:53:38.648Z";

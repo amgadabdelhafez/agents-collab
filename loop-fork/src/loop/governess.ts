@@ -115,7 +115,9 @@ import {
   type GovernessRuntimeAdapter,
   lifecycleEventFromEvidence,
 } from "./governess-runtime";
-import { processPendingTeardowns } from "./governess-teardown-intake";
+import {
+  processPendingInteractionActions,
+} from "./governess-interaction-intake";
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
   applyUsageTrackerPricing,
@@ -442,7 +444,7 @@ export interface GovernessDeps {
   saveState: (stateFile: string | undefined, state: GovernessRunState) => void;
   sendBridge: (
     runDir: string,
-    source: Agent,
+    source: Agent | "supervisor",
     target: Agent,
     message: string,
     options?: BridgeEnqueueOptions
@@ -6513,7 +6515,7 @@ export const saveGovernessState = (
 
 const sendGovernessBridgeMessage = async (
   runDir: string,
-  source: Agent,
+  source: Agent | "supervisor",
   target: Agent,
   message: string,
   options: BridgeEnqueueOptions = {}
@@ -7603,12 +7605,40 @@ export const runGoverness = async (
           runState.exitControl.mode === "idle" &&
           teardownManifest?.runId === config.runId
         ) {
+          const interactionRunDir = config.runDir;
           try {
-            const processed = processPendingTeardowns({
+            const processed = await processPendingInteractionActions({
+              agents: config.agents.map((info) => info.agent),
+              dispatch: async ({
+                agent,
+                controlId,
+                message,
+                subject,
+                threadId,
+                type,
+              }) => ({
+                status: await deps.sendBridge(
+                  interactionRunDir,
+                  "supervisor",
+                  agent,
+                  message,
+                  {
+                    dedupeKey: controlId,
+                    priority: "normal",
+                    subject: subject ?? "human interaction acknowledgement",
+                    ...(threadId ? { threadId } : {}),
+                    type: type ?? "ack",
+                  }
+                ),
+              }),
+              driverLease: runState.driverLease,
+              epoch: acquiredEpoch,
               fenceCurrent: () => governessFenceCurrent(config, deps),
+              journalFile: config.journalFile,
+              lifecycleEvents: runState.lifecycleEvents,
               now: deps.now,
               repoId: teardownManifest.repoId,
-              runDir: config.runDir,
+              runDir: interactionRunDir,
               runId: config.runId,
               // The operator's teardown is executed by the run it names,
               // with the stop Governess already owns.
