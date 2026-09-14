@@ -717,6 +717,46 @@ test("legacy compatibility maps inputs without leaking them into canonical state
   });
 });
 
+test("episode sequence depends on the hook stream, not on tick timing", () => {
+  const hook = (event: string, sequence: number) => ({
+    agent: "claude" as const,
+    event,
+    eventId: `${event}-${sequence}`,
+    sequence,
+    source: "agent-hook" as const,
+    ts: `2026-07-25T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+  });
+  const input = (hooks: ReturnType<typeof hook>[]) => ({
+    agent: "claude" as const,
+    at: "2026-07-25T00:01:00.000Z",
+    epoch: 7,
+    fallback: {
+      alive: true,
+      evidence: "0:claude",
+      state: "input-required" as const,
+    },
+    hooks,
+  });
+  const stream = [
+    hook("Stop", 1),
+    hook("UserPromptSubmit", 2),
+    hook("PreToolUse", 3),
+    hook("Stop", 4),
+  ];
+  const idle = lifecycleEventFromEvidence(undefined, input(stream.slice(0, 1)));
+  // One tick per hook.
+  let perHook = idle;
+  for (let end = 2; end <= stream.length; end += 1) {
+    perHook = lifecycleEventFromEvidence(perHook, input(stream.slice(0, end)));
+  }
+  // The whole turn lands between two ticks.
+  const oneTick = lifecycleEventFromEvidence(idle, input(stream));
+  expect(perHook).toMatchObject({ sequence: 3, sourceSequence: 4 });
+  expect(oneTick).toEqual(perHook);
+  // A later tick with no new hooks keeps the episode.
+  expect(lifecycleEventFromEvidence(oneTick, input(stream))).toBe(oneTick);
+});
+
 test("repeated evidence for the same state keeps the episode, so asks and ids stay current", () => {
   const hook = (
     event: string,

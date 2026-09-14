@@ -145,7 +145,42 @@ export const lifecycleEventFromEvidence = (
     hooks: HookEvent[];
   }
 ): GovernessLifecycleEvent | undefined => {
-  const hook = input.hooks.findLast((event) => hookState(event) !== undefined);
+  const hooked = input.hooks.filter((event) => hookState(event) !== undefined);
+  const last = hooked.at(-1);
+  const seen =
+    previous?.epoch === input.epoch ? previous.sourceSequence : undefined;
+  // Fold every hook since the last one this episode chain consumed. Sampling
+  // only the newest hook per tick made the sequence depend on tick timing: a
+  // turn that started and stopped between two ticks was never counted, so a
+  // producer could not know which episode would end its turn and a public
+  // ask bound to the wrong one (observed: ask bound to 2, idle episode 4).
+  if (
+    last &&
+    seen !== undefined &&
+    last.sequence !== undefined &&
+    last.sequence >= seen
+  ) {
+    let event = previous;
+    for (const hook of hooked) {
+      if (hook.sequence !== undefined && hook.sequence > seen) {
+        event = lifecycleEventFromHook(event, input, hook);
+      }
+    }
+    return event;
+  }
+  return lifecycleEventFromHook(previous, input, last);
+};
+
+const lifecycleEventFromHook = (
+  previous: GovernessLifecycleEvent | undefined,
+  input: {
+    agent: Agent;
+    at: string;
+    epoch: number;
+    fallback: GovernessRuntimeObservation;
+  },
+  hook: HookEvent | undefined
+): GovernessLifecycleEvent | undefined => {
   const state = hook ? hookState(hook) : input.fallback.state;
   if (!state) {
     return previous;

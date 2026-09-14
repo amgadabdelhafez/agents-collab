@@ -12,7 +12,11 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { Agent } from "./types";
+import {
+  type GovernessLifecycleEvent,
+  lifecycleEventFromEvidence,
+} from "./governess-runtime";
+import type { Agent, HookEvent } from "./types";
 
 export const PUBLIC_ASK_JOURNAL_NAME = "public-human-asks.jsonl";
 export const MAX_PUBLIC_ASK_RECORDS = 256;
@@ -586,15 +590,62 @@ const readProducerEpisode = (
   // In tmux every wake is typed into the pane, so an agent is always working
   // when it can call the tool. An ask published mid-turn belongs to the idle
   // episode that ends the turn: episodes change only with state, so that is
-  // exactly the next sequence. The projection shows it only if that episode
-  // is in fact input-required.
+  // exactly the next sequence. The Governess records episodes on its own
+  // tick, so first fold the hooks it has not consumed yet; otherwise an ask
+  // published before the tick that sees this turn binds to the idle episode
+  // the turn already left. The projection shows it only if that episode is
+  // in fact input-required.
+  const current = foldUnconsumedHooks(
+    runDir,
+    agent,
+    episode as unknown as GovernessLifecycleEvent
+  );
   return {
     agent,
     epoch: Number(episode.epoch),
     repoId: manifest.repoId,
     runId: manifest.runId,
-    sequence: Number(episode.sequence) + (episode.state === "working" ? 1 : 0),
+    sequence: current.sequence + (current.state === "working" ? 1 : 0),
   };
+};
+
+const MAX_PRODUCER_HOOK_BYTES = 8 * 1024 * 1024;
+
+const foldUnconsumedHooks = (
+  runDir: string,
+  agent: Agent,
+  episode: GovernessLifecycleEvent
+): GovernessLifecycleEvent => {
+  let hooks: HookEvent[];
+  try {
+    hooks = readSafeFile(
+      join(runDir, "hooks", `${agent}.jsonl`),
+      MAX_PRODUCER_HOOK_BYTES
+    )
+      .split("\n")
+      .flatMap((line) => {
+        if (line.trim().length === 0) {
+          return [];
+        }
+        try {
+          return [JSON.parse(line) as HookEvent];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return episode;
+  }
+  return (
+    lifecycleEventFromEvidence(episode, {
+      agent,
+      at: episode.at,
+      epoch: episode.epoch,
+      // Without hook evidence the recorded episode stands unchanged.
+      fallback: { alive: true, evidence: "", state: episode.state },
+      hooks,
+    }) ?? episode
+  );
 };
 
 const validateInput = (input: PublicAskPublishInput): void => {

@@ -312,6 +312,41 @@ describe("producer-attested public ask journal", () => {
     }
   });
 
+  test("binds to the idle episode ending the turn when the Governess has not yet seen the turn", () => {
+    // Observed live: the Governess still recorded the previous idle episode
+    // when the agent published mid-turn, so the ask bound to it and the turn's
+    // own idle episode (two sequences later) never matched.
+    const { root, runDir } = makeRun();
+    try {
+      mkdirSync(join(runDir, "hooks"));
+      const hook = (sequence: number, event: string, tool?: string) =>
+        JSON.stringify({
+          agent: "claude",
+          event,
+          sequence,
+          source: "agent-hook",
+          ts: `2026-08-28T11:59:${String(sequence + 17).padStart(2, "0")}.000Z`,
+          ...(tool ? { tool } : {}),
+        });
+      writeFileSync(
+        join(runDir, "hooks", "claude.jsonl"),
+        `${[
+          hook(41, "Stop"),
+          hook(42, "UserPromptSubmit"),
+          hook(43, "PreToolUse", "ToolSearch"),
+          hook(44, "PostToolUse", "ToolSearch"),
+          hook(45, "PreToolUse", "mcp__loop-bridge-repo-a-7__publish_human_ask"),
+        ].join("\n")}\n`
+      );
+      const ask = publishPublicAsk(runDir, "claude", question(), {
+        now: () => NOW,
+      });
+      expect(ask.binding.sequence).toBe(14);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("conflicting retry, stale episode, foreign source label, and malformed public text create no evidence", () => {
     const { root, runDir } = makeRun();
     try {
