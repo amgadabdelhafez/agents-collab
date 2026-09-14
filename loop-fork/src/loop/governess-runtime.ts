@@ -103,7 +103,17 @@ export const nextLifecycleEvent = (
   sequence: (previous?.sequence ?? 0) + 1,
 });
 
+// Publishing a public ask is part of waiting for a human, not work. Its own
+// tool hooks must not open a new episode, or the ask is stale on arrival.
+const PUBLIC_ASK_TOOL_SUFFIX = "__publish_human_ask";
+
 const hookState = (event: HookEvent): GovernessAgentState | undefined => {
+  if (
+    (event.event === "PreToolUse" || event.event === "PostToolUse") &&
+    event.tool?.endsWith(PUBLIC_ASK_TOOL_SUFFIX)
+  ) {
+    return undefined;
+  }
   if (event.state) {
     return event.state;
   }
@@ -145,13 +155,12 @@ export const lifecycleEventFromEvidence = (
     ? `${hook.event}:${hook.eventId ?? hook.sequence ?? hook.ts}`
     : input.fallback.evidence;
   const source = hook?.source ?? "tmux-fallback";
-  if (
-    previous?.epoch === input.epoch &&
-    previous.state === state &&
-    previous.source === source &&
-    previous.sourceSequence === sourceSequence &&
-    previous.evidence === evidence
-  ) {
+  // An episode is a lifecycle state, not a hook event. Repeated evidence for
+  // the same state (a Stop after a tool call, Claude's idle Notification)
+  // used to open a new episode each time, which re-keyed the interaction id
+  // every minute and made any published ask stale as soon as the agent
+  // stopped, so no answer could ever be routed.
+  if (previous?.epoch === input.epoch && previous.state === state) {
     return previous;
   }
   return nextLifecycleEvent(previous, {

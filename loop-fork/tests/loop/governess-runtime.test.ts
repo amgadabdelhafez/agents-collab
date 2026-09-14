@@ -716,3 +716,63 @@ test("legacy compatibility maps inputs without leaking them into canonical state
     marker: "legacy",
   });
 });
+
+test("repeated evidence for the same state keeps the episode, so asks and ids stay current", () => {
+  const hook = (
+    event: string,
+    eventId: string,
+    sequence: number,
+    extra = {}
+  ) => ({
+    agent: "claude" as const,
+    event,
+    eventId,
+    sequence,
+    source: "agent-hook" as const,
+    ts: `2026-07-25T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+    ...extra,
+  });
+  const fallback = {
+    alive: true,
+    evidence: "0:claude",
+    state: "input-required" as const,
+  };
+  const idle = lifecycleEventFromEvidence(undefined, {
+    agent: "claude",
+    at: "2026-07-25T00:00:01.000Z",
+    epoch: 7,
+    fallback,
+    hooks: [hook("Stop", "stop-1", 1)],
+  });
+  expect(idle).toMatchObject({ sequence: 1, state: "input-required" });
+
+  // The ask tool's own hooks, the following Stop and an idle Notification.
+  const afterAsk = lifecycleEventFromEvidence(idle, {
+    agent: "claude",
+    at: "2026-07-25T00:00:05.000Z",
+    epoch: 7,
+    fallback,
+    hooks: [
+      hook("Stop", "stop-1", 1),
+      hook("PreToolUse", "pre-2", 2, {
+        tool: "mcp__loop-bridge-repo-7__publish_human_ask",
+      }),
+      hook("PostToolUse", "post-3", 3, {
+        tool: "mcp__loop-bridge-repo-7__publish_human_ask",
+      }),
+      hook("Stop", "stop-4", 4),
+      hook("Notification", "note-5", 5),
+    ],
+  });
+  expect(afterAsk).toBe(idle);
+
+  // Real work still opens a new episode.
+  const working = lifecycleEventFromEvidence(afterAsk, {
+    agent: "claude",
+    at: "2026-07-25T00:00:07.000Z",
+    epoch: 7,
+    fallback,
+    hooks: [hook("PreToolUse", "pre-6", 6, { tool: "Bash" })],
+  });
+  expect(working).toMatchObject({ sequence: 2, state: "working" });
+});

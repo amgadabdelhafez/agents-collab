@@ -44,6 +44,11 @@ import {
 } from "./bridge-utility";
 import { LOOP_VERSION } from "./constants";
 import {
+  isPublicAskRunActive,
+  type PublicAskPublishInput,
+  publishPublicAsk,
+} from "./human-interaction-ask";
+import {
   registerRunBridgeProcess,
   unregisterRunBridgeProcess,
 } from "./run-process-cleanup";
@@ -366,6 +371,65 @@ const handleSendMessageTool = async (
   });
 };
 
+const publicAskInput = (
+  args: Record<string, unknown>
+): PublicAskPublishInput | undefined => {
+  const title = asString(args.title);
+  const prompt = asString(args.prompt);
+  if (!(title && prompt)) {
+    return undefined;
+  }
+  if (
+    args.kind === "question" &&
+    Object.keys(args).every((key) => ["kind", "prompt", "title"].includes(key))
+  ) {
+    return { kind: "question", prompt, title };
+  }
+  const consequence = asString(args.consequence);
+  return args.kind === "approval" &&
+    consequence &&
+    Object.keys(args).every((key) =>
+      ["consequence", "kind", "prompt", "title"].includes(key)
+    )
+    ? { consequence, kind: "approval", prompt, title }
+    : undefined;
+};
+
+const handlePublishHumanAskTool = (
+  id: JsonRpcRequest["id"],
+  runDir: string,
+  source: BridgeMcpSource,
+  args: Record<string, unknown>
+): void => {
+  if (source === "supervisor") {
+    writeError(
+      id,
+      MCP_INVALID_PARAMS,
+      "publish_human_ask requires an agent-scoped bridge source"
+    );
+    return;
+  }
+  const input = publicAskInput(args);
+  if (!input) {
+    writeError(id, MCP_INVALID_PARAMS, "publish_human_ask input is invalid");
+    return;
+  }
+  try {
+    const record = publishPublicAsk(runDir, source, input);
+    writeJsonRpc({
+      id,
+      jsonrpc: "2.0",
+      result: toolContent(JSON.stringify(record)),
+    });
+  } catch (error) {
+    writeError(
+      id,
+      MCP_INVALID_PARAMS,
+      error instanceof Error ? error.message : "public ask publication failed"
+    );
+  }
+};
+
 const handleToolCall = async (
   id: JsonRpcRequest["id"],
   runDir: string,
@@ -392,6 +456,11 @@ const handleToolCall = async (
       MCP_INVALID_PARAMS,
       'Unknown tool: send_to_agent. Use "send_message" instead.'
     );
+    return;
+  }
+
+  if (name === "publish_human_ask") {
+    handlePublishHumanAskTool(id, runDir, source, args);
     return;
   }
 
@@ -482,6 +551,30 @@ const handleBridgeRequest = async (
         result: {
           tools: [
             ...UTILITY_BRIDGE_TOOLS,
+            ...(source !== "supervisor" && isPublicAskRunActive(runDir)
+              ? [
+                  {
+                    annotations: MUTATING_TOOL_ANNOTATIONS,
+                    description:
+                      "Publish one bounded producer-attested public approval or short question for the current input-required episode. This requests a response but authorizes no execution.",
+                    inputSchema: {
+                      additionalProperties: false,
+                      properties: {
+                        consequence: { type: "string" },
+                        kind: {
+                          enum: ["approval", "question"],
+                          type: "string",
+                        },
+                        prompt: { type: "string" },
+                        title: { type: "string" },
+                      },
+                      required: ["kind", "prompt", "title"],
+                      type: "object",
+                    },
+                    name: "publish_human_ask",
+                  },
+                ]
+              : []),
             {
               annotations: MUTATING_TOOL_ANNOTATIONS,
               description:
