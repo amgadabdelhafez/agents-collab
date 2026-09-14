@@ -115,6 +115,7 @@ import {
   type GovernessRuntimeAdapter,
   lifecycleEventFromEvidence,
 } from "./governess-runtime";
+import { processPendingTeardowns } from "./governess-teardown-intake";
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
   applyUsageTrackerPricing,
@@ -7593,6 +7594,45 @@ export const runGoverness = async (
           }),
           stream: "governess-cycle",
         });
+        const teardownManifest = config.manifestPath
+          ? readRunManifest(config.manifestPath)
+          : undefined;
+        if (
+          config.runDir &&
+          !config.dryRun &&
+          runState.exitControl.mode === "idle" &&
+          teardownManifest?.runId === config.runId
+        ) {
+          try {
+            const processed = processPendingTeardowns({
+              fenceCurrent: () => governessFenceCurrent(config, deps),
+              now: deps.now,
+              repoId: teardownManifest.repoId,
+              runDir: config.runDir,
+              runId: config.runId,
+              // The operator's teardown is executed by the run it names,
+              // with the stop Governess already owns.
+              teardown: (reason) => {
+                stopGovernessLoop(config, deps, reason);
+              },
+            });
+            if (processed > 0) {
+              deps.appendLog(config.logFile, {
+                at: lifecycleAt,
+                epoch: acquiredEpoch,
+                event: "interaction-actions-processed",
+                processed,
+              });
+            }
+          } catch (error) {
+            deps.appendLog(config.logFile, {
+              at: lifecycleAt,
+              epoch: acquiredEpoch,
+              error: error instanceof Error ? error.message : String(error),
+              event: "interaction-actions-failed-closed",
+            });
+          }
+        }
       }
       const utilityPeer = config.agents.find(
         (info) => info.agent !== holder
