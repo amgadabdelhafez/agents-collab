@@ -105,7 +105,8 @@ const MAX_INTAKE_REQUESTS_PER_TICK = 4;
 const REQUEST_ID_PATTERN = /^iar_[0-9a-f]{32}$/u;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const ASK_ID_PATTERN = /^ask_[0-9a-f]{32}$/u;
-const DECISION_AUDIENCES = new Set(["desktop", "phone", "watch"]);
+// The native phone signs in as the device-token "operator" audience.
+const DECISION_AUDIENCES = new Set(["desktop", "operator", "phone", "watch"]);
 const LIFECYCLE_TEARDOWN_KIND = "lifecycle-teardown" as const;
 const MAX_TEARDOWN_REASON_LENGTH = 200;
 const TEARDOWN_REQUEST_KEYS = [
@@ -221,7 +222,7 @@ export interface InteractionActionIntakeRequest {
   readonly actionId: string;
   readonly agent: Agent;
   readonly askId?: string;
-  readonly audience?: "desktop" | "phone" | "watch";
+  readonly audience?: "desktop" | "operator" | "phone" | "watch";
   readonly episode: {
     readonly at: string;
     readonly epoch: number;
@@ -991,7 +992,7 @@ export interface InteractionActionAuthorityInput {
 
 type HumanDecisionIntakeRequest = InteractionActionIntakeRequest & {
   readonly askId: string;
-  readonly audience: "desktop" | "phone" | "watch";
+  readonly audience: "desktop" | "operator" | "phone" | "watch";
   readonly episode: InteractionActionIntakeRequest["episode"] & {
     readonly state: "input-required";
   };

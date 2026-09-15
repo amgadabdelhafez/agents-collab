@@ -459,6 +459,32 @@ describe("interaction action human decisions", () => {
       });
     }));
 
+  test("delivers an answer from the device-token operator phone", () =>
+    withRun(async (fixture) => {
+      const ask = publishPublicAsk(fixture.runDir, fixture.agent, {
+        kind: "question",
+        prompt: "Which surface should be prioritized?",
+        title: "Wearable next step",
+      }, { now: () => new Date(NOW - 60_000).toISOString() });
+      const answer = "Prioritize phone actions";
+      writeRequested(fixture.eventsFile, {
+        ...decisionRequest(fixture, ask.id, "answer", answer),
+        audience: "operator",
+      });
+      const processed = await processPendingInteractionActions(
+        authority(fixture, {
+          dispatch: (input) => {
+            recordDecisionBridge(fixture, input.controlId, ask.id, answer);
+            return Promise.resolve({ status: "delivered" });
+          },
+        })
+      );
+      expect(processed).toBe(1);
+      expect(
+        readInteractionActionIntake(fixture.runDir).map((item) => item.state)
+      ).toEqual(["accepted"]);
+    }));
+
   test("delivers and resolves an approval", () =>
     withRun(async (fixture) => {
       const ask = publishPublicAsk(fixture.runDir, fixture.agent, {
