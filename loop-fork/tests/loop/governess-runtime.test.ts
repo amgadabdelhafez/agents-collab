@@ -716,3 +716,180 @@ test("legacy compatibility maps inputs without leaking them into canonical state
     marker: "legacy",
   });
 });
+
+test("episode sequence depends on the hook stream, not on tick timing", () => {
+  const hook = (event: string, sequence: number) => ({
+    agent: "claude" as const,
+    event,
+    eventId: `${event}-${sequence}`,
+    sequence,
+    source: "agent-hook" as const,
+    ts: `2026-07-25T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+  });
+  const input = (hooks: ReturnType<typeof hook>[]) => ({
+    agent: "claude" as const,
+    at: "2026-07-25T00:01:00.000Z",
+    epoch: 7,
+    fallback: {
+      alive: true,
+      evidence: "0:claude",
+      state: "input-required" as const,
+    },
+    hooks,
+  });
+  const stream = [
+    hook("Stop", 1),
+    hook("UserPromptSubmit", 2),
+    hook("PreToolUse", 3),
+    hook("Stop", 4),
+  ];
+  const idle = lifecycleEventFromEvidence(undefined, input(stream.slice(0, 1)));
+  // One tick per hook.
+  let perHook = idle;
+  for (let end = 2; end <= stream.length; end += 1) {
+    perHook = lifecycleEventFromEvidence(perHook, input(stream.slice(0, end)));
+  }
+  // The whole turn lands between two ticks.
+  const oneTick = lifecycleEventFromEvidence(idle, input(stream));
+  expect(perHook).toMatchObject({ sequence: 3, sourceSequence: 4 });
+  expect(oneTick).toEqual(perHook);
+  // A later tick with no new hooks keeps the episode.
+  expect(lifecycleEventFromEvidence(oneTick, input(stream))).toBe(oneTick);
+});
+
+test("an open public ask holds its episode while the agent polls for the answer", () => {
+  const hook = (event: string, sequence: number) => ({
+    agent: "claude" as const,
+    event,
+    eventId: `${event}-${sequence}`,
+    sequence,
+    source: "agent-hook" as const,
+    ts: `2026-07-25T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+  });
+  const fallback = {
+    alive: true,
+    evidence: "0:claude",
+    state: "input-required" as const,
+  };
+  const at = "2026-07-25T00:01:00.000Z";
+  const idle = lifecycleEventFromEvidence(undefined, {
+    agent: "claude",
+    at,
+    epoch: 7,
+    fallback,
+    hooks: [hook("Stop", 1)],
+  });
+  expect(idle).toMatchObject({ sequence: 1, sourceSequence: 1 });
+  const polls = [
+    hook("Stop", 1),
+    hook("UserPromptSubmit", 2),
+    hook("PreToolUse", 3),
+    hook("Stop", 4),
+    hook("UserPromptSubmit", 5),
+    hook("Stop", 6),
+  ];
+  const held = lifecycleEventFromEvidence(idle, {
+    agent: "claude",
+    at,
+    epoch: 7,
+    fallback,
+    hooks: polls,
+    openAskSequences: new Set([1]),
+  });
+  expect(held).toMatchObject({
+    sequence: 1,
+    sourceSequence: 5,
+    state: "input-required",
+  });
+  // Once the ask resolves, only new turns open episodes.
+  const afterAnswer = lifecycleEventFromEvidence(held, {
+    agent: "claude",
+    at,
+    epoch: 7,
+    fallback,
+    hooks: [...polls, hook("UserPromptSubmit", 7)],
+    openAskSequences: new Set(),
+  });
+  expect(afterAnswer).toMatchObject({ sequence: 2, state: "working" });
+  // An ask bound to another episode holds nothing, and failure always moves.
+  expect(
+    lifecycleEventFromEvidence(idle, {
+      agent: "claude",
+      at,
+      epoch: 7,
+      fallback,
+      hooks: polls,
+      openAskSequences: new Set([9]),
+    })
+  ).toMatchObject({ sequence: 5 });
+  expect(
+    lifecycleEventFromEvidence(idle, {
+      agent: "claude",
+      at,
+      epoch: 7,
+      fallback,
+      hooks: [hook("Stop", 1), { ...hook("PostToolUse", 2), error: true }],
+      openAskSequences: new Set([1]),
+    })
+  ).toMatchObject({ sequence: 2, state: "failed" });
+});
+
+test("repeated evidence for the same state keeps the episode, so asks and ids stay current", () => {
+  const hook = (
+    event: string,
+    eventId: string,
+    sequence: number,
+    extra = {}
+  ) => ({
+    agent: "claude" as const,
+    event,
+    eventId,
+    sequence,
+    source: "agent-hook" as const,
+    ts: `2026-07-25T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+    ...extra,
+  });
+  const fallback = {
+    alive: true,
+    evidence: "0:claude",
+    state: "input-required" as const,
+  };
+  const idle = lifecycleEventFromEvidence(undefined, {
+    agent: "claude",
+    at: "2026-07-25T00:00:01.000Z",
+    epoch: 7,
+    fallback,
+    hooks: [hook("Stop", "stop-1", 1)],
+  });
+  expect(idle).toMatchObject({ sequence: 1, state: "input-required" });
+
+  // The ask tool's own hooks, the following Stop and an idle Notification.
+  const afterAsk = lifecycleEventFromEvidence(idle, {
+    agent: "claude",
+    at: "2026-07-25T00:00:05.000Z",
+    epoch: 7,
+    fallback,
+    hooks: [
+      hook("Stop", "stop-1", 1),
+      hook("PreToolUse", "pre-2", 2, {
+        tool: "mcp__loop-bridge-repo-7__publish_human_ask",
+      }),
+      hook("PostToolUse", "post-3", 3, {
+        tool: "mcp__loop-bridge-repo-7__publish_human_ask",
+      }),
+      hook("Stop", "stop-4", 4),
+      hook("Notification", "note-5", 5),
+    ],
+  });
+  expect(afterAsk).toBe(idle);
+
+  // Real work still opens a new episode.
+  const working = lifecycleEventFromEvidence(afterAsk, {
+    agent: "claude",
+    at: "2026-07-25T00:00:07.000Z",
+    epoch: 7,
+    fallback,
+    hooks: [hook("PreToolUse", "pre-6", 6, { tool: "Bash" })],
+  });
+  expect(working).toMatchObject({ sequence: 2, state: "working" });
+});

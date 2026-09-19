@@ -103,7 +103,17 @@ export const nextLifecycleEvent = (
   sequence: (previous?.sequence ?? 0) + 1,
 });
 
+// Publishing a public ask is part of waiting for a human, not work. Its own
+// tool hooks must not open a new episode, or the ask is stale on arrival.
+const PUBLIC_ASK_TOOL_SUFFIX = "__publish_human_ask";
+
 const hookState = (event: HookEvent): GovernessAgentState | undefined => {
+  if (
+    (event.event === "PreToolUse" || event.event === "PostToolUse") &&
+    event.tool?.endsWith(PUBLIC_ASK_TOOL_SUFFIX)
+  ) {
+    return undefined;
+  }
   if (event.state) {
     return event.state;
   }
@@ -133,9 +143,47 @@ export const lifecycleEventFromEvidence = (
     epoch: number;
     fallback: GovernessRuntimeObservation;
     hooks: HookEvent[];
+    // Sequences of this agent's open public asks in this epoch.
+    openAskSequences?: ReadonlySet<number>;
   }
 ): GovernessLifecycleEvent | undefined => {
-  const hook = input.hooks.findLast((event) => hookState(event) !== undefined);
+  const hooked = input.hooks.filter((event) => hookState(event) !== undefined);
+  const last = hooked.at(-1);
+  const seen =
+    previous?.epoch === input.epoch ? previous.sourceSequence : undefined;
+  // Fold every hook since the last one this episode chain consumed. Sampling
+  // only the newest hook per tick made the sequence depend on tick timing: a
+  // turn that started and stopped between two ticks was never counted, so a
+  // producer could not know which episode would end its turn and a public
+  // ask bound to the wrong one (observed: ask bound to 2, idle episode 4).
+  if (
+    last &&
+    seen !== undefined &&
+    last.sequence !== undefined &&
+    last.sequence >= seen
+  ) {
+    let event = previous;
+    for (const hook of hooked) {
+      if (hook.sequence !== undefined && hook.sequence > seen) {
+        event = lifecycleEventFromHook(event, input, hook);
+      }
+    }
+    return event;
+  }
+  return lifecycleEventFromHook(previous, input, last);
+};
+
+const lifecycleEventFromHook = (
+  previous: GovernessLifecycleEvent | undefined,
+  input: {
+    agent: Agent;
+    at: string;
+    epoch: number;
+    fallback: GovernessRuntimeObservation;
+    openAskSequences?: ReadonlySet<number>;
+  },
+  hook: HookEvent | undefined
+): GovernessLifecycleEvent | undefined => {
   const state = hook ? hookState(hook) : input.fallback.state;
   if (!state) {
     return previous;
@@ -145,14 +193,28 @@ export const lifecycleEventFromEvidence = (
     ? `${hook.event}:${hook.eventId ?? hook.sequence ?? hook.ts}`
     : input.fallback.evidence;
   const source = hook?.source ?? "tmux-fallback";
+  // An episode is a lifecycle state, not a hook event. Repeated evidence for
+  // the same state (a Stop after a tool call, Claude's idle Notification)
+  // used to open a new episode each time, which re-keyed the interaction id
+  // every minute and made any published ask stale as soon as the agent
+  // stopped, so no answer could ever be routed.
+  if (previous?.epoch === input.epoch && previous.state === state) {
+    return previous;
+  }
+  // An agent waiting on its own open public ask polls for the answer, and each
+  // poll is a working turn ending in Stop. Those turns are part of waiting, so
+  // they keep the ask's episode (consuming the hooks) until the ask resolves
+  // or the agent reaches any state other than working or input-required.
   if (
     previous?.epoch === input.epoch &&
-    previous.state === state &&
-    previous.source === source &&
-    previous.sourceSequence === sourceSequence &&
-    previous.evidence === evidence
+    previous.state === "input-required" &&
+    (state === "working" || state === "input-required") &&
+    input.openAskSequences?.has(previous.sequence)
   ) {
-    return previous;
+    return sourceSequence !== undefined &&
+      sourceSequence > (previous.sourceSequence ?? 0)
+      ? { ...previous, sourceSequence }
+      : previous;
   }
   return nextLifecycleEvent(previous, {
     agent: input.agent,

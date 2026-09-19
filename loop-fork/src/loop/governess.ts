@@ -77,6 +77,7 @@ import {
   readGovernessHandoffManifest,
   writeGovernessHandoffManifest,
 } from "./governess-handoff";
+import { processPendingInteractionActions } from "./governess-interaction-intake";
 import {
   recordGovernessObservation as appendGovernessObservation,
   ensureGovernessJournal,
@@ -121,6 +122,7 @@ import {
   createStableUsageLimitReader,
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
+import { openPublicAskSequences } from "./human-interaction-ask";
 import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
@@ -441,7 +443,7 @@ export interface GovernessDeps {
   saveState: (stateFile: string | undefined, state: GovernessRunState) => void;
   sendBridge: (
     runDir: string,
-    source: Agent,
+    source: Agent | "supervisor",
     target: Agent,
     message: string,
     options?: BridgeEnqueueOptions
@@ -6512,7 +6514,7 @@ export const saveGovernessState = (
 
 const sendGovernessBridgeMessage = async (
   runDir: string,
-  source: Agent,
+  source: Agent | "supervisor",
   target: Agent,
   message: string,
   options: BridgeEnqueueOptions = {}
@@ -7516,6 +7518,15 @@ export const runGoverness = async (
             epoch: acquiredEpoch,
             fallback: observation,
             hooks,
+            ...(config.runDir
+              ? {
+                  openAskSequences: openPublicAskSequences(
+                    config.runDir,
+                    info.agent,
+                    acquiredEpoch
+                  ),
+                }
+              : {}),
           });
           if (event) {
             runState.lifecycleEvents[info.agent] = event;
@@ -7593,6 +7604,73 @@ export const runGoverness = async (
           }),
           stream: "governess-cycle",
         });
+        const teardownManifest = config.manifestPath
+          ? readRunManifest(config.manifestPath)
+          : undefined;
+        if (
+          config.runDir &&
+          !config.dryRun &&
+          runState.exitControl.mode === "idle" &&
+          teardownManifest?.runId === config.runId
+        ) {
+          const interactionRunDir = config.runDir;
+          try {
+            const processed = await processPendingInteractionActions({
+              agents: config.agents.map((info) => info.agent),
+              dispatch: async ({
+                agent,
+                controlId,
+                message,
+                subject,
+                threadId,
+                type,
+              }) => ({
+                status: await deps.sendBridge(
+                  interactionRunDir,
+                  "supervisor",
+                  agent,
+                  message,
+                  {
+                    dedupeKey: controlId,
+                    priority: "normal",
+                    subject: subject ?? "human interaction acknowledgement",
+                    ...(threadId ? { threadId } : {}),
+                    type: type ?? "ack",
+                  }
+                ),
+              }),
+              driverLease: runState.driverLease,
+              epoch: acquiredEpoch,
+              fenceCurrent: () => governessFenceCurrent(config, deps),
+              journalFile: config.journalFile,
+              lifecycleEvents: runState.lifecycleEvents,
+              now: deps.now,
+              repoId: teardownManifest.repoId,
+              runDir: interactionRunDir,
+              runId: config.runId,
+              // The operator's teardown is executed by the run it names,
+              // with the stop Governess already owns.
+              teardown: (reason) => {
+                stopGovernessLoop(config, deps, reason);
+              },
+            });
+            if (processed > 0) {
+              deps.appendLog(config.logFile, {
+                at: lifecycleAt,
+                epoch: acquiredEpoch,
+                event: "interaction-actions-processed",
+                processed,
+              });
+            }
+          } catch (error) {
+            deps.appendLog(config.logFile, {
+              at: lifecycleAt,
+              epoch: acquiredEpoch,
+              error: error instanceof Error ? error.message : String(error),
+              event: "interaction-actions-failed-closed",
+            });
+          }
+        }
       }
       const utilityPeer = config.agents.find(
         (info) => info.agent !== holder
