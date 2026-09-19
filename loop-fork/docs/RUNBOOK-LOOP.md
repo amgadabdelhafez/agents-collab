@@ -15,6 +15,36 @@ it.
 - Definition: `src/loop/governess-beat-workflow.ts`
 - Reducer shared with the JSONL writer: `src/loop/governess-journal-core.ts`
 
+### Turning the Temporal journal on (gov-6 v3)
+
+The live governess writes its journal through the beat workflow only when both
+variables are set in the governess pane's environment; with neither set it keeps
+the file journal and never loads the Temporal SDK. Setting only one is an error.
+
+```bash
+LOOP_GOVERNESS_TEMPORAL_ADDRESS=192.168.1.18:7233
+LOOP_GOVERNESS_TEMPORAL_NAMESPACE=harness
+LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE=loop-governess   # optional, this is the default
+```
+
+- Authority: when both exist, Temporal history is authoritative. The run-dir
+  `governess-control.jsonl` stays the synchronous write-ahead copy the governess
+  fences against; every record is then signalled (`append_record`, via
+  `signalWithStart`) to `governess-beat:<runId>` in order.
+- Recovery: on every governess start the file is reconciled from history before
+  the epoch is acquired. History wins a disagreement at a held sequence; a file
+  that is missing or behind is rewritten from history; a file tail newer than
+  history (records the dead pane never signalled) is replayed into history. The
+  outcome is logged as `journal-temporal-recovered` in `governess.jsonl`.
+- Recovery reads raw history, so it needs the server but not a worker. It waits
+  for a settled history (no workflow task in flight, event count stable),
+  because Temporal buffers signals that arrive during a workflow task.
+- A failed signal is logged as `journal-temporal-append-failed`; later records
+  queue behind it and the next start's recovery replays them.
+- Live proof: `bun run scripts/governess-temporal-live-proof.ts` with the two
+  variables set. It runs its own worker on a private task queue and terminates
+  its proof workflow when done.
+
 ### One workflow per run, not per seat
 
 The journal's invariants are run-global. The idempotency fence, the monotonic

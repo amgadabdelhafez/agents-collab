@@ -327,3 +327,79 @@ export const decideGovernessTransition = (
     },
   };
 };
+
+// gov-6 write-through. The governess decides a record against its local index
+// and then appends that exact record to the beat workflow. The workflow and the
+// history reader in governess-temporal-journal.ts both use this one rule, so a
+// signal the workflow rejected is also skipped when history is read back.
+
+export type GovernessRecordAppendOutcome =
+  | { kind: "appended"; record: GovernessControlRecord }
+  | { kind: "duplicate"; record: GovernessControlRecord }
+  | { kind: "rejected"; reason: string };
+
+const stableJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      // Object keys are unique, so the comparator never sees equal keys.
+      .sort(([left], [right]) => (left < right ? -1 : 1));
+    return `{${entries
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+};
+
+export const sameGovernessControlRecord = (
+  left: GovernessControlRecord,
+  right: GovernessControlRecord
+): boolean => stableJson(left) === stableJson(right);
+
+/**
+ * Accept the next record of a strictly ordered log. Sequences must be dense and
+ * start at 1; resending a record already held is a no-op, and a different record
+ * at a held sequence is a conflict. Only `observe-runtime` records may carry a
+ * payload body, which keeps the metadata-only audit contract on this path too.
+ */
+export const decideGovernessRecordAppend = (
+  records: readonly GovernessControlRecord[],
+  candidate: unknown
+): GovernessRecordAppendOutcome => {
+  if (!isGovernessControlRecord(candidate)) {
+    return { kind: "rejected", reason: "not a governess control record" };
+  }
+  if (
+    candidate.payload !== undefined &&
+    candidate.action !== "observe-runtime"
+  ) {
+    return {
+      kind: "rejected",
+      reason:
+        "governess beat history is metadata only: send payloadHash, not payload",
+    };
+  }
+  const last = records.at(-1)?.sequence ?? 0;
+  if (candidate.sequence <= last) {
+    const held = records.find(
+      (record) => record.sequence === candidate.sequence
+    );
+    if (held && sameGovernessControlRecord(held, candidate)) {
+      return { kind: "duplicate", record: held };
+    }
+    return {
+      kind: "rejected",
+      reason: `conflicting governess record at sequence ${candidate.sequence}`,
+    };
+  }
+  if (candidate.sequence !== last + 1) {
+    return {
+      kind: "rejected",
+      reason: `governess record sequence ${candidate.sequence} does not follow ${last}`,
+    };
+  }
+  return { kind: "appended", record: candidate };
+};

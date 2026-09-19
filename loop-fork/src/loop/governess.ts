@@ -116,6 +116,12 @@ import {
   type GovernessRuntimeAdapter,
   lifecycleEventFromEvidence,
 } from "./governess-runtime";
+import {
+  attachGovernessJournalBackend,
+  type GovernessTemporalConfig,
+  type GovernessTemporalJournalClient,
+  governessTemporalConfigFromEnv,
+} from "./governess-temporal-journal";
 import { readAgentUsage, readHumanMessages } from "./governess-usage";
 import {
   applyUsageTrackerPricing,
@@ -279,6 +285,9 @@ export interface GovernessConfig {
   idleMs: number;
   initialDriver?: Agent;
   journalFile?: string;
+  // gov-6: when set, the journal is written through the governess-beat.v1
+  // Temporal workflow and recovered from its history on start.
+  journalTemporal?: GovernessTemporalConfig;
   judgeMode: LocalLlmJudgeMode;
   judges?: LocalLlmJudgeConfig[];
   // Explicit compatibility switch; quota observations never change drivers
@@ -382,6 +391,9 @@ export interface GovernessDeps {
   cleanupRunProcesses?: (
     config: GovernessConfig
   ) => RunProcessCleanupResult | undefined;
+  connectTemporalJournal?: (
+    config: GovernessTemporalConfig
+  ) => Promise<GovernessTemporalJournalClient>;
   fenceCurrent?: (config: GovernessConfig) => boolean;
   // Turn on the pane-border title strip for the whole session (idempotent).
   initPaneBorders: (session: string) => void;
@@ -7213,6 +7225,7 @@ export const resolveGovernessConfig = (
     helperCavemanMode: manifest?.helperCavemanMode,
     escalationFile: join(storage.runDir, "escalations.jsonl"),
     journalFile: join(storage.runDir, "governess-control.jsonl"),
+    journalTemporal: governessTemporalConfigFromEnv(env),
     logFile: join(storage.runDir, "governess.jsonl"),
     llmDecodeConcurrency: envPositiveInt(
       env,
@@ -7305,6 +7318,34 @@ export const runGoverness = async (
     // governess must not issue controls after losing idempotency evidence.
     readGovernessJournal(config.journalFile);
     maintainGovernessJournal(config.journalFile);
+    if (config.journalTemporal) {
+      // Recover from history before the epoch is acquired: a pane that died
+      // may have left the file behind or missing, and history is authoritative.
+      const journalFile = config.journalFile;
+      const backend = await attachGovernessJournalBackend({
+        ...(deps.connectTemporalJournal
+          ? { connect: deps.connectTemporalJournal }
+          : {}),
+        journalFile,
+        onSinkError: (error, record) =>
+          deps.appendLog(config.logFile, {
+            at: new Date().toISOString(),
+            error: error instanceof Error ? error.message : String(error),
+            event: "journal-temporal-append-failed",
+            sequence: record.sequence,
+          }),
+        runId: config.runId,
+        temporal: config.journalTemporal,
+      });
+      if (backend.kind === "temporal") {
+        deps.appendLog(config.logFile, {
+          at: new Date().toISOString(),
+          event: "journal-temporal-recovered",
+          workflowId: backend.workflowId,
+          ...backend.recovery,
+        });
+      }
+    }
   }
   const acquiredEpoch = Math.max(
     runState.governessEpoch + 1,

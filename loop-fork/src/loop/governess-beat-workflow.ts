@@ -19,6 +19,7 @@ import {
   applyGovernessControlRecord,
   decideGovernessObservation,
   decideGovernessPrepare,
+  decideGovernessRecordAppend,
   decideGovernessTransition,
   foldGovernessControlRecords,
   type GovernessControlPhase,
@@ -52,15 +53,19 @@ export const governessBeatWorkflowId = (runId: string): string =>
 
 interface GovernessBeatState extends JsonObject {
   epoch: number;
-  records: GovernessControlRecord[];
+  // Held as JSON so the state satisfies JsonObject; read through recordsOf.
+  records: JsonValue[];
   runId: string;
 }
 
 const asState = (state: JsonObject): GovernessBeatState =>
   state as unknown as GovernessBeatState;
 
+const recordsOf = (state: GovernessBeatState): GovernessControlRecord[] =>
+  state.records as unknown as GovernessControlRecord[];
+
 const stateOf = (state: GovernessBeatState): GovernessControlState =>
-  foldGovernessControlRecords(state.records);
+  foldGovernessControlRecords(recordsOf(state));
 
 const asJson = (value: unknown): JsonValue => value as unknown as JsonValue;
 
@@ -139,7 +144,7 @@ const appendDecision = (
     next: {
       ...state,
       epoch: Math.max(state.epoch, decision.record.epoch),
-      records: [...state.records, decision.record],
+      records: [...state.records, asJson(decision.record)],
     },
     record: decision.record,
   };
@@ -201,7 +206,7 @@ const parseDetails = (
 export const exportGovernessJournal = (
   state: JsonObject
 ): GovernessControlRecord[] => {
-  const records = asState(state).records;
+  const records: unknown[] = asState(state).records;
   if (!(Array.isArray(records) && records.every(isGovernessControlRecord))) {
     throw new WorkflowError(
       "invalid-state",
@@ -209,6 +214,33 @@ export const exportGovernessJournal = (
     );
   }
   return records.map((record) => ({ ...record }));
+};
+
+/**
+ * Write-through from the live governess: the record was decided against the
+ * governess's local index and arrives whole, so history holds the exact record
+ * the file journal holds.
+ */
+const appendRecordSignal = (
+  state: GovernessBeatState,
+  payload: JsonObject
+): { changed: boolean; result: JsonValue; state: GovernessBeatState } => {
+  const outcome = decideGovernessRecordAppend(recordsOf(state), payload.record);
+  if (outcome.kind === "rejected") {
+    throw new WorkflowError("conflict", outcome.reason);
+  }
+  if (outcome.kind === "duplicate") {
+    return { changed: false, result: asJson(outcome.record), state };
+  }
+  return {
+    changed: true,
+    result: asJson(outcome.record),
+    state: {
+      ...state,
+      epoch: Math.max(state.epoch, outcome.record.epoch),
+      records: [...state.records, asJson(outcome.record)],
+    },
+  };
 };
 
 export const governessBeatWorkflowDefinition: WorkflowDefinition = {
@@ -305,6 +337,10 @@ export const governessBeatWorkflowDefinition: WorkflowDefinition = {
         ...(applied.record ? { result: asJson(applied.record) } : {}),
         state: applied.next,
       };
+    }
+
+    if (name === "append_record") {
+      return appendRecordSignal(state, payload);
     }
 
     if (name === "transition_control") {

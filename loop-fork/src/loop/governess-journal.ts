@@ -30,7 +30,12 @@ import {
   type GovernessControlState,
   isGovernessControlRecord,
 } from "./governess-journal-core";
-import type { HookEvent } from "./types";
+import type {
+  GovernessAction,
+  GovernessActionClass,
+  GovernessPolicyContext,
+} from "./governess-policy";
+import type { Agent, HookEvent } from "./types";
 
 // The record contract now lives in ./governess-journal-core so the workflow
 // reducer and this JSONL writer cannot drift. Aliased rather than re-exported
@@ -236,6 +241,25 @@ export const ensureGovernessJournalIndex = (journalFile: string): void => {
   loadJournalIndex(journalFile);
 };
 
+// gov-6: a journal file may have a write-through sink (the Temporal beat
+// workflow). The file append stays synchronous and first so every decision
+// keeps its local idempotency fence; the sink receives the same record after.
+const journalSinks = new Map<
+  string,
+  (record: GovernessControlRecord) => void
+>();
+
+export const setGovernessJournalSink = (
+  journalFile: string,
+  sink: ((record: GovernessControlRecord) => void) | undefined
+): void => {
+  if (sink) {
+    journalSinks.set(journalFile, sink);
+  } else {
+    journalSinks.delete(journalFile);
+  }
+};
+
 const append = (
   journalFile: string,
   record: GovernessControlRecord,
@@ -246,6 +270,24 @@ const append = (
   applyRecordToIndex(index, record);
   Object.assign(index, journalStat(journalFile));
   persistJournalIndex(journalFile, index);
+  journalSinks.get(journalFile)?.(record);
+};
+
+/**
+ * Replace the local journal with an authoritative record log (gov-6 recovery
+ * from Temporal history). Atomic rename, then the index is rebuilt from the new
+ * bytes so the next decision fences against the recovered log.
+ */
+export const replaceGovernessJournal = (
+  journalFile: string,
+  records: readonly GovernessControlRecord[]
+): void => {
+  ensureGovernessJournal(journalFile);
+  const temporary = `${journalFile}.${process.pid}.recover`;
+  writeFileSync(temporary, serializeGovernessJournal(records), "utf8");
+  renameSync(temporary, journalFile);
+  indexCache.delete(journalFile);
+  ensureGovernessJournalIndex(journalFile);
 };
 
 export const prepareGovernessControl = (
