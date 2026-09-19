@@ -6672,3 +6672,48 @@ test("claudeSeatHasNoShell is true only for a Claude seat that is not the primar
   expect(tmuxInternals.claudeSeatHasNoShell("codex", "claude")).toBe(false);
   expect(tmuxInternals.claudeSeatHasNoShell("oss", "claude")).toBe(false);
 });
+
+test("governess env carries the gov-6 Temporal journal settings, and only when set", () => {
+  const withTemporal = tmuxInternals.governessEnv(
+    makePairedOptions(),
+    {
+      LOOP_GOVERNESS_TEMPORAL_ADDRESS: "192.0.2.1:7233",
+      LOOP_GOVERNESS_TEMPORAL_NAMESPACE: "harness",
+      LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE: "governess-beat",
+    },
+    "/repo"
+  );
+  expect(withTemporal).toContain(
+    "LOOP_GOVERNESS_TEMPORAL_ADDRESS=192.0.2.1:7233"
+  );
+  expect(withTemporal).toContain("LOOP_GOVERNESS_TEMPORAL_NAMESPACE=harness");
+  expect(withTemporal).toContain(
+    "LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE=governess-beat"
+  );
+  const without = tmuxInternals.governessEnv(makePairedOptions(), {}, "/repo");
+  expect(
+    without.some((entry) => entry.startsWith("LOOP_GOVERNESS_TEMPORAL_"))
+  ).toBe(false);
+});
+
+test("every LOOP_GOVERNESS_TEMPORAL_* variable read by source reaches the Governess pane", () => {
+  const names = new Set<string>();
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+      } else if (entry.isFile() && path.endsWith(".ts")) {
+        for (const match of readFileSync(path, "utf8").matchAll(
+          /\bLOOP_GOVERNESS_TEMPORAL_[A-Z0-9_]+\b/g
+        )) {
+          names.add(match[0]);
+        }
+      }
+    }
+  };
+  walk(join(import.meta.dir, "..", "..", "src"));
+  expect([...names].sort()).toEqual(
+    [...tmuxInternals.governessTemporalEnvKeys].sort()
+  );
+});

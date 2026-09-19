@@ -1784,6 +1784,14 @@ const usageTrackerEnvFromFiles = (
   ];
 };
 
+// gov-6: the Governess writes its beat journal through Temporal only when these
+// reach its pane. governessEnv is an allowlist, so they must be listed here.
+const GOVERNESS_TEMPORAL_ENV_KEYS = [
+  "LOOP_GOVERNESS_TEMPORAL_ADDRESS",
+  "LOOP_GOVERNESS_TEMPORAL_NAMESPACE",
+  "LOOP_GOVERNESS_TEMPORAL_TASK_QUEUE",
+] as const;
+
 const governessEnv = (
   opts: Options,
   inputEnv: NodeJS.ProcessEnv,
@@ -1806,6 +1814,7 @@ const governessEnv = (
     ...passEnv(env, "LOOP_GOVERNESS_ROLE_BALANCE"),
     ...passEnv(env, "LOOP_GOVERNESS_HANDOFF_MANIFEST"),
     ...GOVERNESS_HELPER_ENV_KEYS.flatMap((key) => passEnv(env, key)),
+    ...GOVERNESS_TEMPORAL_ENV_KEYS.flatMap((key) => passEnv(env, key)),
     ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
     ...passEnv(env, "LOOP_USAGE_TRACKER_TIMEOUT_MS"),
     ...passEnv(env, "LOOP_USAGE_TRACKER_URL"),
@@ -4494,6 +4503,7 @@ export const runInTmux = async (
 };
 
 export const tmuxInternals = {
+  governessTemporalEnvKeys: GOVERNESS_TEMPORAL_ENV_KEYS,
   claudeSeatHasNoShell,
   buildClaudeCommand,
   createLaunchCommandSpawner,
