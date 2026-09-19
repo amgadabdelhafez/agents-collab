@@ -44,6 +44,11 @@ import {
 } from "./constants";
 import { DEFAULT_LAUNCH_EFFORT } from "./effort";
 import { decode } from "./git";
+import {
+  closeGovernessBeatWorkflow,
+  connectGovernessBeatWorkflowControl,
+  type GovernessBeatCloseResult,
+} from "./governess-beat-close";
 import { readPriorSummaries, readProjectContext } from "./governess-context";
 import {
   compactGovernessCycleSnapshot,
@@ -88,6 +93,7 @@ import {
   readPendingGovernessControlHistory,
   transitionGovernessControl,
 } from "./governess-journal";
+import type { GovernessControlRecord } from "./governess-journal-core";
 import {
   assessRoleBalance,
   assessWaiting,
@@ -118,6 +124,7 @@ import {
 } from "./governess-runtime";
 import {
   attachGovernessJournalBackend,
+  type GovernessJournalBackend,
   type GovernessTemporalConfig,
   type GovernessTemporalJournalClient,
   governessTemporalConfigFromEnv,
@@ -284,6 +291,9 @@ export interface GovernessConfig {
   helperCavemanMode?: CavemanMode;
   idleMs: number;
   initialDriver?: Agent;
+  // The armed journal backend, held so teardown can flush and detach it
+  // before closing the beat workflow.
+  journalBackend?: GovernessJournalBackend;
   journalFile?: string;
   // gov-6: when set, the journal is written through the governess-beat.v1
   // Temporal workflow and recovered from its history on start.
@@ -309,6 +319,8 @@ export interface GovernessConfig {
   nativeSubagentMode?: NativeSubagentMode;
   // ntfy topic URL for remote escalation; escalation is off when unset.
   ntfyUrl?: string;
+  // Owning repo, written as the beat workflow's owner memo.
+  repoId?: string;
   reviewerEffort: EffortLevel;
   roleBalanceEnabled: boolean;
   // Run directory, for reading prior-session summaries into the summary.
@@ -391,8 +403,15 @@ export interface GovernessDeps {
   cleanupRunProcesses?: (
     config: GovernessConfig
   ) => RunProcessCleanupResult | undefined;
+  // Close this run's governess-beat workflow once the run is terminal. Called
+  // only when config.journalTemporal is set.
+  closeBeatWorkflow?: (
+    config: GovernessConfig,
+    reason: string
+  ) => Promise<GovernessBeatCloseResult | undefined>;
   connectTemporalJournal?: (
-    config: GovernessTemporalConfig
+    config: GovernessTemporalConfig,
+    ownerRepoId?: string
   ) => Promise<GovernessTemporalJournalClient>;
   fenceCurrent?: (config: GovernessConfig) => boolean;
   // Turn on the pane-border title strip for the whole session (idempotent).
@@ -5403,11 +5422,53 @@ export const advanceHandoverControl = async (
   return { status: "waiting" };
 };
 
+// Bound on the beat close so an unreachable Temporal cannot hold the session.
+const BEAT_CLOSE_TIMEOUT_MS = 15_000;
+
+const closeBeatBeforeKill = async (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  reason: string,
+  close: NonNullable<GovernessDeps["closeBeatWorkflow"]>
+): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const closed = await Promise.race([
+      close(config, reason),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("governess-beat close timed out")),
+          BEAT_CLOSE_TIMEOUT_MS
+        );
+      }),
+    ]);
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      event: "journal-temporal-closed",
+      ...closed,
+    });
+  } catch (error) {
+    deps.appendLog(config.logFile, {
+      at: new Date(deps.now()).toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      event: "journal-temporal-close-failed",
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * Tear the run down. Without a Temporal journal every step is synchronous and
+ * the returned promise is already settled. With one, the beat workflow is
+ * closed after the run is marked stopped and before the session is killed,
+ * because killing the session also kills this process.
+ */
 export const stopGovernessLoop = (
   config: GovernessConfig,
   deps: GovernessDeps,
   reason: string
-): void => {
+): Promise<void> => {
   const policy = decideGovernessPolicy("teardown-loop", {
     confirmed: true,
     fenceCurrent: governessFenceCurrent(config, deps),
@@ -5423,7 +5484,7 @@ export const stopGovernessLoop = (
       event: "exit-denied",
       reason: policy.reason,
     });
-    return;
+    return Promise.resolve();
   }
   const now = new Date(deps.now()).toISOString();
   const payload = `${config.session}:${reason}`;
@@ -5442,7 +5503,7 @@ export const stopGovernessLoop = (
       })
     : undefined;
   if (record && record.phase !== "prepared") {
-    return;
+    return Promise.resolve();
   }
   if (record && config.journalFile) {
     transitionGovernessControl(
@@ -5469,6 +5530,23 @@ export const stopGovernessLoop = (
       event: "run-process-cleanup-failed",
     });
   }
+  const close = config.journalTemporal ? deps.closeBeatWorkflow : undefined;
+  if (!close) {
+    killTeardownSession(config, deps, record);
+    return Promise.resolve();
+  }
+  const closeThenKill = async (): Promise<void> => {
+    await closeBeatBeforeKill(config, deps, reason, close);
+    killTeardownSession(config, deps, record);
+  };
+  return closeThenKill();
+};
+
+const killTeardownSession = (
+  config: GovernessConfig,
+  deps: GovernessDeps,
+  record: GovernessControlRecord | undefined
+): void => {
   try {
     deps.killSession?.(config.session);
     if (record && config.journalFile) {
@@ -5514,7 +5592,7 @@ export const driveHandoverControl = async (
   if (handover.status !== "launched") {
     return false;
   }
-  stopGovernessLoop(
+  await stopGovernessLoop(
     config,
     deps,
     handover.session
@@ -6670,6 +6748,33 @@ export const defaultGovernessDeps = (
       : undefined;
     return cleanupRunOwnedProcesses(config.runDir, manifest);
   },
+  closeBeatWorkflow: async (config, reason) => {
+    if (!(config.journalTemporal && config.manifestPath && config.repoId)) {
+      return undefined;
+    }
+    // Detach and flush first: a record signalled after the terminate would
+    // signalWithStart a fresh execution that nothing closes.
+    const backend = config.journalBackend;
+    config.journalBackend = undefined;
+    await backend?.close();
+    const control = await connectGovernessBeatWorkflowControl(
+      config.journalTemporal
+    );
+    try {
+      return await closeGovernessBeatWorkflow({
+        control,
+        manifest: readRunManifest(config.manifestPath),
+        reason,
+        repoId: config.repoId,
+        // This governess wrote the workflow, possibly under an older binary
+        // that set no owner memo.
+        requireOwnerMemo: false,
+        runId: config.runId,
+      });
+    } finally {
+      await control.close().catch(() => undefined);
+    }
+  },
   fenceCurrent: (config) => {
     if (!(config.stateFile && typeof config.epoch === "number")) {
       return false;
@@ -7263,6 +7368,7 @@ export const resolveGovernessConfig = (
     ),
     ntfyUrl: env.LOOP_GOVERNESS_NTFY || undefined,
     roleBalanceEnabled: envEnabled(env.LOOP_GOVERNESS_ROLE_BALANCE),
+    repoId: manifest?.repoId,
     reviewerEffort: manifest?.reviewerEffort ?? DEFAULT_LAUNCH_EFFORT,
     sessionPressureMode: sessionPressureModeFromEnv(env),
     runId,
@@ -7334,9 +7440,11 @@ export const runGoverness = async (
             event: "journal-temporal-append-failed",
             sequence: record.sequence,
           }),
+        ...(config.repoId ? { ownerRepoId: config.repoId } : {}),
         runId: config.runId,
         temporal: config.journalTemporal,
       });
+      config.journalBackend = backend;
       if (backend.kind === "temporal") {
         deps.appendLog(config.logFile, {
           at: new Date().toISOString(),
@@ -7426,7 +7534,7 @@ export const runGoverness = async (
       )
     );
   };
-  const stopCurrentLoop = (reason: string): void =>
+  const stopCurrentLoop = (reason: string): Promise<void> =>
     stopGovernessLoop(config, deps, reason);
   const advanceHandover = async (
     agentStates: Partial<Record<Agent, string>>,
@@ -7922,7 +8030,7 @@ export const runGoverness = async (
       } else if (action === "cancel") {
         exitMenuOpen = false;
       } else if (action === "teardown") {
-        stopCurrentLoop("user requested teardown");
+        await stopCurrentLoop("user requested teardown");
         return;
       } else if (action === "handover") {
         exitMenuOpen = false;

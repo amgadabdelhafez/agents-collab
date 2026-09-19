@@ -22,6 +22,7 @@ import {
   resolveGovernessConfig,
   runGoverness,
 } from "./loop/governess";
+import { closeGovernessBeatForTerminalRun } from "./loop/governess-beat-close";
 import { runGovernessCostCommand } from "./loop/governess-cost";
 import {
   GOVERNESS_PANE_DIED_SUBCOMMAND,
@@ -404,6 +405,17 @@ const runStoppedRunReconcileCommand = async (
   if (result.status === "refused") {
     throw new Error(`stopped-run reconciliation refused: ${result.reason}`);
   }
+  const closed = await closeGovernessBeatForTerminalRun({
+    env: process.env,
+    manifestPath: storage.manifestPath,
+    reason: "reconcile stopped-run",
+    runId,
+  });
+  if (closed) {
+    console.error(
+      `[loop] ${closed.workflowId}: ${closed.outcome}${closed.detail ? ` (${closed.detail})` : ""}`
+    );
+  }
   return true;
 };
 
@@ -537,6 +549,8 @@ export const runCli = async (argv: string[]): Promise<void> => {
     cliDeps.gcStaleClaudeBridgeRegistrations();
     cliDeps.gcStaleBridgeProcesses();
     cliDeps.gcAbandonedRunProcesses();
+    // After abandoned-run GC, so the runs it just marked failed are closed too.
+    await cliDeps.reconcileGovernessBeatWorkflows();
     await updateDeps.applyStagedUpdateOnStartup();
     if (await updateDeps.handleManualUpdateCommand(normalizedArgv)) {
       return;

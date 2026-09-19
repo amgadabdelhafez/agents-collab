@@ -1,6 +1,7 @@
 import { parseArgs, renderImmediateInfo } from "./args";
 import { gcStaleClaudeBridgeRegistrations } from "./claude-config-gc";
 import { checkGitState } from "./git";
+import { reconcileGovernessBeatWorkflows } from "./governess-beat-close";
 import {
   bindLaunchTask,
   cancelPairedLaunch,
@@ -27,6 +28,7 @@ export const cliDeps = {
   maybeEnterWorktree,
   parseArgs,
   prepareRunWorldModel,
+  reconcileGovernessBeatWorkflows,
   renderImmediateInfo,
   resolveTask,
   resolveWorkspaceBinding,

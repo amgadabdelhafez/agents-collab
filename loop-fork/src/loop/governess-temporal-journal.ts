@@ -33,6 +33,10 @@ import {
 
 export const GOVERNESS_TEMPORAL_DEFAULT_TASK_QUEUE = "loop-governess";
 export const GOVERNESS_APPEND_RECORD_SIGNAL = "append_record";
+// Memo written when a run's beat workflow is created, naming the owning repo.
+// Run ids are per-repo integers, so the close path (governess-beat-close.ts)
+// checks it before terminating a workflow another repo's run may own.
+export const GOVERNESS_BEAT_OWNER_MEMO_KEY = "loopRepoId";
 // Must match temporalCommandSignal in temporal-workflow.ts. Kept literal so the
 // file-only path never imports the Temporal SDK.
 const WORKFLOW_PORT_COMMAND_SIGNAL = "workflow-port-command";
@@ -213,6 +217,7 @@ export const createGovernessTemporalJournalClient = (input: {
   client: WorkflowClient;
   close?: () => Promise<void>;
   decode: HistoryPayloadDecoder;
+  ownerRepoId?: string;
   settleTimeoutMs?: number;
   taskQueue: string;
 }): GovernessTemporalJournalClient => ({
@@ -228,6 +233,9 @@ export const createGovernessTemporalJournalClient = (input: {
           workflowType: GOVERNESS_BEAT_WORKFLOW_TYPE,
         },
       ],
+      ...(input.ownerRepoId
+        ? { memo: { [GOVERNESS_BEAT_OWNER_MEMO_KEY]: input.ownerRepoId } }
+        : {}),
       signal: WORKFLOW_PORT_COMMAND_SIGNAL,
       signalArgs: [
         {
@@ -277,7 +285,8 @@ export const createGovernessTemporalJournalClient = (input: {
  * the file-only governess never loads it.
  */
 export const connectGovernessTemporalJournal = async (
-  config: GovernessTemporalConfig
+  config: GovernessTemporalConfig,
+  ownerRepoId?: string
 ): Promise<GovernessTemporalJournalClient> => {
   const { Connection, WorkflowClient, defaultPayloadConverter } = await import(
     "@temporalio/client"
@@ -290,6 +299,7 @@ export const connectGovernessTemporalJournal = async (
       defaultPayloadConverter.fromPayload(
         payload as Parameters<typeof defaultPayloadConverter.fromPayload>[0]
       ),
+    ...(ownerRepoId ? { ownerRepoId } : {}),
     taskQueue: config.taskQueue,
   });
 };
@@ -453,10 +463,12 @@ export type GovernessJournalBackend =
  */
 export const attachGovernessJournalBackend = async (input: {
   connect?: (
-    config: GovernessTemporalConfig
+    config: GovernessTemporalConfig,
+    ownerRepoId?: string
   ) => Promise<GovernessTemporalJournalClient>;
   journalFile: string;
   onSinkError?: (error: unknown, record: GovernessControlRecord) => void;
+  ownerRepoId?: string;
   runId: string;
   temporal?: GovernessTemporalConfig;
 }): Promise<GovernessJournalBackend> => {
@@ -464,7 +476,7 @@ export const attachGovernessJournalBackend = async (input: {
     return { close: async () => undefined, kind: "file" };
   }
   const connect = input.connect ?? connectGovernessTemporalJournal;
-  const client = await connect(input.temporal);
+  const client = await connect(input.temporal, input.ownerRepoId);
   try {
     const recovery = await recoverGovernessJournalFromTemporal(
       input.journalFile,

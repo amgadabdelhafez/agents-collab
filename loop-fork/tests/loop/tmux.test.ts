@@ -2255,6 +2255,7 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
   const logs: string[] = [];
   const sleeps: number[] = [];
   let closed = 0;
+  let beatCloses = 0;
   let released = 0;
   let sessionStarted = false;
   let manifest = createRunManifest({
@@ -2279,6 +2280,10 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
       ["--tmux"],
       {
         capturePane: () => "",
+        closeGovernessBeat: () => {
+          beatCloses += 1;
+          return Promise.resolve(undefined);
+        },
         closePersistentCodexSession: () => {
           closed += 1;
           return Promise.resolve();
@@ -2352,6 +2357,8 @@ test("runInTmux fails closed when Claude never reaches an input-ready prompt", a
   });
   expect(released).toBe(1);
   expect(closed).toBe(0);
+  // The preserved session is a live run (input-required): never closed.
+  expect(beatCloses).toBe(0);
   expect(logs).toContain(
     '[loop] preserved live tmux session "repo-loop-1" for Claude startup readiness timeout recovery; attach with: tmux attach -t repo-loop-1'
   );
@@ -2386,6 +2393,12 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
       {
         capturePane: () => {
           throw new Error("synthetic capture failure");
+        },
+        closeGovernessBeat: (input) => {
+          cleanupEvents.push(
+            `close-beat:${input.runId}:${input.manifest?.state}`
+          );
+          return Promise.resolve(undefined);
         },
         closePersistentCodexSession: () => {
           cleanupEvents.push("close-transport");
@@ -2453,6 +2466,7 @@ test("runInTmux still terminalizes an unexpected Claude readiness probe failure"
     "kill-owned-session",
     "stop-proxy",
     "close-transport",
+    "close-beat:1:failed",
   ]);
   expect(
     calls.some((args) => args[0] === "tmux" && args[1] === "kill-session")

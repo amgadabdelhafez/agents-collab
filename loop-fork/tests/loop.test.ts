@@ -54,6 +54,7 @@ interface CliModuleDeps {
     claim: PairedLaunchClaim,
     task?: string
   ) => unknown | Promise<unknown>;
+  reconcileGovernessBeatWorkflows?: () => Promise<unknown>;
   renderImmediateInfo?: (request: ImmediateInfoRequest) => void;
   reservePairedLaunch?: (
     opts: Options,
@@ -112,6 +113,9 @@ const loadRunCli = async (
   const chdirMock = mock(deps.chdir ?? (() => undefined));
   const gcAbandonedRunProcessesMock = mock(
     deps.gcAbandonedRunProcesses ?? (() => undefined)
+  );
+  const reconcileGovernessBeatWorkflowsMock = mock(
+    deps.reconcileGovernessBeatWorkflows ?? (async () => undefined)
   );
   const gcStaleBridgeProcessesMock = mock(
     deps.gcStaleBridgeProcesses ?? (() => undefined)
@@ -172,6 +176,7 @@ const loadRunCli = async (
       maybeEnterWorktree: maybeEnterWorktreeMock,
       parseArgs: parseArgsMock,
       prepareRunWorldModel: prepareRunWorldModelMock,
+      reconcileGovernessBeatWorkflows: reconcileGovernessBeatWorkflowsMock,
       renderImmediateInfo: renderImmediateInfoMock,
       resolveTask: resolveTaskMock,
       resolveWorkspaceBinding: resolveWorkspaceBindingMock,
@@ -217,6 +222,7 @@ const loadRunCli = async (
     maybeEnterWorktreeMock,
     parseArgsMock,
     prepareRunWorldModelMock,
+    reconcileGovernessBeatWorkflowsMock,
     renderImmediateInfoMock,
     resolveTaskMock,
     resolveWorkspaceBindingMock,
@@ -322,6 +328,24 @@ test("runCli runs task flow when argv has options", async () => {
   expect(gcStaleBridgeProcessesMock).toHaveBeenCalledTimes(1);
   expect(gcStaleClaudeBridgeRegistrationsMock).toHaveBeenCalledTimes(1);
   expect(opts.pairedMode).toBe(true);
+});
+
+test("runCli reconciles governess-beat workflows after abandoned-run GC", async () => {
+  const startup: string[] = [];
+  const { reconcileGovernessBeatWorkflowsMock, runCli } = await loadRunCli({
+    gcAbandonedRunProcesses: () => startup.push("gc-abandoned"),
+    parseArgs: () => makeOptions(),
+    reconcileGovernessBeatWorkflows: () => {
+      startup.push("reconcile-beat");
+      return Promise.resolve();
+    },
+    resolveTask: async () => "ship feature",
+  });
+
+  await runCli(["--proof", "verify with tests"]);
+
+  expect(reconcileGovernessBeatWorkflowsMock).toHaveBeenCalledTimes(1);
+  expect(startup).toEqual(["gc-abandoned", "reconcile-beat"]);
 });
 
 test("runCli delegates paired tmux after resolving the task", async () => {

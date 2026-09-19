@@ -65,6 +65,7 @@ import {
   DEFAULT_CODEX_CONFIG_VALUES,
 } from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
+import { closeGovernessBeatForTerminalRun } from "./governess-beat-close";
 import {
   GOVERNESS_DEAD_PANE_BORDER_FORMAT,
   GOVERNESS_PANE_DIED_SUBCOMMAND,
@@ -236,6 +237,7 @@ interface TmuxDeps {
   // "2.1.223 (Claude Code)". Undefined when it cannot be observed, which keeps
   // the kickoff guard in its default-closed profile.
   claudeCliVersion: () => string | undefined;
+  closeGovernessBeat: typeof closeGovernessBeatForTerminalRun;
   closePersistentCodexSession: typeof closePersistentCodexSession;
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -3496,6 +3498,27 @@ const startPairedSession = async (
         current.codexThreadId === codexThreadId ? "" : current.codexThreadId,
     };
   };
+  // The session is already killed, so the governess cannot close its own
+  // beat workflow; the launcher does. Never masks the launch error.
+  const closeFailedStartBeat = async (manifest: RunManifest): Promise<void> => {
+    try {
+      const closed = await deps.closeGovernessBeat({
+        env: deps.env,
+        manifest,
+        manifestPath: storage.manifestPath,
+        reason: "paired session start failed",
+        runId: storage.runId,
+      });
+      if (closed?.outcome === "terminated") {
+        deps.log(`[loop] closed ${closed.workflowId} after failed start.`);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      deps.log(
+        `[loop] governess-beat close after failed start failed: ${detail}; startup reconcile will retry.`
+      );
+    }
+  };
   const terminalizeFailedStart = async (): Promise<
     RunLifecycleState | "undurable"
   > => {
@@ -3528,6 +3551,7 @@ const startPairedSession = async (
         return "undurable";
       }
       terminalizationResult = updated.state;
+      await closeFailedStartBeat(updated);
       return terminalizationResult;
     } catch {
       // Preserve the original launch error; startup GC reads durable ownership.
@@ -4276,6 +4300,7 @@ const defaultDeps = (persistedSocket?: TmuxSocket): TmuxDeps => {
       return waitForCodexTmuxProxy(port);
     },
     stopCodexProxy: stopCodexTmuxProxy,
+    closeGovernessBeat: closeGovernessBeatForTerminalRun,
     closePersistentCodexSession,
     releasePersistentCodexSession,
     startPersistentAgentSession,
