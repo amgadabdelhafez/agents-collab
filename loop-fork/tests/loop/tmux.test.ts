@@ -1198,8 +1198,18 @@ test("runInTmux transports a realistic charter through hash-bound pointer bootst
   expect(reviewerKickoff).toContain(
     `Expected SHA-256: ${reviewerCharter?.sha256}`
   );
-  expect(reviewerKickoff).toContain(`shasum -a 256 '${reviewerCharter?.path}'`);
-  expect(reviewerKickoff).toContain("your own shell tool");
+  // The Claude reviewer is launched with Bash disallowed, so its kickoff must
+  // never tell it to run a shell command; the codex driver keeps its own check.
+  expect(reviewerKickoff).not.toContain("shasum");
+  expect(reviewerKickoff).not.toContain("shell tool");
+  expect(reviewerKickoff).toContain("Read tool");
+  expect(reviewerKickoff).toContain("fail closed");
+  const driverCharter = manifest.launchCharters?.codex;
+  const driverKickoff = loadedPrompts.find((prompt) =>
+    prompt.path.endsWith("codex-bootstrap.txt")
+  )?.content;
+  expect(driverKickoff).toContain(`shasum -a 256 '${driverCharter?.path}'`);
+  expect(driverKickoff).toContain("your own shell tool");
   expect(reviewerKickoff).not.toMatch(
     /\b(ask|have|get|request)\b[^.\n]*\b(human|user|operator|supervisor)\b/i
   );
@@ -6653,4 +6663,12 @@ test("tmux internals detect session conflicts", () => {
 
 test("tmux internals sanitize run base names", () => {
   expect(tmuxInternals.sanitizeBase("My Repo")).toBe("my-repo");
+});
+
+test("claudeSeatHasNoShell is true only for a Claude seat that is not the primary", () => {
+  expect(tmuxInternals.claudeSeatHasNoShell("claude", "codex")).toBe(true);
+  expect(tmuxInternals.claudeSeatHasNoShell("claude", "oss")).toBe(true);
+  expect(tmuxInternals.claudeSeatHasNoShell("claude", "claude")).toBe(false);
+  expect(tmuxInternals.claudeSeatHasNoShell("codex", "claude")).toBe(false);
+  expect(tmuxInternals.claudeSeatHasNoShell("oss", "claude")).toBe(false);
 });

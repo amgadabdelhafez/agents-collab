@@ -642,20 +642,36 @@ interface MaterializedLaunchCharter {
   charter: RunLaunchCharter;
 }
 
+// A Claude seat that is not the primary agent is launched reviewer-only, with
+// Bash disallowed (see buildClaudeCommand). Its kickoff must never ask it to run
+// a shell command it cannot run: that stalled runs until a supervisor stepped in.
+export const claudeSeatHasNoShell = (agent: Agent, primary: Agent): boolean =>
+  agent === "claude" && agent !== primary;
+
 const buildLaunchBootstrap = (
   agent: Agent,
-  charter: RunLaunchCharter
+  charter: RunLaunchCharter,
+  hasShell = true
 ): string => {
-  const bootstrap = [
+  const header = [
     `Loop bootstrap: you are the ${capitalize(agent)} agent for this run.`,
     `Your complete charter is stored at: ${charter.path}`,
     `Expected SHA-256: ${charter.sha256}`,
-    "Before doing any work, verify the charter yourself with your own shell tool:",
-    `shasum -a 256 '${charter.path}'`,
-    "Compare the first field with the expected SHA-256 exactly. This check is yours alone; it never needs a person to type a command in your pane, so never wait on one.",
-    "If the file is missing or the hash differs, fail closed: report the mismatch and do not proceed.",
-    "After verification, read the complete charter and follow it as the authoritative run instructions.",
-  ].join("\n");
+  ];
+  const verification = hasShell
+    ? [
+        "Before doing any work, verify the charter yourself with your own shell tool:",
+        `shasum -a 256 '${charter.path}'`,
+        "Compare the first field with the expected SHA-256 exactly. This check is yours alone; it never needs a person to type a command in your pane, so never wait on one.",
+        "If the file is missing or the hash differs, fail closed: report the mismatch and do not proceed.",
+        "After verification, read the complete charter and follow it as the authoritative run instructions.",
+      ]
+    : [
+        "The launcher computed that SHA-256 from the exact bytes it wrote to this file. Your seat is read-only by design, so do not try to hash it yourself and never wait on anyone to do it for you.",
+        "Read the complete charter with your Read tool. If the file is missing or unreadable, fail closed: report it and do not proceed.",
+        "Then follow it as the authoritative run instructions.",
+      ];
+  const bootstrap = [...header, ...verification].join("\n");
   const bytes = Buffer.byteLength(bootstrap, "utf8");
   if (bytes >= MAX_LAUNCH_BOOTSTRAP_BYTES) {
     throw new Error(
@@ -668,7 +684,8 @@ const buildLaunchBootstrap = (
 const writeLaunchCharter = (
   runDir: string,
   agent: Agent,
-  prompt: string | undefined
+  prompt: string | undefined,
+  hasShell = true
 ): MaterializedLaunchCharter | undefined => {
   if (!prompt) {
     return undefined;
@@ -684,7 +701,7 @@ const writeLaunchCharter = (
     path: charterPath,
     sha256: createHash("sha256").update(prompt, "utf8").digest("hex"),
   };
-  const bootstrap = buildLaunchBootstrap(agent, charter);
+  const bootstrap = buildLaunchBootstrap(agent, charter, hasShell);
   const bootstrapPath = join(directory, `${agent}-bootstrap.txt`);
   writeFileSync(bootstrapPath, bootstrap, { encoding: "utf8", mode: 0o600 });
   chmodSync(bootstrapPath, 0o600);
@@ -2272,7 +2289,7 @@ const buildPairedAgentCommand = ({
       claudeMcpConfigPath,
       nativeSubagentMode,
       effort,
-      agent !== opts.agent
+      claudeSeatHasNoShell(agent, opts.agent)
     );
   }
   if (agent === "codex") {
@@ -3658,12 +3675,14 @@ const startPairedSession = async (
     const leftLaunch = writeLaunchCharter(
       storage.runDir,
       paneAgents.left,
-      leftPrompt
+      leftPrompt,
+      !claudeSeatHasNoShell(paneAgents.left, launch.opts.agent)
     );
     const rightLaunch = writeLaunchCharter(
       storage.runDir,
       paneAgents.right,
-      rightPrompt
+      rightPrompt,
+      !claudeSeatHasNoShell(paneAgents.right, launch.opts.agent)
     );
     const leftPromptPath = leftLaunch?.bootstrapPath;
     const rightPromptPath = rightLaunch?.bootstrapPath;
@@ -4475,6 +4494,7 @@ export const runInTmux = async (
 };
 
 export const tmuxInternals = {
+  claudeSeatHasNoShell,
   buildClaudeCommand,
   createLaunchCommandSpawner,
   ClaudeKickoffUnconfirmedError,
