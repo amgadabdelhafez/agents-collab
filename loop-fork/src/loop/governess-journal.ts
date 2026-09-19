@@ -8,6 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statSync,
@@ -271,6 +272,35 @@ const append = (
   Object.assign(index, journalStat(journalFile));
   persistJournalIndex(journalFile, index);
   journalSinks.get(journalFile)?.(record);
+};
+
+/**
+ * Every record the local journal still holds, active file plus the records
+ * compaction moved into `<journal>.archive/`, one per sequence, in order.
+ */
+export const readGovernessJournalWithArchive = (
+  journalFile: string
+): GovernessControlRecord[] => {
+  const archiveDir = `${journalFile}${JOURNAL_ARCHIVE_SUFFIX}`;
+  let archiveFiles: string[] = [];
+  try {
+    archiveFiles = readdirSync(archiveDir)
+      .filter((name) => name.endsWith(".jsonl"))
+      .map((name) => join(archiveDir, name));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const bySequence = new Map<number, GovernessControlRecord>();
+  for (const file of [...archiveFiles, journalFile]) {
+    for (const record of readGovernessJournal(file)) {
+      bySequence.set(record.sequence, record);
+    }
+  }
+  return [...bySequence.values()].sort(
+    (left, right) => left.sequence - right.sequence
+  );
 };
 
 /**

@@ -19,6 +19,7 @@ import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { governessBeatWorkflowId } from "../../src/loop/governess-beat-workflow";
 import {
+  compactGovernessJournal,
   prepareGovernessControl,
   readGovernessJournal,
   recordGovernessObservation,
@@ -291,6 +292,49 @@ describe("gov-6 governess journal on Temporal", () => {
     expect(
       serializeGovernessJournal(await journalClient().readRecords(runId))
     ).toBe(serializeGovernessJournal(fileRecords));
+  }, 120_000);
+
+  test("recovery: records compaction archived before they reached Temporal are still replayed", async () => {
+    const runId = `gov6-compacted-${process.pid}`;
+    const journalFile = freshJournal();
+    const offline = journalClient();
+    const first = await attachGovernessJournalBackend({
+      connect: async () => ({
+        ...offline,
+        appendRecord: () => Promise.reject(new Error("server unreachable")),
+      }),
+      journalFile,
+      runId,
+      temporal: TEST_CONFIG,
+    });
+    writeFixture(journalFile);
+    await first.close();
+    const everything = readGovernessJournal(journalFile);
+    const compaction = compactGovernessJournal(journalFile);
+    // Without archived records the replayed tail would have sequence holes.
+    expect(compaction.archivedRecords).toBeGreaterThan(0);
+    expect(readGovernessJournal(journalFile).length).toBeLessThan(
+      everything.length
+    );
+
+    const second = await attachGovernessJournalBackend({
+      connect: async () => journalClient(),
+      journalFile,
+      runId,
+      temporal: TEST_CONFIG,
+    });
+    if (second.kind !== "temporal") {
+      throw new Error("expected the Temporal backend");
+    }
+    await second.close();
+    expect(second.recovery).toMatchObject({
+      backfilled: everything.length,
+      historyComplete: true,
+      temporalRecords: everything.length,
+    });
+    expect(
+      serializeGovernessJournal(await journalClient().readRecords(runId))
+    ).toBe(serializeGovernessJournal(everything));
   }, 120_000);
 });
 

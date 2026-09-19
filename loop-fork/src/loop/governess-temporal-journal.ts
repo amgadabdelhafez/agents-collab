@@ -21,6 +21,7 @@ import {
 } from "./governess-beat-workflow";
 import {
   readGovernessJournal,
+  readGovernessJournalWithArchive,
   replaceGovernessJournal,
   setGovernessJournalSink,
 } from "./governess-journal";
@@ -343,6 +344,9 @@ export interface GovernessJournalRecovery {
   backfilled: number;
   divergedAt?: number;
   fileRecords: number;
+  // False when history still ends short of the local journal after backfill,
+  // for example because an archived record was deleted. Logged, not fatal.
+  historyComplete: boolean;
   rewroteFile: boolean;
   temporalRecords: number;
 }
@@ -353,7 +357,9 @@ export interface GovernessJournalRecovery {
  *
  * - Same sequence, different record: history wins, the file is rewritten from
  *   history and its newer tail is dropped (it was decided on a diverged log).
- * - File holds records newer than history: they are signalled in order.
+ * - The local journal (active file plus compaction archive) holds records
+ *   newer than history: they are signalled in order, then history is read
+ *   again to confirm it reaches the local last sequence (`historyComplete`).
  * - History holds records the file lacks past the file's last sequence (the
  *   file was lost or truncated with the pane): the file is rewritten.
  * Sequences below the file's last one that only history holds are records
@@ -366,12 +372,15 @@ export const recoverGovernessJournalFromTemporal = async (
 ): Promise<GovernessJournalRecovery> => {
   const fromHistory = await client.readRecords(runId);
   const fromFile = readGovernessJournal(journalFile);
+  // Compaction may have archived records history never received, so the local
+  // side of the comparison is the active file plus its archive.
+  const local = readGovernessJournalWithArchive(journalFile);
   const bySequence = new Map(
     fromHistory.map((record) => [record.sequence, record])
   );
   const historyLast = fromHistory.at(-1)?.sequence ?? 0;
   const fileLast = fromFile.at(-1)?.sequence ?? 0;
-  const diverged = fromFile.find((record) => {
+  const diverged = local.find((record) => {
     const held = bySequence.get(record.sequence);
     return held !== undefined && !sameGovernessControlRecord(held, record);
   });
@@ -381,11 +390,12 @@ export const recoverGovernessJournalFromTemporal = async (
       backfilled: 0,
       divergedAt: diverged.sequence,
       fileRecords: fromFile.length,
+      historyComplete: true,
       rewroteFile: true,
       temporalRecords: fromHistory.length,
     };
   }
-  const tail = fromFile.filter((record) => record.sequence > historyLast);
+  const tail = local.filter((record) => record.sequence > historyLast);
   for (const record of tail) {
     await client.appendRecord(runId, record);
   }
@@ -393,11 +403,19 @@ export const recoverGovernessJournalFromTemporal = async (
   if (rewroteFile) {
     replaceGovernessJournal(journalFile, fromHistory);
   }
+  // A tail with a sequence hole is rejected from the hole onward, so confirm
+  // history now reaches the local last sequence instead of assuming it.
+  const temporalRecords =
+    tail.length > 0
+      ? (await client.readRecords(runId)).length
+      : fromHistory.length;
+  const localLast = Math.max(historyLast, local.at(-1)?.sequence ?? 0);
   return {
     backfilled: tail.length,
     fileRecords: fromFile.length,
+    historyComplete: temporalRecords === localLast,
     rewroteFile,
-    temporalRecords: fromHistory.length + tail.length,
+    temporalRecords,
   };
 };
 
