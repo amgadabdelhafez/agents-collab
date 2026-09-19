@@ -61,26 +61,34 @@ the journal can still be read back.
    - `governess-beat:29` read back unchanged afterwards: RUNNING, 19 events.
    - `loop reconcile stopped-run` (session 2): `live-proof-stopped-run.ts`,
      output in `live-proof-stopped-run.log`. The real CLI as a subprocess under
-     a throwaway HOME, run id `91789800898334` (far above any real run number).
-     `governess-beat:91789800898334` started RUNNING (3 events); the CLI while
+     a throwaway HOME, run id `91789801147007` (far above any real run number; rerun on the
+     final code, an earlier run `91789800898334` gave the same result).
+     `governess-beat:91789801147007` started RUNNING (3 events); the CLI while
      the run was `working` refused (`run-is-not-stopped`) and left it RUNNING;
      after the run stopped, the CLI reconciled and closed it:
      `WORKFLOW_EXECUTION_STATUS_TERMINATED`, 4 events, close time
-     `2026-09-19T06:54:58.881734472Z`; a second CLI call reported
+     `2026-09-19T06:59:07.614906703Z`; a second CLI call reported
      `already-closed (TERMINATED)`.
 3. Mutations: `mutation.log`. Skipping the close on the governess teardown
    (2 tests fail), on the tmux failed start (1 fails), skipping the startup
    reconcile (1 fails, plus the allowlisted one), and dropping the live-run
    guard (6 fail). All sources restored. Session 2 added mutation 5:
    skipping the close in `loop reconcile stopped-run` fails `runCli reconciles
-   one synthetic stopped run before startup maintenance`.
-4. Session 2 (after routing the stopped-run close through `cliDeps` and adding
+   one synthetic stopped run before startup maintenance`. Mutation 6 (drop
+   the per-RPC deadline) fails `deadline: the connected control bounds describe
+   and terminate on a real server`, and three later tests in that block time
+   out as a cascade.
+4. Session 2 review fix: an independent review found that only the dial was
+   bounded (3 s), so a server that accepted the connection and then hung would
+   stall every CLI startup in the reconcile. `describe`/`terminate` now run
+   under `connection.withDeadline` (5 s each).
+   Session 2 (after routing the stopped-run close through `cliDeps` and adding
    its CLI tests): `bun run check` clean (941 files); `suite.log` is the full
    suite, 123 files one by one under `env -u TMUX -u TMUX_PANE
    LOOP_TEST_CERTIFICATION_MODE=single-file`: the only nonzero file is
    `tests/loop.test.ts`, the only failure by name is the allowlisted `runCli
    awaits auto-update before handing off promptless paired tmux startup`.
-   Touched files: `governess-beat-close.test.ts` 24/0, `tmux.test.ts` 115/0,
+   Touched files: `governess-beat-close.test.ts` 25/0, `tmux.test.ts` 115/0,
    `loop.test.ts` 44/1 (the allowlisted one).
 5. `git diff --numstat` equals `--ignore-all-space` for every commit on the
    branch (see status.md).

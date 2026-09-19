@@ -15,8 +15,13 @@ Branch `claude/governess-beat-close` (from `ec185ba1`). Implementation
   closes once after reconciliation reports, and never when reconciliation
   refuses. Mutation 5 (skip that close) fails `runCli reconciles one synthetic
   stopped run before startup maintenance`.
-- Live: `governess-beat:91789800898334` closed by the real CLI subprocess,
-  `WORKFLOW_EXECUTION_STATUS_TERMINATED`, close `2026-09-19T06:54:58.881734472Z`;
+- Review fix (independent Sonnet reviewer): `describe`/`terminate` had no RPC
+  deadline, only the 3 s dial did, so a hung server could stall CLI startup.
+  Each call now runs under `connection.withDeadline` (5 s). Real-server test
+  plus mutation 6.
+- Live: `governess-beat:91789801147007` closed by the real CLI subprocess on
+  the final code, `WORKFLOW_EXECUTION_STATUS_TERMINATED`, close
+  `2026-09-19T06:59:07.614906703Z`;
   RUNNING while the run was working. Session 1 live proofs (abandoned + teardown)
   stand; `governess-beat:29` untouched.
 - `bun run check` clean. Full suite 123 files one by one under
@@ -24,7 +29,10 @@ Branch `claude/governess-beat-close` (from `ec185ba1`). Implementation
   before handing off promptless paired tmux startup` fails.
 - numstat equals `--ignore-all-space` for `7b5ccdbf` and this session's commit.
 
-Open: workflows created before the owner memo (for example
+Open: runs ended by paired-loop `finishRun` (foreground, no governess) close
+only at the next `loop` startup in that repo (by the reconcile), not inline; a
+repo never used again keeps that workflow open. Candidate follow-up: inline
+close in `finishRun`. Workflows created before the owner memo (for example
 `governess-beat:29`) are never closed by reconcile by design; the supervisor
 closes those. Next: supervisor diff-read, merge, build, install.
 

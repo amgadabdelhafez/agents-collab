@@ -91,3 +91,17 @@ index 2d07716b..86f6556c 100644
  43 pass
  2 fail
 (restored from backup; grep -c MUTATION src/cli.ts = 0)
+
+## mutation 6: connected control without the per-RPC deadline (session 2)
+     client: new WorkflowClient({ connection, namespace: config.namespace }),
+     close: () => connection.close(),
++    // MUTATION: no per-RPC deadline
+   });
+ };
+(fail) governess-beat close on a real Temporal test server > deadline: the connected control bounds describe and terminate on a real server [5002.04ms]
+(fail) governess-beat close on a real Temporal test server > close: absent and already-closed workflows are no-ops [5000.05ms]
+(fail) governess-beat close on a real Temporal test server > reconcile: closes completed, stopped and abandoned-failed runs, skips live ones, and is idempotent [5000.13ms]
+(fail) governess-beat close on a real Temporal test server > governess: the default close detaches the journal sink, then terminates the stopped run's workflow [5002.02ms]
+ 21 pass
+ 4 fail
+(restored from backup; grep -c MUTATION = 0)

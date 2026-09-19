@@ -38,6 +38,12 @@ import {
 } from "./run-state";
 
 const CONNECT_TIMEOUT_MS = 3000;
+// Per describe/terminate call: connectTimeout only bounds the dial, so a server
+// that accepts the connection and then hangs would otherwise stall CLI startup.
+export const GOVERNESS_BEAT_RPC_TIMEOUT_MS = 5000;
+
+type WithDeadline = <T>(call: () => Promise<T>) => Promise<T>;
+const unbounded: WithDeadline = (call) => call();
 const GRPC_NOT_FOUND = 5;
 
 export interface GovernessBeatDescription {
@@ -155,13 +161,17 @@ export const closeGovernessBeatWorkflow = async (input: {
 export const createGovernessBeatWorkflowControl = (input: {
   client: import("@temporalio/client").WorkflowClient;
   close?: () => Promise<void>;
+  // Bounds one RPC; the connected control passes the connection's deadline.
+  withDeadline?: WithDeadline;
 }): GovernessBeatWorkflowControl => ({
   async close() {
     await input.close?.();
   },
   async describe(workflowId) {
     try {
-      const description = await input.client.getHandle(workflowId).describe();
+      const description = await (input.withDeadline ?? unbounded)(() =>
+        input.client.getHandle(workflowId).describe()
+      );
       const owner = description.memo?.[GOVERNESS_BEAT_OWNER_MEMO_KEY];
       return {
         ...(typeof owner === "string" ? { ownerRepoId: owner } : {}),
@@ -175,12 +185,15 @@ export const createGovernessBeatWorkflowControl = (input: {
     }
   },
   async terminate(workflowId, reason) {
-    await input.client.getHandle(workflowId).terminate(reason);
+    await (input.withDeadline ?? unbounded)(() =>
+      input.client.getHandle(workflowId).terminate(reason)
+    );
   },
 });
 
 export const connectGovernessBeatWorkflowControl = async (
-  config: GovernessTemporalConfig
+  config: GovernessTemporalConfig,
+  rpcTimeoutMs = GOVERNESS_BEAT_RPC_TIMEOUT_MS
 ): Promise<GovernessBeatWorkflowControl> => {
   const { Connection, WorkflowClient } = await import("@temporalio/client");
   const connection = await Connection.connect({
@@ -190,6 +203,8 @@ export const connectGovernessBeatWorkflowControl = async (
   return createGovernessBeatWorkflowControl({
     client: new WorkflowClient({ connection, namespace: config.namespace }),
     close: () => connection.close(),
+    withDeadline: (call) =>
+      connection.withDeadline(Date.now() + rpcTimeoutMs, call),
   });
 };
 

@@ -1,8 +1,8 @@
-# full suite, file by file, env -u TMUX -u TMUX_PANE LOOP_TEST_CERTIFICATION_MODE=single-file bun test <file>
+# full suite on the final tree (after the RPC-deadline fix), file by file, env -u TMUX -u TMUX_PANE LOOP_TEST_CERTIFICATION_MODE=single-file bun test <file>
 # files:      123; nonzero exits:
 1 tests/loop.test.ts
 # failures by name:
-(fail) runCli awaits auto-update before handing off promptless paired tmux startup [2.36ms]
+(fail) runCli awaits auto-update before handing off promptless paired tmux startup [1.83ms]
 # per-file exit codes:
 0 tests/baseline-gate.test.ts
 0 tests/install.test.ts

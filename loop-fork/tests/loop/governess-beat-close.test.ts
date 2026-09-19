@@ -30,6 +30,7 @@ import {
 import {
   closeGovernessBeatForTerminalRun,
   closeGovernessBeatWorkflow,
+  connectGovernessBeatWorkflowControl,
   createGovernessBeatWorkflowControl,
   type GovernessBeatWorkflowControl,
   reconcileGovernessBeatWorkflows,
@@ -261,6 +262,36 @@ describe("governess-beat close on a real Temporal test server", () => {
     });
     expect(closed.outcome).toBe("terminated");
     expect(await statusOf(runId)).toBe("TERMINATED");
+  });
+
+  test("deadline: the connected control bounds describe and terminate on a real server", async () => {
+    const runId = nextRunId();
+    await startBeat(runId);
+    const config = {
+      address: environment.address,
+      namespace: environment.namespace ?? "default",
+    };
+    const expired = await connectGovernessBeatWorkflowControl(config, 0);
+    try {
+      // A deadline that has already passed fails the call instead of waiting.
+      await expect(
+        expired.describe(governessBeatWorkflowId(runId))
+      ).rejects.toThrow();
+      await expect(
+        expired.terminate(governessBeatWorkflowId(runId), "test")
+      ).rejects.toThrow();
+    } finally {
+      await expired.close();
+    }
+    expect(await statusOf(runId)).toBe("RUNNING");
+    const bounded = await connectGovernessBeatWorkflowControl(config);
+    try {
+      expect(
+        (await bounded.describe(governessBeatWorkflowId(runId)))?.status
+      ).toBe("RUNNING");
+    } finally {
+      await bounded.close();
+    }
   });
 
   test("close: absent and already-closed workflows are no-ops", async () => {
