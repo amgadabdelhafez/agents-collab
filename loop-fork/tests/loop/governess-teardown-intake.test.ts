@@ -70,7 +70,7 @@ test("the producer's recorded request id and shape are accepted", () => {
   expect(isTeardownRequest(live)).toBe(true);
   expect(isTeardownRequest({ ...live, extra: 1 })).toBe(false);
   expect(
-    isTeardownRequest({ ...live, requestId: "iar_" + "0".repeat(32) })
+    isTeardownRequest({ ...live, requestId: `iar_${"0".repeat(32)}` })
   ).toBe(false);
 });
 

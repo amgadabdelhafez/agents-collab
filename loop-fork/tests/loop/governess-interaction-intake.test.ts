@@ -8,7 +8,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendBridgeEvent, type BridgeMessage } from "../../src/loop/bridge-store";
+import {
+  appendBridgeEvent,
+  type BridgeMessage,
+} from "../../src/loop/bridge-store";
 import {
   acknowledgeInteractionAction,
   agentInteractionId,
@@ -183,7 +186,9 @@ const acknowledgeRequest = (
     ...base,
     requestId: `iar_${require("node:crypto")
       .createHash("sha256")
-      .update(`${base.interactionId}|${base.actionId}|${base.idempotencyKeyHash}`)
+      .update(
+        `${base.interactionId}|${base.actionId}|${base.idempotencyKeyHash}`
+      )
       .digest("hex")
       .slice(0, 32)}`,
     ...overrides,
@@ -197,14 +202,15 @@ const decisionRequest = (
   value?: string
 ): InteractionActionIntakeRequest => {
   const crypto = require("node:crypto");
-  const sha256 = (v: string) => crypto.createHash("sha256").update(v).digest("hex");
+  const sha256 = (v: string) =>
+    crypto.createHash("sha256").update(v).digest("hex");
   const ixId = interactionId(fixture);
-  const actionId =
-    intent === "answer"
-      ? answerInteractionAction(ixId).id
-      : intent === "approve"
-        ? approveInteractionAction(ixId).id
-        : rejectInteractionAction(ixId).id;
+  const actionFor = {
+    answer: answerInteractionAction,
+    approve: approveInteractionAction,
+    reject: rejectInteractionAction,
+  };
+  const actionId = actionFor[intent](ixId).id;
   const idempotencyKeyHash = "e".repeat(64);
   const semanticAuditCorrelation =
     intent === "answer"
@@ -249,7 +255,11 @@ const authority = (
 ): InteractionActionAuthorityInput => ({
   agents: [fixture.agent],
   dispatch: () => Promise.resolve({ status: "delivered" as const }),
-  driverLease: { epoch: EPOCH, expiresAt: "2026-08-28T06:00:00.000Z", holder: fixture.agent },
+  driverLease: {
+    epoch: EPOCH,
+    expiresAt: "2026-08-28T06:00:00.000Z",
+    holder: fixture.agent,
+  },
   epoch: EPOCH,
   fenceCurrent: () => true,
   journalFile: fixture.journalFile,
@@ -412,11 +422,16 @@ describe("interaction action acknowledgement", () => {
 describe("interaction action human decisions", () => {
   test("delivers and resolves a short answer, requiring durable bridge evidence", () =>
     withRun(async (fixture) => {
-      const ask = publishPublicAsk(fixture.runDir, fixture.agent, {
-        kind: "question",
-        prompt: "Which surface should be prioritized?",
-        title: "Wearable next step",
-      }, { now: () => new Date(NOW - 60_000).toISOString() });
+      const ask = publishPublicAsk(
+        fixture.runDir,
+        fixture.agent,
+        {
+          kind: "question",
+          prompt: "Which surface should be prioritized?",
+          title: "Wearable next step",
+        },
+        { now: () => new Date(NOW - 60_000).toISOString() }
+      );
       const answer = "Prioritize phone actions";
       const request = decisionRequest(fixture, ask.id, "answer", answer);
       writeRequested(fixture.eventsFile, request);
@@ -461,11 +476,16 @@ describe("interaction action human decisions", () => {
 
   test("delivers an answer from the device-token operator phone", () =>
     withRun(async (fixture) => {
-      const ask = publishPublicAsk(fixture.runDir, fixture.agent, {
-        kind: "question",
-        prompt: "Which surface should be prioritized?",
-        title: "Wearable next step",
-      }, { now: () => new Date(NOW - 60_000).toISOString() });
+      const ask = publishPublicAsk(
+        fixture.runDir,
+        fixture.agent,
+        {
+          kind: "question",
+          prompt: "Which surface should be prioritized?",
+          title: "Wearable next step",
+        },
+        { now: () => new Date(NOW - 60_000).toISOString() }
+      );
       const answer = "Prioritize phone actions";
       writeRequested(fixture.eventsFile, {
         ...decisionRequest(fixture, ask.id, "answer", answer),
@@ -487,12 +507,17 @@ describe("interaction action human decisions", () => {
 
   test("delivers and resolves an approval", () =>
     withRun(async (fixture) => {
-      const ask = publishPublicAsk(fixture.runDir, fixture.agent, {
-        consequence: "The migration may briefly pause background jobs.",
-        kind: "approval",
-        prompt: "Approve the verified database migration?",
-        title: "Migration approval",
-      }, { now: () => new Date(NOW - 60_000).toISOString() });
+      const ask = publishPublicAsk(
+        fixture.runDir,
+        fixture.agent,
+        {
+          consequence: "The migration may briefly pause background jobs.",
+          kind: "approval",
+          prompt: "Approve the verified database migration?",
+          title: "Migration approval",
+        },
+        { now: () => new Date(NOW - 60_000).toISOString() }
+      );
       const request = decisionRequest(fixture, ask.id, "approve");
       writeRequested(fixture.eventsFile, request);
       const processed = await processPendingInteractionActions(
@@ -504,20 +529,25 @@ describe("interaction action human decisions", () => {
         })
       );
       expect(processed).toBe(1);
-      expect(
-        readInteractionActionIntake(fixture.runDir)[0]?.state
-      ).toBe("accepted");
+      expect(readInteractionActionIntake(fixture.runDir)[0]?.state).toBe(
+        "accepted"
+      );
       expect(readPublicAskRecords(fixture.runDir)[0]?.state).toBe("resolved");
     }));
 
   test("a delivery with no durable bridge evidence stays pending and is not resent", () =>
     withRun(async (fixture) => {
-      const ask = publishPublicAsk(fixture.runDir, fixture.agent, {
-        consequence: "Statement.",
-        kind: "approval",
-        prompt: "Approve?",
-        title: "Title",
-      }, { now: () => new Date(NOW - 60_000).toISOString() });
+      const ask = publishPublicAsk(
+        fixture.runDir,
+        fixture.agent,
+        {
+          consequence: "Statement.",
+          kind: "approval",
+          prompt: "Approve?",
+          title: "Title",
+        },
+        { now: () => new Date(NOW - 60_000).toISOString() }
+      );
       writeRequested(
         fixture.eventsFile,
         decisionRequest(fixture, ask.id, "approve")
@@ -532,9 +562,9 @@ describe("interaction action human decisions", () => {
       expect(await processPendingInteractionActions(auth)).toBe(1);
       expect(await processPendingInteractionActions(auth)).toBe(1);
       expect(dispatches).toBe(1);
-      expect(
-        readInteractionActionIntake(fixture.runDir)[0]?.state
-      ).toBe("pending");
+      expect(readInteractionActionIntake(fixture.runDir)[0]?.state).toBe(
+        "pending"
+      );
       expect(readPublicAskRecords(fixture.runDir)[0]?.state).toBe("open");
       expect(readGovernessJournal(fixture.journalFile).at(-1)?.phase).toBe(
         "dispatched"
@@ -543,12 +573,17 @@ describe("interaction action human decisions", () => {
 
   test("a rejected ask is denied when the ask has already been resolved differently", () =>
     withRun(async (fixture) => {
-      const ask = publishPublicAsk(fixture.runDir, fixture.agent, {
-        consequence: "Statement.",
-        kind: "approval",
-        prompt: "Approve?",
-        title: "Title",
-      }, { now: () => new Date(NOW - 60_000).toISOString() });
+      const ask = publishPublicAsk(
+        fixture.runDir,
+        fixture.agent,
+        {
+          consequence: "Statement.",
+          kind: "approval",
+          prompt: "Approve?",
+          title: "Title",
+        },
+        { now: () => new Date(NOW - 60_000).toISOString() }
+      );
       writeRequested(
         fixture.eventsFile,
         decisionRequest(fixture, ask.id, "reject")
@@ -627,8 +662,8 @@ describe("interaction action journal forward-compatibility", () => {
       );
       expect(processed).toBe(1);
       expect(reasons).toEqual(["operator ended the run from the phone"]);
-      expect(
-        readInteractionActionIntake(fixture.runDir)[0]?.state
-      ).toBe("accepted");
+      expect(readInteractionActionIntake(fixture.runDir)[0]?.state).toBe(
+        "accepted"
+      );
     }));
 });

@@ -15,7 +15,6 @@ import {
 import { dirname, join } from "node:path";
 import { sleepSync } from "bun";
 import { isAgent } from "./agents";
-import { normalizeBridgeMessage } from "./bridge-message-format";
 import { type BridgeEvent, readBridgeEvents } from "./bridge-store";
 import {
   type GovernessControlRecord,
@@ -526,9 +525,7 @@ const isRequest = (value: unknown): value is IntakeRequest =>
  * request kind this reader does not understand (forward-compatible, never
  * folded); `false` for anything else, which is a hard failure.
  */
-const classifyEvent = (
-  value: unknown
-): "known" | "unknown" | false => {
+const classifyEvent = (value: unknown): "known" | "unknown" | false => {
   if (
     !(
       isRecord(value) &&
@@ -1173,9 +1170,7 @@ export const processPendingTeardowns = (input: TeardownIntakeInput): number => {
     );
     for (const snapshot of pending) {
       const request = snapshot.request as LifecycleTeardownIntakeRequest;
-      if (
-        !(request.repoId === input.repoId && request.runId === input.runId)
-      ) {
+      if (!(request.repoId === input.repoId && request.runId === input.runId)) {
         appendEvent(
           paths.eventsFile,
           terminalEvent(request.requestId, "denied", input.now(), {

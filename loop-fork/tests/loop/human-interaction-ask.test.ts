@@ -335,7 +335,11 @@ describe("producer-attested public ask journal", () => {
           hook(42, "UserPromptSubmit"),
           hook(43, "PreToolUse", "ToolSearch"),
           hook(44, "PostToolUse", "ToolSearch"),
-          hook(45, "PreToolUse", "mcp__loop-bridge-repo-a-7__publish_human_ask"),
+          hook(
+            45,
+            "PreToolUse",
+            "mcp__loop-bridge-repo-a-7__publish_human_ask"
+          ),
         ].join("\n")}\n`
       );
       const ask = publishPublicAsk(runDir, "claude", question(), {
