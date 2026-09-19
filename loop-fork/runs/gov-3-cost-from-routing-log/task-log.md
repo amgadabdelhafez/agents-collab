@@ -1,0 +1,11 @@
+# Task gov-3-cost-from-routing-log
+
+Created: 2026-09-13T01:40:06Z
+Mode: planned
+Description: Report per-run and per-task cost from attributed Switchyard token rows and cached OpenRouter rates, retaining subscription sources
+
+## What I changed
+
+## Why
+
+## Notes

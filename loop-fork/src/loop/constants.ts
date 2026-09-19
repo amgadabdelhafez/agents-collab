@@ -89,6 +89,7 @@ Options:
   --governess-model <model>                  Model id for governess judgment (default: ${DEFAULT_GOVERNESS_MODEL})
   --governess-height <rows|percent>          Governess pane height, e.g. 25% or 12 (default: ${DEFAULT_GOVERNESS_HEIGHT})
   governess doctor <run-id>                  Check governess state, journal, epoch, and tmux readiness
+  governess cost <run-id> [--json]            Report sourced routed cost and subscription estimates
   governess replay <run-id>                  Replay the durable governess control journal and report invariant violations
   governess explain <run-id> [control-id]    Explain policy, transport, evidence, and phase history for a control
   governess recover-control-plane <run-id>   Restore one missing Governess pane for a live, bound paired run

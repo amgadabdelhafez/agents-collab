@@ -2,12 +2,18 @@ import { expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { serve, spawnSync } from "bun";
+import {
+  formatGovernessCost,
+  governessCost,
+} from "../../src/loop/governess-cost";
 import {
   applyPricing,
   readAgentUsage,
@@ -15,6 +21,17 @@ import {
   summarizeClaude,
   summarizeCodex,
 } from "../../src/loop/governess-usage";
+import {
+  deriveRoutingCost,
+  PRICE_CACHE_MAX_AGE_MS,
+  parseRoutingUsage,
+  priceRoutingUsage,
+} from "../../src/loop/routing-cost";
+import {
+  createRunManifest,
+  resolveRunStorage,
+  writeRunManifest,
+} from "../../src/loop/run-state";
 
 const claudeLine = (
   ts: string,
@@ -785,4 +802,369 @@ test("applyPricing yields zero cost and default window for an unknown model", ()
   });
   expect(priced.costUsd).toBe(0);
   expect(priced.contextWindow).toBe(200_000);
+});
+
+const routingRow = (overrides: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    task: "7",
+    model: "test/routed",
+    prompt_tokens: 1000,
+    completion_tokens: 200,
+    cached_tokens: 900,
+    cache_creation_tokens: 50,
+    reasoning_tokens: 180,
+    total_tokens: 1200,
+    ...overrides,
+  });
+const routingPrices = {
+  data: [
+    {
+      id: "test/routed",
+      pricing: { prompt: "0.000002", completion: "0.000008" },
+    },
+  ],
+};
+
+test("derivation-known-usd: prices tokens once without adding cache/reasoning subsets", () => {
+  const priced = deriveRoutingCost(
+    parseRoutingUsage(routingRow(), "7"),
+    routingPrices
+  );
+  expect(priced).toHaveLength(1);
+  expect(priced[0].costUsd).toBeCloseTo(0.0036, 12);
+  expect(priced[0].promptRate).toBe(0.000_002);
+  expect(priced[0].completionRate).toBe(0.000_008);
+  const twice = deriveRoutingCost(
+    parseRoutingUsage(`${routingRow()}\n${routingRow()}`, "7"),
+    routingPrices
+  );
+  expect(twice[0].costUsd).toBeCloseTo(0.0072, 12);
+  expect(twice[0].rows).toBe(2);
+});
+
+test("unknown-model-closed: missing and duplicate rates name the model", () => {
+  const usage = parseRoutingUsage(routingRow(), "7");
+  expect(() => deriveRoutingCost(usage, { data: [] })).toThrow(
+    "missing price for model test/routed"
+  );
+  expect(() =>
+    deriveRoutingCost(usage, {
+      data: [...routingPrices.data, ...routingPrices.data],
+    })
+  ).toThrow("duplicate price for model test/routed");
+  for (const prompt of [
+    undefined,
+    null,
+    "",
+    " ",
+    "NaN",
+    "Infinity",
+    -1,
+    true,
+  ]) {
+    expect(() =>
+      deriveRoutingCost(usage, {
+        data: [{ id: "test/routed", pricing: { prompt, completion: "0.1" } }],
+      })
+    ).toThrow("pricing.prompt for model test/routed");
+  }
+});
+
+test("unattributed-excluded: blank/null/missing ownership is counted without charging tokens", () => {
+  const usage = parseRoutingUsage(
+    [
+      routingRow(),
+      routingRow({ task: null }),
+      routingRow({ task: " " }),
+      routingRow({ task: undefined }),
+      routingRow({ task: "other" }),
+    ].join("\n"),
+    "7"
+  );
+  expect(usage.matchedRows).toBe(1);
+  expect(usage.unattributedRows).toBe(3);
+  expect(usage.otherTaskRows).toBe(1);
+  expect(deriveRoutingCost(usage, routingPrices)[0].costUsd).toBeCloseTo(
+    0.0036,
+    12
+  );
+});
+
+test("routing-input-closed: invalid task, tokens, overflow and malformed JSON fail", () => {
+  for (const prompt_tokens of [
+    -1,
+    1.5,
+    "100",
+    null,
+    undefined,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    expect(() => parseRoutingUsage(routingRow({ prompt_tokens }), "7")).toThrow(
+      "prompt_tokens for model test/routed"
+    );
+  }
+  expect(() => parseRoutingUsage(routingRow({ task: 7 }), "7")).toThrow(
+    "invalid task identity"
+  );
+  expect(() => parseRoutingUsage("{", "7")).toThrow("routing line 1");
+  expect(() => parseRoutingUsage("[]", "7")).toThrow("expected an object");
+  expect(() => parseRoutingUsage(routingRow({ model: "" }), "7")).toThrow(
+    "missing routing model"
+  );
+  expect(() =>
+    parseRoutingUsage(
+      `${routingRow({ prompt_tokens: Number.MAX_SAFE_INTEGER })}\n${routingRow()}`,
+      "7"
+    )
+  ).toThrow("prompt token sum for model test/routed");
+});
+
+test("price-cache-closed: fresh offline prices work; missing, stale, future, and invalid fail", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loop-routing-prices-"));
+  const path = join(root, "models.json");
+  const usage = parseRoutingUsage(routingRow(), "7");
+  try {
+    await expect(
+      priceRoutingUsage(usage, { priceCachePath: path })
+    ).rejects.toThrow("model(s) test/routed");
+    writeFileSync(path, JSON.stringify(routingPrices));
+    const result = await priceRoutingUsage(usage, { priceCachePath: path });
+    expect(result.costUsd).toBeCloseTo(0.0036, 12);
+    expect(result.priceCache.path).toBe(path);
+    expect(result.priceCache.url).toBe("https://openrouter.ai/api/v1/models");
+    for (const time of [
+      Date.now() - PRICE_CACHE_MAX_AGE_MS - 1000,
+      Date.now() + 60_000,
+    ]) {
+      utimesSync(path, time / 1000, time / 1000);
+      await expect(
+        priceRoutingUsage(usage, { priceCachePath: path })
+      ).rejects.toThrow("missing or stale offline price cache");
+    }
+    writeFileSync(path, JSON.stringify({ data: [] }));
+    utimesSync(path, Date.now() / 1000, Date.now() / 1000);
+    await expect(
+      priceRoutingUsage(usage, { priceCachePath: path })
+    ).rejects.toThrow("missing price for model test/routed");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const costFixture = () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "loop-cost-report-")));
+  const storage = resolveRunStorage("7", root, root);
+  const manifest = createRunManifest({
+    cwd: root,
+    mode: "codex-only",
+    pid: process.pid,
+    primaryAgent: "codex",
+    repoId: storage.repoId,
+    runId: "7",
+    codexThreadId: "cost-test-thread",
+  });
+  mkdirSync(storage.runDir, { recursive: true });
+  writeRunManifest(storage.manifestPath, manifest);
+  const sessions = join(storage.runDir, "codex-home", "sessions");
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(
+    join(sessions, "rollout-cost-test-thread.jsonl"),
+    [
+      JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.5" } }),
+      JSON.stringify({
+        type: "event_msg",
+        timestamp: "2026-09-12T01:00:00Z",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 1000,
+              cached_input_tokens: 100,
+              output_tokens: 200,
+              total_tokens: 1200,
+            },
+          },
+        },
+      }),
+    ].join("\n")
+  );
+  const log = join(root, "routing.jsonl");
+  const cache = join(root, "models.json");
+  writeFileSync(log, routingRow());
+  writeFileSync(cache, JSON.stringify(routingPrices));
+  const env = {
+    LOOP_SWITCHYARD_ROUTING_LOG: log,
+    LOOP_OPENROUTER_PRICE_CACHE: cache,
+    LOOP_USAGE_TRACKER_LIMITS: "0",
+  };
+  const previous = Object.fromEntries(
+    Object.keys(env).map((key) => [key, process.env[key]])
+  );
+  Object.assign(process.env, env);
+  return {
+    root,
+    storage,
+    log,
+    cache,
+    env,
+    cleanup: () => {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      rmSync(root, { recursive: true, force: true });
+    },
+  };
+};
+
+test("subscription-source-preserved: actual Codex transcript keeps bundled cost alongside routed cost", async () => {
+  const fixture = costFixture();
+  try {
+    const report = await governessCost("7", fixture.root, fixture.root);
+    const seat = report.tasks[0].subscriptions[0];
+    expect(seat.source).toBe("governess-usage.ts bundled rate table");
+    expect(seat.tokenSource).toContain("Codex rollout via readAgentUsage");
+    expect(seat.totalTokens).toBe(1200);
+    expect(seat.costUsd).toBeCloseTo(0.010_55, 12);
+    expect(report.costUsd).toBeCloseTo(0.014_15, 12);
+    expect(report.tasks[0].costUsd).toBe(report.costUsd);
+    expect(report.tasks[0].identitySource).toContain("Loop run ID");
+    expect(report.status).toBe("complete");
+    writeFileSync(fixture.log, routingRow({ task: null }));
+    const legacy = await governessCost("7", fixture.root, fixture.root);
+    expect(legacy.tasks[0].subscriptions[0].costUsd).toBeCloseTo(0.010_55, 12);
+    expect(legacy.costUsd).toBeNull();
+    expect(legacy.tasks[0].routed.costUsd).toBeNull();
+    expect(legacy.tasks[0].routed.unattributedRows).toBe(1);
+    expect(legacy.knownSubtotalUsd).toBeCloseTo(0.010_55, 12);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("subscription-tracker-preserved: existing reader applies provider credit estimate", async () => {
+  const fixture = costFixture();
+  const previous = {
+    LOOP_USAGE_TRACKER_URL: process.env.LOOP_USAGE_TRACKER_URL,
+    LOOP_USAGE_TRACKER_SECRET: process.env.LOOP_USAGE_TRACKER_SECRET,
+  };
+  const server = serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () =>
+      Response.json({
+        pricing_catalog: {
+          codex_credit_usd_estimate: { value: 0.04 },
+          rates: [
+            {
+              provider: "codex",
+              model_prefix: "gpt-5.5",
+              basis: "credits_per_mtok",
+              rates: { input: 2, output: 3, cache_read: 1 },
+            },
+          ],
+        },
+      }),
+  });
+  try {
+    process.env.LOOP_USAGE_TRACKER_LIMITS = "1";
+    process.env.LOOP_USAGE_TRACKER_URL = server.url.toString();
+    process.env.LOOP_USAGE_TRACKER_SECRET = "fixture-secret";
+    const report = await governessCost("7", fixture.root, fixture.root);
+    expect(report.tasks[0].subscriptions[0].source).toBe("usage-tracker-api");
+    expect(report.tasks[0].subscriptions[0].method).toBe("credit-estimate");
+    expect(report.tasks[0].subscriptions[0].costUsd).toBeCloseTo(0.0001, 12);
+  } finally {
+    server.stop(true);
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    fixture.cleanup();
+  }
+});
+
+test("report-closed: missing prices, missing transcript, unowned rows and colliding run IDs stay unknown", async () => {
+  const fixture = costFixture();
+  try {
+    writeFileSync(fixture.cache, JSON.stringify({ data: [] }));
+    const unknown = await governessCost("7", fixture.root, fixture.root);
+    expect(unknown.costUsd).toBeNull();
+    expect(unknown.tasks[0].routed.reason).toContain(
+      "missing price for model test/routed"
+    );
+    writeFileSync(fixture.cache, JSON.stringify(routingPrices));
+    writeFileSync(
+      fixture.log,
+      `${routingRow()}\n${routingRow({ task: null })}`
+    );
+    const partial = await governessCost("7", fixture.root, fixture.root);
+    expect(partial.costUsd).toBeNull();
+    expect(partial.tasks[0].routed.knownSubtotalUsd).toBeCloseTo(0.0036, 12);
+    expect(partial.tasks[0].routed.unattributedRows).toBe(1);
+    mkdirSync(join(fixture.storage.storageRoot, "another-repo", "7"), {
+      recursive: true,
+    });
+    const collision = await governessCost("7", fixture.root, fixture.root);
+    expect(collision.tasks[0].routed.knownSubtotalUsd).toBeNull();
+    expect(collision.tasks[0].routed.reason).toContain("ambiguous task 7");
+    rmSync(join(fixture.storage.runDir, "codex-home"), { recursive: true });
+    const noTranscript = await governessCost("7", fixture.root, fixture.root);
+    expect(noTranscript.tasks[0].subscriptions[0].costUsd).toBeNull();
+    expect(noTranscript.knownSubtotalUsd).toBeNull();
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("cli-cost-sources: source CLI emits sourced text and JSON and fails closed for legacy run", () => {
+  const fixture = costFixture();
+  try {
+    const run = (args: string[]) =>
+      spawnSync(
+        [
+          process.execPath,
+          join(import.meta.dir, "../../src/cli.ts"),
+          "governess",
+          "cost",
+          "7",
+          ...args,
+        ],
+        {
+          cwd: fixture.root,
+          env: { ...process.env, ...fixture.env, HOME: fixture.root },
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 20_000,
+        }
+      );
+    const json = run(["--json"]);
+    expect({
+      exitCode: json.exitCode,
+      stderr: json.stderr.toString(),
+      stdout: json.exitCode ? json.stdout.toString() : "",
+    }).toEqual({ exitCode: 0, stderr: "", stdout: "" });
+    const report = JSON.parse(json.stdout.toString());
+    expect(report.costUsd).toBeCloseTo(0.014_15, 12);
+    expect(report.tasks[0].routed.priceCache.path).toBe(fixture.cache);
+    const plain = run([]);
+    expect(plain.exitCode).toBe(0);
+    expect(plain.stdout.toString()).toBe(formatGovernessCost(report));
+    expect(plain.stdout.toString()).toContain("USD/token prompt=0.000002");
+    writeFileSync(fixture.log, routingRow({ task: null }));
+    const legacy = run(["--json"]);
+    expect(legacy.exitCode).toBe(1);
+    expect(JSON.parse(legacy.stdout.toString()).costUsd).toBeNull();
+    const invalid = run(["--extra"]);
+    expect(invalid.exitCode).not.toBe(0);
+    expect(invalid.stderr.toString()).toContain("Usage: loop governess cost");
+  } finally {
+    fixture.cleanup();
+  }
 });

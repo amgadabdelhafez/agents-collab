@@ -1,0 +1,27 @@
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/governess-usage.test.ts:
+829 |   const priced = deriveRoutingCost(
+830 |     parseRoutingUsage(routingRow(), "7"),
+831 |     routingPrices
+832 |   );
+833 |   expect(priced).toHaveLength(1);
+834 |   expect(priced[0].costUsd).toBeCloseTo(0.0036, 12);
+                                  ^
+error: expect(received).toBeCloseTo(expected, precision)
+
+Expected: 0.0036
+Received: 0.002
+
+Expected precision: 12
+Expected difference: < 0.0000000000005
+Received difference: 0.0015999999999999999
+
+      at <anonymous> (/Users/amgad/dev_projects/agents-collab/.worktrees/gov3-cost/loop-fork/tests/loop/governess-usage.test.ts:834:29)
+(fail) derivation-known-usd: prices tokens once without adding cache/reasoning subsets [0.53ms]
+
+ 0 pass
+ 30 filtered out
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [98.00ms]

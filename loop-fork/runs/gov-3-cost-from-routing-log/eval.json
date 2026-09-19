@@ -1,0 +1,20 @@
+{
+  "task_id": "gov-3-cost-from-routing-log",
+  "status": "pending",
+  "required": ["unit", "peer_review"],
+  "dimensions": {
+    "unit": {
+      "status": "pass",
+      "artifact": "runs/gov-3-cost-from-routing-log/artifacts/unit/verify.log",
+      "reason": "command exited 0",
+      "method": "verify.sh",
+      "latest_attempt": "001",
+      "latest_attempt_artifact": "runs/gov-3-cost-from-routing-log/artifacts/unit/attempt-001.log",
+      "latest_attempt_meta": "runs/gov-3-cost-from-routing-log/artifacts/unit/attempt-001.json"
+    },
+    "peer_review": {
+      "status": "pending",
+      "reason": "Claude seat lacks shell for mandatory charter verification; no verdict. Root runs/gov-3-cost-from-routing-log/eval.json is authoritative completion record."
+    }
+  }
+}

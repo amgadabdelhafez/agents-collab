@@ -1,0 +1,2213 @@
+$ for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file bun test "$file" || exit 1; done
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 14 expect() calls
+Ran 7 tests across 1 file. [178.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 5 expect() calls
+Ran 4 tests across 1 file. [25.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop.test.ts:
+[loop] detach with Ctrl-b d
+
+ 43 pass
+ 0 fail
+ 428 expect() calls
+Ran 43 tests across 1 file. [249.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/00-paired-loop.integration.test.ts:
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 41
+
+[loop] iteration 1/1 (session: codex-thread-1)
+
+[loop] bridge codex -> claude
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+
+ 1 pass
+ 0 fail
+ 12 expect() calls
+Ran 1 test across 1 file. [75.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 72 pass
+ 0 fail
+ 161 expect() calls
+Ran 72 tests across 1 file. [26.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 3 pass
+ 0 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 53 expect() calls
+Ran 7 tests across 1 file. [31.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [19.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 119 pass
+ 0 fail
+ 507 expect() calls
+Ran 119 tests across 1 file. [23.63s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 22 expect() calls
+Ran 4 tests across 1 file. [21.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 9 expect() calls
+Ran 5 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 19 pass
+ 0 fail
+ 57 expect() calls
+Ran 19 tests across 1 file. [37.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 41 pass
+ 0 fail
+ 82 expect() calls
+Ran 41 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 3 pass
+ 0 fail
+ 5 expect() calls
+Ran 3 tests across 1 file. [29.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/claude-sdk-server.test.ts:
+[loop] claude session: session-abc
+
+ 3 pass
+ 0 fail
+ 13 expect() calls
+Ran 3 tests across 1 file. [337.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 33 pass
+ 0 fail
+ 93 expect() calls
+Ran 33 tests across 1 file. [102.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 7 expect() calls
+Ran 5 tests across 1 file. [17.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 6 expect() calls
+Ran 1 test across 1 file. [2.09s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 30 pass
+ 0 fail
+ 83 expect() calls
+Ran 30 tests across 1 file. [7.41s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 3 pass
+ 0 fail
+ 14 expect() calls
+Ran 3 tests across 1 file. [19.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 3 pass
+ 0 fail
+ 24 expect() calls
+Ran 3 tests across 1 file. [23.27s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 231 pass
+ 0 fail
+ 287 expect() calls
+Ran 231 tests across 1 file. [45.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 8 pass
+ 0 fail
+ 8 expect() calls
+Ran 8 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 38 expect() calls
+Ran 7 tests across 1 file. [31.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 9 expect() calls
+Ran 2 tests across 1 file. [65.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 10 pass
+ 0 fail
+ 28 expect() calls
+Ran 10 tests across 1 file. [21.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 15 expect() calls
+Ran 7 tests across 1 file. [75.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 35 pass
+ 0 fail
+ 196 expect() calls
+Ran 35 tests across 1 file. [103.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 33 pass
+ 0 fail
+ 94 expect() calls
+Ran 33 tests across 1 file. [70.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 19 pass
+ 0 fail
+ 52 expect() calls
+Ran 19 tests across 1 file. [25.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 8 pass
+ 0 fail
+ 30 expect() calls
+Ran 8 tests across 1 file. [33.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 23 pass
+ 0 fail
+ 67 expect() calls
+Ran 23 tests across 1 file. [26.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 15 pass
+ 0 fail
+ 44 expect() calls
+Ran 15 tests across 1 file. [19.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 15 pass
+ 0 fail
+ 64 expect() calls
+Ran 15 tests across 1 file. [130.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 11 expect() calls
+Ran 4 tests across 1 file. [22.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 9 pass
+ 0 fail
+ 45 expect() calls
+Ran 9 tests across 1 file. [25.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 31 pass
+ 0 fail
+ 158 expect() calls
+Ran 31 tests across 1 file. [599.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 5 expect() calls
+Ran 2 tests across 1 file. [79.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 79 pass
+ 0 fail
+ 446 expect() calls
+Ran 79 tests across 1 file. [278.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [26.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 44 pass
+ 0 fail
+ 258 expect() calls
+Ran 44 tests across 1 file. [7.47s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 9 expect() calls
+Ran 1 test across 1 file. [37.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [290.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [22.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 6 expect() calls
+Ran 2 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 15 expect() calls
+Ran 5 tests across 1 file. [44.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 12 pass
+ 0 fail
+ 73 expect() calls
+Ran 12 tests across 1 file. [55.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 9 pass
+ 0 fail
+ 24 expect() calls
+Ran 9 tests across 1 file. [27.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 8 pass
+ 0 fail
+ 23 expect() calls
+Ran 8 tests across 1 file. [17.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 3 pass
+ 0 fail
+ 9 expect() calls
+Ran 3 tests across 1 file. [16.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/oss-agent-seat.test.ts:
+
+[loop] review with oss
+
+[loop] review with oss
+
+[loop] review with oss
+
+[loop] review with claude
+
+[loop] review with oss
+
+[loop] review with oss
+
+ 31 pass
+ 0 fail
+ 177 expect() calls
+Ran 31 tests across 1 file. [142.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/paired-loop.test.ts:
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 11
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 12
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 13
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: alpha
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: raw
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4a
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4c
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4-supervisor
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] bridge codex -> claude
+
+[loop] claude error: temporary bridge failure
+[loop] to resume paired run: loop --run-id 4b
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 4b
+
+[loop] iteration 1/1
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+
+Follow-up:
+Add the missing edge-case test.
+[loop] paired run: 4d
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 5
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 9
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 7
+
+[loop] iteration 1/1
+
+[loop] review with codex
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 8
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] one reviewer requested changes. continuing loop.
+
+[loop] reached max iterations (1), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 10
+
+[loop] iteration 1/2
+
+[loop] review with codex
+
+[loop] bridge codex -> claude
+
+[loop] reviewer feedback delivered through bridge.
+
+[loop] iteration 2/2
+
+[loop] reached max iterations (2), stopping.
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 6
+
+[loop] iteration 1/1
+
+[loop] bridge claude -> codex
+
+[loop] bridge codex -> claude
+
+[loop] reached max iterations (1), stopping.
+
+ 21 pass
+ 0 fail
+ 96 expect() calls
+Ran 21 tests across 1 file. [513.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 12 pass
+ 0 fail
+ 60 expect() calls
+Ran 12 tests across 1 file. [508.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 18 pass
+ 0 fail
+ 31 expect() calls
+Ran 18 tests across 1 file. [26.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 6 pass
+ 0 fail
+ 24 expect() calls
+Ran 6 tests across 1 file. [322.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/pr.test.ts:
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] review passed. asking model to send commit.
+
+[loop] review passed. asking model to create draft PR.
+
+ 3 pass
+ 0 fail
+ 10 expect() calls
+Ran 3 tests across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 3 pass
+ 0 fail
+ 5 expect() calls
+Ran 3 tests across 1 file. [17.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 42 expect() calls
+Ran 7 tests across 1 file. [20.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 20 expect() calls
+Ran 1 test across 1 file. [29.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 91 expect() calls
+Ran 7 tests across 1 file. [1.61s]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/review-run.test.ts:
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+ 17 pass
+ 0 fail
+ 58 expect() calls
+Ran 17 tests across 1 file. [50.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/review.test.ts:
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+[loop] review with codex
+
+[loop] review with claude
+
+[loop] review with codex
+
+ 24 pass
+ 0 fail
+ 54 expect() calls
+Ran 24 tests across 1 file. [45.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 17 pass
+ 0 fail
+ 60 expect() calls
+Ran 17 tests across 1 file. [39.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 53 pass
+ 0 fail
+ 438 expect() calls
+Ran 53 tests across 1 file. [96.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+{"method":"item/agentMessage/delta","params":{"delta":"partial output"}}
+{"method":"item/agentMessage/delta","params":{"delta":"final output"}}
+
+ 23 pass
+ 0 fail
+ 79 expect() calls
+Ran 23 tests across 1 file. [29.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 21 expect() calls
+Ran 7 tests across 1 file. [77.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 15 pass
+ 0 fail
+ 61 expect() calls
+Ran 15 tests across 1 file. [70.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 12 pass
+ 0 fail
+ 33 expect() calls
+Ran 12 tests across 1 file. [61.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/single-loop.test.ts:
+
+[loop] PLAN.md:
+
+Ship feature
+
+[loop] done signal "<done/>" detected, stopping.
+
+ 1 pass
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [25.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 10 expect() calls
+Ran 1 test across 1 file. [24.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 24 expect() calls
+Ran 7 tests across 1 file. [24.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 22 expect() calls
+Ran 4 tests across 1 file. [30.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 9 pass
+ 0 fail
+ 32 expect() calls
+Ran 9 tests across 1 file. [24.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 3 pass
+ 0 fail
+ 19 expect() calls
+Ran 3 tests across 1 file. [25.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 19 expect() calls
+Ran 4 tests across 1 file. [36.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 12 expect() calls
+Ran 4 tests across 1 file. [30.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 13 expect() calls
+Ran 4 tests across 1 file. [28.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 28 expect() calls
+Ran 5 tests across 1 file. [28.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [27.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 20 expect() calls
+Ran 5 tests across 1 file. [25.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 80 pass
+ 0 fail
+ 100 expect() calls
+Ran 80 tests across 1 file. [27.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/task.test.ts:
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with codex.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] skipping PLAN.md review (--review-plan none).
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] reviewing PLAN.md with claude.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+[loop] prompt text detected. creating PLAN.md first.
+
+ 14 pass
+ 0 fail
+ 33 expect() calls
+Ran 14 tests across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+time=2026-09-12T18:53:05.696 level=WARN msg="Cluster Id in Cluster Metadata config is not a valid uuid. Generating a new Cluster Id" component=metadata-initializer
+2026-09-13T01:53:05.804Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. { sdkComponent: 'worker', taskQueue: 'orchestration-e2e-52006' }
+
+tests/loop/temporal-orchestration-e2e.test.ts:
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:05.936Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orchestration-e2e-52006',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:05.936Z [WARN] No activities registered, not polling for activity tasks { sdkComponent: 'worker', taskQueue: 'orchestration-e2e-52006' }
+2026-09-13T01:53:05.937Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'orchestration-e2e-52006' }
+Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:50558
+Temporal Persistence: in-memory
+Temporal Metrics:     http://localhost:50562/metrics
+2026-09-13T01:53:06.121Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orchestration-e2e-52006',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:06.122Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orchestration-e2e-52006',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:06.123Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orchestration-e2e-52006',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:06.123Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orchestration-e2e-52006',
+  state: 'STOPPED'
+}
+
+ 1 pass
+ 0 fail
+ 25 expect() calls
+Ran 1 test across 1 file. [884.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+time=2026-09-12T18:53:06.370 level=WARN msg="Cluster Id in Cluster Metadata config is not a valid uuid. Generating a new Cluster Id" component=metadata-initializer
+2026-09-13T01:53:06.467Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. { sdkComponent: 'worker', taskQueue: 'supervisor-runtime-52023' }
+Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:50577
+Temporal Persistence: in-memory
+Temporal Metrics:     http://localhost:50578/metrics
+2026-09-13T01:53:07.067Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 328 ms { sdkComponent: 'worker', taskQueue: 'supervisor-runtime-52023' }
+2026-09-13T01:53:07.069Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'supervisor-runtime-52023',
+  size: '1.85MB'
+}
+
+tests/loop/temporal-supervisor-runtime.test.ts:
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:07.110Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'supervisor-runtime-52023',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:07.111Z [WARN] No activities registered, not polling for activity tasks { sdkComponent: 'worker', taskQueue: 'supervisor-runtime-52023' }
+2026-09-13T01:53:07.111Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'supervisor-runtime-52023' }
+2026-09-13T01:53:07.191Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'supervisor-runtime-52023',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:07.191Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'supervisor-runtime-52023',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:07.192Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'supervisor-runtime-52023',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:07.192Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'supervisor-runtime-52023',
+  state: 'STOPPED'
+}
+
+ 2 pass
+ 0 fail
+ 5 expect() calls
+Ran 2 tests across 1 file. [1055.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+time=2026-09-12T18:53:07.428 level=WARN msg="Cluster Id in Cluster Metadata config is not a valid uuid. Generating a new Cluster Id" component=metadata-initializer
+2026-09-13T01:53:07.525Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. { sdkComponent: 'worker', taskQueue: 'task-graph-52046' }
+Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:50596
+Temporal Persistence: in-memory
+Temporal Metrics:     http://localhost:50597/metrics
+2026-09-13T01:53:08.005Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 311 ms { sdkComponent: 'worker', taskQueue: 'task-graph-52046' }
+2026-09-13T01:53:08.006Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'task-graph-52046',
+  size: '1.85MB'
+}
+
+tests/loop/temporal-task-graph.test.ts:
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:08.133Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'task-graph-52046',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:08.134Z [WARN] No activities registered, not polling for activity tasks { sdkComponent: 'worker', taskQueue: 'task-graph-52046' }
+2026-09-13T01:53:08.134Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'task-graph-52046' }
+2026-09-13T01:53:08.231Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'task-graph-52046',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:08.231Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'task-graph-52046',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:08.232Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'task-graph-52046',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:08.232Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'task-graph-52046',
+  state: 'STOPPED'
+}
+
+ 1 pass
+ 0 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [1026.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 5 expect() calls
+Ran 2 tests across 1 file. [19.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+time=2026-09-12T18:53:08.470 level=WARN msg="Cluster Id in Cluster Metadata config is not a valid uuid. Generating a new Cluster Id" component=metadata-initializer
+2026-09-13T01:53:08.568Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:50613
+Temporal Persistence: in-memory
+Temporal Metrics:     http://localhost:50614/metrics
+2026-09-13T01:53:09.021Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 292 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.022Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  size: '1.85MB'
+}
+
+tests/loop/temporal-workflow-port.test.ts:
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:09.127Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:09.128Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.128Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.189Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:09.189Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:09.189Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:09.190Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:09.190Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.338Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 129 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.340Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:09.441Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:09.442Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.442Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.539Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:09.539Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:09.540Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:09.540Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:09.541Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.683Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 116 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.684Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:09.801Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:09.801Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.801Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:09.924Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:09.924Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:09.925Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:09.925Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:09.926Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.070Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 115 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.072Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:10.188Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:10.189Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.189Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.290Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:10.290Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:10.292Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:10.292Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:10.292Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.441Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 111 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.442Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:10.556Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:10.556Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.556Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.630Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:10.630Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:10.631Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:10.632Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:10.632Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.808Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 134 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.809Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:10.924Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:10.924Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.924Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:10.996Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:10.996Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:10.997Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:10.997Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:10.998Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:11.129Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 104 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:11.130Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:11.228Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:11.228Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:11.228Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first'
+}
+2026-09-13T01:53:11.283Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:11.283Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:11.284Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:11.284Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-first',
+  state: 'STOPPED'
+}
+time=2026-09-12T18:53:11.323 level=WARN msg="Cluster Id in Cluster Metadata config is not a valid uuid. Generating a new Cluster Id" component=metadata-initializer
+2026-09-13T01:53:11.399Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:50634
+Temporal Persistence: in-memory
+Temporal Metrics:     http://localhost:50635/metrics
+2026-09-13T01:53:11.584Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 153 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:11.585Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:11.714Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:11.715Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:11.715Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:11.774Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:11.774Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:11.775Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:11.775Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:11.775Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:11.945Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 133 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:11.946Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:12.060Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:12.061Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.061Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.161Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:12.161Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:12.163Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:12.163Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:12.163Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.321Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 117 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.322Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:12.427Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:12.427Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.427Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.521Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:12.521Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:12.522Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:12.522Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:12.522Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.651Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 102 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.652Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:12.755Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:12.755Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.755Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.850Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:12.850Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:12.851Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:12.851Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:12.851Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.972Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 91 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:12.973Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:13.075Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:13.075Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.075Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.142Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:13.142Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:13.143Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:13.143Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:13.143Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.274Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 95 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.275Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:13.377Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:13.377Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.378Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.453Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:13.454Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:13.454Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:13.455Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPED'
+}
+2026-09-13T01:53:13.455Z [WARN] Bun versions older than 1.4.0 are deprecated and will not be supported in a future release. Please upgrade to Bun 1.4.0 or later. {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.593Z [INFO] asset workflow-bundle-43403c0178513cd9590f.js 1.85 MiB [emitted] [immutable] (name: main)
+runtime modules 883 bytes 4 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/ 387 KiB
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/common/lib/ 164 KiB 36 modules
+  modules by path ../../governess-helper-env/loop-fork/node_modules/@temporalio/workflow/ 223 KiB 29 modules
+modules by path ../../governess-helper-env/loop-fork/node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./src/loop/ 48.3 KiB
+  ./src/loop/temporal-workflow-autogenerated-entrypoint.cjs 543 bytes [built] [code generated]
+  ./src/loop/temporal-workflow.ts 8.18 KiB [built] [code generated]
+  + 3 modules
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/ms/dist/index.cjs 3.41 KiB [built] [code generated]
+../../governess-helper-env/loop-fork/node_modules/@dagrejs/graphlib/dist/g...(truncated) 12.8 KiB [built] [code generated]
+webpack 5.110.1 compiled successfully in 100 ms {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.594Z [INFO] Workflow bundle created {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  size: '1.85MB'
+}
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-13T01:53:13.702Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'RUNNING'
+}
+2026-09-13T01:53:13.702Z [WARN] No activities registered, not polling for activity tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.702Z [INFO] No Nexus services registered, not polling for Nexus tasks {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second'
+}
+2026-09-13T01:53:13.754Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPING'
+}
+2026-09-13T01:53:13.754Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINING'
+}
+2026-09-13T01:53:13.755Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'DRAINED'
+}
+2026-09-13T01:53:13.755Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'orch-temporal-replay-52065-second',
+  state: 'STOPPED'
+}
+
+ 3 pass
+ 0 fail
+ 18 expect() calls
+Ran 3 tests across 1 file. [5.49s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 30 pass
+ 0 fail
+ 40 expect() calls
+Ran 30 tests across 1 file. [41.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 52 pass
+ 0 fail
+ 141 expect() calls
+Ran 52 tests across 1 file. [36.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/tmux.test.ts:
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-2"
+[loop] attach with: tmux -S '/tmp/ls-a/a.sock' attach -t 'repo-loop-2'
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] starting tmux session...
+[loop] started tmux session "repo-loop-1"
+[loop] attach with: tmux -S '/tmp/tmux-501/default' attach -t 'repo-loop-1'
+[loop] starting tmux session...
+
+ 112 pass
+ 0 fail
+ 591 expect() calls
+Ran 112 tests across 1 file. [301.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+tests/loop/update.test.ts:
+[loop] running from source — use git pull to update
+[loop] running from source — use git pull to update
+
+ 31 pass
+ 0 fail
+ 58 expect() calls
+Ran 31 tests across 1 file. [136.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 6 pass
+ 0 fail
+ 34 expect() calls
+Ran 6 tests across 1 file. [28.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [45.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 30 expect() calls
+Ran 7 tests across 1 file. [391.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 11 pass
+ 0 fail
+ 26 expect() calls
+Ran 11 tests across 1 file. [24.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 31 expect() calls
+Ran 5 tests across 1 file. [42.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 11 pass
+ 0 fail
+ 64 expect() calls
+Ran 11 tests across 1 file. [409.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 11 expect() calls
+Ran 5 tests across 1 file. [24.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 55 pass
+ 0 fail
+ 261 expect() calls
+Ran 55 tests across 1 file. [366.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 20 expect() calls
+Ran 7 tests across 1 file. [32.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 15 pass
+ 0 fail
+ 42 expect() calls
+Ran 15 tests across 1 file. [2.53s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 50 pass
+ 0 fail
+ 183 expect() calls
+Ran 50 tests across 1 file. [319.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 13 pass
+ 0 fail
+ 33 expect() calls
+Ran 13 tests across 1 file. [2.56s]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 10 expect() calls
+Ran 7 tests across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 4 pass
+ 0 fail
+ 15 expect() calls
+Ran 4 tests across 1 file. [23.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 17 expect() calls
+Ran 7 tests across 1 file. [27.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 7 pass
+ 0 fail
+ 19 expect() calls
+Ran 7 tests across 1 file. [702.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 26 pass
+ 0 fail
+ 69 expect() calls
+Ran 26 tests across 1 file. [107.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 6 pass
+ 0 fail
+ 18 expect() calls
+Ran 6 tests across 1 file. [798.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 5 pass
+ 0 fail
+ 22 expect() calls
+Ran 5 tests across 1 file. [686.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 43 pass
+ 0 fail
+ 64 expect() calls
+Ran 43 tests across 1 file. [1301.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [28.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 10 expect() calls
+Ran 1 test across 1 file. [18.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 1 pass
+ 0 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [40.00ms]
+bun test v1.3.13-canary.1 (903015a2)
+
+ 8 pass
+ 0 fail
+ 38 expect() calls
+Ran 8 tests across 1 file. [4.37s]

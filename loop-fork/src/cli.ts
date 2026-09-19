@@ -22,6 +22,7 @@ import {
   resolveGovernessConfig,
   runGoverness,
 } from "./loop/governess";
+import { runGovernessCostCommand } from "./loop/governess-cost";
 import {
   GOVERNESS_PANE_DIED_SUBCOMMAND,
   handleGovernessPaneDied,
@@ -412,6 +413,7 @@ const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
   (await runSecureAgentSubcommand(argv)) ||
   runWorldCommand(argv) ||
   runImmediateInfoCommand(argv) ||
+  (await runGovernessCostCommand(argv)) ||
   runGovernessUtilityCommand(argv) ||
   (await runHiddenSubcommand(argv));
 

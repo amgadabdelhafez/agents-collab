@@ -1,3 +1,39 @@
+# status — Governess cost from routing tokens
+
+## Run 39 (2026-09-12) — implementation/proof complete, review blocked
+
+Implemented specs/gov-3-cost-from-routing-log/: strict routed token/rate derivation,
+24h public cache, source-labelled task/run report, existing subscription sources,
+and pre-maintenance CLI dispatch. Pi usage zero-cost registration stays unchanged.
+31 focused tests pass; completion-cost mutation fails then restored pass. Real
+run38 reports unknown routed/total, 14 unowned exclusions, and $16.101854 known
+Codex credit estimate. Source/code proof in runs/gov-3-cost-from-routing-log/.
+
+bun run check passes (926 files after Harness artifacts); test:ci completes 116/116 files, 1993 pass,
+0 fail. Extra typecheck has exactly the same pre-existing errors on base dde60215
+and current sources; logs retained, no clean-typecheck claim. No build/install,
+restart, Switchyard edit, or harness-engineering write. scripts/verify.sh cannot
+run under this charter because it unconditionally builds the binary.
+
+Claude cannot verify its own charter because its seat has no shell tool. No
+peer verdict exists. Supervisor escalation e7217c02-d817-4190-8119-b9196ba3dca6
+and follow-up 2d51b6db-1b75-4778-9368-df13504456ee request restoring capability.
+Au Pair/Nanny are disabled; scoped edit routes refused because Codex is sole
+writer. Next: preserve concrete commit/proofs, obtain independent Claude PASS,
+resolve findings, then mark eval passing and create draft PR. Supervisor owns
+merge/build/install. Never treat blocked review as approval.
+
+Implementation commit `95644c6ca573eb7370a4d96c1b2e2b15da35ed98` is pushed to
+`origin/claude/gov3-cost-from-routing-log`. Remote verification confirms main
+remains `dde602157cd42c67e2047db7c531836ed61df714`. Exact-source review request
+`3722d10b-f3ce-4e1d-97c5-ffeb6e5dc099` is pending with Claude; supervisor
+handover `0e6d9c11-df58-4369-8c3b-e8c6792247ab` names the capability blocker.
+No draft PR exists. All requested implementation/proof is preserved; only
+independent review, any resulting fixes, passing eval and draft PR remain.
+This documentation-only handoff does not change the certified source/test bytes.
+
+---
+
 # status — Switchyard routed task attribution
 
 ## Run 38 (2026-09-12) — implementation delivered

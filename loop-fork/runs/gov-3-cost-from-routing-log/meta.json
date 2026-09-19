@@ -1,0 +1,7 @@
+{
+  "id": "gov-3-cost-from-routing-log",
+  "mode": "planned",
+  "created_at": "2026-09-13T01:40:06Z",
+  "status": "active",
+  "description": "Report per-run and per-task cost from attributed Switchyard token rows and cached OpenRouter rates, retaining subscription sources"
+}

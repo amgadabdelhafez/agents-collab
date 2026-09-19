@@ -540,6 +540,14 @@
       "created_at": "2026-08-29T00:00:00Z",
       "run_dir": "runs/loop-resume-terminal-reservation-v1",
       "spec_path": "specs/loop-resume-terminal-reservation-v1/spec.md"
+    },
+    {
+      "id": "gov-3-cost-from-routing-log",
+      "mode": "planned",
+      "status": "active",
+      "created_at": "2026-09-13T01:40:06Z",
+      "run_dir": "runs/gov-3-cost-from-routing-log",
+      "eval_status": "pending"
     }
   ]
 }
