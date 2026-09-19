@@ -1,0 +1,15 @@
+C.run {"home":"/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/beatclose-stopped-run-P2Wpdk","manifestPath":"/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/beatclose-stopped-run-P2Wpdk/.loop/runs/agents-collab-fa87e8608224/91789800898334/manifest.json","runId":"91789800898334"}
+C.started {"closeTime":null,"historyLength":"3","owner":"\"agents-collab-fa87e8608224\"","status":"WORKFLOW_EXECUTION_STATUS_RUNNING","workflowId":"governess-beat:91789800898334"}
+C.cli-while-working.exit 1
+C.cli-while-working.stdout "{\"reason\":\"run-is-not-stopped\",\"runId\":\"91789800898334\",\"status\":\"refused\"}"
+C.cli-while-working.stderr "[loop] error: stopped-run reconciliation refused: run-is-not-stopped"
+C.after-cli-while-working {"closeTime":null,"historyLength":"3","owner":"\"agents-collab-fa87e8608224\"","status":"WORKFLOW_EXECUTION_STATUS_RUNNING","workflowId":"governess-beat:91789800898334"}
+C.cli.exit 0
+C.cli.stdout "{\"runId\":\"91789800898334\",\"status\":\"changed\",\"workspaceReleasedAt\":\"2026-09-19T06:54:58.677Z\"}"
+C.cli.stderr "[loop] governess-beat:91789800898334: terminated"
+C.manifest "stopped"
+C.closed {"closeTime":"2026-09-19T06:54:58.881734472Z","historyLength":"4","owner":"\"agents-collab-fa87e8608224\"","status":"WORKFLOW_EXECUTION_STATUS_TERMINATED","workflowId":"governess-beat:91789800898334"}
+C.cli-again.exit 0
+C.cli-again.stdout "{\"runId\":\"91789800898334\",\"status\":\"already-released\",\"workspaceReleasedAt\":\"2026-09-19T06:54:58.677Z\"}"
+C.cli-again.stderr "[loop] governess-beat:91789800898334: already-closed (TERMINATED)"
+C.still-closed {"closeTime":"2026-09-19T06:54:58.881734472Z","historyLength":"4","owner":"\"agents-collab-fa87e8608224\"","status":"WORKFLOW_EXECUTION_STATUS_TERMINATED","workflowId":"governess-beat:91789800898334"}

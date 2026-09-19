@@ -1,0 +1,93 @@
+## mutation 1: governess teardown skips the beat close
+diff --git a/loop-fork/src/loop/governess.ts b/loop-fork/src/loop/governess.ts
+index 662abec8..df037ee4 100644
+--- a/loop-fork/src/loop/governess.ts
++++ b/loop-fork/src/loop/governess.ts
+@@ -5530,7 +5530,7 @@ export const stopGovernessLoop = (
+       event: "run-process-cleanup-failed",
+     });
+   }
+-  const close = config.journalTemporal ? deps.closeBeatWorkflow : undefined;
++  const close = undefined as GovernessDeps["closeBeatWorkflow"]; // MUTATION: skip beat close on teardown
+   if (!close) {
+     killTeardownSession(config, deps, record);
+     return Promise.resolve();
+error: expect(received).toEqual(expected)
+- Expected  - 2
++ Received  + 0
+(fail) governess teardown closes the beat > governess: teardown closes after marking the run stopped and before killing the session [0.64ms]
+error: expect(received).toEqual(expected)
+- Expected  - 2
++ Received  + 0
+(fail) governess teardown closes the beat > governess: a failed close still kills the session [0.22ms]
+ 22 pass
+ 2 fail
+
+## mutation 2: tmux failed start skips the beat close
+diff --git a/loop-fork/src/loop/tmux.ts b/loop-fork/src/loop/tmux.ts
+index 4b036a89..10faf3d8 100644
+--- a/loop-fork/src/loop/tmux.ts
++++ b/loop-fork/src/loop/tmux.ts
+@@ -3551,7 +3551,7 @@ const startPairedSession = async (
+         return "undurable";
+       }
+       terminalizationResult = updated.state;
+-      await closeFailedStartBeat(updated);
++      // MUTATION: skip beat close on failed start
+       return terminalizationResult;
+     } catch {
+       // Preserve the original launch error; startup GC reads durable ownership.
+(fail) runInTmux still terminalizes an unexpected Claude readiness probe failure [12.09ms]
+ 114 pass
+ 1 fail
+
+## mutation 3: startup skips the reconcile (abandoned/finished runs)
+diff --git a/loop-fork/src/cli.ts b/loop-fork/src/cli.ts
+index 531c13e6..f42a8294 100644
+--- a/loop-fork/src/cli.ts
++++ b/loop-fork/src/cli.ts
+@@ -550,7 +550,7 @@ export const runCli = async (argv: string[]): Promise<void> => {
+     cliDeps.gcStaleBridgeProcesses();
+     cliDeps.gcAbandonedRunProcesses();
+     // After abandoned-run GC, so the runs it just marked failed are closed too.
+-    await cliDeps.reconcileGovernessBeatWorkflows();
++    // MUTATION: skip startup reconcile
+     await updateDeps.applyStagedUpdateOnStartup();
+     if (await updateDeps.handleManualUpdateCommand(normalizedArgv)) {
+       return;
+(fail) runCli reconciles governess-beat workflows after abandoned-run GC [1.59ms]
+(fail) runCli awaits auto-update before handing off promptless paired tmux startup [2.72ms]
+ 42 pass
+ 2 fail
+
+## mutation 4: closeGovernessBeatWorkflow drops the live-run guard
+diff --git a/loop-fork/src/loop/governess-beat-close.ts b/loop-fork/src/loop/governess-beat-close.ts
+index 2d07716b..86f6556c 100644
+--- a/loop-fork/src/loop/governess-beat-close.ts
++++ b/loop-fork/src/loop/governess-beat-close.ts
+@@ -104,7 +104,7 @@ export const closeGovernessBeatWorkflow = async (input: {
+       workflowId,
+     };
+   }
+-  if (isActiveRunState(manifest.state)) {
++  if (false && isActiveRunState(manifest.state)) { // MUTATION: drop live-run guard
+     return {
+       detail: `run is ${manifest.state}`,
+       outcome: "refused-live",
+(fail) governess-beat close on a real Temporal test server > live: a submitted run's workflow is never closed [6.77ms]
+(fail) governess-beat close on a real Temporal test server > live: a working run's workflow is never closed [10.25ms]
+(fail) governess-beat close on a real Temporal test server > live: a reviewing run's workflow is never closed [9.09ms]
+(fail) governess-beat close on a real Temporal test server > live: a input-required run's workflow is never closed [7.09ms]
+(fail) governess-beat close on a real Temporal test server > governess: the default close detaches the journal sink, then terminates the stopped run's workflow [14.44ms]
+(fail) governess-beat close without a server > live: an active run is refused before the server is even described [0.38ms]
+ 18 pass
+ 6 fail
+
+## mutation 5: `loop reconcile stopped-run` skips the close (session 2, 2026-09-18)
+-  const closed = await cliDeps.closeGovernessBeatForTerminalRun({
++  const closed = false && await cliDeps.closeGovernessBeatForTerminalRun({ // MUTATION: skip close on stopped-run reconcile
+(fail) runCli awaits auto-update before handing off promptless paired tmux startup [1.56ms]
+(fail) runCli reconciles one synthetic stopped run before startup maintenance [20.10ms]
+ 43 pass
+ 2 fail
+(restored from backup; grep -c MUTATION src/cli.ts = 0)

@@ -1,3 +1,35 @@
+# status — governess-beat workflow closes with the run
+
+## 2026-09-18 — session 2: stopped-run coverage, full proofs
+
+Branch `claude/governess-beat-close` (from `ec185ba1`). Implementation
+`7b5ccdbf` (session 1, pushed). Evidence: `runs/governess-beat-close/README.md`.
+
+- Mechanism: terminate (the beat workflow never returns and no worker polls
+  `loop-governess`, so a completion signal would never be processed).
+- Terminal paths: governess teardown (inline), tmux failed start (inline),
+  `loop reconcile stopped-run` (inline), abandoned-run GC / paired-loop
+  `finishRun` / codex-tmux-proxy / reservation release (startup reconcile).
+- Gap closed this session: the stopped-run CLI path had no unit test. Its close
+  now goes through `cliDeps.closeGovernessBeatForTerminalRun`; tests assert it
+  closes once after reconciliation reports, and never when reconciliation
+  refuses. Mutation 5 (skip that close) fails `runCli reconciles one synthetic
+  stopped run before startup maintenance`.
+- Live: `governess-beat:91789800898334` closed by the real CLI subprocess,
+  `WORKFLOW_EXECUTION_STATUS_TERMINATED`, close `2026-09-19T06:54:58.881734472Z`;
+  RUNNING while the run was working. Session 1 live proofs (abandoned + teardown)
+  stand; `governess-beat:29` untouched.
+- `bun run check` clean. Full suite 123 files one by one under
+  `env -u TMUX -u TMUX_PANE`: only the allowlisted `runCli awaits auto-update
+  before handing off promptless paired tmux startup` fails.
+- numstat equals `--ignore-all-space` for `7b5ccdbf` and this session's commit.
+
+Open: workflows created before the owner memo (for example
+`governess-beat:29`) are never closed by reconcile by design; the supervisor
+closes those. Next: supervisor diff-read, merge, build, install.
+
+---
+
 # status — gov-6 v3: Governess beat journal on Temporal
 
 ## 2026-09-19 — proofs, review fix, push

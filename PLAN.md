@@ -1,3 +1,29 @@
+# PLAN — governess-beat workflow closes with the run
+
+## 2026-09-19 — branch `claude/governess-beat-close` (from `ec185ba1`)
+
+Problem: nothing closes `governess-beat:<runId>`; run 29 stayed RUNNING after
+it stopped. Decision: close by terminate (the workflow never returns and no
+worker polls `loop-governess`, so a signal would never be processed).
+
+Plan: `src/loop/governess-beat-close.ts` holds the guarded close (manifest must
+be terminal; owner memo must not name another repo) and the startup reconcile.
+Hook the governess teardown (close after mark-stopped, before the session kill),
+the tmux failed start, `loop reconcile stopped-run`, and the CLI startup (after
+abandoned-run GC). No-op when the Temporal settings are unset.
+
+Acceptance: unit tests per terminal path and for live-run refusal, no-op and
+idempotent reconcile; live proof on `192.168.1.18:7233`/`harness` read back as
+closed; a mutation per path fails a test; `bun run check` clean; full suite file
+by file with only the allowlisted failure; numstat equals ignore-all-space.
+Non-goals: seats into Temporal, build/install, closing real runs' workflows.
+
+Session 2 (2026-09-18): the stopped-run CLI close had no test; route it through
+`cliDeps` so the CLI test can assert it, add a refusal test and mutation 5, a
+live CLI proof, and the full suite / check / numstat proofs. Status: done.
+
+---
+
 # PLAN — gov-6 v3: Governess beat journal on Temporal
 
 ## 2026-09-19 — done: proofs complete, pushed

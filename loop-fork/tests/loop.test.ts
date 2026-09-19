@@ -45,6 +45,11 @@ interface CliModuleDeps {
   cancelPairedLaunch?: (claim: PairedLaunchClaim) => void;
   chdir?: (path: string) => void;
   checkGitState?: () => string | undefined;
+  closeGovernessBeatForTerminalRun?: (input: {
+    manifestPath: string;
+    reason: string;
+    runId: string;
+  }) => Promise<unknown>;
   gcAbandonedRunProcesses?: () => unknown;
   gcStaleBridgeProcesses?: () => unknown;
   gcStaleClaudeBridgeRegistrations?: () => unknown;
@@ -114,6 +119,9 @@ const loadRunCli = async (
   const gcAbandonedRunProcessesMock = mock(
     deps.gcAbandonedRunProcesses ?? (() => undefined)
   );
+  const closeGovernessBeatForTerminalRunMock = mock(
+    deps.closeGovernessBeatForTerminalRun ?? (async () => undefined)
+  );
   const reconcileGovernessBeatWorkflowsMock = mock(
     deps.reconcileGovernessBeatWorkflows ?? (async () => undefined)
   );
@@ -170,6 +178,7 @@ const loadRunCli = async (
       cancelPairedLaunch: cancelPairedLaunchMock,
       checkGitState: checkGitStateMock,
       chdir: chdirMock,
+      closeGovernessBeatForTerminalRun: closeGovernessBeatForTerminalRunMock,
       gcAbandonedRunProcesses: gcAbandonedRunProcessesMock,
       gcStaleBridgeProcesses: gcStaleBridgeProcessesMock,
       gcStaleClaudeBridgeRegistrations: gcStaleClaudeBridgeRegistrationsMock,
@@ -221,6 +230,7 @@ const loadRunCli = async (
     handleManualMock,
     maybeEnterWorktreeMock,
     parseArgsMock,
+    closeGovernessBeatForTerminalRunMock,
     prepareRunWorldModelMock,
     reconcileGovernessBeatWorkflowsMock,
     renderImmediateInfoMock,
@@ -1065,6 +1075,30 @@ test("runCli rejects malformed stopped-run reconciliation before startup mainten
   expect(applyStagedMock).not.toHaveBeenCalled();
 });
 
+test("runCli leaves the beat workflow alone when stopped-run reconciliation refuses", async () => {
+  const priorHome = process.env.HOME;
+  const home = mkdtempSync(join(tmpdir(), "loop-reconcile-cli-"));
+  process.env.HOME = home;
+  const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+  try {
+    const { closeGovernessBeatForTerminalRunMock, runCli } = await loadRunCli();
+
+    await expect(runCli(["reconcile", "stopped-run", "23"])).rejects.toThrow(
+      "stopped-run reconciliation refused: manifest-not-found"
+    );
+
+    expect(closeGovernessBeatForTerminalRunMock).not.toHaveBeenCalled();
+  } finally {
+    write.mockRestore();
+    if (priorHome === undefined) {
+      process.env.HOME = undefined;
+    } else {
+      process.env.HOME = priorHome;
+    }
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test("runCli reconciles one synthetic stopped run before startup maintenance", async () => {
   const priorHome = process.env.HOME;
   const home = mkdtempSync(join(tmpdir(), "loop-reconcile-cli-"));
@@ -1090,14 +1124,21 @@ test("runCli reconciles one synthetic stopped run before startup maintenance", a
       })
     );
     const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stdoutWritesAtClose: number[] = [];
     const {
       applyStagedMock,
+      closeGovernessBeatForTerminalRunMock,
       gcAbandonedRunProcessesMock,
       gcStaleBridgeProcessesMock,
       gcStaleClaudeBridgeRegistrationsMock,
       parseArgsMock,
       runCli,
-    } = await loadRunCli();
+    } = await loadRunCli({
+      closeGovernessBeatForTerminalRun: () => {
+        stdoutWritesAtClose.push(write.mock.calls.length);
+        return Promise.resolve(undefined);
+      },
+    });
 
     await runCli(["reconcile", "stopped-run", "22"]);
 
@@ -1105,6 +1146,16 @@ test("runCli reconciles one synthetic stopped run before startup maintenance", a
       runId: "22",
       status: "changed",
     });
+    // The run's beat workflow is closed once, after reconciliation reported.
+    expect(closeGovernessBeatForTerminalRunMock).toHaveBeenCalledTimes(1);
+    expect(
+      closeGovernessBeatForTerminalRunMock.mock.calls[0]?.[0]
+    ).toMatchObject({
+      manifestPath: storage.manifestPath,
+      reason: "reconcile stopped-run",
+      runId: "22",
+    });
+    expect(stdoutWritesAtClose).toEqual([1]);
     expect(parseArgsMock).not.toHaveBeenCalled();
     expect(gcAbandonedRunProcessesMock).not.toHaveBeenCalled();
     expect(gcStaleBridgeProcessesMock).not.toHaveBeenCalled();

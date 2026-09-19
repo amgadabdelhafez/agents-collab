@@ -22,7 +22,6 @@ import {
   resolveGovernessConfig,
   runGoverness,
 } from "./loop/governess";
-import { closeGovernessBeatForTerminalRun } from "./loop/governess-beat-close";
 import { runGovernessCostCommand } from "./loop/governess-cost";
 import {
   GOVERNESS_PANE_DIED_SUBCOMMAND,
@@ -405,7 +404,7 @@ const runStoppedRunReconcileCommand = async (
   if (result.status === "refused") {
     throw new Error(`stopped-run reconciliation refused: ${result.reason}`);
   }
-  const closed = await closeGovernessBeatForTerminalRun({
+  const closed = await cliDeps.closeGovernessBeatForTerminalRun({
     env: process.env,
     manifestPath: storage.manifestPath,
     reason: "reconcile stopped-run",

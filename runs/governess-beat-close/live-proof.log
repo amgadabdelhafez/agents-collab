@@ -1,0 +1,15 @@
+A.started {"closeTime":null,"historyLength":"3","owner":"\"beatclose-proof-repo\"","status":"WORKFLOW_EXECUTION_STATUS_RUNNING","workflowId":"governess-beat:beatclose-proof-1789800483781-abandoned"}
+A.reconcile-while-working {"checked":0,"failed":0,"outcomes":{},"skippedLive":0}
+A.after-reconcile-while-working {"closeTime":null,"historyLength":"3","owner":"\"beatclose-proof-repo\"","status":"WORKFLOW_EXECUTION_STATUS_RUNNING","workflowId":"governess-beat:beatclose-proof-1789800483781-abandoned"}
+A.gc [loop] cleaned 1 abandoned run for "beatclose-proof-repo" (0 processes signaled)
+A.manifest-state "failed"
+[loop] closed governess-beat:beatclose-proof-1789800483781-abandoned (run beatclose-proof-1789800483781-abandoned)
+A.reconcile {"checked":1,"failed":0,"outcomes":{"terminated":1},"skippedLive":0}
+A.closed {"closeTime":"2026-09-19T06:48:04.148755034Z","historyLength":"4","owner":"\"beatclose-proof-repo\"","status":"WORKFLOW_EXECUTION_STATUS_TERMINATED","workflowId":"governess-beat:beatclose-proof-1789800483781-abandoned"}
+A.reconcile-again {"checked":1,"failed":0,"outcomes":{"already-closed":1},"skippedLive":0}
+A.still-closed {"closeTime":"2026-09-19T06:48:04.148755034Z","historyLength":"4","owner":"\"beatclose-proof-repo\"","status":"WORKFLOW_EXECUTION_STATUS_TERMINATED","workflowId":"governess-beat:beatclose-proof-1789800483781-abandoned"}
+B.started {"closeTime":null,"historyLength":"3","owner":"\"beatclose-proof-repo\"","status":"WORKFLOW_EXECUTION_STATUS_RUNNING","workflowId":"governess-beat:beatclose-proof-1789800483781-teardown"}
+B.manifest-state "stopped"
+B.governess-log [{"at":"2026-09-19T06:48:04.419Z","event":"exit","reason":"live proof teardown"},{"at":"2026-09-19T06:48:04.542Z","event":"journal-temporal-closed","outcome":"terminated","workflowId":"governess-beat:beatclose-proof-1789800483781-teardown"}]
+B.killed-after-close ["beatclose-proof-1789800483781-no-such-session"]
+B.closed {"closeTime":"2026-09-19T06:48:04.515227231Z","historyLength":"6","owner":"\"beatclose-proof-repo\"","status":"WORKFLOW_EXECUTION_STATUS_TERMINATED","workflowId":"governess-beat:beatclose-proof-1789800483781-teardown"}

@@ -1,7 +1,10 @@
 import { parseArgs, renderImmediateInfo } from "./args";
 import { gcStaleClaudeBridgeRegistrations } from "./claude-config-gc";
 import { checkGitState } from "./git";
-import { reconcileGovernessBeatWorkflows } from "./governess-beat-close";
+import {
+  closeGovernessBeatForTerminalRun,
+  reconcileGovernessBeatWorkflows,
+} from "./governess-beat-close";
 import {
   bindLaunchTask,
   cancelPairedLaunch,
@@ -21,6 +24,7 @@ export const cliDeps = {
   bindLaunchTask,
   cancelPairedLaunch,
   checkGitState,
+  closeGovernessBeatForTerminalRun,
   chdir: (path: string) => process.chdir(path),
   gcAbandonedRunProcesses,
   gcStaleBridgeProcesses,
