@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -37,6 +38,8 @@ import {
   sendRenameCommands,
 } from "../../src/loop/governess";
 
+import { readGovernessJournal } from "../../src/loop/governess-journal";
+import type { GovernessControlRecord } from "../../src/loop/governess-journal-core";
 import type { EscalationEvent } from "../../src/loop/governess-notify";
 import {
   appendNativeFallbackRequest,
@@ -3322,4 +3325,102 @@ test("sendRenameCommands preserves a user draft after a Stop hook", () => {
   );
   expect(spies.texts).toEqual([]);
   expect(spies.sends).toEqual([]);
+});
+
+const recoveryFixtureRecords = (): GovernessControlRecord[] =>
+  readFileSync("tests/fixtures/governess/beat-journal.golden.jsonl", "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as GovernessControlRecord);
+
+test("runGoverness recovers its journal from Temporal history on start when Temporal is configured", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  const history = recoveryFixtureRecords();
+  const connected: string[] = [];
+  const signalled: GovernessControlRecord[] = [];
+  deps.connectTemporalJournal = (temporal) => {
+    connected.push(`${temporal.address}/${temporal.namespace}`);
+    return Promise.resolve({
+      appendRecord: (_runId, record) => {
+        signalled.push(record);
+        return Promise.resolve();
+      },
+      close: () => Promise.resolve(),
+      readRecords: () => Promise.resolve(history),
+      workflowId: (runId) => `governess-beat:${runId}`,
+    });
+  };
+  const keys = ["x", "e"];
+  deps.openKeyInput = () => ({
+    close: () => undefined,
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+  // The previous pane died and its run-dir journal did not survive.
+  const journalFile = join(
+    mkdtempSync(join(tmpdir(), "gov6-run-")),
+    "governess-control.jsonl"
+  );
+
+  await runGoverness(
+    baseConfig({
+      journalFile,
+      journalTemporal: {
+        address: "192.168.1.18:7233",
+        namespace: "harness",
+        taskQueue: "loop-governess",
+      },
+    }),
+    deps
+  );
+
+  expect(connected).toEqual(["192.168.1.18:7233/harness"]);
+  const journal = readGovernessJournal(journalFile);
+  // The recovered log is the prefix; the live governess continues its sequence
+  // and writes every new record through to Temporal.
+  expect(journal.slice(0, history.length)).toEqual(history);
+  const written = journal.slice(history.length);
+  expect(written.length).toBeGreaterThan(0);
+  expect(written[0]?.sequence).toBe(history.length + 1);
+  await new Promise((resolveDrain) => setTimeout(resolveDrain, 20));
+  expect(signalled).toEqual(written);
+  expect(spies.logs).toContainEqual(
+    expect.objectContaining({
+      event: "journal-temporal-recovered",
+      rewroteFile: true,
+      temporalRecords: history.length,
+    })
+  );
+});
+
+test("runGoverness keeps the file journal and never connects when Temporal is not configured", async () => {
+  const spies = freshSpies();
+  const deps = makeDeps(stuck, { ms: START_MS }, spies);
+  let connects = 0;
+  deps.connectTemporalJournal = () => {
+    connects += 1;
+    return Promise.reject(new Error("must not connect"));
+  };
+  const keys = ["x", "e"];
+  deps.openKeyInput = () => ({
+    close: () => undefined,
+    next: () => Promise.resolve(keys.shift() ?? ""),
+  });
+  deps.sleep = () => new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
+  const journalFile = join(
+    mkdtempSync(join(tmpdir(), "gov6-run-")),
+    "governess-control.jsonl"
+  );
+
+  await runGoverness(baseConfig({ journalFile }), deps);
+
+  expect(connects).toBe(0);
+  expect(existsSync(journalFile)).toBe(true);
+  expect(
+    spies.logs.some(
+      (entry) =>
+        (entry as { event?: string }).event === "journal-temporal-recovered"
+    )
+  ).toBe(false);
 });

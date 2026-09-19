@@ -12,6 +12,7 @@ import { Connection, WorkflowClient } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
 import { serve } from "bun";
 import { BridgeSupervisorMessageDeliveryPort } from "./bridge-supervisor-message-delivery";
+import { GOVERNESS_BEAT_WORKFLOW_TYPE } from "./governess-beat-workflow";
 import { LoopSupervisorDirectory } from "./loop-supervisor-directory";
 import { SupervisorBridgeConsumptionReconciler } from "./supervisor-bridge-consumption";
 import {
@@ -19,13 +20,28 @@ import {
   type SupervisorMessageAuthorityPort,
   type SupervisorMessageGovernedOperation,
 } from "./supervisor-message-governance";
+import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "./supervisor-message-workflow";
 import type {
   SupervisorControlSurfaceAuthenticator,
   SupervisorControlSurfaceIdentity,
 } from "./supervisor-orchestration-http";
 import { JsonlSupervisorThreadStore } from "./supervisor-thread-store";
+import { TASK_GRAPH_WORKFLOW_TYPE } from "./task-graph-workflow";
 import { TemporalSupervisorRuntimeHost } from "./temporal-supervisor-runtime";
 import { temporalWorkflowBundleBase64 } from "./temporal-workflow-bundle.generated";
+
+/**
+ * The workflow types this orchestration server hosts. Registration happens
+ * through the shared workflow bundle (temporal-workflow.ts dispatches on type),
+ * so this list is the declared surface of that bundle rather than a second
+ * registry. gov-6 adds the governess beat: one workflow per run, keyed
+ * `governess-beat:<runId>`, whose history is the governess journal.
+ */
+export const LOOP_ORCHESTRATION_WORKFLOW_TYPES = [
+  GOVERNESS_BEAT_WORKFLOW_TYPE,
+  SUPERVISOR_MESSAGE_WORKFLOW_TYPE,
+  TASK_GRAPH_WORKFLOW_TYPE,
+] as const;
 
 const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
 const HOST_RE = /^(?:127\.0\.0\.1|::1|localhost)$/;
