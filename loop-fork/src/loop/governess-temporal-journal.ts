@@ -37,6 +37,14 @@ export const GOVERNESS_APPEND_RECORD_SIGNAL = "append_record";
 // file-only path never imports the Temporal SDK.
 const WORKFLOW_PORT_COMMAND_SIGNAL = "workflow-port-command";
 
+// Record-mutating beat workflow signals the governess never sends; see
+// governessJournalFromHistoryEvents.
+const UNFOLDED_RECORD_SIGNALS: ReadonlySet<string> = new Set([
+  "prepare_control",
+  "record_observation",
+  "transition_control",
+]);
+
 const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
 const ADDRESS_RE = /^[a-zA-Z0-9.:[\]-]{1,255}$/;
 
@@ -121,10 +129,20 @@ export const governessJournalFromHistoryEvents = (
       name?: unknown;
       payload?: { record?: unknown };
     };
+    if (command?.kind !== "signal") {
+      continue;
+    }
     if (
-      command?.kind !== "signal" ||
-      command.name !== GOVERNESS_APPEND_RECORD_SIGNAL
+      typeof command.name === "string" &&
+      UNFOLDED_RECORD_SIGNALS.has(command.name)
     ) {
+      // The workflow accepts these, so its state would hold records this fold
+      // cannot see. Refuse rather than return a silently short journal.
+      throw new Error(
+        `governess history holds a ${command.name} signal; recovery folds only ${GOVERNESS_APPEND_RECORD_SIGNAL}`
+      );
+    }
+    if (command.name !== GOVERNESS_APPEND_RECORD_SIGNAL) {
       continue;
     }
     const outcome = decideGovernessRecordAppend(

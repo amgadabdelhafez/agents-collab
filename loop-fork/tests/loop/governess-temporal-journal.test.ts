@@ -32,6 +32,7 @@ import {
   createGovernessTemporalJournalClient,
   type GovernessTemporalConfig,
   type GovernessTemporalJournalClient,
+  governessJournalFromHistoryEvents,
   governessTemporalConfigFromEnv,
   recoverGovernessJournalFromTemporal,
 } from "../../src/loop/governess-temporal-journal";
@@ -405,5 +406,40 @@ describe("gov-6 journal authority and fallback", () => {
     expect(recovery.divergedAt).toBe(2);
     expect(appended).toEqual([]);
     expect(readGovernessJournal(journalFile)).toEqual(history);
+  });
+
+  test("history holding a record signal the reader does not fold is an error, not a short journal", () => {
+    const signal = (name: string, payload: unknown) => ({
+      workflowExecutionSignaledEventAttributes: {
+        input: { payloads: [{ name, payload }] },
+        signalName: "workflow-port-command",
+      },
+    });
+    const decode = (payload: unknown) => {
+      const { name, payload: body } = payload as {
+        name: string;
+        payload: unknown;
+      };
+      return { kind: "signal", name, payload: body };
+    };
+    const [first] = goldenRecords();
+    expect(
+      governessJournalFromHistoryEvents(
+        [signal("append_record", { record: first })],
+        decode
+      )
+    ).toEqual([first]);
+    for (const name of [
+      "prepare_control",
+      "record_observation",
+      "transition_control",
+    ]) {
+      expect(() =>
+        governessJournalFromHistoryEvents(
+          [signal("append_record", { record: first }), signal(name, {})],
+          decode
+        )
+      ).toThrow(name);
+    }
   });
 });
