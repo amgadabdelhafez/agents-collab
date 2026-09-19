@@ -1,0 +1,10 @@
+const h = JSON.parse(await Bun.file(new URL(process.argv[2] ?? "./live-history.json", import.meta.url).pathname).text());
+const sigs = h.history.events.filter((e:any)=>e.eventType==="EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED");
+const names = new Set(sigs.map((e:any)=>e.workflowExecutionSignaledEventAttributes.signalName));
+const recs = sigs.map((e:any)=>{const p=e.workflowExecutionSignaledEventAttributes.input.payloads; return p.map((x:any)=>JSON.parse(Buffer.from(x.data,"base64").toString()));});
+const flat = recs.map((a:any[])=>{ if(a.length!==1||a[0].name!=="append_record") throw new Error("unexpected envelope"); return a[0].payload.record; });
+const norm=(rs:any[])=>{const ids=new Map();return rs.map(r=>{if(!ids.has(r.controlId))ids.set(r.controlId,`control-${ids.size+1}`);return JSON.stringify({...r,controlId:ids.get(r.controlId)})}).join("\n")};
+const golden=(await Bun.file("loop-fork/tests/fixtures/governess/beat-journal.golden.jsonl").text()).split("\n").filter(Boolean).map(l=>JSON.parse(l));
+console.log("signalNames", [...names], "count", flat.length);
+console.log("equalToGolden", norm(flat)===norm(golden));
+if (norm(flat)!==norm(golden)) console.log(JSON.stringify(recs[0]).slice(0,600));

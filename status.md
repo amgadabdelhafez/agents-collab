@@ -1,5 +1,46 @@
 # status — gov-6 v3: Governess beat journal on Temporal
 
+## 2026-09-19 — proofs, review fix, push
+
+Certified commit `d00a4af0` (implementation `ac572100`, `eeb98dfc`; review fix
+`d00a4af0`). Evidence in `runs/gov-6-journal-to-temporal/README.md`.
+
+- Authority: with both Temporal variables set, Temporal history is authoritative;
+  the file journal is the synchronous write-ahead copy, reconciled from history
+  on every governess start. With neither set, the file journal is the only
+  journal. One variable alone is an error.
+- Live: `governess-beat:gov6-live-20260919060351515` (run
+  `f2ae9e22-fa69-45ea-92a8-aa0143460640`) on `192.168.1.18:7233`/`harness`:
+  11 beats signalled, 36 events at readback, 37 after terminate (independently
+  read from the server API); recovery with the file deleted rewrote all 11 from
+  Temporal; records equal the golden. Earlier run `...055320724` same result.
+- Fallback: default no-config path loads 0 `@temporalio` modules and makes 0
+  socket dials (probe with positive control).
+- Mutation: skipping the client signal or dropping the append in the workflow
+  (bundle regenerated) both fail the golden test; reverted, green.
+- Suite: `bun run check` clean; 122 test files one by one, only
+  `tests/loop.test.ts` fails. Under inherited TMUX it fails 3 (`runCli defaults
+  empty argv to paired interactive tmux mode`, `runCli starts paired interactive
+  tmux without resolving a task`, and the allowlisted one); under
+  `env -u TMUX -u TMUX_PANE` only the allowlisted `runCli awaits auto-update
+  before handing off promptless paired tmux startup`. Base `c5585411` behaves
+  identically. The branch does not touch that file.
+- numstat vs `--ignore-all-space` over `c5585411..HEAD`: equal except
+  `governess-journal.ts` (164/204 vs 163/203) and `dbos-workflow-port.test.ts`
+  (60/51 vs 58/49). Both are blank-line deltas carried verbatim from the
+  merged `05736e65` (files byte-identical to it at the merge); this session's
+  commits `e98dc796..HEAD` are equal. The regenerated bundle
+  `temporal-workflow-bundle.generated.ts` (+27850/-26495) is equal under both.
+- Review (independent diff read): no critical defect. Fixed: recovery silently
+  ignored `prepare_control`/`record_observation`/`transition_control` signals
+  the workflow accepts; it now throws (test added). Open, not fixed: the
+  workflow refolds all records per signal and never `continueAsNew`s, so a very
+  long run grows O(N^2) and toward Temporal's history limits.
+
+Next: supervisor diff-read verdict, merge, build, install. Follow-up slice:
+`continueAsNew` for the beat workflow; decide whether the three unused signals
+should be removed.
+
 ## 2026-09-18/19 — merge of the prior attempt
 
 Merged `origin/codex/gov-6-journal-to-temporal` (`05736e65`) into

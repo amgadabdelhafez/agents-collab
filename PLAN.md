@@ -1,5 +1,12 @@
 # PLAN — gov-6 v3: Governess beat journal on Temporal
 
+## 2026-09-19 — done: proofs complete, pushed
+
+All six proofs ran on `d00a4af0`; see status.md and
+`runs/gov-6-journal-to-temporal/README.md`. Decision recorded: Temporal history
+is authoritative when both journals exist. Deferred: `continueAsNew` for long
+runs.
+
 ## 2026-09-18/19 — branch `claude/gov6-journal-to-temporal-v3` (from `c5585411`)
 
 Merged `origin/codex/gov-6-journal-to-temporal` (`05736e65`, the governess-beat.v1

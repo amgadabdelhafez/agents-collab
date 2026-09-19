@@ -1,0 +1,53 @@
+v8.promiseHooks.createHook is not available; stack trace collection will be disabled.
+2026-09-19T05:53:20.837Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'gov6-live-proof-30421',
+  state: 'RUNNING'
+}
+2026-09-19T05:53:20.839Z [WARN] No activities registered, not polling for activity tasks { sdkComponent: 'worker', taskQueue: 'gov6-live-proof-30421' }
+2026-09-19T05:53:20.839Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'gov6-live-proof-30421' }
+{
+  "address": "192.168.1.18:7233",
+  "checks": {
+    "goldenFromHistory": true,
+    "historyEqualsFile": true,
+    "workflowStateEqualsFile": true,
+    "recoveredEqualsWritten": true,
+    "recoveryRewroteFromTemporal": true
+  },
+  "eventCount": 36,
+  "journalRecords": 11,
+  "namespace": "harness",
+  "recovery": {
+    "backfilled": 0,
+    "fileRecords": 0,
+    "historyComplete": true,
+    "rewroteFile": true,
+    "temporalRecords": 11
+  },
+  "runId": "9212472e-d717-4b43-b2b1-0bc2a93c9917",
+  "signaledEvents": 11,
+  "status": "RUNNING",
+  "workflowId": "governess-beat:gov6-live-20260919055320724",
+  "workflowType": "temporalWorkflow"
+}
+2026-09-19T05:53:21.314Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'gov6-live-proof-30421',
+  state: 'STOPPING'
+}
+2026-09-19T05:53:21.314Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'gov6-live-proof-30421',
+  state: 'DRAINING'
+}
+2026-09-19T05:53:21.315Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'gov6-live-proof-30421',
+  state: 'DRAINED'
+}
+2026-09-19T05:53:21.315Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'gov6-live-proof-30421',
+  state: 'STOPPED'
+}
