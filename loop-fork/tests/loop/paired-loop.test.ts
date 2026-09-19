@@ -1088,3 +1088,193 @@ test("runPairedLoop delivers cross-direction bridge messages without permanent s
     );
   });
 });
+
+// Review passes and the draft PR step succeeds, so the run completes.
+const completeOnFirstIteration = (): void => {
+  runAgentImpl = (_agent, prompt) => {
+    if (prompt.includes("Review this completed work")) {
+      return Promise.resolve(makeResult("<review>PASS</review>"));
+    }
+    if (prompt.includes("Create a draft GitHub pull request")) {
+      return Promise.resolve(makeResult(""));
+    }
+    return Promise.resolve(makeResult("<done/>"));
+  };
+};
+
+const TEMPORAL_ENV = {
+  LOOP_GOVERNESS_TEMPORAL_ADDRESS: "127.0.0.1:1",
+  LOOP_GOVERNESS_TEMPORAL_NAMESPACE: "harness",
+};
+
+// The real close, with Temporal settings forced on and a recording control in
+// place of the server. Records the run's state as the close first sees it.
+const recordingBeatClose = async (module: PairedLoopModule) => {
+  const { closeGovernessBeatForTerminalRun } = await import(
+    "../../src/loop/governess-beat-close"
+  );
+  const { governessBeatWorkflowId } = await import(
+    "../../src/loop/governess-beat-workflow"
+  );
+  const seen: { calls: string[]; statesAtClose: string[] } = {
+    calls: [],
+    statesAtClose: [],
+  };
+  module.pairedLoopInternals.setDeps({
+    closeGovernessBeat: (input) => {
+      seen.statesAtClose.push(
+        readRunManifest(input.manifestPath)?.state ?? "missing"
+      );
+      return closeGovernessBeatForTerminalRun({
+        ...input,
+        connect: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            describe: (workflowId: string) => {
+              seen.calls.push(`describe:${workflowId}`);
+              return Promise.resolve({
+                ownerRepoId: readRunManifest(input.manifestPath)?.repoId,
+                status: "RUNNING",
+              });
+            },
+            terminate: (workflowId: string) => {
+              seen.calls.push(`terminate:${workflowId}`);
+              return Promise.resolve();
+            },
+          }),
+        env: { ...input.env, ...TEMPORAL_ENV },
+      });
+    },
+  });
+  return { governessBeatWorkflowId, seen };
+};
+
+test("runPairedLoop closes the run's governess-beat workflow when the run completes", async () => {
+  const module = await loadPairedLoop();
+  completeOnFirstIteration();
+  const { governessBeatWorkflowId, seen } = await recordingBeatClose(module);
+  try {
+    await withTempHome("beat-close-completed", async (runDir) => {
+      await module.runPairedLoop(
+        "Ship feature",
+        makeOptions({ agent: "codex" })
+      );
+      expect(readRunManifest(join(runDir, "manifest.json"))?.state).toBe(
+        "completed"
+      );
+    });
+    expect(seen.statesAtClose).toEqual(["completed"]);
+    expect(seen.calls).toEqual([
+      `describe:${governessBeatWorkflowId("beat-close-completed")}`,
+      `terminate:${governessBeatWorkflowId("beat-close-completed")}`,
+    ]);
+  } finally {
+    module.pairedLoopInternals.resetDeps();
+  }
+});
+
+test("runPairedLoop closes the run's governess-beat workflow when the run fails", async () => {
+  const module = await loadPairedLoop();
+  const { governessBeatWorkflowId, seen } = await recordingBeatClose(module);
+  startPersistentAgentSessionImpl = (agent) =>
+    agent === "claude"
+      ? Promise.reject(new Error("claude start failed"))
+      : Promise.resolve(undefined);
+  try {
+    await withTempHome("beat-close-failed", async () => {
+      await expect(
+        module.runPairedLoop("Ship feature", makeOptions())
+      ).rejects.toThrow("claude start failed");
+    });
+    expect(seen.statesAtClose).toEqual(["failed"]);
+    expect(seen.calls).toEqual([
+      `describe:${governessBeatWorkflowId("beat-close-failed")}`,
+      `terminate:${governessBeatWorkflowId("beat-close-failed")}`,
+    ]);
+  } finally {
+    module.pairedLoopInternals.resetDeps();
+  }
+});
+
+test("runPairedLoop closes the beat workflow only after finishRun makes the run terminal", async () => {
+  const module = await loadPairedLoop();
+  const statesAtClose: string[] = [];
+  // Review never passes, so the run stays working until finishRun stops it.
+  module.pairedLoopInternals.setDeps({
+    closeGovernessBeat: (input) => {
+      statesAtClose.push(
+        readRunManifest(input.manifestPath)?.state ?? "missing"
+      );
+      return Promise.resolve(undefined);
+    },
+  });
+  try {
+    await withTempHome("beat-close-live", async () => {
+      await module.runPairedLoop(
+        "Ship feature",
+        makeOptions({ agent: "codex" })
+      );
+    });
+    // Exactly one close, after finishRun; none while the run was working.
+    expect(statesAtClose).toEqual(["stopped"]);
+  } finally {
+    module.pairedLoopInternals.resetDeps();
+  }
+});
+
+test("runPairedLoop still completes when the governess-beat close throws", async () => {
+  const module = await loadPairedLoop();
+  completeOnFirstIteration();
+  module.pairedLoopInternals.setDeps({
+    closeGovernessBeat: () => Promise.reject(new Error("temporal down")),
+  });
+  try {
+    await withTempHome("beat-close-throws", async (runDir) => {
+      await module.runPairedLoop(
+        "Ship feature",
+        makeOptions({ agent: "codex" })
+      );
+      expect(readRunManifest(join(runDir, "manifest.json"))?.state).toBe(
+        "completed"
+      );
+    });
+  } finally {
+    module.pairedLoopInternals.resetDeps();
+  }
+});
+
+test("runPairedLoop beat close is a no-op without the Temporal settings", async () => {
+  const module = await loadPairedLoop();
+  completeOnFirstIteration();
+  const { closeGovernessBeatForTerminalRun } = await import(
+    "../../src/loop/governess-beat-close"
+  );
+  const dials: string[] = [];
+  const results: unknown[] = [];
+  module.pairedLoopInternals.setDeps({
+    closeGovernessBeat: async (input) => {
+      const result = await closeGovernessBeatForTerminalRun({
+        ...input,
+        connect: () => {
+          dials.push("dial");
+          return Promise.reject(new Error("must not dial"));
+        },
+        env: {},
+      });
+      results.push(result);
+      return result;
+    },
+  });
+  try {
+    await withTempHome("beat-close-unset", async () => {
+      await module.runPairedLoop(
+        "Ship feature",
+        makeOptions({ agent: "codex" })
+      );
+    });
+    expect(results).toEqual([undefined]);
+    expect(dials).toEqual([]);
+  } finally {
+    module.pairedLoopInternals.resetDeps();
+  }
+});

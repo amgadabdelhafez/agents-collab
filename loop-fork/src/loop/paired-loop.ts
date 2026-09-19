@@ -18,6 +18,7 @@ import { cavemanAgentGuidance, DEFAULT_CAVEMAN_MODE } from "./caveman";
 import { getLastClaudeSessionId } from "./claude-sdk-server";
 import { getLastCodexThreadId } from "./codex-app-server";
 import { INTERNAL_AGENT_COMMUNICATION_GUIDANCE } from "./communication-guidance";
+import { closeGovernessBeatForTerminalRun } from "./governess-beat-close";
 import {
   doneText,
   formatFollowUp,
@@ -68,10 +69,12 @@ interface PairedState {
 }
 
 interface PairedLoopDependencies {
+  closeGovernessBeat: typeof closeGovernessBeatForTerminalRun;
   startPersistentAgentSession: typeof startPersistentAgentSession;
 }
 
 const pairedLoopDefaultDeps: PairedLoopDependencies = {
+  closeGovernessBeat: closeGovernessBeatForTerminalRun,
   startPersistentAgentSession,
 };
 
@@ -555,6 +558,26 @@ const finishRun = (
   }
 };
 
+// A run resumed from a tmux run can own a beat workflow. Close it now instead
+// of at the next startup reconcile; a failed close never fails the run.
+const closeFinishedRunBeat = async (state: PairedState): Promise<void> => {
+  try {
+    const closed = await pairedLoopDeps.closeGovernessBeat({
+      env: process.env,
+      manifestPath: state.storage.manifestPath,
+      reason: "paired loop finished",
+      runId: state.storage.runId,
+    });
+    if (closed?.outcome === "terminated") {
+      console.error(`[loop] closed ${closed.workflowId}`);
+    }
+  } catch (error) {
+    console.error(
+      `[loop] governess-beat close failed for run ${state.storage.runId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+};
+
 export const runPairedLoop = async (
   task: string,
   opts: Options
@@ -614,5 +637,6 @@ export const runPairedLoop = async (
   } finally {
     finishRun(state, finalState);
     rl?.close();
+    await closeFinishedRunBeat(state);
   }
 };

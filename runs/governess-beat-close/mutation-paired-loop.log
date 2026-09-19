@@ -1,0 +1,14 @@
+## mutation 7: skip the close in runPairedLoop finally (session 3)
+(fail) runPairedLoop closes the run's governess-beat workflow when the run completes [21.42ms]
+(fail) runPairedLoop closes the run's governess-beat workflow when the run fails [20.39ms]
+(fail) runPairedLoop closes the beat workflow only after finishRun makes the run terminal [22.47ms]
+ 23 pass
+ 3 fail
+## mutation 8: close before finishRun (run not yet terminal at the call)
+(fail) runPairedLoop closes the run's governess-beat workflow when the run fails [24.58ms]
+(fail) runPairedLoop closes the beat workflow only after finishRun makes the run terminal [30.33ms]
+ 24 pass
+ 2 fail
+## restored
+ 26 pass
+ 0 fail

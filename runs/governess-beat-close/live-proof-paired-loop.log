@@ -1,0 +1,27 @@
+bun test v1.4.2 (744846f84)
+
+../runs/governess-beat-close/live-proof-paired-loop.test.ts:
+D.run {"home":"/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/beatclose-paired-loop-Eeb1iy","manifestPath":"/var/folders/xf/jjv9nmx13hq36sgjfjvvy1gr0000gn/T/beatclose-paired-loop-Eeb1iy/.loop/runs/agents-collab-fa87e8608224/91789801472467/manifest.json","runId":"91789801472467"}
+
+[loop] PLAN.md:
+
+Ship feature
+[loop] paired run: 91789801472467
+
+[loop] iteration 1/1
+
+[loop] review with claude
+
+[loop] review passed. asking model to create draft PR.
+
+[loop] done signal "<done/>" detected and review passed, stopping.
+[loop] closed governess-beat:91789801472467
+D.state-when-workflow-started "working"
+D.started-while-working {"closeTime":null,"historyLength":"3","status":"WORKFLOW_EXECUTION_STATUS_RUNNING","workflowId":"governess-beat:91789801472467"}
+D.manifest "completed"
+D.closed {"closeTime":"2026-09-19T07:04:32.800729127Z","historyLength":"4","status":"WORKFLOW_EXECUTION_STATUS_TERMINATED","workflowId":"governess-beat:91789801472467"}
+
+ 1 pass
+ 0 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [290.00ms]
