@@ -1,3 +1,25 @@
+# PLAN — gov-6 v3: Governess beat journal on Temporal
+
+## 2026-09-18/19 — branch `claude/gov6-journal-to-temporal-v3` (from `c5585411`)
+
+Merged `origin/codex/gov-6-journal-to-temporal` (`05736e65`, the governess-beat.v1
+workflow, shared reducer, golden fixture). Conflicts only in this file and
+`status.md`, resolved to this branch's text plus this entry. The generated
+workflow bundle was not hand-merged: this branch's side was taken and then
+regenerated with `bun run build:temporal-workflow`.
+
+Plan: write every journal record through the beat workflow when
+`LOOP_GOVERNESS_TEMPORAL_ADDRESS` + `LOOP_GOVERNESS_TEMPORAL_NAMESPACE` are set,
+fall back to the file journal when neither is set, and recover the journal from
+Temporal history when the governess starts. Temporal history is authoritative
+when both exist. Acceptance: the six proofs in the task (golden replay through
+Temporal, live proof on `192.168.1.18:7233`/`harness`, file fallback, mutation,
+check + per-file tests + full suite file by file, numstat vs ignore-all-space).
+Non-goals: no seat moves into Temporal activities, no Switchyard/Au Pair/Nanny
+change, no build or install.
+
+---
+
 # PLAN — Governess cost from routing tokens
 
 ## Run 39 (2026-09-12) — implementation/proof complete, review blocked

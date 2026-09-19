@@ -1,3 +1,16 @@
+# status — gov-6 v3: Governess beat journal on Temporal
+
+## 2026-09-18/19 — merge of the prior attempt
+
+Merged `origin/codex/gov-6-journal-to-temporal` (`05736e65`) into
+`claude/gov6-journal-to-temporal-v3`. PLAN.md/status.md conflicts kept this
+branch's text; the generated bundle was taken from this branch and regenerated.
+The prior branch's own handoff (Forgejo draft PR 1 against
+`codex/seat-model-identity`) is superseded by this branch. Implementation and
+proofs follow in the next commit and its status entry.
+
+---
+
 # status — Governess cost from routing tokens
 
 ## Run 39 (2026-09-12) — implementation/proof complete, review blocked

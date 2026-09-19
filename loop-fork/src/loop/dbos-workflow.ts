@@ -1,3 +1,12 @@
+/*
+ * RETIRED (gov-6).
+ * Replacement: the governess beat now runs as the governess-beat.v1
+ * WorkflowDefinition on Temporal, driven by the generic host workflow in
+ * ./temporal-workflow.ts; replay is Temporal replay and the journal is a read
+ * model exported from workflow history.
+ * Left in place deliberately: deletion is the gov-7 cutover's job, not this
+ * slice's. Unwired here, not removed.
+ */
 import { DBOS } from "@dbos-inc/dbos-sdk";
 import { supervisorMessageWorkflowDefinition } from "./supervisor-message-workflow";
 import type {

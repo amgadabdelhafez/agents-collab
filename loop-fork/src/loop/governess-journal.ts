@@ -1,3 +1,9 @@
+// gov-6: this module is the JSONL read/write face of the governess control log.
+// The decision logic it used to own now lives in ./governess-journal-core, which
+// the governess-beat.v1 workflow reduces over Temporal history. Both paths share
+// one reducer so the exported history read model and this JSONL journal cannot
+// drift apart.
+
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -9,49 +15,35 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
-  GovernessAction,
-  GovernessActionClass,
-  GovernessPolicyContext,
-} from "./governess-policy";
-import type { Agent, HookEvent } from "./types";
+  GovernessControlPhase as CoreGovernessControlPhase,
+  GovernessControlRecord as CoreGovernessControlRecord,
+  GovernessControlTransitionDetails as CoreGovernessControlTransitionDetails,
+  GovernessControlTransport as CoreGovernessControlTransport,
+} from "./governess-journal-core";
+import {
+  applyGovernessControlRecord,
+  GOVERNESS_OBSERVATION_HEARTBEAT_MS as CORE_GOVERNESS_OBSERVATION_HEARTBEAT_MS,
+  decideGovernessObservation,
+  decideGovernessPrepare,
+  decideGovernessTransition,
+  emptyGovernessControlState,
+  type GovernessControlState,
+  isGovernessControlRecord,
+} from "./governess-journal-core";
+import type { HookEvent } from "./types";
 
-export type GovernessControlPhase =
-  | "prepared"
-  | "dispatched"
-  | "accepted"
-  | "acknowledged"
-  | "completed"
-  | "failed";
+// The record contract now lives in ./governess-journal-core so the workflow
+// reducer and this JSONL writer cannot drift. Aliased rather than re-exported
+// to keep existing importers of this module working.
+export type GovernessControlPhase = CoreGovernessControlPhase;
+export type GovernessControlRecord = CoreGovernessControlRecord;
+export type GovernessControlTransitionDetails =
+  CoreGovernessControlTransitionDetails;
+export type GovernessControlTransport = CoreGovernessControlTransport;
+export const GOVERNESS_OBSERVATION_HEARTBEAT_MS =
+  CORE_GOVERNESS_OBSERVATION_HEARTBEAT_MS;
 
-export interface GovernessControlRecord {
-  action: GovernessAction;
-  agent?: Agent;
-  at: string;
-  controlId: string;
-  epoch: number;
-  evidence?: string;
-  idempotencyKey: string;
-  observationStream?: string;
-  // Observation results are retained so replay can reconstruct decisions.
-  // Effectful control messages remain hash-only to avoid duplicating prompts.
-  payload?: string;
-  payloadHash: string;
-  phase: GovernessControlPhase;
-  policyClass: GovernessActionClass;
-  policyContext?: GovernessPolicyContext;
-  reason?: string;
-  semanticHash?: string;
-  sequence: number;
-  transport?: GovernessControlTransport;
-}
-
-interface GovernessJournalIndex {
-  dispatchedControls: Record<string, true>;
-  latestByControl: Record<string, GovernessControlRecord>;
-  latestByIdempotency: Record<string, GovernessControlRecord>;
-  latestObservationByStream: Record<string, GovernessControlRecord>;
-  pendingHistoryByControl: Record<string, GovernessControlRecord[]>;
-  sequence: number;
+interface GovernessJournalIndex extends GovernessControlState {
   sourceBytes: number;
   sourceMtimeMs: number;
   version: 1;
@@ -72,81 +64,17 @@ export interface GovernessJournalStorageStatus {
   pendingControls: number;
 }
 
-export type GovernessControlTransport =
-  | "claude-channel"
-  | "codex-app-server"
-  | "bridge"
-  | "tmux-fallback"
-  | "internal";
-
-export interface GovernessControlTransitionDetails {
-  evidence?: string;
-  transport?: GovernessControlTransport;
-}
-
-const hash = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
-
-export const GOVERNESS_OBSERVATION_HEARTBEAT_MS = 60_000;
 export const GOVERNESS_JOURNAL_COMPACT_BYTES = 8 * 1024 * 1024;
 const JOURNAL_INDEX_SUFFIX = ".index.json";
 const JOURNAL_ARCHIVE_SUFFIX = ".archive";
 const indexCache = new Map<string, GovernessJournalIndex>();
 
-const CONTROL_PHASES = new Set<GovernessControlPhase>([
-  "prepared",
-  "dispatched",
-  "accepted",
-  "acknowledged",
-  "completed",
-  "failed",
-]);
+const isControlRecord = isGovernessControlRecord;
 
-const PHASE_ORDER: Record<GovernessControlPhase, number> = {
-  prepared: 0,
-  dispatched: 1,
-  accepted: 2,
-  acknowledged: 3,
-  completed: 4,
-  failed: 5,
-};
-
-const transitionAllowed = (
-  from: GovernessControlPhase,
-  to: GovernessControlPhase
-): boolean => {
-  if (from === to) {
-    return true;
-  }
-  if (from === "completed" || from === "failed") {
-    return false;
-  }
-  if (to === "failed") {
-    return true;
-  }
-  return PHASE_ORDER[to] > PHASE_ORDER[from];
-};
-
-const isControlRecord = (value: unknown): value is GovernessControlRecord => {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Partial<GovernessControlRecord>;
-  return (
-    typeof record.action === "string" &&
-    typeof record.at === "string" &&
-    typeof record.controlId === "string" &&
-    typeof record.epoch === "number" &&
-    typeof record.idempotencyKey === "string" &&
-    typeof record.payloadHash === "string" &&
-    typeof record.phase === "string" &&
-    CONTROL_PHASES.has(record.phase as GovernessControlPhase) &&
-    typeof record.policyClass === "string" &&
-    typeof record.sequence === "number" &&
-    Number.isInteger(record.sequence) &&
-    record.sequence > 0
-  );
-};
+// Hashing lives on this side of the boundary: the pure reducer must stay free of
+// Node built-ins so it can bundle into the Temporal workflow sandbox.
+const hash = (value: string): string =>
+  createHash("sha256").update(value).digest("hex");
 
 export const ensureGovernessJournal = (journalFile: string): void => {
   mkdirSync(dirname(journalFile), { recursive: true });
@@ -197,12 +125,7 @@ const journalStat = (
 };
 
 const emptyJournalIndex = (): GovernessJournalIndex => ({
-  dispatchedControls: {},
-  latestByControl: {},
-  latestByIdempotency: {},
-  latestObservationByStream: {},
-  pendingHistoryByControl: {},
-  sequence: 0,
+  ...emptyGovernessControlState(),
   sourceBytes: 0,
   sourceMtimeMs: 0,
   version: 1,
@@ -212,25 +135,7 @@ const applyRecordToIndex = (
   index: GovernessJournalIndex,
   record: GovernessControlRecord
 ): void => {
-  index.sequence = Math.max(index.sequence, record.sequence);
-  if (record.action === "observe-runtime") {
-    if (record.observationStream) {
-      index.latestObservationByStream[record.observationStream] = record;
-    }
-    return;
-  }
-  index.latestByControl[record.controlId] = record;
-  index.latestByIdempotency[record.idempotencyKey] = record;
-  if (record.phase === "dispatched") {
-    index.dispatchedControls[record.controlId] = true;
-  }
-  const history = index.pendingHistoryByControl[record.controlId] ?? [];
-  history.push(record);
-  if (record.phase === "completed" || record.phase === "failed") {
-    delete index.pendingHistoryByControl[record.controlId];
-  } else {
-    index.pendingHistoryByControl[record.controlId] = history;
-  }
+  applyGovernessControlRecord(index, record);
 };
 
 const buildJournalIndex = (
@@ -357,32 +262,19 @@ export const prepareGovernessControl = (
   }
 ): GovernessControlRecord => {
   const index = loadJournalIndex(journalFile);
-  const existing = index.latestByIdempotency[input.idempotencyKey];
-  if (existing) {
-    const dispatched = index.dispatchedControls[existing.controlId] === true;
-    // A pre-dispatch failure is safe to retry with a new control id. Once an
-    // effect may have crossed the transport boundary, failure is ambiguous and
-    // the idempotency fence must remain closed.
-    if (existing.phase !== "failed" || dispatched) {
-      return existing;
-    }
+  const decision = decideGovernessPrepare(
+    index,
+    {
+      ...input,
+      payloadHash: hash(input.payload),
+      ...(input.action === "observe-runtime" ? { payload: input.payload } : {}),
+    },
+    randomUUID()
+  );
+  if (decision.appended) {
+    append(journalFile, decision.record, index);
   }
-  const record: GovernessControlRecord = {
-    action: input.action,
-    ...(input.agent ? { agent: input.agent } : {}),
-    at: input.at,
-    controlId: randomUUID(),
-    epoch: input.epoch,
-    idempotencyKey: input.idempotencyKey,
-    payloadHash: hash(input.payload),
-    ...(input.action === "observe-runtime" ? { payload: input.payload } : {}),
-    phase: "prepared",
-    policyClass: input.policyClass,
-    ...(input.policyContext ? { policyContext: input.policyContext } : {}),
-    sequence: index.sequence + 1,
-  };
-  append(journalFile, record, index);
-  return record;
+  return decision.record;
 };
 
 export const recordGovernessObservation = (
@@ -401,35 +293,19 @@ export const recordGovernessObservation = (
   }
 ): { record: GovernessControlRecord; written: boolean } => {
   const index = loadJournalIndex(journalFile);
-  const semanticHash = hash(input.semanticPayload ?? input.payload);
-  const previous = index.latestObservationByStream[input.stream];
-  const elapsedMs = previous
-    ? Math.max(0, Date.parse(input.at) - Date.parse(previous.at))
-    : Number.POSITIVE_INFINITY;
-  if (
-    previous?.semanticHash === semanticHash &&
-    elapsedMs < (input.heartbeatMs ?? GOVERNESS_OBSERVATION_HEARTBEAT_MS)
-  ) {
-    return { record: previous, written: false };
+  const decision = decideGovernessObservation(
+    index,
+    {
+      ...input,
+      payloadHash: hash(input.payload),
+      semanticHash: hash(input.semanticPayload ?? input.payload),
+    },
+    randomUUID()
+  );
+  if (decision.appended) {
+    append(journalFile, decision.record, index);
   }
-  const record: GovernessControlRecord = {
-    action: "observe-runtime",
-    ...(input.agent ? { agent: input.agent } : {}),
-    at: input.at,
-    controlId: randomUUID(),
-    epoch: input.epoch,
-    idempotencyKey: input.idempotencyKey,
-    observationStream: input.stream,
-    payload: input.payload,
-    payloadHash: hash(input.payload),
-    phase: "completed",
-    policyClass: input.policyClass,
-    ...(input.policyContext ? { policyContext: input.policyContext } : {}),
-    semanticHash,
-    sequence: index.sequence + 1,
-  };
-  append(journalFile, record, index);
-  return { record, written: true };
+  return { record: decision.record, written: decision.appended };
 };
 
 export const transitionGovernessControl = (
@@ -441,29 +317,21 @@ export const transitionGovernessControl = (
   details: GovernessControlTransitionDetails = {}
 ): GovernessControlRecord | undefined => {
   const index = loadJournalIndex(journalFile);
-  const previous = index.latestByControl[controlId];
-  if (!previous) {
+  const decision = decideGovernessTransition(
+    index,
+    controlId,
+    phase,
+    at,
+    reason,
+    details
+  );
+  if (!decision) {
     return undefined;
   }
-  if (previous.phase === phase) {
-    return previous;
+  if (decision.appended) {
+    append(journalFile, decision.record, index);
   }
-  if (!transitionAllowed(previous.phase, phase)) {
-    throw new Error(
-      `invalid governess control transition ${previous.phase} -> ${phase}`
-    );
-  }
-  const next: GovernessControlRecord = {
-    ...previous,
-    at,
-    phase,
-    ...(details.evidence ? { evidence: details.evidence } : {}),
-    ...(details.transport ? { transport: details.transport } : {}),
-    ...(reason ? { reason } : {}),
-    sequence: index.sequence + 1,
-  };
-  append(journalFile, next, index);
-  return next;
+  return decision.record;
 };
 
 const latestRecordsByControl = (
@@ -716,3 +584,23 @@ export const applyGovernessControlReconciliation = (
     );
   }
 };
+
+// gov-6 read model: the journal projected out of Temporal workflow history.
+//
+// `records` is the ordered decision log held in governess-beat.v1 state. The
+// projection is deliberately trivial — the reducer already produced these
+// records — because that is what makes history and the legacy JSONL file agree
+// by construction rather than by a second implementation.
+
+export const governessJournalFromHistory = (
+  records: readonly GovernessControlRecord[]
+): GovernessControlRecord[] =>
+  [...records].sort((left, right) => left.sequence - right.sequence);
+
+/**
+ * Serialize the read model in the exact on-disk JSONL form the legacy writer
+ * produces, so equality can be compared by content instead of by line count.
+ */
+export const serializeGovernessJournal = (
+  records: readonly GovernessControlRecord[]
+): string => records.map((record) => `${JSON.stringify(record)}\n`).join("");
