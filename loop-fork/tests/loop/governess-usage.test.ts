@@ -1090,6 +1090,55 @@ test("subscription-tracker-preserved: existing reader applies provider credit es
   }
 });
 
+test("subscription-bundled-fallback: a tracker catalog without the model falls back to the labelled bundled table", async () => {
+  const fixture = costFixture();
+  const previous = {
+    LOOP_USAGE_TRACKER_URL: process.env.LOOP_USAGE_TRACKER_URL,
+    LOOP_USAGE_TRACKER_SECRET: process.env.LOOP_USAGE_TRACKER_SECRET,
+    LOOP_USAGE_TRACKER_LIMITS: process.env.LOOP_USAGE_TRACKER_LIMITS,
+  };
+  const server = serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () =>
+      Response.json({
+        pricing_catalog: {
+          codex_credit_usd_estimate: { value: 0.04 },
+          rates: [
+            {
+              provider: "codex",
+              model_prefix: "some-other-model",
+              basis: "credits_per_mtok",
+              rates: { input: 2, output: 3, cache_read: 1 },
+            },
+          ],
+        },
+      }),
+  });
+  try {
+    process.env.LOOP_USAGE_TRACKER_LIMITS = "1";
+    process.env.LOOP_USAGE_TRACKER_URL = server.url.toString();
+    process.env.LOOP_USAGE_TRACKER_SECRET = "fixture-secret";
+    const report = await governessCost("7", fixture.root, fixture.root);
+    const seat = report.tasks[0].subscriptions[0];
+    expect(seat.costUsd).toBeCloseTo(0.010_55, 12);
+    expect(seat.source).toContain("bundled rate table");
+    expect(seat.source).toContain("catalog lacks this model");
+    expect(seat.method).toContain("usage-tracker catalog has no rate for");
+    expect(seat.reason).toBeNull();
+  } finally {
+    server.stop(true);
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    fixture.cleanup();
+  }
+});
+
 test("report-closed: missing prices, missing transcript, unowned rows and colliding run IDs stay unknown", async () => {
   const fixture = costFixture();
   try {

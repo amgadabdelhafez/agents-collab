@@ -74,6 +74,50 @@ const routedCost = async (storage: RunStorage, home: string) => {
   return result;
 };
 
+const BUNDLED_SOURCE = "governess-usage.ts bundled rate table";
+
+// Pricing for one subscription seat. The tracker catalog is the authority when it
+// prices the model. When it has no rate for it, fall back to the bundled table
+// instead of reporting a live seat as unpriced, and say so in method and source.
+const seatPricing = (input: {
+  bundledCostUsd: number;
+  bundledCovered: boolean;
+  basis?: string;
+  model?: string | null;
+  tracker?: { coveragePct?: number; costUsd: number; source: string };
+}): { costUsd: number; covered: boolean; method: string; source: string } => {
+  if (!input.tracker) {
+    return {
+      costUsd: input.bundledCostUsd,
+      covered: input.bundledCovered,
+      method: input.basis ?? "bundled-api-usd-estimate",
+      source: BUNDLED_SOURCE,
+    };
+  }
+  if (input.tracker.coveragePct === 100) {
+    return {
+      costUsd: input.tracker.costUsd,
+      covered: true,
+      method: input.basis ?? "unpriced",
+      source: input.tracker.source,
+    };
+  }
+  if (input.bundledCovered) {
+    return {
+      costUsd: input.bundledCostUsd,
+      covered: true,
+      method: `bundled-api-usd-estimate; usage-tracker catalog has no rate for ${input.model}`,
+      source: `${BUNDLED_SOURCE} (usage-tracker catalog lacks this model)`,
+    };
+  }
+  return {
+    costUsd: input.tracker.costUsd,
+    covered: false,
+    method: input.basis ?? "unpriced",
+    source: input.tracker.source,
+  };
+};
+
 const subscriptionCost = (
   agent: "claude" | "codex",
   manifest: RunManifest,
@@ -83,21 +127,35 @@ const subscriptionCost = (
   const sessionRef =
     agent === "claude" ? manifest.claudeSessionId : manifest.codexThreadId;
   const usage = readAgentUsage(agent, sessionRef, join(runDir, "codex-home"));
+  // readAgentUsage prices with the bundled table; keep that estimate before the
+  // tracker catalog overwrites it.
+  const bundledCostUsd = usage.costUsd;
+  const bundledCovered = Boolean(
+    usage.model && (usage.costUsd > 0 || usage.totalTokens === 0)
+  );
   if (pricing) {
     applyUsageTrackerPricing(usage, agent, pricing);
   }
+  const priced = seatPricing({
+    basis: usage.costEstimateBasis,
+    bundledCostUsd,
+    bundledCovered,
+    model: usage.model,
+    tracker: pricing
+      ? {
+          costUsd: usage.costUsd,
+          coveragePct: usage.costEstimateCoveragePct,
+          source: pricing.source,
+        }
+      : undefined,
+  });
   const readable =
     usage.dataConfidence === "exact" || usage.dataConfidence === "approx";
-  const covered = pricing
-    ? usage.costEstimateCoveragePct === 100
-    : Boolean(usage.model && (usage.costUsd > 0 || usage.totalTokens === 0));
   return {
     agent,
-    costUsd: readable && covered ? usage.costUsd : null,
-    method:
-      usage.costEstimateBasis ??
-      (pricing ? "unpriced" : "bundled-api-usd-estimate"),
-    source: pricing?.source ?? "governess-usage.ts bundled rate table",
+    costUsd: readable && priced.covered ? priced.costUsd : null,
+    method: priced.method,
+    source: priced.source,
     tokenSource:
       agent === "claude"
         ? "Claude Code session transcript via readAgentUsage"
@@ -106,7 +164,7 @@ const subscriptionCost = (
     model: usage.model ?? null,
     totalTokens: readable ? usage.totalTokens : null,
     reason:
-      readable && covered
+      readable && priced.covered
         ? null
         : "Subscription transcript or pricing coverage unavailable; not zero spend.",
   };
