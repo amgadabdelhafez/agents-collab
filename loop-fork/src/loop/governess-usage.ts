@@ -741,7 +741,7 @@ const newestRollout = (
         entry.endsWith(".jsonl") &&
         stat.mtimeMs > newestMtime &&
         (!requireUsage ||
-          summarizeCodex(readFileSync(full, "utf8")).dataConfidence === "exact")
+          summarizeCodex(readFileSync(full, "utf8")).totalTokens > 0)
       ) {
         newest = full;
         newestMtime = stat.mtimeMs;
@@ -938,7 +938,7 @@ export const readAgentUsage = (
       const candidate = newestRollout(join(codexHome, "sessions"), 4, true);
       if (candidate && candidate !== path) {
         const fallback = summarizeCodex(readFileSync(candidate, "utf8"));
-        if (fallback.dataConfidence === "exact") {
+        if (fallback.totalTokens > 0) {
           // Run-local usage projection only. This does not rebind the agent or
           // claim that the manifest thread is the observed provider thread.
           parsed = { ...fallback, dataConfidence: "approx" };
