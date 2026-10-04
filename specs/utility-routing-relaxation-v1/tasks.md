@@ -4,9 +4,9 @@
 - [x] Remove provider-specific refusal of existing patch-proposal routing.
 - [x] Replace packet quotas and compulsory delegation with useful-work guidance.
 - [x] Retain exact scopes, truthful risk, conflict fences and guarded apply.
-- [ ] Compose with the installed stats/API pricing repair; do not install this
+- [x] Compose with the installed stats/API pricing repair; do not install this
   standalone feature-base binary and regress that repair.
-- [ ] Prove one actual Au Pair proposal/review/apply in a disposable repo and one
+- [x] Prove one actual Au Pair proposal/review/apply in a disposable repo and one
   actual Nanny evidence job, then activate the composed candidate and refresh
   loaded guidance through supported messages, not composer injection.
 - [ ] Disposable Bifrost versus LiteLLM controlled-peer spike; pin artifacts and

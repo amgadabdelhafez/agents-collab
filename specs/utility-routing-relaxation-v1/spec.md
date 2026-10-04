@@ -24,5 +24,6 @@ unbounded packets still refuse; guidance describes proposal-only authority and
 useful delegation. No gateway deployment or live cutover in this source slice.
 
 Base: verified installed feature lineage 553d803f, not the older origin/main
-dde60215. This preserves newer utility broker contracts. Stats candidate remains
-separate and must be retained when composing any release.
+dde60215. This preserves newer utility broker contracts. The stats/API repair
+is retained in the combined installed release recorded in
+`loop-fork/runs/utility-routing-composed-release/status.md`.
