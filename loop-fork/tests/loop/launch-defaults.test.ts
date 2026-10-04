@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { parseArgs } from "../../src/loop/args";
 import { buildLoopCodexConfig } from "../../src/loop/codex-home";
 import { restoreSavedLaunchDefaults } from "../../src/loop/launch-defaults";
+import { reservePairedLaunch } from "../../src/loop/launch-reservation";
 import { preparePairedRun } from "../../src/loop/paired-options";
 import {
   createRunManifest,
   readRunManifest,
+  resolveRepoId,
   writeRunManifest,
 } from "../../src/loop/run-state";
 import { resolveModel } from "../../src/loop/runner";
@@ -243,6 +245,45 @@ test("paired preparation persists fresh defaults and restores legacy or saved mo
     preparePairedRun(old);
     expectModels(old, "gpt-5.6-sol", "opus");
     expect(old.reviewerEffort).toBe("high");
+  } finally {
+    for (const name of Object.keys(process.env)) {
+      if (!(name in environment)) {
+        Reflect.deleteProperty(process.env, name);
+      }
+    }
+    Object.assign(process.env, environment);
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("fresh launch reservation keeps selected defaults through real paired preparation", async () => {
+  const home = mkdtempSync(join(tmpdir(), "loop-reserved-defaults-"));
+  const environment = { ...process.env };
+  process.env.HOME = home;
+  Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+  try {
+    const opts = parseArgs(["--agent", "codex"]);
+    const cwd = process.cwd();
+    const claim = await reservePairedLaunch(
+      opts,
+      { root: cwd, repoId: resolveRepoId(cwd) },
+      {
+        home,
+        pid: process.pid,
+        isPidAlive: () => false,
+        tmuxLiveness: () => "dead",
+        resolveSocket: () => "/tmp/loop-defaults-test.sock",
+      }
+    );
+    const reserved = readRunManifest(claim.storage.manifestPath);
+    expect(reserved?.seatModels?.codex).toBe("gpt-6.1-sol");
+    expect(reserved?.seatModels?.claude).toBe("claude-sonnet-5-5");
+    expect(reserved?.driverEffort).toBe("low");
+    expect(reserved?.reviewerEffort).toBe("medium");
+    preparePairedRun(opts);
+    expectModels(opts, "gpt-6.1-sol", "claude-sonnet-5-5");
+    expect(opts.driverEffort).toBe("low");
+    expect(opts.reviewerEffort).toBe("medium");
   } finally {
     for (const name of Object.keys(process.env)) {
       if (!(name in environment)) {

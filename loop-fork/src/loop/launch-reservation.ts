@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import lockfile from "proper-lockfile";
+import { resolveLaunchModel } from "./launch-defaults";
 import {
   createRunManifest,
   isActiveRunState,
@@ -524,6 +525,15 @@ export const reservePairedLaunch = async (
         claudeSessionId: "",
         codexThreadId: "",
         cwd: binding.root,
+        driverEffort: opts.driverEffort,
+        reviewerEffort: opts.reviewerEffort,
+        seatModels: {
+          claude: resolveLaunchModel("claude", opts, opts.agent !== "claude"),
+          codex: resolveLaunchModel("codex", opts, opts.agent !== "codex"),
+          ...(opts.ossModel
+            ? { oss: resolveLaunchModel("oss", opts, opts.agent !== "oss") }
+            : {}),
+        },
         launchAttemptId: claimId,
         launchAttemptPid: deps.pid,
         launchClaimId: claimId,
