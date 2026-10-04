@@ -598,6 +598,20 @@ test("readAgentUsage falls back to the newest run-scoped rollout when the manife
   expect(emptyBound.totalTokens).toBe(4200);
   expect(emptyBound.model).toBe("gpt-5.6-sol");
   expect(emptyBound.dataConfidence).toBe("approx");
+
+  // Bridge metadata refreshes can make the empty bound file newest. Another
+  // empty sibling must not hide the actual run-local usage either.
+  const future = new Date(Date.now() + 60_000);
+  utimesSync(olderPath, future, future);
+  const emptySibling = join(sessionDir, "rollout-newest-empty.jsonl");
+  writeFileSync(
+    emptySibling,
+    JSON.stringify({ type: "session_meta", payload: {} })
+  );
+  utimesSync(emptySibling, future, future);
+  const refreshedBound = readAgentUsage("codex", "019f-first-spawn", root);
+  expect(refreshedBound.totalTokens).toBe(4200);
+  expect(refreshedBound.dataConfidence).toBe("approx");
 });
 
 test("readAgentUsage applies Codex fast history credit multiplier", () => {

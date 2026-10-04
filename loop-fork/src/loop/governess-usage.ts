@@ -708,7 +708,11 @@ const walkForThread = (
 
 // loop-fork gives each run its own CODEX_HOME, so the transcript lives under
 // <runDir>/codex-home/sessions before falling back to the user's global home.
-const newestRollout = (dir: string, depth: number): string | undefined => {
+const newestRollout = (
+  dir: string,
+  depth: number,
+  requireUsage = false
+): string | undefined => {
   let entries: string[];
   try {
     entries = readdirSync(dir);
@@ -723,7 +727,7 @@ const newestRollout = (dir: string, depth: number): string | undefined => {
       const stat = statSync(full);
       if (stat.isDirectory()) {
         if (depth > 0) {
-          const found = newestRollout(full, depth - 1);
+          const found = newestRollout(full, depth - 1, requireUsage);
           if (found) {
             const foundMtime = statSync(found).mtimeMs;
             if (foundMtime > newestMtime) {
@@ -735,7 +739,9 @@ const newestRollout = (dir: string, depth: number): string | undefined => {
       } else if (
         entry.startsWith("rollout-") &&
         entry.endsWith(".jsonl") &&
-        stat.mtimeMs > newestMtime
+        stat.mtimeMs > newestMtime &&
+        (!requireUsage ||
+          summarizeCodex(readFileSync(full, "utf8")).dataConfidence === "exact")
       ) {
         newest = full;
         newestMtime = stat.mtimeMs;
@@ -929,7 +935,7 @@ export const readAgentUsage = (
     let parsed =
       agent === "codex" ? summarizeCodex(text) : summarizeClaude(text);
     if (agent === "codex" && parsed.dataConfidence === "missing" && codexHome) {
-      const candidate = newestRollout(join(codexHome, "sessions"), 4);
+      const candidate = newestRollout(join(codexHome, "sessions"), 4, true);
       if (candidate && candidate !== path) {
         const fallback = summarizeCodex(readFileSync(candidate, "utf8"));
         if (fallback.dataConfidence === "exact") {
