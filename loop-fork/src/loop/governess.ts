@@ -233,6 +233,8 @@ export interface GovernessAgentInfo {
   agent: Agent;
   // Per-run CODEX_HOME, so Codex usage transcripts under it can be located.
   codexHome?: string;
+  configuredEffort?: string;
+  configuredModel?: string;
   hookFile: string;
   pane: string;
   // Session id / thread id used to locate the agent's usage transcript.
@@ -2671,7 +2673,14 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     ...(Number.isFinite(meta.uptimeMs)
       ? [`wall ${fmtDuration(meta.uptimeMs)}`]
       : []),
-    costCell(totalCost, perHr, meta.budgetUsd),
+    rows.some(
+      (row) =>
+        row.usage.dataConfidence === "missing" ||
+        row.usage.dataConfidence === "error" ||
+        row.usage.costEstimateCoveragePct === 0
+    )
+      ? `Σ est incomplete (known $${totalCost.toFixed(2)})`
+      : costCell(totalCost, perHr, meta.budgetUsd),
     `joint idle ${fmtDuration(meta.stats.humanIdleMs)}`,
     ...(messageCounts ? [messageCounts] : []),
     ...roleSummaryParts(meta),
@@ -3643,6 +3652,8 @@ const processAgent = async (
 ): Promise<AgentTickResult> => {
   const events = deps.readHooks(info.hookFile);
   const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
+  usage.model ??= info.configuredModel;
+  usage.reasoningEffort ??= info.configuredEffort;
   if (deps.readSeatSignals) {
     try {
       const signals = deps.readSeatSignals(
@@ -6374,6 +6385,7 @@ export const loadGovernessState = (
         typeof parsed.governessEpoch === "number" ? parsed.governessEpoch : 0,
       handoverBundles: readStringMap(parsed.handoverBundles),
       history: Array.isArray(parsed.history) ? parsed.history : [],
+      seatVerdict: parsed.seatVerdict ?? {},
       lifecycleEvents,
       llmUsage,
       llmUsageByJudge: readLocalLlmUsageByJudge(
@@ -7098,6 +7110,11 @@ export const resolveGovernessConfig = (
     if (agent && isAgent(agent)) {
       agents.push({
         agent,
+        configuredModel: manifest.seatModels?.[agent],
+        configuredEffort:
+          agent === manifest.primaryAgent
+            ? manifest.driverEffort
+            : manifest.reviewerEffort,
         codexHome: agent === "codex" ? codexHome : undefined,
         hookFile: join(storage.runDir, "hooks", `${agent}.jsonl`),
         pane: pane ?? `${session}:0.${fallbackPaneIndex}`,

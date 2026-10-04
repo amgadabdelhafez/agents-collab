@@ -563,7 +563,9 @@ export const summarizeCodex = (text: string): AgentUsage => {
   if (transcriptContextWindow > 0) {
     usage.contextWindow = transcriptContextWindow;
   }
-  usage.model = usage.model ?? "gpt-5.5";
+  if (!(bestInfo || bestGeneric)) {
+    usage.dataConfidence = "missing";
+  }
   setCreditMultiplier(usage);
   usage.firstTs = bounds.first;
   usage.lastTs = bounds.last;
@@ -653,7 +655,12 @@ export const applyPricing = (usage: AgentUsage): AgentUsage => {
         usage.cacheCreateTokens * price.cacheWrite) /
       PER_MTOK
     : 0;
-  const priced = { ...usage, contextWindow: window, costUsd };
+  const priced = {
+    ...usage,
+    contextWindow: window,
+    costUsd,
+    costEstimateCoveragePct: price ? 100 : 0,
+  };
   applyCostRate(priced);
   return priced;
 };
@@ -919,8 +926,19 @@ export const readAgentUsage = (
       return emptyUsage("missing");
     }
     const text = readFileSync(path, "utf8");
-    const parsed =
+    let parsed =
       agent === "codex" ? summarizeCodex(text) : summarizeClaude(text);
+    if (agent === "codex" && parsed.dataConfidence === "missing" && codexHome) {
+      const candidate = newestRollout(join(codexHome, "sessions"), 4);
+      if (candidate && candidate !== path) {
+        const fallback = summarizeCodex(readFileSync(candidate, "utf8"));
+        if (fallback.dataConfidence === "exact") {
+          // Run-local usage projection only. This does not rebind the agent or
+          // claim that the manifest thread is the observed provider thread.
+          parsed = { ...fallback, dataConfidence: "approx" };
+        }
+      }
+    }
     if (agent === "codex") {
       applyCodexConfigMode(parsed, codexHome);
       applyCodexHistoryMode(parsed, sessionRef, codexHome);

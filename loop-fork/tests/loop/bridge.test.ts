@@ -1980,7 +1980,7 @@ test("route_task gives edit-specific recovery guidance", async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("Codex-primary runs refuse utility edit writers before queueing", async () => {
+test("Codex-primary runs queue bounded patch proposals without repository writes", async () => {
   const root = makeTempDir();
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
@@ -2024,10 +2024,11 @@ test("Codex-primary runs refuse utility edit writers before queueing", async () 
   );
 
   expect(result.code).toBe(0);
-  expect(result.stdout).toContain(
-    "utility edit routing is disabled because this run binds Codex as the sole writer"
-  );
-  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(false);
+  expect(result.stdout).not.toContain("utility edit routing is disabled");
+  expect(result.stdout).toContain("pending-route");
+  expect(existsSync(join(runDir, "utility", "jobs.jsonl"))).toBe(true);
+  expect(existsSync(join(runDir, "PLAN.md"))).toBe(false);
+  expect(existsSync(join(runDir, "STATUS.md"))).toBe(false);
   rmSync(root, { recursive: true, force: true });
 });
 

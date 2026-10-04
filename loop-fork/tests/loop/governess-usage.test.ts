@@ -21,6 +21,54 @@ import {
   summarizeClaude,
   summarizeCodex,
 } from "../../src/loop/governess-usage";
+import { applyUsageTrackerPricing } from "../../src/loop/governess-usage-limits";
+
+test("tracker API prices current models without local model rates", () => {
+  const pricing = {
+    codexCreditUsd: 0.04,
+    source: "usage-tracker-api",
+    rates: [
+      {
+        provider: "codex" as const,
+        modelPrefix: "gpt-6.1-sol",
+        basis: "credits_per_mtok" as const,
+        rates: { input: 50, output: 250, cacheRead: 2.5 },
+      },
+      {
+        provider: "claude" as const,
+        modelPrefix: "claude-sonnet-5-5",
+        basis: "api_usd_per_mtok" as const,
+        rates: {
+          input: 2,
+          output: 10,
+          cacheRead: 0.2,
+          cacheWrite: 2.5,
+          cacheWrite1h: 4,
+        },
+      },
+    ],
+  };
+  const usage = {
+    ...summarizeCodex(""),
+    model: "gpt-6.1-sol",
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    cacheReadTokens: 1_000_000,
+  };
+  applyUsageTrackerPricing(usage, "codex", pricing);
+  expect(usage.costUsd).toBe(12.1);
+  expect(usage.costEstimateBasis).toBe("credit-estimate");
+  expect(usage.costEstimateCoveragePct).toBe(100);
+  usage.model = "claude-sonnet-5-5";
+  usage.cacheCreateTokens = 2_000_000;
+  usage.cacheCreate1hTokens = 1_000_000;
+  applyUsageTrackerPricing(usage, "claude", pricing);
+  expect(usage.costUsd).toBe(18.7);
+  expect(usage.costEstimateBasis).toBe("api-usd");
+  applyUsageTrackerPricing(usage, "claude", { ...pricing, rates: [] });
+  expect(usage.costEstimateCoveragePct).toBe(0);
+});
+
 import {
   deriveRoutingCost,
   PRICE_CACHE_MAX_AGE_MS,
@@ -38,6 +86,22 @@ const claudeLine = (
   usage: Record<string, unknown>,
   model = "claude-opus-4-8"
 ): string => JSON.stringify({ message: { model, usage }, timestamp: ts });
+
+test("metadata-only Codex rollout does not invent model or exact usage", () => {
+  const usage = summarizeCodex(
+    JSON.stringify({
+      type: "session_meta",
+      payload: { id: "bound-empty-thread" },
+    })
+  );
+  expect(usage.model).toBeUndefined();
+  expect(usage.dataConfidence).toBe("missing");
+  expect(usage.totalTokens).toBe(0);
+  expect(
+    applyPricing({ ...usage, model: "unknown-unpriced-provider-model" })
+      .costEstimateCoveragePct
+  ).toBe(0);
+});
 
 test("human message extraction keeps the launch task and drops bridge results", () => {
   const root = mkdtempSync(join(tmpdir(), "loop-codex-human-messages-"));
@@ -525,6 +589,15 @@ test("readAgentUsage falls back to the newest run-scoped rollout when the manife
   // A matching thread still wins over recency.
   const exact = readAgentUsage("codex", "019f-first-spawn", root);
   expect(exact.totalTokens).toBe(100);
+  writeFileSync(
+    olderPath,
+    JSON.stringify({ type: "session_meta", payload: {} })
+  );
+  utimesSync(olderPath, past, past);
+  const emptyBound = readAgentUsage("codex", "019f-first-spawn", root);
+  expect(emptyBound.totalTokens).toBe(4200);
+  expect(emptyBound.model).toBe("gpt-5.6-sol");
+  expect(emptyBound.dataConfidence).toBe("approx");
 });
 
 test("readAgentUsage applies Codex fast history credit multiplier", () => {

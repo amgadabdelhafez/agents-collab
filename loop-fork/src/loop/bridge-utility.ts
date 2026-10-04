@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { consumeBridgeInbox } from "./bridge-dispatch";
 import { isBridgeDeliveryClaimed } from "./bridge-runtime";
 import {
@@ -14,7 +13,6 @@ import {
   type NativeFallbackSnapshot,
   readNativeFallbackRequests,
 } from "./native-subagent";
-import { readRunManifest } from "./run-state";
 import {
   createUtilityRouteRequest,
   MAX_UTILITY_CONTEXT_REFS,
@@ -153,7 +151,7 @@ export const UTILITY_BRIDGE_TOOLS = [
   {
     annotations: ROUTE_TASK_ANNOTATIONS,
     description:
-      "Submit an independent bounded, separable work packet before doing it natively. Set work_shape=separable only when it can finish without intermediate output from another lane; sequential, ambiguous, and cross-cutting work stays with the main agent. Start concrete work by submitting one to three packets early, then keep safe lower-tier work in flight while you continue the critical path. Before authoring any meaningful self-contained code block, use kind=edit with one or two exact write files, one through four exact read files, scoped-edit capability, decided behavior, and concrete acceptance; do not recast code writing as inspect and do not wait until after native Edit or Write. For a bounded evidence audit with no approval authority, use kind=review and review_mode=utility-audit; peer-verdict or omitted review_mode stays with Claude/Codex. For commit-bound utility audits, use execution_profile=git-diff without raw execution_argv/execution_cwd and put literal SHAs in the objective; Au Pair calls the SHA-validating broker. Patch and audit results are non-authoritative until a full agent reviews them. For patch proposals, low means low operational side-effect/authority risk, not easy reasoning; unresolved design or ambiguous scope is not low. Reserve active write_scope files, review returned artifacts, and use guarded apply only as a full agent. Nanny handles only small one- or two-scope inspection/extraction/synthesis; Au Pair handles bounded multi-step work, utility audits, small scoped patch proposals, and reasoning-backed focused checks; Direct handles exact work. Specify exact scopes, risk, capabilities, authority, and acceptance, never a provider: Governess chooses. context_refs is optional and accepts only repo-relative README.md, docs/**/*.md, or specs/<feature>/{spec,plan,tasks,verify}.md paths; put narrative facts and SHAs in objective or acceptance_criteria. Split independently answerable inspections into packets of at most two read scopes when practical, but keep cross-file judgment together and never falsify risk. Workers never widen scope: when locating a moved or differently nested path, read_scope must name the narrowest common ancestor that can contain every acceptable candidate. Use execution_profile/execution_plan for exact reads, searches, Git inspection, or focused checks. Every terminal outcome returns to this requester unless the route explicitly requires peer review. The response also drains older unclaimed helper results addressed to you; review those results before sending more work.",
+      "Delegate useful independent bounded work, not a quota of packets. Set work_shape=separable only when it can finish without intermediate output from another lane; sequential, ambiguous, trivial and cross-cutting work may stay with the driver. Nanny handles small one- or two-scope read-only inspection, extraction and summaries; Au Pair handles cohesive multi-step evidence, utility audits and scoped patch proposals; Direct handles deterministic profiled commands. kind=edit is a patch proposal, including in Codex-primary runs: one or two exact write files repeated in one through four read files, scoped-edit capability, decided behavior and concrete acceptance. The driver remains the repository writer: reserve active write scopes, review the returned artifact and use full-agent-only guarded apply. Never auto-apply. risk=low means operational side effects and authority, not easy reasoning. For non-authoritative evidence audits use kind=review and review_mode=utility-audit; peer-verdict or omitted review_mode stays with the main pair. Commit audits use execution_profile=git-diff and literal SHAs in objective, not raw Git argv. Specify exact scopes, truthful risk, capabilities, authority and acceptance, never a provider. context_refs is optional: repo-relative README.md, docs/**/*.md or specs/<feature>/{spec,plan,tasks,verify}.md only; narrative facts and SHAs belong in objective or acceptance_criteria. Use execution_profile/execution_plan for reads, searches and focused checks. Workers never widen scope. On refusal correct a concrete packet error once or keep work with the driver; do not repeat unchanged requests or disguise edits as inspection. Terminal results return to the requester unless peer review is explicitly required. The response also drains older unclaimed helper results; review them before sending more work.",
     inputSchema: {
       additionalProperties: false,
       properties: {
@@ -1065,12 +1063,8 @@ const routeTask = (
       "main agents cannot override the route_task requester"
     );
   }
-  const manifest = readRunManifest(join(runDir, "manifest.json"));
-  if (kind === "edit" && manifest?.primaryAgent === "codex") {
-    throw new UtilityBridgeInputError(
-      "utility edit routing is disabled because this run binds Codex as the sole writer; keep the edit with the primary Codex driver"
-    );
-  }
+  // Utility edits produce guarded patch proposals, not repository writes.
+  // Driver provider is not a capability boundary; scope and apply checks are.
   const request = createUtilityRouteRequest({
     acceptanceCriteria: stringArray(args, "acceptance_criteria"),
     authority: authorityFlags(args.authority),

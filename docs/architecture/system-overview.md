@@ -69,6 +69,13 @@ or claim authority.
 
 ## Architecture invariants
 
+- Utility delegation is useful-work selection, not a mandatory packet quota.
+  Nanny handles narrow evidence; Au Pair handles cohesive evidence and bounded
+  patch proposals for either primary provider. The driver alone reviews/applies
+  a proposal. Gateway/provider routing is separate and cannot grant task or
+  repository authority. See `specs/utility-routing-relaxation-v1/spec.md` and
+  its dated upstream gateway comparison.
+
 - Paired tmux runs always have a governess; its epoch is required for a utility
   route and claim.
 - `Agent` remains the full-agent lifecycle type. `utility` is only a bridge

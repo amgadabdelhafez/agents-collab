@@ -620,6 +620,7 @@ test("Governess ignores retired sessionPressure and sessionPressurePrepared stat
     saveGovernessState(stateFile, state);
     const control = loadGovernessState(stateFile);
     expect(control).toBeDefined();
+    expect(control?.seatVerdict).toEqual({});
     for (const retired of [
       {
         sessionPressure: { codex: { phase: "hard-ceiling" } },

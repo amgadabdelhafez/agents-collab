@@ -39,15 +39,15 @@ test("delegation guidance states the exact context and decomposition contract", 
   expect(guidance).toContain("keep cross-file judgment together for Au Pair");
   expect(guidance).toContain("structured execution fields");
   expect(guidance).toContain("truthful risk");
-  expect(guidance).toContain(
-    "Before authoring any meaningful self-contained code block"
-  );
+  expect(guidance).toContain("Delegation is not a quota");
+  expect(guidance).toContain("including in Codex-primary runs");
+  expect(guidance).toContain("Do not retry an unchanged refusal");
   expect(guidance).toContain("review_mode=utility-audit");
   expect(guidance).toContain("review_mode=peer-verdict");
   expect(guidance).toContain("execution_profile=git-diff");
   expect(guidance).toContain("without raw execution_argv or execution_cwd");
   expect(guidance).toContain("one- or two-scope local-Qwen inspection");
-  expect(guidance).toContain("not after a native Edit or Write call");
+  expect(guidance).toContain("Direct driver edits remain appropriate");
   expect(guidance).toContain("does not prevent you from sending separate");
   expect(guidance).toContain("risk=low describes operational side effects");
   expect(guidance).toContain("name each target in both read_scope");
@@ -80,9 +80,10 @@ test("route_task describes the deterministic small-edit contract", () => {
     (tool) => tool.name === "route_task"
   );
   const contract = JSON.stringify(routeTask);
-  expect(contract).toContain("before doing it natively");
+  expect(contract).toContain("not a quota of packets");
+  expect(contract).toContain("including in Codex-primary runs");
   expect(contract).toContain("one or two exact write files");
-  expect(contract).toContain("low operational side-effect/authority risk");
+  expect(contract).toContain("Operational side-effect and authority risk");
   expect(contract).toContain("Use edit when asking the helper to author");
   expect(contract).toContain("repeats every write target here");
   expect(contract).toContain("directory-broad scopes are not valid");

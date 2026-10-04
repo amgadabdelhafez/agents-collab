@@ -695,20 +695,27 @@ const activePricingRate = (
     return undefined;
   }
   const basis = provider === "claude" ? "api_usd_per_mtok" : "credits_per_mtok";
-  return pricing.rates
-    .filter(
-      (rate) =>
-        rate.provider === provider &&
-        rate.basis === basis &&
-        model.startsWith(rate.modelPrefix) &&
-        (rate.effectiveFromMs === undefined || atMs >= rate.effectiveFromMs) &&
-        (rate.effectiveUntilMs === undefined || atMs <= rate.effectiveUntilMs)
-    )
-    .sort(
-      (a, b) =>
-        b.modelPrefix.length - a.modelPrefix.length ||
-        (b.effectiveFromMs ?? 0) - (a.effectiveFromMs ?? 0)
-    )[0];
+  const select = (rates: UsageTrackerPricingRate[], selectedBasis: string) =>
+    rates
+      .filter(
+        (rate) =>
+          rate.provider === provider &&
+          rate.basis === selectedBasis &&
+          model.startsWith(rate.modelPrefix) &&
+          (rate.effectiveFromMs === undefined ||
+            atMs >= rate.effectiveFromMs) &&
+          (rate.effectiveUntilMs === undefined || atMs <= rate.effectiveUntilMs)
+      )
+      .sort(
+        (a, b) =>
+          b.modelPrefix.length - a.modelPrefix.length ||
+          (b.effectiveFromMs ?? 0) - (a.effectiveFromMs ?? 0)
+      )[0];
+  // The tracker owns prices. Prefer its subscription rate; if it publishes only
+  // an API rate, preserve that distinct estimate basis rather than invent credits.
+  return (
+    select(pricing.rates, basis) ?? select(pricing.rates, "api_usd_per_mtok")
+  );
 };
 
 const applyCostRate = (usage: AgentUsage): void => {
