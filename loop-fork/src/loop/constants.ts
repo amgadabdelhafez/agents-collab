@@ -8,7 +8,8 @@ import {
 import type { ValueFlag } from "./types";
 
 export const DEFAULT_DONE_SIGNAL = "<promise>DONE</promise>";
-export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
+export const DEFAULT_CODEX_MODEL = "gpt-6.1-sol";
+export const DEFAULT_CODEX_REVIEWER_MODEL = "gpt-5.6-sol";
 export const DEFAULT_CODEX_REASONING_EFFORT = DEFAULT_LAUNCH_EFFORT;
 export const DEFAULT_CODEX_SERVICE_TIER = "standard";
 export const DEFAULT_CODEX_CONFIG_VALUES = [
@@ -16,6 +17,8 @@ export const DEFAULT_CODEX_CONFIG_VALUES = [
   `service_tier="${DEFAULT_CODEX_SERVICE_TIER}"`,
 ] as const;
 export const DEFAULT_CLAUDE_MODEL = "opus";
+export const DEFAULT_CLAUDE_REVIEWER_MODEL = "claude-sonnet-5-5";
+export const DEFAULT_CLAUDE_REVIEWER_EFFORT = DEFAULT_LAUNCH_EFFORT;
 // Tmux DRIVER only — the headless SDK/judge legs stay at their own defaults.
 export const DEFAULT_CLAUDE_DRIVER_EFFORT = DEFAULT_LAUNCH_EFFORT;
 // Default profile for the provider-neutral OSS seat, not a hard dependency.
@@ -57,7 +60,7 @@ Options:
   --codex-only                             Use Codex for work, review, and plan review
   --oss-only                               Use the OpenCode-backed OSS seat for work, review, and plan review
   --pair-with, --reviewer <agent>          Pair the worker with a specific peer in paired mode
-  --effort <low|medium|high|xhigh|max>      Set driver and reviewer effort (defaults: driver ${DEFAULT_DRIVER_EFFORT}, reviewer ${DEFAULT_REVIEWER_EFFORT})
+  --effort <low|medium|high|xhigh|max>      Set driver and reviewer effort (defaults: driver ${DEFAULT_DRIVER_EFFORT}, Claude reviewer ${DEFAULT_CLAUDE_REVIEWER_EFFORT}, other reviewer ${DEFAULT_REVIEWER_EFFORT})
   --effort-driver <level>                  Set only the primary driver effort
   --effort-reviewer <level>                Set only the paired reviewer effort
   -p, --prompt <text|.md file>             Prompt text or path to a .md prompt file
@@ -65,11 +68,11 @@ Options:
   -d, --done <signal>                      Done signal (default: <promise>DONE</promise>)
   --proof <text>                           Proof requirements for task completion
   --codex-model <model>                    Override codex model (default: ${DEFAULT_CODEX_MODEL})
-  --codex-reviewer-model <model>           Override codex review model
+  --codex-reviewer-model <model>           Override codex review model (default: ${DEFAULT_CODEX_REVIEWER_MODEL})
   --oss-model <provider/model>             Override the OSS seat model (default: ${DEFAULT_OSS_MODEL})
   --oss-reviewer-model <provider/model>    Override the OSS seat review model
   --claude-model <model>                   Override the claude driver model (default: opus)
-  --claude-reviewer-model <model>          Override claude review model
+  --claude-reviewer-model <model>          Override claude review model (default: ${DEFAULT_CLAUDE_REVIEWER_MODEL})
   --caveman <off|lite|full|ultra>          Main-agent output compression (default: ${DEFAULT_CAVEMAN_MODE})
   --helper-caveman <off|lite|full|ultra>   Nanny/Au Pair output compression (default: ${DEFAULT_HELPER_CAVEMAN_MODE})
   --format <pretty|raw>                    Log format (default: pretty)

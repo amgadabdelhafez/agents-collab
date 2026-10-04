@@ -23,7 +23,8 @@ import {
 } from "./codex-app-server";
 import { codexHomeEnv } from "./codex-home";
 import { createCodexRenderer } from "./codex-render";
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_CONFIG_VALUES } from "./constants";
+import { DEFAULT_CODEX_CONFIG_VALUES } from "./constants";
+import { resolveLaunchModel } from "./launch-defaults";
 import {
   buildOssRunArgs,
   OSS_COMMAND,
@@ -205,26 +206,7 @@ export const resolveModel = (
   agent: Agent,
   opts: Options,
   kind: AgentRunKind
-): string => {
-  if (agent === "codex") {
-    return kind === "review"
-      ? (opts.codexReviewerModel ?? opts.codexModel)
-      : opts.codexModel;
-  }
-  if (agent === "oss") {
-    return kind === "review"
-      ? (opts.ossReviewerModel ?? opts.ossModel)
-      : opts.ossModel;
-  }
-  if (agent === "claude") {
-    return kind === "review"
-      ? (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL)
-      : (opts.claudeModel ?? DEFAULT_CLAUDE_MODEL);
-  }
-
-  const exhaustive: never = agent;
-  throw new Error(`Unknown agent: ${exhaustive}`);
-};
+): string => resolveLaunchModel(agent, opts, kind === "review");
 
 const withCodexModel = (opts: Options, model: string): Options => {
   if (opts.codexModel === model) {

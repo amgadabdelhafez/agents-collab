@@ -61,7 +61,6 @@ import {
 } from "./communication-guidance";
 import {
   DEFAULT_CLAUDE_DRIVER_EFFORT,
-  DEFAULT_CLAUDE_MODEL,
   DEFAULT_CODEX_CONFIG_VALUES,
 } from "./constants";
 import { buildLoopName, decode, runGit, sanitizeBase } from "./git";
@@ -82,6 +81,7 @@ import {
   buildHookCommand,
 } from "./hooks/settings";
 import { buildLaunchArgv } from "./launch";
+import { resolveLaunchModel } from "./launch-defaults";
 import { withLegacyGovernessEnv } from "./legacy-governess-compat";
 import {
   CLAUDE_NATIVE_FALLBACK_PROFILE,
@@ -710,20 +710,8 @@ const writeLaunchCharter = (
   return { bootstrapPath, charter };
 };
 
-export const resolveTmuxModel = (agent: Agent, opts: Options): string => {
-  const isPrimary = agent === opts.agent;
-  if (agent === "codex") {
-    return isPrimary
-      ? opts.codexModel
-      : (opts.codexReviewerModel ?? opts.codexModel);
-  }
-  if (agent === "claude") {
-    return isPrimary
-      ? (opts.claudeModel ?? DEFAULT_CLAUDE_MODEL)
-      : (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_MODEL);
-  }
-  return isPrimary ? opts.ossModel : (opts.ossReviewerModel ?? opts.ossModel);
-};
+export const resolveTmuxModel = (agent: Agent, opts: Options): string =>
+  resolveLaunchModel(agent, opts, agent !== opts.agent);
 
 export const claudeNativeFallbackDefinition = (): Record<
   string,

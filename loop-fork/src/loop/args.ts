@@ -12,6 +12,7 @@ import {
   parseCavemanMode,
 } from "./caveman";
 import {
+  DEFAULT_CLAUDE_REVIEWER_EFFORT,
   DEFAULT_CODEX_MODEL,
   DEFAULT_DONE_SIGNAL,
   DEFAULT_GOVERNESS_COOLDOWN_SECONDS,
@@ -239,6 +240,7 @@ const applyValueFlag = (
         value,
         "Invalid --codex-model value: cannot be empty"
       );
+      opts.codexModelSource = "cli";
       return;
     case "codexReviewerModel":
       opts.codexReviewerModel = requireTrimmedValue(
@@ -756,6 +758,8 @@ const parseArgsWithInfoHandler = (
     format: "pretty",
     maxIterations: DEFAULT_MAX_ITERATIONS,
     codexModel: runtimeEnv.LOOP_CODEX_MODEL ?? DEFAULT_CODEX_MODEL,
+    codexModelSource:
+      runtimeEnv.LOOP_CODEX_MODEL === undefined ? "default" : "env",
     ossModel: runtimeEnv.LOOP_OSS_MODEL?.trim() || DEFAULT_OSS_MODEL,
     helperCavemanMode: helperCavemanEnv
       ? parseCavemanMode(helperCavemanEnv, "LOOP_HELPER_CAVEMAN_MODE")
@@ -825,6 +829,13 @@ const finalizeParsedOptions = (opts: Options, positional: string[]): void => {
   }
   if (opts.pairedMode && !opts.pairWith) {
     opts.pairWith = defaultPeerAgent(opts.agent);
+  }
+  if (
+    opts.pairedMode &&
+    opts.pairWith === "claude" &&
+    opts.reviewerEffortSource === "default"
+  ) {
+    opts.reviewerEffort = DEFAULT_CLAUDE_REVIEWER_EFFORT;
   }
 };
 

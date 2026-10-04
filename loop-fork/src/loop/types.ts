@@ -353,6 +353,7 @@ export interface Options {
   codexHome?: string;
   codexMcpConfigArgs?: string[];
   codexModel: string;
+  codexModelSource?: "default" | "env" | "cli" | "manifest";
   codexReviewerModel?: string;
   doneSignal: string;
   driverEffort?: EffortLevel;

@@ -618,7 +618,7 @@ test("preparePairedOptions keeps non-tmux native policy off without global MCP c
     );
     expect(config).toContain('approval_policy = "never"');
     expect(config).toContain('sandbox_mode = "danger-full-access"');
-    expect(config).toContain('model = "gpt-5.6-sol"');
+    expect(config).toContain('model = "gpt-6.1-sol"');
     expect(config).toContain('model_reasoning_effort = "medium"');
     expect(config).toContain('service_tier = "standard"');
     expect(config).toContain(`[projects.${JSON.stringify(process.cwd())}]`);

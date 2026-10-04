@@ -13,7 +13,7 @@ import {
 } from "./bridge-config";
 import { DEFAULT_CAVEMAN_MODE, DEFAULT_HELPER_CAVEMAN_MODE } from "./caveman";
 import { ensureLoopCodexHome } from "./codex-home";
-import { DEFAULT_CLAUDE_MODEL } from "./constants";
+import { resolveLaunchModel } from "./launch-defaults";
 import {
   ensureOssConfig,
   OSS_COMMAND,
@@ -320,8 +320,10 @@ export const resolvePreparedRunState = (
     reviewerEffort: opts.reviewerEffort,
     runId: storage.runId,
     seatModels: {
-      claude: opts.claudeModel ?? DEFAULT_CLAUDE_MODEL,
-      ...(opts.codexModel ? { codex: opts.codexModel } : {}),
+      claude: resolveLaunchModel("claude", opts, opts.agent !== "claude"),
+      ...(opts.codexModel
+        ? { codex: resolveLaunchModel("codex", opts, opts.agent !== "codex") }
+        : {}),
       ...(opts.ossModel ? { oss: opts.ossModel } : {}),
     },
     state: "submitted",

@@ -2195,7 +2195,7 @@ test("runInTmux starts paired interactive tmux panes without a task", async () =
     ...env,
     ...tmuxInternals.buildClaudeCommand(
       "claude-session-1",
-      "opus",
+      "claude-sonnet-5-5",
       claudeChannelServer,
       false,
       undefined,
