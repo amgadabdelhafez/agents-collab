@@ -1,5 +1,9 @@
 import { BRIDGE_SERVER, CLAUDE_CHANNEL_USER } from "./bridge-constants";
-import { INTERNAL_AGENT_COMMUNICATION_GUIDANCE } from "./communication-guidance";
+import {
+  DRIVER_CHECK_IN_GUIDANCE,
+  INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
+  REVIEWER_CHECK_IN_GUIDANCE,
+} from "./communication-guidance";
 import type { Agent } from "./types";
 
 export type BridgeTool =
@@ -80,3 +84,6 @@ export const claudeChannelInstructions = (): string =>
     "Never answer the human when the inbound message came from Codex. Send the response back through the bridge tools instead.",
     bridgeStatusStuckGuidance,
   ].join("\n");
+
+export const pairedCheckInGuidance = (reviewer: boolean): string =>
+  reviewer ? REVIEWER_CHECK_IN_GUIDANCE : DRIVER_CHECK_IN_GUIDANCE;

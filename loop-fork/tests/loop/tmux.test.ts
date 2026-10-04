@@ -2631,6 +2631,10 @@ test("tmux prompts keep the paired review workflow explicit", () => {
 
   expect(primaryPrompt).toContain("Agent-to-agent pair programming");
   expect(primaryPrompt).toContain("You are the main worker.");
+  expect(primaryPrompt).toContain("Driver check-ins:");
+  expect(primaryPrompt).toContain("at every commit: SHA, diffstat");
+  expect(primaryPrompt).toContain("about ten minutes");
+  expect(primaryPrompt).toContain("Check-ins are nonblocking");
   expect(primaryPrompt).toContain(
     "your own review and the peer review both pass"
   );
@@ -2669,6 +2673,11 @@ test("tmux prompts keep the paired review workflow explicit", () => {
   expect(primaryPrompt).toContain("Governess lease");
   expect(primaryPrompt).not.toContain("Spawn a team of agents");
   expect(peerPrompt).toContain("You are the reviewer/support agent.");
+  expect(peerPrompt).toContain("Reviewer check-in replies:");
+  expect(peerPrompt).toContain(
+    "defects that would change code, a number, or a claim"
+  );
+  expect(peerPrompt).toContain("say what you did not inspect");
   expect(peerPrompt).toContain("request validation every few concrete steps");
   expect(peerPrompt).toContain("keeps PLAN.md and status.md current");
   expect(peerPrompt).toContain(

@@ -7,6 +7,7 @@ import {
 } from "./bridge-dispatch";
 import {
   mandatoryUtilityDelegationGuidance,
+  pairedCheckInGuidance,
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "./bridge-guidance";
@@ -119,6 +120,7 @@ const bridgeGuidance = (agent: Agent, opts: Options): string => {
     `You are in a paired ${capitalize(agent)}/${peer} run. Use the MCP tool ${quotedBridgeTool(agent, "send_message")} with ${bridgeTargetLiteral(target)} when you want ${peer} to act, review, or answer.`,
     singleBridgeTransportGuidance,
     INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
+    pairedCheckInGuidance(agent !== opts.agent),
     mandatoryUtilityDelegationGuidance(
       quotedBridgeTool(agent, "route_task"),
       agent === opts.agent ? "active" : "on-request"
@@ -173,6 +175,7 @@ const reviewBridgePrompt = (
     "Focus your review on unstaged changes (the diff produced by `git diff`). Run checks/tests/commands as needed.",
     opts.proof ? `Proof requirements:\n${opts.proof.trim()}` : "",
     INTERNAL_AGENT_COMMUNICATION_GUIDANCE,
+    pairedCheckInGuidance(reviewer !== opts.agent),
     reviewDeliveryGuidance(reviewer, opts),
     `If review is needed, end your response with exactly "<review>FAIL</review>" on the final non-empty line. Nothing may follow this line.`,
     `If the work is complete, end with exactly "<review>PASS</review>" on the final non-empty line. No extra content after this line.`,

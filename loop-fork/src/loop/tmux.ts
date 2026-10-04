@@ -19,6 +19,7 @@ import {
 import {
   type BridgeTool,
   mandatoryUtilityDelegationGuidance,
+  pairedCheckInGuidance,
   quotedBridgeTool,
   singleBridgeTransportGuidance,
 } from "./bridge-guidance";
@@ -442,6 +443,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
   if (agent === opts.agent) {
     return [
       `You are the main worker. ${peer} reviews and helps on request.`,
+      pairedCheckInGuidance(false),
       ...pairedContextGuidance(opts, agent),
       "Implement and verify first, then ask for review.",
       reviewerCheckpointGuidance(peer),
@@ -455,6 +457,7 @@ const pairedWorkflowGuidance = (opts: Options, agent: Agent): string => {
 
   return [
     `${primary} is the main worker. You are the reviewer/support agent.`,
+    pairedCheckInGuidance(true),
     ...pairedContextGuidance(opts, agent),
     "Do not take over the task or create the PR yourself.",
     `When ${primary} asks, do a real review against the task, proof requirements, and repo state.`,

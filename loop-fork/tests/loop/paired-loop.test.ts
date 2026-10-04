@@ -282,6 +282,10 @@ test("non-tmux paired prompts apply Caveman guidance with an exact off switch", 
   expect(prompts[0]).toContain("CAVEMAN MODE ACTIVE — level: full");
   expect(prompts[0]).toContain("Human/founder/supervisor reporting:");
   expect(prompts[0]).toContain("Internal agent communication:");
+  expect(prompts[0]).toContain("Driver check-ins:");
+  expect(prompts[0]).toContain(
+    "three-line approach plus the riskiest assumption"
+  );
   expect(prompts[0]).toContain("No arbitrary item cap applies");
 
   prompts.length = 0;
@@ -948,6 +952,8 @@ test("runPairedLoop uses the paired peer reviewer in paired mode", async () => {
     );
 
     expect(reviewPrompts.map((entry) => entry.agent)).toEqual(["codex"]);
+    expect(reviewPrompts[0]?.prompt).toContain("Reviewer check-in replies:");
+    expect(reviewPrompts[0]?.prompt).toContain("say what you did not inspect");
     expect(reviewPrompts[0]?.prompt).toContain(
       "concrete file paths, commands, and code locations that must change"
     );
