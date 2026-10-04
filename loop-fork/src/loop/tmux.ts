@@ -714,7 +714,7 @@ const writeLaunchCharter = (
 };
 
 export const resolveTmuxModel = (agent: Agent, opts: Options): string =>
-  resolveLaunchModel(agent, opts, agent !== opts.agent);
+  resolveLaunchModel(agent, { ...opts, tmux: true }, agent !== opts.agent);
 
 export const claudeNativeFallbackDefinition = (): Record<
   string,
