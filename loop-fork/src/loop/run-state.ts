@@ -930,7 +930,8 @@ const sameWorkspaceIdentity = (
 export const reconcileLegacyStoppedRun = async (
   manifestPath: string,
   expectedRunId: string,
-  deps: StoppedRunReconcileDeps
+  deps: StoppedRunReconcileDeps,
+  terminalState: "stopped" | "failed" = "stopped"
 ): Promise<StoppedRunReconcileResult> => {
   const read = readReservationManifest(manifestPath);
   if (!read) {
@@ -971,12 +972,12 @@ export const reconcileLegacyStoppedRun = async (
   }
   if (
     evidence.state.kind !== "valid" ||
-    evidence.state.value !== "stopped" ||
+    evidence.state.value !== terminalState ||
     evidence.status.kind !== "valid" ||
-    evidence.status.value !== "stopped"
+    evidence.status.value !== terminalState
   ) {
     return {
-      reason: "run-is-not-stopped",
+      reason: `run-is-not-${terminalState}`,
       runId: expectedRunId,
       status: "refused",
     };
@@ -1035,8 +1036,8 @@ export const reconcileLegacyStoppedRun = async (
     changed = true;
     return {
       ...current,
-      state: "stopped",
-      status: "stopped",
+      state: terminalState,
+      status: terminalState,
       updatedAt: releasedAt,
       workspaceReleasedAt: releasedAt,
     };

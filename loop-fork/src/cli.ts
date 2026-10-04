@@ -378,36 +378,43 @@ const runStoppedRunReconcileCommand = async (
   }
   const [kind, runId, ...extra] = argv.slice(1);
   if (
-    kind !== "stopped-run" ||
+    (kind !== "stopped-run" && kind !== "failed-terminal") ||
     !runId ||
     extra.length > 0 ||
     !CANONICAL_POSITIVE_RUN_ID_RE.test(runId)
   ) {
-    throw new Error("Usage: loop reconcile stopped-run <run-id>");
+    throw new Error(
+      "Usage: loop reconcile <stopped-run|failed-terminal> <run-id>"
+    );
   }
   const storage = resolveRunStorage(runId);
-  const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {
-    now: () => new Date().toISOString(),
-    pidCanStillOwnRun: (pid, stoppedAt) =>
-      pidCanStillOwnRun(pid, stoppedAt, {
-        ...defaultPidOwnershipDeps,
-      }),
-    runtimeAbsent: async (manifestPath) => {
-      const handle = readRunManifestHandle(manifestPath);
-      const target = handle ? targetFromManifest(handle) : undefined;
-      const endpoint = readTmuxEndpointState(target);
-      const tmux = await Promise.resolve(tmuxTargetLiveness(target));
-      return runtimeAbsent(endpoint, tmux);
+  const result = await reconcileLegacyStoppedRun(
+    storage.manifestPath,
+    runId,
+    {
+      now: () => new Date().toISOString(),
+      pidCanStillOwnRun: (pid, stoppedAt) =>
+        pidCanStillOwnRun(pid, stoppedAt, {
+          ...defaultPidOwnershipDeps,
+        }),
+      runtimeAbsent: async (manifestPath) => {
+        const handle = readRunManifestHandle(manifestPath);
+        const target = handle ? targetFromManifest(handle) : undefined;
+        const endpoint = readTmuxEndpointState(target);
+        const tmux = await Promise.resolve(tmuxTargetLiveness(target));
+        return runtimeAbsent(endpoint, tmux);
+      },
     },
-  });
+    kind === "failed-terminal" ? "failed" : "stopped"
+  );
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (result.status === "refused") {
-    throw new Error(`stopped-run reconciliation refused: ${result.reason}`);
+    throw new Error(`${kind} reconciliation refused: ${result.reason}`);
   }
   const closed = await cliDeps.closeGovernessBeatForTerminalRun({
     env: process.env,
     manifestPath: storage.manifestPath,
-    reason: "reconcile stopped-run",
+    reason: `reconcile ${kind}`,
     runId,
   });
   if (closed) {

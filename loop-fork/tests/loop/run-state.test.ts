@@ -103,6 +103,40 @@ test("legacy stopped-run reconciliation adds release proof once", async () => {
   });
 });
 
+test("failed terminal release preserves failure and refuses live ownership", async () => {
+  const manifestPath = join(makeTempDir(), "manifest.json");
+  const fixture = writeLegacyStoppedFixture(manifestPath);
+  writeRunManifest(manifestPath, {
+    ...fixture,
+    state: "failed",
+    status: "failed",
+  });
+  const deps = {
+    now: () => "2026-08-29T19:00:00.000Z",
+    pidCanStillOwnRun: () => true,
+    runtimeAbsent: async () => true,
+  };
+  expect(
+    (await reconcileLegacyStoppedRun(manifestPath, "22", deps, "failed")).status
+  ).toBe("refused");
+  expect(readRunManifest(manifestPath)?.workspaceReleasedAt).toBeUndefined();
+  expect(
+    (
+      await reconcileLegacyStoppedRun(
+        manifestPath,
+        "22",
+        { ...deps, pidCanStillOwnRun: () => false },
+        "failed"
+      )
+    ).status
+  ).toBe("changed");
+  expect(readRunManifest(manifestPath)).toMatchObject({
+    state: "failed",
+    status: "failed",
+    workspaceReleasedAt: deps.now(),
+  });
+});
+
 test("legacy stopped-run reconciliation refuses uncertain ownership without writes", async () => {
   const cases = [
     { name: "live pid", pidOwns: true, runtimeGone: true },
