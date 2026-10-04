@@ -119,6 +119,7 @@ export interface RunManifest {
   repoId: string;
   reviewerEffort?: EffortLevel;
   runId: string;
+  seatModels?: Partial<Record<Agent, string>>;
   sourceTaskSha256?: string;
   state: RunLifecycleState;
   status: RunStatus;
@@ -1062,6 +1063,21 @@ const sessionManifestFields = (
   ossSessionId: input.ossSessionId ?? "",
 });
 
+const seatModelManifestFields = (
+  value: unknown
+): Pick<RunManifest, "seatModels"> => {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const seatModels: Partial<Record<Agent, string>> = {};
+  for (const [agent, model] of Object.entries(value)) {
+    if (isAgent(agent) && typeof model === "string" && model.trim()) {
+      seatModels[agent] = model.trim();
+    }
+  }
+  return Object.keys(seatModels).length ? { seatModels } : {};
+};
+
 export const createRunManifest = (
   input: RunManifestInput,
   now = new Date().toISOString()
@@ -1073,6 +1089,7 @@ export const createRunManifest = (
   return {
     ...cavemanManifestFields(input),
     ...effortManifestFields(input),
+    ...seatModelManifestFields(input.seatModels),
     ...launchReservationManifestFields(input),
     ...worldModelManifestFields(input.worldModel),
     ...(input.claudeChannelServer
@@ -1546,6 +1563,7 @@ const readOptionalRunManifestFields = (
   return {
     ...(cavemanMode ? { cavemanMode } : {}),
     ...effortManifestFields({ driverEffort, reviewerEffort }),
+    ...seatModelManifestFields(parsed.seatModels),
     ...claudeIdentity,
     ...(codexAppServerPid ? { codexAppServerPid } : {}),
     ...(codexRemoteUrl ? { codexRemoteUrl } : {}),

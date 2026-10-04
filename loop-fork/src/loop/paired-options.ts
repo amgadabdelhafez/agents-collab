@@ -13,7 +13,10 @@ import {
 } from "./bridge-config";
 import { DEFAULT_CAVEMAN_MODE, DEFAULT_HELPER_CAVEMAN_MODE } from "./caveman";
 import { ensureLoopCodexHome } from "./codex-home";
-import { resolveLaunchModel } from "./launch-defaults";
+import {
+  resolveLaunchModel,
+  restoreSavedLaunchDefaults,
+} from "./launch-defaults";
 import {
   ensureOssConfig,
   OSS_COMMAND,
@@ -354,6 +357,9 @@ export const applyPairedOptions = (
   restorePersistedTmuxPair(opts, manifest, livePersistedTmux);
   opts.pairWith ??= defaultPeerAgent(opts.agent);
   applyLiveTmuxModeContract(opts, manifest, livePersistedTmux);
+  if (manifest) {
+    restoreSavedLaunchDefaults(opts, manifest);
+  }
   const resumedSessionIds = pairedSessionIds(
     opts,
     manifest,

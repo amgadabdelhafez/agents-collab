@@ -4437,6 +4437,8 @@ test("runInTmux reopens paired tmux panes without replaying the task", async () 
       ...healthyClaudeKickoffDeps(),
       preparePairedRun: (nextOpts) => {
         nextOpts.codexMcpConfigArgs = codexMcpConfigArgs;
+        // Mock preparation must supply the legacy model restored by preparePairedRun.
+        nextOpts.claudeReviewerModel = "opus";
         return { manifest, storage };
       },
       sendKeys: (): void => undefined,
