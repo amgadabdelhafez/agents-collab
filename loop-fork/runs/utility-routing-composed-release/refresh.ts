@@ -9,7 +9,7 @@ async function refresh(url: string) {
   const pending = new Map<
     number,
     {
-      resolve: (value: any) => void;
+      resolve: (value: unknown) => void;
       reject: (error: Error) => void;
       timer: ReturnType<typeof setTimeout>;
     }
@@ -42,7 +42,7 @@ async function refresh(url: string) {
     );
   });
   const rpc = (method: string, params: unknown) =>
-    new Promise<any>((resolve, reject) => {
+    new Promise<unknown>((resolve, reject) => {
       const id = nextId++;
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -58,17 +58,22 @@ async function refresh(url: string) {
     });
     ws.send(JSON.stringify({ method: "initialized", params: {} }));
     await rpc("config/mcpServer/reload", null);
-    const status = await rpc("mcpServerStatus/list", {
+    const status = (await rpc("mcpServerStatus/list", {
       cursor: null,
       limit: 100,
       serverName: "loop-bridge",
-    });
+    })) as {
+      data?: {
+        name: string;
+        tools?: Record<string, { name: string; description?: string }>;
+      }[];
+    };
     const servers = status.data ?? [];
-    const tools = servers.flatMap((s: any) => Object.values(s.tools ?? {}));
-    const route = tools.find((t: any) => t.name === "route_task") as any;
+    const tools = servers.flatMap((s) => Object.values(s.tools ?? {}));
+    const route = tools.find((t) => t.name === "route_task");
     return {
       reloadAccepted: true,
-      servers: servers.map((s: any) => s.name),
+      servers: servers.map((s) => s.name),
       updatedRouteContract:
         route?.description?.includes("not a quota of packets") ?? false,
     };
@@ -83,7 +88,7 @@ async function guidance(runDir: string, target: string) {
     { stdin: "pipe", stdout: "pipe", stderr: "pipe" }
   );
   child.stdin.write(
-    JSON.stringify({
+    `${JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
@@ -99,7 +104,7 @@ async function guidance(runDir: string, target: string) {
             "Human-authorized routing repair is installed (53be5d44). Delegate useful independent work, not a quota. Nanny: narrow evidence; Au Pair: cohesive evidence and bounded patch proposals, including Codex-primary runs. Driver remains sole reviewer/apply owner. Do not repeat unchanged refusals or disguise edits as reads. Keep active patch scopes reserved; use guarded apply after review. Existing goal, model settings and product authority are unchanged. Please acknowledge through the bridge when received. This is guidance refresh, not a new product task or a restart request.",
         },
       },
-    }) + "\n"
+    })}\n`
   );
   child.stdin.end();
   const output = await new Response(child.stdout).text();
