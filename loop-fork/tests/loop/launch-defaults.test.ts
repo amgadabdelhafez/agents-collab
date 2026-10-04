@@ -67,7 +67,7 @@ const expectModels = (opts: Options, codex: string, claude: string): void => {
 };
 
 test("paired Codex driver launch defaults to gpt-6.1-sol at low effort", () => {
-  const opts = parseArgs(["--agent", "codex"]);
+  const opts = parseArgs(["--tmux", "--agent", "codex"]);
   const command = launchCommand("codex", opts);
   expect(command[command.indexOf("-m") + 1]).toBe("gpt-6.1-sol");
   expect(command).toContain('model_reasoning_effort="low"');
@@ -76,7 +76,7 @@ test("paired Codex driver launch defaults to gpt-6.1-sol at low effort", () => {
 });
 
 test("paired Claude reviewer launch defaults to Sonnet 5.5 at medium effort", () => {
-  const opts = parseArgs(["--agent", "codex"]);
+  const opts = parseArgs(["--tmux", "--agent", "codex"]);
   const command = launchCommand("claude", opts);
   expect(command[command.indexOf("--model") + 1]).toBe("claude-sonnet-5-5");
   expect(command[command.indexOf("--effort") + 1]).toBe("medium");
@@ -84,7 +84,7 @@ test("paired Claude reviewer launch defaults to Sonnet 5.5 at medium effort", ()
 });
 
 test("opposite seats retain Claude driver opus/low and Codex reviewer gpt-5.6-sol/high", () => {
-  const opts = parseArgs([]);
+  const opts = parseArgs(["--tmux"]);
   expectModels(opts, "gpt-5.6-sol", "opus");
   expect(opts.driverEffort).toBe("low");
   expect(opts.reviewerEffort).toBe("high");
@@ -92,6 +92,7 @@ test("opposite seats retain Claude driver opus/low and Codex reviewer gpt-5.6-so
 
 test("explicit model and role effort flags override both new launch defaults", () => {
   const opts = parseArgs([
+    "--tmux",
     "--agent",
     "codex",
     "--codex-model",
@@ -112,6 +113,7 @@ test("explicit model and role effort flags override both new launch defaults", (
   const claude = launchCommand("claude", opts);
   expect(claude[claude.indexOf("--effort") + 1]).toBe("high");
   const opposite = parseArgs([
+    "--tmux",
     "--claude-model",
     "claude-driver",
     "--codex-model",
@@ -121,7 +123,7 @@ test("explicit model and role effort flags override both new launch defaults", (
   ]);
   expectModels(opposite, "codex-review", "claude-driver");
   expectModels(
-    parseArgs(["--codex-model", "gpt-6.1-sol"]),
+    parseArgs(["--tmux", "--codex-model", "gpt-6.1-sol"]),
     "gpt-6.1-sol",
     "opus"
   );
@@ -132,7 +134,7 @@ test("environment model and efforts override launch defaults and CLI still wins"
   process.env.LOOP_EFFORT = "max";
   process.env.LOOP_DRIVER_EFFORT = "medium";
   process.env.LOOP_REVIEWER_EFFORT = "xhigh";
-  const opts = parseArgs(["--agent", "codex"]);
+  const opts = parseArgs(["--tmux", "--agent", "codex"]);
   expectModels(opts, "env-codex", "claude-sonnet-5-5");
   expect(launchCommand("codex", opts)).toContain(
     'model_reasoning_effort="medium"'
@@ -140,6 +142,7 @@ test("environment model and efforts override launch defaults and CLI still wins"
   const claude = launchCommand("claude", opts);
   expect(claude[claude.indexOf("--effort") + 1]).toBe("xhigh");
   const overridden = parseArgs([
+    "--tmux",
     "--agent",
     "codex",
     "--codex-model",
@@ -166,7 +169,7 @@ const savedManifest = (seatModels?: { claude: string; codex: string }) =>
   });
 
 test("saved launch defaults preserve legacy models and role efforts", () => {
-  const opts = parseArgs(["--agent", "codex"]);
+  const opts = parseArgs(["--tmux", "--agent", "codex"]);
   restoreSavedLaunchDefaults(opts, savedManifest());
   expectModels(opts, "gpt-5.6-sol", "opus");
   expect(opts.driverEffort).toBe("low");
@@ -174,7 +177,7 @@ test("saved launch defaults preserve legacy models and role efforts", () => {
 });
 
 test("saved launch defaults preserve persisted models and efforts", () => {
-  const opts = parseArgs(["--agent", "codex"]);
+  const opts = parseArgs(["--tmux", "--agent", "codex"]);
   const manifest = savedManifest({
     claude: "saved-claude",
     codex: "saved-codex",
@@ -188,7 +191,7 @@ test("saved launch defaults preserve persisted models and efforts", () => {
 });
 
 test("fresh persisted launch defaults retain the new seat defaults", () => {
-  const opts = parseArgs(["--agent", "codex"]);
+  const opts = parseArgs(["--tmux", "--agent", "codex"]);
   const manifest = savedManifest({
     claude: "claude-sonnet-5-5",
     codex: "gpt-6.1-sol",
@@ -204,6 +207,7 @@ test("explicit CLI and environment choices override saved launch defaults", () =
   process.env.LOOP_CODEX_MODEL = "env-codex";
   process.env.LOOP_REVIEWER_EFFORT = "xhigh";
   const opts = parseArgs([
+    "--tmux",
     "--agent",
     "codex",
     "--claude-reviewer-model",
@@ -223,7 +227,7 @@ test("paired preparation persists fresh defaults and restores legacy or saved mo
   process.env.HOME = home;
   process.env.LOOP_RUN_ID = "fresh";
   try {
-    const opts = parseArgs(["--agent", "codex"]);
+    const opts = parseArgs(["--tmux", "--agent", "codex"]);
     const prepared = preparePairedRun(opts);
     expectModels(opts, "gpt-6.1-sol", "claude-sonnet-5-5");
     expect(readRunManifest(prepared.storage.manifestPath)?.seatModels).toEqual({
@@ -231,7 +235,13 @@ test("paired preparation persists fresh defaults and restores legacy or saved mo
       codex: "gpt-6.1-sol",
       oss: opts.ossModel,
     });
-    const resumed = parseArgs(["--agent", "codex", "--run-id", "fresh"]);
+    const resumed = parseArgs([
+      "--tmux",
+      "--agent",
+      "codex",
+      "--run-id",
+      "fresh",
+    ]);
     preparePairedRun(resumed);
     expectModels(resumed, "gpt-6.1-sol", "claude-sonnet-5-5");
     expect(resumed.reviewerEffort).toBe("medium");
@@ -241,7 +251,7 @@ test("paired preparation persists fresh defaults and restores legacy or saved mo
       reviewerEffort: undefined,
     };
     writeRunManifest(prepared.storage.manifestPath, legacy);
-    const old = parseArgs(["--agent", "codex", "--run-id", "fresh"]);
+    const old = parseArgs(["--tmux", "--agent", "codex", "--run-id", "fresh"]);
     preparePairedRun(old);
     expectModels(old, "gpt-5.6-sol", "opus");
     expect(old.reviewerEffort).toBe("high");
@@ -262,7 +272,7 @@ test("fresh launch reservation keeps selected defaults through real paired prepa
   process.env.HOME = home;
   Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
   try {
-    const opts = parseArgs(["--agent", "codex"]);
+    const opts = parseArgs(["--tmux", "--agent", "codex"]);
     const cwd = process.cwd();
     const claim = await reservePairedLaunch(
       opts,
@@ -293,4 +303,21 @@ test("fresh launch reservation keeps selected defaults through real paired prepa
     Object.assign(process.env, environment);
     rmSync(home, { force: true, recursive: true });
   }
+});
+
+test("foreground default models and generic effort stay at legacy defaults", () => {
+  const opts = parseArgs(["--agent", "codex"]);
+  expect(resolveModel("codex", opts, "work")).toBe("gpt-5.6-sol");
+  expect(resolveModel("claude", opts, "review")).toBe("opus");
+  expect(opts.reviewerEffort).toBe("high");
+  const explicit = parseArgs([
+    "--agent",
+    "codex",
+    "--codex-model",
+    "gpt-6.1-sol",
+    "--claude-reviewer-model",
+    "claude-sonnet-5-5",
+  ]);
+  expect(resolveModel("codex", explicit, "work")).toBe("gpt-6.1-sol");
+  expect(resolveModel("claude", explicit, "review")).toBe("claude-sonnet-5-5");
 });

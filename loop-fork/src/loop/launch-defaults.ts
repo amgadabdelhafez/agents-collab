@@ -13,17 +13,22 @@ export const resolveLaunchModel = (
   reviewer: boolean
 ): string => {
   if (agent === "codex") {
-    return reviewer
-      ? (opts.codexReviewerModel ??
-          (opts.codexModelSource === "default"
-            ? DEFAULT_CODEX_REVIEWER_MODEL
-            : opts.codexModel))
-      : opts.codexModel;
+    if (reviewer && opts.codexReviewerModel) {
+      return opts.codexReviewerModel;
+    }
+    if (opts.codexModelSource === "default" && (reviewer || !opts.tmux)) {
+      return DEFAULT_CODEX_REVIEWER_MODEL;
+    }
+    return opts.codexModel;
   }
   if (agent === "claude") {
-    return reviewer
-      ? (opts.claudeReviewerModel ?? DEFAULT_CLAUDE_REVIEWER_MODEL)
-      : (opts.claudeModel ?? DEFAULT_CLAUDE_MODEL);
+    if (!reviewer) {
+      return opts.claudeModel ?? DEFAULT_CLAUDE_MODEL;
+    }
+    const defaultModel = opts.tmux
+      ? DEFAULT_CLAUDE_REVIEWER_MODEL
+      : DEFAULT_CLAUDE_MODEL;
+    return opts.claudeReviewerModel ?? defaultModel;
   }
   return reviewer ? (opts.ossReviewerModel ?? opts.ossModel) : opts.ossModel;
 };

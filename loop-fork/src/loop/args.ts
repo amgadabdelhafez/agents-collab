@@ -832,6 +832,7 @@ const finalizeParsedOptions = (opts: Options, positional: string[]): void => {
   }
   if (
     opts.pairedMode &&
+    opts.tmux &&
     opts.pairWith === "claude" &&
     opts.reviewerEffortSource === "default"
   ) {
