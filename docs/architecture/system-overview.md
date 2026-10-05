@@ -45,6 +45,10 @@ is not provider billing; unknown or partial cost never becomes a fabricated zero
 Compact panes preserve usage headers and the newest result. A helper result is
 evidence, not authority: the driver verifies citations and reviews guarded patch
 application. Installing a binary does not upgrade already-loaded panes.
+Governess pins a visible configured-model/endpoint/client row ahead of optional
+metrics. Only credential-free URL origins are displayed. The client hostname and
+proxy endpoint are not proof of the backend's physical host or served weights;
+runtime completion evidence must establish served identity before adoption.
 An external bridge supervisor can submit/observe messages, but is not a route
 or claim authority.
 ```

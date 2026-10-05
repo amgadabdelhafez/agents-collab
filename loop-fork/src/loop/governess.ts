@@ -7,7 +7,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawnSync } from "bun";
@@ -136,6 +136,7 @@ import {
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
 import { openPublicAskSequences } from "./human-interaction-ask";
+import { judgeRouteLabel } from "./judge-route-label";
 import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
@@ -3288,6 +3289,12 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...rows.map((row) => rateLimitCell(row.usage).indexOf("W"))
   );
   const statusLine = renderSummaryLine(rows, meta);
+  const routeLine = meta.llmJudges[0]
+    ? paint(
+        ANSI.cyan,
+        `${judgeRouteLabel(meta.llmJudges[0].model, meta.llmJudges[0].url)} · client ${hostname()}`
+      )
+    : undefined;
   const primaryAgentRows = rows.map((row) =>
     renderAgentRow(row, meta, weeklyLimitIndent)
   );
@@ -3337,6 +3344,7 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const fullTop = [
     statusLine,
     ...identityRows,
+    ...(routeLine ? [routeLine] : []),
     ...bridgeLines,
     ...workerRoutingLines,
     ...workerDetailLines,
@@ -3345,7 +3353,9 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const maxRows = meta.maxRows;
   let top = fullTop;
   if (maxRows !== undefined && fullTop.length > maxRows) {
-    const rowBudget = Math.max(0, maxRows - 1);
+    const routeRows =
+      routeLine && maxRows >= identityRows.length + 2 ? [routeLine] : [];
+    const rowBudget = Math.max(0, maxRows - 1 - routeRows.length);
     const compactIdentityRows =
       maxRows <= entityRows.length + 1
         ? [
@@ -3366,7 +3376,7 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
             ),
           ];
     const visibleIdentityRows = compactIdentityRows.slice(0, rowBudget);
-    let spare = Math.max(0, maxRows - 1 - visibleIdentityRows.length);
+    let spare = Math.max(0, rowBudget - visibleIdentityRows.length);
     const visibleBridgeLines = bridgeLines.slice(0, Math.max(0, spare));
     spare -= visibleBridgeLines.length;
     const visibleRoutingLines = workerRoutingLines.slice(0, Math.max(0, spare));
@@ -3383,6 +3393,7 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     top = [
       statusLine,
       ...visibleIdentityRows,
+      ...routeRows,
       ...visibleBridgeLines,
       ...visibleRoutingLines,
       ...visibleWorkerDetailLines,

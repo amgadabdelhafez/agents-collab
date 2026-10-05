@@ -750,7 +750,7 @@ test("LLM unreachable suppresses recovery and flags the board", async () => {
   expect(spies.sends).toHaveLength(0);
   expect(spies.respawns).toHaveLength(0);
   expect(stripAnsi(result.board)).toContain("judge model · m · offline");
-  expect(stripAnsi(result.board)).not.toContain("qwen");
+  expect(stripAnsi(result.board)).not.toContain("judge cfg qwen");
 });
 
 test("dual local judges render separate token rows and require agreement", async () => {
@@ -2048,7 +2048,7 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("max out 1.2k judge+wait / 3.2k summary");
   expect(visibleBoard).not.toContain("idle-both");
   expect(visibleBoard).not.toContain("recov 0");
-  expect(visibleBoard).not.toContain("qwen");
+  expect(visibleBoard).not.toContain("judge cfg qwen");
   expect(visibleBoard).not.toContain("codex:claude");
   expect(visibleBoard).not.toContain("DATA");
   expect(visibleBoard).not.toContain("CAGE");
@@ -2773,6 +2773,11 @@ test("board merges loop and path into the first time/status line", async () => {
   expect(lines[0]).not.toContain("governess");
   expect(lines[0]).not.toContain("run 34");
   expect(lines[1]).toStartWith(" AGENT");
+  expect(
+    lines.some((line) =>
+      line.startsWith(" judge cfg m · endpoint http://127.0.0.1:8082 · client ")
+    )
+  ).toBe(true);
 });
 
 test("governess pane identity is reapplied without deduplication", () => {
