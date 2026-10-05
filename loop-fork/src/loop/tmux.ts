@@ -83,6 +83,10 @@ import {
 } from "./hooks/settings";
 import { buildLaunchArgv } from "./launch";
 import { resolveLaunchModel } from "./launch-defaults";
+import {
+  defaultPidOwnershipDeps,
+  pidCanStillOwnRun,
+} from "./launch-reservation";
 import { withLegacyGovernessEnv } from "./legacy-governess-compat";
 import {
   CLAUDE_NATIVE_FALLBACK_PROFILE,
@@ -104,7 +108,9 @@ import {
 } from "./recipient-seat-environment";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
 import {
+  appendRunTranscriptEntry,
   clearRunManifestPaneTargets,
+  createRunStatusEntry,
   isActiveRunState,
   type RunLaunchCharter,
   type RunManifest,
@@ -256,6 +262,10 @@ interface TmuxDeps {
   log: (line: string) => void;
   makeClaudeSessionId: () => string;
   nowMs: () => number;
+  // Whether a recorded launcher pid may still be the process that owned the
+  // run as of `since`: a dead pid, or one whose process started after
+  // `since` (a reused pid), cannot; an unknown start time stays fail-closed.
+  pidCanStillOwnRun: (pid: number, since: string) => boolean;
   preparePairedRun: typeof preparePairedRun;
   // Claude's OWN project session transcript version, via
   // readClaudeTranscriptVersionFromProjects. Never <runDir>/transcript.jsonl,
@@ -1476,19 +1486,26 @@ const updatePairedManifest = (
   session: string,
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
-  paneTargets: PairedPaneTargets
+  paneTargets: PairedPaneTargets,
+  // An adopting launcher establishes no seat identity of its own, so it keeps
+  // whatever ids the manifest holds at write time instead of a stale snapshot.
+  keepCurrentIds = false
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
       {
         ...(current ?? manifest),
-        claudeSessionId,
-        codexAppServerPid: codexAppServerPid || undefined,
-        codexRemoteUrl: codexRemoteUrl || undefined,
-        codexThreadId,
+        ...(keepCurrentIds
+          ? {}
+          : {
+              claudeSessionId,
+              codexAppServerPid: codexAppServerPid || undefined,
+              codexRemoteUrl: codexRemoteUrl || undefined,
+              codexThreadId,
+              ossSessionId,
+            }),
         cwd: deps.cwd,
         mode: "paired",
-        ossSessionId,
         pid: process.pid,
         primaryAgent,
         tmuxSession: session,
@@ -3500,10 +3517,11 @@ const startPairedSession = async (
   deps: TmuxDeps,
   launch: PairedTmuxLaunch
 ): Promise<StartedPairedSession> => {
-  const { manifest: preparedManifest, storage } = deps.preparePairedRun(
-    launch.opts,
-    deps.cwd
-  );
+  const {
+    manifest: preparedManifest,
+    previousManifest,
+    storage,
+  } = deps.preparePairedRun(launch.opts, deps.cwd);
   let manifest = preparedManifest;
   const runBase = resolveRunBase(deps.cwd, deps, storage.runId);
   const session = buildRunName(runBase, storage.runId);
@@ -3663,106 +3681,266 @@ const startPairedSession = async (
   }
   if (existingSession.liveness === "live") {
     if (deps.env.LOOP_RECOVER_PRESERVED_STARTUP === "1") {
-      const left = manifest.tmuxPaneLeft;
-      const right = manifest.tmuxPaneRight;
-      const transcript = join(storage.runDir, "transcript.jsonl");
-      const leftPrompt = join(
-        storage.runDir,
-        "launch-charters",
-        `${paneAgents.left}-bootstrap.txt`
-      );
-      const rightPrompt = join(
-        storage.runDir,
-        "launch-charters",
-        `${paneAgents.right}-bootstrap.txt`
-      );
-      if (
-        !(
-          preservedStartupEligible(manifest, storage.runDir) &&
-          left &&
-          right &&
-          RECOVERY_PANE_ID_RE.test(left) &&
-          RECOVERY_PANE_ID_RE.test(right)
-        ) ||
-        left === right ||
-        !existsSync(leftPrompt) ||
-        !existsSync(rightPrompt) ||
-        (existsSync(transcript) && readFileSync(transcript, "utf8").trim()) ||
-        existsSync(join(storage.runDir, "governess-control.jsonl"))
-      ) {
-        throw new Error(
-          "Preserved startup recovery requires exact pre-charter panes and no work/control history."
-        );
+      // The original launcher, a live launch attempt, or a concurrent
+      // recovery could add its own control panes and Governess to this same
+      // session. Preparation already replaced `pid` with this process, so the
+      // earlier owner is read from the pre-preparation manifest. A pid keeps
+      // the verdict of the first record that names it: later records carry a
+      // newer updatedAt (preparation re-touches it, and launchAttemptPid
+      // survives a successful launch), and judging a pid reused since the
+      // earlier record against that newer time would mistake it for a live
+      // launcher. This process is never its own rival.
+      const judgedPids = new Set<number>([process.pid]);
+      const refuseLiveLauncher = (candidate: RunManifest | undefined): void => {
+        if (!candidate) {
+          return;
+        }
+        for (const pid of [candidate.pid, candidate.launchAttemptPid]) {
+          if (typeof pid !== "number" || pid <= 0 || judgedPids.has(pid)) {
+            continue;
+          }
+          if (deps.pidCanStillOwnRun(pid, candidate.updatedAt)) {
+            throw new Error(
+              `Preserved startup recovery refused: launcher pid ${pid} can still own run ${storage.runId}.`
+            );
+          }
+          judgedPids.add(pid);
+        }
+      };
+      // Preparation (and the CLI version refresh) claimed the run record for
+      // this process before recovery could decide anything. A refusal hands
+      // back every field this launcher wrote that nobody has changed since, so
+      // the record names its earlier owner rather than a process about to
+      // exit. A record another process has claimed since is left alone.
+      const ownWrites: Record<string, unknown> = {};
+      if (previousManifest) {
+        const prepared = preparedManifest as unknown as Record<string, unknown>;
+        const previous = previousManifest as unknown as Record<string, unknown>;
+        for (const key of new Set([
+          ...Object.keys(prepared),
+          ...Object.keys(previous),
+        ])) {
+          if (JSON.stringify(prepared[key]) !== JSON.stringify(previous[key])) {
+            ownWrites[key] = prepared[key];
+          }
+        }
+        if (manifest !== preparedManifest) {
+          ownWrites.claudeCliVersion = manifest.claudeCliVersion;
+          ownWrites.updatedAt = manifest.updatedAt;
+        }
       }
-      const panes = deps.spawn([
-        "tmux",
-        "list-panes",
-        "-t",
-        `=${session}`,
-        "-F",
-        "#{pane_id} #{pane_dead}",
-      ]);
-      const actual = panes.stdout.trim().split(LINE_SPLIT_RE).sort();
-      if (
-        panes.exitCode !== 0 ||
-        JSON.stringify(actual) !==
-          JSON.stringify([`${left} 0`, `${right} 0`].sort())
-      ) {
-        throw new Error(
-          "Preserved startup recovery refused changed pane ownership."
+      const releasePreparedClaim = (): void => {
+        if (!previousManifest) {
+          return;
+        }
+        const previous = previousManifest as unknown as Record<string, unknown>;
+        try {
+          deps.updateRunManifest(storage.manifestPath, (current) => {
+            if (!current || current.pid !== process.pid) {
+              return undefined;
+            }
+            const restored: Record<string, unknown> = { ...current };
+            for (const [key, written] of Object.entries(ownWrites)) {
+              if (JSON.stringify(restored[key]) === JSON.stringify(written)) {
+                restored[key] = previous[key];
+              }
+            }
+            return {
+              ...(restored as unknown as RunManifest),
+              pid: previousManifest.pid,
+            };
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          deps.log(
+            `[loop] preserved startup recovery could not hand run ${storage.runId} back to pid ${previousManifest.pid}: ${detail}`
+          );
+        }
+      };
+      // A failed or stranded recovery is recorded in the run transcript, not
+      // only the log: the run stays input-required, and the entry both tells an
+      // operator what to clean up and keeps a later recovery from adopting a
+      // session that may now hold half-started control panes.
+      const recordManualCleanup = (detail: string): void => {
+        try {
+          appendRunTranscriptEntry(
+            join(storage.runDir, "transcript.jsonl"),
+            createRunStatusEntry(
+              "input-required",
+              `${detail}; manual cleanup required: tmux attach -t ${session}`
+            )
+          );
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          deps.log(
+            `[loop] could not record manual cleanup for run ${storage.runId}: ${reason}`
+          );
+        }
+      };
+      // Every check before the first tmux change; a refusal here leaves the
+      // session untouched and hands the run record back.
+      const admitRecovery = () => {
+        refuseLiveLauncher(previousManifest);
+        const left = manifest.tmuxPaneLeft;
+        const right = manifest.tmuxPaneRight;
+        const transcript = join(storage.runDir, "transcript.jsonl");
+        const leftPrompt = join(
+          storage.runDir,
+          "launch-charters",
+          `${paneAgents.left}-bootstrap.txt`
         );
-      }
-      if (!preservedStartupEligible(manifest, storage.runDir)) {
-        throw new Error(
-          "Preserved startup recovery refused new or ambiguous seat work evidence."
+        const rightPrompt = join(
+          storage.runDir,
+          "launch-charters",
+          `${paneAgents.right}-bootstrap.txt`
         );
+        if (
+          !(
+            preservedStartupEligible(manifest, storage.runDir) &&
+            left &&
+            right &&
+            RECOVERY_PANE_ID_RE.test(left) &&
+            RECOVERY_PANE_ID_RE.test(right)
+          ) ||
+          left === right ||
+          !existsSync(leftPrompt) ||
+          !existsSync(rightPrompt) ||
+          (existsSync(transcript) && readFileSync(transcript, "utf8").trim()) ||
+          existsSync(join(storage.runDir, "governess-control.jsonl"))
+        ) {
+          throw new Error(
+            "Preserved startup recovery requires exact pre-charter panes and no work/control history."
+          );
+        }
+        const panes = deps.spawn([
+          "tmux",
+          "list-panes",
+          "-t",
+          `=${session}`,
+          "-F",
+          "#{pane_id} #{pane_dead}",
+        ]);
+        const actual = panes.stdout.trim().split(LINE_SPLIT_RE).sort();
+        if (
+          panes.exitCode !== 0 ||
+          JSON.stringify(actual) !==
+            JSON.stringify([`${left} 0`, `${right} 0`].sort())
+        ) {
+          throw new Error(
+            "Preserved startup recovery refused changed pane ownership."
+          );
+        }
+        if (!preservedStartupEligible(manifest, storage.runDir)) {
+          throw new Error(
+            "Preserved startup recovery refused new or ambiguous seat work evidence."
+          );
+        }
+        // Re-read immediately before the first tmux mutation: another launcher
+        // may have taken the run since preparation. Returning undefined keeps
+        // this a read; nothing is written.
+        let latest: RunManifest | undefined;
+        deps.updateRunManifest(storage.manifestPath, (current) => {
+          latest = current;
+          return undefined;
+        });
+        if (!latest) {
+          throw new Error(
+            "Preserved startup recovery refused: the run manifest is no longer readable."
+          );
+        }
+        refuseLiveLauncher(latest);
+        return { left, leftPrompt, right, rightPrompt };
+      };
+      let admitted: ReturnType<typeof admitRecovery>;
+      try {
+        admitted = admitRecovery();
+      } catch (error) {
+        releasePreparedClaim();
+        throw error;
       }
-      let targets = await createPairedPaneLayout({
-        deps,
-        governess: true,
-        leftCommand: "",
-        rightCommand: "",
-        leftPromptPath: leftPrompt,
-        rightPromptPath: rightPrompt,
-        onSessionCreated: () => {
-          /* Existing session is never re-created. */
-        },
-        paneAgents,
-        runDir: storage.runDir,
-        session,
-        existingPanes: { left, right },
-      });
+      const { left, leftPrompt, right, rightPrompt } = admitted;
       const persist = (currentTargets: PairedPaneTargets) =>
         updatePairedManifest(
           deps,
           storage,
           manifest,
-          manifest.claudeSessionId ?? "",
-          manifest.codexAppServerPid,
-          manifest.codexRemoteUrl ?? "",
-          manifest.codexThreadId ?? "",
-          manifest.ossSessionId ?? "",
+          "",
+          undefined,
+          "",
+          "",
+          "",
           session,
           paneAgents,
           primaryAgent,
-          currentTargets
+          currentTargets,
+          true
         );
-      persist(targets);
-      targets = startPairedControlPanes(
-        deps,
-        launch.opts,
-        session,
-        storage.runId,
-        storage.runDir,
-        targets,
-        persist
-      );
-      persist(targets);
+      try {
+        let targets = await createPairedPaneLayout({
+          deps,
+          governess: true,
+          leftCommand: "",
+          rightCommand: "",
+          leftPromptPath: leftPrompt,
+          rightPromptPath: rightPrompt,
+          onSessionCreated: () => {
+            /* Existing session is never re-created. */
+          },
+          paneAgents,
+          runDir: storage.runDir,
+          session,
+          existingPanes: { left, right },
+        });
+        persist(targets);
+        targets = startPairedControlPanes(
+          deps,
+          launch.opts,
+          session,
+          storage.runId,
+          storage.runDir,
+          targets,
+          persist
+        );
+        persist(targets);
+      } catch (error) {
+        // This launcher never owned the session or its seats, so it neither
+        // kills them nor claims they failed. Leave the run non-terminal and
+        // name the manual cleanup a human must do.
+        const recovery = `tmux attach -t ${session}`;
+        const detail = error instanceof Error ? error.message : String(error);
+        deps.log(
+          `[loop] preserved startup recovery of "${session}" failed after modifying it (${detail}); run ${storage.runId} was not terminalized; manual cleanup required: ${recovery}`
+        );
+        recordManualCleanup(
+          `preserved startup recovery failed after modifying the live session (${detail})`
+        );
+        throw new Error(
+          `Preserved startup recovery failed after modifying live tmux session "${session}"; the run was left input-required, not failed, because its seats may still be live. Manual cleanup required: ${recovery} (${detail})`,
+          { cause: error }
+        );
+      }
+      // Later handoff failures may only terminalize a session positively gone;
+      // a live or unknown session still holds seats this launcher never owned.
+      const terminalizeRecoveredStart = async (): Promise<
+        RunLifecycleState | "undurable"
+      > => {
+        const probe = probeHandoffSession(session, deps.spawn);
+        if (probe.liveness !== "dead") {
+          deps.log(
+            `[loop] preserved startup recovery of "${session}" did not terminalize run ${storage.runId}: session liveness is ${probe.liveness}; manual cleanup required: tmux attach -t ${session}`
+          );
+          recordManualCleanup(
+            `recovered startup failed before handoff and was not terminalized: session liveness is ${probe.liveness}`
+          );
+          return "undurable";
+        }
+        return await terminalizeFailedStart();
+      };
       return {
         manifestPath: storage.manifestPath,
         preserveUnknownStart,
         session,
-        terminalizeFailedStart,
+        terminalizeFailedStart: terminalizeRecoveredStart,
       };
     }
     bindPairedSessionIdentity(
@@ -4420,6 +4598,8 @@ const defaultDeps = (persistedSocket?: TmuxSocket): TmuxDeps => {
     },
     makeClaudeSessionId: () => randomUUID(),
     nowMs: () => Date.now(),
+    pidCanStillOwnRun: (pid: number, since: string) =>
+      pidCanStillOwnRun(pid, since, defaultPidOwnershipDeps),
     preparePairedRun,
     // Claude's own project transcript only. readClaudeSubmissionVersion also
     // folds in the hook journal's size:mtime, which would flip on any hook write
