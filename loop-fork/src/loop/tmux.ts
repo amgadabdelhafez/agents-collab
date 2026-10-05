@@ -1563,6 +1563,7 @@ const passEnv = (env: NodeJS.ProcessEnv, key: string): string[] => {
 };
 
 const GOVERNESS_HELPER_ENV_KEYS = [
+  "LOOP_GOVERNESS_BOARD_DETAILS",
   "LOOP_GOVERNESS_MODEL_LABEL",
   "LOOP_GOVERNESS_COMPUTE_LABEL",
   "LOOP_GOVERNESS_HOST_LABEL",

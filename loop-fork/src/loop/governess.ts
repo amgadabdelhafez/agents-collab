@@ -1181,7 +1181,7 @@ const fmtClock = (nowMs: number): string => {
 };
 
 const CLAUDE_PREFIX_RE = /^claude-/;
-const SHORT_MODEL_WIDTH = 12;
+const SHORT_MODEL_WIDTH = 14;
 // A provider-qualified id (openrouter/z-ai/glm-5.2) is longer than the column,
 // so slicing it alone yielded "openrouter/z": the vendor, never the model. The
 // identity a reader needs is the last segment, the same part shortLocalModel
@@ -1566,14 +1566,14 @@ const AGENT_COL = {
   agent: 7,
   state: 12,
   age: 5,
-  model: 12,
+  model: 14,
   run: 14,
   context: 18,
   limits: 25,
   spend: 12,
   tokens: 24,
   activity: 16,
-  bridge: 18,
+  bridge: 16,
 } as const;
 
 const AGENT_COLUMNS: [string, number][] = [
@@ -1581,10 +1581,10 @@ const AGENT_COLUMNS: [string, number][] = [
   ["STATE", AGENT_COL.state],
   ["AGE", AGENT_COL.age],
   ["MODEL", AGENT_COL.model],
+  [subcells(["COST", "RATE"], [7, 4]), AGENT_COL.spend],
   [subcells(["EFF", "MODE", "X"], [4, 4, 4]), AGENT_COL.run],
   [subcells(["USED/MAX", "PCT", "CMP"], [9, 4, 3]), AGENT_COL.context],
   [subcells(["LIMITS", "RESET"], [9, 15], "left"), AGENT_COL.limits],
-  [subcells(["COST", "RATE"], [7, 4]), AGENT_COL.spend],
   [
     subcells(["TOTAL", "INPUT", "CACHE", "OUTPUT"], [5, 5, 5, 6]),
     AGENT_COL.tokens,
@@ -1616,10 +1616,10 @@ const HELPER_COLUMNS: [string, number][] = [
   ["STATE", HELPER_COL.state],
   ["AGE", HELPER_COL.age],
   ["MODEL", HELPER_COL.model],
+  [subcells(["COST", ""], [7, 4]), HELPER_COL.spend],
   [subcells(["OK", "FAIL"], [6, 7]), HELPER_COL.run],
   [subcells(["ACTIVE", "QUEUE"], [8, 9]), HELPER_COL.context],
   ["CTX MISS", HELPER_COL.limits],
-  [subcells(["COST", ""], [7, 4]), HELPER_COL.spend],
   [
     subcells(["TOTAL", "INPUT", "CACHE", "OUTPUT"], [5, 5, 5, 6]),
     HELPER_COL.tokens,
@@ -2113,10 +2113,10 @@ const renderAgentRow = (
     stateCell(state),
     fitCell(fmtDuration(forMs), AGENT_COL.age),
     fitCell(shortModel(row.usage.model), AGENT_COL.model),
+    fitCell(subcells([cost, burn], [7, 4]), AGENT_COL.spend),
     fitCell(run, AGENT_COL.run),
     ctx,
     rateLimitRendered,
-    fitCell(subcells([cost, burn], [7, 4]), AGENT_COL.spend),
     fitCell(tokenSummary, AGENT_COL.tokens),
     activityTotal(row.usage) > 0
       ? colorCell(ANSI.yellow, activity, AGENT_COL.activity)
@@ -2269,17 +2269,17 @@ const renderUtilityAgentRow = (
     colorCell(utilityStateColor(state), `● ${state}`, HELPER_COL.state),
     fitCell(utilityAge(snapshot, meta.nowMs), HELPER_COL.age),
     colorCell(ANSI.green, utilityModelCell(snapshot, role), HELPER_COL.model),
+    colorCell(
+      ANSI.yellow,
+      subcells([utilityCostCell(usage), ""], [7, 4]),
+      HELPER_COL.spend
+    ),
     fitCell(run, HELPER_COL.run),
     fitCell(
       subcells([String(snapshot.active), String(snapshot.queued)], [8, 9]),
       HELPER_COL.context
     ),
     fitCell(String(snapshot.contextInsufficient), HELPER_COL.limits),
-    colorCell(
-      ANSI.yellow,
-      subcells([utilityCostCell(usage), ""], [7, 4]),
-      HELPER_COL.spend
-    ),
     colorCell(ANSI.yellow, tokens, HELPER_COL.tokens),
     colorCell(ANSI.yellow, activity, HELPER_COL.activity),
   ].join(" ")}`;
@@ -2291,7 +2291,7 @@ const renderWorkerRoutingRows = (
 ): string[] => {
   const width = Math.max(1, meta.maxColumns ?? 176);
   const routing = snapshot.routing;
-  const decisions = ` routing · ${routing.routed}/${routing.considered} helpers ${workerPercentage(routing.routed, routing.considered)} · active ${snapshot.active} queued ${snapshot.queued} · actionable ${routing.actionable} · kept ${routing.retained} · unsafe ${routing.unsafe} · auto ${routing.autoRouted} explicit ${routing.explicitRouted} · packets ${routing.promptPackets} plans ${routing.structuredPlans}`;
+  const decisions = ` routing · ${routing.routed}/${routing.considered} delegated (${workerPercentage(routing.routed, routing.considered)}) · kept ${routing.retained} · unsafe ${routing.unsafe} · auto ${routing.autoRouted} / explicit ${routing.explicitRouted}`;
   const reasonEntries = Object.entries(routing.reasons).sort(
     (left, right) => right[1] - left[1] || left[0].localeCompare(right[0])
   );
@@ -2305,13 +2305,13 @@ const renderWorkerRoutingRows = (
     "tool-not-enforceable": "tool blocked",
   };
   const reasons = reasonEntries
-    .slice(0, 4)
+    .slice(0, 3)
     .map(
       ([reason, count]) =>
         `${reasonLabels[reason] ?? reason.replace(/-/g, " ")} ${count}`
     )
     .join(" · ");
-  const remainingReasons = Math.max(0, reasonEntries.length - 4);
+  const remainingReasons = Math.max(0, reasonEntries.length - 3);
   const latestDetail = snapshot.latestRouteDetail?.includes("chmod 600")
     ? "key file permissions too open; chmod 600"
     : snapshot.latestRouteDetail;
@@ -2352,7 +2352,7 @@ const renderWorkerDetailRows = (
       tierTerminal(meta.nanny) -
       tierTerminal(meta.auPair)
   );
-  const performanceLine = ` helpers · ${performance.successfulJobs}/${performance.finishedJobs} success ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · ${measured ? fmtDuration(performance.averageDurationMs) : "—"} avg · ${measured ? utilityAverageCostCell(performance.averageCostUsd, snapshot.usage) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"} · bridge ${snapshot.messages.inbound}→${snapshot.messages.outbound} pending ${snapshot.messages.pending}${unattributedTerminal > 0 ? ` · unattrib ${unattributedTerminal}` : ""}`;
+  const performanceLine = ` helpers · ${measured ? fmtDuration(performance.averageDurationMs) : "—"} avg · ${measured ? utilityAverageCostCell(performance.averageCostUsd, snapshot.usage) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"} · bridge ${snapshot.messages.inbound}→${snapshot.messages.outbound} pending ${snapshot.messages.pending}${unattributedTerminal > 0 ? ` · unattrib ${unattributedTerminal}` : ""}`;
   const latestContext = contexts.latestHash
     ? `v${contexts.latestVersion ?? "?"} ${contexts.latestHash}`
     : "none";
@@ -3108,13 +3108,11 @@ const renderLocalLlmUsageRow = (
   const runtime = meta.llmRuntimeByJudge[judge.id];
   const offline = meta.llmOfflineByJudge[judge.id] === true;
   const modelLabel = localLlmModelLabel(judge);
-  const identity = modelLabel.toLowerCase().startsWith(judge.id.toLowerCase())
-    ? modelLabel
-    : `${judge.id} ${modelLabel}`;
+  const identity =
+    meta.llmJudges.length === 1 ? "" : `${helperModelLabel(modelLabel)} · `;
   return [
-    paint(ANSI.dim, " judge model · "),
+    paint(ANSI.dim, " judge · "),
     paint(ANSI.cyan, identity),
-    paint(ANSI.dim, " · "),
     paint(offline ? ANSI.red : ANSI.green, offline ? "offline" : "ok"),
     paint(ANSI.dim, " · "),
     paint(ANSI.green, `${usage.calls} calls`),
@@ -3198,9 +3196,10 @@ const renderFooter = (meta: BoardMeta, maxRows?: number): string[] => {
   const judgeLines = meta.llmJudges.map((judge) =>
     renderLocalLlmUsageRow(judge, meta)
   );
-  const runtimeLine = meta.llmJudges[0]
-    ? renderLocalLlmRuntimeRow(meta.llmJudges[0], meta)
-    : undefined;
+  const runtimeLine =
+    meta.llmJudges[0] && process.env.LOOP_GOVERNESS_BOARD_DETAILS === "1"
+      ? renderLocalLlmRuntimeRow(meta.llmJudges[0], meta)
+      : undefined;
   if (maxRows === undefined) {
     return [
       ...judgeLines,

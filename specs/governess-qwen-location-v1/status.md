@@ -1,5 +1,19 @@
 # Status, October 4, 2026
 
+## Board cleanup source and release
+
+Current cleanup aligns agent/helper model and spend cells, widens model to14
+columns while retaining total board width, moves cost/rate beside model, and
+removes repeated helper success/call/queue totals from aggregate rows. Bridge
+pending and unattributed jobs remain visible. Routing reasons bounded to3 plus
+overflow count. Single-judge usage no longer repeats model/path already shown
+in the runtime identity row; multiple judges retain names. Low-level runtime
+tuning opt-in via LOOP_GOVERNESS_BOARD_DETAILS=1, propagated on fresh launch.
+No stored data, usage/cost calculations, routing policy or authority changed.
+Focused Governess84 tests/475 assertions pass, including narrow viewports,
+numeric/header alignment, provenance, missing price, and tuning visibility.
+Run44 is stopped; no runtime refresh or new launch is claimed for this slice.
+
 ## Nanny row correction and completed helper execution
 
 The Nanny row previously collapsed snapshot model identity to the judge family

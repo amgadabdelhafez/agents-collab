@@ -749,7 +749,7 @@ test("LLM unreachable suppresses recovery and flags the board", async () => {
   expect(result.llmOffline).toBe(true);
   expect(spies.sends).toHaveLength(0);
   expect(spies.respawns).toHaveLength(0);
-  expect(stripAnsi(result.board)).toContain("judge model · m · offline");
+  expect(stripAnsi(result.board)).toContain("judge · offline");
   expect(stripAnsi(result.board)).not.toContain("judge cfg qwen");
 });
 
@@ -797,10 +797,10 @@ test("dual local judges render separate token rows and require agreement", async
   ]);
   expect(spies.sends).toHaveLength(0);
   expect(visibleBoard).toContain(
-    "judge model · qwen · ok · 1 calls · 150 tok (i120 c80 o30)"
+    "judge · qwen · ok · 1 calls · 150 tok (i120 c80 o30)"
   );
   expect(visibleBoard).toContain(
-    "judge model · gemma · ok · 1 calls · 90 tok (i70 c40 o20)"
+    "judge · gemma · ok · 1 calls · 90 tok (i70 c40 o20)"
   );
   expect(visibleBoard).toContain("● working");
 });
@@ -865,11 +865,11 @@ test("round-robin local judge mode calls one model for that tick", async () => {
   expect(spies.judgeRequests.map((req) => req.model)).toEqual(["gemma"]);
   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
   expect(visibleBoard).toContain(
-    "judge model · gemma · ok · 1 calls · 120 tok (i100 c12 o20)"
+    "judge · gemma · ok · 1 calls · 120 tok (i100 c12 o20)"
   );
   expect(visibleBoard).not.toContain("judge round-robin");
   expect(visibleBoard).not.toContain("llm params");
-  expect(visibleBoard).toContain("temp 0");
+  expect(visibleBoard).not.toContain("temp 0");
 });
 
 test("board labels an agent [thinking] while its pane is animating", async () => {
@@ -1983,7 +1983,7 @@ test("board shows input, cached, and output token details", async () => {
   const visibleBoard = stripAnsi(result.board);
 
   expect(visibleBoard).toMatch(
-    /AGENT\s+STATE\s+AGE\s+MODEL\s+EFF\s+MODE\s+X\s+USED\/MAX\s+PCT\s+CMP\s+LIMITS\s+RESET\s+COST\s+RATE\s+TOTAL\s+INPUT\s+CACHE\s+OUTPUT\s+TEXT\s+THINK\s+TOOL\s+HUMAN\/BRIDGE/
+    /AGENT\s+STATE\s+AGE\s+MODEL\s+COST\s+RATE\s+EFF\s+MODE\s+X\s+USED\/MAX\s+PCT\s+CMP\s+LIMITS\s+RESET\s+TOTAL\s+INPUT\s+CACHE\s+OUTPUT\s+TEXT\s+THINK\s+TOOL\s+HUMAN\/BRIDGE/
   );
   expect(visibleBoard.match(/^ AGENT/gm) ?? []).toHaveLength(1);
   expect(visibleBoard.match(/^ claude/gm) ?? []).toHaveLength(1);
@@ -2031,21 +2031,15 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("joint idle 0s");
   expect(visibleBoard).not.toContain("msgs claude 0 codex 0");
   expect(visibleBoard).toContain(
-    "judge model · m · ok · 3 calls · 2k tok (i900 c500 o100) · cache 20% · slots 10/10 · mem 1.82GB"
+    "judge · ok · 3 calls · 2k tok (i900 c500 o100) · cache 20% · slots 10/10 · mem 1.82GB"
   );
-  expect(visibleBoard).toContain("@0d95a81 · 40L h2048 ctx262k");
-  expect(visibleBoard).toContain(
-    "runtime · caveman main full / helpers ultra @0d95a81"
-  );
-  expect(visibleBoard).toContain("bf16 q4/g64");
-  expect(visibleBoard).toContain("MoE 256e/8");
-  expect(visibleBoard).toContain("batch 8/32 · step 2048");
+  expect(visibleBoard).not.toContain("runtime ·");
   const llmLines = boardLines.filter(
-    (line) => line.startsWith(" judge model") || line.startsWith(" runtime")
+    (line) => line.startsWith(" judge ·") || line.startsWith(" runtime")
   );
   expect(llmLines.every((line) => line.length <= 176)).toBe(true);
-  expect(visibleBoard).toContain("temp 0");
-  expect(visibleBoard).toContain("max out 1.2k judge+wait / 3.2k summary");
+  expect(visibleBoard).not.toContain("temp 0");
+  expect(visibleBoard).not.toContain("max out");
   expect(visibleBoard).not.toContain("idle-both");
   expect(visibleBoard).not.toContain("recov 0");
   expect(visibleBoard).not.toContain("judge cfg qwen");
@@ -2057,10 +2051,8 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toMatch(/claude\s+● thinking\s+(—|0s)\s+gpt-5\.5/);
   expect(visibleBoard).toMatch(/S70\/W24\s+—\/—/);
   expect(visibleBoard).toContain("Σ est $24.00");
-  expect(visibleBoard).toMatch(/\$12\.00\s+\$42\s+13k\s+1k\s+4k\s+8k/);
-  expect(result.board).toContain("\x1b[36mm");
+  expect(visibleBoard).toMatch(/\$12\.00\s+\$42/);
   expect(result.board).toContain("\x1b[33m2k");
-  expect(result.board).toContain("\x1b[35mbf16");
 });
 
 test("board uses only Progress and Next from the structured summary", async () => {
@@ -2279,7 +2271,7 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
     expect(board.match(/^ HELPER/gm) ?? []).toHaveLength(1);
     expect(board).not.toContain("LOWER");
     expect(board).toMatch(
-      /au pair\s+● idle\s+—\s+glm-5\.2\s+1\s+1\s+0\s+0\s+0\s+\$0\.0123\s+7k\s+5k\s+2k\s+2k\s+4\s+3/
+      /au pair\s+● idle\s+—\s+glm-5\.2\s+\$0\.0123\s+1\s+1\s+0\s+0\s+0\s+7k\s+5k\s+2k\s+2k\s+4\s+3/
     );
     const boardLines = board.split("\n");
     const agentHeader = boardLines.find((line) => line.startsWith(" AGENT"));
@@ -2303,12 +2295,12 @@ test("board uses the recovered summary area for Nanny and Au Pair metrics", asyn
     expect(auPairRow?.length).toBeLessThanOrEqual(176);
     expect(board.split("\n").every((line) => line.length <= 176)).toBe(true);
     expect(board).toContain(
-      "routing · 2/3 helpers 67% · active 0 queued 0 · actionable 0 · kept 0 · unsafe 1 · auto 1 explicit 1 · packets 1 plans 0"
+      "routing · 2/3 delegated (67%) · kept 0 · unsafe 1 · auto 1 / explicit 1"
     );
     expect(board).not.toContain("helper jobs");
     expect(board).toContain("why · protected 1");
     expect(board).toContain(
-      "helpers · 1/2 success 50% · 12s avg · $0.0123/job · 7k tok/job · 3.0 tools/job · cache 40% · bridge 2→2 pending 0"
+      "helpers · 12s avg · $0.0123/job · 7k tok/job · cache 40% · bridge 2→2 pending 0"
     );
     expect(board).toContain(
       "context · 1/2 capsules 50% · refs 1 · latest v1 bbbbbbbb · misses 0 · tool failures 1 · top broker invalid arguments 1"
@@ -2756,6 +2748,35 @@ test("governess run identity includes full loop name and path", () => {
   expect(composeGovernessPaneTitle(config)).toBe("governess.harvto-loop-34");
 });
 
+test("runtime tuning is opt-in and kept out of the compact board", async () => {
+  const previous = process.env.LOOP_GOVERNESS_BOARD_DETAILS;
+  try {
+    // biome-ignore lint/performance/noDelete: Node environment deletion restores true absence.
+    delete process.env.LOOP_GOVERNESS_BOARD_DETAILS;
+    const compact = await governessTick(
+      new Map(),
+      baseConfig(),
+      makeDeps(stuck, { ms: START_MS }, freshSpies())
+    );
+    expect(stripAnsi(compact.board)).not.toContain("runtime ·");
+    expect(stripAnsi(compact.board)).toContain("judge ·");
+    process.env.LOOP_GOVERNESS_BOARD_DETAILS = "1";
+    const detailed = await governessTick(
+      new Map(),
+      baseConfig(),
+      makeDeps(stuck, { ms: START_MS }, freshSpies())
+    );
+    expect(stripAnsi(detailed.board)).toContain("runtime ·");
+  } finally {
+    if (previous === undefined) {
+      // biome-ignore lint/performance/noDelete: Preserve absence rather than the string undefined.
+      delete process.env.LOOP_GOVERNESS_BOARD_DETAILS;
+    } else {
+      process.env.LOOP_GOVERNESS_BOARD_DETAILS = previous;
+    }
+  }
+});
+
 test("board merges loop and path into the first time/status line", async () => {
   const result = await governessTick(
     new Map<Agent, AgentLivenessState>(),
@@ -2774,9 +2795,7 @@ test("board merges loop and path into the first time/status line", async () => {
   expect(lines[0]).not.toContain("run 34");
   expect(lines[1]).toStartWith(" AGENT");
   expect(
-    lines.some((line) =>
-      line.startsWith(" m · compute unknown · host unknown")
-    )
+    lines.some((line) => line.startsWith(" m · compute unknown · host unknown"))
   ).toBe(true);
 });
 
@@ -3474,8 +3493,7 @@ test("Nanny row counts only Nanny task usage, never Governess judge inference", 
     const lines = stripAnsi(result.board).split("\n");
     const helperHeader = lines.find((line) => line.startsWith(" HELPER")) ?? "";
     const nannyRow = lines.find((line) => line.startsWith(" nanny")) ?? "";
-    const judgeLine =
-      lines.find((line) => line.startsWith(" judge model")) ?? "";
+    const judgeLine = lines.find((line) => line.startsWith(" judge ·")) ?? "";
     const totalStart = helperHeader.indexOf("TOTAL");
     const callsEnd = helperHeader.indexOf("CALLS") + "CALLS".length;
 

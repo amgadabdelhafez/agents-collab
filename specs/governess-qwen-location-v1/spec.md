@@ -1,5 +1,14 @@
 # Governess Qwen route identity and location
 
+## Current slice: board cleanup
+
+User requests less duplication, aligned columns and clearer grouping. Keep
+agent/helper identity, activity and honest usage/cost. Widen model names, bring
+cost before quotas, shorten repeated aggregate metrics, and hide low-level runtime
+tuning behind LOOP_GOVERNESS_BOARD_DETAILS=1. Preserve errors, source provenance,
+small-viewport agent/helper priority and all recorded data. No routing-policy or
+provider changes. Verify rendered wide/narrow fixtures before runtime refresh.
+
 User-authorized scope: test the newly staged Qwen in existing agents-collab-loop-43
 and show model and running location in its Governess pane. Preserve hosted seats
 and all other Loops. Infra exclusively stages the model/runtime; Harness owns
