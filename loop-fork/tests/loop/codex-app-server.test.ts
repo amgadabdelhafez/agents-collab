@@ -340,11 +340,23 @@ test("startAppServer normalizes codex bridge config args before spawning", async
     }
   };
 
-  await appServer.startAppServer({
-    configValues: buildCodexBridgeConfigArgs("/tmp/loop-run", "codex"),
-  });
+  const secretToken = "recipient-token-must-not-reach-argv";
+  const previousToken = process.env.LOOP_RECIPIENT_API_TOKEN;
+  process.env.LOOP_RECIPIENT_API_TOKEN = secretToken;
+  try {
+    await appServer.startAppServer({
+      configValues: buildCodexBridgeConfigArgs("/tmp/loop-run", "codex"),
+    });
+  } finally {
+    if (previousToken === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RECIPIENT_API_TOKEN");
+    } else {
+      process.env.LOOP_RECIPIENT_API_TOKEN = previousToken;
+    }
+  }
 
-  expect(lastSpawnCommand.filter((value) => value === "-c")).toHaveLength(12);
+  expect(lastSpawnCommand.join("\n")).not.toContain(secretToken);
+  expect(lastSpawnCommand.filter((value) => value === "-c")).toHaveLength(13);
   expect(lastSpawnCommand).toContain("app-server");
   expect(lastSpawnCommand).not.toContain("-c,-c");
   const bridgeArgs = lastSpawnCommand.slice(
@@ -356,6 +368,8 @@ test("startAppServer normalizes codex bridge config args before spawning", async
     expect.stringContaining("mcp_servers.loop-bridge.command="),
     "-c",
     expect.stringContaining("mcp_servers.loop-bridge.args="),
+    "-c",
+    'mcp_servers.loop-bridge.env_vars=["LOOP_RECIPIENT_RUN_DIR","LOOP_RECIPIENT_SEAT","LOOP_RECIPIENT_API_URL","LOOP_RECIPIENT_API_TOKEN"]',
     "-c",
     'mcp_servers.loop-bridge.tools.send_message.approval_mode="approve"',
     "-c",

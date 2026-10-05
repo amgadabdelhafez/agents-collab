@@ -6331,8 +6331,31 @@ test("bridge config helper builds the bridge MCP entry point for Codex", async (
   const bridge = await loadBridge();
   const root = makeTempDir();
   const runDir = join(root, "run");
-
-  const codexArgs = bridge.buildCodexBridgeConfigArgs(runDir, "codex");
+  const secretToken = "recipient-token-must-not-reach-argv";
+  const secretUrl = "http://127.0.0.1:65530/recipient-url-must-not-reach-argv";
+  const previousToken = process.env.LOOP_RECIPIENT_API_TOKEN;
+  const previousUrl = process.env.LOOP_RECIPIENT_API_URL;
+  process.env.LOOP_RECIPIENT_API_TOKEN = secretToken;
+  process.env.LOOP_RECIPIENT_API_URL = secretUrl;
+  let codexArgs: string[];
+  try {
+    codexArgs = bridge.buildCodexBridgeConfigArgs(runDir, "codex");
+  } finally {
+    if (previousToken === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RECIPIENT_API_TOKEN");
+    } else {
+      process.env.LOOP_RECIPIENT_API_TOKEN = previousToken;
+    }
+    if (previousUrl === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RECIPIENT_API_URL");
+    } else {
+      process.env.LOOP_RECIPIENT_API_URL = previousUrl;
+    }
+  }
+  // Codex forwards env_vars by name to the bridge MCP server; values stay in
+  // the seat environment and must never be serialized into argv.
+  expect(codexArgs.join("\n")).not.toContain(secretToken);
+  expect(codexArgs.join("\n")).not.toContain(secretUrl);
   expect(codexArgs).toEqual([
     "-c",
     'mcp_servers.loop-bridge.command="/opt/bun"',
@@ -6343,6 +6366,8 @@ test("bridge config helper builds the bridge MCP entry point for Codex", async (
       runDir,
       "codex",
     ])}`,
+    "-c",
+    'mcp_servers.loop-bridge.env_vars=["LOOP_RECIPIENT_RUN_DIR","LOOP_RECIPIENT_SEAT","LOOP_RECIPIENT_API_URL","LOOP_RECIPIENT_API_TOKEN"]',
     "-c",
     'mcp_servers.loop-bridge.tools.send_message.approval_mode="approve"',
     "-c",
