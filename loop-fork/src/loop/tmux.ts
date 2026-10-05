@@ -2410,6 +2410,7 @@ interface ClaudeModalStability {
 }
 
 const CLAUDE_SELECTED_ROW_RE = /^\s*❯(?:\s|$)/;
+const RECOVERY_PANE_ID_RE = /^%\d+$/;
 const CLAUDE_SELECTED_DEV_CONFIRM_RE =
   /❯\s*1\.\s*I am using this for local development(?:\s|$)/;
 const CLAUDE_SELECTED_DEV_EXIT_RE = /❯\s*2\.(?:\s|$)/;
@@ -3197,41 +3198,54 @@ const createPairedPaneLayout = async (input: {
   rightPromptPath?: string;
   runDir: string;
   session: string;
+  existingPanes?: { left: string; right: string };
 }): Promise<PairedPaneTargets> => {
-  const leftResult = runTmuxCommand(input.deps, [
-    "tmux",
-    "new-session",
-    "-d",
-    "-P",
-    "-F",
-    "#{pane_id}",
-    ...buildSessionSizeArgs(input.deps, DEFAULT_DETACHED_PAIRED_SIZE),
-    "-s",
-    input.session,
-    "-c",
-    input.deps.cwd,
-    input.leftCommand,
-  ]);
-  input.onSessionCreated();
-  const left = stablePaneTarget(leftResult, `${input.session}:0.0`);
-  const rightResult = runTmuxCommand(
-    input.deps,
-    [
-      "tmux",
-      "split-window",
-      "-h",
-      "-P",
-      "-F",
-      "#{pane_id}",
-      "-t",
-      left,
-      "-c",
-      input.deps.cwd,
-      input.rightCommand,
-    ],
-    "Failed to split tmux window"
-  );
-  const rightPaneId = stablePaneId(rightResult);
+  const leftResult = input.existingPanes
+    ? undefined
+    : runTmuxCommand(input.deps, [
+        "tmux",
+        "new-session",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        ...buildSessionSizeArgs(input.deps, DEFAULT_DETACHED_PAIRED_SIZE),
+        "-s",
+        input.session,
+        "-c",
+        input.deps.cwd,
+        input.leftCommand,
+      ]);
+  if (!input.existingPanes) {
+    input.onSessionCreated();
+  }
+  const left =
+    input.existingPanes?.left ??
+    (leftResult
+      ? stablePaneTarget(leftResult, `${input.session}:0.0`)
+      : `${input.session}:0.0`);
+  const rightResult = input.existingPanes
+    ? undefined
+    : runTmuxCommand(
+        input.deps,
+        [
+          "tmux",
+          "split-window",
+          "-h",
+          "-P",
+          "-F",
+          "#{pane_id}",
+          "-t",
+          left,
+          "-c",
+          input.deps.cwd,
+          input.rightCommand,
+        ],
+        "Failed to split tmux window"
+      );
+  const rightPaneId =
+    input.existingPanes?.right ??
+    (rightResult ? stablePaneId(rightResult) : undefined);
   const rightBeforeUtility = rightPaneId ?? `${input.session}:0.1`;
   input.deps.spawn([
     "tmux",
@@ -3564,6 +3578,102 @@ const startPairedSession = async (
     throw unknownHandoffLivenessError(session, existingSession);
   }
   if (existingSession.liveness === "live") {
+    if (deps.env.LOOP_RECOVER_PRESERVED_STARTUP === "1") {
+      const left = manifest.tmuxPaneLeft;
+      const right = manifest.tmuxPaneRight;
+      const transcript = join(storage.runDir, "transcript.jsonl");
+      const leftPrompt = join(
+        storage.runDir,
+        "launch-charters",
+        `${paneAgents.left}-bootstrap.txt`
+      );
+      const rightPrompt = join(
+        storage.runDir,
+        "launch-charters",
+        `${paneAgents.right}-bootstrap.txt`
+      );
+      if (
+        manifest.state !== "input-required" ||
+        !left ||
+        !right ||
+        !RECOVERY_PANE_ID_RE.test(left) ||
+        !RECOVERY_PANE_ID_RE.test(right) ||
+        left === right ||
+        !existsSync(leftPrompt) ||
+        !existsSync(rightPrompt) ||
+        (existsSync(transcript) && readFileSync(transcript, "utf8").trim()) ||
+        existsSync(join(storage.runDir, "governess-control.jsonl"))
+      ) {
+        throw new Error(
+          "Preserved startup recovery requires exact pre-charter panes and no work/control history."
+        );
+      }
+      const panes = deps.spawn([
+        "tmux",
+        "list-panes",
+        "-t",
+        `=${session}`,
+        "-F",
+        "#{pane_id} #{pane_dead}",
+      ]);
+      const actual = panes.stdout.trim().split(LINE_SPLIT_RE).sort();
+      if (
+        panes.exitCode !== 0 ||
+        JSON.stringify(actual) !==
+          JSON.stringify([`${left} 0`, `${right} 0`].sort())
+      ) {
+        throw new Error(
+          "Preserved startup recovery refused changed pane ownership."
+        );
+      }
+      let targets = await createPairedPaneLayout({
+        deps,
+        governess: true,
+        leftCommand: "",
+        rightCommand: "",
+        leftPromptPath: leftPrompt,
+        rightPromptPath: rightPrompt,
+        onSessionCreated: () => {
+          /* Existing session is never re-created. */
+        },
+        paneAgents,
+        runDir: storage.runDir,
+        session,
+        existingPanes: { left, right },
+      });
+      const persist = (currentTargets: PairedPaneTargets) =>
+        updatePairedManifest(
+          deps,
+          storage,
+          manifest,
+          manifest.claudeSessionId ?? "",
+          manifest.codexAppServerPid,
+          manifest.codexRemoteUrl ?? "",
+          manifest.codexThreadId ?? "",
+          manifest.ossSessionId ?? "",
+          session,
+          paneAgents,
+          primaryAgent,
+          currentTargets
+        );
+      persist(targets);
+      targets = startPairedControlPanes(
+        deps,
+        launch.opts,
+        session,
+        storage.runId,
+        storage.runDir,
+        targets,
+        persist
+      );
+      persist(targets);
+      return {
+        manifestPath: storage.manifestPath,
+        preserveUnknownStart,
+        session,
+        terminalizeFailedStart,
+      };
+    }
     bindPairedSessionIdentity(
       deps,
       storage,
