@@ -1,5 +1,19 @@
 # Status, October 4, 2026
 
+## Nanny row correction and completed helper execution
+
+The Nanny row previously collapsed snapshot model identity to the judge family
+qwen. Fixed source d5f0c2e6 preserves model version/size and uses explicit Nanny
+configuration before the first usage event, unknown rather than invented model.
+Focused label tests5/14 assertions, Biome/build/diff passed. Installed SHA-256
+960ebf35e2035461fa02fd92e59f08334f3286ac92e5ffb47b2a50f26118eeb8;
+previous297191d7 binary retained in hash-named rollback. Refreshed only Run44
+Governess after both helpers terminalized; live capture shows Qwen3.8-27B in
+Nanny model cell. Doctor now all checks true, journal no issues, epoch
+1791172072129445. One supervisor-targeted bridge record remains pending.
+Nanny and Au Pair each completed one test job with0 failures,2 model calls and
+1 tool call each. All source/agent seats/model service preserved.
+
 ## Installed release and fresh test Run44
 
 Explicit user activation completed. Installed binary SHA-256
