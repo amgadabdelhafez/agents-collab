@@ -136,7 +136,7 @@ import {
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
 import { openPublicAskSequences } from "./human-interaction-ask";
-import { judgeRuntimeLabel } from "./judge-route-label";
+import { helperModelLabel, judgeRuntimeLabel } from "./judge-route-label";
 import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
@@ -2229,10 +2229,12 @@ const utilityModelCell = (
   }
   if (snapshot.model) {
     return role === "nanny"
-      ? judgeIdFromModel(snapshot.model)
+      ? helperModelLabel(snapshot.model)
       : shortLocalModel(snapshot.model);
   }
-  return role === "nanny" ? "qwen" : "glm-5.2";
+  return role === "nanny"
+    ? helperModelLabel(process.env.LOOP_NANNY_MODEL)
+    : shortLocalModel(process.env.LOOP_AU_PAIR_MODEL ?? "z-ai/glm-5.2");
 };
 
 const renderUtilityAgentRow = (

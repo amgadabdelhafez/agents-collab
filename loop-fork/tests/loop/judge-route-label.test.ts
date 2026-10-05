@@ -1,8 +1,19 @@
 import { expect, test } from "bun:test";
 import {
+  helperModelLabel,
   judgeRouteLabel,
   judgeRuntimeLabel,
 } from "../../src/loop/judge-route-label";
+
+test("helper model keeps version and size instead of collapsing to family", () => {
+  expect(helperModelLabel("/Users/example/qwen38-27b/model-10c35caa")).toBe(
+    "Qwen3.8-27B"
+  );
+  expect(helperModelLabel("mlx-community/Qwen3.8-27B-4bit")).toBe(
+    "Qwen3.8-27B-4bit"
+  );
+  expect(helperModelLabel(undefined)).toBe("—");
+});
 
 test("runtime row uses attested model, compute and host without technical route", () => {
   expect(

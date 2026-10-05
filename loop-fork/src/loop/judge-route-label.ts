@@ -1,3 +1,15 @@
+const PINNED_QWEN_RE = /(?:^|\/)qwen(\d)(\d)-(\d+b)(?:\/|$)/i;
+export const helperModelLabel = (model?: string): string => {
+  if (!model) {
+    return "—";
+  }
+  const pinnedQwen = model.match(PINNED_QWEN_RE);
+  if (pinnedQwen) {
+    return `Qwen${pinnedQwen[1]}.${pinnedQwen[2]}-${pinnedQwen[3].toUpperCase()}`;
+  }
+  return model.split("/").filter(Boolean).at(-1) ?? "—";
+};
+
 /** Endpoint provenance only: a proxy's address does not establish backend host. */
 export const judgeRouteLabel = (model: string, endpoint: string): string => {
   let location = "unavailable";
