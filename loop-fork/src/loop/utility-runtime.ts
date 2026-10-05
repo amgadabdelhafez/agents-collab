@@ -3263,7 +3263,7 @@ const paneResponseColor = (label: string): string => {
   return PANE_ANSI.green;
 };
 
-const wrapPaneText = (
+export const wrapPaneText = (
   value: string,
   width: number,
   maxLines: number

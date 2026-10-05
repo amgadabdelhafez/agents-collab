@@ -37,6 +37,7 @@ import {
   utilityBrokerBoundary,
   utilitySystemPrompt,
   utilityToolsForExecutionProfile,
+  wrapPaneText,
 } from "../../src/loop/utility-runtime";
 import {
   activateUtilityEpoch,
@@ -3616,4 +3617,19 @@ test("live-size helper panes keep state, usage and cost provenance at 68 columns
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
+});
+
+test("pane wrapping hard-breaks a long artifact path instead of one character per row", () => {
+  const path =
+    "/private/tmp/helper-observability-routing-v1/.loop/utility-artifacts/53052bc0-701c-4243-ae36-131d54d05f43/9a8c9df8-d914-470d-a579-4e1a4eed239f.patch";
+  const text = `Validated patch d6f772aecda16f84185c05d391a7f275d4ca51866c4066aa4a2ba32504a21a71 at ${path}`;
+  const lines = wrapPaneText(text, 68, 10);
+  expect(lines.every((line) => line.length <= 68)).toBe(true);
+  expect(lines.filter((line) => line.length === 1)).toEqual([]);
+  expect(lines.length).toBeLessThanOrEqual(5);
+  // Nothing is dropped: the patch identity and full path survive wrapping.
+  expect(lines.join("")).toContain(
+    "d6f772aecda16f84185c05d391a7f275d4ca51866c4066aa4a2ba32504a21a71"
+  );
+  expect(lines.join("")).toContain(path);
 });
