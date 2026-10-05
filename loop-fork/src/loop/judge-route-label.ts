@@ -16,5 +16,8 @@ export const judgeRouteLabel = (model: string, endpoint: string): string => {
     )
     .join("")
     .slice(0, 100);
-  return ` judge cfg ${safeModel || "unknown"} · endpoint ${location}`;
+  const modelLabel = safeModel.startsWith("/")
+    ? safeModel.split("/").filter(Boolean).slice(-2).join("/")
+    : safeModel;
+  return ` judge cfg ${modelLabel || "unknown"} · endpoint ${location}`;
 };

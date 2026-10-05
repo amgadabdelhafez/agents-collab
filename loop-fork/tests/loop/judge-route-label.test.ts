@@ -28,3 +28,14 @@ test("judge location strips credentials, path, query and fragments", () => {
     "endpoint unavailable"
   );
 });
+
+test("local pinned selectors retain artifact identity without the full home path", () => {
+  expect(
+    judgeRouteLabel(
+      "/Users/example/.local/share/loop/qwen38-27b/model-10c35caa",
+      "http://127.0.0.1:8084"
+    )
+  ).toBe(
+    " judge cfg qwen38-27b/model-10c35caa · endpoint http://127.0.0.1:8084"
+  );
+});
