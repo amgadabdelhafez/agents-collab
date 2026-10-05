@@ -2,6 +2,7 @@ import {
   type WorkflowClient,
   WorkflowExecutionAlreadyStartedError,
   type WorkflowHandle,
+  WorkflowNotFoundError,
 } from "@temporalio/client";
 import {
   type TemporalWorkflowCommand,
@@ -64,6 +65,19 @@ export class TemporalWorkflowPort implements WorkflowPort {
     return this.#handle(workflowId).query(temporalInspectionQuery);
   }
 
+  async isClosed(workflowId: string): Promise<boolean> {
+    try {
+      return (
+        (await this.#handle(workflowId).describe()).status.name !== "RUNNING"
+      );
+    } catch (error) {
+      if (error instanceof WorkflowNotFoundError) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   query(command: WorkflowQueryCommand): Promise<WorkflowQueryResult> {
     return this.#handle(command.workflowId).query(
       temporalPortQuery,
@@ -98,6 +112,7 @@ export class TemporalWorkflowPort implements WorkflowPort {
         ],
         taskQueue: this.#taskQueue,
         workflowId: command.workflowId,
+        workflowIdReusePolicy: "REJECT_DUPLICATE",
       });
     } catch (error) {
       if (!(error instanceof WorkflowExecutionAlreadyStartedError)) {

@@ -1446,6 +1446,62 @@ const readOrResumeCodexThread = async (
   }
 };
 
+const initializeBridgeClient = async (
+  client: Awaited<ReturnType<typeof createRemoteAppServerClient>>
+): Promise<void> => {
+  await client.sendRequest(METHOD_INITIALIZE, {
+    clientInfo: {
+      name: "loop-bridge",
+      title: "loop-bridge",
+      version: LOOP_VERSION,
+    },
+    capabilities: {
+      experimentalApi: true,
+      optOutNotificationMethods: [...BRIDGE_OPT_OUT_NOTIFICATION_METHODS],
+    },
+  });
+  client.sendNotification(METHOD_INITIALIZED);
+};
+
+/**
+ * Verifies that the exact configured thread can be read or resumed without
+ * creating, steering, or submitting a turn. This is a provider liveness
+ * probe, not recipient acknowledgement and not a thread discovery API.
+ */
+export const probeCodexThread = async (
+  remoteUrl: string,
+  threadId: string
+): Promise<boolean> => {
+  if (!(remoteUrl && threadId)) {
+    return false;
+  }
+  let client:
+    | Awaited<ReturnType<typeof createRemoteAppServerClient>>
+    | undefined;
+  try {
+    client = await createRemoteAppServerClient(remoteUrl);
+    await initializeBridgeClient(client);
+    // Liveness must not depend on persisted historical turns. A newly
+    // allocated live thread may not have a rollout until its first turn.
+    try {
+      await client.sendRequest(METHOD_THREAD_READ, {
+        includeTurns: false,
+        threadId,
+      });
+    } catch {
+      await client.sendRequest(METHOD_THREAD_RESUME, {
+        excludeTurns: true,
+        threadId,
+      });
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    client?.close();
+  }
+};
+
 export const injectCodexMessage = async (
   remoteUrl: string,
   threadId: string,
@@ -1456,18 +1512,7 @@ export const injectCodexMessage = async (
   }
   const client = await createRemoteAppServerClient(remoteUrl);
   try {
-    await client.sendRequest(METHOD_INITIALIZE, {
-      clientInfo: {
-        name: "loop-bridge",
-        title: "loop-bridge",
-        version: LOOP_VERSION,
-      },
-      capabilities: {
-        experimentalApi: true,
-        optOutNotificationMethods: [...BRIDGE_OPT_OUT_NOTIFICATION_METHODS],
-      },
-    });
-    client.sendNotification(METHOD_INITIALIZED);
+    await initializeBridgeClient(client);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let activeTurnId: string | undefined;

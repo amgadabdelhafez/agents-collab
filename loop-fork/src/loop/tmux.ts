@@ -98,6 +98,10 @@ import {
 import { preparePairedRun } from "./paired-options";
 import { DETACH_CHILD_PROCESS } from "./process";
 import { SESSION_STATE_GUIDANCE } from "./prompts";
+import {
+  RECIPIENT_API_ENV_KEYS,
+  recipientSeatEnvironment,
+} from "./recipient-seat-environment";
 import { RECON_PANE_SUBCOMMAND } from "./recon-pane";
 import {
   clearRunManifestPaneTargets,
@@ -1279,6 +1283,7 @@ export const buildPairedPaneEnv = (input: {
     // a hard precondition for its whole surface, so unsetting it closes the
     // fanout at the source — there is no tool-name backstop for it, and none is
     // needed. `off` mode is deliberately exempt: it claims no enforcement.
+    ...RECIPIENT_API_ENV_KEYS.flatMap((key) => ["-u", key]),
     ...(governed
       ? [
           "-u",
@@ -1640,7 +1645,16 @@ const securePairedAgentCommand = (input: {
   if (input.agent !== "claude") {
     return { command: input.command };
   }
-  const environment = claudeGatewayEnvironment(input.env);
+  const seatEnv = recipientSeatEnvironment(input.runDir, "claude", input.env);
+  const environment = [
+    ...claudeGatewayEnvironment(input.env),
+    ...[
+      "LOOP_RECIPIENT_RUN_DIR",
+      "LOOP_RECIPIENT_SEAT",
+      "LOOP_RECIPIENT_API_TOKEN",
+      "LOOP_RECIPIENT_API_URL",
+    ].flatMap((key) => (seatEnv[key] ? [`${key}=${seatEnv[key]}`] : [])),
+  ];
   if (environment.length === 0) {
     return { command: input.command };
   }
@@ -2140,7 +2154,8 @@ const preparePersistentTmuxLaunch = async (
   deps: TmuxDeps,
   opts: Options,
   manifest: RunManifest,
-  nativeSubagentMode: NativeSubagentMode
+  nativeSubagentMode: NativeSubagentMode,
+  runDir: string
 ): Promise<{
   claudeSessionId: string;
   codexAppServerPid?: number;
@@ -2183,7 +2198,10 @@ const preparePersistentTmuxLaunch = async (
                 ...withoutCodexEffortConfig(opts.codexMcpConfigArgs ?? []),
                 `model_reasoning_effort=${JSON.stringify(codexEffort)}`,
               ],
-              env: codexHomeEnv(opts.codexHome, codexBaseEnv),
+              env: codexHomeEnv(
+                opts.codexHome,
+                recipientSeatEnvironment(runDir, "codex", codexBaseEnv)
+              ),
               orphanOnExit: true,
             },
           },
@@ -3045,8 +3063,11 @@ const unblockClaudePane = async (
     const detail = devChannelRetrySuppressed
       ? "pane activity or an ambiguous redraw followed confirmation"
       : "the selected modal never transitioned";
-    throw new Error(
-      `Claude pane "${pane}" development-channel confirmation could not be acknowledged because ${detail}; refused to retry into an uncertain input surface or paste the launch bootstrap.`
+    throw new ClaudeStartupInputRequiredError(
+      "ClaudeChannelStartupInputRequiredError",
+      pane,
+      `Claude pane "${pane}" development-channel confirmation could not be acknowledged because ${detail}; refused to retry into an uncertain input surface or paste the launch bootstrap.`,
+      "unresolved Claude channel startup transition"
     );
   }
   if (bypassNavigationSent || bypassConfirmSent) {
@@ -3805,7 +3826,8 @@ const startPairedSession = async (
         deps,
         launch.opts,
         manifest,
-        nativeSubagentMode
+        nativeSubagentMode,
+        storage.runDir
       );
       claudeSessionId = persistent.claudeSessionId;
       codexAppServerPid = persistent.codexAppServerPid;

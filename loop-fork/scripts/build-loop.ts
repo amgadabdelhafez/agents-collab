@@ -29,6 +29,8 @@ const temporalPrebuiltBundlePlugin: BunPlugin = {
 // LOOP_BUILD_TARGET (for example bun-linux-x64) and LOOP_BUILD_OUTFILE let the
 // same script cross-compile the sandbox image binary; defaults are unchanged.
 const compileTarget = process.env.LOOP_BUILD_TARGET;
+// Regenerate workflow definitions before compiling the service executable.
+await import("./build-temporal-workflow-bundle");
 const result = await build({
   compile: {
     outfile: process.env.LOOP_BUILD_OUTFILE ?? "loop",

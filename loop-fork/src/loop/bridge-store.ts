@@ -1,5 +1,15 @@
-import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { AGENTS } from "./agents";
 import { resolveClaudeChannelServerName } from "./bridge-config";
@@ -16,6 +26,7 @@ export type BridgeSource = Agent | "supervisor" | "utility";
 export type BridgeTarget = Agent | "supervisor";
 
 const BRIDGE_FILE = "bridge.jsonl";
+const BRIDGE_DEDUPE_CLAIM_DIR = "bridge-dedupe-claims";
 const LINE_SPLIT_RE = /\r?\n/;
 const MAX_STATUS_MESSAGES = 100;
 export const DEFAULT_BRIDGE_MAX_OUTSTANDING = 32;
@@ -107,6 +118,7 @@ export type BridgeEvent =
 export interface BridgeEnqueueOptions {
   artifactRefs?: string[];
   dedupeKey?: string;
+  dedupeResolved?: boolean;
   expiresAt?: string;
   maxOutstanding?: number;
   now?: string;
@@ -123,7 +135,7 @@ export interface BridgeEnqueueOptions {
 export interface BridgeEnqueueResult {
   entry: BridgeMessage;
   reason?: string;
-  status: "queued" | "duplicate" | "dead-letter" | "expired";
+  status: "queued" | "duplicate" | "deferred" | "dead-letter" | "expired";
 }
 
 export interface BridgeQueueHealth {
@@ -217,6 +229,80 @@ export const bridgePath = (runDir: string): string => join(runDir, BRIDGE_FILE);
 
 const ensureParentDir = (path: string): void => {
   mkdirSync(dirname(path), { recursive: true });
+};
+
+const dedupeClaimPath = (
+  runDir: string,
+  source: BridgeSource,
+  target: BridgeTarget,
+  dedupeKey: string
+): string => {
+  const digest = createHash("sha256")
+    .update(`${source}\n${target}\n${dedupeKey}`, "utf8")
+    .digest("hex");
+  return join(runDir, BRIDGE_DEDUPE_CLAIM_DIR, `${digest}.lock`);
+};
+
+export interface BridgeDedupeClaim {
+  descriptor: number;
+  path: string;
+  released: boolean;
+  token: string;
+}
+
+export const acquireBridgeDedupeClaim = (
+  runDir: string,
+  source: BridgeSource,
+  target: BridgeTarget,
+  dedupeKey: string
+): BridgeDedupeClaim | undefined => {
+  const path = dedupeClaimPath(runDir, source, target, dedupeKey);
+  ensureParentDir(path);
+  try {
+    const descriptor = openSync(path, "wx", 0o600);
+    const token = `${process.pid}:${randomUUID()}\n`;
+    try {
+      writeSync(descriptor, token);
+      fsyncSync(descriptor);
+      return { descriptor, path, released: false, token };
+    } catch (error) {
+      closeSync(descriptor);
+      try {
+        if (readFileSync(path, "utf8") === token) {
+          unlinkSync(path);
+        }
+      } catch {
+        // Never remove a replacement owner after a failed initialization.
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EEXIST") {
+      return undefined;
+    }
+    throw error;
+  }
+};
+
+export const releaseBridgeDedupeClaim = (claim: BridgeDedupeClaim): void => {
+  if (claim.released) {
+    return;
+  }
+  // Fence a repeated old-owner release before closeSync: a numeric descriptor
+  // can be reused by a successor claim or another file after the first close.
+  claim.released = true;
+  try {
+    closeSync(claim.descriptor);
+  } catch {
+    // A repeated release still must never remove a successor owner.
+  }
+  try {
+    if (readFileSync(claim.path, "utf8") === claim.token) {
+      unlinkSync(claim.path);
+    }
+  } catch {
+    // The claim is absent or now belongs to a different owner.
+  }
 };
 
 export const appendBridgeEvent = (runDir: string, event: BridgeEvent): void => {
@@ -646,91 +732,143 @@ export const enqueueBridgeMessage = (
   source: BridgeSource,
   target: BridgeTarget,
   message: string,
-  options: BridgeEnqueueOptions = {}
+  inputOptions: BridgeEnqueueOptions = {}
 ): BridgeEnqueueResult => {
+  // An ACK acknowledges one inbound message, not each delivery notification.
+  // Keep the first ACK across resolved retries and caller-supplied key drift.
+  // Other message types may legitimately publish additional results/progress.
+  const options =
+    inputOptions.type === "ack" && inputOptions.replyTo
+      ? {
+          ...inputOptions,
+          dedupeKey: `reply-ack:${createHash("sha256").update(inputOptions.replyTo).digest("hex")}`,
+          dedupeResolved: true,
+          supersede: false,
+        }
+      : inputOptions;
   const entry = createBridgeMessage(source, target, message, options);
-  const nowMs = Date.parse(entry.at);
-  const pending = readPendingBridgeMessages(runDir, nowMs);
-  const duplicate = options.dedupeKey
-    ? pending.find(
-        (candidate) =>
-          candidate.source === source &&
-          candidate.target === target &&
-          candidate.dedupeKey === options.dedupeKey
-      )
-    : undefined;
-  if (duplicate && !options.supersede) {
-    return {
-      entry: duplicate,
-      reason: `pending dedupe key ${options.dedupeKey}`,
-      status: "duplicate",
-    };
-  }
-  if (duplicate) {
-    appendBridgeResolution(
-      runDir,
-      duplicate,
-      "superseded",
-      `superseded by ${entry.id}`,
-      entry.at
-    );
-  }
-  appendBridgeEvent(runDir, entry);
-  try {
-    appendRunTranscriptEntry(buildTranscriptPath(runDir), {
-      at: entry.at,
-      from: source,
-      message,
-      to: target,
-    });
-  } catch {
-    // bridge.jsonl is the durable delivery authority. A failure in the
-    // compatibility transcript mirror must not hide an already-enqueued body
-    // from its caller and trigger a differently keyed workflow retry.
-    try {
-      appendBridgeEvent(runDir, {
-        at: entry.at,
-        id: entry.id,
-        kind: "delivery-failed",
-        reason: "transcript mirror unavailable after durable bridge enqueue",
-        signature: eventSignature(entry),
-        source: entry.source,
-        target: entry.target,
-      });
-    } catch {
-      // The authoritative message append already succeeded. Preserve queued
-      // success even if the optional diagnostic append also becomes unavailable.
+  // This single synchronous critical section preserves the existing
+  // queue/expiry/limit outcomes while binding durable logical dedupe to append.
+  // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: one atomic decision
+  const enqueue = (): BridgeEnqueueResult => {
+    const nowMs = Date.parse(entry.at);
+    const pending = readPendingBridgeMessages(runDir, nowMs);
+    const duplicate = options.dedupeKey
+      ? pending.find(
+          (candidate) =>
+            candidate.source === source &&
+            candidate.target === target &&
+            candidate.dedupeKey === options.dedupeKey
+        )
+      : undefined;
+    const durableDuplicate =
+      options.dedupeKey && options.dedupeResolved
+        ? readBridgeEvents(runDir)
+            .filter(
+              (candidate): candidate is BridgeMessage =>
+                candidate.kind === "message" &&
+                candidate.source === source &&
+                candidate.target === target &&
+                candidate.dedupeKey === options.dedupeKey
+            )
+            .at(-1)
+        : undefined;
+    const retained = duplicate ?? durableDuplicate;
+    if (retained && !options.supersede) {
+      return {
+        entry: retained,
+        reason: `${durableDuplicate ? "durable" : "pending"} dedupe key ${options.dedupeKey}`,
+        status: "duplicate",
+      };
     }
-  }
-  if (entry.expiresAt && Date.parse(entry.expiresAt) <= nowMs) {
-    try {
+    if (duplicate) {
       appendBridgeResolution(
         runDir,
-        entry,
-        "expired",
-        `expired at ${entry.expiresAt}`,
+        duplicate,
+        "superseded",
+        `superseded by ${entry.id}`,
         entry.at
       );
-      return { entry, reason: "message already expired", status: "expired" };
-    } catch {
-      return { entry, status: "queued" };
     }
-  }
-  const targetPending = pending.filter(
-    (candidate) => candidate.target === target && candidate.id !== duplicate?.id
-  );
-  const maxOutstanding =
-    options.maxOutstanding ?? DEFAULT_BRIDGE_MAX_OUTSTANDING;
-  if (targetPending.length >= maxOutstanding) {
-    const reason = `target queue limit ${maxOutstanding} reached`;
+    appendBridgeEvent(runDir, entry);
     try {
-      appendBridgeResolution(runDir, entry, "dead-letter", reason, entry.at);
-      return { entry, reason, status: "dead-letter" };
+      appendRunTranscriptEntry(buildTranscriptPath(runDir), {
+        at: entry.at,
+        from: source,
+        message,
+        to: target,
+      });
     } catch {
-      return { entry, status: "queued" };
+      // bridge.jsonl is the durable delivery authority. A failure in the
+      // compatibility transcript mirror must not hide an already-enqueued body
+      // from its caller and trigger a differently keyed workflow retry.
+      try {
+        appendBridgeEvent(runDir, {
+          at: entry.at,
+          id: entry.id,
+          kind: "delivery-failed",
+          reason: "transcript mirror unavailable after durable bridge enqueue",
+          signature: eventSignature(entry),
+          source: entry.source,
+          target: entry.target,
+        });
+      } catch {
+        // The authoritative message append already succeeded. Preserve queued
+        // success even if the optional diagnostic append also becomes unavailable.
+      }
     }
+    if (entry.expiresAt && Date.parse(entry.expiresAt) <= nowMs) {
+      try {
+        appendBridgeResolution(
+          runDir,
+          entry,
+          "expired",
+          `expired at ${entry.expiresAt}`,
+          entry.at
+        );
+        return { entry, reason: "message already expired", status: "expired" };
+      } catch {
+        return { entry, status: "queued" };
+      }
+    }
+    const targetPending = pending.filter(
+      (candidate) =>
+        candidate.target === target && candidate.id !== duplicate?.id
+    );
+    const maxOutstanding =
+      options.maxOutstanding ?? DEFAULT_BRIDGE_MAX_OUTSTANDING;
+    if (targetPending.length >= maxOutstanding) {
+      const reason = `target queue limit ${maxOutstanding} reached`;
+      try {
+        appendBridgeResolution(runDir, entry, "dead-letter", reason, entry.at);
+        return { entry, reason, status: "dead-letter" };
+      } catch {
+        return { entry, status: "queued" };
+      }
+    }
+    return { entry, status: "queued" };
+  };
+  if (!options.dedupeKey) {
+    return enqueue();
   }
-  return { entry, status: "queued" };
+  const claim = acquireBridgeDedupeClaim(
+    runDir,
+    source,
+    target,
+    options.dedupeKey
+  );
+  if (!claim) {
+    return {
+      entry,
+      reason: `dedupe claim busy for ${options.dedupeKey}`,
+      status: "deferred",
+    };
+  }
+  try {
+    return enqueue();
+  } finally {
+    releaseBridgeDedupeClaim(claim);
+  }
 };
 
 export const appendBridgeMessage = (

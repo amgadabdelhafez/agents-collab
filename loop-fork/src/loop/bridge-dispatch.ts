@@ -22,6 +22,7 @@ export interface DeliveryResult {
     | "delivered"
     | "queued"
     | "duplicate"
+    | "deferred"
     | "dead-letter"
     | "expired";
   target: BridgeTarget;

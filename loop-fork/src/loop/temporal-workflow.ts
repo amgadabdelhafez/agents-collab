@@ -5,6 +5,7 @@ import {
   setHandler,
 } from "@temporalio/workflow";
 import { governessBeatWorkflowDefinition } from "./governess-beat-workflow";
+import { supervisorMessageV2WorkflowDefinition } from "./supervisor-message-v2-runtime";
 import { supervisorMessageWorkflowDefinition } from "./supervisor-message-workflow";
 import { taskGraphWorkflowDefinition } from "./task-graph-workflow";
 import type {
@@ -85,6 +86,7 @@ const receiptKey = (kind: "cancel" | "signal", requestId: string): string =>
 const WORKFLOW_DEFINITIONS = new Map<string, WorkflowDefinition>(
   [
     governessBeatWorkflowDefinition,
+    supervisorMessageV2WorkflowDefinition,
     supervisorMessageWorkflowDefinition,
     taskGraphWorkflowDefinition,
   ].map((definition) => [definition.type, definition])

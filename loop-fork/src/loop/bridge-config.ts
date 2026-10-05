@@ -133,6 +133,8 @@ export const buildCodexBridgeConfigArgs = (
     `mcp_servers.${BRIDGE_SERVER}.command=${stringifyToml(config.command)}`,
     "-c",
     `mcp_servers.${BRIDGE_SERVER}.args=${JSON.stringify(config.args)}`,
+    "-c",
+    `mcp_servers.${BRIDGE_SERVER}.env_vars=${JSON.stringify(["LOOP_RECIPIENT_RUN_DIR", "LOOP_RECIPIENT_SEAT", "LOOP_RECIPIENT_API_URL", "LOOP_RECIPIENT_API_TOKEN"])}`,
     ...approvalArgs,
   ];
 };

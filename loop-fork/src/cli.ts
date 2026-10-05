@@ -45,6 +45,8 @@ import {
   LEGACY_GOVERNESS_SUBCOMMAND,
   withLegacyGovernessEnv,
 } from "./loop/legacy-governess-compat";
+import { MAILBOX_COMMAND, runMailboxCommand } from "./loop/mailbox-command";
+import { runMailboxSweep } from "./loop/mailbox-sweep";
 import {
   MEMORY_PROMOTE_SUBCOMMAND,
   promoteMemoryCheckpoint,
@@ -378,15 +380,16 @@ const runStoppedRunReconcileCommand = async (
   }
   const [kind, runId, ...extra] = argv.slice(1);
   if (
-    kind !== "stopped-run" ||
+    (kind !== "stopped-run" && kind !== "failed-start") ||
     !runId ||
     extra.length > 0 ||
     !CANONICAL_POSITIVE_RUN_ID_RE.test(runId)
   ) {
-    throw new Error("Usage: loop reconcile stopped-run <run-id>");
+    throw new Error("Usage: loop reconcile stopped-run|failed-start <run-id>");
   }
   const storage = resolveRunStorage(runId);
   const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {
+    terminalState: kind === "failed-start" ? "failed" : "stopped",
     now: () => new Date().toISOString(),
     pidCanStillOwnRun: (pid, stoppedAt) =>
       pidCanStillOwnRun(pid, stoppedAt, {
@@ -418,7 +421,18 @@ const runStoppedRunReconcileCommand = async (
   return true;
 };
 
+const runMailboxCliCommand = (argv: string[]): boolean => {
+  if (argv[0] !== MAILBOX_COMMAND) {
+    return false;
+  }
+  const result =
+    argv[1] === "sweep" ? runMailboxSweep(argv) : runMailboxCommand(argv);
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return true;
+};
+
 const runPreMaintenanceCommand = async (argv: string[]): Promise<boolean> =>
+  runMailboxCliCommand(argv) ||
   (await runOrchestrationCommand(argv)) ||
   (await runStoppedRunReconcileCommand(argv)) ||
   (await runSecureAgentSubcommand(argv)) ||
@@ -545,11 +559,14 @@ export const runCli = async (argv: string[]): Promise<void> => {
   try {
     const invocationCwd = process.cwd();
     const normalizedArgv = argv.length === 0 ? DEFAULT_TMUX_ARGV : argv;
-    cliDeps.gcStaleClaudeBridgeRegistrations();
-    cliDeps.gcStaleBridgeProcesses();
-    cliDeps.gcAbandonedRunProcesses();
-    // After abandoned-run GC, so the runs it just marked failed are closed too.
-    await cliDeps.reconcileGovernessBeatWorkflows();
+    // Launching a task does not grant fleet maintenance authority. Explicit
+    // maintenance opt-in retains the existing guarded cleanup implementations.
+    if (process.env.LOOP_STARTUP_MAINTENANCE === "1") {
+      cliDeps.gcStaleClaudeBridgeRegistrations();
+      cliDeps.gcStaleBridgeProcesses();
+      cliDeps.gcAbandonedRunProcesses();
+      await cliDeps.reconcileGovernessBeatWorkflows();
+    }
     await updateDeps.applyStagedUpdateOnStartup();
     if (await updateDeps.handleManualUpdateCommand(normalizedArgv)) {
       return;

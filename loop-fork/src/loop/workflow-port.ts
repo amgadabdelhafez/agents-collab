@@ -84,6 +84,7 @@ export interface WorkflowPort {
     command: WorkflowCancelCommand
   ): WorkflowResult<WorkflowCommandReceipt>;
   inspect(workflowId: string): WorkflowResult<WorkflowInspection>;
+  isClosed?(workflowId: string): WorkflowResult<boolean>;
   query(command: WorkflowQueryCommand): WorkflowResult<WorkflowQueryResult>;
   signal(
     command: WorkflowSignalCommand

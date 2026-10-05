@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/loop/a2a-sdk-conformance.ts",
+    "src/loop/a2a-postgres-task-store.ts",
+    "src/loop/a2a-supervisor-adapter.ts",
+    "src/loop/a2a-supervisor-executor.ts",
+    "src/loop/a2a-supervisor-http.ts",
+    "src/loop/a2a-supervisor-request-handler.ts",
+    "src/loop/supervisor-message-v2-contract.ts",
+    "src/loop/supervisor-message-v2-replay-fixtures.ts",
+    "tests/loop/a2a-supervisor-adapter.test.ts",
+    "tests/loop/a2a-supervisor-executor.test.ts",
+    "tests/loop/a2a-sdk-round-trip.test.ts",
+    "tests/loop/supervisor-message-v2-contract.test.ts"
+  ]
+}

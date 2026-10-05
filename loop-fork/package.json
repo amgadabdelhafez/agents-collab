@@ -17,7 +17,8 @@
     "test:ci": "for file in $(find tests -name '*.test.ts' | sort); do LOOP_TEST_CERTIFICATION_MODE=single-file bun test \"$file\" || exit 1; done",
     "release:patch": "npm version patch && git push --follow-tags",
     "check": "ultracite check",
-    "fix": "ultracite fix"
+    "fix": "ultracite fix",
+    "typecheck:a2a": "tsc -p tsconfig.a2a.json"
   },
   "bin": {
     "claude-loop": "./src/claude-loop.ts",
@@ -33,6 +34,8 @@
     "ultracite": "^7.3.2"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^1.2.0",
+    "@aws-crypto/sha256-js": "5.2.0",
     "@dagrejs/graphlib": "4.0.5",
     "@dbos-inc/dbos-sdk": "4.27.6",
     "@earendil-works/pi-ai": "0.82.1",

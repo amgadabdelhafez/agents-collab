@@ -8,7 +8,12 @@ import type {
 import { isActiveRunState, readRunManifest } from "./run-state";
 
 export interface LoopSupervisorBinding {
-  manifestPath: string;
+  // Absent for a recipient that is not a Loop run. Such a recipient has no pane
+  // to wake, so it never routes over the bridge and delivery falls through to
+  // its mailbox, which is durable but polling-only.
+  manifestPath?: string;
+  /** Explicit enrolled seat. Omitted retains the legacy primary-agent route. */
+  seat?: "claude" | "codex";
   supervisorId: string;
 }
 
@@ -28,14 +33,26 @@ const exactManifest = (manifestPath: string): string => {
 
 export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
   readonly #manifests = new Map<string, string>();
+  readonly #seats = new Map<string, "claude" | "codex">();
 
   constructor(bindings: readonly LoopSupervisorBinding[]) {
     for (const binding of bindings) {
+      if (binding.seat !== undefined) {
+        if (binding.seat !== "claude" && binding.seat !== "codex") {
+          throw new Error("supervisor seat is invalid");
+        }
+        this.#seats.set(binding.supervisorId, binding.seat);
+      }
       if (!SUPERVISOR_ID_RE.test(binding.supervisorId)) {
         throw new Error("supervisor binding identity is invalid");
       }
       if (this.#manifests.has(binding.supervisorId)) {
         throw new Error(`duplicate supervisor binding ${binding.supervisorId}`);
+      }
+      if (binding.manifestPath === undefined) {
+        // Recorded as known-but-unroutable, so a duplicate id is still caught.
+        this.#manifests.set(binding.supervisorId, "");
+        continue;
       }
       this.#manifests.set(
         binding.supervisorId,
@@ -48,6 +65,8 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
   }
 
   resolve(supervisorId: string): SupervisorBridgeRoute | undefined {
+    // "" is a registered recipient with no run: unroutable over the bridge,
+    // which is the same answer as unknown for routing purposes.
     const manifestPath = this.#manifests.get(supervisorId);
     if (!manifestPath) {
       return undefined;
@@ -60,9 +79,9 @@ export class LoopSupervisorDirectory implements SupervisorBridgeDirectory {
     if (realpathSync(join(runDir, "manifest.json")) !== manifestPath) {
       throw new Error("supervisor run manifest identity changed");
     }
-    const target = isAgent(manifest.primaryAgent)
-      ? manifest.primaryAgent
-      : undefined;
+    const target =
+      this.#seats.get(supervisorId) ??
+      (isAgent(manifest.primaryAgent) ? manifest.primaryAgent : undefined);
     const declaredAgents = new Set(
       [manifest.tmuxPaneLeftAgent, manifest.tmuxPaneRightAgent].filter(isAgent)
     );

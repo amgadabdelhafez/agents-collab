@@ -35,6 +35,7 @@ import {
   formatBridgeInbox,
   normalizeBridgeTarget,
   readBridgeEvents,
+  readBridgeStatus,
 } from "./bridge-store";
 import {
   callUtilityBridgeTool,
@@ -42,12 +43,21 @@ import {
   UTILITY_BRIDGE_TOOLS,
   UtilityBridgeInputError,
 } from "./bridge-utility";
+import {
+  clearClaudeChannelReadiness,
+  publishClaudeChannelReadiness,
+} from "./claude-channel-readiness";
 import { LOOP_VERSION } from "./constants";
 import {
   isPublicAskRunActive,
   type PublicAskPublishInput,
   publishPublicAsk,
 } from "./human-interaction-ask";
+import {
+  callRecipientApi,
+  type RecipientApiCommand,
+  recipientApiConfigured,
+} from "./recipient-api-client";
 import {
   registerRunBridgeProcess,
   unregisterRunBridgeProcess,
@@ -440,6 +450,28 @@ const handleToolCall = async (
   const name = call?.name;
   const args = isRecord(call?.arguments) ? call.arguments : {};
 
+  if (name === "recipient_task") {
+    try {
+      const result = await callRecipientApi({
+        runDir,
+        seat: source,
+        command: args as unknown as RecipientApiCommand,
+      });
+      writeJsonRpc({
+        id,
+        jsonrpc: "2.0",
+        result: toolContent(JSON.stringify(result)),
+      });
+    } catch {
+      writeError(
+        id,
+        MCP_INVALID_PARAMS,
+        "Recipient API command refused or unavailable for this enrolled seat; no completion is claimed"
+      );
+    }
+    return;
+  }
+
   if (name === "bridge_status") {
     handleBridgeStatusTool(id, runDir);
     return;
@@ -642,6 +674,33 @@ const handleBridgeRequest = async (
               },
               name: "receive_messages",
             },
+            ...(recipientApiConfigured(runDir, source, process.env)
+              ? [
+                  {
+                    name: "recipient_task",
+                    annotations: MUTATING_TOOL_ANNOTATIONS,
+                    description:
+                      "Claim or acknowledge your assigned durable task, or publish its host-bound accepted result. ACK is not work completion. Credentials stay in protected environment.",
+                    inputSchema: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["operation", "workflowId", "requestId"],
+                      properties: {
+                        operation: {
+                          type: "string",
+                          enum: ["claim", "acknowledge", "publish-result"],
+                        },
+                        workflowId: { type: "string" },
+                        requestId: { type: "string" },
+                        taskId: {
+                          type: "string",
+                          description: "Required only for publish-result.",
+                        },
+                      },
+                    },
+                  },
+                ]
+              : []),
           ],
         },
       });
@@ -809,6 +868,7 @@ export const runBridgeMcpServer = async (
   runDir: string,
   source: BridgeMcpSource
 ): Promise<void> => {
+  const channelIdentity = readBridgeStatus(runDir);
   let processRegistration: string | undefined;
   try {
     processRegistration = registerRunBridgeProcess(runDir, source);
@@ -847,6 +907,9 @@ export const runBridgeMcpServer = async (
 
   const cleanup = (): void => {
     closed = true;
+    if (source === "claude") {
+      clearClaudeChannelReadiness(runDir);
+    }
     bridgeWatcher?.close();
     bridgeWatcher = undefined;
     clearClaudeSweep();
@@ -874,6 +937,7 @@ export const runBridgeMcpServer = async (
       if (closed) {
         return;
       }
+      publishClaudeChannelReadiness(runDir, channelIdentity);
       triggerClaudeFlush();
       scheduleClaudeSweep();
     }, CLAUDE_CHANNEL_FALLBACK_SWEEP_MS);
@@ -915,6 +979,9 @@ export const runBridgeMcpServer = async (
         const handleRequest = async (): Promise<void> => {
           if (request.method === "notifications/initialized") {
             channelReady = true;
+            if (source === "claude") {
+              publishClaudeChannelReadiness(runDir, channelIdentity);
+            }
             scheduleClaudeSweep();
           }
           await handleBridgeRequest(runDir, source, request);

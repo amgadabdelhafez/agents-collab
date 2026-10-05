@@ -69,6 +69,7 @@ import {
 import type { Agent } from "./types";
 
 const CLAUDE_CHANNEL_METHOD = "notifications/claude/channel";
+const CLAUDE_CHANNEL_NOTIFICATION_RETRY_MS = 30_000;
 const CLAUDE_CHANNEL_SOURCE_TYPE = "codex";
 const CLAUDE_CHANNEL_USER_ID = "codex";
 const BRIDGE_WORKER_FILE = "bridge-worker.json";
@@ -1628,16 +1629,22 @@ export const flushClaudeChannelMessages = (
   runDir: string,
   writeJsonRpc: (payload: unknown) => void
 ): void => {
-  const status = readBridgeRuntimeStatus(runDir);
-  if (
-    status.tmuxLiveness !== "dead" &&
-    tmuxPaneForTarget(runDir, "claude") !== undefined
-  ) {
-    return;
-  }
   for (const message of readBridgeInbox(runDir, "claude")) {
+    const notifiedAt = lastBridgeNotificationAt(runDir, message.id);
+    if (
+      notifiedAt !== undefined &&
+      Date.now() - notifiedAt < CLAUDE_CHANNEL_NOTIFICATION_RETRY_MS
+    ) {
+      continue;
+    }
     writeChannelNotification(runDir, message, writeJsonRpc);
-    acknowledgeBridgeDelivery(runDir, message);
+    // A successful stdio write is not recipient consumption. receive_messages
+    // records delivery after the exact recipient reads the durable inbox.
+    markBridgeMessageNotified(
+      runDir,
+      message,
+      "sent Claude MCP channel notification"
+    );
   }
 };
 

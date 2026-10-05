@@ -903,6 +903,7 @@ interface StoppedRunReconcileDeps {
   now: () => string;
   pidCanStillOwnRun: (pid: number, stoppedAt: string) => boolean;
   runtimeAbsent: (manifestPath: string) => Promise<boolean>;
+  terminalState?: "failed" | "stopped";
 }
 
 const sameWorkspaceIdentity = (
@@ -932,6 +933,7 @@ export const reconcileLegacyStoppedRun = async (
   expectedRunId: string,
   deps: StoppedRunReconcileDeps
 ): Promise<StoppedRunReconcileResult> => {
+  const terminalState = deps.terminalState ?? "stopped";
   const read = readReservationManifest(manifestPath);
   if (!read) {
     return {
@@ -971,12 +973,12 @@ export const reconcileLegacyStoppedRun = async (
   }
   if (
     evidence.state.kind !== "valid" ||
-    evidence.state.value !== "stopped" ||
+    evidence.state.value !== terminalState ||
     evidence.status.kind !== "valid" ||
-    evidence.status.value !== "stopped"
+    evidence.status.value !== terminalState
   ) {
     return {
-      reason: "run-is-not-stopped",
+      reason: `run-is-not-${terminalState}`,
       runId: expectedRunId,
       status: "refused",
     };
