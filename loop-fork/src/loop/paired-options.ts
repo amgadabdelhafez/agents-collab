@@ -50,6 +50,10 @@ export interface PreparedRunState {
 
 export interface PreparedPairedRun {
   manifest: RunManifest;
+  // The manifest as read before preparation replaced its `pid` with this
+  // process. Recovery needs it to tell whether an earlier launcher still owns
+  // the run.
+  previousManifest?: RunManifest;
   storage: RunStorage;
 }
 
@@ -563,5 +567,5 @@ export const preparePairedRun = (
         state: "submitted",
       });
   writeRunManifest(storage.manifestPath, manifest);
-  return { manifest, storage };
+  return { manifest, previousManifest: existing, storage };
 };

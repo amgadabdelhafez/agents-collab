@@ -6750,3 +6750,275 @@ test("every LOOP_GOVERNESS_TEMPORAL_* variable read by source reaches the Govern
     [...tmuxInternals.governessTemporalEnvKeys].sort()
   );
 });
+
+// Preserved startup recovery (LOOP_RECOVER_PRESERVED_STARTUP=1) adopts a live
+// pre-charter session it did not create. These fakes never start tmux.
+const preservedRecoveryHarness = (
+  input: {
+    failSplitWindow?: boolean;
+    hasSession?: (call: number) => boolean;
+    onSpawn?: (args: string[]) => void;
+    pidCanStillOwnRun?: (pid: number, since: string) => boolean;
+    prepared?: Partial<RunManifest>;
+    previous?: Partial<RunManifest>;
+    stored?: Partial<RunManifest>;
+  } = {}
+) => {
+  const runDir = makeTempRunDir();
+  mkdirSync(join(runDir, "hooks"));
+  mkdirSync(join(runDir, "launch-charters"));
+  for (const agent of ["claude", "codex"]) {
+    writeFileSync(
+      join(runDir, "hooks", `${agent}.jsonl`),
+      `${JSON.stringify({
+        agent,
+        cwd: "/repo",
+        event: "SessionStart",
+        source: "agent-hook",
+        state: "starting",
+      })}\n`
+    );
+    writeFileSync(
+      join(runDir, "launch-charters", `${agent}-bootstrap.txt`),
+      `${agent} bootstrap\n`
+    );
+  }
+  const base: RunManifest = setRunManifestState(
+    createRunManifest({
+      claudeSessionId: "claude-snapshot",
+      codexThreadId: "codex-snapshot",
+      cwd: "/repo",
+      mode: "paired",
+      pid: process.pid,
+      repoId: "repo-123",
+      runId: "1",
+      tmuxPaneLeft: "%1",
+      tmuxPaneRight: "%2",
+      tmuxSession: "repo-loop-1",
+    }),
+    "input-required"
+  );
+  const prepared: RunManifest = { ...base, ...input.prepared };
+  const previous: RunManifest = { ...base, pid: 4242, ...input.previous };
+  const state = {
+    beatsClosed: 0,
+    calls: [] as string[][],
+    logs: [] as string[],
+    stored: { ...prepared, ...input.stored } as RunManifest,
+  };
+  const storage = {
+    manifestPath: join(runDir, "manifest.json"),
+    repoId: "repo-123",
+    runDir,
+    runId: "1",
+    storageRoot: dirname(runDir),
+    transcriptPath: join(runDir, "transcript.jsonl"),
+  };
+  let hasSessionCalls = 0;
+  let nextPane = 10;
+  const run = () =>
+    runInTmux(
+      ["--tmux"],
+      {
+        capturePane: () => "❯ ",
+        closeGovernessBeat: () => {
+          state.beatsClosed += 1;
+          return Promise.resolve(undefined);
+        },
+        closePersistentCodexSession: () => Promise.resolve(),
+        cwd: "/repo",
+        env: { LOOP_RECOVER_PRESERVED_STARTUP: "1", LOOP_UTILITY_PANE: "0" },
+        findBinary: () => true,
+        isInteractive: () => false,
+        launchArgv: ["loop"],
+        log: (line: string) => {
+          state.logs.push(line);
+        },
+        ...healthyClaudeKickoffDeps(),
+        pidCanStillOwnRun: input.pidCanStillOwnRun ?? (() => false),
+        preparePairedRun: () => ({
+          manifest: prepared,
+          previousManifest: previous,
+          storage,
+        }),
+        releasePersistentCodexSession: (): void => undefined,
+        sleep: () => Promise.resolve(),
+        spawn: (args: string[]) => {
+          state.calls.push(args);
+          input.onSpawn?.(args);
+          if (args[0] === "tmux" && args[1] === "has-session") {
+            hasSessionCalls += 1;
+            return (input.hasSession ?? (() => true))(hasSessionCalls)
+              ? { exitCode: 0, stderr: "" }
+              : { exitCode: 1, stderr: "can't find session: repo-loop-1" };
+          }
+          if (args[0] === "tmux" && args[1] === "list-panes") {
+            return { exitCode: 0, stderr: "", stdout: "%1 0\n%2 0\n" };
+          }
+          if (args[0] === "tmux" && args[1] === "split-window") {
+            if (input.failSplitWindow) {
+              return { exitCode: 1, stderr: "no space for new pane" };
+            }
+            nextPane += 1;
+            return { exitCode: 0, stderr: "", stdout: `%${nextPane}\n` };
+          }
+          return { exitCode: 0, stderr: "", stdout: "" };
+        },
+        updateRunManifest: (_path, update) => {
+          const next = update(state.stored);
+          if (next) {
+            state.stored = next;
+          }
+          return next;
+        },
+      },
+      { opts: makePairedOptions() }
+    );
+  const mutated = () =>
+    state.calls.some(
+      (args) =>
+        args[0] === "tmux" &&
+        ["split-window", "load-buffer", "paste-buffer", "send-keys"].includes(
+          args[1] ?? ""
+        )
+    );
+  return { mutated, run, runDir, state };
+};
+
+test("preserved startup recovery refuses while the original launcher pid can still own the run", async () => {
+  const owned: [number, string][] = [];
+  const harness = preservedRecoveryHarness({
+    pidCanStillOwnRun: (pid, since) => {
+      owned.push([pid, since]);
+      return pid === 4242;
+    },
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      "Preserved startup recovery refused: launcher pid 4242 can still own run 1."
+    );
+    expect(owned.some(([pid]) => pid === 4242)).toBe(true);
+    expect(owned.some(([pid]) => pid === process.pid)).toBe(false);
+    expect(harness.mutated()).toBe(false);
+    expect(harness.state.stored.state).toBe("input-required");
+    expect(harness.state.beatsClosed).toBe(0);
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("preserved startup recovery refuses while a live launch attempt still owns the run", async () => {
+  const harness = preservedRecoveryHarness({
+    pidCanStillOwnRun: (pid) => pid === 4343,
+    prepared: { launchAttemptPid: 4343 },
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      "Preserved startup recovery refused: launcher pid 4343 can still own run 1."
+    );
+    expect(harness.mutated()).toBe(false);
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("preserved startup recovery refuses when another launcher took the run after preparation", async () => {
+  const harness = preservedRecoveryHarness({
+    pidCanStillOwnRun: (pid) => pid === 5151,
+    stored: { pid: 5151 },
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      "Preserved startup recovery refused: launcher pid 5151 can still own run 1."
+    );
+    expect(harness.mutated()).toBe(false);
+    expect(harness.state.stored.pid).toBe(5151);
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("preserved startup recovery never overwrites session ids that changed after its read", async () => {
+  let harness: ReturnType<typeof preservedRecoveryHarness> | undefined;
+  harness = preservedRecoveryHarness({
+    onSpawn: (args) => {
+      if (args[1] === "select-layout" && harness) {
+        harness.state.stored = {
+          ...harness.state.stored,
+          claudeSessionId: "claude-newer",
+          codexRemoteUrl: "ws://127.0.0.1:4700/",
+          codexThreadId: "codex-newer",
+          ossSessionId: "oss-newer",
+        };
+      }
+    },
+  });
+  try {
+    await expect(harness.run()).resolves.toBe(true);
+    expect(harness.state.stored).toMatchObject({
+      claudeSessionId: "claude-newer",
+      codexRemoteUrl: "ws://127.0.0.1:4700/",
+      codexThreadId: "codex-newer",
+      ossSessionId: "oss-newer",
+      pid: process.pid,
+      state: "input-required",
+      tmuxPaneGoverness: "%11",
+      tmuxPaneLeft: "%1",
+      tmuxPaneRight: "%2",
+    });
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("a failed preserved startup recovery leaves live seats non-terminal and names manual cleanup", async () => {
+  const harness = preservedRecoveryHarness({ failSplitWindow: true });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      'Preserved startup recovery failed after modifying live tmux session "repo-loop-1"; the run was left input-required, not failed, because its seats may still be live. Manual cleanup required: tmux attach -t repo-loop-1'
+    );
+    expect(harness.state.stored.state).toBe("input-required");
+    expect(harness.state.beatsClosed).toBe(0);
+    expect(harness.state.calls.some((args) => args[1] === "kill-session")).toBe(
+      false
+    );
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("recovered preserved startup is never terminalized while its session is still live", async () => {
+  // The handoff probe reports the session gone, but the terminalization
+  // re-probe still sees it: never mark a run failed over live seats.
+  const harness = preservedRecoveryHarness({
+    hasSession: (call) => call !== 2,
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      'tmux session "repo-loop-1" exited before attach.'
+    );
+    expect(harness.state.stored.state).toBe("input-required");
+    expect(harness.state.beatsClosed).toBe(0);
+    expect(
+      harness.state.logs.some((line) =>
+        line.includes("manual cleanup required")
+      )
+    ).toBe(true);
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("recovered preserved startup still terminalizes once its session is positively gone", async () => {
+  const harness = preservedRecoveryHarness({
+    hasSession: (call) => call === 1,
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      'tmux session "repo-loop-1" exited before attach.'
+    );
+    expect(harness.state.stored.state).toBe("failed");
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});

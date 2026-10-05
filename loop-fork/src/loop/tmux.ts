@@ -83,6 +83,10 @@ import {
 } from "./hooks/settings";
 import { buildLaunchArgv } from "./launch";
 import { resolveLaunchModel } from "./launch-defaults";
+import {
+  defaultPidOwnershipDeps,
+  pidCanStillOwnRun,
+} from "./launch-reservation";
 import { withLegacyGovernessEnv } from "./legacy-governess-compat";
 import {
   CLAUDE_NATIVE_FALLBACK_PROFILE,
@@ -256,6 +260,9 @@ interface TmuxDeps {
   log: (line: string) => void;
   makeClaudeSessionId: () => string;
   nowMs: () => number;
+  // Whether a recorded launcher pid may still be the process that owned the
+  // run as of `since`; reused and ambiguous pids stay fail-closed.
+  pidCanStillOwnRun: (pid: number, since: string) => boolean;
   preparePairedRun: typeof preparePairedRun;
   // Claude's OWN project session transcript version, via
   // readClaudeTranscriptVersionFromProjects. Never <runDir>/transcript.jsonl,
@@ -1476,19 +1483,26 @@ const updatePairedManifest = (
   session: string,
   paneAgents: { left: Agent; right: Agent },
   primaryAgent: Agent,
-  paneTargets: PairedPaneTargets
+  paneTargets: PairedPaneTargets,
+  // An adopting launcher establishes no seat identity of its own, so it keeps
+  // whatever ids the manifest holds at write time instead of a stale snapshot.
+  keepCurrentIds = false
 ): void => {
   deps.updateRunManifest(storage.manifestPath, (current) =>
     touchRunManifest(
       {
         ...(current ?? manifest),
-        claudeSessionId,
-        codexAppServerPid: codexAppServerPid || undefined,
-        codexRemoteUrl: codexRemoteUrl || undefined,
-        codexThreadId,
+        ...(keepCurrentIds
+          ? {}
+          : {
+              claudeSessionId,
+              codexAppServerPid: codexAppServerPid || undefined,
+              codexRemoteUrl: codexRemoteUrl || undefined,
+              codexThreadId,
+              ossSessionId,
+            }),
         cwd: deps.cwd,
         mode: "paired",
-        ossSessionId,
         pid: process.pid,
         primaryAgent,
         tmuxSession: session,
@@ -3500,10 +3514,11 @@ const startPairedSession = async (
   deps: TmuxDeps,
   launch: PairedTmuxLaunch
 ): Promise<StartedPairedSession> => {
-  const { manifest: preparedManifest, storage } = deps.preparePairedRun(
-    launch.opts,
-    deps.cwd
-  );
+  const {
+    manifest: preparedManifest,
+    previousManifest,
+    storage,
+  } = deps.preparePairedRun(launch.opts, deps.cwd);
   let manifest = preparedManifest;
   const runBase = resolveRunBase(deps.cwd, deps, storage.runId);
   const session = buildRunName(runBase, storage.runId);
@@ -3663,6 +3678,28 @@ const startPairedSession = async (
   }
   if (existingSession.liveness === "live") {
     if (deps.env.LOOP_RECOVER_PRESERVED_STARTUP === "1") {
+      // The original launcher, a live launch attempt, or a concurrent
+      // recovery could add its own control panes and Governess to this same
+      // session. Preparation already replaced `pid` with this process, so the
+      // earlier owner is read from the pre-preparation manifest.
+      const refuseLiveLauncher = (candidate: RunManifest | undefined): void => {
+        const owner = candidate
+          ? [candidate.pid, candidate.launchAttemptPid].find(
+              (pid): pid is number =>
+                typeof pid === "number" &&
+                pid > 0 &&
+                pid !== process.pid &&
+                deps.pidCanStillOwnRun(pid, candidate.updatedAt)
+            )
+          : undefined;
+        if (owner !== undefined) {
+          throw new Error(
+            `Preserved startup recovery refused: launcher pid ${owner} can still own run ${storage.runId}.`
+          );
+        }
+      };
+      refuseLiveLauncher(previousManifest);
+      refuseLiveLauncher(manifest);
       const left = manifest.tmuxPaneLeft;
       const right = manifest.tmuxPaneRight;
       const transcript = join(storage.runDir, "transcript.jsonl");
@@ -3717,52 +3754,96 @@ const startPairedSession = async (
           "Preserved startup recovery refused new or ambiguous seat work evidence."
         );
       }
-      let targets = await createPairedPaneLayout({
-        deps,
-        governess: true,
-        leftCommand: "",
-        rightCommand: "",
-        leftPromptPath: leftPrompt,
-        rightPromptPath: rightPrompt,
-        onSessionCreated: () => {
-          /* Existing session is never re-created. */
-        },
-        paneAgents,
-        runDir: storage.runDir,
-        session,
-        existingPanes: { left, right },
+      // Re-read immediately before the first tmux mutation: another launcher
+      // may have taken the run since preparation. Returning undefined keeps
+      // this a read; nothing is written.
+      let latest: RunManifest | undefined;
+      deps.updateRunManifest(storage.manifestPath, (current) => {
+        latest = current;
+        return undefined;
       });
+      if (!latest) {
+        throw new Error(
+          "Preserved startup recovery refused: the run manifest is no longer readable."
+        );
+      }
+      refuseLiveLauncher(latest);
       const persist = (currentTargets: PairedPaneTargets) =>
         updatePairedManifest(
           deps,
           storage,
           manifest,
-          manifest.claudeSessionId ?? "",
-          manifest.codexAppServerPid,
-          manifest.codexRemoteUrl ?? "",
-          manifest.codexThreadId ?? "",
-          manifest.ossSessionId ?? "",
+          "",
+          undefined,
+          "",
+          "",
+          "",
           session,
           paneAgents,
           primaryAgent,
-          currentTargets
+          currentTargets,
+          true
         );
-      persist(targets);
-      targets = startPairedControlPanes(
-        deps,
-        launch.opts,
-        session,
-        storage.runId,
-        storage.runDir,
-        targets,
-        persist
-      );
-      persist(targets);
+      try {
+        let targets = await createPairedPaneLayout({
+          deps,
+          governess: true,
+          leftCommand: "",
+          rightCommand: "",
+          leftPromptPath: leftPrompt,
+          rightPromptPath: rightPrompt,
+          onSessionCreated: () => {
+            /* Existing session is never re-created. */
+          },
+          paneAgents,
+          runDir: storage.runDir,
+          session,
+          existingPanes: { left, right },
+        });
+        persist(targets);
+        targets = startPairedControlPanes(
+          deps,
+          launch.opts,
+          session,
+          storage.runId,
+          storage.runDir,
+          targets,
+          persist
+        );
+        persist(targets);
+      } catch (error) {
+        // This launcher never owned the session or its seats, so it neither
+        // kills them nor claims they failed. Leave the run non-terminal and
+        // name the manual cleanup a human must do.
+        const recovery = `tmux attach -t ${session}`;
+        const detail = error instanceof Error ? error.message : String(error);
+        deps.log(
+          `[loop] preserved startup recovery of "${session}" failed after modifying it (${detail}); run ${storage.runId} was not terminalized; manual cleanup required: ${recovery}`
+        );
+        throw new Error(
+          `Preserved startup recovery failed after modifying live tmux session "${session}"; the run was left input-required, not failed, because its seats may still be live. Manual cleanup required: ${recovery} (${detail})`,
+          { cause: error }
+        );
+      }
+      // Later handoff failures may only terminalize a session positively gone;
+      // a live or unknown session still holds seats this launcher never owned.
+      const terminalizeRecoveredStart = async (): Promise<
+        RunLifecycleState | "undurable"
+      > => {
+        const probe = probeHandoffSession(session, deps.spawn);
+        if (probe.liveness !== "dead") {
+          deps.log(
+            `[loop] preserved startup recovery of "${session}" did not terminalize run ${storage.runId}: session liveness is ${probe.liveness}; manual cleanup required: tmux attach -t ${session}`
+          );
+          return "undurable";
+        }
+        return await terminalizeFailedStart();
+      };
       return {
         manifestPath: storage.manifestPath,
         preserveUnknownStart,
         session,
-        terminalizeFailedStart,
+        terminalizeFailedStart: terminalizeRecoveredStart,
       };
     }
     bindPairedSessionIdentity(
@@ -4420,6 +4501,8 @@ const defaultDeps = (persistedSocket?: TmuxSocket): TmuxDeps => {
     },
     makeClaudeSessionId: () => randomUUID(),
     nowMs: () => Date.now(),
+    pidCanStillOwnRun: (pid: number, since: string) =>
+      pidCanStillOwnRun(pid, since, defaultPidOwnershipDeps),
     preparePairedRun,
     // Claude's own project transcript only. readClaudeSubmissionVersion also
     // folds in the hook journal's size:mtime, which would flip on any hook write
