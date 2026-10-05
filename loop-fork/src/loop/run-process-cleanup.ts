@@ -9,6 +9,10 @@ import { join } from "node:path";
 import { spawnSync } from "bun";
 import type { BridgeMcpSource } from "./bridge";
 import {
+  BRIDGE_SUBCOMMAND,
+  BRIDGE_WORKER_SUBCOMMAND,
+} from "./bridge-constants";
+import {
   buildManifestPath,
   isActiveRunState,
   type RunManifest,
@@ -22,7 +26,6 @@ import {
 const PROCESS_REGISTRY_DIR = "run-processes";
 const BRIDGE_PROCESS_PREFIX = "bridge-";
 const WHITESPACE_RE = /\s+/;
-const REGEX_META_RE = /[.*+?^${}()|[\]\\]/g;
 
 interface RegisteredBridgeProcess {
   kind: "bridge-mcp";
@@ -204,9 +207,18 @@ const appServerPort = (remoteUrl: string | undefined): number | undefined => {
   }
 };
 
-const commandHasExactArg = (command: string, argument: string): boolean => {
-  const escaped = argument.replace(REGEX_META_RE, "\\$&");
-  return new RegExp(`(?:^|\\s|['"])${escaped}(?=$|\\s|['"])`).test(command);
+/**
+ * `ps -o command=` joins argv with single spaces, so a runDir containing
+ * spaces cannot be recovered by splitting, and a bare substring match also
+ * accepts another run whose directory merely starts with this one. Both
+ * bridge processes are spawned with the run directory in a fixed trailing
+ * position (`<subcommand> <runDir> [source]`), so only that exact tail proves
+ * ownership; anything else is left unsignaled.
+ */
+const commandEndsWithArgs = (command: string, args: string[]): boolean => {
+  const trimmed = command.trimEnd();
+  const tail = args.join(" ");
+  return trimmed === tail || trimmed.endsWith(` ${tail}`);
 };
 
 const signalOwnedProcess = (
@@ -256,8 +268,7 @@ const cleanupRunOwnedProcessesWithDeps = (
         worker.pid,
         Boolean(
           command &&
-            commandHasExactArg(command, "__bridge-worker") &&
-            commandHasExactArg(command, runDir)
+            commandEndsWithArgs(command, [BRIDGE_WORKER_SUBCOMMAND, runDir])
         ),
         command
           ? "bridge-worker-identity-mismatch"
@@ -274,8 +285,12 @@ const cleanupRunOwnedProcessesWithDeps = (
       result,
       record.pid,
       Boolean(
-        command?.includes("__bridge-mcp") &&
-          commandHasExactArg(command, record.runDir)
+        command &&
+          commandEndsWithArgs(command, [
+            BRIDGE_SUBCOMMAND,
+            record.runDir,
+            record.source,
+          ])
       ),
       command ? "bridge-command-mismatch" : "bridge-not-running",
       deps.signal

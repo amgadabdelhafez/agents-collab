@@ -1,5 +1,6 @@
 import type { SupervisorA2AAuthenticator } from "./a2a-supervisor-http";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
+import { readBoundedRequestText } from "./bounded-request-body";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
 
 const reference = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
@@ -46,8 +47,8 @@ export const createSupervisorA2AAssignmentHttpHandler =
     ) {
       return reply(415, "json-required");
     }
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).length > 8192) {
+    const raw = await readBoundedRequestText(request, 8192);
+    if (raw === undefined) {
       return reply(413, "body-too-large");
     }
     let value: unknown;

@@ -60,6 +60,54 @@ test("teardown owns a recorded bridge worker only with exact live argv", () => {
   }
 });
 
+test("teardown binds a spaced runDir only as the exact trailing bridge argument", () => {
+  const parent = makeRunDir();
+  const runDir = join(parent, "Application Support", "run 7");
+  mkdirSync(runDir, { recursive: true });
+  const original = { ...runProcessCleanupInternals.deps };
+  const signals: number[] = [];
+  writeFileSync(
+    join(runDir, "bridge-worker.json"),
+    JSON.stringify({ pid: 4299 })
+  );
+  const worker = (command: string) => {
+    runProcessCleanupInternals.deps.commandForPid = (pid) =>
+      pid === 4299 ? command : undefined;
+    return cleanupRunOwnedProcesses(runDir, undefined).killed;
+  };
+  try {
+    runProcessCleanupInternals.deps.signal = (pid) => {
+      signals.push(pid);
+    };
+    // Another run's worker whose directory merely starts with this one.
+    expect(worker(`/opt/loop __bridge-worker ${runDir} 8`)).toEqual([]);
+    // This runDir appears, but not as the worker's run argument.
+    expect(
+      worker(`/opt/loop --cwd ${runDir} __bridge-worker ${parent}/other`)
+    ).toEqual([]);
+    expect(worker(`/opt/loop __bridge-worker${runDir}`)).toEqual([]);
+    expect(signals).toEqual([]);
+    expect(worker(`/opt/loop __bridge-worker ${runDir}`)).toEqual([4299]);
+    expect(worker(`/opt/loop __bridge-worker ${runDir}\n`)).toEqual([4299]);
+
+    rmSync(join(runDir, "bridge-worker.json"));
+    registerRunBridgeProcess(runDir, "claude", 4301);
+    runProcessCleanupInternals.deps.commandForPid = (pid) =>
+      pid === 4301 ? `/opt/loop __bridge-mcp ${runDir} 8 claude` : undefined;
+    expect(cleanupRunOwnedProcesses(runDir, undefined).skipped).toContainEqual({
+      pid: 4301,
+      reason: "bridge-command-mismatch",
+    });
+    registerRunBridgeProcess(runDir, "claude", 4301);
+    runProcessCleanupInternals.deps.commandForPid = (pid) =>
+      pid === 4301 ? `/opt/loop __bridge-mcp ${runDir} claude` : undefined;
+    expect(cleanupRunOwnedProcesses(runDir, undefined).killed).toEqual([4301]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(parent, { force: true, recursive: true });
+  }
+});
+
 test("teardown signals only bridge processes registered to the exact run", () => {
   const runDir = makeRunDir();
   const otherRun = `${runDir}-other`;
