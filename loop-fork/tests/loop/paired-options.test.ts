@@ -691,6 +691,62 @@ test("preparePairedRun upgrades an older hashed Claude bridge server name", () =
   }
 });
 
+test("preparePairedRun hands back the record it replaced so recovery can see the earlier launcher", () => {
+  const home = makeTempHome();
+  const originalHome = process.env.HOME;
+  const originalRunId = process.env.LOOP_RUN_ID;
+  process.env.HOME = home;
+  Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+
+  try {
+    const storage = resolveRunStorage("alpha", process.cwd(), home);
+    writeRunManifest(
+      storage.manifestPath,
+      createRunManifest(
+        {
+          claudeSessionId: "claude-session-1",
+          codexThreadId: "codex-thread-1",
+          cwd: process.cwd(),
+          launchAttemptPid: 4343,
+          mode: "paired",
+          pid: 4242,
+          repoId: storage.repoId,
+          runId: "alpha",
+          status: "running",
+        },
+        "2026-03-29T10:00:00.000Z"
+      )
+    );
+
+    const prepared = preparePairedRun(
+      makeOptions({ resumeRunId: "alpha" }),
+      process.cwd()
+    );
+
+    // Preparation claims the record for this process; the earlier launcher is
+    // only visible through the record it replaced.
+    expect(prepared.manifest.pid).toBe(process.pid);
+    expect(readRunManifest(storage.manifestPath)?.pid).toBe(process.pid);
+    expect(prepared.previousManifest).toMatchObject({
+      launchAttemptPid: 4343,
+      pid: 4242,
+      updatedAt: "2026-03-29T10:00:00.000Z",
+    });
+  } finally {
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, "HOME");
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalRunId === undefined) {
+      Reflect.deleteProperty(process.env, "LOOP_RUN_ID");
+    } else {
+      process.env.LOOP_RUN_ID = originalRunId;
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("preparePairedOptions ignores stored session ids from a completed paired run", () => {
   const home = makeTempHome();
   const originalHome = process.env.HOME;

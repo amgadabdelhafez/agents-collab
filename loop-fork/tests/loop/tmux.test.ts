@@ -6757,6 +6757,7 @@ const preservedRecoveryHarness = (
   input: {
     failSplitWindow?: boolean;
     hasSession?: (call: number) => boolean;
+    listPanes?: string;
     onSpawn?: (args: string[]) => void;
     pidCanStillOwnRun?: (pid: number, since: string) => boolean;
     prepared?: Partial<RunManifest>;
@@ -6835,7 +6836,10 @@ const preservedRecoveryHarness = (
           state.logs.push(line);
         },
         ...healthyClaudeKickoffDeps(),
-        pidCanStillOwnRun: input.pidCanStillOwnRun ?? (() => false),
+        // Production reports this live process as able to own the run, so the
+        // default fake does too: recovery must never refuse itself.
+        pidCanStillOwnRun:
+          input.pidCanStillOwnRun ?? ((pid) => pid === process.pid),
         preparePairedRun: () => ({
           manifest: prepared,
           previousManifest: previous,
@@ -6853,7 +6857,11 @@ const preservedRecoveryHarness = (
               : { exitCode: 1, stderr: "can't find session: repo-loop-1" };
           }
           if (args[0] === "tmux" && args[1] === "list-panes") {
-            return { exitCode: 0, stderr: "", stdout: "%1 0\n%2 0\n" };
+            return {
+              exitCode: 0,
+              stderr: "",
+              stdout: input.listPanes ?? "%1 0\n%2 0\n",
+            };
           }
           if (args[0] === "tmux" && args[1] === "split-window") {
             if (input.failSplitWindow) {
@@ -6882,7 +6890,7 @@ const preservedRecoveryHarness = (
           args[1] ?? ""
         )
     );
-  return { mutated, run, runDir, state };
+  return { mutated, previous, run, runDir, state };
 };
 
 test("preserved startup recovery refuses while the original launcher pid can still own the run", async () => {
@@ -7018,6 +7026,161 @@ test("recovered preserved startup still terminalizes once its session is positiv
       'tmux session "repo-loop-1" exited before attach.'
     );
     expect(harness.state.stored.state).toBe("failed");
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("preserved startup recovery keeps a pid ruled out by the pre-preparation record ruled out", async () => {
+  // launchAttemptPid survives a successful launch. Once the earlier record
+  // shows its pid was reused after that record, a newer updatedAt written by
+  // preparation must not turn the reused pid back into a live launcher.
+  const owned: [number, string][] = [];
+  const reusedStartMs = Date.parse("2026-01-01T00:00:00.000Z");
+  const harness = preservedRecoveryHarness({
+    pidCanStillOwnRun: (pid, since) => {
+      owned.push([pid, since]);
+      return (
+        pid === process.pid ||
+        (pid === 4343 && reusedStartMs <= Date.parse(since))
+      );
+    },
+    prepared: { launchAttemptPid: 4343 },
+    previous: {
+      launchAttemptPid: 4343,
+      updatedAt: "2025-12-31T00:00:00.000Z",
+    },
+  });
+  try {
+    await expect(harness.run()).resolves.toBe(true);
+    expect(harness.mutated()).toBe(true);
+    expect(owned).toContainEqual([4343, "2025-12-31T00:00:00.000Z"]);
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("preserved startup recovery re-reads the manifest just before its first tmux change", async () => {
+  // Another launcher takes the run after every earlier check has passed: the
+  // last read-only probe before the first split is where it lands.
+  let harness: ReturnType<typeof preservedRecoveryHarness> | undefined;
+  harness = preservedRecoveryHarness({
+    onSpawn: (args) => {
+      if (args[1] === "list-panes" && harness) {
+        harness.state.stored = {
+          ...harness.state.stored,
+          pid: 6262,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    },
+    pidCanStillOwnRun: (pid) => pid === process.pid || pid === 6262,
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      "Preserved startup recovery refused: launcher pid 6262 can still own run 1."
+    );
+    expect(harness.mutated()).toBe(false);
+    // The record now belongs to the other launcher; the refusal leaves it.
+    expect(harness.state.stored.pid).toBe(6262);
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("a refused preserved startup recovery hands the run record back to its live owner", async () => {
+  const harness = preservedRecoveryHarness({
+    pidCanStillOwnRun: (pid) => pid === process.pid || pid === 4242,
+    previous: {
+      claudeCliVersion: "2.1.100 (Claude Code)",
+      cwd: "/previous-cwd",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    },
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      "Preserved startup recovery refused: launcher pid 4242 can still own run 1."
+    );
+    expect(harness.mutated()).toBe(false);
+    // Preparation wrote this process as the owner; the refusal must not leave
+    // a record naming a process that is about to exit.
+    expect(harness.state.stored).toEqual(harness.previous);
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("a refused preserved startup recovery keeps writes another process made after preparation", async () => {
+  let harness: ReturnType<typeof preservedRecoveryHarness> | undefined;
+  harness = preservedRecoveryHarness({
+    onSpawn: (args) => {
+      if (args[1] === "list-panes" && harness) {
+        harness.state.stored = {
+          ...harness.state.stored,
+          claudeSessionId: "claude-written-by-hook",
+        };
+      }
+    },
+    // A third pane appeared, so pane ownership changed after preparation.
+    listPanes: "%1 0\n%2 0\n%9 0\n",
+    // Preparation rewrote this id too; the newer hook write still wins.
+    previous: { claudeSessionId: "claude-before-preparation" },
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      "Preserved startup recovery refused changed pane ownership."
+    );
+    expect(harness.mutated()).toBe(false);
+    expect(harness.state.stored.pid).toBe(4242);
+    expect(harness.state.stored.updatedAt).toBe(harness.previous.updatedAt);
+    expect(harness.state.stored.claudeSessionId).toBe("claude-written-by-hook");
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("a failed preserved startup recovery records the manual cleanup durably", async () => {
+  const harness = preservedRecoveryHarness({ failSplitWindow: true });
+  try {
+    await expect(harness.run()).rejects.toThrow("Manual cleanup required");
+    const entries = readFileSync(
+      join(harness.runDir, "transcript.jsonl"),
+      "utf8"
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(entries).toEqual([
+      expect.objectContaining({
+        detail: expect.stringContaining(
+          "manual cleanup required: tmux attach -t repo-loop-1"
+        ),
+        kind: "status",
+        state: "input-required",
+      }),
+    ]);
+    expect(harness.state.stored.state).toBe("input-required");
+  } finally {
+    rmSync(harness.runDir, { recursive: true, force: true });
+  }
+});
+
+test("a recovered preserved startup that cannot be terminalized records the manual cleanup durably", async () => {
+  const harness = preservedRecoveryHarness({
+    hasSession: (call) => call !== 2,
+  });
+  try {
+    await expect(harness.run()).rejects.toThrow(
+      'tmux session "repo-loop-1" exited before attach.'
+    );
+    const transcript = readFileSync(
+      join(harness.runDir, "transcript.jsonl"),
+      "utf8"
+    );
+    expect(transcript).toContain('"state":"input-required"');
+    expect(transcript).toContain(
+      "manual cleanup required: tmux attach -t repo-loop-1"
+    );
   } finally {
     rmSync(harness.runDir, { recursive: true, force: true });
   }
