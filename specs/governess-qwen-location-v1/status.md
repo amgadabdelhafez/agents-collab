@@ -2,6 +2,9 @@
 
 ## Board cleanup source and release
 
+Installed binary e026b4b906adf9ed396dad0921c1ba63f3fbf00c268d6fdbbaea67db2df872ea
+from source2a6a3f3e; prior960ebf35 bytes retained in hash-named rollback.
+
 Current cleanup aligns agent/helper model and spend cells, widens model to14
 columns while retaining total board width, moves cost/rate beside model, and
 removes repeated helper success/call/queue totals from aggregate rows. Bridge
