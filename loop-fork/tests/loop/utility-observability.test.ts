@@ -679,7 +679,7 @@ test("helper cost provenance never sums an unknown price as zero", () => {
     });
     expect(auPair.performance.averageCostUsd).toBe(0.25);
     expect(auPair.servedModel).toBe("z-ai/glm-5.2-20260901");
-    expect(utilityUsageCostText(auPair.usage)).toBe("cost $0.2500 + 1 unknown");
+    expect(utilityUsageCostText(auPair.usage)).toBe("cost $0.2500 est + 1 unknown");
     const unknownEntry = auPair.transcript.find(
       (entry) => entry.jobId === "switchyard-au-pair" && entry.usage
     );

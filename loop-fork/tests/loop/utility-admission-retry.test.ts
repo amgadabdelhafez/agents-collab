@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import {
   isGovernessProxyAdmissionRefusal,
   resolveUtilityRuntimeConfig,
@@ -259,4 +259,34 @@ test("retry keeps one original deadline and honors cancellation", async () => {
   // The retry gets what is left of the first attempt's deadline, not a fresh one.
   expect(deadline.runtimes[0]).toBeLessThanOrEqual(60_000);
   expect(deadline.runtimes[1]).toBeLessThanOrEqual(deadline.runtimes[0] ?? 0);
+});
+
+test("an oversleeping backoff never buys an attempt past the deadline", async () => {
+  const script = scripted([
+    { error: BUSY, progress: progress(1, 0) },
+    { progress: progress(1, 0) },
+  ]);
+  const reports: Progress[] = [];
+  try {
+    await expect(
+      runPiConversationWithAdmissionRetry(
+        {
+          assertActive: () => undefined,
+          config: nannyConfig({ LOOP_UTILITY_MAX_RUNTIME_MS: "10000" }),
+          onProgress: (next) => reports.push(next),
+          tierId: "utility-nanny",
+        },
+        script.attempt,
+        () => {
+          // The 100 ms wait wakes 20 s late (event-loop stall or pause).
+          setSystemTime(new Date(Date.now() + 20_000));
+          return Promise.resolve();
+        }
+      )
+    ).rejects.toThrow("runtime limit");
+  } finally {
+    setSystemTime();
+  }
+  expect(script.calls()).toBe(1);
+  expect(reports.at(-1)).toMatchObject({ admissionRetries: 1, modelCalls: 1 });
 });

@@ -2172,11 +2172,27 @@ const utilityAverageCostCell = (
     ? "?"
     : utilityUsdCell(averageCostUsd);
 
+// Known money plus a trailing "+?" that must survive the 7-column spend
+// cell: the amount is rounded to leave room for the marker.
+// Sub-dollar amounts drop the leading zero ("$.003+?").
+const partialUsdCell = (cost: number): string => {
+  let amount = String(Math.round(cost));
+  // Thresholds sit below the rounding carry so "0.9996" never prints ".000".
+  if (cost < 0.9995) {
+    amount = cost.toFixed(3).slice(1);
+  } else if (cost < 9.995) {
+    amount = cost.toFixed(2);
+  } else if (cost < 99.95) {
+    amount = cost.toFixed(1);
+  }
+  return `$${amount}+?`;
+};
+
 const utilityCostCell = (usage: UtilityObservabilityUsage): string => {
   const cost = usage.costUsd;
   const unknown = usage.costUnknownJobs > 0;
   if (cost > 0) {
-    return `${utilityUsdCell(cost)}${unknown ? "+?" : ""}`;
+    return unknown ? partialUsdCell(cost) : utilityUsdCell(cost);
   }
   if (unknown) {
     return "?";

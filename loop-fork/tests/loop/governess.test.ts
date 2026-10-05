@@ -3486,3 +3486,99 @@ test("Nanny row counts only Nanny task usage, never Governess judge inference", 
     rmSync(runDir, { force: true, recursive: true });
   }
 });
+
+test("Au Pair spend cell keeps the unknown-price marker beside small known money", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "governess-au-pair-partial-cost-"));
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  try {
+    activateUtilityEpoch(runDir, 5);
+    for (const id of ["priced-au-pair", "switchyard-au-pair"]) {
+      appendUtilityRouteRequest(
+        runDir,
+        createUtilityRouteRequest({
+          acceptanceCriteria: ["report evidence"],
+          authority: {},
+          id,
+          kind: "inspect",
+          objective: `Inspect one bounded source file for ${id}`,
+          readScope: ["src"],
+          requester: "claude",
+          requiredCapabilities: ["inspect"],
+          risk: "low",
+          writeScope: [],
+        })
+      );
+      transitionUtilityJob(runDir, id, "routed-utility", {
+        decision: {
+          reason: "utility-eligible",
+          target: "utility",
+          tierId: "utility-au-pair",
+        },
+        routeEpoch: 5,
+      });
+      claimUtilityJob(runDir, 5, {
+        jobId: id,
+        workerId: "spend-test",
+        workerPid: process.pid,
+      });
+      transitionUtilityJob(runDir, id, "running");
+      transitionUtilityJob(runDir, id, "completed", {
+        result: {
+          artifactRefs: [],
+          checks: [],
+          filesChanged: [],
+          status: "completed",
+          summary: `${id} done`,
+        },
+      });
+    }
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      [
+        {
+          costSource: "pi-catalog-rates",
+          harness: "pi-sdk",
+          jobId: "priced-au-pair",
+          modelCalls: 1,
+          provider: "openrouter",
+          tierId: "utility-au-pair",
+          toolCalls: 1,
+          usage: { cost: 0.003, inputTokens: 10, totalTokens: 12 },
+        },
+        {
+          costSource: "unknown",
+          harness: "pi-sdk",
+          jobId: "switchyard-au-pair",
+          modelCalls: 1,
+          provider: "loop-au-pair",
+          tierId: "utility-au-pair",
+          toolCalls: 1,
+          usage: { inputTokens: 10, totalTokens: 12 },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n")
+    );
+    const result = await governessTick(
+      new Map<Agent, AgentLivenessState>(),
+      baseConfig({ runDir }),
+      makeDeps(
+        {
+          ok: true,
+          verdict: { confidence: 0.9, state: "working", summary: "" },
+        },
+        clock,
+        spies
+      )
+    );
+    const auPairRow =
+      stripAnsi(result.board)
+        .split("\n")
+        .find((line) => line.startsWith(" au pair")) ?? "";
+    expect(auPairRow).toContain("$.003+?");
+    expect(auPairRow).not.toContain("…");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});

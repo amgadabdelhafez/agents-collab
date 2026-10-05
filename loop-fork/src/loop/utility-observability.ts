@@ -164,8 +164,11 @@ export const utilityUsageCostText = (
   const local = usage.costSources["local-zero-rate"] ?? 0;
   const priced =
     usage.costKnownJobs - local - (usage.costSources["not-applicable"] ?? 0);
+  // Any Pi-catalog component makes the total an estimate, not a bill.
+  const estimate =
+    (usage.costSources["pi-catalog-rates"] ?? 0) > 0 ? " est" : "";
   const parts = [
-    priced > 0 || usage.costUsd > 0 ? usd(usage.costUsd) : "",
+    priced > 0 || usage.costUsd > 0 ? `${usd(usage.costUsd)}${estimate}` : "",
     local > 0 ? `${local} local zero-rate` : "",
     unknown,
   ].filter(Boolean);

@@ -2031,6 +2031,11 @@ const runPiUtilityConversation = async (input: {
     session.dispose();
     throw new Error(`Pi exposed unexpected tools: ${active.join(",")}`);
   }
+  // Setup spent the whole remaining budget: send no model request.
+  if (Date.now() - startedAt >= input.config.maxJobRuntimeMs) {
+    session.dispose();
+    throw new Error("helper exceeded its runtime limit without completion");
+  }
   let summary = "";
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     appendJsonl(input.traceFile, {
@@ -2085,9 +2090,11 @@ const runPiUtilityConversation = async (input: {
       usage: state.usage,
     });
   });
+  // Session setup counts against the runtime budget, so an admission retry
+  // handed the remainder of one deadline cannot stretch it by setup time.
   const timer = setTimeout(
     () => stop("helper exceeded its runtime limit without completion"),
-    input.config.maxJobRuntimeMs
+    Math.max(1, startedAt + input.config.maxJobRuntimeMs - Date.now())
   );
   const cancellationTimer = setInterval(() => {
     try {
@@ -2258,6 +2265,11 @@ export const runPiConversationWithAdmissionRetry = async (
       input.onProgress(carried);
       await sleep(delay);
       input.assertActive();
+      // A late wake (event-loop stall, sleep overshoot) must not buy a fresh
+      // attempt past the job's one deadline.
+      if (Date.now() >= deadline) {
+        throw new Error("helper exceeded its runtime limit without completion");
+      }
     }
   }
 };
@@ -3268,7 +3280,10 @@ const wrapPaneText = (
       break;
     }
     const candidate = remaining.slice(0, width + 1);
-    const breakAt = Math.max(candidate.lastIndexOf(" "), 1);
+    // A long unbroken token (an absolute artifact path) is hard-broken at the
+    // width; breaking at index 1 printed it one character per row.
+    const space = candidate.lastIndexOf(" ");
+    const breakAt = space > 0 ? space : width;
     lines.push(remaining.slice(0, breakAt).trimEnd());
     remaining = remaining.slice(breakAt).trimStart();
   }
@@ -3327,13 +3342,9 @@ const renderTranscriptEntry = (
   return [
     colorPaneLine(color, head, width),
     ...(entry.usage
-      ? [
-          colorPaneLine(
-            PANE_ANSI.yellow,
-            `  ${paneUsageText(entry.usage)}`,
-            width
-          ),
-        ]
+      ? wrapPaneText(paneUsageText(entry.usage), Math.max(1, width - 2), 2).map(
+          (line) => colorPaneLine(PANE_ANSI.yellow, `  ${line}`, width)
+        )
       : []),
     ...wrapPaneText(
       paneResultText(entry.text || "—"),
@@ -3426,6 +3437,11 @@ const renderCompactTranscriptJob = (
         width
       )
     );
+    if (response.usage && lines.length < maxRows) {
+      lines.push(
+        colorPaneLine(PANE_ANSI.yellow, paneUsageText(response.usage), width)
+      );
+    }
     const detailRows = Math.max(0, maxRows - lines.length);
     lines.push(
       ...wrapPaneText(
@@ -3492,21 +3508,70 @@ const HELPER_STATE_COLOR: Record<
   running: PANE_ANSI.cyan,
 };
 
+const FULL_HEADER_MIN_ROWS = 8;
+
+const modelBaseName = (model: string): string =>
+  model.split("/").at(-1) ?? model;
+
 // Helper-task counters only: Governess judge inference never appears here.
+// Each line leads with its most important field so clipping drops the tail.
 const renderUtilityPaneHeader = (
   snapshot: UtilityObservabilitySnapshot,
   role: string,
   configuredModel: string,
-  width: number
+  width: number,
+  maxRows: number
 ): string[] => {
   const usage = snapshot.usage;
-  const state = `${role.toUpperCase()} ${snapshot.helperState} · ${snapshot.active} running ${snapshot.queued} queued ${snapshot.completed} done ${snapshot.failed} failed`;
-  const totals = `${usage.modelCalls} calls ${usage.toolCalls} tools · in ${paneTokens(usage.inputTokens)} cache ${paneTokens(usage.cachedInputTokens)} out ${paneTokens(usage.outputTokens)} · ${utilityUsageCostText(usage)}`;
-  const model = `model ${snapshot.model ?? configuredModel}${snapshot.servedModel ? ` · served ${snapshot.servedModel}` : ""}`;
+  const stateColor = HELPER_STATE_COLOR[snapshot.helperState];
+  // Context-insufficient escalations are neither done nor failed; count them
+  // so the header accounts for every finished job.
+  const context = snapshot.contextInsufficient
+    ? ` ${snapshot.contextInsufficient} context`
+    : "";
+  const counts = `${snapshot.completed} done ${snapshot.failed} failed${context} ${snapshot.active} running ${snapshot.queued} queued`;
+  const tokens = `in ${paneTokens(usage.inputTokens)} cache ${paneTokens(usage.cachedInputTokens)} out ${paneTokens(usage.outputTokens)}`;
+  const requested = snapshot.model ?? configuredModel;
+  if (maxRows < FULL_HEADER_MIN_ROWS) {
+    const served = snapshot.servedModel
+      ? ` served ${modelBaseName(snapshot.servedModel)}`
+      : "";
+    // Zero in-flight counts are implied by the state word; omit them here.
+    const compactCounts = [
+      `${snapshot.completed} done ${snapshot.failed} failed${context}`,
+      ...(snapshot.active ? [`${snapshot.active} running`] : []),
+      ...(snapshot.queued ? [`${snapshot.queued} queued`] : []),
+    ].join(" ");
+    return [
+      colorPaneLine(
+        stateColor,
+        `${role.toUpperCase()} ${snapshot.helperState} · ${utilityUsageCostText(usage)} · ${compactCounts}`,
+        width
+      ),
+      colorPaneLine(
+        PANE_ANSI.yellow,
+        `${usage.modelCalls} calls ${usage.toolCalls} tools · ${tokens} · ${modelBaseName(requested)}${served}`,
+        width
+      ),
+    ].slice(0, maxRows <= 2 ? 1 : 2);
+  }
+  const wrapped = (color: string, text: string): string[] =>
+    wrapPaneText(text, width, 2).map((line) =>
+      colorPaneLine(color, line, width)
+    );
   return [
-    colorPaneLine(HELPER_STATE_COLOR[snapshot.helperState], state, width),
-    colorPaneLine(PANE_ANSI.yellow, totals, width),
-    colorPaneLine(PANE_ANSI.dim, model, width),
+    ...wrapped(
+      stateColor,
+      `${role.toUpperCase()} ${snapshot.helperState} · ${counts}`
+    ),
+    ...wrapped(
+      PANE_ANSI.yellow,
+      `${usage.modelCalls} calls ${usage.toolCalls} tools · ${tokens} · ${utilityUsageCostText(usage)}`
+    ),
+    ...wrapped(
+      PANE_ANSI.dim,
+      `model ${requested}${snapshot.servedModel ? ` · served ${snapshot.servedModel}` : ""}`
+    ),
   ];
 };
 
@@ -3525,15 +3590,15 @@ export const renderUtilityPane = (
   const paneSnapshot = { ...snapshot, transcript: workerTranscript };
   const width = paneWidth(env, viewport);
   const maxRows = paneRows(env, viewport);
-  const header =
-    viewport.tierId && maxRows >= 8
-      ? renderUtilityPaneHeader(
-          snapshot,
-          utilityRoleName(viewport.tierId),
-          configuredModel,
-          width
-        )
-      : [];
+  const header = viewport.tierId
+    ? renderUtilityPaneHeader(
+        snapshot,
+        utilityRoleName(viewport.tierId),
+        configuredModel,
+        width,
+        maxRows
+      )
+    : [];
   return [
     ...header,
     ...renderUtilityTranscript(paneSnapshot, width, maxRows - header.length),

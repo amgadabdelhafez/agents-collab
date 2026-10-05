@@ -1306,3 +1306,67 @@ test("Nanny waits out a judge-proxy admission refusal and records it truthfully"
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test("Pi session setup counts against the runtime budget before any model request", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-slow-setup-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-slow-setup");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(repoRoot, "src", "sample.ts"), "export const n = 1;\n");
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return source-backed evidence"],
+    authority: {},
+    executionProfile: "search",
+    id: "pi-slow-setup-job",
+    kind: "inspect",
+    objective: "Find the declared value",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 93);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 93,
+  });
+  let requests = 0;
+  const server = serve({
+    fetch: () => {
+      requests += 1;
+      return new Response("unexpected", { status: 500 });
+    },
+    port: 0,
+  });
+  servers.push(server);
+  try {
+    // A 1 ms budget is always spent by Pi session setup.
+    await runUtilityWorker(runDir, 93, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      LOOP_NANNY_MODEL: "fake-nanny",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+      LOOP_UTILITY_MAX_RUNTIME_MS: "1",
+    });
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: {
+        blocker: "helper exceeded its runtime limit without completion",
+        status: "failed",
+      },
+      state: "failed",
+    });
+    expect(requests).toBe(0);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});

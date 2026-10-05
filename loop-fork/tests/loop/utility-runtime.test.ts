@@ -3440,7 +3440,7 @@ test("dedicated helper panes show state, task usage and labelled cost", () => {
     )
       .split("\n")
       .map(visiblePane);
-    expect(nanny[0]).toBe("NANNY failed · 0 running 0 queued 0 done 1 failed");
+    expect(nanny[0]).toBe("NANNY failed · 0 done 1 failed 0 running 0 queued");
     expect(nanny[1]).toBe(
       "3 calls 0 tools · in 0 cache 0 out 0 · cost 1 local zero-rate"
     );
@@ -3459,13 +3459,160 @@ test("dedicated helper panes show state, task usage and labelled cost", () => {
       .split("\n")
       .map(visiblePane);
     expect(auPair[0]).toBe(
-      "AU PAIR completed · 0 running 0 queued 1 done 0 failed"
+      "AU PAIR completed · 1 done 0 failed 0 running 0 queued"
     );
     expect(auPair[1]).toBe(
       "4 calls 3 tools · in 5k cache 2k out 700 · cost 1 unknown"
     );
     expect(auPair.join("\n")).toContain("· cost unknown");
     expect(auPair.join("\n")).not.toContain("$0");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("live-size helper panes keep state, usage and cost provenance at 68 columns", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-pane-live-size-"));
+  const patchPath =
+    "/private/tmp/helper-observability-routing-v1/.loop/utility-artifacts/53052bc0-701c-4243-ae36-131d54d05f43/9a8c9df8-d914-470d-a579-4e1a4eed239f.patch";
+  try {
+    activateUtilityEpoch(runDir, 6);
+    const seed = (
+      id: string,
+      tierId: "utility-au-pair" | "utility-nanny",
+      summary: string
+    ): void => {
+      appendUtilityRouteRequest(
+        runDir,
+        createUtilityRouteRequest({
+          acceptanceCriteria: ["report evidence"],
+          authority: {},
+          id,
+          kind: "inspect",
+          objective: `Inspect one bounded source file for ${id}`,
+          readScope: ["src"],
+          requester: "claude",
+          requiredCapabilities: ["inspect"],
+          risk: "low",
+          writeScope: [],
+        })
+      );
+      transitionUtilityJob(runDir, id, "routed-utility", {
+        decision: { reason: "utility-eligible", target: "utility", tierId },
+        routeEpoch: 6,
+      });
+      claimUtilityJob(runDir, 6, {
+        jobId: id,
+        workerId: "pane-size-test",
+        workerPid: process.pid,
+      });
+      transitionUtilityJob(runDir, id, "running");
+      transitionUtilityJob(runDir, id, "completed", {
+        result: {
+          artifactRefs: [],
+          checks: [],
+          filesChanged: [],
+          paneSummary: summary,
+          status: "completed",
+          summary,
+        },
+      });
+    };
+    seed(
+      "au-pair-patch",
+      "utility-au-pair",
+      `Validated patch d6f772aecda16f84185c05d391a7f275d4ca51866c4066aa4a2ba32504a21a71 at ${patchPath}`
+    );
+    seed("nanny-read", "utility-nanny", "Needle found in src/sample.ts.");
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      [
+        {
+          costSource: "pi-catalog-rates",
+          harness: "pi-sdk",
+          jobId: "au-pair-patch",
+          model: "z-ai/glm-5.2",
+          modelCalls: 17,
+          provider: "openrouter",
+          tierId: "utility-au-pair",
+          toolCalls: 27,
+          usage: {
+            cachedInputTokens: 158_016,
+            cost: 0.105_666,
+            inputTokens: 218_563,
+            outputTokens: 18_029,
+            totalTokens: 236_592,
+          },
+        },
+        {
+          costSource: "local-zero-rate",
+          harness: "pi-sdk",
+          jobId: "nanny-read",
+          model: "mlx-community/Qwen3.6-35B-A3B-4bit",
+          modelCalls: 8,
+          provider: "loop-nanny",
+          servedModel: "qwen3.6-35b-a3b-vl",
+          tierId: "utility-nanny",
+          toolCalls: 10,
+          usage: {
+            cachedInputTokens: 48_006,
+            cost: 0,
+            inputTokens: 57_344,
+            outputTokens: 485,
+            totalTokens: 57_829,
+          },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n")
+    );
+    const render = (
+      tierId: "utility-au-pair" | "utility-nanny",
+      rows: number
+    ): string[] =>
+      renderUtilityPane(
+        runDir,
+        { LOOP_UTILITY_API_KEY_FILE: "" },
+        { columns: 68, rows, tierId }
+      )
+        .split("\n")
+        .map(visiblePane);
+
+    // Run43 Au Pair pane %61 is 68x3.
+    const auPair = render("utility-au-pair", 3);
+    expect(auPair).toHaveLength(3);
+    expect(auPair.every((line) => line.length <= 68)).toBe(true);
+    expect(auPair[0]).toBe(
+      "AU PAIR completed · cost $0.1057 est · 1 done 0 failed"
+    );
+    expect(auPair[1]).toBe(
+      "17 calls 27 tools · in 219k cache 158k out 18k · glm-5.2"
+    );
+
+    // Run43 Nanny pane %62 is 68x13.
+    const nanny = render("utility-nanny", 13);
+    expect(nanny.length).toBeLessThanOrEqual(13);
+    expect(nanny.every((line) => line.length <= 68)).toBe(true);
+    expect(nanny[0]).toBe(
+      "NANNY completed · 1 done 0 failed 0 running 0 queued"
+    );
+    expect(nanny[1]).toBe(
+      "8 calls 10 tools · in 57k cache 48k out 485 · cost 1 local zero-rate"
+    );
+    expect(nanny.join("\n")).toContain("served qwen3.6-35b-a3b-vl");
+    expect(nanny.join("\n")).toContain("local zero-rate");
+
+    // A taller Au Pair pane keeps the full per-job provenance (wrapped, not
+    // clipped) and the whole patch path, hard-wrapped instead of one
+    // character per row.
+    const tall = render("utility-au-pair", 20);
+    expect(tall.every((line) => line.length <= 68)).toBe(true);
+    const text = tall.map((line) => line.trim()).join(" ");
+    expect(text).toContain("$0.1057 est (Pi catalog rates)");
+    expect(tall.join("")).toContain(
+      "d6f772aecda16f84185c05d391a7f275d4ca51866c4066aa4a2ba32504a21a71"
+    );
+    expect(tall.filter((line) => line.trim().length === 1)).toEqual([]);
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
