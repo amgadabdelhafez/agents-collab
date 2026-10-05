@@ -12,7 +12,10 @@ import { Connection, WorkflowClient } from "@temporalio/client";
 import { NativeConnection } from "@temporalio/worker";
 import { serve } from "bun";
 import { readBridgeStatus } from "./bridge-store";
-import { BridgeSupervisorMessageDeliveryPort } from "./bridge-supervisor-message-delivery";
+import {
+  BridgeSupervisorMessageDeliveryPort,
+  type SupervisorBridgeDirectory,
+} from "./bridge-supervisor-message-delivery";
 import {
   createGitResultArtifactVerifier,
   type GitResultArtifactBinding,
@@ -113,7 +116,7 @@ interface WakeConfig {
   intervalMs: number;
 }
 
-interface A2AV2Config {
+export interface A2AV2Config {
   databaseUrlEnv: string;
   endpointRef: string;
   policy: {
@@ -668,23 +671,56 @@ const a2aAuthenticator = (
   },
 });
 
-const enrollConfiguredA2AV2Session = async (input: {
+interface A2AV2EnrollmentInput {
   config: A2AV2Config;
-  directory: LoopSupervisorDirectory;
+  directory: SupervisorBridgeDirectory;
   now: () => string;
-  service: SupervisorA2AV2Service;
-}): Promise<void> => {
-  const scope = {
-    principal: input.config.principal,
-    tenantId: input.config.tenant,
-  };
+  service: Pick<
+    SupervisorA2AV2Service,
+    "currentSession" | "rebindSession" | "registerSession"
+  >;
+  status?: typeof readBridgeStatus;
+}
+
+interface ObservedA2AV2Session {
+  endpointDigest: string;
+  provider: SupervisorSessionDescriptorV2["provider"];
+  sessionRef: string;
+}
+
+// Losing a race is retried against the re-read revision, at most this often.
+const ENROLLMENT_ATTEMPTS = 3;
+const ENROLLMENT_RETRY_MS = 5000;
+
+/**
+ * A descriptor is renewed once less than half its lifetime remains, so the
+ * renewal lands while deliveries are still accepted instead of after
+ * `assertReady` has begun refusing them as expired.
+ */
+const enrolledAs = (
+  current: SupervisorSessionDescriptorV2 | undefined,
+  observed: ObservedA2AV2Session,
+  config: A2AV2Config,
+  now: string
+): boolean =>
+  current !== undefined &&
+  current.endpointDigest === observed.endpointDigest &&
+  current.endpointRef === config.endpointRef &&
+  current.provider === observed.provider &&
+  current.sessionRef === observed.sessionRef &&
+  Date.parse(current.expiresAt) - Date.parse(now) >
+    Math.floor(config.sessionTtlMs / 2);
+
+const observeConfiguredA2AV2Session = async (
+  input: Pick<A2AV2EnrollmentInput, "config" | "directory" | "status">
+): Promise<ObservedA2AV2Session> => {
   const route = await input.directory.resolve(input.config.recipient);
   if (!route || (route.target !== "codex" && route.target !== "claude")) {
     throw new Error(
       "configured A2A V2 recipient has no supported provider route"
     );
   }
-  const status = readBridgeStatus(route.runDir);
+  const status = (input.status ?? readBridgeStatus)(route.runDir);
   const endpoint =
     route.target === "codex"
       ? status.codexRemoteUrl
@@ -696,47 +732,138 @@ const enrollConfiguredA2AV2Session = async (input: {
   if (!(endpoint && sessionId)) {
     throw new Error("configured A2A V2 recipient session is unavailable");
   }
-  const issuedAt = input.now();
-  const endpointDigest = createHash("sha256").update(endpoint).digest("hex");
-  const current = await input.service.currentSession(
-    scope,
-    input.config.recipient
-  );
-  const sameLiveSession =
-    current &&
-    current.endpointDigest === endpointDigest &&
-    current.endpointRef === input.config.endpointRef &&
-    current.provider === provider &&
-    current.sessionRef === `session:${sessionId}` &&
-    current.expiresAt > issuedAt;
-  if (sameLiveSession) {
-    return;
-  }
-  const descriptor: SupervisorSessionDescriptorV2 = {
-    descriptorId: deriveSupervisorSessionDescriptorV2Id(
+  return {
+    endpointDigest: createHash("sha256").update(endpoint).digest("hex"),
+    provider,
+    sessionRef: `session:${sessionId}`,
+  };
+};
+
+/**
+ * Registers, renews, or rebinds one configured seat's session descriptor
+ * through the store's governed register/rebind path. Another server instance
+ * enrolling the same seat at the same moment is not an error: a failed write is
+ * followed by a re-read, and the result converges on whatever the winner wrote
+ * when it already describes this seat, or retries against the new revision.
+ * A failure with no competing write (a denial, a conflict) is still thrown.
+ */
+export const enrollConfiguredA2AV2Session = async (
+  input: A2AV2EnrollmentInput
+): Promise<SupervisorSessionDescriptorV2> => {
+  const scope = {
+    principal: input.config.principal,
+    tenantId: input.config.tenant,
+  };
+  const observed = await observeConfiguredA2AV2Session(input);
+  let failure: { error: unknown; revision: number } | undefined;
+  for (let attempt = 0; attempt < ENROLLMENT_ATTEMPTS; attempt += 1) {
+    const issuedAt = input.now();
+    const current = await input.service.currentSession(
       scope,
       input.config.recipient
-    ),
-    endpointDigest,
-    endpointRef: input.config.endpointRef,
-    expiresAt: new Date(
-      Date.parse(issuedAt) + input.config.sessionTtlMs
-    ).toISOString(),
-    issuedAt,
-    principal: scope.principal,
-    provider,
-    recipient: input.config.recipient,
-    revision: current ? current.revision + 1 : 1,
-    schema: "supervisor-session-descriptor.v2",
-    sessionRef: `session:${sessionId}`,
-    tenantId: scope.tenantId,
-  };
-  if (current) {
-    await input.service.rebindSession(scope, descriptor);
-  } else {
-    await input.service.registerSession(scope, descriptor);
+    );
+    if (current && enrolledAs(current, observed, input.config, issuedAt)) {
+      return current;
+    }
+    const revision = current?.revision ?? 0;
+    if (failure && failure.revision === revision) {
+      throw failure.error;
+    }
+    const descriptor: SupervisorSessionDescriptorV2 = {
+      descriptorId: deriveSupervisorSessionDescriptorV2Id(
+        scope,
+        input.config.recipient
+      ),
+      endpointDigest: observed.endpointDigest,
+      endpointRef: input.config.endpointRef,
+      expiresAt: new Date(
+        Date.parse(issuedAt) + input.config.sessionTtlMs
+      ).toISOString(),
+      issuedAt,
+      principal: scope.principal,
+      provider: observed.provider,
+      recipient: input.config.recipient,
+      revision: revision + 1,
+      schema: "supervisor-session-descriptor.v2",
+      sessionRef: observed.sessionRef,
+      tenantId: scope.tenantId,
+    };
+    try {
+      return current
+        ? (await input.service.rebindSession(scope, descriptor)).descriptor
+        : await input.service.registerSession(scope, descriptor);
+    } catch (error) {
+      failure = { error, revision };
+    }
   }
+  throw failure?.error;
 };
+
+/**
+ * Keeps every configured seat's descriptor current for the life of the
+ * server, not only at start: it renews before expiry and rebinds when a Codex
+ * thread or Claude session restarts. It owns no timer; the server's existing
+ * reconciliation sweep calls `maintain()`. Between writes it compares the
+ * seat's bridge status with the descriptor it last enrolled, so a quiet sweep
+ * reads local files only. A failed seat is retried after a short delay.
+ */
+export class ConfiguredA2AV2SessionEnrollment {
+  readonly #enrolled = new Map<string, SupervisorSessionDescriptorV2>();
+  readonly #input: A2AV2EnrollmentInput;
+  readonly #recipients: readonly string[];
+  readonly #retryAt = new Map<string, number>();
+
+  constructor(input: A2AV2EnrollmentInput & { recipients: readonly string[] }) {
+    const { recipients, ...enrollment } = input;
+    this.#input = enrollment;
+    this.#recipients = recipients;
+  }
+
+  async maintain(): Promise<void> {
+    let failure: { error: unknown } | undefined;
+    for (const recipient of this.#recipients) {
+      const now = this.#input.now();
+      if (Date.parse(now) < (this.#retryAt.get(recipient) ?? 0)) {
+        continue;
+      }
+      const input = {
+        ...this.#input,
+        config: { ...this.#input.config, recipient },
+      };
+      try {
+        if (
+          enrolledAs(
+            this.#enrolled.get(recipient),
+            await observeConfiguredA2AV2Session(input),
+            input.config,
+            now
+          )
+        ) {
+          continue;
+        }
+        this.#enrolled.set(
+          recipient,
+          await enrollConfiguredA2AV2Session(input)
+        );
+        this.#retryAt.delete(recipient);
+      } catch (error) {
+        this.#enrolled.delete(recipient);
+        this.#retryAt.set(
+          recipient,
+          Date.parse(now) +
+            Math.min(
+              ENROLLMENT_RETRY_MS,
+              Math.floor(input.config.sessionTtlMs / 4)
+            )
+        );
+        failure ??= { error };
+      }
+    }
+    if (failure) {
+      throw failure.error;
+    }
+  }
+}
 
 export const configuredA2AV2RebindAuthority = (
   config: A2AV2Config,
@@ -775,6 +902,7 @@ const createDefaultRuntimeHost = async (input: {
   mailboxes: ReadonlyMap<string, string>;
   nativeConnection: NativeConnection;
 }): Promise<{
+  a2aV2Enrollment?: ConfiguredA2AV2SessionEnrollment;
   a2aV2Service: SupervisorA2AV2Service | undefined;
   host: TemporalSupervisorRuntimeHost;
 }> => {
@@ -906,30 +1034,30 @@ const createDefaultRuntimeHost = async (input: {
     supervisorId: a2aConfig.recipient,
   });
   try {
-    await enrollConfiguredA2AV2Session({
-      config: a2aConfig,
-      directory: input.directory,
-      now: () => new Date().toISOString(),
-      service: a2aV2Service,
-    });
     const recipientBinding = input.config.supervisors.find(
       (entry) => entry.supervisorId === a2aConfig.recipient
     );
-    for (const peer of input.config.supervisors) {
-      if (
-        peer.seat &&
-        peer.supervisorId !== a2aConfig.recipient &&
-        peer.manifestPath === recipientBinding?.manifestPath
-      ) {
-        await enrollConfiguredA2AV2Session({
-          config: { ...a2aConfig, recipient: peer.supervisorId },
-          directory: input.directory,
-          now: () => new Date().toISOString(),
-          service: a2aV2Service,
-        });
-      }
-    }
-    return { a2aV2Service, host: a2aV2Service.host };
+    const a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
+      config: a2aConfig,
+      directory: input.directory,
+      now: () => new Date().toISOString(),
+      recipients: [
+        a2aConfig.recipient,
+        ...input.config.supervisors
+          .filter(
+            (peer) =>
+              peer.seat &&
+              peer.supervisorId !== a2aConfig.recipient &&
+              peer.manifestPath === recipientBinding?.manifestPath
+          )
+          .map((peer) => peer.supervisorId),
+      ],
+      service: a2aV2Service,
+    });
+    // Start still refuses an unenrollable seat; afterwards the reconciliation
+    // sweep keeps the enrollment current.
+    await a2aV2Enrollment.maintain();
+    return { a2aV2Enrollment, a2aV2Service, host: a2aV2Service.host };
   } catch (error) {
     await a2aV2Service.close().catch(() => undefined);
     throw error;
@@ -978,6 +1106,7 @@ export const runLoopOrchestrationServer = async (
   let deadlineTimer: ReturnType<typeof setInterval> | undefined;
   let wakeTimer: ReturnType<typeof setInterval> | undefined;
   let a2aV2Service = options.a2aV2Service;
+  let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   let reconciliationHealthy = false;
   let reconciliationRunning = false;
@@ -997,6 +1126,7 @@ export const runLoopOrchestrationServer = async (
         mailboxes,
         nativeConnection,
       });
+      a2aV2Enrollment = created.a2aV2Enrollment;
       a2aV2Service = created.a2aV2Service;
       host = created.host;
     }
@@ -1043,6 +1173,15 @@ export const runLoopOrchestrationServer = async (
         reconciliationHealthy = false;
         console.error(
           `orchestration bridge reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      }
+      // Same sweep, separate verdict: a seat that cannot be enrolled right now
+      // is logged and retried, and does not mark bridge reconciliation down.
+      try {
+        await a2aV2Enrollment?.maintain();
+      } catch (error) {
+        console.error(
+          `orchestration A2A V2 session enrollment failed: ${error instanceof Error ? error.message : "unknown error"}`
         );
       } finally {
         reconciliationRunning = false;
