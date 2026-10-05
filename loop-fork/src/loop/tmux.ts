@@ -2412,6 +2412,39 @@ interface ClaudeModalStability {
 const CLAUDE_SELECTED_ROW_RE = /^\s*❯(?:\s|$)/;
 const RECOVERY_PANE_ID_RE = /^%\d+$/;
 
+// The compatibility transcript is only a bridge mirror. A seat may have begun
+// a turn without sending a bridge message, so absence of mirror bytes is not
+// pre-charter evidence. Require one positively readable startup-only hook per
+// seat; missing, malformed, repeated or work-bearing records are ambiguous.
+const startupHooksOnly = (manifest: RunManifest, runDir: string): boolean => {
+  try {
+    return ["claude", "codex"].every((agent) => {
+      const lines = readFileSync(
+        join(runDir, "hooks", `${agent}.jsonl`),
+        "utf8"
+      )
+        .trim()
+        .split(LINE_SPLIT_RE);
+      if (lines.length !== 1 || !lines[0]) {
+        return false;
+      }
+      const record = JSON.parse(lines[0]);
+      return (
+        record !== null &&
+        typeof record === "object" &&
+        !Array.isArray(record) &&
+        record.agent === agent &&
+        record.cwd === manifest.cwd &&
+        record.event === "SessionStart" &&
+        record.state === "starting" &&
+        record.source === "agent-hook"
+      );
+    });
+  } catch {
+    return false;
+  }
+};
+
 const preservedStartupEligible = (
   manifest: RunManifest,
   runDir: string
@@ -2427,6 +2460,7 @@ const preservedStartupEligible = (
         RECOVERY_PANE_ID_RE.test(right) &&
         left !== right
     ) &&
+    startupHooksOnly(manifest, runDir) &&
     !existsSync(join(runDir, "governess-control.jsonl")) &&
     !(
       existsSync(join(runDir, "transcript.jsonl")) &&
@@ -3649,6 +3683,11 @@ const startPairedSession = async (
       ) {
         throw new Error(
           "Preserved startup recovery refused changed pane ownership."
+        );
+      }
+      if (!preservedStartupEligible(manifest, storage.runDir)) {
+        throw new Error(
+          "Preserved startup recovery refused new or ambiguous seat work evidence."
         );
       }
       let targets = await createPairedPaneLayout({
