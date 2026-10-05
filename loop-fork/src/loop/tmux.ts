@@ -2420,7 +2420,13 @@ const activeClaudeModalTail = (text: string, marker: string): string[] => {
   const lines = text.split(LINE_SPLIT_RE).map(stripDimSpans);
   let markerIndex = -1;
   for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index]?.includes(marker)) {
+    // Narrow panes wrap the warning heading across terminal rows. Match only
+    // the complete marker in a bounded adjacent-row window, never a prefix.
+    if (
+      normalizePaneText(lines.slice(index, index + 3).join("\n")).includes(
+        marker
+      )
+    ) {
       markerIndex = index;
     }
   }

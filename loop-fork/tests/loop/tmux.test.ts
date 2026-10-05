@@ -3460,11 +3460,13 @@ test("runInTmux auto-confirms Claude startup prompts in paired mode", async () =
   let startupStage: "bypass-accept" | "bypass-exit" | "dev" | "ready" = "dev";
   // Synthetic unit-only variant; producer-shape certification uses the captured fixture above.
   const syntheticDevChannelsPrompt = [
-    "WARNING: Loading development channels",
+    "WARNING: Loading development",
+    "channels",
     "",
     "--dangerously-load-development-channels is for local channel development only.",
     "",
-    "❯ 1. I am using this for local development",
+    "❯ 1. I am using this for local",
+    "development",
   ].join("\n");
   const bypassExitPrompt = [
     "WARNING: Claude Code running in Bypass Permissions mode",
