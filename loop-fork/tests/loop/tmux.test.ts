@@ -291,6 +291,9 @@ test("governess env passes provided helper-tier settings and omits absent settin
       LOOP_AU_PAIR_MODEL: "openai/gpt-5-mini",
       LOOP_AU_PAIR_URL: "http://switchyard.test/v1",
       LOOP_NANNY_URL: "http://nanny.test/v1",
+      LOOP_GOVERNESS_MODEL_LABEL: "Qwen3.8 27B 4-bit",
+      LOOP_GOVERNESS_COMPUTE_LABEL: "GPU / Metal",
+      LOOP_GOVERNESS_HOST_LABEL: "sweetmac14",
       LOOP_UTILITY_ALLOWED_TIERS: "nanny,au-pair",
     },
     "/repo"
@@ -299,6 +302,9 @@ test("governess env passes provided helper-tier settings and omits absent settin
   expect(environment).toContain("LOOP_AU_PAIR_URL=http://switchyard.test/v1");
   expect(environment).toContain("LOOP_AU_PAIR_MODEL=openai/gpt-5-mini");
   expect(environment).toContain("LOOP_NANNY_URL=http://nanny.test/v1");
+  expect(environment).toContain("LOOP_GOVERNESS_MODEL_LABEL=Qwen3.8 27B 4-bit");
+  expect(environment).toContain("LOOP_GOVERNESS_COMPUTE_LABEL=GPU / Metal");
+  expect(environment).toContain("LOOP_GOVERNESS_HOST_LABEL=sweetmac14");
   expect(environment).toContain("LOOP_UTILITY_ALLOWED_TIERS=nanny,au-pair");
   expect(
     environment.some((entry) => entry.startsWith("LOOP_NANNY_MODEL="))
