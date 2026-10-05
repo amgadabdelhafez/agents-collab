@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "../../src/loop/args";
 import { buildLoopCodexConfig } from "../../src/loop/codex-home";
+import { DEFAULT_CODEX_MODEL } from "../../src/loop/constants";
 import { restoreSavedLaunchDefaults } from "../../src/loop/launch-defaults";
 import { reservePairedLaunch } from "../../src/loop/launch-reservation";
 import { preparePairedRun } from "../../src/loop/paired-options";
@@ -157,7 +158,7 @@ test("environment model and efforts override launch defaults and CLI still wins"
   expect(overridden.reviewerEffort).toBe("low");
 });
 
-const savedManifest = (seatModels?: { claude: string; codex: string }) =>
+const savedManifest = (seatModels?: { claude?: string; codex: string }) =>
   createRunManifest({
     cwd: "/repo",
     mode: "paired",
@@ -288,6 +289,7 @@ test("fresh launch reservation keeps selected defaults through real paired prepa
     const reserved = readRunManifest(claim.storage.manifestPath);
     expect(reserved?.seatModels?.codex).toBe("gpt-6.1-sol");
     expect(reserved?.seatModels?.claude).toBe("claude-sonnet-5-5");
+    expect(reserved?.seatModelsDriver).toBe("codex");
     expect(reserved?.driverEffort).toBe("low");
     expect(reserved?.reviewerEffort).toBe("medium");
     preparePairedRun(opts);
@@ -320,4 +322,103 @@ test("foreground default models and generic effort stay at legacy defaults", () 
   ]);
   expect(resolveModel("codex", explicit, "work")).toBe("gpt-6.1-sol");
   expect(resolveModel("claude", explicit, "review")).toBe("claude-sonnet-5-5");
+});
+
+test("resume after a role swap restores each saved model only to the role it held", () => {
+  const home = mkdtempSync(join(tmpdir(), "loop-launch-swap-"));
+  const environment = { ...process.env };
+  process.env.HOME = home;
+  process.env.LOOP_RUN_ID = "swap";
+  try {
+    const prepared = preparePairedRun(
+      parseArgs(["--tmux", "--agent", "codex"])
+    );
+    const path = prepared.storage.manifestPath;
+    expect(readRunManifest(path)?.seatModelsDriver).toBe("codex");
+    const swapped = parseArgs([
+      "--tmux",
+      "--agent",
+      "claude",
+      "--run-id",
+      "swap",
+    ]);
+    preparePairedRun(swapped);
+    expectModels(swapped, "gpt-5.6-sol", "opus");
+    // Every tmux launch rebinds primaryAgent to the current driver, so it
+    // cannot say which role the saved models were launched for.
+    const current = readRunManifest(path);
+    if (!current) {
+      throw new Error("missing manifest");
+    }
+    writeRunManifest(path, { ...current, primaryAgent: "claude" });
+    const again = parseArgs([
+      "--tmux",
+      "--agent",
+      "claude",
+      "--run-id",
+      "swap",
+    ]);
+    preparePairedRun(again);
+    expectModels(again, "gpt-5.6-sol", "opus");
+    const back = parseArgs(["--tmux", "--agent", "codex", "--run-id", "swap"]);
+    preparePairedRun(back);
+    expectModels(back, "gpt-6.1-sol", "claude-sonnet-5-5");
+  } finally {
+    for (const name of Object.keys(process.env)) {
+      if (!(name in environment)) {
+        Reflect.deleteProperty(process.env, name);
+      }
+    }
+    Object.assign(process.env, environment);
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
+test("old-shape saved models restore by the recorded primary agent", () => {
+  const manifest = savedManifest({
+    claude: "claude-sonnet-5-5",
+    codex: "gpt-6.1-sol",
+  });
+  manifest.primaryAgent = "codex";
+  const swapped = parseArgs(["--tmux", "--agent", "claude"]);
+  restoreSavedLaunchDefaults(swapped, manifest);
+  expectModels(swapped, "gpt-5.6-sol", "opus");
+  const same = parseArgs(["--tmux", "--agent", "codex"]);
+  restoreSavedLaunchDefaults(same, manifest);
+  expectModels(same, "gpt-6.1-sol", "claude-sonnet-5-5");
+  const explicit = parseArgs([
+    "--tmux",
+    "--agent",
+    "claude",
+    "--codex-model",
+    "cli-codex",
+  ]);
+  restoreSavedLaunchDefaults(explicit, manifest);
+  expectModels(explicit, "cli-codex", "opus");
+  // Before role-resolved seat models, one saved Codex model served both roles.
+  const preRole = savedManifest({ codex: "codex-both" });
+  preRole.primaryAgent = "codex";
+  const legacy = parseArgs(["--tmux", "--agent", "claude"]);
+  restoreSavedLaunchDefaults(legacy, preRole);
+  expectModels(legacy, "codex-both", "opus");
+});
+
+test("programmatic options without a codex model source keep legacy foreground defaults", () => {
+  const opts = {
+    agent: "codex",
+    codexModel: DEFAULT_CODEX_MODEL,
+    doneSignal: "<done/>",
+    format: "raw",
+    maxIterations: 1,
+    proof: "",
+  } as Options;
+  expect(opts.codexModelSource).toBeUndefined();
+  expect(resolveModel("codex", opts, "work")).toBe("gpt-5.6-sol");
+  expect(resolveModel("codex", { ...opts, agent: "claude" }, "review")).toBe(
+    "gpt-5.6-sol"
+  );
+  expect(resolveTmuxModel("codex", opts)).toBe("gpt-6.1-sol");
+  expect(resolveModel("codex", { ...opts, codexModel: "custom" }, "work")).toBe(
+    "custom"
+  );
 });
