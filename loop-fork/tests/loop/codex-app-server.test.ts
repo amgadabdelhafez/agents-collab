@@ -606,6 +606,78 @@ test("injectCodexMessage fails closed when an evicted thread cannot resume", asy
   ]);
 });
 
+const probeHandler =
+  (readError: string | undefined): RequestHandler =>
+  (request, write) => {
+    if (request.method === "initialize") {
+      write({ id: request.id, result: {} });
+      return;
+    }
+    if (request.method === "thread/read") {
+      if (readError) {
+        write({ id: request.id, error: { message: readError } });
+        return;
+      }
+      write({ id: request.id, result: { thread: {} } });
+      return;
+    }
+    if (request.method === "thread/resume") {
+      write({ id: request.id, result: { thread: {} } });
+    }
+  };
+
+const probeMethods = (): unknown[] =>
+  wsWrites.map((line) => (JSON.parse(line) as RequestFrame).method);
+
+test("probeCodexThread reads a loaded thread without resuming it", async () => {
+  const appServer = await getModule();
+  currentHandler = probeHandler(undefined);
+  await expect(
+    appServer.probeCodexThread("ws://127.0.0.1:4500", "thread-live")
+  ).resolves.toBe(true);
+  expect(probeMethods()).toEqual(["initialize", "initialized", "thread/read"]);
+});
+
+test("probeCodexThread resumes only a thread that is not loaded or has no rollout yet", async () => {
+  for (const readError of [
+    "thread not loaded: thread-evicted",
+    "no rollout found for thread id thread-evicted",
+  ]) {
+    const appServer = await getModule();
+    currentHandler = probeHandler(readError);
+    await expect(
+      appServer.probeCodexThread("ws://127.0.0.1:4500", "thread-evicted")
+    ).resolves.toBe(true);
+    expect(probeMethods()).toEqual([
+      "initialize",
+      "initialized",
+      "thread/read",
+      "thread/resume",
+    ]);
+    await resetState();
+  }
+});
+
+test("probeCodexThread treats auth and transport read errors as not ready without resuming", async () => {
+  for (const readError of [
+    "unauthorized: invalid bearer token",
+    'codex app-server request "thread/read" timed out',
+    "thread not found: thread-gone",
+  ]) {
+    const appServer = await getModule();
+    currentHandler = probeHandler(readError);
+    await expect(
+      appServer.probeCodexThread("ws://127.0.0.1:4500", "thread-idle")
+    ).resolves.toBe(false);
+    expect(probeMethods()).toEqual([
+      "initialize",
+      "initialized",
+      "thread/read",
+    ]);
+    await resetState();
+  }
+});
+
 test("injectCodexMessage returns once turn/start is accepted", async () => {
   const appServer = await getModule();
   currentHandler = (request, write) => {

@@ -218,6 +218,20 @@ const parseErrorText = (value: unknown): string | undefined => {
   );
 };
 
+/**
+ * App-server read errors for a real thread that is not resident: evicted
+ * from memory, or not materialized because it has no rollout yet.
+ */
+const isThreadNotLoadedError = (value: unknown): boolean => {
+  const message = parseErrorText(value)?.toLowerCase();
+  return !!(
+    message &&
+    (message.includes("thread not loaded") ||
+      message.includes("no rollout found") ||
+      message.includes("not materialized yet"))
+  );
+};
+
 const isBusyTurnError = (value: unknown): boolean => {
   const message = parseErrorText(value)?.toLowerCase();
   return !!(
@@ -1483,12 +1497,18 @@ export const probeCodexThread = async (
     await initializeBridgeClient(client);
     // Liveness must not depend on persisted historical turns. A newly
     // allocated live thread may not have a rollout until its first turn.
+    // Only that condition, or an evicted (not loaded) thread, may fall back
+    // to resume: auth, transport and other read failures are not-ready, so
+    // a liveness probe never revives a thread it could not otherwise read.
     try {
       await client.sendRequest(METHOD_THREAD_READ, {
         includeTurns: false,
         threadId,
       });
-    } catch {
+    } catch (error) {
+      if (!isThreadNotLoadedError(error)) {
+        throw error;
+      }
       await client.sendRequest(METHOD_THREAD_RESUME, {
         excludeTurns: true,
         threadId,
