@@ -4,6 +4,7 @@ import {
   type A2AV2Config,
   ConfiguredA2AV2SessionEnrollment,
   configuredA2AV2RebindAuthority,
+  createOrchestrationSweep,
   enrollConfiguredA2AV2Session,
   parseLoopOrchestrationConfig,
 } from "../../src/loop/loop-orchestration-server";
@@ -354,4 +355,84 @@ test("A2A V2 enrollment sweep reports an unavailable seat and retries it later",
     revision: 1,
     sessionRef: "session:thread-a",
   });
+});
+
+const sweepProbe = (
+  enrollment?: () => Promise<void>,
+  reconcile: () => Promise<void> = () => Promise.resolve()
+) => {
+  const calls = { maintain: 0, reconcile: 0 };
+  const healthy: boolean[] = [];
+  const logs: string[] = [];
+  const sweep = createOrchestrationSweep({
+    enrollment: enrollment
+      ? {
+          maintain: () => {
+            calls.maintain += 1;
+            return enrollment();
+          },
+        }
+      : undefined,
+    log: (line) => logs.push(line),
+    reconcilers: [
+      {
+        reconcile: () => {
+          calls.reconcile += 1;
+          return reconcile();
+        },
+      },
+    ],
+    setHealthy: (value) => healthy.push(value),
+  });
+  return { calls, healthy, logs, sweep };
+};
+
+test("orchestration sweep drives enrollment without holding bridge reconciliation behind it", async () => {
+  // A hung Postgres call inside enrollment must not stop bridge and mailbox
+  // ACK reconciliation, nor be re-entered by the next tick.
+  const probe = sweepProbe(() => new Promise<void>(() => undefined));
+  await probe.sweep();
+  await probe.sweep();
+  await probe.sweep();
+  expect(probe.calls).toEqual({ maintain: 1, reconcile: 3 });
+  expect(probe.healthy).toEqual([true, true, true]);
+  expect(probe.logs).toEqual([]);
+});
+
+test("orchestration sweep retries enrollment every tick and reports each changed failure once", async () => {
+  const outcomes = [
+    "seat unavailable",
+    "seat unavailable",
+    undefined,
+    "seat unavailable",
+  ];
+  const probe = sweepProbe(() => {
+    const failure = outcomes.shift();
+    return failure ? Promise.reject(new Error(failure)) : Promise.resolve();
+  });
+  for (let tick = 0; tick < 4; tick += 1) {
+    await probe.sweep();
+    await yieldTurn();
+  }
+  expect(probe.calls.maintain).toBe(4);
+  expect(probe.logs).toEqual([
+    "orchestration A2A V2 session enrollment failed: seat unavailable",
+    "orchestration A2A V2 session enrollment recovered",
+    "orchestration A2A V2 session enrollment failed: seat unavailable",
+  ]);
+  // Enrollment has its own verdict; it does not mark reconciliation down.
+  expect(probe.healthy).toEqual([true, true, true, true]);
+});
+
+test("orchestration sweep marks reconciliation down on its own failure and still drives enrollment", async () => {
+  const probe = sweepProbe(
+    () => Promise.resolve(),
+    () => Promise.reject(new Error("bridge unreadable"))
+  );
+  await probe.sweep();
+  expect(probe.calls).toEqual({ maintain: 1, reconcile: 1 });
+  expect(probe.healthy).toEqual([false]);
+  expect(probe.logs).toEqual([
+    "orchestration bridge reconciliation failed: bridge unreadable",
+  ]);
 });

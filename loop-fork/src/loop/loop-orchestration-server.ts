@@ -894,6 +894,77 @@ export const configuredA2AV2RebindAuthority = (
   },
 });
 
+const failureMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : "unknown error";
+
+/**
+ * One tick of the server's existing reconciliation interval. Bridge and
+ * mailbox ACK reconciliation keep their in-flight guard and own the health
+ * verdict. Session enrollment rides the same tick under its own guard and is
+ * not awaited by it, so a slow or hung session-store call cannot stop ACK
+ * reconciliation for every recipient while /healthz still reports ready.
+ * Enrollment is retried every tick; a failure is reported once per change.
+ */
+export const createOrchestrationSweep = (input: {
+  enrollment?: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">;
+  log: (line: string) => void;
+  reconcilers: readonly { reconcile(): Promise<unknown> }[];
+  setHealthy: (healthy: boolean) => void;
+}): (() => Promise<void>) => {
+  let enrolling = false;
+  let reconciling = false;
+  let reportedEnrollmentFailure: string | undefined;
+  const enroll = (
+    enrollment: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">
+  ) => {
+    enrolling = true;
+    enrollment
+      .maintain()
+      .then(
+        () => {
+          if (reportedEnrollmentFailure !== undefined) {
+            reportedEnrollmentFailure = undefined;
+            input.log("orchestration A2A V2 session enrollment recovered");
+          }
+        },
+        (error: unknown) => {
+          const message = failureMessage(error);
+          if (message !== reportedEnrollmentFailure) {
+            reportedEnrollmentFailure = message;
+            input.log(
+              `orchestration A2A V2 session enrollment failed: ${message}`
+            );
+          }
+        }
+      )
+      .finally(() => {
+        enrolling = false;
+      });
+  };
+  return async () => {
+    if (input.enrollment && !enrolling) {
+      enroll(input.enrollment);
+    }
+    if (reconciling) {
+      return;
+    }
+    reconciling = true;
+    try {
+      for (const reconciler of input.reconcilers) {
+        await reconciler.reconcile();
+      }
+      input.setHealthy(true);
+    } catch (error) {
+      input.setHealthy(false);
+      input.log(
+        `orchestration bridge reconciliation failed: ${failureMessage(error)}`
+      );
+    } finally {
+      reconciling = false;
+    }
+  };
+};
+
 const createDefaultRuntimeHost = async (input: {
   config: ServerConfig;
   connection: Connection;
@@ -949,6 +1020,11 @@ const createDefaultRuntimeHost = async (input: {
     throw new Error("configured A2A V2 database environment is absent");
   }
   const controlAuthenticator = authenticator(input.config, input.env);
+  const recipientBinding = input.config.supervisors.find(
+    (entry) => entry.supervisorId === a2aConfig.recipient
+  );
+  let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
+  let enrollmentFailure: { error: unknown } | undefined;
   const a2aV2Service = await createSupervisorA2AV2Service({
     card: {
       description:
@@ -980,6 +1056,36 @@ const createDefaultRuntimeHost = async (input: {
       : undefined,
     delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
     dispatchOwner: `v2-dispatcher:${input.config.identity}`,
+    // Enroll before the host's first recovery sweep checks readiness for
+    // pending deliveries: a descriptor that expired, or a seat that restarted,
+    // while the server was down is renewed or rebound first instead of
+    // refusing start on every restart. Start still refuses an unenrollable
+    // seat; afterwards the reconciliation sweep keeps the enrollment current.
+    enrollSessions: async (sessions) => {
+      a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
+        config: a2aConfig,
+        directory: input.directory,
+        now: () => new Date().toISOString(),
+        recipients: [
+          a2aConfig.recipient,
+          ...input.config.supervisors
+            .filter(
+              (peer) =>
+                peer.seat &&
+                peer.supervisorId !== a2aConfig.recipient &&
+                peer.manifestPath === recipientBinding?.manifestPath
+            )
+            .map((peer) => peer.supervisorId),
+        ],
+        service: sessions,
+      });
+      try {
+        await a2aV2Enrollment.maintain();
+      } catch (error) {
+        enrollmentFailure = { error };
+        throw error;
+      }
+    },
     host: hostOptions,
     messageAuthority: {
       decide: (request) => {
@@ -1032,36 +1138,12 @@ const createDefaultRuntimeHost = async (input: {
       tenant: a2aConfig.tenant,
     },
     supervisorId: a2aConfig.recipient,
+  }).catch((error: unknown) => {
+    // The factory reports a stage, not the cause. An enrollment refusal is
+    // the operator's to act on, so it keeps its own message, as before.
+    throw enrollmentFailure ? enrollmentFailure.error : error;
   });
-  try {
-    const recipientBinding = input.config.supervisors.find(
-      (entry) => entry.supervisorId === a2aConfig.recipient
-    );
-    const a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
-      config: a2aConfig,
-      directory: input.directory,
-      now: () => new Date().toISOString(),
-      recipients: [
-        a2aConfig.recipient,
-        ...input.config.supervisors
-          .filter(
-            (peer) =>
-              peer.seat &&
-              peer.supervisorId !== a2aConfig.recipient &&
-              peer.manifestPath === recipientBinding?.manifestPath
-          )
-          .map((peer) => peer.supervisorId),
-      ],
-      service: a2aV2Service,
-    });
-    // Start still refuses an unenrollable seat; afterwards the reconciliation
-    // sweep keeps the enrollment current.
-    await a2aV2Enrollment.maintain();
-    return { a2aV2Enrollment, a2aV2Service, host: a2aV2Service.host };
-  } catch (error) {
-    await a2aV2Service.close().catch(() => undefined);
-    throw error;
-  }
+  return { a2aV2Enrollment, a2aV2Service, host: a2aV2Service.host };
 };
 
 const validateConfiguredRuntimeEnvironment = (
@@ -1109,7 +1191,6 @@ export const runLoopOrchestrationServer = async (
   let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   let reconciliationHealthy = false;
-  let reconciliationRunning = false;
   try {
     if (a2aV2Service) {
       host = a2aV2Service.host;
@@ -1160,33 +1241,14 @@ export const runLoopOrchestrationServer = async (
       log: (line) => console.error(line),
       runtime: host.runtime,
     });
-    const reconcile = async () => {
-      if (reconciliationRunning) {
-        return;
-      }
-      reconciliationRunning = true;
-      try {
-        await reconciler.reconcile();
-        await mailboxReconciler.reconcile();
-        reconciliationHealthy = true;
-      } catch (error) {
-        reconciliationHealthy = false;
-        console.error(
-          `orchestration bridge reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}`
-        );
-      }
-      // Same sweep, separate verdict: a seat that cannot be enrolled right now
-      // is logged and retried, and does not mark bridge reconciliation down.
-      try {
-        await a2aV2Enrollment?.maintain();
-      } catch (error) {
-        console.error(
-          `orchestration A2A V2 session enrollment failed: ${error instanceof Error ? error.message : "unknown error"}`
-        );
-      } finally {
-        reconciliationRunning = false;
-      }
-    };
+    const reconcile = createOrchestrationSweep({
+      enrollment: a2aV2Enrollment,
+      log: (line) => console.error(line),
+      reconcilers: [reconciler, mailboxReconciler],
+      setHealthy: (healthy) => {
+        reconciliationHealthy = healthy;
+      },
+    });
     await reconcile();
     if (config.deadlines) {
       const driver = new SupervisorDeadlineDriver({

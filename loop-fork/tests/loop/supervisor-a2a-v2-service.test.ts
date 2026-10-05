@@ -485,6 +485,153 @@ test("service factory closes every acquired resource after a partial migration f
   expect(closes).toEqual(["ledger", "task-store"]);
 });
 
+const enrollmentProbe = (
+  enrollSessions: NonNullable<
+    Parameters<typeof createSupervisorA2AV2Service>[0]["enrollSessions"]
+  >
+) => {
+  const events: string[] = [];
+  const closer = (name: string) => () => {
+    events.push(`closed:${name}`);
+    return Promise.resolve();
+  };
+  const created = createSupervisorA2AV2Service({
+    ...({
+      card: {
+        description: "enrollment ordering",
+        supervisorId: RECIPIENT,
+        url: "http://a2a.local/a2a",
+      },
+      databaseUrl: "postgres://user:private-password@127.0.0.1:5432/private-db",
+      delivery: {
+        deliver: () => Promise.resolve({ status: "accepted" as const }),
+      },
+      dispatchOwner: "v2-dispatcher:enrollment-ordering",
+      host: {
+        authority: {
+          decide: () => ({
+            allowed: true,
+            authorityRef: "authority:test",
+            reasonCode: "allowed",
+          }),
+        },
+        buildId: "enrollment-ordering.v1",
+        delivery: {
+          deliver: () => Promise.resolve({ status: "accepted" as const }),
+        },
+        identity: "enrollment-ordering",
+        namespace: "default",
+        nativeConnection: {},
+        receipts: { record: () => undefined },
+        store: {} as JsonlSupervisorThreadStore,
+        taskQueue: "enrollment-ordering",
+        workflowBundle: { code: "unused" },
+        workflowClient: {},
+      },
+      now: () => NOW,
+      policy: POLICY,
+      providerReadiness: { ready: () => ({}) as never },
+      rebindAuthority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:test",
+          reasonCode: "allowed",
+        }),
+      },
+      route: {
+        authenticator: { authenticate: () => undefined },
+        tenant: SCOPE.tenantId,
+      },
+      supervisorId: RECIPIENT,
+    } as const),
+    dependencies: {
+      connectLedger: () =>
+        Promise.resolve({
+          close: closer("ledger"),
+          migrate: () => Promise.resolve(),
+        }) as never,
+      connectSessions: () =>
+        Promise.resolve({
+          assertReady: () => {
+            events.push("assertReady");
+            return Promise.reject(new Error("unexpected readiness check"));
+          },
+          close: closer("sessions"),
+          current: (_scope: unknown, recipient: string) => {
+            events.push(`current:${recipient}`);
+            return Promise.resolve(undefined);
+          },
+          migrate: () => Promise.resolve(),
+          rebind: () => Promise.reject(new Error("unexpected rebind")),
+          register: (
+            _scope: unknown,
+            descriptor: SupervisorSessionDescriptorV2
+          ) => {
+            events.push(`register:${descriptor.recipient}`);
+            return Promise.resolve(descriptor);
+          },
+        }) as never,
+      connectTaskStore: () =>
+        Promise.resolve({
+          close: closer("task-store"),
+          migrate: () => Promise.resolve(),
+        }) as never,
+      createHost: () => {
+        // Host creation starts ingress recovery, whose readiness checks need
+        // a current descriptor. Stop here: only the ordering is under test.
+        events.push("host");
+        return Promise.reject(new Error("controlled host stop"));
+      },
+      createWorkflows: () => ({}) as never,
+    },
+    enrollSessions: (sessions) => {
+      events.push("enroll");
+      return enrollSessions(sessions);
+    },
+  }).then(
+    () => "unexpected success",
+    (error: unknown) => (error instanceof Error ? error.message : String(error))
+  );
+  return { created, events };
+};
+
+test("service factory enrolls sessions before the runtime host starts ingress recovery", async () => {
+  const probe = enrollmentProbe(async (sessions) => {
+    expect(await sessions.currentSession(SCOPE, RECIPIENT)).toBeUndefined();
+    await sessions.registerSession(SCOPE, {
+      recipient: RECIPIENT,
+    } as SupervisorSessionDescriptorV2);
+  });
+  expect(await probe.created).toBe(
+    "Supervisor A2A V2 service initialization failed at runtime-host (unclassified)"
+  );
+  expect(probe.events.slice(0, 4)).toEqual([
+    "enroll",
+    `current:${RECIPIENT}`,
+    `register:${RECIPIENT}`,
+    "host",
+  ]);
+});
+
+test("service factory refuses start on a failed enrollment before creating the host", async () => {
+  const probe = enrollmentProbe(() =>
+    Promise.reject(
+      new Error("configured A2A V2 recipient session is unavailable")
+    )
+  );
+  const failure = await probe.created;
+  expect(failure).toBe(
+    "Supervisor A2A V2 service initialization failed at session-enrollment (unclassified)"
+  );
+  expect(failure).not.toContain("private-password");
+  expect(probe.events).toEqual([
+    "enroll",
+    "closed:sessions",
+    "closed:ledger",
+    "closed:task-store",
+  ]);
+});
+
 test("standard V2 factory authenticates before task mutation and preserves scoped delivery and DAG readiness across host recreation", async () => {
   const root = mkdtempSync(join(tmpdir(), "supervisor-a2a-v2-service-"));
   const address = process.env.LOOP_VERTICAL_TEMPORAL_ADDRESS;
