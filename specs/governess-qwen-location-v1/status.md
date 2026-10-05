@@ -1,5 +1,27 @@
 # Status, October 4, 2026
 
+## Installed release and fresh test Run44
+
+Explicit user activation completed. Installed binary SHA-256
+297191d7f9aecefab5e5c1ee7edf0e474ddf1b7b483f1e2fb3b2ec45a52c7d62,
+source c15dbc7b (compiled source change plus focused environment test).
+Rollback is /Users/amgad/.local/bin/loop.rollback.9dac102944e1bca03aaa52823851078e13257f0a0c25c16d34b00c401f144ff7.
+Fresh-launch forwarding now preserves explicit model/compute/host labels;
+focused environment regression passed1 test/13 assertions.
+
+Run43 was stopped through native Governess x/e teardown. Exact session and
+app-server PID33934 absent, then supported stopped-run reconciliation released
+workspace at2026-10-05T03:36:23.503Z. No agent composer input or runtime model stop.
+
+Exactly one fresh Run44 started on /tmp/tmux-501/default, session
+agents-collab-loop-44, epoch1791171506746411. Claude Opus high driver, Codex
+gpt-6.1-sol high peer. All six panes live; new readable GPU/Mac row verified.
+Both seats verified charters. Replay passes with no journal issues. Doctor
+sessionReady/live true but transport false at startup; complete round-trip and
+helper acceptance remain pending, not claimed healthy. No duplicate attempt.
+Test packet: runs/governess-qwen-location-v1/fresh-test-loop.md. Original Qwen
+service remains Infra-owned and untouched. Other project sessions untouched.
+
 ## Current readable runtime row
 
 User-requested replacement is live: `Qwen3.8 27B 4-bit · GPU (Apple M5 Pro / Metal) · sweetmac14`.
