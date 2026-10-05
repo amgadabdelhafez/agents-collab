@@ -1,6 +1,22 @@
 # Status, October 4, 2026
 
-## Accepted live Run43 postimage
+## Current readable runtime row
+
+User-requested replacement is live: `Qwen3.8 27B 4-bit · GPU (Apple M5 Pro / Metal) · sweetmac14`.
+No judge-cfg prefix, endpoint, client label or artifact hash in this row.
+Metadata is explicitly operator-attested, not inferred from a proxy address.
+MLX default device reports GPU0, Metal available; server generation uses the
+default device with no CPU override in the live command. This is configuration
+provenance, not a measured GPU-utilization claim. Unknown routes remain unknown.
+
+Run43 Governess PID36705, epoch1791171107758705, binary SHA-256
+dd9222e87902b4dfa5d28a47a094bf5b11983655ac91fbc0b1b891a90fba94d4.
+All six panes live; original agent PIDs34072/34075 unchanged. Doctor all checks
+true, no journal issues; bridge has16 pending records, so queue-drained acceptance
+is not claimed. Global installed binary is unchanged. Label tests4/11 pass;
+scoped Biome and build pass. Helper stress is complete in stress-report.md.
+
+## Historical accepted live Run43 postimage
 
 Run43 Governess pane%60 now uses compiled source9ec940a4c52ca3021398e3c14124f83a0b334528,
 tree e4dcc0a261999f54765f02811329375c3bc7c091, binary SHA-256

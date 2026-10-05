@@ -25,8 +25,10 @@ disable cooldown, modify journals, widen scopes or increase concurrency.
 V3 Nanny jobs:0ba9086f-5ec0-4415-a082-ad8d206a9712,
 1dddc063-aac6-45f6-a7d9-a2d6103b5adb,56bd4aa8-0cff-4d10-8039-cb46abd6a615.
 First completed213572ms,3 model calls/3 tools,10818 input272 output,11090 total,
-exact local model selector and correct5/6 line citations. Remaining two pending
-postflight at this checkpoint. One running plus two queued respected slot1.
+exact local model selector and correct5/6 line citations. The other two completed
+106288ms and106658ms, each with3 model calls and3 tools. All three returned the
+correct literals and line citations; aggregate33324 tokens. One running plus two
+queued respected slot1. No low-latency production SLA is claimed.
 Same-key resubmission returned existing identities, not new jobs.
 
 Infra read-only runtime evidence includes closed-stream warnings, but no request

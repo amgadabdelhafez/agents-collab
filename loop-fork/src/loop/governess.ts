@@ -7,7 +7,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawnSync } from "bun";
@@ -136,7 +136,7 @@ import {
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
 import { openPublicAskSequences } from "./human-interaction-ask";
-import { judgeRouteLabel } from "./judge-route-label";
+import { judgeRuntimeLabel } from "./judge-route-label";
 import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
@@ -3292,7 +3292,11 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const routeLine = meta.llmJudges[0]
     ? paint(
         ANSI.cyan,
-        `${judgeRouteLabel(meta.llmJudges[0].model, meta.llmJudges[0].url)} · client ${hostname()}`
+        judgeRuntimeLabel(meta.llmJudges[0].model, {
+          model: process.env.LOOP_GOVERNESS_MODEL_LABEL,
+          compute: process.env.LOOP_GOVERNESS_COMPUTE_LABEL,
+          host: process.env.LOOP_GOVERNESS_HOST_LABEL,
+        })
       )
     : undefined;
   const primaryAgentRows = rows.map((row) =>

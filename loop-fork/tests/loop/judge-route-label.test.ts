@@ -1,5 +1,21 @@
 import { expect, test } from "bun:test";
-import { judgeRouteLabel } from "../../src/loop/judge-route-label";
+import {
+  judgeRouteLabel,
+  judgeRuntimeLabel,
+} from "../../src/loop/judge-route-label";
+
+test("runtime row uses attested model, compute and host without technical route", () => {
+  expect(
+    judgeRuntimeLabel("/private/model-pin", {
+      model: "Qwen3.8 27B 4-bit",
+      compute: "GPU (Apple M5 Pro / Metal)",
+      host: "sweetmac14",
+    })
+  ).toBe(" Qwen3.8 27B 4-bit · GPU (Apple M5 Pro / Metal) · sweetmac14");
+  expect(judgeRuntimeLabel("Qwen", {})).toBe(
+    " Qwen · compute unknown · host unknown"
+  );
+});
 
 test("judge route shows configured Qwen and endpoint, not inferred backend", () => {
   expect(

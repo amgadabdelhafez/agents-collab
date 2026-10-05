@@ -2775,7 +2775,7 @@ test("board merges loop and path into the first time/status line", async () => {
   expect(lines[1]).toStartWith(" AGENT");
   expect(
     lines.some((line) =>
-      line.startsWith(" judge cfg m · endpoint http://127.0.0.1:8082 · client ")
+      line.startsWith(" m · compute unknown · host unknown")
     )
   ).toBe(true);
 });
