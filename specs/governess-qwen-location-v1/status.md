@@ -1,5 +1,45 @@
 # Status, October 4, 2026
 
+## Accepted live Run43 postimage
+
+Run43 Governess pane%60 now uses compiled source9ec940a4c52ca3021398e3c14124f83a0b334528,
+tree e4dcc0a261999f54765f02811329375c3bc7c091, binary SHA-256
+f00d88d75b186c8be8f59bf5a902a08144072aa6f3f06647f3672b53cc5c0150.
+Exact refresh preserved the original Claude34072 and Codex34075 PIDs and all
+other panes. New Governess PID91005, epoch1791167569288005; doctor/replay PASS,
+all six panes live. Actual115x17 viewport shows model-directory pin, endpoint
+http://127.0.0.1:8084 and client sweetmac14.local. The secure launch envelope
+was consumed by the existing __governess-secure boundary; no composer input
+or manual manifest/journal edit. The exact maintenance script refuses drift or
+active helper work. It is task-bound and one-shot, not a fleet lifecycle API.
+
+Real Harness Pi completion returned QWEN_RUN43_OK, exact local model selector,
+33 input/8 output tokens. Actual judgeAgent working7022ms and waiting-human8716ms
+both ok=true, confidence0.95, valid JSON within original30s deadline. Probe exit0.
+No synthetic result is represented as an observed judgment of actual agent work.
+
+Infra owns the runtime PID80663 on sweetmac14, MLX-VLM0.7.4/MLX0.32.3/Python3.12.15.
+All pinned weight hashes verified by Infra; model revision
+10c35caafbb80f7dc6a7a432cdd11af10a6d4818. Infra's raw completion reported the exact
+served selector and no reasoning content. The model selector is
+/Users/amgad/.local/share/loop/qwen38-27b/model-10c35caa.
+Run43's judge route alone changed; Nanny and other project routes did not.
+The global installed binary remains9dac1029. This candidate is loaded by Run43
+Governess only, not an installed/fleet binary upgrade claim.
+
+Rollback preserves global9dac bytes and previous configured8082/default Qwen3.6
+route; restoring that old configuration does not prove the previously failing
+proxy healthy. Infra preserved the exact launchd plist hash
+ebb4a597cfadb60021b4ca36766e724ab0cbc538b19d2512556c3c401712c962 and owns coordinated
+server-stop/bootstrap rollback. Do not stop8084 while Run43 depends on it.
+Long-context, concurrent load, cancellation, unattended reboot durability and
+fleet promotion are unverified. Infra was sent the live dependency handoff.
+
+Final source checks: label3/9 assertions; Governess83/477 before final host
+assertion, then exact host-row test1/5. Build exit0. No broad suite or cold review.
+
+## Historical implementation checkpoint
+
 Source writer: Harness supervisor. Runtime/artifact writer: Infra Eng.
 Base: f9077478, accepted installed helper-observability feature lineage. Retained
 feature dependencies are required; old remote main lacks these accepted fixes.
