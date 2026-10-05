@@ -17,6 +17,12 @@ export const SUPERVISOR_SESSION_READINESS_RECEIPT_V2_SCHEMA =
   "supervisor-session-readiness-receipt.v2" as const;
 export const SUPERVISOR_SESSION_REBIND_RECEIPT_V2_SCHEMA =
   "supervisor-session-rebind-receipt.v2" as const;
+/**
+ * Default freshness window for a readiness receipt. A passive status read
+ * never re-probes the provider, so readiness is only as current as the last
+ * successful `assertReady`; past this age a dependent gate reads not-ready.
+ */
+export const SUPERVISOR_SESSION_READINESS_MAX_AGE_MS = 60_000;
 
 export type SupervisorSessionProviderV2 =
   | "claude-code"
@@ -150,6 +156,16 @@ const requireCanonicalUtc = (value: unknown, field: string): string => {
     throw new SupervisorSessionV2Error(`${field} is invalid`);
   }
   return value;
+};
+
+const requireReadinessMaxAgeMs = (value: unknown): number => {
+  if (value === undefined) {
+    return SUPERVISOR_SESSION_READINESS_MAX_AGE_MS;
+  }
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new SupervisorSessionV2Error("readinessMaxAgeMs is invalid");
+  }
+  return Number(value);
 };
 
 const requireString = (
@@ -413,17 +429,20 @@ export class PostgresSupervisorSessionV2Store {
   readonly #authority: SupervisorSessionRebindAuthorityPort;
   readonly #now: () => string;
   readonly #provider: SupervisorSessionProviderReadinessPort;
+  readonly #readinessMaxAgeMs: number;
   readonly #sql: SQL;
 
   private constructor(
     sql: SQL,
     provider: SupervisorSessionProviderReadinessPort,
     authority: SupervisorSessionRebindAuthorityPort,
-    now: () => string
+    now: () => string,
+    readinessMaxAgeMs?: number
   ) {
     this.#authority = authority;
     this.#now = now;
     this.#provider = provider;
+    this.#readinessMaxAgeMs = requireReadinessMaxAgeMs(readinessMaxAgeMs);
     this.#sql = sql;
   }
 
@@ -432,12 +451,15 @@ export class PostgresSupervisorSessionV2Store {
     databaseUrl: string;
     now: () => string;
     provider: SupervisorSessionProviderReadinessPort;
+    /** How long one successful provider probe keeps `status().ready` true. */
+    readinessMaxAgeMs?: number;
   }): Promise<PostgresSupervisorSessionV2Store> {
     if (!POSTGRES_URL.test(input.databaseUrl)) {
       throw new SupervisorSessionV2Error(
         "session store needs an explicit PostgreSQL URL"
       );
     }
+    const readinessMaxAgeMs = requireReadinessMaxAgeMs(input.readinessMaxAgeMs);
     const sql = new SQL(input.databaseUrl);
     try {
       await sql.connect();
@@ -445,7 +467,8 @@ export class PostgresSupervisorSessionV2Store {
         sql,
         input.provider,
         input.authority,
-        input.now
+        input.now,
+        readinessMaxAgeMs
       );
     } catch (error) {
       await sql.close({ timeout: 0 }).catch(() => undefined);
@@ -688,7 +711,8 @@ export class PostgresSupervisorSessionV2Store {
         ) VALUES (
           ${receipt.receiptId}, ${receipt.descriptorId}, ${scope.tenantId},
           ${scope.principal}, ${canonical(receipt)}::jsonb
-        ) ON CONFLICT (receipt_id) DO NOTHING
+        ) ON CONFLICT (receipt_id) DO UPDATE
+          SET receipt_json = EXCLUDED.receipt_json
       `;
     });
     if (!receipt) {
@@ -729,6 +753,9 @@ export class PostgresSupervisorSessionV2Store {
    * A passive read-model projection. It never performs a provider probe, so a
    * task graph can inspect a dependency without waking an agent or exposing a
    * session endpoint. A graph must treat `ready: false` as an unsatisfied gate.
+   * `ready` needs a receipt from a successful probe within the freshness
+   * window: a seat that died after its last probe reads not-ready once that
+   * window lapses, however far away the descriptor's own expiry is.
    */
   async status(
     trustedScopeValue: TrustedSupervisorMessageV2Scope,
@@ -744,14 +771,17 @@ export class PostgresSupervisorSessionV2Store {
       descriptor.descriptorId,
       descriptor.revision
     );
+    const now = requireCanonicalUtc(this.#now(), "status now");
+    const fresh =
+      receipt !== undefined &&
+      Date.parse(now) - Date.parse(receipt.checkedAt) <=
+        this.#readinessMaxAgeMs;
     return {
       descriptorId: descriptor.descriptorId,
       principal: scope.principal,
       provider: descriptor.provider,
       readinessReceiptId: receipt?.receiptId ?? null,
-      ready:
-        receipt !== undefined &&
-        descriptor.expiresAt > requireCanonicalUtc(this.#now(), "status now"),
+      ready: fresh && descriptor.expiresAt > now,
       recipient: descriptor.recipient,
       revision: descriptor.revision,
       schema: "supervisor-session-status.v2",
