@@ -34,3 +34,14 @@ Lessons: use exact binary argv in charters, do not confuse provider acceptance
 with recipient ACK/result, label audit/compatibility state, preserve one session
 on startup ambiguity, and make cleanup prove exact live ownership. Keep final
 release evidence committed while credentials and disposable runtime data vanish.
+
+## Correction, 2026-10-05
+
+The "Git artifact result" row is Proven only for transport: the exact blob
+exists, its SHA256 reproduces as 96a127b8...69c2, and it was the sole changed
+path. The blob's own content asserts "Source truth: Git", "Transactional state:
+PostgreSQL" and "Workflow owner: Temporal" without a SHA or evidence. Those
+lines are unproven claims, not audit evidence. The file is not at this base
+(53511614). Run48 evidence from the integration input binds to 99e61b54 plus an
+uncommitted overlay, not to e4efbae2 or 53511614. See status.md's October 5
+correction.

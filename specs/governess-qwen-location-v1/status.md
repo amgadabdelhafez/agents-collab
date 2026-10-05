@@ -1,5 +1,29 @@
 # Status, October 4, 2026
 
+## Correction, October 5, 2026
+
+Test counts below were re-run with `bun run test:file tests/loop/governess.test.ts`
+from loop-fork/ (Bun 1.4.2, frozen-lockfile install) on exact exported trees:
+
+- 2a6a3f3e (board cleanup source): 84 pass, 0 fail, 475 expect() calls. The
+  board-cleanup claim "84 tests/475 assertions" holds for that source only.
+- ea968d82 (inline Nanny runtime identity): the file has 85 tests. Under a 90
+  character loop-fork path: 85 pass, 0 fail, 479 expect() calls. Under a
+  183 character path: 84 pass, 1 fail, 471 expect() calls. Failing test:
+  "board uses the recovered summary area for Nanny and Au Pair metrics". Its
+  every-line-at-most-176 check fails because the board status line embeds the
+  working directory (240 characters in the 184 character 53511614 run).
+- 53511614 (identical governess.ts and governess.test.ts): same split, 85/0/479
+  under an 86 character path, 84/1/471 with the same failing test under 184.
+
+So "Existing84 Governess tests pass475 assertions" in the inline identity section
+misstates the ea968d82 run, and that pass depends on checkout path length. The
+path-length sensitivity is an open test defect; this docs-only correction does
+not fix it. The standalone runtime row was removed at ea968d82 (`routeLine`
+deleted from governess.ts). The "runtime identity row" wording in the board
+cleanup section and the standalone row section further down describe earlier
+sources, not the current board.
+
 ## Inline Nanny runtime identity
 
 User supersedes standalone model/compute/host row: removed completely from board.
@@ -66,9 +90,10 @@ helper acceptance remain pending, not claimed healthy. No duplicate attempt.
 Test packet: runs/governess-qwen-location-v1/fresh-test-loop.md. Original Qwen
 service remains Infra-owned and untouched. Other project sessions untouched.
 
-## Current readable runtime row
+## Superseded standalone runtime row (historical, removed at ea968d82)
 
-User-requested replacement is live: `Qwen3.8 27B 4-bit · GPU (Apple M5 Pro / Metal) · sweetmac14`.
+Retained as history; see the October 5 correction. At the time, the
+user-requested replacement was live: `Qwen3.8 27B 4-bit · GPU (Apple M5 Pro / Metal) · sweetmac14`.
 No judge-cfg prefix, endpoint, client label or artifact hash in this row.
 Metadata is explicitly operator-attested, not inferred from a proxy address.
 MLX default device reports GPU0, Metal available; server generation uses the

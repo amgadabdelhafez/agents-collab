@@ -1,5 +1,7 @@
 # Test-route acceptance complete, October 5, 2026
 
+Evidence binding is bounded by the October 5 correction at the end of this file.
+
 Run49 activated the composed A2A/application PostgreSQL/Temporal path for one
 workspace and both seats. Delivery, recipient claim/ACK, committed artifact
 acceptance, distinct result publication and worker/database restart dedupe passed.
@@ -52,3 +54,39 @@ document and does not include a source-commit identity claim. Post-commit releas
 packaging and one fresh Sonnet/Codex live proof remain required. No installation,
 merge, push or new Loop occurred. Earlier Run48 acceptance is feature-line
 evidence, not a substitute for composed-candidate live acceptance.
+
+## Correction, October 5, 2026: what each identity's evidence covers
+
+This section corrects and bounds the records above and keeps them as history.
+
+Predecessor docs are not at this base. specs/harness-control-plane-vertical-v1
+(tasks.md, status.md, release-attribution.md, verify.md) exists only at
+e4efbae2, branch codex/a2a-request-rejection-v1. e4efbae2 is not an ancestor of
+53511614 (merge base 4439b2e7); it entered this line as a patch composition
+input. Those files are not edited here. Read them with these limits:
+
+- Its tasks.md ticks "Enroll one paired test workspace and prove the full
+  request/result chain". The items that chain depends on stay unticked there:
+  worker/database restart, duplicate and foreign-identity rejection, exact
+  binary/source/config identities, and one reply effect per inbound message.
+  Its status.md:57 says same-client retry identity convergence is NOT proven.
+  That tick means the Run48 request/result path was observed. It does not mean
+  full-chain acceptance.
+- Run48 PASS evidence there came from binaries built from feature-line HEAD
+  99e61b54 plus an uncommitted overlay: verify.md artifact 7980ed8d...dd4a8 and
+  release-attribution.md terminal-recovery candidate 9904f280...29fa3. It binds
+  to neither e4efbae2 (the child commit of 99e61b54 that records this evidence)
+  nor 53511614. No record shows that e4efbae2's tree reproduces those bytes.
+- Run49 evidence above binds to compiled 8a1cc88f (SHA256 1be7d94a...8f10), and
+  Run50 to compiled 928bd1db (d0a8aa8f...07de). 53511614 itself has no runtime
+  evidence. It differs from 928bd1db by two loop-fork/scripts files and five
+  docs in this directory (`git diff --stat 928bd1db 53511614`).
+
+The worker result artifacts are assertions, not evidence. Neither file is at
+this base. 8c17877e:vertical-result.md (Run48, SHA256 2949e1ab...9c14) and
+b1094f29:vertical-release-result.md (Run49, SHA256 96a127b8...69c2; parent chain
+b1094f29 -> 8c17877e -> 99e61b54) are six-line files: a heading, a task ID, and
+"Source truth: Git", "Transactional state: PostgreSQL" and "Workflow owner:
+Temporal", with no SHA or evidence. The hashes reproduce. They show that a
+committed artifact moved through request, acceptance and result publication.
+The architecture statements inside the files are unproven claims.

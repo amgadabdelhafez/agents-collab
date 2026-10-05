@@ -48,3 +48,9 @@ histories were terminated after proof; cleanup termination is distinct from
 logical completion. Databasecontainerf3d786a131bca16c5026d950cbfb81a36c7cd00dc9d5479cfbe647188accef28,
 volumeharness-vertical-15af043b17d3-pgdata and private secret store were removed.
 Git result and body-free evidence remain; temporary database data does not.
+
+Correction, 2026-10-05: "Integration input" names source only. This receipt's
+PASS evidence binds to the compiled 8a1cc88f and 928bd1db binaries above. The
+input's own Run48 evidence binds to 99e61b54 plus an uncommitted overlay
+(7980ed8d...dd4a8, 9904f280...29fa3), not to e4efbae2 or 53511614. The result
+blob's text is an unproven assertion; see status.md's October 5 correction.
