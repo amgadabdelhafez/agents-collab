@@ -1029,9 +1029,14 @@ export const reconcileLegacyStoppedRun = async (
   const releasedAt = deps.now();
   let changed = false;
   const next = updateRunManifest(manifestPath, (current) => {
+    // The terminal state is re-checked on the bytes being replaced: `manifest`
+    // comes from a second read after the evidence, so matching it alone could
+    // force a resumed run back to the terminal state and release its workspace.
     if (
       !(
         current &&
+        current.state === terminalState &&
+        current.status === terminalState &&
         sameWorkspaceIdentity(current, manifest) &&
         !current.workspaceReleasedAt
       )
@@ -1041,8 +1046,8 @@ export const reconcileLegacyStoppedRun = async (
     changed = true;
     return {
       ...current,
-      state: "stopped",
-      status: "stopped",
+      state: terminalState,
+      status: terminalState,
       updatedAt: releasedAt,
       workspaceReleasedAt: releasedAt,
     };

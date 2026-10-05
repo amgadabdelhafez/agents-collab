@@ -380,16 +380,20 @@ const runStoppedRunReconcileCommand = async (
   }
   const [kind, runId, ...extra] = argv.slice(1);
   if (
-    (kind !== "stopped-run" && kind !== "failed-start") ||
+    (kind !== "stopped-run" &&
+      kind !== "failed-start" &&
+      kind !== "failed-terminal") ||
     !runId ||
     extra.length > 0 ||
     !CANONICAL_POSITIVE_RUN_ID_RE.test(runId)
   ) {
-    throw new Error("Usage: loop reconcile stopped-run|failed-start <run-id>");
+    throw new Error(
+      "Usage: loop reconcile stopped-run|failed-start|failed-terminal <run-id>"
+    );
   }
   const storage = resolveRunStorage(runId);
   const result = await reconcileLegacyStoppedRun(storage.manifestPath, runId, {
-    terminalState: kind === "failed-start" ? "failed" : "stopped",
+    terminalState: kind === "stopped-run" ? "stopped" : "failed",
     now: () => new Date().toISOString(),
     pidCanStillOwnRun: (pid, stoppedAt) =>
       pidCanStillOwnRun(pid, stoppedAt, {
@@ -405,12 +409,12 @@ const runStoppedRunReconcileCommand = async (
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   if (result.status === "refused") {
-    throw new Error(`stopped-run reconciliation refused: ${result.reason}`);
+    throw new Error(`${kind} reconciliation refused: ${result.reason}`);
   }
   const closed = await cliDeps.closeGovernessBeatForTerminalRun({
     env: process.env,
     manifestPath: storage.manifestPath,
-    reason: "reconcile stopped-run",
+    reason: `reconcile ${kind}`,
     runId,
   });
   if (closed) {
