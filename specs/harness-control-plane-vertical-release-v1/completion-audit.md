@@ -42,6 +42,7 @@ exists, its SHA256 reproduces as 96a127b8...69c2, and it was the sole changed
 path. The blob's own content asserts "Source truth: Git", "Transactional state:
 PostgreSQL" and "Workflow owner: Temporal" without a SHA or evidence. Those
 lines are unproven claims, not audit evidence. The file is not at this base
-(53511614). Run48 evidence from the integration input binds to 99e61b54 plus an
-uncommitted overlay, not to e4efbae2 or 53511614. See status.md's October 5
-correction.
+(53511614). Run48 evidence from the integration input binds to neither e4efbae2
+nor 53511614: its launcher candidate 28bf864b has no recorded source, and its
+dedicated service candidate 9904f280 was built from 99e61b54 plus an
+uncommitted overlay. See status.md's October 5 correction.

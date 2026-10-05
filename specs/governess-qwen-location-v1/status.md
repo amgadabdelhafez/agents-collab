@@ -3,26 +3,36 @@
 ## Correction, October 5, 2026
 
 Test counts below were re-run with `bun run test:file tests/loop/governess.test.ts`
-from loop-fork/ (Bun 1.4.2, frozen-lockfile install) on exact exported trees:
+from loop-fork/ (Bun 1.4.2, frozen-lockfile install) on `git archive` copies of
+each tree. Every count depends on the length of the loop-fork checkout path:
 
-- 2a6a3f3e (board cleanup source): 84 pass, 0 fail, 475 expect() calls. The
-  board-cleanup claim "84 tests/475 assertions" holds for that source only.
-- ea968d82 (inline Nanny runtime identity): the file has 85 tests. Under a 90
-  character loop-fork path: 85 pass, 0 fail, 479 expect() calls. Under a
-  183 character path: 84 pass, 1 fail, 471 expect() calls. Failing test:
-  "board uses the recovered summary area for Nanny and Au Pair metrics". Its
-  every-line-at-most-176 check fails because the board status line embeds the
-  working directory (240 characters in the 184 character 53511614 run).
-- 53511614 (identical governess.ts and governess.test.ts): same split, 85/0/479
-  under an 86 character path, 84/1/471 with the same failing test under 184.
+| Tree | Path of 45 or 120 chars | Path of 121 or 216 chars |
+| --- | --- | --- |
+| 2a6a3f3e (board cleanup) | 84 pass, 0 fail, 475 expect() | 83 pass, 1 fail, 467 expect() |
+| ea968d82 (inline Nanny identity) | 85 pass, 0 fail, 479 expect() | 84 pass, 1 fail, 471 expect() |
+| 53511614 (same governess.ts and test as ea968d82) | 85 pass, 0 fail, 479 expect() | 84 pass, 1 fail, 471 expect() |
 
-So "Existing84 Governess tests pass475 assertions" in the inline identity section
-misstates the ea968d82 run, and that pass depends on checkout path length. The
-path-length sensitivity is an open test defect; this docs-only correction does
-not fix it. The standalone runtime row was removed at ea968d82 (`routeLine`
-deleted from governess.ts). The "runtime identity row" wording in the board
-cleanup section and the standalone row section further down describe earlier
-sources, not the current board.
+In every failing run the one failure is "board uses the recovered summary area
+for Nanny and Au Pair metrics", at governess.test.ts:2296
+(`board.split("\n").every((line) => line.length <= 176)`), the same assertion in
+all three trees. The 120 and 121 character runs were done for 2a6a3f3e and
+53511614; ea968d82 was run at 45 and 216 only. In a temporary instrumented copy
+at a 216 character path, the only overlong board line was 272 characters and
+contained the working directory, in both 2a6a3f3e and 53511614. So the test
+passes only when the loop-fork path is at most 120 characters.
+
+So both "Focused Governess84 tests/475 assertions pass" (board cleanup section)
+and "Existing84 Governess tests pass475 assertions" (inline identity section)
+need qualifying. The first holds for 2a6a3f3e at a path of 120 characters or
+less. The second misstates the ea968d82 run: the file there has 85 tests, which
+pass with 479 expect() calls at a short path. The path-length sensitivity is an
+open test defect; this docs-only correction does not fix it.
+
+The standalone runtime row was removed at ea968d82 (`routeLine` deleted from
+governess.ts; still present at 2a6a3f3e and at the Run44 install source
+c15dbc7b). The "runtime identity row" wording in the board cleanup section, the
+"new readable GPU/Mac row" in the Run44 section and the standalone row section
+further down describe those earlier sources, not the current board.
 
 ## Inline Nanny runtime identity
 
@@ -34,6 +44,7 @@ is reusable only when Nanny model AND endpoint match; explicit Nanny metadata
 can be supplied separately. Au Pair/direct keep table alignment. No routing or
 inference change. Existing84 Governess tests pass475 assertions, plus focused
 inline identity/foreign-route refusal/narrow-board3 tests14 assertions pass.
+[Corrected October 5: at ea968d82 the file has 85 tests; see the correction.]
 Installed candidate ba3671b6a21b21159f5a639103c504a29251385eedcfac8b9932210666abf600,
 previous e026b4b9 retained for rollback. No unrelated live pane refresh performed.
 
@@ -52,6 +63,7 @@ tuning opt-in via LOOP_GOVERNESS_BOARD_DETAILS=1, propagated on fresh launch.
 No stored data, usage/cost calculations, routing policy or authority changed.
 Focused Governess84 tests/475 assertions pass, including narrow viewports,
 numeric/header alignment, provenance, missing price, and tuning visibility.
+[Qualified October 5: only with a loop-fork path of 120 characters or less.]
 Run44 is stopped; no runtime refresh or new launch is claimed for this slice.
 
 ## Nanny row correction and completed helper execution
@@ -84,6 +96,7 @@ workspace at2026-10-05T03:36:23.503Z. No agent composer input or runtime model s
 Exactly one fresh Run44 started on /tmp/tmux-501/default, session
 agents-collab-loop-44, epoch1791171506746411. Claude Opus high driver, Codex
 gpt-6.1-sol high peer. All six panes live; new readable GPU/Mac row verified.
+[October 5: that standalone row was removed from source at ea968d82.]
 Both seats verified charters. Replay passes with no journal issues. Doctor
 sessionReady/live true but transport false at startup; complete round-trip and
 helper acceptance remain pending, not claimed healthy. No duplicate attempt.

@@ -51,6 +51,9 @@ Git result and body-free evidence remain; temporary database data does not.
 
 Correction, 2026-10-05: "Integration input" names source only. This receipt's
 PASS evidence binds to the compiled 8a1cc88f and 928bd1db binaries above. The
-input's own Run48 evidence binds to 99e61b54 plus an uncommitted overlay
-(7980ed8d...dd4a8, 9904f280...29fa3), not to e4efbae2 or 53511614. The result
-blob's text is an unproven assertion; see status.md's October 5 correction.
+input's own Run48 evidence binds to neither e4efbae2 nor 53511614: Run48 was
+allocated with launcher candidate 28bf864b...0851, whose source the records do
+not name, and its dedicated service ran 9904f280...29fa3, built from 99e61b54
+plus an uncommitted overlay. The result blob's text is an unproven assertion;
+see status.md's October 5 correction. (Revised the same day: an earlier wording
+also attributed Run48 evidence to the Slice 1 diagnostic candidate 7980ed8d.)
