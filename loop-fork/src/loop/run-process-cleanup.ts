@@ -243,6 +243,31 @@ const cleanupRunOwnedProcessesWithDeps = (
   deps: RunProcessCleanupDeps
 ): RunProcessCleanupResult => {
   const result: RunProcessCleanupResult = { killed: [], skipped: [] };
+  // A worker is owned by this run only when both its recorded PID and live
+  // argv agree. Keep the record as evidence; PID reuse must never be signaled.
+  try {
+    const worker = JSON.parse(
+      readFileSync(join(runDir, "bridge-worker.json"), "utf8")
+    );
+    if (Number.isSafeInteger(worker?.pid) && worker.pid > 0) {
+      const command = deps.commandForPid(worker.pid);
+      signalOwnedProcess(
+        result,
+        worker.pid,
+        Boolean(
+          command &&
+            commandHasExactArg(command, "__bridge-worker") &&
+            commandHasExactArg(command, runDir)
+        ),
+        command
+          ? "bridge-worker-identity-mismatch"
+          : "bridge-worker-not-running",
+        deps.signal
+      );
+    }
+  } catch {
+    // Missing or malformed worker evidence grants no process authority.
+  }
   for (const { path, record } of readBridgeRegistrations(runDir)) {
     const command = deps.commandForPid(record.pid);
     const retainRegistration = signalOwnedProcess(

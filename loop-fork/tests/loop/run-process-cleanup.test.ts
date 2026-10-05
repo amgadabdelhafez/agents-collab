@@ -27,6 +27,39 @@ import { gcStaleBridgeProcesses } from "../../src/loop/stale-bridge-cleanup";
 const makeRunDir = (): string =>
   mkdtempSync(join(tmpdir(), "loop-process-cleanup-"));
 
+test("teardown owns a recorded bridge worker only with exact live argv", () => {
+  const runDir = makeRunDir();
+  const original = { ...runProcessCleanupInternals.deps };
+  const signals: number[] = [];
+  writeFileSync(
+    join(runDir, "bridge-worker.json"),
+    JSON.stringify({ pid: 4199 })
+  );
+  try {
+    runProcessCleanupInternals.deps.signal = (pid) => {
+      signals.push(pid);
+    };
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      `loop __bridge-worker ${runDir}-foreign`;
+    expect(cleanupRunOwnedProcesses(runDir, undefined).killed).toEqual([]);
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      `loop __bridge-mcp ${runDir}`;
+    expect(cleanupRunOwnedProcesses(runDir, undefined).killed).toEqual([]);
+    runProcessCleanupInternals.deps.commandForPid = () =>
+      `loop __bridge-worker ${runDir}`;
+    expect(cleanupRunOwnedProcesses(runDir, undefined).killed).toEqual([4199]);
+    expect(signals).toEqual([4199]);
+    writeFileSync(
+      join(runDir, "bridge-worker.json"),
+      JSON.stringify({ pid: -1 })
+    );
+    expect(cleanupRunOwnedProcesses(runDir, undefined).killed).toEqual([]);
+  } finally {
+    Object.assign(runProcessCleanupInternals.deps, original);
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("teardown signals only bridge processes registered to the exact run", () => {
   const runDir = makeRunDir();
   const otherRun = `${runDir}-other`;
