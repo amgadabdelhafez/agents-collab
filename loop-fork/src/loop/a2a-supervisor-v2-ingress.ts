@@ -28,6 +28,8 @@ export interface SupervisorA2AV2IngressOptions {
   delivery: SupervisorMessageV2DeliveryPort;
   dispatchOwner: string;
   ledger: SupervisorMessageV2DeliveryLedger;
+  /** Recovery failure sink; omitted, the runner's stderr logger is used. */
+  log?: (message: string) => void;
   now: () => string;
   policy: SupervisorMessagePolicy;
   recoveryIntervalMs?: number;
@@ -89,7 +91,7 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
     this.#recovery = new SupervisorMessageV2RecoveryRunner({
       coordinator,
       intervalMs: options.recoveryIntervalMs ?? 30_000,
-      log: () => undefined,
+      log: options.log,
     });
   }
 

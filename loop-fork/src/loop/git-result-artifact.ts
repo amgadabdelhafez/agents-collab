@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 
@@ -37,45 +37,44 @@ export const createGitResultArtifactVerifier = (
     }
     bindings.set(entry.artifactRef, { ...entry });
   }
-  return (artifactRef: string): Promise<boolean> => {
+  return async (artifactRef: string): Promise<boolean> => {
     const binding = bindings.get(artifactRef);
     if (!binding) {
-      return Promise.resolve(false);
+      return false;
     }
+    // Asynchronous so a slow repository never stalls the request path. Same
+    // bounds as before: non-zero exit, 5s timeout or 1 MiB output rejects.
     const git = (args: string[]) =>
-      execFileSync(
-        "git",
-        ["--no-replace-objects", "-C", binding.repositoryRoot, ...args],
-        {
-          maxBuffer: 1024 * 1024,
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 5000,
-        }
-      );
+      new Promise<Buffer>((resolve, reject) => {
+        const child = execFile(
+          "git",
+          ["--no-replace-objects", "-C", binding.repositoryRoot, ...args],
+          { encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 5000 },
+          (error, stdout) => (error ? reject(error) : resolve(stdout))
+        );
+        child.stdin?.end();
+      });
     try {
       if (
-        git(["cat-file", "-t", binding.commit]).toString().trim() !== "commit"
+        (await git(["cat-file", "-t", binding.commit])).toString().trim() !==
+        "commit"
       ) {
-        return Promise.resolve(false);
+        return false;
       }
-      const tree = git([
-        "ls-tree",
-        "-z",
-        binding.commit,
-        "--",
-        binding.path,
-      ]).toString();
+      const tree = (
+        await git(["ls-tree", "-z", binding.commit, "--", binding.path])
+      ).toString();
       const match = regularBlob.exec(tree);
       if (!match || match[2] !== binding.path) {
-        return Promise.resolve(false);
+        return false;
       }
-      const bytes = git(["show", `${binding.commit}:${binding.path}`]);
-      return Promise.resolve(
+      const bytes = await git(["show", `${binding.commit}:${binding.path}`]);
+      return (
         `artifact://sha256/${createHash("sha256").update(bytes).digest("hex")}` ===
-          artifactRef
+        artifactRef
       );
     } catch {
-      return Promise.resolve(false);
+      return false;
     }
   };
 };

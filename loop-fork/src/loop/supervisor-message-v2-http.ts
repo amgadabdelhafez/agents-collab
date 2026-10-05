@@ -2,6 +2,7 @@ import type {
   SupervisorA2AAuthenticatedIdentity,
   SupervisorA2AAuthenticator,
 } from "./a2a-supervisor-http";
+import { readBoundedRequestText } from "./bounded-request-body";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
 import type { GovernedSupervisorMessageV2Service } from "./supervisor-message-v2-governance";
 
@@ -127,8 +128,8 @@ export const createSupervisorMessageV2RecipientHttpHandler =
     ) {
       return response(415, "json-required");
     }
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).length > 8192) {
+    const raw = await readBoundedRequestText(request, 8192);
+    if (raw === undefined) {
       return response(413, "body-too-large");
     }
     const command = parseCommand(raw);
