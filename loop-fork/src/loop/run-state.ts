@@ -120,6 +120,7 @@ export interface RunManifest {
   reviewerEffort?: EffortLevel;
   runId: string;
   seatModels?: Partial<Record<Agent, string>>;
+  seatModelsDriver?: Agent;
   sourceTaskSha256?: string;
   state: RunLifecycleState;
   status: RunStatus;
@@ -224,6 +225,9 @@ interface RunManifestInput {
   // models that produced it. The Governess records what it OBSERVES in the
   // seat-signals rows; this is the request, and the two can differ.
   seatModels?: Partial<Record<Agent, string>>;
+  // The driver when seatModels was recorded. primaryAgent follows the current
+  // driver across resumes, so it cannot say which role a saved model was for.
+  seatModelsDriver?: Agent;
   sourceTaskSha256?: string;
   state?: RunLifecycleState;
   status?: string;
@@ -1066,8 +1070,9 @@ const sessionManifestFields = (
 });
 
 const seatModelManifestFields = (
-  value: unknown
-): Pick<RunManifest, "seatModels"> => {
+  value: unknown,
+  driver: unknown
+): Pick<RunManifest, "seatModels" | "seatModelsDriver"> => {
   if (!isRecord(value)) {
     return {};
   }
@@ -1077,7 +1082,12 @@ const seatModelManifestFields = (
       seatModels[agent] = model.trim();
     }
   }
-  return Object.keys(seatModels).length ? { seatModels } : {};
+  if (!Object.keys(seatModels).length) {
+    return {};
+  }
+  return typeof driver === "string" && isAgent(driver)
+    ? { seatModels, seatModelsDriver: driver }
+    : { seatModels };
 };
 
 export const createRunManifest = (
@@ -1091,7 +1101,7 @@ export const createRunManifest = (
   return {
     ...cavemanManifestFields(input),
     ...effortManifestFields(input),
-    ...seatModelManifestFields(input.seatModels),
+    ...seatModelManifestFields(input.seatModels, input.seatModelsDriver),
     ...launchReservationManifestFields(input),
     ...worldModelManifestFields(input.worldModel),
     ...(input.claudeChannelServer
@@ -1565,7 +1575,7 @@ const readOptionalRunManifestFields = (
   return {
     ...(cavemanMode ? { cavemanMode } : {}),
     ...effortManifestFields({ driverEffort, reviewerEffort }),
-    ...seatModelManifestFields(parsed.seatModels),
+    ...seatModelManifestFields(parsed.seatModels, parsed.seatModelsDriver),
     ...claudeIdentity,
     ...(codexAppServerPid ? { codexAppServerPid } : {}),
     ...(codexRemoteUrl ? { codexRemoteUrl } : {}),

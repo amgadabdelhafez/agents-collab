@@ -534,6 +534,7 @@ export const reservePairedLaunch = async (
             ? { oss: resolveLaunchModel("oss", opts, opts.agent !== "oss") }
             : {}),
         },
+        seatModelsDriver: opts.agent,
         launchAttemptId: claimId,
         launchAttemptPid: deps.pid,
         launchClaimId: claimId,

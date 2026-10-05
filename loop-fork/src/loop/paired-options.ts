@@ -329,6 +329,7 @@ export const resolvePreparedRunState = (
         : {}),
       ...(opts.ossModel ? { oss: opts.ossModel } : {}),
     },
+    seatModelsDriver: opts.agent,
     state: "submitted",
   });
   writeRunManifest(storage.manifestPath, manifest);
