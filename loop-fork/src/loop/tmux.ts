@@ -1584,11 +1584,15 @@ const passEnv = (env: NodeJS.ProcessEnv, key: string): string[] => {
   return value ? [`${key}=${value}`] : [];
 };
 
-const GOVERNESS_HELPER_ENV_KEYS = [
+// Governess board display switches and operator-attested runtime labels. Kept
+// apart from helper-tier policy; each must be read by the Governess source.
+const GOVERNESS_BOARD_ENV_KEYS = [
   "LOOP_GOVERNESS_BOARD_DETAILS",
-  "LOOP_GOVERNESS_MODEL_LABEL",
   "LOOP_GOVERNESS_COMPUTE_LABEL",
   "LOOP_GOVERNESS_HOST_LABEL",
+] as const;
+
+const GOVERNESS_HELPER_ENV_KEYS = [
   "LOOP_AU_PAIR_API_KEY_FILE",
   "LOOP_AU_PAIR_ENABLED",
   "LOOP_AU_PAIR_MAX_CONCURRENCY",
@@ -1603,6 +1607,7 @@ const GOVERNESS_HELPER_ENV_KEYS = [
   "LOOP_NANNY_URL",
   "LOOP_RECON_HEIGHT",
   "LOOP_RECON_PANES",
+  "LOOP_UTILITY_ADMISSION_RETRY_BASE_MS",
   "LOOP_UTILITY_ALLOWED_TIERS",
   "LOOP_UTILITY_ALLOW_OVERRIDES",
   "LOOP_UTILITY_API_KEY_FILE",
@@ -1843,6 +1848,7 @@ const governessEnv = (
     ...passEnv(env, "LOOP_GOVERNESS_AGENT_RENAME"),
     ...passEnv(env, "LOOP_GOVERNESS_ROLE_BALANCE"),
     ...passEnv(env, "LOOP_GOVERNESS_HANDOFF_MANIFEST"),
+    ...GOVERNESS_BOARD_ENV_KEYS.flatMap((key) => passEnv(env, key)),
     ...GOVERNESS_HELPER_ENV_KEYS.flatMap((key) => passEnv(env, key)),
     ...GOVERNESS_TEMPORAL_ENV_KEYS.flatMap((key) => passEnv(env, key)),
     ...passEnv(env, "LOOP_USAGE_TRACKER_LIMITS"),
@@ -4935,6 +4941,7 @@ export const tmuxInternals = {
   buildRunName,
   buildShellCommand,
   governessEnv,
+  governessBoardEnvKeys: GOVERNESS_BOARD_ENV_KEYS,
   governessHelperEnvKeys: GOVERNESS_HELPER_ENV_KEYS,
   governessHelperEnvSecretDenylist: GOVERNESS_HELPER_ENV_SECRET_DENYLIST,
   preparePersistentTmuxLaunch,

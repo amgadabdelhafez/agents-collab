@@ -136,7 +136,7 @@ import {
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
 import { openPublicAskSequences } from "./human-interaction-ask";
-import { helperModelLabel } from "./judge-route-label";
+import { helperModelLabel, judgeEndpointHost } from "./judge-route-label";
 import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
@@ -1414,6 +1414,34 @@ const effortCell = (u: AgentUsage): string => {
   return effort;
 };
 
+// "~" marks a manifest-configured value shown only because nothing observed
+// one; the observed value always wins and carries no marker.
+const CONFIGURED_EFFORT_LABELS: Record<string, string> = {
+  high: "hi",
+  medium: "med",
+  xhigh: "xhi",
+};
+const rowEffortCell = (row: AgentRow): string => {
+  const observed = effortCell(row.usage);
+  const configured = row.configuredEffort?.toLowerCase();
+  if (observed !== "—" || !configured) {
+    return observed;
+  }
+  return `~${CONFIGURED_EFFORT_LABELS[configured] ?? configured.slice(0, 3)}`;
+};
+const rowModelCell = (row: AgentRow): string => {
+  if (row.usage.model || !row.configuredModel) {
+    return shortModel(row.usage.model);
+  }
+  return `~${shortModel(row.configuredModel).slice(0, SHORT_MODEL_WIDTH - 1)}`;
+};
+const configuredSeat = (
+  info: GovernessAgentInfo
+): Pick<AgentRow, "configuredEffort" | "configuredModel"> => ({
+  ...(info.configuredEffort ? { configuredEffort: info.configuredEffort } : {}),
+  ...(info.configuredModel ? { configuredModel: info.configuredModel } : {}),
+});
+
 const multiplierLabel = (value: number): string =>
   Number.isInteger(value) ? `${value}x` : `${value.toFixed(1)}x`;
 
@@ -1471,6 +1499,9 @@ const TURN_END_EVENTS = new Set(["Stop", "Notification"]);
 
 interface AgentRow {
   action: RecoveryHistoryEntry | null;
+  // Manifest-configured seat identity: a display fallback only, never usage.
+  configuredEffort?: string;
+  configuredModel?: string;
   errors: number;
   lastAction: string;
   liveness: AgentLiveness;
@@ -2046,7 +2077,7 @@ const renderAgentRow = (
       : row.liveness.paneIdleMs;
   }
   const [mode, multiplier] = modeParts(row.usage);
-  const run = subcells([effortCell(row.usage), mode, multiplier], [4, 4, 4]);
+  const run = subcells([rowEffortCell(row), mode, multiplier], [4, 4, 4]);
   const ctxText = subcells(
     [
       row.usage.contextTokens > 0
@@ -2112,7 +2143,7 @@ const renderAgentRow = (
     fitCell(agent, AGENT_COL.agent),
     stateCell(state),
     fitCell(fmtDuration(forMs), AGENT_COL.age),
-    fitCell(shortModel(row.usage.model), AGENT_COL.model),
+    fitCell(rowModelCell(row), AGENT_COL.model),
     fitCell(subcells([cost, burn], [7, 4]), AGENT_COL.spend),
     fitCell(run, AGENT_COL.run),
     ctx,
@@ -2238,16 +2269,36 @@ const utilityModelCell = (
 };
 
 const RUNTIME_DEVICE_RE = /^(GPU|CPU)\b/i;
+const MDNS_LOCAL_SUFFIX_RE = /\.local$/i;
+const TRAILING_SLASHES_RE = /\/+$/;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+// Same endpoint spelled differently (trailing slash, localhost vs 127.0.0.1,
+// case, default port) must compare equal; unparsable values never match.
+const routeKey = (endpoint: string | undefined): string | undefined => {
+  if (!endpoint) {
+    return undefined;
+  }
+  try {
+    const url = new URL(endpoint.trim());
+    const host = LOOPBACK_HOSTS.has(url.hostname) ? "127.0.0.1" : url.hostname;
+    const port = url.port ? `:${url.port}` : "";
+    return `${url.protocol}//${host}${port}${url.pathname.replace(TRAILING_SLASHES_RE, "")}`;
+  } catch {
+    return undefined;
+  }
+};
 const nannyRuntimeLocation = (
   model: string | undefined,
   meta: BoardMeta
 ): string => {
   const judge = meta.llmJudges[0];
+  const nannyRoute = routeKey(process.env.LOOP_NANNY_URL);
   const sameRoute = Boolean(
     model &&
       judge &&
       model === judge.model &&
-      process.env.LOOP_NANNY_URL === judge.url
+      nannyRoute &&
+      nannyRoute === routeKey(judge.url)
   );
   const compute =
     process.env.LOOP_NANNY_COMPUTE_LABEL ??
@@ -2261,7 +2312,9 @@ const nannyRuntimeLocation = (
         .filter((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127)
         .join("")
     : undefined;
-  return [device, safeHost?.replace(".local", "")].filter(Boolean).join("@");
+  return [device, safeHost?.replace(MDNS_LOCAL_SUFFIX_RE, "")]
+    .filter(Boolean)
+    .join("@");
 };
 
 const renderUtilityAgentRow = (
@@ -2741,8 +2794,30 @@ const renderGovernessMessageCounts = (
   return paint(ANSI.dim, `msgs ${parts.join(" ")}`);
 };
 
+// Seat-averaged share of usage that has a price. A seat with missing or
+// unreadable usage contributes 0 (its spend is unknown, not zero); a seat
+// without a coverage figure had nothing to price. Floored so a 99.6% total
+// is never presented as complete.
+const summaryCostCoveragePct = (rows: AgentRow[]): number => {
+  if (rows.length === 0) {
+    return 100;
+  }
+  const total = rows.reduce((sum, row) => {
+    if (
+      row.usage.dataConfidence === "missing" ||
+      row.usage.dataConfidence === "error"
+    ) {
+      return sum;
+    }
+    const pct = row.usage.costEstimateCoveragePct ?? 100;
+    return sum + Math.min(100, Math.max(0, pct));
+  }, 0);
+  return Math.floor(total / rows.length);
+};
+
 const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
   const totalCost = rows.reduce((sum, r) => sum + r.usage.costUsd, 0);
+  const coveragePct = summaryCostCoveragePct(rows);
   const perHr =
     meta.uptimeMs > 0 ? totalCost / (meta.uptimeMs / MS_PER_HOUR) : 0;
   const errorTotal = rows.reduce((sum, r) => sum + r.errors, 0);
@@ -2765,13 +2840,8 @@ const renderSummaryLine = (rows: AgentRow[], meta: BoardMeta): string => {
     ...(Number.isFinite(meta.uptimeMs)
       ? [`wall ${fmtDuration(meta.uptimeMs)}`]
       : []),
-    rows.some(
-      (row) =>
-        row.usage.dataConfidence === "missing" ||
-        row.usage.dataConfidence === "error" ||
-        row.usage.costEstimateCoveragePct === 0
-    )
-      ? `Σ est incomplete (known $${totalCost.toFixed(2)})`
+    coveragePct < 100
+      ? `Σ est partial ${coveragePct}% (known $${totalCost.toFixed(2)})`
       : costCell(totalCost, perHr, meta.budgetUsd),
     `joint idle ${fmtDuration(meta.stats.humanIdleMs)}`,
     ...(messageCounts ? [messageCounts] : []),
@@ -3149,8 +3219,12 @@ const renderLocalLlmUsageRow = (
   const runtime = meta.llmRuntimeByJudge[judge.id];
   const offline = meta.llmOfflineByJudge[judge.id] === true;
   const modelLabel = localLlmModelLabel(judge);
+  // The standalone runtime/route row is gone from the default board, so the
+  // single judge carries its own model and credential-free endpoint here.
   const identity =
-    meta.llmJudges.length === 1 ? "" : `${helperModelLabel(modelLabel)} · `;
+    meta.llmJudges.length === 1
+      ? `${helperModelLabel(judge.model)} @${judgeEndpointHost(judge.url)} · `
+      : `${helperModelLabel(modelLabel)} · `;
   return [
     paint(ANSI.dim, " judge · "),
     paint(ANSI.cyan, identity),
@@ -3682,10 +3756,11 @@ const judgeWithLocalJudges = async (
 const applyUsageLimits = (
   usage: AgentUsage,
   agent: Agent,
-  snapshot?: UsageLimitSnapshot
+  snapshot?: UsageLimitSnapshot,
+  pricingModel: string | undefined = usage.model
 ): void => {
   if (snapshot?.pricing) {
-    applyUsageTrackerPricing(usage, agent, snapshot.pricing);
+    applyUsageTrackerPricing(usage, agent, snapshot.pricing, pricingModel);
   }
   const limits = snapshot?.[agent];
   if (!limits) {
@@ -3742,9 +3817,12 @@ const processAgent = async (
   paneText: string
 ): Promise<AgentTickResult> => {
   const events = deps.readHooks(info.hookFile);
-  const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
-  usage.model ??= info.configuredModel;
-  usage.reasoningEffort ??= info.configuredEffort;
+  // A copy: the reader's object may be cached, and the board fills it below.
+  // usage.model/reasoningEffort stay observed-only; the manifest's configured
+  // values travel separately on the row and never mask a seat signal.
+  const usage: AgentUsage = {
+    ...deps.readUsage(info.agent, info.sessionRef, info.codexHome),
+  };
   if (deps.readSeatSignals) {
     try {
       const signals = deps.readSeatSignals(
@@ -3802,7 +3880,12 @@ const processAgent = async (
       // A signal reader must never take the tick down.
     }
   }
-  applyUsageLimits(usage, info.agent, ctx.usageLimits);
+  applyUsageLimits(
+    usage,
+    info.agent,
+    ctx.usageLimits,
+    usage.model ?? info.configuredModel
+  );
   // Prefer the agent's own live remaining-context %, shown in its pane statusline.
   const paneCtxRemainingPct = parsePaneCtxRemainingPct(paneText);
   if (paneCtxRemainingPct !== undefined && usage.contextWindow > 0) {
@@ -3834,6 +3917,7 @@ const processAgent = async (
     !turnEnded && liveness.paneIdleMs < config.tickMs && !liveness.suspect;
   const row: AgentRow = {
     action: null,
+    ...configuredSeat(info),
     errors,
     lastAction: lastActionOf(events),
     liveness,
@@ -3965,8 +4049,15 @@ const processAgentWithoutPane = (
   ctx: AgentTickContext
 ): AgentTickResult => {
   const events = deps.readHooks(info.hookFile);
-  const usage = deps.readUsage(info.agent, info.sessionRef, info.codexHome);
-  applyUsageLimits(usage, info.agent, ctx.usageLimits);
+  const usage: AgentUsage = {
+    ...deps.readUsage(info.agent, info.sessionRef, info.codexHome),
+  };
+  applyUsageLimits(
+    usage,
+    info.agent,
+    ctx.usageLimits,
+    usage.model ?? info.configuredModel
+  );
   const previous =
     states.get(info.agent) ?? initLivenessState(info.agent, ctx.nowMs);
   if (!states.has(info.agent)) {
@@ -3988,6 +4079,7 @@ const processAgentWithoutPane = (
     recoveries: ctx.recoveries,
     row: {
       action: null,
+      ...configuredSeat(info),
       errors: events.filter((event) => event.error === true).length,
       lastAction: lastActionOf(events),
       liveness,

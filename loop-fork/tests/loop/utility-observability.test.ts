@@ -77,6 +77,115 @@ test("latest helper model does not inherit an older served-model mismatch", () =
   }
 });
 
+const routeHelperJobs = (runDir: string, ids: string[]): void => {
+  for (const id of ids) {
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        id,
+        objective: id,
+        acceptanceCriteria: ["literal"],
+        authority: {},
+        kind: "inspect",
+        requester: "claude",
+        risk: "low",
+        readScope: ["src/one.ts"],
+        writeScope: [],
+        requiredCapabilities: ["inspect"],
+      })
+    );
+    transitionUtilityJob(runDir, id, "routed-utility", {
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-nanny",
+      },
+      routeEpoch: 1,
+    });
+  }
+};
+
+test("helper model and served model come from the same newest usage row", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-model-newest-"));
+  try {
+    routeHelperJobs(runDir, ["job-a", "job-b"]);
+    // A job that writes a second row keeps its first Map slot; the newest row
+    // overall is still A2, not B1.
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      [
+        {
+          at: "2026-10-05T10:00:00.000Z",
+          jobId: "job-a",
+          model: "a1-requested",
+          servedModel: "a1-served",
+          modelCalls: 1,
+          usage: { inputTokens: 1, totalTokens: 1 },
+        },
+        {
+          at: "2026-10-05T10:01:00.000Z",
+          jobId: "job-b",
+          model: "b1-requested",
+          modelCalls: 1,
+          usage: { inputTokens: 2, totalTokens: 2 },
+        },
+        {
+          at: "2026-10-05T10:02:00.000Z",
+          jobId: "job-a",
+          model: "a2-requested",
+          servedModel: "a2-served",
+          modelCalls: 1,
+          usage: { inputTokens: 4, totalTokens: 4 },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n")
+    );
+    const snapshot = readUtilityObservability(runDir, "utility-nanny");
+    expect(snapshot.model).toBe("a2-requested");
+    expect(snapshot.servedModel).toBe("a2-served");
+    // Totals still count only the latest row per job.
+    expect(snapshot.usage.modelCalls).toBe(2);
+    expect(snapshot.usage.inputTokens).toBe(6);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("helper model provenance prefers the newest timestamp and never mixes rows", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-model-timestamp-"));
+  try {
+    routeHelperJobs(runDir, ["job-late", "job-early"]);
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      [
+        {
+          at: "2026-10-05T10:05:00.000Z",
+          jobId: "job-late",
+          model: "late-requested",
+          modelCalls: 1,
+          usage: { inputTokens: 1, totalTokens: 1 },
+        },
+        // Appended later by a slower worker, but finished earlier.
+        {
+          at: "2026-10-05T10:01:00.000Z",
+          jobId: "job-early",
+          servedModel: "early-served",
+          modelCalls: 1,
+          usage: { inputTokens: 2, totalTokens: 2 },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n")
+    );
+    const snapshot = readUtilityObservability(runDir, "utility-nanny");
+    expect(snapshot.model).toBe("late-requested");
+    expect(snapshot.servedModel).toBeUndefined();
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("utility observability safely handles absent and malformed journals", () => {
   const runDir = mkdtempSync(join(tmpdir(), "utility-observability-bad-"));
   try {

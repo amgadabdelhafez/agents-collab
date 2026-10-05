@@ -749,7 +749,9 @@ test("LLM unreachable suppresses recovery and flags the board", async () => {
   expect(result.llmOffline).toBe(true);
   expect(spies.sends).toHaveLength(0);
   expect(spies.respawns).toHaveLength(0);
-  expect(stripAnsi(result.board)).toContain("judge · offline");
+  expect(stripAnsi(result.board)).toContain(
+    "judge · m @127.0.0.1:8082 · offline"
+  );
   expect(stripAnsi(result.board)).not.toContain("judge cfg qwen");
 });
 
@@ -2031,7 +2033,7 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("joint idle 0s");
   expect(visibleBoard).not.toContain("msgs claude 0 codex 0");
   expect(visibleBoard).toContain(
-    "judge · ok · 3 calls · 2k tok (i900 c500 o100) · cache 20% · slots 10/10 · mem 1.82GB"
+    "judge · m @127.0.0.1:8082 · ok · 3 calls · 2k tok (i900 c500 o100) · cache 20% · slots 10/10 · mem 1.82GB"
   );
   expect(visibleBoard).not.toContain("runtime ·");
   const llmLines = boardLines.filter(
@@ -2796,6 +2798,227 @@ test("runtime identity lives on Nanny and does not borrow a foreign judge host",
         process.env[key] = value;
       }
     }
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+const withEnv = async (
+  values: Record<string, string | undefined>,
+  fn: () => Promise<void>
+): Promise<void> => {
+  const old = Object.fromEntries(
+    Object.keys(values).map((key) => [key, process.env[key]])
+  );
+  try {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = value;
+      }
+    }
+    await fn();
+  } finally {
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+};
+
+const trackerPricing = {
+  codexCreditUsd: 0,
+  rates: [
+    {
+      basis: "api_usd_per_mtok" as const,
+      modelPrefix: "claude-sonnet",
+      provider: "claude" as const,
+      rates: { cacheRead: 0, input: 3, output: 0 },
+    },
+    {
+      basis: "api_usd_per_mtok" as const,
+      modelPrefix: "claude-opus",
+      provider: "claude" as const,
+      rates: { cacheRead: 0, input: 15, output: 0 },
+    },
+  ],
+  source: "test-catalog",
+};
+
+test("observed seat model wins over configured model for display and pricing", async () => {
+  const shared = usage({ dataConfidence: "missing" });
+  const deps: GovernessDeps = {
+    ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+    readSeatSignals: (agent) => ({
+      agent,
+      costSource: "none",
+      inputTokens: 1_000_000,
+      model: "claude-sonnet-5",
+      source: "transcript",
+    }),
+    readUsage: () => shared,
+    readUsageLimits: () => Promise.resolve({ pricing: trackerPricing }),
+  };
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      agents: [
+        {
+          agent: "claude",
+          configuredEffort: "high",
+          configuredModel: "claude-opus-5",
+          hookFile: "hooks.jsonl",
+          pane: "s:0.0",
+        },
+      ],
+    }),
+    deps
+  );
+  const claudeRow = stripAnsi(result.board)
+    .split("\n")
+    .find((line) => line.startsWith(" claude"));
+  // readUsage's object is the reader's, not the board's to rewrite.
+  expect(shared.model).toBeUndefined();
+  expect(shared.reasoningEffort).toBeUndefined();
+  expect(shared.inputTokens).toBe(0);
+  expect(claudeRow).toContain("sonnet-5");
+  expect(claudeRow).not.toContain("opus");
+  expect(claudeRow).toContain("$3.00");
+});
+
+test("configured seat model is marked as configured, never shown as observed", async () => {
+  const shared = usage({ dataConfidence: "exact", inputTokens: 1_000_000 });
+  const deps: GovernessDeps = {
+    ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+    readUsage: () => shared,
+    readUsageLimits: () => Promise.resolve({ pricing: trackerPricing }),
+  };
+  const result = await governessTick(
+    new Map(),
+    baseConfig({
+      agents: [
+        {
+          agent: "claude",
+          configuredEffort: "high",
+          configuredModel: "claude-opus-5",
+          hookFile: "hooks.jsonl",
+          pane: "s:0.0",
+        },
+      ],
+    }),
+    deps
+  );
+  const claudeRow = stripAnsi(result.board)
+    .split("\n")
+    .find((line) => line.startsWith(" claude"));
+  expect(shared.model).toBeUndefined();
+  expect(shared.reasoningEffort).toBeUndefined();
+  expect(shared.costUsd).toBe(0);
+  expect(claudeRow).toMatch(/\s~opus-5\s/);
+  expect(claudeRow).toMatch(/\s~hi\s/);
+  // Without an observed model the configured one is the only pricing basis.
+  expect(claudeRow).toContain("$15.00");
+});
+
+test("summary labels any cost coverage below 100% as partial with the figure", async () => {
+  const run = async (coverage: number[]) => {
+    const deps: GovernessDeps = {
+      ...makeDeps(stuck, { ms: START_MS }, freshSpies()),
+      readUsage: (agent) =>
+        usage({
+          costEstimateCoveragePct:
+            agent === "claude" ? coverage[0] : coverage[1],
+          costUsd: 5,
+          dataConfidence: "exact",
+        }),
+    };
+    const result = await governessTick(
+      new Map(),
+      baseConfig({
+        agents: [
+          { agent: "claude", hookFile: "claude.jsonl", pane: "s:0.0" },
+          { agent: "codex", hookFile: "codex.jsonl", pane: "s:0.1" },
+        ],
+      }),
+      deps
+    );
+    return stripAnsi(result.board).split("\n")[0] ?? "";
+  };
+  expect(await run([100, 100])).toContain("Σ est $10.00");
+  expect(await run([100, 50])).toContain("Σ est partial 75% (known $10.00)");
+  expect(await run([100, 0])).toContain("Σ est partial 50% (known $10.00)");
+  expect(await run([0, 0])).toContain("Σ est partial 0% (known $10.00)");
+});
+
+test("default board names the single judge model and credential-free endpoint", async () => {
+  await withEnv({ LOOP_GOVERNESS_BOARD_DETAILS: undefined }, async () => {
+    const result = await governessTick(
+      new Map(),
+      baseConfig({
+        model: "mlx-community/Qwen3.8-27B-4bit",
+        url: "http://user:secret@127.0.0.1:8084/v1?token=hidden",
+      }),
+      makeDeps(stuck, { ms: START_MS }, freshSpies())
+    );
+    const board = stripAnsi(result.board);
+    const judgeLine = board
+      .split("\n")
+      .find((line) => line.startsWith(" judge ·"));
+    expect(judgeLine).toStartWith(
+      " judge · Qwen3.8-27B-4bit @127.0.0.1:8084 · ok"
+    );
+    expect(board).not.toContain("runtime ·");
+    for (const secret of ["user", "secret", "hidden", "/v1"]) {
+      expect(judgeLine).not.toContain(secret);
+    }
+    const narrow = await governessTick(
+      new Map(),
+      baseConfig({
+        model: "mlx-community/Qwen3.8-27B-4bit",
+        url: "http://127.0.0.1:8084",
+        viewportColumns: 100,
+      }),
+      makeDeps(stuck, { ms: START_MS }, freshSpies())
+    );
+    const narrowLines = stripAnsi(narrow.board).split("\n");
+    expect(narrowLines.find((line) => line.startsWith(" judge ·"))).toStartWith(
+      " judge · Qwen3.8-27B-4bit @127.0.0.1:8084 · ok"
+    );
+    for (const line of narrowLines) {
+      expect(line.length).toBeLessThanOrEqual(100);
+    }
+  });
+});
+
+test("Nanny runtime location matches normalised routes and anchors .local", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "nanny-route-normalised-"));
+  try {
+    await withEnv(
+      {
+        LOOP_GOVERNESS_COMPUTE_LABEL: "GPU (Apple M5 Pro / Metal)",
+        LOOP_GOVERNESS_HOST_LABEL: "mac.localnet.local",
+        LOOP_NANNY_COMPUTE_LABEL: undefined,
+        LOOP_NANNY_HOST_LABEL: undefined,
+        LOOP_NANNY_MODEL: "mlx-community/Qwen3.8-27B-4bit",
+        LOOP_NANNY_URL: "http://localhost:8082/",
+      },
+      async () => {
+        const result = await governessTick(
+          new Map(),
+          baseConfig({ runDir, model: "mlx-community/Qwen3.8-27B-4bit" }),
+          makeDeps(stuck, { ms: START_MS }, freshSpies())
+        );
+        const nannyRow = stripAnsi(result.board)
+          .split("\n")
+          .find((line) => line.startsWith(" nanny"));
+        expect(nannyRow).toContain("GPU@mac.localnet ");
+        expect(nannyRow).not.toContain("macnet");
+      }
+    );
+  } finally {
     rmSync(runDir, { force: true, recursive: true });
   }
 });

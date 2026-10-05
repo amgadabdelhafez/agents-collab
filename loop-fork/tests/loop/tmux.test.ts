@@ -302,7 +302,10 @@ test("governess env passes provided helper-tier settings and omits absent settin
   expect(environment).toContain("LOOP_AU_PAIR_URL=http://switchyard.test/v1");
   expect(environment).toContain("LOOP_AU_PAIR_MODEL=openai/gpt-5-mini");
   expect(environment).toContain("LOOP_NANNY_URL=http://nanny.test/v1");
-  expect(environment).toContain("LOOP_GOVERNESS_MODEL_LABEL=Qwen3.8 27B 4-bit");
+  // Nothing reads a Governess model label since the runtime row was removed.
+  expect(
+    environment.some((entry) => entry.startsWith("LOOP_GOVERNESS_MODEL_LABEL="))
+  ).toBe(false);
   expect(environment).toContain("LOOP_GOVERNESS_COMPUTE_LABEL=GPU / Metal");
   expect(environment).toContain("LOOP_GOVERNESS_HOST_LABEL=sweetmac14");
   expect(environment).toContain("LOOP_UTILITY_ALLOWED_TIERS=nanny,au-pair");
@@ -379,6 +382,43 @@ test("governess helper env policy covers every helper-tier variable read by sour
   expect(passedHelperNames.sort()).toEqual(
     [...tmuxInternals.governessHelperEnvKeys].sort()
   );
+});
+
+test("governess board display env forwards only variables source reads", () => {
+  const sourceText = (directory: string): string =>
+    readdirSync(directory, { withFileTypes: true })
+      .map((entry) => {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          return sourceText(path);
+        }
+        return entry.isFile() &&
+          path.endsWith(".ts") &&
+          !path.endsWith(join("loop", "tmux.ts"))
+          ? readFileSync(path, "utf8")
+          : "";
+      })
+      .join("\n");
+  const readers = sourceText(join(import.meta.dir, "..", "..", "src"));
+  expect(tmuxInternals.governessBoardEnvKeys.length).toBeGreaterThan(0);
+  for (const key of tmuxInternals.governessBoardEnvKeys) {
+    expect({ key, read: readers.includes(`process.env.${key}`) }).toEqual({
+      key,
+      read: true,
+    });
+  }
+  const forwarded = tmuxInternals
+    .governessEnv(
+      makePairedOptions(),
+      Object.fromEntries(
+        tmuxInternals.governessBoardEnvKeys.map((key) => [key, "1"])
+      ),
+      "/repo"
+    )
+    .map((entry) => entry.slice(0, entry.indexOf("=")));
+  for (const key of tmuxInternals.governessBoardEnvKeys) {
+    expect(forwarded).toContain(key);
+  }
 });
 
 const withTempHomeRunManifest = async (
