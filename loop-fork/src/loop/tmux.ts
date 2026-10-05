@@ -2411,6 +2411,29 @@ interface ClaudeModalStability {
 
 const CLAUDE_SELECTED_ROW_RE = /^\s*❯(?:\s|$)/;
 const RECOVERY_PANE_ID_RE = /^%\d+$/;
+
+const preservedStartupEligible = (
+  manifest: RunManifest,
+  runDir: string
+): boolean => {
+  const left = manifest.tmuxPaneLeft;
+  const right = manifest.tmuxPaneRight;
+  return (
+    manifest.state === "input-required" &&
+    Boolean(
+      left &&
+        right &&
+        RECOVERY_PANE_ID_RE.test(left) &&
+        RECOVERY_PANE_ID_RE.test(right) &&
+        left !== right
+    ) &&
+    !existsSync(join(runDir, "governess-control.jsonl")) &&
+    !(
+      existsSync(join(runDir, "transcript.jsonl")) &&
+      readFileSync(join(runDir, "transcript.jsonl"), "utf8").trim()
+    )
+  );
+};
 const CLAUDE_SELECTED_DEV_CONFIRM_RE =
   /❯\s*1\.\s*I am using this for local development(?:\s|$)/;
 const CLAUDE_SELECTED_DEV_EXIT_RE = /❯\s*2\.(?:\s|$)/;
@@ -3593,11 +3616,13 @@ const startPairedSession = async (
         `${paneAgents.right}-bootstrap.txt`
       );
       if (
-        manifest.state !== "input-required" ||
-        !left ||
-        !right ||
-        !RECOVERY_PANE_ID_RE.test(left) ||
-        !RECOVERY_PANE_ID_RE.test(right) ||
+        !(
+          preservedStartupEligible(manifest, storage.runDir) &&
+          left &&
+          right &&
+          RECOVERY_PANE_ID_RE.test(left) &&
+          RECOVERY_PANE_ID_RE.test(right)
+        ) ||
         left === right ||
         !existsSync(leftPrompt) ||
         !existsSync(rightPrompt) ||
@@ -4635,6 +4660,7 @@ export const runInTmux = async (
 };
 
 export const tmuxInternals = {
+  preservedStartupEligible,
   governessTemporalEnvKeys: GOVERNESS_TEMPORAL_ENV_KEYS,
   claudeSeatHasNoShell,
   buildClaudeCommand,
