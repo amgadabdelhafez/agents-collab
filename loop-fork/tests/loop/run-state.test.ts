@@ -137,6 +137,51 @@ test("failed terminal release preserves failure and refuses live ownership", asy
   });
 });
 
+test("terminal release refuses a run that leaves its terminal state before the write", async () => {
+  for (const terminalState of ["stopped", "failed"] as const) {
+    for (const keepUpdatedAt of [true, false]) {
+      const name = `${terminalState} keepUpdatedAt=${keepUpdatedAt}`;
+      const manifestPath = join(makeTempDir(), "manifest.json");
+      const fixture = writeLegacyStoppedFixture(manifestPath);
+      const terminal = {
+        ...fixture,
+        state: terminalState,
+        status: terminalState,
+      };
+      writeRunManifest(manifestPath, terminal);
+      const result = await reconcileLegacyStoppedRun(
+        manifestPath,
+        "22",
+        {
+          now: () => "2026-08-29T19:00:00.000Z",
+          pidCanStillOwnRun: () => false,
+          runtimeAbsent: () => {
+            writeRunManifest(manifestPath, {
+              ...terminal,
+              state: "working",
+              status: "running",
+              updatedAt: keepUpdatedAt
+                ? terminal.updatedAt
+                : "2026-08-29T18:30:00.000Z",
+            });
+            return Promise.resolve(true);
+          },
+        },
+        terminalState
+      );
+      expect(result, name).toEqual({
+        reason: "manifest-changed-concurrently",
+        runId: "22",
+        status: "refused",
+      });
+      const after = readRunManifest(manifestPath);
+      expect(after?.state, name).toBe("working");
+      expect(after?.status, name).toBe("running");
+      expect(after?.workspaceReleasedAt, name).toBeUndefined();
+    }
+  }
+});
+
 test("legacy stopped-run reconciliation refuses uncertain ownership without writes", async () => {
   const cases = [
     { name: "live pid", pidOwns: true, runtimeGone: true },
