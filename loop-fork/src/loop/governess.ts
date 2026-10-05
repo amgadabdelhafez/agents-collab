@@ -136,7 +136,7 @@ import {
   type UsageLimitSnapshot,
 } from "./governess-usage-limits";
 import { openPublicAskSequences } from "./human-interaction-ask";
-import { helperModelLabel, judgeRuntimeLabel } from "./judge-route-label";
+import { helperModelLabel } from "./judge-route-label";
 import { buildLaunchArgv } from "./launch";
 import {
   migrateLegacyGovernessState,
@@ -1619,7 +1619,7 @@ const HELPER_COLUMNS: [string, number][] = [
   [subcells(["COST", ""], [7, 4]), HELPER_COL.spend],
   [subcells(["OK", "FAIL"], [6, 7]), HELPER_COL.run],
   [subcells(["ACTIVE", "QUEUE"], [8, 9]), HELPER_COL.context],
-  ["CTX MISS", HELPER_COL.limits],
+  [subcells(["MISS", "RUNTIME"], [4, 20], "left"), HELPER_COL.limits],
   [
     subcells(["TOTAL", "INPUT", "CACHE", "OUTPUT"], [5, 5, 5, 6]),
     HELPER_COL.tokens,
@@ -2237,12 +2237,46 @@ const utilityModelCell = (
     : shortLocalModel(process.env.LOOP_AU_PAIR_MODEL ?? "z-ai/glm-5.2");
 };
 
+const RUNTIME_DEVICE_RE = /^(GPU|CPU)\b/i;
+const nannyRuntimeLocation = (
+  model: string | undefined,
+  meta: BoardMeta
+): string => {
+  const judge = meta.llmJudges[0];
+  const sameRoute = Boolean(
+    model &&
+      judge &&
+      model === judge.model &&
+      process.env.LOOP_NANNY_URL === judge.url
+  );
+  const compute =
+    process.env.LOOP_NANNY_COMPUTE_LABEL ??
+    (sameRoute ? process.env.LOOP_GOVERNESS_COMPUTE_LABEL : undefined);
+  const host =
+    process.env.LOOP_NANNY_HOST_LABEL ??
+    (sameRoute ? process.env.LOOP_GOVERNESS_HOST_LABEL : undefined);
+  const device = compute?.match(RUNTIME_DEVICE_RE)?.[1]?.toUpperCase();
+  const safeHost = host
+    ? [...host]
+        .filter((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127)
+        .join("")
+    : undefined;
+  return [device, safeHost?.replace(".local", "")].filter(Boolean).join("@");
+};
+
 const renderUtilityAgentRow = (
   snapshot: UtilityObservabilitySnapshot,
   meta: BoardMeta,
   role: "au pair" | "direct" | "nanny"
 ): string => {
   const state = utilityState(snapshot);
+  const runtimeLocation =
+    role === "nanny"
+      ? nannyRuntimeLocation(
+          snapshot.model ?? process.env.LOOP_NANNY_MODEL,
+          meta
+        )
+      : "";
   // Worker task counters only. Governess judge inference shares the local
   // model but is reported on its own "judge model" line, never folded into
   // the Nanny row (it previously inflated Nanny tokens and calls).
@@ -2279,7 +2313,14 @@ const renderUtilityAgentRow = (
       subcells([String(snapshot.active), String(snapshot.queued)], [8, 9]),
       HELPER_COL.context
     ),
-    fitCell(String(snapshot.contextInsufficient), HELPER_COL.limits),
+    fitCell(
+      subcells(
+        [String(snapshot.contextInsufficient), runtimeLocation],
+        [4, 20],
+        "left"
+      ),
+      HELPER_COL.limits
+    ),
     colorCell(ANSI.yellow, tokens, HELPER_COL.tokens),
     colorCell(ANSI.yellow, activity, HELPER_COL.activity),
   ].join(" ")}`;
@@ -3290,16 +3331,6 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     ...rows.map((row) => rateLimitCell(row.usage).indexOf("W"))
   );
   const statusLine = renderSummaryLine(rows, meta);
-  const routeLine = meta.llmJudges[0]
-    ? paint(
-        ANSI.cyan,
-        judgeRuntimeLabel(meta.llmJudges[0].model, {
-          model: process.env.LOOP_GOVERNESS_MODEL_LABEL,
-          compute: process.env.LOOP_GOVERNESS_COMPUTE_LABEL,
-          host: process.env.LOOP_GOVERNESS_HOST_LABEL,
-        })
-      )
-    : undefined;
   const primaryAgentRows = rows.map((row) =>
     renderAgentRow(row, meta, weeklyLimitIndent)
   );
@@ -3349,7 +3380,6 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const fullTop = [
     statusLine,
     ...identityRows,
-    ...(routeLine ? [routeLine] : []),
     ...bridgeLines,
     ...workerRoutingLines,
     ...workerDetailLines,
@@ -3358,9 +3388,7 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
   const maxRows = meta.maxRows;
   let top = fullTop;
   if (maxRows !== undefined && fullTop.length > maxRows) {
-    const routeRows =
-      routeLine && maxRows >= identityRows.length + 2 ? [routeLine] : [];
-    const rowBudget = Math.max(0, maxRows - 1 - routeRows.length);
+    const rowBudget = Math.max(0, maxRows - 1);
     const compactIdentityRows =
       maxRows <= entityRows.length + 1
         ? [
@@ -3398,7 +3426,6 @@ const renderBoard = (rows: AgentRow[], meta: BoardMeta): string => {
     top = [
       statusLine,
       ...visibleIdentityRows,
-      ...routeRows,
       ...visibleBridgeLines,
       ...visibleRoutingLines,
       ...visibleWorkerDetailLines,

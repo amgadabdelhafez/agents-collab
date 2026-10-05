@@ -2748,6 +2748,58 @@ test("governess run identity includes full loop name and path", () => {
   expect(composeGovernessPaneTitle(config)).toBe("governess.harvto-loop-34");
 });
 
+test("runtime identity lives on Nanny and does not borrow a foreign judge host", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "nanny-inline-location-"));
+  const values = {
+    LOOP_NANNY_MODEL: "mlx-community/Qwen3.8-27B-4bit",
+    LOOP_NANNY_URL: "http://127.0.0.1:8082",
+    LOOP_GOVERNESS_COMPUTE_LABEL: "GPU (Apple M5 Pro / Metal)",
+    LOOP_GOVERNESS_HOST_LABEL: "sweetmac14.local",
+  };
+  const old = Object.fromEntries(
+    Object.keys(values).map((k) => [k, process.env[k]])
+  );
+  try {
+    Object.assign(process.env, values);
+    const config = baseConfig({ runDir, model: values.LOOP_NANNY_MODEL });
+    const same = stripAnsi(
+      (
+        await governessTick(
+          new Map(),
+          config,
+          makeDeps(stuck, { ms: START_MS }, freshSpies())
+        )
+      ).board
+    );
+    expect(
+      same.split("\n").find((line) => line.startsWith(" nanny"))
+    ).toContain("GPU@sweetmac14");
+    expect(same).not.toContain("compute unknown");
+    expect(same).not.toContain("host unknown");
+    const other = stripAnsi(
+      (
+        await governessTick(
+          new Map(),
+          { ...config, model: "foreign-model" },
+          makeDeps(stuck, { ms: START_MS }, freshSpies())
+        )
+      ).board
+    );
+    expect(
+      other.split("\n").find((line) => line.startsWith(" nanny"))
+    ).not.toContain("sweetmac14");
+  } finally {
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = value;
+      }
+    }
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
 test("runtime tuning is opt-in and kept out of the compact board", async () => {
   const previous = process.env.LOOP_GOVERNESS_BOARD_DETAILS;
   try {
@@ -2795,8 +2847,11 @@ test("board merges loop and path into the first time/status line", async () => {
   expect(lines[0]).not.toContain("run 34");
   expect(lines[1]).toStartWith(" AGENT");
   expect(
-    lines.some((line) => line.startsWith(" m · compute unknown · host unknown"))
-  ).toBe(true);
+    lines.some(
+      (line) =>
+        line.includes("compute unknown") || line.includes("host unknown")
+    )
+  ).toBe(false);
 });
 
 test("governess pane identity is reapplied without deduplication", () => {

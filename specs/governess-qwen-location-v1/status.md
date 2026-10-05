@@ -1,5 +1,18 @@
 # Status, October 4, 2026
 
+## Inline Nanny runtime identity
+
+User supersedes standalone model/compute/host row: removed completely from board.
+Nanny keeps its actual model in MODEL, and MISS/RUNTIME uses otherwise wasted
+space for an attested compact device@Mac, e.g. GPU@sweetmac14. Unknown hardware
+or host is omitted, not rendered as compute unknown/host unknown. Judge metadata
+is reusable only when Nanny model AND endpoint match; explicit Nanny metadata
+can be supplied separately. Au Pair/direct keep table alignment. No routing or
+inference change. Existing84 Governess tests pass475 assertions, plus focused
+inline identity/foreign-route refusal/narrow-board3 tests14 assertions pass.
+Installed candidate ba3671b6a21b21159f5a639103c504a29251385eedcfac8b9932210666abf600,
+previous e026b4b9 retained for rollback. No unrelated live pane refresh performed.
+
 ## Board cleanup source and release
 
 Installed binary e026b4b906adf9ed396dad0921c1ba63f3fbf00c268d6fdbbaea67db2df872ea
