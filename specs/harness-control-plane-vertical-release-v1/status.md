@@ -1,5 +1,7 @@
 # Test-route acceptance complete, October 5, 2026
 
+Evidence binding is bounded by the October 5 correction at the end of this file.
+
 Run49 activated the composed A2A/application PostgreSQL/Temporal path for one
 workspace and both seats. Delivery, recipient claim/ACK, committed artifact
 acceptance, distinct result publication and worker/database restart dedupe passed.
@@ -52,3 +54,56 @@ document and does not include a source-commit identity claim. Post-commit releas
 packaging and one fresh Sonnet/Codex live proof remain required. No installation,
 merge, push or new Loop occurred. Earlier Run48 acceptance is feature-line
 evidence, not a substitute for composed-candidate live acceptance.
+
+## Correction, October 5, 2026: what each identity's evidence covers
+
+This section corrects and bounds the records above and keeps them as history.
+
+Predecessor docs are not at this base. specs/harness-control-plane-vertical-v1
+(tasks.md, status.md, release-attribution.md, verify.md) exists only at
+e4efbae2, branch codex/a2a-request-rejection-v1. e4efbae2 is not an ancestor of
+53511614 (merge base 4439b2e7); it entered this line as a patch composition
+input. Those files are not edited here. Read them with these limits:
+
+- Its tasks.md ticks "Enroll one paired test workspace and prove the full
+  request/result chain". Related items there are still open: the composite
+  "Restart worker/database, reject duplicates and foreign identities, clean up",
+  "Record exact binary/source/config identities, rollback and test activation"
+  and "Prove one reply effect per inbound message across repeated channel
+  notices". Two narrower restart items are ticked: application database rows
+  surviving a real container restart, and reconciling accepted bridge delivery
+  into the same Temporal execution after worker restart. Its status.md:57 says
+  same-client retry identity convergence is NOT proven. That tick means the
+  Run48 request/result path was observed. It does not mean full-chain
+  acceptance. Unticking or qualifying it in that file is left to the owner of
+  codex/a2a-request-rejection-v1.
+- Run48 evidence there is spread over three candidate binaries, and none of them
+  binds to e4efbae2 (the child commit of 99e61b54 that records this evidence) or
+  to 53511614:
+  - Run48 was allocated with launcher candidate 28bf864b...0851 (status.md:132),
+    the same SHA256 as the 08:23 dedicated timing-repair candidate
+    (status.md:153-154). These docs record no source HEAD for it.
+  - The dedicated Run48 service that took the result task ran candidate
+    9904f280...29fa3 (status.md:96-98). release-attribution.md:8-11 binds that
+    candidate to feature-line HEAD 99e61b54 plus an uncommitted overlay.
+  - 7980ed8d...dd4a8 (verify.md:16, status.md:413-415, slice-1-charter.md:10)
+    is the October 4 Slice 1 source-overlay diagnostic candidate, not Run48
+    evidence. verify.md says it includes an uncommitted feature-line overlay but
+    names no HEAD. The Slice 1 charter's 99e61b54 is the test workspace's base.
+  No record shows that e4efbae2's tree reproduces any of these bytes. (This
+  bullet replaces an earlier wording on this branch that attributed Run48 PASS
+  evidence to 7980ed8d.)
+- Run49 evidence above binds to compiled 8a1cc88f (SHA256 1be7d94a...8f10), and
+  Run50 to compiled 928bd1db (d0a8aa8f...07de). 53511614 itself has no runtime
+  evidence. It differs from 928bd1db by two loop-fork/scripts files and five
+  docs in this directory (`git diff --stat 928bd1db 53511614`).
+
+The worker result artifacts are assertions, not evidence. Neither file is at
+this base. 8c17877e:vertical-result.md (Run48, SHA256 2949e1ab...9c14) and
+b1094f29:vertical-release-result.md (Run49, SHA256 96a127b8...69c2; parent chain
+b1094f29 -> 8c17877e -> 99e61b54) are six-line files: a heading, a task ID, and
+"Source truth: Git", "Transactional state: PostgreSQL" and "Workflow owner:
+Temporal", with no SHA or evidence. The hashes reproduce and match the digests
+recorded in v1 release-attribution.md:18-20 and release-receipt.md:35-36. They
+identify the committed bytes only. The architecture statements inside the files
+are unproven claims.
