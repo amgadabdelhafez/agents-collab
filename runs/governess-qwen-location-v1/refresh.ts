@@ -10,6 +10,10 @@ const socket = "/tmp/tmux-501/default";
 const binary = "/private/tmp/governess-qwen-location-v1/loop-fork/loop";
 const expected =
   "f00d88d75b186c8be8f59bf5a902a08144072aa6f3f06647f3672b53cc5c0150";
+const expectedPid = process.env.RUN43_EXPECT_GOV_PID ?? "57075";
+if (!/^\d+$/.test(expectedPid)) {
+  throw new Error("Exact expected PID required");
+}
 if (process.env.RUN43_ROUTE_ADOPT !== "yes") {
   throw new Error("Explicit Run43 adoption required");
 }
@@ -42,7 +46,7 @@ if (
     "-t",
     "%60",
     "#{session_name}|#{pane_pid}|#{pane_dead}",
-  ]) !== "agents-collab-loop-43|57075|0"
+  ]) !== `agents-collab-loop-43|${expectedPid}|0`
 ) {
   throw new Error("Governess process drift");
 }
@@ -63,6 +67,8 @@ writeGovernessEnvironmentFile(environmentPath, [
   "LOOP_GOVERNESS_MODEL=/Users/amgad/.local/share/loop/qwen38-27b/model-10c35caa",
   "LOOP_GOVERNESS_URL=http://127.0.0.1:8084",
   "LOOP_GOVERNESS_JUDGES=",
+  "LOOP_NANNY_MODEL=/Users/amgad/.local/share/loop/qwen38-27b/model-10c35caa",
+  "LOOP_NANNY_URL=http://127.0.0.1:8084",
   `LOOP_TMUX_SOCKET=${socket}`,
 ]);
 const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;

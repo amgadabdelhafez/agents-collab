@@ -15,3 +15,9 @@ Acceptance: focused rendering/redaction checks, installed candidate identity,
 same-run control-plane refresh through supported recovery if required, observed
 pane identity/location, actual Qwen judgment and healthy doctor/replay. Preserve
 rollback and prior usage. Only Run43 route adoption; no fleet route cutover.
+
+Follow-up user authority: restart Run43 Governess again and stress the helper
+lanes. Preserve the pair, use queued bounded read-only jobs, retain every failure
+and usage event, and verify postflight. No source edits/patch application by
+helpers, no concurrency-limit increase or added paid capacity. Existing provider
+use for the bounded Au Pair test is within the requested helper test scope.

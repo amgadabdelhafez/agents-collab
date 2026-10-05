@@ -49,6 +49,12 @@ Governess pins a visible configured-model/endpoint/client row ahead of optional
 metrics. Only credential-free URL origins are displayed. The client hostname and
 proxy endpoint are not proof of the backend's physical host or served weights;
 runtime completion evidence must establish served identity before adoption.
+When a Nanny route follows a Governess route, explicitly bind LOOP_NANNY_MODEL
+and LOOP_NANNY_URL. Worker environment minimization intentionally does not pass
+LOOP_GOVERNESS_* variables; relying on that fallback can make the scheduler's
+configured endpoint differ from the worker's endpoint. Verify worker usage/model
+and request provenance, not only the Governess row. Run43 stress exposed this
+and used explicit run-scoped binding; no fleet-default repair is claimed.
 An external bridge supervisor can submit/observe messages, but is not a route
 or claim authority.
 ```

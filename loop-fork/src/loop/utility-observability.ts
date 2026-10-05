@@ -555,7 +555,9 @@ const usageSnapshot = (
   let servedModel: string | undefined;
   for (const event of events.values()) {
     model = stringAt(event, "model") ?? model;
-    servedModel = stringAt(event, "servedModel") ?? servedModel;
+    // Model provenance belongs to the latest usage row, not an older job whose
+    // mismatch would otherwise be displayed beside a newly selected model.
+    servedModel = stringAt(event, "servedModel");
     const current = recordAt(event, "usage") ?? {};
     usage.cachedInputTokens = saturatingAdd(
       usage.cachedInputTokens,

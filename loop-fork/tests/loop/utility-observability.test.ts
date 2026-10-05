@@ -19,6 +19,64 @@ import {
   transitionUtilityJob,
 } from "../../src/loop/utility-store";
 
+test("latest helper model does not inherit an older served-model mismatch", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-model-history-"));
+  try {
+    for (const id of ["old-model", "new-model"]) {
+      appendUtilityRouteRequest(
+        runDir,
+        createUtilityRouteRequest({
+          id,
+          objective: id,
+          acceptanceCriteria: ["literal"],
+          authority: {},
+          kind: "inspect",
+          requester: "claude",
+          risk: "low",
+          readScope: ["src/one.ts"],
+          writeScope: [],
+          requiredCapabilities: ["inspect"],
+        })
+      );
+      transitionUtilityJob(runDir, id, "routed-utility", {
+        decision: {
+          reason: "utility-eligible",
+          target: "utility",
+          tierId: "utility-nanny",
+        },
+        routeEpoch: 1,
+      });
+    }
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      [
+        {
+          jobId: "old-model",
+          model: "old-requested",
+          servedModel: "old-served",
+          modelCalls: 1,
+          usage: { inputTokens: 10, totalTokens: 10 },
+        },
+        {
+          jobId: "new-model",
+          model: "new-requested",
+          modelCalls: 1,
+          usage: { inputTokens: 20, totalTokens: 20 },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n")
+    );
+    const snapshot = readUtilityObservability(runDir, "utility-nanny");
+    expect(snapshot.model).toBe("new-requested");
+    expect(snapshot.servedModel).toBeUndefined();
+    expect(snapshot.usage.modelCalls).toBe(2);
+    expect(snapshot.usage.inputTokens).toBe(30);
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 test("utility observability safely handles absent and malformed journals", () => {
   const runDir = mkdtempSync(join(tmpdir(), "utility-observability-bad-"));
   try {
@@ -679,7 +737,9 @@ test("helper cost provenance never sums an unknown price as zero", () => {
     });
     expect(auPair.performance.averageCostUsd).toBe(0.25);
     expect(auPair.servedModel).toBe("z-ai/glm-5.2-20260901");
-    expect(utilityUsageCostText(auPair.usage)).toBe("cost $0.2500 est + 1 unknown");
+    expect(utilityUsageCostText(auPair.usage)).toBe(
+      "cost $0.2500 est + 1 unknown"
+    );
     const unknownEntry = auPair.transcript.find(
       (entry) => entry.jobId === "switchyard-au-pair" && entry.usage
     );
