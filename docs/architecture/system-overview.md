@@ -38,6 +38,13 @@ Codex spawn_agent ──PreToolUse/config──► denied (sandbox inheritance)
                                                   └─ one read-only fallback
 
 Separate read-only Nanny and Au Pair panes observe their filtered job streams.
+Helper observability keeps routing/judge inference separate from worker task
+counters. Task records retain failed attempts, requested and served model identity,
+input/cache/output, model/tool calls, and explicit cost provenance. Local zero-rate
+is not provider billing; unknown or partial cost never becomes a fabricated zero.
+Compact panes preserve usage headers and the newest result. A helper result is
+evidence, not authority: the driver verifies citations and reviews guarded patch
+application. Installing a binary does not upgrade already-loaded panes.
 An external bridge supervisor can submit/observe messages, but is not a route
 or claim authority.
 ```

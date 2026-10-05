@@ -1,3 +1,32 @@
+# Accepted and installed: helper observability and routing, 2026-10-04
+
+Installed source 5eeaa48538a9e154b00649dd3898dc5bebbd42c1, tree
+38bb8e60daa00db72dfbf66c7ab43efa598566b7, binary SHA-256
+9dac102944e1bca03aaa52823851078e13257f0a0c25c16d34b00c401f144ff7.
+Atomic installation preserved immediate rollback d3591727. Installed native
+Nanny 68x13 and Au Pair 68x3 displays show measured task usage and provenance.
+Run43 remains live, six panes live, doctor/replay PASS after installation.
+Useful Nanny job03078905 completed; Au Pair job53052bc0 completed and Claude
+guarded-applied its proposal. Existing loaded panes were not restarted.
+Nanny requested Qwen35B but served Qwen4B; endpoint-model parity remains an
+explicit follow-up, not a successful 35B claim. Release ledger binds limits.
+
+## Superseded pre-acceptance checkpoint
+
+Run43 remains the sole live repair pair in the isolated workspace. Claude driver,
+Codex existing peer, supervisor acceptance. Installed binary remains d3591727;
+candidate d2663336 is not activated. See feature status and release ledger for
+exact identities and proof, not the dated historical sections below.
+
+Proven: judge/task separation in source; native compiled helper header diagnostic;
+useful Au Pair proposal53052bc0 and driver guarded apply with pre/postimage hashes.
+Open: peer deadline/compact viewport/unknown marker corrections, useful live Nanny,
+corrected candidate build and actual installed/runtime verification with rollback.
+Root startup recovery now refuses missing/ambiguous/work-bearing hook evidence for
+either seat (82be6ca5, focused23 assertions). No completion or fleet-upgrade claim.
+
+---
+
 # status — governess-beat workflow closes with the run
 
 ## 2026-09-18 — session 2: stopped-run coverage, full proofs

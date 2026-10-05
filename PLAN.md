@@ -1,3 +1,40 @@
+# Completed slice: helper observability and useful routing, 2026-10-04
+
+Accepted source5eeaa485 is installed as binary9dac1029 with immediate rollback
+d3591727. Useful Nanny and guarded Au Pair work, actual installed compact
+displays, retained failed-attempt usage, bounded retry and source acceptance
+are recorded in runs/helper-observability-routing-v1/release-acceptance.md.
+Run43 remains preserved and healthy. No project Loop was restarted.
+Next: endpoint owner verifies requested35B/served4B discrepancy; refresh existing
+loaded displays only through their normal lifecycle. No broad-suite/typecheck
+cleanliness or fleet-wide loaded-process upgrade is claimed.
+
+## Superseded implementation plan
+
+One Claude-driven paired Run43 owns the isolated `codex/helper-observability-routing-v1`
+workspace. Claude implements helper changes, existing Codex peer checks bounded
+acceptance, Harness supervisor owns startup recovery and installed/runtime proof.
+Spec: `specs/helper-observability-routing-v1/spec.md`; evidence and release checklist:
+`runs/helper-observability-routing-v1/`. Earlier sections below are dated history.
+
+1. Separate judge inference from worker counters and expose truthful helper state,
+   model, input/cache/output, calls and cost provenance, including narrow viewports.
+2. Repair proven Nanny admission contention without repeat after effects or renewed
+   deadlines; improve broker feedback without weakening scopes or guarded apply.
+3. Prove useful Nanny and Au Pair work through the existing bridge. Au Pair proposal
+   and driver guarded apply are proven; useful candidate-backed Nanny remains open.
+4. Address exact peer findings, compile the corrected source once, preserve immediate
+   rollback, install accepted bytes and verify actual displays and new worker code.
+5. Record source/tree/binary, correlated receipts, failures, knowledge and remaining
+   loaded-process limits. No duplicate writers, merge/push, credentials/capacity or
+   provider gateway. Existing project Loops remain preserved.
+
+Current repair checkpoint d2663336 is not accepted: deadline, compact viewport and
+unknown-price-marker findings require corrections. Supervisor startup-hook refusal
+fix is82be6ca5, focused1/23 assertions passed. Goal remains active.
+
+---
+
 # PLAN — governess-beat workflow closes with the run
 
 ## 2026-09-19 — branch `claude/governess-beat-close` (from `ec185ba1`)
