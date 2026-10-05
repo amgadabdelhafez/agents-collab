@@ -1708,6 +1708,29 @@ test("refuses a corrupt patch before recording an artifact or manifest", async (
       error: { code: "patch_conflict" },
       ok: false,
     });
+    // git's reason reaches the helper, without the broker's private path and
+    // without the old "no longer applies" claim of a stale patch.
+    expect(result.error?.message).toMatch(
+      /^Patch does not apply: corrupt patch at patch:\d+; end the patch with a newline/
+    );
+    expect(result.error?.message).not.toContain(".utility-artifacts");
+
+    const missingFinalNewline = await broker.execute({
+      arguments: {
+        patch: [
+          "--- a/src/hello.ts",
+          "+++ b/src/hello.ts",
+          "@@ -1 +1 @@",
+          "-export const hello = 'world';",
+          "+export const hello = 'utility';",
+        ].join("\n"),
+      },
+      name: "propose_patch",
+    });
+    expect(missingFinalNewline.error?.code).toBe("patch_conflict");
+    expect(missingFinalNewline.error?.message).toContain(
+      "corrupt patch at patch:"
+    );
     expect(await readdir(join(root, ".utility-artifacts"))).toEqual([]);
     expect(await readFile(join(root, "src", "hello.ts"), "utf8")).toBe(
       "export const hello = 'world';\n"
@@ -2093,4 +2116,34 @@ test("environment scrubbing is allowlist based", () => {
       PATH: "/bin",
     })
   ).toEqual({ CI: "1", LANG: "C", NO_COLOR: "1", PATH: "/bin" });
+});
+test("resolveUtilityReadRange distinguishes startLine-exceeds-endLine from startLine-past-end-of-file", async () => {
+  await withRepo(async (root) => {
+    await writeFile(join(root, "src", "three-lines.txt"), "a\nb\nc\n");
+    const broker = await brokerFor(root);
+
+    const exceeds = await broker.execute({
+      arguments: { endLine: 2, path: "src/three-lines.txt", startLine: 3 },
+      name: "read_file",
+    });
+    expect(exceeds.ok).toBe(false);
+    expect(exceeds.error?.code).toBe("invalid_arguments");
+    expect(exceeds.error?.message).toContain("startLine 3 exceeds endLine 2");
+
+    const pastEnd = await broker.execute({
+      arguments: { path: "src/three-lines.txt", startLine: 9 },
+      name: "read_file",
+    });
+    expect(pastEnd.ok).toBe(false);
+    expect(pastEnd.error?.code).toBe("invalid_arguments");
+    expect(pastEnd.error?.message).toContain(
+      "startLine 9 is past the end of the file (3 lines)"
+    );
+
+    const ok = await broker.execute({
+      arguments: { endLine: 3, path: "src/three-lines.txt", startLine: 2 },
+      name: "read_file",
+    });
+    expect(ok.ok).toBe(true);
+  });
 });

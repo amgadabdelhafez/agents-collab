@@ -8,6 +8,9 @@ import { createUtilityRouteRequest } from "../../src/loop/task-router";
 import {
   readUtilityObservability,
   sanitizeUtilityPaneText,
+  utilityCostSource,
+  utilityJobCostText,
+  utilityUsageCostText,
 } from "../../src/loop/utility-observability";
 import {
   activateUtilityEpoch,
@@ -136,8 +139,12 @@ test("utility observability saturates malformed numeric artifacts", () => {
 
     const snapshot = readUtilityObservability(runDir);
     expect(snapshot.performance.cacheHitRate).toBe(1);
+    const { costSources, ...numericUsage } = snapshot.usage;
     expect(
-      Object.values(snapshot.usage).every((value) => Number.isFinite(value))
+      Object.values(numericUsage).every((value) => Number.isFinite(value))
+    ).toBe(true);
+    expect(
+      Object.values(costSources).every((value) => Number.isFinite(value))
     ).toBe(true);
     expect(
       Object.values(snapshot.performance).every((value) =>
@@ -539,9 +546,13 @@ test("utility observability totals worker usage and builds a safe transcript", (
     expect(
       snapshot.transcript.find((entry) => entry.label === "AU PAIR OK")?.usage
     ).toEqual({
+      cachedInputTokens: 400,
+      costSource: "recorded-unlabeled",
       costUsd: 0.003,
       durationMs: 12_000,
+      inputTokens: 1000,
       modelCalls: 2,
+      outputTokens: 250,
       toolCalls: 1,
       totalTokens: 1250,
     });
@@ -557,6 +568,212 @@ test("utility observability totals worker usage and builds a safe transcript", (
     expect(transcript).not.toContain("secret-value");
     expect(transcript).not.toContain("\u001b");
     expect(transcript).not.toContain("\u0007");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+const seedTierJob = (
+  runDir: string,
+  id: string,
+  tierId: string,
+  state: "completed" | "failed" | "running" | "routed-utility"
+): void => {
+  appendUtilityRouteRequest(
+    runDir,
+    createUtilityRouteRequest({
+      acceptanceCriteria: ["report evidence"],
+      authority: {},
+      id,
+      kind: "inspect",
+      objective: `Inspect one bounded source file for ${id}`,
+      readScope: ["src"],
+      requester: "claude",
+      requiredCapabilities: ["inspect"],
+      risk: "low",
+      writeScope: [],
+    })
+  );
+  transitionUtilityJob(runDir, id, "routed-utility", {
+    decision: { reason: "utility-eligible", target: "utility", tierId },
+    routeEpoch: 1,
+  });
+  if (state === "routed-utility") {
+    return;
+  }
+  claimUtilityJob(runDir, 1, {
+    jobId: id,
+    workerId: "provenance-test",
+    workerPid: process.pid,
+  });
+  transitionUtilityJob(runDir, id, "running");
+  if (state === "running") {
+    return;
+  }
+  transitionUtilityJob(runDir, id, state, {
+    result: {
+      artifactRefs: [],
+      checks: [],
+      filesChanged: [],
+      status: state,
+      summary: `${id} ${state}`,
+    },
+  });
+};
+
+test("helper cost provenance never sums an unknown price as zero", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-observability-cost-"));
+  try {
+    activateUtilityEpoch(runDir, 1);
+    seedTierJob(runDir, "switchyard-au-pair", "utility-au-pair", "completed");
+    seedTierJob(runDir, "openrouter-au-pair", "utility-au-pair", "completed");
+    seedTierJob(runDir, "local-nanny", "utility-nanny", "failed");
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      [
+        // Pre-label row from Pi's zero-rate loopback Au Pair: cost 0 is not money.
+        {
+          harness: "pi-sdk",
+          jobId: "switchyard-au-pair",
+          modelCalls: 2,
+          provider: "loop-au-pair",
+          tierId: "utility-au-pair",
+          toolCalls: 1,
+          usage: { cost: 0, inputTokens: 100, totalTokens: 120 },
+        },
+        {
+          costSource: "pi-catalog-rates",
+          harness: "pi-sdk",
+          jobId: "openrouter-au-pair",
+          modelCalls: 3,
+          provider: "openrouter",
+          servedModel: "z-ai/glm-5.2-20260901",
+          tierId: "utility-au-pair",
+          toolCalls: 2,
+          usage: { cost: 0.25, inputTokens: 1000, totalTokens: 1100 },
+        },
+        // The Harvto285 admission-refused Nanny shape: one refused call.
+        {
+          harness: "pi-sdk",
+          jobId: "local-nanny",
+          model: "mlx-community/Qwen3.6-35B-A3B-4bit",
+          modelCalls: 1,
+          provider: "loop-nanny",
+          status: "failed",
+          tierId: "utility-nanny",
+          toolCalls: 0,
+          usage: { cost: 0, inputTokens: 0, totalTokens: 0 },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n")
+    );
+
+    const auPair = readUtilityObservability(runDir, "utility-au-pair");
+    expect(auPair.usage).toMatchObject({
+      costKnownJobs: 1,
+      costSources: { "pi-catalog-rates": 1, unknown: 1 },
+      costUnknownJobs: 1,
+      costUsd: 0.25,
+      modelCalls: 5,
+    });
+    expect(auPair.performance.averageCostUsd).toBe(0.25);
+    expect(auPair.servedModel).toBe("z-ai/glm-5.2-20260901");
+    expect(utilityUsageCostText(auPair.usage)).toBe("cost $0.2500 + 1 unknown");
+    const unknownEntry = auPair.transcript.find(
+      (entry) => entry.jobId === "switchyard-au-pair" && entry.usage
+    );
+    expect(unknownEntry?.usage?.costSource).toBe("unknown");
+    expect(unknownEntry?.usage).not.toHaveProperty("costUsd");
+
+    const nanny = readUtilityObservability(runDir, "utility-nanny");
+    expect(nanny.helperState).toBe("failed");
+    expect(nanny.usage).toMatchObject({
+      costSources: { "local-zero-rate": 1 },
+      costUnknownJobs: 0,
+      modelCalls: 1,
+      totalTokens: 0,
+    });
+    expect(utilityUsageCostText(nanny.usage)).toBe("cost 1 local zero-rate");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});
+
+test("cost source labels follow the actual provider and tier", () => {
+  expect(
+    utilityCostSource({
+      cost: 0,
+      provider: "loop-nanny",
+      tierId: "utility-nanny",
+    })
+  ).toBe("local-zero-rate");
+  expect(
+    utilityCostSource({
+      cost: 0,
+      harness: "pi-sdk",
+      provider: "loop-au-pair",
+      tierId: "utility-au-pair",
+    })
+  ).toBe("unknown");
+  expect(
+    utilityCostSource({
+      cost: 0.1,
+      harness: "pi-sdk",
+      provider: "openrouter",
+      tierId: "utility-au-pair",
+    })
+  ).toBe("pi-catalog-rates");
+  expect(
+    utilityCostSource({
+      cost: 0.1,
+      harness: "legacy",
+      provider: "openrouter",
+      tierId: "utility-au-pair",
+    })
+  ).toBe("provider-reported");
+  expect(
+    utilityCostSource({
+      harness: "legacy",
+      provider: "openrouter",
+      tierId: "utility-au-pair",
+    })
+  ).toBe("unknown");
+  // A local legacy endpoint is only zero-rate for Nanny, never for Au Pair.
+  expect(
+    utilityCostSource({ cost: 0, provider: "local", tierId: "utility-au-pair" })
+  ).toBe("unknown");
+  expect(
+    utilityCostSource({ provider: "broker", tierId: "utility-direct" })
+  ).toBe("not-applicable");
+  expect(utilityJobCostText("unknown", undefined)).toBe("cost unknown");
+  expect(utilityJobCostText("pi-catalog-rates", 0.105_666)).toBe(
+    "$0.1057 est (Pi catalog rates)"
+  );
+});
+
+test("helper state reports running and queued before past outcomes", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-observability-state-"));
+  try {
+    activateUtilityEpoch(runDir, 1);
+    expect(readUtilityObservability(runDir, "utility-nanny").helperState).toBe(
+      "idle"
+    );
+    seedTierJob(runDir, "done", "utility-nanny", "completed");
+    expect(readUtilityObservability(runDir, "utility-nanny").helperState).toBe(
+      "completed"
+    );
+    seedTierJob(runDir, "waiting", "utility-nanny", "routed-utility");
+    expect(readUtilityObservability(runDir, "utility-nanny").helperState).toBe(
+      "queued"
+    );
+    seedTierJob(runDir, "busy", "utility-nanny", "running");
+    expect(readUtilityObservability(runDir, "utility-nanny").helperState).toBe(
+      "running"
+    );
+    expect(
+      readUtilityObservability(runDir, "utility-au-pair").helperState
+    ).toBe("idle");
   } finally {
     rmSync(runDir, { force: true, recursive: true });
   }

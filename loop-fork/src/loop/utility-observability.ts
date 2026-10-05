@@ -45,16 +45,161 @@ export interface UtilityTranscriptEntry {
   usage?: UtilityTranscriptUsage;
 }
 
+// Where a helper job's cost figure comes from. A worker row's `usage.cost`
+// is only money when its source says so: Pi registers loopback helpers at
+// zero rates, so a bare 0 from them is not a measured price. Unknown cost is
+// never summed as $0; it is counted separately so panes can say "unknown".
+export type UtilityCostSource =
+  | "local-zero-rate"
+  | "not-applicable"
+  | "pi-catalog-rates"
+  | "provider-reported"
+  | "recorded-unlabeled"
+  | "unknown";
+
+const UTILITY_COST_SOURCES: readonly UtilityCostSource[] = [
+  "local-zero-rate",
+  "not-applicable",
+  "pi-catalog-rates",
+  "provider-reported",
+  "recorded-unlabeled",
+  "unknown",
+];
+
+export interface UtilityCostSourceInput {
+  cost?: unknown;
+  harness?: string;
+  provider?: string;
+  tierId?: string;
+}
+
+// Writer-side classification for a usage row. `provider` is the helper's
+// actual provider id (Pi: loop-nanny | loop-au-pair | openrouter; legacy:
+// local | openrouter; Direct: broker).
+export const utilityCostSource = (
+  input: UtilityCostSourceInput
+): UtilityCostSource => {
+  if (input.tierId === UTILITY_DIRECT_TIER || input.provider === "broker") {
+    return "not-applicable";
+  }
+  if (
+    input.provider === "loop-nanny" ||
+    (input.provider === "local" && input.tierId === UTILITY_NANNY_TIER)
+  ) {
+    return "local-zero-rate";
+  }
+  const hasCost = typeof input.cost === "number" && Number.isFinite(input.cost);
+  if (input.provider === "openrouter") {
+    if (input.harness === "pi-sdk") {
+      return hasCost ? "pi-catalog-rates" : "unknown";
+    }
+    return hasCost ? "provider-reported" : "unknown";
+  }
+  return "unknown";
+};
+
+// Reader-side provenance: trust a recorded label, otherwise classify rows
+// written before labels existed. An unlabeled numeric cost with no provider
+// keeps its historical meaning ("recorded-unlabeled"); a zero-rate loopback
+// Au Pair row stays unknown even though it carries cost 0.
+const rowCostSource = (event: Record<string, unknown>): UtilityCostSource => {
+  const recorded = event.costSource;
+  if (
+    typeof recorded === "string" &&
+    UTILITY_COST_SOURCES.includes(recorded as UtilityCostSource)
+  ) {
+    return recorded as UtilityCostSource;
+  }
+  const usage = recordAt(event, "usage") ?? {};
+  const provider = stringAt(event, "provider");
+  const tierId = stringAt(event, "tierId");
+  const harness = stringAt(event, "harness");
+  if (provider === undefined && tierId === undefined) {
+    return typeof usage.cost === "number" && Number.isFinite(usage.cost)
+      ? "recorded-unlabeled"
+      : "unknown";
+  }
+  return utilityCostSource({
+    cost: usage.cost,
+    ...(harness ? { harness } : {}),
+    ...(provider ? { provider } : {}),
+    ...(tierId ? { tierId } : {}),
+  });
+};
+
+const costIsKnown = (source: UtilityCostSource): boolean =>
+  source !== "unknown";
+
+const usd = (cost: number): string =>
+  `$${cost.toFixed(cost > 0 && cost < 1 ? 4 : 2)}`;
+
+// One job's cost, labelled with where it came from.
+export const utilityJobCostText = (
+  source: UtilityCostSource,
+  costUsd: number | undefined
+): string => {
+  if (source === "unknown" || costUsd === undefined) {
+    return source === "not-applicable" ? "no model" : "cost unknown";
+  }
+  switch (source) {
+    case "local-zero-rate":
+      return "local zero-rate";
+    case "not-applicable":
+      return "no model";
+    case "pi-catalog-rates":
+      return `${usd(costUsd)} est (Pi catalog rates)`;
+    case "provider-reported":
+      return `${usd(costUsd)} provider-reported`;
+    default:
+      return usd(costUsd);
+  }
+};
+
+// A tier's cost: known money plus an explicit count of unknown-price jobs.
+export const utilityUsageCostText = (
+  usage: UtilityObservabilityUsage
+): string => {
+  const unknown =
+    usage.costUnknownJobs > 0 ? `${usage.costUnknownJobs} unknown` : "";
+  const local = usage.costSources["local-zero-rate"] ?? 0;
+  const priced =
+    usage.costKnownJobs - local - (usage.costSources["not-applicable"] ?? 0);
+  const parts = [
+    priced > 0 || usage.costUsd > 0 ? usd(usage.costUsd) : "",
+    local > 0 ? `${local} local zero-rate` : "",
+    unknown,
+  ].filter(Boolean);
+  return parts.length ? `cost ${parts.join(" + ")}` : "cost —";
+};
+
+export type UtilityHelperState =
+  | "completed"
+  | "failed"
+  | "idle"
+  | "queued"
+  | "running";
+
 export interface UtilityTranscriptUsage {
-  costUsd: number;
+  admissionRetries?: number;
+  cachedInputTokens: number;
+  costSource: UtilityCostSource;
+  // Absent when costSource is "unknown": unknown cost is not $0.
+  costUsd?: number;
   durationMs: number;
+  inputTokens: number;
   modelCalls: number;
+  outputTokens: number;
+  servedModel?: string;
   toolCalls: number;
   totalTokens: number;
 }
 
 export interface UtilityObservabilityUsage {
   cachedInputTokens: number;
+  costKnownJobs: number;
+  costSources: Partial<Record<UtilityCostSource, number>>;
+  costUnknownJobs: number;
+  // Sum over jobs whose cost source is known; see costUnknownJobs.
   costUsd: number;
   inputTokens: number;
   modelCalls: number;
@@ -98,6 +243,7 @@ export interface UtilityObservabilitySnapshot {
   contexts: UtilityContextObservability;
   failed: number;
   failures: UtilityFailureObservability;
+  helperState: UtilityHelperState;
   jobsTotal: number;
   latestAt?: string;
   latestDetail: string;
@@ -110,6 +256,7 @@ export interface UtilityObservabilitySnapshot {
   performance: UtilityPerformanceObservability;
   queued: number;
   routing: UtilityRoutingObservability;
+  servedModel?: string;
   transcript: UtilityTranscriptEntry[];
   usage: UtilityObservabilityUsage;
 }
@@ -139,6 +286,9 @@ export interface UtilityRoutingObservability {
 
 const emptyUsage = (): UtilityObservabilityUsage => ({
   cachedInputTokens: 0,
+  costKnownJobs: 0,
+  costSources: {},
+  costUnknownJobs: 0,
   costUsd: 0,
   inputTokens: 0,
   modelCalls: 0,
@@ -392,17 +542,30 @@ const latestUsageByJob = (
 
 const usageSnapshot = (
   events: Map<string, Record<string, unknown>>
-): { model?: string; usage: UtilityObservabilityUsage } => {
+): {
+  model?: string;
+  servedModel?: string;
+  usage: UtilityObservabilityUsage;
+} => {
   const usage = emptyUsage();
   let model: string | undefined;
+  let servedModel: string | undefined;
   for (const event of events.values()) {
     model = stringAt(event, "model") ?? model;
+    servedModel = stringAt(event, "servedModel") ?? servedModel;
     const current = recordAt(event, "usage") ?? {};
     usage.cachedInputTokens = saturatingAdd(
       usage.cachedInputTokens,
       finiteNumber(current.cachedInputTokens)
     );
-    usage.costUsd = saturatingAdd(usage.costUsd, finiteNumber(current.cost));
+    const costSource = rowCostSource(event);
+    usage.costSources[costSource] = (usage.costSources[costSource] ?? 0) + 1;
+    if (costIsKnown(costSource)) {
+      usage.costKnownJobs += 1;
+      usage.costUsd = saturatingAdd(usage.costUsd, finiteNumber(current.cost));
+    } else {
+      usage.costUnknownJobs += 1;
+    }
     usage.inputTokens = saturatingAdd(
       usage.inputTokens,
       finiteNumber(current.inputTokens)
@@ -428,7 +591,11 @@ const usageSnapshot = (
       finiteNumber(current.totalTokens)
     );
   }
-  return { ...(model ? { model } : {}), usage };
+  return {
+    ...(model ? { model } : {}),
+    ...(servedModel ? { servedModel } : {}),
+    usage,
+  };
 };
 
 const terminalWorkerJobs = (jobs: UtilityJobSnapshot[]): UtilityJobSnapshot[] =>
@@ -438,6 +605,7 @@ const terminalWorkerJobs = (jobs: UtilityJobSnapshot[]): UtilityJobSnapshot[] =>
 
 interface UtilityPerformanceTotals {
   cachedInputTokens: number;
+  costKnownJobs: number;
   costUsd: number;
   durationMs: number;
   inputTokens: number;
@@ -467,7 +635,10 @@ const performanceSnapshot = (
         sum.cachedInputTokens,
         finiteNumber(usage.cachedInputTokens)
       );
-      sum.costUsd = saturatingAdd(sum.costUsd, finiteNumber(usage.cost));
+      if (costIsKnown(rowCostSource(event))) {
+        sum.costKnownJobs += 1;
+        sum.costUsd = saturatingAdd(sum.costUsd, finiteNumber(usage.cost));
+      }
       sum.durationMs = saturatingAdd(
         sum.durationMs,
         finiteNumber(event.durationMs)
@@ -485,6 +656,7 @@ const performanceSnapshot = (
     },
     {
       cachedInputTokens: 0,
+      costKnownJobs: 0,
       costUsd: 0,
       durationMs: 0,
       inputTokens: 0,
@@ -494,7 +666,9 @@ const performanceSnapshot = (
   );
   const divisor = measured.length || 1;
   return {
-    averageCostUsd: totals.costUsd / divisor,
+    averageCostUsd: totals.costKnownJobs
+      ? totals.costUsd / totals.costKnownJobs
+      : 0,
     averageDurationMs: totals.durationMs / divisor,
     averageTokens: totals.tokens / divisor,
     averageToolCalls: totals.toolCalls / divisor,
@@ -585,10 +759,21 @@ const transcriptUsage = (
     return undefined;
   }
   const usage = recordAt(event, "usage") ?? {};
+  const costSource = rowCostSource(event);
+  const servedModel = stringAt(event, "servedModel");
+  const admissionRetries = finiteNumber(event.admissionRetries);
   return {
-    costUsd: finiteNumber(usage.cost),
+    ...(admissionRetries > 0 ? { admissionRetries } : {}),
+    cachedInputTokens: finiteNumber(usage.cachedInputTokens),
+    costSource,
+    ...(costIsKnown(costSource) ? { costUsd: finiteNumber(usage.cost) } : {}),
     durationMs: finiteNumber(event.durationMs),
+    inputTokens: finiteNumber(usage.inputTokens),
     modelCalls: finiteNumber(event.modelCalls),
+    outputTokens: finiteNumber(usage.outputTokens),
+    ...(servedModel
+      ? { servedModel: sanitizeUtilityPaneText(servedModel) }
+      : {}),
     toolCalls: finiteNumber(event.toolCalls),
     totalTokens: finiteNumber(usage.totalTokens),
   };
@@ -732,6 +917,28 @@ const transcriptFor = (
     .sort((left, right) => left.at.localeCompare(right.at));
 };
 
+// One pane-level state for a helper tier: work in flight wins, then work
+// waiting for a worker, then the outcome of the most recent finished job.
+export const utilityHelperState = (
+  jobs: UtilityJobSnapshot[]
+): UtilityHelperState => {
+  if (jobs.some((job) => ["claimed", "running"].includes(job.state))) {
+    return "running";
+  }
+  if (
+    jobs.some((job) => ["pending-route", "routed-utility"].includes(job.state))
+  ) {
+    return "queued";
+  }
+  const finished = terminalWorkerJobs(jobs).sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt)
+  )[0];
+  if (!finished) {
+    return "idle";
+  }
+  return finished.state === "completed" ? "completed" : "failed";
+};
+
 const latestJob = (
   jobs: UtilityJobSnapshot[]
 ): UtilityJobSnapshot | undefined =>
@@ -747,6 +954,7 @@ export const readUtilityObservability = (
     return {
       active: 0,
       available: false,
+      helperState: "idle",
       completed: 0,
       contexts: emptyContexts(),
       contextInsufficient: 0,
@@ -811,6 +1019,7 @@ export const readUtilityObservability = (
         job.result?.reasonCode !== "context-insufficient"
     ).length,
     failures: failureSnapshot(toolEvents),
+    helperState: utilityHelperState(jobs),
     jobsTotal: jobs.length,
     latestDetail,
     messages: messageSnapshot(runDir, jobs),
@@ -839,6 +1048,9 @@ export const readUtilityObservability = (
       ["pending-route", "routed-utility"].includes(job.state)
     ).length,
     routing: routingSnapshot(runDir, allJobs),
+    ...(totals.servedModel
+      ? { servedModel: sanitizeUtilityPaneText(totals.servedModel) }
+      : {}),
     transcript,
     usage: totals.usage,
   };

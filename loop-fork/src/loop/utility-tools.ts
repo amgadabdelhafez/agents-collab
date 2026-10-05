@@ -518,6 +518,33 @@ class ToolPolicyError extends Error {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const GIT_APPLY_REASON_LIMIT = 240;
+const GIT_ERROR_PREFIX_RE = /^error:\s*/;
+const CORRUPT_PATCH_HINT =
+  "end the patch with a newline and make each @@ header's line counts match its hunk body exactly";
+
+// git apply's first "error:" line, with the broker's private candidate path
+// replaced by "patch", so a helper can correct the patch instead of guessing.
+const gitApplyReason = (
+  stderr: string,
+  patchPath: string
+): string | undefined => {
+  const line = stderr
+    .split("\n")
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith("error:"));
+  if (!line) {
+    return undefined;
+  }
+  const reason = line
+    .replace(GIT_ERROR_PREFIX_RE, "")
+    .replaceAll(patchPath, "patch")
+    .slice(0, GIT_APPLY_REASON_LIMIT);
+  return reason.startsWith("corrupt patch")
+    ? `${reason}; ${CORRUPT_PATCH_HINT}`
+    : reason;
+};
+
 const outputBoundaryIsValid = (value: UtilityOutputBoundary): boolean => {
   const keys = Object.keys(value);
   if (
@@ -1231,7 +1258,20 @@ const resolveUtilityReadRange = (
   const boundedEndLine = oversized ? startLine + 499 : requestedEndLine;
   const endLine = Math.min(boundedEndLine, lineCount);
   if (startLine > endLine && lineCount > 0) {
-    throw new ToolPolicyError("invalid_arguments", "startLine exceeds endLine");
+    if (
+      lastLines === undefined &&
+      args.endLine !== undefined &&
+      requestedEndLine < startLine
+    ) {
+      throw new ToolPolicyError(
+        "invalid_arguments",
+        `startLine ${startLine} exceeds endLine ${requestedEndLine}; retry with startLine <= endLine (file has ${lineCount} lines)`
+      );
+    }
+    throw new ToolPolicyError(
+      "invalid_arguments",
+      `startLine ${startLine} is past the end of the file (${lineCount} lines); retry with startLine <= ${lineCount} or stop reading this file`
+    );
   }
   return {
     endLine,
@@ -1744,11 +1784,18 @@ export class UtilityToolBroker {
       );
     }
     if (result.exitCode !== 0) {
+      // A proposal check (noIndex) never "no longer" applies: it never did.
+      // Hiding git's reason left helpers resubmitting the same corrupt patch.
+      let prefix = "Patch application failed";
+      if (checkOnly) {
+        prefix = noIndex
+          ? "Patch does not apply"
+          : "Patch no longer applies cleanly";
+      }
+      const reason = gitApplyReason(result.stderr, patchPath);
       throw new ToolPolicyError(
         "patch_conflict",
-        checkOnly
-          ? "Patch no longer applies cleanly"
-          : "Patch application failed"
+        reason ? `${prefix}: ${reason}` : prefix
       );
     }
   }

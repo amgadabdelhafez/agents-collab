@@ -749,7 +749,7 @@ test("LLM unreachable suppresses recovery and flags the board", async () => {
   expect(result.llmOffline).toBe(true);
   expect(spies.sends).toHaveLength(0);
   expect(spies.respawns).toHaveLength(0);
-  expect(stripAnsi(result.board)).toContain("nanny model · m · offline");
+  expect(stripAnsi(result.board)).toContain("judge model · m · offline");
   expect(stripAnsi(result.board)).not.toContain("qwen");
 });
 
@@ -797,10 +797,10 @@ test("dual local judges render separate token rows and require agreement", async
   ]);
   expect(spies.sends).toHaveLength(0);
   expect(visibleBoard).toContain(
-    "nanny model · qwen · ok · 1 calls · 150 tok (i120 c80 o30)"
+    "judge model · qwen · ok · 1 calls · 150 tok (i120 c80 o30)"
   );
   expect(visibleBoard).toContain(
-    "nanny model · gemma · ok · 1 calls · 90 tok (i70 c40 o20)"
+    "judge model · gemma · ok · 1 calls · 90 tok (i70 c40 o20)"
   );
   expect(visibleBoard).toContain("● working");
 });
@@ -865,7 +865,7 @@ test("round-robin local judge mode calls one model for that tick", async () => {
   expect(spies.judgeRequests.map((req) => req.model)).toEqual(["gemma"]);
   expect(spies.sends).toEqual([["s:0.0", "Enter"]]);
   expect(visibleBoard).toContain(
-    "nanny model · gemma · ok · 1 calls · 120 tok (i100 c12 o20)"
+    "judge model · gemma · ok · 1 calls · 120 tok (i100 c12 o20)"
   );
   expect(visibleBoard).not.toContain("judge round-robin");
   expect(visibleBoard).not.toContain("llm params");
@@ -2031,7 +2031,7 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("joint idle 0s");
   expect(visibleBoard).not.toContain("msgs claude 0 codex 0");
   expect(visibleBoard).toContain(
-    "nanny model · m · ok · 3 calls · 2k tok (i900 c500 o100) · cache 20% · slots 10/10 · mem 1.82GB"
+    "judge model · m · ok · 3 calls · 2k tok (i900 c500 o100) · cache 20% · slots 10/10 · mem 1.82GB"
   );
   expect(visibleBoard).toContain("@0d95a81 · 40L h2048 ctx262k");
   expect(visibleBoard).toContain(
@@ -2041,7 +2041,7 @@ test("board shows input, cached, and output token details", async () => {
   expect(visibleBoard).toContain("MoE 256e/8");
   expect(visibleBoard).toContain("batch 8/32 · step 2048");
   const llmLines = boardLines.filter(
-    (line) => line.startsWith(" nanny model") || line.startsWith(" runtime")
+    (line) => line.startsWith(" judge model") || line.startsWith(" runtime")
   );
   expect(llmLines.every((line) => line.length <= 176)).toBe(true);
   expect(visibleBoard).toContain("temp 0");
@@ -3382,4 +3382,107 @@ test("runGoverness keeps the file journal and never connects when Temporal is no
         (entry as { event?: string }).event === "journal-temporal-recovered"
     )
   ).toBe(false);
+});
+
+test("Nanny row counts only Nanny task usage, never Governess judge inference", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "governess-nanny-vs-judge-"));
+  const clock = { ms: START_MS };
+  const spies = freshSpies();
+  try {
+    activateUtilityEpoch(runDir, 4);
+    const nannyJob = "nanny-admission-refused";
+    appendUtilityRouteRequest(
+      runDir,
+      createUtilityRouteRequest({
+        acceptanceCriteria: ["report evidence"],
+        authority: {},
+        id: nannyJob,
+        kind: "inspect",
+        objective: "Inspect one bounded source file",
+        readScope: ["src"],
+        requester: "codex",
+        requiredCapabilities: ["inspect"],
+        risk: "low",
+        writeScope: [],
+      })
+    );
+    transitionUtilityJob(runDir, nannyJob, "routed-utility", {
+      decision: {
+        reason: "utility-eligible",
+        target: "utility",
+        tierId: "utility-nanny",
+      },
+      routeEpoch: 4,
+    });
+    claimUtilityJob(runDir, 4, {
+      jobId: nannyJob,
+      workerId: "nanny-test",
+      workerPid: process.pid,
+    });
+    transitionUtilityJob(runDir, nannyJob, "running");
+    transitionUtilityJob(runDir, nannyJob, "failed", {
+      result: {
+        artifactRefs: [],
+        blocker:
+          '503: {"message":"governess proxy busy: one judgment in flight"}',
+        checks: [],
+        filesChanged: [],
+        status: "failed",
+        summary: "Nanny failed closed.",
+      },
+    });
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      `${JSON.stringify({
+        harness: "pi-sdk",
+        jobId: nannyJob,
+        modelCalls: 1,
+        provider: "loop-nanny",
+        status: "failed",
+        tierId: "utility-nanny",
+        toolCalls: 0,
+        usage: { cost: 0, inputTokens: 0, totalTokens: 0 },
+      })}\n`
+    );
+    const result = await governessTick(
+      new Map<Agent, AgentLivenessState>(),
+      baseConfig({ runDir }),
+      makeDeps(
+        {
+          ok: true,
+          verdict: { confidence: 0.9, state: "working", summary: "" },
+        },
+        clock,
+        spies
+      ),
+      {
+        ...freshRunState(),
+        llmUsage: {
+          cachedInputTokens: 500,
+          calls: 7,
+          inputTokens: 900,
+          outputTokens: 100,
+          totalTokens: 2000,
+        },
+      }
+    );
+    const lines = stripAnsi(result.board).split("\n");
+    const helperHeader = lines.find((line) => line.startsWith(" HELPER")) ?? "";
+    const nannyRow = lines.find((line) => line.startsWith(" nanny")) ?? "";
+    const judgeLine =
+      lines.find((line) => line.startsWith(" judge model")) ?? "";
+    const totalStart = helperHeader.indexOf("TOTAL");
+    const callsEnd = helperHeader.indexOf("CALLS") + "CALLS".length;
+
+    expect(nannyRow).toMatch(/nanny\s+● failed/);
+    // Judge traffic stays on its own line ...
+    expect(judgeLine).toContain("7 calls · 2k tok (i900 c500 o100)");
+    // ... and the Nanny worker row shows only its one refused call.
+    expect(nannyRow).not.toContain("2k");
+    expect(nannyRow.slice(totalStart, totalStart + 5).trim()).not.toBe("2k");
+    expect(nannyRow.slice(callsEnd - 5, callsEnd).trim()).toBe("1");
+    expect(nannyRow).toContain("local");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
 });

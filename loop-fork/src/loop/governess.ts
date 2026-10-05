@@ -215,6 +215,7 @@ import {
 import {
   readUtilityObservability,
   type UtilityObservabilitySnapshot,
+  type UtilityObservabilityUsage,
 } from "./utility-observability";
 import { processPendingUtilityRoutes } from "./utility-runtime";
 import { activateUtilityEpoch } from "./utility-store";
@@ -2156,8 +2157,35 @@ const utilityStateColor = (state: string): string => {
   return ANSI.yellow;
 };
 
-const utilityCostCell = (cost: number): string =>
+// Unknown helper cost is shown as unknown, never as an empty $0: "?" when no
+// job has a known price, "$x+?" when some do, "local" when every priced job
+// ran on the zero-rate local model.
+const utilityUsdCell = (cost: number): string =>
   cost > 0 ? `$${cost.toFixed(cost < 0.1 ? 4 : 2)}` : "—";
+
+// Average over known-price jobs only; "?" when no job has a known price.
+const utilityAverageCostCell = (
+  averageCostUsd: number,
+  usage: UtilityObservabilityUsage
+): string =>
+  usage.costKnownJobs === 0 && usage.costUnknownJobs > 0
+    ? "?"
+    : utilityUsdCell(averageCostUsd);
+
+const utilityCostCell = (usage: UtilityObservabilityUsage): string => {
+  const cost = usage.costUsd;
+  const unknown = usage.costUnknownJobs > 0;
+  if (cost > 0) {
+    return `${utilityUsdCell(cost)}${unknown ? "+?" : ""}`;
+  }
+  if (unknown) {
+    return "?";
+  }
+  const localOnly =
+    (usage.costSources["local-zero-rate"] ?? 0) > 0 &&
+    usage.costKnownJobs === (usage.costSources["local-zero-rate"] ?? 0);
+  return localOnly ? "local" : "—";
+};
 
 const utilityAge = (
   snapshot: UtilityObservabilitySnapshot,
@@ -2191,26 +2219,25 @@ const renderUtilityAgentRow = (
   role: "au pair" | "direct" | "nanny"
 ): string => {
   const state = utilityState(snapshot);
+  // Worker task counters only. Governess judge inference shares the local
+  // model but is reported on its own "judge model" line, never folded into
+  // the Nanny row (it previously inflated Nanny tokens and calls).
   const usage = snapshot.usage;
-  const nannyUsage =
-    role === "nanny"
-      ? sumLocalLlmUsageByJudge(meta.llmUsageByJudge)
-      : emptyLocalLlmUsage();
   const run = subcells(
     [String(snapshot.completed), String(snapshot.failed)],
     [6, 7]
   );
   const tokens = subcells(
     [
-      tokenCell(usage.totalTokens + nannyUsage.totalTokens),
-      tokenCell(usage.inputTokens + nannyUsage.inputTokens),
-      tokenCell(usage.cachedInputTokens + nannyUsage.cachedInputTokens),
-      tokenCell(usage.outputTokens + nannyUsage.outputTokens),
+      tokenCell(usage.totalTokens),
+      tokenCell(usage.inputTokens),
+      tokenCell(usage.cachedInputTokens),
+      tokenCell(usage.outputTokens),
     ],
     [5, 5, 5, 6]
   );
   const activity = subcells(
-    [String(usage.modelCalls + nannyUsage.calls), String(usage.toolCalls)],
+    [String(usage.modelCalls), String(usage.toolCalls)],
     [5, 10]
   );
   return ` ${[
@@ -2226,7 +2253,7 @@ const renderUtilityAgentRow = (
     fitCell(String(snapshot.contextInsufficient), HELPER_COL.limits),
     colorCell(
       ANSI.yellow,
-      subcells([utilityCostCell(usage.costUsd), ""], [7, 4]),
+      subcells([utilityCostCell(usage), ""], [7, 4]),
       HELPER_COL.spend
     ),
     colorCell(ANSI.yellow, tokens, HELPER_COL.tokens),
@@ -2301,7 +2328,7 @@ const renderWorkerDetailRows = (
       tierTerminal(meta.nanny) -
       tierTerminal(meta.auPair)
   );
-  const performanceLine = ` helpers · ${performance.successfulJobs}/${performance.finishedJobs} success ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · ${measured ? fmtDuration(performance.averageDurationMs) : "—"} avg · ${measured ? utilityCostCell(performance.averageCostUsd) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"} · bridge ${snapshot.messages.inbound}→${snapshot.messages.outbound} pending ${snapshot.messages.pending}${unattributedTerminal > 0 ? ` · unattrib ${unattributedTerminal}` : ""}`;
+  const performanceLine = ` helpers · ${performance.successfulJobs}/${performance.finishedJobs} success ${performance.finishedJobs > 0 ? workerPercentage(performance.successRate, 1) : "—"} · ${measured ? fmtDuration(performance.averageDurationMs) : "—"} avg · ${measured ? utilityAverageCostCell(performance.averageCostUsd, snapshot.usage) : "—"}/job · ${measured ? tokenCell(performance.averageTokens) : "—"} tok/job · ${measured ? performance.averageToolCalls.toFixed(1) : "—"} tools/job · cache ${measured ? workerPercentage(performance.cacheHitRate, 1) : "—"} · bridge ${snapshot.messages.inbound}→${snapshot.messages.outbound} pending ${snapshot.messages.pending}${unattributedTerminal > 0 ? ` · unattrib ${unattributedTerminal}` : ""}`;
   const latestContext = contexts.latestHash
     ? `v${contexts.latestVersion ?? "?"} ${contexts.latestHash}`
     : "none";
@@ -3061,7 +3088,7 @@ const renderLocalLlmUsageRow = (
     ? modelLabel
     : `${judge.id} ${modelLabel}`;
   return [
-    paint(ANSI.dim, " nanny model · "),
+    paint(ANSI.dim, " judge model · "),
     paint(ANSI.cyan, identity),
     paint(ANSI.dim, " · "),
     paint(offline ? ANSI.red : ANSI.green, offline ? "offline" : "ok"),

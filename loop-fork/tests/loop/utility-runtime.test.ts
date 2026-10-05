@@ -3349,3 +3349,124 @@ test("a failing focused check cannot satisfy command completion evidence", async
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test("dedicated helper panes show state, task usage and labelled cost", () => {
+  const runDir = mkdtempSync(join(tmpdir(), "utility-pane-provenance-"));
+  try {
+    activateUtilityEpoch(runDir, 5);
+    const seed = (
+      id: string,
+      tierId: "utility-au-pair" | "utility-nanny",
+      state: "completed" | "failed"
+    ): void => {
+      appendUtilityRouteRequest(
+        runDir,
+        createUtilityRouteRequest({
+          acceptanceCriteria: ["report evidence"],
+          authority: {},
+          id,
+          kind: "inspect",
+          objective: `Inspect one bounded source file for ${id}`,
+          readScope: ["src"],
+          requester: "claude",
+          requiredCapabilities: ["inspect"],
+          risk: "low",
+          writeScope: [],
+        })
+      );
+      transitionUtilityJob(runDir, id, "routed-utility", {
+        decision: { reason: "utility-eligible", target: "utility", tierId },
+        routeEpoch: 5,
+      });
+      claimUtilityJob(runDir, 5, {
+        jobId: id,
+        workerId: "pane-test",
+        workerPid: process.pid,
+      });
+      transitionUtilityJob(runDir, id, "running");
+      transitionUtilityJob(runDir, id, state, {
+        result: {
+          artifactRefs: [],
+          checks: [],
+          filesChanged: [],
+          status: state,
+          summary: `${id} ${state}`,
+        },
+      });
+    };
+    seed("nanny-refused", "utility-nanny", "failed");
+    seed("switchyard-edit", "utility-au-pair", "completed");
+    writeFileSync(
+      join(runDir, "utility", "usage.jsonl"),
+      [
+        {
+          admissionRetries: 2,
+          costSource: "local-zero-rate",
+          harness: "pi-sdk",
+          jobId: "nanny-refused",
+          model: "mlx-community/Qwen3.6-35B-A3B-4bit",
+          modelCalls: 3,
+          provider: "loop-nanny",
+          servedModel: "qwen3.6-35b-a3b-vl",
+          tierId: "utility-nanny",
+          toolCalls: 0,
+          usage: { cost: 0, inputTokens: 0, totalTokens: 0 },
+        },
+        {
+          costSource: "unknown",
+          harness: "pi-sdk",
+          jobId: "switchyard-edit",
+          model: "z-ai/glm-5.2",
+          modelCalls: 4,
+          provider: "loop-au-pair",
+          tierId: "utility-au-pair",
+          toolCalls: 3,
+          usage: {
+            cachedInputTokens: 2000,
+            inputTokens: 5000,
+            outputTokens: 700,
+            totalTokens: 5700,
+          },
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n")
+    );
+
+    const nanny = renderUtilityPane(
+      runDir,
+      { LOOP_UTILITY_API_KEY_FILE: "" },
+      { columns: 160, rows: 20, tierId: "utility-nanny" }
+    )
+      .split("\n")
+      .map(visiblePane);
+    expect(nanny[0]).toBe("NANNY failed · 0 running 0 queued 0 done 1 failed");
+    expect(nanny[1]).toBe(
+      "3 calls 0 tools · in 0 cache 0 out 0 · cost 1 local zero-rate"
+    );
+    expect(nanny[2]).toBe(
+      "model mlx-community/Qwen3.6-35B-A3B-4bit · served qwen3.6-35b-a3b-vl"
+    );
+    expect(nanny.join("\n")).toContain(
+      "3 calls · 0 tools · in 0 cache 0 out 0 · local zero-rate · 2 admission retries · served qwen3.6-35b-a3b-vl"
+    );
+
+    const auPair = renderUtilityPane(
+      runDir,
+      { LOOP_UTILITY_API_KEY_FILE: "" },
+      { columns: 160, rows: 20, tierId: "utility-au-pair" }
+    )
+      .split("\n")
+      .map(visiblePane);
+    expect(auPair[0]).toBe(
+      "AU PAIR completed · 0 running 0 queued 1 done 0 failed"
+    );
+    expect(auPair[1]).toBe(
+      "4 calls 3 tools · in 5k cache 2k out 700 · cost 1 unknown"
+    );
+    expect(auPair.join("\n")).toContain("· cost unknown");
+    expect(auPair.join("\n")).not.toContain("$0");
+  } finally {
+    rmSync(runDir, { force: true, recursive: true });
+  }
+});

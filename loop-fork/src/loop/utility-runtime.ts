@@ -77,6 +77,10 @@ import {
   sanitizeUtilityPaneText,
   type UtilityObservabilitySnapshot,
   type UtilityTranscriptEntry,
+  type UtilityTranscriptUsage,
+  utilityCostSource,
+  utilityJobCostText,
+  utilityUsageCostText,
 } from "./utility-observability";
 import { utilityInferenceCircuitOpen } from "./utility-readiness";
 import {
@@ -113,6 +117,19 @@ export const AU_PAIR_PANE_SUBCOMMAND = "__au-pair-pane";
 const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "z-ai/glm-5.2";
 const DEFAULT_NANNY_ENDPOINT = "http://127.0.0.1:8082/v1/chat/completions";
+const DEFAULT_ADMISSION_RETRY_BASE_MS = 1500;
+const ADMISSION_RETRY_LIMIT = 2;
+
+// The Governess judge proxy (~/.loop/bin/governess-proxy.py) serves Nanny's
+// default endpoint too and admits one POST at a time; every concurrent POST
+// gets this exact 503 without reaching the model (Harvto285 job 237793d9
+// failed on it in 352 ms). Only this proven refusal is retried. Other 429/503
+// bodies, runtime limits, cancellation and broker guards still fail closed.
+const GOVERNESS_PROXY_ADMISSION_REFUSAL_RE =
+  /^503\b[\s\S]*governess proxy busy: one judgment in flight/;
+
+export const isGovernessProxyAdmissionRefusal = (message: string): boolean =>
+  GOVERNESS_PROXY_ADMISSION_REFUSAL_RE.test(message);
 const DEFAULT_NANNY_MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit";
 const DEFAULT_MAX_CONCURRENT_JOBS = 4;
 const DEFAULT_NANNY_MAX_CONCURRENT_JOBS = 1;
@@ -165,6 +182,9 @@ export const utilityToolsForExecutionProfile = (
 };
 
 export interface UtilityRuntimeConfig {
+  // First wait before retrying a Governess judge-proxy admission refusal;
+  // the second wait is 2.5x. Defaults to 1500 ms.
+  admissionRetryBaseMs?: number;
   allowedTierPatterns: string[];
   apiKey?: string;
   availability: UtilityAvailability;
@@ -491,6 +511,10 @@ export const resolveUtilityRuntimeConfig = (
       ? sort
       : "balanced";
   return {
+    admissionRetryBaseMs: positiveNumber(
+      env.LOOP_UTILITY_ADMISSION_RETRY_BASE_MS,
+      DEFAULT_ADMISSION_RETRY_BASE_MS
+    ),
     allowedTierPatterns: (env.LOOP_UTILITY_ALLOWED_TIERS ?? "utility-*")
       .split(",")
       .map((value) => value.trim())
@@ -1111,6 +1135,39 @@ const addUsage = (
       }),
 });
 
+// Usage-row provenance: label where the cost figure comes from and drop a
+// cost that is not money (Pi's zero-rate loopback Au Pair registration), so
+// readers never sum an unknown price as $0.
+const usageProvenance = (input: {
+  admissionRetries?: number;
+  harness: string;
+  provider: string;
+  servedModel?: string;
+  tierId: UtilityExecutionTierId;
+  usage: OpenAICompatibleUsage;
+}): {
+  admissionRetries?: number;
+  costSource: ReturnType<typeof utilityCostSource>;
+  servedModel?: string;
+  usage: OpenAICompatibleUsage;
+} => {
+  const costSource = utilityCostSource({
+    cost: input.usage.cost,
+    harness: input.harness,
+    provider: input.provider,
+    tierId: input.tierId,
+  });
+  const { cost: _cost, ...withoutCost } = input.usage;
+  return {
+    ...(input.admissionRetries
+      ? { admissionRetries: input.admissionRetries }
+      : {}),
+    costSource,
+    ...(input.servedModel ? { servedModel: input.servedModel } : {}),
+    usage: costSource === "unknown" ? withoutCost : input.usage,
+  };
+};
+
 const emptyUsage = (): OpenAICompatibleUsage => ({
   cachedInputTokens: 0,
   inputTokens: 0,
@@ -1217,6 +1274,7 @@ const parseToolArguments = (raw: string): unknown => {
 };
 
 interface UtilityConversationResult {
+  admissionRetries?: number;
   artifacts: UtilityArtifactReference[];
   checks: UtilityCheckResult[];
   contextInsufficient?: string;
@@ -1225,6 +1283,7 @@ interface UtilityConversationResult {
   modelCalls: number;
   piVersion?: string;
   provider: string;
+  servedModel?: string;
   summary: string;
   toolCalls: number;
   toolRounds: number;
@@ -1234,7 +1293,8 @@ interface UtilityConversationResult {
 type UtilityConversationProgress = Pick<
   UtilityConversationResult,
   "durationMs" | "modelCalls" | "toolCalls" | "toolRounds" | "usage"
->;
+> &
+  Pick<UtilityConversationResult, "admissionRetries" | "servedModel">;
 
 interface UtilityConversationBroker {
   assertComplete?: () => void;
@@ -1902,6 +1962,7 @@ const runPiUtilityConversation = async (input: {
     lastToolCallFingerprint: "",
     modelCalls: 0,
     repeatedToolCallCount: 0,
+    servedModel: undefined as string | undefined,
     successfulTools: new Set<UtilityToolName>(),
     toolCalls: 0,
     toolRounds: 0,
@@ -1987,6 +2048,9 @@ const runPiUtilityConversation = async (input: {
       return;
     }
     state.modelCalls += 1;
+    if (event.message.responseModel) {
+      state.servedModel = event.message.responseModel;
+    }
     const normalized = normalizePiUsage(event.message.usage);
     state.usage = addUsage(state.usage, normalized);
     const siblingCalls = event.message.content.filter(
@@ -2015,6 +2079,7 @@ const runPiUtilityConversation = async (input: {
     input.onProgress({
       durationMs: Date.now() - startedAt,
       modelCalls: state.modelCalls,
+      ...(state.servedModel ? { servedModel: state.servedModel } : {}),
       toolCalls: state.toolCalls,
       toolRounds: state.toolRounds,
       usage: state.usage,
@@ -2084,11 +2149,117 @@ const runPiUtilityConversation = async (input: {
     modelCalls: state.modelCalls,
     piVersion: PI_VERSION,
     provider: created.providerId,
+    ...(state.servedModel ? { servedModel: state.servedModel } : {}),
     summary: summary || `${utilityRoleName(input.tierId)} task completed.`,
     toolCalls: state.toolCalls,
     toolRounds: state.toolRounds,
     usage: state.usage,
   };
+};
+
+const addProgress = (
+  left: UtilityConversationProgress,
+  right: UtilityConversationProgress
+): UtilityConversationProgress => ({
+  ...((right.admissionRetries ?? left.admissionRetries) === undefined
+    ? {}
+    : { admissionRetries: right.admissionRetries ?? left.admissionRetries }),
+  durationMs: left.durationMs + right.durationMs,
+  modelCalls: left.modelCalls + right.modelCalls,
+  ...((right.servedModel ?? left.servedModel)
+    ? { servedModel: right.servedModel ?? left.servedModel }
+    : {}),
+  toolCalls: left.toolCalls + right.toolCalls,
+  toolRounds: left.toolRounds + right.toolRounds,
+  usage: addUsage(left.usage, right.usage),
+});
+
+// The proven boundary: a Nanny job whose endpoint is the loopback judge proxy.
+// Au Pair (OpenRouter or Switchyard) never retries, whatever its error text.
+const admissionRetryApplies = (
+  tierId: UtilityExecutionTierId,
+  config: UtilityRuntimeConfig
+): boolean =>
+  tierId === UTILITY_NANNY_TIER && isLoopbackEndpoint(config.nannyEndpoint);
+
+// Retries only the proven judge-proxy admission refusal, only while the
+// refused attempt executed no tool, at most ADMISSION_RETRY_LIMIT times, and
+// inside the job's one original runtime deadline. Counters accumulate across
+// attempts so the usage row reports every refused call truthfully.
+export const runPiConversationWithAdmissionRetry = async (
+  input: {
+    assertActive: () => void;
+    config: UtilityRuntimeConfig;
+    onProgress: (progress: UtilityConversationProgress) => void;
+    tierId: UtilityExecutionTierId;
+  },
+  attempt: (
+    config: UtilityRuntimeConfig,
+    onProgress: (progress: UtilityConversationProgress) => void
+  ) => Promise<UtilityConversationResult>,
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms))
+): Promise<UtilityConversationResult> => {
+  const deadline = Date.now() + input.config.maxJobRuntimeMs;
+  const baseDelay =
+    input.config.admissionRetryBaseMs ?? DEFAULT_ADMISSION_RETRY_BASE_MS;
+  let carried: UtilityConversationProgress = {
+    durationMs: 0,
+    modelCalls: 0,
+    toolCalls: 0,
+    toolRounds: 0,
+    usage: emptyUsage(),
+  };
+  let retries = 0;
+  for (;;) {
+    let latest: UtilityConversationProgress = {
+      durationMs: 0,
+      modelCalls: 0,
+      toolCalls: 0,
+      toolRounds: 0,
+      usage: emptyUsage(),
+    };
+    const report = (next: UtilityConversationProgress): void => {
+      latest = next;
+      input.onProgress(addProgress(carried, next));
+    };
+    try {
+      const result = await attempt(
+        {
+          ...input.config,
+          maxJobRuntimeMs: Math.max(1, deadline - Date.now()),
+        },
+        report
+      );
+      if (retries === 0) {
+        return result;
+      }
+      return {
+        ...result,
+        ...addProgress(carried, result),
+        admissionRetries: retries,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const delay = baseDelay * 2.5 ** retries;
+      if (
+        !(
+          admissionRetryApplies(input.tierId, input.config) &&
+          isGovernessProxyAdmissionRefusal(message)
+        ) ||
+        latest.toolCalls > 0 ||
+        retries >= ADMISSION_RETRY_LIMIT ||
+        Date.now() + delay >= deadline
+      ) {
+        throw error;
+      }
+      retries += 1;
+      carried = { ...addProgress(carried, latest), admissionRetries: retries };
+      input.onProgress(carried);
+      await sleep(delay);
+      input.assertActive();
+    }
+  }
 };
 
 const runUtilityConversation = (input: {
@@ -2112,7 +2283,11 @@ const runUtilityConversation = (input: {
   if (selectedConfig.harness === "legacy") {
     return runLegacyUtilityConversation({ ...input, config: selectedConfig });
   }
-  return runPiUtilityConversation({ ...input, config: selectedConfig });
+  return runPiConversationWithAdmissionRetry(
+    { ...input, config: selectedConfig },
+    (config, onProgress) =>
+      runPiUtilityConversation({ ...input, config, onProgress })
+  );
 };
 
 export const utilityBrokerBoundary = (
@@ -2540,7 +2715,18 @@ export const runUtilityWorker = async (
         tierId,
         toolCalls: conversation.toolCalls,
         toolRounds: conversation.toolRounds,
-        usage: conversation.usage,
+        ...usageProvenance({
+          harness: conversation.harness,
+          provider: conversation.provider,
+          tierId,
+          usage: conversation.usage,
+          ...(conversation.servedModel
+            ? { servedModel: conversation.servedModel }
+            : {}),
+          ...(conversation.admissionRetries
+            ? { admissionRetries: conversation.admissionRetries }
+            : {}),
+        }),
       });
       transitionUtilityJob(runDir, jobId, "escalated", { result });
       await dispatchBridgeMessage(
@@ -2602,7 +2788,18 @@ export const runUtilityWorker = async (
       tierId,
       toolCalls: conversation.toolCalls,
       toolRounds: conversation.toolRounds,
-      usage: conversation.usage,
+      ...usageProvenance({
+        harness: conversation.harness,
+        provider: conversation.provider,
+        tierId,
+        usage: conversation.usage,
+        ...(conversation.servedModel
+          ? { servedModel: conversation.servedModel }
+          : {}),
+        ...(conversation.admissionRetries
+          ? { admissionRetries: conversation.admissionRetries }
+          : {}),
+      }),
     });
     transitionUtilityJob(runDir, jobId, "completed", { result });
     await dispatchBridgeMessage(
@@ -2646,6 +2843,16 @@ export const runUtilityWorker = async (
       role: roleName,
       status: "failed",
       tierId,
+      ...usageProvenance({
+        harness: failureHarness,
+        provider: failureProvider,
+        tierId,
+        usage: progress.usage,
+        ...(progress.servedModel ? { servedModel: progress.servedModel } : {}),
+        ...(progress.admissionRetries
+          ? { admissionRetries: progress.admissionRetries }
+          : {}),
+      }),
     });
     const summary = error instanceof Error ? error.message : String(error);
     const result: UtilityCompactResult = {
@@ -3073,6 +3280,29 @@ const transcriptTime = (at: string): string => {
   return match?.[1] ?? "--:--:--";
 };
 
+const paneTokens = (value: number): string => {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1000) {
+    return `${Math.round(value / 1000)}k`;
+  }
+  return String(Math.round(value));
+};
+
+// Per-job provenance under a helper result: calls, tokens and labelled cost.
+export const paneUsageText = (usage: UtilityTranscriptUsage): string =>
+  [
+    `${usage.modelCalls} calls`,
+    `${usage.toolCalls} tools`,
+    `in ${paneTokens(usage.inputTokens)} cache ${paneTokens(usage.cachedInputTokens)} out ${paneTokens(usage.outputTokens)}`,
+    utilityJobCostText(usage.costSource, usage.costUsd),
+    ...(usage.admissionRetries
+      ? [`${usage.admissionRetries} admission retries`]
+      : []),
+    ...(usage.servedModel ? [`served ${usage.servedModel}`] : []),
+  ].join(" · ");
+
 const renderTranscriptEntry = (
   entry: UtilityTranscriptEntry,
   width: number
@@ -3096,6 +3326,15 @@ const renderTranscriptEntry = (
   const color = paneResponseColor(entry.label);
   return [
     colorPaneLine(color, head, width),
+    ...(entry.usage
+      ? [
+          colorPaneLine(
+            PANE_ANSI.yellow,
+            `  ${paneUsageText(entry.usage)}`,
+            width
+          ),
+        ]
+      : []),
     ...wrapPaneText(
       paneResultText(entry.text || "—"),
       Math.max(1, width - 2),
@@ -3242,6 +3481,35 @@ const renderUtilityTranscript = (
   return groups.flat();
 };
 
+const HELPER_STATE_COLOR: Record<
+  UtilityObservabilitySnapshot["helperState"],
+  string
+> = {
+  completed: PANE_ANSI.green,
+  failed: PANE_ANSI.red,
+  idle: PANE_ANSI.dim,
+  queued: PANE_ANSI.yellow,
+  running: PANE_ANSI.cyan,
+};
+
+// Helper-task counters only: Governess judge inference never appears here.
+const renderUtilityPaneHeader = (
+  snapshot: UtilityObservabilitySnapshot,
+  role: string,
+  configuredModel: string,
+  width: number
+): string[] => {
+  const usage = snapshot.usage;
+  const state = `${role.toUpperCase()} ${snapshot.helperState} · ${snapshot.active} running ${snapshot.queued} queued ${snapshot.completed} done ${snapshot.failed} failed`;
+  const totals = `${usage.modelCalls} calls ${usage.toolCalls} tools · in ${paneTokens(usage.inputTokens)} cache ${paneTokens(usage.cachedInputTokens)} out ${paneTokens(usage.outputTokens)} · ${utilityUsageCostText(usage)}`;
+  const model = `model ${snapshot.model ?? configuredModel}${snapshot.servedModel ? ` · served ${snapshot.servedModel}` : ""}`;
+  return [
+    colorPaneLine(HELPER_STATE_COLOR[snapshot.helperState], state, width),
+    colorPaneLine(PANE_ANSI.yellow, totals, width),
+    colorPaneLine(PANE_ANSI.dim, model, width),
+  ];
+};
+
 export const renderUtilityPane = (
   runDir: string,
   env: NodeJS.ProcessEnv = process.env,
@@ -3257,7 +3525,19 @@ export const renderUtilityPane = (
   const paneSnapshot = { ...snapshot, transcript: workerTranscript };
   const width = paneWidth(env, viewport);
   const maxRows = paneRows(env, viewport);
-  return renderUtilityTranscript(paneSnapshot, width, maxRows)
+  const header =
+    viewport.tierId && maxRows >= 8
+      ? renderUtilityPaneHeader(
+          snapshot,
+          utilityRoleName(viewport.tierId),
+          configuredModel,
+          width
+        )
+      : [];
+  return [
+    ...header,
+    ...renderUtilityTranscript(paneSnapshot, width, maxRows - header.length),
+  ]
     .slice(0, maxRows)
     .join("\n");
 };

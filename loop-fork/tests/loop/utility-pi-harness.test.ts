@@ -1181,3 +1181,128 @@ test("Pi refuses broker work after durable cancellation", async () => {
     rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test("Nanny waits out a judge-proxy admission refusal and records it truthfully", async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "loop-pi-nanny-busy-"));
+  const runDir = join(repoRoot, ".loop", "runs", "pi-nanny-busy");
+  mkdirSync(join(repoRoot, "src"), { recursive: true });
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(repoRoot, "src", "sample.ts"),
+    "export const needle = 1;\n"
+  );
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    JSON.stringify({ cwd: repoRoot })
+  );
+  const request = createUtilityRouteRequest({
+    acceptanceCriteria: ["return source-backed evidence"],
+    authority: {},
+    executionProfile: "search",
+    id: "pi-nanny-busy-job",
+    kind: "inspect",
+    objective: "Find the declared needle",
+    readScope: ["src"],
+    requester: "codex",
+    requiredCapabilities: ["inspect"],
+    risk: "low",
+    writeScope: [],
+  });
+  appendUtilityRouteRequest(runDir, request);
+  activateUtilityEpoch(runDir, 92);
+  transitionUtilityJob(runDir, request.id, "routed-utility", {
+    decision: {
+      reason: "utility-eligible",
+      target: "utility",
+      tierId: "utility-nanny",
+    },
+    routeEpoch: 92,
+  });
+
+  let requests = 0;
+  const server = serve({
+    fetch: async (incoming) => {
+      await incoming.json();
+      requests += 1;
+      if (requests === 1) {
+        // Byte-for-byte what ~/.loop/bin/governess-proxy.py sends while a
+        // judge POST holds its single admission slot.
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: "governess proxy busy: one judgment in flight",
+            },
+          }),
+          { headers: { "Content-Type": "application/json" }, status: 503 }
+        );
+      }
+      return requests === 2
+        ? response([
+            event({ role: "assistant" }),
+            event({
+              tool_calls: [
+                {
+                  function: {
+                    arguments: '{"query":"needle","paths":["src"]}',
+                    name: "search_repo",
+                  },
+                  id: "search-1",
+                  index: 0,
+                  type: "function",
+                },
+              ],
+            }),
+            event({}, "tool_calls", {
+              completion_tokens: 8,
+              prompt_tokens: 40,
+              total_tokens: 48,
+            }),
+          ])
+        : response([
+            event({ role: "assistant" }),
+            event({ content: "Needle found in src/sample.ts." }),
+            event({}, "stop", {
+              completion_tokens: 7,
+              prompt_tokens: 70,
+              total_tokens: 77,
+            }),
+          ]);
+    },
+    port: 0,
+  });
+  servers.push(server);
+
+  try {
+    await runUtilityWorker(runDir, 92, request.id, {
+      LOOP_NANNY_ENABLED: "1",
+      // The judge proxy rewrites the requested model; the stream reports the
+      // model it actually served, which Pi exposes as responseModel.
+      LOOP_NANNY_MODEL: "mlx-community/Qwen3.6-35B-A3B-4bit",
+      LOOP_NANNY_URL: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      LOOP_UTILITY_ADMISSION_RETRY_BASE_MS: "5",
+      LOOP_UTILITY_HARNESS: "pi-sdk",
+    });
+    expect(readUtilityJob(runDir, request.id)).toMatchObject({
+      result: { status: "completed" },
+      state: "completed",
+    });
+    expect(requests).toBe(3);
+    const rows = readFileSync(join(runDir, "utility", "usage.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      admissionRetries: 1,
+      costSource: "local-zero-rate",
+      modelCalls: 3,
+      provider: "loop-nanny",
+      servedModel: "fake-nanny",
+      status: "completed",
+      toolCalls: 1,
+      usage: { inputTokens: 110, outputTokens: 15, totalTokens: 125 },
+    });
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
