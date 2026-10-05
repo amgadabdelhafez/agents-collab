@@ -1,9 +1,21 @@
 import { expect, test } from "bun:test";
 import {
   helperModelLabel,
+  judgeEndpointHost,
   judgeRouteLabel,
   judgeRuntimeLabel,
 } from "../../src/loop/judge-route-label";
+
+test("compact judge endpoint keeps host and port only", () => {
+  expect(judgeEndpointHost("http://127.0.0.1:8084/v1")).toBe("127.0.0.1:8084");
+  expect(
+    judgeEndpointHost(
+      "https://user:secret@host.example:8443/private?token=hidden#secret"
+    )
+  ).toBe("host.example:8443");
+  expect(judgeEndpointHost("not-a-url-secret")).toBe("unavailable");
+  expect(judgeEndpointHost("file:///secret")).toBe("unavailable");
+});
 
 test("helper model keeps version and size instead of collapsing to family", () => {
   expect(helperModelLabel("/Users/example/qwen38-27b/model-10c35caa")).toBe(

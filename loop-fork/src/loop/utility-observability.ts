@@ -537,6 +537,9 @@ const latestUsageByJob = (
   )) {
     const jobId = stringAt(event, "jobId");
     if (jobId) {
+      // Re-insert so iteration order follows each job's latest append, not its
+      // first one; usageSnapshot relies on that order as the tie-break.
+      latest.delete(jobId);
       latest.set(jobId, event);
     }
   }
@@ -551,13 +554,21 @@ const usageSnapshot = (
   usage: UtilityObservabilityUsage;
 } => {
   const usage = emptyUsage();
-  let model: string | undefined;
-  let servedModel: string | undefined;
+  // Model provenance belongs to the single newest usage row: requested and
+  // served model are read from that row together, never stitched from two
+  // jobs. Newest is the latest `at`; append order (the iteration order of
+  // latestUsageByJob) breaks ties and orders rows without a timestamp.
+  let newest: Record<string, unknown> | undefined;
+  let newestAtMs = Number.NEGATIVE_INFINITY;
   for (const event of events.values()) {
-    model = stringAt(event, "model") ?? model;
-    // Model provenance belongs to the latest usage row, not an older job whose
-    // mismatch would otherwise be displayed beside a newly selected model.
-    servedModel = stringAt(event, "servedModel");
+    const parsedAtMs = Date.parse(stringAt(event, "at") ?? "");
+    const atMs = Number.isFinite(parsedAtMs)
+      ? parsedAtMs
+      : Number.NEGATIVE_INFINITY;
+    if (atMs >= newestAtMs) {
+      newest = event;
+      newestAtMs = atMs;
+    }
     const current = recordAt(event, "usage") ?? {};
     usage.cachedInputTokens = saturatingAdd(
       usage.cachedInputTokens,
@@ -596,6 +607,8 @@ const usageSnapshot = (
       finiteNumber(current.totalTokens)
     );
   }
+  const model = newest ? stringAt(newest, "model") : undefined;
+  const servedModel = newest ? stringAt(newest, "servedModel") : undefined;
   return {
     ...(model ? { model } : {}),
     ...(servedModel ? { servedModel } : {}),

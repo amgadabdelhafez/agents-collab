@@ -10,17 +10,25 @@ export const helperModelLabel = (model?: string): string => {
   return model.split("/").filter(Boolean).at(-1) ?? "—";
 };
 
-/** Endpoint provenance only: a proxy's address does not establish backend host. */
-export const judgeRouteLabel = (model: string, endpoint: string): string => {
-  let location = "unavailable";
+const httpEndpoint = (endpoint: string): URL | undefined => {
   try {
     const url = new URL(endpoint);
-    if (url.protocol === "http:" || url.protocol === "https:") {
-      location = url.origin;
-    }
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url
+      : undefined;
   } catch {
     // Never display unparsed configuration which may contain credentials.
+    return undefined;
   }
+};
+
+/** Compact credential-free endpoint (host:port only), for the default board. */
+export const judgeEndpointHost = (endpoint: string): string =>
+  httpEndpoint(endpoint)?.host || "unavailable";
+
+/** Endpoint provenance only: a proxy's address does not establish backend host. */
+export const judgeRouteLabel = (model: string, endpoint: string): string => {
+  const location = httpEndpoint(endpoint)?.origin ?? "unavailable";
   const safeModel = [...model]
     .filter(
       (character) =>

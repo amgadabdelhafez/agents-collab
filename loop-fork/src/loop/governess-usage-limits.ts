@@ -733,9 +733,11 @@ const applyCostRate = (usage: AgentUsage): void => {
 export const applyUsageTrackerPricing = (
   usage: AgentUsage,
   agent: Agent,
-  pricing: UsageTrackerPricing
+  pricing: UsageTrackerPricing,
+  // Defaults to the observed model; a caller may supply a labelled fallback
+  // (the configured seat model) without recording it as observed.
+  model: string | undefined = usage.model
 ): void => {
-  const model = usage.model;
   const atMs = timestampMs(usage.lastTs) ?? Date.now();
   const rate = model
     ? activePricingRate(pricing, agent, model, atMs)
