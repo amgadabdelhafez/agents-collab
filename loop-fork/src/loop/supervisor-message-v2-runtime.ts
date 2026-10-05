@@ -672,8 +672,16 @@ export class SupervisorMessageV2Coordinator {
     const outcomeRequestId = `${requestId}:${envelope.deliveryId}`;
     // Do this before claiming or calling the provider. A stale, missing, or
     // cross-scope descriptor becomes a normal retryable delivery failure and
-    // cannot consume an external provider turn.
-    await this.#readiness?.assertReady(trustedScope, envelope.target);
+    // cannot consume an external provider turn. The failure is signalled only
+    // under this attempt's lease, so it cannot fail an attempt another
+    // dispatcher holds, and its reason stays opaque: no session detail
+    // reaches workflow state.
+    let ready = true;
+    try {
+      await this.#readiness?.assertReady(trustedScope, envelope.target);
+    } catch {
+      ready = false;
+    }
     const claim = await this.#ledger.claim(
       envelope,
       trustedScope,
@@ -695,7 +703,12 @@ export class SupervisorMessageV2Coordinator {
     }
     let outcome: SupervisorMessageV2DeliveryOutcome;
     try {
-      outcome = await this.#delivery.deliver(envelope);
+      outcome = ready
+        ? await this.#delivery.deliver(envelope)
+        : {
+            reason: "recipient session is not ready",
+            status: "transient-failure",
+          };
     } catch (error) {
       outcome = {
         reason: error instanceof Error ? error.message : "delivery threw",
