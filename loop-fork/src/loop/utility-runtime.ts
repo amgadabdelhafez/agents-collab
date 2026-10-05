@@ -3454,7 +3454,7 @@ const renderCompactTranscriptJob = (
   return lines.slice(0, maxRows);
 };
 
-const renderUtilityTranscript = (
+export const renderUtilityTranscript = (
   snapshot: UtilityObservabilitySnapshot,
   width: number,
   maxRows: number
@@ -3483,6 +3483,11 @@ const renderUtilityTranscript = (
       renderTranscriptEntry(entry, width)
     );
     if (rows + rendered.length > maxRows) {
+      // Never replace the latest outcome with an older, shorter job merely
+      // because the latest full transcript cannot fit the current viewport.
+      if (entries === recentJobs[0]) {
+        return renderCompactTranscriptJob(entries, width, maxRows);
+      }
       continue;
     }
     groups.unshift(rendered);

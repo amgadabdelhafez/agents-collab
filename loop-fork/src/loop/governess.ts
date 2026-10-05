@@ -2175,7 +2175,12 @@ const utilityAverageCostCell = (
 // Known money plus a trailing "+?" that must survive the 7-column spend
 // cell: the amount is rounded to leave room for the marker.
 // Sub-dollar amounts drop the leading zero ("$.003+?").
-const partialUsdCell = (cost: number): string => {
+export const partialUsdCell = (cost: number): string => {
+  // Four amount columns remain after "$" and "+?". At large values an
+  // explicit bound preserves the unknown marker instead of clipping it.
+  if (cost >= 9999.5) {
+    return "$>9k+?";
+  }
   let amount = String(Math.round(cost));
   // Thresholds sit below the rounding carry so "0.9996" never prints ".000".
   if (cost < 0.9995) {
