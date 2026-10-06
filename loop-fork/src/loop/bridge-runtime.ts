@@ -83,6 +83,13 @@ const BRIDGE_NOTIFICATION_RETRY_MS = 30_000;
 const BRIDGE_NOTIFICATION_CLAIM_STALE_MS = BRIDGE_NOTIFICATION_RETRY_MS;
 const BRIDGE_WORKER_SUCCESS_DELAY_MS = 100;
 const BRIDGE_WORKER_PENDING_RETRY_MS = 5000;
+// After Codex progress the pane pass is a fairness probe: at most two
+// readiness captures (two are needed for provider-neutral Claude idle proof),
+// and a target that is not rung is skipped by fairness probes until this
+// window passes, so a busy pane costs Codex traffic one short probe per
+// window instead of a full readiness wait per delivery.
+const BRIDGE_FAIRNESS_READY_PROBES = 2;
+const BRIDGE_FAIRNESS_BACKOFF_MS = BRIDGE_WORKER_PENDING_RETRY_MS;
 export const BRIDGE_VERSION_PROBE_INTERVAL_MS = 250;
 export const BRIDGE_RECONCILIATION_INTERVAL_MS = 5 * 60 * 1000;
 const TMUX_LEFT_PANE = "0.0";
@@ -234,6 +241,7 @@ export const bridgeRuntimeCommandDeps = {
   },
   createWorkerWakeSession: (runDir: string) =>
     createBridgeWorkerWakeSession(runDir),
+  now: (): number => Date.now(),
   readCodexSubmissionVersion,
   readClaudeTranscriptVersion,
   spawn,
@@ -1735,6 +1743,22 @@ export const submitTmuxBridgeMessage = (
 const isMessagePending = (runDir: string, messageId: string): boolean =>
   readPendingBridgeMessages(runDir).some((entry) => entry.id === messageId);
 
+// The terminal text is a doorbell for the inbox, not a notification for each
+// message. Once any pending message has raised the doorbell, coalesce later
+// messages behind it until receive_messages drains the inbox.
+const isTmuxDoorbellDue = (
+  runDir: string,
+  pending: readonly BridgeMessage[],
+  nowMs: number
+): boolean =>
+  pending.every((entry) => {
+    const notifiedAt = lastBridgeNotificationAt(runDir, entry.id);
+    return (
+      notifiedAt === undefined ||
+      nowMs - notifiedAt >= BRIDGE_NOTIFICATION_RETRY_MS
+    );
+  });
+
 export const notifyTmuxBridgeInbox = async (
   runDir: string,
   target: BridgeMessage["target"],
@@ -1747,17 +1771,7 @@ export const notifyTmuxBridgeInbox = async (
   if (pending.length === 0) {
     return false;
   }
-  // The terminal text is a doorbell for the inbox, not a notification for
-  // each message. Once any pending message has raised the doorbell, coalesce
-  // later messages behind it until receive_messages drains the inbox.
-  const due = pending.every((entry) => {
-    const notifiedAt = lastBridgeNotificationAt(runDir, entry.id);
-    return (
-      notifiedAt === undefined ||
-      nowMs - notifiedAt >= BRIDGE_NOTIFICATION_RETRY_MS
-    );
-  });
-  if (!due) {
+  if (!isTmuxDoorbellDue(runDir, pending, nowMs)) {
     return false;
   }
   const claim = acquireNotificationClaim(runDir, target, nowMs);
@@ -1773,7 +1787,14 @@ export const notifyTmuxBridgeInbox = async (
     // Re-check the ledger after the bounded readiness wait. The target may
     // consume its inbox while the worker is proving a safe composer; never
     // type a stale nudge after that authoritative acknowledgement.
-    if (!(await waitForBridgePaneReady(runDir, resolved.pane, target))) {
+    if (
+      !(await waitForBridgePaneReady(
+        runDir,
+        resolved.pane,
+        target,
+        readyAttempts
+      ))
+    ) {
       return false;
     }
     const stillPending = readPendingBridgeMessages(runDir, nowMs).filter(
@@ -1863,10 +1884,11 @@ export const drainCodexAppServerMessages = (
 // it never probes tmux.
 const pendingPaneTargets = (
   runDir: string,
-  hasCodexRemote: boolean
+  hasCodexRemote: boolean,
+  pending: readonly BridgeMessage[] = readPendingBridgeMessages(runDir)
 ): Set<BridgeMessage["target"]> =>
   new Set(
-    readPendingBridgeMessages(runDir)
+    pending
       .filter(
         (entry) =>
           !(entry.target === "codex" && hasCodexRemote) &&
@@ -1875,36 +1897,96 @@ const pendingPaneTargets = (
       .map((entry) => entry.target)
   );
 
-export const drainTmuxBridgeMessages = async (
-  runDir: string
-): Promise<boolean> => {
+// Probe tmux once, then ring each target (all pending pane targets when none
+// are given). Returns the targets whose doorbell rang.
+const ringTmuxBridgeTargets = async (
+  runDir: string,
+  targets?: Iterable<BridgeMessage["target"]>,
+  readyAttempts?: number
+): Promise<Set<BridgeMessage["target"]>> => {
+  const rung = new Set<BridgeMessage["target"]>();
   const status = readBridgeRuntimeStatus(runDir);
   if (!status.tmuxSession) {
-    return false;
+    return rung;
   }
   if (status.tmuxLiveness === "dead") {
     clearStaleTmuxBridgeState(runDir);
-    return false;
+    return rung;
   }
   if (status.tmuxLiveness === "unknown") {
-    return false;
+    return rung;
   }
   // Ring every pane-backed target with pending messages, in queue order. A
   // target whose doorbell is not due (or whose pane is busy) must not hide
   // another target's inbox, such as Claude's behind an undrained Codex inbound.
-  const targets = pendingPaneTargets(runDir, status.hasCodexRemote);
-  let notified = false;
-  for (const target of targets) {
-    if (await notifyTmuxBridgeInbox(runDir, target)) {
-      notified = true;
+  for (const target of targets ??
+    pendingPaneTargets(runDir, status.hasCodexRemote)) {
+    if (
+      await notifyTmuxBridgeInbox(
+        runDir,
+        target,
+        bridgeRuntimeCommandDeps.now(),
+        readyAttempts
+      )
+    ) {
+      rung.add(target);
     }
   }
-  return notified;
+  return rung;
+};
+
+export const drainTmuxBridgeMessages = async (
+  runDir: string
+): Promise<boolean> => (await ringTmuxBridgeTargets(runDir)).size > 0;
+
+// Per-worker fairness state: target -> earliest time a fairness probe may
+// look at its pane again. In memory only; a restarted worker starts clean.
+type BridgeFairnessBackoff = Map<BridgeMessage["target"], number>;
+
+// Fairness pass after Codex progress. Codex progress must not skip the pane
+// doorbells (a steady Codex stream once starved Claude's inbox forever), but
+// it must not pay a full readiness wait per delivery either. Only targets
+// whose doorbell is due and whose backoff has passed are considered, chosen
+// from the ledger alone, so tmux is not probed when nothing is due. Each is
+// given a short readiness probe; one that is not rung (busy turn, user draft,
+// unconfirmed ring) backs off for BRIDGE_FAIRNESS_BACKOFF_MS. Bound: with
+// Codex traffic flowing, a target is rung within one backoff window plus one
+// worker cycle of the moment its doorbell is due and its pane is ready.
+const ringDuePaneTargetsFairly = async (
+  runDir: string,
+  hasCodexRemote: boolean,
+  backoff: BridgeFairnessBackoff
+): Promise<void> => {
+  const nowMs = bridgeRuntimeCommandDeps.now();
+  const pending = readPendingBridgeMessages(runDir, nowMs);
+  const due = [...pendingPaneTargets(runDir, hasCodexRemote, pending)].filter(
+    (target) =>
+      (backoff.get(target) ?? 0) <= nowMs &&
+      isTmuxDoorbellDue(
+        runDir,
+        pending.filter((entry) => entry.target === target),
+        nowMs
+      )
+  );
+  if (due.length === 0) {
+    return;
+  }
+  const rung = await ringTmuxBridgeTargets(
+    runDir,
+    due,
+    BRIDGE_FAIRNESS_READY_PROBES
+  );
+  for (const target of due) {
+    if (!rung.has(target)) {
+      backoff.set(target, nowMs + BRIDGE_FAIRNESS_BACKOFF_MS);
+    }
+  }
 };
 
 const drainBridgeWorkerCycle = async (
   runDir: string,
-  status: BridgeStatus
+  status: BridgeStatus,
+  backoff: BridgeFairnessBackoff
 ): Promise<boolean> => {
   const deliveredToCodex =
     status.hasCodexRemote && (await drainCodexAppServerMessages(runDir));
@@ -1914,20 +1996,14 @@ const drainBridgeWorkerCycle = async (
     !deliveredToCodex &&
     status.hasCodexRemote &&
     (await drainCodexTmuxMessages(runDir));
-  // Fairness: Codex progress must not skip the pane doorbell pass. Returning
-  // early on it let a steady Codex stream starve Claude's inbox forever. When
-  // the Codex path made progress, the pass still runs whenever another pane
-  // target has pending messages (so Codex-only app-server traffic still never
-  // probes tmux); otherwise it runs as before. drainTmuxBridgeMessages leaves
-  // app-server Codex out, so Codex is not rung twice, and each other target
-  // is considered every cycle and rung when its own doorbell is due
-  // (BRIDGE_NOTIFICATION_RETRY_MS).
-  const codexProgressed = deliveredToCodex || notifiedCodex;
-  const notifiedPanes =
-    (!codexProgressed ||
-      pendingPaneTargets(runDir, status.hasCodexRemote).size > 0) &&
-    (await drainTmuxBridgeMessages(runDir));
-  return codexProgressed || notifiedPanes;
+  if (!(deliveredToCodex || notifiedCodex)) {
+    // No Codex progress: the full pane pass, with its full readiness wait.
+    return drainTmuxBridgeMessages(runDir);
+  }
+  // pendingPaneTargets leaves app-server Codex out of the fairness pass, so
+  // Codex is never rung twice in a cycle.
+  await ringDuePaneTargetsFairly(runDir, status.hasCodexRemote, backoff);
+  return true;
 };
 
 const bridgeWorkerWaitPolicy = (
@@ -1955,6 +2031,7 @@ const bridgeWorkerWaitPolicy = (
 export const runBridgeWorker = async (runDir: string): Promise<void> => {
   let reconciliationReason: BridgeReconciliationState["lastReason"] = "startup";
   const wakeSession = bridgeRuntimeCommandDeps.createWorkerWakeSession(runDir);
+  const fairnessBackoff: BridgeFairnessBackoff = new Map();
   try {
     while (true) {
       const claimedPid = readBridgeWorkerPid(runDir);
@@ -1967,7 +2044,11 @@ export const runBridgeWorker = async (runDir: string): Promise<void> => {
         return;
       }
       const inspectedVersion = bridgeJournalVersion(runDir);
-      const delivered = await drainBridgeWorkerCycle(runDir, status);
+      const delivered = await drainBridgeWorkerCycle(
+        runDir,
+        status,
+        fairnessBackoff
+      );
       if (!(status.hasCodexRemote || status.hasTmuxSession)) {
         return;
       }
