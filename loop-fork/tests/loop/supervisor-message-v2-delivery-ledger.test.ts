@@ -103,6 +103,12 @@ const envelopeFor = (
  * An in-memory engine with Temporal's retention behavior: only a closed
  * execution can be purged, and a purged ID is unknown, so starting it again
  * creates a fresh execution. Every start is recorded.
+ *
+ * Unlike the generic Temporal workflow, which stays RUNNING after the message
+ * reaches a terminal phase until the engine terminates, cancels or times it
+ * out, this engine closes an execution as soon as its message ends. That is
+ * the harsher model for retention: every ended message is purgeable. The
+ * real-Temporal paths are in supervisor-message-v2-temporal-retention.test.ts.
  */
 class RetentionWorkflowPort implements WorkflowPort {
   readonly live: InMemoryWorkflowPort;
@@ -312,7 +318,7 @@ describe("V2 delivery ledger on PostgreSQL", () => {
     ).rejects.toThrow("terminal outcome is invalid");
 
     await ledger.recordTerminalOutcome(workflowId, SCOPE, "exhausted");
-    await ledger.recordTerminalOutcome(workflowId, SCOPE, "completed");
+    await ledger.recordTerminalOutcome(workflowId, SCOPE, "acknowledged");
 
     await expect(ledger.terminalOutcome(workflowId, SCOPE)).resolves.toBe(
       "exhausted"
@@ -373,6 +379,13 @@ describe("V2 delivery ledger on PostgreSQL", () => {
           () => "rejected by the CHECK constraint"
         );
       expect(reopened).toBe("rejected by the CHECK constraint");
+      // A delivery/read acknowledgement is never stored as work completion.
+      const completed =
+        await legacySql`UPDATE loop_supervisor_message_v2_start_intent SET terminal_outcome = 'completed'`.then(
+          () => "accepted",
+          () => "rejected by the CHECK constraint"
+        );
+      expect(completed).toBe("rejected by the CHECK constraint");
     } finally {
       await legacy.close();
     }
@@ -493,7 +506,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     ]);
   });
 
-  test("records completion when the recipient acknowledges", async () => {
+  test("records acknowledgement, not completion, when the recipient acknowledges", async () => {
     const { coordinator, ledger } = await harness();
     const input = inputFor(`acknowledged-${randomUUID()}`);
     const workflowId = workflowIdOf(input);
@@ -506,7 +519,7 @@ describe("V2 recovery against retention on PostgreSQL", () => {
     await coordinator.acknowledge(SCOPE, workflowId, input.to, "ack-ack");
 
     await expect(ledger.terminalOutcome(workflowId, SCOPE)).resolves.toBe(
-      "completed"
+      "acknowledged"
     );
   });
 

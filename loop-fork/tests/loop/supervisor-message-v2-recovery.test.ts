@@ -8,6 +8,7 @@ import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-mes
 import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  SupervisorMessageV2RecoveryRunner,
   type SupervisorMessageV2TerminalOutcome,
 } from "../../src/loop/supervisor-message-v2-runtime";
 import {
@@ -47,6 +48,8 @@ const workflowsWith = (
   presence: WorkflowPresence,
   options: {
     foreign?: string;
+    /** Overrides `presence` per call; may throw, as the Temporal port does. */
+    presenceOf?: (workflowId: string, call: number) => WorkflowPresence;
     status?: (workflowId: string) => Record<string, unknown>;
     withoutPresence?: boolean;
   } = {}
@@ -63,7 +66,12 @@ const workflowsWith = (
       : {
           presence: (workflowId: string) => {
             presenceChecks.push(workflowId);
-            return presence;
+            return options.presenceOf
+              ? options.presenceOf(
+                  workflowId,
+                  presenceChecks.filter((id) => id === workflowId).length
+                )
+              : presence;
           },
         }),
     query: (command: WorkflowQueryCommand) => ({
@@ -141,6 +149,12 @@ const ledgerWith = (
     prepare: unused("prepare"),
     recordStartIntent: (_workflowId, _scope, input) => Promise.resolve(input),
     recoverableStarts: () => Promise.resolve(records),
+    startIntent: (workflowId) => {
+      const record = records.find((entry) => entry.workflowId === workflowId);
+      return record
+        ? Promise.resolve(record.input)
+        : Promise.reject(new Error("start intent is absent"));
+    },
     recordTerminalOutcome: (workflowId, _scope, outcome) => {
       if (!terminal.has(workflowId)) {
         terminal.set(workflowId, outcome);
@@ -198,7 +212,7 @@ describe("SupervisorMessage V2 recovery against workflow retention", () => {
 
   test("keeps post-effect recovery for a running workflow with a completed delivery", async () => {
     const workflows = workflowsWith("running");
-    const { completionChecks, ledger } = ledgerWith(true);
+    const { completionChecks, ledger, terminal } = ledgerWith(true);
 
     await coordinator(workflows.port, ledger).recoverPending();
 
@@ -206,6 +220,94 @@ describe("SupervisorMessage V2 recovery against workflow retention", () => {
       WORKFLOW_ID,
     ]);
     expect(completionChecks).toEqual([]);
+    // An open message on a running execution is not an outcome.
+    expect([...terminal]).toEqual([]);
+  });
+
+  test("records a message phase that ended while its execution still runs", async () => {
+    // The generic Temporal workflow stays RUNNING after the message ends, so
+    // a cancel issued outside the coordinator is visible only here.
+    const workflows = workflowsWith("running", {
+      status: () => ({
+        deliveredAt: "2026-10-05T00:00:00.000Z",
+        deliveryAttempts: 1,
+        nextRetryAt: null,
+        phase: "canceled",
+      }),
+    });
+    const { ledger, terminal } = ledgerWith(false);
+
+    await expect(
+      coordinator(workflows.port, ledger).recoverPending()
+    ).resolves.toBe(0);
+
+    expect([...terminal]).toEqual([[WORKFLOW_ID, "canceled"]]);
+    expect(workflows.signals).toEqual([]);
+  });
+
+  test("defers an ID another deployment holds at the presence check, recording nothing", async () => {
+    const workflows = workflowsWith("closed", {
+      presenceOf: (workflowId) => {
+        if (workflowId === WORKFLOW_ID) {
+          throw new WorkflowError(
+            "conflict",
+            `workflow ${workflowId} belongs to another task queue`
+          );
+        }
+        return "closed";
+      },
+      status: () => ({
+        deliveredAt: null,
+        deliveryAttempts: 0,
+        nextRetryAt: null,
+        phase: "canceled",
+      }),
+    });
+    const { ledger, terminal } = ledgerWith(false, [
+      {
+        input: structuredClone(fixture.input),
+        trustedScope: SCOPE,
+        workflowId: WORKFLOW_ID,
+      },
+      {
+        input: structuredClone(OTHER_INPUT),
+        trustedScope: SCOPE,
+        workflowId: OTHER_WORKFLOW_ID,
+      },
+    ]);
+
+    await expect(
+      coordinator(workflows.port, ledger).recoverPending()
+    ).rejects.toMatchObject({ code: "conflict", name: "WorkflowError" });
+    expect([...terminal]).toEqual([[OTHER_WORKFLOW_ID, "canceled"]]);
+    expect(workflows.starts).toEqual([]);
+  });
+
+  test("records no outcome when the ID changes owner between the presence check and the status read", async () => {
+    const workflows = workflowsWith("closed", {
+      presenceOf: (workflowId, call) => {
+        if (call > 1) {
+          throw new WorkflowError(
+            "conflict",
+            `workflow ${workflowId} belongs to another task queue`
+          );
+        }
+        return "closed";
+      },
+      status: () => ({
+        deliveredAt: null,
+        deliveryAttempts: 0,
+        nextRetryAt: null,
+        phase: "canceled",
+      }),
+    });
+    const { ledger, terminal } = ledgerWith(false);
+
+    await expect(
+      coordinator(workflows.port, ledger).recoverPending()
+    ).rejects.toMatchObject({ code: "conflict", name: "WorkflowError" });
+    expect([...terminal]).toEqual([]);
+    expect(workflows.starts).toEqual([]);
   });
 
   test("records a closed workflow's outcome instead of starting it", async () => {
@@ -250,7 +352,7 @@ describe("SupervisorMessage V2 recovery against workflow retention", () => {
           deliveryAttempts: 1,
           phase: "acknowledged",
         },
-        "completed",
+        "acknowledged",
       ],
       [
         { deliveredAt: null, deliveryAttempts: 0, phase: "routed" },
@@ -397,5 +499,57 @@ describe("SupervisorMessage V2 receive against workflow retention", () => {
     expect(workflows.starts.map((start) => start.workflowId)).toEqual([
       WORKFLOW_ID,
     ]);
+  });
+});
+
+describe("SupervisorMessage V2 recovery runner startup", () => {
+  const runnerFailingWith = (error: Error) => {
+    const lines: string[] = [];
+    const intervals: (() => void)[] = [];
+    const runner = new SupervisorMessageV2RecoveryRunner({
+      coordinator: { recoverPending: () => Promise.reject(error) },
+      intervalMs: 1000,
+      log: (line) => lines.push(line),
+      timer: {
+        clearInterval: () => undefined,
+        setInterval: (callback) => {
+          intervals.push(callback);
+          return intervals.length;
+        },
+      },
+    });
+    return { intervals, lines, runner };
+  };
+
+  test("starts past an intent whose ID another deployment holds, and keeps sweeping", async () => {
+    const { intervals, lines, runner } = runnerFailingWith(
+      new WorkflowError(
+        "conflict",
+        `workflow ${WORKFLOW_ID} belongs to another task queue`
+      )
+    );
+    try {
+      await expect(runner.start()).resolves.toBeUndefined();
+      expect(lines).toEqual([
+        "V2 initial recovery deferred an intent held by another deployment",
+      ]);
+      expect(intervals).toHaveLength(1);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  test("still refuses startup on any other workflow error", async () => {
+    const { intervals, runner } = runnerFailingWith(
+      new WorkflowError("invalid-state", "workflow state is unreadable")
+    );
+    try {
+      await expect(runner.start()).rejects.toMatchObject({
+        code: "invalid-state",
+      });
+      expect(intervals).toEqual([]);
+    } finally {
+      await runner.close();
+    }
   });
 });

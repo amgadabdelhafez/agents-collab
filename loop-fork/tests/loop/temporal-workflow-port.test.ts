@@ -175,4 +175,35 @@ describe("Temporal WorkflowPort execution ownership", () => {
       foreign.start({ ...command, requestId: "start-foreign-closed" })
     ).rejects.toMatchObject({ code: "conflict", name: "WorkflowError" });
   }, 60_000);
+
+  test("reports a same-ID execution owned by another task queue as a conflict, never as its own", async () => {
+    const workflowId = `port-presence-foreign-${process.pid}`;
+    await expect(
+      owner.start({
+        input: singleNodeGraph,
+        requestId: "start-owner-presence",
+        workflowId,
+        workflowType: TASK_GRAPH_WORKFLOW_TYPE,
+      })
+    ).resolves.toMatchObject({ created: true });
+    // Running: another deployment must not read the execution as running.
+    await expect(foreign.presence(workflowId)).rejects.toMatchObject({
+      code: "conflict",
+      name: "WorkflowError",
+    });
+    await environment.client.workflow
+      .getHandle(workflowId)
+      .terminate("retention proof");
+    // Closed: reading it as closed would let a recovery sweep record the
+    // owner's outcome as its own.
+    await expect(owner.presence(workflowId)).resolves.toBe("closed");
+    await expect(foreign.presence(workflowId)).rejects.toMatchObject({
+      code: "conflict",
+      name: "WorkflowError",
+    });
+    await expect(foreign.isClosed(workflowId)).rejects.toMatchObject({
+      code: "conflict",
+      name: "WorkflowError",
+    });
+  }, 60_000);
 });

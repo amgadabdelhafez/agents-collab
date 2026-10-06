@@ -61,6 +61,13 @@ class MemoryLedger implements SupervisorMessageV2DeliveryLedger {
     return Promise.resolve();
   }
 
+  startIntent(workflowId: string): Promise<SupervisorMessageV2Input> {
+    const start = this.starts.get(workflowId);
+    return start
+      ? Promise.resolve(start.input)
+      : Promise.reject(new Error("start intent is absent"));
+  }
+
   claim(
     envelope: SupervisorMessageV2DeliveryEnvelope,
     _trustedScope: TrustedSupervisorMessageV2Scope,

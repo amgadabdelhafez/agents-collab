@@ -83,18 +83,23 @@ export class TemporalWorkflowPort implements WorkflowPort {
     return (await this.presence(workflowId)) === "closed";
   }
 
+  /**
+   * Presence of this deployment's own execution. A same-ID execution on
+   * another task queue is neither running nor closed for this port: it is a
+   * conflict, so no caller can read, adopt or record a foreign outcome.
+   */
   async presence(workflowId: string): Promise<WorkflowPresence> {
+    let description: Awaited<ReturnType<WorkflowHandle["describe"]>>;
     try {
-      return (await this.#handle(workflowId).describe()).status.name ===
-        "RUNNING"
-        ? "running"
-        : "closed";
+      description = await this.#handle(workflowId).describe();
     } catch (error) {
       if (error instanceof WorkflowNotFoundError) {
         return "missing";
       }
       throw error;
     }
+    this.#requireOwnTaskQueue(workflowId, description.taskQueue);
+    return description.status.name === "RUNNING" ? "running" : "closed";
   }
 
   query(command: WorkflowQueryCommand): Promise<WorkflowQueryResult> {
@@ -139,15 +144,10 @@ export class TemporalWorkflowPort implements WorkflowPort {
       }
       created = false;
       handle = this.#handle(command.workflowId);
-      // A workflow ID is unique per namespace, not per deployment. Another
-      // deployment sharing the namespace under its own task queue can hold the
-      // same ID; adopting its execution would read and signal foreign state.
-      if ((await handle.describe()).taskQueue !== this.#taskQueue) {
-        throw new WorkflowError(
-          "conflict",
-          `workflow ${command.workflowId} belongs to another task queue`
-        );
-      }
+      this.#requireOwnTaskQueue(
+        command.workflowId,
+        (await handle.describe()).taskQueue
+      );
     }
     const snapshot = await handle.query(temporalStartSnapshotQuery);
     if (snapshot.inspection.workflowType !== command.workflowType) {
@@ -191,6 +191,21 @@ export class TemporalWorkflowPort implements WorkflowPort {
 
   #handle(workflowId: string): WorkflowHandle {
     return this.#client.getHandle(workflowId);
+  }
+
+  /**
+   * A workflow ID is unique per namespace, not per deployment. Another
+   * deployment sharing the namespace under its own task queue can hold the
+   * same ID; treating its execution as ours would read and signal foreign
+   * state, or record its outcome as ours.
+   */
+  #requireOwnTaskQueue(workflowId: string, taskQueue: string): void {
+    if (taskQueue !== this.#taskQueue) {
+      throw new WorkflowError(
+        "conflict",
+        `workflow ${workflowId} belongs to another task queue`
+      );
+    }
   }
 
   #unwrap(

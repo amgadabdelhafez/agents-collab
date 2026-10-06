@@ -99,7 +99,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     // outcome was observed; a value closes the workflow for recovery, sender
     // retries and delivery claims, even after the engine purges it.
     await this
-      .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_outcome TEXT CHECK (terminal_outcome IN ('completed', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
+      .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_outcome TEXT CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
     await this
       .#sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_at TIMESTAMPTZ`;
   }
@@ -266,6 +266,13 @@ export class PostgresSupervisorMessageV2DeliveryLedger
     workflowId: string,
     trustedScope: TrustedSupervisorMessageV2Scope
   ): Promise<void> {
+    await this.startIntent(workflowId, trustedScope);
+  }
+
+  async startIntent(
+    workflowId: string,
+    trustedScope: TrustedSupervisorMessageV2Scope
+  ): Promise<SupervisorMessageV2Input> {
     const rows = await this.#sql<
       { input_json: unknown; principal: string; tenant_id: string }[]
     >`SELECT input_json, principal, tenant_id FROM loop_supervisor_message_v2_start_intent WHERE workflow_id = ${workflowId}`;
@@ -296,6 +303,7 @@ export class PostgresSupervisorMessageV2DeliveryLedger
         "V2 workflow start intent has an invalid workflow binding"
       );
     }
+    return parsed;
   }
 
   /** Body-free host lookup. Caller supplies route tenant and authenticated
