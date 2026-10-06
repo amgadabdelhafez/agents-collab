@@ -986,6 +986,8 @@ test("service start logs each binding that will never publish once, with ids onl
     );
     expect(listed?.status).toBe(200);
     expect(await listed?.json()).toEqual({
+      // No record of this tenant is quarantined from recovery.
+      recoveryQuarantine: [],
       schema: "supervisor-result-assignment-status.v1",
       unpublishable: [
         {
