@@ -7,6 +7,7 @@ import type { BridgeStatus } from "../../src/loop/bridge-store";
 import {
   type A2AV2Config,
   type A2AV2EnrollmentOutcome,
+  A2AV2SeatUnavailableError,
   ConfiguredA2AV2SessionEnrollment,
   configuredA2AV2RebindAuthority,
   createLoopOrchestrationFetchHandler,
@@ -323,6 +324,30 @@ test("orchestration config takes an optional readiness outage bound within one s
   }
 });
 
+test("orchestration config takes an optional not-enrolled deferral bound within one second to one day", () => {
+  const withBound = (notEnrolledBoundMs: unknown) => {
+    const value = a2aV2([]);
+    return {
+      ...value,
+      a2aV2: { ...value.a2aV2, notEnrolledBoundMs },
+    };
+  };
+  for (const boundMs of [1000, 120_000, 86_400_000]) {
+    expect(
+      parseLoopOrchestrationConfig(withBound(boundMs)).a2aV2?.notEnrolledBoundMs
+    ).toBe(boundMs);
+  }
+  // Absent, the key stays absent and the runtime default applies.
+  expect(
+    Object.keys(parseLoopOrchestrationConfig(a2aV2([])).a2aV2 ?? {})
+  ).not.toContain("notEnrolledBoundMs");
+  for (const invalid of [999, 86_400_001, 1500.5, "120000", null]) {
+    expect(() => parseLoopOrchestrationConfig(withBound(invalid))).toThrow(
+      "orchestration a2aV2 notEnrolledBoundMs is invalid"
+    );
+  }
+});
+
 test("/healthz reports the V2 readiness-outage counters as counts only, without changing its state", async () => {
   const snapshot = {
     boundMs: 60_000,
@@ -346,13 +371,21 @@ test("/healthz reports the V2 readiness-outage counters as counts only, without 
     });
     return (await handler(new Request("http://127.0.0.1/healthz"))).json();
   };
+  const notEnrolledSnapshot = {
+    boundMs: 120_000,
+    deferredDeliveries: 3,
+    notEnrolledFailures: 1,
+    recipientsDeferred: 1,
+  };
   expect(
     await health({
       httpHandler: () => Promise.resolve(new Response(null)),
+      notEnrolledDeferral: () => notEnrolledSnapshot,
       pathname: "/a2a",
       readinessOutage: () => snapshot,
     })
   ).toEqual({
+    a2aV2NotEnrolledDeferral: notEnrolledSnapshot,
     a2aV2ReadinessOutage: snapshot,
     schema: "loop-orchestration-health.v1",
     state: "ready",
@@ -360,6 +393,44 @@ test("/healthz reports the V2 readiness-outage counters as counts only, without 
   // Without V2 the body is exactly what it was.
   expect(await health()).toEqual({
     schema: "loop-orchestration-health.v1",
+    state: "ready",
+  });
+});
+
+test("unauthenticated /healthz names no seat or recipient while seats are not enrolled and deliveries wait", async () => {
+  const handler = createLoopOrchestrationFetchHandler({
+    a2aV2Service: {
+      httpHandler: () => Promise.resolve(new Response(null)),
+      notEnrolledDeferral: () => ({
+        boundMs: 900_000,
+        deferredDeliveries: 4,
+        notEnrolledFailures: 0,
+        recipientsDeferred: 1,
+      }),
+      pathname: "/a2a",
+      readinessOutage: () => ({
+        boundMs: 900_000,
+        deferredDeliveries: 2,
+        outageFailures: 0,
+        recipientsDeferred: 1,
+      }),
+    },
+    // Nobody is authenticated: this is what any caller can read.
+    authenticator: { authenticate: () => undefined } as never,
+    host: {
+      httpHandler: () => () => Promise.resolve(new Response(null)),
+      workerState: () => "RUNNING",
+    } as never,
+    notEnrolledSeats: () => ["supervisor:harness-peer", "supervisor:harness"],
+    reconciliationHealthy: () => true,
+  });
+  const text = await (
+    await handler(new Request("http://127.0.0.1/healthz"))
+  ).text();
+  expect(text).not.toContain("supervisor:");
+  expect(text).not.toContain("harness");
+  expect(JSON.parse(text)).toMatchObject({
+    notEnrolledCount: 2,
     state: "ready",
   });
 });
@@ -825,7 +896,7 @@ test("start-time enrollment refuses the configured recipient's failure and degra
   const recipient = "supervisor:harness";
   const peer = "supervisor:harness-peer";
   const down = (seat: string): A2AV2EnrollmentOutcome => ({
-    error: new Error(`${seat} unavailable`),
+    error: new A2AV2SeatUnavailableError(`${seat} unavailable`),
     recipient: seat,
     state: "failed",
   });
@@ -843,6 +914,147 @@ test("start-time enrollment refuses the configured recipient's failure and degra
       recipient
     )
   ).toThrow(`${recipient} unavailable`);
+});
+
+test("start-time enrollment degrades a peer only when its seat is not running; any other peer failure refuses start", () => {
+  const recipient = "supervisor:harness";
+  const peer = "supervisor:harness-peer";
+  const peerFails = (error: unknown) => () =>
+    requireA2AV2Enrollment(
+      [
+        { recipient, state: "enrolled" },
+        { error, recipient: peer, state: "failed" },
+      ],
+      recipient
+    );
+  expect(
+    peerFails(
+      new A2AV2SeatUnavailableError(
+        "configured A2A V2 recipient session is unavailable"
+      )
+    )
+  ).not.toThrow();
+  // An authority denial, an identity or registration conflict, a store
+  // failure, or anything unclassified is not a stopped seat: start refuses
+  // with the peer's own cause.
+  for (const message of [
+    "session rebind denied: no-configured-session-rebind",
+    "supervisor run manifest identity changed",
+    "session descriptor conflicts with the current registration",
+    "configured A2A V2 recipient has no supported provider route",
+    "connect ECONNREFUSED",
+  ]) {
+    expect(peerFails(new Error(message))).toThrow(message);
+  }
+  expect(peerFails("not an error")).toThrow();
+});
+
+test("A2A V2 enrollment classifies only a seat that is not running as unavailable", async () => {
+  const config = a2aConfig();
+  const failureOf = async (
+    input: Partial<Parameters<typeof enrollConfiguredA2AV2Session>[0]>
+  ) =>
+    enrollConfiguredA2AV2Session({
+      ...codexSeat({ id: "thread-a" }),
+      config,
+      now: at(0),
+      service: sessionStore(config),
+      ...input,
+    }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+  // No Codex thread in the run: the seat's session is not running.
+  const noSession = await failureOf(codexSeat({ id: "" }));
+  expect(noSession).toBeInstanceOf(A2AV2SeatUnavailableError);
+  expect(failureText(noSession)).toBe(
+    "configured A2A V2 recipient session is unavailable"
+  );
+  // The seat's run is stopped: the directory has no route for it.
+  const stopped = await failureOf({ directory: { resolve: () => undefined } });
+  expect(stopped).toBeInstanceOf(A2AV2SeatUnavailableError);
+  expect(failureText(stopped)).toBe(
+    "configured A2A V2 recipient seat is not running"
+  );
+  // A route to a provider this server cannot enroll is a configuration
+  // error, not a stopped seat.
+  const unsupported = await failureOf({
+    directory: {
+      resolve: () => ({ runDir: "/run/harness", target: "gemini" as never }),
+    },
+  });
+  expect(failureText(unsupported)).toBe(
+    "configured A2A V2 recipient has no supported provider route"
+  );
+  expect(unsupported).not.toBeInstanceOf(A2AV2SeatUnavailableError);
+  // An identity conflict reading the seat's run is not a stopped seat.
+  const identity = await failureOf({
+    directory: {
+      resolve: () => {
+        throw new Error("supervisor run manifest identity changed");
+      },
+    },
+  });
+  expect(failureText(identity)).toBe(
+    "supervisor run manifest identity changed"
+  );
+  expect(identity).not.toBeInstanceOf(A2AV2SeatUnavailableError);
+  // A governed rebind denial is an authority refusal.
+  const store = sessionStore(config);
+  await enrollConfiguredA2AV2Session({
+    ...codexSeat({ id: "thread-a" }),
+    config,
+    now: at(0),
+    service: store,
+  });
+  const denied = await failureOf({
+    config: { ...config, endpointRef: "endpoint:elsewhere" },
+    now: at(1000),
+    service: store,
+  });
+  expect(failureText(denied)).toContain("session rebind denied");
+  expect(denied).not.toBeInstanceOf(A2AV2SeatUnavailableError);
+});
+
+test("A2A V2 enrollment says since when each seat has not been enrolled, until a pass enrolls it", async () => {
+  const config = a2aConfig();
+  const peer = "supervisor:harness-peer";
+  const store = sessionStore(config);
+  const thread = { id: "" };
+  const clock = { offsetMs: 0 };
+  const enrollment = new ConfiguredA2AV2SessionEnrollment({
+    ...codexSeat(thread),
+    config,
+    now: () => at(clock.offsetMs)(),
+    recipients: [config.recipient],
+    service: store,
+  });
+  // Before any pass nothing is known to be down.
+  expect(enrollment.notEnrolled()).toEqual([]);
+  expect(enrollment.notEnrolledSince(config.recipient)).toBeUndefined();
+  await enrollment.maintain();
+  expect(enrollment.notEnrolled()).toEqual([config.recipient]);
+  expect(enrollment.notEnrolledSince(config.recipient)).toBe(START);
+  // A seat this enrollment does not manage is never reported.
+  expect(enrollment.notEnrolledSince(peer)).toBeUndefined();
+  // Waiting out the retry delay, and failing again, keep the first instant.
+  clock.offsetMs = 1000;
+  await enrollment.maintain();
+  clock.offsetMs = 5000;
+  await enrollment.maintain();
+  expect(enrollment.notEnrolledSince(config.recipient)).toBe(START);
+  thread.id = "thread-a";
+  clock.offsetMs = 10_000;
+  expect(await enrollment.maintain()).toEqual([
+    { recipient: config.recipient, state: "enrolled" },
+  ]);
+  expect(enrollment.notEnrolled()).toEqual([]);
+  expect(enrollment.notEnrolledSince(config.recipient)).toBeUndefined();
+  // A later failure starts a new spell at its own instant.
+  thread.id = "";
+  clock.offsetMs = 20_000;
+  await enrollment.maintain();
+  expect(enrollment.notEnrolledSince(config.recipient)).toBe(START + 20_000);
 });
 
 test("orchestration sweep reports a peer that failed start-time enrollment as not enrolled, then its recovery", async () => {
@@ -918,7 +1130,7 @@ test("orchestration sweep exposes which seats are not enrolled, from start until
   expect(states.at(-1)).toEqual([]);
 });
 
-test("/healthz lists the seats that are not enrolled beside an unchanged ready state", async () => {
+test("/healthz counts the seats that are not enrolled beside an unchanged ready state", async () => {
   let notEnrolled: readonly string[] = ["supervisor:harness-peer"];
   const host = {
     httpHandler: () => () => Promise.resolve(new Response(null)),
@@ -933,13 +1145,13 @@ test("/healthz lists the seats that are not enrolled beside an unchanged ready s
   const health = async (fetchHandler: typeof handler) =>
     (await fetchHandler(new Request("http://127.0.0.1/healthz"))).json();
   expect(await health(handler)).toEqual({
-    notEnrolled: ["supervisor:harness-peer"],
+    notEnrolledCount: 1,
     schema: "loop-orchestration-health.v1",
     state: "ready",
   });
   notEnrolled = [];
   expect(await health(handler)).toEqual({
-    notEnrolled: [],
+    notEnrolledCount: 0,
     schema: "loop-orchestration-health.v1",
     state: "ready",
   });

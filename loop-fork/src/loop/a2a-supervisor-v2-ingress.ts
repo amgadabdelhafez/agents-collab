@@ -8,6 +8,7 @@ import type {
   SupervisorMessageV2DeliveryLedger,
   SupervisorMessageV2DeliveryPort,
   SupervisorMessageV2DeliveryReadinessPort,
+  SupervisorMessageV2NotEnrolledDeferral,
   SupervisorMessageV2ReadinessOutageTracker,
 } from "./supervisor-message-v2-runtime";
 import {
@@ -31,6 +32,11 @@ export interface SupervisorA2AV2IngressOptions {
   ledger: SupervisorMessageV2DeliveryLedger;
   /** Recovery failure sink; omitted, the runner's stderr logger is used. */
   log?: (message: string) => void;
+  /**
+   * Shared not-enrolled deferral bound, log, and counters. Omitted, no
+   * recipient is ever treated as not enrolled on this ingress.
+   */
+  notEnrolled?: SupervisorMessageV2NotEnrolledDeferral;
   now: () => string;
   policy: SupervisorMessagePolicy;
   /**
@@ -80,7 +86,8 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
       options.dispatchOwner,
       () => new Date(options.now()),
       options.sessionReadiness,
-      options.readinessOutage
+      options.readinessOutage,
+      options.notEnrolled
     );
     this.handler = new SupervisorA2ARequestHandler(
       this.card,

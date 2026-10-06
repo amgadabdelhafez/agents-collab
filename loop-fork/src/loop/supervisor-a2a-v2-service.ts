@@ -43,8 +43,11 @@ import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
   type SupervisorMessageV2DeliveryPort,
+  SupervisorMessageV2NotEnrolledDeferral,
+  type SupervisorMessageV2NotEnrolledSnapshot,
   type SupervisorMessageV2ReadinessOutageSnapshot,
   SupervisorMessageV2ReadinessOutageTracker,
+  type SupervisorMessageV2RecipientEnrollmentPort,
 } from "./supervisor-message-v2-runtime";
 import {
   PostgresSupervisorSessionV2Store,
@@ -178,6 +181,12 @@ export interface SupervisorA2AV2ServiceOptions {
   log?: (line: string) => void;
   /** Explicit body-free policy boundary. Absence exposes no lifecycle authority. */
   messageAuthority?: SupervisorMessageV2AuthorityPort;
+  /**
+   * How long a recipient that `recipientEnrollment` reports not enrolled may
+   * defer its deliveries before each one fails as a normal retryable
+   * attempt. Omitted, SUPERVISOR_MESSAGE_V2_NOT_ENROLLED_BOUND_MS.
+   */
+  notEnrolledBoundMs?: number;
   now: () => string;
   peerRoutes?: readonly { pathname: string; supervisorId: string }[];
   policy: SupervisorA2AV2IngressOptions["policy"];
@@ -189,6 +198,15 @@ export interface SupervisorA2AV2ServiceOptions {
    */
   readinessOutageBoundMs?: number;
   rebindAuthority: SupervisorSessionRebindAuthorityPort;
+  /**
+   * The host's own enrollment of its seats: which are not enrolled now, and
+   * since when. Every delivery path defers a not-enrolled recipient within
+   * the bound; the authenticated assignment status lists the seat ids.
+   * Omitted, no recipient is ever treated as not enrolled.
+   */
+  recipientEnrollment?: SupervisorMessageV2RecipientEnrollmentPort & {
+    notEnrolled(): readonly string[];
+  };
   recipientRoute?: {
     authenticator: SupervisorA2AAuthenticator;
     pathname: string;
@@ -245,6 +263,8 @@ export interface SupervisorA2AV2Service {
   governance: GovernedSupervisorMessageV2Service | undefined;
   host: TemporalSupervisorRuntimeHost;
   httpHandler: (request: Request) => Promise<Response>;
+  /** Not-enrolled deferral counters of every V2 delivery path. */
+  notEnrolledDeferral(): SupervisorMessageV2NotEnrolledSnapshot;
   pathname: string;
   pathnames?: readonly string[];
   publishResult(
@@ -320,6 +340,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
   readonly pathname: string;
   readonly pathnames: readonly string[];
   readonly #ledger: LedgerResource;
+  readonly #notEnrolled: SupervisorMessageV2NotEnrolledDeferral;
   readonly #readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
   readonly #sessions: SessionResource;
   readonly #taskStore: TaskStoreResource;
@@ -341,6 +362,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     ledger: LedgerResource;
     pathname: string;
     pathnames?: readonly string[];
+    notEnrolled: SupervisorMessageV2NotEnrolledDeferral;
     readinessOutage: SupervisorMessageV2ReadinessOutageTracker;
     sessions: SessionResource;
     taskStore: TaskStoreResource;
@@ -363,6 +385,7 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
     this.pathname = input.pathname;
     this.pathnames = input.pathnames ?? [input.pathname];
     this.#ledger = input.ledger;
+    this.#notEnrolled = input.notEnrolled;
     this.#readinessOutage = input.readinessOutage;
     this.#sessions = input.sessions;
     this.#taskStore = input.taskStore;
@@ -370,6 +393,10 @@ class OwnedSupervisorA2AV2Service implements SupervisorA2AV2Service {
 
   readinessOutage(): SupervisorMessageV2ReadinessOutageSnapshot {
     return this.#readinessOutage.snapshot(new Date(this.#now()));
+  }
+
+  notEnrolledDeferral(): SupervisorMessageV2NotEnrolledSnapshot {
+    return this.#notEnrolled.snapshot();
   }
 
   close(): Promise<void> {
@@ -569,7 +596,8 @@ const reportUnpublishableResultBindings = async (
 const createAssignmentRoute = (
   options: SupervisorA2AV2ServiceOptions,
   ledger: LedgerResource,
-  bind: SupervisorA2AV2Service["bindResult"]
+  bind: SupervisorA2AV2Service["bindResult"],
+  readinessOutage: SupervisorMessageV2ReadinessOutageTracker
 ): SupervisorA2AV2Service["assignmentRoute"] => {
   if (!options.assignmentRoute) {
     return undefined;
@@ -591,6 +619,13 @@ const createAssignmentRoute = (
       authenticator: options.route.authenticator,
       tenant: options.route.tenant,
       bind,
+      // The per-seat detail that the unauthenticated /healthz only counts:
+      // this host's seats that are not enrolled, and the recipients a
+      // readiness-store outage defers. Control principal only.
+      deliveryStatus: () => ({
+        notEnrolled: [...(options.recipientEnrollment?.notEnrolled() ?? [])],
+        readinessOutage: readinessOutage.recipients(),
+      }),
       // The inspection surface lists only this route's tenant.
       unpublishable: list ? (scope) => list(scope.tenantId) : undefined,
     }),
@@ -638,6 +673,12 @@ export const createSupervisorA2AV2Service = async (
   // outage is logged, bounded, and counted once, whichever path delivers.
   const readinessOutage = new SupervisorMessageV2ReadinessOutageTracker({
     boundMs: options.readinessOutageBoundMs,
+  });
+  // Likewise one not-enrolled deferral for every path, fed by the host's
+  // own enrollment of its seats.
+  const notEnrolled = new SupervisorMessageV2NotEnrolledDeferral({
+    boundMs: options.notEnrolledBoundMs,
+    enrollment: options.recipientEnrollment,
   });
   let taskStore: TaskStoreResource | undefined;
   let ledger: LedgerResource | undefined;
@@ -699,18 +740,20 @@ export const createSupervisorA2AV2Service = async (
           options.dispatchOwner,
           () => new Date(options.now()),
           sessions,
-          readinessOutage
+          readinessOutage,
+          notEnrolled
         ),
         now: options.now,
         receipts,
       });
     }
-    // Every ingress (primary and peer) shares these, the outage tracker
-    // among them.
+    // Every ingress (primary and peer) shares these, the outage tracker and
+    // the not-enrolled deferral among them.
     const shared = {
       delivery: options.delivery,
       dispatchOwner: options.dispatchOwner,
       ledger,
+      notEnrolled,
       now: options.now,
       policy: options.policy,
       readinessOutage,
@@ -782,7 +825,8 @@ export const createSupervisorA2AV2Service = async (
     const assignmentRoute = createAssignmentRoute(
       options,
       ledger,
-      (scope, binding) => ownedService.bindResult(scope, binding)
+      (scope, binding) => ownedService.bindResult(scope, binding),
+      readinessOutage
     );
     const resultGraphRoute = createResultGraphRoute(options, (scope, command) =>
       ownedService.startResultGraph(scope, command)
@@ -832,6 +876,7 @@ export const createSupervisorA2AV2Service = async (
       ledger,
       pathname: options.route.pathname ?? "/a2a",
       pathnames: [...routes.keys()],
+      notEnrolled,
       readinessOutage,
       sessions,
       taskStore,

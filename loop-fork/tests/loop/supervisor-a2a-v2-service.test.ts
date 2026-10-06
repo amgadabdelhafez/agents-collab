@@ -39,6 +39,7 @@ import {
   deriveSupervisorSessionDescriptorV2Id,
   PostgresSupervisorSessionV2Store,
   type SupervisorSessionDescriptorV2,
+  SupervisorSessionV2Error,
 } from "../../src/loop/supervisor-session-v2";
 import { JsonlSupervisorThreadStore } from "../../src/loop/supervisor-thread-store";
 import { TemporalWorkflowPort } from "../../src/loop/temporal-workflow-port";
@@ -1818,6 +1819,196 @@ test("every V2 delivery path of one service shares its readiness-outage bound, l
     ).toEqual([
       `V2 delivery to ${input.to} deferred: session readiness store is unavailable`,
     ]);
+    expect(
+      (
+        await workflows.query({
+          args: { trustedScope: scope },
+          name: "status",
+          workflowId,
+        })
+      ).value
+    ).toMatchObject({ deliveryAttempts: 1, phase: "routed" });
+  } finally {
+    errors.mockRestore();
+    await service?.close().catch(() => undefined);
+    await postgres?.close();
+  }
+}, 120_000);
+
+test("every V2 delivery path of one service defers a not-enrolled recipient under one shared bound, log line, and counters", async () => {
+  const [fixture] = supervisorMessageV2ReplayFixtures;
+  if (!fixture) {
+    throw new Error("missing V2 fixture");
+  }
+  const scope = fixture.expectedScope;
+  let clock = Date.parse(NOW);
+  const now = () => new Date(clock).toISOString();
+  const workflows = new InMemoryWorkflowPort({
+    definitions: [supervisorMessageV2WorkflowDefinition],
+    now,
+  });
+  const recipient = fixture.input.to;
+  // The host's enrollment found the recipient's seat down a second ago.
+  const downSince = clock - 1000;
+  let ingress: SupervisorA2AV2IngressLifecycle | undefined;
+  let postgres: DisposablePostgres | undefined;
+  let service: SupervisorA2AV2Service | undefined;
+  let ledger: PostgresSupervisorMessageV2DeliveryLedger | undefined;
+  const errors = spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    postgres = await DisposablePostgres.create();
+    const databaseUrl = postgres.databaseUrl();
+    service = await createSupervisorA2AV2Service({
+      card: {
+        description: "shared not-enrolled deferral",
+        supervisorId: RECIPIENT,
+        url: "http://a2a.local/a2a",
+      },
+      databaseUrl,
+      delivery: {
+        deliver: () => Promise.reject(new Error("not enrolled: no delivery")),
+      },
+      dispatchOwner: "v2-dispatcher:shared-not-enrolled",
+      host: { taskQueue: "shared-not-enrolled-queue" } as never,
+      messageAuthority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:test",
+          reasonCode: "allowed",
+        }),
+      },
+      notEnrolledBoundMs: 120_000,
+      now,
+      peerRoutes: [{ pathname: "/a2a/seats/peer", supervisorId: PEER }],
+      policy: POLICY,
+      providerReadiness: { ready: () => ({}) as never },
+      rebindAuthority: {
+        decide: () => ({
+          allowed: false,
+          authorityRef: "authority:none",
+          reasonCode: "denied",
+        }),
+      },
+      recipientEnrollment: {
+        notEnrolled: () => [recipient],
+        notEnrolledSince: (seat) =>
+          seat === recipient ? downSince : undefined,
+      },
+      route: {
+        authenticator: { authenticate: () => undefined },
+        tenant: scope.tenantId,
+      },
+      supervisorId: RECIPIENT,
+      dependencies: {
+        connectLedger: async (url, options) => {
+          ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+            url,
+            options
+          );
+          return ledger;
+        },
+        connectSessions: () =>
+          Promise.resolve({
+            // The store answers: the recipient has no current descriptor.
+            assertReady: () =>
+              Promise.reject(
+                new SupervisorSessionV2Error(
+                  "current session descriptor is absent"
+                )
+              ),
+            close: () => Promise.resolve(),
+            current: () => Promise.resolve(undefined),
+            migrate: () => Promise.resolve(),
+            rebind: () => Promise.reject(new Error("unused")),
+            register: () => Promise.reject(new Error("unused")),
+            status: () => Promise.reject(new Error("unused")),
+          }) as never,
+        connectTaskStore: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () => Promise.resolve(),
+          }) as never,
+        createHost: (options) => {
+          ingress = options.v2Ingress;
+          return Promise.resolve({
+            close: () => ingress?.close() ?? Promise.resolve(),
+          } as never);
+        },
+        createWorkflows: () => workflows,
+      },
+    });
+    expect(service.notEnrolledDeferral()).toEqual({
+      boundMs: 120_000,
+      deferredDeliveries: 0,
+      notEnrolledFailures: 0,
+      recipientsDeferred: 0,
+    });
+
+    // A message whose first attempt failed and whose retry is now due.
+    const input = {
+      ...structuredClone(fixture.input),
+      dedupeKey: "shared-not-enrolled",
+      policy: POLICY,
+    };
+    const workflowId = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      input.dedupeKey,
+      "shared-not-enrolled-queue"
+    );
+    if (!ledger) {
+      throw new Error("ledger was not connected");
+    }
+    await ledger.recordStartIntent(workflowId, scope, input);
+    await workflows.start({
+      input: { input, trustedScope: scope },
+      requestId: "shared-not-enrolled:start",
+      workflowId,
+      workflowType: supervisorMessageV2WorkflowDefinition.type,
+    });
+    await workflows.signal({
+      name: "delivery_failed",
+      payload: { permanent: false, reason: "provider unavailable" },
+      requestId: "shared-not-enrolled:first-attempt",
+      workflowId,
+    });
+    clock += POLICY.retryDelayMs;
+
+    // The governed claim path delivers the due retry: deferred.
+    const governance = service.governance;
+    if (!governance) {
+      throw new Error("governance is not configured");
+    }
+    await expect(
+      governance.claim({
+        claimant: input.to,
+        requestId: "shared-not-enrolled:claim",
+        trustedScope: scope,
+        workflowId,
+      })
+    ).rejects.toBeInstanceOf(WorkflowError);
+    // The ingress recovery path delivers the still-pending message: deferred.
+    await ingress?.start();
+
+    expect(service.notEnrolledDeferral()).toEqual({
+      boundMs: 120_000,
+      deferredDeliveries: 2,
+      notEnrolledFailures: 0,
+      recipientsDeferred: 1,
+    });
+    // The readiness store answered, so this is no readiness outage.
+    expect(service.readinessOutage()).toMatchObject({
+      deferredDeliveries: 0,
+      recipientsDeferred: 0,
+    });
+    // One recipient, one spell: logged once across both paths.
+    expect(
+      errors.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith("V2 delivery to "))
+    ).toEqual([
+      `V2 delivery to ${input.to} deferred: recipient session is not enrolled`,
+    ]);
+    // The deferrals spent no attempt: only the first, failed one counts.
     expect(
       (
         await workflows.query({

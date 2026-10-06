@@ -125,6 +125,14 @@ interface WakeConfig {
 export interface A2AV2Config {
   databaseUrlEnv: string;
   endpointRef: string;
+  /**
+   * How long a recipient that is not enrolled (its seat stopped or
+   * unreachable) may defer its V2 deliveries without spending attempts
+   * (1000..86400000 ms), measured from when enrollment first failed, before
+   * each delivery fails as a normal retryable attempt. Omitted, the runtime
+   * default of 15 minutes.
+   */
+  notEnrolledBoundMs?: number;
   policy: {
     claimTimeoutMs: number;
     escalationTimeoutMs: number;
@@ -205,6 +213,7 @@ export interface LoopOrchestrationFetchHandlerOptions {
   a2aV2Service?: Pick<
     SupervisorA2AV2Service,
     | "httpHandler"
+    | "notEnrolledDeferral"
     | "pathname"
     | "pathnames"
     | "readinessOutage"
@@ -216,22 +225,29 @@ export interface LoopOrchestrationFetchHandlerOptions {
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
   /**
    * The configured A2A V2 seats that are not enrolled now (a peer degraded
-   * at start, or any seat whose enrollment failed since). Reported on
-   * /healthz as `notEnrolled`; it does not change `state`, which stays about
-   * the server itself. The server always supplies it (an empty list when it
-   * enrolls no A2A V2 seats); the field is left out only when it is not.
+   * at start, or any seat whose enrollment failed since). /healthz reports
+   * only how many, as `notEnrolledCount`; the seat ids are on the
+   * authenticated assignment status (GET on the assignment route). It does
+   * not change `state`, which stays about the server itself. The server
+   * always supplies it (an empty list when it enrolls no A2A V2 seats); the
+   * field is left out only when it is not.
    */
   notEnrolledSeats?: () => readonly string[];
   reconciliationHealthy: () => boolean;
 }
 
-/** The unauthenticated GET /healthz body. */
+/**
+ * The unauthenticated GET /healthz body. Counts and aggregate state only:
+ * no seat, recipient, session, or store detail reaches this route. Which
+ * seats are not enrolled, and which recipients a readiness outage defers,
+ * are on the authenticated assignment status.
+ */
 const orchestrationHealth = (
   options: LoopOrchestrationFetchHandlerOptions
 ): Response =>
   Response.json({
     ...(options.notEnrolledSeats
-      ? { notEnrolled: [...options.notEnrolledSeats()] }
+      ? { notEnrolledCount: options.notEnrolledSeats().length }
       : {}),
     schema: "loop-orchestration-health.v1",
     state:
@@ -239,12 +255,11 @@ const orchestrationHealth = (
       options.reconciliationHealthy()
         ? "ready"
         : "unavailable",
-    // The readiness-outage counters are additive and counts only: no
-    // recipient, session, or store detail of the outage reaches this
-    // unauthenticated route. A readiness-store outage defers deliveries
-    // without changing `state`.
+    // Additive deferral counters. A readiness-store outage or a recipient
+    // that is not enrolled defers deliveries without changing `state`.
     ...(options.a2aV2Service
       ? {
+          a2aV2NotEnrolledDeferral: options.a2aV2Service.notEnrolledDeferral(),
           a2aV2ReadinessOutage: options.a2aV2Service.readinessOutage(),
         }
       : {}),
@@ -392,6 +407,7 @@ const parseA2AV2 = (
       ...(value.readinessOutageBoundMs === undefined
         ? []
         : ["readinessOutageBoundMs"]),
+      ...(value.notEnrolledBoundMs === undefined ? [] : ["notEnrolledBoundMs"]),
     ],
     "orchestration a2aV2"
   );
@@ -510,6 +526,14 @@ const parseA2AV2 = (
       ENDPOINT_REF_RE,
       "orchestration a2aV2 endpointRef"
     ),
+    ...(value.notEnrolledBoundMs === undefined
+      ? {}
+      : {
+          notEnrolledBoundMs: positiveDuration(
+            value.notEnrolledBoundMs,
+            "orchestration a2aV2 notEnrolledBoundMs"
+          ),
+        }),
     policy,
     principal,
     ...(value.readinessOutageBoundMs === undefined
@@ -863,11 +887,30 @@ const enrolledAs = (
   Date.parse(current.expiresAt) - Date.parse(now) >
     Math.floor(config.sessionTtlMs / 2);
 
+/**
+ * The one enrollment failure that means the seat is simply not running or
+ * not reachable now: its run is not active (no route), or its provider
+ * session is absent from the run. Only this class lets a peer seat be
+ * degraded at start; every other failure (an authority denial, an identity
+ * or registration conflict, a store or configuration error) refuses start.
+ */
+export class A2AV2SeatUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "A2AV2SeatUnavailableError";
+  }
+}
+
 const observeConfiguredA2AV2Session = async (
   input: Pick<A2AV2EnrollmentInput, "config" | "directory" | "status">
 ): Promise<ObservedA2AV2Session> => {
   const route = await input.directory.resolve(input.config.recipient);
-  if (!route || (route.target !== "codex" && route.target !== "claude")) {
+  if (!route) {
+    throw new A2AV2SeatUnavailableError(
+      "configured A2A V2 recipient seat is not running"
+    );
+  }
+  if (route.target !== "codex" && route.target !== "claude") {
     throw new Error(
       "configured A2A V2 recipient has no supported provider route"
     );
@@ -882,7 +925,9 @@ const observeConfiguredA2AV2Session = async (
   const provider =
     route.target === "codex" ? "codex-app-server" : "claude-code";
   if (!(endpoint && sessionId)) {
-    throw new Error("configured A2A V2 recipient session is unavailable");
+    throw new A2AV2SeatUnavailableError(
+      "configured A2A V2 recipient session is unavailable"
+    );
   }
   return {
     endpointDigest: createHash("sha256").update(endpoint).digest("hex"),
@@ -966,21 +1011,28 @@ export type A2AV2EnrollmentOutcome =
   | { error: unknown; recipient: string; state: "failed" };
 
 /**
- * Start-time verdict on the first `maintain()` pass. Only the configured
+ * Start-time verdict on the first `maintain()` pass. The configured
  * recipient's own failure refuses start, with its own cause. A peer seat that
- * cannot be enrolled (for example, stopped) degrades that seat alone: the
- * server starts, the sweep reports the peer as not enrolled (a log line, and
- * /healthz `notEnrolled`) and retries it. Until then the peer's deliveries
- * meet the store's ordinary readiness refusal before any provider call, and
- * each refusal spends one of that message's delivery attempts, as it does for
- * a peer that stops while the server runs.
+ * is not running or not reachable (`A2AV2SeatUnavailableError`) degrades that
+ * seat alone: the server starts, the sweep reports the peer as not enrolled (a
+ * log line, a count on /healthz, the seat id on the authenticated assignment
+ * status) and retries it. Any other peer failure (an authority denial, an
+ * identity or registration conflict, a store error) refuses start with the
+ * peer's own cause. While a recipient is not enrolled, its deliveries wait
+ * without spending attempts up to the not-enrolled bound (see
+ * `SupervisorMessageV2NotEnrolledDeferral`), then fail as normal retryable
+ * attempts.
  */
 export const requireA2AV2Enrollment = (
   outcomes: readonly A2AV2EnrollmentOutcome[],
   recipient: string
 ): void => {
   for (const outcome of outcomes) {
-    if (outcome.state === "failed" && outcome.recipient === recipient) {
+    if (
+      outcome.state === "failed" &&
+      (outcome.recipient === recipient ||
+        !(outcome.error instanceof A2AV2SeatUnavailableError))
+    ) {
       throw outcome.error;
     }
   }
@@ -998,6 +1050,8 @@ export const requireA2AV2Enrollment = (
 export class ConfiguredA2AV2SessionEnrollment {
   readonly #enrolled = new Map<string, SupervisorSessionDescriptorV2>();
   readonly #input: A2AV2EnrollmentInput;
+  /** When each failing seat's current failure began (epoch ms). */
+  readonly #notEnrolledSince = new Map<string, number>();
   readonly #recipients: readonly string[];
   readonly #retryAt = new Map<string, number>();
 
@@ -1013,6 +1067,20 @@ export class ConfiguredA2AV2SessionEnrollment {
       outcomes.push(await this.#maintainOne(recipient));
     }
     return outcomes;
+  }
+
+  /** The seats whose last attempt failed, sorted, until a pass enrolls them. */
+  notEnrolled(): string[] {
+    return [...this.#notEnrolledSince.keys()].sort();
+  }
+
+  /**
+   * When this seat's current failure to enroll began (epoch ms): kept across
+   * retries and retry delays, cleared once a pass enrolls it. Undefined for
+   * an enrolled seat and for one this enrollment does not manage.
+   */
+  notEnrolledSince(recipient: string): number | undefined {
+    return this.#notEnrolledSince.get(recipient);
   }
 
   async #maintainOne(recipient: string): Promise<A2AV2EnrollmentOutcome> {
@@ -1033,13 +1101,18 @@ export class ConfiguredA2AV2SessionEnrollment {
           now
         )
       ) {
+        // Only a seat enrolled since its last failure is unchanged.
         return { recipient, state: "unchanged" };
       }
       this.#enrolled.set(recipient, await enrollConfiguredA2AV2Session(input));
       this.#retryAt.delete(recipient);
+      this.#notEnrolledSince.delete(recipient);
       return { recipient, state: "enrolled" };
     } catch (error) {
       this.#enrolled.delete(recipient);
+      if (!this.#notEnrolledSince.has(recipient)) {
+        this.#notEnrolledSince.set(recipient, Date.parse(now));
+      }
       this.#retryAt.set(
         recipient,
         Date.parse(now) +
@@ -1290,13 +1363,22 @@ const createDefaultRuntimeHost = async (input: {
     delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
     dispatchOwner: `v2-dispatcher:${input.config.identity}`,
     readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
+    notEnrolledBoundMs: a2aConfig.notEnrolledBoundMs,
+    // Read lazily: the enrollment exists once enrollSessions has run, which
+    // is before the host's first recovery sweep delivers anything.
+    recipientEnrollment: {
+      notEnrolled: () => a2aV2Enrollment?.notEnrolled() ?? [],
+      notEnrolledSince: (recipient) =>
+        a2aV2Enrollment?.notEnrolledSince(recipient),
+    },
     // Enroll before the host's first recovery sweep checks readiness for
     // pending deliveries: a descriptor that expired, or a seat that restarted,
     // while the server was down is renewed or rebound first instead of
     // refusing start on every restart. Start still refuses when the
-    // configured recipient cannot be enrolled; a peer seat that cannot (one
-    // that is stopped) is degraded alone: the sweep reports it as not
-    // enrolled and retries it. Afterwards the sweep keeps every seat current.
+    // configured recipient cannot be enrolled, and when a peer fails for any
+    // reason but a seat that is not running; a stopped peer is degraded
+    // alone: the sweep reports it as not enrolled and retries it. Afterwards
+    // the sweep keeps every seat current.
     enrollSessions: async (sessions) => {
       a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
         config: a2aConfig,
