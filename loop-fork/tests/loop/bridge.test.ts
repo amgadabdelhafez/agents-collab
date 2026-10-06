@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BridgeEvent } from "../../src/loop/bridge-store";
 import { readDelegationEvents } from "../../src/loop/delegation-policy";
 import { readRunManifest } from "../../src/loop/run-state";
 import { transitionUtilityJob } from "../../src/loop/utility-store";
@@ -1436,6 +1437,50 @@ test("short-lived bridge MCP emits initialize and tool responses before exit", a
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "message")
   ).toHaveLength(1);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("bridge MCP send_message keeps one Claude result reply per inbound", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  const resultReply = (id: number, message: string) =>
+    encodeLine({
+      id,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        arguments: { message, reply_to: "inbound-codex-1", target: "codex" },
+        name: "send_message",
+      },
+    });
+
+  // Claude acted on one inbound twice (channel ring, then tmux doorbell).
+  const result = await runBridgeProcess(
+    runDir,
+    "claude",
+    [
+      resultReply(1, "Result: PASS at abc123."),
+      resultReply(2, "Result: PASS at abc123, restated."),
+    ].join("")
+  );
+
+  expect(result.code).toBe(0);
+  expect(result.stderr).toBe("");
+  const replies = parseJsonLines(result.stdout).map((entry) =>
+    JSON.stringify(entry)
+  );
+  expect(replies[0]).toContain("queued");
+  expect(replies[1]).toContain("deduplicated");
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event: BridgeEvent) => event.kind === "message")
+      .map((event: BridgeEvent) =>
+        event.kind === "message" ? event.message : ""
+      )
+  ).toEqual(["Result: PASS at abc123."]);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -4798,6 +4843,103 @@ test("bridge drains pending Claude messages through the visible tmux pane", asyn
   rmSync(root, { recursive: true, force: true });
 });
 
+test("bridge doorbell rings Claude when a Codex inbound is first in the queue", async () => {
+  // The worker must ring every target with pending messages. A Codex message
+  // that sorts first and is not due must not hide Claude's inbox.
+  const loadedTexts: string[] = [];
+  const spawnSync = mock((args: string[]) => {
+    if (tmuxCommand(args) === "has-session") {
+      return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+    }
+    if (tmuxCommand(args) === "capture-pane") {
+      return {
+        exitCode: 0,
+        stderr: Buffer.alloc(0),
+        stdout: Buffer.from("❯\n\nOpus 5 · bypass permissions on", "utf8"),
+      };
+    }
+    const literal = tmuxLiteralText(args);
+    if (literal !== undefined) {
+      loadedTexts.push(literal);
+    }
+    return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
+  });
+  const bridge = await loadBridge();
+  bridge.bridgeRuntimeCommandDeps.spawnSync = spawnSync;
+  let transcriptReads = 0;
+  bridge.bridgeRuntimeCommandDeps.readClaudeTranscriptVersion = mock(() =>
+    transcriptReads++ === 0 ? "before" : "after"
+  );
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, "manifest.json"),
+    `${JSON.stringify({
+      createdAt: "2026-03-23T10:00:00.000Z",
+      cwd: "/repo",
+      mode: "paired",
+      pid: 1234,
+      repoId: "repo-123",
+      runId: "8",
+      state: "working",
+      status: "running",
+      tmuxPaneLeftAgent: "claude",
+      tmuxPaneRightAgent: "codex",
+      tmuxSession: "repo-loop-8",
+      tmuxSocket: "/tmp/loop-bridge-test.sock",
+      updatedAt: "2026-03-23T10:00:00.000Z",
+    })}\n`,
+    "utf8"
+  );
+  const codexInbound = {
+    at: "2026-03-23T10:00:00.000Z",
+    id: "msg-codex-first-in-queue",
+    kind: "message" as const,
+    message: "Codex has not drained this yet.",
+    source: "claude" as const,
+    target: "codex" as const,
+  };
+  bridge.bridgeInternals.appendBridgeEvent(runDir, codexInbound);
+  // Codex's doorbell rang moments ago, so its inbox is not due again.
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: new Date().toISOString(),
+    id: codexInbound.id,
+    kind: "notified",
+    reason: "nudged codex tmux inbox",
+    source: codexInbound.source,
+    target: codexInbound.target,
+  });
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: "2026-03-23T10:01:00.000Z",
+    id: "msg-claude-behind-codex",
+    kind: "message",
+    message: "Claude must still hear about this.",
+    source: "codex",
+    target: "claude",
+  });
+
+  const delivered = await bridge.drainTmuxBridgeMessages(runDir);
+
+  expect(delivered).toBe(true);
+  expect(loadedTexts).toEqual([
+    "Bridge: 1 message waiting. Call receive_messages now.",
+  ]);
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter(
+        (event: BridgeEvent) =>
+          event.kind === "notified" && event.id === "msg-claude-behind-codex"
+      )
+      .map((event: BridgeEvent) => ("reason" in event ? event.reason : ""))
+  ).toEqual(["nudged claude tmux inbox"]);
+  // A doorbell is not delivery: both messages stay pending for their pulls.
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(2);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("Claude pane delivery preserves a non-empty user draft", async () => {
   const bridge = await loadBridge();
 
@@ -5931,17 +6073,58 @@ test("bridge MCP delivers pending codex messages to Claude as channel notificati
   expect(result.stdout).toContain('"method":"notifications/claude/channel"');
   expect(result.stdout).toContain("Please review the latest Codex output.");
   expect(result.stdout).toContain('"user":"Codex"');
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  // A stdio channel write is a notification, not recipient consumption.
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "delivered")
-  ).toHaveLength(1);
+  ).toHaveLength(0);
 
   rmSync(root, { recursive: true, force: true });
 });
 
-test("Claude channel flush leaves live tmux messages pending for visible delivery", async () => {
+test("Claude receive records delivery only after channel notification", async () => {
+  const bridge = await loadBridge();
+  const root = makeTempDir();
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  bridge.bridgeInternals.appendBridgeEvent(runDir, {
+    at: new Date().toISOString(),
+    id: "channel-consumption-proof",
+    kind: "message",
+    message: "Correlated channel consumption proof",
+    source: "codex",
+    target: "claude",
+  });
+  bridge.flushClaudeChannelMessages(runDir, () => undefined);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
+  const result = await runBridgeProcess(
+    runDir,
+    "claude",
+    encodeLine({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: {}, name: "receive_messages" },
+    })
+  );
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("channel-consumption-proof");
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(0);
+  const deliveries = bridge.bridgeInternals
+    .readBridgeEvents(runDir)
+    .filter((event: BridgeEvent) => event.kind === "delivered");
+  expect(deliveries).toHaveLength(1);
+  expect(deliveries[0]).toMatchObject({ reason: "read via receive_messages" });
+  rmSync(root, { recursive: true, force: true });
+});
+
+// e4efbae2 deliberately lets the channel ring even while Claude has a live
+// tmux pane; the doorbell does not stand in for it. Duplicate result effects
+// are prevented by the durable reply slot in bridge-store, not by silencing a
+// notification path.
+test("Claude channel notifies even with a live Claude tmux pane and leaves the message pending", async () => {
   const spawnSync = mock((args: string[]) => {
     if (tmuxCommand(args) === "has-session") {
       return { exitCode: 0, stderr: Buffer.alloc(0), stdout: Buffer.alloc(0) };
@@ -5986,7 +6169,16 @@ test("Claude channel flush leaves live tmux messages pending for visible deliver
     payloads.push(payload);
   });
 
-  expect(payloads).toEqual([]);
+  expect(payloads).toHaveLength(1);
+  expect(JSON.stringify(payloads[0])).toContain(
+    "This must be visible in Claude."
+  );
+  expect(
+    bridge.bridgeInternals
+      .readBridgeEvents(runDir)
+      .filter((event: BridgeEvent) => event.kind === "notified")
+      .map((event: BridgeEvent) => ("reason" in event ? event.reason : ""))
+  ).toEqual(["sent Claude MCP channel notification"]);
   expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(
     bridge.bridgeInternals
@@ -6043,7 +6235,7 @@ test("Claude channel stays active when the live tmux pair has no Claude pane", a
   });
 
   expect(payloads).toHaveLength(1);
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
 
   rmSync(root, { recursive: true, force: true });
 });
@@ -6093,12 +6285,12 @@ test("bridge MCP flushes new Claude channel messages after bridge file changes",
   expect(result.code).toBe(0);
   expect(result.stderr).toBe("");
   expect(result.stdout).toContain('"method":"notifications/claude/channel"');
-  expect(bridge.readPendingBridgeMessages(runDir)).toEqual([]);
+  expect(bridge.readPendingBridgeMessages(runDir)).toHaveLength(1);
   expect(
     bridge.bridgeInternals
       .readBridgeEvents(runDir)
       .filter((event) => event.kind === "delivered")
-  ).toHaveLength(1);
+  ).toHaveLength(0);
 
   rmSync(root, { recursive: true, force: true });
 });

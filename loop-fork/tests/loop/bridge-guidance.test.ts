@@ -102,6 +102,21 @@ test("Claude channel guidance preserves evidence-dense peer traffic", () => {
   expect(guidance).toContain("Separate observed facts from inference");
 });
 
+test("Claude channel guidance explains when a result reply is one effect", () => {
+  const guidance = claudeChannelInstructions();
+  expect(guidance).toContain(
+    "Reply with reply_to and a stable dedupe_key derived from the inbound message ID."
+  );
+  // The bridge keeps one Claude message or decision reply per reply_to, type
+  // and dedupe_key, so an interim progress reply must use a distinct key.
+  expect(guidance).toContain(
+    "A message or decision reply is delivered once per reply_to, type and dedupe_key"
+  );
+  expect(guidance).toContain(
+    "give an interim progress reply its own distinct dedupe_key"
+  );
+});
+
 test("quotedBridgeTool wraps the resolved bridge tool name", () => {
   expect(quotedBridgeTool("codex", "send_message")).toBe(
     '"mcp__loop_bridge__send_message"'
