@@ -8,6 +8,7 @@ import type {
   SupervisorMessageV2DeliveryLedger,
   SupervisorMessageV2DeliveryPort,
   SupervisorMessageV2DeliveryReadinessPort,
+  SupervisorMessageV2ReadinessOutageTracker,
 } from "./supervisor-message-v2-runtime";
 import {
   SupervisorMessageV2Coordinator,
@@ -32,6 +33,11 @@ export interface SupervisorA2AV2IngressOptions {
   log?: (message: string) => void;
   now: () => string;
   policy: SupervisorMessagePolicy;
+  /**
+   * Shared readiness-outage bound, log, and counters. Every coordinator of
+   * one service shares it; omitted, this ingress keeps its own default.
+   */
+  readinessOutage?: SupervisorMessageV2ReadinessOutageTracker;
   recoveryIntervalMs?: number;
   sessionReadiness: SupervisorMessageV2DeliveryReadinessPort;
   supervisorId: string;
@@ -73,7 +79,8 @@ export class SupervisorA2AV2Ingress implements SupervisorA2AV2IngressLifecycle {
       options.ledger,
       options.dispatchOwner,
       () => new Date(options.now()),
-      options.sessionReadiness
+      options.sessionReadiness,
+      options.readinessOutage
     );
     this.handler = new SupervisorA2ARequestHandler(
       this.card,

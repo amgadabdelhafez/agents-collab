@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
 import type {
   SupervisorMessageV2DeliveryEnvelope,
@@ -11,8 +11,10 @@ import {
 } from "../../src/loop/supervisor-message-v2-contract";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import {
+  SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS,
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  SupervisorMessageV2ReadinessOutageTracker,
   SupervisorMessageV2ReadinessUnavailableError,
   SupervisorMessageV2RecoveryRunner,
   type SupervisorMessageV2TerminalOutcome,
@@ -218,8 +220,13 @@ class RecordingWorkflowPort extends InMemoryWorkflowPort {
   }
 }
 
-const harness = () => {
+const harness = (options: { outageBoundMs?: number } = {}) => {
   let clock = Date.parse("2026-09-20T05:00:00.000Z");
+  const logs: string[] = [];
+  const outage = new SupervisorMessageV2ReadinessOutageTracker({
+    boundMs: options.outageBoundMs,
+    log: (line) => logs.push(line),
+  });
   const workflows = new RecordingWorkflowPort({
     definitions: [supervisorMessageV2WorkflowDefinition],
     now: () => new Date(clock).toISOString(),
@@ -228,7 +235,7 @@ const harness = () => {
   const delivered: string[] = [];
   const unready = new Set<string>();
   const providerDown = new Set<string>();
-  const readinessStore = { down: false };
+  const readinessStore = { down: false, downFor: new Set<string>() };
   const readinessChecks: string[] = [];
   const coordinator = new SupervisorMessageV2Coordinator(
     workflows,
@@ -250,7 +257,7 @@ const harness = () => {
     {
       assertReady(_trustedScope, recipient) {
         readinessChecks.push(recipient);
-        if (readinessStore.down) {
+        if (readinessStore.down || readinessStore.downFor.has(recipient)) {
           return Promise.reject(
             new SupervisorMessageV2ReadinessUnavailableError()
           );
@@ -264,7 +271,8 @@ const harness = () => {
         }
         return Promise.resolve({ status: "ready" });
       },
-    }
+    },
+    outage
   );
   const status = (workflowId: string) => coordinator.status(scope, workflowId);
   const signals = (workflowId: string) =>
@@ -280,9 +288,12 @@ const harness = () => {
     advance(ms: number) {
       clock += ms;
     },
+    at: () => new Date(clock),
     coordinator,
     delivered,
     ledger,
+    logs,
+    outage,
     providerDown,
     readinessChecks,
     readinessStore,
@@ -563,6 +574,288 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
     );
     expect(claimed.phase).toBe("claimed");
     expect(claimed.deliveryAttempts).toBe(2);
+  });
+});
+
+describe("SupervisorMessageV2 readiness outage deferral bound", () => {
+  const entered = (recipient: string) =>
+    `V2 delivery to ${recipient} deferred: session readiness store is unavailable`;
+  const resumed = (recipient: string, afterMs: number) =>
+    `V2 delivery to ${recipient} resumed after ${afterMs}ms: session readiness store answered`;
+  const exceeded = (recipient: string, boundMs: number) =>
+    `V2 delivery to ${recipient} still deferred after ${boundMs}ms: the readiness store outage now fails delivery attempts`;
+
+  test("an outage logs one line per recipient on entering deferral and one on leaving it, not one per attempt", async () => {
+    const h = harness();
+    h.readinessStore.down = true;
+    await h.coordinator.receive(
+      scope,
+      inputFor("log-a", "supervisor:a"),
+      "request:log-a"
+    );
+    await h.coordinator.receive(
+      scope,
+      inputFor("log-b", "supervisor:b"),
+      "request:log-b"
+    );
+    for (let sweep = 0; sweep < 4; sweep += 1) {
+      h.advance(30_000);
+      expect(await h.coordinator.recoverPending()).toBe(0);
+    }
+    expect(h.readinessChecks).toHaveLength(10);
+    expect(h.logs).toEqual([entered("supervisor:a"), entered("supervisor:b")]);
+
+    h.readinessStore.down = false;
+    expect(await h.coordinator.recoverPending()).toBe(2);
+    expect(h.delivered).toHaveLength(2);
+    const afterOutage = [
+      entered("supervisor:a"),
+      entered("supervisor:b"),
+      resumed("supervisor:a", 120_000),
+      resumed("supervisor:b", 120_000),
+    ];
+    expect(h.logs).toEqual(afterOutage);
+
+    // A later delivery while the store answers says nothing more.
+    await h.coordinator.receive(
+      scope,
+      inputFor("log-a-again", "supervisor:a"),
+      "request:log-a-again"
+    );
+    expect(h.delivered).toHaveLength(3);
+    expect(h.logs).toEqual(afterOutage);
+  });
+
+  test("a store that answers the seat is not ready ends the outage too", async () => {
+    const h = harness();
+    h.readinessStore.downFor.add("supervisor:target");
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("outage-then-unready"),
+      "request:outage-then-unready"
+    );
+    h.readinessStore.downFor.clear();
+    h.unready.add("supervisor:target");
+    h.advance(45_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    expect(h.logs).toEqual([
+      entered("supervisor:target"),
+      resumed("supervisor:target", 45_000),
+    ]);
+    expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(0);
+  });
+
+  test("the outage counter reports deferred deliveries, outage failures and the recipients in deferral", async () => {
+    const h = harness({ outageBoundMs: 60_000 });
+    expect(h.outage.snapshot(h.at())).toEqual({
+      boundMs: 60_000,
+      deferredDeliveries: 0,
+      outageFailures: 0,
+      recipientsDeferred: 0,
+    });
+    h.readinessStore.downFor.add("supervisor:a");
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("count-a", "supervisor:a"),
+      "request:count-a"
+    );
+    h.advance(30_000);
+    expect(await h.coordinator.recoverPending()).toBe(0);
+    expect(h.outage.snapshot(h.at())).toEqual({
+      boundMs: 60_000,
+      deferredDeliveries: 2,
+      outageFailures: 0,
+      recipientsDeferred: 1,
+    });
+
+    h.advance(30_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    expect(h.outage.snapshot(h.at())).toEqual({
+      boundMs: 60_000,
+      deferredDeliveries: 2,
+      outageFailures: 1,
+      recipientsDeferred: 1,
+    });
+
+    h.readinessStore.downFor.clear();
+    h.advance(500);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect(h.delivered).toHaveLength(1);
+    expect(h.outage.snapshot(h.at())).toEqual({
+      boundMs: 60_000,
+      deferredDeliveries: 2,
+      outageFailures: 1,
+      recipientsDeferred: 0,
+    });
+  });
+
+  test("an outage that outlasts its bound becomes a retryable delivery failure that consumes attempts up to the policy bound", async () => {
+    const h = harness({ outageBoundMs: 60_000 });
+    h.readinessStore.down = true;
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("outage-bound"),
+      "request:outage-bound"
+    );
+    h.advance(59_999);
+    expect(await h.coordinator.recoverPending()).toBe(0);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(0);
+    expect(h.ledger.deliveries.size).toBe(0);
+
+    h.advance(1);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    const failed = await h.status(workflowId);
+    expect(failed.phase).toBe("retry-scheduled");
+    expect(failed.deliveryAttempts).toBe(1);
+    // A normal attempt: it claimed the lease, and its fixed opaque reason
+    // names the store, not the seat.
+    expect(h.ledger.deliveries.size).toBe(1);
+    expect(h.signalPayloads(workflowId)).toEqual([
+      {
+        name: "delivery_failed",
+        payload: {
+          permanent: false,
+          reason: "session readiness store is unavailable",
+        },
+      },
+    ]);
+
+    for (let attempt = 2; attempt <= 5; attempt += 1) {
+      h.advance(500);
+      await h.coordinator.recoverPending();
+      expect((await h.status(workflowId)).deliveryAttempts).toBe(attempt);
+    }
+    expect((await h.status(workflowId)).phase).toBe("dead-lettered");
+    expect(h.delivered).toHaveLength(0);
+    expect(h.logs).toEqual([
+      entered("supervisor:target"),
+      exceeded("supervisor:target", 60_000),
+    ]);
+  });
+
+  test("one continuous outage observed only every half hour is still one outage", async () => {
+    const h = harness();
+    h.readinessStore.down = true;
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("sparse-outage"),
+      "request:sparse-outage"
+    );
+    for (let sweep = 0; sweep < 4; sweep += 1) {
+      h.advance(1_800_000);
+      await h.coordinator.recoverPending();
+    }
+    // Past the default bound at the first sweep, every sweep is an attempt.
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(4);
+    expect(h.logs).toEqual([
+      entered("supervisor:target"),
+      exceeded(
+        "supervisor:target",
+        SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS
+      ),
+    ]);
+  });
+
+  test("a bound longer than an hour keeps an outage observed every ninety minutes as one outage", async () => {
+    const h = harness({ outageBoundMs: 7_200_000 });
+    h.readinessStore.down = true;
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("long-bound"),
+      "request:long-bound"
+    );
+    h.advance(5_400_000);
+    expect(await h.coordinator.recoverPending()).toBe(0);
+    h.advance(5_400_000);
+    expect(await h.coordinator.recoverPending()).toBe(1);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(1);
+    expect(h.logs).toEqual([
+      entered("supervisor:target"),
+      exceeded("supervisor:target", 7_200_000),
+    ]);
+  });
+
+  test("an outage not observed for over an hour restarts its bound and leaves the recipient count", async () => {
+    const h = harness({ outageBoundMs: 60_000 });
+    h.readinessStore.down = true;
+    const { workflowId } = await h.coordinator.receive(
+      scope,
+      inputFor("stale-outage"),
+      "request:stale-outage"
+    );
+    expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(1);
+    h.advance(3_600_001);
+    // Nothing observed this recipient's outage for over an hour.
+    expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(0);
+    expect(await h.coordinator.recoverPending()).toBe(0);
+    expect((await h.status(workflowId)).deliveryAttempts).toBe(0);
+    expect(h.logs).toEqual([
+      entered("supervisor:target"),
+      entered("supervisor:target"),
+    ]);
+    expect(h.outage.snapshot(h.at()).recipientsDeferred).toBe(1);
+  });
+
+  test("the outage bound is a whole number of milliseconds from one second to one day, fifteen minutes by default", () => {
+    expect(SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS).toBe(900_000);
+    expect(
+      new SupervisorMessageV2ReadinessOutageTracker().snapshot().boundMs
+    ).toBe(900_000);
+    for (const boundMs of [999, 86_400_001, 1500.5, Number.NaN]) {
+      expect(
+        () => new SupervisorMessageV2ReadinessOutageTracker({ boundMs })
+      ).toThrow("V2 readiness outage bound is invalid");
+    }
+    for (const boundMs of [1000, 86_400_000]) {
+      expect(
+        new SupervisorMessageV2ReadinessOutageTracker({ boundMs }).snapshot()
+          .boundMs
+      ).toBe(boundMs);
+    }
+  });
+
+  test("a coordinator built without a tracker still logs and bounds an outage at the default", async () => {
+    let clock = Date.parse("2026-09-20T05:00:00.000Z");
+    const workflows = new InMemoryWorkflowPort({
+      definitions: [supervisorMessageV2WorkflowDefinition],
+      now: () => new Date(clock).toISOString(),
+    });
+    const coordinator = new SupervisorMessageV2Coordinator(
+      workflows,
+      { deliver: () => Promise.resolve({ status: "accepted" }) },
+      new MemoryLedger(),
+      OWNER,
+      () => new Date(clock),
+      {
+        assertReady: () =>
+          Promise.reject(new SupervisorMessageV2ReadinessUnavailableError()),
+      }
+    );
+    const errors = spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const { workflowId } = await coordinator.receive(
+        scope,
+        inputFor("default-bound"),
+        "request:default-bound"
+      );
+      expect(errors.mock.calls.map(([line]) => String(line))).toEqual([
+        entered("supervisor:target"),
+      ]);
+      clock += SUPERVISOR_MESSAGE_V2_READINESS_OUTAGE_BOUND_MS - 1;
+      await coordinator.recoverPending();
+      expect(
+        (await coordinator.status(scope, workflowId)).deliveryAttempts
+      ).toBe(0);
+      clock += 1;
+      await coordinator.recoverPending();
+      expect(
+        (await coordinator.status(scope, workflowId)).deliveryAttempts
+      ).toBe(1);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });
 

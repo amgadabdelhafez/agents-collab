@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,8 @@ import {
 } from "../../src/loop/a2a-supervisor-adapter";
 import { WORKFLOW_IDS_METADATA_KEY } from "../../src/loop/a2a-supervisor-executor";
 import { publishSupervisorA2AAcceptedResult } from "../../src/loop/a2a-supervisor-result";
+import type { SupervisorA2AV2IngressLifecycle } from "../../src/loop/a2a-supervisor-v2-ingress";
+import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
 import {
   createSupervisorA2AV2Service,
   type SupervisorA2AV2Service,
@@ -26,7 +28,13 @@ import {
   SupervisorResultGraphKey,
 } from "../../src/loop/supervisor-message-v2-contract";
 import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
-import { SupervisorMessageV2ReadinessUnavailableError } from "../../src/loop/supervisor-message-v2-runtime";
+import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
+import {
+  SupervisorMessageV2Coordinator,
+  SupervisorMessageV2ReadinessOutageTracker,
+  SupervisorMessageV2ReadinessUnavailableError,
+  supervisorMessageV2WorkflowDefinition,
+} from "../../src/loop/supervisor-message-v2-runtime";
 import {
   deriveSupervisorSessionDescriptorV2Id,
   PostgresSupervisorSessionV2Store,
@@ -34,6 +42,7 @@ import {
 } from "../../src/loop/supervisor-session-v2";
 import { JsonlSupervisorThreadStore } from "../../src/loop/supervisor-thread-store";
 import { TemporalWorkflowPort } from "../../src/loop/temporal-workflow-port";
+import { WorkflowError } from "../../src/loop/workflow-port";
 
 import { DisposablePostgres } from "../support/disposable-postgres";
 
@@ -1649,3 +1658,283 @@ test("end to end on PostgreSQL and Temporal: send a message, start its result gr
     rmSync(root, { force: true, recursive: true });
   }
 }, 90_000);
+
+test("every V2 delivery path of one service shares its readiness-outage bound, log line, and counters", async () => {
+  const [fixture] = supervisorMessageV2ReplayFixtures;
+  if (!fixture) {
+    throw new Error("missing V2 fixture");
+  }
+  const scope = fixture.expectedScope;
+  let clock = Date.parse(NOW);
+  const now = () => new Date(clock).toISOString();
+  const workflows = new InMemoryWorkflowPort({
+    definitions: [supervisorMessageV2WorkflowDefinition],
+    now,
+  });
+  let ingress: SupervisorA2AV2IngressLifecycle | undefined;
+  let postgres: DisposablePostgres | undefined;
+  let service: SupervisorA2AV2Service | undefined;
+  let ledger: PostgresSupervisorMessageV2DeliveryLedger | undefined;
+  const errors = spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    postgres = await DisposablePostgres.create();
+    const databaseUrl = postgres.databaseUrl();
+    service = await createSupervisorA2AV2Service({
+      card: {
+        description: "shared readiness outage",
+        supervisorId: RECIPIENT,
+        url: "http://a2a.local/a2a",
+      },
+      databaseUrl,
+      delivery: {
+        deliver: () => Promise.reject(new Error("store is down: no delivery")),
+      },
+      dispatchOwner: "v2-dispatcher:shared-outage",
+      // Only the deployment (task queue) is read before createHost.
+      host: { taskQueue: "shared-outage-queue" } as never,
+      messageAuthority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:test",
+          reasonCode: "allowed",
+        }),
+      },
+      now,
+      peerRoutes: [{ pathname: "/a2a/seats/peer", supervisorId: PEER }],
+      policy: POLICY,
+      providerReadiness: { ready: () => ({}) as never },
+      readinessOutageBoundMs: 120_000,
+      rebindAuthority: {
+        decide: () => ({
+          allowed: false,
+          authorityRef: "authority:none",
+          reasonCode: "denied",
+        }),
+      },
+      route: {
+        authenticator: { authenticate: () => undefined },
+        tenant: scope.tenantId,
+      },
+      supervisorId: RECIPIENT,
+      dependencies: {
+        connectLedger: async (url, options) => {
+          ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+            url,
+            options
+          );
+          return ledger;
+        },
+        connectSessions: () =>
+          Promise.resolve({
+            // The session store itself is down for every recipient.
+            assertReady: () =>
+              Promise.reject(
+                new SupervisorMessageV2ReadinessUnavailableError()
+              ),
+            close: () => Promise.resolve(),
+            current: () => Promise.resolve(undefined),
+            migrate: () => Promise.resolve(),
+            rebind: () => Promise.reject(new Error("unused")),
+            register: () => Promise.reject(new Error("unused")),
+            status: () => Promise.reject(new Error("unused")),
+          }) as never,
+        connectTaskStore: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () => Promise.resolve(),
+          }) as never,
+        createHost: (options) => {
+          ingress = options.v2Ingress;
+          return Promise.resolve({
+            close: () => ingress?.close() ?? Promise.resolve(),
+          } as never);
+        },
+        createWorkflows: () => workflows,
+      },
+    });
+    expect(service.readinessOutage()).toEqual({
+      boundMs: 120_000,
+      deferredDeliveries: 0,
+      outageFailures: 0,
+      recipientsDeferred: 0,
+    });
+
+    // A message whose first attempt failed and whose retry is now due.
+    const input = {
+      ...structuredClone(fixture.input),
+      dedupeKey: "shared-outage",
+      policy: POLICY,
+    };
+    const workflowId = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      input.dedupeKey,
+      "shared-outage-queue"
+    );
+    if (!ledger) {
+      throw new Error("ledger was not connected");
+    }
+    await ledger.recordStartIntent(workflowId, scope, input);
+    await workflows.start({
+      input: { input, trustedScope: scope },
+      requestId: "shared-outage:start",
+      workflowId,
+      workflowType: supervisorMessageV2WorkflowDefinition.type,
+    });
+    await workflows.signal({
+      name: "delivery_failed",
+      payload: { permanent: false, reason: "provider unavailable" },
+      requestId: "shared-outage:first-attempt",
+      workflowId,
+    });
+    clock += POLICY.retryDelayMs;
+
+    // The governed claim path delivers the due retry: deferred.
+    const governance = service.governance;
+    if (!governance) {
+      throw new Error("governance is not configured");
+    }
+    await expect(
+      governance.claim({
+        claimant: input.to,
+        requestId: "shared-outage:claim",
+        trustedScope: scope,
+        workflowId,
+      })
+    ).rejects.toBeInstanceOf(WorkflowError);
+    // The ingress recovery path delivers the still-pending message: deferred.
+    await ingress?.start();
+
+    expect(service.readinessOutage()).toEqual({
+      boundMs: 120_000,
+      deferredDeliveries: 2,
+      outageFailures: 0,
+      recipientsDeferred: 1,
+    });
+    // One recipient, one outage: logged once across both paths.
+    expect(
+      errors.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.startsWith("V2 delivery to "))
+    ).toEqual([
+      `V2 delivery to ${input.to} deferred: session readiness store is unavailable`,
+    ]);
+    expect(
+      (
+        await workflows.query({
+          args: { trustedScope: scope },
+          name: "status",
+          workflowId,
+        })
+      ).value
+    ).toMatchObject({ deliveryAttempts: 1, phase: "routed" });
+  } finally {
+    errors.mockRestore();
+    await service?.close().catch(() => undefined);
+    await postgres?.close();
+  }
+}, 120_000);
+
+test("a stopped PostgreSQL session store defers a delivery with one log line until the outage bound, then fails it as a retryable attempt", async () => {
+  const [fixture] = supervisorMessageV2ReplayFixtures;
+  if (!fixture) {
+    throw new Error("missing V2 fixture");
+  }
+  const scope = fixture.expectedScope;
+  let clock = Date.parse(NOW);
+  let sessionsDb: DisposablePostgres | undefined;
+  let ledgerDb: DisposablePostgres | undefined;
+  let sessions: PostgresSupervisorSessionV2Store | undefined;
+  let ledger: PostgresSupervisorMessageV2DeliveryLedger | undefined;
+  try {
+    [sessionsDb, ledgerDb] = await Promise.all([
+      DisposablePostgres.create(),
+      DisposablePostgres.create(),
+    ]);
+    sessions = await PostgresSupervisorSessionV2Store.connect({
+      authority: {
+        decide: () => ({
+          allowed: false,
+          authorityRef: "authority:none",
+          reasonCode: "denied",
+        }),
+      },
+      databaseUrl: sessionsDb.databaseUrl(),
+      now: () => new Date(clock).toISOString(),
+      provider: { ready: () => ({}) as never },
+    });
+    await sessions.migrate();
+    ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      ledgerDb.databaseUrl(),
+      { deployment: "stopped-session-store-queue" }
+    );
+    await ledger.migrate();
+    const lines: string[] = [];
+    const outage = new SupervisorMessageV2ReadinessOutageTracker({
+      boundMs: 60_000,
+      log: (line) => lines.push(line),
+    });
+    const delivered: string[] = [];
+    const coordinator = new SupervisorMessageV2Coordinator(
+      new InMemoryWorkflowPort({
+        definitions: [supervisorMessageV2WorkflowDefinition],
+        now: () => new Date(clock).toISOString(),
+      }),
+      {
+        deliver: (envelope) => {
+          delivered.push(envelope.deliveryId);
+          return Promise.resolve({ status: "accepted" });
+        },
+      },
+      ledger,
+      "v2-dispatcher:stopped-session-store",
+      () => new Date(clock),
+      sessions,
+      outage
+    );
+
+    // The session store's database goes away; the ledger's stays.
+    await sessionsDb.close();
+    sessionsDb = undefined;
+
+    const input = {
+      ...structuredClone(fixture.input),
+      dedupeKey: "stopped-session-store",
+      policy: POLICY,
+    };
+    const received = await coordinator.receive(
+      scope,
+      input,
+      "request:stopped-session-store"
+    );
+    expect(received.projection).toMatchObject({
+      deliveryAttempts: 0,
+      phase: "routed",
+    });
+    expect(lines).toEqual([
+      `V2 delivery to ${input.to} deferred: session readiness store is unavailable`,
+    ]);
+
+    clock += 60_000;
+    expect(await coordinator.recoverPending()).toBe(1);
+    expect(await coordinator.status(scope, received.workflowId)).toMatchObject({
+      deliveryAttempts: 1,
+      phase: "retry-scheduled",
+    });
+    expect(delivered).toEqual([]);
+    expect(lines).toEqual([
+      `V2 delivery to ${input.to} deferred: session readiness store is unavailable`,
+      `V2 delivery to ${input.to} still deferred after 60000ms: the readiness store outage now fails delivery attempts`,
+    ]);
+    expect(outage.snapshot(new Date(clock))).toEqual({
+      boundMs: 60_000,
+      deferredDeliveries: 1,
+      outageFailures: 1,
+      recipientsDeferred: 1,
+    });
+  } finally {
+    await sessions?.close().catch(() => undefined);
+    await ledger?.close().catch(() => undefined);
+    await sessionsDb?.close();
+    await ledgerDb?.close();
+  }
+}, 120_000);

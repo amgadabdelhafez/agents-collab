@@ -132,6 +132,12 @@ export interface A2AV2Config {
     retryDelayMs: number;
   };
   principal: string;
+  /**
+   * How long a session readiness-store outage may defer a recipient's V2
+   * deliveries (1000..86400000 ms) before each delivery fails as a normal
+   * retryable attempt. Omitted, the runtime default of 15 minutes.
+   */
+  readinessOutageBoundMs?: number;
   recipient: string;
   resultArtifacts?: GitResultArtifactBinding[];
   /**
@@ -201,6 +207,7 @@ export interface LoopOrchestrationFetchHandlerOptions {
     | "httpHandler"
     | "pathname"
     | "pathnames"
+    | "readinessOutage"
     | "recipientRoute"
     | "assignmentRoute"
     | "resultGraphRoute"
@@ -209,6 +216,27 @@ export interface LoopOrchestrationFetchHandlerOptions {
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
   reconciliationHealthy: () => boolean;
 }
+
+/** The unauthenticated GET /healthz body. */
+const orchestrationHealth = (
+  options: LoopOrchestrationFetchHandlerOptions
+): Response =>
+  Response.json({
+    schema: "loop-orchestration-health.v1",
+    state:
+      options.host.workerState() === "RUNNING" &&
+      options.reconciliationHealthy()
+        ? "ready"
+        : "unavailable",
+    // Additive and counts only: no recipient, session, or store detail
+    // reaches this unauthenticated route. A readiness-store outage
+    // defers deliveries without changing `state`.
+    ...(options.a2aV2Service
+      ? {
+          a2aV2ReadinessOutage: options.a2aV2Service.readinessOutage(),
+        }
+      : {}),
+  });
 
 /**
  * The one HTTP mount point for the existing V1 control surface and an
@@ -222,16 +250,7 @@ export const createLoopOrchestrationFetchHandler = (
   return (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/healthz") {
-      return Promise.resolve(
-        Response.json({
-          schema: "loop-orchestration-health.v1",
-          state:
-            options.host.workerState() === "RUNNING" &&
-            options.reconciliationHealthy()
-              ? "ready"
-              : "unavailable",
-        })
-      );
+      return Promise.resolve(orchestrationHealth(options));
     }
     if (
       options.a2aV2Service &&
@@ -358,6 +377,9 @@ const parseA2AV2 = (
       "tenant",
       ...(value.resultArtifacts === undefined ? [] : ["resultArtifacts"]),
       ...(value.resultGraphKeyEnv === undefined ? [] : ["resultGraphKeyEnv"]),
+      ...(value.readinessOutageBoundMs === undefined
+        ? []
+        : ["readinessOutageBoundMs"]),
     ],
     "orchestration a2aV2"
   );
@@ -478,6 +500,14 @@ const parseA2AV2 = (
     ),
     policy,
     principal,
+    ...(value.readinessOutageBoundMs === undefined
+      ? {}
+      : {
+          readinessOutageBoundMs: positiveDuration(
+            value.readinessOutageBoundMs,
+            "orchestration a2aV2 readinessOutageBoundMs"
+          ),
+        }),
     recipient,
     routePath: requireRoutePath(
       value.routePath,
@@ -1225,6 +1255,7 @@ const createDefaultRuntimeHost = async (input: {
       : undefined,
     delivery: new SupervisorMessageV2BridgeDeliveryPort(delivery),
     dispatchOwner: `v2-dispatcher:${input.config.identity}`,
+    readinessOutageBoundMs: a2aConfig.readinessOutageBoundMs,
     // Enroll before the host's first recovery sweep checks readiness for
     // pending deliveries: a descriptor that expired, or a seat that restarted,
     // while the server was down is renewed or rebound first instead of
