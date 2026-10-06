@@ -339,12 +339,13 @@ const V2_BOARD_ITEM_ID_RE = /^supervisor-message-board-item:v2:[a-f0-9]{64}$/;
 const V2_DELIVERY_ID_RE = /^supervisor-message-delivery:v2:[a-f0-9]{64}$/;
 const V2_RECEIPT_ID_RE = /^supervisor-message-receipt:v2:[a-f0-9]{64}$/;
 /**
- * A V2 message workflow id in either format: the current deployment-scoped
+ * A V2 message workflow id in either format: the deployment-scoped
  * `supervisor-message-workflow:v2:deployment:<sha256>`, or the legacy
  * `supervisor-message-workflow:v2:<sha256>` that executions and ledger rows
- * created before the deployment discriminator still carry. Every id derived
- * from a workflow id (delivery, receipt, board item, result graph) accepts
- * both, so an in-flight legacy message keeps its derived ids unchanged.
+ * created before the deployment discriminator carry, and that a ledger in
+ * legacy-write mode still mints. Every id derived from a workflow id
+ * (delivery, receipt, board item, result graph) accepts both, so a legacy
+ * message keeps its derived ids unchanged.
  */
 const V2_WORKFLOW_ID_RE =
   /^supervisor-message-workflow:v2:(?:deployment:)?[a-f0-9]{64}$/;
@@ -742,9 +743,10 @@ export const parseSupervisorMessageV2Deployment = (value: unknown): string =>
   requireString(value, "deployment", SUPERVISOR_MESSAGE_V2_DEPLOYMENT_RE);
 
 /**
- * The workflow id a host mints for a new message: scoped to the tenant and
- * principal, and to the deployment, so two deployments sharing a Temporal
- * namespace never derive the same id for the same dedupe key.
+ * The workflow id a host mints for a new message once its ledger writes the
+ * deployment format: scoped to the tenant and principal, and to the
+ * deployment, so two deployments sharing a Temporal namespace never derive
+ * the same id for the same dedupe key.
  */
 export const deriveSupervisorMessageV2WorkflowId = (
   scope: TrustedSupervisorMessageV2Scope,
@@ -762,9 +764,11 @@ export const deriveSupervisorMessageV2WorkflowId = (
 
 /**
  * The workflow id format before the deployment discriminator, byte for byte.
- * It is never minted for a new message. It is recognised only for a message
- * a ledger already recorded under it, so that message is still recovered,
- * acknowledged and deduplicated under the id its execution runs as.
+ * A ledger in legacy-write mode (the default until an operator opts in to the
+ * deployment format) mints it for a new message, so a pre-discriminator build
+ * can still be rolled back to. In deployment-write mode it is recognised only
+ * for a message a ledger already recorded under it, so that message is still
+ * recovered, acknowledged and deduplicated under the id its execution runs as.
  */
 export const deriveSupervisorMessageV2LegacyWorkflowId = (
   scope: TrustedSupervisorMessageV2Scope,

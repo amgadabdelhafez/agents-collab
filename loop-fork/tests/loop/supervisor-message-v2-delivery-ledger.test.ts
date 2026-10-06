@@ -7,18 +7,26 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { randomUUID } from "node:crypto";
-import { SQL } from "bun";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { SQL, sleep } from "bun";
+import type { SupervisorA2AResultBinding } from "../../src/loop/a2a-supervisor-result";
 import { InMemoryWorkflowPort } from "../../src/loop/in-memory-workflow-port";
 import {
   deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2LegacyWorkflowId,
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
   type SupervisorMessageV2Input,
+  SupervisorResultGraphKey,
   type TrustedSupervisorMessageV2Scope,
 } from "../../src/loop/supervisor-message-v2-contract";
-import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
+import {
+  PostgresSupervisorMessageV2DeliveryLedger,
+  SupervisorMessageV2WorkflowIdFormatError,
+} from "../../src/loop/supervisor-message-v2-delivery-ledger";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import {
   SupervisorMessageV2Coordinator,
@@ -36,6 +44,11 @@ import {
   type WorkflowSignalCommand,
   type WorkflowStartCommand,
 } from "../../src/loop/workflow-port";
+import {
+  deriveSupervisorMessageV2WorkflowId as baseEraContractId,
+  deriveSupervisorMessageV2ResultGraphWorkflowId as baseEraResultGraphId,
+} from "../fixtures/base-era-40097564/supervisor-message-v2-contract";
+import { PostgresSupervisorMessageV2DeliveryLedger as BaseEraLedger } from "../fixtures/base-era-40097564/supervisor-message-v2-delivery-ledger";
 import { DisposablePostgres } from "../support/disposable-postgres";
 
 const fixture = structuredClone(supervisorMessageV2ReplayFixtures[0]);
@@ -53,6 +66,14 @@ setDefaultTimeout(20_000);
 const OWNER = "v2-dispatcher:ledger-postgres-test";
 /** This ledger's deployment discriminator (its host's task queue). */
 const DEPLOYMENT = "ledger-test-queue";
+/** The build these ledgers record as the writer of their id format. */
+const BUILD = "ledger-test-build.v1";
+/** A ledger that has opted in to deployment-scoped workflow ids. */
+const DEPLOYMENT_FORMAT = {
+  buildId: BUILD,
+  deployment: DEPLOYMENT,
+  workflowIdFormat: "deployment",
+} as const;
 const NOW = new Date("2026-10-05T12:00:00.000Z");
 
 const inputFor = (
@@ -191,7 +212,7 @@ beforeAll(async () => {
   postgres = await DisposablePostgres.create();
   ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     postgres.databaseUrl(),
-    { deployment: DEPLOYMENT }
+    DEPLOYMENT_FORMAT
   );
   await ledger.migrate();
   raw = new SQL(postgres.databaseUrl());
@@ -227,7 +248,7 @@ const freshLedger =
   async (): Promise<PostgresSupervisorMessageV2DeliveryLedger> => {
     const isolated = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       await freshDatabase(),
-      { deployment: DEPLOYMENT }
+      DEPLOYMENT_FORMAT
     );
     opened.push(isolated);
     await isolated.migrate();
@@ -373,7 +394,7 @@ describe("V2 delivery ledger on PostgreSQL", () => {
     await legacySql`CREATE TABLE loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL)`;
     const legacy = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       databaseUrl,
-      { deployment: DEPLOYMENT }
+      DEPLOYMENT_FORMAT
     );
     try {
       const input = inputFor(`legacy-${randomUUID()}`);
@@ -585,7 +606,7 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
     await legacySql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json) VALUES (${legacyId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb)`;
     const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       databaseUrl,
-      { deployment: DEPLOYMENT }
+      DEPLOYMENT_FORMAT
     );
     opened.push(upgraded);
     await upgraded.migrate();
@@ -621,7 +642,7 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
     ]) {
       const refused = await PostgresSupervisorMessageV2DeliveryLedger.connect(
         postgres.databaseUrl(),
-        options as unknown as { deployment: string }
+        options as unknown as typeof DEPLOYMENT_FORMAT
       ).then(
         async (opened) => {
           await opened.close();
@@ -789,7 +810,7 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
     );
   });
 
-  test("never mints a legacy-format intent for a new message", async () => {
+  test("deployment-write mode never mints a legacy-format intent for a new message", async () => {
     const isolated = await freshLedger();
     const input = inputFor(`legacy-mint-${randomUUID()}`);
 
@@ -813,13 +834,13 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
     const databaseUrl = await freshDatabase();
     const here = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       databaseUrl,
-      { deployment: DEPLOYMENT }
+      DEPLOYMENT_FORMAT
     );
     opened.push(here);
     await here.migrate();
     const there = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       databaseUrl,
-      { deployment: "another-deployment-queue" }
+      { ...DEPLOYMENT_FORMAT, deployment: "another-deployment-queue" }
     );
     opened.push(there);
     await there.migrate();
@@ -863,6 +884,764 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
   });
 });
 
+/**
+ * The workflow id derivation every base-era host (before the deployment
+ * discriminator, 40097564) used, reimplemented here independently of the
+ * contract module so a change there cannot move both sides at once.
+ */
+const baseEraWorkflowId = (
+  scope: TrustedSupervisorMessageV2Scope,
+  dedupeKey: string
+): string => {
+  const hash = createHash("sha256");
+  for (const value of [
+    "supervisor-message",
+    "v2",
+    "workflow",
+    scope.tenantId,
+    scope.principal,
+    dedupeKey,
+  ]) {
+    hash.update(`${Buffer.byteLength(value)}:`);
+    hash.update(value);
+    hash.update(Buffer.from([0]));
+  }
+  return `supervisor-message-workflow:v2:${hash.digest("hex")}`;
+};
+
+/**
+ * The base-era build's ledger statements against one database, as
+ * 40097564 issues them: it cannot be changed, so a rollback runs exactly
+ * these. Its migrate is idempotent DDL; its start intent never names a
+ * deployment; its recovery reads every row and refuses any id that is not
+ * its own derivation.
+ */
+const baseEraBuild = (sql: SQL) => ({
+  async migrate(): Promise<void> {
+    await sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_delivery_ledger (delivery_id TEXT PRIMARY KEY, envelope_json JSONB NOT NULL, completed_at TIMESTAMPTZ, lease_owner TEXT, lease_fence BIGINT NOT NULL DEFAULT 0, lease_until TIMESTAMPTZ)`;
+    await sql`CREATE TABLE IF NOT EXISTS loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL)`;
+    await sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_outcome TEXT CHECK (terminal_outcome IN ('acknowledged', 'canceled', 'dead-lettered', 'exhausted', 'terminated'))`;
+    await sql`ALTER TABLE loop_supervisor_message_v2_start_intent ADD COLUMN IF NOT EXISTS terminal_at TIMESTAMPTZ`;
+  },
+  /** Its `recordStartIntent` write, settled to the error message or id. */
+  async recordStartIntent(input: SupervisorMessageV2Input): Promise<string> {
+    const workflowId = baseEraWorkflowId(SCOPE, input.dedupeKey);
+    return await sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json) VALUES (${workflowId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb) ON CONFLICT (workflow_id) DO NOTHING`.then(
+      () => workflowId,
+      (error: Error) => error.message
+    );
+  },
+  /** Its `recoverableStarts`: every row, each bound to its own derivation. */
+  async recoverableStarts(): Promise<string[]> {
+    const rows = await sql<
+      {
+        input_json: unknown;
+        principal: string;
+        tenant_id: string;
+        workflow_id: string;
+      }[]
+    >`SELECT input_json, principal, tenant_id, workflow_id FROM loop_supervisor_message_v2_start_intent ORDER BY workflow_id`;
+    return rows.map((row) => {
+      const input = (
+        typeof row.input_json === "string"
+          ? JSON.parse(row.input_json)
+          : row.input_json
+      ) as SupervisorMessageV2Input;
+      if (
+        row.workflow_id !==
+        baseEraWorkflowId(
+          { principal: row.principal, tenantId: row.tenant_id },
+          input.dedupeKey
+        )
+      ) {
+        throw new Error(
+          "V2 recovery ledger row has an invalid workflow binding"
+        );
+      }
+      return row.workflow_id;
+    });
+  },
+});
+
+const formatRefusal = (recorded: string, build: string, written: string) =>
+  `V2 delivery ledger writes "${recorded}" workflow ids (recorded by build ${build}); a "${written}" start intent is refused. Every host sharing this ledger database must run a build that supports the recorded format, with the same a2aV2.workflowIdFormat`;
+
+describe("V2 workflow id format marker on PostgreSQL", () => {
+  /** One database, opened by successive builds of this host. */
+  const sharedDatabase = async () => {
+    const databaseUrl = await freshDatabase();
+    const sql = new SQL(databaseUrl);
+    opened.push({ close: () => sql.close({ timeout: 0 }) });
+    await sql.connect();
+    const open = async (
+      buildId: string,
+      workflowIdFormat?: "deployment" | "legacy"
+    ) => {
+      const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+        databaseUrl,
+        {
+          buildId,
+          deployment: DEPLOYMENT,
+          ...(workflowIdFormat ? { workflowIdFormat } : {}),
+        }
+      );
+      opened.push(ledger);
+      return ledger;
+    };
+    const marker = async () =>
+      await sql<
+        { build_id: string | null; value: string | null }[]
+      >`SELECT value, build_id FROM loop_supervisor_message_v2_schema_marker WHERE name = 'workflow-id-format.v1'`;
+    const intents = async () =>
+      await sql<
+        { deployment: string | null; workflow_id: string }[]
+      >`SELECT workflow_id, deployment FROM loop_supervisor_message_v2_start_intent ORDER BY workflow_id`;
+    return { databaseUrl, intents, marker, open, sql };
+  };
+
+  const refusalOf = (work: Promise<unknown>) =>
+    work.then(
+      () => "accepted",
+      (error: Error) => error.message
+    );
+
+  test("defaults to legacy-write mode: mints the base-era workflow id byte for byte and records the format with its build", async () => {
+    const { intents, marker, open } = await sharedDatabase();
+    const ledger = await open("upgrade-build.v1");
+    await ledger.migrate();
+    const input = inputFor(fixture.input.dedupeKey);
+
+    const workflowId = await ledger.workflowIdFor(SCOPE, input.dedupeKey);
+    await ledger.recordStartIntent(workflowId, SCOPE, input);
+
+    // The value every base-era host derived for this fixture.
+    expect(workflowId).toBe(
+      "supervisor-message-workflow:v2:7f52fd713e6acb1e3cbb1c20b2b86ce2eb3ca96c2c9eb7ce857798afff31e0af"
+    );
+    expect(workflowId).toBe(baseEraWorkflowId(SCOPE, input.dedupeKey));
+    expect(await intents()).toEqual([
+      { deployment: null, workflow_id: workflowId },
+    ]);
+    expect(await marker()).toEqual([
+      { build_id: "upgrade-build.v1", value: "legacy" },
+    ]);
+    expect(ledger.workflowIdFormat).toBe("legacy");
+    expect(
+      (await ledger.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([workflowId]);
+  });
+
+  test("legacy-write mode never mints a deployment workflow id", async () => {
+    const { intents, open } = await sharedDatabase();
+    const ledger = await open("upgrade-build.v1", "legacy");
+    await ledger.migrate();
+    const input = inputFor(`legacy-mode-${randomUUID()}`);
+
+    expect(
+      await refusalOf(
+        ledger.recordStartIntent(workflowIdOf(input), SCOPE, input)
+      )
+    ).toBe(
+      'V2 deployment workflow id has no recorded start intent; this ledger writes legacy workflow ids (a2aV2.workflowIdFormat "legacy")'
+    );
+    expect(await intents()).toEqual([]);
+  });
+
+  test("rollback: the base-era build reads, recovers and deduplicates what legacy-write mode recorded, and this build reads what it records", async () => {
+    const { open, sql } = await sharedDatabase();
+    const upgraded = await open("upgrade-build.v1");
+    await upgraded.migrate();
+    const first = inputFor(`rollback-first-${randomUUID()}`);
+    const second = inputFor(`rollback-second-${randomUUID()}`);
+    for (const input of [first, second]) {
+      await upgraded.recordStartIntent(
+        await upgraded.workflowIdFor(SCOPE, input.dedupeKey),
+        SCOPE,
+        input
+      );
+    }
+
+    // Roll back: the base-era build migrates, recovers and takes a sender
+    // retry over the same database.
+    const baseEra = baseEraBuild(sql);
+    await baseEra.migrate();
+    expect(await baseEra.recoverableStarts()).toEqual(
+      [first, second]
+        .map((input) => baseEraWorkflowId(SCOPE, input.dedupeKey))
+        .sort()
+    );
+    expect(await baseEra.recordStartIntent(first)).toBe(
+      baseEraWorkflowId(SCOPE, first.dedupeKey)
+    );
+    const third = inputFor(`rollback-third-${randomUUID()}`);
+    expect(await baseEra.recordStartIntent(third)).toBe(
+      baseEraWorkflowId(SCOPE, third.dedupeKey)
+    );
+    expect(await baseEra.recoverableStarts()).toHaveLength(3);
+
+    // Roll forward again: this build reads the base-era row as its own.
+    const again = await open("upgrade-build.v2");
+    await again.migrate();
+    expect(await again.workflowIdFor(SCOPE, third.dedupeKey)).toBe(
+      baseEraWorkflowId(SCOPE, third.dedupeKey)
+    );
+    expect(
+      (await again.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual(await baseEra.recoverableStarts());
+  });
+
+  test("flips to deployment ids only on explicit opt-in; afterwards the base-era build's writes are refused with an exact message", async () => {
+    const { intents, marker, open, sql } = await sharedDatabase();
+    const upgraded = await open("upgrade-build.v1");
+    await upgraded.migrate();
+    const held = inputFor(`flip-held-${randomUUID()}`);
+    const heldId = await upgraded.workflowIdFor(SCOPE, held.dedupeKey);
+    await upgraded.recordStartIntent(heldId, SCOPE, held);
+
+    const flipped = await open("flip-build.v1", "deployment");
+    await flipped.migrate();
+
+    expect(flipped.workflowIdFormat).toBe("deployment");
+    expect(await marker()).toEqual([
+      { build_id: "flip-build.v1", value: "deployment" },
+    ]);
+    const fresh = inputFor(`flip-fresh-${randomUUID()}`);
+    const freshId = await flipped.workflowIdFor(SCOPE, fresh.dedupeKey);
+    expect(freshId).toBe(workflowIdOf(fresh));
+    await flipped.recordStartIntent(freshId, SCOPE, fresh);
+    // The message accepted before the flip keeps its legacy id.
+    expect(await flipped.workflowIdFor(SCOPE, held.dedupeKey)).toBe(heldId);
+    expect(await intents()).toEqual(
+      [
+        { deployment: null, workflow_id: heldId },
+        { deployment: DEPLOYMENT, workflow_id: freshId },
+      ].sort((left, right) => left.workflow_id.localeCompare(right.workflow_id))
+    );
+
+    // A base-era host sharing the database can no longer record anything.
+    const baseEra = baseEraBuild(sql);
+    await baseEra.migrate();
+    for (const input of [held, inputFor(`flip-base-era-${randomUUID()}`)]) {
+      expect(await baseEra.recordStartIntent(input)).toBe(
+        formatRefusal("deployment", "flip-build.v1", "legacy")
+      );
+    }
+    // Its recovery refuses the deployment-format row rather than starting it.
+    expect(await refusalOf(baseEra.recoverableStarts())).toBe(
+      "V2 recovery ledger row has an invalid workflow binding"
+    );
+
+    // Omitting the setting keeps the recorded format; it never flips back.
+    const restarted = await open("flip-build.v2");
+    await restarted.migrate();
+    expect(restarted.workflowIdFormat).toBe("deployment");
+    expect(await marker()).toEqual([
+      { build_id: "flip-build.v1", value: "deployment" },
+    ]);
+  });
+
+  test("refuses to return to legacy ids while deployment-format intents are unsettled, then returns once they settle", async () => {
+    const { marker, open } = await sharedDatabase();
+    const flipped = await open("flip-build.v1", "deployment");
+    await flipped.migrate();
+    const pending = inputFor(`flip-back-${randomUUID()}`);
+    const pendingId = workflowIdOf(pending);
+    await flipped.recordStartIntent(pendingId, SCOPE, pending);
+
+    const early = await open("flip-back-build.v1", "legacy");
+    expect(await refusalOf(early.migrate())).toBe(
+      'V2 delivery ledger cannot return to legacy workflow ids: 1 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle'
+    );
+    // Typed, so the service reports it verbatim instead of as unclassified.
+    expect(
+      await early.migrate().catch((error: unknown) => error)
+    ).toBeInstanceOf(SupervisorMessageV2WorkflowIdFormatError);
+    expect(await marker()).toEqual([
+      { build_id: "flip-build.v1", value: "deployment" },
+    ]);
+
+    await flipped.recordTerminalOutcome(pendingId, SCOPE, "acknowledged");
+    const settled = await open("flip-back-build.v2", "legacy");
+    await settled.migrate();
+    expect(settled.workflowIdFormat).toBe("legacy");
+    expect(await marker()).toEqual([
+      { build_id: "flip-back-build.v2", value: "legacy" },
+    ]);
+    // The settled message still resolves to its deployment id.
+    expect(await settled.workflowIdFor(SCOPE, pending.dedupeKey)).toBe(
+      pendingId
+    );
+    await settled.recordStartIntent(pendingId, SCOPE, pending);
+
+    // A host still running in deployment mode cannot write past the flip.
+    const late = inputFor(`flip-back-late-${randomUUID()}`);
+    expect(
+      await refusalOf(
+        flipped.recordStartIntent(workflowIdOf(late), SCOPE, late)
+      )
+    ).toBe(formatRefusal("legacy", "flip-back-build.v2", "deployment"));
+  });
+
+  test("a return to legacy ids waits for a deployment-format write in flight and counts it", async () => {
+    const { marker, open, sql } = await sharedDatabase();
+    const flipped = await open("flip-build.v1", "deployment");
+    await flipped.migrate();
+    const gate = () => {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { open, opened };
+    };
+    const until = async (label: string, done: () => Promise<boolean>) => {
+      const deadline = Date.now() + 10_000;
+      while (!(await done())) {
+        if (Date.now() > deadline) {
+          throw new Error(`timed out waiting for ${label}`);
+        }
+        await sleep(20);
+      }
+    };
+
+    // Another start holds the format lock, so the return waits inside it.
+    const holderReleased = gate();
+    const holderHeld = gate();
+    const holder = sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext('loop_supervisor_message_v2_workflow_id_format'))`;
+      holderHeld.open();
+      await holderReleased.opened;
+    });
+    await holderHeld.opened;
+    const returning = await open("flip-back-build.v1", "legacy");
+    let settled = false;
+    const outcome = refusalOf(returning.migrate()).finally(() => {
+      settled = true;
+    });
+    await until("the return to wait for the format lock", async () => {
+      const rows = await sql<
+        { count: number }[]
+      >`SELECT count(*)::integer AS count FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
+      return rows[0]?.count === 1;
+    });
+
+    // A deployment-format write begins after the return's schema changes
+    // and is still uncommitted when the return takes the lock.
+    const pending = inputFor(`in-flight-${randomUUID()}`);
+    const writeCommitted = gate();
+    const writeRecorded = gate();
+    const write = sql.begin(async (tx) => {
+      await tx`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json, deployment) VALUES (${workflowIdOf(pending)}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(pending)}::jsonb, ${DEPLOYMENT})`;
+      writeRecorded.open();
+      await writeCommitted.opened;
+    });
+    await writeRecorded.opened;
+    holderReleased.open();
+    await holder;
+    await sleep(300);
+    expect(settled).toBe(false);
+
+    writeCommitted.open();
+    await write;
+    expect(await outcome).toBe(
+      'V2 delivery ledger cannot return to legacy workflow ids: 1 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle'
+    );
+    expect(await marker()).toEqual([
+      { build_id: "flip-build.v1", value: "deployment" },
+    ]);
+  });
+
+  test("never starts the same message twice across legacy, deployment and back to legacy, through recovery and sender retries", async () => {
+    const { open, sql } = await sharedDatabase();
+    // One engine outlives every host build.
+    const workflows = new RetentionWorkflowPort();
+    const created: string[] = [];
+    const start = workflows.start.bind(workflows);
+    workflows.start = (command: WorkflowStartCommand) => {
+      const receipt = start(command);
+      if (receipt.created) {
+        created.push(command.workflowId);
+      }
+      return receipt;
+    };
+    const delivered: string[] = [];
+    const host = async (
+      buildId: string,
+      workflowIdFormat?: "deployment" | "legacy"
+    ) => {
+      const ledger = await open(buildId, workflowIdFormat);
+      await ledger.migrate();
+      return new SupervisorMessageV2Coordinator(
+        workflows,
+        {
+          deliver(envelope) {
+            delivered.push(envelope.deliveryId);
+            return Promise.resolve({ status: "accepted" });
+          },
+        },
+        ledger,
+        OWNER,
+        () => NOW
+      );
+    };
+    const a = inputFor(`mixed-a-${randomUUID()}`);
+    const b = inputFor(`mixed-b-${randomUUID()}`);
+    const c = inputFor(`mixed-c-${randomUUID()}`);
+    const legacyA = legacyWorkflowIdOf(a);
+    const deploymentB = workflowIdOf(b);
+    const legacyC = legacyWorkflowIdOf(c);
+
+    const legacyHost = await host("mixed-build.v1");
+    expect((await legacyHost.receive(SCOPE, a, "a-1")).workflowId).toBe(
+      legacyA
+    );
+    expect((await legacyHost.receive(SCOPE, a, "a-2")).created).toBe(false);
+
+    const deploymentHost = await host("mixed-build.v2", "deployment");
+    expect((await deploymentHost.receive(SCOPE, a, "a-3")).workflowId).toBe(
+      legacyA
+    );
+    expect((await deploymentHost.receive(SCOPE, b, "b-1")).workflowId).toBe(
+      deploymentB
+    );
+    await deploymentHost.recoverPending();
+    await deploymentHost.claim(SCOPE, deploymentB, b.to, "b-claim");
+    await deploymentHost.acknowledge(SCOPE, deploymentB, b.to, "b-ack");
+    workflows.purge(deploymentB);
+
+    const returnedHost = await host("mixed-build.v3", "legacy");
+    await returnedHost.recoverPending();
+    // A sender retry of the settled message resolves to its deployment id,
+    // whose execution retention purged: refused, never started again.
+    await expect(returnedHost.receive(SCOPE, b, "b-2")).rejects.toMatchObject({
+      code: "conflict",
+      name: "WorkflowError",
+    });
+    expect((await returnedHost.receive(SCOPE, a, "a-4")).workflowId).toBe(
+      legacyA
+    );
+    expect((await returnedHost.receive(SCOPE, c, "c-1")).workflowId).toBe(
+      legacyC
+    );
+    await returnedHost.recoverPending();
+    // The base-era build cannot start the settled message under its legacy id.
+    expect(await baseEraBuild(sql).recordStartIntent(b)).toBe(
+      `V2 start intent ${legacyWorkflowIdOf(b)} is held under a deployment workflow id; it is never recorded again under its legacy id`
+    );
+
+    expect(created).toEqual([legacyA, deploymentB, legacyC]);
+    expect(delivered.sort()).toEqual(
+      [
+        deriveSupervisorMessageV2DeliveryId(SCOPE, legacyA, 1),
+        deriveSupervisorMessageV2DeliveryId(SCOPE, deploymentB, 1),
+        deriveSupervisorMessageV2DeliveryId(SCOPE, legacyC, 1),
+      ].sort()
+    );
+  });
+
+  test("refuses to start on a recorded format this build does not support, naming the format and the build", async () => {
+    const { open, sql } = await sharedDatabase();
+    const first = await open("upgrade-build.v1");
+    await first.migrate();
+    await sql`UPDATE loop_supervisor_message_v2_schema_marker SET value = 'tenant-scoped.v3', build_id = 'future-build.v9' WHERE name = 'workflow-id-format.v1'`;
+
+    for (const format of [undefined, "legacy", "deployment"] as const) {
+      const later = await open("upgrade-build.v2", format);
+      expect(await refusalOf(later.migrate())).toBe(
+        'V2 delivery ledger records workflow id format "tenant-scoped.v3" (written by build future-build.v9), which this build does not support; it supports "legacy" and "deployment". Run a build that supports the recorded format'
+      );
+      expect(
+        await later.migrate().catch((error: unknown) => error)
+      ).toBeInstanceOf(SupervisorMessageV2WorkflowIdFormatError);
+      expect(later.workflowIdFormat).toBeUndefined();
+      expect(
+        await refusalOf(later.workflowIdFor(SCOPE, `unsupported-${format}`))
+      ).toBe(
+        "V2 delivery ledger has no workflow id format: migrate() must succeed first"
+      );
+    }
+    // Neither format can be written under it.
+    expect(
+      await baseEraBuild(sql).recordStartIntent(
+        inputFor(`future-${randomUUID()}`)
+      )
+    ).toBe(formatRefusal("tenant-scoped.v3", "future-build.v9", "legacy"));
+
+    // Marker text outside the id grammar is never repeated in the message.
+    await sql`UPDATE loop_supervisor_message_v2_schema_marker SET value = ${"v3 format\nsecond line"}, build_id = NULL WHERE name = 'workflow-id-format.v1'`;
+    const unreadable = await open("upgrade-build.v3");
+    expect(await refusalOf(unreadable.migrate())).toBe(
+      'V2 delivery ledger records workflow id format "<unreadable>" (written by build <unreadable>), which this build does not support; it supports "legacy" and "deployment". Run a build that supports the recorded format'
+    );
+  });
+
+  test("a database a deployment-id build wrote before the marker existed keeps deployment ids only on explicit opt-in", async () => {
+    const { marker, open, sql } = await sharedDatabase();
+    // The pre-marker deployment-id build: deployment rows, no marker.
+    const preMarker = await open("pre-marker-build.v1");
+    await preMarker.migrate();
+    await sql`DELETE FROM loop_supervisor_message_v2_schema_marker WHERE name = 'workflow-id-format.v1'`;
+    await sql`DROP TRIGGER loop_supervisor_message_v2_start_intent_format_guard_v1 ON loop_supervisor_message_v2_start_intent`;
+    const pending = inputFor(`pre-marker-${randomUUID()}`);
+    const pendingId = workflowIdOf(pending);
+    await sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json, deployment) VALUES (${pendingId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(pending)}::jsonb, ${DEPLOYMENT})`;
+
+    // The default is legacy, which these unsettled rows forbid.
+    const defaulted = await open("marker-build.v1");
+    expect(await refusalOf(defaulted.migrate())).toBe(
+      'V2 delivery ledger cannot return to legacy workflow ids: 1 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle'
+    );
+    expect(await marker()).toEqual([]);
+
+    const optedIn = await open("marker-build.v1", "deployment");
+    await optedIn.migrate();
+    expect(await marker()).toEqual([
+      { build_id: "marker-build.v1", value: "deployment" },
+    ]);
+    expect(await optedIn.workflowIdFor(SCOPE, pending.dedupeKey)).toBe(
+      pendingId
+    );
+
+    // Once settled, returning to legacy guards its legacy id too.
+    await optedIn.recordTerminalOutcome(pendingId, SCOPE, "acknowledged");
+    const returned = await open("marker-build.v2", "legacy");
+    await returned.migrate();
+    expect(await baseEraBuild(sql).recordStartIntent(pending)).toBe(
+      `V2 start intent ${legacyWorkflowIdOf(pending)} is held under a deployment workflow id; it is never recorded again under its legacy id`
+    );
+  });
+
+  test("refuses an invalid build id or workflow id format at connect", async () => {
+    for (const [options, message] of [
+      [{ deployment: DEPLOYMENT }, "V2 delivery ledger build id is invalid"],
+      [
+        { buildId: "build with spaces", deployment: DEPLOYMENT },
+        "V2 delivery ledger build id is invalid",
+      ],
+      [
+        { ...DEPLOYMENT_FORMAT, workflowIdFormat: "tenant" },
+        "V2 delivery ledger workflow id format is invalid",
+      ],
+    ] as const) {
+      const refused = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+        postgres.databaseUrl(),
+        options as unknown as typeof DEPLOYMENT_FORMAT
+      ).then(
+        async (connected) => {
+          await connected.close();
+          return "connected";
+        },
+        (error: Error) => error.message
+      );
+      expect(refused).toBe(message);
+    }
+  });
+});
+
+/**
+ * The base-era build's own ledger code: the files of 40097564 this ledger
+ * class needs, vendored unmodified under tests/fixtures. Each is pinned to
+ * its git blob id at that commit, so the rollback tests below run the code a
+ * rollback runs, not a re-statement of it.
+ */
+const BASE_ERA_DIR = join(import.meta.dir, "../fixtures/base-era-40097564");
+const BASE_ERA_BLOBS = {
+  "supervisor-message-v2-contract.ts":
+    "d0817f1d208cfa571f199de91ef9820301294e06",
+  "supervisor-message-v2-delivery-ledger.ts":
+    "7627d03498d12eca502d03d339628120569d357c",
+  "supervisor-message-v2-runtime.ts":
+    "dec3179efce0947012f581f34ce1a9f9b7538f90",
+  "supervisor-message-v2-workflow-identity.ts":
+    "42d53804edaa8e891df4e3c2dc6d7439669dab7c",
+  "supervisor-message-workflow.ts": "5b47b5b8a92d3308c924c48b7de08013cbb12ec4",
+  "workflow-port.ts": "b7cc06349ae1801367cda6e6c2d23e27626aec7a",
+} as const;
+
+/** `git hash-object` of a file's bytes. */
+const gitBlobId = (bytes: Buffer): string =>
+  createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`)
+    .update(bytes)
+    .digest("hex");
+
+describe("V2 rollback to the real base-era (40097564) ledger on PostgreSQL", () => {
+  /** One database shared by this build's ledgers and the base-era ledger. */
+  const sharedDatabase = async () => {
+    const databaseUrl = await freshDatabase();
+    const open = async (
+      buildId: string,
+      options: {
+        deployment?: string;
+        resultGraphKey?: SupervisorResultGraphKey;
+        workflowIdFormat?: "deployment" | "legacy";
+      } = {}
+    ) => {
+      const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+        databaseUrl,
+        { buildId, deployment: DEPLOYMENT, ...options }
+      );
+      opened.push(ledger);
+      await ledger.migrate();
+      return ledger;
+    };
+    const openBaseEra = async () => {
+      const ledger = await BaseEraLedger.connect(databaseUrl);
+      opened.push(ledger);
+      await ledger.migrate();
+      return ledger;
+    };
+    return { open, openBaseEra };
+  };
+
+  const settle = (work: Promise<unknown>) =>
+    work.then(
+      () => "accepted",
+      (error: Error) => error.message
+    );
+
+  test("the vendored base-era ledger files are byte-identical to 40097564", () => {
+    for (const [file, blob] of Object.entries(BASE_ERA_BLOBS)) {
+      expect({
+        blob: gitBlobId(readFileSync(join(BASE_ERA_DIR, file))),
+        file,
+      }).toEqual({ blob, file });
+    }
+  });
+
+  test("rollback: the real base-era ledger migrates, recovers, deduplicates and records over default legacy-write rows, and this build reads its rows back", async () => {
+    const { open, openBaseEra } = await sharedDatabase();
+    const upgraded = await open("upgrade-build.v1");
+    const first = inputFor(`real-rollback-first-${randomUUID()}`);
+    const second = inputFor(`real-rollback-second-${randomUUID()}`);
+    const recorded: string[] = [];
+    for (const input of [first, second]) {
+      const workflowId = await upgraded.workflowIdFor(SCOPE, input.dedupeKey);
+      // The id the base-era contract derives, from its own code.
+      expect(workflowId).toBe(baseEraContractId(SCOPE, input.dedupeKey));
+      await upgraded.recordStartIntent(workflowId, SCOPE, input);
+      recorded.push(workflowId);
+    }
+
+    const baseEra = await openBaseEra();
+    expect(
+      (await baseEra.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([...recorded].sort());
+    // A sender retry of a message this build accepted, a new message, and
+    // a terminal outcome, all through the base-era code.
+    const [firstId, secondId] = recorded as [string, string];
+    expect(await settle(baseEra.recordStartIntent(firstId, SCOPE, first))).toBe(
+      "accepted"
+    );
+    const third = inputFor(`real-rollback-third-${randomUUID()}`);
+    const thirdId = baseEraContractId(SCOPE, third.dedupeKey);
+    expect(await settle(baseEra.recordStartIntent(thirdId, SCOPE, third))).toBe(
+      "accepted"
+    );
+    await baseEra.recordTerminalOutcome(secondId, SCOPE, "acknowledged");
+    expect(await baseEra.recoverableStarts()).toHaveLength(3);
+
+    // Roll forward again: this build reads every base-era row as its own.
+    const again = await open("upgrade-build.v2");
+    expect(again.workflowIdFormat).toBe("legacy");
+    expect(await again.workflowIdFor(SCOPE, third.dedupeKey)).toBe(thirdId);
+    expect(await again.terminalOutcome(secondId, SCOPE)).toBe("acknowledged");
+    expect(
+      (await again.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([firstId, secondId, thirdId].sort());
+  });
+
+  test("after the flip to deployment ids the real base-era ledger can record nothing, and its recovery refuses instead of starting", async () => {
+    const { open, openBaseEra } = await sharedDatabase();
+    const upgraded = await open("upgrade-build.v1");
+    const held = inputFor(`real-flip-held-${randomUUID()}`);
+    const heldId = await upgraded.workflowIdFor(SCOPE, held.dedupeKey);
+    await upgraded.recordStartIntent(heldId, SCOPE, held);
+    const flipped = await open("flip-build.v1", {
+      workflowIdFormat: "deployment",
+    });
+    const fresh = inputFor(`real-flip-fresh-${randomUUID()}`);
+    await flipped.recordStartIntent(workflowIdOf(fresh), SCOPE, fresh);
+
+    const baseEra = await openBaseEra();
+    const newcomer = inputFor(`real-flip-newcomer-${randomUUID()}`);
+    for (const input of [held, newcomer]) {
+      expect(
+        await settle(
+          baseEra.recordStartIntent(
+            baseEraContractId(SCOPE, input.dedupeKey),
+            SCOPE,
+            input
+          )
+        )
+      ).toBe(formatRefusal("deployment", "flip-build.v1", "legacy"));
+    }
+    expect(await settle(baseEra.recoverableStarts())).toBe(
+      "V2 recovery ledger row has an invalid workflow binding"
+    );
+  });
+
+  test("rollback limit: the base-era ledger does not publish a result this build bound to its keyed graph, and lets the message be re-bound to its unkeyed graph", async () => {
+    const { open, openBaseEra } = await sharedDatabase();
+    const key = SupervisorResultGraphKey.fromSecret(
+      randomBytes(32).toString("hex")
+    );
+    const upgraded = await open("upgrade-build.v1", { resultGraphKey: key });
+    const input = inputFor(`real-rollback-binding-${randomUUID()}`);
+    const workflowId = await upgraded.workflowIdFor(SCOPE, input.dedupeKey);
+    await upgraded.recordStartIntent(workflowId, SCOPE, input);
+    const keyed: SupervisorA2AResultBinding = {
+      a2aTaskId: "task:rollback-binding",
+      graphTaskId: "result-node",
+      graphWorkflowId: deriveSupervisorMessageV2ResultGraphWorkflowId(
+        key,
+        SCOPE,
+        workflowId
+      ),
+      messageWorkflowId: workflowId,
+      recipient: input.to,
+    };
+    await upgraded.bindResult(SCOPE, keyed);
+    expect(
+      await upgraded.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
+    ).toEqual(keyed);
+
+    const baseEra = await openBaseEra();
+    expect(
+      await baseEra.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
+    ).toBeUndefined();
+    const unkeyed = {
+      ...keyed,
+      graphWorkflowId: baseEraResultGraphId(SCOPE, workflowId),
+    };
+    await baseEra.bindResult(SCOPE, unkeyed);
+    expect(
+      await baseEra.resultBinding(SCOPE, workflowId, keyed.a2aTaskId)
+    ).toEqual(unkeyed);
+  });
+
+  test("default legacy-write mode does not isolate deployments that share a database: each recovers and resolves the other's messages until the flip", async () => {
+    const { open } = await sharedDatabase();
+    const queueA = await open("upgrade-build.v1", { deployment: "queue-a" });
+    const queueB = await open("upgrade-build.v1", { deployment: "queue-b" });
+    expect([queueA.workflowIdFormat, queueB.workflowIdFormat]).toEqual([
+      "legacy",
+      "legacy",
+    ]);
+    const input = inputFor(`shared-legacy-${randomUUID()}`);
+    const workflowId = await queueB.workflowIdFor(SCOPE, input.dedupeKey);
+    await queueB.recordStartIntent(workflowId, SCOPE, input);
+
+    // queue-a recovers queue-b's intent and resolves its dedupe key to it.
+    expect(
+      (await queueA.recoverableStarts()).map((start) => start.workflowId)
+    ).toEqual([workflowId]);
+    expect(await queueA.workflowIdFor(SCOPE, input.dedupeKey)).toBe(workflowId);
+    expect(await settle(queueA.startIntent(workflowId, SCOPE))).toBe(
+      "accepted"
+    );
+  });
+});
+
 describe("V2 recovery runner on PostgreSQL", () => {
   const INJECTED = "injected terminal outcome failure";
 
@@ -874,7 +1653,7 @@ describe("V2 recovery runner on PostgreSQL", () => {
     const url = await freshDatabase();
     const isolated = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       url,
-      { deployment: DEPLOYMENT }
+      DEPLOYMENT_FORMAT
     );
     opened.push(isolated);
     await isolated.migrate();

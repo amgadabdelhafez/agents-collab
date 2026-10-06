@@ -49,6 +49,8 @@ if (!fixture) {
 const SCOPE: TrustedSupervisorMessageV2Scope = fixture.expectedScope;
 const OWNER_DISPATCH = "v2-dispatcher:temporal-retention-owner";
 const FOREIGN_DISPATCH = "v2-dispatcher:temporal-retention-foreign";
+/** The build these ledgers record as the writer of their id format. */
+const RETENTION_BUILD = "temporal-retention.v1";
 
 setDefaultTimeout(60_000);
 
@@ -118,9 +120,10 @@ const freshLedger = async (
   await raw.unsafe(`CREATE DATABASE ${name}`);
   const url = new URL(postgres.databaseUrl());
   url.pathname = `/${name}`;
+  // This host has opted in to deployment-scoped workflow ids.
   const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
     url.toString(),
-    { deployment }
+    { buildId: RETENTION_BUILD, deployment, workflowIdFormat: "deployment" }
   );
   opened.push(ledger);
   databaseOf.set(ledger, url.toString());
@@ -130,7 +133,10 @@ const freshLedger = async (
 
 /**
  * A start intent exactly as a pre-discriminator host recorded it: the legacy
- * id, and no deployment (the migrated column stays NULL).
+ * id, and no deployment (the migrated column stays NULL). That host writes
+ * only while the database records the legacy format, so the database is
+ * returned to it (by this build in legacy-write mode) for the write, and the
+ * ledger then opts in to deployment ids again, as an upgrade would.
  */
 const recordLegacyIntent = async (
   ledger: PostgresSupervisorMessageV2DeliveryLedger,
@@ -140,13 +146,25 @@ const recordLegacyIntent = async (
     SCOPE,
     input.dedupeKey
   );
-  const sql = new SQL(databaseOf.get(ledger) ?? "");
+  const url = databaseOf.get(ledger) ?? "";
+  const legacyWrite = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    url,
+    {
+      buildId: RETENTION_BUILD,
+      deployment: ledger.deployment,
+      workflowIdFormat: "legacy",
+    }
+  );
+  const sql = new SQL(url);
   await sql.connect();
   try {
+    await legacyWrite.migrate();
     await sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json) VALUES (${legacyId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(input)}::jsonb)`;
   } finally {
     await sql.close({ timeout: 0 });
+    await legacyWrite.close();
   }
+  await ledger.migrate();
   return legacyId;
 };
 

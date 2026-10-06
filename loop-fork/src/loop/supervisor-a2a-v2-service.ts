@@ -31,6 +31,8 @@ import {
 import {
   PostgresSupervisorMessageV2DeliveryLedger,
   type PostgresSupervisorMessageV2DeliveryLedgerOptions,
+  type SupervisorMessageV2WorkflowIdFormat,
+  SupervisorMessageV2WorkflowIdFormatError,
 } from "./supervisor-message-v2-delivery-ledger";
 import {
   GovernedSupervisorMessageV2Service,
@@ -96,6 +98,8 @@ type LedgerResource = SupervisorMessageV2DeliveryLedger & {
   resultBinding?: PostgresSupervisorMessageV2DeliveryLedger["resultBinding"];
   recipientAssignment?: PostgresSupervisorMessageV2DeliveryLedger["recipientAssignment"];
   unpublishableResultBindings?: PostgresSupervisorMessageV2DeliveryLedger["unpublishableResultBindings"];
+  /** The format `migrate` resolved new messages to be written in. */
+  readonly workflowIdFormat?: PostgresSupervisorMessageV2DeliveryLedger["workflowIdFormat"];
   close(): Promise<void>;
   migrate(): Promise<void>;
 };
@@ -219,6 +223,12 @@ export interface SupervisorA2AV2ServiceOptions {
     reference: string,
     target: SupervisorA2AResultArtifactTarget
   ): Promise<boolean>;
+  /**
+   * The workflow id format new messages are written in (operator config
+   * `a2aV2.workflowIdFormat`). Omitted, the format the ledger database
+   * records, or `legacy`; `deployment` is an explicit opt-in.
+   */
+  workflowIdFormat?: SupervisorMessageV2WorkflowIdFormat;
 }
 
 /** The governed session-store operations available to start-time enrollment. */
@@ -566,6 +576,28 @@ const reportUnpublishableResultBindings = async (
   }
 };
 
+/**
+ * One start line naming the workflow id format the ledger resolved. Legacy
+ * ids carry no deployment discriminator, so decision 6's per-deployment
+ * isolation is off until the operator opts in to "deployment". The line says
+ * so: a host sharing the ledger database on another task queue then recovers
+ * and deduplicates this host's messages, and this host theirs.
+ */
+const reportWorkflowIdFormat = (
+  ledger: LedgerResource,
+  log: (line: string) => void = (line) => console.error(line)
+): void => {
+  if (ledger.workflowIdFormat === "legacy") {
+    log(
+      'A2A V2 workflow ids: legacy format. The deployment discriminator is off: every host sharing this ledger database recovers and deduplicates the others\' messages. Set a2aV2.workflowIdFormat "deployment" on every such host once all of them run a build that supports it'
+    );
+  } else if (ledger.workflowIdFormat === "deployment") {
+    log(
+      "A2A V2 workflow ids: deployment format, scoped to this host's task queue"
+    );
+  }
+};
+
 const createAssignmentRoute = (
   options: SupervisorA2AV2ServiceOptions,
   ledger: LedgerResource,
@@ -654,11 +686,17 @@ export const createSupervisorA2AV2Service = async (
     stage = "delivery-ledger";
     // Workflow ids are minted for this host's deployment: the task queue its
     // worker polls and its workflow port starts and adopts executions on.
+    // The ledger records this build with any id format it sets.
     ledger = await dependencies.connectLedger(options.databaseUrl, {
+      buildId: options.host.buildId,
       deployment: options.host.taskQueue,
       resultGraphKey: options.resultGraphKey,
+      ...(options.workflowIdFormat
+        ? { workflowIdFormat: options.workflowIdFormat }
+        : {}),
     });
     await ledger.migrate();
+    reportWorkflowIdFormat(ledger, options.log);
     await reportUnpublishableResultBindings(ledger, options.log);
     stage = "session-store";
     sessions = await dependencies.connectSessions({
@@ -846,6 +884,13 @@ export const createSupervisorA2AV2Service = async (
     await closeQuietly(sessions);
     await closeQuietly(ledger);
     await closeQuietly(taskStore);
+    // A refusal over the ledger's workflow id format is the operator's to
+    // act on, and its message names formats, builds and counts only.
+    if (error instanceof SupervisorMessageV2WorkflowIdFormatError) {
+      throw new Error(
+        `Supervisor A2A V2 service initialization failed at ${stage}: ${error.message}`
+      );
+    }
     const category = safeFailureCategory(error);
     throw new Error(
       `Supervisor A2A V2 service initialization failed at ${stage} (${category})`

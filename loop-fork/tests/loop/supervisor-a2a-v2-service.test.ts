@@ -27,7 +27,11 @@ import {
   type SupervisorMessageV2DeliveryEnvelope,
   SupervisorResultGraphKey,
 } from "../../src/loop/supervisor-message-v2-contract";
-import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
+import {
+  PostgresSupervisorMessageV2DeliveryLedger,
+  type PostgresSupervisorMessageV2DeliveryLedgerOptions,
+  SupervisorMessageV2WorkflowIdFormatError,
+} from "../../src/loop/supervisor-message-v2-delivery-ledger";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import {
   SupervisorMessageV2Coordinator,
@@ -228,6 +232,8 @@ const serviceOptions = (input: {
       ? [{ graphWorkflowId: input.graphWorkflowId, graphTaskId }]
       : []
   ),
+  // These tests derive deployment-scoped ids: the host has opted in.
+  workflowIdFormat: "deployment" as const,
   verifyResultArtifact: (reference: string, target: { graphTaskId: string }) =>
     Promise.resolve(
       target.graphTaskId === "result-node" &&
@@ -437,6 +443,156 @@ test("service factory closes every acquired resource after a partial migration f
   expect(ledgerDeployments).toEqual(["partial-cleanup-queue"]);
 });
 
+test("service hands the ledger its build and the configured workflow id format, and reports a format refusal verbatim", async () => {
+  const REFUSAL =
+    'V2 delivery ledger cannot return to legacy workflow ids: 2 deployment-format start intents have no terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they settle';
+  const seen: PostgresSupervisorMessageV2DeliveryLedgerOptions[] = [];
+  const start = (workflowIdFormat?: "deployment" | "legacy") =>
+    createSupervisorA2AV2Service({
+      ...({
+        card: {
+          description: "format wiring",
+          supervisorId: RECIPIENT,
+          url: "http://a2a.local/a2a",
+        },
+        databaseUrl: "postgres://user:private-password@127.0.0.1:5432/db",
+        delivery: {
+          deliver: () => Promise.resolve({ status: "accepted" as const }),
+        },
+        dispatchOwner: "v2-dispatcher:format-wiring",
+        host: {
+          buildId: "format-wiring.v1",
+          taskQueue: "format-wiring-queue",
+        } as never,
+        now: () => NOW,
+        policy: POLICY,
+        providerReadiness: { ready: () => ({}) as never },
+        rebindAuthority: {
+          decide: () => ({
+            allowed: true,
+            authorityRef: "authority:test",
+            reasonCode: "allowed",
+          }),
+        },
+        route: {
+          authenticator: { authenticate: () => undefined },
+          tenant: SCOPE.tenantId,
+        },
+        supervisorId: RECIPIENT,
+      } as const),
+      ...(workflowIdFormat ? { workflowIdFormat } : {}),
+      dependencies: {
+        connectLedger: (_databaseUrl, options) => {
+          seen.push(options);
+          return Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () =>
+              Promise.reject(
+                new SupervisorMessageV2WorkflowIdFormatError(REFUSAL)
+              ),
+          }) as never;
+        },
+        connectSessions: () => Promise.reject(new Error("unused")),
+        connectTaskStore: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () => Promise.resolve(),
+          }) as never,
+        createHost: () => Promise.reject(new Error("unused")),
+        createWorkflows: () => {
+          throw new Error("unused");
+        },
+      },
+    }).then(
+      () => "started",
+      (error: Error) => error.message
+    );
+
+  for (const format of ["legacy", undefined] as const) {
+    expect(await start(format)).toBe(
+      `Supervisor A2A V2 service initialization failed at delivery-ledger: ${REFUSAL}`
+    );
+  }
+  expect(seen).toEqual([
+    {
+      buildId: "format-wiring.v1",
+      deployment: "format-wiring-queue",
+      workflowIdFormat: "legacy",
+    },
+    { buildId: "format-wiring.v1", deployment: "format-wiring-queue" },
+  ]);
+  expect("workflowIdFormat" in (seen[1] ?? {})).toBe(false);
+});
+
+test("service start logs the workflow id format the ledger resolved, and warns that legacy ids do not isolate deployments", async () => {
+  const start = async (resolved: "deployment" | "legacy") => {
+    const lines: string[] = [];
+    const outcome = await createSupervisorA2AV2Service({
+      card: {
+        description: "format log",
+        supervisorId: RECIPIENT,
+        url: "http://a2a.local/a2a",
+      },
+      databaseUrl: "postgres://user:private-password@127.0.0.1:5432/db",
+      delivery: {
+        deliver: () => Promise.resolve({ status: "accepted" as const }),
+      },
+      dispatchOwner: "v2-dispatcher:format-log",
+      host: {
+        buildId: "format-log.v1",
+        taskQueue: "format-log-queue",
+      } as never,
+      log: (line) => lines.push(line),
+      now: () => NOW,
+      policy: POLICY,
+      providerReadiness: { ready: () => ({}) as never },
+      rebindAuthority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:test",
+          reasonCode: "allowed",
+        }),
+      },
+      route: {
+        authenticator: { authenticate: () => undefined },
+        tenant: SCOPE.tenantId,
+      },
+      supervisorId: RECIPIENT,
+      dependencies: {
+        connectLedger: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () => Promise.resolve(),
+            workflowIdFormat: resolved,
+          }) as never,
+        // Start stops at the next stage; the log line is already written.
+        connectSessions: () => Promise.reject(new Error("stop here")),
+        connectTaskStore: () =>
+          Promise.resolve({
+            close: () => Promise.resolve(),
+            migrate: () => Promise.resolve(),
+          }) as never,
+        createHost: () => Promise.reject(new Error("unused")),
+        createWorkflows: () => {
+          throw new Error("unused");
+        },
+      },
+    }).then(
+      () => "started",
+      () => "refused"
+    );
+    expect(outcome).toBe("refused");
+    return lines;
+  };
+
+  expect(await start("legacy")).toEqual([
+    'A2A V2 workflow ids: legacy format. The deployment discriminator is off: every host sharing this ledger database recovers and deduplicates the others\' messages. Set a2aV2.workflowIdFormat "deployment" on every such host once all of them run a build that supports it',
+  ]);
+  expect(await start("deployment")).toEqual([
+    "A2A V2 workflow ids: deployment format, scoped to this host's task queue",
+  ]);
+});
+
 const BIND_MESSAGE = deriveSupervisorMessageV2WorkflowId(
   SCOPE,
   "bind",
@@ -588,7 +744,11 @@ test("result binding refuses a graph not derived from the message, or a graph ta
     // The host's key and its deployment (task queue) reach the durable
     // ledger, which re-derives on its own.
     expect(ledgerOptions).toEqual([
-      { deployment: "binding-wiring", resultGraphKey: KEY },
+      {
+        buildId: "binding-wiring.v1",
+        deployment: "binding-wiring",
+        resultGraphKey: KEY,
+      },
     ]);
     await expect(unconfigured.bindResult(SCOPE, binding)).rejects.toThrow(
       "not configured"
@@ -992,7 +1152,11 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     const assignmentLedger =
       await PostgresSupervisorMessageV2DeliveryLedger.connect(
         postgres.databaseUrl(),
-        { deployment: taskQueue }
+        {
+          buildId: "supervisor-a2a-v2-service-test.v1",
+          deployment: taskQueue,
+          workflowIdFormat: "deployment",
+        }
       );
     try {
       await expect(
@@ -1278,7 +1442,12 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     );
     const reservation = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       postgres.databaseUrl(),
-      { deployment: taskQueue, resultGraphKey: KEY }
+      {
+        buildId: "supervisor-a2a-v2-service-test.v1",
+        deployment: taskQueue,
+        resultGraphKey: KEY,
+        workflowIdFormat: "deployment",
+      }
     );
     try {
       // The ledger refuses it on its own and records nothing for the peer.
@@ -1691,7 +1860,10 @@ test("every V2 delivery path of one service shares its readiness-outage bound, l
       },
       dispatchOwner: "v2-dispatcher:shared-outage",
       // Only the deployment (task queue) is read before createHost.
-      host: { taskQueue: "shared-outage-queue" } as never,
+      host: {
+        buildId: "shared-outage.v1",
+        taskQueue: "shared-outage-queue",
+      } as never,
       messageAuthority: {
         decide: () => ({
           allowed: true,
@@ -1716,6 +1888,7 @@ test("every V2 delivery path of one service shares its readiness-outage bound, l
         tenant: scope.tenantId,
       },
       supervisorId: RECIPIENT,
+      workflowIdFormat: "deployment",
       dependencies: {
         connectLedger: async (url, options) => {
           ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
@@ -1865,7 +2038,11 @@ test("a stopped PostgreSQL session store defers a delivery with one log line unt
     await sessions.migrate();
     ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
       ledgerDb.databaseUrl(),
-      { deployment: "stopped-session-store-queue" }
+      {
+        buildId: "stopped-session-store.v1",
+        deployment: "stopped-session-store-queue",
+        workflowIdFormat: "deployment",
+      }
     );
     await ledger.migrate();
     const lines: string[] = [];

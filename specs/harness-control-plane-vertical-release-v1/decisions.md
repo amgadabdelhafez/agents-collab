@@ -127,3 +127,135 @@ assigned item is decided but not implemented.
 Also observed: claude/fix3-doorbell-starvation, with no commits. This record
 does not map it to a decision. The open-defect state for these items is in
 status.md, under "Open review defects at r2".
+
+## 2026-10-05: decision 6 follow-up, a rollback-safe workflow ID format
+
+The entry after this one corrects four of its claims: the Q2 answer, the
+default's effect on decision 6, the scope of "rolling back is safe", and the
+return to legacy when rows never settle.
+
+This is not an owner decision. Owner question Q1 (is a one-way upgrade
+acceptable for the deployment ID?) is unanswered, so
+claude/fix4-deployment-rollback-safety takes the option that needs no answer:
+rolling back stays safe, and nothing becomes one-way without an explicit
+operator step. It builds on claude/fix-integration-r3-2026-10-05 (ef570282)
+and is not merged or installed.
+
+- Operator switch: `a2aV2.workflowIdFormat`, "legacy" or "deployment". When it
+  is omitted, the host uses the format the ledger database records, or
+  "legacy" when none is recorded. "deployment" is always an explicit opt-in.
+  In both formats the host reads, recovers and deduplicates both ID formats.
+- Durable marker: the loop_supervisor_message_v2_schema_marker row
+  'workflow-id-format.v1' records the format (column value) and the build that
+  set it (column build_id). A host refuses to start on a recorded format it
+  does not support, with the exact message: V2 delivery ledger records
+  workflow id format "<format>" (written by build <build>), which this build
+  does not support; it supports "legacy" and "deployment". Run a build that
+  supports the recorded format.
+- Database guard: a BEFORE INSERT trigger on the start-intent table refuses,
+  for every writer (including a pre-discriminator build), a start intent in
+  any format but the recorded one. It also refuses a legacy-format intent for
+  a message already held under a deployment ID.
+- Procedure. (1) Install this build with the switch unset. It writes the
+  legacy ID, byte for byte, with deployment NULL: the row a
+  pre-discriminator build writes. Rolling back to that build is safe. A test
+  replays that build's SQL against the rows. (2) After every host that shares
+  the ledger database runs this build, set "deployment" and restart. From then
+  on, a pre-discriminator build cannot record a start intent. Its recovery
+  also refuses the first deployment-format row it reads. (3) To go back, set
+  "legacy". Start is refused while any deployment-format start intent has no
+  terminal outcome, with the exact message: V2 delivery ledger cannot return
+  to legacy workflow ids: <n> deployment-format start intents have no
+  terminal outcome. Keep a2aV2.workflowIdFormat "deployment" until they
+  settle. Once they settle, the switch back is allowed.
+- Limits. Deployment-format rows are never deleted. A database that ever held
+  one cannot be used by a pre-discriminator build again: that build's
+  recovery rejects every such row, settled or not. After a flip, the
+  reversible path is this build's legacy mode, not the old binary. The
+  format applies to the whole database, so hosts that share it must be
+  configured alike. A host whose format another host changed refuses to
+  record (trigger message) until it restarts. A database written by the r3
+  build (deployment rows, no marker) defaults to "legacy". It therefore
+  refuses to start until "deployment" is set or its rows settle.
+- Q2 is untouched: no unauthenticated endpoint exposes the format, the
+  marker or any seat ID.
+
+## 2026-10-05: corrections to the decision 6 follow-up
+
+This is not an owner decision. The round-4 review of
+claude/fix4-deployment-rollback-safety (ae877039) found four claims in the
+entry above false or unqualified. This entry supersedes them. The fixes are
+on the same branch, which is still not merged or installed.
+
+- Q2, seat IDs on unauthenticated endpoints. The entry above says no
+  unauthenticated endpoint exposes any seat ID. That is false at this
+  branch's base (ef570282) and on this branch. The unauthenticated GET
+  /healthz body carries `notEnrolled`, the IDs of the configured A2A V2 seats
+  that are not enrolled (loop-orchestration-server.ts, `orchestrationHealth`;
+  the server supplies the real list). The loop-orchestration-server test
+  "/healthz lists the seats that are not enrolled beside an unchanged ready
+  state" pins it. It arrived with 00845464 on r3. This branch leaves /healthz
+  alone. claude/fix4-peer-degrade-healthz (f3f8c2e1, not merged, review
+  pending) replaces the list with a count, `notEnrolledCount`, and moves the
+  seat IDs to the authenticated assignment status. The exposure stands until
+  that branch lands. What this branch adds (the format, the marker and the
+  build ID) reaches no unauthenticated endpoint.
+- Decision 6 is off until the flip. With the switch unset, a host writes
+  legacy IDs, and a legacy row names no deployment. Hosts on different task
+  queues that share one ledger database therefore get none of decision 6's
+  isolation. Each recovers the others' legacy start intents, and a dedupe
+  key resolves to the same legacy ID on every deployment. This is the
+  pre-discriminator behaviour. The workflow port's task-queue ownership
+  checks still refuse an execution that another task queue already holds.
+  They cannot refuse a start whose execution does not exist yet. So if one
+  host records an intent and stops before it starts the workflow, another
+  host's recovery can start it on its own task queue. Pinned by the ledger
+  test "default legacy-write mode does not isolate deployments that share a
+  database: each recovers and resolves the other's messages until the
+  flip". A host now logs the format at start; in legacy format the line
+  says that the discriminator is off. Decision 6 takes effect only when
+  every host sharing the database sets "deployment" (procedure step 2).
+- Rollback scope. "Rolling back to that build is safe" (procedure step 1)
+  holds for the workflow ID path only. The ledger tests now run the real
+  40097564 ledger class against a database this build wrote, not a replay of
+  its SQL. Its six source files are vendored unmodified under
+  loop-fork/tests/fixtures/base-era-40097564, and a test pins each one to its
+  git blob ID at 40097564. Those tests show the following. In default mode
+  this build mints the IDs the 40097564 contract derives. 40097564 migrates,
+  recovers, takes a sender retry, records a new message and records a
+  terminal outcome over those rows, and this build reads them back. After
+  the flip, 40097564 can record nothing and its recovery refuses instead of
+  starting. A rollback from this build (r3 plus this branch) to 40097564 has
+  other limits:
+  - Result bindings. This build binds results under the keyed
+    `supervisor-result-graph:v3:` ID. 40097564 publishes a binding only when
+    its graph is the unkeyed v2 ID, so it does not publish those results. Its
+    bindResult also lets such a message be re-bound to its unkeyed v2 graph.
+    Pinned by the ledger test "rollback limit: the base-era ledger does not
+    publish a result this build bound to its keyed graph, and lets the
+    message be re-bound to its unkeyed graph".
+  - Configuration. 40097564 checks a2aV2 keys exactly, so it refuses to
+    start with resultGraphKeyEnv, readinessOutageBoundMs or
+    workflowIdFormat set. It also refuses a resultArtifacts entry whose
+    graphWorkflowId is a keyed v3 ID. Roll the configuration back with the
+    binary.
+  - Temporal executions in flight. The decoded workflow bundle code differs
+    between 40097564 and ef570282 in code, not only in comments. No test
+    shows that the 40097564 worker can replay histories this build's
+    workflow code wrote. Treat a rollback with V2 executions still running
+    as unverified.
+  - The other r3 changes (session receipt retention and its indexes, the
+    Claude result dedupe slot, ACK retry, readiness-outage bound) were not
+    reviewed for rollback.
+- Returning to legacy when rows never settle. The return needs a terminal
+  outcome on every deployment-format start intent in the database, whatever
+  deployment owns it. A host's recovery settles only its own deployment's
+  rows. Rows of a deployment that no longer runs, and any other row whose
+  outcome is never recorded, keep the return refused for good. The supported
+  way to settle them is to run a host on that task queue in "deployment"
+  mode until its recovery records their outcomes. If that cannot happen,
+  stay on "deployment". Nothing is lost by staying: once a database holds a
+  deployment-format row, 40097564 cannot use it again, so after a flip
+  legacy mode is not a way back to the pre-discriminator build. This build
+  offers no override. Whether an operator may record such an outcome by hand
+  is an open question for the owner.
