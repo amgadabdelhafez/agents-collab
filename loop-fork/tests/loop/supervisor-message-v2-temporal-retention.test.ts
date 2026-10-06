@@ -665,6 +665,31 @@ describe("V2 workflow id deployment discriminator on real Temporal and PostgreSQ
   });
 });
 
+/** Another workflow type, task-graph.v1, under `workflowId` on our own queue. */
+const startTaskGraphUnder = async (workflowId: string): Promise<void> => {
+  await owner.start({
+    input: {
+      graphId: "same-queue-conflict",
+      nodes: [
+        {
+          acceptanceChecks: [{ checkId: "artifact", kind: "artifact" }],
+          authorityGates: [],
+          dependencies: [],
+          ownerRepository: "agents-collab",
+          readScopes: ["src"],
+          specArtifactRef: `artifact://sha256/${"a".repeat(64)}`,
+          taskId: "node",
+          writeScopes: [],
+        },
+      ],
+      schema: "task-graph.v1",
+    },
+    requestId: "same-queue-conflict",
+    workflowId,
+    workflowType: "task-graph.v1",
+  });
+};
+
 describe("V2 recovery of a same-queue workflow type conflict on real Temporal and PostgreSQL", () => {
   test("another workflow type under a recorded id on this deployment's own queue refuses startup until an operator quarantines it", async () => {
     const ledger = await freshLedger();
@@ -680,27 +705,7 @@ describe("V2 recovery of a same-queue workflow type conflict on real Temporal an
     await ledger.recordStartIntent(workflowId, SCOPE, input);
     // Our own queue holds the id, as another workflow type: no other
     // deployment is involved, so this is not a foreign execution.
-    await owner.start({
-      input: {
-        graphId: "same-queue-conflict",
-        nodes: [
-          {
-            acceptanceChecks: [{ checkId: "artifact", kind: "artifact" }],
-            authorityGates: [],
-            dependencies: [],
-            ownerRepository: "agents-collab",
-            readScopes: ["src"],
-            specArtifactRef: `artifact://sha256/${"a".repeat(64)}`,
-            taskId: "node",
-            writeScopes: [],
-          },
-        ],
-        schema: "task-graph.v1",
-      },
-      requestId: "same-queue-conflict",
-      workflowId,
-      workflowType: "task-graph.v1",
-    });
+    await startTaskGraphUnder(workflowId);
     try {
       // The port tells the two conflicts apart.
       const sameQueue = await owner
@@ -766,5 +771,46 @@ describe("V2 recovery of a same-queue workflow type conflict on real Temporal an
         .terminate()
         .catch(() => undefined);
     }
+  });
+
+  test("a CLOSED execution of another workflow type under a recorded id on this deployment's own queue refuses startup and records no outcome", async () => {
+    const ledger = await freshLedger();
+    const { coordinator } = coordinatorFor(owner, ledger, () => {
+      throw new Error("the conflicting execution must never be delivered");
+    });
+    const input = inputFor();
+    const workflowId = deriveSupervisorMessageV2WorkflowId(
+      SCOPE,
+      input.dedupeKey,
+      owner.taskQueue
+    );
+    await ledger.recordStartIntent(workflowId, SCOPE, input);
+    await startTaskGraphUnder(workflowId);
+    // Closed, on our own queue: presence says "closed", and recovery would
+    // otherwise read the other type's status as this message's outcome.
+    await environment.client.workflow.getHandle(workflowId).terminate();
+    expect(await owner.presence(workflowId)).toBe("closed");
+
+    const lines: string[] = [];
+    const runner = new SupervisorMessageV2RecoveryRunner({
+      coordinator,
+      intervalMs: 1000,
+      log: (line) => lines.push(line),
+      operatorConfigPath: "/srv/loop/orchestration.json",
+      timer: { clearInterval: () => undefined, setInterval: () => 1 },
+    });
+    opened.push(runner);
+    const refusal = await settle(runner.start());
+    expect(refusal).toEqual({
+      error: {
+        code: undefined,
+        name: "SupervisorMessageV2RecoveryStartupError",
+      },
+    });
+    expect(lines).toEqual([
+      `V2 initial recovery failed for 1 recorded start: workflow ${workflowId} for ${input.to}: WorkflowError (conflict): workflow ${workflowId} is not a supervisor-message.v2 execution [to start without it: loop orchestration v2-quarantine /srv/loop/orchestration.json ${workflowId} --reason '<why>']`,
+    ]);
+    // Nothing was recorded as this message's outcome.
+    expect(await ledger.terminalOutcome(workflowId, SCOPE)).toBe(undefined);
   });
 });

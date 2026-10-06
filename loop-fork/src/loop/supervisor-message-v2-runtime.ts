@@ -24,6 +24,8 @@ import {
 } from "./workflow-port";
 
 export const SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE = "supervisor-message.v2";
+/** The schema every V2 message execution answers its status query with. */
+const V2_STATUS_SCHEMA = "supervisor-message-status.v2";
 const DISPATCH_OWNER = /^v2-dispatcher:[A-Za-z0-9._:-]{1,255}$/;
 
 /**
@@ -1320,6 +1322,17 @@ export class SupervisorMessageV2Coordinator {
       name: "status",
       workflowId,
     });
+    // The port only proves the execution runs on this deployment's queue, not
+    // that it is a V2 message: another workflow type under the ID (running or
+    // closed) answers "status" too. Its answer is never this message's state,
+    // so recovery cannot record it as an outcome; it is this deployment's own
+    // conflict, never a foreign execution.
+    if (!isRecord(result.value) || result.value.schema !== V2_STATUS_SCHEMA) {
+      throw new WorkflowError(
+        "conflict",
+        `workflow ${workflowId} is not a ${SUPERVISOR_MESSAGE_V2_WORKFLOW_TYPE} execution`
+      );
+    }
     return result.value as SupervisorMessageV2Projection;
   }
 
