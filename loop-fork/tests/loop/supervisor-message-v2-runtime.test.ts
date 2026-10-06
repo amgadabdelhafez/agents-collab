@@ -10,6 +10,7 @@ import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-mes
 import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  type SupervisorMessageV2TerminalOutcome,
   supervisorMessageV2WorkflowDefinition,
 } from "../../src/loop/supervisor-message-v2-runtime";
 import { WorkflowError } from "../../src/loop/workflow-port";
@@ -116,6 +117,29 @@ class MemoryLedger implements SupervisorMessageV2DeliveryLedger {
     }
     this.starts.set(workflowId, { input, trustedScope });
     return Promise.resolve(input);
+  }
+
+  hasCompletedDelivery(): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+
+  readonly terminal = new Map<string, SupervisorMessageV2TerminalOutcome>();
+
+  recordTerminalOutcome(
+    workflowId: string,
+    _trustedScope: TrustedSupervisorMessageV2Scope,
+    outcome: SupervisorMessageV2TerminalOutcome
+  ): Promise<void> {
+    if (!this.terminal.has(workflowId)) {
+      this.terminal.set(workflowId, outcome);
+    }
+    return Promise.resolve();
+  }
+
+  terminalOutcome(
+    workflowId: string
+  ): Promise<SupervisorMessageV2TerminalOutcome | undefined> {
+    return Promise.resolve(this.terminal.get(workflowId));
   }
 
   recoverableStarts() {
