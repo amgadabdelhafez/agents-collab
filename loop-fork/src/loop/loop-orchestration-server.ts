@@ -176,6 +176,11 @@ interface ServerConfig {
  */
 export interface LoopOrchestrationServerOptions {
   a2aV2Service?: SupervisorA2AV2Service;
+  /**
+   * Stops the server as SIGINT or SIGTERM would, for an embedding caller or a
+   * test driving the whole composition. The signals still stop it.
+   */
+  signal?: AbortSignal;
 }
 
 export interface LoopOrchestrationFetchHandlerOptions {
@@ -800,12 +805,38 @@ export const enrollConfiguredA2AV2Session = async (
 };
 
 /**
+ * One seat's result from one `maintain()` pass.
+ * - `unchanged`: the seat still matches the descriptor this process last
+ *   enrolled, checked against local bridge status only (no store call).
+ * - `enrolled`: the session store now holds a current descriptor for the
+ *   seat: registered, renewed, rebound, or converged on a competing write.
+ * - `deferred`: the seat failed recently and is waiting out its retry delay;
+ *   it was not attempted, so nothing is known about it now.
+ * - `failed`: the attempt failed; the seat is retried after the delay.
+ */
+export type A2AV2EnrollmentOutcome =
+  | { recipient: string; state: "deferred" | "enrolled" | "unchanged" }
+  | { error: unknown; recipient: string; state: "failed" };
+
+/** The first failure in a `maintain()` result, for callers that must refuse. */
+export const requireA2AV2Enrollment = (
+  outcomes: readonly A2AV2EnrollmentOutcome[]
+): void => {
+  for (const outcome of outcomes) {
+    if (outcome.state === "failed") {
+      throw outcome.error;
+    }
+  }
+};
+
+/**
  * Keeps every configured seat's descriptor current for the life of the
  * server, not only at start: it renews before expiry and rebinds when a Codex
  * thread or Claude session restarts. It owns no timer; the server's existing
  * reconciliation sweep calls `maintain()`. Between writes it compares the
  * seat's bridge status with the descriptor it last enrolled, so a quiet sweep
- * reads local files only. A failed seat is retried after a short delay.
+ * reads local files only. A failed seat is retried after a short delay, and
+ * is reported as `deferred` (not as a success) until then.
  */
 export class ConfiguredA2AV2SessionEnrollment {
   readonly #enrolled = new Map<string, SupervisorSessionDescriptorV2>();
@@ -819,48 +850,48 @@ export class ConfiguredA2AV2SessionEnrollment {
     this.#recipients = recipients;
   }
 
-  async maintain(): Promise<void> {
-    let failure: { error: unknown } | undefined;
+  async maintain(): Promise<A2AV2EnrollmentOutcome[]> {
+    const outcomes: A2AV2EnrollmentOutcome[] = [];
     for (const recipient of this.#recipients) {
-      const now = this.#input.now();
-      if (Date.parse(now) < (this.#retryAt.get(recipient) ?? 0)) {
-        continue;
-      }
-      const input = {
-        ...this.#input,
-        config: { ...this.#input.config, recipient },
-      };
-      try {
-        if (
-          enrolledAs(
-            this.#enrolled.get(recipient),
-            await observeConfiguredA2AV2Session(input),
-            input.config,
-            now
-          )
-        ) {
-          continue;
-        }
-        this.#enrolled.set(
-          recipient,
-          await enrollConfiguredA2AV2Session(input)
-        );
-        this.#retryAt.delete(recipient);
-      } catch (error) {
-        this.#enrolled.delete(recipient);
-        this.#retryAt.set(
-          recipient,
-          Date.parse(now) +
-            Math.min(
-              ENROLLMENT_RETRY_MS,
-              Math.floor(input.config.sessionTtlMs / 4)
-            )
-        );
-        failure ??= { error };
-      }
+      outcomes.push(await this.#maintainOne(recipient));
     }
-    if (failure) {
-      throw failure.error;
+    return outcomes;
+  }
+
+  async #maintainOne(recipient: string): Promise<A2AV2EnrollmentOutcome> {
+    const now = this.#input.now();
+    if (Date.parse(now) < (this.#retryAt.get(recipient) ?? 0)) {
+      return { recipient, state: "deferred" };
+    }
+    const input = {
+      ...this.#input,
+      config: { ...this.#input.config, recipient },
+    };
+    try {
+      if (
+        enrolledAs(
+          this.#enrolled.get(recipient),
+          await observeConfiguredA2AV2Session(input),
+          input.config,
+          now
+        )
+      ) {
+        return { recipient, state: "unchanged" };
+      }
+      this.#enrolled.set(recipient, await enrollConfiguredA2AV2Session(input));
+      this.#retryAt.delete(recipient);
+      return { recipient, state: "enrolled" };
+    } catch (error) {
+      this.#enrolled.delete(recipient);
+      this.#retryAt.set(
+        recipient,
+        Date.parse(now) +
+          Math.min(
+            ENROLLMENT_RETRY_MS,
+            Math.floor(input.config.sessionTtlMs / 4)
+          )
+      );
+      return { error, recipient, state: "failed" };
     }
   }
 }
@@ -903,7 +934,9 @@ const failureMessage = (error: unknown): string =>
  * verdict. Session enrollment rides the same tick under its own guard and is
  * not awaited by it, so a slow or hung session-store call cannot stop ACK
  * reconciliation for every recipient while /healthz still reports ready.
- * Enrollment is retried every tick; a failure is reported once per change.
+ * Enrollment is retried every tick. Each seat's failure is reported once per
+ * change, and its recovery only when a later pass actually enrolled it: a
+ * seat skipped while it waits out its retry delay has not recovered.
  */
 export const createOrchestrationSweep = (input: {
   enrollment?: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">;
@@ -913,7 +946,27 @@ export const createOrchestrationSweep = (input: {
 }): (() => Promise<void>) => {
   let enrolling = false;
   let reconciling = false;
-  let reportedEnrollmentFailure: string | undefined;
+  const reportedFailures = new Map<string, string>();
+  let unexpectedFailure: string | undefined;
+  const report = (outcomes: readonly A2AV2EnrollmentOutcome[]) => {
+    for (const outcome of outcomes) {
+      const reported = reportedFailures.get(outcome.recipient);
+      if (outcome.state === "failed") {
+        const message = failureMessage(outcome.error);
+        if (message !== reported) {
+          reportedFailures.set(outcome.recipient, message);
+          input.log(
+            `orchestration A2A V2 session enrollment failed for ${outcome.recipient}: ${message}`
+          );
+        }
+      } else if (outcome.state === "enrolled" && reported !== undefined) {
+        reportedFailures.delete(outcome.recipient);
+        input.log(
+          `orchestration A2A V2 session enrollment recovered for ${outcome.recipient}`
+        );
+      }
+    }
+  };
   const enroll = (
     enrollment: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">
   ) => {
@@ -921,18 +974,18 @@ export const createOrchestrationSweep = (input: {
     enrollment
       .maintain()
       .then(
-        () => {
-          if (reportedEnrollmentFailure !== undefined) {
-            reportedEnrollmentFailure = undefined;
-            input.log("orchestration A2A V2 session enrollment recovered");
-          }
+        (outcomes) => {
+          unexpectedFailure = undefined;
+          report(outcomes);
         },
         (error: unknown) => {
+          // maintain() reports seat failures as outcomes; a rejection is a
+          // defect in the pass itself, reported once per change.
           const message = failureMessage(error);
-          if (message !== reportedEnrollmentFailure) {
-            reportedEnrollmentFailure = message;
+          if (message !== unexpectedFailure) {
+            unexpectedFailure = message;
             input.log(
-              `orchestration A2A V2 session enrollment failed: ${message}`
+              `orchestration A2A V2 session enrollment pass failed: ${message}`
             );
           }
         }
@@ -1080,7 +1133,7 @@ const createDefaultRuntimeHost = async (input: {
         service: sessions,
       });
       try {
-        await a2aV2Enrollment.maintain();
+        requireA2AV2Enrollment(await a2aV2Enrollment.maintain());
       } catch (error) {
         enrollmentFailure = { error };
         throw error;
@@ -1335,11 +1388,19 @@ export const runLoopOrchestrationServer = async (
     });
     await new Promise<void>((resolve) => {
       const stop = () => {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        options.signal?.removeEventListener("abort", stop);
         server.stop(true);
         resolve();
       };
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
+      if (options.signal?.aborted) {
+        stop();
+      } else {
+        options.signal?.addEventListener("abort", stop, { once: true });
+      }
     });
   } finally {
     if (reconcileTimer) {
