@@ -10,9 +10,10 @@ import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-mes
 import {
   SupervisorMessageV2Coordinator,
   type SupervisorMessageV2DeliveryLedger,
+  SupervisorMessageV2RecoveryRunner,
   supervisorMessageV2WorkflowDefinition,
 } from "../../src/loop/supervisor-message-v2-runtime";
-import { WorkflowError } from "../../src/loop/workflow-port";
+import { WorkflowError, type WorkflowPort } from "../../src/loop/workflow-port";
 
 const fixture = structuredClone(supervisorMessageV2ReplayFixtures[0]);
 if (!fixture) {
@@ -355,5 +356,123 @@ describe("SupervisorMessageV2Coordinator delivery readiness", () => {
     expect(claimed.phase).toBe("claimed");
     expect(claimed.claimedBy).toBe("supervisor:target");
     expect(h.delivered).toHaveLength(1);
+  });
+});
+
+describe("SupervisorMessageV2 recovery with a foreign-owned workflow ID", () => {
+  // A V2 workflow ID is unique per Temporal namespace, not per deployment.
+  // When another deployment (or another workflow type) already holds an ID
+  // this ledger recorded a start intent for, the Temporal port refuses with
+  // a conflict. That one record must not refuse the whole service start.
+  const FOREIGN_TYPE = "supervisor-message.v1";
+  const foreignPort = (
+    inner: InMemoryWorkflowPort,
+    foreign: ReadonlySet<string>
+  ): WorkflowPort => ({
+    cancel: (command) => inner.cancel(command),
+    inspect: (workflowId) => inner.inspect(workflowId),
+    query: (command) => inner.query(command),
+    signal: (command) => inner.signal(command),
+    start: (command) =>
+      foreign.has(command.workflowId)
+        ? Promise.reject(
+            new WorkflowError(
+              "conflict",
+              `workflow ${command.workflowId} already exists as ${FOREIGN_TYPE}`
+            )
+          )
+        : inner.start(command),
+  });
+
+  const setup = () => {
+    let clock = Date.parse("2026-09-20T05:00:00.000Z");
+    const inner = new InMemoryWorkflowPort({
+      definitions: [supervisorMessageV2WorkflowDefinition],
+      now: () => new Date(clock).toISOString(),
+    });
+    const foreignId = deriveSupervisorMessageV2WorkflowId(scope, "foreign");
+    const ledger = new MemoryLedger();
+    const delivered: string[] = [];
+    const providerDown = new Set<string>();
+    const coordinator = new SupervisorMessageV2Coordinator(
+      foreignPort(inner, new Set([foreignId])),
+      {
+        deliver(envelope) {
+          if (providerDown.has(envelope.target)) {
+            return Promise.resolve({
+              reason: "provider unavailable",
+              status: "transient-failure",
+            });
+          }
+          delivered.push(envelope.target);
+          return Promise.resolve({ status: "accepted" });
+        },
+      },
+      ledger,
+      OWNER,
+      () => new Date(clock)
+    );
+    // Recorded first, so it is visited before the healthy recipient.
+    ledger.starts.set(foreignId, {
+      input: inputFor("foreign", "supervisor:a-foreign"),
+      trustedScope: scope,
+    });
+    const logs: string[] = [];
+    const runner = new SupervisorMessageV2RecoveryRunner({
+      coordinator,
+      intervalMs: 1000,
+      log: (line) => logs.push(line),
+      timer: { clearInterval: () => undefined, setInterval: () => 1 },
+    });
+    return {
+      advance: (ms: number) => {
+        clock += ms;
+      },
+      coordinator,
+      delivered,
+      foreignId,
+      logs,
+      providerDown,
+      runner,
+    };
+  };
+
+  test("service-start recovery skips the foreign ID, recovers every other recipient, and says which ID and recipient", async () => {
+    const s = setup();
+    s.providerDown.add("supervisor:z-ready");
+    const pending = await s.coordinator.receive(
+      scope,
+      inputFor("pending", "supervisor:z-ready"),
+      "request:pending"
+    );
+    expect(pending.projection.phase).toBe("retry-scheduled");
+    s.providerDown.clear();
+    s.advance(500);
+
+    await s.runner.start();
+
+    expect(s.delivered).toEqual(["supervisor:z-ready"]);
+    const skipped = `V2 recovery skipped workflow ${s.foreignId} for supervisor:a-foreign: WorkflowError (conflict): workflow ${s.foreignId} already exists as ${FOREIGN_TYPE}`;
+    expect(s.logs).toEqual([skipped]);
+    // The next sweep still skips it, without repeating the same line.
+    expect(await s.runner.sweep()).toBe(0);
+    expect(s.logs).toEqual([skipped]);
+    await s.runner.close();
+  });
+
+  test("a direct recovery call still fails after recovering the other recipients", async () => {
+    const s = setup();
+    s.providerDown.add("supervisor:z-ready");
+    await s.coordinator.receive(
+      scope,
+      inputFor("pending", "supervisor:z-ready"),
+      "request:pending"
+    );
+    s.providerDown.clear();
+    s.advance(500);
+    await expect(s.coordinator.recoverPending()).rejects.toThrow(
+      `workflow ${s.foreignId} already exists as ${FOREIGN_TYPE}`
+    );
+    expect(s.delivered).toEqual(["supervisor:z-ready"]);
   });
 });

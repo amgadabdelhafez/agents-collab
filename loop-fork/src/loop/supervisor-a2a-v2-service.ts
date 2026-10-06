@@ -136,6 +136,16 @@ export interface SupervisorA2AV2ServiceOptions {
   /** Test-only override for partial-construction cleanup proof. */
   dependencies?: SupervisorA2AV2ServiceDependencies;
   dispatchOwner: string;
+  /**
+   * Registers, renews, or rebinds configured session descriptors through the
+   * governed session store before the runtime host starts ingress recovery.
+   * Recovery checks readiness for every pending delivery, so a descriptor that
+   * expired, or a seat that restarted, while the service was down must be
+   * current before that first sweep. A failure refuses start.
+   */
+  enrollSessions?(
+    sessions: SupervisorA2AV2SessionEnrollmentPort
+  ): Promise<void>;
   /** Existing V1 host dependencies. The factory adds the strict V2 pair. */
   host: Omit<
     TemporalSupervisorRuntimeOptions,
@@ -171,6 +181,12 @@ export interface SupervisorA2AV2ServiceOptions {
     target: SupervisorA2AResultArtifactTarget
   ): Promise<boolean>;
 }
+
+/** The governed session-store operations available to start-time enrollment. */
+export type SupervisorA2AV2SessionEnrollmentPort = Pick<
+  SupervisorA2AV2Service,
+  "currentSession" | "rebindSession" | "registerSession"
+>;
 
 export interface SupervisorA2AV2Service {
   assignmentRoute?: {
@@ -473,6 +489,16 @@ export const createSupervisorA2AV2Service = async (
       provider: options.providerReadiness,
     });
     await sessions.migrate();
+    if (options.enrollSessions) {
+      stage = "session-enrollment";
+      const store = sessions;
+      await options.enrollSessions({
+        currentSession: (scope, recipient) => store.current(scope, recipient),
+        rebindSession: (scope, descriptor) => store.rebind(scope, descriptor),
+        registerSession: (scope, descriptor) =>
+          store.register(scope, descriptor),
+      });
+    }
     const workflows = dependencies.createWorkflows(
       options.host.workflowClient,
       options.host.taskQueue
