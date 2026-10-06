@@ -5,6 +5,7 @@ import {
   type A2AV2EnrollmentOutcome,
   ConfiguredA2AV2SessionEnrollment,
   configuredA2AV2RebindAuthority,
+  createLoopOrchestrationFetchHandler,
   createOrchestrationSweep,
   enrollConfiguredA2AV2Session,
   parseLoopOrchestrationConfig,
@@ -642,4 +643,78 @@ test("orchestration sweep reports a peer that failed start-time enrollment as no
     failed,
     `orchestration A2A V2 session enrollment recovered for ${peer}`,
   ]);
+});
+
+test("orchestration sweep exposes which seats are not enrolled, from start until each one is enrolled", async () => {
+  const recipient = "supervisor:harness";
+  const peer = "supervisor:harness-peer";
+  const down = (seat: string): A2AV2EnrollmentOutcome => ({
+    error: new Error(`${seat} unavailable`),
+    recipient: seat,
+    state: "failed",
+  });
+  const passes: A2AV2EnrollmentOutcome[][] = [
+    // A seat waiting out its retry delay is still not enrolled.
+    [down(recipient), { recipient: peer, state: "deferred" }],
+    [
+      { recipient, state: "enrolled" },
+      { recipient: peer, state: "enrolled" },
+    ],
+  ];
+  const states: string[][] = [];
+  const sweep = createOrchestrationSweep({
+    enrollment: {
+      maintain: () => Promise.resolve(passes.shift() ?? []),
+    },
+    log: () => undefined,
+    reconcilers: [],
+    setHealthy: () => undefined,
+    setNotEnrolled: (seats) => states.push([...seats]),
+    startOutcomes: [{ recipient, state: "enrolled" }, down(peer)],
+  });
+  // Known before the first tick, so /healthz shows a degraded start at once.
+  expect(states).toEqual([[peer]]);
+  await sweep();
+  await yieldTurn();
+  expect(states.at(-1)).toEqual([recipient, peer].sort());
+  await sweep();
+  await yieldTurn();
+  expect(states.at(-1)).toEqual([]);
+});
+
+test("/healthz lists the seats that are not enrolled beside an unchanged ready state", async () => {
+  let notEnrolled: readonly string[] = ["supervisor:harness-peer"];
+  const host = {
+    httpHandler: () => () => Promise.resolve(new Response(null)),
+    workerState: () => "RUNNING" as const,
+  };
+  const handler = createLoopOrchestrationFetchHandler({
+    authenticator: {} as never,
+    host: host as never,
+    notEnrolledSeats: () => notEnrolled,
+    reconciliationHealthy: () => true,
+  });
+  const health = async (fetchHandler: typeof handler) =>
+    (await fetchHandler(new Request("http://127.0.0.1/healthz"))).json();
+  expect(await health(handler)).toEqual({
+    notEnrolled: ["supervisor:harness-peer"],
+    schema: "loop-orchestration-health.v1",
+    state: "ready",
+  });
+  notEnrolled = [];
+  expect(await health(handler)).toEqual({
+    notEnrolled: [],
+    schema: "loop-orchestration-health.v1",
+    state: "ready",
+  });
+  // A server without A2A V2 enrollment has no seats to report.
+  const plain = createLoopOrchestrationFetchHandler({
+    authenticator: {} as never,
+    host: host as never,
+    reconciliationHealthy: () => true,
+  });
+  expect(await health(plain)).toEqual({
+    schema: "loop-orchestration-health.v1",
+    state: "ready",
+  });
 });

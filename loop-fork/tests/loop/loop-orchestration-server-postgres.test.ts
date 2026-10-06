@@ -512,6 +512,10 @@ const sessionDescriptor = (
   tenantId: config.tenant,
 });
 
+/** The server's /healthz body. */
+const health = async (fixture: { port: number }): Promise<unknown> =>
+  (await fetch(`http://127.0.0.1:${fixture.port}/healthz`)).json();
+
 /** Runs the real server; `ready` is "ready" or why it never got there. */
 const startServer = (
   fixture: ReturnType<typeof compositionFixture>,
@@ -658,6 +662,12 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
     expect(lines()).toContain(
       `orchestration A2A V2 session enrollment failed for ${PEER}: configured A2A V2 recipient session is unavailable`
     );
+    // /healthz stays ready for the live recipient and names the peer.
+    expect(await health(fixture)).toEqual({
+      notEnrolled: [PEER],
+      schema: "loop-orchestration-health.v1",
+      state: "ready",
+    });
     // The peer's Claude session comes up while the server runs: the existing
     // reconciliation sweep enrolls it after its retry delay, no restart.
     fixture.writeSeat("thread-a", "claude-peer-session");
@@ -679,11 +689,100 @@ test("the orchestration server starts with a stopped peer seat, reports it not e
           : undefined
       )
     );
+    expect(await health(fixture)).toEqual({
+      notEnrolled: [],
+      schema: "loop-orchestration-health.v1",
+      state: "ready",
+    });
   } finally {
     stop.abort();
     await running?.catch(() => undefined);
     errors.mockRestore();
     await admin.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("a V2 delivery pending for a stopped peer at start neither refuses start nor reaches the provider: it spends one attempt on the readiness refusal", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const fixture = compositionFixture({
+    address: environment.address,
+    peer: true,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const [fixtureV2] = supervisorMessageV2ReplayFixtures;
+  if (!fixtureV2) {
+    throw new Error("missing V2 fixture");
+  }
+  const scope = scopeOf(config);
+  const dedupeKey = `peer-pending-${randomUUID().slice(0, 8)}`;
+  const workflowId = deriveSupervisorMessageV2WorkflowId(scope, dedupeKey);
+  const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl()
+  );
+  const errors = spyOn(console, "error");
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    await ledger.migrate();
+    // Accepted for the peer while the server was down; still pending.
+    await ledger.recordStartIntent(workflowId, scope, {
+      ...structuredClone(fixtureV2.input),
+      dedupeKey,
+      from: "supervisor:sender",
+      messageId: `message-${dedupeKey}`,
+      policy: {
+        claimTimeoutMs: 60_000,
+        escalationTimeoutMs: 120_000,
+        maxDeliveryAttempts: 3,
+        // Long enough that only start-time recovery attempts it here.
+        retryDelayMs: 600_000,
+      },
+      principal: scope.principal,
+      receivedAt: new Date().toISOString(),
+      tenantId: scope.tenantId,
+      threadId: `thread-${dedupeKey}`,
+      to: PEER,
+    });
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    const status = await waitFor("the start-time attempt", async () => {
+      const result = (await environment.client.workflow
+        .getHandle(workflowId)
+        .query("workflow-port-query", "status", { trustedScope: scope })
+        .catch(() => undefined)) as
+        | { value?: { deliveryAttempts?: number } }
+        | undefined;
+      return (result?.value?.deliveryAttempts ?? 0) >= 1
+        ? result?.value
+        : undefined;
+    });
+    expect(status).toMatchObject({
+      deadLetteredAt: null,
+      deliveredAt: null,
+      deliveryAttempts: 1,
+      phase: "retry-scheduled",
+      to: PEER,
+    });
+    // The record was recovered, not skipped: no recovery failure for it.
+    expect(
+      errors.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes(workflowId))
+    ).toEqual([]);
+    expect(await health(fixture)).toMatchObject({ notEnrolled: [PEER] });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
+    await environment.client.workflow
+      .getHandle(workflowId)
+      .terminate()
+      .catch(() => undefined);
+    await ledger.close();
     fixture.remove();
   }
 }, 120_000);

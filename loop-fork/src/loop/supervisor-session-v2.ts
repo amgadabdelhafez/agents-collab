@@ -35,11 +35,18 @@ export const SUPERVISOR_SESSION_READINESS_CLOCK_SKEW_MS = 5000;
  * Receipt retention for one seat (one descriptor). Every renewal writes a
  * rebind receipt, and readiness receipts are keyed by revision, so both tables
  * grow with each renewal for as long as a seat lives. A receipt is kept while
- * it is among the seat's latest `keepLatest` (by revision) or younger than
- * `keepNewerThanMs` (by its row's `created_at`, database clock); anything else
- * is pruned in the same transaction as the seat's next rebind. There is no
- * separate scheduler: rows are only ever added by a rebind, or by a probe of
- * the revision a rebind wrote, so pruning on rebind bounds both tables.
+ * it is among the seat's latest `keepLatest` or younger than
+ * `keepNewerThanMs`, both by its row's `created_at` (database clock); anything
+ * else is pruned in the same transaction as the seat's next rebind. There is
+ * no separate scheduler: rows are only ever added by a rebind, or by a probe
+ * of the revision a rebind wrote, so pruning on rebind bounds both tables.
+ *
+ * Ranking reads only typed columns, never `receipt_json`, so a stored receipt
+ * of any shape (one written out of band included) cannot fail a renewal; it
+ * ages out like any other. Within one descriptor lifetime write order is
+ * revision order. A rebind that rewrites a receipt id left by an earlier
+ * lifetime of a re-registered descriptor resets that row's `created_at`, so
+ * the earlier lifetime's leftovers rank below the receipts it just wrote.
  *
  * Existing rows are not migrated: a seat's backlog is pruned by that seat's
  * first rebind after upgrade. Receipts of a seat that is never rebound again
@@ -51,6 +58,14 @@ export interface SupervisorSessionReceiptRetentionV2 {
 }
 export const SUPERVISOR_SESSION_RECEIPT_RETENTION_DEFAULT: SupervisorSessionReceiptRetentionV2 =
   Object.freeze({ keepLatest: 16, keepNewerThanMs: 7 * 24 * 60 * 60 * 1000 });
+/**
+ * The longest accepted `keepNewerThanMs`: 100 years of 365 days. A "keep
+ * forever" value past this (such as Number.MAX_SAFE_INTEGER, ~285,000 years)
+ * would put the window's start before the earliest timestamp the database can
+ * hold, and every renewal would fail on it.
+ */
+export const SUPERVISOR_SESSION_RECEIPT_RETENTION_MAX_WINDOW_MS =
+  100 * 365 * 24 * 60 * 60 * 1000;
 
 export type SupervisorSessionProviderV2 =
   | "claude-code"
@@ -227,7 +242,9 @@ const requireReceiptRetention = (
       Number.isSafeInteger(keepLatest) &&
       Number(keepLatest) >= 1 &&
       Number.isSafeInteger(keepNewerThanMs) &&
-      Number(keepNewerThanMs) >= 0
+      Number(keepNewerThanMs) >= 0 &&
+      Number(keepNewerThanMs) <=
+        SUPERVISOR_SESSION_RECEIPT_RETENTION_MAX_WINDOW_MS
     )
   ) {
     throw new SupervisorSessionV2Error("receiptRetention is invalid");
@@ -614,6 +631,12 @@ export class PostgresSupervisorSessionV2Store {
       )
     `;
     // Additive: lets a rebind prune its own seat's receipts without a scan.
+    // The first migrate after upgrade builds each index with a plain CREATE
+    // INDEX, which holds a SHARE lock on that receipt table until the build
+    // ends: receipt writes (renewals, probes) from any process sharing the
+    // database wait for it. Tables grown without a bound before this change
+    // make that wait longest. CONCURRENTLY is not used: a failed concurrent
+    // build leaves an INVALID index that IF NOT EXISTS would then keep.
     await this.#sql`
       CREATE INDEX IF NOT EXISTS loop_supervisor_session_v2_rebind_receipt_seat_idx
       ON loop_supervisor_session_v2_rebind_receipt (tenant_id, principal, descriptor_id)
@@ -738,13 +761,18 @@ export class PostgresSupervisorSessionV2Store {
           "session rebind lost the current revision"
         );
       }
+      // The id can only already exist when an earlier lifetime of a
+      // re-registered descriptor made the same transition. That stored
+      // receipt is kept as it was; only its write time moves to now, so
+      // retention ranks it as this renewal's receipt (see the retention type).
       await sql`
       INSERT INTO loop_supervisor_session_v2_rebind_receipt (
         receipt_id, descriptor_id, tenant_id, principal, receipt_json
       ) VALUES (
         ${receipt.receiptId}, ${receipt.descriptorId}, ${scope.tenantId},
         ${scope.principal}, ${canonical(receipt)}::jsonb
-      ) ON CONFLICT (receipt_id) DO NOTHING
+      ) ON CONFLICT (receipt_id) DO UPDATE
+        SET created_at = now()
     `;
       // A renewal of the same provider session must not drop a dependent
       // DAG gate to not-ready until the next delivery probes it.
@@ -764,7 +792,7 @@ export class PostgresSupervisorSessionV2Store {
    * succeeds and the seat reads not-ready until its next probe. A leftover
    * receipt already stored under the renewed revision's id (left by an
    * earlier lifetime of a re-registered descriptor) is replaced, as a probe
-   * replaces it.
+   * replaces it, and its `created_at` reset so retention ranks it as new.
    */
   async #carryReadiness(
     sql: SQL,
@@ -809,7 +837,7 @@ export class PostgresSupervisorSessionV2Store {
         ${carried.receiptId}, ${carried.descriptorId}, ${scope.tenantId},
         ${scope.principal}, ${canonical(carried)}::jsonb
       ) ON CONFLICT (receipt_id) DO UPDATE
-        SET receipt_json = EXCLUDED.receipt_json
+        SET receipt_json = EXCLUDED.receipt_json, created_at = now()
     `;
   }
 
@@ -820,9 +848,8 @@ export class PostgresSupervisorSessionV2Store {
     descriptorId: string
   ): Promise<void> {
     const { keepLatest, keepNewerThanMs } = this.#receiptRetention;
-    // Receipts are stored as a JSONB string holding the canonical JSON text
-    // (how the driver binds a string to `::jsonb`); `#>> '{}'` then `::jsonb`
-    // reads the revision from that shape and from a JSONB object alike.
+    // Ranked by typed columns only: no cast of `receipt_json`, whose stored
+    // shape a renewal must never depend on.
     await sql`
       DELETE FROM loop_supervisor_session_v2_rebind_receipt
       WHERE tenant_id = ${scope.tenantId}
@@ -834,7 +861,7 @@ export class PostgresSupervisorSessionV2Store {
           WHERE tenant_id = ${scope.tenantId}
             AND principal = ${scope.principal}
             AND descriptor_id = ${descriptorId}
-          ORDER BY ((receipt_json #>> '{}')::jsonb->>'toRevision')::bigint DESC NULLS LAST
+          ORDER BY created_at DESC
           LIMIT ${keepLatest}
         )
     `;
@@ -849,7 +876,7 @@ export class PostgresSupervisorSessionV2Store {
           WHERE tenant_id = ${scope.tenantId}
             AND principal = ${scope.principal}
             AND descriptor_id = ${descriptorId}
-          ORDER BY ((receipt_json #>> '{}')::jsonb->>'descriptorRevision')::bigint DESC NULLS LAST
+          ORDER BY created_at DESC
           LIMIT ${keepLatest}
         )
     `;

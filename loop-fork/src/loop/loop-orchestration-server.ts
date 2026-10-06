@@ -195,6 +195,14 @@ export interface LoopOrchestrationFetchHandlerOptions {
   >;
   authenticator: SupervisorControlSurfaceAuthenticator;
   host: Pick<TemporalSupervisorRuntimeHost, "httpHandler" | "workerState">;
+  /**
+   * The configured A2A V2 seats that are not enrolled now (a peer degraded
+   * at start, or any seat whose enrollment failed since). Reported on
+   * /healthz as `notEnrolled`; it does not change `state`, which stays about
+   * the server itself. The server always supplies it (an empty list when it
+   * enrolls no A2A V2 seats); the field is left out only when it is not.
+   */
+  notEnrolledSeats?: () => readonly string[];
   reconciliationHealthy: () => boolean;
 }
 
@@ -212,6 +220,9 @@ export const createLoopOrchestrationFetchHandler = (
     if (request.method === "GET" && url.pathname === "/healthz") {
       return Promise.resolve(
         Response.json({
+          ...(options.notEnrolledSeats
+            ? { notEnrolled: [...options.notEnrolledSeats()] }
+            : {}),
           schema: "loop-orchestration-health.v1",
           state:
             options.host.workerState() === "RUNNING" &&
@@ -861,8 +872,11 @@ export type A2AV2EnrollmentOutcome =
  * Start-time verdict on the first `maintain()` pass. Only the configured
  * recipient's own failure refuses start, with its own cause. A peer seat that
  * cannot be enrolled (for example, stopped) degrades that seat alone: the
- * server starts, the sweep reports the peer as not enrolled and retries it.
- * Until then the peer's deliveries meet the store's ordinary readiness refusal.
+ * server starts, the sweep reports the peer as not enrolled (a log line, and
+ * /healthz `notEnrolled`) and retries it. Until then the peer's deliveries
+ * meet the store's ordinary readiness refusal before any provider call, and
+ * each refusal spends one of that message's delivery attempts, as it does for
+ * a peer that stops while the server runs.
  */
 export const requireA2AV2Enrollment = (
   outcomes: readonly A2AV2EnrollmentOutcome[],
@@ -989,6 +1003,12 @@ export const createOrchestrationSweep = (input: {
   log: (line: string) => void;
   reconcilers: readonly { reconcile(): Promise<unknown> }[];
   setHealthy: (healthy: boolean) => void;
+  /**
+   * Receives the seats not enrolled now, sorted, after the start-time pass
+   * and after every later pass: a seat whose last attempt failed, including
+   * while it waits out its retry delay, until a pass enrolls it.
+   */
+  setNotEnrolled?: (recipients: readonly string[]) => void;
   /** The start-time pass, so a peer that start degraded is reported now. */
   startOutcomes?: readonly A2AV2EnrollmentOutcome[];
 }): (() => Promise<void>) => {
@@ -1014,6 +1034,7 @@ export const createOrchestrationSweep = (input: {
         );
       }
     }
+    input.setNotEnrolled?.([...reportedFailures.keys()].sort());
   };
   report(input.startOutcomes ?? []);
   const enroll = (
@@ -1310,6 +1331,7 @@ export const runLoopOrchestrationServer = async (
   let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   let reconciliationHealthy = false;
+  let notEnrolled: readonly string[] = [];
   try {
     if (a2aV2Service) {
       host = a2aV2Service.host;
@@ -1367,6 +1389,9 @@ export const runLoopOrchestrationServer = async (
       reconcilers: [reconciler, mailboxReconciler],
       setHealthy: (healthy) => {
         reconciliationHealthy = healthy;
+      },
+      setNotEnrolled: (seats) => {
+        notEnrolled = seats;
       },
       startOutcomes: a2aV2StartOutcomes,
     });
@@ -1447,6 +1472,7 @@ export const runLoopOrchestrationServer = async (
       a2aV2Service,
       authenticator: authenticator(config, env),
       host,
+      notEnrolledSeats: () => notEnrolled,
       reconciliationHealthy: () => reconciliationHealthy,
     });
     const server = serve({

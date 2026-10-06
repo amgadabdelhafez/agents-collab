@@ -4,6 +4,7 @@ import { SQL } from "bun";
 import {
   deriveSupervisorSessionDescriptorV2Id,
   PostgresSupervisorSessionV2Store,
+  SUPERVISOR_SESSION_RECEIPT_RETENTION_MAX_WINDOW_MS,
   type SupervisorSessionDescriptorV2,
   type SupervisorSessionProviderReadinessPort,
 } from "../../src/loop/supervisor-session-v2";
@@ -177,16 +178,19 @@ const plantForeignRows = async (owner: Scope, recipient: string) => {
   };
 };
 
-/** Backdates every receipt of the scope, as if written `ageMs` ago. */
+/**
+ * Backdates every receipt of the scope by `ageMs`, keeping the order they
+ * were written in (retention ranks a seat's receipts by write time).
+ */
 const age = async (owner: Scope, ageMs: number) => {
   await admin`
     UPDATE loop_supervisor_session_v2_rebind_receipt
-    SET created_at = now() - (${ageMs}::bigint * interval '1 millisecond')
+    SET created_at = created_at - (${ageMs}::bigint * interval '1 millisecond')
     WHERE tenant_id = ${owner.tenantId}
   `;
   await admin`
     UPDATE loop_supervisor_session_v2_readiness_receipt
-    SET created_at = now() - (${ageMs}::bigint * interval '1 millisecond')
+    SET created_at = created_at - (${ageMs}::bigint * interval '1 millisecond')
     WHERE tenant_id = ${owner.tenantId}
   `;
 };
@@ -230,7 +234,7 @@ test("PostgreSQL: a renewal prunes a seat's receipts older than the window beyon
     await age(owner, 2 * HOUR);
     const foreignRows = await plantForeignRows(owner, seat);
     // The next renewal of one seat prunes that seat's backlog to the latest
-    // three (by revision), the new receipt included.
+    // three (by write time), the new receipt included.
     await store.rebind(
       owner,
       descriptor(owner, seat, { issuedAtMs: START + 8000, revision: 8 })
@@ -292,6 +296,12 @@ test("PostgreSQL: receipt retention refuses a policy that would keep no receipt"
     { keepLatest: 3, keepNewerThanMs: Number.NaN },
     { keepLatest: Number.NaN, keepNewerThanMs: HOUR },
     { keepLatest: 3, keepNewerThanMs: 0.5 },
+    // A "keep forever" window past what a database timestamp can subtract.
+    { keepLatest: 3, keepNewerThanMs: Number.MAX_SAFE_INTEGER },
+    {
+      keepLatest: 3,
+      keepNewerThanMs: SUPERVISOR_SESSION_RECEIPT_RETENTION_MAX_WINDOW_MS + 1,
+    },
     null as never,
   ]) {
     await expect(connect({ receiptRetention })).rejects.toThrow(
@@ -309,6 +319,178 @@ test("PostgreSQL: receipt retention refuses a policy that would keep no receipt"
     ).rejects.toThrow("receiptRetention is invalid");
   }
 });
+
+test("PostgreSQL: the longest accepted retention window still renews and prunes nothing", async () => {
+  const owner = scope();
+  const seat = "supervisor:retention-longest";
+  const store = await connect({
+    receiptRetention: {
+      keepLatest: 1,
+      keepNewerThanMs: SUPERVISOR_SESSION_RECEIPT_RETENTION_MAX_WINDOW_MS,
+    },
+  });
+  try {
+    await renewRepeatedly(store, owner, seat, 3);
+    await age(owner, 365 * 24 * HOUR);
+    await store.rebind(
+      owner,
+      descriptor(owner, seat, { issuedAtMs: START + 9000, revision: 5 })
+    );
+    expect((await store.current(owner, seat))?.revision).toBe(5);
+    expect(await rebindRevisions(owner, seat)).toEqual([2, 3, 4, 5]);
+  } finally {
+    await store.close();
+  }
+}, 60_000);
+
+const RECEIPT_TABLES = {
+  readiness: {
+    field: "descriptorRevision",
+    name: "loop_supervisor_session_v2_readiness_receipt",
+  },
+  rebind: {
+    field: "toRevision",
+    name: "loop_supervisor_session_v2_rebind_receipt",
+  },
+} as const;
+
+/**
+ * Plants, in a seat's own scope and in both receipt tables, receipts that no
+ * store code writes: a JSONB string that is not JSON text, string-shaped
+ * JSON with a non-numeric revision, and objects whose revision is fractional
+ * or past bigint. Returns a live count of the planted rows.
+ */
+const plantMalformedRows = async (
+  owner: Scope,
+  recipient: string,
+  createdAgoMs: number
+) => {
+  const id = deriveSupervisorSessionDescriptorV2Id(owner, recipient);
+  for (const { field, name } of Object.values(RECEIPT_TABLES)) {
+    for (const shape of [
+      "to_jsonb('not json'::text)",
+      `to_jsonb('{"${field}":"x"}'::text)`,
+      `'{"${field}":1.5}'::jsonb`,
+      `'{"${field}":1e30}'::jsonb`,
+    ]) {
+      await admin.unsafe(
+        `INSERT INTO ${name}
+           (receipt_id, descriptor_id, tenant_id, principal, receipt_json, created_at)
+         VALUES ($1, $2, $3, $4, ${shape},
+           now() - ($5::bigint * interval '1 millisecond'))`,
+        [
+          `malformed-${randomUUID()}`,
+          id,
+          owner.tenantId,
+          owner.principal,
+          createdAgoMs,
+        ]
+      );
+    }
+  }
+  return async () => {
+    const [row] = await admin<{ count: number }[]>`
+      SELECT (
+        (SELECT count(*) FROM loop_supervisor_session_v2_rebind_receipt
+          WHERE descriptor_id = ${id} AND receipt_id LIKE 'malformed-%')
+        +
+        (SELECT count(*) FROM loop_supervisor_session_v2_readiness_receipt
+          WHERE descriptor_id = ${id} AND receipt_id LIKE 'malformed-%')
+      )::int AS count
+    `;
+    return row?.count;
+  };
+};
+
+test("PostgreSQL: a malformed stored receipt never blocks a seat's renewal, and ages out like any other", async () => {
+  const owner = scope();
+  const seat = "supervisor:retention-malformed";
+  const store = await connect({
+    receiptRetention: { keepLatest: 2, keepNewerThanMs: HOUR },
+  });
+  try {
+    await renewRepeatedly(store, owner, seat, 1);
+    const malformedOld = await plantMalformedRows(owner, seat, 2 * HOUR);
+    expect(await malformedOld()).toBe(8);
+    // The renewal succeeds and keeps readiness. The old malformed rows are
+    // past the window and not among the latest two, so they are pruned.
+    await store.rebind(
+      owner,
+      descriptor(owner, seat, { issuedAtMs: START + 3000, revision: 3 })
+    );
+    expect(await store.current(owner, seat)).toMatchObject({ revision: 3 });
+    expect((await store.status(owner, seat))?.ready).toBe(true);
+    expect(await malformedOld()).toBe(0);
+    expect(await rebindRevisions(owner, seat)).toEqual([2, 3]);
+    // Recent malformed rows are inside the window: kept, and still harmless.
+    const malformedNew = await plantMalformedRows(owner, seat, 0);
+    await store.rebind(
+      owner,
+      descriptor(owner, seat, { issuedAtMs: START + 4000, revision: 4 })
+    );
+    expect(await store.current(owner, seat)).toMatchObject({ revision: 4 });
+    expect((await store.status(owner, seat))?.ready).toBe(true);
+    expect(await malformedNew()).toBe(8);
+  } finally {
+    await store.close();
+  }
+}, 60_000);
+
+test("PostgreSQL: a re-registered descriptor's renewal keeps its fresh receipts ahead of an earlier lifetime's leftovers", async () => {
+  const owner = scope();
+  const seat = "supervisor:retention-relifetime";
+  const id = deriveSupervisorSessionDescriptorV2Id(owner, seat);
+  const clock = { ms: START };
+  const store = await connect({
+    clock,
+    receiptRetention: { keepLatest: 2, keepNewerThanMs: HOUR },
+  });
+  try {
+    // The first lifetime reaches revision 4, probed on every revision.
+    await renewRepeatedly(store, owner, seat, 3);
+    // The descriptor row is removed by hand; its receipts stay behind.
+    await admin`
+      DELETE FROM loop_supervisor_session_v2_descriptor
+      WHERE descriptor_id = ${id}
+    `;
+    // Every leftover is past the window. Revision 2's receipts, whose ids the
+    // second lifetime's first renewal reuses, are the oldest; revisions 3 and
+    // 4 are newer and above any revision the second lifetime reaches here.
+    for (const { field, name } of Object.values(RECEIPT_TABLES)) {
+      await admin.unsafe(
+        `UPDATE ${name}
+         SET created_at = now() - CASE
+           WHEN ((receipt_json #>> '{}')::jsonb->>'${field}')::int = 2
+           THEN interval '3 hours' ELSE interval '2 hours' END
+         WHERE descriptor_id = $1`,
+        [id]
+      );
+    }
+    // The second lifetime: probed on revision 1, then renewed onto 2.
+    clock.ms = START + 120_000;
+    await store.register(owner, descriptor(owner, seat, { revision: 1 }));
+    await store.assertReady(owner, seat);
+    const renewed = await store.rebind(
+      owner,
+      descriptor(owner, seat, { issuedAtMs: clock.ms, revision: 2 })
+    );
+    clock.ms += 10_000;
+    // The carried readiness receipt and the renewal's own rebind receipt
+    // survive the prune that runs in the same transaction.
+    expect(await store.status(owner, seat)).toMatchObject({
+      ready: true,
+      revision: 2,
+    });
+    const [kept] = await admin<{ count: number }[]>`
+      SELECT count(*)::int AS count
+      FROM loop_supervisor_session_v2_rebind_receipt
+      WHERE receipt_id = ${renewed.receipt.receiptId}
+    `;
+    expect(kept?.count).toBe(1);
+  } finally {
+    await store.close();
+  }
+}, 60_000);
 
 test("PostgreSQL: migrate indexes both receipt tables by seat for retention", async () => {
   const store = await connect();
@@ -393,6 +575,22 @@ test("PostgreSQL: a renewal with an unreadable or absent readiness receipt succe
     `;
     await store.rebind(owner, descriptor(owner, corrupt, { revision: 2 }));
     expect(await store.status(owner, corrupt)).toMatchObject({
+      readinessReceiptId: null,
+      ready: false,
+      revision: 2,
+    });
+    // Unreadable as JSON at all: a JSONB string that is not JSON text.
+    const garbage = "supervisor:renewal-garbage";
+    await store.register(owner, descriptor(owner, garbage, { revision: 1 }));
+    await store.assertReady(owner, garbage);
+    await admin`
+      UPDATE loop_supervisor_session_v2_readiness_receipt
+      SET receipt_json = to_jsonb('not json'::text)
+      WHERE descriptor_id = ${deriveSupervisorSessionDescriptorV2Id(owner, garbage)}
+        AND tenant_id = ${owner.tenantId}
+    `;
+    await store.rebind(owner, descriptor(owner, garbage, { revision: 2 }));
+    expect(await store.status(owner, garbage)).toMatchObject({
       readinessReceiptId: null,
       ready: false,
       revision: 2,
