@@ -60,6 +60,7 @@ const workflowsWith = (
     presenceOf?: (workflowId: string, call: number) => WorkflowPresence;
     /** An error `start` throws for this ID instead of starting it. */
     startError?: (workflowId: string) => Error | undefined;
+    /** The status answer; a V2 execution's always carries its schema. */
     status?: (workflowId: string) => Record<string, unknown>;
     withoutPresence?: boolean;
   } = {}
@@ -90,12 +91,17 @@ const workflowsWith = (
       value:
         command.name === "delivery_pending"
           ? false
-          : ((options.status?.(command.workflowId) ?? {
-              deliveredAt: null,
-              deliveryAttempts: 0,
-              nextRetryAt: null,
-              phase: "routed",
-            }) as never),
+          : ({
+              // What every V2 execution answers with; a status override may
+              // replace it to model another workflow type under the ID.
+              schema: "supervisor-message-status.v2",
+              ...(options.status?.(command.workflowId) ?? {
+                deliveredAt: null,
+                deliveryAttempts: 0,
+                nextRetryAt: null,
+                phase: "routed",
+              }),
+            } as never),
       workflowId: command.workflowId,
     }),
     signal: (command) => {
@@ -726,6 +732,41 @@ describe("SupervisorMessage V2 recovery failure classification", () => {
         workflowId: WORKFLOW_ID,
       },
     ]);
+  });
+
+  test("a CLOSED execution of another workflow type on this deployment's own queue is failed, and records no outcome", async () => {
+    // Presence only proves the execution is on this deployment's queue. A
+    // closed one of another type answers "status" with its own state, which
+    // must never be recorded as this message's terminal outcome.
+    const workflows = workflowsWith("closed", {
+      status: (workflowId) =>
+        workflowId === WORKFLOW_ID
+          ? { graphId: "graph", schema: "task-graph-status.v1" }
+          : {
+              deliveredAt: null,
+              deliveryAttempts: 1,
+              nextRetryAt: null,
+              phase: "acknowledged",
+            },
+    });
+    const { ledger, terminal } = twoRecords();
+    const reports: { kind: string; message: string; workflowId: string }[] = [];
+    await coordinator(workflows.port, ledger).recoverPending((failure) => {
+      reports.push({
+        kind: failure.kind,
+        message: (failure.error as Error).message,
+        workflowId: failure.workflowId,
+      });
+    });
+    expect(reports).toEqual([
+      {
+        kind: "failed",
+        message: `workflow ${WORKFLOW_ID} is not a supervisor-message.v2 execution`,
+        workflowId: WORKFLOW_ID,
+      },
+    ]);
+    expect([...terminal]).toEqual([[OTHER_WORKFLOW_ID, "acknowledged"]]);
+    expect(workflows.starts).toEqual([]);
   });
 
   test("a conflict at the presence check that names no other task queue is failed, not foreign", async () => {
