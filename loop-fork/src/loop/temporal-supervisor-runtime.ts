@@ -61,11 +61,23 @@ export interface TemporalSupervisorRuntimeOptions {
 const SAFE_RUNTIME_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
 
 const requireRuntimeName = (value: string, field: string): string => {
-  if (!SAFE_RUNTIME_NAME_RE.test(value)) {
+  // `RegExp.test` coerces: an absent value would pass as "undefined".
+  if (typeof value !== "string" || !SAFE_RUNTIME_NAME_RE.test(value)) {
     throw new Error(`Temporal supervisor ${field} is invalid`);
   }
   return value;
 };
+
+/** The namespace a Temporal `WorkflowClient` was constructed for, if any. */
+const clientNamespace = (client: unknown): unknown =>
+  typeof client === "object" &&
+  client !== null &&
+  "options" in client &&
+  typeof client.options === "object" &&
+  client.options !== null &&
+  "namespace" in client.options
+    ? client.options.namespace
+    : undefined;
 
 const requireWorkflowPath = (value: string): string => {
   if (!(value && value.length <= 4096 && !value.includes("\0"))) {
@@ -193,6 +205,13 @@ export class TemporalSupervisorRuntimeHost {
     const workflows =
       options.workflowPort ??
       new TemporalWorkflowPort(options.workflowClient, { taskQueue });
+    // The task queue is this deployment's discriminator: the port starts and
+    // adopts executions only on it, so it must be the queue this worker polls.
+    if (workflows.taskQueue !== taskQueue) {
+      throw new Error(
+        "Temporal supervisor workflowPort task queue does not match its worker"
+      );
+    }
     const coordinator = new SupervisorMessageCoordinator(
       workflows,
       options.delivery
@@ -214,12 +233,20 @@ export class TemporalSupervisorRuntimeHost {
     ) {
       throw new Error("Temporal supervisor workflowExecution is invalid");
     }
+    const namespace = requireRuntimeName(options.namespace, "namespace");
+    // Workflow IDs are unique per namespace. A client in another namespace
+    // would start executions this worker never runs and read foreign ones.
+    if (clientNamespace(options.workflowClient) !== namespace) {
+      throw new Error(
+        "Temporal supervisor workflowClient namespace does not match its worker"
+      );
+    }
     const worker = await Worker.create({
       buildId: requireRuntimeName(options.buildId, "buildId"),
       connection: options.nativeConnection as NativeConnection,
       debugMode: workflowExecution === "in-process",
       identity: requireRuntimeName(options.identity, "identity"),
-      namespace: requireRuntimeName(options.namespace, "namespace"),
+      namespace,
       taskQueue,
       ...workflowSource,
     });

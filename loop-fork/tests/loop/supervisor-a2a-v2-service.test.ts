@@ -224,7 +224,7 @@ const serviceOptions = (input: {
       deliver: () => Promise.resolve({ status: "accepted" as const }),
     },
     identity: "supervisor-a2a-v2-service-test",
-    namespace: input.environment.namespace,
+    namespace: input.environment.client.workflow.options.namespace,
     nativeConnection: input.environment.nativeConnection,
     receipts: { record: () => undefined },
     store: new JsonlSupervisorThreadStore(join(input.root, "threads.jsonl")),

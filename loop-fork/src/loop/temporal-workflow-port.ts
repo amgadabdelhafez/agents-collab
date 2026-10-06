@@ -38,6 +38,8 @@ export interface TemporalWorkflowPortOptions {
 const sleep = (durationMs: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, durationMs));
 
+const TASK_QUEUE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:@-]{0,255}$/;
+
 export class TemporalWorkflowPort implements WorkflowPort {
   readonly #client: WorkflowClient;
   readonly #observationAttempts: number;
@@ -46,11 +48,22 @@ export class TemporalWorkflowPort implements WorkflowPort {
   readonly #taskQueue: string;
 
   constructor(client: unknown, options: TemporalWorkflowPortOptions) {
+    if (
+      typeof options.taskQueue !== "string" ||
+      !TASK_QUEUE_RE.test(options.taskQueue)
+    ) {
+      throw new Error("Temporal workflow port taskQueue is invalid");
+    }
     this.#client = client as WorkflowClient;
     this.#taskQueue = options.taskQueue;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#observationAttempts = options.commandObservationAttempts ?? 200;
     this.#observationDelayMs = options.commandObservationDelayMs ?? 5;
+  }
+
+  /** The deployment discriminator: the queue this port starts and adopts. */
+  get taskQueue(): string {
+    return this.#taskQueue;
   }
 
   cancel(command: WorkflowCancelCommand): Promise<WorkflowCommandReceipt> {

@@ -98,6 +98,12 @@ export interface WorkflowPort {
     command: WorkflowSignalCommand
   ): WorkflowResult<WorkflowCommandReceipt>;
   start(command: WorkflowStartCommand): WorkflowResult<WorkflowStartReceipt>;
+  /**
+   * The deployment discriminator an engine-backed port starts executions on
+   * and requires of an execution it adopts. A host composes a port only with
+   * a worker polling this same queue.
+   */
+  readonly taskQueue?: string;
 }
 
 export type WorkflowErrorCode =
