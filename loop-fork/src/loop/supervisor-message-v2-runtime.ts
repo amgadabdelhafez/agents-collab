@@ -17,6 +17,7 @@ import {
   type JsonObject,
   type WorkflowDefinition,
   WorkflowError,
+  WorkflowForeignExecutionError,
   type WorkflowPort,
   type WorkflowPresence,
   type WorkflowTransitionResult,
@@ -214,29 +215,91 @@ export interface SupervisorMessageV2RecoveryPort {
 }
 
 /**
- * One recorded start that a recovery sweep could not recover.
- * `foreign-execution`: the workflow ID is held by an execution this
- * deployment does not own (another task queue or another workflow type), as
- * raised by the port's start or presence check for that ID. `failed`: any
- * other failure for this record, including a PostgreSQL error and a conflict
- * raised by any later step.
+ * One recorded start that a recovery sweep did not recover.
+ * `foreign-execution`: the workflow ID is held by an execution on another
+ * task queue, another deployment's, as raised by the port's start or presence
+ * check for that ID. `quarantined`: an operator quarantined the record
+ * (`quarantine` says who, when and why; `error` is undefined), so recovery
+ * left it alone. `failed`: any other failure for this record, including a
+ * PostgreSQL error, another workflow type under the ID on this deployment's
+ * own queue, and a conflict raised by any later step.
  */
 export interface SupervisorMessageV2RecoveryFailure {
   error: unknown;
-  kind: "failed" | "foreign-execution";
+  kind: "failed" | "foreign-execution" | "quarantined";
+  quarantine?: SupervisorMessageV2RecoveryQuarantine;
   recipient: string;
   workflowId: string;
+}
+
+/** An operator's quarantine of one recorded start: who, when and why. */
+export interface SupervisorMessageV2RecoveryQuarantine {
+  at: string;
+  by: string;
+  reason: string;
+}
+
+/** A recorded start that recovery converges. */
+export interface SupervisorMessageV2RecoverableStart {
+  input: SupervisorMessageV2Input;
+  trustedScope: TrustedSupervisorMessageV2Scope;
+  workflowId: string;
+}
+
+/** A recorded start an operator quarantined: recovery leaves it alone. */
+export interface SupervisorMessageV2QuarantinedStart {
+  quarantine: SupervisorMessageV2RecoveryQuarantine;
+  /** The message's recipient, or SUPERVISOR_MESSAGE_V2_UNREADABLE_RECIPIENT. */
+  recipient: string;
+  workflowId: string;
+}
+
+/** The recipient named for a recorded start whose row cannot be read. */
+export const SUPERVISOR_MESSAGE_V2_UNREADABLE_RECIPIENT =
+  "an unreadable recipient";
+
+/**
+ * A ledger raises this when one recorded start cannot even be listed for
+ * recovery (an unreadable or wrongly bound row). It fails the whole sweep;
+ * at service start it is refused like a failed record, naming the workflow
+ * so an operator can quarantine it.
+ */
+export class SupervisorMessageV2RecoveryRecordError extends Error {
+  readonly workflowId: string;
+
+  constructor(workflowId: string, message: string) {
+    super(message);
+    this.name = "SupervisorMessageV2RecoveryRecordError";
+    this.workflowId = workflowId;
+  }
 }
 
 /** A failure of one record, before the sweep names its record. */
 type RecordFailure = Pick<SupervisorMessageV2RecoveryFailure, "error" | "kind">;
 
 /**
- * The port raises a conflict when an ID this host starts or checks is held
- * by an execution it does not own (another task queue or workflow type).
+ * Only the port's refusal of an execution on another task queue means another
+ * deployment holds the ID. Any other conflict, including another workflow
+ * type under the ID on this deployment's own queue, is this deployment's own
+ * failure and is never skipped.
  */
 const isForeignExecution = (error: unknown): boolean =>
-  error instanceof WorkflowError && error.code === "conflict";
+  error instanceof WorkflowForeignExecutionError;
+
+const SHELL_SAFE = /^[A-Za-z0-9_./:@%+=,-]+$/;
+
+/** One shell word: as is when it is plain, else single-quoted. */
+const shellWord = (value: string): string =>
+  SHELL_SAFE.test(value) ? value : `'${value.split("'").join("'\\''")}'`;
+
+const operatorCommand = (
+  subcommand: "v2-quarantine" | "v2-quarantine-release",
+  workflowId: string,
+  configPath: string | undefined
+): string =>
+  `loop orchestration ${subcommand} ${
+    configPath === undefined ? "<config-path>" : shellWord(configPath)
+  } ${shellWord(workflowId)} --reason '<why>'`;
 
 const recoveryFailureText = (error: unknown): string => {
   if (error instanceof WorkflowError) {
@@ -256,16 +319,22 @@ const plural = (count: number, noun: string): string =>
 /**
  * Service-start recovery refuses to start the host when a recorded start
  * failed for any reason other than a foreign execution holding its ID.
+ * Recovery never skips such a record by itself (owner decision 7); the
+ * message names each one with the exact command that quarantines it, the
+ * operator's explicit escape.
  */
 export class SupervisorMessageV2RecoveryStartupError extends Error {
   readonly failures: readonly SupervisorMessageV2RecoveryFailure[];
 
-  constructor(failures: readonly SupervisorMessageV2RecoveryFailure[]) {
+  constructor(
+    failures: readonly SupervisorMessageV2RecoveryFailure[],
+    operatorConfigPath?: string
+  ) {
     super(
       `V2 initial recovery failed for ${plural(failures.length, "recorded start")}: ${failures
         .map(
           (failure) =>
-            `${recordText(failure)}: ${recoveryFailureText(failure.error)}`
+            `${recordText(failure)}: ${recoveryFailureText(failure.error)} [to start without it: ${operatorCommand("v2-quarantine", failure.workflowId, operatorConfigPath)}]`
         )
         .join("; ")}`
     );
@@ -285,6 +354,11 @@ export interface SupervisorMessageV2RecoveryRunnerOptions {
    */
   maxBackoffMs?: number;
   now?: () => number;
+  /**
+   * The host's config file, named in the quarantine and release commands the
+   * runner prints. Absent, the commands say `<config-path>`.
+   */
+  operatorConfigPath?: string;
   timer?: SupervisorMessageV2RecoveryTimer;
 }
 
@@ -320,11 +394,16 @@ interface SupervisorMessageV2FailingRecovery {
 /**
  * Runs service-start recovery and the periodic sweep.
  *
- * Service start: only a record whose ID is held by an execution this
- * deployment does not own is skipped (logged with its ID and recipient), so
- * a foreign deployment cannot keep this host down. Any other per-record
- * failure refuses startup, naming every failing record, after every other
- * record was recovered; so does a failure of the whole sweep.
+ * Service start: only a record whose ID is held by another deployment's
+ * execution is skipped (logged with its ID and recipient), so a foreign
+ * deployment cannot keep this host down. Any other per-record failure refuses
+ * startup, naming every failing record and the command that quarantines it,
+ * after every other record was recovered; the refusal is logged too, since a
+ * host may wrap the error. So does a failure of the whole sweep.
+ *
+ * Quarantine: a record an operator quarantined is left alone and logged,
+ * with who, when, why and the release command, on every start and whenever
+ * it changes; its release is logged and it is recovered normally again.
  *
  * Periodic sweep: a failing record is retried with bounded exponential
  * backoff, and every transition is logged: each failed attempt (with its
@@ -341,6 +420,12 @@ export class SupervisorMessageV2RecoveryRunner
   readonly #log: (message: string) => void;
   readonly #maxBackoffMs: number;
   readonly #now: () => number;
+  readonly #operatorConfigPath: string | undefined;
+  /** workflowId -> its quarantine line and recipient, while quarantined. */
+  readonly #quarantined = new Map<
+    string,
+    { line: string; recipient: string }
+  >();
   /** workflowId -> the line last logged for it, so a sweep repeats nothing. */
   readonly #reportedSkips = new Map<string, string>();
   readonly #timerPort: SupervisorMessageV2RecoveryTimer;
@@ -372,6 +457,7 @@ export class SupervisorMessageV2RecoveryRunner
     this.#log = options.log ?? ((message) => console.error(message));
     this.#maxBackoffMs = maxBackoffMs;
     this.#now = options.now ?? Date.now;
+    this.#operatorConfigPath = options.operatorConfigPath;
     this.#timerPort = options.timer ?? SYSTEM_RECOVERY_TIMER;
   }
 
@@ -427,21 +513,82 @@ export class SupervisorMessageV2RecoveryRunner
     );
     this.#inFlight = run;
     try {
-      const recovered = await run;
+      const recovered = await run.catch((error: unknown) => {
+        // One unreadable row fails the whole sweep; at start it is refused
+        // like a failed record, by its workflow ID.
+        if (
+          initial &&
+          error instanceof SupervisorMessageV2RecoveryRecordError
+        ) {
+          throw this.#refuseStart([
+            {
+              error,
+              kind: "failed",
+              recipient: SUPERVISOR_MESSAGE_V2_UNREADABLE_RECIPIENT,
+              workflowId: error.workflowId,
+            },
+          ]);
+        }
+        throw error;
+      });
       this.#reportSkips(
         failures.filter((failure) => failure.kind === "foreign-execution")
       );
-      const failed = failures.filter(
-        (failure) => failure.kind !== "foreign-execution"
+      this.#reportQuarantines(
+        failures.filter((failure) => failure.kind === "quarantined")
       );
+      const failed = failures.filter((failure) => failure.kind === "failed");
       if (initial && failed.length > 0) {
-        throw new SupervisorMessageV2RecoveryStartupError(failed);
+        throw this.#refuseStart(failed);
       }
       this.#retryLater(failed, now, recorded, attempted);
       return recovered;
     } finally {
       if (this.#inFlight === run) {
         this.#inFlight = undefined;
+      }
+    }
+  }
+
+  /** The startup refusal, logged as well: a host may wrap the error. */
+  #refuseStart(
+    failed: readonly SupervisorMessageV2RecoveryFailure[]
+  ): SupervisorMessageV2RecoveryStartupError {
+    const refusal = new SupervisorMessageV2RecoveryStartupError(
+      failed,
+      this.#operatorConfigPath
+    );
+    this.#log(refusal.message);
+    return refusal;
+  }
+
+  /**
+   * A quarantined record is not recovered and not retried. It is logged
+   * (who, when, why, and how to release it) when this runner first sees it,
+   * which is every service start, and again only when its quarantine
+   * changes. Its release is logged once; it is then recovered as any other.
+   */
+  #reportQuarantines(
+    quarantined: readonly SupervisorMessageV2RecoveryFailure[]
+  ): void {
+    const current = new Set(quarantined.map((failure) => failure.workflowId));
+    for (const [workflowId, held] of this.#quarantined) {
+      if (!current.has(workflowId)) {
+        this.#quarantined.delete(workflowId);
+        this.#log(
+          `V2 recovery quarantine of workflow ${workflowId} for ${held.recipient} was released; recovering it again`
+        );
+      }
+    }
+    for (const failure of quarantined) {
+      this.#failing.delete(failure.workflowId);
+      const line = `V2 recovery QUARANTINED ${recordText(failure)}: skipped until released (quarantined by ${failure.quarantine?.by} at ${failure.quarantine?.at}: ${failure.quarantine?.reason}); release it with: ${operatorCommand("v2-quarantine-release", failure.workflowId, this.#operatorConfigPath)}`;
+      if (this.#quarantined.get(failure.workflowId)?.line !== line) {
+        this.#quarantined.set(failure.workflowId, {
+          line,
+          recipient: failure.recipient,
+        });
+        this.#log(line);
       }
     }
   }
@@ -589,12 +736,16 @@ export interface SupervisorMessageV2DeliveryLedger {
     trustedScope: TrustedSupervisorMessageV2Scope,
     outcome: SupervisorMessageV2TerminalOutcome
   ): Promise<void>;
+  /**
+   * This deployment's recorded starts, in a stable order. A start an
+   * operator quarantined is listed as such, with who, when and why, and
+   * without its input: recovery leaves it alone until it is released.
+   */
   recoverableStarts(): Promise<
-    readonly {
-      input: SupervisorMessageV2Input;
-      trustedScope: TrustedSupervisorMessageV2Scope;
-      workflowId: string;
-    }[]
+    readonly (
+      | SupervisorMessageV2RecoverableStart
+      | SupervisorMessageV2QuarantinedStart
+    )[]
   >;
   /** The durable start intent of this scoped workflow; refuses any other. */
   startIntent(
@@ -992,14 +1143,17 @@ export class SupervisorMessageV2Coordinator {
    * effect can converge without a sender replaying the original request.
    *
    * Each record is recovered on its own: one that fails does not stop the
-   * others. A conflict the port raises when this host starts the ID or
-   * checks its presence means another deployment's execution holds it; that
-   * record is left alone and its failure is a `foreign-execution`. Any other
-   * error (Temporal, PostgreSQL, a conflict from a later step) is `failed`.
-   * With `report`, each failure is handed to it and the sweep resolves; the
-   * caller decides what each kind means. Without it, the first failure is
-   * thrown after every other record was attempted. Reading the ledger itself
-   * still fails the sweep.
+   * others. The port's foreign-task-queue conflict when this host starts the
+   * ID or checks its presence means another deployment's execution holds it;
+   * that record is left alone and its failure is a `foreign-execution`. Any
+   * other error (Temporal, PostgreSQL, another workflow type under the ID on
+   * this deployment's own queue, a conflict from a later step) is `failed`.
+   * A record an operator quarantined is not touched at all and is reported
+   * as `quarantined` (before `due` is asked). With `report`, each failure is
+   * handed to it and the sweep resolves; the caller decides what each kind
+   * means. Without it, the first failure is thrown after every other record
+   * was attempted, and a quarantined record is skipped. Reading the ledger
+   * itself still fails the sweep.
    */
   async recoverPending(
     report?: (failure: SupervisorMessageV2RecoveryFailure) => void,
@@ -1008,6 +1162,18 @@ export class SupervisorMessageV2Coordinator {
     let recovered = 0;
     let unreported: { error: unknown } | undefined;
     for (const record of await this.#ledger.recoverableStarts()) {
+      if ("quarantine" in record) {
+        // The operator's explicit escape: neither the engine nor the ledger
+        // is asked anything about it until it is released.
+        report?.({
+          error: undefined,
+          kind: "quarantined",
+          quarantine: record.quarantine,
+          recipient: record.recipient,
+          workflowId: record.workflowId,
+        });
+        continue;
+      }
       if (due && !due(record.workflowId)) {
         continue;
       }

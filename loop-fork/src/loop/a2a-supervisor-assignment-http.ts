@@ -2,7 +2,10 @@ import type { SupervisorA2AAuthenticator } from "./a2a-supervisor-http";
 import type { SupervisorA2AResultBinding } from "./a2a-supervisor-result";
 import { readBoundedRequestText } from "./bounded-request-body";
 import type { TrustedSupervisorMessageV2Scope } from "./supervisor-message-v2-contract";
-import type { SupervisorMessageV2UnpublishableResultBinding } from "./supervisor-message-v2-delivery-ledger";
+import type {
+  SupervisorMessageV2RecoveryQuarantineEntry,
+  SupervisorMessageV2UnpublishableResultBinding,
+} from "./supervisor-message-v2-delivery-ledger";
 import type { JsonObject, WorkflowStartReceipt } from "./workflow-port";
 
 const reference = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/;
@@ -63,20 +66,41 @@ const readJsonBody = async (
   }
 };
 
-const listUnpublishable = async (
-  scope: TrustedSupervisorMessageV2Scope,
-  list: (
+interface AssignmentStatusLists {
+  recoveryQuarantine?(
     scope: TrustedSupervisorMessageV2Scope
-  ) => Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>
+  ): Promise<readonly SupervisorMessageV2RecoveryQuarantineEntry[]>;
+  unpublishable?(
+    scope: TrustedSupervisorMessageV2Scope
+  ): Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>;
+}
+
+/** The authenticated status body: each list the route has, ids only, for
+ * the route's tenant (whose id is not repeated). */
+const listStatus = async (
+  scope: TrustedSupervisorMessageV2Scope,
+  lists: AssignmentStatusLists
 ): Promise<Response> => {
   try {
-    const entries = await list(scope);
+    const unpublishable = await lists.unpublishable?.(scope);
+    const quarantined = await lists.recoveryQuarantine?.(scope);
     return Response.json(
       {
+        ...(quarantined
+          ? {
+              recoveryQuarantine: quarantined.map(
+                ({ tenantId: _tenantId, ...entry }) => entry
+              ),
+            }
+          : {}),
         schema: "supervisor-result-assignment-status.v1",
-        unpublishable: entries.map(
-          ({ tenantId: _tenantId, ...entry }) => entry
-        ),
+        ...(unpublishable
+          ? {
+              unpublishable: unpublishable.map(
+                ({ tenantId: _tenantId, ...entry }) => entry
+              ),
+            }
+          : {}),
       },
       { headers: { "cache-control": "no-store" } }
     );
@@ -94,29 +118,33 @@ const listUnpublishable = async (
  * host allowlist, task/message/recipient and the graph, and reserves for
  * this A2A task before recording it.
  *
- * GET on the same path is the inspection surface: the recorded bindings of
- * this route's tenant that will never publish (ids only). */
+ * GET on the same path is the inspection surface, for the authenticated
+ * control principal only: the recorded bindings of this route's tenant that
+ * will never publish, and its recorded starts an operator quarantined from
+ * recovery (ids, recipient, who, when and why). */
 export const createSupervisorA2AAssignmentHttpHandler =
-  (options: {
-    authenticator: SupervisorA2AAuthenticator;
-    pathname: string;
-    principal: string;
-    tenant: string;
-    bind(
-      scope: TrustedSupervisorMessageV2Scope,
-      binding: SupervisorA2AResultBinding
-    ): Promise<void>;
-    unpublishable?(
-      scope: TrustedSupervisorMessageV2Scope
-    ): Promise<readonly SupervisorMessageV2UnpublishableResultBinding[]>;
-  }) =>
+  (
+    options: AssignmentStatusLists & {
+      authenticator: SupervisorA2AAuthenticator;
+      pathname: string;
+      principal: string;
+      tenant: string;
+      bind(
+        scope: TrustedSupervisorMessageV2Scope,
+        binding: SupervisorA2AResultBinding
+      ): Promise<void>;
+    }
+  ) =>
   async (request: Request): Promise<Response> => {
     if (new URL(request.url).pathname !== options.pathname) {
       return reply(404, "not-found");
     }
+    const inspectable = Boolean(
+      options.unpublishable || options.recoveryQuarantine
+    );
     if (
       request.method !== "POST" &&
-      !(request.method === "GET" && options.unpublishable)
+      !(request.method === "GET" && inspectable)
     ) {
       return reply(405, "method-not-allowed");
     }
@@ -124,8 +152,8 @@ export const createSupervisorA2AAssignmentHttpHandler =
     if (scope instanceof Response) {
       return scope;
     }
-    if (request.method === "GET" && options.unpublishable) {
-      return listUnpublishable(scope, options.unpublishable);
+    if (request.method === "GET" && inspectable) {
+      return listStatus(scope, options);
     }
     const body = await readJsonBody(request, 8192, "invalid-binding");
     if (body instanceof Response) {

@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import {
   parseOrchestrationCommand,
@@ -12,6 +12,9 @@ import {
   deriveSupervisorMessageV2WorkflowId,
   SupervisorResultGraphKey,
 } from "../../src/loop/supervisor-message-v2-contract";
+import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
+import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
+import { DisposablePostgres } from "../support/disposable-postgres";
 
 const MESSAGE = `supervisor-message-workflow:v2:${"a".repeat(64)}`;
 
@@ -50,6 +53,285 @@ test("orchestration command refuses incomplete or ambiguous invocation", () => {
     );
   }
 });
+
+test("orchestration command parses the V2 recovery quarantine forms and refuses incomplete ones", () => {
+  const config = resolve("config/orchestration.json");
+  expect(
+    parseOrchestrationCommand([
+      "orchestration",
+      "v2-quarantine",
+      "config/orchestration.json",
+      MESSAGE,
+      "--reason",
+      "start snapshot unreadable",
+    ])
+  ).toEqual({
+    by: undefined,
+    command: "v2-quarantine",
+    configPath: config,
+    reason: "start snapshot unreadable",
+    workflowId: MESSAGE,
+  });
+  expect(
+    parseOrchestrationCommand([
+      "orchestration",
+      "v2-quarantine-release",
+      "config/orchestration.json",
+      MESSAGE,
+      "--by",
+      "operator-b",
+      "--reason",
+      "fixed",
+    ])
+  ).toEqual({
+    by: "operator-b",
+    command: "v2-quarantine-release",
+    configPath: config,
+    reason: "fixed",
+    workflowId: MESSAGE,
+  });
+  expect(
+    parseOrchestrationCommand([
+      "orchestration",
+      "v2-quarantine-list",
+      "config/orchestration.json",
+    ])
+  ).toEqual({ command: "v2-quarantine-list", configPath: config });
+  const invalid = [
+    ["orchestration", "v2-quarantine", "/tmp/c.json", MESSAGE],
+    ["orchestration", "v2-quarantine", "/tmp/c.json", MESSAGE, "--reason"],
+    ["orchestration", "v2-quarantine", "/tmp/c.json", MESSAGE, "--reason", ""],
+    ["orchestration", "v2-quarantine", "/tmp/c.json", "--reason", "why"],
+    [
+      "orchestration",
+      "v2-quarantine",
+      "/tmp/c.json",
+      MESSAGE,
+      "--reason",
+      "why",
+      "--reason",
+      "twice",
+    ],
+    [
+      "orchestration",
+      "v2-quarantine",
+      "/tmp/c.json",
+      MESSAGE,
+      "--reason",
+      "why",
+      "--force",
+    ],
+    // A flag is never taken for the workflow id.
+    [
+      "orchestration",
+      "v2-quarantine",
+      "/tmp/c.json",
+      "--reason",
+      "--reason",
+      "why",
+    ],
+    ["orchestration", "v2-quarantine-release", "/tmp/c.json", MESSAGE],
+    ["orchestration", "v2-quarantine-list"],
+    ["orchestration", "v2-quarantine-list", "/tmp/c.json", MESSAGE],
+  ];
+  for (const argv of invalid) {
+    expect(() => parseOrchestrationCommand(argv)).toThrow(
+      "loop orchestration v2-quarantine <config-path> <workflow-id> --reason <text> [--by <operator>]"
+    );
+    expect(() => parseOrchestrationCommand(argv)).toThrow(
+      "loop orchestration v2-quarantine-release <config-path> <workflow-id> --reason <text> [--by <operator>]"
+    );
+    expect(() => parseOrchestrationCommand(argv)).toThrow(
+      "loop orchestration v2-quarantine-list <config-path>"
+    );
+  }
+});
+
+test("v2-quarantine records, lists and releases a quarantine in the configured deployment's PostgreSQL ledger, printing no secret", async () => {
+  const postgres = await DisposablePostgres.create();
+  const root = mkdtempSync(join(tmpdir(), "loop-orch-quarantine-"));
+  const configPath = join(root, "orchestration.json");
+  const deployment = "loop-orchestration";
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      a2aV2: {
+        databaseUrlEnv: "LOOP_CLI_A2A_V2_DATABASE_URL",
+        endpointRef: "endpoint:local-a2a",
+        policy: {
+          claimTimeoutMs: 60_000,
+          escalationTimeoutMs: 120_000,
+          maxDeliveryAttempts: 3,
+          retryDelayMs: 1000,
+        },
+        principal: "principal:harness",
+        recipient: "supervisor:harness",
+        routePath: "/a2a",
+        sessionTtlMs: 3_600_000,
+        tenant: "tenant:local",
+      },
+      address: "127.0.0.1:9",
+      buildId: "loop-orchestration.v1",
+      grants: [
+        {
+          from: "supervisor:source",
+          operations: ["receive"],
+          principal: "principal:harness",
+          to: "supervisor:harness",
+        },
+      ],
+      hostname: "127.0.0.1",
+      identity: "loop-orchestration@local",
+      namespace: "default",
+      port: 7321,
+      schema: "loop-orchestration-server.v1",
+      stateDir: join(root, "state"),
+      supervisors: [
+        {
+          manifestPath: join(root, "manifest.json"),
+          principal: "principal:harness",
+          supervisorId: "supervisor:harness",
+          tokenEnv: "LOOP_HARNESS_ORCHESTRATION_TOKEN",
+        },
+      ],
+      taskQueue: deployment,
+    })
+  );
+  const databaseUrl = postgres.databaseUrl();
+  const env = { LOOP_CLI_A2A_V2_DATABASE_URL: databaseUrl };
+  const fixture = supervisorMessageV2ReplayFixtures[0];
+  if (!fixture) {
+    throw new Error("missing V2 fixture");
+  }
+  const scope = fixture.expectedScope;
+  const workflowId = deriveSupervisorMessageV2WorkflowId(
+    scope,
+    fixture.input.dedupeKey,
+    deployment
+  );
+  const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    databaseUrl,
+    { deployment }
+  );
+  const lines: string[] = [];
+  const run = (...args: string[]) =>
+    runOrchestrationCommand(
+      ["orchestration", ...args],
+      () => {
+        throw new Error("the server must not start");
+      },
+      { env, write: (text) => lines.push(text) }
+    );
+  try {
+    await ledger.migrate();
+    await ledger.recordStartIntent(workflowId, scope, fixture.input);
+
+    expect(await run("v2-quarantine-list", configPath)).toBe(true);
+    expect(
+      await run(
+        "v2-quarantine",
+        configPath,
+        workflowId,
+        "--reason",
+        "start keeps failing"
+      )
+    ).toBe(true);
+    const [entry] = await ledger.recoveryQuarantines();
+    if (!entry) {
+      throw new Error("the quarantine was not recorded");
+    }
+    // Who defaults to the operating-system user running the command.
+    expect(entry).toEqual({
+      at: entry.at,
+      by: userInfo().username,
+      reason: "start keeps failing",
+      recipient: fixture.input.to,
+      tenantId: scope.tenantId,
+      workflowId,
+    });
+    expect(
+      await run(
+        "v2-quarantine",
+        configPath,
+        workflowId,
+        "--reason",
+        "again",
+        "--by",
+        "operator-z"
+      )
+    ).toBe(true);
+    expect(await run("v2-quarantine-list", configPath)).toBe(true);
+    expect(
+      await run(
+        "v2-quarantine-release",
+        configPath,
+        workflowId,
+        "--reason",
+        "cause fixed",
+        "--by",
+        "operator-b"
+      )
+    ).toBe(true);
+    expect(await ledger.recoveryQuarantines()).toEqual([]);
+    expect(lines).toEqual([
+      "no quarantined V2 recovery records\n",
+      `quarantined ${workflowId} for ${fixture.input.to} by ${entry.by} at ${entry.at}: start keeps failing\n`,
+      `already quarantined ${workflowId} for ${fixture.input.to} by ${entry.by} at ${entry.at}: start keeps failing\n`,
+      `${workflowId} for ${fixture.input.to} quarantined by ${entry.by} at ${entry.at}: start keeps failing\n`,
+      `released ${workflowId} for ${fixture.input.to} (quarantined by ${entry.by} at ${entry.at}: start keeps failing)\n`,
+    ]);
+    const printed = lines.join("");
+    expect(printed).not.toContain(databaseUrl);
+    expect(printed).not.toContain(new URL(databaseUrl).password);
+
+    // A record that is not this deployment's is refused, by id only.
+    const unknown = `supervisor-message-workflow:v2:deployment:${"b".repeat(64)}`;
+    const refused = await run(
+      "v2-quarantine",
+      configPath,
+      unknown,
+      "--reason",
+      "x"
+    ).then(
+      () => "accepted",
+      (error: Error) => error.message
+    );
+    expect(refused).toBe(
+      `V2 workflow ${unknown} has no start intent recorded by this deployment`
+    );
+    // Without the database environment the command refuses before connecting.
+    const missing = await runOrchestrationCommand(
+      ["orchestration", "v2-quarantine-list", configPath],
+      () => Promise.resolve(),
+      { env: {}, write: (text) => lines.push(text) }
+    ).then(
+      () => "listed",
+      (error: Error) => error.message
+    );
+    expect(missing).toBe(
+      "missing orchestration A2A V2 database environment LOOP_CLI_A2A_V2_DATABASE_URL"
+    );
+    // An unreachable database is reported without its URL or credentials.
+    const unreachable = new URL(databaseUrl);
+    unreachable.port = "1";
+    const offline = await runOrchestrationCommand(
+      ["orchestration", "v2-quarantine-list", configPath],
+      () => Promise.resolve(),
+      {
+        env: { LOOP_CLI_A2A_V2_DATABASE_URL: unreachable.toString() },
+        write: (text) => lines.push(text),
+      }
+    ).then(
+      () => "listed",
+      (error: Error) => error.message
+    );
+    expect(offline).toBe("orchestration A2A V2 ledger is unavailable");
+  } finally {
+    await ledger.close();
+    rmSync(root, { force: true, recursive: true });
+    await postgres.close();
+  }
+}, 60_000);
 
 test("result-graph-id prints the id the server derives from the config's key environment, never the key, and never starts the server", async () => {
   const root = mkdtempSync(join(tmpdir(), "loop-orch-cli-"));

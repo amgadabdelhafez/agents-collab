@@ -863,8 +863,8 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
       ...structuredClone(fixtureV2.input),
       dedupeKey,
     });
-    // ...but the ID is already held in the namespace by another execution,
-    // of a different workflow type.
+    // ...but the ID is already held in the namespace by another deployment's
+    // execution, on its own task queue.
     await environment.client.workflow.start(temporalWorkflow, {
       args: [
         {
@@ -890,16 +890,185 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
           workflowType: SUPERVISOR_MESSAGE_WORKFLOW_TYPE,
         },
       ],
-      taskQueue: fixture.taskQueue,
+      taskQueue: `${fixture.taskQueue}-foreign`,
       workflowId,
     });
     const started = startServer(fixture, stop.signal);
     running = started.running;
     expect(await started.ready).toBe("ready");
     expect(errors.mock.calls.map(([line]) => String(line))).toContain(
-      `V2 recovery skipped workflow ${workflowId} for supervisor:target: WorkflowError (conflict): workflow ${workflowId} already exists as ${SUPERVISOR_MESSAGE_WORKFLOW_TYPE}`
+      `V2 recovery skipped workflow ${workflowId} for ${fixtureV2.input.to}: WorkflowError (conflict): workflow ${workflowId} belongs to another task queue`
     );
   } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
+    await environment.client.workflow
+      .getHandle(workflowId)
+      .terminate()
+      .catch(() => undefined);
+    await ledger.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server refuses to start while its own queue holds another workflow type under a recorded V2 id, names the quarantine command, and starts once an operator quarantines it", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const fixture = compositionFixture({
+    address: environment.address,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const [fixtureV2] = supervisorMessageV2ReplayFixtures;
+  if (!fixtureV2) {
+    throw new Error("missing V2 fixture");
+  }
+  // Recorded in the route's own scope, so its status surface lists it.
+  const v2Scope = scopeOf(config);
+  const dedupeKey = `same-queue-${randomUUID().slice(0, 8)}`;
+  const workflowId = deriveSupervisorMessageV2WorkflowId(
+    v2Scope,
+    dedupeKey,
+    fixture.taskQueue
+  );
+  const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl(),
+    { deployment: fixture.taskQueue }
+  );
+  const errors = spyOn(console, "error");
+  const lines = () => errors.mock.calls.map(([line]) => String(line));
+  const refusedStop = new AbortController();
+  let refusedRun: Promise<void> | undefined;
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    await ledger.migrate();
+    await ledger.recordStartIntent(workflowId, v2Scope, {
+      ...structuredClone(fixtureV2.input),
+      dedupeKey,
+      principal: v2Scope.principal,
+      tenantId: v2Scope.tenantId,
+    });
+    // This deployment's own queue holds the id, as another workflow type.
+    await environment.client.workflow.start(temporalWorkflow, {
+      args: [
+        {
+          at: "2026-10-05T00:00:00.000Z",
+          input: {
+            artifactRefs: [],
+            body: "another workflow type under a message id",
+            dedupeKey,
+            from: "supervisor:source",
+            messageId: `message-${dedupeKey}`,
+            policy: {
+              claimTimeoutMs: 60_000,
+              escalationTimeoutMs: 120_000,
+              maxDeliveryAttempts: 2,
+              retryDelayMs: 500,
+            },
+            receivedAt: "2026-10-05T00:00:00.000Z",
+            threadId: `thread-${dedupeKey}`,
+            to: "supervisor:target",
+          },
+          requestId: "same-queue:start",
+          workflowId,
+          workflowType: SUPERVISOR_MESSAGE_WORKFLOW_TYPE,
+        },
+      ],
+      taskQueue: fixture.taskQueue,
+      workflowId,
+    });
+
+    const refused = startServer(fixture, refusedStop.signal);
+    refusedRun = refused.running;
+    expect(await refused.ready).toBe(
+      "server failed: Supervisor A2A V2 service initialization failed at runtime-host (SupervisorMessageV2RecoveryStartupError)"
+    );
+    expect(lines()).toContain(
+      `V2 initial recovery failed for 1 recorded start: workflow ${workflowId} for ${fixtureV2.input.to}: WorkflowError (conflict): workflow ${workflowId} already exists as ${SUPERVISOR_MESSAGE_WORKFLOW_TYPE} [to start without it: loop orchestration v2-quarantine ${fixture.configPath} ${workflowId} --reason '<why>']`
+    );
+
+    // The operator runs the named command.
+    const printed: string[] = [];
+    await runOrchestrationCommand(
+      [
+        "orchestration",
+        "v2-quarantine",
+        fixture.configPath,
+        workflowId,
+        "--reason",
+        "V1 execution under a V2 id",
+        "--by",
+        "operator-test",
+      ],
+      () => {
+        throw new Error("the server must not start");
+      },
+      { env: fixture.env, write: (text) => printed.push(text) }
+    );
+    expect(printed).toHaveLength(1);
+    const [entry] = await ledger.recoveryQuarantines();
+    if (!entry) {
+      throw new Error("the quarantine was not recorded");
+    }
+    // Another tenant's quarantined record of this deployment: logged at
+    // start, but never listed on this route's tenant-scoped status surface.
+    const elsewhere = { principal: v2Scope.principal, tenantId: tenant() };
+    const elsewhereKey = `elsewhere-${randomUUID().slice(0, 8)}`;
+    const elsewhereId = deriveSupervisorMessageV2WorkflowId(
+      elsewhere,
+      elsewhereKey,
+      fixture.taskQueue
+    );
+    await ledger.recordStartIntent(elsewhereId, elsewhere, {
+      ...structuredClone(fixtureV2.input),
+      dedupeKey: elsewhereKey,
+      principal: elsewhere.principal,
+      tenantId: elsewhere.tenantId,
+    });
+    await ledger.quarantineRecovery(elsewhereId, {
+      by: "operator-test",
+      reason: "another tenant's hold",
+    });
+
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(lines()).toContain(
+      `V2 recovery QUARANTINED workflow ${workflowId} for ${fixtureV2.input.to}: skipped until released (quarantined by operator-test at ${entry.at}: V1 execution under a V2 id); release it with: loop orchestration v2-quarantine-release ${fixture.configPath} ${workflowId} --reason '<why>'`
+    );
+    // Reported on the authenticated status surface only.
+    const status = await fetch(
+      `http://127.0.0.1:${fixture.port}/a2a/v2/assignment`,
+      {
+        headers: {
+          authorization: `Bearer ${fixture.env.LOOP_TEST_HARNESS_TOKEN}`,
+        },
+      }
+    );
+    expect(status.status).toBe(200);
+    expect(await status.json()).toEqual({
+      recoveryQuarantine: [
+        {
+          at: entry.at,
+          by: "operator-test",
+          reason: "V1 execution under a V2 id",
+          recipient: fixtureV2.input.to,
+          workflowId,
+        },
+      ],
+      schema: "supervisor-result-assignment-status.v1",
+      unpublishable: [],
+    });
+    const anonymous = await fetch(
+      `http://127.0.0.1:${fixture.port}/a2a/v2/assignment`
+    );
+    expect(anonymous.status).toBe(401);
+    expect(JSON.stringify(await health(fixture))).not.toContain(workflowId);
+  } finally {
+    refusedStop.abort();
+    await refusedRun?.catch(() => undefined);
     stop.abort();
     await running?.catch(() => undefined);
     errors.mockRestore();
@@ -1119,6 +1288,7 @@ test("the orchestration server starts a message's result graph under its keyed i
     );
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual({
+      recoveryQuarantine: [],
       schema: "supervisor-result-assignment-status.v1",
       unpublishable: [],
     });

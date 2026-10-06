@@ -196,6 +196,103 @@ test("assignment route lists only what its service returns for the authenticated
   ).toBe(405);
 });
 
+test("assignment route reports quarantined recovery records only to the authenticated control principal, for its tenant", async () => {
+  const scopes: unknown[] = [];
+  const handler = createSupervisorA2AAssignmentHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    bind: () => Promise.resolve(),
+    pathname: "/assign",
+    principal: "principal:control",
+    recoveryQuarantine: (scope) => {
+      scopes.push(scope);
+      return Promise.resolve([
+        {
+          at: "2026-10-05T01:02:03.000Z",
+          by: "operator-a",
+          reason: "start keeps failing",
+          recipient: "supervisor:seat",
+          tenantId: "tenant:owned",
+          workflowId: "message:one",
+        },
+      ]);
+    },
+    tenant: "tenant:owned",
+    unpublishable: () => Promise.resolve([]),
+  });
+  const get = (authorization?: string) =>
+    handler(
+      new Request("http://local/assign", {
+        headers: authorization ? { authorization } : {},
+      })
+    );
+  expect((await get()).status).toBe(401);
+  expect((await get("Bearer other")).status).toBe(403);
+  expect(scopes).toEqual([]);
+  const listed = await get("Bearer fixture");
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toEqual({
+    recoveryQuarantine: [
+      {
+        at: "2026-10-05T01:02:03.000Z",
+        by: "operator-a",
+        reason: "start keeps failing",
+        recipient: "supervisor:seat",
+        workflowId: "message:one",
+      },
+    ],
+    schema: "supervisor-result-assignment-status.v1",
+    unpublishable: [],
+  });
+  expect(scopes).toEqual([
+    { principal: "principal:control", tenantId: "tenant:owned" },
+  ]);
+  // The quarantine list alone makes the route inspectable.
+  const quarantineOnly = createSupervisorA2AAssignmentHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    bind: () => Promise.resolve(),
+    pathname: "/assign",
+    principal: "principal:control",
+    recoveryQuarantine: () => Promise.resolve([]),
+    tenant: "tenant:owned",
+  });
+  const alone = await quarantineOnly(
+    new Request("http://local/assign", {
+      headers: { authorization: "Bearer fixture" },
+    })
+  );
+  expect(alone.status).toBe(200);
+  expect(await alone.json()).toEqual({
+    recoveryQuarantine: [],
+    schema: "supervisor-result-assignment-status.v1",
+  });
+  // A failing read is reported without its cause.
+  const failing = createSupervisorA2AAssignmentHttpHandler({
+    authenticator: {
+      authenticate: (request) =>
+        IDENTITIES[request.headers.get("authorization") ?? ""],
+    },
+    bind: () => Promise.resolve(),
+    pathname: "/assign",
+    principal: "principal:control",
+    recoveryQuarantine: () => Promise.reject(new Error("postgres://secret")),
+    tenant: "tenant:owned",
+    unpublishable: () => Promise.resolve([]),
+  });
+  const refused = await failing(
+    new Request("http://local/assign", {
+      headers: { authorization: "Bearer fixture" },
+    })
+  );
+  expect(refused.status).toBe(503);
+  expect(await refused.json()).toEqual({ code: "status-unavailable" });
+});
+
 const createStartHandler = (
   start: Parameters<
     typeof createSupervisorA2AResultGraphStartHttpHandler

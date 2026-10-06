@@ -785,7 +785,7 @@ describe("V2 workflow id deployment discriminator on PostgreSQL", () => {
       (error: Error) => error.message
     );
     expect(swept).toBe(
-      "V2 recovery ledger row has an invalid workflow binding"
+      `V2 recovery ledger row ${current} has an invalid workflow binding`
     );
   });
 
@@ -953,9 +953,294 @@ describe("V2 recovery runner on PostgreSQL", () => {
           `CREATE TRIGGER refuse_terminal_outcome BEFORE UPDATE OF terminal_outcome ON loop_supervisor_message_v2_start_intent FOR EACH ROW WHEN (OLD.workflow_id = '${workflowId}') EXECUTE FUNCTION refuse_terminal_outcome()`
         );
       },
+      /** A new process's runner over the same ledger: a host restart. */
+      restart: () => {
+        const restartLines: string[] = [];
+        const restarted = new SupervisorMessageV2RecoveryRunner({
+          coordinator,
+          intervalMs: 1000,
+          log: (line) => restartLines.push(line),
+          now: () => clock,
+          operatorConfigPath: "/srv/loop/orchestration.json",
+          timer: { clearInterval: () => undefined, setInterval: () => 1 },
+        });
+        opened.push(restarted);
+        return { lines: restartLines, runner: restarted };
+      },
       runner,
+      sql,
+      url,
     };
   };
+
+  const startOutcome = (runner: SupervisorMessageV2RecoveryRunner) =>
+    runner.start().then(
+      () => "started",
+      (error: unknown) => error
+    );
+
+  test("an operator quarantine lets every start skip a persistently failing record loudly, and its release returns it to recovery", async () => {
+    const h = await failingHarness();
+    const refused = await h.canceledIntent();
+    await h.refuseOutcomeOf(refused.workflowId);
+    const quarantineCommand = `loop orchestration v2-quarantine /srv/loop/orchestration.json ${refused.workflowId} --reason '<why>'`;
+
+    // Decision 7: never skipped by itself. The refusal names the record and
+    // the exact command that quarantines it.
+    const first = h.restart();
+    const refusal = await startOutcome(first.runner);
+    expect(refusal).toBeInstanceOf(SupervisorMessageV2RecoveryStartupError);
+    expect((refusal as Error).message).toContain(
+      `workflow ${refused.workflowId} for ${refused.input.to}: `
+    );
+    expect((refusal as Error).message).toContain(quarantineCommand);
+    expect(first.lines).toEqual([(refusal as Error).message]);
+
+    const quarantined = await h.ledger.quarantineRecovery(refused.workflowId, {
+      by: "operator-a",
+      reason: "PostgreSQL refuses its outcome; investigating",
+    });
+    expect(quarantined.created).toBe(true);
+    expect(quarantined.quarantine).toEqual({
+      at: expect.stringMatching(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      ),
+      by: "operator-a",
+      reason: "PostgreSQL refuses its outcome; investigating",
+      recipient: refused.input.to,
+      tenantId: SCOPE.tenantId,
+      workflowId: refused.workflowId,
+    });
+    const { at } = quarantined.quarantine;
+    const loud = `V2 recovery QUARANTINED workflow ${refused.workflowId} for ${refused.input.to}: skipped until released (quarantined by operator-a at ${at}: PostgreSQL refuses its outcome; investigating); release it with: loop orchestration v2-quarantine-release /srv/loop/orchestration.json ${refused.workflowId} --reason '<why>'`;
+
+    // Every start skips it, and says so.
+    for (const _restart of [1, 2]) {
+      const next = h.restart();
+      expect(await startOutcome(next.runner)).toBe("started");
+      expect(next.lines).toEqual([loud]);
+    }
+    expect(await h.ledger.terminalOutcome(refused.workflowId, SCOPE)).toBe(
+      undefined
+    );
+
+    // Released, it is recovered normally again: still failing, so startup
+    // refuses again until the cause is fixed.
+    await h.ledger.releaseRecoveryQuarantine(refused.workflowId, {
+      by: "operator-b",
+      reason: "trigger understood",
+    });
+    expect(await startOutcome(h.restart().runner)).toBeInstanceOf(
+      SupervisorMessageV2RecoveryStartupError
+    );
+    await h.acceptOutcomes();
+    const healed = h.restart();
+    expect(await startOutcome(healed.runner)).toBe("started");
+    expect(healed.lines).toEqual([]);
+    expect(await h.ledger.terminalOutcome(refused.workflowId, SCOPE)).toBe(
+      "canceled"
+    );
+  });
+
+  test("a quarantine records who, when and why durably, refuses records that are not this deployment's open ones, and keeps release history", async () => {
+    const h = await failingHarness();
+    const open = await h.canceledIntent();
+    const by = { by: "operator-a", reason: "hold for investigation" };
+
+    const first = await h.ledger.quarantineRecovery(open.workflowId, by);
+    const again = await h.ledger.quarantineRecovery(open.workflowId, {
+      by: "operator-z",
+      reason: "a second operator",
+    });
+    // Idempotent: the first quarantine stands, unchanged.
+    expect(again).toEqual({ created: false, quarantine: first.quarantine });
+    expect(await h.ledger.recoveryQuarantines()).toEqual([first.quarantine]);
+    expect(await h.ledger.recoveryQuarantines(SCOPE.tenantId)).toEqual([
+      first.quarantine,
+    ]);
+    expect(await h.ledger.recoveryQuarantines("tenant:other")).toEqual([]);
+    expect(
+      (await h.ledger.recoverableStarts()).find(
+        (start) => start.workflowId === open.workflowId
+      )
+    ).toEqual({
+      quarantine: {
+        at: first.quarantine.at,
+        by: "operator-a",
+        reason: "hold for investigation",
+      },
+      recipient: open.input.to,
+      workflowId: open.workflowId,
+    });
+
+    const refusalOf = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "accepted",
+        (error: Error) => error.message
+      );
+    // Unknown, another deployment's, and closed records are refused.
+    const unknown = workflowIdOf(inputFor(`unknown-${randomUUID()}`));
+    expect(await refusalOf(h.ledger.quarantineRecovery(unknown, by))).toBe(
+      `V2 workflow ${unknown} has no start intent recorded by this deployment`
+    );
+    const theirs = inputFor(`theirs-${randomUUID()}`);
+    const theirId = deriveSupervisorMessageV2WorkflowId(
+      SCOPE,
+      theirs.dedupeKey,
+      "another-deployment-queue"
+    );
+    await h.sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json, deployment) VALUES (${theirId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(theirs)}::jsonb, ${"another-deployment-queue"})`;
+    expect(await refusalOf(h.ledger.quarantineRecovery(theirId, by))).toBe(
+      `V2 workflow ${theirId} has no start intent recorded by this deployment`
+    );
+    const closed = await h.canceledIntent();
+    await h.ledger.recordTerminalOutcome(closed.workflowId, SCOPE, "canceled");
+    expect(
+      await refusalOf(h.ledger.quarantineRecovery(closed.workflowId, by))
+    ).toBe(
+      `V2 workflow ${closed.workflowId} already has a terminal outcome; recovery leaves it alone`
+    );
+    for (const invalid of [
+      { by: "", reason: "why" },
+      { by: "operator", reason: "" },
+      { by: "operator", reason: "two\nlines" },
+      { by: "o".repeat(201), reason: "why" },
+      { by: "operator", reason: "r".repeat(1001) },
+    ]) {
+      expect(
+        await refusalOf(h.ledger.quarantineRecovery(open.workflowId, invalid))
+      ).toBe(
+        "V2 recovery quarantine needs an operator (1-200 characters) and a reason (1-1000 characters) without control characters"
+      );
+    }
+
+    // A pre-discriminator row is recovered by every deployment sharing the
+    // database; another deployment's quarantine of it is not this one's.
+    const legacy = inputFor(`legacy-shared-${randomUUID()}`);
+    const legacyId = legacyWorkflowIdOf(legacy);
+    await h.sql`INSERT INTO loop_supervisor_message_v2_start_intent (workflow_id, tenant_id, principal, input_json) VALUES (${legacyId}, ${SCOPE.tenantId}, ${SCOPE.principal}, ${JSON.stringify(legacy)}::jsonb)`;
+    const other = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      h.url,
+      { deployment: "another-deployment-queue" }
+    );
+    opened.push(other);
+    await other.quarantineRecovery(legacyId, {
+      by: "operator-other",
+      reason: "their own hold",
+    });
+    expect(
+      (await other.recoveryQuarantines()).map((entry) => entry.workflowId)
+    ).toEqual([legacyId]);
+    expect(
+      (await h.ledger.recoveryQuarantines()).map((entry) => entry.workflowId)
+    ).toEqual([open.workflowId]);
+    const ours = (await h.ledger.recoverableStarts()).find(
+      (start) => start.workflowId === legacyId
+    );
+    expect(ours && "quarantine" in ours).toBe(false);
+    expect(
+      await refusalOf(
+        h.ledger.releaseRecoveryQuarantine(legacyId, {
+          by: "operator-b",
+          reason: "not ours",
+        })
+      )
+    ).toBe(`V2 workflow ${legacyId} is not quarantined`);
+
+    expect(
+      await refusalOf(
+        h.ledger.releaseRecoveryQuarantine(open.workflowId, {
+          by: "operator-b",
+          reason: "",
+        })
+      )
+    ).toBe(
+      "V2 recovery quarantine needs an operator (1-200 characters) and a reason (1-1000 characters) without control characters"
+    );
+
+    // Release: the record leaves the list, and history keeps both sides.
+    const released = await h.ledger.releaseRecoveryQuarantine(open.workflowId, {
+      by: "operator-b",
+      reason: "cause fixed",
+    });
+    expect(released).toEqual(first.quarantine);
+    expect(await h.ledger.recoveryQuarantines()).toEqual([]);
+    expect(
+      await refusalOf(
+        h.ledger.releaseRecoveryQuarantine(open.workflowId, {
+          by: "operator-b",
+          reason: "again",
+        })
+      )
+    ).toBe(`V2 workflow ${open.workflowId} is not quarantined`);
+    const requarantined = await h.ledger.quarantineRecovery(
+      open.workflowId,
+      by
+    );
+    expect(requarantined.created).toBe(true);
+    const history = await h.sql<
+      {
+        deployment: string;
+        quarantined_by: string;
+        reason: string;
+        release_reason: string | null;
+        released: boolean;
+        released_by: string | null;
+      }[]
+    >`SELECT deployment, quarantined_by, reason, released_by, release_reason, released_at IS NOT NULL AS released FROM loop_supervisor_message_v2_recovery_quarantine WHERE workflow_id = ${open.workflowId} ORDER BY id`;
+    expect(history).toEqual([
+      {
+        deployment: DEPLOYMENT,
+        quarantined_by: "operator-a",
+        reason: "hold for investigation",
+        release_reason: "cause fixed",
+        released: true,
+        released_by: "operator-b",
+      },
+      {
+        deployment: DEPLOYMENT,
+        quarantined_by: "operator-a",
+        reason: "hold for investigation",
+        release_reason: null,
+        released: false,
+        released_by: null,
+      },
+    ]);
+  });
+
+  test("a quarantined unreadable row no longer fails the whole sweep, and is named when it does", async () => {
+    const h = await failingHarness();
+    const healthy = inputFor(`healthy-${randomUUID()}`);
+    const healthyId = workflowIdOf(healthy);
+    await h.ledger.recordStartIntent(healthyId, SCOPE, healthy);
+    const broken = inputFor(`broken-${randomUUID()}`);
+    const brokenId = workflowIdOf(broken);
+    await h.ledger.recordStartIntent(brokenId, SCOPE, broken);
+    // A deployment-format id on a row claiming no deployment: unreadable as
+    // either format, so listing it fails the whole sweep.
+    await h.sql`UPDATE loop_supervisor_message_v2_start_intent SET deployment = NULL WHERE workflow_id = ${brokenId}`;
+
+    const refused = h.restart();
+    const refusal = await startOutcome(refused.runner);
+    expect(refusal).toBeInstanceOf(SupervisorMessageV2RecoveryStartupError);
+    expect((refusal as Error).message).toBe(
+      `V2 initial recovery failed for 1 recorded start: workflow ${brokenId} for an unreadable recipient: SupervisorMessageV2RecoveryRecordError: V2 recovery ledger row ${brokenId} has an invalid workflow binding [to start without it: loop orchestration v2-quarantine /srv/loop/orchestration.json ${brokenId} --reason '<why>']`
+    );
+
+    await h.ledger.quarantineRecovery(brokenId, {
+      by: "operator-a",
+      reason: "tampered row",
+    });
+    const started = h.restart();
+    expect(await startOutcome(started.runner)).toBe("started");
+    expect(started.lines).toHaveLength(1);
+    expect(started.lines[0]).toStartWith(
+      `V2 recovery QUARANTINED workflow ${brokenId} for ${broken.to}: skipped until released (quarantined by operator-a at `
+    );
+    expect(h.delivered).toEqual([
+      deriveSupervisorMessageV2DeliveryId(SCOPE, healthyId, 1),
+    ]);
+  });
 
   test("service start refuses a PostgreSQL failure for one record after recovering the others", async () => {
     const h = await failingHarness();
