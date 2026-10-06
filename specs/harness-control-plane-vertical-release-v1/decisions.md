@@ -128,7 +128,7 @@ Also observed: claude/fix3-doorbell-starvation, with no commits. This record
 does not map it to a decision. The open-defect state for these items is in
 status.md, under "Open review defects at r2".
 
-## 2026-10-06: decision 7 follow-up, operator quarantine (not an owner decision)
+## 2026-10-05: decision 7 follow-up, operator quarantine (not an owner decision)
 
 This entry records an implementation choice on
 claude/fix4-recovery-escape-path (from claude/fix-integration-r3-2026-10-05,
@@ -152,8 +152,24 @@ reviewed it.
 - Refinement: a conflict with another workflow type under the ID on the
   host's own task queue is no longer treated as a foreign execution. Only an
   execution on another task queue (`WorkflowForeignExecutionError`) is
-  skipped. A same-queue type conflict refuses startup like any other failure.
-  It can be quarantined.
+  skipped. A same-queue type conflict refuses startup like any other failure,
+  whether that execution is running (the port's start refuses the type) or
+  closed (the coordinator's status read refuses any answer that is not a
+  `supervisor-message-status.v2` projection, so the other type's state is
+  never recorded as this message's terminal outcome). It can be quarantined.
+- Status surface limits: quarantined records are listed only where an
+  authenticated V2 inspection surface exists, the assignment route's GET,
+  and only for that route's tenant (one tenant's control principal never
+  sees another tenant's message ids). A deployment without an assignment
+  route has the start-time log lines and `v2-quarantine-list` (which needs
+  the database credential) and nothing on HTTP. Nothing is added to /healthz,
+  not even a count, while owner question Q2 is open.
 - Rollback and mixed versions: the table is additive. A build without it
   ignores the table and refuses startup on a failing record, as 4ab9bc3d
-  does. So a rollback is safe; it only loses the escape.
+  does, so a rollback fails closed and loses the escape. It also restores
+  the r3 handling of a same-queue workflow-type conflict: a running one is
+  skipped as foreign again, and a closed one is durably recorded as
+  `terminated` from the other type's status. That record is not undone by
+  upgrading again, and a quarantine does not prevent it, because an older
+  build ignores quarantines. Before rolling back, resolve each same-queue
+  conflict this build reported.
