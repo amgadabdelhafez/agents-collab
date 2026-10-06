@@ -76,16 +76,26 @@ input. Those files are not edited here. Read them with these limits:
   same-client retry identity convergence is NOT proven. That tick means the
   Run48 request/result path was observed. It does not mean full-chain
   acceptance. Unticking or qualifying it in that file is left to the owner of
-  codex/a2a-request-rejection-v1.
+  codex/a2a-request-rejection-v1. (Added 2026-10-05: commit 021c39d3 on
+  claude/fix2-control-plane-docs, a child of e4efbae2, reopens that item and
+  adds dated corrections to that directory's release-attribution.md, verify.md
+  and status.md. It is not merged into codex/a2a-request-rejection-v1, main or
+  this line, so those files at e4efbae2 still read as before.)
 - Run48 evidence there is spread over three candidate binaries, and none of them
   binds to e4efbae2 (the child commit of 99e61b54 that records this evidence) or
   to 53511614:
   - Run48 was allocated with launcher candidate 28bf864b...0851 (status.md:132),
     the same SHA256 as the 08:23 dedicated timing-repair candidate
     (status.md:153-154). These docs record no source HEAD for it.
-  - The dedicated Run48 service that took the result task ran candidate
-    9904f280...29fa3 (status.md:96-98). release-attribution.md:8-11 binds that
-    candidate to feature-line HEAD 99e61b54 plus an uncommitted overlay.
+  - Candidate 9904f280...29fa3 is recorded for one Run48 service start only:
+    the 08:38 UTC start under PTY40134 (status.md:94-98), after which result
+    task da28fcc8 was submitted. The later restarts record no binary hash; see
+    "Run48 service identity" below. release-attribution.md:8-11 describes the
+    candidate as feature-line HEAD 99e61b54 plus an uncommitted overlay whose
+    bytes were not recorded, so no source is identified for it. (Revised
+    2026-10-05: this bullet said the service "that took the result task ran"
+    9904f280 and that release-attribution.md "binds" it to 99e61b54 plus the
+    overlay.)
   - 7980ed8d...dd4a8 (verify.md:16, status.md:413-415, slice-1-charter.md:10)
     is the October 4 Slice 1 source-overlay diagnostic candidate, not Run48
     evidence. verify.md says it includes an uncommitted feature-line overlay but
@@ -107,3 +117,100 @@ Temporal", with no SHA or evidence. The hashes reproduce and match the digests
 recorded in v1 release-attribution.md:18-20 and release-receipt.md:35-36. They
 identify the committed bytes only. The architecture statements inside the files
 are unproven claims.
+
+### Run48 service identity (added 2026-10-05)
+
+Evidence is limited to the predecessor docs at e4efbae2 and git objects. These
+points are brought forward from 021c39d3 (claude/fix2-control-plane-docs),
+whose files do not exist on this line.
+
+- 08:38 UTC: the dedicated Run48 service became ready under PTY40134 with
+  candidate SHA256 9904f280...29fa3 (e4efbae2 status.md:94-98). This is the
+  only binary hash recorded for any Run48 service start.
+- 08:45 UTC: the service was restarted through its owning PTY "with an exact
+  commit/path/hash artifact-verifier binding", current PTY75285
+  (status.md:66-67). No binary hash is recorded. Graph acceptance followed
+  this restart. The next recorded event is the 08:47 result publication
+  (receipt 627ad26d, status.md:47-51), with no restart recorded in between.
+- After 08:47 the worker was restarted again (PTY88746, status.md:54). It
+  served the post-restart checks and was stopped for the 08:52 restore drill
+  (status.md:18-19). No binary hash is recorded.
+- So the docs record 9904f280 for the 08:38 start only. They do not show that
+  graph acceptance, result publication, restart or restore evidence ran on
+  9904f280.
+- release-attribution.md:8-9 names feature-line HEAD 99e61b54 and says the
+  candidate "includes an uncommitted overlay. HEAD alone does not identify
+  bytes." The overlay bytes were never recorded, so no source is identified.
+  e4efbae2 was committed at 2026-10-05T09:00:49Z, after the 08:38 start.
+  `git diff --numstat 99e61b54 e4efbae2` gives 32019 added and 28003 removed
+  lines for loop-fork/src/loop/temporal-workflow-bundle.generated.ts. These
+  equal the counts in release-attribution.md:40. That is consistent with
+  e4efbae2 committing the tree described there. No build of e4efbae2 and no
+  hash comparison with 9904f280 is recorded, so e4efbae2 is not proven to be
+  9904f280's source.
+
+### Open review defects at r2 (added 2026-10-05)
+
+021c39d3 listed four review defects as open in e4efbae2. This list gives their
+state on claude/fix-integration-r2-2026-10-05 at 40097564. r2 is an
+integration branch. It is not merged into main (0f69b9a9) and is not
+installed. Branch state was observed at 2026-10-06T03:43Z. Test counts are
+from this docs branch, whose loop-fork tree equals 40097564, run with
+`bun run test:file` against task-owned PostgreSQL and a local Temporal dev
+server. The owner decisions referred to below are recorded in decisions.md in
+this directory.
+
+1. Completion binding to the message: fixed on r2. 65587c10 ports
+   159d369c/52113358. 2b1b1893 derives the result graph id from the message's
+   scoped identity and refuses any other graph. It also makes the retired
+   resultArtifacts config shape fail startup. Evidence:
+   supervisor-a2a-result-binding.test.ts, 7 pass. Still open (decision 1):
+   the derivation is an unkeyed sha256 that anyone who knows tenant, principal
+   and message workflow ID can compute. No tool computes it yet. Assigned to
+   claude/fix3-graph-id-keyed, which had no commits when observed.
+2. Duplicate Claude result: fixed on r2 at store level. b42a326c gives each
+   Claude message or decision reply one durable slot per inbound, keyed by
+   type and dedupe_key. It lets an ACK retry after a no-effect ACK for every
+   sender, and the doorbell now rings every pane-backed target. The double
+   notification (MCP channel plus tmux doorbell) is kept by design. Evidence:
+   bridge-result-reply-dedupe.test.ts, 12 pass. Still open (decision 3): a
+   keyless progress reply and a later keyless result reply of the same type
+   share one slot (loop-fork/src/loop/bridge-store.ts:784-788). Once the first
+   has reached its recipient, the second is a duplicate and is not delivered.
+   No lint or warning for keyless progress replies exists on r2. No fix3
+   branch whose name covers it was observed.
+3. Purge re-run: fixed on r2 for executions that end after the marker exists.
+   The fixes are 4f769f48 (cherry-picks of 3a43ba90 and 698d3d54), 3f7a70f2
+   (the terminal_outcome marker) and 4d98d97d (foreign-task-queue conflict and
+   the 'acknowledged' naming). Evidence:
+   supervisor-message-v2-delivery-ledger.test.ts, 13 pass;
+   supervisor-message-v2-temporal-retention.test.ts, 6 pass;
+   supervisor-message-v2-recovery.test.ts, 17 pass. Limit: existing rows are
+   not backfilled (decision 5). Open (decision 6): the workflow ID has no
+   deployment discriminator. r2 guards with a task-queue conflict and a
+   namespace/queue binding at composition (31e5deba). Assigned to
+   claude/fix3-workflow-id-deployment, which had no commits when observed.
+4. Session re-enrollment: fixed on r2. 1176afff renews and rebinds after
+   start. f650e1d9 enrolls before recovery and off the ACK sweep. 6615d452
+   adds per-seat outcomes and a real-server composition test. Evidence:
+   loop-orchestration-server-postgres.test.ts, 8 pass. Still open
+   (decision 9): start still refuses when any configured seat cannot be
+   enrolled. The test "the orchestration server refuses to start when a
+   configured seat cannot be enrolled" pins that behavior, and the owner
+   wants per-seat degrade for a stopped peer. Also open: a retention policy
+   for rebind receipts and the not-ready-after-renewal gate. Assigned to
+   claude/fix3-session-retention, which had no commits when observed.
+
+Two behaviors that r2 introduced are narrowed by owner decisions and are not
+yet changed:
+
+- Recovery (72d188df): the runner's reporter skips any failing record, and
+  service start proceeds. Decision 7 narrows this to conflicts only. Assigned
+  to claude/fix3-recovery-narrowing.
+- Readiness-store outage (eefcbb0b): the delivery stays pending with no attempt
+  spent, and no log line, counter or bound applies to it. Decision 8 adds all
+  three. Assigned to claude/fix3-readiness-outage-bound.
+
+claude/fix3-doorbell-starvation also exists with no commits. Its scope is not
+recorded here. None of the fix3 branches is merged into r2. Nothing in this
+list claims a fix3 change.

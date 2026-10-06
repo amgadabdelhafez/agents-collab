@@ -53,7 +53,13 @@ Correction, 2026-10-05: "Integration input" names source only. This receipt's
 PASS evidence binds to the compiled 8a1cc88f and 928bd1db binaries above. The
 input's own Run48 evidence binds to neither e4efbae2 nor 53511614: Run48 was
 allocated with launcher candidate 28bf864b...0851, whose source the records do
-not name, and its dedicated service ran 9904f280...29fa3, built from 99e61b54
-plus an uncommitted overlay. The result blob's text is an unproven assertion;
+not name. The only binary hash recorded for a Run48 service is 9904f280...29fa3,
+for the 08:38 UTC start (PTY40134); the 08:45 restart (PTY75285), under which
+graph acceptance and the 08:47 result publication happened, and the later
+worker restart (PTY88746) record no hash. No commit or recorded overlay
+identifies 9904f280's source. The result blob's text is an unproven assertion;
 see status.md's October 5 correction. (Revised the same day: an earlier wording
-also attributed Run48 evidence to the Slice 1 diagnostic candidate 7980ed8d.)
+also attributed Run48 evidence to the Slice 1 diagnostic candidate 7980ed8d.
+Revised again 2026-10-05: an earlier wording said the dedicated service "ran
+9904f280", "built from 99e61b54 plus an uncommitted overlay". The docs prove
+neither for the result publication; see status.md, "Run48 service identity".)
