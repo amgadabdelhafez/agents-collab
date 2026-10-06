@@ -857,12 +857,19 @@ export type A2AV2EnrollmentOutcome =
   | { recipient: string; state: "deferred" | "enrolled" | "unchanged" }
   | { error: unknown; recipient: string; state: "failed" };
 
-/** The first failure in a `maintain()` result, for callers that must refuse. */
+/**
+ * Start-time verdict on the first `maintain()` pass. Only the configured
+ * recipient's own failure refuses start, with its own cause. A peer seat that
+ * cannot be enrolled (for example, stopped) degrades that seat alone: the
+ * server starts, the sweep reports the peer as not enrolled and retries it.
+ * Until then the peer's deliveries meet the store's ordinary readiness refusal.
+ */
 export const requireA2AV2Enrollment = (
-  outcomes: readonly A2AV2EnrollmentOutcome[]
+  outcomes: readonly A2AV2EnrollmentOutcome[],
+  recipient: string
 ): void => {
   for (const outcome of outcomes) {
-    if (outcome.state === "failed") {
+    if (outcome.state === "failed" && outcome.recipient === recipient) {
       throw outcome.error;
     }
   }
@@ -982,6 +989,8 @@ export const createOrchestrationSweep = (input: {
   log: (line: string) => void;
   reconcilers: readonly { reconcile(): Promise<unknown> }[];
   setHealthy: (healthy: boolean) => void;
+  /** The start-time pass, so a peer that start degraded is reported now. */
+  startOutcomes?: readonly A2AV2EnrollmentOutcome[];
 }): (() => Promise<void>) => {
   let enrolling = false;
   let reconciling = false;
@@ -1006,6 +1015,7 @@ export const createOrchestrationSweep = (input: {
       }
     }
   };
+  report(input.startOutcomes ?? []);
   const enroll = (
     enrollment: Pick<ConfiguredA2AV2SessionEnrollment, "maintain">
   ) => {
@@ -1067,6 +1077,7 @@ const createDefaultRuntimeHost = async (input: {
 }): Promise<{
   a2aV2Enrollment?: ConfiguredA2AV2SessionEnrollment;
   a2aV2Service: SupervisorA2AV2Service | undefined;
+  a2aV2StartOutcomes?: readonly A2AV2EnrollmentOutcome[];
   host: TemporalSupervisorRuntimeHost;
 }> => {
   const delivery = new FirstAvailableDeliveryPort([
@@ -1116,6 +1127,7 @@ const createDefaultRuntimeHost = async (input: {
     (entry) => entry.supervisorId === a2aConfig.recipient
   );
   let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
+  let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
   let enrollmentFailure: { error: unknown } | undefined;
   const a2aV2Service = await createSupervisorA2AV2Service({
     card: {
@@ -1157,8 +1169,10 @@ const createDefaultRuntimeHost = async (input: {
     // Enroll before the host's first recovery sweep checks readiness for
     // pending deliveries: a descriptor that expired, or a seat that restarted,
     // while the server was down is renewed or rebound first instead of
-    // refusing start on every restart. Start still refuses an unenrollable
-    // seat; afterwards the reconciliation sweep keeps the enrollment current.
+    // refusing start on every restart. Start still refuses when the
+    // configured recipient cannot be enrolled; a peer seat that cannot (one
+    // that is stopped) is degraded alone: the sweep reports it as not
+    // enrolled and retries it. Afterwards the sweep keeps every seat current.
     enrollSessions: async (sessions) => {
       a2aV2Enrollment = new ConfiguredA2AV2SessionEnrollment({
         config: a2aConfig,
@@ -1178,7 +1192,8 @@ const createDefaultRuntimeHost = async (input: {
         service: sessions,
       });
       try {
-        requireA2AV2Enrollment(await a2aV2Enrollment.maintain());
+        a2aV2StartOutcomes = await a2aV2Enrollment.maintain();
+        requireA2AV2Enrollment(a2aV2StartOutcomes, a2aConfig.recipient);
       } catch (error) {
         enrollmentFailure = { error };
         throw error;
@@ -1241,7 +1256,12 @@ const createDefaultRuntimeHost = async (input: {
     // the operator's to act on, so it keeps its own message, as before.
     throw enrollmentFailure ? enrollmentFailure.error : error;
   });
-  return { a2aV2Enrollment, a2aV2Service, host: a2aV2Service.host };
+  return {
+    a2aV2Enrollment,
+    a2aV2Service,
+    a2aV2StartOutcomes,
+    host: a2aV2Service.host,
+  };
 };
 
 const validateConfiguredRuntimeEnvironment = (
@@ -1287,6 +1307,7 @@ export const runLoopOrchestrationServer = async (
   let wakeTimer: ReturnType<typeof setInterval> | undefined;
   let a2aV2Service = options.a2aV2Service;
   let a2aV2Enrollment: ConfiguredA2AV2SessionEnrollment | undefined;
+  let a2aV2StartOutcomes: readonly A2AV2EnrollmentOutcome[] | undefined;
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   let reconciliationHealthy = false;
   try {
@@ -1306,6 +1327,7 @@ export const runLoopOrchestrationServer = async (
         nativeConnection,
       });
       a2aV2Enrollment = created.a2aV2Enrollment;
+      a2aV2StartOutcomes = created.a2aV2StartOutcomes;
       a2aV2Service = created.a2aV2Service;
       host = created.host;
     }
@@ -1346,6 +1368,7 @@ export const runLoopOrchestrationServer = async (
       setHealthy: (healthy) => {
         reconciliationHealthy = healthy;
       },
+      startOutcomes: a2aV2StartOutcomes,
     });
     await reconcile();
     if (config.deadlines) {

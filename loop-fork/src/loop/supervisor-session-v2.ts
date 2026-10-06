@@ -31,6 +31,27 @@ export const SUPERVISOR_SESSION_READINESS_MAX_AGE_MS = 60_000;
  */
 export const SUPERVISOR_SESSION_READINESS_CLOCK_SKEW_MS = 5000;
 
+/**
+ * Receipt retention for one seat (one descriptor). Every renewal writes a
+ * rebind receipt, and readiness receipts are keyed by revision, so both tables
+ * grow with each renewal for as long as a seat lives. A receipt is kept while
+ * it is among the seat's latest `keepLatest` (by revision) or younger than
+ * `keepNewerThanMs` (by its row's `created_at`, database clock); anything else
+ * is pruned in the same transaction as the seat's next rebind. There is no
+ * separate scheduler: rows are only ever added by a rebind, or by a probe of
+ * the revision a rebind wrote, so pruning on rebind bounds both tables.
+ *
+ * Existing rows are not migrated: a seat's backlog is pruned by that seat's
+ * first rebind after upgrade. Receipts of a seat that is never rebound again
+ * (a removed seat) are left as they are.
+ */
+export interface SupervisorSessionReceiptRetentionV2 {
+  keepLatest: number;
+  keepNewerThanMs: number;
+}
+export const SUPERVISOR_SESSION_RECEIPT_RETENTION_DEFAULT: SupervisorSessionReceiptRetentionV2 =
+  Object.freeze({ keepLatest: 16, keepNewerThanMs: 7 * 24 * 60 * 60 * 1000 });
+
 export type SupervisorSessionProviderV2 =
   | "claude-code"
   | "codex-app-server"
@@ -188,6 +209,51 @@ const requireReadinessMaxAgeMs = (value: unknown): number => {
   }
   return Number(value);
 };
+
+const requireReceiptRetention = (
+  value: unknown
+): SupervisorSessionReceiptRetentionV2 => {
+  if (value === undefined) {
+    return SUPERVISOR_SESSION_RECEIPT_RETENTION_DEFAULT;
+  }
+  const record = value as
+    | Partial<SupervisorSessionReceiptRetentionV2>
+    | null
+    | undefined;
+  const keepLatest = record?.keepLatest;
+  const keepNewerThanMs = record?.keepNewerThanMs;
+  if (
+    !(
+      Number.isSafeInteger(keepLatest) &&
+      Number(keepLatest) >= 1 &&
+      Number.isSafeInteger(keepNewerThanMs) &&
+      Number(keepNewerThanMs) >= 0
+    )
+  ) {
+    throw new SupervisorSessionV2Error("receiptRetention is invalid");
+  }
+  return {
+    keepLatest: Number(keepLatest),
+    keepNewerThanMs: Number(keepNewerThanMs),
+  };
+};
+
+/**
+ * The provider-session identity a readiness probe vouches for. Two revisions
+ * of one descriptor that agree on all of it differ only by a renewal
+ * (revision, issuedAt, expiresAt), so a probe of one is evidence for the other.
+ * Both callers compare two revisions of one descriptor (same scope, recipient
+ * and descriptor id): rebind refuses another descriptor id first, and
+ * assertReady re-reads by scope and recipient.
+ */
+const sameSeatIdentity = (
+  left: SupervisorSessionDescriptorV2,
+  right: SupervisorSessionDescriptorV2
+): boolean =>
+  left.endpointDigest === right.endpointDigest &&
+  left.endpointRef === right.endpointRef &&
+  left.provider === right.provider &&
+  left.sessionRef === right.sessionRef;
 
 const requireString = (
   value: unknown,
@@ -457,6 +523,7 @@ export class PostgresSupervisorSessionV2Store {
   readonly #now: () => string;
   readonly #provider: SupervisorSessionProviderReadinessPort;
   readonly #readinessMaxAgeMs: number;
+  readonly #receiptRetention: SupervisorSessionReceiptRetentionV2;
   readonly #sql: SQL;
 
   private constructor(
@@ -464,12 +531,14 @@ export class PostgresSupervisorSessionV2Store {
     provider: SupervisorSessionProviderReadinessPort,
     authority: SupervisorSessionRebindAuthorityPort,
     now: () => string,
-    readinessMaxAgeMs?: number
+    readinessMaxAgeMs?: number,
+    receiptRetention?: SupervisorSessionReceiptRetentionV2
   ) {
     this.#authority = authority;
     this.#now = now;
     this.#provider = provider;
     this.#readinessMaxAgeMs = requireReadinessMaxAgeMs(readinessMaxAgeMs);
+    this.#receiptRetention = requireReceiptRetention(receiptRetention);
     this.#sql = sql;
   }
 
@@ -480,6 +549,8 @@ export class PostgresSupervisorSessionV2Store {
     provider: SupervisorSessionProviderReadinessPort;
     /** How long one successful provider probe keeps `status().ready` true. */
     readinessMaxAgeMs?: number;
+    /** Per-seat receipt retention; see SupervisorSessionReceiptRetentionV2. */
+    receiptRetention?: SupervisorSessionReceiptRetentionV2;
   }): Promise<PostgresSupervisorSessionV2Store> {
     if (!POSTGRES_URL.test(input.databaseUrl)) {
       throw new SupervisorSessionV2Error(
@@ -487,6 +558,7 @@ export class PostgresSupervisorSessionV2Store {
       );
     }
     const readinessMaxAgeMs = requireReadinessMaxAgeMs(input.readinessMaxAgeMs);
+    const receiptRetention = requireReceiptRetention(input.receiptRetention);
     const sql = new SQL(input.databaseUrl);
     try {
       await sql.connect();
@@ -495,7 +567,8 @@ export class PostgresSupervisorSessionV2Store {
         input.provider,
         input.authority,
         input.now,
-        readinessMaxAgeMs
+        readinessMaxAgeMs,
+        receiptRetention
       );
     } catch (error) {
       await sql.close({ timeout: 0 }).catch(() => undefined);
@@ -539,6 +612,15 @@ export class PostgresSupervisorSessionV2Store {
         receipt_json JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
+    `;
+    // Additive: lets a rebind prune its own seat's receipts without a scan.
+    await this.#sql`
+      CREATE INDEX IF NOT EXISTS loop_supervisor_session_v2_rebind_receipt_seat_idx
+      ON loop_supervisor_session_v2_rebind_receipt (tenant_id, principal, descriptor_id)
+    `;
+    await this.#sql`
+      CREATE INDEX IF NOT EXISTS loop_supervisor_session_v2_readiness_receipt_seat_idx
+      ON loop_supervisor_session_v2_readiness_receipt (tenant_id, principal, descriptor_id)
     `;
   }
 
@@ -664,8 +746,113 @@ export class PostgresSupervisorSessionV2Store {
         ${scope.principal}, ${canonical(receipt)}::jsonb
       ) ON CONFLICT (receipt_id) DO NOTHING
     `;
+      // A renewal of the same provider session must not drop a dependent
+      // DAG gate to not-ready until the next delivery probes it.
+      if (sameSeatIdentity(current, next)) {
+        await this.#carryReadiness(sql, scope, current, next);
+      }
+      await this.#pruneReceipts(sql, scope, next.descriptorId);
     });
     return { descriptor: next, receipt };
+  }
+
+  /**
+   * Copies the current revision's readiness receipt to the renewed revision,
+   * keeping its `checkedAt`: it is the same probe's evidence, so it lapses when
+   * that probe would have and a renewal never extends readiness. Nothing is
+   * carried when there is no receipt, or it cannot be read: the renewal still
+   * succeeds and the seat reads not-ready until its next probe. A leftover
+   * receipt already stored under the renewed revision's id (left by an
+   * earlier lifetime of a re-registered descriptor) is replaced, as a probe
+   * replaces it.
+   */
+  async #carryReadiness(
+    sql: SQL,
+    scope: TrustedSupervisorMessageV2Scope,
+    current: SupervisorSessionDescriptorV2,
+    next: SupervisorSessionDescriptorV2
+  ): Promise<void> {
+    const rows = await sql<{ receipt_json: unknown }[]>`
+      SELECT receipt_json
+      FROM loop_supervisor_session_v2_readiness_receipt
+      WHERE receipt_id = ${deriveSupervisorSessionReadinessReceiptV2Id(
+        scope,
+        current.descriptorId,
+        current.revision
+      )}
+        AND tenant_id = ${scope.tenantId}
+        AND principal = ${scope.principal}
+    `;
+    let prior: SupervisorSessionReadinessReceiptV2;
+    try {
+      const value = rows[0]?.receipt_json;
+      prior = this.#parseReadinessReceipt(
+        typeof value === "string" ? JSON.parse(value) : value,
+        scope
+      );
+    } catch {
+      return;
+    }
+    const carried: SupervisorSessionReadinessReceiptV2 = {
+      ...prior,
+      descriptorRevision: next.revision,
+      receiptId: deriveSupervisorSessionReadinessReceiptV2Id(
+        scope,
+        next.descriptorId,
+        next.revision
+      ),
+    };
+    await sql`
+      INSERT INTO loop_supervisor_session_v2_readiness_receipt (
+        receipt_id, descriptor_id, tenant_id, principal, receipt_json
+      ) VALUES (
+        ${carried.receiptId}, ${carried.descriptorId}, ${scope.tenantId},
+        ${scope.principal}, ${canonical(carried)}::jsonb
+      ) ON CONFLICT (receipt_id) DO UPDATE
+        SET receipt_json = EXCLUDED.receipt_json
+    `;
+  }
+
+  /** Applies the receipt retention policy to one seat; see its type. */
+  async #pruneReceipts(
+    sql: SQL,
+    scope: TrustedSupervisorMessageV2Scope,
+    descriptorId: string
+  ): Promise<void> {
+    const { keepLatest, keepNewerThanMs } = this.#receiptRetention;
+    // Receipts are stored as a JSONB string holding the canonical JSON text
+    // (how the driver binds a string to `::jsonb`); `#>> '{}'` then `::jsonb`
+    // reads the revision from that shape and from a JSONB object alike.
+    await sql`
+      DELETE FROM loop_supervisor_session_v2_rebind_receipt
+      WHERE tenant_id = ${scope.tenantId}
+        AND principal = ${scope.principal}
+        AND descriptor_id = ${descriptorId}
+        AND created_at < now() - (${keepNewerThanMs}::bigint * interval '1 millisecond')
+        AND receipt_id NOT IN (
+          SELECT receipt_id FROM loop_supervisor_session_v2_rebind_receipt
+          WHERE tenant_id = ${scope.tenantId}
+            AND principal = ${scope.principal}
+            AND descriptor_id = ${descriptorId}
+          ORDER BY ((receipt_json #>> '{}')::jsonb->>'toRevision')::bigint DESC NULLS LAST
+          LIMIT ${keepLatest}
+        )
+    `;
+    await sql`
+      DELETE FROM loop_supervisor_session_v2_readiness_receipt
+      WHERE tenant_id = ${scope.tenantId}
+        AND principal = ${scope.principal}
+        AND descriptor_id = ${descriptorId}
+        AND created_at < now() - (${keepNewerThanMs}::bigint * interval '1 millisecond')
+        AND receipt_id NOT IN (
+          SELECT receipt_id FROM loop_supervisor_session_v2_readiness_receipt
+          WHERE tenant_id = ${scope.tenantId}
+            AND principal = ${scope.principal}
+            AND descriptor_id = ${descriptorId}
+          ORDER BY ((receipt_json #>> '{}')::jsonb->>'descriptorRevision')::bigint DESC NULLS LAST
+          LIMIT ${keepLatest}
+        )
+    `;
   }
 
   /** The delivery coordinator calls this immediately before the provider port. */
@@ -704,10 +891,11 @@ export class PostgresSupervisorSessionV2Store {
         FOR UPDATE
       `;
       const current = descriptorFromRow(rows[0], scope);
-      if (
-        !current ||
-        descriptorSemantics(current) !== descriptorSemantics(descriptor)
-      ) {
+      // A renewal between the read and this lock (a new revision and expiry
+      // for the same provider session) does not void the probe; the receipt
+      // is written for the revision now current. Any change to the session
+      // identity the probe vouched for still refuses.
+      if (!(current && sameSeatIdentity(current, descriptor))) {
         throw new SupervisorSessionV2Error(
           "current session changed during readiness"
         );

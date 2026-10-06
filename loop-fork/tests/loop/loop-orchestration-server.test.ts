@@ -408,9 +408,9 @@ test("A2A V2 enrollment sweep reports an unavailable seat and retries it later",
   expect(failed?.state === "failed" && failureText(failed.error)).toBe(
     "configured A2A V2 recipient session is unavailable"
   );
-  expect(() => requireA2AV2Enrollment(failed ? [failed] : [])).toThrow(
-    "configured A2A V2 recipient session is unavailable"
-  );
+  expect(() =>
+    requireA2AV2Enrollment(failed ? [failed] : [], config.recipient)
+  ).toThrow("configured A2A V2 recipient session is unavailable");
   thread.id = "thread-a";
   clock.offsetMs = 1000;
   // Inside the retry delay the seat is not re-attempted, and says so.
@@ -581,5 +581,65 @@ test("orchestration sweep reports recovery only after a real enrollment, not whi
   expect(logs).toEqual([
     failed,
     "orchestration A2A V2 session enrollment recovered for supervisor:harness",
+  ]);
+});
+
+test("start-time enrollment refuses the configured recipient's failure and degrades a peer's", () => {
+  const recipient = "supervisor:harness";
+  const peer = "supervisor:harness-peer";
+  const down = (seat: string): A2AV2EnrollmentOutcome => ({
+    error: new Error(`${seat} unavailable`),
+    recipient: seat,
+    state: "failed",
+  });
+  // A stopped peer does not refuse start: it is left to the sweep.
+  expect(() =>
+    requireA2AV2Enrollment(
+      [{ recipient, state: "enrolled" }, down(peer)],
+      recipient
+    )
+  ).not.toThrow();
+  // The configured recipient itself still refuses start, with its own cause.
+  expect(() =>
+    requireA2AV2Enrollment(
+      [down(recipient), { recipient: peer, state: "enrolled" }],
+      recipient
+    )
+  ).toThrow(`${recipient} unavailable`);
+});
+
+test("orchestration sweep reports a peer that failed start-time enrollment as not enrolled, then its recovery", async () => {
+  const peer = "supervisor:harness-peer";
+  const passes: A2AV2EnrollmentOutcome[][] = [
+    [{ recipient: peer, state: "deferred" }],
+    [{ recipient: peer, state: "enrolled" }],
+  ];
+  const logs: string[] = [];
+  const sweep = createOrchestrationSweep({
+    enrollment: {
+      maintain: () => Promise.resolve(passes.shift() ?? []),
+    },
+    log: (line) => logs.push(line),
+    reconcilers: [],
+    setHealthy: () => undefined,
+    startOutcomes: [
+      {
+        error: new Error("configured A2A V2 recipient session is unavailable"),
+        recipient: peer,
+        state: "failed",
+      },
+    ],
+  });
+  const failed = `orchestration A2A V2 session enrollment failed for ${peer}: configured A2A V2 recipient session is unavailable`;
+  // Reported before the first tick, so a degraded start is never silent.
+  expect(logs).toEqual([failed]);
+  await sweep();
+  await yieldTurn();
+  expect(logs).toEqual([failed]);
+  await sweep();
+  await yieldTurn();
+  expect(logs).toEqual([
+    failed,
+    `orchestration A2A V2 session enrollment recovered for ${peer}`,
   ]);
 });

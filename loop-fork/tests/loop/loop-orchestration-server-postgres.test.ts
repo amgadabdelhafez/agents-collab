@@ -379,19 +379,24 @@ const waitFor = async <T>(
   throw new Error(`timed out waiting for ${label}`);
 };
 
+const PEER = "supervisor:harness-peer";
+
 const compositionFixture = (input: {
   address: string;
+  /** Also configure the run's Claude seat as a peer recipient. */
+  peer?: boolean;
   tenant: string;
   thread: string;
 }) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "loop-orch-compose-")));
   const runDir = join(root, "run");
   const manifestPath = join(runDir, "manifest.json");
-  const writeSeat = (thread: string) =>
+  const writeSeat = (thread: string, claudeSessionId = "") =>
     writeRunManifest(
       manifestPath,
       createRunManifest(
         {
+          claudeSessionId,
           codexRemoteUrl: "ws://127.0.0.1:4500",
           codexThreadId: thread,
           cwd: root,
@@ -455,6 +460,17 @@ const compositionFixture = (input: {
           supervisorId: "supervisor:harness",
           tokenEnv: "LOOP_TEST_HARNESS_TOKEN",
         },
+        ...(input.peer
+          ? [
+              {
+                manifestPath,
+                principal: "principal:harness",
+                seat: "claude",
+                supervisorId: PEER,
+                tokenEnv: "LOOP_TEST_PEER_TOKEN",
+              },
+            ]
+          : []),
       ],
       taskQueue,
     })
@@ -465,6 +481,7 @@ const compositionFixture = (input: {
     env: {
       LOOP_TEST_A2A_DATABASE_URL: postgres.databaseUrl(),
       LOOP_TEST_HARNESS_TOKEN: randomUUID(),
+      LOOP_TEST_PEER_TOKEN: randomUUID(),
     },
     port,
     remove: () => rmSync(root, { force: true, recursive: true }),
@@ -610,6 +627,62 @@ test("the orchestration server refuses to start when a configured seat cannot be
   } finally {
     clearTimeout(timer);
     stop.abort();
+    await admin.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server starts with a stopped peer seat, reports it not enrolled, and enrolls it from the sweep", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  // The Codex recipient is live; the Claude peer seat has no session yet.
+  const fixture = compositionFixture({
+    address: environment.address,
+    peer: true,
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const admin = await connectStore(config);
+  const errors = spyOn(console, "error");
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    expect(
+      await admin.current(scopeOf(config), config.recipient)
+    ).toMatchObject({ revision: 1, sessionRef: "session:thread-a" });
+    expect(await admin.current(scopeOf(config), PEER)).toBeUndefined();
+    const lines = () => errors.mock.calls.map(([line]) => String(line));
+    expect(lines()).toContain(
+      `orchestration A2A V2 session enrollment failed for ${PEER}: configured A2A V2 recipient session is unavailable`
+    );
+    // The peer's Claude session comes up while the server runs: the existing
+    // reconciliation sweep enrolls it after its retry delay, no restart.
+    fixture.writeSeat("thread-a", "claude-peer-session");
+    const enrolled = await waitFor("the sweep to enroll the peer", async () => {
+      const current = await admin.current(scopeOf(config), PEER);
+      return current ? current : undefined;
+    });
+    expect(enrolled).toMatchObject({
+      provider: "claude-code",
+      revision: 1,
+      sessionRef: "session:claude-peer-session",
+    });
+    await waitFor("the recovery line", () =>
+      Promise.resolve(
+        lines().includes(
+          `orchestration A2A V2 session enrollment recovered for ${PEER}`
+        )
+          ? true
+          : undefined
+      )
+    );
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    errors.mockRestore();
     await admin.close();
     fixture.remove();
   }
