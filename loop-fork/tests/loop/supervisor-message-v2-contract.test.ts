@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { createHmac, randomBytes } from "node:crypto";
+import { inspect } from "node:util";
 import {
+  deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2BoardItemId,
   deriveSupervisorMessageV2DeliveryId,
   deriveSupervisorMessageV2Identity,
@@ -14,9 +17,11 @@ import {
   parseSupervisorMessageV2Projection,
   parseSupervisorMessageV2ReplayFixture,
   parseSupervisorMessageV2State,
+  SUPERVISOR_MESSAGE_V2_LEGACY_RESULT_GRAPH_WORKFLOW_ID_RE,
   SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE,
   type SupervisorMessageV2Projection,
   type SupervisorMessageV2State,
+  SupervisorResultGraphKey,
 } from "../../src/loop/supervisor-message-v2-contract";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import { parseSupervisorMessageInput } from "../../src/loop/supervisor-message-workflow";
@@ -381,20 +386,44 @@ describe("SupervisorMessage V2 tenant contract", () => {
     expect(local.boardItemId).toMatch(/^supervisor-message-board-item:v2:/);
   });
 
-  test("derives a message's result graph from its scoped identity alone", () => {
+  test("derives a message's result graph as an HMAC-SHA256 keyed by the host secret", () => {
     const scope = fixture.expectedScope;
     const workflowId = deriveSupervisorMessageV2WorkflowId(
       scope,
       fixture.input.dedupeKey
     );
+    const secret = randomBytes(32).toString("hex");
+    const key = SupervisorResultGraphKey.fromSecret(secret);
     const graph = deriveSupervisorMessageV2ResultGraphWorkflowId(
+      key,
       scope,
       workflowId
     );
     expect(graph).toMatch(SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE);
-    // Stable across calls: every host derives the same graph for a message.
+    expect(graph.startsWith("supervisor-result-graph:v3:")).toBe(true);
+    // The documented format: HMAC-SHA256 under the host secret over the
+    // length-prefixed, NUL-terminated fields below. Anyone without the
+    // secret cannot compute it from the (public) scope and message id.
+    const mac = createHmac("sha256", Buffer.from(secret, "utf8"));
+    for (const field of [
+      "supervisor-result-graph",
+      "v3",
+      scope.tenantId,
+      scope.principal,
+      workflowId,
+    ]) {
+      mac.update(`${Buffer.byteLength(field)}:`);
+      mac.update(field);
+      mac.update(Buffer.from([0]));
+    }
+    expect(graph).toBe(`supervisor-result-graph:v3:${mac.digest("hex")}`);
+    // Stable across calls and hosts sharing the key.
     expect(
-      deriveSupervisorMessageV2ResultGraphWorkflowId(scope, workflowId)
+      deriveSupervisorMessageV2ResultGraphWorkflowId(
+        SupervisorResultGraphKey.fromSecret(secret),
+        scope,
+        workflowId
+      )
     ).toBe(graph);
     const otherMessage = deriveSupervisorMessageV2WorkflowId(
       scope,
@@ -402,21 +431,75 @@ describe("SupervisorMessage V2 tenant contract", () => {
     );
     for (const other of [
       deriveSupervisorMessageV2ResultGraphWorkflowId(
+        SupervisorResultGraphKey.fromSecret(randomBytes(32).toString("hex")),
+        scope,
+        workflowId
+      ),
+      deriveSupervisorMessageV2ResultGraphWorkflowId(
+        key,
         { ...scope, tenantId: "tenant:other" },
         workflowId
       ),
       deriveSupervisorMessageV2ResultGraphWorkflowId(
+        key,
         { ...scope, principal: "principal:other" },
         workflowId
       ),
-      deriveSupervisorMessageV2ResultGraphWorkflowId(scope, otherMessage),
+      deriveSupervisorMessageV2ResultGraphWorkflowId(key, scope, otherMessage),
+      deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId(
+        scope,
+        workflowId
+      ),
     ]) {
       expect(other).not.toBe(graph);
     }
     // Only a V2 message workflow id has a result graph.
     expect(() =>
-      deriveSupervisorMessageV2ResultGraphWorkflowId(scope, "task-graph:any")
+      deriveSupervisorMessageV2ResultGraphWorkflowId(
+        key,
+        scope,
+        "task-graph:any"
+      )
     ).toThrow();
+  });
+
+  test("keeps the unkeyed v2 result graph id byte-for-byte for bindings recorded before the key", () => {
+    const scope = fixture.expectedScope;
+    const workflowId = deriveSupervisorMessageV2WorkflowId(
+      scope,
+      fixture.input.dedupeKey
+    );
+    // Pinned from the 2b1b1893 derivation for this fixture.
+    expect(
+      deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId(
+        scope,
+        workflowId
+      )
+    ).toBe(
+      "supervisor-result-graph:v2:f4f5e7f52ad0a60dea63ab6f058a489f0aee1a56e698c8255f7fca558bcbd908"
+    );
+    expect(
+      deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId(
+        scope,
+        workflowId
+      )
+    ).toMatch(SUPERVISOR_MESSAGE_V2_LEGACY_RESULT_GRAPH_WORKFLOW_ID_RE);
+  });
+
+  test("a result graph key refuses a short secret and never renders its value", () => {
+    expect(() => SupervisorResultGraphKey.fromSecret("x".repeat(31))).toThrow(
+      "result graph key must be at least 32 bytes"
+    );
+    const secret = randomBytes(32).toString("hex");
+    const key = SupervisorResultGraphKey.fromSecret(secret);
+    for (const rendered of [
+      String(key),
+      JSON.stringify({ key }),
+      inspect(key),
+      inspect({ key }),
+    ]) {
+      expect(rendered).not.toContain(secret);
+    }
   });
 
   test("parses only scope-bound V2 delivery, governance, receipt, and board contracts", () => {

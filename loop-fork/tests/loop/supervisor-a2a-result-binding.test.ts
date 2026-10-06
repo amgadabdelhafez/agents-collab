@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { type Task, TaskState } from "@a2a-js/sdk";
 import { ServerCallContext } from "@a2a-js/sdk/server";
 import { SQL } from "bun";
@@ -11,9 +11,11 @@ import {
   type SupervisorA2AV2Service,
 } from "../../src/loop/supervisor-a2a-v2-service";
 import {
+  deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2Input,
+  SupervisorResultGraphKey,
   type TrustedSupervisorMessageV2Scope,
 } from "../../src/loop/supervisor-message-v2-contract";
 import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
@@ -29,6 +31,10 @@ const RECIPIENT = "supervisor:target";
 const OTHER_WORKER = "supervisor:other-worker";
 const NOW = "2026-10-05T12:00:00.000Z";
 const ARTIFACT = `artifact://sha256/${"e".repeat(64)}`;
+/** A throwaway host secret, generated per run and never printed. */
+const KEY = SupervisorResultGraphKey.fromSecret(
+  randomBytes(32).toString("hex")
+);
 const POLICY = {
   claimTimeoutMs: 60_000,
   escalationTimeoutMs: 120_000,
@@ -57,7 +63,8 @@ beforeAll(async () => {
   raw = new SQL(postgres.databaseUrl());
   await raw.connect();
   ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    postgres.databaseUrl()
+    postgres.databaseUrl(),
+    { resultGraphKey: KEY }
   );
   tasks = await PostgresA2ATaskStore.connect({
     databaseUrl: postgres.databaseUrl(),
@@ -137,11 +144,26 @@ const bindingFor = (
   a2aTaskId,
   graphTaskId,
   graphWorkflowId: deriveSupervisorMessageV2ResultGraphWorkflowId(
+    KEY,
     scope,
     messageWorkflowId
   ),
   messageWorkflowId,
   recipient: RECIPIENT,
+});
+
+/** A binding as 2b1b1893 recorded it: the unkeyed v2 derived graph. */
+const legacyBindingFor = (
+  scope: TrustedSupervisorMessageV2Scope,
+  messageWorkflowId: string,
+  a2aTaskId: string,
+  graphTaskId = "result-node"
+): SupervisorA2AResultBinding => ({
+  ...bindingFor(scope, messageWorkflowId, a2aTaskId, graphTaskId),
+  graphWorkflowId: deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId(
+    scope,
+    messageWorkflowId
+  ),
 });
 
 const reservationsFor = async (graphWorkflowId: string) =>
@@ -160,6 +182,8 @@ const serviceFor = (input: {
   scope: TrustedSupervisorMessageV2Scope;
   allow: { graphWorkflowId: string; graphTaskId: string }[];
   graphs: Map<string, { taskId: string; workerId: string; phase: string }[]>;
+  databaseUrl?: string;
+  log?: (line: string) => void;
 }): Promise<SupervisorA2AV2Service> =>
   createSupervisorA2AV2Service({
     ...({
@@ -172,7 +196,6 @@ const serviceFor = (input: {
         supervisorId: RECIPIENT,
         url: "http://a2a.local/a2a",
       },
-      databaseUrl: postgres.databaseUrl(),
       delivery: {
         deliver: () => Promise.resolve({ status: "accepted" as const }),
       },
@@ -219,6 +242,9 @@ const serviceFor = (input: {
       },
       supervisorId: RECIPIENT,
     } as const),
+    databaseUrl: input.databaseUrl ?? postgres.databaseUrl(),
+    log: input.log ?? (() => undefined),
+    resultGraphKey: KEY,
     resultGraphTasks: input.allow,
     verifyResultArtifact: (reference, target) =>
       Promise.resolve(
@@ -230,8 +256,8 @@ const serviceFor = (input: {
           )
       ),
     dependencies: {
-      connectLedger: (databaseUrl) =>
-        PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl),
+      connectLedger: (databaseUrl, options) =>
+        PostgresSupervisorMessageV2DeliveryLedger.connect(databaseUrl, options),
       connectTaskStore: (options) => PostgresA2ATaskStore.connect(options),
       connectSessions: () =>
         Promise.resolve({
@@ -529,22 +555,33 @@ test("follow-up turns of one A2A task each bind their own message graph and comp
   }
 });
 
-test("migration backfills reservations for existing derived bindings and never publishes a body-chosen one", async () => {
-  // A database as the base revision left it: the three original tables and
+const markerRows = (sql: SQL) =>
+  sql`SELECT name FROM loop_supervisor_message_v2_schema_marker ORDER BY name` as Promise<
+    { name: string }[]
+  >;
+
+/** The two tables every revision before reservations created. */
+const createBaseTables = async (sql: SQL) => {
+  await sql`CREATE TABLE loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL)`;
+  await sql`CREATE TABLE loop_supervisor_message_v2_result_binding (
+    workflow_id TEXT NOT NULL REFERENCES loop_supervisor_message_v2_start_intent(workflow_id),
+    a2a_task_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal TEXT NOT NULL,
+    binding_json JSONB NOT NULL, PRIMARY KEY (workflow_id, a2a_task_id)
+  )`;
+};
+
+test("migration backfills reservations once for existing unkeyed derived bindings, and records every body-chosen or malformed one it will never publish", async () => {
+  // A database as the base revision left it: the original tables and
   // bindings written exactly as its bindResult wrote them. No reservations.
   const isolated = await DisposablePostgres.create();
   const legacy = new SQL(isolated.databaseUrl());
   const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-    isolated.databaseUrl()
+    isolated.databaseUrl(),
+    { resultGraphKey: KEY }
   );
   try {
     await legacy.connect();
-    await legacy`CREATE TABLE loop_supervisor_message_v2_start_intent (workflow_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, principal TEXT NOT NULL, input_json JSONB NOT NULL)`;
-    await legacy`CREATE TABLE loop_supervisor_message_v2_result_binding (
-      workflow_id TEXT NOT NULL REFERENCES loop_supervisor_message_v2_start_intent(workflow_id),
-      a2a_task_id TEXT NOT NULL, tenant_id TEXT NOT NULL, principal TEXT NOT NULL,
-      binding_json JSONB NOT NULL, PRIMARY KEY (workflow_id, a2a_task_id)
-    )`;
+    await createBaseTables(legacy);
     const scope = tenant("backfill");
     const seed = async (dedupeKey: string) => {
       const workflowId = deriveSupervisorMessageV2WorkflowId(scope, dedupeKey);
@@ -555,10 +592,18 @@ test("migration backfills reservations for existing derived bindings and never p
       );
       return workflowId;
     };
+    const insertLegacy = (binding: SupervisorA2AResultBinding) =>
+      legacy`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json)
+        VALUES (${binding.messageWorkflowId}, ${binding.a2aTaskId}, ${scope.tenantId}, ${scope.principal}, ${canonical(binding)}::jsonb)`;
     const derivedMessage = await seed("backfill-derived");
     const bodyMessage = await seed("backfill-body");
     const objectMessage = await seed("backfill-object");
-    const derived = bindingFor(scope, derivedMessage, "task:backfill-derived");
+    // Recorded by 2b1b1893 under the unkeyed v2 derivation.
+    const derived = legacyBindingFor(
+      scope,
+      derivedMessage,
+      "task:backfill-derived"
+    );
     const bodyChosen = {
       ...bindingFor(scope, bodyMessage, "task:backfill-body"),
       graphWorkflowId: "task-graph:chosen-by-body",
@@ -568,10 +613,13 @@ test("migration backfills reservations for existing derived bindings and never p
       ...bindingFor(scope, await seed("backfill-body-two"), "task:body-two"),
       graphWorkflowId: "task-graph:also-chosen-by-body",
     };
-    const objectForm = bindingFor(scope, objectMessage, "task:backfill-object");
+    const objectForm = legacyBindingFor(
+      scope,
+      objectMessage,
+      "task:backfill-object"
+    );
     for (const binding of [derived, bodyChosen, unreservedBodyChosen]) {
-      await legacy`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json)
-        VALUES (${binding.messageWorkflowId}, ${binding.a2aTaskId}, ${scope.tenantId}, ${scope.principal}, ${canonical(binding)}::jsonb)`;
+      await insertLegacy(binding);
     }
     // This is the encoding the base revision produced: a JSON string, which
     // `->>` cannot read (the reason an earlier SQL backfill failed).
@@ -600,8 +648,17 @@ test("migration backfills reservations for existing derived bindings and never p
     await legacy`INSERT INTO loop_supervisor_message_v2_result_graph_task (graph_workflow_id, graph_task_id, tenant_id, a2a_task_id)
       VALUES (${bodyChosen.graphWorkflowId}, ${bodyChosen.graphTaskId}, ${scope.tenantId}, ${bodyChosen.a2aTaskId})`;
 
-    // Migrating twice is how every restart runs it.
     await upgraded.migrate();
+    expect(await markerRows(legacy)).toEqual([
+      { name: "result-graph-task-backfill.v1" },
+    ]);
+    // The scan runs once per schema version, not on every start: a row that
+    // appears after the marker (only an older binary could write one) is
+    // neither reserved nor listed by the next migration.
+    const lateMessage = await seed("backfill-late");
+    await insertLegacy(
+      legacyBindingFor(scope, lateMessage, "task:backfill-late")
+    );
     await upgraded.migrate();
     const reserved =
       (await legacy`SELECT graph_workflow_id, graph_task_id, a2a_task_id FROM loop_supervisor_message_v2_result_graph_task ORDER BY a2a_task_id`) as {
@@ -626,12 +683,41 @@ test("migration backfills reservations for existing derived bindings and never p
         a2a_task_id: "task:backfill-object",
       },
     ]);
+    // Accept-for-existing: an unkeyed v2 binding recorded before the key
+    // still publishes, in either storage form.
     await expect(
       upgraded.resultBinding(scope, derivedMessage, "task:backfill-derived")
     ).resolves.toEqual(derived);
     await expect(
       upgraded.resultBinding(scope, objectMessage, "task:backfill-object")
     ).resolves.toEqual(objectForm);
+    // Every binding that will never publish is recorded, with ids only.
+    expect(await upgraded.unpublishableResultBindings()).toEqual([
+      {
+        a2aTaskId: "task:backfill-body",
+        graphTaskId: "result-node",
+        graphWorkflowId: "task-graph:chosen-by-body",
+        messageWorkflowId: bodyMessage,
+        reason: "body-chosen-graph",
+        tenantId: scope.tenantId,
+      },
+      {
+        a2aTaskId: "task:backfill-broken",
+        graphTaskId: null,
+        graphWorkflowId: null,
+        messageWorkflowId: brokenMessage,
+        reason: "malformed",
+        tenantId: scope.tenantId,
+      },
+      {
+        a2aTaskId: "task:body-two",
+        graphTaskId: "result-node",
+        graphWorkflowId: "task-graph:also-chosen-by-body",
+        messageWorkflowId: unreservedBodyChosen.messageWorkflowId,
+        reason: "body-chosen-graph",
+        tenantId: scope.tenantId,
+      },
+    ]);
     // A graph the request body chose is never published ...
     await expect(
       upgraded.resultBinding(scope, bodyMessage, "task:backfill-body")
@@ -643,18 +729,268 @@ test("migration backfills reservations for existing derived bindings and never p
         "task:body-two"
       )
     ).resolves.toBeUndefined();
-    // ... and the message can be re-bound to its own derived graph.
+    // ... and the message can be re-bound to its own keyed graph, which
+    // clears its entry.
     const rebound = bindingFor(scope, bodyMessage, "task:backfill-body");
     await upgraded.bindResult(scope, rebound);
     await expect(
       upgraded.resultBinding(scope, bodyMessage, "task:backfill-body")
     ).resolves.toEqual(rebound);
-    // A derived binding stays immutable.
+    expect(
+      (await upgraded.unpublishableResultBindings()).map(
+        (entry) => entry.a2aTaskId
+      )
+    ).toEqual(["task:backfill-broken", "task:body-two"]);
+    // A recorded derived binding stays immutable, whether keyed or legacy.
     await expect(
-      upgraded.bindResult(scope, { ...derived, graphTaskId: "second-node" })
+      upgraded.bindResult(scope, { ...rebound, graphTaskId: "second-node" })
+    ).rejects.toThrow("conflicts with prior assignment");
+    await expect(
+      upgraded.bindResult(
+        scope,
+        bindingFor(scope, derivedMessage, "task:backfill-derived")
+      )
     ).rejects.toThrow("conflicts with prior assignment");
   } finally {
     await upgraded.close();
+    await legacy.close();
+    await isolated.close();
+  }
+}, 60_000);
+
+test("no new binding may name an unkeyed v2 graph, and a ledger without the key binds nothing", async () => {
+  const scope = tenant("legacy-new");
+  const message = await sendMessage(scope, "legacy-new");
+  await saveTask(scope, "task:legacy-new", [message]);
+  const keyed = bindingFor(scope, message, "task:legacy-new");
+  // Anyone can compute the unkeyed id, so it is never accepted for a new bind.
+  await expect(
+    ledger.bindResult(
+      scope,
+      legacyBindingFor(scope, message, "task:legacy-new")
+    )
+  ).rejects.toThrow("not derived from this message");
+  const keyless = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl()
+  );
+  const otherKey = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl(),
+    {
+      resultGraphKey: SupervisorResultGraphKey.fromSecret(
+        randomBytes(32).toString("hex")
+      ),
+    }
+  );
+  try {
+    await expect(keyless.bindResult(scope, keyed)).rejects.toThrow(
+      "Result graph key is not configured"
+    );
+    // Under another host secret this message's graph id is a different one.
+    await expect(otherKey.bindResult(scope, keyed)).rejects.toThrow(
+      "not derived from this message"
+    );
+    await ledger.bindResult(scope, keyed);
+    await expect(
+      ledger.resultBinding(scope, message, "task:legacy-new")
+    ).resolves.toEqual(keyed);
+    // A keyed binding is not publishable through a ledger that cannot verify
+    // it, nor through one holding another key.
+    await expect(
+      keyless.resultBinding(scope, message, "task:legacy-new")
+    ).resolves.toBeUndefined();
+    await expect(
+      otherKey.resultBinding(scope, message, "task:legacy-new")
+    ).resolves.toBeUndefined();
+  } finally {
+    await keyless.close();
+    await otherKey.close();
+  }
+});
+
+test("two binders racing for an ended holder's graph task: exactly one takes it (compare-and-swap on the holder)", async () => {
+  const scope = tenant("race");
+  const message = await sendMessage(scope, "race");
+  for (const id of ["task:race-holder", "task:race-b", "task:race-c"]) {
+    await saveTask(scope, id, [message]);
+  }
+  const holder = bindingFor(scope, message, "task:race-holder");
+  await ledger.bindResult(scope, holder);
+  // Separate clients, so the two transactions really run concurrently.
+  const left = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl(),
+    { resultGraphKey: KEY }
+  );
+  const right = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl(),
+    { resultGraphKey: KEY }
+  );
+  try {
+    // Both binders read the ended holder before either swaps it.
+    let arrived = 0;
+    let open: () => void = () => undefined;
+    const barrier = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const releasable = async () => {
+      arrived += 1;
+      if (arrived === 2) {
+        open();
+      }
+      await barrier;
+      return true;
+    };
+    const outcomes = await Promise.allSettled([
+      left.bindResult(
+        scope,
+        { ...holder, a2aTaskId: "task:race-b" },
+        { releasable }
+      ),
+      right.bindResult(
+        scope,
+        { ...holder, a2aTaskId: "task:race-c" },
+        { releasable }
+      ),
+    ]);
+    expect(arrived).toBe(2);
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual([
+      "fulfilled",
+      "rejected",
+    ]);
+    const lost = outcomes.find((outcome) => outcome.status === "rejected");
+    expect(String((lost as PromiseRejectedResult).reason)).toContain(
+      "reserved for another A2A task"
+    );
+    const winner =
+      outcomes[0]?.status === "fulfilled" ? "task:race-b" : "task:race-c";
+    const loser = winner === "task:race-b" ? "task:race-c" : "task:race-b";
+    expect(await reservationsFor(holder.graphWorkflowId)).toEqual([
+      {
+        graph_task_id: "result-node",
+        tenant_id: scope.tenantId,
+        a2a_task_id: winner,
+      },
+    ]);
+    await expect(ledger.resultBinding(scope, message, winner)).resolves.toEqual(
+      { ...holder, a2aTaskId: winner }
+    );
+    // The loser recorded no binding at all.
+    expect(
+      (await raw`SELECT a2a_task_id FROM loop_supervisor_message_v2_result_binding
+        WHERE workflow_id = ${message} AND a2a_task_id = ${loser}`) as unknown[]
+    ).toEqual([]);
+  } finally {
+    await left.close();
+    await right.close();
+  }
+});
+
+test("migration drops the retired per-graph-task unique index an unreleased revision created", async () => {
+  const isolated = await DisposablePostgres.create();
+  const legacy = new SQL(isolated.databaseUrl());
+  const upgraded = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    isolated.databaseUrl(),
+    { resultGraphKey: KEY }
+  );
+  try {
+    await legacy.connect();
+    await createBaseTables(legacy);
+    // Exactly as 159d369c created it.
+    await legacy`CREATE UNIQUE INDEX loop_supervisor_message_v2_result_binding_graph_task
+      ON loop_supervisor_message_v2_result_binding ((binding_json->>'graphWorkflowId'), (binding_json->>'graphTaskId'))`;
+    const indexes = async () =>
+      (
+        (await legacy`SELECT indexname FROM pg_indexes WHERE tablename = 'loop_supervisor_message_v2_result_binding' ORDER BY indexname`) as {
+          indexname: string;
+        }[]
+      ).map((row) => row.indexname);
+    expect(await indexes()).toContain(
+      "loop_supervisor_message_v2_result_binding_graph_task"
+    );
+    await upgraded.migrate();
+    expect(await indexes()).toEqual([
+      "loop_supervisor_message_v2_result_binding_pkey",
+    ]);
+  } finally {
+    await upgraded.close();
+    await legacy.close();
+    await isolated.close();
+  }
+}, 60_000);
+
+test("service start logs each binding that will never publish once, with ids only, and the assignment route lists its tenant's", async () => {
+  const isolated = await DisposablePostgres.create();
+  const legacy = new SQL(isolated.databaseUrl());
+  const seeding = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    isolated.databaseUrl(),
+    { resultGraphKey: KEY }
+  );
+  const lines: string[] = [];
+  let service: SupervisorA2AV2Service | undefined;
+  try {
+    await legacy.connect();
+    await createBaseTables(legacy);
+    const scope = tenant("stranded");
+    const other = tenant("stranded-other");
+    const seed = async (
+      owner: TrustedSupervisorMessageV2Scope,
+      dedupeKey: string,
+      a2aTaskId: string
+    ) => {
+      const workflowId = deriveSupervisorMessageV2WorkflowId(owner, dedupeKey);
+      await seeding.recordStartIntent(
+        workflowId,
+        owner,
+        inputFor(owner, dedupeKey)
+      );
+      const binding = {
+        ...bindingFor(owner, workflowId, a2aTaskId),
+        graphWorkflowId: "task-graph:chosen-by-body",
+      };
+      await legacy`INSERT INTO loop_supervisor_message_v2_result_binding (workflow_id, a2a_task_id, tenant_id, principal, binding_json)
+        VALUES (${workflowId}, ${a2aTaskId}, ${owner.tenantId}, ${owner.principal}, ${canonical(binding)}::jsonb)`;
+      return workflowId;
+    };
+    const mine = await seed(scope, "stranded-mine", "task:stranded-mine");
+    const theirs = await seed(other, "stranded-theirs", "task:stranded-theirs");
+    const start = () =>
+      serviceFor({
+        scope,
+        allow: [],
+        graphs: new Map(),
+        databaseUrl: isolated.databaseUrl(),
+        log: (line) => lines.push(line),
+      });
+    service = await start();
+    const expected = [
+      `A2A V2 result binding will never publish (body-chosen-graph): tenant ${scope.tenantId} message ${mine} A2A task task:stranded-mine; re-bind it to its message-derived result graph`,
+      `A2A V2 result binding will never publish (body-chosen-graph): tenant ${other.tenantId} message ${theirs} A2A task task:stranded-theirs; re-bind it to its message-derived result graph`,
+    ];
+    expect([...lines].sort()).toEqual([...expected].sort());
+    // Once per binding at each start.
+    await service.close();
+    service = await start();
+    expect([...lines].sort()).toEqual([...expected, ...expected].sort());
+    // The assignment route is the inspection surface, scoped to its tenant
+    // and to its authenticated control principal.
+    const listed = await service.assignmentRoute?.httpHandler(
+      new Request("http://local/assignment", { method: "GET" })
+    );
+    expect(listed?.status).toBe(200);
+    expect(await listed?.json()).toEqual({
+      schema: "supervisor-result-assignment-status.v1",
+      unpublishable: [
+        {
+          a2aTaskId: "task:stranded-mine",
+          graphTaskId: "result-node",
+          graphWorkflowId: "task-graph:chosen-by-body",
+          messageWorkflowId: mine,
+          reason: "body-chosen-graph",
+        },
+      ],
+    });
+  } finally {
+    await service?.close();
+    await seeding.close();
     await legacy.close();
     await isolated.close();
   }

@@ -38,6 +38,7 @@ const ARTIFACT_REF_RE = /^artifact:\/\/sha256\/[a-f0-9]{64}$/;
 const MESSAGE_KIND_RE =
   /^(authority-decision|conflict|failure|informational|question)$/;
 const GRAPH_QUERY_RE = /^\/api\/v1\/task-graphs\/([^/]+)\/(ready|status)$/;
+const RESULT_GRAPH_ID_PREFIX = "supervisor-result-graph:";
 
 const json = (status: number, value: unknown): Response =>
   Response.json(value, {
@@ -215,6 +216,15 @@ const postGraph = async (
     exactKeys(body, ["input", "requestId", "workflowId"]);
     if (!isRecord(body.input)) {
       throw new Error("input is invalid");
+    }
+    // A message's result graph is started only by the A2A V2 result-graph
+    // route, which derives its id under the host key. No caller here may
+    // pre-start (squat) one under a chosen id.
+    if (
+      typeof body.workflowId === "string" &&
+      body.workflowId.startsWith(RESULT_GRAPH_ID_PREFIX)
+    ) {
+      return errorResponse(403, "result-graph-id-reserved");
     }
     return json(200, {
       data: await options.tasks.start({

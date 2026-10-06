@@ -1,3 +1,4 @@
+import { Sha256 } from "@aws-crypto/sha256-js";
 import { supervisorMessageV2ScopedDigest } from "./supervisor-message-v2-workflow-identity";
 import {
   parseSupervisorMessageInput,
@@ -729,18 +730,89 @@ export const deriveSupervisorMessageV2WorkflowId = (
     requireString(dedupeKey, "dedupeKey", STABLE_ID_RE),
   ])}`;
 
+/** The current, keyed result graph id (see `SupervisorResultGraphKey`). */
 export const SUPERVISOR_MESSAGE_V2_RESULT_GRAPH_WORKFLOW_ID_RE =
+  /^supervisor-result-graph:v3:[a-f0-9]{64}$/;
+
+/** The retired unkeyed id. Bindings recorded under it before the key existed
+ * stay publishable; no new binding may name one. */
+export const SUPERVISOR_MESSAGE_V2_LEGACY_RESULT_GRAPH_WORKFLOW_ID_RE =
   /^supervisor-result-graph:v2:[a-f0-9]{64}$/;
+
+const RESULT_GRAPH_KEY_MIN_BYTES = 32;
+const keyEncoder = new TextEncoder();
+
+/**
+ * The host secret that keys result graph ids, read from an operator-named
+ * environment variable. The bytes live only in a private field, so `String`,
+ * `JSON.stringify` and `inspect` never render them.
+ */
+export class SupervisorResultGraphKey {
+  readonly #bytes: Uint8Array;
+
+  private constructor(bytes: Uint8Array) {
+    this.#bytes = bytes;
+  }
+
+  static fromSecret(secret: string): SupervisorResultGraphKey {
+    const bytes = keyEncoder.encode(secret);
+    if (bytes.byteLength < RESULT_GRAPH_KEY_MIN_BYTES) {
+      throw new Error(
+        `result graph key must be at least ${RESULT_GRAPH_KEY_MIN_BYTES} bytes`
+      );
+    }
+    return new SupervisorResultGraphKey(bytes);
+  }
+
+  /** HMAC-SHA256 over length-prefixed, NUL-terminated fields. */
+  mac(fields: readonly string[]): string {
+    const hash = new Sha256(this.#bytes);
+    for (const field of fields) {
+      const encoded = keyEncoder.encode(field);
+      hash.update(keyEncoder.encode(`${encoded.byteLength}:`));
+      hash.update(encoded);
+      hash.update(new Uint8Array([0]));
+    }
+    return [...hash.digestSync()]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+}
 
 /**
  * The one task graph whose tasks may carry this message's result. A
  * `task-graph.v1` carries no tenant or message identity, so the binding is
  * taken from the message instead: the graph workflow id is derived from the
- * message's scoped identity (tenant, principal, message workflow id). A graph
- * named in a request body is accepted only when it equals this id, so no
- * caller can attach a message to another message's or tenant's graph.
+ * message's scoped identity (tenant, principal, message workflow id).
+ *
+ * The derivation is keyed: HMAC-SHA256 under the host's result graph key
+ * over ("supervisor-result-graph", "v3", tenant, principal, messageWorkflowId),
+ * each field length-prefixed and NUL-terminated. Scope and message ids are
+ * not secret, so without the key nobody can compute (and pre-start) another
+ * message's graph. A graph named in a request body is accepted only when it
+ * equals this id.
  */
 export const deriveSupervisorMessageV2ResultGraphWorkflowId = (
+  key: SupervisorResultGraphKey,
+  scope: TrustedSupervisorMessageV2Scope,
+  workflowId: string
+): string => {
+  const trusted = requireTrustedScope(scope);
+  return `supervisor-result-graph:v3:${key.mac([
+    "supervisor-result-graph",
+    "v3",
+    trusted.tenantId,
+    trusted.principal,
+    requireString(workflowId, "workflowId", V2_WORKFLOW_ID_RE),
+  ])}`;
+};
+
+/**
+ * The retired unkeyed derivation (2b1b1893): a plain scoped SHA-256 anyone
+ * can compute. Kept only to recognise bindings recorded before the key: they
+ * stay publishable, and no new binding may use one.
+ */
+export const deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId = (
   scope: TrustedSupervisorMessageV2Scope,
   workflowId: string
 ): string =>

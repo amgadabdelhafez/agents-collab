@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,9 +19,11 @@ import {
   type SupervisorA2AV2Service,
 } from "../../src/loop/supervisor-a2a-v2-service";
 import {
+  deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2ResultGraphWorkflowId,
   deriveSupervisorMessageV2WorkflowId,
   type SupervisorMessageV2DeliveryEnvelope,
+  SupervisorResultGraphKey,
 } from "../../src/loop/supervisor-message-v2-contract";
 import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
 import { SupervisorMessageV2ReadinessUnavailableError } from "../../src/loop/supervisor-message-v2-runtime";
@@ -49,6 +51,10 @@ const POLICY = {
   maxDeliveryAttempts: 3,
   retryDelayMs: 1000,
 };
+/** A throwaway host secret, generated per run and never printed. */
+const KEY = SupervisorResultGraphKey.fromSecret(
+  randomBytes(32).toString("hex")
+);
 
 test("separate PostgreSQL result publishers atomically complete concurrent accepted follow-ups", async () => {
   const postgres = await DisposablePostgres.create();
@@ -206,6 +212,8 @@ const serviceOptions = (input: {
   delivery: input.delivery,
   dispatchOwner: "v2-dispatcher:service-factory-proof",
   assignmentRoute: { pathname: "/assignment", principal: SCOPE.principal },
+  resultGraphKey: KEY,
+  resultGraphRoute: { pathname: "/result-graph", principal: SCOPE.principal },
   resultGraphTasks: ["result-node", "second-node"].flatMap((graphTaskId) =>
     input.graphWorkflowId
       ? [{ graphWorkflowId: input.graphWorkflowId, graphTaskId }]
@@ -417,6 +425,7 @@ test("service factory closes every acquired resource after a partial migration f
 
 const BIND_MESSAGE = deriveSupervisorMessageV2WorkflowId(SCOPE, "bind");
 const BIND_GRAPH = deriveSupervisorMessageV2ResultGraphWorkflowId(
+  KEY,
   SCOPE,
   BIND_MESSAGE
 );
@@ -424,9 +433,15 @@ const BIND_GRAPH = deriveSupervisorMessageV2ResultGraphWorkflowId(
 test("result binding refuses a graph not derived from the message, or a graph task the host has not configured or that is another worker's, before the ledger records it", async () => {
   const bound: unknown[] = [];
   const queried: string[] = [];
+  const ledgerOptions: unknown[] = [];
   const closed = () => Promise.resolve();
   const create = (
-    resultGraphTasks?: { graphTaskId: string; graphWorkflowId: string }[]
+    resultGraphTasks?: { graphTaskId: string; graphWorkflowId: string }[],
+    resultGraphKey: SupervisorResultGraphKey | null = KEY,
+    routes: {
+      peerRoutes?: { pathname: string; supervisorId: string }[];
+      resultGraphRoute?: { pathname: string; principal: string };
+    } = {}
   ) =>
     createSupervisorA2AV2Service({
       ...({
@@ -486,17 +501,21 @@ test("result binding refuses a graph not derived from the message, or a graph ta
         },
         supervisorId: RECIPIENT,
       } as const),
+      resultGraphKey: resultGraphKey ?? undefined,
       resultGraphTasks,
+      ...routes,
       dependencies: {
-        connectLedger: () =>
-          Promise.resolve({
+        connectLedger: (_databaseUrl, options) => {
+          ledgerOptions.push(options);
+          return Promise.resolve({
             bindResult: (_scope: unknown, binding: unknown) => {
               bound.push(binding);
               return Promise.resolve();
             },
             close: closed,
             migrate: closed,
-          }) as never,
+          }) as never;
+        },
         connectSessions: () =>
           Promise.resolve({
             assertReady: closed,
@@ -548,30 +567,89 @@ test("result binding refuses a graph not derived from the message, or a graph ta
   };
   const unconfigured = await create();
   try {
+    // The host's key reaches the durable ledger, which re-derives on its own.
+    expect(ledgerOptions).toEqual([{ resultGraphKey: KEY }]);
     await expect(unconfigured.bindResult(SCOPE, binding)).rejects.toThrow(
       "not configured"
     );
   } finally {
     await unconfigured.close();
   }
-  // Graphs not derived from this message, even when the host allowlists
-  // them: one the body names freely, and the one derived for the same
-  // message id under another tenant.
+  // Without the host key nothing binds, even an allowlisted derived graph.
+  const keyless = await create(
+    [{ graphWorkflowId: BIND_GRAPH, graphTaskId: "node:mine" }],
+    null
+  );
+  try {
+    await expect(keyless.bindResult(SCOPE, binding)).rejects.toThrow(
+      "Result graph key is not configured"
+    );
+    await expect(
+      keyless.startResultGraph(SCOPE, {
+        input: {},
+        messageWorkflowId: BIND_MESSAGE,
+        requestId: "keyless-start",
+      })
+    ).rejects.toThrow("Result graph key is not configured");
+  } finally {
+    await keyless.close();
+  }
+  // The result graph route owns its path: neither the assignment route nor
+  // a peer seat route may share it.
+  for (const routes of [
+    {
+      resultGraphRoute: { pathname: "/assignment", principal: SCOPE.principal },
+    },
+    {
+      peerRoutes: [{ pathname: "/result-graph", supervisorId: PEER }],
+      resultGraphRoute: {
+        pathname: "/result-graph",
+        principal: SCOPE.principal,
+      },
+    },
+  ]) {
+    await expect(create([], KEY, routes)).rejects.toThrow(
+      "initialization failed at http-routes"
+    );
+  }
+  // Graphs not derived from this message under this host's key, even when
+  // the host allowlists them: one the body names freely, the one derived for
+  // the same message id under another tenant, the retired unkeyed v2 id that
+  // anyone can compute, and the id under another host's key.
   const otherTenantGraph = deriveSupervisorMessageV2ResultGraphWorkflowId(
+    KEY,
     { ...SCOPE, tenantId: "tenant:v2-service-other" },
     BIND_MESSAGE
   );
+  const unkeyedGraph =
+    deriveLegacyUnkeyedSupervisorMessageV2ResultGraphWorkflowId(
+      SCOPE,
+      BIND_MESSAGE
+    );
+  const otherKeyGraph = deriveSupervisorMessageV2ResultGraphWorkflowId(
+    SupervisorResultGraphKey.fromSecret(randomBytes(32).toString("hex")),
+    SCOPE,
+    BIND_MESSAGE
+  );
+  const notDerived = [
+    "graph:chosen-by-body",
+    otherTenantGraph,
+    unkeyedGraph,
+    otherKeyGraph,
+  ];
   const service = await create([
     { graphWorkflowId: BIND_GRAPH, graphTaskId: "node:mine" },
     { graphWorkflowId: BIND_GRAPH, graphTaskId: "node:theirs" },
-    { graphWorkflowId: "graph:chosen-by-body", graphTaskId: "node:mine" },
-    { graphWorkflowId: otherTenantGraph, graphTaskId: "node:mine" },
+    ...notDerived.map((graphWorkflowId) => ({
+      graphWorkflowId,
+      graphTaskId: "node:mine",
+    })),
   ]);
   try {
     await expect(
       service.bindResult(SCOPE, { ...binding, graphTaskId: "node:unlisted" })
     ).rejects.toThrow("not configured");
-    for (const graphWorkflowId of ["graph:chosen-by-body", otherTenantGraph]) {
+    for (const graphWorkflowId of notDerived) {
       await expect(
         service.bindResult(SCOPE, { ...binding, graphWorkflowId })
       ).rejects.toThrow("not derived from this message");
@@ -864,6 +942,7 @@ test("standard V2 factory authenticates before task mutation and preserves scope
     // The only graph this message's result may bind to is derived from the
     // message itself. The recreated host allowlists its tasks.
     const graphWorkflowId = deriveSupervisorMessageV2ResultGraphWorkflowId(
+      KEY,
       SCOPE,
       workflowId
     );
@@ -1176,7 +1255,8 @@ test("standard V2 factory authenticates before task mutation and preserves scope
       "not derived from this message"
     );
     const reservation = await PostgresSupervisorMessageV2DeliveryLedger.connect(
-      postgres.databaseUrl()
+      postgres.databaseUrl(),
+      { resultGraphKey: KEY }
     );
     try {
       // The ledger refuses it on its own and records nothing for the peer.
@@ -1315,3 +1395,243 @@ test("a stopped PostgreSQL session store reports readiness unavailable, not an u
     await postgres?.close();
   }
 }, 60_000);
+
+const resultGraphInput = (artifactRef: string) => ({
+  schema: "task-graph.v1",
+  graphId: "keyed-result-proof",
+  nodes: [
+    {
+      taskId: "result-node",
+      acceptanceChecks: [{ checkId: "artifact", kind: "artifact" }],
+      authorityGates: [],
+      dependencies: [],
+      ownerRepository: "agents-collab",
+      readScopes: ["src"],
+      writeScopes: [],
+      specArtifactRef: artifactRef,
+    },
+  ],
+});
+
+test("end to end on PostgreSQL and Temporal: send a message, start its result graph under the keyed id, bind, publish, COMPLETED", async () => {
+  const root = mkdtempSync(join(tmpdir(), "supervisor-a2a-v2-keyed-graph-"));
+  const environment = await TestWorkflowEnvironment.createLocal();
+  let postgres: DisposablePostgres | undefined;
+  let adminSessions: PostgresSupervisorSessionV2Store | undefined;
+  let service: SupervisorA2AV2Service | undefined;
+  let results: PostgresA2ATaskStore | undefined;
+  const ownedWorkflowIds = new Set<string>();
+  const taskQueue = `supervisor-a2a-v2-keyed-${process.pid}-${randomUUID().slice(0, 8)}`;
+  try {
+    postgres = await DisposablePostgres.create();
+    adminSessions = await PostgresSupervisorSessionV2Store.connect({
+      authority: {
+        decide: () => ({
+          allowed: true,
+          authorityRef: "authority:keyed-graph-proof",
+          reasonCode: "allowed",
+        }),
+      },
+      databaseUrl: postgres.databaseUrl(),
+      now: () => NOW,
+      provider: { ready: () => ({}) as never },
+    });
+    await adminSessions.migrate();
+    await adminSessions.register(SCOPE, descriptor());
+    const delivery = {
+      deliver: (envelope: SupervisorMessageV2DeliveryEnvelope) => {
+        ownedWorkflowIds.add(envelope.workflowId);
+        return Promise.resolve({ status: "accepted" as const });
+      },
+    };
+    const options = (graphWorkflowId?: string) =>
+      serviceOptions({
+        databaseUrl: (postgres as DisposablePostgres).databaseUrl(),
+        delivery,
+        environment,
+        graphWorkflowId,
+        root,
+        taskQueue,
+      });
+    service = await createSupervisorA2AV2Service(options());
+
+    // 1. Send: an authenticated A2A message records the V2 message.
+    const submitted = await (await clientFor(service)).sendMessage({
+      configuration: undefined,
+      message: message(`keyed-graph-${randomUUID()}`),
+      metadata: undefined,
+      tenant: SCOPE.tenantId,
+    });
+    const messageWorkflowId = [...ownedWorkflowIds][0];
+    if (!(messageWorkflowId && "id" in submitted)) {
+      throw new Error("Expected a delivered message and an A2A task");
+    }
+
+    // 2. Start the message's result graph through the message-driven route.
+    // The caller names the message, never the graph id, and holds no key.
+    const resultBytes = Buffer.from("controlled accepted result fixture v1\n");
+    const artifactRef = `artifact://sha256/${createHash("sha256").update(resultBytes).digest("hex")}`;
+    const startGraph = (
+      token: string,
+      body: Record<string, unknown> = {
+        input: resultGraphInput(artifactRef),
+        messageWorkflowId,
+        requestId: "keyed-graph-start",
+      }
+    ) =>
+      (service as SupervisorA2AV2Service).resultGraphRoute?.httpHandler(
+        new Request("http://local/result-graph", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        })
+      ) as Promise<Response>;
+    expect((await startGraph("recipient-fixture")).status).toBe(401);
+    // A message this scope never sent has no result graph here.
+    expect(
+      (
+        await startGraph("service-factory-token", {
+          input: resultGraphInput(artifactRef),
+          messageWorkflowId: deriveSupervisorMessageV2WorkflowId(
+            SCOPE,
+            "never-sent"
+          ),
+          requestId: "keyed-graph-unknown",
+        })
+      ).status
+    ).toBe(409);
+    const started = await startGraph("service-factory-token");
+    expect(started.status).toBe(200);
+    const receipt = (await started.json()) as {
+      created: boolean;
+      graphWorkflowId: string;
+      messageWorkflowId: string;
+      schema: string;
+    };
+    // The route derived exactly the id the operator tool computes.
+    const graphWorkflowId = deriveSupervisorMessageV2ResultGraphWorkflowId(
+      KEY,
+      SCOPE,
+      messageWorkflowId
+    );
+    ownedWorkflowIds.add(graphWorkflowId);
+    expect(receipt).toEqual({
+      schema: "supervisor-result-graph-start-receipt.v1",
+      messageWorkflowId,
+      graphWorkflowId,
+      created: true,
+    });
+    // A response-loss retry is the same start, not a second graph.
+    const retried = await startGraph("service-factory-token");
+    expect(await retried.json()).toMatchObject({
+      graphWorkflowId,
+      created: false,
+    });
+    const handle = environment.client.workflow.getHandle(graphWorkflowId);
+    expect((await handle.describe()).status.name).toBe("RUNNING");
+
+    // 3. Bind. The host has not configured this graph task yet.
+    const binding = {
+      a2aTaskId: submitted.id,
+      messageWorkflowId,
+      graphWorkflowId,
+      graphTaskId: "result-node",
+      recipient: RECIPIENT,
+    };
+    const assign = () =>
+      (service as SupervisorA2AV2Service).assignmentRoute?.httpHandler(
+        new Request("http://local/assignment", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer service-factory-token",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(binding),
+        })
+      );
+    expect((await assign())?.status).toBe(409);
+    // The operator adds the computed id to the host's result artifacts.
+    await service.close();
+    service = await createSupervisorA2AV2Service(options(graphWorkflowId));
+    expect((await assign())?.status).toBe(200);
+
+    // 4. The recipient does the work in the graph and it is accepted.
+    const workflows = new TemporalWorkflowPort(environment.client.workflow, {
+      taskQueue,
+    });
+    for (const [name, requestId] of [
+      ["claim", "keyed-claim"],
+      ["start", "keyed-running"],
+    ] as const) {
+      await workflows.signal({
+        workflowId: graphWorkflowId,
+        name,
+        requestId,
+        payload: { taskId: "result-node", workerId: RECIPIENT },
+      });
+    }
+    await workflows.signal({
+      workflowId: graphWorkflowId,
+      name: "complete",
+      requestId: "keyed-accepted",
+      payload: {
+        taskId: "result-node",
+        workerId: RECIPIENT,
+        receipts: [{ checkId: "artifact", artifactRef }],
+      },
+    });
+
+    // 5. Publish through the recipient route: the A2A task completes.
+    const published = await service.recipientRoute?.httpHandler(
+      new Request("http://local/recipient", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer recipient-fixture",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          operation: "publish-result",
+          requestId: "keyed-publish",
+          workflowId: messageWorkflowId,
+          taskId: submitted.id,
+        }),
+      })
+    );
+    expect(published?.status).toBe(200);
+    expect(await published?.json()).toMatchObject({
+      resultPublished: true,
+      taskId: submitted.id,
+    });
+    results = await PostgresA2ATaskStore.connect({
+      databaseUrl: postgres.databaseUrl(),
+    });
+    const completed = await results.load(
+      submitted.id,
+      new ServerCallContext({
+        tenant: SCOPE.tenantId,
+        user: { isAuthenticated: true, userName: SCOPE.principal },
+      })
+    );
+    expect(completed?.status?.state).toBe(TaskState.TASK_STATE_COMPLETED);
+    expect(completed?.artifacts.map((artifact) => artifact.artifactId)).toEqual(
+      [`accepted:${messageWorkflowId}`]
+    );
+  } finally {
+    await results?.close().catch(() => undefined);
+    await service?.close().catch(() => undefined);
+    await adminSessions?.close().catch(() => undefined);
+    for (const workflowId of ownedWorkflowIds) {
+      const handle = environment.client.workflow.getHandle(workflowId);
+      const description = await handle.describe().catch(() => undefined);
+      if (description?.status.name === "RUNNING") {
+        await handle.terminate("keyed result graph proof cleanup");
+      }
+    }
+    await environment.teardown();
+    await postgres?.close();
+    rmSync(root, { force: true, recursive: true });
+  }
+}, 90_000);

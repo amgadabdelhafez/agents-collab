@@ -1,18 +1,27 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TaskState } from "@a2a-js/sdk";
+import { ServerCallContext } from "@a2a-js/sdk/server";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { serve } from "bun";
+import { PostgresA2ATaskStore } from "../../src/loop/a2a-postgres-task-store";
+import { WORKFLOW_IDS_METADATA_KEY } from "../../src/loop/a2a-supervisor-executor";
 import {
   type A2AV2Config,
   configuredA2AV2RebindAuthority,
   enrollConfiguredA2AV2Session,
   runLoopOrchestrationServer,
 } from "../../src/loop/loop-orchestration-server";
+import { runOrchestrationCommand } from "../../src/loop/orchestration-command";
 import { createRunManifest, writeRunManifest } from "../../src/loop/run-state";
-import { deriveSupervisorMessageV2WorkflowId } from "../../src/loop/supervisor-message-v2-contract";
+import {
+  deriveSupervisorMessageV2ResultGraphWorkflowId,
+  deriveSupervisorMessageV2WorkflowId,
+  SupervisorResultGraphKey,
+} from "../../src/loop/supervisor-message-v2-contract";
 import { PostgresSupervisorMessageV2DeliveryLedger } from "../../src/loop/supervisor-message-v2-delivery-ledger";
 import { supervisorMessageV2ReplayFixtures } from "../../src/loop/supervisor-message-v2-replay-fixtures";
 import { SUPERVISOR_MESSAGE_WORKFLOW_TYPE } from "../../src/loop/supervisor-message-workflow";
@@ -381,6 +390,9 @@ const waitFor = async <T>(
 
 const compositionFixture = (input: {
   address: string;
+  /** Extra a2aV2 config fields and the environment they name. */
+  a2aExtra?: Record<string, unknown>;
+  envExtra?: Record<string, string>;
   tenant: string;
   thread: string;
 }) => {
@@ -430,6 +442,7 @@ const compositionFixture = (input: {
         routePath: "/a2a/v2",
         sessionTtlMs: 60_000,
         tenant: input.tenant,
+        ...input.a2aExtra,
       },
       address: input.address,
       buildId: "orchestration-composition.v1",
@@ -465,7 +478,8 @@ const compositionFixture = (input: {
     env: {
       LOOP_TEST_A2A_DATABASE_URL: postgres.databaseUrl(),
       LOOP_TEST_HARNESS_TOKEN: randomUUID(),
-    },
+      ...input.envExtra,
+    } as Record<string, string>,
     port,
     remove: () => rmSync(root, { force: true, recursive: true }),
     writeSeat,
@@ -687,6 +701,221 @@ test("the orchestration server starts when a recorded V2 workflow ID is held by 
       .getHandle(workflowId)
       .terminate()
       .catch(() => undefined);
+    await ledger.close();
+    fixture.remove();
+  }
+}, 120_000);
+
+test("the orchestration server starts a message's result graph under its keyed id and binds it only through the configured graph tasks", async () => {
+  const environment = await temporalEnvironment();
+  const config = a2aConfig(tenant());
+  const scope = scopeOf(config);
+  const [fixtureV2] = supervisorMessageV2ReplayFixtures;
+  if (!fixtureV2) {
+    throw new Error("missing V2 fixture");
+  }
+  const dedupeKey = `keyed-${randomUUID().slice(0, 8)}`;
+  const messageWorkflowId = deriveSupervisorMessageV2WorkflowId(
+    scope,
+    dedupeKey
+  );
+  // A throwaway host secret, passed only through the environment.
+  const secret = randomBytes(32).toString("hex");
+  const graphWorkflowId = deriveSupervisorMessageV2ResultGraphWorkflowId(
+    SupervisorResultGraphKey.fromSecret(secret),
+    scope,
+    messageWorkflowId
+  );
+  const fixture = compositionFixture({
+    address: environment.address,
+    a2aExtra: {
+      resultArtifacts: [
+        {
+          artifactRef: `artifact://sha256/${"e".repeat(64)}`,
+          commit: "b".repeat(40),
+          graphTaskId: "result-node",
+          graphWorkflowId,
+          path: "results/accepted.md",
+          repositoryRoot: "/nonexistent/repository",
+        },
+      ],
+      resultGraphKeyEnv: "LOOP_TEST_RESULT_GRAPH_KEY",
+    },
+    envExtra: { LOOP_TEST_RESULT_GRAPH_KEY: secret },
+    tenant: config.tenant,
+    thread: "thread-a",
+  });
+  const ledger = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+    postgres.databaseUrl()
+  );
+  const tasks = await PostgresA2ATaskStore.connect({
+    databaseUrl: postgres.databaseUrl(),
+  });
+  const stop = new AbortController();
+  let running: Promise<void> | undefined;
+  try {
+    // The operator tool computes, from the same config and environment, the
+    // id this server derives.
+    const printed: string[] = [];
+    await runOrchestrationCommand(
+      [
+        "orchestration",
+        "result-graph-id",
+        fixture.configPath,
+        messageWorkflowId,
+      ],
+      () => Promise.reject(new Error("must not start the server")),
+      {
+        env: fixture.env,
+        write: (text) => printed.push(text),
+      }
+    );
+    expect(printed).toEqual([`${graphWorkflowId}\n`]);
+    await ledger.migrate();
+    await tasks.migrate();
+    // A message this route's scope sent, already acknowledged by its
+    // recipient (so recovery leaves it alone), and its A2A task.
+    await ledger.recordStartIntent(messageWorkflowId, scope, {
+      ...structuredClone(fixtureV2.input),
+      dedupeKey,
+      messageId: `message-${dedupeKey}`,
+      principal: scope.principal,
+      tenantId: scope.tenantId,
+      threadId: `thread-${dedupeKey}`,
+      to: "supervisor:target",
+    });
+    await ledger.recordTerminalOutcome(
+      messageWorkflowId,
+      scope,
+      "acknowledged"
+    );
+    await tasks.save(
+      {
+        id: "task:keyed-server",
+        contextId: "context:keyed-server",
+        history: [],
+        artifacts: [],
+        metadata: { [WORKFLOW_IDS_METADATA_KEY]: [messageWorkflowId] },
+        status: {
+          state: TaskState.TASK_STATE_WORKING,
+          timestamp: "2026-10-05T00:00:00.000Z",
+          message: undefined,
+        },
+      },
+      new ServerCallContext({
+        tenant: scope.tenantId,
+        user: { isAuthenticated: true, userName: scope.principal },
+      })
+    );
+    const started = startServer(fixture, stop.signal);
+    running = started.running;
+    expect(await started.ready).toBe("ready");
+    const post = (path: string, body: unknown) =>
+      fetch(`http://127.0.0.1:${fixture.port}${path}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.env.LOOP_TEST_HARNESS_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+    const graphInput = {
+      schema: "task-graph.v1",
+      graphId: "keyed-server-proof",
+      nodes: [
+        {
+          taskId: "result-node",
+          acceptanceChecks: [{ checkId: "artifact", kind: "artifact" }],
+          authorityGates: [],
+          dependencies: [],
+          ownerRepository: "agents-collab",
+          readScopes: ["src"],
+          writeScopes: [],
+          specArtifactRef: `artifact://sha256/${"e".repeat(64)}`,
+        },
+        {
+          taskId: "unconfigured-node",
+          acceptanceChecks: [{ checkId: "artifact", kind: "artifact" }],
+          authorityGates: [],
+          dependencies: [],
+          ownerRepository: "agents-collab",
+          readScopes: ["src"],
+          writeScopes: [],
+          specArtifactRef: `artifact://sha256/${"e".repeat(64)}`,
+        },
+      ],
+    };
+    // No control-surface caller may pre-start the derived id itself.
+    const squat = await post("/api/v1/task-graphs/start", {
+      input: graphInput,
+      requestId: "squat",
+      workflowId: graphWorkflowId,
+    });
+    expect(squat.status).toBe(403);
+    const start = await post("/a2a/v2/result-graph", {
+      input: graphInput,
+      messageWorkflowId,
+      requestId: "keyed-server-start",
+    });
+    expect(start.status).toBe(200);
+    expect(await start.json()).toMatchObject({
+      graphWorkflowId,
+      messageWorkflowId,
+      created: true,
+    });
+    const binding = {
+      a2aTaskId: "task:keyed-server",
+      graphTaskId: "result-node",
+      graphWorkflowId,
+      messageWorkflowId,
+      recipient: "supervisor:target",
+    };
+    // Only the operator-configured graph task of the keyed graph binds.
+    expect(
+      (
+        await post("/a2a/v2/assignment", {
+          ...binding,
+          graphTaskId: "unconfigured-node",
+        })
+      ).status
+    ).toBe(409);
+    const assigned = await post("/a2a/v2/assignment", binding);
+    expect(assigned.status).toBe(200);
+    await expect(
+      ledger.resultBinding(scope, messageWorkflowId, "task:keyed-server")
+    ).resolves.toBeUndefined(); // this ledger holds no key: it cannot verify
+    const keyed = await PostgresSupervisorMessageV2DeliveryLedger.connect(
+      postgres.databaseUrl(),
+      { resultGraphKey: SupervisorResultGraphKey.fromSecret(secret) }
+    );
+    try {
+      await expect(
+        keyed.resultBinding(scope, messageWorkflowId, "task:keyed-server")
+      ).resolves.toEqual(binding);
+    } finally {
+      await keyed.close();
+    }
+    const listed = await fetch(
+      `http://127.0.0.1:${fixture.port}/a2a/v2/assignment`,
+      {
+        headers: {
+          authorization: `Bearer ${fixture.env.LOOP_TEST_HARNESS_TOKEN}`,
+        },
+      }
+    );
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual({
+      schema: "supervisor-result-assignment-status.v1",
+      unpublishable: [],
+    });
+  } finally {
+    stop.abort();
+    await running?.catch(() => undefined);
+    await environment.client.workflow
+      .getHandle(graphWorkflowId)
+      .terminate()
+      .catch(() => undefined);
+    await tasks.close();
     await ledger.close();
     fixture.remove();
   }
